@@ -715,7 +715,7 @@ model HaEnrollment {
   tokenHash              String   // argon2id
   tokenPrefix            String   // "polaris_xxxxxxxx", indexed
   expiresAt              DateTime // 24h — a human workflow, not a machine one
-  requestId              String?  @unique // opaque poll handle, 32 bytes hex
+  requestIdHash          String?  @unique // SHA-256 hex of the poll handle (rule 117(i)); the raw handle is never stored
   status                 String   @default("issued")
   registeredFromIp       String?  // evidence the operator approves against
   registeredNodeName     String?
@@ -734,6 +734,8 @@ model HaEnrollment {
   @@map("ha_enrollments")
 }
 ```
+
+The poll handle is a credential — it alone claims the bundle — so only its SHA-256 is stored (`haEnrollmentService.hashRequestId`; migration `20261016000000_ha_request_id_hash` renamed `requestId` and hashed the rows in flight). `expireStaleEnrollments` runs before every lookup and expires an `issued` row past `expiresAt`, a `pending` one past `APPROVAL_WINDOW_MS` (30 min) and an `approved` one past `CLAIM_WINDOW_MS` (10 min); the digest stays so the script still reads "expired". `claimBundle` also requires the caller's address to equal `registeredFromIp` (business rule 117(i), re-scan F86).
 
 #### Tag
 

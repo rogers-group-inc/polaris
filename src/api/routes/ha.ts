@@ -300,7 +300,8 @@ haEnrollRouter.get("/:requestId", async (req, res, next) => {
     if (!/^[0-9a-f]{64}$/.test(requestId)) throw new AppError(404, "Unknown enrollment request");
 
     if (req.query.download === "1") {
-      const { archive, filename } = await claimBundle(requestId);
+      const sourceIp = (req.ip || req.socket.remoteAddress || null) ?? null;
+      const { archive, filename } = await claimBundle(requestId, sourceIp);
       await logEvent({
         action: "ha.node_enrolled",
         resourceType: "setting",

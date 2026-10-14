@@ -120,7 +120,17 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   // detach from it tore down the agent's live replacement and wrote a warning
   // `agent.disconnected` for a connection that was fine. That fired for every
   // agent that double-dialed during a server restart's reconnect herd.
-  ws.on("message", (data) => onFrame(managedAgentId, data));
+  // A frame that throws closes THIS socket, never the process (re-scan F8): the
+  // listener runs outside any request's try/catch, so an exception here was an
+  // uncaughtException and the crash handler exited the web role.
+  ws.on("message", (data) => {
+    try {
+      onFrame(managedAgentId, data);
+    } catch (err) {
+      logger.warn({ err, managedAgentId }, "Agent WS frame handler failed; closing the socket");
+      detach(managedAgentId, "malformed frame", session);
+    }
+  });
   ws.on("pong", () => { session.pongSeen = true; });
   ws.on("close", (code, reason) => {
     detach(managedAgentId, `socket closed: ${code} ${reason.toString().slice(0, 80)}`, session);
@@ -240,13 +250,25 @@ interface Frame {
   payload: unknown;
 }
 
-function onFrame(managedAgentId: string, data: unknown): void {
-  let frame: Frame;
+/** A parsed frame is agent-controlled JSON: `null`, a number or an array parse fine. */
+export function asFrame(value: unknown): Frame | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.type !== "string") return null;
+  return { type: v.type, id: typeof v.id === "string" ? v.id : "", payload: v.payload };
+}
+
+export function onFrame(managedAgentId: string, data: unknown): void {
+  let frame: Frame | null;
   try {
     const text = typeof data === "string" ? data : (data as Buffer).toString("utf8");
-    frame = JSON.parse(text);
+    frame = asFrame(JSON.parse(text));
   } catch (err) {
     logger.warn({ err, managedAgentId }, "Agent WS frame parse failed");
+    return;
+  }
+  if (!frame) {
+    logger.warn({ managedAgentId }, "Agent WS frame is not an object with a string type; ignored");
     return;
   }
   if (frame.type === "probe-now-response") {

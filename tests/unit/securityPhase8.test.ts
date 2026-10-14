@@ -43,7 +43,9 @@ describe("graphqlOperationKinds — the Unraid query tool reads documents as Gra
 
   it("keywords inside strings, arguments and selections do not count", () => {
     expect(isQueryOnlyGraphql('{ search(q: "mutation { x }") { id } }')).toBe(true);
-    expect(isQueryOnlyGraphql('{ a(q: """\nmutation { x }\n""") }')).toBe(true);
+    // Block strings are refused outright since re-scan F70 — but the
+    // operation scan still treats their contents as a string.
+    expect(graphqlOperationKinds('{ a(q: """\nmutation { x }\n""") }')).toEqual(["query"]);
     expect(isQueryOnlyGraphql("{ mutation subscription }")).toBe(true);
     expect(isQueryOnlyGraphql("fragment F on mutation { a } { b }")).toBe(true);
   });

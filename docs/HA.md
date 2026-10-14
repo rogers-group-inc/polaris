@@ -275,8 +275,12 @@ No data diverges.
 ```bash
 patronictl -c /etc/patroni/patroni.yml list         # exactly one Leader
 polaris-ha-role verify                              # cert, HEAD, node, uid, tsdb parity
-curl -sf localhost:8008/primary && echo primary     # exactly one node answers 200
+curl -sfk https://127.0.0.1:8008/primary && echo primary   # exactly one node answers 200
 ```
+
+The REST API is HTTPS on clusters built from 2026-10-14 and plain HTTP on older
+ones until they switch (docs/UPGRADING.md, *Patroni REST API over TLS*); on an
+older cluster drop the `-k https://` and use `http://127.0.0.1:8008/primary`.
 
 Alert on "no node reports ready", not on "a node is down" — the standby being
 down at 443 is the normal state.
@@ -779,7 +783,7 @@ the DCS; with the witness in the standby DC, a standby-site or WAN outage has
 demoted a healthy primary.
 
 First, check whether `failsafe_mode` is holding the primary up: if the primary
-still answers `curl localhost:8008/primary` with 200 and PostgreSQL is
+still answers `curl -sk https://127.0.0.1:8008/primary` (`http://` on a pre-TLS cluster) with 200 and PostgreSQL is
 writable, you have time. Restore the missing members and stop.
 
 If the primary has demoted and the other two members will not be back soon,

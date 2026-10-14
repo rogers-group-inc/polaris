@@ -114,6 +114,18 @@ Its whole surface is three calls: register, poll, claim once.
 > silent handover of `.env` (and therefore `POLARIS_SECRET_KEY`), the nginx
 > private key and the database passwords.
 
+**The approval is short-lived and tied to the node.** Approve within 30 minutes
+of the node registering; after that the request expires and you generate a new
+script. The bundle must then be downloaded within 10 minutes, from the same
+address the node registered from — the bootstrap script does both in seconds.
+Polaris stores only a hash of the handle the script polls with, so a copy of the
+database cannot be used to collect a bundle ([rule 117](Business-Rules#rule-117)).
+
+**A new cluster's Patroni REST API (port 8008) uses TLS**, with each node's
+cluster certificate. An existing cluster keeps plain HTTP until you switch it
+(`docs/UPGRADING.md`, *Patroni REST API over TLS*); the capacity card warns until
+then.
+
 **Approving is a decision made against evidence.** The pending panel shows the
 node's **source address** and the **SSH host-key fingerprints it presented**,
 next to the Approve button, and the confirmation repeats them plus exactly what

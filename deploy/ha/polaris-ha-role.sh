@@ -121,9 +121,30 @@ pin_peer() {
 # leader lease, and 503 otherwise. That is the same fact the database itself
 # reports through pg_is_in_recovery(), read over a channel that does not need
 # database credentials.
+# The REST API is HTTPS on clusters built since 2026-10-14 and plain HTTP on
+# older ones (business rule 117). On loopback — the default — both are tried:
+# HTTPS without a certificate check (no credential is sent, and there is no
+# path to intercept on 127.0.0.1), then HTTP. Anything else in ha.conf is
+# used as given.
+patroni_code() {
+  local path="$1" code
+  case "$PATRONI_REST" in
+    http://127.0.0.1:8008|https://127.0.0.1:8008)
+      code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "https://127.0.0.1:8008$path" 2>/dev/null) || code="000"
+      if [[ "$code" == "000" ]]; then
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:8008$path" 2>/dev/null) || code="000"
+      fi
+      ;;
+    *)
+      code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$PATRONI_REST$path" 2>/dev/null) || code="000"
+      ;;
+  esac
+  echo "${code:-000}"
+}
+
 ha_role() {
   local code
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$PATRONI_REST/primary" 2>/dev/null || echo "000")
+  code=$(patroni_code /primary)
   case "$code" in
     200) echo "primary" ;;
     503) echo "replica" ;;

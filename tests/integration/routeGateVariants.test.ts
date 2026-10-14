@@ -111,6 +111,25 @@ d("API docs source gate", () => {
     },
   );
 
+  // re-scan F87: express.static decodes and normalizes; the gate used not to.
+  // (Dot segments are pinned in tests/unit/routePath.test.ts: supertest's URL
+  // parser resolves `/./` and `%2e` before the request is sent.)
+  it.each(["/%61pi.html", "//api.html", "/%6Cogin.html", "//login.html", "/%zz.html"])(
+    "refuses the non-canonical spelling %s before any gate or file",
+    async (path) => {
+      await saveApiDocsSettings({ enabled: false });
+      invalidateApiDocsSettingsCache();
+      const res = await request(app).get(path);
+      expect(res.status).toBe(404);
+      expect(res.text).not.toMatch(/<html/i);
+    },
+  );
+
+  it("an /api/v1 path keeps its percent-encoded parameters", async () => {
+    const res = await request(app).get("/api/v1/auth/me%20x");
+    expect(res.status).not.toBe(404);
+  });
+
   it("leaves /api/v1 traffic alone", async () => {
     await saveApiDocsSettings({ enabled: false });
     invalidateApiDocsSettingsCache();

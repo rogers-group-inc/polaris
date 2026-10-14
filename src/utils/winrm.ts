@@ -114,9 +114,9 @@ async function createShell(conn: WinRmConnection): Promise<string> {
   // Pull ShellId out of the response. The response wraps a Shell element
   // whose ShellId is the new shell's GUID — alternately, the addressing
   // header carries the same GUID via wsa:RelatesTo on subsequent calls.
-  const m = xml.match(/<(?:\w+:)?ShellId[^>]*>([^<]+)<\/(?:\w+:)?ShellId>/);
-  if (!m) throw new Error("CreateShell response missing ShellId");
-  return m[1];
+  const shellId = xmlElement(xml, "ShellId")?.content.trim();
+  if (!shellId) throw new Error("CreateShell response missing ShellId");
+  return shellId;
 }
 
 async function runCommand(
@@ -145,9 +145,9 @@ async function runCommand(
       `</s:Body>` +
     `</s:Envelope>`;
   const xml = await soapPost(conn, env);
-  const m = xml.match(/<(?:\w+:)?CommandId[^>]*>([^<]+)<\/(?:\w+:)?CommandId>/);
-  if (!m) throw new Error("RunCommand response missing CommandId");
-  return m[1];
+  const commandId = xmlElement(xml, "CommandId")?.content.trim();
+  if (!commandId) throw new Error("RunCommand response missing CommandId");
+  return commandId;
 }
 
 async function receiveAll(
@@ -174,24 +174,10 @@ async function receiveAll(
         `</s:Body>` +
       `</s:Envelope>`;
     const xml = await soapPost(conn, env);
-
-    // Pull every <rsp:Stream Name="stdout|stderr">...</rsp:Stream> chunk
-    // — content is base64 of the raw bytes the host wrote.
-    const streamRe = /<(?:\w+:)?Stream\b[^>]*Name="(stdout|stderr)"[^>]*(?:CommandId="[^"]*")?[^>]*>([^<]*)<\/(?:\w+:)?Stream>/g;
-    let m: RegExpExecArray | null;
-    while ((m = streamRe.exec(xml))) {
-      const decoded = Buffer.from(m[2], "base64").toString("utf8");
-      if (m[1] === "stdout") stdout += decoded;
-      else                    stderr += decoded;
-    }
-
-    // Look for the exit signal. CommandState="...Done" + ExitCode element.
-    const doneMatch = xml.match(/<(?:\w+:)?CommandState[^>]*State="[^"]*Done"[\s\S]*?<\/(?:\w+:)?CommandState>/);
-    if (doneMatch) {
-      const ec = doneMatch[0].match(/<(?:\w+:)?ExitCode>(-?\d+)<\/(?:\w+:)?ExitCode>/);
-      const exitCode = ec ? parseInt(ec[1], 10) : null;
-      return { exitCode, stdout, stderr };
-    }
+    const chunk = parseReceive(xml);
+    stdout += chunk.stdout;
+    stderr += chunk.stderr;
+    if (chunk.done) return { exitCode: chunk.exitCode, stdout, stderr };
     // Not done — keep polling. Brief delay so we don't tight-loop on a
     // command that prints nothing for seconds at a time.
     await sleep(250);
@@ -208,6 +194,101 @@ async function deleteShell(conn: WinRmConnection, shellId: string): Promise<void
       `<s:Body/>` +
     `</s:Envelope>`;
   await soapPost(conn, env);
+}
+
+// ─── Response parsing (re-scan F84) ───────────────────────────────────
+//
+// The response body is the remote host's. It used to be matched with
+// backtracking regexes — the fault pattern nested two lazy `[\s\S]*?` scans
+// and the Stream pattern ran three adjacent `[^>]*`, so a body of many
+// `<Text` openers with no `</Text>` cost O(openers × length) on the event
+// loop that also runs every collector. These scans are indexOf-based and
+// linear: each element search moves forward only, and a missing close tag
+// ends the search instead of retrying from the next opener. Bodies are also
+// capped (MAX_WINRM_BODY_BYTES).
+
+export const MAX_WINRM_BODY_BYTES = 4 * 1024 * 1024;
+
+const isXmlNameChar = (c: string) =>
+  (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "_" || c === ":" || c === "-" || c === ".";
+
+const localName = (name: string) => name.slice(name.lastIndexOf(":") + 1);
+
+export interface XmlElement { attrs: string; content: string; end: number }
+
+/** The next element named `local` (any namespace prefix) at or after `from`, or null. */
+export function xmlElement(xml: string, local: string, from = 0): XmlElement | null {
+  let i = from;
+  for (;;) {
+    const lt = xml.indexOf("<", i);
+    if (lt < 0) return null;
+    let j = lt + 1;
+    while (j < xml.length && isXmlNameChar(xml[j])) j++;
+    if (j === lt + 1 || localName(xml.slice(lt + 1, j)) !== local) { i = lt + 1; continue; }
+    const gt = xml.indexOf(">", j);
+    if (gt < 0) return null;
+    const attrs = xml.slice(j, gt);
+    if (attrs.endsWith("/")) return { attrs: attrs.slice(0, -1), content: "", end: gt + 1 };
+    let k = gt + 1;
+    for (;;) {
+      const close = xml.indexOf("</", k);
+      if (close < 0) return null;
+      let e = close + 2;
+      while (e < xml.length && isXmlNameChar(xml[e])) e++;
+      if (localName(xml.slice(close + 2, e)) === local) {
+        const cgt = xml.indexOf(">", e);
+        if (cgt < 0) return null;
+        return { attrs, content: xml.slice(gt + 1, close), end: cgt + 1 };
+      }
+      k = close + 2;
+    }
+  }
+}
+
+/** The value of attribute `name` in an element's attribute text, or null. */
+export function xmlAttr(attrs: string, name: string): string | null {
+  const needle = `${name}="`;
+  let i = 0;
+  for (;;) {
+    const at = attrs.indexOf(needle, i);
+    if (at < 0) return null;
+    const before = at === 0 ? " " : attrs[at - 1];
+    if (before === " " || before === "\t" || before === "\n" || before === "\r") {
+      const start = at + needle.length;
+      const end = attrs.indexOf('"', start);
+      return end < 0 ? null : attrs.slice(start, end);
+    }
+    i = at + 1;
+  }
+}
+
+/** One Receive response: its decoded stdout / stderr, and whether the command is Done. */
+export function parseReceive(xml: string): { stdout: string; stderr: string; done: boolean; exitCode: number | null } {
+  let stdout = "";
+  let stderr = "";
+  // <rsp:Stream Name="stdout|stderr">base64</rsp:Stream>
+  for (let el = xmlElement(xml, "Stream"); el; el = xmlElement(xml, "Stream", el.end)) {
+    const name = xmlAttr(el.attrs, "Name");
+    if (name !== "stdout" && name !== "stderr") continue;
+    const decoded = Buffer.from(el.content.trim(), "base64").toString("utf8");
+    if (name === "stdout") stdout += decoded;
+    else                   stderr += decoded;
+  }
+  // The exit signal: CommandState State="…Done" carrying an ExitCode.
+  for (let el = xmlElement(xml, "CommandState"); el; el = xmlElement(xml, "CommandState", el.end)) {
+    if (!(xmlAttr(el.attrs, "State") ?? "").endsWith("Done")) continue;
+    const ec = xmlElement(el.content, "ExitCode")?.content.trim() ?? "";
+    const exitCode = /^-?\d{1,10}$/.test(ec) ? parseInt(ec, 10) : null;
+    return { stdout, stderr, done: true, exitCode };
+  }
+  return { stdout, stderr, done: false, exitCode: null };
+}
+
+/** The text of a WS-Management fault (`<Reason><Text>…</Text></Reason>`), or null. */
+export function faultReason(body: string): string | null {
+  const reason = xmlElement(body, "Reason");
+  if (!reason) return null;
+  return xmlElement(reason.content, "Text")?.content ?? null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -273,15 +354,29 @@ function soapPost(conn: WinRmConnection, envelope: string): Promise<string> {
   };
   return new Promise<string>((resolve, reject) => {
     const req = reqFn(opts, (res) => {
-      let body = "";
-      res.on("data", (chunk) => { body += chunk.toString("utf8"); });
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let tooBig = false;
+      res.on("data", (chunk: Buffer) => {
+        if (tooBig) return;
+        bytes += chunk.length;
+        if (bytes > MAX_WINRM_BODY_BYTES) {
+          tooBig = true;
+          try { req.destroy(); } catch { /* ignore */ }
+          reject(new Error(`WinRM response exceeded ${MAX_WINRM_BODY_BYTES} bytes; refused`));
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on("end", () => {
+        if (tooBig) return;
+        const body = Buffer.concat(chunks).toString("utf8");
         if (res.statusCode === 200) return resolve(body);
         if (res.statusCode === 401) return reject(new Error("WinRM authentication failed"));
         // 500 is the default on WS-Management faults; surface the fault
         // body so the operator can see e.g. "ShellId not found" or
         // "Access is denied" instead of an opaque 500.
-        const reason = (body.match(/<(?:\w+:)?Reason>[\s\S]*?<(?:\w+:)?Text[^>]*>([\s\S]*?)<\/(?:\w+:)?Text>/) || [])[1];
+        const reason = faultReason(body);
         reject(new Error(`WinRM HTTP ${res.statusCode}${reason ? ": " + reason.trim().slice(0, 200) : ""}`));
       });
     });

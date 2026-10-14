@@ -19,6 +19,7 @@
  *     (escapeLdapFilterValue) to prevent filter injection.
  */
 
+import { randomUUID } from "node:crypto";
 import { type Entry } from "ldapts";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
@@ -187,6 +188,13 @@ function extractUid(entry: Entry, attr: string): string {
   return String(first).trim();
 }
 
+/** A bind that is certain to fail, costing what a real user bind costs. Never throws. */
+async function dummyUserBind(s: LdapSettings): Promise<void> {
+  const dn = `cn=polaris-no-such-user-${randomUUID()},${s.searchBase}`;
+  await withBoundLdapClient(connConfig(s, dn, randomUUID()), undefined, async () => { /* never reached */ })
+    .catch(() => { /* the failure is the point */ });
+}
+
 export interface LdapAuthResult {
   dn: string;
   username: string;
@@ -226,7 +234,15 @@ export async function authenticateLdapUser(username: string, password: string): 
     if (searchEntries.length !== 1) return null;
     return searchEntries[0];
   });
-  if (!entry) throw new AppError(401, "Invalid username or password");
+  if (!entry) {
+    // A name the directory does not know still pays the second connection +
+    // bind a known one does (re-scan F77): without it, a reply that needed one
+    // connection marked "not in AD" and a reply that needed two marked a valid
+    // directory username to spray. The DN cannot exist and the password is
+    // random, so no real account's failure counter is touched.
+    await dummyUserBind(s);
+    throw new AppError(401, "Invalid username or password");
+  }
 
   const userDn = String(entry.dn || "");
   if (!userDn) throw new AppError(502, "LDAP entry has no DN");

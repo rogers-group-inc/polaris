@@ -4203,10 +4203,13 @@ model HaEnrollment {
   tokenPrefix String
   expiresAt   DateTime
 
-  // Opaque 32-byte handle the bootstrap script polls with. Separate from the
-  // token because the token is spent by then, and a poll must not carry a
-  // credential that is still worth stealing.
-  requestId String? @unique
+  // SHA-256 (hex) of the opaque 32-byte handle the bootstrap script polls
+  // with. Separate from the token because the token is spent by then, and a
+  // poll must not carry a credential that is still worth stealing. Only the
+  // digest is stored (business rule 117, re-scan F86): the handle alone claims
+  // the bundle, so a raw copy in a dump or replica was the whole install's
+  // secret set.
+  requestIdHash String? @unique
 
   // Lifecycle:
   //   issued    — token minted, nothing has connected yet

@@ -80,7 +80,7 @@ HA_MODE=0
 HA_HOLD_FILE="/run/polaris-ha/hold"
 if [[ -f /etc/polaris/ha-node ]]; then
   HA_MODE=1
-  if ! curl -sf --max-time 3 -o /dev/null http://127.0.0.1:8008/primary 2>/dev/null; then
+  if ! { curl -sfk --max-time 3 -o /dev/null https://127.0.0.1:8008/primary 2>/dev/null || curl -sf --max-time 3 -o /dev/null http://127.0.0.1:8008/primary 2>/dev/null; }; then
     echo "[ERROR] This is an HA node but its PostgreSQL is not the Patroni primary." >&2
     echo "[ERROR] Run the update on the ACTIVE node; the standby picks the new code up by sync." >&2
     echo "[ERROR] Check with: patronictl -c /etc/patroni/patroni.yml list" >&2

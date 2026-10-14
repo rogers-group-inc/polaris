@@ -24,7 +24,7 @@
  * (services/discovery/workloadSync.ts); this file knows Unraid, nothing else.
  */
 
-import { isQueryOnlyGraphql } from "../utils/graphqlOperations.js";
+import { graphqlHasBlockString, isQueryOnlyGraphql } from "../utils/graphqlOperations.js";
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
@@ -919,6 +919,9 @@ export async function proxyQuery(config: UnraidConfig, query: string, variables?
   // Read the document as a GraphQL server does (business rule 117): a prefix
   // check let `, mutation {…}` and a leading fragment carry a mutation through
   // with the stored API key.
+  if (graphqlHasBlockString(q)) {
+    throw new AppError(400, 'Block strings (""" … """) are not accepted here — use an ordinary "string" or a variable');
+  }
   if (!isQueryOnlyGraphql(q)) {
     throw new AppError(400, "Only queries can be run here — a document containing a mutation or subscription is refused");
   }

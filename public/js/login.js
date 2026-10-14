@@ -446,10 +446,23 @@ function takeLoginTarget() {
     break;
   }
   document.cookie = "polaris_next=; Max-Age=0; Path=/";
-  // Reject anything that isn't an unambiguous local path. "//evil.example" is
-  // protocol-relative and would leave the origin; "/\evil" is the same trick
-  // with the byte browsers also treat as a separator.
-  if (!raw || raw.charAt(0) !== "/" || raw.charAt(1) === "/" || raw.charAt(1) === "\\") return "/";
-  if (raw === "/login.html" || raw.indexOf("/login.html?") === 0) return "/";
-  return raw;
+  return safeLoginTarget(raw);
+}
+
+// Only an unambiguous same-origin path survives. Character checks alone are
+// not enough (re-scan F11): the URL parser strips tab / CR / LF before it
+// resolves, so "/\t/evil.example" passed a first-two-characters guard and then
+// navigated off-origin. So: no control characters at all, then resolve the
+// value with the browser's own parser and require the same origin and a path
+// that starts with exactly one "/" — the server's safeNextPath rule.
+function safeLoginTarget(raw) {
+  if (typeof raw !== "string" || !raw || /[\u0000-\u001f\u007f]/.test(raw)) return "/";
+  if (raw.charAt(0) !== "/" || raw.charAt(1) === "/" || raw.charAt(1) === "\\") return "/";
+  var url;
+  try { url = new URL(raw, window.location.origin); } catch (_) { return "/"; }
+  if (url.origin !== window.location.origin) return "/";
+  if (url.pathname.charAt(0) !== "/" || url.pathname.charAt(1) === "/") return "/";
+  var target = url.pathname + url.search + url.hash;
+  if (url.pathname === "/login.html") return "/";
+  return target;
 }

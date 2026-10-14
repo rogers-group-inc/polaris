@@ -869,8 +869,8 @@ export function buildWindowsOnboardingDetectionScript(opts: {
 //     world-writable .ssh or a wrongly-owned authorized_keys, exactly as it
 //     refuses a bad ACL on Windows.
 //  2. **Key auth does not remove the sudo requirement.** The agent installer
-//     runs `sudo -n bash /tmp/polaris-agent-install.sh` (and separate
-//     uninstall/upgrade scripts). Without passwordless sudo the install fails
+//     runs `sudo -n bash <private staging dir>/install.sh` (and separate
+//     uninstall/upgrade scripts; business rule 119). Without passwordless sudo the install fails
 //     no matter how the SSH auth succeeded, so onboarding that only installed
 //     the key would just move the manual step. Hence the sudoers drop-in.
 //  3. SELinux. On RHEL-family hosts a hand-created ~/.ssh carries the wrong
@@ -938,8 +938,9 @@ const LINUX_ONBOARDING_SH = `#!/usr/bin/env bash
 #   Ad hoc   : scp it over, then  sudo bash polaris-ssh-onboarding.sh
 #
 # WHY PASSWORDLESS SUDO. The agent installer runs
-# 'sudo -n bash /tmp/polaris-agent-install.sh' (plus separate uninstall and
-# upgrade scripts), so SSH key auth alone is not enough to install the agent.
+# 'sudo -n bash /tmp/polaris-agent.XXXXXXXXXX/install.sh' (a private directory
+# created for each run, plus separate uninstall and upgrade scripts), so SSH
+# key auth alone is not enough to install the agent.
 # This grants NOPASSWD:ALL to the account below — effectively passwordless root
 # on this host for anyone holding the Polaris private key.
 #

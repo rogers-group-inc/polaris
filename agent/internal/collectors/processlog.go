@@ -17,11 +17,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/polaris/agent/internal/transport"
@@ -117,37 +119,80 @@ func journaldLogSamples(name string, cursors map[string]string, maxLines int) []
 }
 
 // fileLogSamples tails every file matching glob from its saved byte offset.
+//
+// Business rule 119 (re-scan F68): the agent reads with more privilege than
+// whoever writes the log directory, so a matched FILE that is a symlink /
+// junction / reparse point is skipped (Lstat, then a no-follow open that
+// fstats the handle), as is a match reached through a link in a WILDCARD
+// directory component, and a matched file with more than one hard link.
+// Links in the glob's literal directory prefix — the part the operator typed
+// — are allowed. Each path's identity is kept beside its offset: a different
+// file at the same path is a rotation and is read from 0.
 func fileLogSamples(name, glob string, cursors map[string]string, maxLines int) []*transport.ProcessLogSample {
 	matches, err := filepath.Glob(glob)
 	if err != nil || len(matches) == 0 {
 		return nil
 	}
+	prefix := globLiteralDir(glob)
 	var out []*transport.ProcessLogSample
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, path := range matches {
 		if len(out) >= maxLines {
 			break
 		}
-		key := "file:" + path
-		info, err := os.Stat(path)
-		if err != nil {
+		if reason := logMatchLinkReason(prefix, path); reason != "" {
+			if reason != "directory" {
+				noteSkippedLog(name, path, reason)
+			}
 			continue
 		}
-		size := info.Size()
+		f, size, id, nlink, err := openLogNoFollow(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				noteSkippedLog(name, path, err.Error())
+			}
+			continue
+		}
+		if nlink > 1 {
+			// With symlinks refused at open, a HARD link is the remaining way
+			// to put a file the directory's writer cannot read at a tailed
+			// path — skip it outright: never seeded, never tailed, on every
+			// poll. Business rule 119 (re-scan F68).
+			f.Close()
+			noteSkippedLog(name, path, "hard link ("+strconv.FormatUint(nlink, 10)+" links)")
+			continue
+		}
+		clearSkippedLog(path)
+		key := "file:" + path
+		idKey := "fileid:" + path
 		if _, seeded := cursors[key]; !seeded {
 			// First run for this file — seed at EOF, emit nothing.
 			cursors[key] = strconv.FormatInt(size, 10)
+			cursors[idKey] = id
+			f.Close()
 			continue
 		}
 		off, _ := strconv.ParseInt(cursors[key], 10, 64)
-		if off > size {
-			off = 0 // rotated/truncated — re-read from the new start
+		savedID := cursors[idKey]
+		switch {
+		case savedID == "":
+			// A cursor saved before identities were tracked (the upgrade
+			// case): adopt this identity and keep the stored offset.
+			cursors[idKey] = id
+			if off > size {
+				off = 0 // truncated/rotated — re-read from the new start
+			}
+		case savedID != id:
+			// A different, singly-linked file now sits at this path
+			// (rotation) — read it from the start as a rotated log always
+			// was; links were refused above. Business rule 119 (re-scan F68).
+			cursors[idKey] = id
+			off = 0
+		case off > size:
+			off = 0 // same file truncated in place — re-read from the new start
 		}
 		if off == size {
-			continue
-		}
-		f, err := os.Open(path)
-		if err != nil {
+			f.Close()
 			continue
 		}
 		if _, err := f.Seek(off, io.SeekStart); err != nil {
@@ -176,6 +221,91 @@ func fileLogSamples(name, glob string, cursors map[string]string, maxLines int) 
 		cursors[key] = strconv.FormatInt(off+consumed, 10)
 	}
 	return out
+}
+
+// globLiteralDir returns the directory part of glob that holds no pattern
+// metacharacter — the prefix the operator typed literally. Links inside it
+// are trusted; components below it were chosen by a wildcard.
+func globLiteralDir(glob string) string {
+	i := strings.IndexAny(glob, "*?[")
+	if i < 0 {
+		return filepath.Dir(glob)
+	}
+	j := strings.LastIndexAny(glob[:i], `/`+string(filepath.Separator))
+	if j < 0 {
+		return ""
+	}
+	return filepath.Clean(glob[:j+1]) // keeps a root ("/", `C:\`) intact
+}
+
+// logMatchLinkReason returns why a glob match must not be read ("" = fine):
+// the matched file itself is a link / reparse point or not a regular file, or
+// a directory component between the literal prefix and the file is a link.
+func logMatchLinkReason(prefix, path string) string {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "" // vanished — the open reports it
+	}
+	if isLinkInfo(info) {
+		return "symbolic link"
+	}
+	if info.IsDir() {
+		return "directory" // a glob that also matches subdirectories — not news
+	}
+	if !info.Mode().IsRegular() {
+		return "not a regular file"
+	}
+	rel := filepath.Dir(path) // relative glob, wildcard in its first component
+	if prefix != "" {
+		r, err := filepath.Rel(prefix, rel)
+		if err != nil || strings.HasPrefix(r, "..") {
+			return ""
+		}
+		rel = r
+	}
+	if rel == "." {
+		return "" // the file sits directly in the literal prefix
+	}
+	dir := prefix
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		if dir == "" {
+			dir = part
+		} else {
+			dir = filepath.Join(dir, part)
+		}
+		if di, err := os.Lstat(dir); err == nil && isLinkInfo(di) {
+			return "symbolic link in directory " + dir
+		}
+	}
+	return ""
+}
+
+// skippedLogNotes remembers which paths have already been logged as skipped,
+// so a refused match is reported once, not every poll. There is no per-program
+// status channel to the server for processLog, so the note goes to the agent's
+// own log. A path that later reads cleanly is forgotten again.
+var (
+	skippedLogMu    sync.Mutex
+	skippedLogNotes = map[string]string{}
+)
+
+func noteSkippedLog(name, path, reason string) {
+	skippedLogMu.Lock()
+	defer skippedLogMu.Unlock()
+	if skippedLogNotes[path] == reason {
+		return
+	}
+	skippedLogNotes[path] = reason
+	log.Printf("processLog %s: skipped %s: %s", name, path, reason)
+}
+
+func clearSkippedLog(path string) {
+	skippedLogMu.Lock()
+	delete(skippedLogNotes, path)
+	skippedLogMu.Unlock()
 }
 
 func toLogSamples(name string, lines []rawLogLine, source string) []*transport.ProcessLogSample {

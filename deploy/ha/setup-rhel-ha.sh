@@ -750,7 +750,7 @@ adopt_primary() {
 
   local i
   for i in $(seq 1 60); do
-    if curl -sf --max-time 3 -o /dev/null http://127.0.0.1:8008/primary 2>/dev/null; then
+    if { curl -sfk --max-time 3 -o /dev/null https://127.0.0.1:8008/primary 2>/dev/null || curl -sf --max-time 3 -o /dev/null http://127.0.0.1:8008/primary 2>/dev/null; }; then
       info "Patroni reports this node as primary"
       break
     fi

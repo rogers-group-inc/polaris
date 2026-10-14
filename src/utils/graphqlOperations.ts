@@ -12,6 +12,16 @@
  * strings and block strings, tracking brace and paren depth — and reports
  * every top-level operation. An anonymous `{ … }` at the top level is a query.
  * One pass, no regex over the document (rule 116), never throws. Pure.
+ *
+ * Block strings (2026-10-14, re-scan F70): inside `"""` GraphQL's only escape
+ * is the four characters `\"""`; every other backslash is an ordinary
+ * character. This lexer used to treat `\` as escaping the next character, so
+ * `"""\\"""` closed here but not in graphql-js, and from then on the two
+ * disagreed about what was string and what was code — a `mutation` sat where
+ * the guard thought it was still inside a string. The scan now follows the
+ * spec, AND the query tool refuses any document containing a block string
+ * (`isQueryOnlyGraphql`): a read console has no use for them, and refusing
+ * them removes the whole class of lexer disagreement rather than one instance.
  */
 
 export type GraphqlOperationKind = "query" | "mutation" | "subscription";
@@ -20,7 +30,17 @@ const isNameStart = (c: string) => (c >= "A" && c <= "Z") || (c >= "a" && c <= "
 const isNameChar = (c: string) => isNameStart(c) || (c >= "0" && c <= "9");
 
 export function graphqlOperationKinds(doc: string): GraphqlOperationKind[] {
+  return scanGraphql(doc).kinds;
+}
+
+/** True when the document contains a `"""` block string anywhere outside a comment or string. */
+export function graphqlHasBlockString(doc: string): boolean {
+  return scanGraphql(doc).blockString;
+}
+
+function scanGraphql(doc: string): { kinds: GraphqlOperationKind[]; blockString: boolean } {
   const s = String(doc ?? "");
+  let blockString = false;
   const out: GraphqlOperationKind[] = [];
   let depth = 0;
   let parens = 0;
@@ -34,8 +54,12 @@ export function graphqlOperationKinds(doc: string): GraphqlOperationKind[] {
     if (c === "#") { while (i < s.length && s[i] !== "\n" && s[i] !== "\r") i++; continue; }
     if (c === '"') {
       if (s[i + 1] === '"' && s[i + 2] === '"') {
+        blockString = true;
         i += 3;
-        while (i < s.length && !(s[i] === '"' && s[i + 1] === '"' && s[i + 2] === '"')) i += s[i] === "\\" ? 2 : 1;
+        // Spec: only `\"""` is an escape inside a block string.
+        while (i < s.length && !(s[i] === '"' && s[i + 1] === '"' && s[i + 2] === '"')) {
+          i += s[i] === "\\" && s[i + 1] === '"' && s[i + 2] === '"' && s[i + 3] === '"' ? 4 : 1;
+        }
         i += 3;
       } else {
         i++;
@@ -74,11 +98,14 @@ export function graphqlOperationKinds(doc: string): GraphqlOperationKind[] {
     }
     i++;
   }
-  return out;
+  return { kinds: out, blockString };
 }
 
-/** True when every operation the document defines is a query (and it defines at least one). */
+/**
+ * True when every operation the document defines is a query (and it defines
+ * at least one) and the document contains no block string (see the header).
+ */
 export function isQueryOnlyGraphql(doc: string): boolean {
-  const kinds = graphqlOperationKinds(doc);
-  return kinds.length > 0 && kinds.every((k) => k === "query");
+  const { kinds, blockString } = scanGraphql(doc);
+  return !blockString && kinds.length > 0 && kinds.every((k) => k === "query");
 }
