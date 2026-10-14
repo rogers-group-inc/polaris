@@ -1892,6 +1892,194 @@ describe("automation wizard DOM render", () => {
     expect(toastErrors).toEqual([]);
   });
 
+  // ── Storage used: one condition, a unit select ───────────────────────────
+  //
+  // storageUsedPct and storageUsedBytes both carry the label "Storage used", so
+  // listing them separately put the same words in the picker twice. The row now
+  // offers ONE entry and a unit select: % is the percent metric, a size is the
+  // bytes metric with the threshold stored in bytes.
+  const GiB = 1073741824;
+  const STORAGE_RULE = {
+    id: "r-storage",
+    name: "Disk filling",
+    description: null,
+    enabled: true,
+    severity: "warning",
+    trigger: { type: "asset_metric", metric: "storageUsedBytes", aggregation: "latest", windowSec: 0, operator: ">", threshold: 500 * GiB },
+    scope: { allAssets: true },
+    reset: { mode: "auto", clearThreshold: 450 * GiB },
+    cooldownSec: null,
+    messageTemplate: null,
+    actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+    escalation: null,
+    severityBands: [{ threshold: 600 * GiB, severity: "critical", actions: [] }],
+    bandNotify: { onIncrease: true, onDecrease: false, onResolved: false },
+  };
+  /** Click Next until step n is the visible one. */
+  async function toStep(n: number): Promise<void> {
+    toastErrors.length = 0;
+    for (let i = 0; i < 6 && !doc.querySelector("#aw-step-" + n + ".visible"); i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(toastErrors).toEqual([]);
+    expect(doc.querySelector("#aw-step-" + n + ".visible")).toBeTruthy();
+  }
+  type Ctl = { value: string; dispatchEvent: (e: unknown) => void; options?: ArrayLike<{ value: string; textContent: string }> };
+  const ctl = (sel: string) => doc.querySelector(sel) as unknown as Ctl;
+  const fire = (el: Ctl, type: string) => el.dispatchEvent(new (g.window as InstanceType<typeof Window>).Event(type, { bubbles: true }));
+
+  it("lists Storage used once, and a stored byte rule reads back in GB on the row, its tier and its clear threshold", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(STORAGE_RULE);
+    await toStep(3);
+    const what = ctl("#aw-trig-root .tgl-what");
+    const labels = Array.from(what.options!).map((o) => o.textContent);
+    expect(labels.filter((l) => l === "Storage used")).toHaveLength(1);
+    expect(Array.from(what.options!).map((o) => o.value)).not.toContain("m:storageUsedBytes");
+    expect(what.value).toBe("m:storageUsedPct");
+    expect(ctl("#aw-trig-root .tgl-bunit").value).toBe("GB");
+    expect(ctl("#aw-trig-root .tgl-threshold").value).toBe("500");
+    expect(Array.from(ctl("#aw-trig-root .tgl-bunit").options!).map((o) => o.value)).toEqual(["%", "KB", "MB", "GB", "TB"]);
+    // The tier shares the base's metric (rule 19): sizes only, no "%".
+    expect(Array.from(ctl("#aw-bands .band-cond .tgl-bunit").options!).map((o) => o.value)).toEqual(["KB", "MB", "GB", "TB"]);
+    expect(ctl("#aw-bands .band-cond .tgl-threshold").value).toBe("600");
+    // The sentence states the size, not 536870912000 bytes.
+    expect(doc.querySelector("#aw-step-3")!.textContent).toContain("500 GB");
+    expect(doc.querySelector("#aw-step-3")!.textContent).not.toContain("536870912000");
+  }, 15000);
+
+  it("saves a size as the bytes metric in bytes, and % as the percent metric", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(STORAGE_RULE);
+    await toStep(3);
+    const unit = ctl("#aw-trig-root .tgl-bunit");
+    unit.value = "TB";
+    fire(unit, "change");
+    const thr = ctl("#aw-trig-root .tgl-threshold");
+    thr.value = "1";
+    fire(thr, "input");
+    await toStep(4);
+    expect(ctl("#aw-clear-threshold").value).toBe("0.439"); // 450 GB stated in the fire threshold's unit (TB)
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const p = savedPayloads[0]! as Record<string, any>;
+    expect(p.trigger).toMatchObject({ metric: "storageUsedBytes", threshold: 1024 * GiB });
+    expect(p.severityBands[0].threshold).toBe(600 * GiB);
+    // 0.439 TB, re-multiplied — the box rounds to three places.
+    expect(Math.abs(p.reset.clearThreshold - 450 * GiB)).toBeLessThan(0.001 * 1024 * GiB);
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  }, 15000);
+
+  it("switching the base to % makes it the percent metric and clears the tier's size rather than reading it as a percent", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(STORAGE_RULE);
+    await toStep(3);
+    const unit = ctl("#aw-trig-root .tgl-bunit");
+    unit.value = "%";
+    fire(unit, "change");
+    // The tier follows the base onto % — a plain chip, no size select — and its
+    // 600 (GB) is not carried over as 600 %.
+    expect(doc.querySelector("#aw-bands .band-cond .tgl-bunit")).toBeNull();
+    expect(doc.querySelector("#aw-bands .band-cond .tgl-unit")!.textContent).toBe("%");
+    expect(ctl("#aw-bands .band-cond .tgl-threshold").value).toBe("");
+    const thr = ctl("#aw-trig-root .tgl-threshold");
+    thr.value = "85";
+    fire(thr, "input");
+    const bthr = ctl("#aw-bands .band-cond .tgl-threshold");
+    bthr.value = "95";
+    fire(bthr, "input");
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const p = savedPayloads[0]! as Record<string, any>;
+    expect(p.trigger).toMatchObject({ metric: "storageUsedPct", threshold: 85 });
+    expect(p.severityBands[0].threshold).toBe(95);
+  }, 15000);
+
+  // ── A message template written for another condition ─────────────────────
+  //
+  // The seeded disk rule's template says "disk at {value}% used (fires above
+  // {threshold}%)". Retargeting that rule at days-until-full left alerts reading
+  // "disk at n/a% used (fires above 7%)". The template is the operator's text,
+  // so the wizard flags the mismatch and offers the default rather than
+  // rewriting it.
+  const DISK_RULE = {
+    ...STORAGE_RULE,
+    id: "r-disk",
+    trigger: { type: "asset_metric", metric: "storageUsedPct", aggregation: "latest", windowSec: 0, operator: ">", threshold: 90 },
+    reset: { mode: "auto", clearThreshold: 75 },
+    severityBands: null,
+    bandNotify: null,
+    messageTemplate: "{asset} disk at {value}% used (fires above {threshold}%)",
+  };
+  const staleNote = () => doc.querySelector("#aw-msg-stale") as unknown as { style: { display: string }; textContent: string };
+
+  it("says nothing about a template while the trigger is the one it was written for", async () => {
+    doc.body.innerHTML = "";
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(DISK_RULE);
+    await toStep(5);
+    expect(staleNote().style.display).toBe("none");
+  }, 15000);
+
+  /** Open the disk rule, retarget it at days-until-full, land on Actions. */
+  async function retargetDiskRule(): Promise<void> {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(DISK_RULE);
+    await toStep(3);
+    const what = ctl("#aw-trig-root .tgl-what");
+    what.value = "m:storageDaysUntilFull";
+    fire(what, "change");
+    const thr = ctl("#aw-trig-root .tgl-threshold");
+    thr.value = "7";
+    fire(thr, "input");
+    await toStep(4);
+    // A "clear below 75" stated in % means nothing in days, so it went with
+    // the metric.
+    expect(ctl("#aw-clear-threshold").value).toBe("");
+    await toStep(5);
+  }
+
+  it("flags a template once the trigger checks something else, and Use the default message clears it", async () => {
+    await retargetDiskRule();
+    expect(staleNote().style.display).toBe("");
+    expect(staleNote().textContent).toContain("Days until storage full");
+    (doc.querySelector("#aw-msg-use-default") as unknown as { click: () => void }).click();
+    expect(ctl("#aw-msg").value).toBe("");
+    expect(staleNote().style.display).toBe("none");
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    expect((savedPayloads[0] as Record<string, unknown>).messageTemplate).toBeNull();
+  }, 15000);
+
+  it("typing in the template accepts it for the new trigger", async () => {
+    await retargetDiskRule();
+    expect(staleNote().style.display).toBe("");
+    const msg = ctl("#aw-msg");
+    msg.value = "{asset} storage full in {value} days";
+    fire(msg, "input");
+    expect(staleNote().style.display).toBe("none");
+  }, 15000);
+
+  it("a mismatch already in the stored record is not flagged — only a change made in the wizard", async () => {
+    doc.body.innerHTML = "";
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...DISK_RULE,
+      trigger: { ...DISK_RULE.trigger, metric: "storageDaysUntilFull", operator: "<", threshold: 7 },
+      reset: { mode: "auto" },
+    });
+    // The wizard can't know what a template was written for before it opened;
+    // it judges against the trigger as stored.
+    await toStep(5);
+    expect(staleNote().style.display).toBe("none");
+  }, 15000);
+
   it("sensor-name filter is a picker: offers the fleet's own sensor names, filters as you type, and flags one nothing reports", async () => {
     // A sensor name ("CPU ON-DIE Temperature") is not guessable, and the
     // dimension is a substring PATTERN the server can't reject — so a typo used

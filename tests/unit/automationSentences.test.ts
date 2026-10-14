@@ -741,6 +741,19 @@ describe("makeAutomationSentences", () => {
       expect(f.lines[0]).toBe("latest(CPU usage) > … %");
     });
 
+    it("states a byte threshold in the unit it reads best in, not raw bytes", () => {
+      // storageUsedBytes is the size half of the builder's one "Storage used"
+      // condition; its threshold is stored in bytes.
+      const s = make({ ...SCHEMA, metricMeta: { ...SCHEMA.metricMeta, storageUsedBytes: { label: "Storage used", unit: "bytes" } } } as never);
+      const GiB = 1073741824;
+      const tr = { type: "asset_metric", metric: "storageUsedBytes", operator: ">", threshold: 500 * GiB, aggregation: "latest" };
+      expect(s.triggerSentence(tr)).toContain("Storage used is above 500 GB");
+      expect(s.triggerFormula(tr).lines[0]).toBe("latest(Storage used) > 500 GB");
+      expect(s.triggerFormula({ ...tr, threshold: 2048 * GiB }).lines[0]).toBe("latest(Storage used) > 2 TB");
+      expect(s.triggerFormula({ ...tr, threshold: 1536 * 1048576 }).lines[0]).toBe("latest(Storage used) > 1.5 GB");
+      expect(s.triggerFormula({ ...tr, threshold: undefined }).lines[0]).toBe("latest(Storage used) > …");
+    });
+
     it("compactDuration abbreviates hours, minutes and seconds", () => {
       const s = make(SCHEMA as never);
       expect(s.compactDuration(7200)).toBe("2h");

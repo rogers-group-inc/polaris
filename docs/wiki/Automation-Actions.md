@@ -27,6 +27,14 @@ would show it for one of the devices you selected — Polaris picks one at
 random. Pick another from the drop-down beside it, or press **Random**. The
 example follows your typing, and uses the device's current reading as
 `{value}` (it shows `n/a` when the device has no reading for the trigger).
+
+A template is your own text, so it can name units the trigger no longer
+measures. Change an automation's condition to something else, such as the
+baseline disk-usage automation moved from *Storage used* to *Days until
+storage full*, and the step warns under the template that it was written for
+a different condition, naming what the trigger checks now. **Use the default
+message** clears the template. Editing the template yourself dismisses the
+warning.
 **Insert variable…** opens the list of variables. Each row gives the
 variable's name, what it means, and what it says for the example device.
 Rows are grouped by subject: Alert, Component, Device, Charts &

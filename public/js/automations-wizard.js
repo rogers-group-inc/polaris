@@ -397,6 +397,39 @@ function makeAutomationSentences(s) {
     var cls = df && df.sensorClass ? String(df.sensorClass).trim().toLowerCase() : "";
     return (cls && s.sensorClassUnits && s.sensorClassUnits[cls]) || "";
   }
+  // Storage used is ONE condition in the builder — "Storage used >= [80] [% ▾]"
+  // — over two stored metrics: the % unit is storageUsedPct, a size unit is
+  // storageUsedBytes with the threshold stored in bytes. Both carried the same
+  // label, so listing them separately put "Storage used" in the picker twice.
+  // Sizes are 1024-based with formatBytes' labels, the same figures the
+  // asset's storage table shows.
+  var BYTE_UNITS = [["KB", 1024], ["MB", 1048576], ["GB", 1073741824], ["TB", 1099511627776]];
+  var PCT_OF_BYTES = { storageUsedBytes: "storageUsedPct" };
+  var BYTES_OF_PCT = { storageUsedPct: "storageUsedBytes" };
+  function byteUnitMult(u) {
+    for (var i = 0; i < BYTE_UNITS.length; i++) if (BYTE_UNITS[i][0] === u) return BYTE_UNITS[i][1];
+    return null;
+  }
+  /** The unit a stored byte threshold reads best in: the largest that leaves a
+   *  value of at least 1. GB when there is no value yet. */
+  function byteUnitFor(bytes) {
+    var n = Number(bytes);
+    if (bytes == null || bytes === "" || !isFinite(n) || n <= 0) return "GB";
+    var pick = BYTE_UNITS[0][0];
+    BYTE_UNITS.forEach(function (u) { if (n >= u[1]) pick = u[0]; });
+    return pick;
+  }
+  function bytesIn(bytes, unit) {
+    var m = byteUnitMult(unit) || 1;
+    return Math.round((Number(bytes) / m) * 1000) / 1000;
+  }
+  /** "80 %", "500 GB", "…" — a threshold as prose, a byte threshold in its unit. */
+  function thresholdText(metric, df, thr) {
+    var u = leafUnit(metric, df);
+    if (thr == null || thr === "" || isNaN(thr)) return "…" + (u && u !== "bytes" ? " " + u : "");
+    if (u === "bytes") { var bu = byteUnitFor(thr); return bytesIn(thr, bu) + " " + bu; }
+    return String(thr) + (u ? " " + u : "");
+  }
   function fieldLabel(f) { var x = s.fieldMeta && s.fieldMeta[f]; return x ? x.label : f; }
   function changeLabel(c) { return (s.changeTypeMeta && s.changeTypeMeta[c]) || c; }
 
@@ -652,7 +685,6 @@ function makeAutomationSentences(s) {
       return sOut;
     }
     if (isBooleanMetric(leaf.metric)) return stateLeafClause(leaf);
-    var unit = leafUnit(leaf.metric, leaf.dimensionFilter); unit = unit ? " " + unit : "";
     // A windowed ratio IS its window, so it says so plainly instead of borrowing
     // an aggregation phrase it doesn't have ("avg over 15 minutes" would be a
     // second average on top of a percentage).
@@ -662,8 +694,7 @@ function makeAutomationSentences(s) {
         ? " (" + (AGG_PHRASE[leaf.aggregation] || leaf.aggregation) + " the last " + leafCountWindow(leaf) + " readings)"
       : leaf.aggregation && leaf.aggregation !== "latest" && leaf.windowSec
         ? " (" + (AGG_PHRASE[leaf.aggregation] || leaf.aggregation) + " " + humanDuration(leaf.windowSec) + ")" : "";
-    var thr = leaf.threshold == null || isNaN(leaf.threshold) ? "…" : leaf.threshold;
-    var out = (leaf.type === "host_metric" ? "the Polaris host's " : "") + metricLabel(leaf.metric) + agg + " " + (CMP_PHRASE[leaf.operator] || leaf.operator) + " " + thr + unit;
+    var out = (leaf.type === "host_metric" ? "the Polaris host's " : "") + metricLabel(leaf.metric) + agg + " " + (CMP_PHRASE[leaf.operator] || leaf.operator) + " " + thresholdText(leaf.metric, leaf.dimensionFilter, leaf.threshold);
     var df = leaf.dimensionFilter || {};
     Object.keys(df).forEach(function (k) {
       if (df[k]) out += " " + dimPhrase(k, df[k]);
@@ -701,17 +732,15 @@ function makeAutomationSentences(s) {
     var bands = (banded && opts.severityBands ? opts.severityBands : []).filter(function (b) { return b && b.severity; });
     if (!bands.length) return " — <strong>" + escapeHtml(sev) + "</strong>";
     var baseDur = tr.forDurationSec || 0;
-    var unit = leafUnit(tr.metric, tr.dimensionFilter); unit = unit ? " " + unit : "";
     var parts = ["<strong>" + escapeHtml(sev) + "</strong> at this level"];
     bands.forEach(function (b) {
       var op = b.operator || tr.operator;
-      var thr = b.threshold == null || isNaN(b.threshold) ? "…" : b.threshold;
       // "serious at or above 90 %" — the tier name is the subject here, so the
       // comparator drops its leading "is" ("is at or above" reads as a verb
       // phrase about the metric, which the base clause already supplied).
       var cmp = String(CMP_PHRASE[op] || op).replace(/^is /, "");
       var p = "<strong>" + escapeHtml(b.severity) + "</strong> " + escapeHtml(cmp) + " " +
-        escapeHtml(String(thr)) + escapeHtml(unit);
+        escapeHtml(thresholdText(tr.metric, tr.dimensionFilter, b.threshold));
       // A band inherits the base sustained-for unless it sets its own — print
       // only the deviation, so the common (inherited) case stays readable.
       var dur = b.forDurationSec == null ? baseDur : b.forDurationSec;
@@ -766,9 +795,7 @@ function makeAutomationSentences(s) {
         : tr.aggregation && tr.aggregation !== "latest" && tr.windowSec
           ? " (" + escapeHtml(AGG_PHRASE[tr.aggregation] || tr.aggregation) + " " +
             (leafCountWindow(tr) ? "the last " + leafCountWindow(tr) + " readings" : humanDuration(tr.windowSec)) + ")" : "";
-      var thr = tr.threshold == null || isNaN(tr.threshold) ? "…" : tr.threshold;
-      var unit = leafUnit(tr.metric, tr.dimensionFilter); unit = unit ? " " + unit : "";
-      out = "When <strong>" + escapeHtml(subject) + agg + " " + escapeHtml(CMP_PHRASE[tr.operator] || tr.operator) + " " + escapeHtml(String(thr)) + escapeHtml(unit) + "</strong>";
+      out = "When <strong>" + escapeHtml(subject) + agg + " " + escapeHtml(CMP_PHRASE[tr.operator] || tr.operator) + " " + escapeHtml(thresholdText(tr.metric, tr.dimensionFilter, tr.threshold)) + "</strong>";
       var df = tr.dimensionFilter || {};
       Object.keys(df).forEach(function (k) {
         if (df[k]) out += " " + escapeHtml(dimPhrase(k, df[k]));
@@ -934,8 +961,7 @@ function makeAutomationSentences(s) {
       return op + ' "' + stateValueLabel(leaf.metric, leaf.dimensionFilter || {}, threshold == null ? leaf.threshold : threshold) + '"';
     }
     var thr = threshold == null ? leaf.threshold : threshold;
-    var unit = leafUnit(leaf.metric, leaf.dimensionFilter); unit = unit ? " " + unit : "";
-    return op + " " + (thr == null || isNaN(thr) ? "…" : thr) + unit;
+    return op + " " + thresholdText(leaf.metric, leaf.dimensionFilter, thr);
   }
   function formulaLeafLine(leaf) { return formulaTerm(leaf) + " " + formulaCompare(leaf); }
 
@@ -1146,6 +1172,8 @@ function makeAutomationSentences(s) {
   return {
     findType: findType, isTriggerScoped: isTriggerScoped,
     metricLabel: metricLabel, metricUnit: metricUnit, leafUnit: leafUnit,
+    thresholdText: thresholdText, byteUnitFor: byteUnitFor, byteUnitMult: byteUnitMult, bytesIn: bytesIn,
+    BYTE_UNITS: BYTE_UNITS, PCT_OF_BYTES: PCT_OF_BYTES, BYTES_OF_PCT: BYTES_OF_PCT,
     isBooleanMetric: isBooleanMetric, stateProbeOf: stateProbeOf, stateMapOf: stateMapOf,
     stateValueLabel: stateValueLabel, stateLeafClause: stateLeafClause,
     monStatusWord: monStatusWord,
@@ -1693,6 +1721,13 @@ async function openAutomationWizard(existing, opts) {
       actions: [{ type: "event" }], escalation: null,
     };
   }
+  // What the trigger checked when the message template was last written — the
+  // stored rule's on open, then whatever it is when the operator next types in
+  // the box. A template is free text naming its own units ("disk at {value}%
+  // used"), so changing the condition underneath it leaves an alert that reads
+  // "disk at n/a% used (fires above 7%)" for a days-until-full rule. The
+  // Actions step says so (syncMsgStale) instead of rewriting the operator's text.
+  var _msgWrittenFor = triggerConditionSig(draft.trigger);
   if (cloning) {
     draft.name = (opts && opts.name) || (importing ? draft.name : draft.name + " (copy)");
     // A clone starts DISABLED, and that is deliberate. Business rule 18: two
@@ -1750,6 +1785,8 @@ async function openAutomationWizard(existing, opts) {
   var _sent = makeAutomationSentences(s);
   var findType = _sent.findType, isTriggerScoped = _sent.isTriggerScoped,
       metricLabel = _sent.metricLabel, metricUnit = _sent.metricUnit, leafUnit = _sent.leafUnit,
+      thresholdText = _sent.thresholdText, byteUnitFor = _sent.byteUnitFor, byteUnitMult = _sent.byteUnitMult, bytesIn = _sent.bytesIn,
+      BYTE_UNITS = _sent.BYTE_UNITS, PCT_OF_BYTES = _sent.PCT_OF_BYTES, BYTES_OF_PCT = _sent.BYTES_OF_PCT,
       fieldLabel = _sent.fieldLabel, changeLabel = _sent.changeLabel,
       humanDuration = _sent.humanDuration, tgTreePhrase = _sent.tgTreePhrase,
       // The tier summaries state a hold in whichever unit the rule states it.
@@ -2979,6 +3016,44 @@ async function openAutomationWizard(existing, opts) {
     }
     return { type: "composite", kind: tr.kind, op: op, children: children, forDurationSec: tr.forDurationSec || 0, forPolls: tr.forPolls > 0 ? tr.forPolls : undefined };
   }
+  /** Whether a threshold typed for metric a means the same thing for b. */
+  function sameThresholdUnit(a, b) {
+    if (!a || !b) return false;
+    return a === b || metricUnit(a) === metricUnit(b);
+  }
+  /** The conditions a trigger compares, as [{metric} | {field} | {type}] —
+   *  flat or composite, filter rows ignored. */
+  function triggerConditions(tr) {
+    var out = [];
+    var visit = function (n) {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n.children)) { n.children.forEach(visit); return; }
+      if (n.type === "asset_filter") return;
+      if (n.metric) out.push({ metric: n.metric });
+      else if (n.field) out.push({ field: n.field });
+      else if (n.type) out.push({ type: n.type });
+    };
+    visit(tr);
+    return out;
+  }
+  function triggerConditionSig(tr) {
+    return triggerConditions(tr).map(function (c) { return c.metric || c.field || c.type; }).sort().join("|");
+  }
+  /** "Storage used (%)", "Days until storage full" — what a trigger checks, in
+   *  words. The unit rides along where one label covers two metrics. */
+  function triggerConditionWords(tr) {
+    var seen = {};
+    return triggerConditions(tr).map(function (c) {
+      if (c.metric) {
+        var u = metricUnit(c.metric);
+        var shared = PCT_OF_BYTES[c.metric] || BYTES_OF_PCT[c.metric];
+        return metricLabel(c.metric) + (shared ? (u === "bytes" ? " (size)" : " (%)") : "");
+      }
+      if (c.field) return fieldLabel(c.field);
+      var def = findType(c.type);
+      return (def && def.label) || c.type;
+    }).filter(function (w) { if (seen[w]) return false; seen[w] = true; return true; }).join(", ");
+  }
   function tgLeaves(node) {
     var out = [];
     (node.children || []).forEach(function (c) {
@@ -3009,11 +3084,13 @@ async function openAutomationWizard(existing, opts) {
   function pinRowSelects(row, leaf) {
     if (!row || !leaf) return;
     var what = row.querySelector(".tgl-what");
-    if (what) what.value = leaf.type === "asset_filter" ? "d:" + leaf.dim : leaf.type === "asset_state" ? "f:" + leaf.field : "m:" + leaf.metric;
+    if (what) what.value = leaf.type === "asset_filter" ? "d:" + leaf.dim : leaf.type === "asset_state" ? "f:" + leaf.field : "m:" + (PCT_OF_BYTES[leaf.metric] || leaf.metric);
     var op = row.querySelector(".tgl-op");
     if (op && leaf.operator) op.value = leaf.operator;
     var agg = row.querySelector(".tgl-agg");
     if (agg && !agg.getAttribute("data-ratio")) agg.value = leaf.aggregation || "latest";
+    var bunit = row.querySelector(".tgl-bunit");
+    if (bunit) bunit.value = PCT_OF_BYTES[leaf.metric] ? byteUnitFor(leaf.threshold) : "%";
     if (leaf.type === "asset_state") {
       var v = row.querySelector("select.tgl-value");
       if (v && leaf.value != null) v.value = String(leaf.value);
@@ -3052,7 +3129,9 @@ async function openAutomationWizard(existing, opts) {
     // The device tree no longer offers the path conditions — they moved to
     // their own trigger type. A stored device rule can't name one either:
     // triggerToTree sends any path trigger to the path tree.
-    var metrics = allMetrics.filter(function (m) { return !isPathMetricC(m); });
+    // storageUsedBytes rides the storageUsedPct entry — the row's unit select
+    // picks between them (see BYTE_UNITS).
+    var metrics = allMetrics.filter(function (m) { return !isPathMetricC(m) && !PCT_OF_BYTES[m]; });
     var fields = (findType("asset_state") || {}).fields || [];
     var html = '<optgroup label="Metrics">' + metrics.map(function (m) {
       var v = "m:" + m;
@@ -3389,7 +3468,10 @@ async function openAutomationWizard(existing, opts) {
       els.forEach(applyDimOptions);
     }
   }
-  function tgLeafRowHtml(leaf, kind) {
+  /** opts.lockFamily: a severity tier's row — its unit select may move between
+   *  sizes but not between % and a size, because a tier shares the base
+   *  condition's metric (business rule 19) and % vs size IS the metric. */
+  function tgLeafRowHtml(leaf, kind, opts) {
     leaf = leaf || tgDefaultLeaf(kind);
     // A FILTER row: "<what> matches <value>". The value control is the same
     // picker combobox a dimension input gets (same .tgl-dim classes, so the
@@ -3435,7 +3517,7 @@ async function openAutomationWizard(existing, opts) {
     var isState = leaf.type === "asset_state";
     // A 0/1 state metric: equality only, and the value is a state name.
     var isFlag = !isState && isBooleanMetric(leaf.metric);
-    var what = isState ? "f:" + leaf.field : "m:" + leaf.metric;
+    var what = isState ? "f:" + leaf.field : "m:" + (PCT_OF_BYTES[leaf.metric] || leaf.metric);
     // Unit chip sits beside the threshold value it qualifies (read-only —
     // never part of the input). hwSensorValue resolves it from the typed
     // sensor class; "sensor unit" is the unresolved placeholder.
@@ -3445,9 +3527,25 @@ async function openAutomationWizard(existing, opts) {
       if (!unit && metricUnit(leaf.metric) === "(sensor unit)") unit = "sensor unit";
     }
     var valueControl;
+    // Storage used: one condition whose unit select picks the stored metric —
+    // % is storageUsedPct, a size is storageUsedBytes in bytes (BYTE_UNITS).
+    var storageFamily = !isState && !isFlag && !!(BYTES_OF_PCT[leaf.metric] || PCT_OF_BYTES[leaf.metric]);
     if (isState) valueControl = tgStateValueControl(leaf.field, leaf.value);
     else if (isFlag) valueControl = tgStateFlagControl(leaf);
-    else {
+    else if (storageFamily) {
+      var isBytes = !!PCT_OF_BYTES[leaf.metric];
+      var hasThr = leaf.threshold != null && leaf.threshold !== "" && !isNaN(leaf.threshold);
+      var bu = isBytes ? byteUnitFor(hasThr ? leaf.threshold : null) : "%";
+      var units = BYTE_UNITS.map(function (u) { return u[0]; });
+      if (opts && opts.lockFamily) units = isBytes ? units : ["%"];
+      else units = ["%"].concat(units);
+      valueControl = '<input type="number" step="any" class="tgl-threshold" value="' + (hasThr ? (isBytes ? bytesIn(leaf.threshold, bu) : leaf.threshold) : "") + '" placeholder="value" style="width:110px">' +
+        (units.length > 1
+          ? '<select class="tgl-bunit" style="flex:0 0 64px;width:64px" title="Percent of the filesystem, or an amount of space used">' +
+              units.map(function (u) { return '<option value="' + u + '"' + (u === bu ? " selected" : "") + '>' + u + '</option>'; }).join("") +
+            '</select>'
+          : '<span class="tgl-unit" style="font-size:0.8rem;color:var(--color-text-tertiary);white-space:nowrap">%</span>');
+    } else {
       valueControl = '<input type="number" step="any" class="tgl-threshold" value="' + (leaf.threshold != null && !isNaN(leaf.threshold) ? leaf.threshold : "") + '" placeholder="value" style="width:110px">' +
         (unit ? '<span class="tgl-unit" style="font-size:0.8rem;color:var(--color-text-tertiary);white-space:nowrap">' + escapeHtml(unit) + '</span>' : "");
     }
@@ -3602,6 +3700,15 @@ async function openAutomationWizard(existing, opts) {
       operator: op,
       threshold: Number(rowEl.querySelector(".tgl-threshold").value),
     };
+    // A size on the Storage used row is the bytes metric, stored in bytes. A
+    // tier locked to sizes renders the select without "%", so it always lands
+    // here; a tier locked to % has no select and stays the % metric.
+    var bunitEl = rowEl.querySelector(".tgl-bunit");
+    var mult = bunitEl ? byteUnitMult(bunitEl.value) : null;
+    if (mult && BYTES_OF_PCT[leaf.metric]) {
+      leaf.metric = BYTES_OF_PCT[leaf.metric];
+      leaf.threshold = Math.round(leaf.threshold * mult);
+    }
     if (kind !== "host") {
       var df = {};
       rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) df[el.getAttribute("data-dim")] = v; });
@@ -3683,7 +3790,11 @@ async function openAutomationWizard(existing, opts) {
         } else {
           leaf = { type: kindFn() === "host" ? "host_metric" : "asset_metric", metric: metric, aggregation: "latest", windowSec: 0, operator: ">=", threshold: null };
         }
+        var wparent = row.parentNode;
+        var widx = Array.prototype.indexOf.call(wparent.children, row);
         row.outerHTML = tgLeafRowHtml(leaf, kindFn());
+        // Pinned from the model, as the value re-render below does.
+        pinRowSelects(wparent.children[widx], leaf);
       } else if (t.classList.contains("tgl-dim") && t.getAttribute("data-dim") === "stateProbeId") {
         // The value control shows the CHOSEN probe's labels ("Alarm" / "OK"), so
         // picking a different probe has to relabel it — otherwise the row would
@@ -5046,6 +5157,7 @@ async function openAutomationWizard(existing, opts) {
         // wizard-step-collector-strips trap). Carry it across by hand.
         var ddMeta = dependencyDownMeta();
         var prevDepDown = !!(ddMeta && draft.trigger && draft.trigger[ddMeta.dependencyDownKey] === true);
+        var prevMetric = draft.trigger ? draft.trigger.metric : null;
         draft.trigger = tgCollapse({
           // A path tree stores as a device composite (see PATH_MONITOR).
           type: "composite", kind: kind === "host" ? "host" : "asset", op: tree.op, children: tree.children,
@@ -5055,6 +5167,13 @@ async function openAutomationWizard(existing, opts) {
         // The server rides a single path condition only — a composite is
         // evaluated per device row, and the server has none.
         if (cat === "path" && draft.trigger && draft.trigger.type === "asset_metric") draft.trigger.includeServer = pathServer;
+        // A clear threshold is stated in the trigger metric's unit, so one left
+        // from a metric in another unit is meaningless — Storage used switched
+        // from % to GB would otherwise clear "below 75" bytes. Dropped, not
+        // converted: the reset step then offers the box empty.
+        if (draft.reset && draft.reset.clearThreshold != null && prevMetric && !sameThresholdUnit(prevMetric, draft.trigger && draft.trigger.metric)) {
+          delete draft.reset.clearThreshold;
+        }
         // A count only means something on a BARE trigger; the server rejects
         // one inside a multi-condition trigger. tgCollapse has already folded a
         // single-leaf tree down to that bare trigger, so anything still
@@ -5685,6 +5804,10 @@ async function openAutomationWizard(existing, opts) {
       var customReset = { mode: autoOn ? selCustom : reset.mode, afterSec: reset.afterSec, condition: reset.condition, sustainSec: reset.sustainSec };
 
       var unit = numeric ? leafUnit(tr.metric, tr.dimensionFilter) : "";
+      // A byte trigger states its clear threshold in the unit its fire
+      // threshold reads in (500 GB → clear below 450 GB), stored in bytes.
+      var clearMult = 1;
+      if (unit === "bytes") { unit = byteUnitFor(tr.threshold); clearMult = byteUnitMult(unit); }
       var invOp = INV_CMP[tr.operator] || "<";
       // Counted in polls like every hold on the trigger step: recovery is
       // judged on readings too, so "stay cleared for 3" means three readings
@@ -5710,7 +5833,7 @@ async function openAutomationWizard(existing, opts) {
         autoExtras =
           '<label style="display:block;font-size:0.82rem"><input type="checkbox" id="aw-hyst-enable"' + (reset.clearThreshold != null ? " checked" : "") + '> Use a different clear threshold (hysteresis)</label>' +
           '<div id="aw-hyst-fields" style="display:' + (reset.clearThreshold != null ? "block" : "none") + ';margin:4px 0 0 24px;font-size:0.85rem">value must be <strong>' + escapeHtml(CMP_PHRASE[invOp] || invOp) + '</strong> ' +
-            '<input type="number" step="any" id="aw-clear-threshold" value="' + (reset.clearThreshold != null ? reset.clearThreshold : "") + '" style="width:110px"> ' + escapeHtml(unit) +
+            '<input type="number" step="any" id="aw-clear-threshold" data-mult="' + clearMult + '" value="' + (reset.clearThreshold != null ? (clearMult > 1 ? bytesIn(reset.clearThreshold, unit) : reset.clearThreshold) : "") + '" style="width:110px"> ' + escapeHtml(unit) +
           '</div>' + sustainHtml;
       } else {
         autoExtras = sustainHtml;
@@ -5812,7 +5935,10 @@ async function openAutomationWizard(existing, opts) {
       reset = { mode: "auto" };
       var hyst = panel.querySelector("#aw-hyst-enable");
       var ct = panel.querySelector("#aw-clear-threshold");
-      if (hyst && hyst.checked && ct && ct.value !== "" && !isNaN(Number(ct.value))) reset.clearThreshold = Number(ct.value);
+      if (hyst && hyst.checked && ct && ct.value !== "" && !isNaN(Number(ct.value))) {
+        var ctMult = Number(ct.getAttribute("data-mult")) || 1;
+        reset.clearThreshold = ctMult > 1 ? Math.round(Number(ct.value) * ctMult) : Number(ct.value);
+      }
       var smEl = panel.querySelector("#aw-sustain-min");
       var sus = pollFieldSec(smEl);
       if (sus > 0) reset.sustainSec = sus;
@@ -5879,8 +6005,8 @@ async function openAutomationWizard(existing, opts) {
       if (isNaN(r.clearThreshold)) return "Hysteresis: enter a numeric clear threshold.";
       var t = tr.threshold;
       if (tr.operator === "==" || tr.operator === "!=") return "Hysteresis can't be combined with the " + tr.operator + " operator.";
-      if ((tr.operator === ">" || tr.operator === ">=") && r.clearThreshold > t) return "Clear threshold must be at or below the fire threshold (" + t + ").";
-      if ((tr.operator === "<" || tr.operator === "<=") && r.clearThreshold < t) return "Clear threshold must be at or above the fire threshold (" + t + ").";
+      if ((tr.operator === ">" || tr.operator === ">=") && r.clearThreshold > t) return "Clear threshold must be at or below the fire threshold (" + thresholdText(tr.metric, tr.dimensionFilter, t) + ").";
+      if ((tr.operator === "<" || tr.operator === "<=") && r.clearThreshold < t) return "Clear threshold must be at or above the fire threshold (" + thresholdText(tr.metric, tr.dimensionFilter, t) + ").";
     }
     if (r.mode === "condition") {
       if (_rsFilterErrors.length) return "Custom reset: " + _rsFilterErrors[0];
@@ -6327,6 +6453,7 @@ async function openAutomationWizard(existing, opts) {
         '<p class="aw5-help">' + cardHelp + '</p>' +
         tokenPaletteHtml("aw-token-palette") +
         '<input type="text" id="aw-msg" class="tpl-field" value="' + escapeHtml(draft.messageTemplate || "") + '" placeholder="' + (isEC ? "{rule}: {value}" : "{asset} {metric} = {value} (threshold {threshold})") + '" style="width:100%;margin-top:4px">' +
+        '<div id="aw-msg-stale" class="aw5-help" style="display:none;margin:4px 0 0;color:var(--color-warning)"></div>' +
         // The follow-up pair ("require a note" / "repeat this notification")
         // used to live here. It moved into each severity section — see
         // followUpBlockHtml.
@@ -6544,8 +6671,36 @@ async function openAutomationWizard(existing, opts) {
     wireTokenPalette(panel);
     wireCollapsibles(panel);
     var msgInput = panel.querySelector("#aw-msg");
-    if (msgInput) msgInput.addEventListener("input", function () { scheduleMessageExample(); });
+    if (msgInput) msgInput.addEventListener("input", function () {
+      // Typing in the box is reading it: the template now belongs to the
+      // trigger as it stands.
+      _msgWrittenFor = triggerConditionSig(draft.trigger);
+      syncMsgStale(panel);
+      scheduleMessageExample();
+    });
+    syncMsgStale(panel);
     scheduleMessageExample(0);
+  }
+  /** The note under the message template when the trigger has changed since
+   *  the template was written, with a one-click way back to the default. */
+  function syncMsgStale(panel) {
+    var box = panel.querySelector("#aw-msg-stale");
+    var msgEl = panel.querySelector("#aw-msg");
+    if (!box || !msgEl) return;
+    var now = triggerConditionSig(draft.trigger);
+    var stale = !!msgEl.value.trim() && !!_msgWrittenFor && now !== _msgWrittenFor;
+    box.style.display = stale ? "" : "none";
+    if (!stale) { box.innerHTML = ""; return; }
+    box.innerHTML = "This message was written for a different condition. The trigger now checks <strong>" +
+      escapeHtml(triggerConditionWords(draft.trigger)) + "</strong> — check that its wording and units still fit. " +
+      '<button type="button" class="btn btn-sm btn-secondary" id="aw-msg-use-default">Use the default message</button>';
+    box.querySelector("#aw-msg-use-default").addEventListener("click", function () {
+      msgEl.value = "";
+      draft.messageTemplate = null;
+      _msgWrittenFor = now;
+      syncMsgStale(panel);
+      scheduleMessageExample(0);
+    });
   }
   /** Whether the per-severity action sections are in play. Explicit once the
    *  operator touches the toggle; inferred from the record otherwise, so an
@@ -7007,15 +7162,16 @@ async function openAutomationWizard(existing, opts) {
    *  control any more; tiers take the base's.) */
   function renderBandCond(row, panel, leaf, kind) {
     var cond = row.querySelector(".band-cond");
-    cond.innerHTML = tgLeafRowHtml(leaf, kind);
+    cond.innerHTML = tgLeafRowHtml(leaf, kind, { lockFamily: true });
     // Set the select values rather than relying on the markup's `selected`
     // attribute (the sevSel / scg-sev precedent) — this row is re-rendered in
     // place as the base condition changes, and a mirrored control silently
     // falling back to its first option would defeat the mirroring.
     var setVal = function (q, v) { var el = cond.querySelector(q); if (el && v != null && v !== "") el.value = v; };
-    setVal(".tgl-what", "m:" + leaf.metric);
+    setVal(".tgl-what", "m:" + (PCT_OF_BYTES[leaf.metric] || leaf.metric));
     setVal(".tgl-agg", leaf.aggregation || "latest");
     setVal(".tgl-op", leaf.operator);
+    if (PCT_OF_BYTES[leaf.metric]) setVal(".tgl-bunit", byteUnitFor(leaf.threshold));
     var df = leaf.dimensionFilter || {};
     cond.querySelectorAll(".tgl-dim").forEach(function (el) { el.value = df[el.getAttribute("data-dim")] || ""; });
     cond.querySelectorAll(".tgl-what, .tgl-agg, .tgl-dim").forEach(function (el) { el.disabled = true; el.style.opacity = "0.55"; });
@@ -7060,9 +7216,12 @@ async function openAutomationWizard(existing, opts) {
       renderBandCond(row, panel, {
         type: base.type, metric: base.metric, aggregation: base.aggregation, windowSec: 0,
         dimensionFilter: base.dimensionFilter,
-        // The tier keeps its own comparison — only the sampling is shared.
+        // The tier keeps its own comparison — only the sampling is shared. A
+        // value stated in another UNIT is dropped rather than carried: the base
+        // flipping Storage used from % to GB would otherwise turn a tier's "90"
+        // (%) into 90 bytes. Same unit (CPU % → packet loss %) carries over.
         operator: prev.operator || base.operator,
-        threshold: prev.threshold != null && !isNaN(prev.threshold) ? prev.threshold : null,
+        threshold: sameThresholdUnit(prev.metric, base.metric) && prev.threshold != null && !isNaN(prev.threshold) ? prev.threshold : null,
       }, kind);
     });
   }
