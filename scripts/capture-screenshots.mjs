@@ -29,6 +29,9 @@
  *   node scripts/capture-screenshots.mjs --base http://127.0.0.1:3000 \
  *        --out docs/img/screenshots --themes noon,nightfall
  *
+ *   --only <slug,…> shoots just those images (e.g. --only asset-monitoring),
+ *   leaving every other file alone.
+ *
  * Re-run it after any UI change that the docs show; the filenames are stable,
  * so the images are overwritten in place.
  */
@@ -59,6 +62,8 @@ const PASS = arg("pass", "admin");
 // The docs ship the neutral light one and the dark one; morning is a warm tint
 // that reads as a colour cast in a screenshot rather than a deliberate look.
 const THEMES = arg("themes", "noon,nightfall").split(",");
+const ONLY = arg("only", "").split(",").filter(Boolean);
+const wanted = (slug) => ONLY.length === 0 || ONLY.includes(slug);
 
 // `settle` is extra quiet time for pages that fetch and then render charts
 // after load.
@@ -82,6 +87,15 @@ const DESKTOP = [
 //   server-settings.html — install-specific figures (disk, capacity, versions)
 //                        and the place a stray real value is most likely to
 //                        appear; needs a review pass of its own.
+
+// One asset's details modal on a chart-bearing tab — the README's picture of
+// what monitoring actually shows. Ids are minted per database, so the asset is
+// named by hostname and resolved once signed in. edge-rtr-01 is the asset
+// mock-compare backfills with 7 days of response-time, CPU/memory, interface
+// and storage samples.
+const ASSET_SHOTS = [
+  { slug: "asset-monitoring", host: arg("asset", "edge-rtr-01"), tab: "system", settle: 6000 },
+];
 
 // The PWA opens on its Search tab, which is an empty state until something is
 // typed; the Alerts tab is the one that shows the app doing its job.
@@ -216,12 +230,59 @@ async function shoot(page, { slug, path, settle }, label) {
   }
 }
 
+// Resolve each ASSET_SHOTS hostname to its id through the API the page itself
+// uses, so the shot follows whatever database the stack holds.
+async function resolveAssetIds(page, shots) {
+  await page.goto(`${BASE}/assets.html`, { waitUntil: "load" });
+  const ids = await page.evaluate(async (hosts) => {
+    const res = await fetch("/api/v1/assets?limit=500", { credentials: "same-origin" });
+    const body = await res.json();
+    const rows = Array.isArray(body) ? body : body.assets || body.items || body.data || [];
+    const out = {};
+    for (const h of hosts) {
+      const hit = rows.find((r) => (r.hostname || "").toLowerCase() === h.toLowerCase());
+      if (hit) out[h] = hit.id;
+    }
+    return out;
+  }, shots.map((s) => s.host));
+  return shots
+    .map((s) => {
+      if (!ids[s.host]) console.log(`  ! ${s.slug}: no asset named ${s.host} — run the demo seed chain`);
+      return ids[s.host] ? { ...s, id: ids[s.host] } : null;
+    })
+    .filter(Boolean);
+}
+
+async function shootAsset(page, shot, label) {
+  try {
+    // From /assets.html itself a hash-only goto never reloads the page, and the
+    // #view= deep link is read only on load (app.js processSearchHash).
+    await page.goto("about:blank");
+    await page.goto(`${BASE}/assets.html#view=asset:${encodeURIComponent(shot.id)}&tab=${shot.tab}`, { waitUntil: "load", timeout: 45000 });
+    const tab = page.locator(`#asset-view-tabs .page-tab[data-tab="${shot.tab}"]`);
+    await tab.waitFor({ timeout: 30000 });
+    await tab.click();
+    await page.waitForTimeout(shot.settle);
+    // Each chart opens on its own default range, and CPU/memory's is 1h —
+    // a handful of points. Put every chart on 24h so they read as one day.
+    const ranges = page.locator("button:visible", { hasText: /^\s*24h\s*$/ });
+    for (let i = 0, n = await ranges.count(); i < n; i++) await ranges.nth(i).click().catch(() => {});
+    await page.waitForTimeout(3000);
+    const file = `${OUT}/${label}-${shot.slug}.png`;
+    await page.screenshot({ path: file });
+    console.log(`  ok ${file}`);
+  } catch (e) {
+    console.log(`  ! ${shot.slug}: ${e.message.split("\n")[0]}`);
+  }
+}
+
 async function main() {
   await mkdir(OUT, { recursive: true });
   const browser = await chromium.launch({ channel: "chrome" });
   const session = await authenticate(browser);
   console.log(`signed in as ${USER} at ${BASE} (session reused across themes)`);
   let dashboardWritten = false;
+  let assetShots = null;
 
   for (const theme of THEMES) {
     console.log(`\n=== theme: ${theme} ===`);
@@ -239,17 +300,22 @@ async function main() {
 
     // The login page still renders for a signed-in caller, so it can be shot
     // without dropping the session.
-    await page.goto(`${BASE}/login.html`, { waitUntil: "load" });
-    await page.waitForTimeout(1200);
-    await page.screenshot({ path: `${OUT}/desktop-${theme}-login.png` });
-    console.log(`  ok ${OUT}/desktop-${theme}-login.png`);
+    if (wanted("login")) {
+      await page.goto(`${BASE}/login.html`, { waitUntil: "load" });
+      await page.waitForTimeout(1200);
+      await page.screenshot({ path: `${OUT}/desktop-${theme}-login.png` });
+      console.log(`  ok ${OUT}/desktop-${theme}-login.png`);
+    }
 
-    if (!dashboardWritten) {
+    if (!dashboardWritten && wanted("dashboard")) {
       await composeDashboard(page, DASH_LAYOUT);
       dashboardWritten = true; // stored server-side per user — once is enough
     }
 
-    for (const p of DESKTOP) await shoot(page, p, `desktop-${theme}`);
+    for (const p of DESKTOP.filter((d) => wanted(d.slug))) await shoot(page, p, `desktop-${theme}`);
+
+    if (!assetShots) assetShots = await resolveAssetIds(page, ASSET_SHOTS.filter((a) => wanted(a.slug)));
+    for (const s of assetShots) await shootAsset(page, s, `desktop-${theme}`);
 
     const mctx = await browser.newContext({
       viewport: { width: 390, height: 844 },
@@ -264,7 +330,7 @@ async function main() {
     });
     await mctx.addInitScript(seedBrowserState, { theme, user: USER });
     const mpage = await mctx.newPage();
-    for (const p of MOBILE) await shoot(mpage, p, `mobile-${theme}`);
+    for (const p of MOBILE.filter((m) => wanted(m.slug))) await shoot(mpage, p, `mobile-${theme}`);
 
     await mctx.close();
     await ctx.close();

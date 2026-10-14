@@ -1,39 +1,64 @@
 # Polaris
 
-**Polaris is an asset management and network monitoring tool.** It pulls the
-systems you already run into one dashboard: it discovers what is on your
-network, keeps one record per device, watches those devices, and tells the right
-people when something breaks.
+**Polaris monitors your network and the devices on it, and keeps one inventory
+of what those devices are.** It builds that inventory from the systems you
+already run, watches every device in it, and tells the right people when
+something breaks — once, rather than once per symptom.
+
+![An asset's System tab: status, uptime, and 24 hours of response time with packet loss, and CPU and memory.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-asset-monitoring.png)
 
 ---
 
 ## What it actually does
 
-Four things, in the order a new install grows into them:
+### 1. Monitors
 
-1. **Discovers what exists.** Eleven integration types read your FortiManager,
-   FortiGates, Entra ID / Intune, Active Directory, Windows DHCP servers,
-   vCenter, Azure Arc, Unraid, TrueNAS SCALE and Proxmox VE — and, through
-   the build-your-own Generic API, any REST feed that lists devices. See
-   [Discovery](Discovery).
-2. **Keeps one record per device, from all of them.** This is the part that
-   makes a central dashboard worth having. An asset that AD, Intune, Azure Arc
-   and a FortiGate all know about is **one row carrying four sources**, and
-   every field shows the answer from whichever source is most trustworthy *for
-   that field* — not whichever system wrote last. Where they genuinely disagree,
-   you get a [conflict](Conflict-Resolution) rather than a silent overwrite. See
-   [Assets](Assets).
-3. **Monitors those devices.** Eight independent telemetry streams over six
-   transports, on a cadence you set per asset, per class or per integration.
-   See [Monitoring](Monitoring).
-4. **Acts when something is wrong.** Automations watch a metric, a device
-   state, an event or a change; raise an alert at a severity; notify people by
-   email, push or webhook; escalate when nobody answers; and run a script or
-   call an API if you want them to. See [Automations](Automations).
+Eight independent telemetry streams — response time, CPU/memory, hardware
+sensors, interfaces, LLDP, storage, processes, event logs — each on its own
+cadence, over FortiOS REST, SNMP, SSH, WinRM, ICMP, the hypervisor and NAS APIs,
+or the optional [Polaris Agent](Polaris-Agent). See [Monitoring](Monitoring).
 
-Alongside those, it keeps a full **address registry** — blocks, networks,
-individual addresses and reservations, with overlaps refused, CIDRs normalised
-and deletions protected while reservations are live. See [IPAM](IPAM).
+- **Down is a verdict, not a missed ping.** Misses accumulate in a bucket,
+  recovery takes a known number of good polls, and how many misses make "down"
+  is a property of the alert you wrote. See [Monitor states](Monitor-States).
+- **One outage, one alert.** Everything behind a device that is down is
+  suppressed, so a dead core switch pages once. See
+  [Dependency suppression](Dependency-Suppression).
+- **Quiet when it should be** — maintenance windows, ad-hoc holds, and the holds
+  Polaris takes on itself while it reboots or upgrades a device. See
+  [Maintenance windows](Maintenance-Windows).
+- **What talks to what.** The [Application Map](Application-Map) draws the
+  traffic the agent observes between processes and services on your hosts.
+
+### 2. Alerts and acts
+
+[Automations](Automations) watch a metric, a device state, an event or a
+change; raise an alert at a severity; notify people by email, push or webhook;
+escalate when nobody acknowledges; and run a script, call an API or book a
+reboot if you want them to. See [Triggers](Automation-Triggers) ·
+[Actions](Automation-Actions) · [Escalation](Automation-Escalation).
+
+### 3. Knows what it is monitoring
+
+Eleven integration types — FortiManager, FortiGate, Entra ID / Intune, Active
+Directory, Windows DHCP, vCenter, Azure Arc, Unraid, TrueNAS SCALE, Proxmox VE,
+and the build-your-own Generic API — fill the inventory and can add what they
+find as monitored. See [Discovery](Discovery).
+
+An asset that AD, Intune, Azure Arc and a FortiGate all know about is **one row
+carrying four sources**, and every field shows the answer from whichever source
+is most trustworthy *for that field* — not whichever system wrote last. Where
+they genuinely disagree, you get a [conflict](Conflict-Resolution) rather than a
+silent overwrite. See [Assets](Assets).
+
+### Also
+
+[Path Monitor](Path-Monitor) checks reachability from where your users sit. The
+[Device Map](Device-Map) draws each site's Fortinet topology.
+[IPAM](IPAM) keeps a full address registry — blocks, networks and
+reservations, with overlaps refused. Polaris can push DHCP reservations and MAC
+quarantine to FortiGates, upgrade firmware and reboot devices, and answer
+questions through an [AI assistant](AI-Assistant) connected to a model you run.
 
 ---
 
@@ -43,8 +68,10 @@ and deletions protected while reservations are live. See [IPAM](IPAM).
 |---|---|
 | installing Polaris for the first time | [Installation](Installation) → [First-run setup](First-Run-Setup) |
 | new to an install someone else built | [Concepts](Concepts) → [Getting around](Navigation-and-Account) |
-| trying to get devices into inventory | [Discovery](Discovery) → the page for your integration |
 | trying to get alerted about something | [Automations](Automations) → [Triggers](Automation-Triggers) → [Actions](Automation-Actions) |
+| wondering why a device reads up, down or grey | [Monitor states](Monitor-States) → [Dependency suppression](Dependency-Suppression) |
+| choosing how a device is polled | [Monitoring](Monitoring) → [Polling methods](Polling-Methods) |
+| trying to get devices into inventory | [Discovery](Discovery) → the page for your integration |
 | wondering why Polaris decided something | [Business rules](Business-Rules) — every numbered decision and the reasoning behind it |
 | wiring Polaris into another system | [REST API](API) |
 | holding a broken install | [Troubleshooting](Troubleshooting) |
@@ -77,9 +104,9 @@ nginx, behind a corporate load balancer, or nowhere at all on a lab VM.
 
 Every integration is optional and absent by default — discovery is something you
 turn on, not something you turn off. An install with none at all still works:
-you enter assets and address space by hand, and monitor them over SNMP, SSH,
-WinRM, ICMP or the agent. But the integrations are the point of the thing, and
-an install with one is worth more than an install with none.
+you enter assets by hand and monitor them over SNMP, SSH, WinRM, ICMP or the
+agent. But an integration is what saves you typing in the fleet, and an install
+with one is worth more than an install with none.
 
 ---
 

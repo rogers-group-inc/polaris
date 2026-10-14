@@ -33,6 +33,18 @@ import { prisma } from "../src/db.js";
 const DOWN = "MEMP-SCALE-PC";
 const MISSED = "ASHF-CORE-SW2";
 
+// The asset the README's monitoring screenshot opens. mock-compare backfills
+// its CPU/memory, interface and storage samples, but it inherits ICMP on every
+// stream, and the System tab draws those charts only when the stream resolves
+// to a transport that collects them. So it is pinned to SNMP here. Its success
+// stamps are made fresh as well, or each chart carries the amber "Last
+// successful update" banner (rule 118). Any open failure run is cleared too.
+// Nothing on a dev stack can actually
+// poll an invented address, so the next live SNMP poll (within a minute)
+// reopens the failure run. Run this immediately before
+// `capture-screenshots.mjs --only asset-monitoring`.
+const SHOWCASE = "edge-rtr-01";
+
 const MIN = 60_000;
 
 async function main() {
@@ -75,11 +87,29 @@ async function main() {
         lastResponseTimeMs:     base + ((i * 7) % 9),
         // Whole seconds of device uptime — a few days, varied per device.
         lastUptimeSec:          86_400 * (3 + (i % 9)) + i * 613,
+        ...(a.hostname === SHOWCASE
+          ? {
+              cpuMemoryPolling:        "snmp",
+              interfacesPolling:       "snmp",
+              storagePolling:          "snmp",
+              lastTelemetryAt:         new Date(now - 20_000),
+              lastTelemetryAttemptAt:  new Date(now - 20_000),
+              lastSystemInfoAt:        new Date(now - 20_000),
+              lastSystemInfoAttemptAt: new Date(now - 20_000),
+              lastStorageAt:           new Date(now - 20_000),
+              // Any failure run an earlier live poll opened ("last poll failed").
+              telemetryFailingSince:   null,
+              telemetryLastError:      null,
+              systemInfoFailingSince:  null,
+              systemInfoLastError:     null,
+            }
+          : {}),
       },
     });
   });
 
   await prisma.$transaction(updates);
+  await freshenShowcase(now);
 
   const down = assets.filter((a) => a.hostname === DOWN).length;
   const missed = assets.filter((a) => a.hostname === MISSED).length;
@@ -89,6 +119,38 @@ async function main() {
   );
 
   await deMock();
+}
+
+// The response-time banner reads the newest successful SAMPLE, not a stamp,
+// and mock-compare's newest sample is as old as the seed run. Give the showcase
+// asset one fresh reading per chart, copied from its newest seeded row so the
+// curve does not jump. Rows from an earlier pass are cleared first.
+async function freshenShowcase(now: number) {
+  const asset = await prisma.asset.findFirst({ where: { hostname: SHOWCASE }, select: { id: true } });
+  if (!asset) return;
+  const assetId = asset.id;
+  const ts = new Date(now - 20_000);
+  const recent = { assetId, timestamp: { gt: new Date(now - 5 * MIN) } };
+  await prisma.assetMonitorSample.deleteMany({ where: recent });
+  await prisma.assetTelemetrySample.deleteMany({ where: recent });
+
+  const [mon, tel] = await Promise.all([
+    prisma.assetMonitorSample.findFirst({ where: { assetId, success: true }, orderBy: { timestamp: "desc" } }),
+    prisma.assetTelemetrySample.findFirst({ where: { assetId }, orderBy: { timestamp: "desc" } }),
+  ]);
+  if (mon) {
+    await prisma.assetMonitorSample.create({
+      data: { assetId, timestamp: ts, success: true, responseTimeMs: mon.responseTimeMs, error: null },
+    });
+  }
+  if (tel) {
+    await prisma.assetTelemetrySample.create({
+      data: {
+        assetId, timestamp: ts, cpuPct: tel.cpuPct, memPct: tel.memPct,
+        memUsedBytes: tel.memUsedBytes, memTotalBytes: tel.memTotalBytes,
+      },
+    });
+  }
 }
 
 // Strip the dev-seed prefixes out of everything an operator can see.

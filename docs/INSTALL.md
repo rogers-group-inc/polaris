@@ -1033,7 +1033,7 @@ scripts and the first-run wizard mint `SESSION_SECRET` and `POLARIS_SECRET_KEY`
 for you, but neither runs here: this stack supplies `DATABASE_URL` up front, and
 a set `DATABASE_URL` is exactly what tells Polaris to boot normally instead of
 starting the wizard. (A single-container deployment that *does* let the wizard
-run — the Unraid path in the README — gets both values written into
+run — the [single-container path](#single-container-unraid) — gets both values written into
 `/app/state/.env` for free.) For compose, write them into `./state/.env` before
 the first `compose up`:
 
@@ -1108,6 +1108,64 @@ Two container-specific cautions:
   both values as secrets rather than a file on disk; in a managed deployment
   inject them from Azure Key Vault. Do not inline them into
   `docker-compose.yml` — it is committed, `./state/.env` is gitignored.
+
+### Single container (Unraid)
+
+The single-container path, typical on Unraid: one Polaris container that runs the
+first-run wizard itself, beside a separate database container.
+
+```bash
+docker pull ghcr.io/rogers-group-inc/polaris:latest
+```
+
+Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a
+`timescale/timescaledb:latest-pg17` container alongside it (**not** plain
+`postgres:17`: Polaris requires the TimescaleDB extension, and the image must
+also be started with `-c shared_preload_libraries=timescaledb`), or point at any
+reachable Postgres that has the extension. Already running an older major in a
+container? Changing the image tag is not an upgrade — see
+[UPGRADING.md → On Docker / Unraid, where PostgreSQL is its own container](UPGRADING.md#on-docker--unraid-where-postgresql-is-its-own-container).
+
+Expose container port `3000`. It is HTTP-only: terminate TLS in a reverse proxy
+in front of the container (`docker-compose.yml` is the nginx-fronted reference
+stack), and do not let that proxy add its own `Referrer-Policy` header, or
+OpenStreetMap blocks every map tile — see
+[Map tiles come back as "Access blocked"](#map-tiles-come-back-as-access-blocked).
+All persistent state lives under `/app/state`, so a single bind mount is enough:
+
+| Container path | Host path | Notes |
+|---|---|---|
+| `/app/state` | `/mnt/user/appdata/polaris` | `.env`, `.setup-complete`, `data/backups/`, `data/instance-id`, `public/uploads/` |
+
+Keep that mount across upgrades. `data/instance-id` is how Polaris recognizes its
+own active-instance heartbeat once the container is recreated under a new
+container ID — without it, an upgraded container can mistake its predecessor for
+a second Polaris on the same database and refuse to start for 90 seconds
+([HA.md](HA.md) §5).
+
+On first launch the container starts the setup wizard at `http://<host>:3000`
+(DB host, admin account, session secret). The wizard supports self-signed
+Postgres TLS via an "Allow self-signed certificate" toggle. After finalize, the
+container restarts itself into the main app — with a generated
+`POLARIS_SECRET_KEY` in `/app/state/.env` that encrypts stored device +
+integration credentials. **Back that key up off the host:** it lives on the bind
+mount, and sealed secrets cannot be recovered without it.
+
+Two things about that first launch. The wizard has no accounts to authenticate,
+so it asks for a one-time **setup token** before it will touch the host —
+printed in the container's log (`docker logs <container>`) and saved as
+`.setup-token` in the state directory — which means reaching port 3000 is not
+enough to own the install; on an untrusted LAN, still publish the port only once
+you are ready to run through it. And the app runs as the unprivileged `node`
+user (uid 1000), so the entrypoint takes ownership of the bind mount on first
+start: everything under your host state directory ends up owned by uid 1000, and
+editing `.env` from the host afterwards needs `sudo`.
+
+Updates: `docker pull` + restart. The in-app updater under Server Settings →
+Maintenance is for the script-deployed RHEL / Ubuntu path; image-based
+deployments update by pulling a new tag. Every commit to `main` builds and
+publishes `:latest`, the branch name, and `:sha-<short>` to GHCR via GitHub
+Actions.
 
 ### Sizing — connections multiply
 
