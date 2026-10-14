@@ -26,8 +26,8 @@ Gated by `events`. The page has two tabs: **Events** (the log, below) and
 
 Sortable, inline-filterable, resizable, with saved layouts like every other list
 page. **Export** downloads PDF or CSV of the current page, all filtered results,
-or the entire event log; **Refresh** and the **Show** page size sit beside the
-pagination. In a CSV, a cell that begins with `=`, `+`, `-` or `@` (a hostname or
+or the entire event log; **Refresh**, **Clear Filters** and the **Show** page
+size sit beside the pagination. In a CSV, a cell that begins with `=`, `+`, `-` or `@` (a hostname or
 message that a device chose) is written with a leading apostrophe so a spreadsheet
 reads it as text, not a formula ([rule 109](Business-Rules#rule-109)).
 

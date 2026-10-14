@@ -73,6 +73,14 @@ document.addEventListener("DOMContentLoaded", async function () {
   loadTagList();        // best-effort; used by the tag pickers
   initAuthSettingsButton();
   document.getElementById("btn-add-user").addEventListener("click", openUserCreateModal);
+  // Clear Filters — the Assets list's button, on the Users table.
+  var btnClearFilters = document.getElementById("btn-clear-filters");
+  if (btnClearFilters) btnClearFilters.addEventListener("click", function () {
+    _usersSF.clearFilters();
+    _usersPage = 1;
+    renderUsersBody();
+    _saveUsersPrefs();
+  });
   var btnAddRole = document.getElementById("btn-add-role");
   if (btnAddRole) btnAddRole.addEventListener("click", function () { openRoleSlideover(null); });
   var btnAddGm = document.getElementById("btn-add-group-mapping");
