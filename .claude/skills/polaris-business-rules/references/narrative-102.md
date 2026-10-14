@@ -45,7 +45,7 @@ A DHCP card that renumbers would otherwise leave the pin on an address nobody ho
 
 ### What the pin does not touch
 
-`Asset.macAddress` stays the identity MAC `selectPrimaryMac` chooses. It keys the `fortigate-endpoint` AssetSource row and every MAC-based match; moving it with a pin would reopen the identity churn the hardware anchoring exists to stop. The panel's Primary Address row shows the pair the IP is on (the pin's MAC, else the address row holding the IP, else the identity MAC), which is what the operator asked to see.
+`Asset.macAddress` stays the identity MAC `selectPrimaryMac` chooses. It keys the `fortigate-endpoint` AssetSource row and every MAC-based match; moving it with a pin would reopen the identity churn the hardware anchoring exists to stop. The panel's Address row shows the primary IP; its IPs / MACs hover pills star the pair it is on (the pin's MAC, else the address row holding the IP, else the identity MAC), which is what the operator asked to see.
 
 ### (a) IPAM is checked when the details open (2026-10-11)
 

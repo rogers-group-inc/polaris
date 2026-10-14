@@ -301,13 +301,13 @@ older than 24 hours is not evidence.
 
 #### Addresses and the primary address
 
-**Primary Address** is the address monitoring probes and the network card it
-is on (*on AA:BB:…*). Beside it on the right, **Addresses** lists the MACs the
-device has been seen with and, under each one, the IP addresses bound to it. A
-MAC with no address, and any past the first three, sits behind the **+N MACs**
-pill; hover it to see them (and remove one). Each MAC shows its first three
-addresses (the primary always among them); the rest sit behind a **+N IPs**
-pill, where each can still be copied or set as primary. The addresses come from a lease or
+**Address** shows the address monitoring probes. Under it, two pills hold
+everything else the device has been seen with: hover **N IPs** for every IP
+address, each with the network card (MAC) it is on, and **N MACs** for every
+MAC with the addresses bound to it. Click any IP or MAC in either list to copy
+it. The primary pair is first and carries **★ Primary**; from the IPs list any
+other address can be set as primary, and from the MACs list a MAC can be
+removed (**×**). The addresses come from a lease or
 reservation the device is holding, the address a FortiGate sees it using, ARP
 entries (a card's secondary addresses), the interface table of a monitored
 device, and anything typed by hand. Each address names where it came from, the
@@ -321,7 +321,8 @@ subnet for are left as they are.
 
 A MAC labelled *Not on MAC list* appears only because addresses name it — an
 interface of a monitored device, or an address typed by hand — so it has no
-**×**.
+**×**. A MAC with many addresses names its first three in the MACs list; the
+IPs list has them all.
 
 The primary pair carries **★ Primary**. Polaris chooses it from what the gates
 report ([rule 101](Business-Rules#rule-101)); with **Assets** set to *Write* or
@@ -346,14 +347,15 @@ shows as *pinned* with an **Unpin** button, and:
 
 FortiGates, FortiSwitches and FortiAPs are monitored on their management IP and
 offer no pin. A device's port MACs from its interface table are collapsed into
-one *N port MACs* entry and are never a primary.
+one *N port MACs* pill and are never a primary.
 
 #### Address confidence
 
 Every address carries a **confidence score** from 0 to 100, shown as a small
 chip beside it. The chip is green for high (80 and over), grey for medium,
 amber for low (20–49) and red for very low. Hover the chip in the asset panel to
-see what the score is made of: each source that reports the address, how
+see what the score is made of (inside the IPs list, hovering the chip shows
+just the score): each source that reports the address, how
 recently, how long Polaris has polled it successfully as the primary, and
 anything counting against it. On the asset list, the IP address and each
 address in its hover carry the same chip, and hovering the chip shows the
@@ -1282,7 +1284,7 @@ The IP Address field in the edit form overrides what discovery reports.
 
 Each of the three also releases a pinned primary address. To monitor a device
 on one of the addresses it already has, use **Set as primary** in its
-[Addresses](#addresses-and-the-primary-address) list instead.
+[IPs list](#addresses-and-the-primary-address) instead.
 
 Saving the form while the field is already empty changes nothing, so editing
 another field on an asset with no address never pins it blank.
