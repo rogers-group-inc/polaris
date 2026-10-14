@@ -71,8 +71,9 @@ rule: it decides when the Event exists at all, so every capacity automation and
 the Events log see the same held event, and the wizard saves it on change rather
 than with the draft. It moved there from the Database card on 2026-10-13 because
 an operator looks for "how long before this alerts" on the automation that
-alerts; the card keeps a read-only line naming the hold, linking to Automations,
-and showing what was last recorded or is being waited out. A per-automation hold
+alerts; the card keeps a read-only line showing what was last recorded or is
+being waited out. (It also named the hold and linked to Automations until
+2026-10-14, when the operator asked for that note to go.) A per-automation hold
 was considered and rejected: the Event would have to be written on every
 change, which is the Events-log noise this rule removed.
 

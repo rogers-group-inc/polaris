@@ -452,22 +452,22 @@ that automation if you want the all-clear delivered as well — see
 [Automation-Triggers](Automation-Triggers).
 
 A change only counts once it has held for the **alert hold** (30 minutes by
-default, in either direction). The card names the hold and shows what alerting
-last recorded, or the change it is waiting out. The hold is set on the trigger
-step of a capacity automation, not here — see
+default, in either direction). The card shows what alerting last recorded, or
+the change it is waiting out. The hold is set on the trigger step of a capacity
+automation, not here — see
 [rule 105](Business-Rules#rule-105).
 
 Only the 10-minute capacity check records these Events. A change becomes one
 only after every check for the **alert hold** agrees, in either direction, so a
 short spike never alerts and a host hovering at a threshold cannot clear and
 re-raise its alert on alternate checks
-([rule 105](Business-Rules#rule-105)). Set the hold with **Alert after a
-change holds for** on the **Database** card: 30 minutes by default, from
-**Alert on the first reading** up to 4 hours. The Event's message says how long
-the change held.
+([rule 105](Business-Rules#rule-105)). The hold is **Alert after a capacity
+change holds for** on a capacity automation's trigger step: 30 minutes by
+default, from **Alert on the first reading** up to 4 hours. The Event's message
+says how long the change held.
 
 The card's pill and reasons are the **live** grade, so they can differ from what
-alerting has recorded. The line under the hold setting says which: the grade
+alerting has recorded. The alert-hold line on the card says which: the grade
 alerting last recorded and when, or the change it is waiting out ("seen for 10
 of 30 min") and the time it is recorded if every check until then agrees. An
 open capacity alert beside a card that reads **Healthy** is a recovery still
