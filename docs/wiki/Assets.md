@@ -305,7 +305,9 @@ older than 24 hours is not evidence.
 is on (*on AA:BB:…*). Beside it on the right, **Addresses** lists the MACs the
 device has been seen with and, under each one, the IP addresses bound to it. A
 MAC with no address, and any past the first three, sits behind the **+N MACs**
-pill; hover it to see them (and remove one). The addresses come from a lease or
+pill; hover it to see them (and remove one). Each MAC shows its first three
+addresses (the primary always among them); the rest sit behind a **+N IPs**
+pill, where each can still be copied or set as primary. The addresses come from a lease or
 reservation the device is holding, the address a FortiGate sees it using, ARP
 entries (a card's secondary addresses), the interface table of a monitored
 device, and anything typed by hand. Each address names where it came from, the

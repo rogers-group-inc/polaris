@@ -18940,6 +18940,7 @@ function ipViewRow(asset) {
 // chose (rule 101).
 
 var _ADDRESS_GROUPS_VISIBLE = 3;
+var _ADDRESS_IPS_VISIBLE = 3; // per MAC group; the rest sit behind a "+N IPs" hover
 var _PIN_STALE_MS = 24 * 60 * 60 * 1000; // mirrors PIN_FOLLOW_STALE_MS (src/utils/assetInvariants.ts)
 
 function _assetAddressRows(asset) {
@@ -19163,10 +19164,46 @@ function _addressGroupHTML(asset, m, ips, primaryIp, primaryMac) {
         (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
       '</span>' +
     '</div>';
-  var lines = ips.map(function (r) {
-    return _addressIpLineHTML(asset, r, r.ip === primaryIp && (!primaryMac || _addressMacKey(r.mac) === _addressMacKey(primaryMac)));
+  return '<div class="address-group">' + head + _addressIpLinesHTML(asset, ips, function (r) {
+    return r.ip === primaryIp && (!primaryMac || _addressMacKey(r.mac) === _addressMacKey(primaryMac));
+  }) + '</div>';
+}
+
+// A group's address lines: the first _ADDRESS_IPS_VISIBLE drawn (the caller's
+// sort puts the primary first), the rest behind a "+N IPs" hover whose rows
+// keep copy, the score chip and "Set as primary" — a firewall with a dozen
+// interface addresses otherwise pushes everything below it off the tab.
+function _addressIpLinesHTML(asset, ips, isPrimary) {
+  var shown = ips.slice(0, _ADDRESS_IPS_VISIBLE);
+  var hidden = ips.slice(shown.length);
+  var html = shown.map(function (r) { return _addressIpLineHTML(asset, r, isPrimary(r)); }).join('');
+  if (!hidden.length) return html;
+  var pinnable = canManageAssets() && _assetAddressPinnable(asset);
+  var rows = hidden.map(function (r) {
+    var bits = [];
+    var label = formatAddressSource(r.source);
+    if (label) bits.push(escapeHtml(label));
+    if (r.device) bits.push(escapeHtml(r.device));
+    if (r.interfaceName) bits.push(escapeHtml(r.interfaceName));
+    if (r.lastSeen) bits.push(formatDate(r.lastSeen));
+    var star = isPrimary(r)
+      ? '<span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span>'
+      : (r.mac && pinnable
+        ? '<button type="button" class="btn btn-sm btn-secondary primary-address-set" ' +
+            'data-asset-id="' + escapeHtml(asset.id) + '" data-mac="' + escapeHtml(r.mac) + '" data-ip="' + escapeHtml(r.ip) + '" ' +
+            'title="Monitor this asset on ' + escapeHtml(r.ip) + '">Set as primary</button>'
+        : '');
+    return '<div class="mac-tooltip-row">' +
+      '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</span>' +
+      addressConfidenceChipHTML(asset, r.ip, { plain: true }) +
+      '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + bits.join(' &middot; ') + '</span></span>' +
+      star +
+    '</div>';
   }).join('');
-  return '<div class="address-group">' + head + lines + '</div>';
+  return html + '<div class="address-ip-more"><span class="mac-hover-trigger">' +
+    '<span class="mac-badge-count" style="margin-left:0">+' + hidden.length + ' IP' + (hidden.length === 1 ? '' : 's') + '</span>' +
+    '<div class="mac-tooltip"><div class="mac-tooltip-header">' + hidden.length + ' more IP' + (hidden.length === 1 ? '' : 's') + '</div>' + rows + '</div>' +
+  '</span></div>';
 }
 
 function addressesViewHTML(asset) {
@@ -19226,9 +19263,14 @@ function addressesViewHTML(asset) {
   if (!shown.length && !noMac.length) html = '<div class="address-empty" style="padding-left:0">no address reported</div>';
 
   if (noMac.length) {
+    noMac.sort(function (a, b) {
+      var ap = a.ip === primaryIp ? 1 : 0, bp = b.ip === primaryIp ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return (Date.parse(b.lastSeen || 0) || 0) - (Date.parse(a.lastSeen || 0) || 0);
+    });
     html += '<div class="address-group">' +
       '<div class="address-mac-line"><span class="address-meta">No MAC</span></div>' +
-      noMac.map(function (r) { return _addressIpLineHTML(asset, r, r.ip === primaryIp && !primaryMac); }).join('') +
+      _addressIpLinesHTML(asset, noMac, function (r) { return r.ip === primaryIp && !primaryMac; }) +
     '</div>';
   }
 
