@@ -29,7 +29,7 @@
  * strings.
  */
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import { prisma } from "../db.js";
@@ -82,6 +82,41 @@ export const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** How long a registered node may wait for approval before it gives up. */
 export const APPROVAL_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * How long an approved bundle stays claimable (business rule 117, re-scan
+ * F86). The bootstrap script polls every 5 s and downloads the moment it sees
+ * "approved", so a working enrollment claims within seconds; an approval no
+ * script ever collected used to stay claimable forever.
+ */
+export const CLAIM_WINDOW_MS = 10 * 60 * 1000;
+
+/** The stored form of a poll handle: only its SHA-256 is ever written (F86). */
+export function hashRequestId(requestId: string): string {
+  return createHash("sha256").update(requestId, "utf8").digest("hex");
+}
+
+/**
+ * Expire every row whose window has passed — an issued token past expiresAt,
+ * a pending registration past APPROVAL_WINDOW_MS, an approval past
+ * CLAIM_WINDOW_MS. Run before every lookup rather than on a timer, so a stale
+ * approval can never be claimed however long it sat. The handle's digest is
+ * kept, so the script still reads "expired" rather than a bare 404 it would
+ * poll on until its own timeout.
+ */
+export async function expireStaleEnrollments(now = new Date()): Promise<number> {
+  const res = await prisma.haEnrollment.updateMany({
+    where: {
+      OR: [
+        { status: "issued",   expiresAt:    { lt: now } },
+        { status: "pending",  registeredAt: { lt: new Date(now.getTime() - APPROVAL_WINDOW_MS) } },
+        { status: "approved", approvedAt:   { lt: new Date(now.getTime() - CLAIM_WINDOW_MS) } },
+      ],
+    },
+    data: { status: "expired" },
+  });
+  return res.count;
+}
 
 export type EnrollmentStatus = "issued" | "pending" | "approved" | "delivered" | "rejected" | "expired";
 
@@ -153,6 +188,7 @@ export interface RegisterInput {
  * whether a token existed, expired or was already used.
  */
 export async function registerEnrollment(input: RegisterInput): Promise<{ requestId: string }> {
+  await expireStaleEnrollments();
   const raw = (input.token || "").trim();
   if (!raw.startsWith(TOKEN_PREFIX)) throw new AppError(401, "Invalid enrollment token");
 
@@ -176,7 +212,7 @@ export async function registerEnrollment(input: RegisterInput): Promise<{ reques
       where: { id: row.id, status: "issued" },
       data: {
         status: "pending",
-        requestId,
+        requestIdHash: hashRequestId(requestId),
         registeredFromIp: input.sourceIp,
         registeredNodeName: input.nodeName || null,
         sshHostKeyFingerprints: (input.sshHostKeyFingerprints ?? []).slice(0, 8),
@@ -204,16 +240,14 @@ export interface EnrollmentPollResult {
 
 /** What the bootstrap script's poll loop sees. */
 export async function pollEnrollment(requestId: string): Promise<EnrollmentPollResult> {
-  const row = await prisma.haEnrollment.findUnique({ where: { requestId } });
+  await expireStaleEnrollments();
+  const row = await prisma.haEnrollment.findUnique({ where: { requestIdHash: hashRequestId(requestId) } });
   if (!row) throw new AppError(404, "Unknown enrollment request");
   const status = row.status as EnrollmentStatus;
 
-  if (status === "pending" && row.registeredAt && Date.now() - row.registeredAt.getTime() > APPROVAL_WINDOW_MS) {
-    await prisma.haEnrollment.update({ where: { id: row.id }, data: { status: "expired" } });
-    return { status: "expired", ready: false, message: "This request waited too long for approval. Re-generate the script." };
-  }
-
   switch (status) {
+    case "expired":
+      return { status, ready: false, message: "This request expired before it was approved and collected. Re-generate the script." };
     case "pending":
       return { status, ready: false, message: "Waiting for an operator to approve this node in Server Settings -> High Availability." };
     case "approved":
@@ -251,6 +285,10 @@ export async function listEnrollments(): Promise<
 }
 
 export async function approveEnrollment(id: string, actor: string): Promise<void> {
+  // The approval window is enforced here too, not only in the poll (F86): an
+  // approval of a registration nobody has polled for in 30 minutes is an
+  // approval of something nobody is waiting on.
+  await expireStaleEnrollments();
   const row = await prisma.haEnrollment.findUnique({ where: { id } });
   if (!row) throw new AppError(404, "Enrollment not found");
   if (row.status !== "pending") {
@@ -287,14 +325,29 @@ export async function rejectEnrollment(id: string, actor: string): Promise<void>
  * is the right way round: a second copy of a bundle full of private keys is
  * worse than a repeated click.
  */
-export async function claimBundle(requestId: string): Promise<{ archive: Buffer; filename: string }> {
-  const row = await prisma.haEnrollment.findUnique({ where: { requestId } });
+export async function claimBundle(
+  requestId: string,
+  sourceIp: string | null = null,
+): Promise<{ archive: Buffer; filename: string }> {
+  await expireStaleEnrollments();
+  const row = await prisma.haEnrollment.findUnique({ where: { requestIdHash: hashRequestId(requestId) } });
   if (!row) throw new AppError(404, "Unknown enrollment request");
   if (row.status !== "approved") {
     throw new AppError(403, "This node has not been approved yet.");
   }
+  // The registering script and the downloading script are the same process
+  // on the same host (F86): a claim from anywhere else is someone holding a
+  // copy of the handle. Refused without spending the approval, so the real
+  // node can still collect it; logged loudly for the operator.
+  if (row.registeredFromIp && sourceIp !== row.registeredFromIp) {
+    logger.warn(
+      { enrollmentId: row.id, registeredFromIp: row.registeredFromIp, sourceIp },
+      "HA bundle claim refused: source address differs from the registration",
+    );
+    throw new AppError(403, "This bundle can only be downloaded from the address that registered.");
+  }
   const claimed = await prisma.haEnrollment.updateMany({
-    where: { id: row.id, status: "approved" },
+    where: { id: row.id, status: "approved", approvedAt: { gte: new Date(Date.now() - CLAIM_WINDOW_MS) } },
     data: { status: "delivered", deliveredAt: new Date() },
   });
   if (claimed.count !== 1) throw new AppError(410, "This bundle has already been downloaded.");
@@ -520,7 +573,7 @@ function renderEtcdConf(cfg: HaConfig, role: HaRole): string {
   ].join("\n");
 }
 
-function renderPatroniYml(cfg: HaConfig, role: HaRole): string {
+export function renderPatroniYml(cfg: HaConfig, role: HaRole): string {
   const self = requireNode(cfg, role);
   const peer = requireNode(cfg, role === "primary" ? "standby" : "primary");
   const c = cfg.credentials!;
@@ -540,11 +593,22 @@ function renderPatroniYml(cfg: HaConfig, role: HaRole): string {
     `name: ${self.name}`,
     "",
     "restapi:",
+    "  # One listener: the loopback readers (the systemd guard, the reconciler,",
+    "  # the HA card) and the peer share it, and the firewall limits 8008 to the",
+    "  # peer node. TLS with this node's etcd member certificate (it carries the",
+    "  # cluster-address SAN): the write credentials below cross the inter-node",
+    "  # link on every member-to-member call (business rule 117).",
     "  listen: 0.0.0.0:8008",
     `  connect_address: ${self.clusterAddr}:8008`,
+    `  certfile: /etc/polaris/etcd-ca/${self.name}.crt`,
+    `  keyfile: /etc/polaris/etcd-ca/${self.name}.key`,
     "  authentication:",
     "    username: patroni",
     `    password: '${c.restapi.password}'`,
+    "",
+    "# patronictl and Patroni's own calls to the peer verify its REST certificate.",
+    "ctl:",
+    "  cacert: /etc/polaris/etcd-ca/ca.crt",
     "",
     "etcd3:",
     "  hosts:",

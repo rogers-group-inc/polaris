@@ -68,7 +68,7 @@ import { startMetricsOnlyServer } from "./utils/metricsServer.js";
 import { recordDbConnectionMode, setDbPoolRoleCapacity } from "./metrics.js";
 import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
 import { rememberLoginTarget } from "./utils/loginRedirect.js";
-import { canonicalRoutePath } from "./utils/routePath.js";
+import { canonicalRoutePath, nonCanonicalRequestPath } from "./utils/routePath.js";
 import { isPhoneUserAgent, resolveAssetOpenTarget } from "./utils/assetOpenLink.js";
 
 // Fail-fast environment validation runs BEFORE any listener binds, before
@@ -471,6 +471,19 @@ export function resetLoginRateLimit(): void {
 // re-validates trust itself and never relies on stripping alone.
 app.use(stripUntrustedEntraProxyHeaders);
 
+// ─── Non-canonical paths are refused ────────────────────────────────────────
+// Every gate below decides on the request path, and express.static at the end
+// decodes and normalizes it before reading a file. A path that is not already
+// in that form (`/%61pi.html`, `//login.html`, `/./api.html`) is the one way a
+// gate and the served file can disagree (re-scan F87), and no page or API
+// route Polaris serves is legitimately spelled that way — so it is a 404 here,
+// before any gate runs. Under /api/ percent-encoded parameters stay allowed
+// (nonCanonicalRequestPath).
+app.use((req, res, next) => {
+  if (!nonCanonicalRequestPath(req.path)) return next();
+  return res.status(404).type("text/plain").send("Not found");
+});
+
 // ─── Local login source-IP gate ─────────────────────────────────────────────
 // Optional, default OFF (`loginAccessConfig` — Server Settings → Web Server →
 // Local Login Access). When enabled, the local login FORM and the password
@@ -812,7 +825,7 @@ async function sendToSignIn(req: express.Request, res: express.Response): Promis
 // session, and the SSO failure routes rely on it being reachable.
 const LOGIN_FORM_QUERY_KEYS = ["error", "local"];
 app.use(async (req, res, next) => {
-  if (req.path !== "/login.html" || req.session?.userId) return next();
+  if (canonicalRoutePath(req.path) !== "/login.html" || req.session?.userId) return next();
   if (LOGIN_FORM_QUERY_KEYS.some(k => Object.prototype.hasOwnProperty.call(req.query, k))) return next();
   const ssoTarget = await skipLoginSsoTarget();
   if (ssoTarget) return res.redirect(ssoTarget);
@@ -820,7 +833,7 @@ app.use(async (req, res, next) => {
 });
 
 app.use(async (req, res, next) => {
-  if (!protectedPages.includes(req.path)) return next();
+  if (!protectedPages.includes(canonicalRoutePath(req.path))) return next();
   if (!req.session?.userId) {
     // Remember where they were going BEFORE choosing how to bounce them —
     // every branch below (App Proxy, skip-login SSO, the login page) comes

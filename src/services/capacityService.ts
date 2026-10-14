@@ -2304,7 +2304,7 @@ export async function getCapacitySnapshot(opts: {
     },
   };
 
-  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe(), ...await changedCertReasonsSafe(), ...await cleartextWinrmReasonsSafe()]);
+  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe(), ...await changedCertReasonsSafe(), ...await cleartextWinrmReasonsSafe(), ...await patroniCleartextReasonsSafe()]);
   snap.severity = deriveSeverity(snap.reasons);
   return snap;
 }
@@ -2364,6 +2364,28 @@ async function cleartextWinrmReasonsSafe(): Promise<CapacityReason[]> {
       code: "winrm_cleartext_password",
       message: `${http.length} Windows Server integration${http.length === 1 ? "" : "s"} (${http.slice(0, 5).map((n) => `"${n}"`).join(", ")}${http.length > 5 ? ` and ${http.length - 5} more` : ""}) connect${http.length === 1 ? "s" : ""} over WinRM HTTP, which sends the account password in clear text.`,
       suggestion: "Enable the WinRM HTTPS listener (port 5986) on the server, then edit the integration and turn on Use SSL.",
+    }];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Business rule 117 (re-scan F69/F83): an HA node whose Patroni REST API still
+ * answers over plain HTTP — a cluster built before 2026-10-14 — sends the
+ * REST write credentials across the inter-node link in clear text on every
+ * member-to-member call. Probed over loopback at most every 10 minutes.
+ */
+async function patroniCleartextReasonsSafe(): Promise<CapacityReason[]> {
+  try {
+    const { getHaConfig, refreshPatroniScheme } = await import("./haService.js");
+    if (!(await getHaConfig()).enabled) return [];
+    if ((await refreshPatroniScheme()) !== true) return [];
+    return [{
+      severity: "warning",
+      code: "ha_patroni_rest_cleartext",
+      message: "This HA node's Patroni REST API is plain HTTP, so its write credentials cross the link between the database nodes in clear text.",
+      suggestion: "Turn on TLS for the Patroni REST API on both database nodes (docs/UPGRADING.md → \"Patroni REST API over TLS\").",
     }];
   } catch {
     return [];
@@ -2475,7 +2497,7 @@ export async function getCapacitySnapshotWithAdvisor(
   // so the advisor-driven reasons fire without doing a second snapshot pass.
   // The lifecycle result is memoized, so re-fetching it for this second pass
   // costs nothing and keeps the two passes' reason lists identical.
-  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe(), ...await changedCertReasonsSafe(), ...await cleartextWinrmReasonsSafe()]);
+  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, [...await lifecycleReasonsSafe(), ...await grantReviewReasonsSafe(), ...await unusableRegexReasonsSafe(), ...await changedCertReasonsSafe(), ...await cleartextWinrmReasonsSafe(), ...await patroniCleartextReasonsSafe()]);
   snapshot.severity = deriveSeverity(snapshot.reasons);
   return { snapshot, advisor };
 }

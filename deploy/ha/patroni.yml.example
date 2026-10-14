@@ -35,10 +35,19 @@ restapi:
   # GET endpoints stay open: the systemd ExecStartPre guard, the reconciler and
   # the HA status card all read /primary and /cluster over loopback, and the
   # firewall already limits 8008 to the peer nodes. Writes (switchover,
-  # restart, reinit) require these credentials.
+  # restart, reinit) require these credentials — which is why the API is TLS:
+  # Patroni sends them on its member-to-member calls across the inter-node
+  # link (business rule 117). The etcd member certificate carries this node's
+  # cluster-address SAN.
+  certfile: /etc/polaris/etcd-ca/{{NODE_NAME}}.crt
+  keyfile: /etc/polaris/etcd-ca/{{NODE_NAME}}.key
   authentication:
     username: patroni
     password: {{RESTAPI_PASSWORD}}
+
+# patronictl and Patroni's own calls to the peer verify its REST certificate.
+ctl:
+  cacert: /etc/polaris/etcd-ca/ca.crt
 
 etcd3:
   hosts:

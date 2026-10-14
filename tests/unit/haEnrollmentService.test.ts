@@ -67,7 +67,7 @@ vi.mock("../../src/db.js", () => ({
   prismaBase: {},
 }));
 
-const { renderNodeScript, renderTeardownScript, buildNodeBundle, peerHostFingerprints, TOKEN_TTL_MS, APPROVAL_WINDOW_MS } =
+const { renderNodeScript, renderTeardownScript, buildNodeBundle, peerHostFingerprints, renderPatroniYml, TOKEN_TTL_MS, APPROVAL_WINDOW_MS } =
   await import("../../src/services/haEnrollmentService.js");
 const { listTar, readTarEntry } = await import("../../src/utils/tarWriter.js");
 const { gunzipSync } = await import("node:zlib");
@@ -193,6 +193,18 @@ describe("buildNodeBundle", () => {
     expect(names.some((n) => n.startsWith("app/"))).toBe(false);
     expect(names.some((n) => n.startsWith("patroni/"))).toBe(false);
     expect(names.some((n) => n.startsWith("sync/"))).toBe(false);
+  });
+
+  // Business rule 117, re-scan F69/F83: Patroni sends the REST write
+  // credentials on its member-to-member calls, so a new cluster's REST API is
+  // TLS with the node's etcd member certificate, and its calls verify the CA.
+  it("renders the Patroni REST API over TLS with the member certificate", () => {
+    const yml = renderPatroniYml(CONFIG as never, "primary");
+    const restapi = yml.slice(yml.indexOf("restapi:"), yml.indexOf("etcd3:"));
+    expect(restapi).toContain("certfile: /etc/polaris/etcd-ca/polaris-a.crt");
+    expect(restapi).toContain("keyfile: /etc/polaris/etcd-ca/polaris-a.key");
+    expect(restapi).toContain("connect_address: 10.10.1.5:8008");
+    expect(yml).toMatch(/\nctl:\n {2}cacert: \/etc\/polaris\/etcd-ca\/ca\.crt\n/);
   });
 
   it("renders an etcd config naming all three members and mutual TLS", async () => {

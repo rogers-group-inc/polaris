@@ -31,6 +31,7 @@
  * Windows path.
  */
 
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { prisma } from "../db.js";
@@ -52,6 +53,15 @@ import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { truncate } from "../utils/text.js";
 import { winrmRunOne, type WinRmConnection } from "../utils/winrm.js";
 import { withSshClient, sshExec, sftpPut } from "../utils/remoteExec.js";
+import {
+  makeUnixStageDir,
+  unixStagedCommand,
+  removeUnixStageDir,
+  makeWindowsStageDir,
+  windowsStagedSftpPath,
+  removeWindowsStageDir,
+  STAGED_SCRIPT_PRELUDE,
+} from "../utils/remoteStaging.js";
 import { getPublicUrlPort } from "../utils/publicUrl.js";
 import { getServerCertHostnames, getServerCertFingerprint } from "./certInfo.js";
 import { assetSourceKindFromIntegrationType, isPollingMethodCompatible } from "../utils/pollingCompatibility.js";
@@ -1307,6 +1317,31 @@ async function failUpgrade(managedAgentId: string, assetId: string, reason: stri
 
 // ─── SSH helpers ──────────────────────────────────────────────────────
 
+/**
+ * Upload `files` into a staging directory created for this run and run
+ * `script` from it as root (business rule 119 — never fixed names in /tmp).
+ * The directory is removed by the command itself, or here if the run never
+ * got that far.
+ */
+async function runStagedUnix(
+  client: Parameters<typeof sshExec>[0],
+  files: Array<{ name: string; body: Buffer; mode: number }>,
+  script: string,
+  sha256?: string,
+): Promise<Awaited<ReturnType<typeof sshExec>>> {
+  const dir = await makeUnixStageDir(client);
+  let ran = false;
+  try {
+    for (const f of files) await sftpPut(client, `${dir}/${f.name}`, f.body, f.mode);
+    ran = true;
+    return await sshExec(client, unixStagedCommand(dir, script, sha256), 60_000);
+  } finally {
+    if (!ran) await removeUnixStageDir(client, dir);
+  }
+}
+
+const sha256Hex = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+
 interface SshInstallParams {
   host: string;
   cred: Record<string, unknown>;
@@ -1323,17 +1358,18 @@ async function sshInstall(p: SshInstallParams): Promise<void> {
   if (p.testOverrides?.fakeSshFail) throw new AppError(502, p.testOverrides.fakeSshFail);
 
   await withSshClient(p.host, p.cred, async (client) => {
-    // 1. SFTP upload binary + installer script to /tmp.
-    await sftpPut(client, "/tmp/polaris-agent.bin",         p.binaryBytes, 0o755);
-    await sftpPut(client, "/tmp/polaris-agent-install.sh",  installerScript(p.platform, p.scriptId, p.tier ?? "unprivileged"), 0o700);
-    await sftpPut(client, "/tmp/polaris-agent.conf",        Buffer.from(p.agentConfBody, "utf8"), 0o600);
-
+    // 1. SFTP the binary, installer and agent.conf (it holds the enrollment
+    //    token) into this run's private staging directory (rule 119).
     // 2. Run the installer. `sudo` is implicit — the credential is
     //    expected to map to a user that can `sudo -n` (passwordless
     //    sudo) on the target. Operators who want a different escalation
     //    model can roll their own bootstrap. If sudo prompts for a
     //    password the install hangs; the timeout below trips it.
-    const out = await sshExec(client, "sudo -n bash /tmp/polaris-agent-install.sh", 60_000);
+    const out = await runStagedUnix(client, [
+      { name: "agent.bin",  body: p.binaryBytes, mode: 0o755 },
+      { name: "install.sh", body: installerScript(p.platform, p.scriptId, p.tier ?? "unprivileged"), mode: 0o700 },
+      { name: "agent.conf", body: Buffer.from(p.agentConfBody, "utf8"), mode: 0o600 },
+    ], "install.sh", sha256Hex(p.binaryBytes));
     if (out.exitCode !== 0) {
       throw new AppError(502, `Installer exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
     }
@@ -1353,8 +1389,9 @@ async function sshUninstall(p: SshUninstallParams): Promise<void> {
   if (p.testOverrides?.fakeSshFail) throw new AppError(502, p.testOverrides.fakeSshFail);
 
   await withSshClient(p.host, p.cred, async (client) => {
-    await sftpPut(client, "/tmp/polaris-agent-uninstall.sh", uninstallerScript(p.platform, p.scriptId), 0o700);
-    const out = await sshExec(client, "sudo -n bash /tmp/polaris-agent-uninstall.sh", 60_000);
+    const out = await runStagedUnix(client, [
+      { name: "uninstall.sh", body: uninstallerScript(p.platform, p.scriptId), mode: 0o700 },
+    ], "uninstall.sh");
     if (out.exitCode !== 0) {
       throw new AppError(502, `Uninstaller exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
     }
@@ -1373,16 +1410,16 @@ async function sshUninstall(p: SshUninstallParams): Promise<void> {
 // shipping them together would mean the operator has to also re-upload
 // the script every time we patch a service-management bug.
 //
-// All three scripts share the same input contract: nothing on the command
-// line, everything pre-staged at /tmp/polaris-agent.bin and
-// /tmp/polaris-agent.conf (binary + config) — the script just moves them
-// into place and registers the service.
+// All three scripts share the same input contract: the staging directory as
+// $1 and the binary's SHA-256 as $2, with agent.bin and agent.conf pre-staged
+// inside it (business rule 119, src/utils/remoteStaging.ts) — the script
+// checks the binary, moves both into place and registers the service.
 
 // Select the install script for the resolved catalog variant. resolveInstallScriptId
 // re-validates the OS-lock (defense in depth — the row's installScriptId was
 // already validated at deploy time). Add a `case` here for every new variant
 // added to AGENT_INSTALL_SCRIPTS.
-function installerScript(platform: "linux" | "darwin", scriptId?: string | null, tier: AgentPrivilegeTier = "unprivileged"): Buffer {
+export function installerScript(platform: "linux" | "darwin", scriptId?: string | null, tier: AgentPrivilegeTier = "unprivileged"): Buffer {
   const id = resolveInstallScriptId(platform, scriptId);
   switch (id) {
     case "linux-systemd":  return Buffer.from(linuxInstallScript(tier), "utf8");
@@ -1394,7 +1431,7 @@ function installerScript(platform: "linux" | "darwin", scriptId?: string | null,
   }
 }
 
-function uninstallerScript(platform: "linux" | "darwin", scriptId?: string | null): Buffer {
+export function uninstallerScript(platform: "linux" | "darwin", scriptId?: string | null): Buffer {
   // Uninstall must undo the SAME variant that installed the agent, so it keys
   // off the persisted installScriptId too.
   const id = resolveInstallScriptId(platform, scriptId);
@@ -1413,7 +1450,7 @@ export type { AgentPrivilegeTier };
 
 // Polaris Agent installer for Linux (systemd), parameterized by privilege tier.
 // Run by polaris-agent-install.sh as root via sudo -n; reads pre-staged binary
-// + config from /tmp/. Config lives under /var/lib/polaris-agent/ (systemd
+// + config from the run's staging directory. Config lives under /var/lib/polaris-agent/ (systemd
 // StateDirectory) rather than /etc/polaris-agent/ so the agent can rewrite it
 // after /enroll succeeds — under the unprivileged unit ProtectSystem=strict
 // makes /etc read-only, while StateDirectory stays writable. The legacy
@@ -1422,8 +1459,10 @@ function linuxInstallScript(tier: AgentPrivilegeTier): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
 
-BIN_SRC=/tmp/polaris-agent.bin
-CONF_SRC=/tmp/polaris-agent.conf
+${STAGED_SCRIPT_PRELUDE}
+BIN_SRC="\${STAGE_DIR}/agent.bin"
+CONF_SRC="\${STAGE_DIR}/agent.conf"
+verify_sha256 "\${BIN_SRC}" "\${2:?expected agent binary SHA-256}"
 BIN_DST=/usr/local/bin/polaris-agent
 CONF_DIR=/var/lib/polaris-agent
 CONF_DST=\${CONF_DIR}/agent.conf
@@ -1502,8 +1541,10 @@ const DARWIN_INSTALL_SCRIPT = `#!/usr/bin/env bash
 # Polaris Agent installer for macOS (launchd). Run as root via sudo -n.
 set -euo pipefail
 
-BIN_SRC=/tmp/polaris-agent.bin
-CONF_SRC=/tmp/polaris-agent.conf
+${STAGED_SCRIPT_PRELUDE}
+BIN_SRC="\${STAGE_DIR}/agent.bin"
+CONF_SRC="\${STAGE_DIR}/agent.conf"
+verify_sha256 "\${BIN_SRC}" "\${2:?expected agent binary SHA-256}"
 BIN_DST=/usr/local/bin/polaris-agent
 CONF_DIR=/etc/polaris-agent
 CONF_DST=\${CONF_DIR}/agent.conf
@@ -1772,8 +1813,8 @@ async function winrmUninstall(p: WinRmUninstallParams): Promise<void> {
 // installed + enabled on the target Windows host (Windows Server 2019+ /
 // Windows 10 1809+ ship it as an optional feature).
 //
-// Delivery: SFTP the script as a UTF-8 file with a BOM to
-// C:/Windows/Temp/polaris-agent-*.ps1, then invoke
+// Delivery: SFTP the script as a UTF-8 file with a BOM into a private
+// per-run directory (rule 119, runPowerShellOverSsh), then invoke
 // `powershell.exe -ExecutionPolicy Bypass -File <path>`. We don't use
 // `-EncodedCommand` here even though it works for WinRM — the base64
 // payload of the install script overflows the Windows cmd.exe 8191-char
@@ -1866,8 +1907,9 @@ export async function applyRebootPermissionOnHost(p: RebootPermissionTarget): Pr
   if (p.osPlatform === "linux" || p.osPlatform === "darwin") {
     const script = p.osPlatform === "linux" ? linuxRebootPermissionScript(p.enable) : darwinRebootPermissionScript(p.enable);
     await withSshClient(p.host, p.cred, async (client) => {
-      await sftpPut(client, "/tmp/polaris-agent-reboot.sh", Buffer.from(script, "utf8"), 0o700);
-      const out = await sshExec(client, "sudo -n bash /tmp/polaris-agent-reboot.sh; rc=$?; rm -f /tmp/polaris-agent-reboot.sh; exit $rc", 60_000);
+      const out = await runStagedUnix(client, [
+        { name: "reboot.sh", body: Buffer.from(script, "utf8"), mode: 0o700 },
+      ], "reboot.sh");
       if (out.exitCode !== 0) {
         throw new AppError(502, `The reboot-permission script exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
       }
@@ -1902,24 +1944,27 @@ async function runPowerShellOverSsh(
   // .ps1 file is UTF-8 — without it PS5.1 falls back to the legacy ANSI code
   // page and any non-ASCII byte (an em-dash in a comment, a smart quote) is
   // mis-decoded. PowerShell 7 reads UTF-8 by default so the BOM is harmless
-  // there. Forward-slash absolute path works with Windows OpenSSH's
-  // sftp-server; "C:/Windows/Temp" is writable by every admin context and
-  // always exists.
-  const remotePath = `C:/Windows/Temp/${scriptName}`;
+  // there.
+  //
+  // Staged in a directory created for this run under the SSH user's OWN temp
+  // folder (business rule 119, re-scan F64/F67) — not C:\Windows\Temp, where
+  // a standard user can pre-create the file name, keep CREATOR OWNER rights
+  // over it and edit the script (and read the agent.conf embedded in the
+  // install script) before the elevated PowerShell runs it.
   const body = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(ps, "utf8")]);
-  const cmd =
-    `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${remotePath}"`;
   await withSshClient(host, cred, async (client) => {
-    await sftpPut(client, remotePath, body, 0o600);
-    const out = await sshExec(client, cmd, timeoutMs);
-    if (out.exitCode !== 0) {
-      throw new AppError(502, `PowerShell exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
-    }
-    // Best-effort cleanup. Not fatal if it fails (Windows\Temp is fair game
-    // for orphans, and an admin re-run will overwrite the file anyway).
+    const dir = await makeWindowsStageDir(client);
     try {
-      await sshExec(client, `cmd.exe /c del /f /q "${remotePath.replace(/\//g, "\\")}"`, 10_000);
-    } catch { /* ignore */ }
+      await sftpPut(client, windowsStagedSftpPath(dir, scriptName), body, 0o600);
+      const cmd =
+        `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${dir}\\${scriptName}"`;
+      const out = await sshExec(client, cmd, timeoutMs);
+      if (out.exitCode !== 0) {
+        throw new AppError(502, `PowerShell exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
+      }
+    } finally {
+      await removeWindowsStageDir(client, dir);
+    }
   });
 }
 
@@ -2193,9 +2238,10 @@ async function sshUpgrade(p: SshUpgradeParams): Promise<void> {
   if (p.testOverrides?.fakeSshFail) throw new AppError(502, p.testOverrides.fakeSshFail);
 
   await withSshClient(p.host, p.cred, async (client) => {
-    await sftpPut(client, "/tmp/polaris-agent.new",         p.binaryBytes, 0o755);
-    await sftpPut(client, "/tmp/polaris-agent-upgrade.sh",  upgradeScript(p.platform), 0o700);
-    const out = await sshExec(client, "sudo -n bash /tmp/polaris-agent-upgrade.sh", 60_000);
+    const out = await runStagedUnix(client, [
+      { name: "agent.new",  body: p.binaryBytes, mode: 0o755 },
+      { name: "upgrade.sh", body: upgradeScript(p.platform), mode: 0o700 },
+    ], "upgrade.sh", sha256Hex(p.binaryBytes));
     if (out.exitCode !== 0) {
       throw new AppError(502, `Upgrade exited ${out.exitCode}: ${truncate(out.stderr || out.stdout, 400)}`);
     }
@@ -2230,7 +2276,7 @@ async function winrmUpgrade(p: WinRmUpgradeParams): Promise<void> {
   }
 }
 
-function upgradeScript(platform: "linux" | "darwin"): Buffer {
+export function upgradeScript(platform: "linux" | "darwin"): Buffer {
   return Buffer.from(platform === "linux" ? LINUX_UPGRADE_SCRIPT : DARWIN_UPGRADE_SCRIPT, "utf8");
 }
 
@@ -2241,7 +2287,9 @@ const LINUX_UPGRADE_SCRIPT = `#!/usr/bin/env bash
 # with the same identity.
 set -euo pipefail
 
-BIN_NEW=/tmp/polaris-agent.new
+${STAGED_SCRIPT_PRELUDE}
+BIN_NEW="\${STAGE_DIR}/agent.new"
+verify_sha256 "\${BIN_NEW}" "\${2:?expected agent binary SHA-256}"
 BIN_DST=/usr/local/bin/polaris-agent
 
 if [ ! -f "\${BIN_NEW}" ]; then
@@ -2260,7 +2308,9 @@ const DARWIN_UPGRADE_SCRIPT = `#!/usr/bin/env bash
 # Polaris Agent upgrader (macOS/launchd).
 set -euo pipefail
 
-BIN_NEW=/tmp/polaris-agent.new
+${STAGED_SCRIPT_PRELUDE}
+BIN_NEW="\${STAGE_DIR}/agent.new"
+verify_sha256 "\${BIN_NEW}" "\${2:?expected agent binary SHA-256}"
 BIN_DST=/usr/local/bin/polaris-agent
 PLIST=/Library/LaunchDaemons/com.polaris.agent.plist
 

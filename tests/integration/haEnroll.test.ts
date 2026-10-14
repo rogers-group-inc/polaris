@@ -265,3 +265,55 @@ d("CSRF posture", () => {
     expect(res.status).toBe(403);
   });
 });
+
+// Business rule 117, re-scan F86: the poll handle alone claims a bundle that
+// holds .env and every private key, so it is stored hashed, the claim must come
+// from the registering address, and neither approval nor claim outlives its
+// window.
+d("the poll handle is a credential (F86)", () => {
+  it("stores only the SHA-256 of the handle, never the handle", async () => {
+    const { token, id } = await seedToken();
+    const reg = await request(app).post(ENROLL).send({ token });
+    const row = await prisma.haEnrollment.findUnique({ where: { id } });
+    expect(row!.requestIdHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(row!.requestIdHash).not.toBe(reg.body.requestId);
+    expect(JSON.stringify(row)).not.toContain(reg.body.requestId);
+  });
+
+  it("refuses a claim from an address other than the registering one, without spending the approval", async () => {
+    const { token, id } = await seedToken();
+    const reg = await request(app).post(ENROLL).send({ token });
+    await prisma.haEnrollment.update({
+      where: { id },
+      data: { status: "approved", approvedAt: new Date(), registeredFromIp: "203.0.113.50" },
+    });
+    const res = await request(app).get(`${ENROLL}/${reg.body.requestId}?download=1`);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/address that registered/);
+    expect((await prisma.haEnrollment.findUnique({ where: { id } }))!.status).toBe("approved");
+  });
+
+  it("an approval nobody collected within the claim window expires and cannot be claimed", async () => {
+    const { token, id } = await seedToken();
+    const reg = await request(app).post(ENROLL).send({ token });
+    await prisma.haEnrollment.update({
+      where: { id },
+      data: { status: "approved", approvedAt: new Date(Date.now() - 11 * 60 * 1000) },
+    });
+    const res = await request(app).get(`${ENROLL}/${reg.body.requestId}?download=1`);
+    expect(res.status).toBe(403);
+    expect((await prisma.haEnrollment.findUnique({ where: { id } }))!.status).toBe("expired");
+    const poll = await request(app).get(`${ENROLL}/${reg.body.requestId}`);
+    expect(poll.body.status).toBe("expired");
+  });
+
+  it("an operator cannot approve a registration past the approval window", async () => {
+    const { token, id } = await seedToken();
+    await request(app).post(ENROLL).send({ token });
+    await prisma.haEnrollment.update({ where: { id }, data: { registeredAt: new Date(Date.now() - 31 * 60 * 1000) } });
+    const { agent, csrf } = await authedAgent(app);
+    const res = await agent.post(`/api/v1/ha/enrollments/${id}/approve`).set("X-CSRF-Token", csrf);
+    expect(res.status).toBe(409);
+    expect((await prisma.haEnrollment.findUnique({ where: { id } }))!.status).toBe("expired");
+  });
+});

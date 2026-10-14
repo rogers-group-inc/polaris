@@ -183,6 +183,11 @@ router.post("/login", async (req, res, next) => {
     // lockout counter applies to LDAP attempts too (checked above).
     const useLdap = (user?.authProvider === "ldap") || (!user && (await isLdapEnabled()));
     if (useLdap) {
+      // The local path below always pays one argon2 verify, so a name taken to
+      // LDAP pays it too (re-scan F77): otherwise "slow" meant "a local
+      // Polaris account" and "fast" meant "not one", enumerable on any
+      // LDAP-enabled install. The result is discarded.
+      await verifyPassword(password, null);
       try {
         const result = await authenticateLdapUser(username, password);
         clearLockout(username);

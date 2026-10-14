@@ -32,6 +32,7 @@ import net from "node:net";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
+import { Agent as UndiciAgent, fetch as undiciFetch } from "undici";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
@@ -470,7 +471,77 @@ export interface HaClusterStatus {
   automaticFailover: boolean;
 }
 
-const PATRONI_REST = process.env.POLARIS_PATRONI_REST || "http://127.0.0.1:8008";
+/**
+ * The local Patroni REST API. Unset (the norm) means loopback 8008 in EITHER
+ * scheme (business rule 117, re-scan F69/F83): clusters built since
+ * 2026-10-14 serve it over TLS, earlier ones keep plain HTTP until the
+ * operator opts in (docs/UPGRADING.md). Loopback reads carry no credential —
+ * /cluster and /primary are the open GET endpoints — so HTTPS is tried with
+ * certificate checks off (there is no on-path attacker on 127.0.0.1) and HTTP
+ * is the fallback. An operator-set POLARIS_PATRONI_REST is used exactly as
+ * given.
+ */
+const PATRONI_REST_OVERRIDE = process.env.POLARIS_PATRONI_REST || "";
+const LOOPBACK_HTTPS = "https://127.0.0.1:8008";
+const LOOPBACK_HTTP = "http://127.0.0.1:8008";
+
+// Userland undici on both sides — a dispatcher is only valid to the undici
+// copy that made it (see utils/tlsDispatcher.ts).
+let loopbackTls: UndiciAgent | null = null;
+function loopbackTlsAgent(): UndiciAgent {
+  if (!loopbackTls) loopbackTls = new UndiciAgent({ connect: { rejectUnauthorized: false } });
+  return loopbackTls;
+}
+
+/** Which scheme the local Patroni last answered on; null until it has answered. */
+let lastPatroniScheme: "https" | "http" | null = null;
+
+/** GET a Patroni REST path. Resolves to the response status and body text; throws when nothing answers. */
+async function patroniGet(path: string, timeoutMs: number): Promise<{ status: number; text: string }> {
+  const attempt = async (base: string, tls: boolean) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = tls
+        ? await undiciFetch(`${base}${path}`, { signal: controller.signal, dispatcher: loopbackTlsAgent() })
+        : await undiciFetch(`${base}${path}`, { signal: controller.signal });
+      return { status: res.status, text: await res.text() };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  if (PATRONI_REST_OVERRIDE) return attempt(PATRONI_REST_OVERRIDE, false);
+  try {
+    const r = await attempt(LOOPBACK_HTTPS, true);
+    lastPatroniScheme = "https";
+    return r;
+  } catch (err: any) {
+    if (err?.name === "AbortError") throw err;
+    const r = await attempt(LOOPBACK_HTTP, false);
+    lastPatroniScheme = "http";
+    return r;
+  }
+}
+
+/**
+ * True when the local Patroni REST API last answered over plain HTTP — a
+ * cluster built before rule 117's TLS amendment. Null when it has not been
+ * read yet or an override is set (the capacity card stays quiet then).
+ */
+export function patroniRestIsCleartext(): boolean | null {
+  if (PATRONI_REST_OVERRIDE || lastPatroniScheme === null) return null;
+  return lastPatroniScheme === "http";
+}
+
+/** Probe the local Patroni once (cached for 10 min) so the capacity card can say whether its REST API is still cleartext. */
+let lastSchemeProbeAt = 0;
+export async function refreshPatroniScheme(): Promise<boolean | null> {
+  if (Date.now() - lastSchemeProbeAt > 10 * 60 * 1000) {
+    lastSchemeProbeAt = Date.now();
+    await patroniGet("/cluster", 2000).catch(() => { /* not an HA node, or Patroni down */ });
+  }
+  return patroniRestIsCleartext();
+}
 
 /**
  * Read cluster state from the local Patroni over loopback.
@@ -483,16 +554,9 @@ const PATRONI_REST = process.env.POLARIS_PATRONI_REST || "http://127.0.0.1:8008"
 export async function getClusterStatus(): Promise<HaClusterStatus> {
   const empty: HaClusterStatus = { available: false, members: [], localRole: "unknown", automaticFailover: false };
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
-    let res: Response;
-    try {
-      res = await fetch(`${PATRONI_REST}/cluster`, { signal: controller.signal });
-    } finally {
-      clearTimeout(timer);
-    }
-    if (!res.ok) return { ...empty, reason: `Patroni answered ${res.status}` };
-    const body = (await res.json()) as { members?: unknown[] };
+    const res = await patroniGet("/cluster", 2500);
+    if (res.status < 200 || res.status >= 300) return { ...empty, reason: `Patroni answered ${res.status}` };
+    const body = JSON.parse(res.text) as { members?: unknown[] };
     const members: HaMember[] = (body.members ?? []).map((m) => {
       const o = (m ?? {}) as Record<string, any>;
       return {
@@ -523,16 +587,10 @@ export async function getClusterStatus(): Promise<HaClusterStatus> {
 
 async function readLocalRole(): Promise<"primary" | "replica" | "unknown"> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
-    try {
-      const res = await fetch(`${PATRONI_REST}/primary`, { signal: controller.signal });
-      if (res.status === 200) return "primary";
-      if (res.status === 503) return "replica";
-      return "unknown";
-    } finally {
-      clearTimeout(timer);
-    }
+    const res = await patroniGet("/primary", 2000);
+    if (res.status === 200) return "primary";
+    if (res.status === 503) return "replica";
+    return "unknown";
   } catch {
     return "unknown";
   }
