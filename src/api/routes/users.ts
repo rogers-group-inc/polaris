@@ -30,6 +30,7 @@ import { revokeUserSessions } from "../../services/sessionRevocationService.js";
 import { normalizeTags } from "../../utils/tagNormalize.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import { logEvent } from "./events.js";
+import { deleteUserAndTombstoneOwnership, assertUsernameNotReserved } from "../../services/userOwnershipService.js";
 
 const router = Router();
 
@@ -192,6 +193,7 @@ async function endSessionsOf(req: Request, targetUserId: string): Promise<void> 
 router.post("/", requirePermission("users", "write"), async (req, res, next) => {
   try {
     const { username, password, roleId, regionTags, otherTags } = CreateUserSchema.parse(req.body);
+    assertUsernameNotReserved(username);
 
     const [existing, role] = await Promise.all([
       prisma.user.findUnique({ where: { username } }),
@@ -474,7 +476,9 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
     // is gone.
     await prisma.savedDashboard.deleteMany({ where: { ownerId: id, visibility: "private" } });
 
-    await prisma.user.delete({ where: { id } });
+    // Rule 48(e), re-scan F85: their rows' ownership goes with the account.
+    const tomb = await deleteUserAndTombstoneOwnership(user);
+    const owned = tomb.subnets + tomb.reservations + tomb.credentials + tomb.contacts;
     await endSessionsOf(req, id);
     logEvent({
       action: "user.deleted",
@@ -482,7 +486,9 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
       resourceId: user.id,
       resourceName: user.username,
       actor: req.session?.username,
-      message: `User "${user.username}" deleted (was role "${user.role.name}")`,
+      message: `User "${user.username}" deleted (was role "${user.role.name}")` +
+        (owned ? `; ${owned} row(s) they owned are now owned by no account (Full Read-Write holders can still change them)` : ""),
+      ...(owned ? { details: { ownedRowsTombstoned: tomb } } : {}),
     });
     res.status(204).send();
   } catch (err) {

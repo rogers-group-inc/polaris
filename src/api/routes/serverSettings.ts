@@ -40,7 +40,7 @@ import { getProxyConfig } from "../../services/proxyConfigService.js";
 import { applyProxyConfig, getDriftStatus } from "../../services/nginxApplyService.js";
 import { describeIpScope, type IpScope } from "../../utils/ipScope.js";
 import { normalizeAllowlistCidr } from "../../utils/cidr.js";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, hasPermission } from "../middleware/permissions.js";
 import { requestActor } from "../middleware/auth.js";
 import { logEvent } from "./events.js";
 import { buildChanges } from "../../services/eventLogService.js";
@@ -877,6 +877,13 @@ router.post("/tags/preview-criteria", async (req, res, next) => {
       { condition: req.body.assetCondition, criteria: req.body.criteria },
       tagId,
     );
+    // The sample names devices (hostname, IP, type). This route is reachable
+    // with Server Settings read alone, so a caller who may not list assets
+    // gets the counts only — enough to build a filter (re-scan F78).
+    if (!hasPermission(req, "assets", "read")) {
+      res.json({ ...preview, sample: [], sampleHidden: true });
+      return;
+    }
     res.json(preview);
   } catch (err) {
     next(err);

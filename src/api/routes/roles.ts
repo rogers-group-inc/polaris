@@ -18,6 +18,9 @@ import {
   ACCESS_LEVELS,
   requirePermission,
   assertGrantWithinCaller,
+  callerIsAdminEquivalent,
+  isAdminEquivalentPermissions,
+  normalizePermissions,
 } from "../middleware/permissions.js";
 
 const router = Router();
@@ -102,6 +105,13 @@ router.put("/:id", requirePermission("roles", "write"), async (req, res, next) =
       // is not being granted by this caller (rule 114(g)).
       const current = await roleService.getRole(req.params.id as string);
       assertGrantWithinCaller(req, input.permissions, "this permission set", (current as { permissions?: unknown }).permissions);
+      // Rule 48 the other way (re-scan F76): taking admin-equivalence away.
+      await roleService.assertRoleDemotionAllowed(
+        req.params.id as string,
+        (current as { permissions?: unknown }).permissions,
+        isAdminEquivalentPermissions(normalizePermissions(input.permissions)),
+        callerIsAdminEquivalent(req),
+      );
     }
     const updated = await roleService.updateRole(
       req.params.id as string,

@@ -391,6 +391,41 @@ export async function deleteRole(id: string, actor?: string): Promise<void> {
  * userService's lastAdminEquivalent invariant to refuse the action that
  * would leave Polaris with zero admins.
  */
+/**
+ * Business rule 48, re-scan F76: refuse an edit that takes admin-equivalence
+ * away from a role unless the caller is admin-equivalent itself (demoting
+ * every holder at once is the same act as demoting each), and refuse it
+ * outright when it would leave no admin-equivalent user anywhere. `nextIsAdmin`
+ * is what the edit would leave the role as. Throws 403 / 409.
+ */
+export async function assertRoleDemotionAllowed(
+  roleId: string,
+  currentPermissions: unknown,
+  nextIsAdmin: boolean,
+  callerIsAdmin: boolean,
+): Promise<void> {
+  const cur = normalizePermissions(currentPermissions);
+  const wasAdmin = cur.users === "fullwrite" && cur.roles === "fullwrite";
+  if (!wasAdmin || nextIsAdmin) return;
+  if (!callerIsAdmin) {
+    throw new AppError(
+      403,
+      "Forbidden — this edit takes admin-equivalent control (Full RW on both users and roles) away from every account on this role, which needs an admin-equivalent caller. Ask an administrator to make this change.",
+    );
+  }
+  const roles = await prisma.role.findMany({ select: { id: true, permissions: true } });
+  const otherAdminRoleIds = roles
+    .filter((r) => r.id !== roleId)
+    .filter((r) => { const p = normalizePermissions(r.permissions); return p.users === "fullwrite" && p.roles === "fullwrite"; })
+    .map((r) => r.id);
+  const remaining = otherAdminRoleIds.length
+    ? await prisma.user.count({ where: { roleId: { in: otherAdminRoleIds } } })
+    : 0;
+  if (remaining === 0) {
+    throw new AppError(409, "This edit would leave no account with admin-equivalent control. Give another account an admin-equivalent role first.");
+  }
+}
+
 export async function countAdminEquivalentUsers(excludeUserId?: string): Promise<number> {
   // The matrix lookup is in JSON so we filter in JS — admin-equivalent
   // roles are typically 1-2 rows out of a dozen total. Cheap.

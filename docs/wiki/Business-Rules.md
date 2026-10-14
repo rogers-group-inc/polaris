@@ -419,7 +419,11 @@ minted by a caller who lacks it, at any of the four sites. The same bar holds on
 the other side of the act: resetting an administrator's password, removing
 their two-factor methods or passkeys, deleting them or changing their role, and
 creating an API token bound to an admin-equivalent role, all need the caller to
-be admin-equivalent too. Accounts and roles below that tier stay within reach of
+be admin-equivalent too — and so does taking admin-equivalence away from a
+role, which may never leave the install without an administrator. Deleting an
+account ends its ownership: the networks, reservations, credentials and
+contacts it created become owned by no account (shown as `deleted:<name>`), so
+a later account with the same name inherits nothing. Accounts and roles below that tier stay within reach of
 **Users** Read-Write and **API Tokens** Read-Write. Not four-eyes; the mirror of
 the last-admin guard. A request with no role snapshot **fails closed**.
 
@@ -2192,10 +2196,25 @@ granter.**
   reservations.
 - **A scoped API token quarantining an asset** keeps other sites' quarantine
   records.
-- **Roles flagged for review** — custom roles holding Read-Write on a
+- **Roles flagged for review** — custom roles, and the editable built-in roles
+  where they differ from what they ship with, holding Read-Write on a
   permission that became stronger in the September 2026 update — are listed
   until an administrator saves them or marks them reviewed. Nothing is taken
   away automatically.
+- **An IdP group mapping is a grant.** Mapping a group to a role, changing the
+  group it applies to, or switching it back on needs you to hold everything
+  that role grants. Removing a mapping to a role above your own needs that
+  rank too.
+- **Regenerating the AI Assistant's token** needs the rights creating it does.
+- **Alert groups that run a script** need Automation Scripts Read-Write to
+  change their members or scope, not only their actions.
+- **The tag filter preview** shows how many devices match to anyone who can
+  open it, and which devices only to people who can list assets.
+- **Registering an integration's address** may overwrite an existing
+  reservation only with Full Read-Write on Reservations, or Read-Write when it
+  is your own.
+- **Quarantine is set and released only by Quarantine.** Creating or importing
+  an asset with the quarantined status is refused.
 
 ### Rule 115
 

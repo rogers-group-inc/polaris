@@ -253,6 +253,8 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 
 - **Rule 111(e) (2026-10-13, re-scan F59).** `LLM_REPOINT_KEYS` / `llmRepointKeys(stored, next)` — provider, host, port, basePath, useHttps, allowLoopback, azureApiShape, systemPromptExtra (not the model). `PUT /integrations/:id` on an llm row runs `assertCanProvision(req)` when any changed, and logs the warning `integration.updated` naming them. A key an old row never stored compares only against a known default, so its first plain save is not a move. A new llm config key that decides where traffic goes, or what every assistant is told, belongs in `LLM_REPOINT_KEYS`.
 
+- **`regenerateLlmToken(…, req)` (rule 114(k), re-scan F9).** With the request it runs `assertCanProvision` and `assertGrantWithinCaller` on the bot role as stored, before the old token is deleted. The route always passes `req`.
+
 **When changing this:**
 - A new function key: decide whether the bot should read it, and add it to `BOT_EXCLUDED_KEYS` if it exposes secrets, identities or administration.
 - Existing bot roles are NOT updated when a key is added later — they get `none` from `normalizePermissions`; an operator widens them by hand under Users → Roles.

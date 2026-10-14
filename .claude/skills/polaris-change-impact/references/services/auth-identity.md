@@ -84,6 +84,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A mapping pointing at an admin-equivalent role emits a warning Event (the audit trail for IdP→admin paths); a `roleId=null` tag-only mapping contributes tags without a role.
 - `GROUP_MAPPING_PROVIDERS` (`oidc`/`ldap`/`saml`/`entra-proxy`) is the single source of truth — `groupMappings.ts`'s `ProviderSchema` and `regionScopeService`'s lookup both key off `User.authProvider`, so a login provider's stored `authProvider` string MUST equal its `GROUP_MAPPING_PROVIDERS` entry or group tags silently never resolve.
 
+- **A mapping is a grant (rule 114(j), 2026-10-13).** The route runs `assertGrantWithinCaller` on the mapping's role on create and on any update that changes the role, the group or switches it on, and `assertNoPrivilegeEscalation` on the previous role when an update or delete withdraws it. `roleGrantFor(roleId)` and `mappingGrantState(id)` are the reads it uses. The service itself still only logs; do not add a path that writes a mapping without the route's checks.
+
 **When changing this:**
 - Adding to `GROUP_MAPPING_PROVIDERS` is code-only (no `GroupMapping` schema migration — `provider` is a free-form string); ensure the new provider's login path stores a matching `authProvider`. `normalizeGroupKey` changes risk breaking already-stored keys.
 
@@ -448,11 +450,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Delete refuses with 409 when any user holds the role; `regionTags`/`otherTags` are normalized (trim/dedupe/cap); badge color is `#rrggbb` or null.
 - Every write bumps the role-version cache via `bumpRoleVersion` (live sessions refresh on next request) and emits a per-field diff Event.
 
+- **`assertRoleDemotionAllowed(roleId, currentPermissions, nextIsAdmin, callerIsAdmin)` (rule 48(d), 2026-10-13).** Taking admin-equivalence away from a role needs an admin-equivalent caller and is refused (409) when no other admin-equivalent account would remain. Called by `PUT /roles/:id` after `assertGrantWithinCaller`.
+
 **When changing this:**
 - `countAdminEquivalentUsers` filters in JS (role counts are tiny) and backs the last-admin invariant alongside `userService`.
 
 ---
 
+
+## services/userOwnershipService.ts
+
+**Purpose:** business rule 48(e) — row ownership dies with the account (re-scan F85).
+
+**Public API:** `ownershipTombstone(username, userId)` → `deleted:<username>#<id8>` (pure); `assertUsernameNotReserved(username)` — 400 for a name starting `deleted:`; `deleteUserAndTombstoneOwnership(user)` — in ONE transaction rewrites `createdBy` from the username to the tombstone on Subnet, Reservation, Credential and Contact, then deletes the user; returns the per-table counts.
+
+**Writes:** Subnet / Reservation / Credential / Contact `createdBy`, User (delete). **Callers:** `DELETE /users/:id` (the counts go on the `user.deleted` Event); `POST /users` calls `assertUsernameNotReserved`.
+
+**When changing this:**
+- A new table whose rows `assertOwnership` guards by `createdBy` MUST join the transaction here, or a re-used username inherits its rows.
+- A new way to create or rename a local account must call `assertUsernameNotReserved`. SSO / LDAP provisioning cannot produce `:` (USERNAME_SAFE_RE).
 ## services/totpService.ts
 
 **What it owns:** RFC 6238 TOTP secret generation, enrollment QR codes, time-windowed code verification (±30s), and argon2id-hashed backup code generation and consumption.

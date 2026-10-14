@@ -4127,9 +4127,28 @@ async function writeTimeIpConflictFor(
   }
 }
 
+/**
+ * Quarantine status is owned by the quarantine endpoints (assetsQuarantine):
+ * setting it anywhere else skips the FortiGate push, and discovery's
+ * auto-quarantine pass then pushes a REAL quarantine for any sighted asset
+ * whose status says "quarantined". `PUT /assets/:id` has always refused it;
+ * create and the PDF import did not (re-scan F61). `current` is null for a
+ * create. Throws 400.
+ */
+function assertQuarantineStatusUntouched(next: unknown, current: string | null): void {
+  if (next === undefined || next === null || next === "") return;
+  if (next === "quarantined" && current !== "quarantined") {
+    throw new AppError(400, "Quarantine an asset with POST /assets/:id/quarantine (Quarantine permission), not by setting its status");
+  }
+  if (next !== "quarantined" && current === "quarantined") {
+    throw new AppError(400, "Release the quarantine with DELETE /assets/:id/quarantine before changing this asset's status");
+  }
+}
+
 router.post("/", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const input = CreateAssetSchema.parse(req.body);
+    assertQuarantineStatusUntouched(input.status, null);
     const coordErr = manualCoordPatchError(input.latitude, input.longitude);
     if (coordErr) throw new AppError(400, coordErr);
     // Nothing to round-trip on a create, so every region tag in the body is an
@@ -5235,6 +5254,7 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
       if (existing) {
         // An invoice row that matches a managed firewall's serial may not move its address (rule 111).
         assertIpChangeMayRetargetIntegrationToken(req, existing, updateData.ipAddress as string | undefined);
+        assertQuarantineStatusUntouched(updateData.status, existing.status);
         preview.push({ action: "update", serialNumber: serial, hostname: row.hostname || null, existingHostname: existing.hostname, fields });
         if (!dryRun) {
           const importUpdateData: Record<string, unknown> = { ...updateData };
@@ -5257,6 +5277,7 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
           if (firmwareEvent) firmwareEvents.push(firmwareEvent);
         }
       } else {
+        assertQuarantineStatusUntouched(updateData.status, null);
         preview.push({ action: "create", serialNumber: serial, hostname: row.hostname || null, fields });
         if (!dryRun) {
           await prisma.asset.create({ data: { assetType: "other", status: "storage", statusChangedAt: new Date(), statusChangedBy: requestActor(req) ?? "manual", ...updateData } as any });
