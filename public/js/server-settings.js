@@ -1987,11 +1987,7 @@ function renderPlatformLifecycleCard(lifecycle) {
 // row says what the alerting side last recorded and any change it is waiting
 // out — so an alert beside a card that reads Healthy has an explanation on the
 // same screen. The hold itself is set on the event trigger step of a capacity
-// automation (Automations → the wizard), so the row only names it.
-function _capacityHoldLabel(min) {
-  if (min >= 60 && min % 60 === 0) return (min / 60) + (min === 60 ? " hour" : " hours");
-  return min + " minutes";
-}
+// automation (Automations → the wizard); the card does not restate it.
 
 function renderCapacityAlertHoldHtml(t) {
   if (!t) return "";
@@ -2009,13 +2005,9 @@ function renderCapacityAlertHoldHtml(t) {
       '</strong> at ' + escapeHtml(formatLocalTime(t.recorded.recordedAt)) + '.';
   }
 
+  if (!status) return "";
   return '<div class="capacity-alert-hold" style="margin:0.75rem 0;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
-    '<p class="hint" id="capacity-alert-hold-rule" style="margin:0">Capacity alerts fire ' +
-      (t.holdMinutes === 0 ? 'on the <strong>first reading</strong>'
-        : 'after a change holds for <strong>' + escapeHtml(_capacityHoldLabel(t.holdMinutes)) + '</strong>') +
-      '. Change it on the trigger step of a capacity automation in ' +
-      '<a href="/automations.html">Automations</a>. This card shows the live reading, so it can differ from what has been recorded.</p>' +
-    (status ? '<p class="hint" id="capacity-alert-hold-status" style="margin:0.35rem 0 0">' + status + '</p>' : '') +
+    '<p class="hint" id="capacity-alert-hold-status" style="margin:0">' + status + '</p>' +
   '</div>';
 }
 
