@@ -8713,7 +8713,11 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
 
   var tableHtml = tokens.length
     ? '<div class="table-wrapper"><table class="data-table"><thead><tr>' +
-        '<th>Name</th><th>Prefix</th><th>Role</th><th>Integrations</th><th>Trusted Hosts</th><th>Created By</th><th>Last Used</th><th>Expires</th><th>Status</th><th>Actions</th>' +
+        // Integrations is capped (its status notes wrap inside it, so it
+        // stops claiming the slack); Created By and Expires get a floor and
+        // never wrap, so a name or date stays on one line.
+        '<th>Name</th><th>Prefix</th><th>Role</th><th style="width:180px">Integrations</th><th>Trusted Hosts</th>' +
+        '<th style="min-width:150px">Created By</th><th>Last Used</th><th style="min-width:150px">Expires</th><th>Status</th><th>Actions</th>' +
       '</tr></thead><tbody>' +
       tokens.map(function (t) {
         var statusBadge = t.revokedAt
@@ -8757,9 +8761,9 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
           '<td>' + roleHtml + '</td>' +
           '<td style="font-size:0.85rem">' + intgHtml + '</td>' +
           '<td style="font-size:0.82rem">' + hostsHtml + '</td>' +
-          '<td>' + escapeHtml(t.createdBy || "—") + '</td>' +
+          '<td style="white-space:nowrap">' + escapeHtml(t.createdBy || "—") + '</td>' +
           '<td>' + (t.lastUsedAt ? formatDate(t.lastUsedAt) + (t.lastUsedIp ? ' <span class="mono" style="font-size:0.78rem;color:var(--color-text-secondary)">(' + escapeHtml(t.lastUsedIp) + ')</span>' : '') : "—") + '</td>' +
-          '<td>' + (t.expiresAt ? formatDate(t.expiresAt) : "Never") + '</td>' +
+          '<td style="white-space:nowrap">' + (t.expiresAt ? formatDate(t.expiresAt) : "Never") + '</td>' +
           '<td>' + statusBadge + '</td>' +
           '<td class="actions">' + actions + '</td>' +
         '</tr>';
