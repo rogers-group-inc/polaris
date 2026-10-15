@@ -288,7 +288,7 @@ unselected page tab).
   outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead. Since 2026-10-15 the
   page title, the global search field and the account badge (username, caret, avatar, role pill) carry the
   RAIL's lift, so the header sits at the same height as the sidebar and the Server Settings folder card:
-  `--shadow-lift` (the sidebar's cast, halved, as a ring; spread stands in for the rail's sideways offset) on
+  `--shadow-lift` (the sidebar's cast, halved in strength and blur to 12px / 2px, as a ring; spread stands in for the rail's sideways offset) on
   boxes and `--shadow-lift-text` on text. These are theme-independent like the rail's rgba, and declared on
   `:root`. The caret takes the same pair as `drop-shadow()`s. The other header buttons keep `--shadow-control`.
   This applies on every `.page-header`, frozen or not. `--shadow-text` is the general token for loose text and glyphs on the page ground

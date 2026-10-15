@@ -90,14 +90,14 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
-  /* The rail's lift: the sidebar's cast (half its original strength since
-     2026-10-15), dark in every theme, shared by the surfaces that sit at the
+  /* The rail's lift: the sidebar's cast (half its original strength and
+     half its blur since 2026-10-15), dark in every theme, shared by the surfaces that sit at the
      rail's height — the folder card and its tabs, the page title, the global
      search and the account badge. --shadow-lift rings a box (spread stands in
      for the rail's sideways offset, so a card casts evenly all round);
      --shadow-lift-text is the same pair for text, which takes no spread. */
-  --shadow-lift: 0 0 24px 8px rgba(0,0,0,.11), 0 0 4px 1px rgba(0,0,0,.07);
-  --shadow-lift-text: 0 0 4px rgba(0,0,0,.07), 0 0 24px rgba(0,0,0,.11);
+  --shadow-lift: 0 0 12px 8px rgba(0,0,0,.11), 0 0 2px 1px rgba(0,0,0,.07);
+  --shadow-lift-text: 0 0 2px rgba(0,0,0,.07), 0 0 12px rgba(0,0,0,.11);
   /* Nothing in the app paints --shadow-sm any more: it was the cards' shadow,
      and a 4px blur under a box hundreds of pixels wide is invisible on the
      daylight pair, which is what --shadow-card below replaced. Kept because the
@@ -1115,10 +1115,11 @@ code {
      dark in every theme) as the slide-over's; it lands above the content
      without a z-index change because .sidebar is already z-index 100, and the
      element's own overflow-y does not clip its own shadow. */
-  /* Halved 2026-10-15 (was .22 / .14); --shadow-lift is the same pair as a
-     ring, for the surfaces that share the rail's height. */
-  box-shadow: 8px 0 24px rgba(0,0,0,.11), 1px 0 4px rgba(0,0,0,.07),
-              -8px 0 24px rgba(0,0,0,.11), -1px 0 4px rgba(0,0,0,.07);
+  /* Halved 2026-10-15 in both strength and blur (was 24px / 4px at .22 /
+     .14); --shadow-lift is the same pair as a ring, for the surfaces that
+     share the rail's height. */
+  box-shadow: 8px 0 12px rgba(0,0,0,.11), 1px 0 2px rgba(0,0,0,.07),
+              -8px 0 12px rgba(0,0,0,.11), -1px 0 2px rgba(0,0,0,.07);
   padding: 1.25rem 0;
   position: sticky;
   top: 0;
@@ -1828,7 +1829,7 @@ code {
 .user-badge-name { text-shadow: var(--shadow-lift-text); }
 .user-badge-avatar { box-shadow: var(--shadow-lift); }
 .user-badge .badge { box-shadow: var(--shadow-lift); }
-.user-badge-caret { filter: drop-shadow(0 0 4px rgba(0,0,0,.07)) drop-shadow(0 0 24px rgba(0,0,0,.11)); }
+.user-badge-caret { filter: drop-shadow(0 0 2px rgba(0,0,0,.07)) drop-shadow(0 0 12px rgba(0,0,0,.11)); }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
    content below is the wrapper's margin. The header draws no rule of its own:
    the tab strip's bottom border is the bar's one line. */
