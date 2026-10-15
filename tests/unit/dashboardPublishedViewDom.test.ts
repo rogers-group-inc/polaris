@@ -209,8 +209,11 @@ describe("PolarisDashboard seam — viewing a published dashboard", () => {
   it("renders it instead of the local layout, with every edit affordance gone", async () => {
     const b = await boot({ wallboard: true });
     expect(b.seam().isWallboard()).toBe(true);
-    // Baseline: the wallboard's own layout is editable.
+    // Baseline: the wallboard's own layout is editable. Create New Dashboard
+    // is an edit-mode verb, so it appears only once Customize Page is clicked.
     expect(hidden(b.doc, "dashboard-customize")).toBe(false);
+    expect(hidden(b.doc, "dashboard-create")).toBe(true);
+    (b.doc.getElementById("dashboard-customize") as unknown as { click: () => void }).click();
     expect(hidden(b.doc, "dashboard-create")).toBe(false);
 
     expect(b.seam().viewPublished(PUBLISHED)).toBe(true);

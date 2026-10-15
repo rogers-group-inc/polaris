@@ -26,7 +26,7 @@
  *     the total: the pie came up a wedge short and every percentage read low.
  */
 
-import { describe, it, expect, beforeAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -279,61 +279,88 @@ describe("what the asset-type filter puts on the wire", () => {
   });
 });
 
-describe("the gear's asset-type grid", () => {
+describe("the gear's Asset types field + picker", () => {
   const flush = () => new Promise((r) => setTimeout(r, 0));
+  type Box = Element & { checked: boolean; click: () => void; dispatchEvent: (e: unknown) => void };
+  const field = (el: Element) => el.querySelector('.widget-filter-field[data-filter="assetTypes"]') as unknown as Box;
+  const picker = () => doc.querySelector(".widget-filter-picker") as unknown as Element;
+  const pickerBoxes = () => Array.from(picker().querySelectorAll("[data-wfp-v]")) as unknown as Box[];
+  const untick = (b: Box) => {
+    b.checked = false;
+    b.dispatchEvent(new (doc.defaultView as unknown as { Event: new (t: string, o?: unknown) => unknown }).Event("change", { bubbles: true }));
+  };
+  const save = () => (picker().querySelector('[data-wfp="save"]') as unknown as Box).click();
+  afterEach(() => { doc.querySelectorAll(".widget-filter-picker").forEach((n) => n.remove()); });
 
-  it("paints the built-ins synchronously, then adds the fleet's custom types", async () => {
+  it("reads All asset types until something is switched off", () => {
     const el = doc.createElement("div");
     doc.body.appendChild(el);
     W.renderNocFilterConfig(el, {}, () => {}, true);
-    expect(el.querySelectorAll("[data-noctype]").length).toBe(BUILT_IN_ASSET_TYPES.length);
+    expect(field(el).textContent).toContain("All asset types");
+    expect(field(el).querySelectorAll(".tag-chip").length).toBe(0);
+  });
+
+  it("opens a picker of the built-ins plus the fleet's custom types, all ticked by default", async () => {
+    const el = doc.createElement("div");
+    doc.body.appendChild(el);
+    W.renderNocFilterConfig(el, {}, () => {}, true);
+    field(el).click();
     await flush();
-    const names = Array.from(el.querySelectorAll("[data-noctype]"))
-      .map((cb) => (cb as unknown as Element).getAttribute("data-noctype"));
+    const names = pickerBoxes().map((b) => b.getAttribute("data-wfp-v"));
     expect(names).toEqual([...BUILT_IN_ASSET_TYPES, "network_camera"]);
-    // Registry label, so the checkbox doesn't read "network_camera"…
-    expect(el.innerHTML).toContain("Network Camera");
+    expect(pickerBoxes().every((b) => b.checked)).toBe(true);
+    // Registry label, so the option doesn't read "network_camera"…
+    expect(picker().innerHTML).toContain("Network Camera");
     // …while the compact built-in label the widgets use survives the
     // registry's longer "Access Point".
     expect(W.ASSET_TYPE_LABELS.access_point).toBe("AP");
     expect(W.ASSET_TYPE_LABELS.network_camera).toBe("Network Camera");
   });
 
-  it("everything is checked by default, and unchecking a custom type stores it off", async () => {
+  it("stores an unticked type off on Save, and shows the rest as pills", async () => {
     const el = doc.createElement("div");
     doc.body.appendChild(el);
     const changes: Array<[string, unknown]> = [];
     W.renderNocFilterConfig(el, {}, (k, v) => changes.push([k, v]), true);
+    field(el).click();
     await flush();
-    const boxes = Array.from(el.querySelectorAll("[data-noctype]")) as unknown as Array<
-      Element & { checked: boolean; dispatchEvent: (e: unknown) => void }
-    >;
-    expect(boxes.every((b) => b.checked)).toBe(true);
-    const camera = boxes.find((b) => b.getAttribute("data-noctype") === "network_camera")!;
-    camera.checked = false;
-    camera.dispatchEvent(new (doc.defaultView as unknown as { Event: new (t: string) => unknown }).Event("change"));
+    untick(pickerBoxes().find((b) => b.getAttribute("data-wfp-v") === "network_camera")!);
+    expect(changes).toEqual([]); // nothing applies until Save
+    save();
+    await flush();
     expect(changes).toEqual([
       ["assetTypesOff", ["network_camera"]],
       ["assetTypes", BUILT_IN_ASSET_TYPES.filter((t) => t !== "network_camera")],
     ]);
+    const chips = Array.from(field(el).querySelectorAll(".tag-chip-delete")).map((b) => b.getAttribute("data-chip"));
+    expect(chips).toEqual([...BUILT_IN_ASSET_TYPES]);
   });
 
-  it("shows a stored off-list unchecked, and keeps a type the grid no longer offers", async () => {
+  it("keeps a stored off type the picker no longer offers", async () => {
     const el = doc.createElement("div");
     doc.body.appendChild(el);
     const changes: Array<[string, unknown]> = [];
     // `plc` isn't offered (no assets wear it any more) but is still switched
-    // off — dropping it on the next toggle would silently un-hide it.
+    // off — dropping it on the next save would silently un-hide it.
     W.renderNocFilterConfig(el, { assetTypesOff: ["printer", "plc"] }, (k, v) => changes.push([k, v]), true);
+    field(el).click();
     await flush();
-    const boxes = Array.from(el.querySelectorAll("[data-noctype]")) as unknown as Array<
-      Element & { checked: boolean; dispatchEvent: (e: unknown) => void }
-    >;
-    expect(boxes.find((b) => b.getAttribute("data-noctype") === "printer")!.checked).toBe(false);
-    const camera = boxes.find((b) => b.getAttribute("data-noctype") === "network_camera")!;
-    camera.checked = false;
-    camera.dispatchEvent(new (doc.defaultView as unknown as { Event: new (t: string) => unknown }).Event("change"));
+    expect(pickerBoxes().find((b) => b.getAttribute("data-wfp-v") === "printer")!.checked).toBe(false);
+    untick(pickerBoxes().find((b) => b.getAttribute("data-wfp-v") === "network_camera")!);
+    save();
+    await flush();
     expect(changes[0]).toEqual(["assetTypesOff", ["printer", "network_camera", "plc"]]);
+  });
+
+  it("switches a type off from its pill's ×, without opening the picker", async () => {
+    const el = doc.createElement("div");
+    doc.body.appendChild(el);
+    const changes: Array<[string, unknown]> = [];
+    W.renderNocFilterConfig(el, { assetTypesOff: ["printer"] }, (k, v) => changes.push([k, v]), true);
+    (field(el).querySelector('[data-chip="server"]') as unknown as Box).click();
+    expect(changes[0]).toEqual(["assetTypesOff", ["printer", "server"]]);
+    expect(field(el).querySelector('[data-chip="server"]')).toBeNull();
+    expect(picker()).toBeNull();
   });
 });
 

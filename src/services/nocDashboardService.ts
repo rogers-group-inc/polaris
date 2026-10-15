@@ -1250,6 +1250,12 @@ export interface AlertRow {
    *  otherwise. A frozen alert stays listed (the problem predates the work)
    *  but pages nobody, and the widget pills it MAINT so it reads as paused. */
   maintenanceHold: "self" | "upstream" | null;
+  /** The alerting asset's tags as they stand NOW (read from the asset, not
+   *  snapshotted), `region:` tags excluded — regions have their own scope
+   *  control. Carried for the widget's tag filter, which matches
+   *  client-side like the severity floor. Empty on a device-less alert and on
+   *  one whose asset has since been deleted. */
+  tags: string[];
 }
 
 export interface ActiveAlerts {
@@ -1318,9 +1324,10 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     },
     orderBy: { triggeredAt: "desc" },
   });
-  const [triggerTypeByRule, holds] = await Promise.all([
+  const [triggerTypeByRule, holds, tagsByAsset] = await Promise.all([
     triggerTypesFor(rows),
     maintenanceHoldsByAsset(rows.map((n) => n.assetId ?? "")),
+    assetTagsFor(rows),
   ]);
   const out: AlertRow[] = rows.map((n) => ({
     id: n.id,
@@ -1348,6 +1355,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     testRun: n.testRun === true,
     quietHeld: !!n.quietHeldAt && !n.quietSummarizedAt,
     maintenanceHold: (n.assetId && holds.get(n.assetId)) || null,
+    tags: (n.assetId && tagsByAsset.get(n.assetId)) || [],
   }));
   out.sort((a, b) => {
     const d = (ALERT_SEVERITY_RANK[b.severity] ?? 0) - (ALERT_SEVERITY_RANK[a.severity] ?? 0);
@@ -1382,6 +1390,27 @@ async function triggerTypesFor(rows: { ruleId: string | null }[]): Promise<Map<s
   for (const r of rules) {
     const t = (r.trigger as { type?: unknown } | null)?.type;
     if (typeof t === "string") out.set(r.id, t);
+  }
+  return out;
+}
+
+/**
+ * assetId → its non-region tags, for the alert rows just fetched. One query
+ * over the DISTINCT alerting assets (the same posture as triggerTypesFor): a
+ * gate losing its switches raises hundreds of alerts across tens of devices,
+ * and the tags are read once per device, not once per alert.
+ */
+async function assetTagsFor(rows: { assetId: string | null }[]): Promise<Map<string, string[]>> {
+  const ids = [...new Set(rows.map((r) => r.assetId).filter((id): id is string => !!id))];
+  if (!ids.length) return new Map();
+  const assets = await prisma.asset.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, tags: true },
+  });
+  const out = new Map<string, string[]>();
+  for (const a of assets) {
+    const tags = (a.tags || []).filter((t) => !t.startsWith("region:"));
+    if (tags.length) out.set(a.id, tags);
   }
   return out;
 }
@@ -1481,6 +1510,7 @@ export interface FilterOptions {
   assetTypes: Array<{ name: string; label: string }>;
   regions: string[];
   fortigates: Array<{ name: string; regions: string[] }>;
+  tags: string[];
 }
 
 /**
@@ -1513,10 +1543,13 @@ export interface FilterOptions {
  *     narrow its list to the widget's selected regions client-side.
  *     Non-Fortinet operator-typed firewalls carry no learnedLocation and are
  *     naturally excluded. Sorted by name.
- * Four cheap queries; safe for a read-only NOC kiosk token.
+ *   - tags: distinct tags across the live fleet, `region:` tags excluded
+ *     (regions above are their own control) — the Active Alerts widget's
+ *     "Selected tags" picker. Sorted.
+ * Five cheap queries; safe for a read-only NOC kiosk token.
  */
 export async function getFilterOptions(): Promise<FilterOptions> {
-  const [typeRows, registryRows, regionRows, fortigateRows] = await Promise.all([
+  const [typeRows, registryRows, regionRows, fortigateRows, tagRows] = await Promise.all([
     prisma.asset.findMany({
       where: { status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } },
       select: { assetType: true },
@@ -1538,6 +1571,12 @@ export async function getFilterOptions(): Promise<FilterOptions> {
       select: { learnedLocation: true, tags: true },
       distinct: ["learnedLocation"],
     }),
+    prisma.$queryRaw<Array<{ tag: string }>>`
+      SELECT DISTINCT t AS tag
+      FROM "assets", unnest("tags") AS t
+      WHERE t NOT LIKE 'region:%'
+        AND "status" NOT IN ('decommissioned', 'disabled')
+      ORDER BY tag`,
   ]);
   const present = new Set(typeRows.map((r) => r.assetType));
   const labels = new Map(registryRows.map((r) => [r.name, r.label]));
@@ -1566,6 +1605,7 @@ export async function getFilterOptions(): Promise<FilterOptions> {
           .map((t) => t.slice("region:".length)),
       }))
       .sort((a, b) => a.name.localeCompare(b.name)),
+    tags: tagRows.map((r) => r.tag).filter(Boolean),
   };
 }
 

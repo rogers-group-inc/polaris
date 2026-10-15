@@ -255,6 +255,10 @@ GET    /dashboard/filter-options
 These are **filter-don't-403** surfaces: a token whose role cannot read
 something gets a narrower payload, not an error.
 
+`/dashboard/filter-options` returns the vocabularies the widget filters accept:
+`assetTypes`, `regions`, `fortigates` and `tags` (the fleet's asset tags, with
+`region:` tags left out — they are `regions`).
+
 `/dashboard/noc-summary` takes `?feeds=` to select the subset a caller renders.
 Each feed is gated on the key that owns its data — `assets:read` for most of
 them, `events:read` for `recentReboots`, `alerts:read` for `activeAlerts`, and

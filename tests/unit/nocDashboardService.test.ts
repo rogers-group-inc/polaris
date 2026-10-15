@@ -63,6 +63,9 @@ beforeEach(() => {
   ruleFindMany.mockResolvedValue([]);
   // Default: an empty asset-type registry (only getFilterOptions reads it).
   typeDefFindMany.mockResolvedValue([]);
+  // Default: the alerting assets carry no tags (getRecentAlerts reads them
+  // once per distinct asset for the widget's tag filter).
+  findMany.mockResolvedValue([]);
 });
 
 describe("getStatusSummary", () => {
@@ -497,7 +500,7 @@ describe("getRecentAlerts", () => {
     expect(r.alerts[0]).toEqual({
       id: "n1", assetId: "asset-1", hostname: "fw-1", dimension: null,
       message: "fw-1 is down", severity: "critical", raisedAt: t,
-      ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith",
+      ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith", tags: [],
       // Acknowledged without a note — the ack pill hovers the owner alone.
       acknowledgeNote: null,
       // Business rule 78a — acknowledged directly, not inherited from a root cause.
@@ -757,6 +760,26 @@ describe("getHighestTemperature", () => {
   });
 });
 
+describe("getRecentAlerts — asset tags", () => {
+  it("carries each alerting asset's tags minus region: ones, read once per DISTINCT asset", async () => {
+    const t = new Date("2026-06-20T00:00:00Z");
+    notifFindMany.mockReset();
+    notifFindMany.mockResolvedValueOnce([
+      { id: "a", assetId: "sw", assetHostname: "sw-1", dimension: "port1", message: "m", severity: "serious", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: null },
+      { id: "b", assetId: "sw", assetHostname: "sw-1", dimension: "port2", message: "m", severity: "serious", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: null },
+      { id: "c", assetId: null, assetHostname: null, dimension: null, message: "polaris", severity: "warning", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: null },
+    ]);
+    findMany.mockResolvedValueOnce([{ id: "sw", tags: ["region:East", "core", "scalehouse"] }]);
+    const r = await noc.getRecentAlerts();
+    expect(r.alerts.find((x) => x.id === "a")!.tags).toEqual(["core", "scalehouse"]);
+    expect(r.alerts.find((x) => x.id === "b")!.tags).toEqual(["core", "scalehouse"]);
+    // A device-less alert has no asset to read tags from.
+    expect(r.alerts.find((x) => x.id === "c")!.tags).toEqual([]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith({ where: { id: { in: ["sw"] } }, select: { id: true, tags: true } });
+  });
+});
+
 describe("getFilterOptions", () => {
   it("offers every built-in plus every CUSTOM registry type, registry-labelled", async () => {
     findMany
@@ -772,7 +795,7 @@ describe("getFilterOptions", () => {
       // operator sees, so it is the vocabulary the grid offers.
       { name: "plc", label: "PLC" },
     ]);
-    rawQuery.mockResolvedValueOnce([]);
+    rawQuery.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     const r = await noc.getFilterOptions();
     const names = r.assetTypes.map((t) => t.name);
     // Built-ins lead, in canonical order, whether or not the fleet owns any.
@@ -798,9 +821,14 @@ describe("getFilterOptions", () => {
         { learnedLocation: "RIVERBEND-FG", tags: ["region:Central Kentucky", "site:quarry"] },
         { learnedLocation: "ATLANTA-FG", tags: [] },
       ]);
-    rawQuery.mockResolvedValueOnce([{ region: "East" }, { region: "West" }]);
+    rawQuery
+      .mockResolvedValueOnce([{ region: "East" }, { region: "West" }])
+      .mockResolvedValueOnce([{ tag: "core" }, { tag: "site:quarry" }]);
     const r = await noc.getFilterOptions();
     expect(r.regions).toEqual(["East", "West"]);
+    // The Active Alerts tag picker's vocabulary — region: tags are excluded in
+    // SQL (regions have their own control).
+    expect(r.tags).toEqual(["core", "site:quarry"]);
     expect(r.fortigates).toEqual([
       { name: "ATLANTA-FG", regions: [] },
       { name: "RIVERBEND-FG", regions: ["Central Kentucky"] },

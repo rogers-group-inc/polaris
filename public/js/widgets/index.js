@@ -771,7 +771,12 @@
       btn.type = "button";
       btn.className = "dashboard-widget-action widget-header-menu-btn widget-header-export";
       btn.title = "Export CSV…";
-      btn.textContent = "⤓";
+      btn.setAttribute("aria-label", "Export CSV");
+      // The download line-icon Server Settings' backup buttons draw, at the
+      // 18px the edit-mode gear uses — the ⤓ text glyph it replaced rendered
+      // at text size, smaller than the edit-mode controls.
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+        '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
       title.insertAdjacentElement("afterend", btn);
       btn.addEventListener("click", function (ev) {
         ev.stopPropagation();
@@ -988,6 +993,11 @@
   };
   window.PolarisWidgets.getFortigateOptions = function () {
     return getFilterOptions().then(function (d) { return (d && d.fortigates) || []; });
+  };
+  // The fleet's tags, `region:` tags excluded — the Active Alerts widget's
+  // "Selected tags" picker.
+  window.PolarisWidgets.getTagOptions = function () {
+    return getFilterOptions().then(function (d) { return (d && d.tags) || []; });
   };
 
   // The asset-type vocabulary the gear grid offers, as [{value, label}]: every
@@ -1214,223 +1224,454 @@
       });
   }
 
-  // Append the shared per-widget filter controls into a gear-popover container.
-  // Region scope (All / My regions / Selected regions) goes on every NOC
-  // widget; "Selected regions" reveals a checkbox list of the created regions
-  // (none checked = unfiltered, mirroring the asset-type grid). On the
-  // unauthenticated /dash wallboard "My regions" is hidden — there is no
-  // viewer identity for it to resolve against (a saved "mine" renders and
-  // behaves as "all" there). The asset-type toggle grid AND the FortiGates
-  // scope (All / Selected FortiGates — narrows to assets behind the picked
-  // gates, e.g. one site's switches/APs) are added only when includeAssetTypes
-  // is true (every NOC widget except the maps, which fetch /map/sites and
-  // don't ride the noc-summary filter).
-  // The type grid is painted TWICE: once synchronously from the built-in list
-  // so the popover is never empty, then again when getAssetTypeOptions()
-  // resolves and adds every custom type the registry carries. A toggle
-  // made before that lands is kept (the repaint reads the live off-list, not
-  // the config snapshot).
-  // onChange(key, value) is the widget's config setter — key is "regionScope"/
-  // "fortigateScope" (string), "regions"/"fortigates" (string[]),
-  // "assetTypesOff" (string[] — the switched-off types, what the filter is
-  // actually stored as) or "assetTypes" (string[] — the checked list, kept in
-  // step for the header title and for a config read by older bundles).
-  // Appends, so a widget can render its own controls first, then call this.
-  window.PolarisWidgets.renderNocFilterConfig = function (el, config, onChange, includeAssetTypes) {
-    config = config || {};
-    var labels = window.PolarisWidgets.ASSET_TYPE_LABELS;
-    var BUILTIN = window.PolarisWidgets.BUILTIN_ASSET_TYPES;
-    var onDash = window.POLARIS_DASH_LOCAL === true;
-    var scope = config.regionScope === "custom" ? "custom"
-      : (config.regionScope === "mine" && !onDash) ? "mine"
-      : "all";
-    var fgScope = config.fortigateScope === "custom" ? "custom" : "all";
-    var html = ''
-      + '<label class="widget-config-label">Regions</label>'
-      + '<select class="widget-config-select" data-nocf="regionScope">'
-      +   '<option value="all"' + (scope === "all" ? " selected" : "") + '>All regions</option>'
-      +   (onDash ? '' : '<option value="mine"' + (scope === "mine" ? " selected" : "") + '>My regions</option>')
-      +   '<option value="custom"' + (scope === "custom" ? " selected" : "") + '>Selected regions…</option>'
-      + '</select>'
-      + '<div class="widget-config-typegrid" data-nocf="regionList" style="display:none"></div>';
-    if (includeAssetTypes) {
-      html += '<label class="widget-config-label">FortiGates</label>'
-        + '<select class="widget-config-select" data-nocf="fortigateScope">'
-        +   '<option value="all"' + (fgScope === "all" ? " selected" : "") + '>All FortiGates</option>'
-        +   '<option value="custom"' + (fgScope === "custom" ? " selected" : "") + '>Selected FortiGates…</option>'
-        + '</select>'
-        + '<div class="widget-config-typegrid widget-config-fglist" data-nocf="fortigateList" style="display:none"></div>';
-      html += '<label class="widget-config-label">Asset types</label>'
-        + '<div class="widget-config-typegrid" data-nocf="typeList"></div>';
-    }
-    el.insertAdjacentHTML("beforeend", html);
+  // ─── Filter picker modal + pill field ──────────────────────────────────
+  // The gear popover's list filters (Regions, FortiGates, Asset types, Tags)
+  // are each ONE field: the current pick as removable pills (× drops one
+  // picked by accident), or the unfiltered state in words ("All regions").
+  // Clicking the field opens openFilterPicker — a modal with the full list,
+  // a search box, Select all / Clear, and Save — rather than unrolling a
+  // checkbox grid inside a 260px popover, which stopped scaling at a few
+  // hundred FortiGates.
+  //
+  // The modal is a STANDALONE stacked overlay (the showConfirm recipe), not
+  // openModal: the /dash wallboard runs this file without app.js, and the
+  // gear popover underneath must survive it. dashboard.js's outside-click
+  // handler ignores clicks inside `.widget-filter-picker`, or picking a
+  // checkbox would close the popover the modal was opened from.
 
-    // Live copy of the filter keys this popover edits. updateConfig replaces
-    // the widget's config object, so the `config` snapshot we closed over
-    // goes stale after the first change — `live` is what the FortiGate list
-    // reads to filter by the CURRENT region selection (and what repaints
-    // read for checked state).
-    var live = {
-      regionScope: scope,
-      regions: Array.isArray(config.regions) ? config.regions.slice() : [],
-      fortigateScope: fgScope,
-      fortigates: Array.isArray(config.fortigates) ? config.fortigates.slice() : [],
-    };
-    function setCfg(key, value) {
-      if (Object.prototype.hasOwnProperty.call(live, key)) live[key] = value;
-      onChange(key, value);
-      // A region change re-filters which gates the FortiGate list offers.
-      if ((key === "regionScope" || key === "regions") && repaintFortigates) repaintFortigates(true);
-    }
-    var repaintFortigates = null;
+  // opts: { title, scopes?: [{value,label}], scope?, options: Promise|[{value,label}],
+  //         selected: string[] | (options) => string[], emptyMsg, note? }
+  // `selected` as a function is resolved once the options land — for a pick
+  // stored as its complement (asset types are saved as the OFF list, so a
+  // custom type only the fetch knows about is ticked unless switched off).
+  // Resolves { scope, values } on Save, null on Cancel / Escape.
+  window.PolarisWidgets.openFilterPicker = function (opts) {
+    return new Promise(function (resolve) {
+      var scopes = opts.scopes || null;
+      var scope = opts.scope || (scopes ? scopes[0].value : "custom");
+      var picked = typeof opts.selected === "function" ? [] : (opts.selected || []).slice();
+      var options = [];
+      var overlay = document.createElement("div");
+      overlay.className = "modal-overlay widget-filter-picker";
+      overlay.style.zIndex = "1300";
+      overlay.innerHTML =
+        '<div class="modal" role="dialog" aria-modal="true" aria-label="' + escapeHtml(opts.title) + '" tabindex="-1">' +
+          '<div class="modal-header"><h3>' + escapeHtml(opts.title) + '</h3></div>' +
+          '<div class="modal-body">' +
+            (scopes
+              ? '<div class="wfp-scopes" role="radiogroup">' + scopes.map(function (s) {
+                  return '<label class="wfp-scope"><input type="radio" name="wfp-scope" value="' + escapeHtml(s.value) + '"' +
+                    (s.value === scope ? " checked" : "") + '> ' + escapeHtml(s.label) + '</label>';
+                }).join("") + '</div>'
+              : '') +
+            '<div class="wfp-pick">' +
+              '<div class="wfp-tools">' +
+                '<input type="text" class="wfp-search" placeholder="Search…" aria-label="Search the list">' +
+                '<button type="button" class="btn btn-secondary btn-sm" data-wfp="all">Select all</button>' +
+                '<button type="button" class="btn btn-secondary btn-sm" data-wfp="none">Clear</button>' +
+              '</div>' +
+              '<div class="wfp-list"><p class="wfp-empty">Loading…</p></div>' +
+              '<p class="wfp-count"></p>' +
+            '</div>' +
+            (opts.note ? '<p class="wfp-note">' + escapeHtml(opts.note) + '</p>' : '') +
+          '</div>' +
+          '<div class="modal-footer">' +
+            '<button type="button" class="btn btn-secondary" data-wfp="cancel">Cancel</button>' +
+            '<button type="button" class="btn btn-primary" data-wfp="save">Save</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(overlay);
+      var dialog = overlay.querySelector(".modal");
+      var pickEl = overlay.querySelector(".wfp-pick");
+      var listEl = overlay.querySelector(".wfp-list");
+      var searchEl = overlay.querySelector(".wfp-search");
+      var countEl = overlay.querySelector(".wfp-count");
+      var prevFocus = document.activeElement;
+      var settled = false;
 
-    // Wire one scope <select> + its "Selected …" checkbox list. The list is
-    // shown/populated only while scope is "custom"; checkbox handlers re-read
-    // the live DOM. getOptions resolves to strings or {value, label} entries
-    // (label shown, value stored) and is re-invoked on forced repaints (the
-    // FortiGate list re-filters when the region pick changes). Returns the
-    // paint function; paint(true) rebuilds even when already painted.
-    function wireScopePicker(scopeAttr, listAttr, listKey, getOptions, emptyMsg) {
-      var sel = el.querySelector('[data-nocf="' + scopeAttr + '"]');
-      var listEl = el.querySelector('[data-nocf="' + listAttr + '"]');
-      if (!sel) return function () {};
-      function paintList(force) {
-        if (!listEl) return;
-        if (sel.value !== "custom") { listEl.style.display = "none"; return; }
-        listEl.style.display = "";
-        if (listEl.childElementCount && !force) return;
-        getOptions().then(function (entries) {
-          if (!listEl.isConnected || sel.value !== "custom") return;
-          if (!entries.length) {
-            listEl.innerHTML = '<p style="grid-column:1/-1;font-size:0.8rem;color:var(--color-text-secondary);margin:2px 0">'
-              + emptyMsg + '</p>';
-            return;
-          }
-          var opts = entries.map(function (e) {
-            return typeof e === "string" ? { value: e, label: e } : e;
-          });
-          // Drop selections the (re-filtered) list no longer offers so the
-          // saved config always mirrors what the operator can see. Skipped
-          // when the option fetch came back empty (a failed fetch must not
-          // wipe a saved pick).
-          var selected = Array.isArray(live[listKey]) ? live[listKey] : [];
-          var visible = selected.filter(function (v) {
-            return opts.some(function (o) { return o.value === v; });
-          });
-          if (visible.length !== selected.length) setCfg(listKey, visible);
-          selected = visible;
-          listEl.innerHTML = opts.map(function (o, i) {
-            return '<label class="widget-config-typeopt">'
-              + '<input type="checkbox" data-nocopt="' + i + '"' + (selected.indexOf(o.value) !== -1 ? " checked" : "") + '> '
-              + escapeHtml(o.label) + '</label>';
-          }).join("");
-          var boxes = listEl.querySelectorAll("[data-nocopt]");
-          Array.prototype.forEach.call(boxes, function (cb) {
-            cb.addEventListener("change", function () {
-              var current = [];
-              Array.prototype.forEach.call(boxes, function (b) {
-                if (b.checked) current.push(opts[parseInt(b.getAttribute("data-nocopt"), 10)].value);
-              });
-              setCfg(listKey, current);
-            });
-          });
-        });
+      function scopeIsCustom() { return !scopes || scope === "custom"; }
+      function matches(o) {
+        var q = searchEl.value.trim().toLowerCase();
+        return !q || o.label.toLowerCase().indexOf(q) !== -1 || o.value.toLowerCase().indexOf(q) !== -1;
       }
-      sel.addEventListener("change", function () {
-        setCfg(scopeAttr, sel.value);
+      function paintCount() {
+        countEl.textContent = options.length ? picked.length + " of " + options.length + " selected" : "";
+      }
+      function paintList() {
+        var on = scopeIsCustom();
+        pickEl.classList.toggle("is-disabled", !on);
+        searchEl.disabled = !on;
+        Array.prototype.forEach.call(pickEl.querySelectorAll("button"), function (b) { b.disabled = !on; });
+        if (!options.length) {
+          listEl.innerHTML = '<p class="wfp-empty">' + escapeHtml(opts.emptyMsg || "Nothing to pick from.") + '</p>';
+          paintCount();
+          return;
+        }
+        var shown = options.filter(matches);
+        listEl.innerHTML = shown.length
+          ? shown.map(function (o) {
+              return '<label class="wfp-opt"><input type="checkbox" data-wfp-v="' + escapeHtml(o.value) + '"' +
+                (picked.indexOf(o.value) !== -1 ? " checked" : "") + (on ? "" : " disabled") + '> ' +
+                '<span>' + escapeHtml(o.label) + '</span></label>';
+            }).join("")
+          : '<p class="wfp-empty">No match.</p>';
+        paintCount();
+      }
+      function setPicked(value, on) {
+        var i = picked.indexOf(value);
+        if (on && i === -1) picked.push(value);
+        if (!on && i !== -1) picked.splice(i, 1);
+      }
+      listEl.addEventListener("change", function (e) {
+        var v = e.target && e.target.getAttribute && e.target.getAttribute("data-wfp-v");
+        if (v == null) return;
+        setPicked(v, e.target.checked);
+        paintCount();
+      });
+      searchEl.addEventListener("input", paintList);
+      // Select all / Clear act on what the search shows, so "type 'knox',
+      // Select all" picks every Knoxville gate and nothing else.
+      overlay.querySelector('[data-wfp="all"]').addEventListener("click", function () {
+        options.filter(matches).forEach(function (o) { setPicked(o.value, true); });
         paintList();
       });
-      paintList();
-      return paintList;
-    }
+      overlay.querySelector('[data-wfp="none"]').addEventListener("click", function () {
+        options.filter(matches).forEach(function (o) { setPicked(o.value, false); });
+        paintList();
+      });
+      Array.prototype.forEach.call(overlay.querySelectorAll('input[name="wfp-scope"]'), function (r) {
+        r.addEventListener("change", function () { if (r.checked) { scope = r.value; paintList(); } });
+      });
 
-    wireScopePicker(
-      "regionScope", "regionList", "regions",
-      window.PolarisWidgets.getRegionOptions,
-      'No regions found — draw regions on the Device Map first.',
-    );
-    if (includeAssetTypes) {
-      repaintFortigates = wireScopePicker(
-        "fortigateScope", "fortigateList", "fortigates",
-        function () {
-          return window.PolarisWidgets.getFortigateOptions().then(function (gates) {
-            if (!gates.length) return [];
-            // Narrow the offered gates to the widget's CURRENT region scope
-            // (a gate matches when it carries any selected region's tag); no
-            // region narrowing = every gate. "(No FortiGate)" (server
-            // sentinel __none__) is always offered so switches/APs with no
-            // associated gate stay selectable — including inside a region.
-            var regions = null;
-            if (live.regionScope === "custom") regions = live.regions;
-            else if (live.regionScope === "mine" && !onDash) regions = window.PolarisWidgets.myRegionNames();
-            var offered = gates;
-            if (regions && regions.length) {
-              offered = gates.filter(function (g) {
-                var rs = g.regions || [];
-                for (var i = 0; i < rs.length; i++) {
-                  if (regions.indexOf(rs[i]) !== -1) return true;
-                }
-                return false;
-              });
-            }
-            return [{ value: "__none__", label: "(No FortiGate)" }].concat(
-              offered.map(function (g) { return { value: g.name, label: g.name }; }),
-            );
-          });
-        },
-        'No FortiGates found — run a FortiManager / FortiGate discovery first.',
-      );
-    }
-
-    if (includeAssetTypes) {
-      // The off-list is the state this grid edits. Seeded from the stored
-      // config through the same resolver the query path uses, so a config
-      // saved before a built-in existed shows that type CHECKED — matching
-      // the rows the widget actually renders.
-      var liveOff = hiddenAssetTypes(config);
-      var typeGrid = el.querySelector('[data-nocf="typeList"]');
-
-      function paintTypeGrid(options) {
-        typeGrid.innerHTML = options.map(function (o) {
-          var off = liveOff.indexOf(o.value) !== -1;
-          return '<label class="widget-config-typeopt">'
-            + '<input type="checkbox" data-noctype="' + escapeHtml(o.value) + '"' + (off ? "" : " checked") + '> '
-            + escapeHtml(o.label) + '</label>';
-        }).join("");
-        var boxes = typeGrid.querySelectorAll("[data-noctype]");
-        Array.prototype.forEach.call(boxes, function (cb) {
-          cb.addEventListener("change", function () {
-            var on = [];
-            var offered = {};
-            var off = [];
-            Array.prototype.forEach.call(boxes, function (b) {
-              var t = b.getAttribute("data-noctype");
-              offered[t] = true;
-              if (b.checked) on.push(t); else off.push(t);
-            });
-            // A type the grid doesn't offer (switched off while it was in the
-            // fleet, since decommissioned) stays hidden rather than silently
-            // switching itself back on.
-            liveOff.forEach(function (t) { if (!offered[t] && off.indexOf(t) === -1) off.push(t); });
-            liveOff = off;
-            onChange("assetTypesOff", off);
-            // The checked list is what the header title names, and it is what
-            // an older bundle reading this config would filter on — keep the
-            // two in step rather than leaving a stale enabled list behind.
-            onChange("assetTypes", on);
-          });
-        });
+      function done(val) {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener("keydown", onKey, true);
+        overlay.classList.remove("open");
+        setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 200);
+        if (prevFocus && typeof prevFocus.focus === "function") {
+          try { prevFocus.focus(); } catch (_) { /* element gone */ }
+        }
+        resolve(val);
       }
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(null); }
+      }
+      document.addEventListener("keydown", onKey, true);
+      overlay.querySelector('[data-wfp="cancel"]').addEventListener("click", function () { done(null); });
+      overlay.querySelector('[data-wfp="save"]').addEventListener("click", function () {
+        // Keep the operator's order out of it: the pick is saved in list order.
+        var order = options.map(function (o) { return o.value; });
+        var values = picked.slice().sort(function (a, b) {
+          var ia = order.indexOf(a), ib = order.indexOf(b);
+          return (ia === -1 ? 1e9 : ia) - (ib === -1 ? 1e9 : ib);
+        });
+        done({ scope: scope, values: scopeIsCustom() ? values : [] });
+      });
 
-      // Built-ins now (the popover is never empty), then the full vocabulary —
-      // built-ins plus every custom type the registry carries — once
-      // /dashboard/filter-options answers.
-      paintTypeGrid(BUILTIN.map(function (t) { return { value: t, label: labels[t] || t }; }));
-      window.PolarisWidgets.getAssetTypeOptions().then(function (options) {
-        if (typeGrid.isConnected === false) return; // popover closed while we waited
-        if (options.length > BUILTIN.length) paintTypeGrid(options);
-      }).catch(function () { /* keep the built-in grid */ });
+      Promise.resolve(opts.options).then(function (list) {
+        options = (list || []).map(function (e) { return typeof e === "string" ? { value: e, label: e } : e; });
+        if (typeof opts.selected === "function") picked = (opts.selected(options) || []).slice();
+        // A saved pick the list no longer offers stays listed (and ticked) so
+        // it can be unticked, rather than being silently kept or dropped.
+        picked.forEach(function (v) {
+          if (!options.some(function (o) { return o.value === v; })) options.push({ value: v, label: v });
+        });
+        paintList();
+      }, function () { paintList(); });
+      paintList();
+
+      var reveal = function () {
+        if (overlay.classList.contains("open")) return;
+        overlay.classList.add("open");
+        try { (scopeIsCustom() ? searchEl : dialog).focus(); } catch (_) { /* hidden tab */ }
+      };
+      if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(reveal);
+      setTimeout(reveal, 50);
+    });
+  };
+
+  // One filter field in the gear popover. spec: { key, label, render() →
+  // { text } | { chips: [{value,label}] }, onRemove(value), onEdit() }.
+  // Returns repaint(). The whole value box opens the picker; a pill's × only
+  // removes that pill (it stops the click so the picker doesn't open too).
+  function renderFilterField(el, spec) {
+    el.insertAdjacentHTML("beforeend",
+      '<label class="widget-config-label">' + escapeHtml(spec.label) + '</label>' +
+      '<div class="widget-filter-field" data-filter="' + escapeHtml(spec.key) + '" role="button" tabindex="0" ' +
+        'title="' + escapeHtml("Choose " + spec.label.toLowerCase() + "…") + '"></div>');
+    var box = el.querySelector('.widget-filter-field[data-filter="' + spec.key + '"]');
+    function repaint() {
+      var v = spec.render();
+      if (v.chips && v.chips.length) {
+        box.innerHTML = '<span class="tag-chip-list">' + v.chips.map(function (c) {
+          return '<span class="tag-chip">' + escapeHtml(c.label) +
+            '<button type="button" class="tag-chip-delete" data-chip="' + escapeHtml(c.value) + '" ' +
+            'aria-label="' + escapeHtml("Remove " + c.label) + '" title="Remove">×</button></span>';
+        }).join("") + '</span>';
+      } else {
+        box.innerHTML = '<span class="widget-filter-all">' + escapeHtml(v.text || "") + '</span>';
+      }
+      box.insertAdjacentHTML("beforeend", '<span class="widget-filter-edit" aria-hidden="true">Edit…</span>');
     }
+    box.addEventListener("click", function (e) {
+      var x = e.target.closest && e.target.closest(".tag-chip-delete");
+      if (x) {
+        e.stopPropagation();
+        spec.onRemove(x.getAttribute("data-chip"));
+        repaint();
+        return;
+      }
+      spec.onEdit();
+    });
+    box.addEventListener("keydown", function (e) {
+      if (e.target !== box) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); spec.onEdit(); }
+    });
+    repaint();
+    return repaint;
+  }
+
+  // Append the shared per-widget filter controls into a gear-popover container.
+  // Every NOC widget gets Regions (All / My regions / Selected regions); the
+  // widgets that ride the noc-summary filter (includeAssetTypes — every NOC
+  // widget except the maps, which fetch /map/sites) also get FortiGates (All /
+  // Selected — narrows to assets behind the picked gates, e.g. one site's
+  // switches/APs) and Asset types. Each is a pill field + picker modal (see
+  // above). On the unauthenticated /dash wallboard "My regions" is not offered
+  // — there is no viewer identity to resolve it against (a saved "mine"
+  // renders and behaves as "all" there).
+  //
+  // Stored shapes are unchanged: regionScope + regions, fortigateScope +
+  // fortigates (the "__none__" sentinel = "(No FortiGate)"), and asset types
+  // as the switched-OFF list `assetTypesOff` (what lets a custom type be
+  // hidden at all) with the checked list `assetTypes` kept in step for the
+  // header title and for older bundles. A "Selected" scope with nothing
+  // picked is unfiltered, so removing the last pill returns the field to All.
+  // onChange(key, value) is the widget's config setter. Appends, so a widget
+  // can render its own controls first, then call this.
+  window.PolarisWidgets.renderNocFilterConfig = function (el, config, onChange, includeAssetTypes) {
+    config = config || {};
+    var onDash = window.POLARIS_DASH_LOCAL === true;
+    var W = window.PolarisWidgets;
+    // Live copy of the keys this popover edits — updateConfig replaces the
+    // widget's config object, so the snapshot we closed over goes stale after
+    // the first change.
+    var live = {
+      regionScope: config.regionScope === "custom" ? "custom"
+        : (config.regionScope === "mine" && !onDash) ? "mine" : "all",
+      regions: Array.isArray(config.regions) ? config.regions.slice() : [],
+      fortigateScope: config.fortigateScope === "custom" ? "custom" : "all",
+      fortigates: Array.isArray(config.fortigates) ? config.fortigates.slice() : [],
+      assetTypesOff: hiddenAssetTypes(config),
+    };
+    function set(key, value) { live[key] = value; onChange(key, value); }
+    // An empty "Selected" pick is unfiltered — say so by returning to All.
+    function setPick(scopeKey, listKey, scope, values) {
+      if (scope === "custom" && !values.length) scope = "all";
+      set(listKey, scope === "custom" ? values : []);
+      set(scopeKey, scope);
+    }
+
+    // ── Regions ──
+    var regionScopes = [{ value: "all", label: "All regions" }];
+    if (!onDash) regionScopes.push({ value: "mine", label: "My regions" });
+    regionScopes.push({ value: "custom", label: "Selected regions" });
+    var repaintRegions = renderFilterField(el, {
+      key: "regions",
+      label: "Regions",
+      render: function () {
+        if (live.regionScope === "mine") return { text: "My regions" };
+        if (live.regionScope === "custom" && live.regions.length) {
+          return { chips: live.regions.map(function (r) { return { value: r, label: r }; }) };
+        }
+        return { text: "All regions" };
+      },
+      onRemove: function (v) {
+        setPick("regionScope", "regions", "custom", live.regions.filter(function (r) { return r !== v; }));
+        pruneFortigates();
+      },
+      onEdit: function () {
+        W.openFilterPicker({
+          title: "Regions",
+          scopes: regionScopes,
+          scope: live.regionScope,
+          options: W.getRegionOptions(),
+          selected: live.regions,
+          emptyMsg: "No regions found — draw regions on the Device Map first.",
+        }).then(function (r) {
+          if (!r) return;
+          setPick("regionScope", "regions", r.scope, r.values);
+          repaintRegions();
+          pruneFortigates();
+        });
+      },
+    });
+
+    if (!includeAssetTypes) return;
+
+    // ── FortiGates ──
+    // The gates on offer narrow to the widget's CURRENT region scope (a gate
+    // matches when it carries any selected region's tag); no region narrowing
+    // = every gate. "(No FortiGate)" (server sentinel __none__) is always
+    // offered so switches/APs with no associated gate stay selectable.
+    function fortigateOptions() {
+      return W.getFortigateOptions().then(function (gates) {
+        if (!gates.length) return [];
+        var regions = null;
+        if (live.regionScope === "custom") regions = live.regions;
+        else if (live.regionScope === "mine" && !onDash) regions = W.myRegionNames();
+        var offered = gates;
+        if (regions && regions.length) {
+          offered = gates.filter(function (g) {
+            var rs = g.regions || [];
+            for (var i = 0; i < rs.length; i++) if (regions.indexOf(rs[i]) !== -1) return true;
+            return false;
+          });
+        }
+        return [{ value: "__none__", label: "(No FortiGate)" }].concat(
+          offered.map(function (g) { return { value: g.name, label: g.name }; }),
+        );
+      });
+    }
+    function gateLabel(v) { return v === "__none__" ? "(No FortiGate)" : v; }
+    // A region change can take gates out of the offered list; drop them from
+    // the pick so the saved config mirrors what the operator can see. Skipped
+    // when the fetch came back empty (a failed fetch must not wipe a pick).
+    function pruneFortigates() {
+      if (live.fortigateScope !== "custom" || !live.fortigates.length) return;
+      fortigateOptions().then(function (opts) {
+        if (!opts.length) return;
+        var keep = live.fortigates.filter(function (v) {
+          return opts.some(function (o) { return o.value === v; });
+        });
+        if (keep.length === live.fortigates.length) return;
+        setPick("fortigateScope", "fortigates", "custom", keep);
+        repaintGates();
+      });
+    }
+    var repaintGates = renderFilterField(el, {
+      key: "fortigates",
+      label: "FortiGates",
+      render: function () {
+        if (live.fortigateScope === "custom" && live.fortigates.length) {
+          return { chips: live.fortigates.map(function (g) { return { value: g, label: gateLabel(g) }; }) };
+        }
+        return { text: "All FortiGates" };
+      },
+      onRemove: function (v) {
+        setPick("fortigateScope", "fortigates", "custom", live.fortigates.filter(function (g) { return g !== v; }));
+      },
+      onEdit: function () {
+        W.openFilterPicker({
+          title: "FortiGates",
+          options: fortigateOptions(),
+          selected: live.fortigateScope === "custom" ? live.fortigates : [],
+          emptyMsg: "No FortiGates found — run a FortiManager / FortiGate discovery first.",
+          note: "Shows assets behind any ticked FortiGate. Nothing ticked = all FortiGates.",
+        }).then(function (r) {
+          if (!r) return;
+          setPick("fortigateScope", "fortigates", "custom", r.values);
+          repaintGates();
+        });
+      },
+    });
+
+    // ── Asset types ──
+    // Pills are the types SHOWN, once any is switched off; all on reads "All
+    // asset types". The labels start from the built-in map and pick up the
+    // registry's once /dashboard/filter-options answers.
+    var typeOptions = W.BUILTIN_ASSET_TYPES.map(function (t) { return { value: t, label: W.assetTypeLabel(t) }; });
+    function typeLabel(t) {
+      for (var i = 0; i < typeOptions.length; i++) if (typeOptions[i].value === t) return typeOptions[i].label;
+      return W.assetTypeLabel(t);
+    }
+    function shownTypes() {
+      return typeOptions.map(function (o) { return o.value; })
+        .filter(function (t) { return live.assetTypesOff.indexOf(t) === -1; });
+    }
+    function setTypesOff(off) {
+      // Every type off = nothing to show, which no one means: read it as All.
+      var offered = typeOptions.map(function (o) { return o.value; });
+      if (offered.every(function (t) { return off.indexOf(t) !== -1; })) off = [];
+      set("assetTypesOff", off);
+      // The checked list is what the header title names and what an older
+      // bundle filters on — keep the two in step.
+      onChange("assetTypes", shownTypes());
+    }
+    var repaintTypes = renderFilterField(el, {
+      key: "assetTypes",
+      label: "Asset types",
+      render: function () {
+        if (!live.assetTypesOff.length) return { text: "All asset types" };
+        return { chips: shownTypes().map(function (t) { return { value: t, label: typeLabel(t) }; }) };
+      },
+      onRemove: function (v) {
+        setTypesOff(live.assetTypesOff.concat([v]));
+      },
+      onEdit: function () {
+        W.openFilterPicker({
+          title: "Asset types",
+          options: W.getAssetTypeOptions().then(function (o) { if (o && o.length) typeOptions = o; return typeOptions; }),
+          selected: function () { return shownTypes(); },
+          note: "Shows only the ticked types. Nothing ticked = all asset types.",
+        }).then(function (r) {
+          if (!r) return;
+          var offered = typeOptions.map(function (o) { return o.value; });
+          var off = offered.filter(function (t) { return r.values.indexOf(t) === -1; });
+          // A type the list doesn't offer (switched off while it was in the
+          // fleet, since gone) stays hidden rather than switching back on.
+          live.assetTypesOff.forEach(function (t) { if (offered.indexOf(t) === -1 && off.indexOf(t) === -1) off.push(t); });
+          if (!r.values.length) off = [];
+          setTypesOff(off);
+          repaintTypes();
+        });
+      },
+    });
+    W.getAssetTypeOptions().then(function (o) {
+      if (o && o.length > typeOptions.length) { typeOptions = o; repaintTypes(); }
+    }).catch(function () { /* keep the built-in labels */ });
+  };
+
+  // The Active Alerts widget's Tags filter (config.tagScope "custom" +
+  // config.tags) — the same pill field + picker as the NOC filters above,
+  // offered the fleet's tags minus region: ones (regions are their own field).
+  window.PolarisWidgets.renderTagFilterConfig = function (el, config, onChange, note) {
+    config = config || {};
+    var live = {
+      scope: config.tagScope === "custom" ? "custom" : "all",
+      tags: Array.isArray(config.tags) ? config.tags.slice() : [],
+    };
+    function save(values) {
+      live.scope = values.length ? "custom" : "all";
+      live.tags = values;
+      onChange("tags", values);
+      onChange("tagScope", live.scope);
+    }
+    var repaint = renderFilterField(el, {
+      key: "tags",
+      label: "Tags",
+      render: function () {
+        if (live.scope === "custom" && live.tags.length) {
+          return { chips: live.tags.map(function (t) { return { value: t, label: t }; }) };
+        }
+        return { text: "All tags" };
+      },
+      onRemove: function (v) { save(live.tags.filter(function (t) { return t !== v; })); },
+      onEdit: function () {
+        window.PolarisWidgets.openFilterPicker({
+          title: "Tags",
+          options: window.PolarisWidgets.getTagOptions(),
+          selected: live.scope === "custom" ? live.tags : [],
+          emptyMsg: "No tags found — tag assets on the Assets page first.",
+          note: note,
+        }).then(function (r) {
+          if (!r) return;
+          save(r.values);
+          repaint();
+        });
+      },
+    });
   };
 
   // RFC4122 v4 (good-enough; not crypto). Used for widget instance ids.

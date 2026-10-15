@@ -6252,7 +6252,9 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   min-width: 0;
 }
 .dashboard-canvas.is-editing .dashboard-column {
-  outline: 1px dashed rgba(79,195,247,0.20);
+  /* The theme's own accent, so the block edge reads on the daylight themes
+     too — the fixed rgba(79,195,247,0.20) it replaced vanished on cream. */
+  outline: 1px dashed color-mix(in srgb, var(--color-accent) 55%, transparent);
   outline-offset: 6px;
   border-radius: 6px;
 }
@@ -6311,17 +6313,43 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px dashed var(--color-border, rgba(255,255,255,0.14));
-  border-radius: 6px;
-  color: var(--color-text-tertiary);
+  /* The theme's GREEN, not its accent: the block outlines wear the accent,
+     and the add targets must not read as one more block. Green is also the
+     drag placeholder's colour, so "green = something goes here" holds for
+     clicking and dragging alike. */
+  border: 2px dashed color-mix(in srgb, var(--color-success) 65%, transparent);
+  /* Matches the block outline's visible curve: a block is a 6px radius with
+     its outline drawn 6px outside it, and an outline's corner grows by its
+     offset — so 12px here, or the two dashed shapes sit side by side with
+     different corners. */
+  border-radius: 12px;
+  color: var(--color-success);
   font-size: 0.85rem;
   cursor: pointer;
 }
 .dashboard-newcol-target:hover,
 .dashboard-newcol-target.drag-over {
-  border-color: rgba(102,187,106,0.7);
-  color: #81c784;
-  background: rgba(102,187,106,0.06);
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+/* "+ Add widget" at the bottom of each block in edit mode — the slim
+   sibling of the "+ New block" target, same dashed treatment. */
+.dashboard-column-add {
+  min-height: 44px;
+  border: 2px dashed color-mix(in srgb, var(--color-success) 65%, transparent);
+  border-radius: 6px;
+  background: none;
+  color: var(--color-success);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.dashboard-column-add:hover,
+.dashboard-column-add:focus-visible {
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  outline: none;
 }
 
 /* Green "+" insertion placeholder between widgets in a column. */
@@ -6406,15 +6434,21 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   background: transparent;
   border: 0;
   color: var(--color-text-tertiary);
-  padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.95rem;
-  line-height: 1;
 }
 .dashboard-widget-action:hover {
   color: var(--color-text-primary);
   background: var(--color-hover-tint);
+}
+/* The gear (edit mode) and the export download icon (read mode) are both
+   line-icon SVGs at one size, so the header's icons match in either mode. */
+.dashboard-widget-gear svg,
+.widget-header-export svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .dashboard-widget-body {
@@ -6423,20 +6457,52 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   overflow: auto;
 }
 
-/* Edit-mode widget controls: height 1↔2 toggle + remove ×. */
+/* Every control on a widget header — the ⇅ sort, the 1×/2×/3× height
+   cycle, the gear, the × — shares ONE box: a 28px square, its glyph centred
+   by flex rather than by line-height. They used to carry their own paddings,
+   font sizes and line-heights, so each box was a different height and each
+   glyph sat on a different line (the sort arrows low, the × high). */
+.dashboard-widget-header .dashboard-widget-action,
 .dashboard-widget-height-toggle,
+.dashboard-widget-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.dashboard-widget-height-toggle {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.dashboard-widget-height-toggle:hover { color: var(--color-text-primary); background: var(--color-hover-tint); }
+/* The widget's × (edit mode) is the modal X: same glyph size, same red
+   grow on hover (.modal-close). Its LOOK only — it deliberately does not
+   carry .modal-close, so the off-click flash/bloom (flashModalCloseBtn in
+   app.js, fired when a modal's backdrop is clicked) can never reach it. */
 .dashboard-widget-remove {
   background: transparent;
   border: 0;
   color: var(--color-text-tertiary);
-  padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 0.95rem;
-  line-height: 1;
+  font-size: 1.25rem;
+  transition: color 0.15s, background 0.15s, transform 0.15s;
 }
-.dashboard-widget-height-toggle:hover { color: var(--color-text-primary); background: var(--color-hover-tint); }
-.dashboard-widget-remove:hover { color: var(--color-danger); background: var(--color-hover-tint); }
+.dashboard-widget-remove:hover,
+.dashboard-widget-remove:focus-visible {
+  color: #ff4d6d;
+  background: rgba(255,77,109,0.25);
+  transform: scale(1.25);
+  outline: none;
+}
 
 /* Widget-specific body wrappers reuse the rolled-up styles from the old
    dashboard surface — kept under .dashboard-widget-body so layout still
@@ -6548,16 +6614,53 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   border: 1px solid var(--color-border, rgba(255,255,255,0.10));
   border-radius: 4px;
 }
-.widget-config-popover-footer {
+/* Shared per-widget list filters (Regions, FortiGates, Asset types, Tags) —
+   PolarisWidgets.renderNocFilterConfig / renderTagFilterConfig. Each is one
+   clickable field holding the pick as .tag-chip pills (× removes one) or the
+   unfiltered state in words; a click opens the picker modal below. */
+.widget-config-popover .widget-filter-field {
   display: flex;
-  justify-content: space-between;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-border, rgba(255,255,255,0.08));
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 6px 4px 8px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border, rgba(255,255,255,0.10));
+  border-radius: 4px;
+  cursor: pointer;
 }
-/* Shared per-widget NOC filter controls (region scope + asset-type toggles),
-   rendered by PolarisWidgets.renderNocFilterConfig. The asset-type checkboxes
-   lay out in a compact two-column grid; override the base block-label rule. */
+.widget-config-popover .widget-filter-field:hover,
+.widget-config-popover .widget-filter-field:focus-visible {
+  border-color: var(--color-accent);
+  outline: none;
+}
+.widget-config-popover .widget-filter-field .tag-chip-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 4px;
+}
+.widget-config-popover .widget-filter-field .tag-chip {
+  padding: 2px 6px 2px 8px;
+  font-size: 0.76rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.widget-config-popover .widget-filter-all {
+  flex: 1 1 auto;
+  font-size: 0.85rem;
+  color: var(--color-text-primary);
+}
+.widget-config-popover .widget-filter-edit {
+  margin-left: auto;
+  font-size: 0.76rem;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+/* A compact two-column checkbox grid for a widget's own toggles (Down
+   Interfaces' Physical / IPsec, Down Assets' options); overrides the base
+   block-label rule. */
 .widget-config-popover .widget-config-typegrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -6579,18 +6682,61 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   margin: 0;
   flex: 0 0 auto;
 }
-/* FortiGate picker list: device hostnames (SITENAME-61F-1 …) are much longer
-   than region names, so the two-column grid overflows its cells — go single
-   column, cap the height (fleets run to hundreds of gates), and let any
-   still-too-long name wrap instead of escaping the popover. */
-.widget-config-popover .widget-config-fglist {
-  grid-template-columns: 1fr;
-  max-height: 240px;
-  overflow-y: auto;
+
+/* The picker modal (PolarisWidgets.openFilterPicker) — a stacked overlay at
+   z 1300 over the gear popover; frosted like every .modal. */
+.widget-filter-picker .modal { width: min(460px, calc(100vw - 32px)); }
+.widget-filter-picker .wfp-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 10px;
 }
-.widget-config-popover .widget-config-fglist .widget-config-typeopt {
+.widget-filter-picker .wfp-scope,
+.widget-filter-picker .wfp-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.widget-filter-picker .wfp-tools {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.widget-filter-picker .wfp-search {
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
+  padding: 5px 8px;
+  font-size: 0.88rem;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border, rgba(255,255,255,0.10));
+  border-radius: 4px;
+}
+.widget-filter-picker .wfp-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+  padding: 4px 2px;
+  border-top: 1px solid var(--color-border, rgba(255,255,255,0.08));
+  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08));
+}
+.widget-filter-picker .wfp-opt { padding: 3px 2px; }
+.widget-filter-picker .wfp-opt span { min-width: 0; overflow-wrap: anywhere; }
+.widget-filter-picker .wfp-opt input,
+.widget-filter-picker .wfp-scope input { margin: 0; flex: 0 0 auto; }
+.widget-filter-picker .wfp-pick.is-disabled .wfp-list { opacity: 0.45; }
+.widget-filter-picker .wfp-empty,
+.widget-filter-picker .wfp-count,
+.widget-filter-picker .wfp-note {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
 }
 /* Explanatory note under a control (e.g. the Minimum severity filter's
    "un-alerted rows are hidden" caveat) — muted, tighter than a label. */
