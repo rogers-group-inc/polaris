@@ -62,6 +62,25 @@ describe.each(INSTALLERS)("%s", (file) => {
     expect(src).toMatch(/sudo -u "\$APP_USER" cat "\$APP_DIR\/deploy\/nginx\/polaris\.conf" \| sed /);
     expect(src).toMatch(/if \[\[ \$FRESH_TREE -eq 0 \]\] && ! nginx_conf_checked "\$NGINX_CONF_NEW"; then/);
   });
+
+  // RHEL 9.5 VM run: data/ was left root:root, polaris-web exited on
+  // EACCES mkdir data/backups.
+  it("hands data/ itself to the app account, not only its children", () => {
+    expect(src).toMatch(/mkdir -p "\$APP_DIR\/data"\nchown "\$APP_USER:\$APP_GROUP" "\$APP_DIR\/data"\n/);
+  });
+});
+
+// RHEL 9.5 VM run: the DVD's Node 22.4 passed the old `v22*` check and npm ci
+// then died in Prisma's preinstall. node_ok is the project floor: 24+, or 22.12+.
+describe.skipIf(!haveBash).each([...INSTALLERS, "deploy/ha/setup-rhel-ha.sh"])("%s node_ok", (file) => {
+  const src = read(file);
+  const fn = src.match(/^node_ok\(\) \{\n[\s\S]*?\n\}\n/m)?.[0];
+  const ok = (v: string) =>
+    spawnSync("bash", ["-c", `${fn}\nnode() { echo "$V"; }\nnode_ok`], { encoding: "utf8", env: { ...process.env, V: v } }).status === 0;
+
+  it("is defined", () => expect(fn).toBeTruthy());
+  it.each(["v24.0.0", "v25.1.0", "v22.12.0", "v22.19.1"])("accepts %s", (v) => expect(ok(v)).toBe(true));
+  it.each(["v22.4.1", "v22.11.9", "v20.18.0", "v18.0.0", "garbage"])("refuses %s", (v) => expect(ok(v)).toBe(false));
 });
 
 describe("update-linux.sh and migrate-to-nginx.sh", () => {

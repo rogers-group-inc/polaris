@@ -501,6 +501,11 @@ fi
 # uses $APP_DIR/.cache/go-build as Go's build cache (HOME=$APP_DIR for the
 # build subprocess). Create both upfront with the right ownership so the
 # first click doesn't crash trying to mkdir under root-owned ancestors.
+# data/ itself must be polaris-owned too: the app creates data/backups and
+# friends at boot, and a re-run (or this step running before the clone)
+# would otherwise leave it root:root and polaris-web exits on EACCES.
+mkdir -p "$APP_DIR/data"
+chown "$APP_USER:$APP_GROUP" "$APP_DIR/data"
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 # The firmware repository (Server Settings → Repository) stores switch / AP / FortiGate
