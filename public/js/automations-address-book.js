@@ -106,7 +106,7 @@
         case "ssids":          return plain(opts.ssids);
         case "tags": return plain(opts.tags);
         case "subnets":
-          return (opts.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
+          return (opts.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr, name: sn.name }; });
         case "ipBlocks":
           return (opts.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
         default: return [];

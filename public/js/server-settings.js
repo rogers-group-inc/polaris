@@ -6852,7 +6852,7 @@ function _tagValueOptions(schema) {
       case "ssids":          return plain(o.ssids);
       case "tags":           return plain(o.tags);
       case "subnets":
-        return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
+        return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr, name: sn.name }; });
       case "ipBlocks":
         return (o.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
       default: return [];

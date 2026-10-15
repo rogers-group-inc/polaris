@@ -67,6 +67,7 @@ import {
   type ScopeConditionGroup,
 } from "./notificationTypes.js";
 import { deviceFilterSelect, resolveDeviceFilterAssetIds } from "./deviceFilterService.js";
+import { decorateSubnetNameHits, type RelationDecoratable } from "./scopeRelationIndex.js";
 
 // ─── Criteria shape ──────────────────────────────────────────────────────────
 
@@ -850,6 +851,8 @@ export async function reconcileTagsForAsset(assetId: string): Promise<TagReconci
     },
   }) as CandidateAsset | null;
   if (!asset) return { added: 0, removed: 0 };
+  // Subnet-NAME leaves read the registry; a no-op (no query) without one.
+  await decorateSubnetNameHits([asset as unknown as RelationDecoratable], conditions);
 
   // One containment lookup for this asset's IP across every LEGACY tag's CIDRs.
   const allCidrs = managed.flatMap((t) => (t.filter.criteria ? collectCidrs(t.filter.criteria) : []));
