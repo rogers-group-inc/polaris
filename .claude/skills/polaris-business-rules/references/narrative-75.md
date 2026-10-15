@@ -413,6 +413,47 @@ delivering on their own. The confirm dialog says what that costs, including the 
 otherwise invisible: a member with no notify action of its own was relying on the group to do the
 telling, and would go silent without saying so.
 
+### Folding by subnet
+
+A group folds by DEVICE unless its `foldBy` says `subnet` (2026-10). The case it exists for is the
+device-down storm: a switch fails, and a "monitor status is down" automation with dependency-down
+alerting turned on pages once for every host behind it. Those are not twelve problems, they are one
+problem seen from twelve places, and the operator wants one page that lists the twelve.
+
+**Which subnet.** The most specific non-deprecated registry `Subnet` containing the device's
+primary IP — the same "narrowest container wins" answer the IPAM tree gives — resolved once per
+tick (`TickAlertIndex.subnetsOf`, one subnet read plus an address read only for devices the buffer
+lacks). The alert keys `subnet:<subnetId>` (`subnetFoldTarget`), prefixed so it can never be
+mistaken for an asset id in the same group's key space. A device in NO registry subnet keeps its
+own alert: silently dropping it would be the one outcome worse than paging twice.
+
+**Identity includes the device.** In a device fold a contribution is `(automation, component)`,
+and the device is implied by the alert. In a subnet fold it is not — two hosts both "down" carry
+the same `(rule, key)` and would collapse into one member. So a subnet-folded member carries
+`assetId` (and the `subnet` label) and `memberMatches` / `memberIdentityOf` compare it. The device
+joins the identity ONLY when the member carries one, so every member stored before the feature
+keeps exactly the identity it had.
+
+**Whole-device triggers join only a subnet group.** `asset_state` / `asset_metric` without a
+dimension report once per device already, so a device group would only ever hold one contribution
+per alert — there is nothing to fold, and refusing it there stays right. A subnet group folds
+DEVICES, so the same trigger has something to fold. `triggerCanJoinGroup(trigger, foldBy)` and
+`ruleGroupsByAsset` (via `DbRule.alertGroupFoldBy`) carry the mode; `reasonCannotJoin` tells an
+operator who tries it on a device group to fold by subnet instead, and switching a group back to
+device with such a member still in it is refused, naming it.
+
+**The state machine is still untouched.** `NotificationRuleState` rows stay per device: the last
+host to recover clears the alert, a middle one stamps `leftAt` on its member. The alert's `assetId`
+is the LEADING device (so it has a device to hang on), while `assetHostname` and `{asset}` render
+the subnet label "Name (cidr)"; the default message names the count, the subnet and the hosts, and
+carries the dependency headline when the lead is dependency-down. The email draws no per-component
+chart block for it, because a member key belongs to a different host than the one charted.
+
+**Changing the fold retires.** Device ↔ subnet changes what ONE alert is; a live per-device alert
+cannot become a member of a per-subnet one in place. `updateGroup` retires the group's live alerts
+(`system:group-refolded`) and the next tick re-raises them in the new shape — the same rule as
+every other reshape in this section.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.
