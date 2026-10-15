@@ -328,12 +328,33 @@
     return bits.join(" · ");
   }
 
+  // Updates the strip IN PLACE, keyed by tab id: a tab that survives a render
+  // keeps its element and only has its class, attributes and contents
+  // rewritten. Rebuilding the list with innerHTML replaced every tab on every
+  // switch, so the folder-tab rise (a CSS transition on .active, styles.css
+  // "Table head row") never ran — a new element starts in its final state.
   function render() {
     var list = document.getElementById("assets-tabs-list");
     if (!list) return;
     var closable = _tabs.length > 1;
-    list.innerHTML = _tabs.map(function (t) {
+    var existing = {};
+    Array.prototype.forEach.call(list.querySelectorAll(":scope > .table-tab"), function (el) {
+      existing[el.getAttribute("data-tab-id")] = el;
+    });
+    var prev = null;
+    _tabs.forEach(function (t) {
       var active = t.id === _activeId;
+      var el = existing[t.id];
+      delete existing[t.id];
+      if (!el) {
+        el = document.createElement("div");
+        el.setAttribute("data-tab-id", t.id);
+        el.setAttribute("role", "tab");
+        el.setAttribute("tabindex", "0");
+      }
+      el.className = "table-tab" + (active ? " active" : "");
+      el.setAttribute("aria-selected", active ? "true" : "false");
+      el.setAttribute("title", tabTitle(t));
       var dot = filterCount(t.state) ? '<span class="table-tab-dot" aria-hidden="true"></span>' : "";
       // The base marker does not replace the dot: "has filters" and "has a base
       // to get back to" are two different facts, and the operator acts on both.
@@ -341,17 +362,18 @@
         ? '<span class="table-tab-base" title="Base filter: ' +
           escapeHtml(t.defaultFilterName || "saved filter") + '">&#9733;</span>'
         : "";
-      return '<div class="table-tab' + (active ? " active" : "") + '" data-tab-id="' + escapeHtml(t.id) + '"' +
-        ' role="tab" aria-selected="' + (active ? "true" : "false") + '" tabindex="0"' +
-        ' title="' + escapeHtml(tabTitle(t)) + '">' +
-          base + dot +
-          '<span class="table-tab-name">' + escapeHtml(t.name) + "</span>" +
-          (closable
-            ? '<button type="button" class="table-tab-close" data-tab-close="' + escapeHtml(t.id) +
-              '" title="Close tab" aria-label="Close ' + escapeHtml(t.name) + '">&times;</button>'
-            : "") +
-        "</div>";
-    }).join("");
+      el.innerHTML =
+        base + dot +
+        '<span class="table-tab-name">' + escapeHtml(t.name) + "</span>" +
+        (closable
+          ? '<button type="button" class="table-tab-close" data-tab-close="' + escapeHtml(t.id) +
+            '" title="Close tab" aria-label="Close ' + escapeHtml(t.name) + '">&times;</button>'
+          : "");
+      var slot = prev ? prev.nextSibling : list.firstChild;
+      if (el !== slot) list.insertBefore(el, slot);
+      prev = el;
+    });
+    Object.keys(existing).forEach(function (id) { existing[id].remove(); });
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────────

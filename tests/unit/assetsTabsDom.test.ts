@@ -216,6 +216,20 @@ describe("restoring saved tabs", () => {
     expect(state.tabs[1].state.sfFilters).toEqual({ assetType: ["firewall"] });
   });
 
+  it("switching keeps the same tab elements, so the folder-tab rise can animate", async () => {
+    await boot();
+    const before = tabEls();
+    fire(before[0], "click");
+    const after = tabEls();
+    // A rebuilt element starts in its final state and a CSS transition on
+    // .active never runs — render() must update the strip in place.
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+    expect(after[0]!.classList.contains("active")).toBe(true);
+    expect(after[1]!.classList.contains("active")).toBe(false);
+    expect(after[1]!.getAttribute("aria-selected")).toBe("false");
+  });
+
   it("a filter change lands in the ACTIVE tab only, and persists", async () => {
     await boot();
     liveFilters = { status: ["decommissioned"] };         // operator types in a filter box

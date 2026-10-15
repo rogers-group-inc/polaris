@@ -237,6 +237,11 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
   - The head row's `margin-bottom: -1px` puts the rule on that empty border row.
 - **The active tab is filled with `--folder-fill`**: the header's stacked `--rail-glass-bg` density, 51% (keep it in step with the 30% token). It has no bottom border, and a `::after` neck with radial-gradient fillets curves its sides into the rule. The accent sits on its top edge.
 - **Inactive tabs are shorter and dimmer and sit behind the rule.**
+- **A switch animates a transform, never layout.** Every tab is laid out lifted by `--folder-r` (`margin-bottom`), and an inactive tab is pushed back onto the rule with `translateY(var(--folder-r))`.
+  - If the lift were a margin, the row's height (set by its tallest tab) would dip mid-switch while one tab rose and another fell, and the table would bob.
+  - The neck (`::after`, height 0 → `--folder-r + 1px`) transitions with the same duration and easing, so its bottom stays on the rule.
+  - The incoming panel, or IPAM's freshly mounted table, fades in (`folder-panel-in`). `prefers-reduced-motion` drops both.
+- **The tab elements must survive the switch.** A rebuilt element starts in its final state, so no transition runs. That is why the Assets strip's `render()` ([public/js/assets-tabs.js](public/js/assets-tabs.js)) updates tabs in place, keyed by tab id, rather than rewriting the list's `innerHTML`. [tests/unit/assetsTabsDom.test.ts](tests/unit/assetsTabsDom.test.ts) pins the element identity.
 - **`data-head-for="<data-tab>"` on a control cluster** shows it only while that tab is active. It works by toggling `.head-off` (`!important`, since renderPageControls stamps an inline display).
 - **A panel with no `.folder-body`** gets top padding via `:has()`. That padding is on the panel, not a margin on its first child: TableSF inserts a zero-height `.sf-col-gear-anchor` as the first child, and an inline-margined `<p>` would beat a stylesheet margin.
 - **`syncFolderTabs` writes the vars only when they change.** The observer watches the row's own `style` attribute, so an unconditional write loops forever.

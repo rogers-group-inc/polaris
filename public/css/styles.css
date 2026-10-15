@@ -2490,14 +2490,21 @@ html[data-page-top-curtain]::after {
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   box-shadow: none;
   opacity: 0.85;
+  /* Every tab is LAID OUT lifted by the neck's height, and an inactive one is
+     translated back down onto the rule. Switching tabs then animates a
+     transform, never layout: if the lift were a margin, the row's height —
+     set by its tallest tab — would dip mid-switch while one tab rose and the
+     other fell, and the whole table would bob. */
+  margin-bottom: var(--folder-r);
+  transform: translateY(var(--folder-r));
+  transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease,
+    opacity 0.2s ease, box-shadow 0.2s ease;
 }
 .table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab):hover { opacity: 1; background: var(--rail-glass-bg); }
 .table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab).active {
   z-index: 2;
   opacity: 1;
-  padding-top: 0.45rem;
-  /* Lifted by the neck's height; the neck fills the space down to the rule. */
-  margin-bottom: var(--folder-r);
+  transform: none;
   background: var(--folder-fill);
   border-color: var(--color-border);
   /* The accent moves from the old underline to the tab's top edge — the
@@ -2506,15 +2513,18 @@ html[data-page-top-curtain]::after {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-.table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab).active::after {
+/* The neck exists on every tab at zero height and grows on the active one, in
+   step with the tab's rise (same duration and easing), so its bottom stays on
+   the rule for the whole switch. */
+.table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab)::after {
   content: "";
   position: absolute;
   top: 100%;
   left: calc(-1px - var(--folder-r));
   right: calc(-1px - var(--folder-r));
-  /* +1px: the last row lands on the wrapper's (gapped) top border row. */
-  height: calc(var(--folder-r) + 1px);
+  height: 0;
   pointer-events: none;
+  transition: height 0.2s ease;
   background:
     radial-gradient(circle at 0 0,
       transparent calc(var(--folder-r) - 0.5px),
@@ -2530,6 +2540,26 @@ html[data-page-top-curtain]::after {
       right top / calc(var(--folder-r) + 1px) 100% no-repeat,
     linear-gradient(var(--folder-fill), var(--folder-fill))
       center top / calc(100% - 2 * (var(--folder-r) + 1px)) 100% no-repeat;
+}
+.table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab).active::after {
+  /* +1px: the last row lands on the folder body's (empty) top border row. */
+  height: calc(var(--folder-r) + 1px);
+}
+/* The incoming panel eases in rather than snapping (a section tab's panel, or
+   IPAM's freshly mounted table). Opacity only, and no fill-mode, so nothing is
+   left behind once it ends. */
+@keyframes folder-panel-in { from { opacity: 0.25; } }
+.table-head-row ~ .page-tab-panel.active,
+.table-head-row ~ #ipam-mount > .folder-body {
+  animation: folder-panel-in 0.2s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab),
+  .table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab)::after {
+    transition: none;
+  }
+  .table-head-row ~ .page-tab-panel.active,
+  .table-head-row ~ #ipam-mount > .folder-body { animation: none; }
 }
 /* Fill clipped to the padding box so the top border row stays empty: the head
    row's rule (and, in the gap, the neck) is what shows there. */
