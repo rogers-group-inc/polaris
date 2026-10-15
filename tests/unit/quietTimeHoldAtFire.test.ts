@@ -16,6 +16,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = {
   notif: null as any,
   notifUpdates: [] as any[],
+  /** Live-fire source stamps (rule 92(f)): updateMany, never quietHeldAt. */
+  liveStamps: [] as any[],
   deliveries: [] as any[],
   /** Rows already on the alert, for the all-clear's audience read (rule 120). */
   prior: [] as any[],
@@ -25,12 +27,15 @@ const db = {
 };
 const holdAnswer = { value: null as any };
 const holdQuestions: any[] = [];
+const windowAnswer = { value: null as any };
+const windowQuestions: any[] = [];
 
 vi.mock("../../src/db.js", () => ({
   prisma: {
     notification: {
       findUnique: vi.fn(async () => db.notif),
       update: vi.fn(async (args: any) => { db.notifUpdates.push(args); return {}; }),
+      updateMany: vi.fn(async (args: any) => { db.liveStamps.push(args); return { count: 1 }; }),
     },
     notificationDelivery: {
       createMany: vi.fn(async ({ data }: any) => { db.deliveries.push(...data); return { count: data.length }; }),
@@ -53,6 +58,7 @@ vi.mock("../../src/services/automationScriptService.js", () => ({
 }));
 vi.mock("../../src/services/quietTimeHoldService.js", () => ({
   resolveQuietHold: vi.fn(async (q: any) => { holdQuestions.push(q); return holdAnswer.value; }),
+  resolveQuietWindow: vi.fn(async (q: any) => { windowQuestions.push(q); return windowAnswer.value; }),
 }));
 
 import { executeActions } from "../../src/services/automationActionService.js";
@@ -63,8 +69,11 @@ const WINDOW_END = new Date(2026, 9, 3, 6, 0, 0, 0);
 const HOLD = { source: { kind: "global", id: "g1", name: "Nights" }, config: { windows: [] }, windowEnd: WINDOW_END };
 
 beforeEach(() => {
-  db.notif = { ruleId: "r1", assetId: "a1", metric: "cpuPct", severity: "warning", testRun: false, quietHeldAt: null, quietSummarizedAt: null };
+  db.notif = { ruleId: "r1", assetId: "a1", metric: "cpuPct", severity: "warning", testRun: false, quietHeldAt: null, quietSummarizedAt: null, quietSource: null };
   db.notifUpdates.length = 0;
+  db.liveStamps.length = 0;
+  windowAnswer.value = null;
+  windowQuestions.length = 0;
   db.deliveries.length = 0;
   db.prior = [];
   db.events.length = 0;
@@ -158,6 +167,54 @@ describe("executeActions inside a quiet window", () => {
   });
 });
 
+describe("a fire the open window lets through (business rule 92(f))", () => {
+  const CRIT = { ...CTX, severity: "critical" };
+  const NIGHTS = { kind: "global", id: "g1", name: "Nights" };
+
+  it("goes out live and is stamped with the window's source — never as held", async () => {
+    windowAnswer.value = NIGHTS;
+    await executeActions("n1", [NOTIFY], CRIT, { ruleId: "r1" });
+    expect(db.deliveries[0].status).toBeUndefined();
+    expect(db.notifUpdates).toHaveLength(0);
+    expect(db.liveStamps).toEqual([{ where: { id: "n1", quietHeldAt: null }, data: { quietSource: NIGHTS } }]);
+    expect(windowQuestions[0]).toMatchObject({ ruleId: "r1", severity: "critical", metric: "cpuPct", assetId: "a1" });
+    expect(db.events.map((e) => e.action)).not.toContain("notification.quiet_held");
+  });
+
+  it("stamps nothing when no window is open", async () => {
+    await executeActions("n1", [NOTIFY], CRIT, { ruleId: "r1" });
+    expect(windowQuestions).toHaveLength(1);
+    expect(db.liveStamps).toHaveLength(0);
+  });
+
+  it("does not ask again for an alert already stamped (a grouped alert's growth update)", async () => {
+    windowAnswer.value = NIGHTS;
+    db.notif.quietSource = NIGHTS;
+    await executeActions("n1", [NOTIFY], CRIT, { ruleId: "r1", growth: { count: 2 } });
+    expect(windowQuestions).toHaveLength(0);
+    expect(db.liveStamps).toHaveLength(0);
+  });
+
+  it("never stamps a test delivery, an all-clear, or the sweep's own passes", async () => {
+    windowAnswer.value = NIGHTS;
+    db.notif.testRun = true;
+    await executeActions("n1", [NOTIFY], CRIT, { ruleId: "r1" });
+    db.notif.testRun = false;
+    await executeActions("n1", [NOTIFY], { ...CTX, severity: "resolved" }, { ruleId: "r1" });
+    await executeActions("n1", [NOTIFY], CRIT, { ruleId: "r1", repeat: { attempt: 1 } });
+    expect(windowQuestions).toHaveLength(0);
+    expect(db.liveStamps).toHaveLength(0);
+  });
+
+  it("delivers as usual when the window lookup fails", async () => {
+    const { resolveQuietWindow } = await import("../../src/services/quietTimeHoldService.js");
+    vi.mocked(resolveQuietWindow).mockImplementationOnce(async () => { throw new Error("db down"); });
+    await executeActions("n1", [NOTIFY], CRIT, { ruleId: "r1" });
+    expect(db.deliveries).toHaveLength(1);
+    expect(db.liveStamps).toHaveLength(0);
+  });
+});
+
 describe("the all-clear of a held alert", () => {
   const RESOLVED = { ...CTX, severity: "resolved" };
 
@@ -211,13 +268,14 @@ describe("recipient exceptions (business rule 120)", () => {
     expect(ev.details).toMatchObject({ liveRows: 1, heldRows: 1 });
   });
 
-  it("does not stamp an alert that reached every one of its readers live", async () => {
+  it("does not stamp an alert HELD when it reached every one of its readers live — only its source, for the summary's live list", async () => {
     holdAnswer.value = SPLIT;
     await executeActions("n1", [{ ...NOTIFY, addresses: ["noc@example.com"] }], CTX, { ruleId: "r1" });
     expect(db.deliveries).toHaveLength(1);
     expect(db.deliveries[0].status).toBeUndefined();
     expect(db.notifUpdates).toHaveLength(0);
     expect(db.events.map((e) => e.action)).not.toContain("notification.quiet_held");
+    expect(db.liveStamps).toEqual([{ where: { id: "n1", quietHeldAt: null }, data: { quietSource: { kind: "global", id: "g1", name: "Nights" } } }]);
   });
 
   it("writes a split reminder's held side as DEFERRED — owed at the window's end", async () => {

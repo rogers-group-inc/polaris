@@ -46,7 +46,7 @@ import {
 } from "./notificationRecipientService.js";
 import { requestScriptRun } from "./automationScriptService.js";
 import { resolveContactEmailsForAsset } from "./contactService.js";
-import { resolveQuietHold, type QuietHold } from "./quietTimeHoldService.js";
+import { resolveQuietHold, resolveQuietWindow, type QuietHold, type QuietSource } from "./quietTimeHoldService.js";
 import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
 import { logger } from "../utils/logger.js";
 import {
@@ -198,6 +198,11 @@ export async function executeActions(
   let hold: QuietHold | null = null;
   let dropPeopleFacing = false;
   let stampHold = false;
+  // A fire NOT held while a quiet window is open for it — a severity the
+  // policy lets through. It is stamped with the window's source (quietSource,
+  // no quietHeldAt) so the summary can list it to the readers it reached
+  // (business rule 92(f)).
+  let liveSource: QuietSource | null = null;
   // Only a fire that would actually TELL someone can be held. An automation
   // with no notify action — an event trigger that only writes the audit
   // Event, or only runs a script — has no people-facing send for quiet time
@@ -214,7 +219,7 @@ export async function executeActions(
       try {
         return await prisma.notification.findUnique({
           where: { id: notificationId },
-          select: { ruleId: true, assetId: true, metric: true, severity: true, testRun: true, quietHeldAt: true, quietSummarizedAt: true },
+          select: { ruleId: true, assetId: true, metric: true, severity: true, testRun: true, quietHeldAt: true, quietSummarizedAt: true, quietSource: true },
         });
       } catch (err) {
         logger.warn({ err: (err as Error)?.message, notificationId }, "quiet-time check could not read the alert — delivering as usual");
@@ -225,13 +230,20 @@ export async function executeActions(
       if (allClear) {
         dropPeopleFacing = !!row.quietHeldAt && !row.quietSummarizedAt;
       } else {
-        hold = await resolveQuietHold({
+        const question = {
           ruleId: row.ruleId ?? exec.ruleId,
           severity: ctx["severity"] || row.severity,
           metric: row.metric,
           assetId: row.assetId,
-        });
+        };
+        hold = await resolveQuietHold(question);
         stampHold = !!hold && !row.quietHeldAt;
+        if (!hold && !row.quietHeldAt && row.quietSource == null) {
+          liveSource = await resolveQuietWindow(question).catch((err) => {
+            logger.warn({ err: (err as Error)?.message, notificationId }, "quiet-time window lookup failed — the live alert will not be in the summary");
+            return null;
+          });
+        }
       }
     }
   }
@@ -422,6 +434,18 @@ export async function executeActions(
     }
   }
   if (hold && stampHold && deferStamp && holdStats.held > 0) await stampHeld(hold);
+  // A split fire that reached every reader live owes no summary as HELD, but
+  // it still happened inside the window.
+  else if (hold && stampHold && deferStamp) liveSource = hold.source;
+  if (liveSource) {
+    const src = liveSource;
+    await prisma.notification.updateMany({
+      where: { id: notificationId, quietHeldAt: null },
+      data: { quietSource: { kind: src.kind, id: src.id, name: src.name } },
+    }).catch((err) => {
+      logger.warn({ err: (err as Error)?.message, notificationId }, "could not stamp the live alert's quiet source");
+    });
+  }
   return { executed, failed };
 }
 

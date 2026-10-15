@@ -144,7 +144,7 @@ export async function deleteQuietTimeSchedule(id: string, actor?: string) {
   // Alerts it is holding right now keep their stamp: the summary job reads
   // the stamp and flushes them at the moment it finds the source gone.
   const heldNow = await prisma.notification.count({
-    where: { quietSummarizedAt: null, quietHeldAt: { not: null }, quietSource: { equals: { kind: "global", id } } },
+    where: { quietSummarizedAt: null, quietHeldAt: { not: null }, quietSource: { path: ["id"], equals: id } },
   });
   await prisma.quietTimeSchedule.delete({ where: { id } });
   bumpQuietTimeCache();
@@ -197,23 +197,31 @@ export async function getQuietTimeSummary(id: string) {
   const summaryDetails = { outstanding: [], recurring: [], recurrenceThreshold: null, ...details } as Parameters<typeof detailsForRecipient>[0];
   const withCounts = recipients.map((r) => {
     const mine = detailsForRecipient(summaryDetails, r);
-    return { ...r, listedCount: mine.outstanding.length, recurringCount: mine.recurring.length, filtered: Array.isArray(r.alertIds) };
+    return { ...r, listedCount: mine.outstanding.length, recurringCount: mine.recurring.length, liveCount: (mine.live ?? []).length, filtered: Array.isArray(r.alertIds) };
   });
   return {
     summary: { ...row, recipients: withCounts },
     covered: covered.map((n) => ({ ...n, ruleName: n.rule?.name ?? null, rule: undefined, listed: listedIds.has(n.id) })),
-    listed: { outstanding: details.outstanding ?? [], recurring: details.recurring ?? [], recurrenceThreshold: details.recurrenceThreshold ?? null },
+    listed: { outstanding: details.outstanding ?? [], recurring: details.recurring ?? [], live: liveRowsOf(details), recurrenceThreshold: details.recurrenceThreshold ?? null },
   };
 }
 
 export async function listQuietTimeSummaries(limit = 20) {
-  return prisma.quietTimeSummary.findMany({
+  const rows = await prisma.quietTimeSummary.findMany({
     select: {
       id: true, sourceKind: true, sourceId: true, sourceName: true, coveredFrom: true, coveredTo: true,
       listedCount: true, recurringCount: true, recipients: true, channelId: true, status: true, createdAt: true, sentAt: true,
-      notificationIds: true,
+      notificationIds: true, details: true,
     },
     orderBy: { createdAt: "desc" },
     take: Math.max(1, Math.min(100, limit)),
   });
+  // The alerts sent live in the window (rule 92(f)) live only in `details`;
+  // the list carries their count, not the whole blob.
+  return rows.map(({ details, ...r }) => ({ ...r, liveCount: liveRowsOf(details).length }));
+}
+
+function liveRowsOf(details: unknown): unknown[] {
+  const live = details && typeof details === "object" ? (details as { live?: unknown }).live : null;
+  return Array.isArray(live) ? live : [];
 }

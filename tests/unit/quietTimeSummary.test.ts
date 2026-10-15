@@ -28,6 +28,14 @@ vi.mock("../../src/db.js", () => {
     notification: {
       findMany: vi.fn(async ({ where }: any) => {
         if (where?.quietSummarizedAt === null) return db.notifs.filter((n) => n.quietHeldAt && !n.quietSummarizedAt);
+        // The live-alert read (rule 92(f)): stamped with the source, fired in the stretch.
+        if (where?.quietSource?.path) {
+          return db.notifs.filter((n) =>
+            n.quietSource?.id === where.quietSource.equals
+            && !!n.testRun === where.testRun
+            && n.triggeredAt.getTime() >= where.triggeredAt.gte.getTime()
+            && n.triggeredAt.getTime() <= where.triggeredAt.lte.getTime());
+        }
         return db.notifs;
       }),
       update: vi.fn(async (args: any) => { db.notifUpdates.push(args); return {}; }),
@@ -38,7 +46,10 @@ vi.mock("../../src/db.js", () => {
       }),
     },
     notificationDelivery: {
-      findMany: vi.fn(async ({ where }: any) => db.deliveries.filter((d) => where.notificationId.in.includes(d.notificationId) && d.status === where.status)),
+      findMany: vi.fn(async ({ where }: any) => db.deliveries.filter((d) =>
+        where.notificationId.in.includes(d.notificationId)
+        && (typeof where.status === "string" ? d.status === where.status : where.status.in.includes(d.status))
+        && (!where.transport || where.transport.in.includes(d.transport)))),
     },
     notificationChannel: {
       findMany: vi.fn(async ({ where, take }: any) => {
@@ -296,6 +307,21 @@ describe("detailsForRecipient", () => {
   it("a recipient with no alert list gets the summary whole (static all-quiet audience, older rows)", () => {
     expect(detailsForRecipient(details, {})).toBe(details);
   });
+
+  it("adds the live rows that reached the reader, never one already listed as held for them (rule 92(f))", () => {
+    const liveRow = (id: string) => ({ notificationId: id, severity: "critical", assetId: "a9", assetHostname: "core-1", ruleName: "Core", message: "down", dimension: null, triggeredAt: HELD_AT.toISOString(), stillActive: false });
+    const withLive = { ...details, live: [liveRow("L1"), liveRow("L2"), liveRow("n1")] };
+    // Paged live, nothing held: not all quiet.
+    const paged = detailsForRecipient(withLive, { alertIds: [], liveAlertIds: ["L1"] });
+    expect(paged.allQuiet).toBeUndefined();
+    expect(paged.live!.map((l) => l.notificationId)).toEqual(["L1"]);
+    // n1 is in their held list, so it is not repeated under live.
+    const both = detailsForRecipient(withLive, { alertIds: ["n1"], liveAlertIds: ["n1", "L2"] });
+    expect(both.outstanding.map((o) => o.notificationId)).toEqual(["n1"]);
+    expect(both.live!.map((l) => l.notificationId)).toEqual(["L2"]);
+    // Live rows that reached someone else leave this reader all quiet.
+    expect(detailsForRecipient(withLive, { alertIds: [] })).toMatchObject({ allQuiet: true, heldCount: 0 });
+  });
 });
 
 describe("createDueSummaries", () => {
@@ -492,6 +518,91 @@ describe("the all-quiet summary when NOTHING was held", () => {
   });
 });
 
+describe("alerts the window let through, sent live (business rule 92(f))", () => {
+  const NIGHTS = { kind: "global", id: "g1", name: "Nights" };
+  // A critical that went out live at 23:30 Friday — BEFORE the first hold at
+  // 02:00, so the live read must start at the stretch, not at the hold.
+  function liveCritical(over: Record<string, unknown> = {}) {
+    return heldAlert({
+      ruleId: "r-crit", assetId: "a-core", assetHostname: "core-1", severity: "critical", message: "core-1 is down", dimension: null,
+      triggeredAt: at(2026, 10, 2, 23, 30), quietHeldAt: null, quietSource: NIGHTS, cleared: true, rule: { name: "Core down" }, ...over,
+    });
+  }
+
+  it("lists a live critical for the readers it reached instead of telling them 'all quiet'", async () => {
+    const held = heldAlert();
+    const crit = liveCritical();
+    db.deliveries.push(
+      { notificationId: held.id, status: "held", transport: "email", target: "infra@example.com", meta: {}, channelId: "ch-email" },
+      { notificationId: crit.id, status: "sent", transport: "email", target: "oncall@example.com", meta: { composed: true, cc: ["boss@example.com"] }, channelId: "ch-email" },
+      // Its all-clear reached them too — not a second live row.
+      { notificationId: crit.id, status: "sent", transport: "email", target: "oncall@example.com", meta: { allClear: true }, channelId: "ch-email" },
+    );
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    const s = db.summaries[0];
+    expect(s.details.live.map((l: any) => l.notificationId)).toEqual([crit.id]);
+    // The live alert is reported, not covered: it was never held.
+    expect(s.notificationIds).toEqual([held.id]);
+    expect(s.recipients.find((r: any) => r.address === "oncall@example.com")).toMatchObject({ alertIds: [], liveAlertIds: [crit.id] });
+
+    await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    const to = (a: string) => db.sent.find((m) => m.to[0] === a);
+    const oncall = to("oncall@example.com");
+    expect(oncall.subject).toBe("[QUIET TIME SUMMARY] 1 sent live · Nights");
+    expect(oncall.html).toContain("Sent during quiet time (1)");
+    expect(oncall.html).toContain("core-1");
+    expect(oncall.html).toContain("Recovered");
+    expect(oncall.html).not.toContain("All quiet");
+    expect(oncall.html).not.toContain("port12");
+    expect(to("boss@example.com").subject).toBe("[QUIET TIME SUMMARY] 1 sent live · Nights");
+    // The held reader's copy is theirs alone.
+    expect(to("infra@example.com").subject).toBe("[QUIET TIME SUMMARY] 1 outstanding · Nights");
+    expect(to("infra@example.com").html).not.toContain("core-1");
+  });
+
+  it("nothing held but a critical went out: its reader gets the live list, everyone else the all-quiet copy", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], severities: ["serious", "warning"] };
+    db.rules.push({ id: "r-a", name: "Port down", enabled: true, severity: "serious", trigger: { type: "asset_state", field: "ifOperStatus" }, scope: {}, quietTime: null, updatedAt: at(2026, 10, 1), actions: [{ type: "notify", channelId: "ch-email", addresses: ["noc@example.com"] }], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+    const crit = liveCritical({ cleared: false });
+    db.deliveries.push({ notificationId: crit.id, status: "sent", transport: "email", target: "critical@example.com", meta: {}, channelId: "ch-email" });
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(1);
+    const s = db.summaries[0];
+    expect(s.details.allQuiet).toBeUndefined();
+    expect(s.recipients.map((r: any) => r.address).sort()).toEqual(["critical@example.com", "noc@example.com"]);
+
+    await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    const to = (a: string) => db.sent.find((m) => m.to[0] === a);
+    expect(to("critical@example.com").subject).toBe("[QUIET TIME SUMMARY] 1 sent live · Nights");
+    expect(to("critical@example.com").html).toContain("Still active");
+    expect(to("noc@example.com").subject).toBe("[QUIET TIME SUMMARY] all quiet · Nights");
+    expect(to("noc@example.com").html).not.toContain("core-1");
+  });
+
+  it("with the all-quiet email off, only the readers a live alert reached are mailed", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], summaryAlways: false };
+    db.rules.push({ id: "r-a", name: "Port down", enabled: true, severity: "serious", trigger: {}, scope: {}, quietTime: null, updatedAt: at(2026, 10, 1), actions: [{ type: "notify", channelId: "ch-email", addresses: ["noc@example.com"] }], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+    const crit = liveCritical();
+    db.deliveries.push({ notificationId: crit.id, status: "sent", transport: "email", target: "critical@example.com", meta: {}, channelId: "ch-email" });
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(1);
+    expect(db.summaries[0].recipients.map((r: any) => r.address)).toEqual(["critical@example.com"]);
+  });
+
+  it("ignores a failed send, a test fire, another source's alert and one outside the stretch", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], summaryAlways: false };
+    const failed = liveCritical();
+    const test = liveCritical({ testRun: true });
+    const other = liveCritical({ quietSource: { kind: "global", id: "g2", name: "Weekends" } });
+    const before = liveCritical({ triggeredAt: at(2026, 10, 2, 21, 0) });
+    db.deliveries.push(
+      { notificationId: failed.id, status: "failed", transport: "email", target: "a@example.com", meta: {}, channelId: "ch-email" },
+      { notificationId: test.id, status: "sent", transport: "email", target: "b@example.com", meta: {}, channelId: "ch-email" },
+      { notificationId: other.id, status: "sent", transport: "email", target: "c@example.com", meta: {}, channelId: "ch-email" },
+      { notificationId: before.id, status: "sent", transport: "email", target: "d@example.com", meta: {}, channelId: "ch-email" },
+    );
+    expect(await createDueSummaries(at(2026, 10, 3, 6, 1))).toBe(0);
+  });
+});
+
 describe("drainPendingSummaries", () => {
   async function seedPending() {
     const live = heldAlert();
@@ -628,6 +739,32 @@ describe("drainPendingSummaries", () => {
     expect(e.html).toBe(sent.html);
     await expect(renderSentSummaryEmail("s1", "nobody@example.com")).rejects.toThrow(/not a recipient/);
     await expect(renderSentSummaryEmail("missing", "phone@example.com")).rejects.toThrow(/not found/);
+  });
+
+  it("one team's held alert does not decide the audience: every other reader the quiet time covers gets the all-quiet copy (2026-10-15)", async () => {
+    // r-apps is covered and fired nothing overnight; its readers used to hear nothing.
+    db.rules.push({ id: "r-apps", name: "Apps down", enabled: true, severity: "serious", trigger: { type: "asset_state", field: "monitorStatus" }, scope: {}, quietTime: null, updatedAt: at(2026, 10, 1), actions: [{ type: "notify", channelId: "ch-email", addresses: ["Apps@example.com"] }], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+    const infra = heldAlert({ ruleId: "r-infra", assetHostname: "fw-core", message: "fw-core is down", dimension: null });
+    db.deliveries.push({ notificationId: infra.id, status: "held", transport: "email", target: "infra@example.com", meta: {}, channelId: "ch-email" });
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    const rs = db.summaries[0].recipients;
+    expect(rs.map((r: any) => r.address).sort()).toEqual(["apps@example.com", "infra@example.com"]);
+    expect(rs.find((r: any) => r.address === "apps@example.com").alertIds).toEqual([]);
+
+    await drainPendingSummaries(at(2026, 10, 3, 6, 1));
+    const to = (a: string) => db.sent.find((m) => m.to[0] === a);
+    expect(to("infra@example.com").subject).toBe("[QUIET TIME SUMMARY] 1 outstanding · Nights");
+    expect(to("apps@example.com").subject).toBe("[QUIET TIME SUMMARY] all quiet · Nights");
+    expect(to("apps@example.com").html).not.toContain("fw-core");
+  });
+
+  it("with the all-quiet email off, the covered audience is not added", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], summaryAlways: false };
+    db.rules.push({ id: "r-apps", name: "Apps down", enabled: true, severity: "serious", trigger: {}, scope: {}, quietTime: null, updatedAt: at(2026, 10, 1), actions: [{ type: "notify", channelId: "ch-email", addresses: ["apps@example.com"] }], escalation: null, severityBands: null, bandNotify: null, resetActions: null });
+    const infra = heldAlert();
+    db.deliveries.push({ notificationId: infra.id, status: "held", transport: "email", target: "infra@example.com", meta: {}, channelId: "ch-email" });
+    await createDueSummaries(at(2026, 10, 3, 6, 1));
+    expect(db.summaries[0].recipients.map((r: any) => r.address)).toEqual(["infra@example.com"]);
   });
 
   it("the whole tick creates and sends in one call", async () => {

@@ -27,6 +27,11 @@
  *     policy's threshold times during the window. Listed with the count and
  *     every fire time, recovered or not, and not repeated under OUTSTANDING.
  *
+ *   - SENT LIVE (rule 92(f)): alerts that fired inside the same stretch at a
+ *     severity the policy lets through. The fire stamps `quietSource` without
+ *     `quietHeldAt` (`resolveQuietWindow`), so they are reported, never
+ *     covered; each is listed to the readers its sent rows reached.
+ *
  * Who gets it: the HELD delivery rows of the listed alerts, which are the
  * resolver's own answer to "who was this alert for" — an email row's To line
  * and Cc, a web-push row's account (reached by its email; a push preference
@@ -34,10 +39,14 @@
  * person. Deduplicated by lower-cased address. A reader with no address on
  * their account is skipped with one warning Event. Every covered alert's held
  * rows are read, and each recipient keeps the alerts it was a target of
- * (`alertIds`).
+ * (`alertIds`). Plus the readers the live alerts reached (`liveAlertIds`),
+ * and — with `summaryAlways` — every static recipient of the automations the
+ * source covers, with an empty list: on 2026-10-15 one team's held alert
+ * decided the whole audience of a global quiet time, and every other reader
+ * it covered got no morning email at all.
  *
- * What each reader sees (`detailsForRecipient`): ONLY the outstanding and
- * recurring rows for their own alerts. One source can span many automations
+ * What each reader sees (`detailsForRecipient`): ONLY the outstanding,
+ * recurring and live rows for their own alerts. One source can span many automations
  * with different audiences — a global quiet time covers every automation that
  * does not opt out — and on 2026-10-12 a whole-source summary mailed an
  * infrastructure list devices it was never paged about. A reader whose own
@@ -105,6 +114,7 @@ import {
   renderQuietSummaryEmail,
   type SummaryOutstandingRow,
   type SummaryRecurringRow,
+  type SummaryLiveRow,
 } from "../utils/quietSummaryEmailTemplate.js";
 
 /** Per-recipient attempts across the job's 60 s ticks — ten minutes of
@@ -127,6 +137,9 @@ export interface SummaryRecipient {
    *  copy lists only these. Absent = the whole summary: an all-quiet row built
    *  from static recipients, or a row written before per-reader filtering. */
   alertIds?: string[];
+  /** The alerts that reached this reader LIVE inside the window (rule 92(f)):
+   *  their copy's "sent during quiet time" rows. Absent = none. */
+  liveAlertIds?: string[];
   /** The zone their copy was rendered in and when it went — kept so the
    *  Settings view can show the email exactly as it was sent. */
   zone?: string;
@@ -137,6 +150,8 @@ interface SummaryDetails {
   outstanding: SummaryOutstandingRow[];
   recurring: SummaryRecurringRow[];
   recurrenceThreshold: number | null;
+  /** Alerts that fired inside the window and went out live (rule 92(f)). */
+  live?: SummaryLiveRow[];
   /** The all-quiet email (`summaryAlways`): nothing listed; `heldCount` alerts
    *  fired and recovered during the stretch, 0 = none were held at all. */
   allQuiet?: boolean;
@@ -282,19 +297,71 @@ export function recipientsFromHeldRows(
 
 /**
  * One reader's copy of a summary: only the outstanding rows and recurring
- * rows for alerts they were a target of. A reader whose alerts all recovered
- * gets the all-quiet copy, counting their own. A recipient with no `alertIds`
- * gets the summary whole (see `SummaryRecipient.alertIds`). Pure.
+ * rows for alerts they were a target of, plus the live rows that reached them
+ * (rule 92(f)). A reader with none of the three gets the all-quiet copy,
+ * counting their own held alerts. A recipient with no `alertIds` gets the
+ * summary whole (see `SummaryRecipient.alertIds`). Pure.
  */
-export function detailsForRecipient(details: SummaryDetails, recipient: Pick<SummaryRecipient, "alertIds">): SummaryDetails {
+export function detailsForRecipient(details: SummaryDetails, recipient: Pick<SummaryRecipient, "alertIds" | "liveAlertIds">): SummaryDetails {
   if (!Array.isArray(recipient.alertIds)) return details;
   const mine = new Set(recipient.alertIds);
+  const mineLive = new Set(recipient.liveAlertIds ?? []);
   const outstanding = (details.outstanding ?? []).filter((o) => mine.has(o.notificationId));
   const recurring = (details.recurring ?? []).filter((r) => (r.notificationIds ?? []).some((id) => mine.has(id)));
-  if (outstanding.length === 0 && recurring.length === 0) {
+  // An alert already listed as held for this reader is not repeated as live.
+  const live = (details.live ?? []).filter((l) => mineLive.has(l.notificationId) && !mine.has(l.notificationId));
+  if (outstanding.length === 0 && recurring.length === 0 && live.length === 0) {
     return { outstanding: [], recurring: [], recurrenceThreshold: details.recurrenceThreshold, allQuiet: true, heldCount: mine.size };
   }
-  return { outstanding, recurring, recurrenceThreshold: details.recurrenceThreshold };
+  return { outstanding, recurring, live, recurrenceThreshold: details.recurrenceThreshold };
+}
+
+/**
+ * The alerts that fired inside [from, to] at a severity `source` let through
+ * and went out live (rule 92(f)) — stamped `quietSource` at the fire — with
+ * who each reached: the sent / still-pending email and push rows, all-clears
+ * excluded. An alert that reached nobody is not listed. Bounded by the
+ * window's alerts via the triggeredAt index, not the fleet.
+ */
+async function liveAlertsFor(
+  source: { kind: QuietSourceKind; id: string },
+  from: Date,
+  to: Date,
+): Promise<{ rows: SummaryLiveRow[]; addresses: string[]; userIds: string[]; alerts: RecipientAlertMap }> {
+  const empty = { rows: [], addresses: [], userIds: [], alerts: { byAddress: {}, byUser: {} } };
+  const fired = (await prisma.notification.findMany({
+    where: { testRun: false, triggeredAt: { gte: from, lte: to }, quietSource: { path: ["id"], equals: source.id } },
+    select: {
+      id: true, severity: true, assetId: true, assetHostname: true, message: true, dimension: true,
+      triggeredAt: true, cleared: true, quietSource: true, rule: { select: { name: true } },
+    },
+    orderBy: { triggeredAt: "asc" },
+    take: HELD_BATCH,
+  })).filter((n) => readSource(n.quietSource)?.kind === source.kind);
+  if (fired.length === 0) return empty;
+  const rows = (await prisma.notificationDelivery.findMany({
+    where: { notificationId: { in: fired.map((n) => n.id) }, status: { in: ["sent", "pending"] }, transport: { in: ["email", "web_push"] } },
+    select: { notificationId: true, transport: true, target: true, meta: true },
+  })).filter((r) => !(r.meta && typeof r.meta === "object" && (r.meta as Record<string, unknown>).allClear === true));
+  if (rows.length === 0) return empty;
+  const reached = new Set(rows.map((r) => r.notificationId));
+  const { addresses, userIds, alerts } = recipientsFromHeldRows(rows);
+  return {
+    rows: fired.filter((n) => reached.has(n.id)).map((n) => ({
+      notificationId: n.id,
+      severity: n.severity,
+      assetId: n.assetId,
+      assetHostname: n.assetHostname,
+      ruleName: n.rule?.name ?? null,
+      message: n.message,
+      dimension: n.dimension,
+      triggeredAt: n.triggeredAt.toISOString(),
+      stillActive: !n.cleared,
+    })),
+    addresses,
+    userIds,
+    alerts,
+  };
 }
 
 interface EmailChannelRow { id: string; type: string; enabled: boolean; config: unknown }
@@ -384,11 +451,17 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
     let recipients: SummaryRecipient[] = [];
     let channel: EmailChannelRow | null = null;
     let status = "pending";
-    // Nothing to list: everything recovered under the threshold. With
-    // `summaryAlways` (the default) that is still an email — the all-quiet
-    // one, to everyone the covered alerts would have reached — because its
+    // The alerts that went out live inside the same stretch (rule 92(f)):
+    // from the stretch's own start — a 23:00 critical precedes a 02:00 hold.
+    const stretch = config ? lastQuietStretch(config, coveredTo) : null;
+    const liveFrom = stretch && stretch.end.getTime() === coveredTo.getTime() && stretch.start < firstHeld ? stretch.start : firstHeld;
+    const live = await liveAlertsFor(source, liveFrom, coveredTo);
+    if (live.rows.length > 0) details.live = live.rows;
+    // Nothing to list: everything recovered under the threshold, and nothing
+    // went out live. With `summaryAlways` (the default) that is still an
+    // email — the all-quiet one, to everyone the source covers — because its
     // arriving is the point. Turned off, the row is written and nobody mailed.
-    const allQuiet = listedIds.length === 0;
+    const allQuiet = listedIds.length === 0 && live.rows.length === 0;
     if (allQuiet) {
       details.allQuiet = true;
       details.heldCount = covered.length;
@@ -405,9 +478,19 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
         where: { notificationId: { in: covered.map((c) => c.id) }, status: "held" },
         select: { notificationId: true, transport: true, target: true, meta: true, channelId: true },
       });
-      const { addresses, userIds, alerts } = recipientsFromHeldRows(heldRows);
+      const held = recipientsFromHeldRows(heldRows);
+      // Everyone else the source covers gets the all-quiet copy (an empty
+      // alert list). Held alerts on ONE team's devices used to decide the
+      // audience for the whole source, so every other reader of a global
+      // quiet time heard nothing at all that morning (2026-10-15).
+      const audience = always && config ? await staticRecipientsOfRules(await coveredRulesOf(source, config)) : { addresses: [], userIds: [] };
+      const addresses = Array.from(new Set([...held.addresses, ...live.addresses, ...audience.addresses]));
+      const userIds = Array.from(new Set([...held.userIds, ...live.userIds, ...audience.userIds]));
       channel = await resolveSummaryChannel(config?.summaryChannelId, heldRows.map((r) => r.channelId));
-      recipients = await resolveRecipients(addresses, userIds, name, alerts);
+      recipients = await resolveRecipients(addresses, userIds, name, held.alerts, live.alerts);
+      // A reader the quiet time never applied to (rule 120) is owed nothing
+      // the held rows did not name.
+      if (config) recipients = recipients.filter((r) => (r.alertIds ?? []).length > 0 || !quietRecipientFullyExempt(config, r.address));
       // A reader whose own alerts all recovered gets the all-quiet copy only
       // when the policy sends one; otherwise they are not mailed at all.
       if (!always) recipients = recipients.filter((r) => !detailsForRecipient(details, r).allQuiet);
@@ -472,7 +555,9 @@ export async function createDueSummaries(now: Date = new Date()): Promise<number
 // source whose policy holds first alerts somewhere and has `summaryAlways`
 // (the default), finds the stretch that most recently ENDED
 // (`lastQuietStretch`), and when its send time has arrived writes an all-quiet
-// row once per stretch. Recipients are derived from the automations the
+// row once per stretch — listing, to the readers they reached, any alerts that
+// went out live in the stretch (rule 92(f); with `summaryAlways` off, those
+// readers are the only ones mailed). Recipients are derived from the automations the
 // source covers: the static recipients of their notify actions (named users,
 // typed addresses, roles, tags, regions, scope-region users), plus device-
 // region routing (`recipientDeviceRegion` and its levels) resolved against
@@ -518,7 +603,8 @@ async function createAllQuietSummaries(now: Date, handled: Set<string>): Promise
   let created = 0;
   for (const src of sources) {
     if (handled.has(`${src.kind}:${src.id}`)) continue;
-    if (!quietSummaryAlways(src.config) || !quietHoldsFires(src.config)) continue;
+    if (!quietHoldsFires(src.config)) continue;
+    const always = quietSummaryAlways(src.config);
     const stretch = lastQuietStretch(src.config, now);
     if (!stretch) continue;
     if (stretch.end.getTime() < src.since.getTime()) continue;
@@ -529,16 +615,24 @@ async function createAllQuietSummaries(now: Date, handled: Set<string>): Promise
     });
     if (already) continue;
 
-    const covered = src.kind === "automation"
-      ? rules.filter((r) => r.id === src.id)
-      : rules.filter((r) => r.enabled && r.quietTime == null && ruleCoveredByGlobal(r, src.config));
-    const { addresses, userIds } = await staticRecipientsOfRules(covered);
-    // A recipient exception held for nothing (business rule 120) was never
-    // quiet, so an email saying the quiet time passed is not theirs.
-    const recipients = (await resolveRecipients(addresses, userIds, src.name))
+    // Nothing was held, but a severity the policy lets through may have gone
+    // out live (rule 92(f)); its readers are told what reached them, not
+    // "all quiet". With `summaryAlways` off, only they are mailed.
+    const live = await liveAlertsFor(src, stretch.start, stretch.end);
+    if (!always && live.rows.length === 0) continue;
+    const audience = always ? await staticRecipientsOfRules(await coveredRulesOf(src, src.config, rules)) : { addresses: [], userIds: [] };
+    const addresses = Array.from(new Set([...audience.addresses, ...live.addresses]));
+    const userIds = Array.from(new Set([...audience.userIds, ...live.userIds]));
+    // Every reader gets a filtered copy: an empty held list, plus whatever
+    // reached them live. A recipient exception held for nothing (business
+    // rule 120) was never quiet, so an email about the quiet time is not theirs.
+    const recipients = (await resolveRecipients(addresses, userIds, src.name, { byAddress: {}, byUser: {} }, live.alerts))
       .filter((r) => !quietRecipientFullyExempt(src.config, r.address));
     const channel = await resolveSummaryChannel(src.config.summaryChannelId, []);
-    const details: SummaryDetails = { outstanding: [], recurring: [], recurrenceThreshold: src.config.recurrenceThreshold ?? null, allQuiet: true, heldCount: 0 };
+    const details: SummaryDetails = {
+      outstanding: [], recurring: [], recurrenceThreshold: src.config.recurrenceThreshold ?? null,
+      ...(live.rows.length > 0 ? { live: live.rows } : { allQuiet: true, heldCount: 0 }),
+    };
     let status = "pending";
     if (!channel) {
       status = "unroutable";
@@ -587,6 +681,22 @@ function ruleCoveredByGlobal(rule: RuleRecipientRow, config: QuietTimeConfig): b
   if (!severities.some((s) => quietHoldsSend(config, s, "fire"))) return false;
   const trig = (rule.trigger && typeof rule.trigger === "object" ? rule.trigger : {}) as { metric?: string; field?: string };
   return quietHoldsKind(config, trig.metric ?? trig.field ?? null);
+}
+
+/** The enabled automations a source covers — the audience of its all-quiet
+ *  copy. `rules` = every enabled rule, already read; otherwise read here. */
+async function coveredRulesOf(
+  source: { kind: QuietSourceKind; id: string },
+  config: QuietTimeConfig,
+  rules?: RuleRecipientRow[],
+): Promise<RuleRecipientRow[]> {
+  const all = rules ?? await prisma.notificationRule.findMany({
+    where: { enabled: true, ...(source.kind === "automation" ? { id: source.id } : {}) },
+    select: RULE_RECIPIENT_SELECT,
+  });
+  return source.kind === "automation"
+    ? all.filter((r) => r.id === source.id)
+    : all.filter((r) => r.enabled && r.quietTime == null && ruleCoveredByGlobal(r, config));
 }
 
 /** The static recipients of every notify action on these rules: addresses and
@@ -656,8 +766,9 @@ async function staticRecipientsOfRules(rules: RuleRecipientRow[]): Promise<{ add
 /** Addresses → recipients with their account (for the zone), plus push
  *  accounts reached by their email. Skips an account with no address, once.
  *  With `alerts`, each recipient carries the alerts it was a target of — by
- *  address and by push account, merged when both name the same person. */
-async function resolveRecipients(addresses: string[], userIds: string[], sourceName: string, alerts?: RecipientAlertMap): Promise<SummaryRecipient[]> {
+ *  address and by push account, merged when both name the same person; with
+ *  `live`, the same for the alerts that reached it live (`liveAlertIds`). */
+async function resolveRecipients(addresses: string[], userIds: string[], sourceName: string, alerts?: RecipientAlertMap, live?: RecipientAlertMap): Promise<SummaryRecipient[]> {
   const users = (addresses.length > 0 || userIds.length > 0)
     ? await prisma.user.findMany({
         where: {
@@ -686,6 +797,12 @@ async function resolveRecipients(addresses: string[], userIds: string[], sourceN
     for (const r of byAddress.values()) {
       const ids = new Set([...(alerts.byAddress[r.address] ?? []), ...(r.userId ? alerts.byUser[r.userId] ?? [] : [])]);
       r.alertIds = Array.from(ids);
+    }
+  }
+  if (live) {
+    for (const r of byAddress.values()) {
+      const ids = new Set([...(live.byAddress[r.address] ?? []), ...(r.userId ? live.byUser[r.userId] ?? [] : [])]);
+      if (ids.size > 0) r.liveAlertIds = Array.from(ids);
     }
   }
   if (noEmail.length > 0) {
@@ -717,6 +834,7 @@ async function renderRecipientCopy(row: SummaryRowFacts, details: SummaryDetails
     zone,
     outstanding: mine.outstanding ?? [],
     recurring: mine.recurring ?? [],
+    live: mine.live ?? [],
     recurrenceThreshold: mine.recurrenceThreshold ?? null,
     allQuiet: mine.allQuiet === true,
     heldCount: mine.heldCount ?? 0,
@@ -769,6 +887,7 @@ export async function renderSentSummaryEmail(id: string, address: string) {
     filtered: Array.isArray(r.alertIds),
     listedCount: (mine.outstanding ?? []).length,
     recurringCount: (mine.recurring ?? []).length,
+    liveCount: (mine.live ?? []).length,
     subject: msg.subject,
     text: msg.text,
     html,
