@@ -6098,8 +6098,9 @@ function _wireAssetRefreshExport(a) {
 }
 
 // System-tab monitor actions: override reset. (Discover Now is a header verb
-// now — see _wireAssetDiscoverNow. On-demand polling stays on the
-// mobile asset sheet's refresh gesture, which still calls probe-now.)
+// now — see _wireAssetDiscoverNow. No UI calls probe-now any more: the
+// mobile asset sheet's refresh became a plain re-read on 2026-10-07, so
+// on-demand polling is API-only.)
 function _wireAssetMonitorActions(a) {
     var monitorResetBtn = document.getElementById("btn-asset-monitor-reset");
     if (monitorResetBtn) {

@@ -836,7 +836,7 @@ const api = {
     },
     maintenanceInfo:      (id)  => request("GET", `/assets/${id}/maintenance-info`),
     probeNow:             (id)  => request("POST", `/assets/${id}/probe-now`),
-    // probe-now narrowed to the system-info collector — the Refresh button on
+    // probe-now narrowed to the system-info collector — the Poll button on
     // the Wireless / MAC Table / ARP Table tabs, whose content is a snapshot of
     // what the device last answered. Writes no monitor state.
     refreshSystemInfo:    (id)  => request("POST", `/assets/${id}/refresh-system-info`),
