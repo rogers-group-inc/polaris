@@ -13,14 +13,18 @@
  * POLARIS_PUBLIC_URL is unset; the row then names the device without a link,
  * the same degradation every alert email takes.
  *
- * Two sections, both optional:
+ * Three sections, all optional:
  *   OUTSTANDING — alerts still active when the summary was built, oldest
  *                 first: severity, device, what, since (reader's zone), age.
  *   RECURRING   — the same alert on the same device/component fired more than
  *                 the policy's threshold during the window: device, what, the
  *                 count, every fire time, and whether it is still active. An
  *                 alert listed here is NOT repeated above.
- * With neither it is the ALL-QUIET email (`summaryAlways`, on by default):
+ *   SENT LIVE   — alerts that fired inside the window at a severity the policy
+ *                 does not hold, and reached this reader as they happened
+ *                 (business rule 92(f)): the night's whole story in one place,
+ *                 and a reader paged at 03:00 is not told "all quiet".
+ * With none of them it is the ALL-QUIET email (`summaryAlways`, on by default):
  * nothing outstanding, how many alerts fired and recovered (or that none were
  * held), and the line that this arriving proves the quiet time and the email
  * path work — the morning heartbeat the operator asked for on 2026-10-05.
@@ -58,6 +62,21 @@ export interface SummaryRecurringRow {
   notificationIds?: string[];
 }
 
+/** An alert that fired inside the window and went out LIVE to this reader —
+ *  a severity the policy does not hold (business rule 92(f)). */
+export interface SummaryLiveRow {
+  notificationId: string;
+  severity: string;
+  assetId: string | null;
+  assetHostname: string | null;
+  ruleName: string | null;
+  message: string;
+  dimension: string | null;
+  triggeredAt: string; // ISO
+  /** Uncleared when the summary was built. */
+  stillActive: boolean;
+}
+
 export interface QuietSummaryInput {
   sourceName: string;
   sourceKind: "automation" | "global";
@@ -68,6 +87,9 @@ export interface QuietSummaryInput {
   outstanding: SummaryOutstandingRow[];
   recurring: SummaryRecurringRow[];
   recurrenceThreshold: number | null;
+  /** Alerts sent live to this reader during the window. Optional: a summary
+   *  written before rule 92(f) has none. */
+  live?: SummaryLiveRow[];
   /** The "all quiet" email: nothing to list. `heldCount` says how many alerts
    *  fired and recovered during the stretch (0 = none were held at all). */
   allQuiet?: boolean;
@@ -111,10 +133,11 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-export function quietSummarySubject(input: Pick<QuietSummaryInput, "sourceName" | "outstanding" | "recurring">): string {
+export function quietSummarySubject(input: Pick<QuietSummaryInput, "sourceName" | "outstanding" | "recurring" | "live">): string {
   const parts: string[] = [];
   if (input.outstanding.length > 0) parts.push(`${input.outstanding.length} outstanding`);
   if (input.recurring.length > 0) parts.push(`${input.recurring.length} recurring`);
+  if ((input.live ?? []).length > 0) parts.push(`${input.live!.length} sent live`);
   if (parts.length === 0) parts.push("all quiet");
   return `[QUIET TIME SUMMARY] ${parts.join(" · ")} · ${input.sourceName}`;
 }
@@ -131,9 +154,11 @@ export function renderQuietSummaryEmail(input: QuietSummaryInput): RenderedSumma
   const { zone, now } = input;
   const fmt = (d: Date | string) => formatLocalTime(d, zone);
   const kind = input.sourceKind === "global" ? "global quiet time" : "automation quiet time";
-  const allQuiet = input.outstanding.length === 0 && input.recurring.length === 0;
+  const live = input.live ?? [];
+  const nothingHeld = input.outstanding.length === 0 && input.recurring.length === 0;
+  const allQuiet = nothingHeld && live.length === 0;
   const heldCount = input.heldCount ?? 0;
-  const intro = allQuiet
+  const intro = nothingHeld
     ? `${kind.charAt(0).toUpperCase()}${kind.slice(1)} "${input.sourceName}" ran from ${fmt(input.coveredFrom)} to ${fmt(input.coveredTo)}. Times are shown in ${zone}.`
     : `Alerts held by ${kind} "${input.sourceName}" between ${fmt(input.coveredFrom)} and ${fmt(input.coveredTo)}. ` +
       `Times are shown in ${zone}.`;
@@ -163,6 +188,19 @@ export function renderQuietSummaryEmail(input: QuietSummaryInput): RenderedSumma
       text.push(
         `- ${deviceLabel(r)} — ${r.ruleName ?? r.severity}: ${plural(r.count, "time")}${r.stillActive ? ", still active" : ", recovered"}` +
         `\n  ${r.times.map((t) => fmt(t)).join("; ")}` +
+        (url ? `\n  ${url}` : ""),
+      );
+    }
+    text.push("");
+  }
+  if (live.length > 0) {
+    text.push(`SENT DURING QUIET TIME (${live.length}) — these were not held and reached you as they happened`);
+    for (const r of live) {
+      const url = assetPageUrl(r.assetId);
+      text.push(
+        `- ${r.severity.toUpperCase()} · ${deviceLabel(r)} — ${r.message}` +
+        ` · at ${fmt(r.triggeredAt)}${r.stillActive ? ", still active" : ", recovered"}` +
+        (r.ruleName ? ` · ${r.ruleName}` : "") +
         (url ? `\n  ${url}` : ""),
       );
     }
@@ -234,6 +272,28 @@ export function renderQuietSummaryEmail(input: QuietSummaryInput): RenderedSumma
         `<td ${cell}>${sevPill(r.severity)} ${escapeHtml(r.ruleName ?? "")}<div style="color:${r.stillActive ? "#b91c1c" : "#15803d"};font-size:12px;margin-top:4px;font-weight:600">${r.stillActive ? "Still active" : "Recovered"}</div></td>`,
         `<td ${cell} nowrap><strong>${r.count}</strong> ${r.count === 1 ? "time" : "times"}</td>`,
         `<td ${cell}>${r.times.map((t) => escapeHtml(fmt(t))).join("<br>")}</td>`,
+        "</tr>",
+      );
+    }
+    html.push("</table>", "</td></tr>");
+  }
+
+  if (live.length > 0) {
+    html.push(
+      '<tr><td style="padding:14px 22px 4px">',
+      `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#374151;font-weight:700">Sent during quiet time (${live.length})</div>`,
+      '<div style="font-size:12px;color:#6b7280;margin-top:2px">These were not held and reached you as they happened.</div>',
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:6px">',
+      `<tr><th ${head}>Severity</th><th ${head}>Device</th><th ${head}>What</th><th ${head}>Fired</th><th ${head}>Now</th></tr>`,
+    );
+    for (const r of live) {
+      html.push(
+        "<tr>",
+        `<td ${cell}>${sevPill(r.severity)}</td>`,
+        `<td ${cell}>${deviceHtml(r)}</td>`,
+        `<td ${cell}>${escapeHtml(r.message)}${r.ruleName ? `<div style="color:#6b7280;font-size:12px;margin-top:2px">${escapeHtml(r.ruleName)}</div>` : ""}</td>`,
+        `<td ${cell} nowrap>${escapeHtml(fmt(r.triggeredAt))}</td>`,
+        `<td ${cell} nowrap><span style="color:${r.stillActive ? "#b91c1c" : "#15803d"};font-weight:600">${r.stillActive ? "Still active" : "Recovered"}</span></td>`,
         "</tr>",
       );
     }

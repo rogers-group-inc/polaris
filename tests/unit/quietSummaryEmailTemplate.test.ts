@@ -84,4 +84,25 @@ describe("renderQuietSummaryEmail", () => {
     expect(none.text).toContain("no alerts were held during the quiet period");
     expect(none.text).toContain('ran from');
   });
+
+  it("lists the alerts sent live during the window, and is then not the all-quiet email (rule 92(f))", () => {
+    const live = [{
+      notificationId: "L1", severity: "critical", assetId: "a9", assetHostname: "core-1", ruleName: "Core down",
+      message: "core-1 is down", dimension: null, triggeredAt: at(2026, 10, 3, 3, 15).toISOString(), stillActive: false,
+    }];
+    const r = render({ outstanding: [], recurring: [], live });
+    expect(r.subject).toBe("[QUIET TIME SUMMARY] 1 sent live · Nights");
+    expect(r.text).toContain("SENT DURING QUIET TIME (1) — these were not held and reached you as they happened");
+    expect(r.text).toContain("CRITICAL · core-1 — core-1 is down · at");
+    expect(r.text).toContain(", recovered · Core down");
+    expect(r.text).toContain("ran from");
+    expect(r.text).not.toContain("Nothing is outstanding");
+    expect(r.html).toContain("Sent during quiet time (1)");
+    expect(r.html).toContain("Recovered");
+    expect(r.html).not.toContain("All quiet");
+    // Beside held rows it is a third section, and the subject counts all three.
+    const all = render({ live: [{ ...live[0]!, stillActive: true }] });
+    expect(all.subject).toBe("[QUIET TIME SUMMARY] 1 outstanding · 1 recurring · 1 sent live · Nights");
+    expect(all.html).toContain("Still active");
+  });
 });

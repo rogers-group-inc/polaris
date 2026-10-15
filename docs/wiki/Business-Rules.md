@@ -1528,7 +1528,12 @@ like any other. With nothing to list — everything recovered, or nothing was
 held at all — the summary still goes out as the **all-quiet email** (on by
 default), to the people the covered automations notify — device-region
 routing included, as the users of every region their devices are in — saying nothing is
-outstanding and, by arriving, that the quiet time and email delivery work. A test delivery is never
+outstanding and, by arriving, that the quiet time and email delivery work.
+**Everyone the quiet time covers is told** (92(f)): a summary built from one
+team's held alerts still reaches every other covered reader with the all-quiet
+copy. An alert that fired during the quiet period at a severity it does not
+hold went out live; the summary lists it under **Sent during quiet time** to
+the people it reached, who get that list instead of "all quiet". A test delivery is never
 held. Rule 44 is the hold mechanics inside this.
 
 See [Escalation, reminders and quiet time → Quiet time](Automation-Escalation#quiet-time).
@@ -2523,5 +2528,6 @@ has the details.)
   was held for get the newest held copy when the quiet period ends, unless the
   alert has recovered or been acknowledged by then.
 - **The summary and the all-clear follow what each person was told.** Someone
-  held for nothing gets no summary. The all-clear reaches everyone who heard
+  held for nothing gets no summary — no all-quiet email and no list of what
+  reached them live. The all-clear reaches everyone who heard
   the alert started and skips those who did not.

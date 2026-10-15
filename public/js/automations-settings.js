@@ -205,7 +205,7 @@
       // this modal): which alerts the summary stamped, what the email said,
       // and who it went to with each address's outcome.
       "<td>" + detailBtn(r.id, "covered", (r.notificationIds || []).length + " alert" + ((r.notificationIds || []).length === 1 ? "" : "s"), "Every alert this summary covered") + "</td>" +
-      "<td>" + detailBtn(r.id, "listed", r.listedCount + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : ""), "What the summary listed, across all recipients") + "</td>" +
+      "<td>" + detailBtn(r.id, "listed", r.listedCount + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : "") + (r.liveCount ? ", " + r.liveCount + " sent live" : ""), "What the summary listed, across all recipients") + "</td>" +
       "<td>" + (recips.length ? detailBtn(r.id, "recipients", sent + "/" + recips.length, "Who it went to, and whether it arrived") : "—") + "</td>" +
       '<td><span class="badge ' + statusCls + '"' + (firstErr ? ' title="' + escapeHtml(firstErr) + '"' : "") + '>' + escapeHtml(r.status) + "</span></td>" +
       '<td style="text-align:right;white-space:nowrap">' +
@@ -263,7 +263,8 @@
   function listedHtml(d) {
     var out = (d.listed && d.listed.outstanding) || [];
     var rec = (d.listed && d.listed.recurring) || [];
-    if (!out.length && !rec.length) {
+    var live = (d.listed && d.listed.live) || [];
+    if (!out.length && !rec.length && !live.length) {
       var held = d.summary && d.summary.details && d.summary.details.heldCount;
       return '<p class="hint">The email listed nothing: ' + (held ? held + " alert" + (held === 1 ? "" : "s") + " fired and recovered during the quiet period" : "no alerts were held") + ". It was sent as the all-quiet summary.</p>";
     }
@@ -288,6 +289,18 @@
             "<td " + TD + ">" + (r.times || []).map(function (t) { return escapeHtml(fmtAt(t)); }).join("<br>") + "</td></tr>";
         }).join("") + "</tbody></table>";
     }
+    // Alerts the policy did not hold, which went out as they happened —
+    // listed to the readers they reached so the summary tells the whole night.
+    if (live.length) {
+      html += '<h4 style="margin:' + (out.length || rec.length ? "14px" : "0") + ' 0 6px;font-size:0.85rem">Sent during quiet time (' + live.length + ') <span style="font-weight:400;color:var(--color-text-tertiary)">— not held, sent as they happened</span></h4>' +
+        '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Severity</th><th ' + TH + '>Device</th><th ' + TH + '>What</th><th ' + TH + '>Fired</th><th ' + TH + '>Then</th></tr></thead><tbody>' +
+        live.map(function (r) {
+          return "<tr><td " + TD + ">" + sevPill(r.severity) + "</td><td " + TD + ">" + deviceCell(r.assetId, r.assetHostname, r.dimension) + "</td>" +
+            "<td " + TD + ">" + escapeHtml(r.message || "") + (r.ruleName ? '<div style="font-size:0.78rem;color:var(--color-text-tertiary)">' + escapeHtml(r.ruleName) + "</div>" : "") + "</td>" +
+            "<td " + TD + ' style="white-space:nowrap">' + escapeHtml(fmtAt(r.triggeredAt)) + "</td>" +
+            "<td " + TD + '><span style="color:' + (r.stillActive ? "var(--color-sev-critical,#dc2626)" : "var(--color-success,#15803d)") + '">' + (r.stillActive ? "Still active" : "Recovered") + "</span></td></tr>";
+        }).join("") + "</tbody></table>";
+    }
     return html;
   }
 
@@ -303,8 +316,8 @@
       '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Address</th><th ' + TH + '>Their email listed</th><th ' + TH + '>Status</th><th ' + TH + '>Attempts</th><th ' + TH + '>Error</th><th ' + TH + '></th></tr></thead><tbody>' +
       recips.map(function (r) {
         var cls = r.status === "sent" ? "badge-active" : r.status === "pending" ? "badge-warning" : "badge-deprecated";
-        var listed = (r.listedCount || 0) + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : "");
-        if (!r.listedCount && !r.recurringCount) listed = "all quiet";
+        var listed = (r.listedCount || 0) + " outstanding" + (r.recurringCount ? ", " + r.recurringCount + " recurring" : "") + (r.liveCount ? ", " + r.liveCount + " sent live" : "");
+        if (!r.listedCount && !r.recurringCount && !r.liveCount) listed = "all quiet";
         return "<tr><td " + TD + ">" + escapeHtml(r.address) + (r.userId ? ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">(account)</span>' : "") + "</td>" +
           "<td " + TD + ">" + escapeHtml(listed) + "</td>" +
           "<td " + TD + '><span class="badge ' + cls + '">' + escapeHtml(r.status) + "</span></td>" +

@@ -202,6 +202,41 @@ same way (`normalizeRuleInputCore`). `AlertGroup.repeat.quiet` is simply no long
 
 Since 2026-10-14 a policy may name addresses that do not follow it. Such a hold is SPLIT: who is held is decided per address, a reminder or tier pass is sent (live to the excepted readers, `deferred` for the rest) and advances its state instead of being skipped, and the held readers get the newest copy when the window ends. Everything in this narrative still describes a policy with no exceptions. See [narrative-120.md](narrative-120.md#rule-120).
 
+### 92(f) — the summary tells every covered reader the whole stretch (2026-10-15)
+
+The operator runs one global *nights and weekends* quiet time over every automation. One
+morning the summary's recipients list showed five all-quiet emails where about twelve were
+expected. Two gaps, one cause each.
+
+**The audience was decided by whoever happened to be held.** A summary had two builders: the
+held-alert path, whose recipients were the `held` delivery rows and nothing else, and the
+all-quiet pass for a stretch NOTHING was held in, whose recipients were the covered
+automations' static recipients. The held path marked its source handled, so the all-quiet
+pass skipped it. One team's held alert at 02:00 therefore decided the audience for the whole
+global quiet time: every reader of every other covered automation got no morning email at all
+— and the all-quiet email exists precisely so its arrival proves the path works. Now the held
+path adds the same static audience (`coveredRulesOf` + `staticRecipientsOfRules`), each with
+an empty held list, so they get the all-quiet copy; per-reader filtering (2026-10-12) is
+untouched, nobody is shown another team's devices.
+
+**A reader paged live would have been told "all quiet".** The policy holds serious and below;
+a critical goes out live at 03:00. Once the audience widened, that reader's morning email
+would say nothing happened. The operator's call: list it. *Rejected:* skipping the all-quiet
+copy for anyone who got a live alert — the email would then vanish for exactly the people
+having the worst night, and the summary would stop being the one place the night is told.
+*Rejected:* deciding at summary time which source a live alert "belonged" to by re-running
+the window, kind and scope match — with several global schedules that guess can disagree
+with the one decision function. Instead the FIRE records it: a fire not held while a window
+is open is stamped `quietSource` with no `quietHeldAt` (`resolveQuietWindow`, the same
+precedence as `resolveQuietHold` minus severity and send kind), and the summary reads
+`quietSource` + `triggeredAt` within the stretch. Being stamped without `quietHeldAt` keeps
+it out of the held set, its all-clear unaffected and its clocks untouched. A rule-120 split
+fire that reached every reader live is stamped the same way.
+
+Found alongside: `deleteQuietTimeSchedule` counted held alerts with
+`quietSource: { equals: { kind, id } }` against a stamp that also carries `name`, so the
+"N held alert(s) will be summarised now" count was always zero. It filters on the `id` path now.
+
 ### Where it lives
 
 `utils/quietTime.ts` (the policy shape, `summaryTimeConflicts`, `summarySendAt`),
@@ -213,6 +248,6 @@ the sweep gate in `notificationEscalationService`, the route
 `src/api/routes/quietTimeSchedules.ts`, and in the browser `quiet-time-editor.js` (shared by
 the automation wizard's step 6 and `quiet-time-wizard.js`), `automations-settings.js`, the
 `PolarisRecurrence` schedule composite, and the QUIET pill on the alert surfaces. Pinned by
-`tests/unit/quietTimeConfig.test.ts`, `quietTimeHoldAtFire.test.ts`, `quietTimeSummary.test.ts`,
+`tests/unit/quietTimeConfig.test.ts`, `quietTimeHoldAtFire.test.ts`, `quietTimeHoldResolve.test.ts`, `quietTimeSummary.test.ts`, `quietSummaryEmailTemplate.test.ts`,
 the quiet block of `notificationRepeat.test.ts`, `migrateRepeatQuietToQuietTime.test.ts`,
 `quietTimeEditorDom.test.ts` and `quietTimeSettingsDom.test.ts`.

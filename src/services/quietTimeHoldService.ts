@@ -314,6 +314,36 @@ export async function resolveQuietHold(q: QuietHoldQuestion): Promise<QuietHold 
 }
 
 /**
+ * Whose quiet window is open for this alert right now, whatever the policy
+ * holds — the same precedence and matching as `resolveQuietHold` (the
+ * automation's own setting, else the first global schedule whose kind, window
+ * and scope match), minus the severity / send-kind test. Asked for a fire
+ * that was NOT held: a critical that went out live at 03:00 is still part of
+ * the night the summary reports (business rule 92(f)), so the fire is stamped
+ * with this source. Null = no window open for it.
+ */
+export async function resolveQuietWindow(q: QuietHoldQuestion): Promise<QuietSource | null> {
+  if (!q.ruleId) return null;
+  const now = q.now ?? new Date();
+  const memo = q.memo ?? newQuietHoldMemo();
+  const catalog = await loadCatalog();
+  const own = catalog.rules.get(q.ruleId);
+  if (own) {
+    return own.config && quietWindowNow(own.config, now) ? { kind: "automation", id: own.id, name: own.name } : null;
+  }
+  for (const s of catalog.schedules) {
+    if (!quietHoldsKind(s.config, q.metric) || !quietWindowNow(s.config, now)) continue;
+    if (!scopeIsUnconstrained(s.scope)) {
+      if (!q.assetId) continue;
+      const asset = await scopeAssetFor(q.assetId, catalog, memo);
+      if (!asset || !scopeMatchesAsset(s.scope, asset)) continue;
+    }
+    return { kind: "global", id: s.id, name: s.name };
+  }
+  return null;
+}
+
+/**
  * A quiet source's current config and name, by the `{kind, id}` an alert was
  * stamped with — what the summary job reads to learn the send time, the
  * recurrence threshold and the channel. Reads the row directly rather than the

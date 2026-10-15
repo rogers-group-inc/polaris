@@ -30,7 +30,7 @@ vi.mock("../../src/services/scopeRelationIndex.js", () => ({
   decorateRelationLeafHits: vi.fn(async () => {}),
 }));
 
-import { resolveQuietHold, bumpQuietTimeCache } from "../../src/services/quietTimeHoldService.js";
+import { resolveQuietHold, resolveQuietWindow, bumpQuietTimeCache } from "../../src/services/quietTimeHoldService.js";
 
 const NIGHTLY = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "06:00" }] };
 const LUNCH = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "12:00", endTime: "13:00" }] };
@@ -90,5 +90,26 @@ describe("resolveQuietHold precedence", () => {
 
   it("a rule-less alert is never quiet", async () => {
     expect(await resolveQuietHold({ ruleId: null, severity: "warning", metric: "cpuPct", assetId: "a1", now: NIGHT })).toBeNull();
+  });
+});
+
+describe("resolveQuietWindow (business rule 92(f))", () => {
+  it("names the open window even for a severity the policy lets through", async () => {
+    db.schedules[0].quiet = { windows: [NIGHTLY], severities: ["warning"] };
+    bumpQuietTimeCache();
+    // Not held …
+    expect(await resolveQuietHold({ ruleId: "r-plain", severity: "critical", metric: "cpuPct", assetId: "a1", now: NIGHT })).toBeNull();
+    // … but inside the window, so the summary reports it.
+    expect(await resolveQuietWindow({ ruleId: "r-plain", severity: "critical", metric: "cpuPct", assetId: "a1", now: NIGHT }))
+      .toEqual({ kind: "global", id: "g1", name: "Nights" });
+  });
+
+  it("follows the same precedence: own policy alone, the exemption never, outside the window nothing", async () => {
+    expect(await resolveQuietWindow({ ruleId: "r-plain", severity: "critical", metric: "cpuPct", assetId: "a1", now: NOON })).toBeNull();
+    expect(await resolveQuietWindow({ ruleId: "r-ignore", severity: "critical", metric: "cpuPct", assetId: "a1", now: NIGHT })).toBeNull();
+    expect(await resolveQuietWindow({ ruleId: "r-own", severity: "critical", metric: "cpuPct", assetId: "a1", now: NIGHT })).toBeNull();
+    expect(await resolveQuietWindow({ ruleId: "r-own", severity: "critical", metric: "cpuPct", assetId: "a1", now: NOON }))
+      .toEqual({ kind: "automation", id: "r-own", name: "Lunch-quiet" });
+    expect(await resolveQuietWindow({ ruleId: null, severity: "critical", metric: "cpuPct", assetId: "a1", now: NIGHT })).toBeNull();
   });
 });

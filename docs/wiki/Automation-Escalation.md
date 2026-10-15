@@ -177,8 +177,9 @@ push). **One email per person, in that person's own time zone, about that
 person's own alerts.** A global quiet time can cover automations that page
 different teams, and each person's email lists only the alerts that would have
 reached *them*. Someone on two teams' notify lists sees both teams' alerts.
-Someone whose alerts all recovered gets the all-quiet email (below), or nothing
-if the all-quiet email is turned off. It lists:
+Everyone else the quiet time covers gets one too: someone whose alerts all
+recovered, or whose automations held nothing that night, gets the all-quiet
+email (below), or nothing if the all-quiet email is turned off. It lists:
 
 - **Still outstanding** — the held alerts that have not recovered or been
   cleared by the time it is sent: severity, device, what, since when, how long.
@@ -187,21 +188,29 @@ if the all-quiet email is turned off. It lists:
   for the same automation, device and component (the *recurrence threshold* on
   the quiet time), listed with the count and every time it fired, whether or not
   it has recovered. It is not repeated under Still outstanding.
+- **Sent during quiet time** — alerts that fired during the quiet period at a
+  severity the quiet time does **not** hold (a critical, say, on a quiet time
+  that holds only serious and below). Those went out as they happened; the
+  summary lists the ones that reached *you*, with when each fired and whether it
+  has recovered, so the morning email tells the whole night. Someone paged
+  overnight gets this list instead of an all-quiet email.
 
 Each device name opens the device in Polaris.
 
-**The all-quiet email.** When the quiet period ends with nothing to list —
-every held alert recovered, or nothing was held at all — the summary still
-goes out, saying so: nothing is outstanding, how many alerts fired and
-recovered (or that none were held), and that its arriving confirms the quiet
-time and your email delivery are working. It goes to everyone the covered
-automations notify: the people, addresses, roles, tags and regions their
+**The all-quiet email.** When the quiet period ends with nothing to list for
+you — every held alert recovered, or nothing was held at all, and nothing was
+sent to you live — the summary still goes out, saying so: nothing is
+outstanding, how many alerts fired and recovered (or that none were held), and
+that its arriving confirms the quiet time and your email delivery are working.
+It goes to everyone the covered automations notify, whether or not another
+team's alerts were held that night: the people, addresses, roles, tags and regions their
 notify actions name. An action that notifies **the device's region** (or a
 region level above it) reaches the users of every region the automation's
 monitored devices are in — everyone it could have paged from any of them. A
 device's own address-book contacts are left out. It is on by default; untick
 **All-Quiet Summary emails** on the quiet time to get a
-summary only when something was held.
+summary only when there is something to list — something held, or an alert
+sent to you live.
 
 **When it is sent.** When the quiet period ends, or at a **send time** you
 choose — a time of day. On a day it falls inside the quiet period the summary
@@ -224,8 +233,8 @@ The Settings modal lists recent summaries: when, which quiet time, how many
 alerts it covered, how many it listed, and who it reached. **Covered**,
 **Listed** and **Recipients** are clickable: Covered opens every alert the
 summary stamped, as it is now, marking the ones the email named; Listed opens
-everything the quiet period held that was still outstanding or recurring, across
-every recipient; Recipients opens who it went to, with what *their* email listed,
+everything the quiet period held that was still outstanding or recurring, and
+every alert sent live during it, across every recipient; Recipients opens who it went to, with what *their* email listed,
 each address's sent / failed state and the error if there was one. **View email**
 on a recipient shows the email that person was sent: subject, the time zone it
 was written in, and the body as it looked in their inbox. A send that fails is
@@ -264,9 +273,9 @@ What each person gets:
   one email per missed reminder. If the alert recovers or is acknowledged
   first, the held copies are dropped. The copy they get was written when it was
   held, so its *active for* time is the age at that moment.
-- **The summary email** goes only to people something was held for, and lists
-  only their own held alerts. An address held for nothing gets no summary and
-  no all-quiet email.
+- **The summary email** lists, for each person, only their own held alerts. An
+  address held for nothing gets no summary, no all-quiet email and no list of
+  what it was sent live — it was never quiet.
 - **The all-clear** goes to everyone who heard about the alert, live or through
   a released reminder. It skips the people it was held for who have heard
   nothing since.
