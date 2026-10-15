@@ -120,8 +120,9 @@ a checker should force. Warning keeps them visible without making the gate un-pa
 | floating tags | Informational list of tags that move under you (`latest-pg17`, `nginx:stable`, `:latest`) and therefore cannot be pin-checked. |
 
 Note the Go installs *look* unversioned (`dnf install -y golang`, `apt-get install -y golang-go`)
-but are deliberately guarded — RHEL enables the `go-toolset` module stream first, Ubuntu
-re-verifies `go version` and falls back to snap. They are excluded from `unversioned-install` by
+but are deliberately guarded — RHEL installs `go-toolset` and re-verifies `go version` (warning
+below 1.26; RHEL 9 has no `go-toolset` module stream to enable), Ubuntu re-verifies `go version`
+and falls back to snap. They are excluded from `unversioned-install` by
 name and with a reason, because a checker that cries wolf gets ignored, which is the exact
 failure this guard exists to prevent.
 
@@ -164,7 +165,9 @@ repo. Different questions, and one of them is not available on a built install a
 
 Accept-range sites collapse to their **floor**: `[[ node -v == v20* || == v22* ]]` declares a
 requirement of 20 and a tested ceiling of 22, which are two different questions. The floor goes
-to the equality check; the ceiling goes to the warning.
+to the equality check; the ceiling goes to the warning. The Node accept check is the `node_ok()`
+function since 2026-10-15 (`BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12`): the Node regex in
+`scripts/check-versions.mjs` matches both that form and the old `== v22*`, and picks the major.
 
 ## Where it is wired
 

@@ -111,6 +111,19 @@ guessed at otherwise.
 layout, or anything about an upgrade of an existing host. A scratch VM is still the only way to
 sign off a full fresh install.
 
+**What the first scratch-VM install found (RHEL 9.5 DVD, SELinux enforcing, 2026-10-15)** — every
+one of these passed every unit test and `bash -n`, and each one stopped a stock install:
+
+- `dnf module enable -y go-toolset` — RHEL 9 has no such stream; it aborted the install. Now a package install, warning below 1.26.
+- the DVD's Node streams stop at 22 (22.4, below the 22.12 floor), and `== v22*` accepted it; `node_ok()` checks the minor. A host with no `nodejs:24` stream gets a clear error.
+- nginx.org's 1.30 el9 builds need `libssl OPENSSL_3.5.0` (RHEL 9.7+); `--nobest` falls back, and a version guard refuses anything below 1.30. PGDG 404s an old minor's `rhel-9.X` repo outright. `docs/INSTALL.md` now says: update the host to the current minor first.
+- `$APP_DIR/data` itself stayed `root:root` (only `data/agents` and `data/firmware` were chowned), so polaris-web exited on `EACCES mkdir data/backups`.
+- **SELinux, three ways.** udp/443 is `reserved_port_t` (`http_port_t` is tcp only), so the QUIC `listen` bind is denied and nginx drops the WHOLE Polaris server block — only the stock :80 server comes up. 127.0.0.1:3000 is `ntop_port_t`, so without `httpd_can_network_connect` every request 502s. And with nginx stopped, a root `nginx -t` leaves an empty `/run/nginx.pid` labelled `unconfined_u:var_run_t`, which the real start can't write — the unit fails with "Failed to parse PID". The RHEL installers' `selinux_nginx_policy()`, the HA standby prep and `migrate-to-nginx.sh` now set the port label and boolean; the installers delete that pid file after `nginx -t`. An existing enforcing host that serves fine had these set by hand (or runs permissive).
+- **No polkit at all** on a minimal host, so `49-polaris.rules` was read by nothing and every updater start/restart was Access denied. All five installers install `polkit` / `polkitd` first; Ubuntu 22.04's polkit 0.105 ignores JavaScript rules, and the installer warns.
+- A re-run never reloaded nginx (starting a running nginx is a no-op), and the :3000 smoke check could never pass (`'127\\.0…'` in single quotes, and `ss -p` names node's thread `MainThread`).
+
+The lab: `/opt/rhel-lab` inside Ubuntu WSL, KVM on the Proxmox lab bridge, an unattended kickstart install, and the branch shipped as a `git bundle` (nothing is pushed to test it).
+
 ## How the container image is published, and what guards it
 
 The image half of "how Polaris gets onto a host" is built by

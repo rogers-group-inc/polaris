@@ -613,6 +613,21 @@ installs the split-role systemd units + a `Wants=nginx` drop-in on
 brings up nginx first via the drop-in, then `polaris-web` in HTTP-only
 proxy mode on `127.0.0.1:3000`).
 
+With SELinux enforcing, the script also labels **udp/443** `http_port_t` (RHEL 9's policy
+labels it `reserved_port_t`, and nginx then refuses to load the Polaris server block over the
+HTTP/3 listener) and turns on `httpd_can_network_connect` (port 3000 is `ntop_port_t`, so without
+it nginx answers every request with a 502). It also installs `polkit`, which a minimal host
+lacks; without it the in-app updater cannot restart the Polaris units. A host installed before
+2026-10-15 that serves fine already has these, set by hand or because it runs permissive. If
+one does not, fix it with:
+
+```bash
+sudo semanage port -a -t http_port_t -p udp 443
+sudo setsebool -P httpd_can_network_connect 1
+sudo dnf install -y polkit
+sudo systemctl restart nginx
+```
+
 Options:
 - `--public-url <https://hostname>` — REQUIRED (well, defaulted to
   `https://$(hostname -f)` if you skip it). The cert + nginx `server_name`

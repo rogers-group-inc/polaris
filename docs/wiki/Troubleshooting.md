@@ -19,6 +19,8 @@ real explanation.
 | **"In-app updates are disabled in Docker"** | Correct — a container image has no git checkout. Pull the new image and recreate the container. [Updates](Updates) |
 | `/health`, `/health/ready` or `/metrics` answers **401** | The setup wizard generated `HEALTH_TOKEN` / `METRICS_TOKEN`. Send `Authorization: Bearer <token>` from your monitor, load balancer or Prometheus. [First-run setup](First-Run-Setup#step-3--application-settings) |
 | **Save & Apply** on Web Server → nginx Proxy shows *Internal server error* on a systemd install | A known problem: neither the tab nor the updater can currently rewrite nginx on the systemd split-role layout. Edit the config by hand as root. [Server Settings](Server-Settings#repository) |
+| On RHEL, nginx serves only its default page on port 80, or every request is a **502** | SELinux. udp/443 (the HTTP/3 listener) is not a web port in RHEL 9's policy, so nginx drops the whole Polaris server block; and nginx may not connect to Polaris on port 3000. The installer sets both since 2026-10-15. On an older host: `sudo semanage port -a -t http_port_t -p udp 443`, `sudo setsebool -P httpd_can_network_connect 1`, then restart nginx |
+| An update restarts only the web process, or the host log shows `polaris-update-sync` **Access denied** | The host has no polkit (a minimal RHEL install), so nothing reads Polaris's rule. `sudo dnf install -y polkit` (Ubuntu: `polkitd`). Ubuntu 22.04's polkit 0.105 cannot read the rule at all |
 | A compose stack stores credentials in plaintext | `POLARIS_SECRET_KEY` was never written to `./state/.env` — compose does not run the setup wizard, so nothing generates it. [Installation](Installation#install-paths) |
 
 ---
