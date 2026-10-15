@@ -2112,7 +2112,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
       '<div class="db-info-grid">' +
         dbInfoRow("CPU cores", host.cpuCount != null ? host.cpuCount : "—") +
         dbInfoRow("RAM (total)", _capacityFormatBytes(host.totalMemoryBytes)) +
-        dbInfoRow("RAM (free)", _capacityFormatBytes(host.freeMemoryBytes)) +
+        dbInfoRow("RAM (available)", _capacityFormatBytes(host.freeMemoryBytes)) +
         (host.loadAvg ? dbInfoRow("Load avg (1/5/15m)", host.loadAvg.map(function (n) { return n.toFixed(2); }).join(" / ")) : "") +
         dbInfoRow("DB co-located", host.dbColocated ? "Yes" : "No (remote)") +
       '</div>' +

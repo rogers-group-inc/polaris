@@ -436,6 +436,19 @@ bytes, because TimescaleDB's absence is a broken install from the first byte,
 not a problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).
 A 1 GB threshold chooses only *watch* vs *warning*.
 
+Its **Disk I/O is high** reason measures how long PostgreSQL actually waits on
+storage reads, not how big the database is. It only suggests adding RAM when
+the database host is short of it — under 15% of memory **available**. The
+host card's **RAM (available)** row counts the OS page cache, which Linux gives
+back on demand, so a busy database server normally shows little truly free
+memory and plenty available. With memory to spare, the reason says RAM isn't
+the constraint: the reads are of data that was never cached (long-range
+history, a backup, compression or rollups catching up). A reading taken in the
+first 10 minutes after Polaris starts is ignored, because the startup pass
+deliberately compresses week-old chunks and catches up the rollups. When
+PostgreSQL runs on a separate host, Polaris can't see its memory and tells you
+to check that host instead.
+
 The **Monitoring workload** card lists how much Polaris is polling:
 **Assets** (monitored assets), **Interfaces** (pinned interfaces
 and IPsec tunnels), **Storage mounts** (pinned mounts) and **Agents** (every
