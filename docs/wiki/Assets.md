@@ -238,7 +238,7 @@ between reads. So all four carry the same heading row:
   the reading is older than one poll cadence** — a poll is overdue. That is a
   lower bar than the amber *Last successful update* banner elsewhere in the
   slide-over, which waits for three; overdue and abandoned are different things.
-- **Refresh** — re-reads this device *now*, rather than waiting for the next
+- **Poll** — re-reads this device *now*, rather than waiting for the next
   scheduled pass. It needs the **Asset Probes** permission, and it is hidden if
   you do not have it.
 
@@ -247,16 +247,18 @@ nobody is connected; the same empty list beside an amber "updated 2 days ago"
 means nobody has asked.
 
 The [SD-WAN](#sd-wan-fortigate-firewalls) tab's sections carry the same source
-and age pair, without a Refresh button.
+and age pair, without a Poll button.
 
-Refresh dials the device and re-reads its current state. It does **not** run a
+Poll dials the device and re-reads its current state. (The **Refresh** button at
+the top of the slide-over is different: it only reloads what Polaris already
+has stored, and never contacts the device.) It does **not** run a
 response-time probe, so it cannot mark an asset up or down, and it will not
-disturb an in-progress outage count. If it reports *nothing to refresh*, this
+disturb an in-progress outage count. If it reports *nothing to poll*, this
 device does not deliver current-state data on its present polling method —
 monitoring is off, the Interfaces stream is set to Disabled, or a Polaris Agent
 on the host pushes on its own schedule instead.
 
-Refresh is also refused for a device your integration's **device filter**
+Poll is also refused for a device your integration's **device filter**
 excludes. A filter you set to keep Polaris off a host keeps this button off it
 too.
 
@@ -997,7 +999,7 @@ A **filter box** above the tree matches a client's MAC, IP, SSID, BSSID or
 matched hostname. A radio or SSID that matches by name keeps everything under
 it; otherwise only the clients that match are shown, under their own radio and
 SSID, with every radio the filter kept opened even if you had collapsed it. The
-filter stays put across **Refresh**.
+filter stays put across **Poll**.
 
 An AP whose radio inventory has not arrived yet falls back to a flat client
 table, so the tab never reads as empty while discovery fills it in. Radios and
@@ -1005,7 +1007,7 @@ their SSIDs come from the discovery run against the controlling FortiGate;
 connected clients come from an SNMP walk, which needs the AP's **Interfaces**
 stream set to SNMP.
 
-Carries the cadence · freshness · **Refresh** row described above, with the
+Carries the cadence · freshness · **Poll** row described above, with the
 AP's **profile** (`Profile: <name>`) after the heading — the controller's AP
 profile that decides these radios, SSIDs and power, the same value as the
 General tab's *AP Profile* row. It appears once a discovery run against the
@@ -1029,21 +1031,21 @@ A **filter box**, like the ARP Table's, matches a MAC, interface name, VLAN,
 status or matched hostname, and the count in the heading becomes *N of M
 entries*. It filters whatever is shown, so the unresolved-port entries are only
 searched once you have clicked **Show**. The filter stays put across
-**Refresh**.
+**Poll**.
 
 This is collected over SNMP on the system-info cadence. **A switch polled
 through its parent FortiGate reports none** — the empty state says so, and tells
 you when the last pass ran, so "scraped and genuinely empty" stays distinct from
 "never scraped".
 
-Carries the cadence · freshness · **Refresh** row described above. An unmonitored
+Carries the cadence · freshness · **Poll** row described above. An unmonitored
 switch shows no cadence at all: nothing refreshes a forwarding database except
 the system-info pass, and discovery does not fill in for it.
 
 ### ARP Table (firewalls)
 
 The gate's layer-3 neighbour cache, grouped interface-first. Headed by the
-cadence · freshness · **Refresh** row described above, plus:
+cadence · freshness · **Poll** row described above, plus:
 
 - A **range selector** — Current / 1h / 12h / 24h / 7d / 30d. An option past
   your configured retention is **disabled rather than hidden**, so you can see
@@ -1065,7 +1067,7 @@ shares one instant.
 ### IPsec (FortiGate firewalls)
 
 The gate's IPsec tunnels and **who is connected through them**. Headed by the
-cadence · freshness · **Refresh** row described above, and the same snapshot
+cadence · freshness · **Poll** row described above, and the same snapshot
 disclaimer: ADVPN shortcuts form on demand and tear down when idle, and remote
 users come and go, so a peer missing here may simply not have been connected
 when the gate was last read.
@@ -1170,7 +1172,7 @@ SD-WAN has its own polling pass, separate from interfaces: every 60 seconds by
 default, set per integration by the SD-WAN tab's **Polling Interval** (see
 [Integration-Fortinet](Integration-Fortinet)). An on-demand poll (the mobile asset sheet's refresh, or
 `POST /assets/:id/probe-now` over the [API](API)) re-reads SD-WAN along with the
-probe; the snapshot tabs' **Refresh** (which re-reads system info) does not.
+probe; the snapshot tabs' **Poll** (which re-reads system info) does not.
 
 ### Path Monitor (hosts with the Polaris Agent)
 

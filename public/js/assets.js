@@ -8390,7 +8390,7 @@ function _freshnessStampHTML(lastAt, cadenceSec, neverText) {
  *   lastAt      — ISO timestamp the data was collected
  *   cadenceSec  — the same cadence the chip states; drives the amber threshold
  *   neverText   — what to say when lastAt is null
- *   refreshId   — element id for the Refresh button; omitted → no button
+ *   refreshId   — element id for the Poll button; omitted → no button
  *                 (also omitted for operators without `assetsProbe` read)
  */
 function _currentStateStripHTML(opts) {
@@ -8405,13 +8405,13 @@ function _currentStateStripHTML(opts) {
     '</div>' +
     (canRefresh
       ? '<button type="button" class="btn btn-sm btn-secondary" id="' + escapeHtml(opts.refreshId) + '" ' +
-          'title="' + escapeHtml(opts.refreshTitle || "Re-read this from the device now") + '">Refresh</button>'
+          'title="' + escapeHtml(opts.refreshTitle || "Re-read this from the device now") + '">Poll</button>'
       : "") +
   '</div>';
 }
 
 /**
- * Wire a strip's Refresh button to the narrow system-info collector.
+ * Wire a strip's Poll button to the narrow system-info collector.
  *
  * One endpoint serves all three tabs because one pass writes all three tables
  * (wireless stations + radios, the forwarding database, the neighbour cache).
@@ -8428,25 +8428,25 @@ function _wireCurrentStateRefresh(refreshId, assetId, onDone) {
   if (!btn) return;
   btn.addEventListener("click", async function () {
     btn.disabled = true;
-    btn.textContent = "Refreshing…";
+    btn.textContent = "Polling…";
     try {
       var res = await api.assets.refreshSystemInfo(assetId);
       if (!res || res.supported === false) {
-        showToast("Nothing to refresh — this device does not deliver current-state data on its " +
+        showToast("Nothing to poll — this device does not deliver current-state data on its " +
           "current polling method.", "info");
       } else if (!res.collected) {
-        showToast("Refresh failed — " + (res.error || "the device returned no data"), "error");
+        showToast("Poll failed — " + (res.error || "the device returned no data"), "error");
       } else {
-        showToast("Refreshed from the device.", "success");
+        showToast("Polled the device.", "success");
       }
     } catch (err) {
-      showToast("Refresh failed — " + ((err && err.message) || "unknown error"), "error");
+      showToast("Poll failed — " + ((err && err.message) || "unknown error"), "error");
     } finally {
       // The button lives inside the markup onDone replaces, so restore it
       // first for the paths where the re-render never happens (a failed
       // re-fetch leaves the old DOM in place).
       btn.disabled = false;
-      btn.textContent = "Refresh";
+      btn.textContent = "Poll";
       if (typeof onDone === "function") await onDone();
     }
   });
