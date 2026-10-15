@@ -44,8 +44,9 @@ interface AlertRow {
   dependencyDown?: boolean;
   dependencyUpstream?: string | null;
   testRun?: boolean;
+  tags?: string[];
 }
-interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string }
+interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string; tagScope?: string; tags?: string[] }
 interface WidgetModule {
   type: string;
   defaultConfig: Cfg & Record<string, unknown>;
@@ -54,6 +55,7 @@ interface WidgetModule {
 }
 
 let mod: WidgetModule;
+let evMod: WidgetModule;
 const g = globalThis as Record<string, unknown>;
 let doc: Window["document"];
 
@@ -72,8 +74,10 @@ beforeAll(() => {
   // what index.js hung off `window` onto the eval scope's global.
   g.PolarisWidgets = (win as unknown as { PolarisWidgets: unknown }).PolarisWidgets;
   (0, eval)(readFileSync(resolve(here, "../../public/js/widgets/activeAlerts.js"), "utf8"));
+  (0, eval)(readFileSync(resolve(here, "../../public/js/widgets/eventAlerts.js"), "utf8"));
   const W = win as unknown as { PolarisWidgets: { getByType: (t: string) => WidgetModule } };
   mod = W.PolarisWidgets.getByType("activeAlerts");
+  evMod = W.PolarisWidgets.getByType("eventAlerts");
 });
 
 /** A widget shell with the header the pills + export button land in. */
@@ -89,10 +93,10 @@ function mountWidget() {
 }
 
 /** Render one payload and hand back the body + a teardown for its 30s timer. */
-function render(rows: AlertRow[], total: number | null, config: Cfg = {}) {
+function render(rows: AlertRow[], total: number | null, config: Cfg = {}, m: WidgetModule = mod) {
   const el = mountWidget();
   const cleanups: Array<() => void> = [];
-  mod.renderInstance(el, config, { rows, total }, { onUnmount: (fn) => cleanups.push(fn) });
+  m.renderInstance(el, config, { rows, total }, { onUnmount: (fn) => cleanups.push(fn) });
   cleanups.forEach((fn) => fn());  // stop the refresh interval
   return el;
 }
@@ -236,7 +240,7 @@ describe("row limit + overflow note", () => {
     // it never sent are the LEAST severe — exactly the serious/warning alerts
     // an operator goes looking for. Silence here reads as "there are none".
     const el = render(many(100), 214, { minSeverity: "warning", rowLimit: 100 });
-    expect(noteText(el)).toBe("Showing 100 of 214 active alerts — raise Row limit to fetch more.");
+    expect(noteText(el)).toBe("The feed stopped at 100 of 214 active alerts — raise Row limit to fetch more.");
   });
 
   it("says nothing when the whole set is on screen", () => {
@@ -392,48 +396,115 @@ describe("row contents", () => {
   });
 });
 
-describe("event-triggered alerts", () => {
+describe("event-triggered alerts have their own widget", () => {
   // An event rule fires off an audit Event (an agent disconnecting, a failed
   // sync) rather than off a reading, so it answers a different question from
-  // the rest of the feed — hideable per widget, shown until someone says
-  // otherwise.
+  // the rest of the feed. Active Alerts lists everything else; Event Alerts
+  // lists only those — two widgets over the one feed.
   const evt = (id: string) => alert({ id, severity: "critical", triggerType: "event", assetId: null, hostname: null, ruleName: "Agent disconnected" });
+  const ids = (el: any) => rowsOf(el).map((r: any) => r.getAttribute("data-alert-id"));
+  const mixed = () => [
+    evt("e"),
+    alert({ id: "chg", severity: "critical", triggerType: "change" }),
+    alert({ id: "cpu", severity: "critical", triggerType: "asset_metric" }),
+    alert({ id: "old", severity: "critical" }), // pre-upgrade cached row: no triggerType at all
+  ];
 
-  it("lists them by default, so an existing dashboard's feed does not change under the control", () => {
-    const el = render([evt("e"), alert({ id: "d", severity: "critical" })], 2, { minSeverity: "warning", rowLimit: 50 });
-    expect(rowsOf(el)).toHaveLength(2);
-  });
-
-  it("hides only the EVENT kind when the gear says hide", () => {
+  it("keeps the EVENT kind out of Active Alerts, and nothing else", () => {
     // A `change` rule (firmware moved, the switch behind an asset changed) is
     // about the device, so it stays — as does everything metric/state-driven.
-    const el = render([
-      evt("e"),
-      alert({ id: "chg", severity: "critical", triggerType: "change" }),
-      alert({ id: "cpu", severity: "critical", triggerType: "asset_metric" }),
-      alert({ id: "old", severity: "critical" }), // pre-upgrade cached row: no triggerType at all
-    ], 4, { minSeverity: "warning", rowLimit: 50, eventAlerts: "hide" });
-    expect(rowsOf(el).map((r: any) => r.getAttribute("data-alert-id"))).toEqual(["chg", "cpu", "old"]);
+    expect(ids(render(mixed(), 4, { minSeverity: "warning", rowLimit: 50 }))).toEqual(["chg", "cpu", "old"]);
   });
 
-  it("names the event filter, not the severity floor, when it is what emptied the widget", () => {
-    const el = render([evt("e1"), evt("e2")], 2, { minSeverity: "warning", eventAlerts: "hide" });
-    expect((el.querySelector(".empty-state") as any).textContent).toBe("No active alerts — event-triggered alerts are hidden");
+  it("lists only the EVENT kind in Event Alerts", () => {
+    expect(evMod).toBeTruthy();
+    expect(ids(render(mixed(), 4, { minSeverity: "warning", rowLimit: 50 }, evMod))).toEqual(["e"]);
   });
 
-  it("does not read as a truncated feed just because rows were filtered out", () => {
+  it("says which widget is empty", () => {
+    expect((render([evt("e1")], 1, { minSeverity: "warning" }).querySelector(".empty-state") as any).textContent)
+      .toBe("No active alerts");
+    expect((render([alert({ id: "d", severity: "critical" })], 1, { minSeverity: "warning" }, evMod)
+      .querySelector(".empty-state") as any).textContent).toBe("No event alerts");
+  });
+
+  it("does not read as a truncated feed because the other widget's rows were split off", () => {
     // The overflow note measures the SERVER cap against what was FETCHED. Off
-    // the filtered set it would announce "Showing 1 of 3 active alerts — raise
-    // Row limit to fetch more" over a feed that sent everything it had.
-    const el = render([evt("e1"), evt("e2"), alert({ id: "d", severity: "critical" })], 3,
-      { minSeverity: "warning", rowLimit: 50, eventAlerts: "hide" });
+    // this widget's share it would announce truncation over a feed that sent
+    // everything it had.
+    const el = render([evt("e1"), evt("e2"), alert({ id: "d", severity: "critical" })], 3, { minSeverity: "warning", rowLimit: 50 });
     expect(rowsOf(el)).toHaveLength(1);
     expect(noteText(el)).toBeNull();
+  });
+
+  it("offers no event toggle in either gear", () => {
+    for (const m of [mod, evMod]) {
+      const el = mountWidget();
+      m.renderConfig(el, {}, () => {});
+      expect(el.querySelector('[data-k="eventAlerts"]')).toBeNull();
+    }
+  });
+});
+
+describe("tag filter", () => {
+  const row = (id: string, tags: string[] | undefined, assetId: string | null = "as-" + id): AlertRow =>
+    ({ id, assetId, hostname: id, severity: "critical", message: id, tags });
+  const ids = (el: any) =>
+    Array.from(el.querySelectorAll(".recent-item[data-alert-id]")).map((n: any) => n.getAttribute("data-alert-id"));
+
+  it("lists every alert while the scope is All tags, whatever tags are saved", () => {
+    const el = render([row("a", ["core"]), row("b", [])], 2, { minSeverity: "warning", tagScope: "all", tags: ["core"] });
+    expect(ids(el)).toEqual(["a", "b"]);
+  });
+
+  it("keeps only alerts whose asset carries ANY ticked tag", () => {
+    const el = render([row("a", ["core"]), row("b", ["edge", "scalehouse"]), row("c", ["edge"]), row("d", undefined)], 4,
+      { minSeverity: "warning", tagScope: "custom", tags: ["core", "scalehouse"] });
+    expect(ids(el)).toEqual(["a", "b"]);
+  });
+
+  it("keeps a device-less alert (about Polaris itself) under a tag filter", () => {
+    const el = render([row("a", ["core"]), row("sys", [], null)], 2, { minSeverity: "warning", tagScope: "custom", tags: ["edge"] });
+    expect(ids(el)).toEqual(["sys"]);
+  });
+
+  it("treats Selected tags with nothing ticked as unfiltered", () => {
+    const el = render([row("a", ["core"]), row("b", [])], 2, { minSeverity: "warning", tagScope: "custom", tags: [] });
+    expect(ids(el)).toEqual(["a", "b"]);
+  });
+
+  it("names the tag filter when it is what emptied the widget", () => {
+    const el = render([row("a", ["core"])], 1, { minSeverity: "warning", tagScope: "custom", tags: ["edge"] });
+    expect(el.textContent).toContain("No active alerts on assets with the selected tags");
+  });
+
+  it("shows a Tags field reading All tags, or the saved pick as removable pills", () => {
+    const el = doc.createElement("div") as any;
+    mod.renderConfig(el, {}, () => {});
+    expect(el.querySelector('.widget-filter-field[data-filter="tags"]').textContent).toContain("All tags");
+
+    const el2 = doc.createElement("div") as any;
+    const changes: Array<[string, unknown]> = [];
+    mod.renderConfig(el2, { tagScope: "custom", tags: ["core", "edge"] }, (k, v) => changes.push([k, v]));
+    const field = el2.querySelector('.widget-filter-field[data-filter="tags"]');
+    expect(Array.from(field.querySelectorAll(".tag-chip-delete")).map((b: any) => b.getAttribute("data-chip"))).toEqual(["core", "edge"]);
+    // × drops one pick and leaves the rest.
+    field.querySelector('[data-chip="core"]').click();
+    expect(changes).toEqual([["tags", ["edge"]], ["tagScope", "custom"]]);
+    // Removing the last one returns the field to All.
+    el2.querySelector('.widget-filter-field[data-filter="tags"] [data-chip="edge"]').click();
+    expect(changes.slice(-2)).toEqual([["tags", []], ["tagScope", "all"]]);
+    expect(el2.querySelector('.widget-filter-field[data-filter="tags"]').textContent).toContain("All tags");
+  });
+
+  it("ships a defaultConfig that filters by nothing", () => {
+    expect(mod.defaultConfig.tagScope).toBe("all");
+    expect(mod.defaultConfig.tags).toEqual([]);
   });
 });
 
 describe("gear config", () => {
-  it("offers a row limit seeded at the default, and warns that the cap follows the sort order", () => {
+  it("offers a row limit seeded at the default", () => {
     const el = mountWidget();
     const changes: Array<[string, unknown]> = [];
     mod.renderConfig(el, {}, (k, v) => changes.push([k, v]));
@@ -441,11 +512,6 @@ describe("gear config", () => {
     const selected = Array.from(sel.querySelectorAll("option"))
       .filter((o: any) => o.hasAttribute("selected")).map((o: any) => o.getAttribute("value"));
     expect(selected).toEqual(["50"]);
-    // The hint is what makes a low limit's behaviour predictable. Since the
-    // order became the operator's (the ⇅ header button), the hint names THAT
-    // rather than claiming a severity order the widget may no longer be on.
-    expect(el.textContent).toContain("sort order");
-    expect(el.textContent).toContain("least severe by default");
     // …and the minimum-severity control still follows it.
     expect(el.querySelector("[data-minsev]")).toBeTruthy();
   });
@@ -463,29 +529,5 @@ describe("gear config", () => {
   it("ships a defaultConfig carrying the row limit", () => {
     expect(mod.defaultConfig.rowLimit).toBe(50);
     expect(mod.defaultConfig.minSeverity).toBe("warning");
-    expect(mod.defaultConfig.eventAlerts).toBe("show");
-  });
-
-  it("offers Show/Hide for event-triggered alerts, seeded at Show", () => {
-    const el = mountWidget();
-    mod.renderConfig(el, {}, () => {});
-    const sel = el.querySelector('[data-k="eventAlerts"]') as any;
-    const selected = Array.from(sel.querySelectorAll("option"))
-      .filter((o: any) => o.hasAttribute("selected")).map((o: any) => o.getAttribute("value"));
-    expect(selected).toEqual(["show"]);
-    // The hidden rows still spend the server's cap — say so where it's set.
-    expect(el.textContent).toContain("still count against the row limit");
-  });
-
-  it("seeds the control from a saved hide, and writes the choice back", () => {
-    const el = mountWidget();
-    const changes: Array<[string, unknown]> = [];
-    mod.renderConfig(el, { eventAlerts: "hide" }, (k, v) => changes.push([k, v]));
-    const sel = el.querySelector('[data-k="eventAlerts"]') as any;
-    expect(Array.from(sel.querySelectorAll("option"))
-      .filter((o: any) => o.hasAttribute("selected")).map((o: any) => o.getAttribute("value"))).toEqual(["hide"]);
-    sel.value = "show";
-    sel.dispatchEvent(new (doc.defaultView as any).Event("change"));
-    expect(changes).toEqual([["eventAlerts", "show"]]);
   });
 });

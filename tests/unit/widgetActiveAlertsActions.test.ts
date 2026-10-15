@@ -129,7 +129,7 @@ function mountWidget() {
 
 const alert = (o: Partial<AlertRow> & { id: string }): AlertRow => ({
   assetId: null, hostname: null, message: "m", severity: "critical",
-  ruleName: "Agent disconnected", triggerType: "event", acknowledged: false,
+  ruleName: "Polaris disk nearly full", triggerType: "host_metric", acknowledged: false,
   raisedAt: "2026-09-05T00:00:00Z", ...o,
 });
 

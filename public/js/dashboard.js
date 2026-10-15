@@ -115,8 +115,18 @@
     document.addEventListener("click", function (e) {
       if (!openPopover) return;
       if (openPopover.el.contains(e.target)) return;
+      // A filter field's picker modal is opened FROM the popover and sits
+      // above it; and a pill's × re-renders its field, detaching the clicked
+      // button before this handler sees it. Neither is a click outside.
+      if (e.target.closest && e.target.closest(".widget-filter-picker")) return;
+      if (!e.target.isConnected) return;
       if (e.target.closest && e.target.closest(".dashboard-widget-action[data-action='gear']")) return;
       closePopover();
+    });
+    // Escape closes the gear popover (the picker modal above it takes its own
+    // Escape in the capture phase, so this never sees that one).
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && openPopover) closePopover();
     });
 
     bootstrap();
@@ -315,11 +325,14 @@
     // A published dashboard belongs to whoever published it: the viewer gets
     // no Customize / Add Widgets / Create, so there is no way to build an edit
     // that could not be saved.
+    // Create New Dashboard is an edit-mode verb like Add Widgets: the
+    // read-only header offers Customize Page alone, and creating a new
+    // dashboard starts from there.
     var viewingPublished = !!state.external;
     if (customizeBtn)   customizeBtn.hidden   = state.editing || viewingPublished;
     if (addWidgetsBtn)  addWidgetsBtn.hidden  = !state.editing || viewingPublished;
     if (doneBtn)        doneBtn.hidden        = !state.editing || viewingPublished;
-    if (createBtn)      createBtn.hidden      = viewingPublished;
+    if (createBtn)      createBtn.hidden      = !state.editing || viewingPublished;
     canvasEl.classList.toggle("is-editing", state.editing && !viewingPublished);
   }
 
@@ -535,6 +548,21 @@
     stack.className = "dashboard-column-stack";
     col.widgets.forEach(function (w) { stack.appendChild(mountWidgetShell(w)); });
     colEl.appendChild(stack);
+    // "+ Add widget" closes each block in edit mode: the picker opened from
+    // here adds to THIS block, at its bottom. Outside the stack, so the drag
+    // placeholder's slot arithmetic (which counts the stack's cards) is
+    // untouched.
+    if (state.editing) {
+      var add = document.createElement("button");
+      add.type = "button";
+      add.className = "dashboard-column-add";
+      add.textContent = "+ Add widget";
+      add.addEventListener("click", function () {
+        if (_dragStashId || _dragStashType) return;
+        WidgetLibrary.open(function (type) { addWidgetToColumn(type, col.id); });
+      });
+      colEl.appendChild(add);
+    }
     return colEl;
   }
 
@@ -554,6 +582,12 @@
     return PolarisWidgets.widgetTitle(module, w);
   }
 
+  // The Server Settings gear (the sidebar's `settings` icon in app.js),
+  // copied rather than read from there: the /dash wallboard runs this file
+  // without app.js. The ⚙ glyph it replaced rendered at text size and read
+  // as too small beside the header's other controls.
+  var GEAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>';
+
   function mountWidgetShell(w) {
     var module = PolarisWidgets.getByType(w.type);
     var label = widgetTitleFor(module, w);
@@ -572,7 +606,7 @@
     var grip = state.editing ? '<span class="dashboard-widget-grip" draggable="true" title="Drag to move (to any column)">⠿</span>' : "";
     var editControls = state.editing
       ? '<button type="button" class="dashboard-widget-height-toggle" data-action="height" title="Height (click to cycle 1×/2×/3×)">' + (Math.min(3, Math.max(1, w.height || 1))) + '×</button>' +
-        '<button type="button" class="dashboard-widget-action" data-action="gear" title="Configure">⚙</button>' +
+        '<button type="button" class="dashboard-widget-action dashboard-widget-gear" data-action="gear" title="Configure" aria-label="Configure widget">' + GEAR_SVG + '</button>' +
         '<button type="button" class="dashboard-widget-remove" data-action="remove" title="Remove">&times;</button>'
       : "";
     article.innerHTML =
@@ -614,9 +648,13 @@
     el.className = "dashboard-newcol-target";
     el.setAttribute("data-newcol", "1");
     el.innerHTML = '<span>+ New block</span>';
-    // Click-to-add a new empty column (keyboard/touch parity with drag).
+    // Click-to-add (keyboard/touch parity with drag): the widget picked here
+    // STARTS a new block. It used to go through handleTapToAdd, which appends
+    // to the last block — so the target said "New block" and the widget
+    // landed in an existing one.
     el.addEventListener("click", function () {
-      if (!_dragStashId && !_dragStashType) WidgetLibrary.open(handleTapToAdd);
+      if (_dragStashId || _dragStashType) return;
+      WidgetLibrary.open(function (type) { addWidgetAt(type, { newColumn: true }); });
     });
     return el;
   }
@@ -789,6 +827,19 @@
     }
   }
 
+  // Append to the bottom of the block with this id — looked up at pick time,
+  // since the picker stays open while the layout can change underneath it.
+  function addWidgetToColumn(type, colId) {
+    var cols = activeDash().columns;
+    for (var i = 0; i < cols.length; i++) {
+      if (cols[i].id === colId) {
+        addWidgetAt(type, { columnIndex: i, insertionIndex: cols[i].widgets.length });
+        return;
+      }
+    }
+    addWidgetAt(type, { newColumn: true });
+  }
+
   function handleTapToAdd(type) {
     // Click-to-add from the picker: append to the last column, or start one.
     if (activeDash().columns.length) {
@@ -925,11 +976,10 @@
     if (!module) return;
     var pop = document.createElement("div");
     pop.className = "widget-config-popover";
-    pop.innerHTML = '<h4>' + escapeHtml(module.label) + '</h4><div class="widget-config-fields"></div>' +
-      '<div class="widget-config-popover-footer">' +
-        '<button type="button" class="btn btn-icon" data-action="remove">Remove widget</button>' +
-        '<button type="button" class="btn btn-primary" data-action="close">Done</button>' +
-      '</div>';
+    // No footer: every change applies to the widget the moment it is made, so
+    // a Done button only closed the popover (a click outside or Escape does),
+    // and Remove widget repeated the × on the widget's own header.
+    pop.innerHTML = '<h4>' + escapeHtml(module.label) + '</h4><div class="widget-config-fields"></div>';
     document.body.appendChild(pop);
 
     var fieldsEl = pop.querySelector(".widget-config-fields");
@@ -942,8 +992,6 @@
     } else {
       fieldsEl.innerHTML = '<p style="font-size:0.82rem;color:var(--color-text-secondary)">This widget has no configurable options.</p>';
     }
-    pop.querySelector('[data-action="remove"]').addEventListener("click", function () { closePopover(); removeWidget(w.id); });
-    pop.querySelector('[data-action="close"]').addEventListener("click", closePopover);
 
     var anchorRect = anchorEl.getBoundingClientRect();
     var width = 260;

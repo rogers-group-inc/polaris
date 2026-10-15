@@ -19,17 +19,19 @@ widgets.
 
 | Action | How |
 |---|---|
-| Add a widget | **Customize Page** → **Add Widgets** — a picker that docks over the dashboard, with a group list, a search box, A–Z / Z–A sort and favourites; drag a widget into place or click it |
-| Move one | drag its **⠿** grip to any column; a green **+** marks where it will land, and dropping on the trailing empty column starts a new one |
+| Add a widget | **Customize Page** → **Add Widgets** — a picker that docks over the dashboard, with a group list, a search box, A–Z / Z–A sort and favourites; drag a widget into place or click it (a click adds it to the last column) |
+| Add to a particular column | the green **+ Add widget** at the bottom of that column, while customizing |
+| Start a new column | the green **+ New block** after the last column — click it and pick a widget, or drop a widget on it |
+| Move one | drag its **⠿** grip to any column; a green **+** marks where it will land, and dropping on **+ New block** starts a new one |
 | Column width | the column's **¼ / ⅓ / ½ / Full** control |
 | Widget height | the **1× / 2× / 3×** toggle on the widget, click to cycle |
-| Configure one | the **⚙** on the widget — most carry options (row count, filters, grouping) |
+| Configure one | the gear on the widget — most carry options (row count, filters, grouping). Changes apply at once; click anywhere else, or press Escape, to close it |
 | Sort one | the **⇅** button on the widget's header, while you are customizing |
-| Export one to CSV | the **⤓** button on the widget's header, while you are *not* customizing |
+| Export one to CSV | the download button on the widget's header, while you are *not* customizing |
 | Remove one | the **×** on the widget, while customizing |
 
-**Several dashboards, as tabs.** **Create New Dashboard** adds another canvas
-and opens it in edit mode. Once you have more than one, a tab bar appears under
+**Several dashboards, as tabs.** **Create New Dashboard** — shown while you
+are customizing — adds another canvas and opens it in edit mode. Once you have more than one, a tab bar appears under
 the header: click a tab to switch; while customizing, type over the active
 tab's name to rename it, drag a tab's grip to reorder, or **×** to delete it.
 
@@ -85,7 +87,8 @@ imported tab is not linked to anything: it is yours to change.
 | Widget | Shows |
 |---|---|
 | **Status Summary** | at-a-glance counts of monitored assets by state, infra uptime %, active alerts |
-| **Active Alerts** | alerts your automations have raised and nothing has cleared, most severe first — **with Acknowledge and Clear in place** |
+| **Active Alerts** | alerts your automations have raised from a reading or a state change and nothing has cleared, most severe first — **with Acknowledge and Clear in place** |
+| **Event Alerts** | the same, for alerts raised by **event-triggered** automations — an agent disconnecting, a failed sync, a discovery error. These used to share Active Alerts behind a Show / Hide setting; add this widget wherever you want them |
 | **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise. An outage whose alert has been acknowledged stays listed but is greyed out, with an **ack** pill naming who took it, so unowned outages stand out. Hover the pill to read the acknowledgement note |
 | **Sites With Issues** | sites with assets down or in warning, worst first; expand for the nodes |
 | **Asset Types** | breakdown of monitored assets by type; click a slice to drill into the matching asset list |
@@ -140,6 +143,28 @@ red dot is an outage nobody has picked up yet. A Device Map cluster fades only
 when every down site inside it is acknowledged.
 
 ---
+
+## Filtering a widget
+
+Most fleet widgets narrow what they show from the gear. Each filter is one
+field that reads **All regions**, **All FortiGates**, **All asset types** or
+**All tags** until you narrow it, and then shows what you picked as pills:
+
+- **Click the field** to open a picker with a search box, **Select all** /
+  **Clear** (which act on what the search is showing) and the full list. Nothing
+  changes until you press **Save**.
+- **Click a pill's ×** to drop one item picked by mistake. Removing the last one
+  puts the field back to All.
+
+| Filter | Narrows to |
+|---|---|
+| **Regions** | All regions, **My regions** (the regions your role is scoped to — not offered on the Dash wallboard, which has no viewer), or the regions you pick |
+| **FortiGates** | assets behind the gates you pick; **(No FortiGate)** keeps devices with no gate. The list offers only gates in the regions you picked |
+| **Asset types** | the types you leave ticked. The pills are the types *shown* |
+| **Tags** (Active Alerts and Event Alerts) | alerts on assets carrying **any** of the tags you pick. An alert about Polaris itself, with no device, stays listed |
+
+The filters combine: a widget narrowed by region *and* type shows what matches
+both.
 
 ## Reading the widgets correctly
 
