@@ -330,3 +330,42 @@ image only, the same POST and gates; `public/js/mobile/asset-detail.js` → Firm
 block). And a bench test on
 real hardware — the wiki says so, in the words a human must review before this reaches a
 fleet: a flash that fails partway can leave a device unbootable.
+
+### Follow-on (2026-10-15): the record catches up from the device's own reading
+
+Operator report: "the firmware upgrade card in asset details is supposed to update every 10
+minutes, but it's not" — both halves: the open card never re-read, and a flashed (or
+upgraded-elsewhere) device kept its old `osVersion`, so the card kept offering the upgrade, until
+an integration discovery happened to run. The scoped rediscover above is not enough on its own:
+it covers only a Polaris flash, and only when that rediscover lands.
+
+The engine STILL never writes `Asset.osVersion`. What changed is who else may contribute it:
+`services/fortinetLiveVersionService.ts → reconcileFortinetLiveVersions` records the firmware
+the device reports to the monitor path as an ENRICHMENT `AssetSource` row (`fortinet-live`,
+externalId = assetId, `observed.osVersion` only), ranked in `OS_VERSION_RULES` directly above
+`fortigate-firewall` / `fortiswitch` / `fortiap` and below the in-guest kinds. Two readers,
+neither issuing a call of its own: the FortiLink sweep (`fortinetLinkStateService`, every
+FortiGate-managed switch / AP, 60 s, from the controller row's `os_version`) and the FortiOS
+REST response-time probe of a Fortinet-discovered firewall (`system/status` read with
+`envelope: true`, `version`; shaped by `fortigateLiveVersionFor` to the integration's discovery
+format — FMG `7.4.5`, standalone `v7.4.5`). Acted on only when `compareFirmwareVersions` says
+the version MOVED against the asset's current value, so a format difference never writes and a
+steady fleet of 2000 costs an in-memory compare per device; an in-memory last-recorded map stops
+a projection that keeps choosing another source from re-recording every pass. A real change
+upserts the row, re-projects, writes osVersion alone, and logs one `asset.firmware.changed`
+(`actor: system:monitor`, `source: fortinet-live`).
+
+The card (`public/js/assets.js → _scheduleFirmwareRefresh`, mirrored on the phone sheet)
+re-reads `GET /assets/:id/firmware-upgrade` every 10 minutes while it is on screen, redraws only
+when the answer changed, and waits another interval while the tab is hidden or a run poll owns
+the card. Pinned by `tests/unit/fortinetLiveVersion.test.ts`, the `fortinet-live` block of
+`tests/unit/assetProjection.test.ts`, and the live-firmware block of
+`tests/unit/fortinetLinkState.test.ts`.
+
+Rejected: writing the live value into the discovery kind's own row (FortiManager's dvmdb copy of
+a gate's version can lag, so discovery and monitor would overwrite each other and audit a
+firmware change each time); a scoped re-discovery whenever the versions differ (a whole gate's
+discovery to learn one string). Known gap: a FortiGate polled by ICMP / SNMP / the
+`fortimanager` method has no live reader and still waits for discovery. A live row that stops
+being refreshed (a gate moved off `rest_api`) keeps outranking discovery until the asset's next
+live reading.

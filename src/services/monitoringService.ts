@@ -130,7 +130,9 @@ import { maybeEmitChangeEvents, type ChangeItem } from "./notificationChangeEven
 import { isChangeActionSubscribed } from "./notificationRuleService.js";
 import { logger } from "../utils/logger.js";
 import { adBindFallbackAllowed, adBindFallbackIntegration } from "../utils/adBindFallback.js";
-import { parseFortiapTelemetrySnapshot } from "../utils/fortiapMonitorRow.js";
+import { parseFortiapTelemetrySnapshot, isCanonicalFortiapVersion } from "../utils/fortiapMonitorRow.js";
+import { readSystemStatus } from "../utils/fortiosEnvelope.js";
+import { reconcileFortinetLiveVersions, fortigateLiveVersionFor } from "./fortinetLiveVersionService.js";
 import type { ApRadioSample, ApVapSample } from "../utils/fortiapMonitorRow.js";
 import {
   FAP_RADIO_OID, FAP_VAP_OID, decodeRadioMode, decodeChannelWidth, decodeRadioType,
@@ -255,6 +257,12 @@ export interface ProbeResult {
    * (lastRebootAt + device.reboot Event) from it.
    */
   uptimeSec?: number;
+  /**
+   * The firmware the device reported, when the probe read it for free — today
+   * only the FortiOS REST probe (`system/status` envelope `version`). Consumed
+   * by probeAsset's live-version reconcile; nothing else reads it.
+   */
+  firmwareVersion?: string;
   /**
    * "This was not a measurement." Set when the transport could not ask the
    * thing that answers FOR the asset — today only the vCenter probe, when the
@@ -2311,6 +2319,22 @@ export async function probeAsset(
         // proxy call. Fire-and-forget — don't add to the FortiGate's RTT.
         // Direct mode keeps children independent (no proxy bottleneck, and
         // per-device parallelism is up to 20).
+        // The running firmware rode the probe: keep Asset.osVersion current
+        // between discoveries (fortinetLiveVersionService). Best-effort — an
+        // identity write must never turn a successful probe into a failure.
+        if (result.success && result.firmwareVersion && asset.assetType === "firewall") {
+          try {
+            await reconcileFortinetLiveVersions([{
+              assetId: asset.id,
+              hostname: asset.hostname,
+              currentOsVersion: asset.osVersion,
+              liveVersion: fortigateLiveVersionFor(integration.type, result.firmwareVersion),
+              reader: "fortios-probe",
+            }]);
+          } catch (err: any) {
+            logger.debug({ assetId: asset.id, err: err?.message }, "fortinet live version reconcile failed");
+          }
+        }
         if (
           result.success &&
           integration.type === "fortimanager" &&
@@ -2447,10 +2471,14 @@ async function probeFortinet(
   try {
     // /api/v2/monitor/system/status doubles as our liveness check; capture
     // the body so we can read device uptime for free instead of discarding it.
-    const res = await fgRequest<any>(fgConfig, "GET", "/api/v2/monitor/system/status", { timeoutMs });
+    // `envelope: true` because the running firmware (`version`) is an envelope
+    // field; the uptime reader already accepts both the envelope and `results`.
+    const res = await fgRequest<any>(fgConfig, "GET", "/api/v2/monitor/system/status", { timeoutMs, envelope: true });
     const ok = finish(start, true);
     const up = fortinetUptimeSecondsFromStatus(res);
     if (up !== null) ok.uptimeSec = up;
+    const version = readSystemStatus(res).version;
+    if (version) ok.firmwareVersion = version;
     return ok;
   } catch (err: any) {
     // Inside a 401 pause the request was never sent: not a reading, not a miss (rule 96).
@@ -2505,6 +2533,14 @@ export interface FortinetControllerEntry {
    * the relevant fields.
    */
   apTelemetry?: import("../utils/fortiapMonitorRow.js").FortiapTelemetrySnapshot;
+  /**
+   * The firmware the device is running, as the controller reports it — the
+   * same `os_version` string discovery stores on the fortiswitch / fortiap
+   * source, so the live-version reconcile (fortinetLinkStateService →
+   * fortinetLiveVersionService) compares like with like. Undefined when the
+   * row carried no usable version.
+   */
+  osVersion?: string;
 }
 
 export interface FortinetControllerFetchResult {
@@ -2736,6 +2772,15 @@ export async function fetchFortinetControllerInventory(
           // — only "online"/"connected" count as up.
           : (status === "online" || status === "connected");
         const entry: FortinetControllerEntry = { connected, status };
+        // APs: os_version is live; the cached version/firmware_version fields
+        // lag upgrades and are trusted only in the canonical shape — the same
+        // pick parseFortiapMonitorRow makes for discovery.
+        const osVersion = kind === "switches"
+          ? String(r.os_version || "").trim()
+          : (String(r.os_version || "").trim()
+              || [String(r.version || ""), String(r.firmware_version || "")].find(isCanonicalFortiapVersion)
+              || "");
+        if (osVersion) entry.osVersion = osVersion;
         if (kind === "aps") {
           // Parse the AP-row telemetry snapshot once at fetch time so the
           // cache absorbs both probe + telemetry + temperature consumers.

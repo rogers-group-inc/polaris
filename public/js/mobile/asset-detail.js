@@ -2820,7 +2820,7 @@
     }
     if (fw.schedule) out += fwScheduleLineHtml(fw.schedule);
     if (!out && fw.state === "pending-discovery") {
-      out = '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.reason || "Upgraded — the record updates on the next discovery") + '</div>';
+      out = '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.reason || "Upgraded — the record catches up on the next poll") + '</div>';
     }
     return out;
   }
@@ -2880,6 +2880,29 @@
     var cancel = document.getElementById("asset-fw-sched-cancel");
     if (cancel && fw.schedule) cancel.addEventListener("click", function () { cancelFirmwareSchedule(asset, fw.schedule, cancel); });
     if (fw && fw.state === "running" && fw.activeRun) watchFirmwareRun(asset.id, fw.activeRun.id);
+    scheduleFirmwareRefresh(asset, fw);
+  }
+
+  // The desktop card's 10-minute re-read (assets.js _scheduleFirmwareRefresh):
+  // while this asset's sheet is open, re-read the firmware status and repaint
+  // only when the answer changed. While a flash is running its watcher owns
+  // the slot, so the tick just waits another interval.
+  var FW_REFRESH_MS = 10 * 60 * 1000;
+  var _fwRefreshTimer = null;
+  function scheduleFirmwareRefresh(asset, fw) {
+    if (_fwRefreshTimer) clearTimeout(_fwRefreshTimer);
+    _fwRefreshTimer = null;
+    var sig = JSON.stringify(fw || null);
+    _fwRefreshTimer = setTimeout(function () {
+      _fwRefreshTimer = null;
+      if (_openId !== asset.id || !document.getElementById("asset-fw-slot")) return;
+      if (document.hidden || _fwPoll) { scheduleFirmwareRefresh(asset, fw); return; }
+      api.assets.firmwareUpgrade(asset.id).then(function (next) {
+        if (_openId !== asset.id) return;
+        if (JSON.stringify(next || null) === sig) { scheduleFirmwareRefresh(asset, next); return; }
+        paintFirmwareSlot(asset, next);
+      }).catch(function () { scheduleFirmwareRefresh(asset, fw); });
+    }, FW_REFRESH_MS);
   }
 
   /**

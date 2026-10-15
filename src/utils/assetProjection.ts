@@ -100,6 +100,10 @@ export type AssetSourceKind =
   // ENRICHMENT, not ownership: it says what the device claims to be, never
   // that the device is in anyone's inventory — see ENRICHMENT_SOURCE_KINDS.
   | "snmp-sysdescr"
+  // The firmware a FortiGate / FortiSwitch / FortiAP reports about itself on
+  // the monitor path (services/fortinetLiveVersionService.ts) — osVersion
+  // only. ENRICHMENT, like snmp-sysdescr.
+  | "fortinet-live"
   | "manual";
 
 /**
@@ -118,7 +122,7 @@ export type AssetSourceKind =
  * would leave a deleted VM active forever. Callers asking about EXISTENCE
  * filter these out; callers asking about IDENTITY (projection) do not.
  */
-export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr"];
+export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr", "fortinet-live"];
 
 /** True when this kind's presence means "something still holds this device". */
 export function sourceClaimsExistence(kind: string): boolean {
@@ -531,6 +535,11 @@ const OS_VERSION_RULES: FieldRule[] = [
   { sourceKind: "intune", pick: (o) => obsString(o, "osVersion") },
   { sourceKind: "entra", pick: (o) => obsString(o, "operatingSystemVersion") },
   { sourceKind: "ad", pick: (o) => obsString(o, "operatingSystemVersion") },
+  // The device's own CURRENT answer, read by the monitor path from the same
+  // FortiOS tables discovery reads — ranked directly above those discovery
+  // copies, which are only as fresh as the last discovery (and FortiManager's
+  // dvmdb can lag even that). Only Fortinet gear ever carries this row.
+  { sourceKind: "fortinet-live", pick: (o) => obsString(o, "osVersion") },
   { sourceKind: "fortigate-firewall", pick: (o) => obsString(o, "osVersion") },
   { sourceKind: "fortiswitch", pick: (o) => obsString(o, "osVersion") },
   { sourceKind: "fortiap", pick: (o) => obsString(o, "osVersion") },

@@ -710,9 +710,18 @@ device while it is writing.**
 A run ends *succeeded* (the device came back reporting the image's version),
 *unverified* (it came back but Polaris could not confirm the version — check
 it on the device) or *failed* (the transcript says at which stage). The
-asset's OS/firmware field is not rewritten by the run: the next discovery
-reads the new version, and until it does the card says *Flashed*. **Run
-history** lists every attempt with a **View log**. On the phone the upgrade lives in the
+asset's OS/firmware field is not rewritten by the run. It catches up from
+what the device itself reports to monitoring: within about a minute for a
+FortiSwitch or FortiAP (read from its FortiGate's controller table), on the
+next poll for a FortiGate polled over its REST API, and otherwise at the
+next discovery. Until it does the card says *Flashed*. The same reading
+picks up a firmware change made outside Polaris, so the card stops offering
+an upgrade the device already took. **Run history** lists every attempt
+with a **View log**.
+
+While the asset is open the card **re-reads its status every 10 minutes**
+on its own, and redraws only when something changed, so an expanded Run
+history stays open. **Refresh** in the panel footer re-reads it at once. On the phone the upgrade lives in the
 asset's OS row instead — see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
 
 **Scheduling an upgrade for later**
