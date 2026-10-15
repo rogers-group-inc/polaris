@@ -140,6 +140,25 @@ Unchecked **and empty is a validation error** — never silently "all assets".
 
 A debounced preview shows the devices currently matched.
 
+**Subnet / IP** matches a device by its primary IP address, three ways — the
+operator decides which, and each has its negation:
+
+| Operator | Value | Matches when the device's IP is… |
+|---|---|---|
+| **is within CIDR** | `10.20.0.0/16`, or a bare IP (one address) | inside that network |
+| **is within range** | `10.20.0.10-10.20.0.50`, or the short `10.20.0.10-50` | between the two addresses, both included (IPv4) |
+| **is in subnet named** | an [IPAM](IPAM) network name; `*` and `?` are wildcards, case does not matter | inside **any** active network whose name matches |
+
+The value box suggests networks for CIDR and network names for a name, and
+clears itself when you switch to an operator that takes a different kind of
+value. A name rule follows the IPAM registry: `Plant-*` also covers a plant
+network added next month, and a renamed network reaches the rule within a
+minute. Deprecated networks never match. Every value is checked when you save —
+a backwards range or a malformed CIDR is refused, not stored. **IP block**
+takes a CIDR only. The same field and operators appear in every device filter:
+alert groups, the [Address Book](Address-Book), mass pinning and tag
+auto-assignment.
+
 **The step is per trigger.** A trigger type the catalogue marks *unscoped* has
 its filter **discarded** at save. Today that is `host_metric` and a host-kind
 composite — those are about the Polaris server, not about your devices. The
@@ -167,16 +186,20 @@ The split is the whole idea:
   reminders, acknowledge-note policy and email. While an automation is in a
   group, **its own recipients are not used** for alerts the group governs.
 
-The editor holds a name, an **Active** switch, a **Which devices** filter, the
-member list, the alert text, **Require a note when acknowledging** and
-**Remind while unhandled**.
+The editor holds a name, an **Active** switch, **One alert per** (**Device**,
+**Automation**, **Device + automation** or **Subnet**), a **Which devices** filter, the member list, the alert text,
+**Require a note when acknowledging** and **Remind while unhandled**.
 
 - **Members.** Every automation is listed; one that cannot join says why rather
   than being left out. An automation can be in one group at a time, and only
   one that watches something it can keep checking — a metric, a state, or a
   multi-condition device trigger. Event and change automations cannot join:
   they fire on a single moment, so Polaris could never tell when their part in
-  a shared alert had ended.
+  a shared alert had ended. In a **Device** or **Device + automation** group, a metric or state that
+  is about the whole device (such as `monitorStatus == down`) cannot join
+  either — it already raises one alert per device, so there is nothing to fold;
+  the picker suggests one alert per automation or per subnet instead. The list is re-checked whenever
+  you switch **One alert per**.
 - **Which devices.** Narrows where the folding applies, never what a member
   watches. On a device outside the filter, a member alerts on its own exactly
   as it would outside the group — which is how one set of automations can serve
@@ -191,9 +214,75 @@ member list, the alert text, **Require a note when acknowledging** and
   confirmation names any member that has no recipients of its own and would go
   quiet.
 
-Adding or removing a member, changing the device filter, and turning off or
-deleting a group all **end the affected live alerts**; the next check raises
-them again under whoever now delivers them.
+Adding or removing a member, changing the device filter, switching **One alert
+per**, and turning off or deleting a group all **end the affected live
+alerts**; the next check raises them again under whoever now delivers them.
+
+### The first email waits one poll
+
+A grouped alert — from a group, or from an automation set to one alert per
+device — shows up in Polaris the moment it opens, but its **first email waits
+one polling interval** of whatever opened it: the device's poll interval for
+that reading, or a path check's own interval. Anything that fails in that time
+joins the alert and is in the first email. The wait comes **after** the
+automation's own *for N polls*: an automation that waits 3 polls of a
+5-minute path check opens its alert at 15 minutes and emails at 20.
+
+While it waits, nothing else is sent either — no updates, no escalation, no
+reminders (those count from the first email). An alert that recovers before
+its first email sends nothing at all, not even "Resolved".
+
+### One alert per automation, or per device and automation
+
+**One alert per** decides what a single alert stands for:
+
+| Choice | One alert per | Members listed |
+|---|---|---|
+| **Device** | device — everything the group's automations find on it | the components (ports, tunnels…) |
+| **Automation** | automation — every device it trips, together | the devices |
+| **Device + automation** | device, separately for each automation | that automation's components |
+| **Subnet** | network — every device in it, together | the devices |
+
+**Automation** suits a check you want to hear about once however widely it
+fires — *"Device down: 5 devices — sw-01, sw-02, …"*. The alert is named after
+the automation, ends when the **last** device recovers, and (like Subnet) also
+accepts automations about the whole device, such as `monitorStatus == down`.
+
+**Device + automation** keeps different checks apart on the same device — a PoE
+fault and a high temperature on one switch are two alerts — while each
+automation's own components still fold (eight faulted ports are one alert). Use
+it when you want the group's recipients and escalation over several automations
+without merging their alerts.
+
+The groups list marks a group that folds any way but **Device** with a badge.
+
+### One alert per subnet
+
+Set **One alert per** to **Subnet** and every device the group governs whose IP
+falls in the same [IPAM](IPAM) network shares **one** alert, each device listed
+as a member. The network is the most specific active one containing the
+device's primary IP. A device in no recorded network still alerts, on its own.
+The groups list marks these groups **per subnet**.
+
+The case it exists for is the device-down storm: a switch fails and every host
+behind it goes down or [Dep. Down](Dependency-Suppression) at once. With a
+subnet group that is one page — *"Device down: 12 devices in Plant A
+(10.1.0.0/24) — …"* — instead of twelve. The alert names the network as its
+device, carries the dependency headline when the first host is Dep. Down, and
+stays up until the **last** host recovers; a host that comes back earlier is
+marked as recovered in the member list. The alert email shows no per-port graph
+block, since its members are devices rather than components of one device.
+
+To set it up:
+
+1. Open the automation that watches `monitorStatus == down` (or create one —
+   see [Asset state](Automation-Triggers#monitorstatus--down-is-the-down-detection-automation)).
+   If hosts behind a failed switch should alert too, tick **Dependency-Down
+   Bypass** on its Actions step.
+2. On the **Alert Groups** tab, click **New group**, set **One alert per** to
+   **Subnet**, and narrow **Which devices** if only some sites should fold.
+3. Tick the down automation in the member list and save. The group's
+   recipients are copied from it the first time, as for any group.
 
 Separately from groups, a single automation that watches something per
 component can raise **one alert per device** on its own — see
@@ -213,7 +302,9 @@ All assets < Device type < OS < Manufacturer < Model
 ```
 
 (An IP block *contains* subnets, so a block rule targets less precisely and
-loses the carve-out to a subnet rule over the same trigger.)
+loses the carve-out to a subnet rule over the same trigger. A **Subnet / IP**
+rule ranks as Subnet whichever way it names the addresses — CIDR, range or
+subnet name.)
 
 When a higher-ranked automation carves a device out of a lower-ranked one, the
 lower one's readings for that device are dropped, any active alert from it is

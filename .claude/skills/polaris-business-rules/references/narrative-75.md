@@ -413,6 +413,111 @@ delivering on their own. The confirm dialog says what that costs, including the 
 otherwise invisible: a member with no notify action of its own was relying on the group to do the
 telling, and would go silent without saying so.
 
+### Folding by subnet
+
+A group folds by DEVICE unless its `foldBy` says `subnet` (2026-10). The case it exists for is the
+device-down storm: a switch fails, and a "monitor status is down" automation with dependency-down
+alerting turned on pages once for every host behind it. Those are not twelve problems, they are one
+problem seen from twelve places, and the operator wants one page that lists the twelve.
+
+**Which subnet.** The most specific non-deprecated registry `Subnet` containing the device's
+primary IP — the same "narrowest container wins" answer the IPAM tree gives — resolved once per
+tick (`TickAlertIndex.subnetsOf`, one subnet read plus an address read only for devices the buffer
+lacks). The alert keys `subnet:<subnetId>` (`subnetFoldTarget`), prefixed so it can never be
+mistaken for an asset id in the same group's key space. A device in NO registry subnet keeps its
+own alert: silently dropping it would be the one outcome worse than paging twice.
+
+**Identity includes the device.** In a device fold a contribution is `(automation, component)`,
+and the device is implied by the alert. In a subnet fold it is not — two hosts both "down" carry
+the same `(rule, key)` and would collapse into one member. So a subnet-folded member carries
+`assetId` (and the `subnet` label) and `memberMatches` / `memberIdentityOf` compare it. The device
+joins the identity ONLY when the member carries one, so every member stored before the feature
+keeps exactly the identity it had.
+
+**Whole-device triggers join only a subnet group.** `asset_state` / `asset_metric` without a
+dimension report once per device already, so a device group would only ever hold one contribution
+per alert — there is nothing to fold, and refusing it there stays right. A subnet group folds
+DEVICES, so the same trigger has something to fold. `triggerCanJoinGroup(trigger, foldBy)` and
+`ruleGroupsByAsset` (via `DbRule.alertGroupFoldBy`) carry the mode; `reasonCannotJoin` tells an
+operator who tries it on a device group to fold by subnet instead, and switching a group back to
+device with such a member still in it is refused, naming it.
+
+**The state machine is still untouched.** `NotificationRuleState` rows stay per device: the last
+host to recover clears the alert, a middle one stamps `leftAt` on its member. The alert's `assetId`
+is the LEADING device (so it has a device to hang on), while `assetHostname` and `{asset}` render
+the subnet label "Name (cidr)"; the default message names the count, the subnet and the hosts, and
+carries the dependency headline when the lead is dependency-down. The email draws no per-component
+chart block for it, because a member key belongs to a different host than the one charted.
+
+**Changing the fold retires.** Device ↔ subnet changes what ONE alert is; a live per-device alert
+cannot become a member of a per-subnet one in place. `updateGroup` retires the group's live alerts
+(`system:group-refolded`) and the next tick re-raises them in the new shape — the same rule as
+every other reshape in this section.
+
+### Folding by automation, and by device and automation
+
+Two more folds landed beside subnet the same week (2026-10), because "one alert per device" is
+only one of the shapes an on-call team asks for.
+
+**`automation`** — one alert per member automation, across every device the group governs. The
+alert keys `auto:<ruleId>` (`automationFoldTarget`); its members are devices exactly as in a
+subnet fold (`assetId` on each, host-led labels, `memberMatches` comparing the device), so
+everything said above about identity, the leading device, the missing chart block and the state
+machine applies unchanged. `foldSpansDevices(foldBy)` is the one predicate that says "this fold
+holds several devices" — it is what admits the whole-device triggers (`monitorStatus == down`) to
+both of these folds. The alert names the AUTOMATION as its device (`assetHostname` = the rule's
+name), `{asset}` reads "N devices" (distinct active devices), and the default message is
+"<rule>: N devices — <hosts>" plus the dependency headline. The difference from a subnet fold is
+the unit, not the mechanism: a subnet fold answers "what broke at this site", an automation fold
+"what is this check finding, everywhere".
+
+**`deviceAutomation`** — one alert per device PER automation: one automation's components on a
+device fold together (eight faulted ports are one alert), but two automations on the same device
+stay two alerts. The alert keys `<assetId>/auto:<ruleId>` (`deviceAutomationFoldTarget`); members
+are components, as in a device fold, and nothing carries `assetId`. Eligibility is the DEVICE
+group's: a whole-device trigger would only ever hold one contribution per alert, so it is refused
+with the same reason. It is the shape an automation's own `groupByAsset` checkbox already gives —
+the point of putting it in a group is the group's DELIVERY (one recipient list, one escalation
+chain) over several automations whose alerts should still stay apart.
+
+Changing between any two of the four folds retires the group's live alerts, as above.
+
+### The first-send hold
+
+A grouped alert does not send its first message the tick it opens (2026-10). It waits ONE polling
+interval of the reading that opened it, because the whole point of folding is lost when the
+first email names one device and the next nine arrive as a string of `[UPDATED]` messages a
+minute apart: the hosts behind a failed switch cross their own "for N polls" on the same poll or
+the next one, and the hold is what lets them all be in the first page. It is added ON TOP of the
+automation's own hold — 3 polls of a 5-minute path check opens the alert at 15 minutes, and the
+grouped alert's first email goes at 20.
+
+**How long.** `firstSendHoldSec(rule, reading)` asks `resolveAssetCadenceSec(assetId, metric,
+dimKey)` — the per-device twin of the wizard's `resolveScopeCadence`: the device's stream
+cadence through the monitor-settings hierarchy, the integration's SD-WAN interval, or, for a path
+check, the CHECK's `intervalSec` (the dimension key is the check id, so a server-run check with no
+device resolves too). Anything unresolvable holds 60 s, one engine tick.
+
+**What happens while held.** The alert is live in the app from the first tick (the in-app alert
+is the row). `createGroupAlert` stamps `firstSendDueAt` and always stores `templateCtx`; it
+records no pending send. `joinGroupAlert` and `reconcileGroupSeverity` keep the row and its
+context current but record no growth or band message. `releaseHeldFirstSends` runs once per
+engine pass before `drainPendingSends`: one query on the partial index
+`notifications_first_send_held`, a claim by stamping `firstSentAt` (so an overlapping pass cannot
+send twice), and a "fire" built from the row AS IT STANDS — stored context, members, severity,
+message, and `tierForSeverity(rule, severity).actions`; the group still swaps in its own actions
+at the drain. An Event `notification.first_send_released` records it.
+
+**What nobody was told cannot be resolved.** An alert that ends while held sends nothing:
+`fireReset` and `fireResolved` return early on `neverAnnounced`, and `runResetActionsForCleared`
+(an operator's Clear) skips held rows — a "Resolved" email or a ticket-closing API call would
+answer an alert nobody heard of. Escalation (`runEscalationSweep`) excludes held rows and starts
+every clock at `firstSentAt` when that is later, the same shift quiet time's summary makes.
+
+**Why not reuse quiet time's `held` delivery rows.** Those are terminal — they are summarised,
+never re-sent — and they are written per recipient AFTER the owner's actions resolve. The hold is
+earlier and simpler: no send is recorded at all until it ends, so nothing has to be un-held.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.

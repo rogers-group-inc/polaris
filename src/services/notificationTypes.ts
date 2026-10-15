@@ -10,7 +10,7 @@
  */
 
 import { z } from "zod";
-import { isValidCidr, isValidIpAddress, ipInCidr, bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
+import { isValidCidr, isValidIpAddress, ipInCidr, bareInterfaceIp, interfaceIpIsUnaddressed, parseIpv4Range, ipInIpv4Range } from "../utils/cidr.js";
 import { compileWildcard } from "../utils/wildcard.js";
 import { TEMPLATE_VARIABLES, TEMPLATE_VARIABLE_SECTIONS, formatElapsed } from "../utils/notificationTemplate.js";
 import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
@@ -1151,6 +1151,27 @@ export const SCOPE_GROUP_OPS = ["and", "or", "none", "notAll"] as const;
 export type ScopeGroupOp = (typeof SCOPE_GROUP_OPS)[number];
 
 const STRING_OPS = ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"] as const;
+
+/**
+ * The three ways a `subnet` ("Subnet / IP") rule can name addresses, each with
+ * its negation:
+ *   - CIDR  (`inCidr`)        — "10.20.0.0/16", or a bare IP read as a /32;
+ *   - Range (`inRange`)       — "10.20.0.10-10.20.0.50" (or "10.20.0.10-50"),
+ *                               inclusive, IPv4;
+ *   - Name  (`inSubnetNamed`) — a registry Subnet NAME, `*` / `?` wildcards,
+ *                               case-insensitive: the address is inside ANY
+ *                               non-deprecated Subnet whose name matches, so
+ *                               "Plant-*" selects every plant subnet, including
+ *                               ones created after the rule was saved.
+ * CIDR and Range are pure over the asset row. Name needs the subnet registry,
+ * so it is resolved like the relation-backed fields: `decorateRelationLeafHits`
+ * (scopeRelationIndex.ts) stamps the verdict under `subnetNameLeafKey`, and an
+ * undecorated row reads as "in no such subnet".
+ */
+export const SUBNET_NAME_OPS = ["inSubnetNamed", "notInSubnetNamed"] as const;
+export const SUBNET_RANGE_OPS = ["inRange", "notInRange"] as const;
+const SUBNET_OPS = ["inCidr", "notInCidr", ...SUBNET_RANGE_OPS, ...SUBNET_NAME_OPS] as const;
+
 export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   assetType: ["equals", "notEquals"],
   manufacturer: STRING_OPS,
@@ -1158,7 +1179,7 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   hostname: STRING_OPS,
   os: STRING_OPS,
   tag: ["has", "notHas"],
-  subnet: ["inCidr", "notInCidr"],
+  subnet: SUBNET_OPS,
   // "IP block" — the IPAM block an address falls inside, stored as the block's
   // CIDR and matched by exactly the `subnet` predicate below. A separate field
   // rather than more entries on the `subnet` picker because a block is the
@@ -1297,7 +1318,17 @@ function makeScopeConditionSchema(
       if (!ops.includes(r.operator)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `operator "${r.operator}" is not valid for field "${r.field}"` });
       }
-      if (CIDR_VALUED_FIELDS.has(r.field) && !isValidCidr(r.value) && !isValidIpAddress(r.value)) {
+      if ((SUBNET_RANGE_OPS as readonly string[]).includes(r.operator)) {
+        if (!parseIpv4Range(r.value)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${r.value}" must be an IPv4 range, first to last (e.g. 10.20.0.10-10.20.0.50)` });
+        }
+      } else if ((SUBNET_NAME_OPS as readonly string[]).includes(r.operator)) {
+        try {
+          compileWildcard(r.value.trim());
+        } catch (err) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: (err as Error)?.message || `"${r.value}" is not a valid subnet name pattern` });
+        }
+      } else if (CIDR_VALUED_FIELDS.has(r.field) && !isValidCidr(r.value) && !isValidIpAddress(r.value)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${r.value}" must be a CIDR (e.g. 10.20.0.0/16) or an IP address` });
       }
       // A malformed wildcard must be a 400 at save time, not a throw inside the
@@ -1525,6 +1556,19 @@ export function relationLeafKey(rule: ScopeConditionRule): string {
   return rule.field + "|" + leafOpValueKey(rule);
 }
 
+/** Is this leaf a `subnet` rule matched by registry Subnet NAME? Those are
+ *  the leaves `decorateRelationLeafHits` resolves besides the relation ones. */
+export function isSubnetNameLeaf(rule: ScopeConditionRule): boolean {
+  return rule.field === "subnet" && (SUBNET_NAME_OPS as readonly string[]).includes(rule.operator);
+}
+
+/** Prefetch key for a subnet-name leaf. Both halves of the pair share it — the
+ *  negation is the same lookup, inverted — and the pattern is trimmed and
+ *  lower-cased exactly as the resolver compares it. */
+export function subnetNameLeafKey(rule: ScopeConditionRule): string {
+  return "subnet|named\u0000" + rule.value.trim().toLowerCase();
+}
+
 /** The operator+value half of the key — the part both halves of a negative
  *  pair share. Separate only so the field can be prefixed above. */
 function leafOpValueKey(rule: ScopeConditionRule): string {
@@ -1600,6 +1644,17 @@ function matchScopeRule(rule: ScopeConditionRule, asset: ScopeConditionAsset): b
       // separate FIELDS because the pickers differ and the specificity ladder
       // ranks a block below a subnet — see SCOPE_RANK.
       const ip = asset.ipAddress ?? "";
+      if ((SUBNET_NAME_OPS as readonly string[]).includes(rule.operator)) {
+        // Resolved against the subnet registry by decorateRelationLeafHits; an
+        // undecorated row is read as "in no such subnet" — the same answer an
+        // asset with no address gets.
+        const inside = asset.relationLeafHits?.get(subnetNameLeafKey(rule)) === true;
+        return rule.operator === "notInSubnetNamed" ? !inside : inside;
+      }
+      if ((SUBNET_RANGE_OPS as readonly string[]).includes(rule.operator)) {
+        const inside = !!ip && ipInIpv4Range(ip, rule.value);
+        return rule.operator === "notInRange" ? !inside : inside;
+      }
       let inside = false;
       if (ip) {
         try { inside = ipInCidr(ip, scopeCidrOf(rule.value)); } catch { inside = false; }
@@ -2482,7 +2537,7 @@ export function scopeRankLabel(rank: number): string {
 // Condition-rule operators that POSITIVELY narrow to specific assets. Negative
 // operators (notEquals/notHas/…) and none/notAll groups broaden rather than
 // target, so they never raise specificity.
-const POSITIVE_SCOPE_OPS = new Set(["equals", "contains", "startsWith", "endsWith", "has", "inCidr"]);
+const POSITIVE_SCOPE_OPS = new Set(["equals", "contains", "startsWith", "endsWith", "has", "inCidr", "inRange", "inSubnetNamed"]);
 
 function isRegionTagValue(v: string): boolean {
   return v.trim().toLowerCase().startsWith("region:");
@@ -4723,6 +4778,13 @@ export interface AlertMember {
   /** ISO. Set when the contribution recovered or left; the row is KEPT, because
    *  what this alert covered is the history the snapshot exists to carry. */
   leftAt?: string;
+  /** Set ONLY on a subnet- or automation-folded alert, where contributions come from several
+   *  devices: the device this one is about. It joins the identity, because two
+   *  hosts both "down" are two findings with the same (rule, key). */
+  assetId?: string;
+  /** Set only on a subnet-folded alert: the subnet it is about, as a human
+   *  reads it — "Plant A (10.1.0.0/24)". What {asset} renders as there. */
+  subnet?: string;
 }
 
 /** A 48-port switch plus its SFPs. Past this an alert has stopped being about
@@ -4743,8 +4805,11 @@ export const GROUP_LABEL_CAP = 6;
  *  alert groups land) a group keys on the group. A rule joining or leaving a
  *  group therefore changes its key, which is what keeps the old episode's row
  *  and the new one from fighting over it. */
-export function groupKeyOf(scope: "rule" | "grp", id: string, assetId: string): string {
-  return `${scope}:${id}|${assetId}`;
+export function groupKeyOf(scope: "rule" | "grp", id: string, target: string): string {
+  // `target` is the asset id, or the fold's own target on a group that folds
+  // another way (subnetFoldTarget / automationFoldTarget /
+  // deviceAutomationFoldTarget).
+  return `${scope}:${id}|${target}`;
 }
 
 /** Does this trigger report one reading PER COMPONENT (rather than one per
@@ -4775,10 +4840,53 @@ export function ruleGroupsByAsset(rule: {
    *  in a group and still got eight alerts per switch would reasonably call
    *  that broken. */
   alertGroupId?: string | null;
+  /** The group's fold axis. A SUBNET or AUTOMATION group also takes
+   *  whole-device triggers (monitor status is down), so membership alone no
+   *  longer settles it. */
+  alertGroupFoldBy?: string | null;
   trigger: Trigger;
 }): boolean {
-  if (rule.alertGroupId) return triggerCanJoinGroup(rule.trigger);
+  if (rule.alertGroupId) return triggerCanJoinGroup(rule.trigger, rule.alertGroupFoldBy);
   return rule.groupByAsset === true && triggerIsPerDimension(rule.trigger);
+}
+
+/** What an AlertGroup folds its members' alerts by.
+ *
+ *  `device` — one alert per device, its components and automations folded in
+ *  (the original shape). `automation` — one alert per member AUTOMATION: every
+ *  device the group governs that trips it shares that automation's one alert,
+ *  each device a member. `deviceAutomation` — one alert per device PER
+ *  automation: one automation's components on a device fold together, but two
+ *  automations on the same device stay two alerts. `subnet` — one alert per
+ *  registry SUBNET: every device the group governs whose primary IP falls in
+ *  the same subnet (the most specific non-deprecated Subnet row containing it)
+ *  shares one alert, so a switch dropping twelve hosts behind it is one page,
+ *  not twelve. A device in no registry subnet still alerts, on its own. */
+export const ALERT_GROUP_FOLD_BY = ["device", "automation", "deviceAutomation", "subnet"] as const;
+export type AlertGroupFoldBy = (typeof ALERT_GROUP_FOLD_BY)[number];
+
+/** Does this fold put SEVERAL devices into one alert? Its members then carry
+ *  their device (`AlertMember.assetId`), which joins their identity. */
+export function foldSpansDevices(foldBy: string | null | undefined): boolean {
+  return foldBy === "subnet" || foldBy === "automation";
+}
+
+/** The `groupKey` target of a subnet-folded alert. Prefixed so it can never be
+ *  mistaken for an asset id in the same group's key space. */
+export function subnetFoldTarget(subnetId: string): string {
+  return `subnet:${subnetId}`;
+}
+
+/** The `groupKey` target of an automation-folded alert: one per member
+ *  automation, whatever devices it covers. */
+export function automationFoldTarget(ruleId: string): string {
+  return `auto:${ruleId}`;
+}
+
+/** The `groupKey` target of a device-and-automation alert: the device, split
+ *  by the automation raising it. */
+export function deviceAutomationFoldTarget(assetId: string, ruleId: string): string {
+  return `${assetId}/auto:${ruleId}`;
 }
 
 /**
@@ -4796,9 +4904,17 @@ export function ruleGroupsByAsset(rule: {
  * that the last contribution?" count to see, and the alert could never learn
  * that the event's part in it had ended. Revisit only with a state row for them.
  */
-export function triggerCanJoinGroup(trigger: Trigger | null | undefined): boolean {
+export function triggerCanJoinGroup(
+  trigger: Trigger | null | undefined,
+  /** A SUBNET or AUTOMATION group folds DEVICES, so a whole-device trigger —
+   *  "monitor status is down" above all — has something to fold there, where a
+   *  device (or device-and-automation) group would only ever hold one
+   *  contribution per alert. */
+  foldBy?: string | null,
+): boolean {
   if (!trigger) return false;
   if (trigger.type === "composite") return trigger.kind !== "host";
+  if (foldSpansDevices(foldBy)) return trigger.type === "asset_metric" || trigger.type === "asset_state";
   return triggerIsPerDimension(trigger);
 }
 
@@ -4885,10 +5001,11 @@ export function markMemberLeft(
   ruleId: string,
   key: string,
   now: Date,
+  /** The contribution's device — consulted only for a member that carries one. */
+  assetId?: string | null,
 ): AlertMember[] {
-  const id = memberIdentityOf(ruleId, key);
   return (members ?? []).map((m) =>
-    memberIdentity(m) === id && !m.leftAt ? { ...m, leftAt: now.toISOString() } : m,
+    memberMatches(m, ruleId, key, assetId) && !m.leftAt ? { ...m, leftAt: now.toISOString() } : m,
   );
 }
 
@@ -4984,7 +5101,14 @@ function listLabels(labels: string[]): string {
 /** A contribution is identified by (automation, component), not by component
  *  alone — two automations may both be about port12 and they are two findings. */
 function memberIdentity(m: AlertMember): string {
-  return memberIdentityOf(m.ruleId, m.key);
+  return memberIdentityOf(m.ruleId, m.key, m.assetId);
+}
+
+/** Does this stored member stand for THIS contribution? The device is compared
+ *  only when the member carries one (a subnet- or automation-folded alert), so every member
+ *  stored before subnet folding existed matches exactly as it did. */
+export function memberMatches(m: AlertMember, ruleId: string, key: string, assetId?: string | null): boolean {
+  return m.ruleId === ruleId && m.key === key && (!m.assetId || m.assetId === assetId);
 }
 
 /** The identity pair, flattened.
@@ -4993,8 +5117,10 @@ function memberIdentity(m: AlertMember): string {
  *  SD-WAN keys are "<healthCheck>|<link>"): a rule id is a UUID, so the FIRST
  *  separator is always the boundary and nothing in the left half can imitate
  *  it. Splitting is never needed anyway — this string is only ever compared. */
-function memberIdentityOf(ruleId: string, key: string): string {
-  return `${ruleId}|${key}`;
+function memberIdentityOf(ruleId: string, key: string, assetId?: string): string {
+  // The device only on a multi-device fold's members, so every member stored
+  // before that existed keeps exactly the identity it had.
+  return assetId ? `${ruleId}|@${assetId}|${key}` : `${ruleId}|${key}`;
 }
 
 /** Hold the snapshot to MAX_GROUP_MEMBERS, shedding DEPARTED entries oldest
@@ -5618,9 +5744,27 @@ export function scopeConditionMeta(fieldOps: Record<string, readonly string[]>) 
       // Deliberately not "is in subnet": the same operator now carries the
       // `ipBlock` field, and the label is what both the operator dropdown and
       // the automations-list prose summary render.
-      inCidr: "is within",
-      notInCidr: "is not within",
+      // Named by HOW the addresses are given, since `subnet` offers three ways
+      // (CIDR / Range / Name) and the dropdown is where the choice is made.
+      inCidr: "is within CIDR",
+      notInCidr: "is not within CIDR",
+      inRange: "is within range",
+      notInRange: "is not within range",
+      inSubnetNamed: "is in subnet named",
+      notInSubnetNamed: "is not in subnet named",
       [WILDCARD_OP]: "matches (wildcard *)",
+    },
+    // What the value box holds for an operator whose value is not the field's
+    // usual kind. The builder reads it for the placeholder, the suggestion
+    // list (subnet NAMES rather than CIDRs, none for a range) and its own
+    // pre-save check; an operator absent here takes the field's defaults.
+    operatorValueKinds: {
+      inCidr: "cidr",
+      notInCidr: "cidr",
+      inRange: "ipRange",
+      notInRange: "ipRange",
+      inSubnetNamed: "subnetName",
+      notInSubnetNamed: "subnetName",
     },
     fields: Object.keys(fieldOps)
       .filter((field) => SCOPE_FIELD_META[field])

@@ -1271,7 +1271,13 @@ const api = {
     /** Every automation, each marked selectable or carrying the reason it
      *  cannot join — the member picker shows the refusals rather than hiding
      *  the rows. */
-    joinable: (groupId) => request("GET", "/automations/groups/joinable" + (groupId ? `?groupId=${encodeURIComponent(groupId)}` : "")),
+    joinable: (groupId, foldBy) => {
+      const q = new URLSearchParams();
+      if (groupId) q.set("groupId", groupId);
+      if (foldBy) q.set("foldBy", foldBy);
+      const qs = q.toString();
+      return request("GET", "/automations/groups/joinable" + (qs ? `?${qs}` : ""));
+    },
     create:   (body)  => request("POST", "/automations/groups", body),
     update:   (id, b) => request("PUT", `/automations/groups/${id}`, b),
     delete:   (id)    => request("DELETE", `/automations/groups/${id}`),

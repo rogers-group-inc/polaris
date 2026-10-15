@@ -181,6 +181,78 @@ describe("condition-builder validation", () => {
     expect(b.validate({ op: "and", children: [{ field: "ipBlock", operator: "inCidr", value: "10.20.0.0/16" }] }))
       .toBeNull();
   });
+
+  // Subnet / IP offers CIDR, Range and Name. The CIDR check must not refuse a
+  // range or a subnet name — they are what those operators are FOR.
+  it("checks a range as a range and lets a subnet name through", () => {
+    const b = make();
+    const row = (operator: string, value: string) => ({ op: "and", children: [{ field: "subnet", operator, value }] });
+    expect(b.validate(row("inRange", "10.20.0.10-10.20.0.50"))).toBeNull();
+    expect(b.validate(row("notInRange", "10.20.0.10-50"))).toBeNull();
+    expect(b.validate(row("inRange", "10.20.0.0/24"))).toMatch(/should run first to last/i);
+    expect(b.validate(row("inSubnetNamed", "Plant-*"))).toBeNull();
+    expect(b.validate(row("notInSubnetNamed", "Office"))).toBeNull();
+    expect(b.validate(row("inCidr", "Plant-*"))).toMatch(/does not look like a CIDR/i);
+  });
+});
+
+describe("condition-builder Subnet / IP value kinds", () => {
+  const SUBNET_META = {
+    ...META,
+    fields: [
+      { field: "hostname", label: "Hostname", ops: ["equals"], optionsFrom: null },
+      { field: "subnet", label: "Subnet / IP", ops: ["inCidr", "notInCidr", "inRange", "notInRange", "inSubnetNamed", "notInSubnetNamed"], optionsFrom: "subnets" },
+    ],
+  };
+  const SUBNETS = [
+    { value: "10.1.0.0/24", label: "Plant-A — 10.1.0.0/24", name: "Plant-A" },
+    { value: "10.9.1.0/24", label: "Plant-A — 10.9.1.0/24", name: "Plant-A" }, // same name, two blocks
+    { value: "10.2.0.0/24", label: "Office — 10.2.0.0/24", name: "Office" },
+  ];
+
+  function wired(rule: Record<string, string>) {
+    const b = make({ meta: SUBNET_META, valueOptions: (field: string) => (field === "subnet" ? SUBNETS : []) });
+    const panel = doc.createElement("div");
+    const host = mount(b, { op: "and", children: [rule] });
+    panel.appendChild(host);
+    doc.body.appendChild(panel);
+    b.wire(panel, "#cond-root");
+    const op = host.querySelector(".scr-op") as HTMLSelectElement;
+    const input = host.querySelector(".scr-value") as HTMLInputElement;
+    const setOp = (v: string) => {
+      op.value = v;
+      op.dispatchEvent(new (g.window as { Event: typeof Event }).Event("change", { bubbles: true }));
+    };
+    return { host, op, input, setOp };
+  }
+
+  it("tells the operator what each kind of value looks like", () => {
+    const { input, setOp } = wired({ field: "subnet", operator: "inCidr", value: "" });
+    expect(input.placeholder).toMatch(/10\.20\.0\.0\/16/);
+    setOp("inRange");
+    expect(input.placeholder).toMatch(/10\.20\.0\.10-10\.20\.0\.50/);
+    setOp("inSubnetNamed");
+    expect(input.placeholder).toMatch(/wildcard/i);
+  });
+
+  it("clears the value when the KIND changes, and keeps it for a negation", () => {
+    const { input, setOp } = wired({ field: "subnet", operator: "inCidr", value: "10.1.0.0/24" });
+    setOp("notInCidr");
+    expect(input.value).toBe("10.1.0.0/24");
+    setOp("inSubnetNamed");
+    expect(input.value).toBe("");
+  });
+
+  it("offers each subnet NAME once to a name rule, and nothing to a range", () => {
+    const { host, input, setOp } = wired({ field: "subnet", operator: "inSubnetNamed", value: "" });
+    input.dispatchEvent(new (g.window as { Event: typeof Event }).Event("input", { bubbles: true }));
+    const items = Array.from(host.querySelectorAll(".aw-suggest-item")).map((el) => el.getAttribute("data-val"));
+    expect(items).toEqual(["Plant-A", "Office"]);
+
+    setOp("inRange");
+    input.dispatchEvent(new (g.window as { Event: typeof Event }).Event("input", { bubbles: true }));
+    expect(host.querySelectorAll(".aw-suggest-item")).toHaveLength(0);
+  });
 });
 
 describe("condition-builder seeding", () => {

@@ -243,6 +243,34 @@ export function compareIpv4(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+/**
+ * An operator-typed IPv4 range, first to last inclusive: "10.0.0.10-10.0.0.50",
+ * spaces around the dash allowed, or the short form "10.0.0.10-50" (the end
+ * replaces the last octet). A single address is a one-address range. Null when
+ * either end is not a valid IPv4 address or the range runs backwards — a range
+ * is refused at save rather than silently matching nothing.
+ */
+export function parseIpv4Range(raw: string): { first: string; last: string } | null {
+  if (typeof raw !== "string") return null;
+  const parts = raw.trim().split(/\s*-\s*/);
+  if (parts.length < 1 || parts.length > 2) return null;
+  const first = parts[0] ?? "";
+  let last = parts[1] ?? first;
+  if (/^\d{1,3}$/.test(last)) last = first.split(".").slice(0, 3).concat(last).join(".");
+  if (!isValidIpv4(first) || !isValidIpv4(last)) return null;
+  if (ipToInt(first) > ipToInt(last)) return null;
+  return { first, last };
+}
+
+/** Is `ip` inside the range `parseIpv4Range` reads from `range`? False for an
+ *  unparseable range and for any non-IPv4 address. */
+export function ipInIpv4Range(ip: string, range: string): boolean {
+  const r = parseIpv4Range(range);
+  if (!r || !isValidIpv4(ip)) return false;
+  const n = ipToInt(ip);
+  return n >= ipToInt(r.first) && n <= ipToInt(r.last);
+}
+
 // ─── Containment & Overlap ────────────────────────────────────────────────────
 
 /**

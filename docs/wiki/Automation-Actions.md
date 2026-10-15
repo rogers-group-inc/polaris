@@ -461,6 +461,8 @@ alert, the storage chart on a storage alert)
 `{chart.responseTime}` `{chart.probeLoss}` `{chart.cpu}` `{chart.memory}` `{chart.storage}`
 `{chart.sensor}` `{chart.sdwanLatency}` `{chart.sdwanJitter}`
 `{chart.sdwanLoss}` `{processes.top}` `{interface.ip}` `{interface.lldp}`
+`{path.graph}` (a Path Monitor alert's traceroute graph — up to four on a
+grouped alert)
 `{brand.header}` (the install's logo, name and subtitle — the default email's
 letterhead)
 
@@ -509,6 +511,8 @@ default. Tick **Raise one alert per device, not one per interface** (the noun
 follows the trigger) on the Actions step and it raises **one alert per device**
 instead ([rule 75](Business-Rules#rule-75)):
 
+- its **first email waits one polling interval**, so components that fail on
+  the next poll are in it — see [The first email waits one poll](Automations#the-first-email-waits-one-poll);
 - every affected component is named on the alert — `{dimension}` renders the
   list, `{dimension.count}` how many, `{dimension.first}` the lead one;
 - **one acknowledgement** covers all of them;

@@ -38,7 +38,7 @@ import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { assertActionRefs } from "./notificationRuleService.js";
 import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
-import { triggerCanJoinGroup, normalizeRuleToV2, type Trigger } from "./notificationTypes.js";
+import { triggerCanJoinGroup, foldSpansDevices, normalizeRuleToV2, type Trigger, type AlertGroupFoldBy } from "./notificationTypes.js";
 
 export interface AlertGroupInput {
   name: string;
@@ -47,6 +47,8 @@ export interface AlertGroupInput {
   /** Which devices this group governs — narrows where the fold applies, never
    *  what a member watches. Null / allAssets = every device its members cover. */
   scope?: unknown;
+  /** "device" (default) or "subnet" — what one alert is per. */
+  foldBy?: AlertGroupFoldBy;
   messageTemplate?: string | null;
   requireAckNote?: boolean;
   emailComposition?: unknown;
@@ -60,7 +62,7 @@ export interface AlertGroupInput {
 }
 
 const GROUP_SELECT = {
-  id: true, name: true, description: true, enabled: true, scope: true,
+  id: true, name: true, description: true, enabled: true, scope: true, foldBy: true,
   messageTemplate: true, requireAckNote: true, emailComposition: true,
   actions: true, resetActions: true, escalation: true, repeat: true,
   createdBy: true, createdAt: true, updatedAt: true,
@@ -84,14 +86,19 @@ export async function getGroup(id: string) {
  * looking for "Agent disconnected" in the picker needs to be told it cannot be
  * grouped and why, or they will conclude the list is broken.
  */
-export async function listJoinableRules(forGroupId?: string) {
+export async function listJoinableRules(forGroupId?: string, foldBy?: AlertGroupFoldBy) {
+  // The picker asks for the mode it is SHOWING, which may not be saved yet;
+  // without one, the group's stored mode decides.
+  const mode = foldBy ?? (forGroupId
+    ? (await prisma.alertGroup.findUnique({ where: { id: forGroupId }, select: { foldBy: true } }))?.foldBy
+    : undefined) ?? "device";
   const rules = await prisma.notificationRule.findMany({
     select: { id: true, name: true, enabled: true, severity: true, trigger: true, alertGroupId: true, alertGroup: { select: { name: true } } },
     orderBy: { name: "asc" },
   });
   return rules.map((r) => {
     const t = r.trigger as unknown as Trigger;
-    const eligible = triggerCanJoinGroup(t);
+    const eligible = triggerCanJoinGroup(t, mode);
     const takenByOther = !!r.alertGroupId && r.alertGroupId !== forGroupId;
     return {
       id: r.id,
@@ -102,7 +109,7 @@ export async function listJoinableRules(forGroupId?: string) {
       member: r.alertGroupId === forGroupId && !!forGroupId,
       selectable: eligible && !takenByOther,
       reason: !eligible
-        ? reasonCannotJoin(t)
+        ? reasonCannotJoin(t, mode)
         : takenByOther
           ? `Already delivers through "${r.alertGroup?.name ?? "another group"}" — an automation belongs to at most one group.`
           : null,
@@ -110,17 +117,20 @@ export async function listJoinableRules(forGroupId?: string) {
   });
 }
 
-function reasonCannotJoin(trigger: Trigger | null | undefined): string {
+function reasonCannotJoin(trigger: Trigger | null | undefined, foldBy: string = "device"): string {
   const type = (trigger as { type?: string })?.type;
   if (type === "host_metric") return "Watches the Polaris server itself, so there is no device to group its alerts by.";
   if (type === "event" || type === "change") {
     return "Fires on an instant rather than on a reading it keeps watching, so Polaris cannot tell when its part in a shared alert has ended.";
   }
+  if (!foldSpansDevices(foldBy) && (type === "asset_state" || type === "asset_metric")) {
+    return "Reports once per device already, so there is nothing to fold per device. Set the group to one alert per automation or per subnet to combine it across devices.";
+  }
   return "Reports once per device already, so there is nothing for a group to fold.";
 }
 
 export async function createGroup(input: AlertGroupInput, actor?: string) {
-  await assertMembership(input.ruleIds ?? [], undefined);
+  await assertMembership(input.ruleIds ?? [], undefined, input.foldBy ?? "device");
   // The same save-time reference checks an automation's actions get (rule 114(a)).
   restoreMaskedActionHeaders(input, null);
   await assertActionRefs(input as never);
@@ -130,6 +140,7 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
       description: input.description ?? null,
       enabled: input.enabled !== false,
       scope: (input.scope ?? undefined) as Prisma.InputJsonValue | undefined,
+      foldBy: input.foldBy ?? "device",
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: (input.emailComposition ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -157,7 +168,11 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
 
 export async function updateGroup(id: string, input: AlertGroupInput, actor?: string) {
   const existing = await getGroup(id);
-  await assertMembership(input.ruleIds ?? [], id);
+  const foldBy = input.foldBy ?? (existing.foldBy as AlertGroupFoldBy);
+  // Checked against the members it will HAVE: the posted list, or the current
+  // one when only the mode changed — a device group cannot keep a down
+  // automation that only a subnet group can fold.
+  await assertMembership(input.ruleIds ?? existing.rules.map((r) => r.id), id, foldBy);
   restoreMaskedActionHeaders(input, existing);
   await assertActionRefs(input as never);
   const jsonOrClear = (v: unknown) => (v === undefined ? undefined : v === null ? Prisma.DbNull : (v as Prisma.InputJsonValue));
@@ -168,6 +183,7 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
       description: input.description ?? null,
       enabled: input.enabled !== false,
       scope: jsonOrClear(input.scope),
+      foldBy,
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: jsonOrClear(input.emailComposition),
@@ -201,6 +217,11 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   // save of an unrelated field.
   if (JSON.stringify(existing.scope ?? null) !== JSON.stringify(input.scope ?? null)) {
     await retireGroupAlerts(id, "system:group-rescoped");
+  } else if (existing.foldBy !== foldBy) {
+    // A new fold changes what ONE alert is: a live alert per device
+    // cannot become a member of one per subnet in place. Same retire-and-
+    // re-raise as every other reshape.
+    await retireGroupAlerts(id, "system:group-refolded");
   }
 
   await logEvent({
@@ -210,7 +231,7 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
     resourceName: group.name,
     actor,
     message: `Alert group "${group.name}" updated`,
-    details: { enabled: input.enabled !== false, ruleIds: input.ruleIds ?? null },
+    details: { enabled: input.enabled !== false, foldBy, ruleIds: input.ruleIds ?? null },
   });
   return getGroup(id);
 }
@@ -266,7 +287,7 @@ async function rulesWithoutNotify(ruleIds: string[]): Promise<{ id: string; name
 }
 
 /** Refuse a membership that could never work, naming the automation. */
-async function assertMembership(ruleIds: string[], forGroupId: string | undefined): Promise<void> {
+async function assertMembership(ruleIds: string[], forGroupId: string | undefined, foldBy: string = "device"): Promise<void> {
   if (!ruleIds.length) return;
   const rules = await prisma.notificationRule.findMany({
     where: { id: { in: ruleIds } },
@@ -274,8 +295,8 @@ async function assertMembership(ruleIds: string[], forGroupId: string | undefine
   });
   if (rules.length !== ruleIds.length) throw new AppError(400, "One or more automations no longer exist");
   for (const r of rules) {
-    if (!triggerCanJoinGroup(r.trigger as unknown as Trigger)) {
-      throw new AppError(400, `"${r.name}" cannot join a group — ${reasonCannotJoin(r.trigger as unknown as Trigger)}`);
+    if (!triggerCanJoinGroup(r.trigger as unknown as Trigger, foldBy)) {
+      throw new AppError(400, `"${r.name}" cannot join a group — ${reasonCannotJoin(r.trigger as unknown as Trigger, foldBy)}`);
     }
     if (r.alertGroupId && r.alertGroupId !== forGroupId) {
       throw new AppError(400, `"${r.name}" already delivers through "${r.alertGroup?.name ?? "another group"}" — an automation belongs to at most one group.`);

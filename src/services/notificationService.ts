@@ -279,7 +279,12 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
     // An alert delivered through an AlertGroup has its OWN reset actions
     // (business rule 75) and may well carry no automation-level ones, so the
     // filter widens from "has a rule" to "has an owner".
-    where: { id: { in: ids }, cleared: false, OR: [{ ruleId: { not: null } }, { alertGroupId: { not: null } }] },
+    where: {
+      id: { in: ids }, cleared: false, OR: [{ ruleId: { not: null } }, { alertGroupId: { not: null } }],
+      // A grouped alert still holding its first send was never announced, so
+      // clearing it by hand resolves nothing anyone heard of (business rule 75).
+      NOT: { firstSendDueAt: { not: null }, firstSentAt: null },
+    },
     select: {
       id: true, message: true, severity: true, assetId: true, assetHostname: true,
       rule: { select: { id: true, name: true, scope: true, emailComposition: true, resetActions: true } },
