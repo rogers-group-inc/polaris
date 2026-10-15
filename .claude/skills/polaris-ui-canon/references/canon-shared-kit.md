@@ -152,8 +152,10 @@ unselected page tab).
 - **`box-shadow` replaces, it does not compose.** Every `:focus` rule on an element carrying
   `--shadow-control` re-states the shadow after the focus ring, or the field visibly flattens
   the moment it is focused.
-- **In the dark family the drop shadow is the inset rim.** The nightfall ground is `#0d0d1c`,
-  so a black shadow has almost nothing to darken and stays invisible however far its alpha is
+- **In the dark family the drop shadow is the inset rim.** The nightfall ground is near-black:
+  `#0d0d1c` mixed 5% toward white. Since 2026-10-15 its five background tokens (bg-primary /
+  -secondary / -tertiary, surface, elevated) are each `color-mix(in oklch, <old> 95%, #fff)`, with
+  their order kept. 20% was tried first and washed the theme out. So a black shadow has almost nothing to darken and stays invisible however far its alpha is
   pushed; `--shadow-control`'s and `--shadow-card`'s third layer is a 1px inset top highlight,
   and that is what actually reads as raised. Any future elevation token for the dark themes
   needs the same. It is worth saying plainly that a card in the dark family reads as raised
@@ -285,11 +287,13 @@ unselected page tab).
   strip together — Dashboard, /dash, Server Settings, Integrations; the header draws no rule of its own, the
   tab strip's bottom border is the bar's one line) is UNFILLED — it never paints a box of its own. It casts NO shadow
   either: a bottom-only `box-shadow` on it was tried and dropped on 2026-10-08 — its blur still
-  outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead: buttons,
-  search field and tabs already had theirs, the title takes `--shadow-title` (`--shadow-control`'s
-  two drop layers, so it lifts as far as the buttons beside it; text-shadow only), the username
-  and caret take `--shadow-text` (per family) and the avatar `--shadow-control` — on every `.page-header`, frozen
-  or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
+  outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead. Since 2026-10-15 the
+  page title, the global search field and the account badge (username, caret, avatar, role pill) carry the
+  RAIL's lift, so the header sits at the same height as the sidebar and the Server Settings folder card:
+  `--shadow-lift` (the sidebar's cast, halved in strength and blur to 12px / 2px, as a ring; spread stands in for the rail's sideways offset) on
+  boxes and `--shadow-lift-text` on text. These are theme-independent like the rail's rgba, and declared on
+  `:root`. The caret takes the same pair as `drop-shadow()`s. Page-level buttons carry `--shadow-lift` too: any `.btn` in a `.page-header-actions` (a section's own header included, e.g. Users → Roles) or a `.table-head-controls`. Buttons in tables, cards, modals and menus keep `--shadow-control`. A table that stands as a page's own card takes `.table-wrapper.lift-card` (the Users page's three tables).
+  This applies on every `.page-header`, frozen or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
   (`--shadow-control`'s counterpart for things with no box); the Application Map toolbar uses it on
   its labels and status, and as `drop-shadow()` on its native checkboxes and icon-button svgs, and
   gives its select `--shadow-control`. Never `filter:
@@ -311,7 +315,7 @@ unselected page tab).
   it). Never put a scroll-linked position on it again; the bar does not move, so nothing has to
   follow it. z-index 1049 (one under the bar), and
   masked to a `--page-top-feather` (1.5rem) fade below the bar — inside the bar's own
-  margin-bottom, so at rest it covers empty page — and a short fade-in on its left edge so the
+  margin-bottom, so at rest it covers empty page. The exception is a bar holding a `.table-head-row` over a `.folder-card` (Server Settings). There the bar has no margin-bottom and the curtain is OFF: the card's panels scroll inside the card, so nothing ever passes under the bar, and the curtain would only hide the card's top cast (canon-tables-lists.md, "Table head row + folder tabs") (canon-tables-lists.md, "Table head row + folder tabs"). The curtain also has a short fade-in on its left edge so the
   sidebar's shadow is not cut. It lives on `<html>`, not the bar, because the glow's animated
   parts are `inherits: false` and only html's own pseudo-elements can `inherit` them; this way it
   turns with the theme frame for frame. The bar reaches up over all of `.main`'s top padding

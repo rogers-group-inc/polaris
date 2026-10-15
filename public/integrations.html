@@ -26,12 +26,18 @@
         </div>
       </div>
 
-      <div class="page-tabs page-tabs-glass" id="integration-tabs">
-        <button class="page-tab active" data-tab="integrations">Integrations</button>
-        <button class="page-tab" data-tab="agents">Polaris Agents</button>
+      <!-- Folder tabs over one page-sized card holding both tabs' panels —
+           the Server Settings layout (styles.css "Folder CARD"). -->
+      <div class="table-head-row folder-head-card">
+        <div class="page-tabs page-tabs-glass" id="integration-tabs">
+          <button class="page-tab active" data-tab="integrations">Integrations</button>
+          <button class="page-tab" data-tab="agents">Polaris Agents</button>
+        </div>
       </div>
       </div>
 
+      <div class="folder-card folder-body">
+      <div class="folder-card-scroll">
       <div class="page-tab-panel active" id="tab-integrations">
         <div id="integrations-list">
           <p class="empty-state">Loading...</p>
@@ -79,6 +85,8 @@
             <p class="empty-state" style="padding:1rem 0">Loading...</p>
           </div>
         </div>
+      </div>
+      </div>
       </div>
     </main>
   </div>

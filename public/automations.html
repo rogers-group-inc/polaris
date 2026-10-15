@@ -35,128 +35,140 @@
         </div>
       </div>
 
-      <div class="page-tabs page-tabs-glass" id="auto-tabs">
-        <button type="button" class="page-tab active" data-tab="manage" id="auto-tab-manage-btn" style="display:none">Automations</button>
-        <button type="button" class="page-tab" data-tab="delivery" id="auto-tab-delivery-btn" style="display:none">Delivery</button>
-        <button type="button" class="page-tab" data-tab="groups" id="auto-tab-groups-btn" style="display:none">Alert Groups</button>
-        <button type="button" class="page-tab" data-tab="scripts" id="auto-tab-scripts-btn" style="display:none">Scripts</button>
-        <button type="button" class="page-tab" data-tab="contacts" id="auto-tab-contacts-btn" style="display:none">Address Book</button>
+      <!-- Table head row (styles.css): the section tabs as folder tabs on the
+           table's top edge, and the Automations list controls on the same line.
+           renderPageControls fills #rules-pagination-top (Refresh / Clear
+           Filters / Show N, no page buttons inside a head row) and
+           #rules-pagination below the table; data-head-for shows the cluster
+           only while the Automations tab is active. -->
+      <div class="table-head-row folder-head-card">
+        <div class="page-tabs page-tabs-glass" id="auto-tabs">
+          <button type="button" class="page-tab active" data-tab="manage" id="auto-tab-manage-btn" style="display:none">Automations</button>
+          <button type="button" class="page-tab" data-tab="delivery" id="auto-tab-delivery-btn" style="display:none">Delivery</button>
+          <button type="button" class="page-tab" data-tab="groups" id="auto-tab-groups-btn" style="display:none">Alert Groups</button>
+          <button type="button" class="page-tab" data-tab="scripts" id="auto-tab-scripts-btn" style="display:none">Scripts</button>
+          <button type="button" class="page-tab" data-tab="contacts" id="auto-tab-contacts-btn" style="display:none">Address Book</button>
+        </div>
+        <div id="rules-pagination-top" class="table-head-controls" data-head-for="manage"></div>
       </div>
 
       <!-- ─── Manage tab ───────────────────────────────────────────────── -->
-      <div class="page-tab-panel active" id="auto-tab-manage">
-        <!-- Paginated list controls row (TEMPLATES.md). renderPageControls
-             fills both #rules-pagination-top and #rules-pagination; the "Show N"
-             selector renders in the -top row only. -->
-        <div id="rules-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
-        <!-- .table-wrapper-sticky: the header row freezes and scrolling happens
-             INSIDE the wrapper. sizeStickyTableWrappers() in app.js height-bounds
-             it to the viewport and is already hooked into renderPageControls. -->
-        <div class="table-wrapper table-wrapper-sticky">
-          <table>
-            <thead>
-              <tr>
-                <th style="width:200px" data-col-id="name"     data-sf-key="name"      data-sf-type="string">Name</th>
-                <!-- "Type" now that the four prose columns describe the automation:
-                     this one exists to FILTER by trigger kind, which the sentence
-                     can't do. Its data-sf-key is unchanged so stored per-user sort
-                     + filter prefs keep working. -->
-                <th style="width:110px" data-col-id="trigger"  data-sf-key="triggerType" data-sf-type="string">Type</th>
-                <th style="width:100px" data-col-no-resize="true" data-col-id="severity" data-sf-key="severity"  data-sf-type="string" data-sf-options="notice|informational|warning|serious|critical">Severity</th>
-                <th style="width:110px" data-col-no-resize="true" data-col-id="enabled"  data-sf-key="enabled"   data-sf-type="string" data-sf-options="true=Enabled|false=Disabled">Enabled</th>
-                <!-- The automation's Quiet time step (business rule 92): whether the
-                     global quiet times apply to it, are ignored (it always sends), or
-                     are overridden by a quiet time of its own. Filterable so "which
-                     automations page through the night" is one click. -->
-                <th style="width:140px" data-col-no-resize="true" data-col-id="quiet" data-sf-key="quietMode" data-sf-type="string" data-sf-options="global=Global|ignore=Ignores global|override=Overrides global">Quiet time</th>
-                <!-- The automation in its own words, one column per part of the
-                     builder. Each is the SAME sentence the wizard shows on that
-                     step (PolarisAutomationSentences), so the list and the editor
-                     can't describe one automation two ways. Filters are plain
-                     text-contains over the sentence, which is what makes "every
-                     automation that emails" or "everything about packet loss"
-                     answerable from the list. -->
-                <th style="width:240px" data-col-id="devices"  data-sf-key="devicesSummary" data-sf-type="string">Devices</th>
-                <th style="width:280px" data-col-id="trigsum"  data-sf-key="triggerSummary" data-sf-type="string">Trigger</th>
-                <th style="width:240px" data-col-id="resetsum" data-sf-key="resetSummary"   data-sf-type="string">Reset</th>
-                <th                       data-col-id="actsum"   data-sf-key="actionsSummary" data-sf-type="string">Actions</th>
-                <!-- WHO the automation reaches. The cell is the flat deduped
-                     address list (so the filter answers "every automation that
-                     mails Jane"); the hover breaks it down by base / severity
-                     band / escalation tier / reset, each with its channel. -->
-                <th style="width:220px" data-col-id="addresses" data-sf-key="addressesSummary" data-sf-type="string">Addresses</th>
-                <th style="width:120px" data-col-id="createdBy" data-sf-key="createdBy" data-sf-type="string">Created by</th>
-              </tr>
-            </thead>
-            <tbody id="rules-tbody">
-              <tr><td colspan="11" class="empty-state">Loading...</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination" id="rules-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
-      </div>
+      <!-- Folder card (styles.css "Folder CARD"): every tab's panel sits in
+           one viewport-tall card the tabs open into. A table panel fills it
+           (its page navigation sits below the card); the others scroll inside it. -->
+      <div class="folder-card folder-body">
+        <div class="page-tab-panel active" id="auto-tab-manage">
+          <!-- .table-wrapper-sticky: the header row freezes and scrolling happens
+               INSIDE the wrapper, which fills the folder card's height. -->
 
-      <!-- ─── Delivery tab ─────────────────────────────────────────────────
-           Operator-managed list of outbound delivery channels (email/chat/push),
-           set up like the Integrations page. Rules reference these by id. -->
-      <div class="page-tab-panel" id="auto-tab-delivery">
-        <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
-          Configure where notifications are delivered. Add SMTP / Microsoft 365 email, Pushbullet, Slack or Microsoft Teams channels, then reference them from an automation's <strong>Notify</strong> action. In-app alerts (the Alerts tab) are always on.
-        </p>
-        <!-- One two-column card grid for the whole tab: the Web Push card and
-             every channel card are siblings in it (both containers are
-             display:contents), so the capability toggle sits in a column beside
-             the destinations instead of spanning the page above them. -->
-        <div class="delivery-grid">
-          <!-- Web Push is a server capability rather than a destination, so it
-               gets a plain on/off card instead of a channel form. Who receives a
-               given push is chosen per Notify action when an automation is built. -->
-          <div id="web-push-card"></div>
-          <div id="channels-list"><p class="empty-state">Loading...</p></div>
+          <div class="table-wrapper table-wrapper-sticky">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:200px" data-col-id="name"     data-sf-key="name"      data-sf-type="string">Name</th>
+                  <!-- "Type" now that the four prose columns describe the automation:
+                       this one exists to FILTER by trigger kind, which the sentence
+                       can't do. Its data-sf-key is unchanged so stored per-user sort
+                       + filter prefs keep working. -->
+                  <th style="width:110px" data-col-id="trigger"  data-sf-key="triggerType" data-sf-type="string">Type</th>
+                  <th style="width:100px" data-col-no-resize="true" data-col-id="severity" data-sf-key="severity"  data-sf-type="string" data-sf-options="notice|informational|warning|serious|critical">Severity</th>
+                  <th style="width:110px" data-col-no-resize="true" data-col-id="enabled"  data-sf-key="enabled"   data-sf-type="string" data-sf-options="true=Enabled|false=Disabled">Enabled</th>
+                  <!-- The automation's Quiet time step (business rule 92): whether the
+                       global quiet times apply to it, are ignored (it always sends), or
+                       are overridden by a quiet time of its own. Filterable so "which
+                       automations page through the night" is one click. -->
+                  <th style="width:140px" data-col-no-resize="true" data-col-id="quiet" data-sf-key="quietMode" data-sf-type="string" data-sf-options="global=Global|ignore=Ignores global|override=Overrides global">Quiet time</th>
+                  <!-- The automation in its own words, one column per part of the
+                       builder. Each is the SAME sentence the wizard shows on that
+                       step (PolarisAutomationSentences), so the list and the editor
+                       can't describe one automation two ways. Filters are plain
+                       text-contains over the sentence, which is what makes "every
+                       automation that emails" or "everything about packet loss"
+                       answerable from the list. -->
+                  <th style="width:240px" data-col-id="devices"  data-sf-key="devicesSummary" data-sf-type="string">Devices</th>
+                  <th style="width:280px" data-col-id="trigsum"  data-sf-key="triggerSummary" data-sf-type="string">Trigger</th>
+                  <th style="width:240px" data-col-id="resetsum" data-sf-key="resetSummary"   data-sf-type="string">Reset</th>
+                  <th                       data-col-id="actsum"   data-sf-key="actionsSummary" data-sf-type="string">Actions</th>
+                  <!-- WHO the automation reaches. The cell is the flat deduped
+                       address list (so the filter answers "every automation that
+                       mails Jane"); the hover breaks it down by base / severity
+                       band / escalation tier / reset, each with its channel. -->
+                  <th style="width:220px" data-col-id="addresses" data-sf-key="addressesSummary" data-sf-type="string">Addresses</th>
+                  <th style="width:120px" data-col-id="createdBy" data-sf-key="createdBy" data-sf-type="string">Created by</th>
+                </tr>
+              </thead>
+              <tbody id="rules-tbody">
+                <tr><td colspan="11" class="empty-state">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      <!-- ─── Alert Groups tab ──────────────────────────────────────────────
-           AlertGroup registry (business rule 75): a named set of automations
-           whose alerts about ONE device fold into a single alert. The group
-           owns DELIVERY — recipients, escalation, reminders, the ack-note
-           policy — while its members keep owning DETECTION. Gated by
-           automationManagement, like the automations themselves: a group
-           decides who gets paged about every one of its members. -->
-      <div class="page-tab-panel" id="auto-tab-groups">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin:0 0 1rem">
-          <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0;max-width:60ch">
-            A group folds everything its automations raise about one device into a <strong>single alert</strong> — one message, one acknowledgement, up until the last problem clears. The group decides who is told and how it escalates; its automations keep deciding what to watch for.
+        <!-- ─── Delivery tab ─────────────────────────────────────────────────
+             Operator-managed list of outbound delivery channels (email/chat/push),
+             set up like the Integrations page. Rules reference these by id. -->
+        <div class="page-tab-panel folder-card-scroll" id="auto-tab-delivery">
+          <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
+            Configure where notifications are delivered. Add SMTP / Microsoft 365 email, Pushbullet, Slack or Microsoft Teams channels, then reference them from an automation's <strong>Notify</strong> action. In-app alerts (the Alerts tab) are always on.
           </p>
-          <button type="button" class="btn btn-primary" id="ag-new-btn">New group</button>
+          <!-- One two-column card grid for the whole tab: the Web Push card and
+               every channel card are siblings in it (both containers are
+               display:contents), so the capability toggle sits in a column beside
+               the destinations instead of spanning the page above them. -->
+          <div class="delivery-grid">
+            <!-- Web Push is a server capability rather than a destination, so it
+                 gets a plain on/off card instead of a channel form. Who receives a
+                 given push is chosen per Notify action when an automation is built. -->
+            <div id="web-push-card"></div>
+            <div id="channels-list"><p class="empty-state">Loading...</p></div>
+          </div>
         </div>
-        <div id="ag-list"><p class="empty-state">Loading...</p></div>
-      </div>
 
-      <!-- ─── Scripts tab ───────────────────────────────────────────────────
-           AutomationScript registry (script actions reference these). Gated by
-           the automationScripts RBAC key — scripts are RCE-equivalent, so the
-           tab is hidden without it. -->
-      <div class="page-tab-panel" id="auto-tab-scripts">
-        <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
-          Scripts that automations can run — on the Polaris server (as the service account) or on the triggering asset's agent (as root / LocalSystem). <strong>A human must review every script before enabling it in production.</strong> Creation and body changes are audited with checksums.
-        </p>
-        <div id="scripts-list"><p class="empty-state">Loading...</p></div>
-      </div>
+        <!-- ─── Alert Groups tab ──────────────────────────────────────────────
+             AlertGroup registry (business rule 75): a named set of automations
+             whose alerts about ONE device fold into a single alert. The group
+             owns DELIVERY — recipients, escalation, reminders, the ack-note
+             policy — while its members keep owning DETECTION. Gated by
+             automationManagement, like the automations themselves: a group
+             decides who gets paged about every one of its members. -->
+        <div class="page-tab-panel folder-card-scroll" id="auto-tab-groups">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin:0 0 1rem">
+            <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0;max-width:60ch">
+              A group folds everything its automations raise about one device into a <strong>single alert</strong> — one message, one acknowledgement, up until the last problem clears. The group decides who is told and how it escalates; its automations keep deciding what to watch for.
+            </p>
+            <button type="button" class="btn btn-primary" id="ag-new-btn">New group</button>
+          </div>
+          <div id="ag-list"><p class="empty-state">Loading...</p></div>
+        </div>
 
-      <!-- ─── Address Book tab ──────────────────────────────────────────────
-           Every address an alert can route to. Gated by the ownership-
-           dimensioned contacts key: read browses, write adds + curates your
-           own rows. The panel is rendered by PolarisAddressBook.renderTab as
-           the SAME two panes (People / Regions) the recipient picker in the
-           automation wizard opens — one renderer, so the page that manages
-           recipients can't show less than the modal that picks them. -->
-      <div class="page-tab-panel" id="auto-tab-contacts">
-        <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
-          Everyone and everywhere Polaris can send an alert: address-book <strong>contacts</strong> (an address with no Polaris account — a distribution list, an on-call rotation, a vendor NOC), <strong>Polaris user accounts</strong>, your organization's <strong>directory</strong> where an integration opted in, and the <strong>regions</strong> drawn on the Device Map. Give a contact a <strong>device filter</strong> and an automation's <strong>Notify</strong> action can route to “the contacts responsible for the triggering device” instead of a hand-picked list.
-        </p>
-        <div id="contacts-list"><p class="empty-state">Loading...</p></div>
+        <!-- ─── Scripts tab ───────────────────────────────────────────────────
+             AutomationScript registry (script actions reference these). Gated by
+             the automationScripts RBAC key — scripts are RCE-equivalent, so the
+             tab is hidden without it. -->
+        <div class="page-tab-panel folder-card-scroll" id="auto-tab-scripts">
+          <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
+            Scripts that automations can run — on the Polaris server (as the service account) or on the triggering asset's agent (as root / LocalSystem). <strong>A human must review every script before enabling it in production.</strong> Creation and body changes are audited with checksums.
+          </p>
+          <div id="scripts-list"><p class="empty-state">Loading...</p></div>
+        </div>
+
+        <!-- ─── Address Book tab ──────────────────────────────────────────────
+             Every address an alert can route to. Gated by the ownership-
+             dimensioned contacts key: read browses, write adds + curates your
+             own rows. The panel is rendered by PolarisAddressBook.renderTab as
+             the SAME two panes (People / Regions) the recipient picker in the
+             automation wizard opens — one renderer, so the page that manages
+             recipients can't show less than the modal that picks them. -->
+        <div class="page-tab-panel folder-card-scroll" id="auto-tab-contacts">
+          <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
+            Everyone and everywhere Polaris can send an alert: address-book <strong>contacts</strong> (an address with no Polaris account — a distribution list, an on-call rotation, a vendor NOC), <strong>Polaris user accounts</strong>, your organization's <strong>directory</strong> where an integration opted in, and the <strong>regions</strong> drawn on the Device Map. Give a contact a <strong>device filter</strong> and an automation's <strong>Notify</strong> action can route to “the contacts responsible for the triggering device” instead of a hand-picked list.
+          </p>
+          <div id="contacts-list"><p class="empty-state">Loading...</p></div>
+        </div>
       </div>
+      <!-- Page navigation sits below the card (Refresh / Clear Filters are on
+           the tab row only). -->
+      <div class="pagination folder-card-nav" id="rules-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
     </main>
   </div>
 

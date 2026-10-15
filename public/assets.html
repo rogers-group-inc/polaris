@@ -55,15 +55,6 @@
         </div>
       </div>
 
-      <!-- Per-user view tabs (assets-tabs.js). Each tab holds its own filter +
-           sort state, its own base filter, and its own favorites; the set is
-           persisted per user at /me/table-tabs. Rendered client-side — the strip
-           is empty until init() resolves. -->
-      <div class="table-tabs" id="assets-tabs">
-        <div class="table-tabs-list" id="assets-tabs-list" role="tablist" aria-label="Asset views"></div>
-        <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab">+</button>
-      </div>
-
       <!-- Always-visible selection bar: idle (neutral border) until rows are
            selected, then it gets the accent outline and its buttons enable.
            Same pattern as the Notifications View tab. -->
@@ -105,8 +96,25 @@
         <button class="btn btn-sm btn-danger" id="assets-bulk-delete-btn" data-manage-assets>Delete selected</button>
       </div>
 
-      <div id="pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:0.5rem 0 1rem"></div>
+      <!-- Table head row: the view tabs sit on the table's top-left edge,
+           with Refresh / Clear Filters / Show N on the same row to the right
+           (#pagination-top renders WITHOUT page navigation here — topNav:false
+           in _renderAssetsPageControls; the page buttons live below the table). -->
+      <div class="table-head-row folder-head-card">
+        <!-- Per-user view tabs (assets-tabs.js). Each tab holds its own filter +
+             sort state, its own base filter, and its own favorites; the set is
+             persisted per user at /me/table-tabs. Rendered client-side — the strip
+             is empty until init() resolves. -->
+        <div class="table-tabs" id="assets-tabs">
+          <div class="table-tabs-list" id="assets-tabs-list" role="tablist" aria-label="Asset views"></div>
+          <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab">+</button>
+        </div>
+        <div id="pagination-top" class="table-head-controls"></div>
+      </div>
 
+      <!-- Folder card (styles.css "Folder CARD"): the table fills it down to
+           the page navigation and scrolls inside. -->
+      <div class="folder-card folder-body">
       <div class="table-wrapper table-wrapper-sticky" id="assets-table-wrapper">
         <table>
           <thead>
@@ -167,7 +175,10 @@
           </tbody>
         </table>
       </div>
-      <div id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+      </div>
+      <!-- Page navigation sits below the card (Refresh / Clear Filters are on
+           the tab row only). -->
+      <div id="pagination" class="folder-card-nav" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
     </main>
   </div>
 

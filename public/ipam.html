@@ -44,9 +44,17 @@
         </div>
       </div>
 
-      <div class="page-tabs page-tabs-glass" id="ipam-tabs">
-        <button class="page-tab" data-tab="blocks">IP Blocks</button>
-        <button class="page-tab active" data-tab="networks">Networks</button>
+      <!-- Table head row (styles.css): the section tabs as folder tabs on the
+           mounted table's top edge. #ipam-head-controls is a slot: on each
+           mount ipam.js moves the template's [data-head-controls] cluster
+           (its Add buttons + #pagination-top — Refresh / Clear Filters /
+           Show N, no page buttons inside a head row) into it. -->
+      <div class="table-head-row folder-head-card">
+        <div class="page-tabs page-tabs-glass" id="ipam-tabs">
+          <button class="page-tab" data-tab="blocks">IP Blocks</button>
+          <button class="page-tab active" data-tab="networks">Networks</button>
+        </div>
+        <div class="table-head-controls" id="ipam-head-controls"></div>
       </div>
 
       <!--
@@ -56,17 +64,17 @@
         pagination, *-tbody, etc.) collide between Blocks and Networks, so
         only ONE tab's markup is in the DOM at a time.
       -->
-      <div id="ipam-mount"></div>
+      <!-- The mount is the folder card (styles.css "Folder CARD"): the
+           mounted table fills it down to the page navigation, which ipam.js
+           moves out of the template into #ipam-nav below the card. -->
+      <div id="ipam-mount" class="folder-card folder-body"></div>
+      <div id="ipam-nav"></div>
 
       <template id="ipam-tpl-blocks">
-        <div class="page-header" style="margin-top:0">
-          <div></div>
-          <div class="page-header-actions">
-            <button class="btn btn-primary" id="btn-add-block" data-manage-blocks>+ Add Block</button>
-          </div>
+        <div data-head-controls style="display:contents">
+          <div id="pagination-top"></div>
+          <button class="btn btn-primary btn-sm" id="btn-add-block" data-manage-blocks>+ Add Block</button>
         </div>
-
-        <div id="pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:0.5rem 0 1rem"></div>
 
         <div class="table-wrapper table-wrapper-sticky">
           <table>
@@ -88,20 +96,16 @@
             </tbody>
           </table>
         </div>
-        <div id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+        <div id="pagination" class="folder-card-nav" data-card-nav style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       </template>
 
       <template id="ipam-tpl-networks">
-        <div class="page-header" style="margin-top:0">
-          <div></div>
-          <div class="page-header-actions">
-            <button class="btn btn-secondary" id="btn-exclusions">Exclusions</button>
-            <button class="btn btn-secondary" id="btn-auto-alloc" data-create-networks>Auto-Allocate Next</button>
-            <button class="btn btn-primary" id="btn-add-subnet" data-create-networks>+ Add Network</button>
-          </div>
+        <div data-head-controls style="display:contents">
+          <div id="pagination-top"></div>
+          <button class="btn btn-secondary btn-sm" id="btn-exclusions">Exclusions</button>
+          <button class="btn btn-secondary btn-sm" id="btn-auto-alloc" data-create-networks>Auto-Allocate Next</button>
+          <button class="btn btn-primary btn-sm" id="btn-add-subnet" data-create-networks>+ Add Network</button>
         </div>
-
-        <div id="pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:0.5rem 0 1rem"></div>
 
         <div class="table-wrapper table-wrapper-sticky">
           <table>
@@ -138,7 +142,7 @@
             </tbody>
           </table>
         </div>
-        <div id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+        <div id="pagination" class="folder-card-nav" data-card-nav style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       </template>
     </main>
   </div>

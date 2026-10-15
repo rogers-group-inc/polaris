@@ -203,11 +203,80 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 
 **Key conventions:**
 - **Pass `onSizeChange(size)`** (the 6th arg) to get the "Show N" selector — it renders into the right cell and calls back with the new size. The selector renders **only in the `-top` row** (not duplicated in the bottom pagination). Optional `opts.pageSizes` overrides `[15,25,50,100]`.
+- **`opts.topNav: false`** renders the `-top` row as the right cluster only (action buttons + Show N, no page navigation, `display:flex`); the bottom row keeps the full navigation. It is implied whenever the `-top` row sits inside a `.table-head-row`. Pinned by [tests/unit/renderPageControlsTopNav.test.ts](tests/unit/renderPageControlsTopNav.test.ts).
+
 - The page (not the helper) owns the size: `onSizeChange` sets the page's `_<scope>PageSize`, resets to page 1, re-fetches/re-renders, and saves prefs. Mirror the `onPageChange` callback shape.
 - **Render the row on ZERO rows too — don't `clearPageControls` a filtered-empty list.** The row carries the page-size selector and `opts.actionButtons`, so clearing it takes **Clear Filters** away in exactly the state that needs it: an operator whose filter matched nothing gets an empty table and no way back but a browser reload. The Assets page routes BOTH branches of its render through one `_renderAssetsPageControls()` ([public/js/assets.js](public/js/assets.js)) instead of calling the helper from the populated branch only. `renderPageControls` handles `total = 0` (one disabled page button, "0 items"); reset the page number to 1 first, since a page-past-the-end clamp that only fires on a non-zero total would otherwise leave "Prev" enabled over an empty result set. `clearPageControls` is for tearing the row down when the table itself goes away, not for an empty result.
 - **Every TableSF list page carries a Clear Filters button.** Assets, IP Blocks, Networks and Automations pass it as an `opts.actionButtons` entry (one `_render<Scope>PageControls(total)` per page, called from both the populated and the filtered-empty branch); Events puts `#btn-clear-filters` beside its static Refresh, and Users — no pagination row — in the page header. The handler is always `sf.clearFilters()` → page 1 → re-render/re-fetch → save prefs: `clearFilters()` only resets the header inputs and fires no `onChange`, so the re-render and the prefs save are the caller's or a reload brings the filters back. Only Assets relabels it "Reset Filter" (a view tab's base filter, above); the other pages have no base to return to.
 - **Do NOT add a standalone `<div class="filter-bar"><label>Show</label><select id="filter-pagesize">` above the table** — that's the old pattern, now removed. If prefs-restore still references `#filter-pagesize`, guard it (`var el = ...; if (el) ...`) since the static element no longer exists.
-- **Bespoke (non-`renderPageControls`) pagination** (offset-based: [public/js/events.js](public/js/events.js)) gets the same look with an HTML grid wrapper instead: `<div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center"><span></span><div id="…-top"></div><div class="filter-bar" style="justify-self:end">…Show + buttons…</div></div>`. The middle cell is the JS-filled pagination container; the right cell holds the static selector. Only valid when that pagination renderer does **not** absolutely-position its own right-side buttons (those need the full-width container, which is why `renderPageControls` owns the grid itself).
+- **Bespoke (non-`renderPageControls`) pagination** (offset-based: [public/js/events.js](public/js/events.js), whose controls now live in the table head row; see the next section) gets the same look with an HTML grid wrapper instead: `<div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center"><span></span><div id="…-top"></div><div class="filter-bar" style="justify-self:end">…Show + buttons…</div></div>`. The middle cell is the JS-filled pagination container; the right cell holds the static selector. Only valid when that pagination renderer does **not** absolutely-position its own right-side buttons (those need the full-width container, which is why `renderPageControls` owns the grid itself).
+
+
+---
+
+## Table head row + folder tabs
+
+**What it is:** the tab strip and the list controls share one row on the table's top edge. The tabs are drawn as **folder tabs**: the active tab opens into the table below it.
+
+**Used by:**
+- **Assets:** view tabs (`.table-tabs`). The bulk bar sits ABOVE the row.
+- **Automations:** section tabs (`.page-tabs`). The `#rules-pagination-top` cluster shows only on the Automations tab.
+- **Events:** section tabs. Its static Show / Refresh / Clear Filters cluster shows only on the Events tab. There is no `#pagination-top`, so events.js renders only the bottom page row.
+- **Server Settings:** section tabs inside the pinned `.page-top-sticky`, over a **`.folder-card`**: one page-sized card wrapping every `.page-tab-panel`, whose own cards sit inside it.
+  - The card stays put and its panels scroll INSIDE `.folder-card-scroll`. `.main:has(> .folder-card)` is a viewport-tall (`100dvh`) flex column that the card fills. That keeps the rounded top edge, the folder join and the ring cast from ever sliding under the pinned header.
+  - Contents fade into the card's top and bottom edges, but only on an edge with more content past it. `wireFolderScrollFades()` in app.js toggles `.fade-top` / `.fade-bottom` on scroll and on ResizeObserver (a tab switch or a lazily loaded body changes the scroll height without scrolling). The mask's depths are registered `@property` lengths, so they ease.
+  - So the page-top curtain is OFF on this page (`html[data-page-top-curtain]:has(.folder-card)::after { display: none }`). Nothing scrolls under the bar, and the curtain would hide the card's top cast.
+  - `folder-head-card` on the head row sets `--folder-fill` to the card's fill instead of a table header's, and turns off the head row's rule.
+  - The card draws its own top edge as background layers: the straight edge with the gap at `--folder-gap-l/-r`, plus both top corner arcs drawn whole, with `border-top-color: transparent`. A transparent top border alone draws only the side borders' half of each arc. `syncFolderTabs` writes the gap vars on the visible `.folder-body` too, measured from the body's own left edge.
+  - The strip starts its first tab at `--radius-lg + --folder-r`, so the fillet lands on the straight edge.
+  - **Glass:** the card is the sidebar's frosted glass (fill + `--panel-glass-blur`, whose `saturate(1.3)` is what warms the rail), so the two read as one shade.
+    - The frost is on `.folder-card::after`, a layer behind the contents (padding box, inner radius, so the top edge and corner arcs stay in the border). On the card itself it would become the containing block for fixed popovers and the backdrop root for the panels' frosted menus.
+    - The active tab's glass is ONE layer: a `.tab-glass` span that `wireFolderTabs()` inserts in each tab of a `folder-head-card` row, shown (opacity cross-fade) on the active one. Its mask covers the whole silhouette: the tab's padding box with rounded top corners, the neck below it, the strip under the tab's side borders, and both fillet crescents.
+      - The tab's own fill and the neck's (`--folder-fill`) are transparent.
+      - The span is a child, so it paints over the tab's border and inset accent. That is why it is shaped to the PADDING box and draws the 2px accent itself.
+      - It rides the tab's transform.
+      - Glass on the tab plus a separate layer under the neck blurred to two tones, and the neck read as a square block. Extending the tab down to the card ran its side borders straight past the fillets.
+    - Under 8× zoom the active tab's glass is a touch darker near its base than the card. Its backdrop blur samples the box beyond the mask, which includes the tab's own cast. It is not visible at 1×.
+  - **Shadows:** only the card and its ACTIVE tab lift (inactive tabs cast nothing), with `--shadow-lift` (the sidebar's cast, halved 2026-10-15, as a ring). The `.settings-card`s inside lie flat (`box-shadow: none`).
+    - The card's ring comes from `::before`, clipped by an evenodd `polygon` to everything OUTSIDE the card. The hole is the card outline (corners in 22.5° steps) plus a notch over the active tab whose sides follow the neck's fillets (`--fr`). The glass fill would otherwise show the cast beneath it as a dark band.
+    - Each tab rings itself from its own `::before`, clipped at its bottom edge. The active tab's layer reaches down through the neck to the card (`bottom: -var(--folder-r)`, transitioned), or its cast ends in a line across the tab's base.
+    - The strip clips, so it is padded by `--folder-shadow-room` (32px) on top and sides and pulled back by the same negative margins.
+  - On a cold permission cache an admin sees only the Credentials tab until reload. This predates folder tabs: `server-settings.js` decides visibility at DOMContentLoaded. Warm the cache with one load before capturing.
+- **Every tabbed list page uses the folder card** (since 2026-10-15): Assets, Automations, Events, IPAM and Integrations as well as Server Settings. Each head row carries `folder-head-card`, so the active tab takes the card's glass and cast, inactive tabs lie flat, and every card ends at the same bottom edge (`.main:has(> .folder-card)` is a `100dvh` flex column).
+  - Table panels: the `.table-wrapper` sits directly in the card (Assets, Path Monitor), in the active `.page-tab-panel` (Automations → Automations, Events → Events), or in the card-classed `#ipam-mount` (IPAM). It drops its own card chrome and fills the leftover height, so `sizeStickyTableWrappers()` skips wrappers inside a `.folder-card`. The page navigation row sits BELOW the card (`.folder-card-nav`):
+    - IPAM's is moved from the mounted template into `#ipam-nav` by `mountTab`.
+    - The Automations and Events rows hide while a non-table tab is open, via `.main:has(#…:not(.active))`.
+    - A `-top` row inside a head row implies the bottom row carries no `actionButtons`, so Refresh / Clear Filters appear on the tab row only. Path Monitor has no tab row, so its bottom row keeps them.
+    - The tab row's "Show N" label and select carry `--shadow-lift`.
+  - Content panels (Automations → Delivery / Groups / Scripts / Address Book, Events → Calendar) carry `folder-card-scroll` themselves.
+  - Path Monitor has no tabs, so it gets the card only. Its edge is unbroken because the gap vars are unset.
+  - Cards inside a folder card lie flat: `.settings-card`, `.integration-card`, `.empty-state-card` and `.card` have `box-shadow: none`.
+  - The strip is pulled up over the page header or bulk bar by the cast's room, so it is `pointer-events: none` except on its tabs and the + button.
+- **Application Map**'s graph card (`.appmap-graph`, appmap.css) takes the folder card's glass, `--rail-glass-bg` + `--panel-glass-blur`, on a `::before` behind the graph instead of its opaque fill. The card is isolated, so the layer sits under the Cytoscape canvas and the card never traps the overlays' fixed positioning or frosted menus.
+- **Device Map** isn't a folder card, but its `.map-canvas` fills the same flex column (`map.css`), so it ends at the same bottom edge.
+- **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.
+
+**Canonical implementation:**
+- Markup: `<div class="table-head-row">` holding the tab strip, then a `.table-head-controls` cluster.
+- The table under it carries **`.folder-body`**.
+- CSS: "Table head row" block in [public/css/styles.css](public/css/styles.css).
+- JS: `wireFolderTabs()` / `syncFolderTabs()` in [public/js/app.js](public/js/app.js). They auto-wire every head row on load, and a MutationObserver re-syncs on any tab switch, re-render, rename or show/hide, so no page script calls them.
+
+**Key conventions:**
+- **The rule is the head row's own bottom line**, drawn as a 1px background with a gap at `--folder-gap-l/-r` under the active tab.
+  - A border can't have a hole, and a translucent tab can't hide one painted over it.
+  - `.folder-body` gives up its top border: transparent, fill clipped to the padding box, square top corners. A transparent `border-top` beside a radius draws half a corner arc.
+  - The head row's `margin-bottom: -1px` puts the rule on that empty border row.
+- **The active tab is filled with `--folder-fill`**: the header's stacked `--rail-glass-bg` density, 51% (keep it in step with the 30% token). It has no bottom border, and a `::after` neck with radial-gradient fillets curves its sides into the rule. The accent sits on its top edge.
+- **Inactive tabs are shorter and dimmer and sit behind the rule.**
+- **A switch animates a transform, never layout.** Every tab is laid out lifted by `--folder-r` (`margin-bottom`), and an inactive tab is pushed back onto the rule with `translateY(var(--folder-r))`.
+  - If the lift were a margin, the row's height (set by its tallest tab) would dip mid-switch while one tab rose and another fell, and the table would bob.
+  - The neck (`::after`, height 0 → `--folder-r + 1px`) transitions with the same duration and easing, so its bottom stays on the rule.
+  - The incoming panel, or IPAM's freshly mounted table, fades in (`folder-panel-in`). `prefers-reduced-motion` drops both.
+- **The tab elements must survive the switch.** A rebuilt element starts in its final state, so no transition runs. That is why the Assets strip's `render()` ([public/js/assets-tabs.js](public/js/assets-tabs.js)) updates tabs in place, keyed by tab id, rather than rewriting the list's `innerHTML`. [tests/unit/assetsTabsDom.test.ts](tests/unit/assetsTabsDom.test.ts) pins the element identity.
+- **`data-head-for="<data-tab>"` on a control cluster** shows it only while that tab is active. It works by toggling `.head-off` (`!important`, since renderPageControls stamps an inline display).
+- **A panel with no `.folder-body`** gets top padding via `:has()`. That padding is on the panel, not a margin on its first child: TableSF inserts a zero-height `.sf-col-gear-anchor` as the first child, and an inline-margined `<p>` would beat a stylesheet margin.
+- **`syncFolderTabs` writes the vars only when they change.** The observer watches the row's own `style` attribute, so an unconditional write loops forever.
 
 ---
 

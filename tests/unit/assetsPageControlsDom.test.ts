@@ -31,7 +31,7 @@ interface ControlsCall {
   page: number;
   onPageChange: (p: number) => void;
   onSizeChange: (n: number) => void;
-  opts: { actionButtons?: ActionButton[] } | undefined;
+  opts: { actionButtons?: ActionButton[]; topNav?: boolean } | undefined;
 }
 
 const g = globalThis as Record<string, any>;
@@ -154,6 +154,13 @@ describe("renderAssetsPage — zero rows", () => {
     g.renderAssetsPage();
     expect(tbodyHtml).toContain("No assets found.");
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("_renderAssetsPageControls — top row shares a line with the view tabs", () => {
+  it("asks for no page navigation in the top row (topNav: false)", () => {
+    g.renderAssetsPage();
+    expect(calls[0]!.opts?.topNav).toBe(false);
   });
 });
 

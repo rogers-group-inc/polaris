@@ -4775,6 +4775,9 @@ function showFormModal(title, formHTML, confirmLabel) {
  */
 function sizeStickyTableWrappers() {
   document.querySelectorAll(".table-wrapper-sticky").forEach(function (w) {
+    // Inside a folder card the wrapper is sized by the card's flex column
+    // (styles.css "Folder CARD"), not by the viewport.
+    if (w.closest(".folder-card")) { w.style.maxHeight = ""; return; }
     var docTop = w.getBoundingClientRect().top + window.scrollY;
     var h = window.innerHeight - docTop - 72;
     w.style.maxHeight = Math.max(260, Math.round(h)) + "px";
@@ -4841,8 +4844,23 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
   // in polaris-ui-canon → "Paginated list controls row".
   var pageSizes = (opts && opts.pageSizes) || [15, 25, 50, 100];
   var hasTop = !!topEl; // render the size selector only once (top row when present)
+  // opts.topNav === false: the top row carries only the right cluster (action
+  // buttons + "Show N") and no page navigation — the page buttons stay in the
+  // bottom row. Implied when the -top row sits in a .table-head-row, where it
+  // shares a line with the tab strip (Assets, Automations, IPAM).
+  var topNav = !(opts && opts.topNav === false) &&
+    !(topEl && topEl.closest && topEl.closest(".table-head-row"));
 
   containers.forEach(function (container) {
+    if (container === topEl && !topNav) {
+      container.style.display = "flex";
+      container.style.margin = "";
+      container.style.gridTemplateColumns = "";
+      container.innerHTML =
+        '<div class="pg-right" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end"></div>';
+      _fillPageControlsRight(container.querySelector(".pg-right"), true);
+      return;
+    }
     container.style.display = "grid";
     // Breathing room against the table: the top row sits above the wrapper and
     // the bottom row below it, and flush against the border both read as table
@@ -4872,8 +4890,15 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
       });
     });
 
-    var right = container.querySelector('.pg-right');
-    if (opts && opts.actionButtons && opts.actionButtons.length) {
+    // When the top row lives in a tab row (topNav off) it already carries the
+    // action buttons, so the bottom row is page navigation only — Refresh /
+    // Clear Filters are not repeated at the foot of the page.
+    _fillPageControlsRight(container.querySelector('.pg-right'), !hasTop || container === topEl, topNav || container === topEl);
+  });
+  sizeStickyTableWrappers();
+
+  function _fillPageControlsRight(right, withSize, withButtons) {
+    if (withButtons !== false && opts && opts.actionButtons && opts.actionButtons.length) {
       opts.actionButtons.forEach(function (cfg) {
         var btn = document.createElement("button");
         btn.className = "btn btn-secondary btn-sm" + (cfg.className ? " " + cfg.className : "");
@@ -4885,7 +4910,7 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
         right.appendChild(btn);
       });
     }
-    if (typeof onSizeChange === "function" && (!hasTop || container === topEl)) {
+    if (typeof onSizeChange === "function" && withSize) {
       var lbl = document.createElement("label");
       lbl.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;font-size:0.82rem;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:0.04em";
       lbl.appendChild(document.createTextNode("Show"));
@@ -4901,9 +4926,126 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
       lbl.appendChild(sel);
       right.appendChild(lbl);
     }
-  });
-  sizeStickyTableWrappers();
+  }
 }
+
+// ─── Folder tabs (.table-head-row) ───────────────────────────────────────────
+// The head row draws the table's top rule as a background line with a gap
+// under the active tab, which the tab's neck fills (styles.css, "Table head
+// row"). This measures that gap — the active tab's span plus the fillet radius
+// each side, in px from the row's left edge — and shows only the control
+// clusters whose data-head-for names the active tab's data-tab. Wired once per
+// row; a MutationObserver re-runs it on any tab switch, re-render, rename or
+// show/hide, so no page script has to call it.
+function syncFolderTabs(row) {
+  // A folder CARD's tabs carry the card's frosted glass on one masked layer
+  // per tab (.tab-glass, styles.css), shown on the active one. Ensured on
+  // every sync, not once: the Assets strip rewrites a tab's contents on each
+  // render, which drops the layer. Inserting it re-fires the observer once;
+  // the next pass finds every tab already carrying one and changes nothing.
+  if (row.classList.contains("folder-head-card")) {
+    row.querySelectorAll(".page-tab, .table-tab").forEach(function (t) {
+      if (t.querySelector(":scope > .tab-glass")) return;
+      var g = document.createElement("span");
+      g.className = "tab-glass";
+      g.setAttribute("aria-hidden", "true");
+      t.insertBefore(g, t.firstChild);
+    });
+  }
+  var tab = null;
+  row.querySelectorAll(".table-tab.active, .page-tab.active").forEach(function (t) {
+    if (!tab && t.getClientRects().length) tab = t;
+  });
+  // The same gap is written twice: on the row (whose rule it opens) and on
+  // the visible .folder-body after it, measured from the BODY's left edge —
+  // a folder card draws its own top edge and ring cast and opens both there.
+  var body = null;
+  document.querySelectorAll(".folder-body").forEach(function (b) {
+    if (!body && b.getClientRects().length &&
+        (row.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) body = b;
+  });
+  var tr = tab ? tab.getBoundingClientRect() : null;
+  var fr = tab ? (parseFloat(getComputedStyle(row).getPropertyValue("--folder-r")) || 0) : 0;
+  _writeFolderGap(row, tr, fr);
+  if (body) _writeFolderGap(body, tr, fr);
+  var activeName = tab ? tab.getAttribute("data-tab") : null;
+  row.querySelectorAll("[data-head-for]").forEach(function (el) {
+    el.classList.toggle("head-off", el.getAttribute("data-head-for") !== activeName);
+  });
+}
+
+// --folder-gap-l/-r on `el`: the active tab's span plus the fillet radius each
+// side, in px from el's left edge, clamped to el so a tab scrolled partly out
+// of the strip can't open the edge past el's own sides. Written only on
+// change: the observer in wireFolderTabs() watches the row's attributes, and
+// an unconditional write would re-trigger it forever.
+function _writeFolderGap(el, tr, fr) {
+  var l = "", r = "";
+  if (tr) {
+    var er = el.getBoundingClientRect();
+    var lo = Math.max(0, tr.left - er.left - fr);
+    var hi = Math.min(er.width, tr.right - er.left + fr);
+    if (hi > lo) { l = lo + "px"; r = hi + "px"; }
+  }
+  if (el.style.getPropertyValue("--folder-gap-l") !== l) {
+    if (l) el.style.setProperty("--folder-gap-l", l); else el.style.removeProperty("--folder-gap-l");
+  }
+  if (el.style.getPropertyValue("--folder-gap-r") !== r) {
+    if (r) el.style.setProperty("--folder-gap-r", r); else el.style.removeProperty("--folder-gap-r");
+  }
+}
+
+function wireFolderTabs() {
+  document.querySelectorAll(".table-head-row").forEach(function (row) {
+    if (row.__polarisFolderWired) return;
+    row.__polarisFolderWired = true;
+    var sync = function () { syncFolderTabs(row); };
+    var strip = row.querySelector(".table-tabs, .page-tabs");
+    if (strip) strip.addEventListener("scroll", sync, { passive: true });
+    window.addEventListener("resize", sync);
+    if (typeof ResizeObserver === "function") {
+      var ro = new ResizeObserver(sync);
+      ro.observe(row);
+      if (strip) ro.observe(strip);
+    }
+    if (typeof MutationObserver === "function") {
+      new MutationObserver(sync).observe(row, {
+        subtree: true, childList: true, attributes: true, attributeFilter: ["class", "style"],
+      });
+    }
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(sync);
+    sync();
+  });
+}
+// A folder card's scroller fades its contents into an edge only while there
+// is more past that edge (styles.css, .folder-card-scroll). Re-checked on
+// scroll and whenever the scroller or a panel in it changes size — a tab
+// switch or a lazily loaded tab body changes the scroll height without
+// scrolling.
+function wireFolderScrollFades() {
+  document.querySelectorAll(".folder-card-scroll").forEach(function (el) {
+    if (el.__polarisFadeWired) return;
+    el.__polarisFadeWired = true;
+    var update = function () {
+      el.classList.toggle("fade-top", el.scrollTop > 1);
+      el.classList.toggle("fade-bottom", el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+    };
+    el.addEventListener("scroll", update, { passive: true });
+    if (typeof ResizeObserver === "function") {
+      var ro = new ResizeObserver(update);
+      ro.observe(el);
+      Array.prototype.forEach.call(el.children, function (c) { ro.observe(c); });
+    }
+    update();
+  });
+}
+
+function wireFolderSurfaces() {
+  wireFolderTabs();
+  wireFolderScrollFades();
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wireFolderSurfaces);
+else wireFolderSurfaces();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

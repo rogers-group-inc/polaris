@@ -1733,6 +1733,9 @@ function _renderAssetsPageControls() {
     fetchAssetsPage();
     _saveAssetsPrefs();
   }, {
+    // The top row shares a line with the view tabs (.table-head-row), so it
+    // carries only Refresh / Clear Filters / Show N — page buttons are below.
+    topNav: false,
     actionButtons: [
       {
         label: "Refresh",
