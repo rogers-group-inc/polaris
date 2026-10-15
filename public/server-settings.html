@@ -23,30 +23,38 @@
         <h2>Server Settings</h2>
       </div>
 
-      <div class="page-tabs page-tabs-glass" id="settings-tabs">
-        <button class="page-tab active" data-tab="identification">Identification</button>
-        <button class="page-tab" data-tab="credentials">Credentials</button>
-        <button class="page-tab" data-tab="firmware">Repository</button>
-        <button class="page-tab" data-tab="customization">Customization</button>
-        <button class="page-tab" data-tab="ntp">Time &amp; NTP</button>
-        <button class="page-tab" data-tab="certificates">Web Server</button>
-        <button class="page-tab" data-tab="maintenance">Maintenance</button>
-        <button class="page-tab" data-tab="retention">Retention</button>
-        <button class="page-tab" data-tab="api-tokens">API Tokens</button>
-        <button class="page-tab" data-tab="ha">High Availability</button>
+      <!-- Folder tabs (styles.css "Table head row") over one page-sized card
+           (.folder-card) that holds every tab's panel — the tabs open into it.
+           folder-head-card: the tab takes the card's fill, not a table
+           header's. -->
+      <div class="table-head-row folder-head-card">
+        <div class="page-tabs page-tabs-glass" id="settings-tabs">
+          <button class="page-tab active" data-tab="identification">Identification</button>
+          <button class="page-tab" data-tab="credentials">Credentials</button>
+          <button class="page-tab" data-tab="firmware">Repository</button>
+          <button class="page-tab" data-tab="customization">Customization</button>
+          <button class="page-tab" data-tab="ntp">Time &amp; NTP</button>
+          <button class="page-tab" data-tab="certificates">Web Server</button>
+          <button class="page-tab" data-tab="maintenance">Maintenance</button>
+          <button class="page-tab" data-tab="retention">Retention</button>
+          <button class="page-tab" data-tab="api-tokens">API Tokens</button>
+          <button class="page-tab" data-tab="ha">High Availability</button>
+        </div>
       </div>
       </div>
 
-      <div class="page-tab-panel active" id="tab-identification"></div>
-      <div class="page-tab-panel" id="tab-credentials"></div>
-      <div class="page-tab-panel" id="tab-firmware"></div>
-      <div class="page-tab-panel" id="tab-customization"></div>
-      <div class="page-tab-panel" id="tab-ntp"></div>
-      <div class="page-tab-panel" id="tab-certificates"></div>
-      <div class="page-tab-panel" id="tab-maintenance"></div>
-      <div class="page-tab-panel" id="tab-retention"></div>
-      <div class="page-tab-panel" id="tab-api-tokens"></div>
-      <div class="page-tab-panel" id="tab-ha"></div>
+      <div class="folder-card folder-body">
+        <div class="page-tab-panel active" id="tab-identification"></div>
+        <div class="page-tab-panel" id="tab-credentials"></div>
+        <div class="page-tab-panel" id="tab-firmware"></div>
+        <div class="page-tab-panel" id="tab-customization"></div>
+        <div class="page-tab-panel" id="tab-ntp"></div>
+        <div class="page-tab-panel" id="tab-certificates"></div>
+        <div class="page-tab-panel" id="tab-maintenance"></div>
+        <div class="page-tab-panel" id="tab-retention"></div>
+        <div class="page-tab-panel" id="tab-api-tokens"></div>
+        <div class="page-tab-panel" id="tab-ha"></div>
+      </div>
     </main>
   </div>
 

@@ -2550,7 +2550,8 @@ html[data-page-top-curtain]::after {
    left behind once it ends. */
 @keyframes folder-panel-in { from { opacity: 0.25; } }
 .table-head-row ~ .page-tab-panel.active,
-.table-head-row ~ #ipam-mount > .folder-body {
+.table-head-row ~ #ipam-mount > .folder-body,
+.folder-card > .page-tab-panel.active {
   animation: folder-panel-in 0.2s ease;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2559,10 +2560,35 @@ html[data-page-top-curtain]::after {
     transition: none;
   }
   .table-head-row ~ .page-tab-panel.active,
-  .table-head-row ~ #ipam-mount > .folder-body { animation: none; }
+  .table-head-row ~ #ipam-mount > .folder-body,
+  .folder-card > .page-tab-panel.active { animation: none; }
 }
+/* Folder CARD (Server Settings): one page-sized card holding every tab's
+   panel, so the tabs open into a surface rather than a table. It fills the
+   rest of the viewport (the column becomes a flex column for it) and its
+   panels' own cards sit inside it. The tab takes the CARD's fill
+   (folder-head-card), not a table header's stacked density. */
+.table-head-row.folder-head-card { --folder-fill: var(--rail-glass-bg); }
+.main:has(> .folder-card) { display: flex; flex-direction: column; min-height: 100dvh; }
+.folder-card {
+  flex: 1 0 auto;
+  background: var(--rail-glass-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 1.25rem;
+}
+/* A pinned bar (.page-top-sticky) holding a head row sits flush on the folder
+   body — no gap under it — and its curtain loses the feather: content
+   scrolling up inside the folder is cut cleanly at the tab rule, as if it
+   slid under the folder's own top edge, instead of dissolving over the card's
+   top at rest (the feather used to fit inside the bar's margin, now gone). */
+.page-top-sticky:has(> .table-head-row) { margin-bottom: 0; }
+.page-top-sticky > .table-head-row > .page-tabs { margin-bottom: 0; }
+html[data-page-top-curtain]:has(.page-top-sticky > .table-head-row)::after { --page-top-feather: 0px; }
 /* Fill clipped to the padding box so the top border row stays empty: the head
    row's rule (and, in the gap, the neck) is what shows there. */
+.folder-card.folder-body,
 .table-wrapper.folder-body {
   border-top-color: transparent;
   border-top-left-radius: 0;

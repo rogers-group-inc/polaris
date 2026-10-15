@@ -311,7 +311,7 @@ unselected page tab).
   it). Never put a scroll-linked position on it again; the bar does not move, so nothing has to
   follow it. z-index 1049 (one under the bar), and
   masked to a `--page-top-feather` (1.5rem) fade below the bar — inside the bar's own
-  margin-bottom, so at rest it covers empty page — and a short fade-in on its left edge so the
+  margin-bottom, so at rest it covers empty page. The exception is a bar holding a `.table-head-row` (folder tabs; Server Settings): there the bar has no margin-bottom and the feather is 0, so content is cut cleanly at the tab rule instead of dissolving over the folder card's top (canon-tables-lists.md, "Table head row + folder tabs"). The curtain also has a short fade-in on its left edge so the
   sidebar's shadow is not cut. It lives on `<html>`, not the bar, because the glow's animated
   parts are `inherits: false` and only html's own pseudo-elements can `inherit` them; this way it
   turns with the theme frame for frame. The bar reaches up over all of `.main`'s top padding
