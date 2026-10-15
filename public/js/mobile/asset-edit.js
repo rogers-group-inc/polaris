@@ -1,9 +1,10 @@
 // public/js/mobile/asset-edit.js — the asset edit menu and its three sheets.
 //
 // Tapping the asset's NAME in the asset sheet header (asset-detail.js) opens a
-// menu with one entry per tab of the desktop's Edit Asset modal
+// menu: first the desktop panel header's device verbs — Discover Now and
+// Reboot — then one entry per tab of the desktop's Edit Asset modal
 // (openEditModal in public/js/assets.js): General, Monitoring, Maintenance.
-// Each entry opens a stacked `.sheet` that is the phone build of that tab:
+// Each tab entry opens a stacked `.sheet` that is the phone build of that tab:
 //
 //   General     — the identity / details / location / procurement / notes /
 //                 tags form (assetFormHTML + getAssetFormData). Saves the same
@@ -238,6 +239,79 @@
   var _token = 0;          // bumped per sheet open; late loads for a closed sheet bail
   var _ctx = null;         // { assetId, hostname, onSaved }
 
+  // ─── The device verbs above the tabs ────────────────────────────────────
+  // The desktop panel header's Discover Now and Reboot, as menu rows. Neither
+  // is decided here: POST /assets/:id/rediscover answers a 400 naming why an
+  // asset has no re-runnable discovery (assetDiscoveryScope.ts), and GET
+  // /assets/:id/reboot says what may reboot it. The rows only describe and
+  // relay; the reboot's confirm sheet is asset-detail.js's (opts.onReboot).
+  /** The Discover Now row's supporting line. Pure. */
+  function discoverDesc(a) {
+    var role = a && a.fortinetTopology && a.fortinetTopology.role;
+    if (role === "fortiswitch" || role === "fortiap") return "Runs its controller FortiGate’s discovery";
+    if (role === "fortigate") return "Refresh this FortiGate’s subnets, reservations, switches and APs";
+    return "Re-read this device from its integration";
+  }
+
+  /** The Reboot row's state for one availability answer: null = no row. Pure. */
+  function rebootRowState(rb, canAct) {
+    if (!rb || rb.error || !rb.state || rb.state === "unsupported") return null;
+    if (rb.activeRun) return { enabled: false, desc: "Reboot in progress" };
+    var schedulable = !!REBOOT_SCHEDULABLE[rb.state];
+    if (!rb.available && !schedulable) return { enabled: false, desc: rb.reason || "This device cannot be rebooted from Polaris" };
+    if (!canAct) return { enabled: false, desc: "Needs Read-Write on Assets" };
+    if (!rb.available) return { enabled: true, desc: (rb.reason || "Not right now.") + " It can be scheduled for later." };
+    if (rb.schedule) return { enabled: true, desc: "A reboot is already scheduled — this reboots now" };
+    return { enabled: true, desc: "Restart now or schedule it" };
+  }
+  /** States a booking can still be made from (RB_SCHEDULABLE in asset-detail.js). */
+  var REBOOT_SCHEDULABLE = { available: true, blocked: true, "agent-offline": true };
+
+  function actionRowHtml(id, icon, label, desc, enabled) {
+    return '<button type="button" class="list-item two-line ae-menu-action" role="menuitem" id="' + id + '"' +
+        (enabled ? '' : ' disabled aria-disabled="true"') + '>' +
+      '<div class="leading tonal"><svg viewBox="0 0 24 24"><use href="#' + icon + '"/></svg></div>' +
+      '<div class="content"><div class="headline">' + esc(label) + '</div>' +
+        '<div class="supporting">' + esc(desc) + '</div></div>' +
+    '</button>';
+  }
+
+  function runDiscoverNow(assetId) {
+    api.assets.rediscover(assetId).then(function (resp) {
+      toast(resp && resp.viaController && resp.deviceName
+        ? "Discovering via controller " + resp.deviceName + " — tap Refresh in a minute or two"
+        : "Discovery started — tap Refresh in a minute or two");
+    }).catch(function (err) {
+      toast((err && err.message) || "Discovery failed to start", true);
+    });
+  }
+
+  // Fill the Reboot row once GET /assets/:id/reboot answers; drop it (and the
+  // section, if Discover Now is not there either) when nothing can reboot it.
+  function loadRebootRow(assetId, onReboot) {
+    if (!api.assets.reboot || !permAtLeast("assets", "read")) { dropRebootRow(); return; }
+    api.assets.reboot(assetId).then(function (rb) {
+      var row = $("ae-action-reboot");
+      if (!row || !_ctx || _ctx.assetId !== assetId) return;
+      var st = rebootRowState(rb, canEditAsset());
+      if (!st || !onReboot) { dropRebootRow(); return; }
+      row.querySelector(".supporting").textContent = st.desc;
+      row.disabled = !st.enabled;
+      if (st.enabled) row.removeAttribute("aria-disabled"); else row.setAttribute("aria-disabled", "true");
+      row.addEventListener("click", function () {
+        if (row.disabled) return;
+        closeMenu();
+        onReboot(rb);
+      });
+    }).catch(dropRebootRow);
+  }
+  function dropRebootRow() {
+    var row = $("ae-action-reboot");
+    if (row) row.remove();
+    var sec = $("ae-menu-actions");
+    if (sec && !sec.querySelector(".ae-menu-action")) sec.remove();
+  }
+
   function closeMenu() { removeSheet(MENU_ID); }
   function closeEdit() { _token++; removeSheet(EDIT_ID); removeSheet("ae-confirm-sheet"); }
   function closeAll() { closeMenu(); closeEdit(); }
@@ -245,8 +319,10 @@
   /**
    * Open the edit menu for an asset.
    * @param {{id:string, hostname?:string, assetTag?:string}} asset
-   * @param {{onSaved?: function}} [opts] — called after any sheet saves, so the
-   *        asset sheet behind can repaint.
+   * @param {{onSaved?: function, onReboot?: function}} [opts] — onSaved is
+   *        called after any sheet saves, so the asset sheet behind can repaint;
+   *        onReboot(rb) starts the asset sheet's reboot confirm for the
+   *        availability answer the Reboot row was drawn from (no row without it).
    */
   function openMenu(asset, opts) {
     if (!asset || !asset.id) return;
@@ -256,11 +332,20 @@
       hostname: asset.hostname || asset.assetTag || "",
       onSaved: opts && typeof opts.onSaved === "function" ? opts.onSaved : null,
     };
+    var onReboot = opts && typeof opts.onReboot === "function" ? opts.onReboot : null;
+    var canDiscover = canEditAsset();
     var sheet = buildSheet(MENU_ID, closeMenu);
     sheet.setAttribute("role", "dialog");
-    sheet.setAttribute("aria-label", "Edit asset");
-    sheet.innerHTML = sheetHeader("Edit asset", _ctx.hostname, "ae-menu-close") +
-      '<div class="ae-menu" role="menu">' +
+    sheet.setAttribute("aria-label", "Asset actions");
+    sheet.innerHTML = sheetHeader("Asset actions", _ctx.hostname, "ae-menu-close") +
+      // Discover Now, then Reboot — the desktop header's order. Reboot starts
+      // as "Checking…" and is filled (or dropped) by loadRebootRow.
+      '<div class="ae-menu" id="ae-menu-actions" role="menu" aria-label="Actions">' +
+        actionRowHtml("ae-action-discover", "i-sync", "Discover Now",
+          canDiscover ? discoverDesc(asset) : "Needs Read-Write on Assets", canDiscover) +
+        (onReboot ? actionRowHtml("ae-action-reboot", "i-power", "Reboot", "Checking…", false) : "") +
+      '</div>' +
+      '<div class="ae-menu" role="menu" aria-label="Edit">' +
       TABS.map(function (t) {
         var ok = t.allowed();
         return '<button type="button" class="list-item two-line ae-menu-item" role="menuitem" data-tab="' + t.key + '"' +
@@ -275,6 +360,14 @@
     // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
     if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     $("ae-menu-close").addEventListener("click", closeMenu);
+    var discoverRow = $("ae-action-discover");
+    if (discoverRow) discoverRow.addEventListener("click", function () {
+      if (discoverRow.disabled) return;
+      var id = _ctx.assetId;
+      closeMenu();
+      runDiscoverNow(id);
+    });
+    if (onReboot) loadRebootRow(asset.id, onReboot);
     sheet.querySelectorAll(".ae-menu-item").forEach(function (b) {
       b.addEventListener("click", function () {
         if (b.disabled) return;
@@ -1075,5 +1168,6 @@
     openTab: openTab,
     closeAll: closeAll,
     TABS: TABS.map(function (t) { return t.key; }),
+    _rebootRowState: rebootRowState,
   };
 })();

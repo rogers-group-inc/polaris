@@ -5409,6 +5409,16 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   gap: 10px;
   min-width: 0;
 }
+/* The asset panel's device verbs (Discover Now, Reboot) right of the title.
+   Never squeezed — a long hostname wraps the title instead — and hidden while
+   empty so the lead's gap doesn't leave a hole during the loading state. */
+.slideover-header-verbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.slideover-header-verbs:empty { display: none; }
 /* Per-asset action buttons in the panel header (asset details: Copy /
    Screenshot | Export / Refresh / Open HTTPS / Open SSH). The header is
    space-between, and _ensureLockButton (app.js) stamps margin-left:auto inline

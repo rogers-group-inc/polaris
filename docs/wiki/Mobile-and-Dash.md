@@ -193,9 +193,15 @@ nothing allows a reboot, the row says what is missing. Pressing it needs
 **Read-Write on Assets**. A device that reports no uptime and can't be rebooted
 from Polaris has no Uptime row.
 
-**Tapping the asset's name edits it.** The name at the top of the detail sheet
-opens a menu with the same three tabs as the desktop's *Edit Asset* dialog. Each
-opens its own sheet, which reads the asset fresh and saves only its own fields:
+**Tapping the asset's name acts on it or edits it.** The name at the top of
+the detail sheet opens a menu. First come the desktop header's two device verbs:
+**Discover Now** ([Assets → Discover Now](Assets#discover-now); for a FortiSwitch
+or FortiAP it runs the controller FortiGate's discovery — tap the refresh button
+a minute or two later to see what it found) and **Reboot**, the same confirm
+sheet as the Uptime row's button, shown only when Polaris can reboot the device.
+Both need Read-Write on Assets. Below them are the same three tabs as the
+desktop's *Edit Asset* dialog. Each tab opens its own sheet, which reads the
+asset fresh and saves only its own fields:
 
 | Entry | What you can change | Needs |
 |---|---|---|

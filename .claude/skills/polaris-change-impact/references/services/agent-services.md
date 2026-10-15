@@ -112,7 +112,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `src/services/rebootScheduleService.ts` — `checkSchedulableReboot` at booking, `startReboot({ scheduleId })` when a booking fires, `RebootRunConflictError` to tell "wait" from "refused".
 - Reader of its rows, not a caller: `src/services/operationsCalendarService.ts` reads `RebootRun` by `startedAt` range for the Events page's Calendar tab — a new run status needs a colour there (`public/js/ops-calendar.js → statusClass()`).
 - `src/jobs/failOrphanedRebootRuns.ts` — the boot sweep.
-- `public/js/assets.js` — the slide-over's Reboot… button and agent card Reboots row, through the routes (`_startRebootPoll` polls the run).
+- `public/js/assets.js` — the slide-over header's Reboot button and agent card Reboots row, through the routes (`_startRebootPoll` polls the run).
 
 **Invariants:**
 - **The plan.** A FortiGate reboots itself — refused when it is an HA member (`haMembershipOf` at the click, the gate's own `system/ha` again in the run's preflight; rebooting one member fails the cluster over, which this does not orchestrate). A FortiSwitch / FortiAP with a controller stamp is restarted THROUGH the controlling gate (resolved via `utils/fortinetParentKey`, never by matching `controllerFortigate` against `Asset.hostname`; the restart API is addressed by the child's switch-id / wtp name, and the gate is addressed by its `controllerFortigate` device NAME through FMG); the gate's HA state does not matter. A switch / AP with no controller is rebooted over its own SSH CLI. An agent host gets `AgentCommand{action:"reboot"}`.

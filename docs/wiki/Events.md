@@ -130,7 +130,7 @@ calendar stays empty.
 | Click | Opens |
 |---|---|
 | a maintenance window | the Maintenance dialog on that schedule |
-| a reboot or firmware item | the device's details on its **System** tab. A booking still pending opens the **Reboot…** or firmware dialog to move its time, change who is told, or cancel it (with `assets` Read-Write); a run opens its log |
+| a reboot or firmware item | the device's details on its **System** tab. A booking still pending opens the **Reboot** or firmware dialog to move its time, change who is told, or cancel it (with `assets` Read-Write); a run opens its log |
 | an empty day, or an hour in Week / Day | the Maintenance dialog with a new one-time window prefilled on that day — that hour, or 20:00 (now, for today) — for two hours. Nothing is saved until you name it, choose its devices and click **Save**. Offered only with `maintenanceManagement` Read-Write; without it, empty days are not clickable |
 
 A booking changed or cancelled from the dialog a click opened shows on the

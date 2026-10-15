@@ -177,6 +177,79 @@ describe("the name opens the edit menu", () => {
     expect(menuItem("maintenance").disabled).toBe(false);
   });
 
+  it("puts Discover Now then Reboot above the tabs, outside the tab list", async () => {
+    boot(WRITER, { reboot: vi.fn(async () => ({ state: "available", available: true, authority: "Lab FG" })) });
+    ASSETS.fw.fortinetTopology = { role: "fortigate" };
+    await openMenu("fw");
+    const actions = [...document.querySelectorAll("#asset-edit-menu .ae-menu-action")].map((b) => b.id);
+    expect(actions).toEqual(["ae-action-discover", "ae-action-reboot"]);
+    expect($("ae-action-discover").disabled).toBe(false);
+    expect($("ae-action-discover").textContent).toContain("FortiGate");
+    expect($("ae-action-reboot").disabled).toBe(false);
+    expect($("ae-action-reboot").textContent).toContain("Restart now or schedule it");
+    // The tab rows are still exactly the desktop's tabs.
+    const tabs = [...document.querySelectorAll("#asset-edit-menu .ae-menu-item")].map((b) => b.getAttribute("data-tab"));
+    expect(tabs).toEqual(["general", "monitoring", "maintenance"]);
+  });
+
+  it("Discover Now calls the rediscover route and relays the server's answer", async () => {
+    const rediscover = vi.fn(async () => ({ viaController: true, deviceName: "GATE-1" }));
+    boot(WRITER, { rediscover });
+    await openMenu("fw");
+    $("ae-action-discover").click();
+    await flush();
+    expect(rediscover).toHaveBeenCalledWith("fw");
+    expect($("asset-edit-menu")).toBeNull();
+    expect(g.PolarisTabs.showSnackbar.mock.calls.at(-1)[0]).toContain("via controller GATE-1");
+  });
+
+  it("Discover Now relays a refusal as an error", async () => {
+    boot(WRITER, { rediscover: vi.fn(async () => { throw new Error("No discovery source owns this asset"); }) });
+    await openMenu("srv");
+    $("ae-action-discover").click();
+    await flush();
+    const last = g.PolarisTabs.showSnackbar.mock.calls.at(-1);
+    expect(last[0]).toBe("No discovery source owns this asset");
+    expect(last[1]).toEqual({ error: true });
+  });
+
+  it("a read-only viewer sees both verbs disabled with the reason", async () => {
+    boot({ assets: "read" }, { reboot: vi.fn(async () => ({ state: "available", available: true })) });
+    await openMenu("fw");
+    expect($("ae-action-discover").disabled).toBe(true);
+    expect($("ae-action-discover").textContent).toContain("Needs Read-Write on Assets");
+    expect($("ae-action-reboot").disabled).toBe(true);
+    expect($("ae-action-reboot").textContent).toContain("Needs Read-Write on Assets");
+  });
+
+  it("drops the Reboot row when nothing can reboot the device", async () => {
+    boot(WRITER, { reboot: vi.fn(async () => ({ state: "unsupported", available: false })) });
+    await openMenu("srv");
+    expect($("ae-action-reboot")).toBeNull();
+    expect($("ae-action-discover")).toBeTruthy();
+  });
+
+  it("Reboot opens the asset sheet's reboot confirm", async () => {
+    boot(WRITER, { reboot: vi.fn(async () => ({ state: "available", available: true, authority: "Lab FG" })) });
+    await openMenu("fw");
+    $("ae-action-reboot").click();
+    await flush();
+    expect($("asset-edit-menu")).toBeNull();
+    expect($("rb-confirm-sheet")).toBeTruthy();
+  });
+
+  it("the Reboot row's state follows the availability answer", () => {
+    const st = g.PolarisAssetEdit._rebootRowState;
+    expect(st(null, true)).toBeNull();
+    expect(st({ state: "unsupported" }, true)).toBeNull();
+    expect(st({ state: "available", available: true, activeRun: { id: "r" } }, true)).toEqual({ enabled: false, desc: "Reboot in progress" });
+    expect(st({ state: "blocked", available: false, reason: "Maintenance." }, true))
+      .toEqual({ enabled: true, desc: "Maintenance. It can be scheduled for later." });
+    expect(st({ state: "no-credential", available: false, reason: "No login allows reboots" }, true))
+      .toEqual({ enabled: false, desc: "No login allows reboots" });
+    expect(st({ state: "available", available: true, schedule: { id: "s" } }, true).desc).toContain("already scheduled");
+  });
+
   it("closing the asset sheet closes the edit sheets with it", async () => {
     await openTab("srv", "general");
     expect($("asset-edit-sheet")).toBeTruthy();

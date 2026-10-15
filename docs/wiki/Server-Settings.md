@@ -104,7 +104,7 @@ monitoring streams, or bound for the device in the [Repository](#device-logins)
 — and restart the FortiSwitches and FortiAPs that FortiGate manages; an SSH
 credential on a standalone FortiSwitch or FortiAP reboots that device over its
 own command line. Anyone with Read-Write on Assets can then press
-[Reboot…](Assets#reboot) on those devices. The admin behind the credential needs
+[Reboot](Assets#reboot) on those devices. The admin behind the credential needs
 System read-write on the device (and WiFi & Switch read-write for managed
 switches and access points). The box is not offered on SNMP, WinRM or other
 HTTP credentials, which cannot reboot anything. The credential list says

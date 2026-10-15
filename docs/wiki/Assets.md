@@ -189,7 +189,8 @@ The header also carries **Copy** and **Screenshot** (below), **Open HTTPS** /
 **Open RDP** / **Open SSH** where the device has them, and **Edit** for
 `assets:write`. Edit opens the edit modal (**General · Monitoring**, plus
 **Maintenance** where it applies) over the panel and returns you to it.
-[Discover Now](#discover-now) sits beside the Status pill on the System tab.
+Right of the device's name, on every tab, are its two verbs:
+[Discover Now](#discover-now) and [Reboot](#reboot).
 
 ### Copy and Screenshot
 
@@ -431,12 +432,10 @@ Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage. A FortiGate's IPsec tunnels are on the
 [IPsec](#ipsec-fortigate-firewalls) tab.
 
-At the top sits the **Status** row — the pill, **Discover Now**, on a
-monitored firewall, switch or access point **Simulate Down…** for
-`assetMonitorSettings:fullwrite`
-([testing dependency suppression](Dependency-Suppression#testing-it)), and
-**Reboot…** on a FortiGate, FortiSwitch, FortiAP or Polaris Agent host
-([Reboot](#reboot)) — then
+At the top sits the **Status** row — on a monitored firewall, switch or
+access point **Simulate Down** for `assetMonitorSettings:fullwrite`
+([testing dependency suppression](Dependency-Suppression#testing-it)), then the
+pill — then
 the **Last 30 min** strip, one cell per probe coloured by the state it left
 the device in, and **Uptime** where the transport reports it.
 
@@ -569,7 +568,7 @@ host, with **Enable…** / **Disable** ([Polaris Agent](Polaris-Agent#reboots)).
 
 #### Reboot
 
-**Reboot…** on the Status row restarts the device, now or at a time you pick
+**Reboot** in the panel header, right of **Discover Now**, restarts the device, now or at a time you pick
 ([rule 115](Business-Rules#rule-115)). It is there for a FortiGate, a
 FortiSwitch, a FortiAP and a host running the Polaris Agent, and pressing it
 needs **Read-Write on Assets**. Whether the device *can* be rebooted is decided
@@ -636,7 +635,7 @@ booking in place.
 Every booked and past reboot, across the fleet, is on
 [Events → Calendar](Events#calendar), coloured by how it went; clicking one
 opens this device's **System** tab — a pending booking straight into the
-**Reboot…** dialog to change or cancel it, a reboot that ran into its log.
+**Reboot** dialog to change or cancel it, a reboot that ran into its log.
 
 #### Firmware
 
@@ -1207,8 +1206,10 @@ sightings and quarantine stay on the original — the recovery for a bad merge.
 
 ### Discover Now
 
-`POST /assets/:id/rediscover` narrows a discovery run to **one device**. For a
-FortiSwitch or FortiAP it scopes to the **controller gate**.
+**Discover Now** sits in the panel header, right of the device's name (on the
+phone, in the menu the name opens). `POST /assets/:id/rediscover` narrows a
+discovery run to **one device**. For a FortiSwitch or FortiAP it scopes to the
+**controller gate**.
 
 A scoped run never stamps the integration's last-discovery time, never feeds the
 duration baseline, and **skips all four asset-only post-sync passes** — agent

@@ -103,7 +103,7 @@ the page says what that means.
 **Reboot the device** books a reboot of the device that raised the alert
 ([rule 115](Business-Rules#rule-115)). It never sends one on the spot: it makes
 the same booking as **Schedule for later** in the asset's
-[Reboot…](Assets#reboot) dialog. Everything that governs a reboot from that
+[Reboot](Assets#reboot) dialog. Everything that governs a reboot from that
 dialog governs this one. Something must allow the device to be rebooted (a
 credential, the integration or the agent host's opt-in), an HA FortiGate is
 refused, and every check is taken again when the booking fires. Polaris holds

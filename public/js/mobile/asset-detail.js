@@ -272,8 +272,16 @@
     document.getElementById("asset-sheet-name-btn").addEventListener("click", function () {
       if (_state !== "expanded" || !_openAsset || !window.PolarisAssetEdit) return;
       var id = _openAsset.id;
-      PolarisAssetEdit.openMenu(_openAsset, {
+      var menuAsset = _openAsset;
+      PolarisAssetEdit.openMenu(menuAsset, {
         onSaved: function () { if (_openId === id) reloadSheet(id); },
+        // The menu's Reboot row runs the same confirm sheet as the Uptime
+        // row's button; that button (when drawn) is the one disabled while the
+        // request is in flight.
+        onReboot: function (rb) {
+          if (_openId !== id) return;
+          startRebootFlow(menuAsset, rb, document.getElementById("asset-reboot-btn") || { disabled: false }, null);
+        },
       });
     });
     PolarisTabs.attachSwipeToDismiss(sheet, dismiss, {

@@ -311,7 +311,7 @@ reconciler tick (≤ 60 s). The child switches and APs should flip to Dep. Down
 and emit `monitor.dependency_suppressed`.
 
 There is also an **outage simulation** for testing dependency behaviour without
-a real outage: **Simulate Down…** beside the Status pill on the System tab of a
+a real outage: **Simulate Down**, left of the Status pill on the System tab of a
 monitored firewall, switch or access point. It asks for a duration (1–240
 minutes, 30 by default); for that long the device counts as down for its
 children, which turn Dep. Down exactly as for a real failure, while its own
