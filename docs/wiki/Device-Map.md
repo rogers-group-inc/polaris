@@ -26,6 +26,14 @@ degraded child still rolls the cluster up red or amber.
 
 Click a pin for the site; click through for its **topology**.
 
+**Clusters.** Hover a numbered circle to list the FortiGates inside it,
+worst status first. Click a name in that list to open its topology. Click the
+circle itself to zoom in until the gates separate. Gates that share a location,
+or sit so close together that no zoom can separate them, fan out in a ring
+instead. Each one gets a line back to a dot that marks the real location. Click
+the map or zoom to fold them back. From zoom 11 a cluster forms only where pins
+would overlap.
+
 The sun / moon button at the left of the toolbar switches the **basemap** between
 light and dark tiles independently of the app theme. It is remembered per user in
 this browser; until you touch it, the map follows the app theme's family

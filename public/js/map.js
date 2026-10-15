@@ -144,9 +144,19 @@
 
     markerCluster = L.markerClusterGroup({
       showCoverageOnHover: false,
-      maxClusterRadius: 40,
-      disableClusteringAtZoom: 11,
+      // Wide clusters while zoomed out; from CLUSTER_TIGHT_ZOOM on, a cluster
+      // forms only where gates would draw on top of each other — that used
+      // to be disableClusteringAtZoom, which left co-located gates stacked
+      // under one visible marker with nothing to click to reach the others.
+      maxClusterRadius: function (zoom) { return zoom >= CLUSTER_TIGHT_ZOOM ? CLUSTER_TIGHT_RADIUS : 40; },
+      // A cluster click is ours (onClusterActivate): zoom until the gates
+      // separate, or fan them out with legs to their shared location.
+      zoomToBoundsOnClick: false,
       spiderfyOnMaxZoom: false,
+      // .fg-marker is 34px against the 25px marker the foot spacing assumes,
+      // and the legs back to the shared location need room to be seen.
+      spiderfyDistanceMultiplier: 2.6,
+      spiderLegPolylineOptions: { weight: 2, opacity: 0.9, className: "fg-spider-leg" },
       // Default markercluster coloring buckets by child count (small/medium/large
       // → green/yellow/orange). That's misleading here: a cluster of 100 healthy
       // FortiGates would show orange. Roll up the worst monitor health among
@@ -154,6 +164,7 @@
       iconCreateFunction: clusterIcon,
     });
     map.addLayer(markerCluster);
+    wireClusterInteractions();
     addStatusLegend();
 
     attachRightClickPan();
@@ -317,12 +328,171 @@
     });
   }
 
+  // ─── Cluster hover list + click ───────────────────────────────────────────
+  // A cluster bubble names its gates on hover (each name opens that gate's
+  // topology) and, on click, either zooms until the gates separate or — when
+  // no zoom would separate them because they share a location — fans them
+  // out around that location with a leg from each back to it.
+  var CLUSTER_TIGHT_ZOOM = 11;     // from here on, cluster only overlapping markers
+  var CLUSTER_TIGHT_RADIUS = 24;   // px — two 34px .fg-marker discs this close read as one
+  var CLUSTER_ZOOM_CAP = 18;       // deepest zoom a cluster click will take the map to
+  var CLUSTER_SPLIT_PX = 40;       // spread at the cap below which zooming can't split them
+  var CLUSTER_FAN_ZOOM = 15;       // zoom a fan-out is drawn at when clicked from further out
+  var CLUSTER_LIST_CLOSE_MS = 250; // grace to move the pointer from the bubble into the list
+  // Worst-first, the same precedence monitorClass and clusterIcon read.
+  var CLUSTER_LIST_RANK = {
+    "monitor-down": 0, "monitor-degraded": 1, "monitor-dep-down": 2, "monitor-unknown": 3,
+    "monitor-maintenance": 4, "monitor-passive": 5, "monitor-up": 6, "monitor-unmonitored": 7,
+  };
+  var clusterList = { popup: null, cluster: null, closeTimer: null };
+  var spiderAnchor = null;
+
+  function wireClusterInteractions() {
+    markerCluster.on("clustermouseover", function (e) {
+      cancelClusterListClose();
+      showClusterList(e.layer);
+    });
+    markerCluster.on("clustermouseout", scheduleClusterListClose);
+    markerCluster.on("clusterclick clusterkeypress", function (e) {
+      if (e.type === "clusterkeypress") {
+        var oe = e.originalEvent;
+        if (!oe || (oe.key !== "Enter" && oe.keyCode !== 13)) return;
+      }
+      closeClusterList();
+      onClusterActivate(e.layer);
+    });
+    // The fan's legs meet at the gates' real location; mark that point so
+    // the legs read as "these are all here" rather than ending in nothing.
+    markerCluster.on("spiderfied", function (e) {
+      hideSpiderAnchor();
+      // markercluster leaves the bubble at 30% under the fan; the anchor dot
+      // replaces it. It restores the bubble's opacity itself on unspiderfy.
+      e.cluster.setOpacity(0);
+      spiderAnchor = L.circleMarker(e.cluster.getLatLng(), {
+        radius: 5, weight: 2, fillOpacity: 1, interactive: false, className: "fg-spider-anchor",
+      }).addTo(map);
+    });
+    markerCluster.on("unspiderfied", hideSpiderAnchor);
+    map.on("zoomstart", closeClusterList);
+  }
+
+  function hideSpiderAnchor() {
+    if (spiderAnchor) { map.removeLayer(spiderAnchor); spiderAnchor = null; }
+  }
+
+  // Pixel distance across the markers' bounds at a given zoom.
+  function clusterSpreadPx(markers, zoom) {
+    var b = L.latLngBounds(markers.map(function (m) { return m.getLatLng(); }));
+    return map.project(b.getNorthWest(), zoom).distanceTo(map.project(b.getSouthEast(), zoom));
+  }
+  function clusterIsCoLocated(markers) {
+    return clusterSpreadPx(markers, CLUSTER_ZOOM_CAP) < CLUSTER_SPLIT_PX;
+  }
+
+  function onClusterActivate(cluster) {
+    var markers = cluster.getAllChildMarkers();
+    if (!markers.length) return;
+    var zoom = map.getZoom();
+    if (!clusterIsCoLocated(markers)) {
+      var bounds = L.latLngBounds(markers.map(function (m) { return m.getLatLng(); }));
+      var fitZoom = Math.min(map.getBoundsZoom(bounds, false, L.point(120, 120)), CLUSTER_ZOOM_CAP);
+      if (fitZoom > zoom) {
+        map.fitBounds(bounds, { padding: [60, 60], maxZoom: CLUSTER_ZOOM_CAP });
+        return;
+      }
+      // Already as close as a fit would go — fan them out instead.
+    }
+    if (zoom >= CLUSTER_FAN_ZOOM) { cluster.spiderfy(); return; }
+    // Zoom in on the shared location, then fan out the cluster that holds
+    // these gates at the new zoom. markercluster refuses to spiderfy during
+    // its zoom animation, so wait it out (bounded).
+    var tries = 0;
+    var fanOut = function () {
+      var parent = markerCluster.getVisibleParent(markers[0]);
+      var ready = !markerCluster._inZoomAnimation && parent && parent !== markers[0] && typeof parent.spiderfy === "function";
+      if (ready) { parent.spiderfy(); return; }
+      if (++tries < 20) setTimeout(fanOut, 100);
+    };
+    map.once("moveend", function () { setTimeout(fanOut, 0); });
+    map.setView(cluster.getLatLng(), CLUSTER_FAN_ZOOM);
+  }
+
+  function showClusterList(cluster) {
+    if (clusterList.cluster === cluster && clusterList.popup && map.hasLayer(clusterList.popup)) return;
+    // A fanned-out bubble is hidden under its own fan; the markers are the list.
+    if (markerCluster._spiderfied === cluster) return;
+    var markers = cluster.getAllChildMarkers();
+    var sites = markers.map(function (m) { return m._site; }).filter(Boolean);
+    sites.sort(function (a, b) {
+      var ra = CLUSTER_LIST_RANK[monitorClass(a)], rb = CLUSTER_LIST_RANK[monitorClass(b)];
+      if (ra !== rb) return (ra == null ? 99 : ra) - (rb == null ? 99 : rb);
+      return String(a.hostname || "").localeCompare(String(b.hostname || ""), undefined, { numeric: true });
+    });
+    var coLocated = clusterIsCoLocated(markers);
+    var rows = sites.map(function (s) {
+      return '<li><button type="button" class="fg-cluster-list-item" data-site-id="' + escapeHtml(String(s.id)) + '"' +
+        ' title="' + escapeHtml(monitorTooltipLine(s)) + '">' +
+        '<i class="' + monitorClass(s) + '" aria-hidden="true"></i>' +
+        '<span class="fg-cluster-list-name">' + escapeHtml(s.hostname || "(unnamed)") + '</span>' +
+        (s.model ? '<span class="fg-cluster-list-model">' + escapeHtml(s.model) + '</span>' : '') +
+        '</button></li>';
+    }).join("");
+    var html =
+      '<div class="fg-cluster-list">' +
+        '<div class="fg-cluster-list-head">' + sites.length + ' FortiGate' + (sites.length === 1 ? '' : 's') +
+          (coLocated ? ' at this location' : '') + '</div>' +
+        '<ul>' + rows + '</ul>' +
+        '<div class="fg-cluster-list-hint">Click a name for its topology · click the circle to ' +
+          (coLocated ? 'fan them out' : 'zoom in') + '</div>' +
+      '</div>';
+    closeClusterList();
+    var popup = L.popup({
+      closeButton: false,
+      autoPan: false,
+      className: "fg-cluster-popup",
+      offset: [0, -14],
+      minWidth: 200,
+      maxWidth: 320,
+    }).setLatLng(cluster.getLatLng()).setContent(html);
+    popup.openOn(map);
+    clusterList.popup = popup;
+    clusterList.cluster = cluster;
+    var el = popup.getElement();
+    if (!el) return;
+    el.addEventListener("mouseenter", cancelClusterListClose);
+    el.addEventListener("mouseleave", scheduleClusterListClose);
+    el.addEventListener("click", function (ev) {
+      var btn = ev.target.closest("[data-site-id]");
+      if (!btn) return;
+      var id = btn.getAttribute("data-site-id");
+      var site = siteCache.find(function (s) { return String(s.id) === id; });
+      closeClusterList();
+      if (site) openTopology(site.id, site.hostname || "");
+    });
+  }
+
+  function scheduleClusterListClose() {
+    cancelClusterListClose();
+    clusterList.closeTimer = setTimeout(closeClusterList, CLUSTER_LIST_CLOSE_MS);
+  }
+  function cancelClusterListClose() {
+    if (clusterList.closeTimer) { clearTimeout(clusterList.closeTimer); clusterList.closeTimer = null; }
+  }
+  function closeClusterList() {
+    cancelClusterListClose();
+    if (clusterList.popup && map) map.closePopup(clusterList.popup);
+    clusterList.popup = null;
+    clusterList.cluster = null;
+  }
+
   // ─── Sites load ───────────────────────────────────────────────────────────
   async function loadSites() {
     setStatus("Loading FortiGates…");
     var sites = await api.map.sites();
     siteCache = Array.isArray(sites) ? sites : [];
+    closeClusterList();
     markerCluster.clearLayers();
+    hideSpiderAnchor();
     markersById = Object.create(null);
 
     if (siteCache.length === 0) {

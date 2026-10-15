@@ -234,28 +234,36 @@
   cursor: pointer;
 }
 .fg-marker.monitor-unmonitored,
-.map-legend i.monitor-unmonitored { background: #757575; }
+.map-legend i.monitor-unmonitored,
+.fg-cluster-list i.monitor-unmonitored { background: #757575; }
 .fg-marker.monitor-unknown,
-.map-legend i.monitor-unknown     { background: #9e9e9e; }
+.map-legend i.monitor-unknown,
+.fg-cluster-list i.monitor-unknown     { background: #9e9e9e; }
 .fg-marker.monitor-up,
-.map-legend i.monitor-up          { background: #2e7d32; }
+.map-legend i.monitor-up,
+.fg-cluster-list i.monitor-up          { background: #2e7d32; }
 .fg-marker.monitor-degraded,
-.map-legend i.monitor-degraded    { background: #f9a825; color: #222; }
+.map-legend i.monitor-degraded,
+.fg-cluster-list i.monitor-degraded    { background: #f9a825; color: #222; }
 .fg-marker.monitor-down,
-.map-legend i.monitor-down        { background: #c62828; }
+.map-legend i.monitor-down,
+.fg-cluster-list i.monitor-down        { background: #c62828; }
 .fg-marker.monitor-maintenance,
-.map-legend i.monitor-maintenance { background: #9575cd; }
+.map-legend i.monitor-maintenance,
+.fg-cluster-list i.monitor-maintenance { background: #9575cd; }
 /* Dependency-suppressed: an upstream parent is confirmed-down. Slate-blue
  * — distinct from the bright red of a confirmed-down probe and the amber
  * of a degraded probe. The probe itself is still firing (at 2× cadence)
  * in case the asset is reachable via a redundant path. */
 .fg-marker.monitor-dep-down,
-.map-legend i.monitor-dep-down    { background: #607d8b; }
+.map-legend i.monitor-dep-down,
+.fg-cluster-list i.monitor-dep-down    { background: #607d8b; }
 /* Passive: no down-detection automation covers the gate, so Polaris renders
  * no verdict (business rule 36) — indigo, deliberately not either grey,
  * which claim "nobody is polling it" and "polled, no samples yet". */
 .fg-marker.monitor-passive,
-.map-legend i.monitor-passive     { background: #5c6bc0; }
+.map-legend i.monitor-passive,
+.fg-cluster-list i.monitor-passive     { background: #5c6bc0; }
 
 /* Status legend (Leaflet control, bottom-left) — the Status Map widget's
    legend (.sitemap-legend in styles.css) on the page that paints the same
@@ -309,6 +317,78 @@
 .fg-cluster.monitor-dep-down    { background: #607d8b; }
 .fg-cluster.monitor-maintenance { background: #9575cd; }
 .fg-cluster.monitor-passive     { background: #5c6bc0; }
+.fg-cluster { cursor: pointer; }
+
+/* Cluster hover list (map.js → showClusterList): the gates a bubble holds,
+   worst-first, each a button that opens that gate's topology. Rides the
+   themed .leaflet-popup surface above; only the list itself is styled here.
+   Swatch colours come from the .fg-marker palette above. */
+.fg-cluster-popup .leaflet-popup-content { margin: 8px 10px; }
+.fg-cluster-list { font-size: 0.8rem; }
+.fg-cluster-list-head {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--color-text-secondary);
+}
+.fg-cluster-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.fg-cluster-list-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fg-cluster-list-item:hover,
+.fg-cluster-list-item:focus-visible {
+  background: var(--color-bg-tertiary);
+  text-decoration: underline;
+  outline: none;
+}
+.fg-cluster-list i {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #757575;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+}
+.fg-cluster-list-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fg-cluster-list-model {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+.fg-cluster-list-hint {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
+}
+
+/* Fan-out of co-located gates: a leg from each marker back to the shared
+   location, and a dot on that location. Over tiles, not the page, so the
+   colour follows the BASEMAP theme (.polaris-basemap-dark), not the app's. */
+.fg-spider-leg { stroke: #263238; }
+.fg-spider-anchor { stroke: #fff; fill: #263238; }
+.polaris-basemap-dark .fg-spider-leg { stroke: #eceff1; }
+.polaris-basemap-dark .fg-spider-anchor { stroke: #263238; fill: #eceff1; }
 
 /* ─── Topology modal layout ─────────────────────────────────────────────────── */
 /* The header band takes the same 90% ground as .topology-info below, for the
