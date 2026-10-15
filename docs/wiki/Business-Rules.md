@@ -2487,3 +2487,25 @@ writes there or reads from it — and the host cannot take Polaris down.**
   is read from the start of the new file, as before.
 - **A malformed message from an agent closes that agent's connection only.**
   It cannot stop Polaris.
+
+### Rule 120
+
+**A quiet time can name the people it does not apply to.** A quiet time —
+global or an automation's own — carries an optional list of **recipient
+exceptions**: email addresses that each have their own choice of what is held,
+under the same hours. Nothing ticked means the address ignores the quiet time.
+([Escalation, reminders and quiet time](Automation-Escalation#recipient-exceptions)
+has the details.)
+
+- **The send splits by who is held, and by nothing else.** The people who get
+  an email at a given moment still get one email together
+  ([rule 25](Business-Rules#rule-25)). The held part either never goes out (a
+  first alert, which the summary reports instead) or goes out later (a
+  reminder).
+- **Held for some, never dropped for anyone.** A reminder or escalation tier
+  goes out live to the excepted addresses and its clock moves. The people it
+  was held for get the newest held copy when the quiet period ends, unless the
+  alert has recovered or been acknowledged by then.
+- **The summary and the all-clear follow what each person was told.** Someone
+  held for nothing gets no summary. The all-clear reaches everyone who heard
+  the alert started and skips those who did not.
