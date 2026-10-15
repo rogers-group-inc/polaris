@@ -59,6 +59,8 @@ import {
   IO_VERDICT_STALE_MS,
   DB_IO_WATCH_BACKENDS,
   DB_IO_WARNING_BACKENDS,
+  ioWindowInBootGrace,
+  dbIoPressureAdvice,
   type DbIoReading,
   type DbIoVerdict,
 } from "./capacityDbIo.js";
@@ -191,8 +193,15 @@ async function computeDbIoState(): Promise<CapacitySnapshot["database"]["io"]> {
   if (!reading) {
     return { trackIoTiming: false, measured: false, avgBackendsBlockedOnDisk: null, windowSeconds: null };
   }
-  const verdict = deriveDbIoVerdict(prevDbIo, reading);
+  const raw = deriveDbIoVerdict(prevDbIo, reading);
   prevDbIo = reading;
+  // A window that began during startup maintenance (compression self-heal,
+  // rollup catch-up) measures Polaris's own boot work, not the workload —
+  // drop it, and let the next window (which starts here) be the first real one.
+  const verdict: DbIoVerdict =
+    raw.measured && raw.windowSeconds !== null && ioWindowInBootGrace(process.uptime() * 1000, raw.windowSeconds)
+      ? { measured: false, avgBackendsBlockedOnDisk: null, windowSeconds: null }
+      : raw;
   if (verdict.measured) {
     lastIoVerdict = { verdict, atMs: reading.nowMs };
     return { trackIoTiming: reading.trackIoTiming, ...verdict };
@@ -302,6 +311,8 @@ export interface CapacitySnapshot {
   appHost: {
     cpuCount: number;
     totalMemoryBytes: number;
+    /** os.freemem(): MemAvailable on Linux (libuv ≥ 1.45) — reclaimable page
+     *  cache counts, so this is "available", not "unused". Shown as such. */
     freeMemoryBytes: number;
     loadAvg: [number, number, number];
     /**
@@ -1953,14 +1964,21 @@ function computeReasons(
     // projected_db_large / projected_db_huge so a higher-severity DB-vs-RAM
     // finding absorbs it in the collapse pass.
     const avg = io.avgBackendsBlockedOnDisk;
-    const mins = io.windowSeconds ? Math.round(io.windowSeconds / 60) : null;
-    const windowText = mins && mins >= 1 ? ` over the last ${mins} min` : "";
+    const { message, suggestion } = dbIoPressureAdvice({
+      avgBackendsBlockedOnDisk: avg,
+      windowSeconds: io.windowSeconds,
+      databaseBytes: snap.database.sizeBytes,
+      totalMemoryBytes: ram,
+      availableMemoryBytes: snap.appHost.freeMemoryBytes,
+      dbColocated: snap.appHost.dbColocated,
+      formatBytes,
+    });
     reasons.push({
       severity: avg >= DB_IO_WARNING_BACKENDS ? "warning" : "watch",
       code: "db_io_pressure",
       family: "db_ram",
-      message: `Disk I/O is high — PostgreSQL is spending significant time reading from storage rather than serving from cache (avg ${avg.toFixed(1)} connection(s) blocked on disk${windowText}; host RAM ${formatBytes(ram)}, database ${formatBytes(snap.database.sizeBytes)}).`,
-      suggestion: "Consider adding RAM so more of the working set stays cached. Narrowing the monitored-interface selection (each integration's Monitoring tab) is often the biggest lever — only pinned interfaces keep a time-series, so fewer pins means fewer rows written AND a smaller working set competing for cache. Faster storage (NVMe) or lower sample retention also reduce disk reads; the Capacity Advisor card surfaces the retention and cadence levers.",
+      message,
+      suggestion,
     });
   }
   if (pgTuningNeeded) {

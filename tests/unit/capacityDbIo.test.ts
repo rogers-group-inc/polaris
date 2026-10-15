@@ -12,6 +12,10 @@ import {
   MIN_IO_WINDOW_MS,
   DB_IO_WATCH_BACKENDS,
   DB_IO_WARNING_BACKENDS,
+  DB_IO_BOOT_GRACE_MS,
+  DB_IO_LOW_AVAILABLE_RATIO,
+  ioWindowInBootGrace,
+  dbIoPressureAdvice,
   type DbIoReading,
 } from "../../src/services/capacityDbIo.js";
 
@@ -73,5 +77,65 @@ describe("deriveDbIoVerdict", () => {
     const atWarning = deriveDbIoVerdict(prev, reading({ nowMs: 100_000, blkReadTime: 2.0 * 100_000 }));
     expect(atWatch.avgBackendsBlockedOnDisk).toBeCloseTo(DB_IO_WATCH_BACKENDS, 6);
     expect(atWarning.avgBackendsBlockedOnDisk).toBeCloseTo(DB_IO_WARNING_BACKENDS, 6);
+  });
+});
+
+describe("ioWindowInBootGrace", () => {
+  it("drops a window that started during startup maintenance", () => {
+    // 1 min window ending 2 min after boot — the prod 2026-10-15 shape.
+    expect(ioWindowInBootGrace(2 * 60_000, 60)).toBe(true);
+  });
+
+  it("drops a window that began just inside the grace even when it ends well after", () => {
+    expect(ioWindowInBootGrace(DB_IO_BOOT_GRACE_MS + 5 * 60_000, 6 * 60)).toBe(true);
+  });
+
+  it("keeps a window that started at or after the grace boundary", () => {
+    expect(ioWindowInBootGrace(DB_IO_BOOT_GRACE_MS + 10 * 60_000, 10 * 60)).toBe(false);
+    expect(ioWindowInBootGrace(24 * 3_600_000, 10 * 60)).toBe(false);
+  });
+});
+
+describe("dbIoPressureAdvice", () => {
+  const GB = 1024 ** 3;
+  const base = {
+    avgBackendsBlockedOnDisk: 0.7,
+    windowSeconds: 600,
+    databaseBytes: 104 * GB,
+    totalMemoryBytes: 62 * GB,
+    availableMemoryBytes: 37 * GB,
+    dbColocated: true,
+    formatBytes: (n: number) => `${Math.round(n / GB)} GB`,
+  };
+
+  it("does not recommend RAM when plenty is available, and says so", () => {
+    const a = dbIoPressureAdvice(base);
+    expect(a.suggestion).not.toMatch(/adding RAM/i);
+    expect(a.suggestion).toMatch(/RAM isn't the constraint — 37 GB of 62 GB is available/);
+    expect(a.message).toMatch(/host RAM 62 GB, 37 GB available, database 104 GB/);
+    expect(a.message).toMatch(/over the last 10 min/);
+  });
+
+  it("recommends RAM when available memory is below the low-available ratio", () => {
+    const a = dbIoPressureAdvice({ ...base, availableMemoryBytes: 62 * GB * (DB_IO_LOW_AVAILABLE_RATIO - 0.01) });
+    expect(a.suggestion).toMatch(/^Consider adding RAM/);
+  });
+
+  it("treats exactly the ratio as not low", () => {
+    const a = dbIoPressureAdvice({ ...base, availableMemoryBytes: 62 * GB * DB_IO_LOW_AVAILABLE_RATIO });
+    expect(a.suggestion).not.toMatch(/adding RAM/i);
+  });
+
+  it("with a remote database, points at the database host instead of this host's memory", () => {
+    const a = dbIoPressureAdvice({ ...base, dbColocated: false, availableMemoryBytes: 1 * GB });
+    expect(a.message).toMatch(/database on a separate host/);
+    expect(a.message).not.toMatch(/available/);
+    expect(a.suggestion).toMatch(/can't see the database host's memory/);
+    expect(a.suggestion).not.toMatch(/^Consider adding RAM/);
+  });
+
+  it("omits the window text for a sub-minute or unknown window", () => {
+    expect(dbIoPressureAdvice({ ...base, windowSeconds: 20 }).message).not.toMatch(/over the last/);
+    expect(dbIoPressureAdvice({ ...base, windowSeconds: null }).message).not.toMatch(/over the last/);
   });
 });
