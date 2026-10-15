@@ -24,7 +24,8 @@ const h = vi.hoisted(() => ({
   updateCalls: [] as Array<{ id: string; data: Record<string, unknown> }>,
   loggedEvents: [] as Array<Record<string, unknown>>,
   // (deviceName, kind) -> inventory, or a thrown error for an unreadable one.
-  inventories: new Map<string, Map<string, { connected: boolean; status: string }> | Error>(),
+  inventories: new Map<string, Map<string, { connected: boolean; status: string; osVersion?: string }> | Error>(),
+  versionReadings: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("../../src/db.js", () => ({
@@ -65,6 +66,13 @@ vi.mock("../../src/services/eventLogService.js", async (importOriginal) => {
 
 vi.mock("../../src/metrics.js", () => ({ recordFortilinkState: vi.fn() }));
 
+vi.mock("../../src/services/fortinetLiveVersionService.js", () => ({
+  reconcileFortinetLiveVersions: vi.fn(async (readings: any[]) => {
+    h.versionReadings.push(...readings);
+    return 0;
+  }),
+}));
+
 const { sweepFortinetLinkState } = await import("../../src/services/fortinetLinkStateService.js");
 
 const FMG = { id: "i-1", type: "fortimanager", name: "CENTRAL-FMG", config: {} };
@@ -102,6 +110,7 @@ beforeEach(() => {
   h.updateCalls.length = 0;
   h.loggedEvents.length = 0;
   h.inventories.clear();
+  h.versionReadings.length = 0;
   h.integrationRows.push(FMG);
 });
 
@@ -305,5 +314,36 @@ describe("controller grouping", () => {
     // The standalone gate IS the one controller, whatever the topology blob
     // does or does not say.
     expect(writtenStatuses()).toEqual({ "sw-1": "down" });
+  });
+});
+
+describe("live firmware readings", () => {
+  it("hands each device's controller-reported os_version to the reconcile", async () => {
+    h.assetRows.push({ ...sw("sw-1", "S1", "up"), osVersion: "S108EP-v7.2.5-build0453" });
+    h.assetRows.push({ ...sw("sw-2", "S2", "up"), osVersion: null });
+    h.inventories.set("GATE-A::switches", new Map([
+      ["S1", { connected: true, status: "Connected", osVersion: "S108EP-v7.4.3-build0800" }],
+      ["S2", { connected: true, status: "Connected" }],
+    ]));
+
+    await sweepFortinetLinkState();
+
+    // S2's row carried no version, so there is nothing to say about it.
+    expect(h.versionReadings).toEqual([{
+      assetId: "sw-1",
+      hostname: "sw-1",
+      currentOsVersion: "S108EP-v7.2.5-build0453",
+      liveVersion: "S108EP-v7.4.3-build0800",
+      reader: "fortilink-sweep",
+    }]);
+  });
+
+  it("reads nothing from an unreadable controller", async () => {
+    h.assetRows.push({ ...sw("sw-1", "S1", "up"), osVersion: "S108EP-v7.2.5-build0453" });
+    h.inventories.set("GATE-A::switches", new Error("FMG unreachable"));
+
+    await sweepFortinetLinkState();
+
+    expect(h.versionReadings).toEqual([]);
   });
 });

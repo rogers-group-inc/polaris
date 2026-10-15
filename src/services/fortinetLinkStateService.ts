@@ -62,6 +62,13 @@
  *     else the five-state machine owns. The value of this column is precisely
  *     that it can DISAGREE with monitorStatus; folding it in would erase the
  *     disagreement.
+ *
+ * ── A second reading off the same rows ─────────────────────────────────────
+ * Each controller row also names the firmware the device runs (`os_version`).
+ * The sweep hands those to `fortinetLiveVersionService`, which keeps
+ * `Asset.osVersion` current between discoveries — so the Firmware card stops
+ * offering an upgrade the device has already taken. No extra controller call;
+ * an in-memory compare per device, DB work only where the firmware moved.
  */
 
 import { prisma } from "../db.js";
@@ -71,6 +78,7 @@ import { isFortiapStatusOnline } from "../utils/fortiapMonitorRow.js";
 import { fetchFortinetControllerInventory } from "./monitoringService.js";
 import { buildFortilinkChangedEvent, logEventsBatch } from "./eventLogService.js";
 import { recordFortilinkState } from "../metrics.js";
+import { reconcileFortinetLiveVersions, type FortinetLiveVersionReading } from "./fortinetLiveVersionService.js";
 
 /** The three values `Asset.fortilinkStatus` can hold. null = never swept. */
 export type FortilinkStatus = "up" | "down" | "unknown";
@@ -100,6 +108,7 @@ interface LinkStateAssetRow {
   fortilinkStatus: string | null;
   fortilinkStatusRaw: string | null;
   discoveredByIntegrationId: string | null;
+  osVersion: string | null;
 }
 
 interface ControllerGroup {
@@ -177,7 +186,7 @@ async function loadControllerGroups(): Promise<ControllerGroup[]> {
     select: {
       id: true, hostname: true, ipAddress: true, assetType: true, serialNumber: true,
       fortinetTopology: true, fortilinkStatus: true, fortilinkStatusRaw: true,
-      discoveredByIntegrationId: true,
+      discoveredByIntegrationId: true, osVersion: true,
     },
   });
 
@@ -227,6 +236,11 @@ export async function sweepFortinetLinkState(): Promise<FortilinkSweepResult> {
   const rawWrites: Array<{ id: string; raw: string | null }> = [];
   const confirmed: string[] = [];
   const events: ReturnType<typeof buildFortilinkChangedEvent>[] = [];
+  // The controller row also carries the firmware each device runs. Collected
+  // here, reconciled after the link writes (fortinetLiveVersionService) — an
+  // in-memory compare per device, DB work only for a device whose firmware
+  // actually moved.
+  const versionReadings: FortinetLiveVersionReading[] = [];
 
   const outcomes = await Promise.allSettled(
     groups.map(async (group) => {
@@ -257,6 +271,15 @@ export async function sweepFortinetLinkState(): Promise<FortilinkSweepResult> {
       // Refusal 2: answered-but-absent is `unknown`, never `down`.
       const next: FortilinkStatus = entry ? normalizeEntry(group.kind, entry) : "unknown";
       const nextRaw = entry ? (entry.status || null) : null;
+      if (entry?.osVersion) {
+        versionReadings.push({
+          assetId: asset.id,
+          hostname: asset.hostname || asset.ipAddress,
+          currentOsVersion: asset.osVersion,
+          liveVersion: entry.osVersion,
+          reader: "fortilink-sweep",
+        });
+      }
       if (asset.fortilinkStatus === next) {
         confirmed.push(asset.id);
         result.unchanged++;
@@ -318,6 +341,14 @@ export async function sweepFortinetLinkState(): Promise<FortilinkSweepResult> {
   await Promise.all(writes);
   if (events.length > 0) {
     await logEventsBatch(events.filter((e): e is NonNullable<typeof e> => e !== undefined));
+  }
+
+  if (versionReadings.length > 0) {
+    try {
+      await reconcileFortinetLiveVersions(versionReadings);
+    } catch (err: any) {
+      logger.debug({ err: err?.message }, "fortinet live version reconcile failed");
+    }
   }
 
   recordFortilinkState(result.controllersRead, result.controllersFailed, result.transitions);

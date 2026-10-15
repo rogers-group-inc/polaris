@@ -933,3 +933,24 @@ describe("projectAssetFromSources — a placeholder serial is not a serial", () 
     expect(projected.serialNumber).toBe("MP2YZAC2");
   });
 });
+
+describe("projectAssetFromSources — fortinet-live (the device's running firmware)", () => {
+  it("beats the discovery copy on osVersion and speaks to nothing else", () => {
+    const { projected, provenance } = projectAssetFromSources([
+      src("fortiswitch", { kind: "fortiswitch", name: "SW-1", model: "S108EP", serial: "S108EPTF1", osVersion: "S108EP-v7.2.5-build0453" }),
+      src("fortinet-live", { osVersion: "S108EP-v7.4.3-build0800", reader: "fortilink-sweep" }),
+    ]);
+    expect(projected.osVersion).toBe("S108EP-v7.4.3-build0800");
+    expect(provenance.osVersion).toBe("fortinet-live");
+    const others = Object.entries(provenance).filter(([f, kind]) => f !== "osVersion" && kind === "fortinet-live");
+    expect(others).toEqual([]);
+  });
+
+  it("stays below an in-guest Polaris Agent", () => {
+    const { projected } = projectAssetFromSources([
+      src("polaris-agent", { osVersion: "7.2.0" }),
+      src("fortinet-live", { osVersion: "7.4.5" }),
+    ]);
+    expect(projected.osVersion).toBe("7.2.0");
+  });
+});

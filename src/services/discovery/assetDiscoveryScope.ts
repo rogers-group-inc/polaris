@@ -98,6 +98,7 @@ export type AssetScopeResolution =
 const UNREFRESHABLE_REASON: Record<string, string> = {
   "polaris-agent": "This asset is reported by the Polaris Agent, which pushes on its own schedule — there is no discovery to re-run",
   "snmp-sysdescr": "This asset's identity comes from its SNMP sysDescr, which refreshes on the next monitor pass rather than through discovery",
+  "fortinet-live": "This reading is the firmware the device reports on the monitor path, which refreshes on the next poll rather than through discovery",
   manual: "This asset was created manually, so no discovery source owns it",
 };
 

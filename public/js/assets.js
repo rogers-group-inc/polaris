@@ -7301,6 +7301,36 @@ function _rerenderFirmwarePanel(a, fw) {
   if (!mount) return;
   mount.innerHTML = assetFirmwarePanelHTML(a, fw);
   _wireFirmwarePanel(a, fw);
+  _scheduleFirmwareRefresh(a, fw);
+}
+
+// While the card is on screen it re-reads its status every 10 minutes, so a
+// device upgraded elsewhere (or one whose record caught up after a flash)
+// stops offering a stale upgrade without a Refresh. One timer for the page:
+// a re-render or another asset's card replaces it, and the tick stops when
+// the card is gone or shows another asset. A hidden tab, a run poll that owns
+// the card, or an unchanged answer just waits another interval rather than
+// redrawing, so an expanded Run history stays open.
+var FW_REFRESH_MS = 10 * 60 * 1000;
+var _fwRefreshTimer = null;
+
+function _scheduleFirmwareRefresh(a, fw) {
+  if (_fwRefreshTimer) clearTimeout(_fwRefreshTimer);
+  _fwRefreshTimer = null;
+  if (!document.getElementById("asset-firmware-panel")) return;
+  var sig = JSON.stringify(fw || null);
+  _fwRefreshTimer = setTimeout(function () {
+    _fwRefreshTimer = null;
+    var panel = document.getElementById("asset-firmware-panel");
+    if (!panel || panel.getAttribute("data-asset-id") !== a.id) return;
+    if (document.hidden || _fwPollKey) { _scheduleFirmwareRefresh(a, fw); return; }
+    api.assets.firmwareUpgrade(a.id).then(function (next) {
+      var panel2 = document.getElementById("asset-firmware-panel");
+      if (!panel2 || panel2.getAttribute("data-asset-id") !== a.id || _fwPollKey) return;
+      if (JSON.stringify(next || null) === sig) { _scheduleFirmwareRefresh(a, next); return; }
+      _rerenderFirmwarePanel(a, next);
+    }).catch(function () { _scheduleFirmwareRefresh(a, fw); });
+  }, FW_REFRESH_MS);
 }
 
 // One poll per (asset, run): the sentinel is the panel itself — the tick

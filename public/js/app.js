@@ -710,6 +710,7 @@ var _assetSourceLabels = {
   "fortiap":            "FortiAP",
   "fortigate-endpoint": "FortiGate / FortiManager (endpoint)",
   "snmp-sysdescr": "Device self-report (SNMP sysDescr)",
+  "fortinet-live":      "Device self-report (FortiOS firmware)",
   "vcenter-vm":         "VMware vCenter (VM)",
   "vcenter-host":       "VMware vCenter (ESXi host)",
   "arc":                "Azure Arc",

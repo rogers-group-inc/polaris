@@ -268,7 +268,7 @@ export async function getUpgradeAvailability(assetId: string): Promise<UpgradeAv
   // has not rewritten osVersion yet — do not re-offer a flash that already
   // happened.
   if (last && last.status === "succeeded" && last.verifiedVersion && last.imageId === primary.id) {
-    return { ...base, state: "pending-discovery", image: primary, reason: `The last run flashed ${primary.versionLabel} and the device confirmed it; the asset record updates on the next discovery.` };
+    return { ...base, state: "pending-discovery", image: primary, reason: `The last run flashed ${primary.versionLabel} and the device confirmed it; the asset record catches up on its next poll (within about a minute for a FortiSwitch or FortiAP), or at the next discovery.` };
   }
   const credential = (await resolveFirmwareCredential(a, { revealSecrets: false })) as EffectiveBinding | null;
   const blockers = healthBlockers(a);

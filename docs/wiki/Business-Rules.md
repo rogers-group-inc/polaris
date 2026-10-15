@@ -1393,10 +1393,16 @@ has not answered by then, the window ends anyway and the device is judged
 normally.
 
 The run records what the device **reported after it came back**; it never
-rewrites the asset's OS/firmware field itself. The next discovery reads the
-device and records the new version — the same path every other firmware
-change takes — and until then the card says *Flashed* rather than offering
-the same image again.
+rewrites the asset's OS/firmware field itself. The field is updated from what
+the device itself reports to monitoring, which is the path any other firmware
+change takes too. A FortiSwitch or FortiAP's version comes from its
+FortiGate's controller table, read every minute. A FortiGate polled over its
+REST API reports its version on every poll. Anything else waits for the next
+discovery. Until the field catches up the card says *Flashed* rather than
+offering the same image again. The device's own report outranks the
+integration's discovered copy for this one field, and it is acted on only
+when the version really changes. The same version written differently
+(`7.4.5` against `v7.4.5`) is not a change.
 
 Starting an upgrade needs **Read-Write on Assets**: whoever may edit an
 asset may upgrade it. The `firmware` key covers the Repository only — Read

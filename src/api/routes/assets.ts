@@ -5618,6 +5618,7 @@ router.get("/:id/sources", requirePermission("assets", "read"), async (req, res,
       // Enrichment, so it sorts under the sources that own the device — but
       // above "manual", since it is a real reading rather than a fallback.
       "snmp-sysdescr": 8,
+      "fortinet-live": 9,
       "manual": 99,
     };
     rows.sort((a, b) => {
