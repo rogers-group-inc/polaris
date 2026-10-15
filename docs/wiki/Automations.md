@@ -186,8 +186,8 @@ The split is the whole idea:
   reminders, acknowledge-note policy and email. While an automation is in a
   group, **its own recipients are not used** for alerts the group governs.
 
-The editor holds a name, an **Active** switch, **One alert per** (**Device** or
-**Subnet**), a **Which devices** filter, the member list, the alert text,
+The editor holds a name, an **Active** switch, **One alert per** (**Device**,
+**Automation**, **Device + automation** or **Subnet**), a **Which devices** filter, the member list, the alert text,
 **Require a note when acknowledging** and **Remind while unhandled**.
 
 - **Members.** Every automation is listed; one that cannot join says why rather
@@ -195,10 +195,10 @@ The editor holds a name, an **Active** switch, **One alert per** (**Device** or
   one that watches something it can keep checking — a metric, a state, or a
   multi-condition device trigger. Event and change automations cannot join:
   they fire on a single moment, so Polaris could never tell when their part in
-  a shared alert had ended. In a **Device** group, a metric or state that is
-  about the whole device (such as `monitorStatus == down`) cannot join either —
-  it already raises one alert per device, so there is nothing to fold; the
-  picker suggests folding by subnet instead. The list is re-checked whenever
+  a shared alert had ended. In a **Device** or **Device + automation** group, a metric or state that
+  is about the whole device (such as `monitorStatus == down`) cannot join
+  either — it already raises one alert per device, so there is nothing to fold;
+  the picker suggests one alert per automation or per subnet instead. The list is re-checked whenever
   you switch **One alert per**.
 - **Which devices.** Narrows where the folding applies, never what a member
   watches. On a device outside the filter, a member alerts on its own exactly
@@ -217,6 +217,30 @@ The editor holds a name, an **Active** switch, **One alert per** (**Device** or
 Adding or removing a member, changing the device filter, switching **One alert
 per**, and turning off or deleting a group all **end the affected live
 alerts**; the next check raises them again under whoever now delivers them.
+
+### One alert per automation, or per device and automation
+
+**One alert per** decides what a single alert stands for:
+
+| Choice | One alert per | Members listed |
+|---|---|---|
+| **Device** | device — everything the group's automations find on it | the components (ports, tunnels…) |
+| **Automation** | automation — every device it trips, together | the devices |
+| **Device + automation** | device, separately for each automation | that automation's components |
+| **Subnet** | network — every device in it, together | the devices |
+
+**Automation** suits a check you want to hear about once however widely it
+fires — *"Device down: 5 devices — sw-01, sw-02, …"*. The alert is named after
+the automation, ends when the **last** device recovers, and (like Subnet) also
+accepts automations about the whole device, such as `monitorStatus == down`.
+
+**Device + automation** keeps different checks apart on the same device — a PoE
+fault and a high temperature on one switch are two alerts — while each
+automation's own components still fold (eight faulted ports are one alert). Use
+it when you want the group's recipients and escalation over several automations
+without merging their alerts.
+
+The groups list marks a group that folds any way but **Device** with a badge.
 
 ### One alert per subnet
 

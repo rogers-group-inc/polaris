@@ -454,6 +454,34 @@ cannot become a member of a per-subnet one in place. `updateGroup` retires the g
 (`system:group-refolded`) and the next tick re-raises them in the new shape — the same rule as
 every other reshape in this section.
 
+### Folding by automation, and by device and automation
+
+Two more folds landed beside subnet the same week (2026-10), because "one alert per device" is
+only one of the shapes an on-call team asks for.
+
+**`automation`** — one alert per member automation, across every device the group governs. The
+alert keys `auto:<ruleId>` (`automationFoldTarget`); its members are devices exactly as in a
+subnet fold (`assetId` on each, host-led labels, `memberMatches` comparing the device), so
+everything said above about identity, the leading device, the missing chart block and the state
+machine applies unchanged. `foldSpansDevices(foldBy)` is the one predicate that says "this fold
+holds several devices" — it is what admits the whole-device triggers (`monitorStatus == down`) to
+both of these folds. The alert names the AUTOMATION as its device (`assetHostname` = the rule's
+name), `{asset}` reads "N devices" (distinct active devices), and the default message is
+"<rule>: N devices — <hosts>" plus the dependency headline. The difference from a subnet fold is
+the unit, not the mechanism: a subnet fold answers "what broke at this site", an automation fold
+"what is this check finding, everywhere".
+
+**`deviceAutomation`** — one alert per device PER automation: one automation's components on a
+device fold together (eight faulted ports are one alert), but two automations on the same device
+stay two alerts. The alert keys `<assetId>/auto:<ruleId>` (`deviceAutomationFoldTarget`); members
+are components, as in a device fold, and nothing carries `assetId`. Eligibility is the DEVICE
+group's: a whole-device trigger would only ever hold one contribution per alert, so it is refused
+with the same reason. It is the shape an automation's own `groupByAsset` checkbox already gives —
+the point of putting it in a group is the group's DELIVERY (one recipient list, one escalation
+chain) over several automations whose alerts should still stay apart.
+
+Changing between any two of the four folds retires the group's live alerts, as above.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.
