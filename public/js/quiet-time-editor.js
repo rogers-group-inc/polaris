@@ -22,6 +22,11 @@
  *                unticking its last kind unticks the severity. Hidden when the
  *                host asks the question itself (the global wizard's Alerts
  *                step renders the same tree through the exported helpers).
+ *   RECIPIENT EXCEPTIONS  a button opening a stacked modal of addresses that
+ *                do not follow the policy (business rule 120): each carries its
+ *                own per-severity tree under the same windows; all unticked =
+ *                the address hears everything live. Shown on both hosts, the
+ *                global wizard included (it hides only the policy's own tree).
  *   SUMMARY      when the summary email goes out (at the end of each period,
  *                or at a time of day), which email channel carries it, and the
  *                recurrence threshold. Shown only while some severity holds
@@ -127,7 +132,7 @@
    * send goes out live. Ticking a severity ticks all four; unticking its last
    * kind unticks the severity.
    */
-  function severityTreeHtml(prefix, held, sevs, scope) {
+  function severityTreeHtml(prefix, held, sevs, scope, bare) {
     sevs = sevs || ALL_SEVERITIES;
     // `scope` (sev → kind → bool) hides the sends the host can never make — an
     // automation with no reminders has no Reminders box. A hidden box still
@@ -154,7 +159,7 @@
         '</div>';
       }).join("") +
     '</div>' +
-    '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">Ticked = held during the quiet period and, for Alerts, reported in the summary email. Untick a box to let that send go out live; untick a severity to let it through entirely — critical usually should. Scripts, API calls and the audit event always run.</p>';
+    (bare ? "" : '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">Ticked = held during the quiet period and, for Alerts, reported in the summary email. Untick a box to let that send go out live; untick a severity to let it through entirely — critical usually should. Scripts, API calls and the audit event always run.</p>');
   }
 
   /** Delegated handlers for the tree; `onChange` fires after every edit. */
@@ -260,6 +265,123 @@
     });
   }
 
+  // ─── Recipient exceptions (business rule 120) ──────────────────────────────
+
+  function recipientsButtonText(list) {
+    var n = (list || []).length;
+    return "Recipient exceptions" + (n ? " (" + n + ")" : "") + "…";
+  }
+
+  /** What one exception means: "hears everything live" / "holds critical: everything". */
+  function describeRecipient(r) {
+    var d = describeHeld({ held: (r && r.held) || {} });
+    return d === "nothing" ? "hears everything live" : "holds " + d;
+  }
+
+  function describeRecipients(list) {
+    list = list || [];
+    if (!list.length) return "None — everyone follows this quiet time.";
+    return list.map(function (r) { return r.address + " (" + describeRecipient(r) + ")"; }).join(" · ");
+  }
+
+  var EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
+  var MAX_RECIPIENTS = 50;
+
+  function recipientRowHtml(prefix, r, sevs) {
+    return '<div class="qte-rx-row" style="border:1px solid var(--color-border);border-radius:6px;padding:8px 10px;margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+        '<input type="email" class="qte-rx-address" placeholder="name@example.com" maxlength="320" value="' + esc((r && r.address) || "") + '" style="flex:1 1 auto" aria-label="Email address">' +
+        '<button type="button" class="qte-rx-remove btn-icon" title="Remove this exception" aria-label="Remove this exception" ' +
+          'style="border:1px solid var(--color-border);border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer;width:26px;height:26px">×</button>' +
+      '</div>' +
+      '<div style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 4px">Held for this address (nothing ticked = it hears every alert live):</div>' +
+      severityTreeHtml(prefix, (r && r.held) || {}, sevs, null, true) +
+    '</div>';
+  }
+
+  /**
+   * The stacked modal (canonical: `buildOverlay` in app.js, z 1300 over the
+   * wizard) that edits `host._quietRecipients`. Save validates every row and
+   * writes the list back; Cancel leaves it untouched.
+   */
+  function openRecipientsModal(host) {
+    if (typeof buildOverlay !== "function") return null;
+    var section = host.querySelector(".qte-recipients");
+    var sevs = ALL_SEVERITIES;
+    try { sevs = JSON.parse(section.getAttribute("data-qte-sevs")) || ALL_SEVERITIES; } catch (_) { /* default */ }
+    var qte = host.classList && host.classList.contains("qte") ? host : host.querySelector(".qte");
+    var prefix = ((qte && qte.getAttribute("data-qte-prefix")) || "qte") + "-rx";
+    var body =
+      '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">These addresses do not follow the quiet time’s own choices. Tick what stays held for each one; an address with nothing ticked hears every alert, reminder and escalation live. Everyone else follows the quiet time. A reminder held for someone is sent to them when the quiet period ends.</p>' +
+      '<div class="qte-rx-list"></div>' +
+      '<button type="button" class="btn btn-secondary btn-sm qte-rx-add">+ Add recipient</button>' +
+      '<p class="qte-rx-problem" role="alert" style="font-size:0.8rem;color:var(--color-warning);margin:8px 0 0"></p>';
+    var footer =
+      '<button type="button" class="btn btn-secondary qte-rx-cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary qte-rx-save">Save</button>';
+    var layer = buildOverlay(1300, "Recipient exceptions", body, footer, null, false);
+    var overlay = layer.overlay;
+    var listEl = overlay.querySelector(".qte-rx-list");
+    var problem = overlay.querySelector(".qte-rx-problem");
+    var close = layer.close;
+    var addRow = function (r) {
+      var wrap = document.createElement("div");
+      wrap.innerHTML = recipientRowHtml(prefix, r, sevs);
+      var row = wrap.firstElementChild;
+      listEl.appendChild(row);
+      wireSeverityTree(row.querySelector(".qte-sevtree"), null);
+      return row;
+    };
+    (host._quietRecipients || []).forEach(addRow);
+    overlay.querySelector(".qte-rx-add").addEventListener("click", function () {
+      if (listEl.querySelectorAll(".qte-rx-row").length >= MAX_RECIPIENTS) {
+        problem.textContent = "At most " + MAX_RECIPIENTS + " recipient exceptions.";
+        return;
+      }
+      var input = addRow(null).querySelector(".qte-rx-address");
+      if (input) input.focus();
+    });
+    listEl.addEventListener("click", function (ev) {
+      var btn = ev.target.closest && ev.target.closest(".qte-rx-remove");
+      if (!btn) return;
+      var row = btn.closest(".qte-rx-row");
+      if (row) row.remove();
+    });
+    overlay.querySelector(".qte-rx-cancel").addEventListener("click", close);
+    overlay.querySelector(".qte-rx-save").addEventListener("click", function () {
+      var got = readRecipientRows(listEl);
+      if (got.error) { problem.textContent = got.error; return; }
+      host._quietRecipients = got.recipients;
+      refreshRecipients(host);
+      close();
+      if (typeof host._qteFire === "function") host._qteFire();
+    });
+    return overlay;
+  }
+
+  /** The modal's rows → `{ recipients }` or `{ error }`. A row left blank is skipped. */
+  function readRecipientRows(listEl) {
+    var out = [], seen = {};
+    var rows = listEl.querySelectorAll(".qte-rx-row");
+    for (var i = 0; i < rows.length; i++) {
+      var input = rows[i].querySelector(".qte-rx-address");
+      var address = String((input && input.value) || "").trim().toLowerCase();
+      if (!address) continue;
+      if (!EMAIL_RE.test(address)) return { error: "“" + address + "” is not an email address." };
+      if (seen[address]) return { error: address + " is listed twice." };
+      seen[address] = true;
+      out.push({ address: address, held: readTree(rows[i].querySelector(".qte-sevtree")) });
+    }
+    return { recipients: out };
+  }
+
+  function refreshRecipients(host) {
+    var btn = host.querySelector(".qte-recipients-btn");
+    var sum = host.querySelector(".qte-recipients-summary");
+    if (btn) btn.textContent = recipientsButtonText(host._quietRecipients);
+    if (sum) sum.textContent = describeRecipients(host._quietRecipients);
+  }
+
   /**
    * @param prefix  id prefix ("awq", "qtw")
    * @param cfg     the stored policy, or null for a new one
@@ -310,6 +432,18 @@
 
       sevHtml +
 
+      // Recipient exceptions (business rule 120). The severities the modal's
+      // trees offer ride on the section, since wire() is not handed `meta`.
+      '<div class="form-group qte-recipients" style="margin-top:0.9rem" data-qte-sevs="' +
+          esc(JSON.stringify(meta.scope ? sevs.filter(function (sv) { return !!meta.scope[sv]; }) : sevs)) + '">' +
+        '<label style="font-weight:600">Recipient exceptions</label>' +
+        '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.4rem">Email addresses that do not follow this quiet time — an on-call phone, a NOC mailbox. Each one gets its own choice of what is held for it, under the same hours. A push recipient is matched by its account’s email.</p>' +
+        '<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">' +
+          '<button type="button" class="btn btn-secondary btn-sm qte-recipients-btn">' + esc(recipientsButtonText(cfg && cfg.recipients)) + '</button>' +
+          '<span class="qte-recipients-summary" style="font-size:0.8rem;color:var(--color-text-secondary)">' + esc(describeRecipients(cfg && cfg.recipients)) + '</span>' +
+        '</div>' +
+      '</div>' +
+
       '<div class="form-group qte-summary" style="margin-top:0.9rem;border-top:1px solid var(--color-border);padding-top:0.75rem"' + (summarises ? "" : " hidden") + '>' +
         '<label style="font-weight:600">The summary email</label>' +
         '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.4rem">Sent to everyone the held alerts would have reached — always by email, even for people who prefer push — listing the alerts still active, each linking to the device in Polaris. No graphs.</p>' +
@@ -357,6 +491,15 @@
   function wire(host, cfg, onChange) {
     var fire = function () { refreshProblem(host); if (typeof onChange === "function") onChange(); };
     stashExtras(host, cfg || null);
+    // The exceptions live on the host, not in its DOM — the modal edits them —
+    // and collect() re-sends them: a stored field with no editor is deleted on
+    // save.
+    host._quietRecipients = ((cfg && cfg.recipients) || []).map(function (r) {
+      return { address: r.address, held: Object.assign({}, r.held || {}) };
+    });
+    host._qteFire = fire;
+    var rxBtn = host.querySelector(".qte-recipients-btn");
+    if (rxBtn) rxBtn.addEventListener("click", function () { openRecipientsModal(host); });
     R().wireScheduleEditor(host.querySelector(".qte-window .rc-schedule"), fire, QUIET_PRESETS);
     // The summary section is only for a quiet time that holds a FIRST alert
     // somewhere — a reminders-and-escalations-only one has nothing to report.
@@ -440,6 +583,7 @@
     });
     if (!windows.length) return { error: "Quiet period: pick the days and hours." };
     out.windows = windows;
+    if (host._quietRecipients && host._quietRecipients.length) out.recipients = host._quietRecipients.slice();
 
     var tree = host.querySelector(".qte-sevtree");
     var summarises = true;
@@ -498,6 +642,8 @@
     bits.push("holds " + describeHeld(cfg));
     if (policySummarises(cfg)) bits.push("summary " + (cfg.summaryAt ? "at " + cfg.summaryAt : "when it ends") + (cfg.summaryAlways === false ? ", only when something was held" : ""));
     if (cfg.recurrenceThreshold) bits.push("recurring > " + cfg.recurrenceThreshold + "× reported");
+    var rx = (cfg.recipients || []).length;
+    if (rx) bits.push(rx + " recipient exception" + (rx === 1 ? "" : "s"));
     return bits.join(" · ");
   }
 
@@ -505,5 +651,6 @@
     html: html, wire: wire, collect: collect, summary: summary,
     severityTreeHtml: severityTreeHtml, wireSeverityTree: wireSeverityTree, collectSeverityTree: collectSeverityTree,
     heldOf: heldOf, describeHeld: describeHeld, anyAlertsHeld: anyAlertsHeld, policySummarises: policySummarises,
+    describeRecipients: describeRecipients, openRecipientsModal: openRecipientsModal,
   };
 })();
