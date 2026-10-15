@@ -68,6 +68,17 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+# node_ok — an installed Node that meets the project floor: 24+, or 22.12+
+# (package.json engines ">=22.12.0"; Prisma's preinstall refuses anything
+# older, so an accepted v22.4 failed `npm ci` halfway through the install —
+# found on a RHEL 9.5 VM, whose DVD carries 22.4). Lockstep with engines.node.
+node_ok() {
+  local v
+  v="$(node -v 2>/dev/null)" || return 1
+  [[ "$v" =~ ^v([0-9]+)\.([0-9]+) ]] || return 1
+  (( BASH_REMATCH[1] >= 24 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12) ))
+}
+
 # ─── Root-owned files on a re-run (business rule 117(k)/(l)) ─────────────────
 #
 # On a fresh install root itself clones the tree moments before using it. On a
@@ -203,7 +214,7 @@ info "  Prometheus IP:     $PROMETHEUS_IP"
 #
 # An existing v22 install is accepted rather than forced up: it satisfies the
 # floor and is supported until ~April 2027. v20 and below are replaced.
-if command -v node &>/dev/null && [[ "$(node -v)" == v24* || "$(node -v)" == v22* ]]; then
+if node_ok; then
   info "Node.js $(node -v) already installed"
 else
   info "Installing Node.js 24..."
@@ -275,7 +286,7 @@ REPO
   # OpenSSL 3.5, which a 9.5 host without newer updates lacks (found on a RHEL
   # 9.5 VM). --nobest then takes the newest stable build this host can run.
   dnf install -y nginx || dnf install -y --nobest nginx
-  nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])' || error "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') is older than 1.30 (HTTP/3) — update the host (dnf upgrade) and re-run"
+  nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])' || error "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') is older than 1.30: every nginx.org 1.30 build for el9 needs OpenSSL 3.5, which comes with RHEL 9.7. Update the host (dnf upgrade, on a registered system) and re-run"
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') installed"
 fi
 

@@ -146,6 +146,17 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+
+# node_ok — an installed Node that meets the project floor: 24+, or 22.12+
+# (package.json engines ">=22.12.0"; Prisma's preinstall refuses anything
+# older, so an accepted v22.4 failed `npm ci` halfway through the install —
+# found on a RHEL 9.5 VM, whose DVD carries 22.4). Lockstep with engines.node.
+node_ok() {
+  local v
+  v="$(node -v 2>/dev/null)" || return 1
+  [[ "$v" =~ ^v([0-9]+)\.([0-9]+) ]] || return 1
+  (( BASH_REMATCH[1] >= 24 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12) ))
+}
 step()  { echo -e "${CYAN}[STEP]${NC}  $*"; }
 
 while [[ $# -gt 0 ]]; do
@@ -379,10 +390,12 @@ prepare_standby_host() {
   warn "LOCKSTEP: this function mirrors the package/user/directory half of"
   warn "deploy/setup-rhel.sh. When that script gains a dependency, add it here."
 
-  if command -v node >/dev/null 2>&1 && [[ "$(node -v)" == v20* || "$(node -v)" == v22* ]]; then
+  if node_ok; then
     info "Node.js $(node -v) already installed"
   else
-    dnf module enable -y nodejs:20 && dnf install -y nodejs npm
+    # Same stream as setup-rhel.sh 1 (the standby must run what the primary runs).
+    dnf module reset -y nodejs && dnf module enable -y nodejs:24 && dnf install -y nodejs npm \
+      || error "could not install Node 24 (no Node 24 module stream in this host's AppStream?) — install Node 24, or 22.12+, and re-run"
     info "Node.js $(node -v) installed"
   fi
 
