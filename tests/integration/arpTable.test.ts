@@ -238,6 +238,27 @@ d("GET /assets/:id/arp-table", () => {
     expect(week.body.range).toBe("7d");
   });
 
+  it("Current shows only the newest read, not every retained row", async () => {
+    await persist([
+      row("FGT-A", "10.0.0.1", "AA:BB:CC:DD:EE:01"),
+      row("FGT-A", "10.0.0.2", "AA:BB:CC:DD:EE:02"),
+      row("FGT-A", "10.0.0.3", "AA:BB:CC:DD:EE:03"),
+    ], ["FGT-A"]);
+    // 10.0.0.2 was last answered by an earlier read, ten minutes ago.
+    await prisma.assetArpEntry.updateMany({
+      where: { assetId: gateA, ipAddress: "10.0.0.2" },
+      data:  { lastSeen: new Date(Date.now() - 10 * 60 * 1000) },
+    });
+
+    const { agent } = await authedAgent(app);
+    const current = await agent.get(`/api/v1/assets/${gateA}/arp-table`);
+    expect(current.body.entries.map((e: any) => e.ipAddress).sort()).toEqual(["10.0.0.1", "10.0.0.3"]);
+    expect(current.body.total).toBe(2);
+
+    const hour = await agent.get(`/api/v1/assets/${gateA}/arp-table?range=1h`);
+    expect(hour.body.entries).toHaveLength(3);
+  });
+
   it("rejects a range it does not offer instead of silently widening", async () => {
     const { agent } = await authedAgent(app);
     const res = await agent.get(`/api/v1/assets/${gateA}/arp-table?range=90d`);

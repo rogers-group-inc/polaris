@@ -1047,9 +1047,11 @@ the system-info pass, and discovery does not fill in for it.
 The gate's layer-3 neighbour cache, grouped interface-first. Headed by the
 cadence · freshness · **Poll** row described above, plus:
 
-- A **range selector** — Current / 1h / 12h / 24h / 7d / 30d. An option past
-  your configured retention is **disabled rather than hidden**, so you can see
-  it exists and is not being kept.
+- A **range selector** — Current / 1h / 12h / 24h / 7d / 30d. **Current** is
+  only what the most recent read found; an entry the gate has since aged out
+  appears under the time ranges, not here. An option past your configured
+  retention is **disabled rather than hidden**, so you can see it exists and is
+  not being kept.
 - A filter over IP / MAC / interface / matched hostname — what brings an
   operator here is a lookup, not a survey.
 - A **disclaimer** that each read is a snapshot of a cache the gate ages out in

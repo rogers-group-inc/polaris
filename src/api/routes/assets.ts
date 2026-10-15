@@ -2971,15 +2971,15 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
 /**
  * GET /assets/:id/arp-table — the FortiGate's layer-3 neighbour cache.
  *
- * Current-state (delete-replaced per discovery cycle), so there is no time
- * window to select. Returns the entries plus per-interface counts and the
- * single timestamp the whole table was collected at — the tab leads with that,
- * because an ARP cache is only meaningful next to its age.
+ * Rows accumulate (upsert bumps lastSeen per read) and age out by retention,
+ * so the range picks a window. Returns the entries plus per-interface counts
+ * and the newest read's timestamp — the tab leads with that, because an ARP
+ * cache is only meaningful next to its age.
  */
 /**
  * The ARP Table tab's range selector. `current` is not a time window — it
- * means "whatever the last poll found", which is the newest lastSeen rather
- * than a fixed span, and is resolved client-side against `collectedAt`.
+ * means "whatever the last read found": the rows whose lastSeen is the
+ * newest read's stamp (within ARP_CURRENT_TOLERANCE_MS), resolved here.
  */
 const ARP_RANGE_SECONDS: Record<string, number | null> = {
   current: null,
@@ -2989,6 +2989,14 @@ const ARP_RANGE_SECONDS: Record<string, number | null> = {
   "7d":    7 * 24 * 60 * 60,
   "30d":   30 * 24 * 60 * 60,
 };
+
+/**
+ * Slack around the newest lastSeen when resolving `current`. A read is stamped
+ * once (upsertArpNeighbors), but rows written before that stamped each
+ * 1000-row chunk separately, milliseconds apart. Kept far below any poll
+ * cadence so the PREVIOUS read never falls inside it.
+ */
+const ARP_CURRENT_TOLERANCE_MS = 5_000;
 
 const ArpTableQuerySchema = z.object({
   range: z.enum(["current", "1h", "12h", "24h", "7d", "30d"]).optional().default("current"),
@@ -3057,7 +3065,19 @@ router.get("/:id/arp-table", requirePermission("assets", "read"), async (req, re
     // promises history that was pruned days ago.
     const retentionDays = await getArpEntryRetentionDays();
     const windowSec = ARP_RANGE_SECONDS[range];
-    const since = windowSec == null ? null : new Date(Date.now() - windowSec * 1000);
+    let since: Date | null = null;
+    if (windowSec != null) {
+      since = new Date(Date.now() - windowSec * 1000);
+    } else {
+      // Current: only what the newest read touched. Without this the view is
+      // every row still inside retention — stale neighbours included.
+      const newest = await prisma.assetArpEntry.aggregate({
+        where: { assetId: id },
+        _max: { lastSeen: true },
+      });
+      const latest = newest._max.lastSeen;
+      if (latest) since = new Date(latest.getTime() - ARP_CURRENT_TOLERANCE_MS);
+    }
 
     const rows = await prisma.assetArpEntry.findMany({
       where: { assetId: id, ...(since ? { lastSeen: { gte: since } } : {}) },

@@ -97,8 +97,11 @@ export async function upsertArpNeighbors(
   if (rows.length === 0) return 0;
 
   let written = 0;
+  // One stamp for the whole read, not one per chunk: the tab's "Current" view
+  // is "the rows the newest read touched", resolved by lastSeen, so a
+  // multi-chunk read must not split across several instants.
+  const now = new Date().toISOString();
   for (const batch of chunkArray(rows, INSERT_CHUNK)) {
-    const now = new Date().toISOString();
     const params: unknown[] = [assetId, now];
     const groups: string[] = [];
     for (const r of batch) {
