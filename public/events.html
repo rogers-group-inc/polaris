@@ -77,7 +77,7 @@
 
       <!-- Folder card (styles.css "Folder CARD"): every tab's panel sits in
            one viewport-tall card the tabs open into. A table panel fills it
-           (page buttons at its foot); the others scroll inside it. -->
+           (its page navigation sits below the card); the others scroll inside it. -->
       <div class="folder-card folder-body">
         <div class="page-tab-panel active" id="ev-tab-log">
         <div class="table-wrapper table-wrapper-sticky">
@@ -100,14 +100,15 @@
           </table>
         </div>
 
-        <div class="pagination folder-card-foot" id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center">
-        </div>
         </div>
 
         <div class="page-tab-panel folder-card-scroll" id="ev-tab-calendar">
           <div id="ops-calendar-host"><div class="empty-state">Loading…</div></div>
         </div>
       </div>
+      <!-- Page navigation sits below the card (Refresh / Clear Filters are on
+           the tab row only). -->
+      <div class="pagination folder-card-nav" id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
     </main>
   </div>
 

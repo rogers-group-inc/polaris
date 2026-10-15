@@ -65,9 +65,10 @@
         only ONE tab's markup is in the DOM at a time.
       -->
       <!-- The mount is the folder card (styles.css "Folder CARD"): the
-           mounted table fills it down to the viewport's foot and its page
-           buttons sit at its foot. -->
+           mounted table fills it down to the page navigation, which ipam.js
+           moves out of the template into #ipam-nav below the card. -->
       <div id="ipam-mount" class="folder-card folder-body"></div>
+      <div id="ipam-nav"></div>
 
       <template id="ipam-tpl-blocks">
         <div data-head-controls style="display:contents">
@@ -95,7 +96,7 @@
             </tbody>
           </table>
         </div>
-        <div id="pagination" class="folder-card-foot" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+        <div id="pagination" class="folder-card-nav" data-card-nav style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       </template>
 
       <template id="ipam-tpl-networks">
@@ -141,7 +142,7 @@
             </tbody>
           </table>
         </div>
-        <div id="pagination" class="folder-card-foot" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+        <div id="pagination" class="folder-card-nav" data-card-nav style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       </template>
     </main>
   </div>

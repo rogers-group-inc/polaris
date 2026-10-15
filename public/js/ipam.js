@@ -98,8 +98,12 @@
     // #pagination-top, whose IDs collide with the incoming template's — empty
     // it with the mount, then move the new template's [data-head-controls]
     // cluster into it before the tab's init() looks them up by id.
+    // The same goes for the page navigation, which sits below the card in
+    // #ipam-nav rather than inside the mount (the card).
     var slot = document.getElementById("ipam-head-controls");
+    var navSlot = document.getElementById("ipam-nav");
     if (slot) slot.innerHTML = "";
+    if (navSlot) navSlot.innerHTML = "";
     mount.innerHTML = "";
     mount.appendChild(tpl.content.cloneNode(true));
     var headControls = mount.querySelector("[data-head-controls]");
@@ -107,6 +111,8 @@
       while (headControls.firstChild) slot.appendChild(headControls.firstChild);
       headControls.remove();
     }
+    var nav = mount.querySelector("[data-card-nav]");
+    if (nav && navSlot) navSlot.appendChild(nav);
     activeTab = name;
     setActiveButton(name);
     updateExportLabels(name);

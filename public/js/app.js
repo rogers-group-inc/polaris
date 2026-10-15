@@ -4889,12 +4889,15 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
       });
     });
 
-    _fillPageControlsRight(container.querySelector('.pg-right'), !hasTop || container === topEl);
+    // When the top row lives in a tab row (topNav off) it already carries the
+    // action buttons, so the bottom row is page navigation only — Refresh /
+    // Clear Filters are not repeated at the foot of the page.
+    _fillPageControlsRight(container.querySelector('.pg-right'), !hasTop || container === topEl, topNav || container === topEl);
   });
   sizeStickyTableWrappers();
 
-  function _fillPageControlsRight(right, withSize) {
-    if (opts && opts.actionButtons && opts.actionButtons.length) {
+  function _fillPageControlsRight(right, withSize, withButtons) {
+    if (withButtons !== false && opts && opts.actionButtons && opts.actionButtons.length) {
       opts.actionButtons.forEach(function (cfg) {
         var btn = document.createElement("button");
         btn.className = "btn btn-secondary btn-sm" + (cfg.className ? " " + cfg.className : "");

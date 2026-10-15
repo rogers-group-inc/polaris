@@ -113,8 +113,7 @@
       </div>
 
       <!-- Folder card (styles.css "Folder CARD"): the table fills it down to
-           the viewport's foot and scrolls inside; the page buttons sit at its
-           foot. -->
+           the page navigation and scrolls inside. -->
       <div class="folder-card folder-body">
       <div class="table-wrapper table-wrapper-sticky" id="assets-table-wrapper">
         <table>
@@ -176,8 +175,10 @@
           </tbody>
         </table>
       </div>
-      <div id="pagination" class="folder-card-foot" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       </div>
+      <!-- Page navigation sits below the card (Refresh / Clear Filters are on
+           the tab row only). -->
+      <div id="pagination" class="folder-card-nav" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
     </main>
   </div>
 

@@ -55,7 +55,7 @@
       <!-- ─── Manage tab ───────────────────────────────────────────────── -->
       <!-- Folder card (styles.css "Folder CARD"): every tab's panel sits in
            one viewport-tall card the tabs open into. A table panel fills it
-           (page buttons at its foot); the others scroll inside it. -->
+           (its page navigation sits below the card); the others scroll inside it. -->
       <div class="folder-card folder-body">
         <div class="page-tab-panel active" id="auto-tab-manage">
           <!-- .table-wrapper-sticky: the header row freezes and scrolling happens
@@ -102,7 +102,6 @@
               </tbody>
             </table>
           </div>
-          <div class="pagination folder-card-foot" id="rules-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
         </div>
 
         <!-- ─── Delivery tab ─────────────────────────────────────────────────
@@ -167,6 +166,9 @@
           <div id="contacts-list"><p class="empty-state">Loading...</p></div>
         </div>
       </div>
+      <!-- Page navigation sits below the card (Refresh / Clear Filters are on
+           the tab row only). -->
+      <div class="pagination folder-card-nav" id="rules-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
     </main>
   </div>
 

@@ -243,7 +243,11 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
     - The strip clips, so it is padded by `--folder-shadow-room` (32px) on top and sides and pulled back by the same negative margins.
   - On a cold permission cache an admin sees only the Credentials tab until reload. This predates folder tabs: `server-settings.js` decides visibility at DOMContentLoaded. Warm the cache with one load before capturing.
 - **Every tabbed list page uses the folder card** (since 2026-10-15): Assets, Automations, Events, IPAM and Integrations as well as Server Settings. Each head row carries `folder-head-card`, so the active tab takes the card's glass and cast, inactive tabs lie flat, and every card ends at the same bottom edge (`.main:has(> .folder-card)` is a `100dvh` flex column).
-  - Table panels: the `.table-wrapper` sits directly in the card (Assets, Path Monitor), in the active `.page-tab-panel` (Automations → Automations, Events → Events), or in the card-classed `#ipam-mount` (IPAM). It drops its own card chrome and fills the leftover height, so `sizeStickyTableWrappers()` skips wrappers inside a `.folder-card`. The bottom page row carries `.folder-card-foot`.
+  - Table panels: the `.table-wrapper` sits directly in the card (Assets, Path Monitor), in the active `.page-tab-panel` (Automations → Automations, Events → Events), or in the card-classed `#ipam-mount` (IPAM). It drops its own card chrome and fills the leftover height, so `sizeStickyTableWrappers()` skips wrappers inside a `.folder-card`. The page navigation row sits BELOW the card (`.folder-card-nav`):
+    - IPAM's is moved from the mounted template into `#ipam-nav` by `mountTab`.
+    - The Automations and Events rows hide while a non-table tab is open, via `.main:has(#…:not(.active))`.
+    - A `-top` row inside a head row implies the bottom row carries no `actionButtons`, so Refresh / Clear Filters appear on the tab row only. Path Monitor has no tab row, so its bottom row keeps them.
+    - The tab row's "Show N" label and select carry `--shadow-lift`.
   - Content panels (Automations → Delivery / Groups / Scripts / Address Book, Events → Calendar) carry `folder-card-scroll` themselves.
   - Path Monitor has no tabs, so it gets the card only. Its edge is unbroken because the gap vars are unset.
   - Cards inside a folder card lie flat: `.settings-card`, `.integration-card`, `.empty-state-card` and `.card` have `box-shadow: none`.

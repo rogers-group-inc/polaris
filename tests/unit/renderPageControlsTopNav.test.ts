@@ -59,20 +59,23 @@ describe("renderPageControls — topNav: false", () => {
     expect(sizes).toEqual([50]);
   });
 
-  it("keeps full page navigation in the bottom row, without a second Show N", () => {
+  it("keeps full page navigation in the bottom row, without a second Show N or the action buttons", () => {
     render({ topNav: false });
     const bottom = document.getElementById("pg")!;
     expect(bottom.querySelector(".pg-prev")).not.toBeNull();
     expect(bottom.querySelector("select")).toBeNull();
+    // Refresh lives in the top (tab) row only — not repeated at the foot.
+    expect(bottom.querySelector(".pg-right")!.children).toHaveLength(0);
     (bottom.querySelector(".pg-next") as HTMLButtonElement).click();
     expect(pages).toEqual([3]);
   });
 });
 
 describe("renderPageControls — default", () => {
-  it("renders page navigation in both rows", () => {
+  it("renders page navigation and the action buttons in both rows", () => {
     render({});
     expect(document.getElementById("pg-top")!.querySelector(".pg-prev")).not.toBeNull();
     expect(document.getElementById("pg")!.querySelector(".pg-prev")).not.toBeNull();
+    expect(document.getElementById("pg")!.querySelector(".pg-right button")!.textContent).toBe("Refresh");
   });
 });
