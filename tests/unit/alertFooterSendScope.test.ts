@@ -59,6 +59,7 @@ vi.mock("../../src/db.js", () => ({
           (r) =>
             r.notificationId === where.notificationId &&
             where.transport.in.includes(r.transport) &&
+            !(where.status?.notIn ?? []).includes(r.status ?? "pending") &&
             matchesMetaFilter(r, where),
         );
       }),
@@ -162,6 +163,18 @@ describe("buildRecipientBlocks scope", () => {
     const { email } = await buildRecipientBlocks("n1", tier);
     expect(email.text).toContain("manager@example.com");
     expect(email.text).not.toContain("noc@example.com");
+  });
+
+  it("does not name a reader a quiet window held the same send from (rule 120)", async () => {
+    db.deliveries.push(
+      { notificationId: "n1", transport: "email", target: "noc@example.com", meta: { dispatch: "d-split", cc: [] } },
+      { notificationId: "n1", transport: "email", target: "oncall@example.com", status: "held", meta: { dispatch: "d-split", cc: [] } },
+      { notificationId: "n1", transport: "email", target: "lead@example.com", status: "deferred", meta: { dispatch: "d-split", cc: [] } },
+    );
+    const { email } = await buildRecipientBlocks("n1", "d-split");
+    expect(email.text).toContain("noc@example.com");
+    expect(email.text).not.toContain("oncall@example.com");
+    expect(email.text).not.toContain("lead@example.com");
   });
 
   it("narrows in the database rather than after the read", async () => {

@@ -83,7 +83,7 @@ import {
   notificationsPageUrl,
 } from "../utils/notificationTemplate.js";
 import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
-import { resolveQuietHold, newQuietHoldMemo, primeQuietHoldAssets } from "./quietTimeHoldService.js";
+import { resolveQuietHold, newQuietHoldMemo, primeQuietHoldAssets, type QuietHold } from "./quietTimeHoldService.js";
 import type { QuietSend } from "../utils/quietTime.js";
 import { logEvent } from "./eventLogService.js";
 import { isSuppressedForNotifications } from "./notificationEngine.js";
@@ -433,9 +433,18 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     // window ticks 480 times.
     let heldSomething = false;
     let quietWindowEnd: Date | null = null;
+    // Recipient exceptions (business rule 120) make a hold SPLIT: the pass is
+    // not skipped but runs with the hold attached, so it goes out live to the
+    // excepted readers and is written held for everyone else, who get the
+    // newest held copy when the window ends (quietTimeSummaryService.
+    // releaseHeldFollowUps). The pass then counts as sent and its clock moves
+    // — the readers who were told were told on time.
+    let splitHold: QuietHold | undefined;
     const quietHeld = async (send: QuietSend): Promise<boolean> => {
+      splitHold = undefined;
       const hold = await resolveQuietHold({ ruleId: n.ruleId, severity: n.severity, metric: n.metric, assetId: n.assetId, send, now, memo: quietMemo });
       if (!hold) return false;
+      if (hold.split) { splitHold = hold; return false; }
       heldSomething = true;
       quietWindowEnd = quietWindowEnd ?? hold.windowEnd;
       return true;
@@ -497,6 +506,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
           ruleName: rule.name,
           ruleEmailComposition: rule.emailComposition,
           escalation: { tier: idx + 1, attempt },
+          ...(splitHold ? { quietHold: splitHold } : {}),
           actor: "system:notification-escalation",
         });
 
@@ -569,6 +579,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
         ruleName: rule.name,
         ruleEmailComposition: rule.emailComposition,
         repeat: { attempt, elapsed, ...(resumedFromQuiet ? { quietResumed: true } : {}) },
+        ...(splitHold ? { quietHold: splitHold } : {}),
         actor: "system:notification-repeat",
       });
       if (executed > 0) {

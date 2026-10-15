@@ -152,7 +152,10 @@ const FAMILIES = [
       { files: ["Dockerfile", "Dockerfile.dev"], label: "FROM node", kind: "pin",
         re: /^FROM node:(\d+)-/gm, pick: (m) => m[1] },
       { files: LINUX_SETUP, label: "node -v accept floor", kind: "accept-range",
-        re: /node -v\)" == v(\d+)\*/g, pick: (m) => m[1] },
+        // node_ok() (2026-10-15) names its floor as `BASH_REMATCH[1] == 22 && …`;
+        // the older `"$(node -v)" == v22*` test is still read for a script that
+        // has not moved over.
+        re: /node -v\)" == v(\d+)\*|BASH_REMATCH\[1\] == (\d+) &&/g, pick: (m) => m[1] ?? m[2] },
       { files: LINUX_SETUP, label: "install source", kind: "pin",
         re: /nodejs:(\d+)\b|node_(\d+)\.x/g, pick: (m) => m[1] ?? m[2] },
       { files: WORKFLOWS, label: "node-version", kind: "pin",

@@ -233,6 +233,47 @@ retried for about ten minutes; a summary that still did not reach everyone
 shows **Resend**, which sends it again to the recipients it missed (and nobody
 else) once the channel is fixed.
 
+### Recipient exceptions
+
+Some people should hear about an alert whatever the hour: an on-call phone,
+a NOC mailbox. **Recipient exceptions** names them ([rule 120](Business-Rules#rule-120)).
+The **Recipient exceptions…** button sits under *What goes quiet* on an
+automation's own quiet time, and on the *When, and what happens* step of a
+global quiet time. It opens a list of email addresses. Each address has its own
+copy of the severity tree:
+
+- **Nothing ticked** (how a new row starts): that address ignores the quiet
+  time and gets every alert, reminder and escalation live.
+- **Some boxes ticked**: those sends are held for that address, during the same
+  hours as everyone else. An exception can hold *more* than the quiet time
+  itself, too — for example a manager who wants critical reminders held
+  overnight while the on-call engineer still gets them.
+
+Everyone not on the list follows the quiet time as usual. A push recipient is
+matched by their account's email address. Slack, Teams and Pushbullet channels
+have no address, so they follow the quiet time.
+
+What each person gets:
+
+- **The first alert.** One email goes out live, To the excepted addresses only,
+  and the alert is held for everyone else. The alert gets a **QUIET** pill and
+  a summary only when somebody was actually held.
+- **Reminders and escalation tiers.** The send goes out live to the excepted
+  addresses, so the alert's reminder clock keeps running. Everyone it was held
+  for gets the **newest** held copy when the quiet period ends. They do not get
+  one email per missed reminder. If the alert recovers or is acknowledged
+  first, the held copies are dropped. The copy they get was written when it was
+  held, so its *active for* time is the age at that moment.
+- **The summary email** goes only to people something was held for, and lists
+  only their own held alerts. An address held for nothing gets no summary and
+  no all-quiet email.
+- **The all-clear** goes to everyone who heard about the alert, live or through
+  a released reminder. It skips the people it was held for who have heard
+  nothing since.
+
+An alert email's *also sent to* footer names only the people that email
+actually reached, never the ones the quiet period held.
+
 ### What quiet time is not
 
 A **maintenance window** is not a quiet time. It stops polling the device, so no

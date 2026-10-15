@@ -298,6 +298,11 @@ if command -v semanage >/dev/null 2>&1; then
   semanage fcontext -a -t httpd_sys_content_t "$NGINX_CERT_DIR(/.*)?" 2>/dev/null || \
     semanage fcontext -m -t httpd_sys_content_t "$NGINX_CERT_DIR(/.*)?" 2>/dev/null || true
   restorecon -Rv "$NGINX_CERT_DIR" || true
+  # udp/443 (QUIC) and nginx → :3000, as setup-rhel.sh: without them nginx
+  # refuses the Polaris server block (bind denied), then 502s.
+  semanage port -a -t http_port_t -p udp 443 2>/dev/null || \
+    semanage port -m -t http_port_t -p udp 443 2>/dev/null || true
+  setsebool -P httpd_can_network_connect 1 || warn "setsebool httpd_can_network_connect failed: nginx will 502"
 else
   warn "semanage not available — skipping SELinux context. If nginx 403s, install policycoreutils-python-utils and re-run."
 fi
@@ -398,7 +403,8 @@ else
   SMOKE_FAILED=1
 fi
 
-if ss -ltnp 2>/dev/null | grep -qE '127\.0\.0\.1:3000\b.*node'; then
+# Address only: `ss -p` names node's listening thread (MainThread), not node.
+if ss -ltn 2>/dev/null | grep -qF '127.0.0.1:3000 '; then
   info "✓ Polaris web bound to 127.0.0.1:3000 (proxy mode)"
 else
   warn "✗ Polaris web not bound to 127.0.0.1:3000 — check journalctl -u polaris-web"

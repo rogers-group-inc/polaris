@@ -20,6 +20,7 @@ import { dbDescribe, dbReachable } from "./_helpers.js";
 import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
 import { runEscalationSweep } from "../../src/services/notificationEscalationService.js";
 import { resolveAssetCadenceSec } from "../../src/services/notificationCadenceService.js";
+import { bumpQuietTimeCache } from "../../src/services/quietTimeHoldService.js";
 
 const d = dbDescribe;
 const HOST = "first-send-hold-test";
@@ -38,6 +39,8 @@ async function wipe(): Promise<void> {
   await prisma.alertGroup.deleteMany({ where: { name: { startsWith: NAME } } });
   await prisma.notificationChannel.deleteMany({ where: { name: { startsWith: NAME } } });
   await prisma.pathCheck.deleteMany({ where: { name: { startsWith: NAME } } });
+  await prisma.quietTimeSchedule.deleteMany({ where: { name: { startsWith: NAME } } });
+  bumpQuietTimeCache();
   await prisma.asset.deleteMany({ where: { hostname: { startsWith: HOST } } });
 }
 
@@ -170,6 +173,29 @@ d("a grouped alert holds its first send one polling interval (business rule 75)"
 
     expect(await prisma.notification.count({ where: { ruleId, cleared: false } })).toBe(0);
     expect(await targetsOf(ruleId)).toEqual([]);
+  });
+
+  it("a released first send inside a quiet window is held by quiet time, like any fire (rules 92 / 120)", async () => {
+    await prisma.quietTimeSchedule.create({
+      data: {
+        name: `${NAME} all day`, enabled: true, scope: { allAssets: true },
+        quiet: { windows: [{ version: 1, kind: "recurring", freq: "daily", startTime: "00:00", endTime: "23:59" }] },
+      } as never,
+    });
+    // Written straight to the table, so clear the 15 s catalog as a real save does.
+    bumpQuietTimeCache();
+    await seedSwitch("a");
+    const { ruleId } = await seedGroupAndMember();
+    await evaluateAllNotificationRules();
+    await expireHolds(ruleId);
+    await evaluateAllNotificationRules();
+
+    const [alert] = await prisma.notification.findMany({ where: { ruleId, cleared: false } });
+    expect(alert!.firstSentAt).toBeTruthy();
+    expect(alert!.quietHeldAt).toBeTruthy();
+    const rows = await prisma.notificationDelivery.findMany({ where: { notificationId: alert!.id }, select: { status: true } });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.status === "held")).toBe(true);
   });
 
   it("escalation leaves a held alert alone", async () => {

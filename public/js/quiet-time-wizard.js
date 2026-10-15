@@ -255,6 +255,7 @@
         ["Kinds of alert", kinds],
         ["When", (q.windows || []).map(function (w) { return window.PolarisRecurrence.summary(w); }).join("; ")],
         ["Holds", QE.describeHeld(policy)],
+        ["Recipient exceptions", QE.describeRecipients(q.recipients)],
       ];
       if (QE.policySummarises(policy)) {
         rows.push(["Summary sent", q.summaryAt ? "at " + q.summaryAt + " (server time)" : "when each quiet period ends"]);

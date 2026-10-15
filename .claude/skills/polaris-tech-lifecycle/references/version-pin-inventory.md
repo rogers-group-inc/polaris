@@ -42,7 +42,7 @@ see *Why two numbers* below.
 | `package.json` | `engines.node` `">=22.12.0"` | floor |
 | `package.json` | `@types/node` `"^22.20.1"` | floor |
 | `src/utils/platformVersions.ts` | `NODE_MINIMUM_MAJOR` | floor |
-| four Linux setup scripts | `[[ "$(node -v)" == v24* \|\| "$(node -v)" == v22* ]]` | floor (22) |
+| four Linux setup scripts + `deploy/ha/setup-rhel-ha.sh` | `node_ok()`: `BASH_REMATCH[1] >= 24 \|\| (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12)` — the `engines` floor to the minor. Was `== v22*` until 2026-10-15: the RHEL 9.5 DVD's Node 22.4 passed it and `npm ci` then died in Prisma's preinstall. `check:versions` reads the `== 22 &&` major | floor (22) |
 | `docs/INSTALL.md` | the **Supported platform versions** table, minimum column | floor |
 | `README.md` | the system-requirements table, minimum column | floor |
 | `Dockerfile` | `FROM node:24-trixie` (builder) and `node:24-trixie-slim` (runtime) | pin |
@@ -202,7 +202,7 @@ only the two most recent majors alive.
 |---|---|---|
 | `agent/go.mod` | `go 1.26.0` directive — patch-qualified since `go get` rewrote it for x/sys; `check:versions` reads `/^go (\d+\.\d+)/`, so either form satisfies it and neither is worth normalising by hand | floor |
 | four Linux setup scripts | `go version \| grep -qE 'go1\.(2[6-9]\|[3-9][0-9])'` | accept-range |
-| `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y go-toolset` then `dnf install -y golang` | pin (module stream) |
+| `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh`, `deploy/ha/setup-rhel-ha.sh` | `dnf install -y go-toolset` (a plain package: RHEL 9 has no `go-toolset` module stream — that was RHEL 8 — and the `dnf module enable` these ran until 2026-10-15 aborted every fresh install), then a warning, never a failure, when what AppStream gave is below 1.26 (1.22.7 on the 9.5 DVD) | accept-range |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `golang-go`, re-verified against the same regex, then `snap install --channel=1.26/stable go` — which is the branch that actually runs, since neither LTS archive reaches 1.26 | accept-range |
 | `Dockerfile` | `FROM golang:1.26-trixie AS gotoolchain`, then `COPY --from=gotoolchain /usr/local/go` + `ENV PATH` in the runtime stage — the family's only checked PIN. Was `golang-go` from `trixie-backports` (trixie itself ships 1.24) until 2026-10-04, when backports published the `golang-go` 1.26 metapackage without the `golang-1.26-go` it depends on and every image build failed at `apt-get install`. The upstream toolchain is self-contained: no apt suite to track, nothing to half-sync. The `-trixie` suffix is cosmetic (only `/usr/local/go` is copied) | pin |
 | `agent/Makefile` | `go-winres@v0.3.3` for the Windows resource files | pin |

@@ -45,7 +45,9 @@ import {
   quietWindowNow,
   quietResumesAt,
   quietHoldsKind,
-  quietHoldsSend,
+  quietHoldsSendAny,
+  quietHoldsSendFor,
+  quietHasRecipientExceptions,
   type QuietSend,
   type QuietTimeConfig,
 } from "../utils/quietTime.js";
@@ -71,6 +73,14 @@ export interface QuietHold {
   config: QuietTimeConfig;
   /** When the whole quiet stretch containing `now` ends (abutting windows chained). */
   windowEnd: Date;
+  /**
+   * The policy carries recipient exceptions (business rule 120), so who is
+   * held is decided per address — `isHeldFor` — and some of the send may go
+   * out live. False = every recipient is held alike, exactly as before.
+   */
+  split: boolean;
+  /** Is this send held for `address` (an email; null = a recipient with none)? */
+  isHeldFor: (address: string | null | undefined) => boolean;
 }
 
 interface GlobalSchedule {
@@ -249,10 +259,16 @@ export interface QuietHoldQuestion {
 }
 
 function holdFromConfig(source: QuietSource, config: QuietTimeConfig, severity: string, now: Date, send: QuietSend): QuietHold | null {
-  if (!quietHoldsSend(config, severity, send)) return null;
+  // Held for ANYONE — the policy, or an exception stricter than it (rule 120).
+  if (!quietHoldsSendAny(config, severity, send)) return null;
   if (!quietWindowNow(config, now)) return null;
   const windowEnd = quietResumesAt(config, now);
-  return windowEnd ? { source, config, windowEnd } : null;
+  if (!windowEnd) return null;
+  const split = quietHasRecipientExceptions(config);
+  return {
+    source, config, windowEnd, split,
+    isHeldFor: split ? (address) => quietHoldsSendFor(config, address, severity, send) : () => true,
+  };
 }
 
 /**

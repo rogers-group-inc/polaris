@@ -731,7 +731,28 @@ export interface ExpandDeliveriesOptions {
    * itself. The drain never picks a held row up (it filters `pending`), so
    * nothing leaves; the summary is what reports the alert.
    */
-  hold?: { kind: "automation" | "global"; id: string; windowEnd: Date };
+  hold?: {
+    kind: "automation" | "global"; id: string; windowEnd: Date;
+    /**
+     * Recipient exceptions (business rule 120): who among the recipients this
+     * hold actually holds, by email address (null = a recipient with no
+     * address — a chat webhook, an account without one). Absent = everyone.
+     * When present the fan-out PARTITIONS: an email To line splits into a
+     * live row for the excepted addresses and a held row for the rest, and a
+     * push row is judged by its account's address.
+     */
+    isHeldFor?: (address: string | null) => boolean;
+  };
+  /**
+   * Recipients this send must NOT reach (business rule 120): the all-clear of
+   * an alert whose fire was held for some recipients and went out live to
+   * others. Those it was held for were never told the alert started, so the
+   * all-clear skips them; the excepted readers who saw the fire get it.
+   * `chat` = drop the chat/webhook rows too.
+   */
+  excludeRecipients?: { addresses: Set<string>; userIds: Set<string>; chat: boolean };
+  /** Filled with how many rows went out live and how many were written held. */
+  stats?: { live: number; held: number };
 }
 
 export async function expandDeliveries(
@@ -739,7 +760,11 @@ export async function expandDeliveries(
   targets: DeliveryTarget[] | undefined,
   opts: ExpandDeliveriesOptions = {},
 ): Promise<number> {
-  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck, dispatchId, hold } = opts;
+  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck, dispatchId, hold, excludeRecipients, stats } = opts;
+  // Who this hold holds — everyone, unless the policy carries recipient
+  // exceptions (business rule 120). No hold = nobody.
+  const heldFor = (address: string | null): boolean => (hold ? (hold.isHeldFor ? hold.isHeldFor(address) : true) : false);
+  const excludedAddress = (a: string): boolean => !!excludeRecipients && excludeRecipients.addresses.has(a.trim().toLowerCase());
   if (!targets || targets.length === 0) return 0;
 
   // Resolve the referenced channels once (type + enabled).
@@ -759,31 +784,38 @@ export async function expandDeliveries(
     transport: string,
     target: string,
     meta?: Prisma.InputJsonValue,
+    held: boolean = !!hold,
   ) => {
     const key = `${channelId}|${transport}|${target}`;
     if (seen.has(key)) return;
     seen.add(key);
+    if (stats) { if (held) stats.held++; else stats.live++; }
     // Fold in whichever provenance is present, and keep meta strictly
     // undefined when none is — so a caller that stamps nothing still writes a
     // byte-identical row. `dispatch` joins the two pass keys here rather than
     // getting its own column: it is read by exactly one consumer (the footer,
     // at drain time) and it has to travel on rows that otherwise carry no meta
     // at all, which is what the `?? undefined` tail below would drop.
-    const provenance = escalation || repeat || dispatchId || hold
+    const heldStamp = held && hold;
+    const provenance = escalation || repeat || dispatchId || heldStamp
       ? ({
           ...(meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {}),
           ...(escalation ? { escalation } : {}),
           ...(repeat ? { repeat } : {}),
           ...(dispatchId ? { dispatch: dispatchId } : {}),
-          ...(hold ? { quietHold: { kind: hold.kind, id: hold.id, windowEnd: hold.windowEnd.toISOString() } } : {}),
+          ...(heldStamp ? { quietHold: { kind: hold.kind, id: hold.id, windowEnd: hold.windowEnd.toISOString() } } : {}),
         } as Prisma.InputJsonValue)
       : meta;
     rows.push({
       notificationId, channelId, transport, target, meta: provenance ?? undefined,
       // A held row is terminal for the drain and the whole point for the
       // summary (business rule 92). Omitted — not `"pending"` — otherwise, so
-      // a caller that never holds writes a byte-identical row.
-      ...(hold ? { status: "held" } : {}),
+      // a caller that never holds writes a byte-identical row. With recipient
+      // exceptions (rule 120) one send can write both kinds, and a held
+      // REMINDER or TIER copy is `deferred` instead: it is not a record for
+      // the summary but a send owed at the window's end, which
+      // quietTimeSummaryService.releaseHeldFollowUps turns back to pending.
+      ...(heldStamp ? { status: escalation || repeat ? "deferred" : "held" } : {}),
     });
   };
 
@@ -918,6 +950,8 @@ export async function expandDeliveries(
       const contactAddrs = t.recipientAssetContacts ? assetContactEmails ?? [] : [];
       const targetUsers = await usersForTarget(t, "email");
       const owners = buildAddressOwnerMap(targetUsers, t.addresses, contactAddrs);
+      // The all-clear skips whoever the fire was held for (rule 120).
+      if (excludeRecipients) for (const a of Array.from(owners.keys())) if (excludedAddress(a)) owners.delete(a);
 
       // No recipients = no send (Graph rejects an empty To). Said out loud, in
       // the two forms the operator has to fix differently: an action that
@@ -950,32 +984,54 @@ export async function expandDeliveries(
         // read it as Polaris mailing each of them separately, which is exactly
         // what a shared To line exists to prevent. A fact about ONE reader is
         // not worth fracturing the audience of the alert.
-        const to = Array.from(owners.keys());
-        const { cc, bcc } = dedupeEmailRecipients(to, ccResolved, bccResolved);
-        // `target` IS THE TO LINE, and only the To line — business rule 60
-        // depends on it. The alert email's `{email.recipients}` footer names
-        // who else was mailed by parsing this string (plus `meta.cc`, never
-        // `meta.bcc`), so folding a Bcc address in here would print a blind
-        // recipient to every reader of the alert. Nothing near that footer
-        // would fail; it would simply start unblinding people. Bcc travels
-        // in `meta.bcc` below, where no reader surfaces it.
-        add(channel.id, "email", to.join(", "), {
-          composed: true,
-          to,
-          cc,
-          bcc,
-          subject: composedBody.subject,
-          text: composedBody.text,
-          ...(composedBody.html ? { html: composedBody.html } : {}),
-          // The all-clear says so to the DRAIN as well, since the blocks it
-          // builds at delivery are drawn per send, not per alert: the
-          // dependency path draws the fire-time chain in each device's state
-          // NOW on the email announcing the alert is over, rather than
-          // re-sending the outage picture under a green header. Same fact
-          // `noAck` already encodes (only the all-clear sets it), under the
-          // name the drain is asking about.
-          ...(noAck ? { allClear: true } : {}),
-        });
+        const allTo = Array.from(owners.keys());
+        const deduped = dedupeEmailRecipients(allTo, ccResolved, bccResolved);
+        const allCc = deduped.cc.filter((a) => !excludedAddress(a));
+        const allBcc = deduped.bcc.filter((a) => !excludedAddress(a));
+        // Recipient exceptions (business rule 120) split the ONE row into at
+        // most two: the addresses this hold holds, written held, and the
+        // excepted ones, sent live. Each side keeps its own To/Cc/Bcc — a
+        // side whose To emptied promotes its Cc, since a send needs a To. Without
+        // exceptions there is one side and the row is exactly what it was.
+        const sides: { held: boolean; to: string[]; cc: string[]; bcc: string[] }[] = [];
+        if (hold?.isHeldFor) {
+          for (const held of [false, true]) {
+            const pick = (xs: string[]) => xs.filter((a) => heldFor(a) === held);
+            let to = pick(allTo);
+            let cc = pick(allCc);
+            const sideBcc = pick(allBcc);
+            if (to.length === 0 && cc.length > 0) { to = cc; cc = []; }
+            if (to.length > 0) sides.push({ held, to, cc, bcc: sideBcc });
+          }
+        } else {
+          sides.push({ held: !!hold, to: allTo, cc: allCc, bcc: allBcc });
+        }
+        for (const { held, to, cc, bcc } of sides) {
+          // `target` IS THE TO LINE, and only the To line — business rule 60
+          // depends on it. The alert email's `{email.recipients}` footer names
+          // who else was mailed by parsing this string (plus `meta.cc`, never
+          // `meta.bcc`), so folding a Bcc address in here would print a blind
+          // recipient to every reader of the alert. Nothing near that footer
+          // would fail; it would simply start unblinding people. Bcc travels
+          // in `meta.bcc` below, where no reader surfaces it.
+          add(channel.id, "email", to.join(", "), {
+            composed: true,
+            to,
+            cc,
+            bcc,
+            subject: composedBody.subject,
+            text: composedBody.text,
+            ...(composedBody.html ? { html: composedBody.html } : {}),
+            // The all-clear says so to the DRAIN as well, since the blocks it
+            // builds at delivery are drawn per send, not per alert: the
+            // dependency path draws the fire-time chain in each device's state
+            // NOW on the email announcing the alert is over, rather than
+            // re-sending the outage picture under a green header. Same fact
+            // `noAck` already encodes (only the all-clear sets it), under the
+            // name the drain is asking about.
+            ...(noAck ? { allClear: true } : {}),
+          }, held);
+        }
       } else {
         // Plain (uncomposed) email is one row per address — the legacy shape,
         // and unreachable from an automation since `composeForNotify` began
@@ -985,11 +1041,12 @@ export async function expandDeliveries(
         // reader is decides nothing here any more, exactly as on the composed
         // path above.
         for (const addr of owners.keys()) {
-          add(channel.id, "email", addr, noAck ? { noAck: true } : undefined);
+          add(channel.id, "email", addr, noAck ? { noAck: true } : undefined, heldFor(addr));
         }
       }
     } else if (transport === "web_push") {
-      const users = await usersForTarget(t, "web_push");
+      const users = (await usersForTarget(t, "web_push")).filter((u) =>
+        !excludeRecipients || (!excludeRecipients.userIds.has(u.id) && !(u.email && excludedAddress(u.email))));
       const subs = users.length
         ? await prisma.pushSubscription.findMany({
             where: { userId: { in: users.map((u) => u.id) } },
@@ -1034,7 +1091,7 @@ export async function expandDeliveries(
           // opens a page saying there is nothing to do.
           ...(noAck || cannotAck.has(s.userId) ? { noAck: true } : {}),
           ...(followUp ? { followUp } : {}),
-        });
+        }, heldFor(byUserEmail.get(s.userId) ?? null));
       }
       if (subs.length === 0) {
         // Push is opt-in per browser, so a perfectly valid-looking automation
@@ -1050,7 +1107,9 @@ export async function expandDeliveries(
       }
     } else {
       // webhook (slack/teams) + pushbullet: one row, fixed destination on the channel.
-      add(channel.id, transport, "");
+      // No address, so it follows the policy (rule 120).
+      if (excludeRecipients?.chat) continue;
+      add(channel.id, transport, "", undefined, heldFor(null));
     }
   }
 

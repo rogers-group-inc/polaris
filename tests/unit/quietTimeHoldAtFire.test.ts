@@ -17,6 +17,8 @@ const db = {
   notif: null as any,
   notifUpdates: [] as any[],
   deliveries: [] as any[],
+  /** Rows already on the alert, for the all-clear's audience read (rule 120). */
+  prior: [] as any[],
   events: [] as any[],
   channels: [] as any[],
   scriptRuns: [] as any[],
@@ -33,6 +35,7 @@ vi.mock("../../src/db.js", () => ({
     notificationDelivery: {
       createMany: vi.fn(async ({ data }: any) => { db.deliveries.push(...data); return { count: data.length }; }),
       create: vi.fn(async ({ data }: any) => { db.deliveries.push(data); return { id: "d", ...data }; }),
+      findMany: vi.fn(async () => db.prior),
     },
     notificationChannel: {
       findMany: vi.fn(async ({ where }: any) => db.channels.filter((c) => where.id.in.includes(c.id))),
@@ -63,6 +66,7 @@ beforeEach(() => {
   db.notif = { ruleId: "r1", assetId: "a1", metric: "cpuPct", severity: "warning", testRun: false, quietHeldAt: null, quietSummarizedAt: null };
   db.notifUpdates.length = 0;
   db.deliveries.length = 0;
+  db.prior = [];
   db.events.length = 0;
   db.scriptRuns.length = 0;
   db.channels = [{ id: "ch-email", type: "smtp", enabled: true }];
@@ -180,5 +184,85 @@ describe("the all-clear of a held alert", () => {
   it("sends the all-clear of an alert that was never held", async () => {
     await executeActions("n1", [NOTIFY], RESOLVED, { ruleId: "r1" });
     expect(db.deliveries).toHaveLength(1);
+  });
+});
+
+describe("recipient exceptions (business rule 120)", () => {
+  const RESOLVED = { ...CTX, severity: "resolved" };
+  const TWO = { ...NOTIFY, addresses: ["oncall@example.com", "noc@example.com"] } as const;
+  // noc@ is excepted: held for nothing. Everyone else follows the policy.
+  const SPLIT = { ...HOLD, split: true, isHeldFor: (a: string | null) => a !== "noc@example.com" };
+
+  it("splits the To line: a live row for the excepted address, a held row for the rest", async () => {
+    holdAnswer.value = SPLIT;
+    await executeActions("n1", [TWO], CTX, { ruleId: "r1", ruleName: "cpu rule" });
+    const email = db.deliveries.filter((d) => d.transport === "email");
+    expect(email).toHaveLength(2);
+    const live = email.find((d) => d.status === undefined);
+    const held = email.find((d) => d.status === "held");
+    expect(live.target).toBe("noc@example.com");
+    expect(live.meta.quietHold).toBeUndefined();
+    expect(held.target).toBe("oncall@example.com");
+    expect(held.meta.quietHold).toEqual({ kind: "global", id: "g1", windowEnd: WINDOW_END.toISOString() });
+    // Somebody was held, so the alert is stamped and the summary owes it.
+    expect(db.notifUpdates).toHaveLength(1);
+    const ev = db.events.find((e) => e.action === "notification.quiet_held");
+    expect(ev.message).toContain("sent live to 1 excepted recipient copy");
+    expect(ev.details).toMatchObject({ liveRows: 1, heldRows: 1 });
+  });
+
+  it("does not stamp an alert that reached every one of its readers live", async () => {
+    holdAnswer.value = SPLIT;
+    await executeActions("n1", [{ ...NOTIFY, addresses: ["noc@example.com"] }], CTX, { ruleId: "r1" });
+    expect(db.deliveries).toHaveLength(1);
+    expect(db.deliveries[0].status).toBeUndefined();
+    expect(db.notifUpdates).toHaveLength(0);
+    expect(db.events.map((e) => e.action)).not.toContain("notification.quiet_held");
+  });
+
+  it("writes a split reminder's held side as DEFERRED — owed at the window's end", async () => {
+    await executeActions("n1", [TWO], CTX, { ruleId: "r1", repeat: { attempt: 2 }, quietHold: SPLIT as any });
+    const email = db.deliveries.filter((d) => d.transport === "email");
+    expect(email.find((d) => d.target === "noc@example.com").status).toBeUndefined();
+    const deferred = email.find((d) => d.target === "oncall@example.com");
+    expect(deferred.status).toBe("deferred");
+    expect(deferred.meta.repeat).toEqual({ attempt: 2 });
+    expect(deferred.meta.quietHold.windowEnd).toBe(WINDOW_END.toISOString());
+    // The sweep's pass never stamps the alert — only a fire does.
+    expect(db.notifUpdates).toHaveLength(0);
+  });
+
+  it("sends the all-clear to the readers who were told, and skips the ones the fire was held for", async () => {
+    db.notif.quietHeldAt = new Date();
+    db.prior = [
+      { transport: "email", target: "oncall@example.com", status: "held", meta: {} },
+      { transport: "email", target: "noc@example.com", status: "sent", meta: {} },
+    ];
+    await executeActions("n1", [TWO], RESOLVED, { ruleId: "r1" });
+    const email = db.deliveries.filter((d) => d.transport === "email");
+    expect(email).toHaveLength(1);
+    expect(email[0].target).toBe("noc@example.com");
+    expect(email[0].status).toBeUndefined();
+    expect(db.events.map((e) => e.action)).not.toContain("notification.quiet_allclear_dropped");
+  });
+
+  it("a reader the fire was held for but a released reminder reached gets the all-clear", async () => {
+    db.notif.quietHeldAt = new Date();
+    db.prior = [
+      { transport: "email", target: "oncall@example.com, noc@example.com", status: "held", meta: {} },
+      { transport: "email", target: "oncall@example.com", status: "sent", meta: { repeat: { attempt: 3 } } },
+    ];
+    await executeActions("n1", [TWO], RESOLVED, { ruleId: "r1" });
+    const email = db.deliveries.filter((d) => d.transport === "email");
+    expect(email).toHaveLength(1);
+    expect(email[0].target).toBe("oncall@example.com");
+  });
+
+  it("still drops the all-clear whole when no row of the alert ever went out", async () => {
+    db.notif.quietHeldAt = new Date();
+    db.prior = [{ transport: "email", target: "oncall@example.com", status: "held", meta: {} }];
+    await executeActions("n1", [TWO], RESOLVED, { ruleId: "r1" });
+    expect(db.deliveries.filter((d) => d.transport === "email")).toHaveLength(0);
+    expect(db.events.map((e) => e.action)).toContain("notification.quiet_allclear_dropped");
   });
 });

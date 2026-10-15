@@ -61,7 +61,8 @@ steps are in the dataset's `go-pin` playbook. Two things belong here:
   moving the version tells every enrolled agent an upgrade is waiting. Rebuild when you mean to.
 - **Check what each platform can actually install before choosing the floor.** Since 2026-09-09
   this family has a floor AND a pin (1.26 → 1.27) for that reason: no Linux path can install
-  1.27 — the RHEL `go-toolset` module carries 1.26.7 and the Go snap's newest channel is
+  1.27 — the RHEL `go-toolset` package carries 1.26.7 on a current minor (1.22.7 on the 9.5
+  DVD, which is why the RHEL installers only warn below 1.26) and the Go snap's newest channel is
   `1.26/stable` — while the Windows scripts pin the newest winget has a manifest for. Neither
   Ubuntu LTS reaches the floor from its own archive at all, so the snap fallback is the branch
   that runs there. A floor above what a platform can provide is an install script that fails.

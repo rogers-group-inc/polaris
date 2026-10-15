@@ -198,6 +198,10 @@ operator's click: a migration must not start withholding first alerts overnight 
 configuration that never asked it to. An old export file carrying `repeat.quiet` imports the
 same way (`normalizeRuleInputCore`). `AlertGroup.repeat.quiet` is simply no longer read.
 
+### Recipient exceptions (rule 120)
+
+Since 2026-10-14 a policy may name addresses that do not follow it. Such a hold is SPLIT: who is held is decided per address, a reminder or tier pass is sent (live to the excepted readers, `deferred` for the rest) and advances its state instead of being skipped, and the held readers get the newest copy when the window ends. Everything in this narrative still describes a policy with no exceptions. See [narrative-120.md](narrative-120.md#rule-120).
+
 ### Where it lives
 
 `utils/quietTime.ts` (the policy shape, `summaryTimeConflicts`, `summarySendAt`),
