@@ -203,12 +203,43 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 
 **Key conventions:**
 - **Pass `onSizeChange(size)`** (the 6th arg) to get the "Show N" selector — it renders into the right cell and calls back with the new size. The selector renders **only in the `-top` row** (not duplicated in the bottom pagination). Optional `opts.pageSizes` overrides `[15,25,50,100]`.
-- **`opts.topNav: false`** renders the `-top` row as the right cluster only (action buttons + Show N, no page navigation, `display:flex`); the bottom row keeps the full navigation. Assets uses it so the top row shares a line with its view tabs: `.table-head-row` (styles.css) wraps `#assets-tabs` (left, `flex:1`) and `#pagination-top` (right), and the table starts directly beneath it with square top corners. The Assets bulk bar sits ABOVE that row. The tabs there are **folder tabs**: the active one is filled with `--folder-fill` (the header's stacked `--rail-glass-bg` density) and has no bottom border, and a `::after` neck with radial-gradient fillets curves its sides into the table's top rule. Inactive tabs are shorter and dimmer and sit behind the rule. The rule cannot be the wrapper's `border-top`: a border can't have a hole, and a translucent tab can't hide one. So the wrapper's top border is transparent, and the rule is a 1px background line with a gap at `--folder-gap-l/-r`. `syncFolderGap()` in [public/js/assets-tabs.js](public/js/assets-tabs.js) measures that gap on render, strip scroll and ResizeObserver. The top corners are square because a transparent `border-top` draws half a corner arc. Pinned by [tests/unit/renderPageControlsTopNav.test.ts](tests/unit/renderPageControlsTopNav.test.ts).
+- **`opts.topNav: false`** renders the `-top` row as the right cluster only (action buttons + Show N, no page navigation, `display:flex`); the bottom row keeps the full navigation. It is implied whenever the `-top` row sits inside a `.table-head-row`. Pinned by [tests/unit/renderPageControlsTopNav.test.ts](tests/unit/renderPageControlsTopNav.test.ts).
+
 - The page (not the helper) owns the size: `onSizeChange` sets the page's `_<scope>PageSize`, resets to page 1, re-fetches/re-renders, and saves prefs. Mirror the `onPageChange` callback shape.
 - **Render the row on ZERO rows too — don't `clearPageControls` a filtered-empty list.** The row carries the page-size selector and `opts.actionButtons`, so clearing it takes **Clear Filters** away in exactly the state that needs it: an operator whose filter matched nothing gets an empty table and no way back but a browser reload. The Assets page routes BOTH branches of its render through one `_renderAssetsPageControls()` ([public/js/assets.js](public/js/assets.js)) instead of calling the helper from the populated branch only. `renderPageControls` handles `total = 0` (one disabled page button, "0 items"); reset the page number to 1 first, since a page-past-the-end clamp that only fires on a non-zero total would otherwise leave "Prev" enabled over an empty result set. `clearPageControls` is for tearing the row down when the table itself goes away, not for an empty result.
 - **Every TableSF list page carries a Clear Filters button.** Assets, IP Blocks, Networks and Automations pass it as an `opts.actionButtons` entry (one `_render<Scope>PageControls(total)` per page, called from both the populated and the filtered-empty branch); Events puts `#btn-clear-filters` beside its static Refresh, and Users — no pagination row — in the page header. The handler is always `sf.clearFilters()` → page 1 → re-render/re-fetch → save prefs: `clearFilters()` only resets the header inputs and fires no `onChange`, so the re-render and the prefs save are the caller's or a reload brings the filters back. Only Assets relabels it "Reset Filter" (a view tab's base filter, above); the other pages have no base to return to.
 - **Do NOT add a standalone `<div class="filter-bar"><label>Show</label><select id="filter-pagesize">` above the table** — that's the old pattern, now removed. If prefs-restore still references `#filter-pagesize`, guard it (`var el = ...; if (el) ...`) since the static element no longer exists.
-- **Bespoke (non-`renderPageControls`) pagination** (offset-based: [public/js/events.js](public/js/events.js)) gets the same look with an HTML grid wrapper instead: `<div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center"><span></span><div id="…-top"></div><div class="filter-bar" style="justify-self:end">…Show + buttons…</div></div>`. The middle cell is the JS-filled pagination container; the right cell holds the static selector. Only valid when that pagination renderer does **not** absolutely-position its own right-side buttons (those need the full-width container, which is why `renderPageControls` owns the grid itself).
+- **Bespoke (non-`renderPageControls`) pagination** (offset-based: [public/js/events.js](public/js/events.js), whose controls now live in the table head row; see the next section) gets the same look with an HTML grid wrapper instead: `<div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center"><span></span><div id="…-top"></div><div class="filter-bar" style="justify-self:end">…Show + buttons…</div></div>`. The middle cell is the JS-filled pagination container; the right cell holds the static selector. Only valid when that pagination renderer does **not** absolutely-position its own right-side buttons (those need the full-width container, which is why `renderPageControls` owns the grid itself).
+
+
+---
+
+## Table head row + folder tabs
+
+**What it is:** the tab strip and the list controls share one row on the table's top edge. The tabs are drawn as **folder tabs**: the active tab opens into the table below it.
+
+**Used by:**
+- **Assets:** view tabs (`.table-tabs`). The bulk bar sits ABOVE the row.
+- **Automations:** section tabs (`.page-tabs`). The `#rules-pagination-top` cluster shows only on the Automations tab.
+- **Events:** section tabs. Its static Show / Refresh / Clear Filters cluster shows only on the Events tab. There is no `#pagination-top`, so events.js renders only the bottom page row.
+- **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.
+
+**Canonical implementation:**
+- Markup: `<div class="table-head-row">` holding the tab strip, then a `.table-head-controls` cluster.
+- The table under it carries **`.folder-body`**.
+- CSS: "Table head row" block in [public/css/styles.css](public/css/styles.css).
+- JS: `wireFolderTabs()` / `syncFolderTabs()` in [public/js/app.js](public/js/app.js). They auto-wire every head row on load, and a MutationObserver re-syncs on any tab switch, re-render, rename or show/hide, so no page script calls them.
+
+**Key conventions:**
+- **The rule is the head row's own bottom line**, drawn as a 1px background with a gap at `--folder-gap-l/-r` under the active tab.
+  - A border can't have a hole, and a translucent tab can't hide one painted over it.
+  - `.folder-body` gives up its top border: transparent, fill clipped to the padding box, square top corners. A transparent `border-top` beside a radius draws half a corner arc.
+  - The head row's `margin-bottom: -1px` puts the rule on that empty border row.
+- **The active tab is filled with `--folder-fill`**: the header's stacked `--rail-glass-bg` density, 51% (keep it in step with the 30% token). It has no bottom border, and a `::after` neck with radial-gradient fillets curves its sides into the rule. The accent sits on its top edge.
+- **Inactive tabs are shorter and dimmer and sit behind the rule.**
+- **`data-head-for="<data-tab>"` on a control cluster** shows it only while that tab is active. It works by toggling `.head-off` (`!important`, since renderPageControls stamps an inline display).
+- **A panel with no `.folder-body`** gets top padding via `:has()`. That padding is on the panel, not a margin on its first child: TableSF inserts a zero-height `.sf-col-gear-anchor` as the first child, and an inline-margined `<p>` would beat a stylesheet margin.
+- **`syncFolderTabs` writes the vars only when they change.** The observer watches the row's own `style` attribute, so an unconditional write loops forever.
 
 ---
 

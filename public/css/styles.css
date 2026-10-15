@@ -2409,20 +2409,24 @@ html[data-page-top-curtain]::after {
   scrollbar-width: thin;
 }
 .table-tabs:empty { display: none; }
-/* Table head row (Assets): the view tabs on the table's top-left edge and the
-   list controls (Refresh / Clear Filters / Show N — #pagination-top with
-   topNav:false) on the same line to the right.
+/* Table head row (Assets view tabs; Automations / Events / IPAM section tabs):
+   the tab strip on the table's top-left edge and the list controls (Refresh /
+   Clear Filters / Show N — a renderPageControls -top row, which drops its page
+   navigation inside a head row) on the same line to the right. A control
+   cluster carrying data-head-for="<tab>" shows only while that tab is active.
 
    The tabs are FOLDER tabs. The active one is the table's own surface rising
-   out of its top edge: same tint (--rail-glass-bg), no bottom border, and a
-   neck (::after) whose concave fillets curve its side borders out into the
-   table's top rule. Inactive tabs are shorter, dimmer and sit BEHIND that rule.
-   The rule can't be the wrapper's border-top — a border can't have a hole, and
-   the glass tint can't hide one painted over it — so the wrapper's top border
-   is transparent and the rule is a 1px background line with a gap at
-   --folder-gap-l..--folder-gap-r, which syncFolderGap() in assets-tabs.js
-   measures from the active tab. Top corners are square: a transparent
-   border-top would draw half a corner arc. */
+   out of its top edge: the header's tint, no bottom border, and a neck
+   (::after) whose concave fillets curve its side borders out into the rule.
+   Inactive tabs are shorter, dimmer and sit BEHIND that rule. The rule is the
+   head row's own bottom line, drawn as a 1px background with a gap at
+   --folder-gap-l..--folder-gap-r (wireFolderTabs() in app.js measures it from
+   the active tab): a border can't have a hole, and the glass tint can't hide
+   one painted over it. The table under the row is marked .folder-body, which
+   hands its top border to that rule (transparent, square corners — a
+   transparent border-top would draw half a corner arc). A panel with no
+   folder body (Automations → Delivery, Events → Calendar) just sits under the
+   rule. */
 .table-head-row {
   --folder-r: 8px;
   /* The tab opens into the table HEADER, which stacks --rail-glass-bg twice
@@ -2432,35 +2436,63 @@ html[data-page-top-curtain]::after {
   display: flex;
   align-items: flex-end;
   gap: 12px;
-  /* The strip's 1px bottom padding overlaps the wrapper's top border row, so
-     the neck can paint into the gap in the rule. */
+  /* The bottom row overlaps the folder body's (transparent) top border row,
+     so the rule and the neck both land exactly on the table's top edge. */
   margin-bottom: -1px;
+  background:
+    linear-gradient(to right,
+      var(--color-border) var(--folder-gap-l, 0px),
+      transparent var(--folder-gap-l, 0px),
+      transparent var(--folder-gap-r, 0px),
+      var(--color-border) var(--folder-gap-r, 0px))
+      left bottom / 100% 1px no-repeat;
 }
-.table-head-row .table-tabs {
+.table-head-row > :is(.table-tabs, .page-tabs) {
   flex: 1 1 auto;
   min-width: 0;
   border-bottom: none;
   margin-bottom: 0;
+  gap: 4px;
+  align-items: flex-end;
   /* Left padding = the fillet radius, so the first tab's left fillet lands on
      the table's left edge rather than being clipped by the scrolling strip. */
   padding: 6px 6px 1px var(--folder-r);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 .table-head-row .table-tabs-list { gap: 4px; }
 .table-head-row .table-head-controls {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   padding-bottom: 7px;
 }
-.table-head-row .table-tab {
+/* !important: renderPageControls stamps an inline display on its -top row. */
+.table-head-row .head-off { display: none !important; }
+/* Panels with no folder body start a little below the rule rather than on it.
+   Padding on the panel, not a margin on its first child: TableSF inserts a
+   zero-height .sf-col-gear-anchor ahead of a table, and its first child's
+   inline margins (Delivery's intro <p>) would beat a stylesheet margin. */
+.table-head-row ~ .page-tab-panel:not(:has(> .folder-body)) { padding-top: 1.25rem; }
+.table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab) {
   position: relative;
-  padding: 0.35rem 0.7rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.84rem;
   background: color-mix(in srgb, var(--color-bg-tertiary) 14%, transparent);
   border: 1px solid var(--color-border);
   border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   box-shadow: none;
   opacity: 0.85;
 }
-.table-head-row .table-tab:hover { opacity: 1; background: var(--rail-glass-bg); }
-.table-head-row .table-tab.active {
+.table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab):hover { opacity: 1; background: var(--rail-glass-bg); }
+.table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab).active {
   z-index: 2;
   opacity: 1;
   padding-top: 0.45rem;
@@ -2474,7 +2506,7 @@ html[data-page-top-curtain]::after {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-.table-head-row .table-tab.active::after {
+.table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab).active::after {
   content: "";
   position: absolute;
   top: 100%;
@@ -2499,20 +2531,13 @@ html[data-page-top-curtain]::after {
     linear-gradient(var(--folder-fill), var(--folder-fill))
       center top / calc(100% - 2 * (var(--folder-r) + 1px)) 100% no-repeat;
 }
-.table-head-row + .table-wrapper {
+/* Fill clipped to the padding box so the top border row stays empty: the head
+   row's rule (and, in the gap, the neck) is what shows there. */
+.table-wrapper.folder-body {
   border-top-color: transparent;
   border-top-left-radius: 0;
   border-top-right-radius: 0;
-  /* Fill clipped to the padding box so the top border row is empty in the gap
-     (the neck paints it); the rule is the first layer, in the border row. */
-  background:
-    linear-gradient(to right,
-      var(--color-border) var(--folder-gap-l, 0px),
-      transparent var(--folder-gap-l, 0px),
-      transparent var(--folder-gap-r, 0px),
-      var(--color-border) var(--folder-gap-r, 0px))
-      0 0 / 100% 1px no-repeat border-box,
-    var(--rail-glass-bg) padding-box;
+  background-clip: padding-box;
 }
 .table-tabs-list { display: flex; align-items: flex-end; gap: 2px; }
 .table-tab {

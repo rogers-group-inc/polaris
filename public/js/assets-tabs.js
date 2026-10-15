@@ -352,35 +352,6 @@
             : "") +
         "</div>";
     }).join("");
-    syncFolderGap();
-  }
-
-  // Folder-tab join (.table-head-row in styles.css): the table wrapper draws
-  // its top rule as a background line with a GAP under the active tab — the
-  // tab's neck (.table-tab.active::after) fills that gap with the table's own
-  // tint, so tab and table read as one surface. The gap is the active tab's
-  // span plus the neck's fillet radius on each side, in px from the wrapper's
-  // left edge. Re-run on render, strip scroll and any resize; with no active
-  // tab (or no head row) the vars are cleared and the rule is unbroken.
-  function syncFolderGap() {
-    var wrapper = document.getElementById("assets-table-wrapper");
-    if (!wrapper) return;
-    var tab = document.querySelector("#assets-tabs-list .table-tab.active");
-    if (!tab || !tab.closest(".table-head-row")) {
-      wrapper.style.removeProperty("--folder-gap-l");
-      wrapper.style.removeProperty("--folder-gap-r");
-      return;
-    }
-    var r = parseFloat(getComputedStyle(tab).getPropertyValue("--folder-r")) || 0;
-    var w = wrapper.getBoundingClientRect();
-    var t = tab.getBoundingClientRect();
-    // Clamped to the wrapper: a tab scrolled partly out of the strip must not
-    // open the rule past the table's own edges.
-    var l = Math.max(0, t.left - w.left - r);
-    var rt = Math.min(w.width, t.right - w.left + r);
-    if (rt <= l) { l = 0; rt = 0; }
-    wrapper.style.setProperty("--folder-gap-l", l + "px");
-    wrapper.style.setProperty("--folder-gap-r", rt + "px");
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────────
@@ -766,17 +737,6 @@
 
     var list = document.getElementById("assets-tabs-list");
     if (!list) return;
-
-    // Keep the folder join under the active tab as the strip scrolls, a tab
-    // is renamed (the inline input resizes it) or the page reflows.
-    strip.addEventListener("scroll", syncFolderGap, { passive: true });
-    window.addEventListener("resize", syncFolderGap);
-    if (typeof ResizeObserver === "function") {
-      var ro = new ResizeObserver(syncFolderGap);
-      ro.observe(list);
-      var wrapper = document.getElementById("assets-table-wrapper");
-      if (wrapper) ro.observe(wrapper);
-    }
 
     list.addEventListener("click", function (e) {
       var close = e.target.closest("[data-tab-close]");

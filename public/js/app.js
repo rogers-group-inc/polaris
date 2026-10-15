@@ -4842,9 +4842,10 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
   var hasTop = !!topEl; // render the size selector only once (top row when present)
   // opts.topNav === false: the top row carries only the right cluster (action
   // buttons + "Show N") and no page navigation — the page buttons stay in the
-  // bottom row. Assets uses it so the top row can share a line with its view
-  // tabs (.table-head-row).
-  var topNav = !(opts && opts.topNav === false);
+  // bottom row. Implied when the -top row sits in a .table-head-row, where it
+  // shares a line with the tab strip (Assets, Automations, IPAM).
+  var topNav = !(opts && opts.topNav === false) &&
+    !(topEl && topEl.closest && topEl.closest(".table-head-row"));
 
   containers.forEach(function (container) {
     if (container === topEl && !topNav) {
@@ -4920,6 +4921,69 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
     }
   }
 }
+
+// ─── Folder tabs (.table-head-row) ───────────────────────────────────────────
+// The head row draws the table's top rule as a background line with a gap
+// under the active tab, which the tab's neck fills (styles.css, "Table head
+// row"). This measures that gap — the active tab's span plus the fillet radius
+// each side, in px from the row's left edge — and shows only the control
+// clusters whose data-head-for names the active tab's data-tab. Wired once per
+// row; a MutationObserver re-runs it on any tab switch, re-render, rename or
+// show/hide, so no page script has to call it.
+function syncFolderTabs(row) {
+  var tab = null;
+  row.querySelectorAll(".table-tab.active, .page-tab.active").forEach(function (t) {
+    if (!tab && t.getClientRects().length) tab = t;
+  });
+  var l = "", r = "";
+  if (tab) {
+    var fr = parseFloat(getComputedStyle(row).getPropertyValue("--folder-r")) || 0;
+    var rr = row.getBoundingClientRect();
+    var tr = tab.getBoundingClientRect();
+    // Clamped to the row: a tab scrolled partly out of the strip must not
+    // open the rule past the table's own edges.
+    var lo = Math.max(0, tr.left - rr.left - fr);
+    var hi = Math.min(rr.width, tr.right - rr.left + fr);
+    if (hi > lo) { l = lo + "px"; r = hi + "px"; }
+  }
+  // Write only on change: the observer below watches this row's attributes,
+  // and an unconditional write would re-trigger it forever.
+  if (row.style.getPropertyValue("--folder-gap-l") !== l) {
+    if (l) row.style.setProperty("--folder-gap-l", l); else row.style.removeProperty("--folder-gap-l");
+  }
+  if (row.style.getPropertyValue("--folder-gap-r") !== r) {
+    if (r) row.style.setProperty("--folder-gap-r", r); else row.style.removeProperty("--folder-gap-r");
+  }
+  var activeName = tab ? tab.getAttribute("data-tab") : null;
+  row.querySelectorAll("[data-head-for]").forEach(function (el) {
+    el.classList.toggle("head-off", el.getAttribute("data-head-for") !== activeName);
+  });
+}
+
+function wireFolderTabs() {
+  document.querySelectorAll(".table-head-row").forEach(function (row) {
+    if (row.__polarisFolderWired) return;
+    row.__polarisFolderWired = true;
+    var sync = function () { syncFolderTabs(row); };
+    var strip = row.querySelector(".table-tabs, .page-tabs");
+    if (strip) strip.addEventListener("scroll", sync, { passive: true });
+    window.addEventListener("resize", sync);
+    if (typeof ResizeObserver === "function") {
+      var ro = new ResizeObserver(sync);
+      ro.observe(row);
+      if (strip) ro.observe(strip);
+    }
+    if (typeof MutationObserver === "function") {
+      new MutationObserver(sync).observe(row, {
+        subtree: true, childList: true, attributes: true, attributeFilter: ["class", "style"],
+      });
+    }
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(sync);
+    sync();
+  });
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wireFolderTabs);
+else wireFolderTabs();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

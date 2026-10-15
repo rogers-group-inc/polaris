@@ -94,8 +94,19 @@
     var mount = document.getElementById("ipam-mount");
     var tpl = document.getElementById("ipam-tpl-" + name);
     if (!mount || !tpl) return;
+    // The head row's control slot holds the previous tab's buttons and
+    // #pagination-top, whose IDs collide with the incoming template's — empty
+    // it with the mount, then move the new template's [data-head-controls]
+    // cluster into it before the tab's init() looks them up by id.
+    var slot = document.getElementById("ipam-head-controls");
+    if (slot) slot.innerHTML = "";
     mount.innerHTML = "";
     mount.appendChild(tpl.content.cloneNode(true));
+    var headControls = mount.querySelector("[data-head-controls]");
+    if (headControls && slot) {
+      while (headControls.firstChild) slot.appendChild(headControls.firstChild);
+      headControls.remove();
+    }
     activeTab = name;
     setActiveButton(name);
     updateExportLabels(name);

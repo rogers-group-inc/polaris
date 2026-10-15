@@ -35,24 +35,29 @@
         </div>
       </div>
 
-      <div class="page-tabs page-tabs-glass" id="auto-tabs">
-        <button type="button" class="page-tab active" data-tab="manage" id="auto-tab-manage-btn" style="display:none">Automations</button>
-        <button type="button" class="page-tab" data-tab="delivery" id="auto-tab-delivery-btn" style="display:none">Delivery</button>
-        <button type="button" class="page-tab" data-tab="groups" id="auto-tab-groups-btn" style="display:none">Alert Groups</button>
-        <button type="button" class="page-tab" data-tab="scripts" id="auto-tab-scripts-btn" style="display:none">Scripts</button>
-        <button type="button" class="page-tab" data-tab="contacts" id="auto-tab-contacts-btn" style="display:none">Address Book</button>
+      <!-- Table head row (styles.css): the section tabs as folder tabs on the
+           table's top edge, and the Automations list controls on the same line.
+           renderPageControls fills #rules-pagination-top (Refresh / Clear
+           Filters / Show N, no page buttons inside a head row) and
+           #rules-pagination below the table; data-head-for shows the cluster
+           only while the Automations tab is active. -->
+      <div class="table-head-row">
+        <div class="page-tabs page-tabs-glass" id="auto-tabs">
+          <button type="button" class="page-tab active" data-tab="manage" id="auto-tab-manage-btn" style="display:none">Automations</button>
+          <button type="button" class="page-tab" data-tab="delivery" id="auto-tab-delivery-btn" style="display:none">Delivery</button>
+          <button type="button" class="page-tab" data-tab="groups" id="auto-tab-groups-btn" style="display:none">Alert Groups</button>
+          <button type="button" class="page-tab" data-tab="scripts" id="auto-tab-scripts-btn" style="display:none">Scripts</button>
+          <button type="button" class="page-tab" data-tab="contacts" id="auto-tab-contacts-btn" style="display:none">Address Book</button>
+        </div>
+        <div id="rules-pagination-top" class="table-head-controls" data-head-for="manage"></div>
       </div>
 
       <!-- ─── Manage tab ───────────────────────────────────────────────── -->
       <div class="page-tab-panel active" id="auto-tab-manage">
-        <!-- Paginated list controls row (TEMPLATES.md). renderPageControls
-             fills both #rules-pagination-top and #rules-pagination; the "Show N"
-             selector renders in the -top row only. -->
-        <div id="rules-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
         <!-- .table-wrapper-sticky: the header row freezes and scrolling happens
              INSIDE the wrapper. sizeStickyTableWrappers() in app.js height-bounds
              it to the viewport and is already hooked into renderPageControls. -->
-        <div class="table-wrapper table-wrapper-sticky">
+        <div class="table-wrapper table-wrapper-sticky folder-body">
           <table>
             <thead>
               <tr>
