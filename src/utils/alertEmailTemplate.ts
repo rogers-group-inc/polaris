@@ -128,6 +128,10 @@ export const DEFAULT_ALERT_TEXT = [
   // the HTML body draws it). Renders away, blank line and all, on every other alert.
   "{dependency.path}",
   "",
+  // The route a Path Monitor alert's check took, hop by hop (alertPathGraphService;
+  // the HTML body draws it). Renders away on every other alert.
+  "{path.graph}",
+  "",
   // What was on the port, when the alert is about ONE port. Renders away for
   // every other alert — and for a port that advertised no neighbour — so it
   // costs a non-interface alert nothing. Above the charts because on an
@@ -353,6 +357,12 @@ export const DEFAULT_ALERT_HTML = [
   // not dependency-down. Under the facts, because the Upstream / Root cause
   // rows name the two ends and this shows what lies between and where.
   "{dependency.path}",
+  // The traceroute path graph on a Path Monitor alert — the Paths tab's view,
+  // one image per path the alert names (up to four on a grouped alert). A
+  // complete <tr> with its own heading, or nothing: filled at DELIVERY
+  // (alertPathGraphService). The device charts below never render on a path
+  // alert — the host is not what failed — so this is the email's picture.
+  "{path.graph}",
   // The LLDP neighbours on the interface this alert is about — a complete <tr>
   // with its own heading, or nothing at all. It is filled at DELIVERY time
   // (alertInterfaceService, like the charts) and is the substance of an

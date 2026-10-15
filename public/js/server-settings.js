@@ -2112,7 +2112,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
       '<div class="db-info-grid">' +
         dbInfoRow("CPU cores", host.cpuCount != null ? host.cpuCount : "—") +
         dbInfoRow("RAM (total)", _capacityFormatBytes(host.totalMemoryBytes)) +
-        dbInfoRow("RAM (free)", _capacityFormatBytes(host.freeMemoryBytes)) +
+        dbInfoRow("RAM (available)", _capacityFormatBytes(host.freeMemoryBytes)) +
         (host.loadAvg ? dbInfoRow("Load avg (1/5/15m)", host.loadAvg.map(function (n) { return n.toFixed(2); }).join(" / ")) : "") +
         dbInfoRow("DB co-located", host.dbColocated ? "Yes" : "No (remote)") +
       '</div>' +
@@ -6852,7 +6852,7 @@ function _tagValueOptions(schema) {
       case "ssids":          return plain(o.ssids);
       case "tags":           return plain(o.tags);
       case "subnets":
-        return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
+        return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr, name: sn.name }; });
       case "ipBlocks":
         return (o.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
       default: return [];

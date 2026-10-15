@@ -63,6 +63,7 @@ import {
   type ScopeConditionGroup,
 } from "./notificationTypes.js";
 import { resolveDeviceFilterAssetIds } from "./deviceFilterService.js";
+import { decorateSubnetNameHits } from "./scopeRelationIndex.js";
 import { criteriaToCondition } from "../utils/criteriaToCondition.js";
 import { listRecipientUsers } from "./notificationRecipientService.js";
 import { logEvent } from "./eventLogService.js";
@@ -874,6 +875,8 @@ export async function resolveContactsForAsset(assetId: string): Promise<ContactR
     },
   });
   if (!asset) return byPin;
+  // Subnet-NAME leaves read the registry; a no-op (no query) without one.
+  await decorateSubnetNameHits([asset as ScopeConditionAsset & { id: string }], filtered.map((f) => f.condition));
 
   // Only the LEGACY predicate needs the inet round-trip — it defers containment
   // to the caller. The tree does its own CIDR math in memory (ipInCidr), so a

@@ -37,9 +37,13 @@
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { compileWildcard, type PatternMatcher } from "../utils/wildcard.js";
+import { createTtlCache } from "../utils/ttlCache.js";
+import { buildCidrMatcher } from "../utils/cidr.js";
 import {
   RELATION_CONDITION_FIELDS,
   relationLeafKey,
+  isSubnetNameLeaf,
+  subnetNameLeafKey,
   positiveStringOp,
   type ScopeConditionGroup,
   type ScopeConditionRule,
@@ -48,6 +52,10 @@ import {
 /** The row shape decoration needs: an id to key on, and somewhere to stamp. */
 export interface RelationDecoratable {
   id: string;
+  /** Read by the subnet-NAME leaves. Every fleet loader already selects it
+   *  (the `subnet` CIDR test reads it too); a row without the key has it
+   *  fetched, so a narrower select still answers correctly. */
+  ipAddress?: string | null;
   relationLeafHits?: ReadonlyMap<string, boolean>;
 }
 
@@ -166,6 +174,7 @@ export async function decorateRelationLeafHits(
   trees: readonly MaybeTree[],
 ): Promise<void> {
   if (rows.length === 0) return;
+  await decorateSubnetNameHits(rows, trees);
   const leaves = relationLeaves(trees);
   if (leaves.size === 0) return;
 
@@ -181,4 +190,82 @@ export async function decorateRelationLeafHits(
     for (const [key, ids] of resolved) map.set(key, ids.has(row.id));
     row.relationLeafHits = map;
   }
+}
+
+// ─── Subnet-NAME leaves ───────────────────────────────────────────────────────
+//
+// `subnet is in subnet named "Plant-*"` asks the subnet REGISTRY, which the
+// pure evaluator never sees. It rides the same stamp as the relation leaves:
+// the matching subnets' CIDRs are compiled once per leaf and each row's
+// address is tested against them here, so the evaluator only reads a boolean.
+//
+// The registry read is cached for a few seconds. The engine resolves every
+// rule's scope each 60s tick and the down-detection index rebuilds on its own
+// clock; a few hundred rows read once per burst rather than once per rule is
+// the difference, and a subnet renamed a few seconds ago reaching rules on the
+// next tick instead of this one is not.
+
+const SUBNET_REGISTRY_TTL_MS = 10_000;
+const subnetRegistry = createTtlCache<{ name: string; cidr: string }[]>({ ttlMs: SUBNET_REGISTRY_TTL_MS, maxEntries: 1 });
+
+function subnetNameLeaves(trees: readonly MaybeTree[]): Map<string, ScopeConditionRule> {
+  const out = new Map<string, ScopeConditionRule>();
+  const walk = (g: ScopeConditionGroup): void => {
+    for (const c of g.children) {
+      if ("op" in c) walk(c as ScopeConditionGroup);
+      else if (isSubnetNameLeaf(c as ScopeConditionRule)) {
+        const rule = c as ScopeConditionRule;
+        const key = subnetNameLeafKey(rule);
+        if (!out.has(key)) out.set(key, rule);
+      }
+    }
+  };
+  for (const t of trees) if (t) walk(t);
+  return out;
+}
+
+/**
+ * Stamp the subnet-NAME leaves of `trees` onto `rows`. A no-op with no query
+ * when no tree has one. Called by `decorateRelationLeafHits`, so every fleet
+ * loader gets it for free; the SINGLE-asset paths, which join relations
+ * instead of decorating, call this directly.
+ */
+export async function decorateSubnetNameHits(
+  rows: RelationDecoratable[],
+  trees: readonly MaybeTree[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const leaves = subnetNameLeaves(trees);
+  if (leaves.size === 0) return;
+
+  const registry = await subnetRegistry.getOrCompute("", () =>
+    prisma.subnet.findMany({ where: { status: { not: "deprecated" } }, select: { name: true, cidr: true } }),
+  );
+  const matchers = Array.from(leaves, ([key, rule]) => {
+    let re: PatternMatcher | null = null;
+    // Lower-cased on both sides: compileWildcard is case-sensitive. A pattern
+    // the save-time check would refuse matches nothing rather than throwing.
+    try { re = compileWildcard(rule.value.trim().toLowerCase()); } catch { re = null; }
+    const cidrs = re ? registry.filter((s) => re!.test(s.name.toLowerCase())).map((s) => s.cidr) : [];
+    return { key, inside: buildCidrMatcher(cidrs) };
+  });
+
+  // A loader whose select left the address out still gets a right answer.
+  const missing = rows.filter((r) => !("ipAddress" in r)).map((r) => r.id);
+  const fetched = missing.length
+    ? new Map((await prisma.asset.findMany({ where: { id: { in: missing } }, select: { id: true, ipAddress: true } }))
+        .map((a) => [a.id, a.ipAddress]))
+    : null;
+
+  for (const row of rows) {
+    const ip = ("ipAddress" in row ? row.ipAddress : fetched?.get(row.id)) ?? "";
+    const map = new Map<string, boolean>(row.relationLeafHits ?? []);
+    for (const m of matchers) map.set(m.key, !!ip && m.inside(ip) !== null);
+    row.relationLeafHits = map;
+  }
+}
+
+/** Drop the cached registry — for tests that create subnets mid-case. */
+export function invalidateSubnetRegistryCache(): void {
+  subnetRegistry.invalidate();
 }

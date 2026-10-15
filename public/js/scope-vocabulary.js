@@ -52,7 +52,14 @@
       contains: "contains", notContains: "does not contain",
       startsWith: "starts with", endsWith: "ends with",
       has: "is applied", notHas: "is not applied",
-      inCidr: "is within", notInCidr: "is not within",
+      inCidr: "is within CIDR", notInCidr: "is not within CIDR",
+      inRange: "is within range", notInRange: "is not within range",
+      inSubnetNamed: "is in subnet named", notInSubnetNamed: "is not in subnet named",
+    },
+    operatorValueKinds: {
+      inCidr: "cidr", notInCidr: "cidr",
+      inRange: "ipRange", notInRange: "ipRange",
+      inSubnetNamed: "subnetName", notInSubnetNamed: "subnetName",
     },
     fields: [
       { field: "assetType", label: "Device type", ops: ["equals", "notEquals"], optionsFrom: "assetTypes" },
@@ -61,7 +68,7 @@
       { field: "hostname", label: "Hostname", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: null },
       { field: "os", label: "Operating system", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: null },
       { field: "tag", label: "Tag", ops: ["has", "notHas"], optionsFrom: "tags" },
-      { field: "subnet", label: "Subnet / IP", ops: ["inCidr", "notInCidr"], optionsFrom: "subnets" },
+      { field: "subnet", label: "Subnet / IP", ops: ["inCidr", "notInCidr", "inRange", "notInRange", "inSubnetNamed", "notInSubnetNamed"], optionsFrom: "subnets" },
       { field: "ipBlock", label: "IP block", ops: ["inCidr", "notInCidr"], optionsFrom: "ipBlocks" },
       { field: "interfaceName", label: "Device interface", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "interfaceNames" },
       { field: "ssid", label: "Broadcast SSID", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "ssids" },
@@ -131,7 +138,8 @@
           });
           return out;
         }
-        case "subnets":        return (opts.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
+        // `name` lets the builder offer subnet NAMES to an "is in subnet named" rule.
+        case "subnets":        return (opts.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr, name: sn.name }; });
         case "ipBlocks":       return (opts.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
         default: return [];
       }

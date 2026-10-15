@@ -158,6 +158,21 @@
     function fieldMeta(field) {
       return fields.find(function (f) { return f.field === field; }) || fields[0];
     }
+    // What the value box holds for an operator: "cidr", "ipRange",
+    // "subnetName", or "" for the field's ordinary value. Served by the schema
+    // catalog; the fallback keeps an older server's payload working.
+    var VALUE_KINDS = meta.operatorValueKinds || {
+      inCidr: "cidr", notInCidr: "cidr",
+      inRange: "ipRange", notInRange: "ipRange",
+      inSubnetNamed: "subnetName", notInSubnetNamed: "subnetName",
+    };
+    var PLACEHOLDERS = {
+      cidr: "10.20.0.0/16 or an IP",
+      ipRange: "10.20.0.10-10.20.0.50",
+      subnetName: "subnet name, * wildcard (e.g. Plant-*)",
+    };
+    function valueKind(op) { return VALUE_KINDS[op] || ""; }
+    function placeholderFor(op) { return PLACEHOLDERS[valueKind(op)] || "value"; }
     function opOptions(field, sel) {
       var fm = fieldMeta(field);
       return ((fm && fm.ops) || []).map(function (o) {
@@ -172,15 +187,16 @@
     function ruleRowHtml(rule) {
       rule = rule || { field: (fields[0] || {}).field || "assetType", operator: null, value: "" };
       var fm = fieldMeta(rule.field);
+      var op = rule.operator || (fm && fm.ops && fm.ops[0]);
       var fieldOpts = fields.map(function (f) {
         return '<option value="' + f.field + '"' + (f.field === (fm && fm.field) ? " selected" : "") + '>' + esc(f.label) + '</option>';
       }).join("");
       return '<div class="scr-row" style="display:flex;gap:6px;align-items:center;margin:4px 0">' +
         '<span class="aw-grip" draggable="true" title="Drag to move">&#x2842;</span>' +
         '<select class="scr-field" style="width:31%">' + fieldOpts + '</select>' +
-        '<select class="scr-op" style="width:26%">' + opOptions(fm && fm.field, rule.operator || (fm && fm.ops && fm.ops[0])) + '</select>' +
+        '<select class="scr-op" style="width:26%">' + opOptions(fm && fm.field, op) + '</select>' +
         '<span class="aw-combo">' +
-          '<input type="text" class="scr-value" autocomplete="off" value="' + esc(rule.value || "") + '" placeholder="value">' +
+          '<input type="text" class="scr-value" autocomplete="off" value="' + esc(rule.value || "") + '" placeholder="' + esc(placeholderFor(op)) + '" data-kind="' + esc(valueKind(op)) + '">' +
           '<div class="aw-suggest"></div>' +
         '</span>' +
         '<button type="button" class="btn btn-sm btn-danger scr-remove" title="Remove condition">&times;</button>' +
@@ -213,7 +229,20 @@
       var suggest = input.parentElement.querySelector(".aw-suggest");
       if (!row || !suggest) return;
       var field = row.querySelector(".scr-field").value;
-      var options = valueOptionsFor(field) || [];
+      var op = row.querySelector(".scr-op").value;
+      var kind = valueKind(op);
+      // A range is typed, never picked. A NAME rule offers the subnet names
+      // (every consumer's `subnets` options carry `name`), each once.
+      var options = kind === "ipRange" ? [] : (valueOptionsFor(field, op) || []);
+      if (kind === "subnetName") {
+        var seenName = {};
+        options = options.filter(function (o) {
+          var n = o.name || "";
+          if (!n || seenName[n.toLowerCase()]) return false;
+          seenName[n.toLowerCase()] = 1;
+          return true;
+        }).map(function (o) { return { value: o.name, label: o.name }; });
+      }
       if (!options.length) { closeSuggest(suggest); return; }
       var q = input.value.trim().toLowerCase();
       var filtered = options.filter(function (o) {
@@ -241,7 +270,22 @@
           row.querySelector(".scr-op").innerHTML = opOptions(t.value, null);
           var input = row.querySelector(".scr-value");
           input.value = "";
+          input.placeholder = placeholderFor(row.querySelector(".scr-op").value);
+          input.setAttribute("data-kind", valueKind(row.querySelector(".scr-op").value));
           closeSuggest(row.querySelector(".aw-suggest"));
+        }
+        if (t.classList.contains("scr-op")) {
+          // CIDR -> Range -> Name changes what the value IS: a CIDR left in a
+          // name box would save as a pattern matching no subnet. Clear it only
+          // when the kind actually changed, so "within" -> "not within" keeps it.
+          var opRow = t.closest(".scr-row");
+          var valEl = opRow.querySelector(".scr-value");
+          var prevKind = valEl.getAttribute("data-kind") || "";
+          var nextKind = valueKind(t.value);
+          if (prevKind !== nextKind) valEl.value = "";
+          valEl.setAttribute("data-kind", nextKind);
+          valEl.placeholder = placeholderFor(t.value);
+          closeSuggest(opRow.querySelector(".aw-suggest"));
         }
         if (t.classList.contains("scr-field") || t.classList.contains("scr-op") || t.classList.contains("scg-op") || t.classList.contains("scr-value")) {
           onChange();
@@ -357,6 +401,7 @@
     function validate(tree) {
       if (!tree) return null;
       var CIDR_ISH = /^([0-9]{1,3}\.){3}[0-9]{1,3}(\/[0-9]{1,2})?$|^[0-9a-f:]+(\/[0-9]{1,3})?$/i;
+      var RANGE_ISH = /^\s*([0-9]{1,3}\.){3}[0-9]{1,3}\s*(-\s*(([0-9]{1,3}\.){3})?[0-9]{1,3}\s*)?$/;
       var problem = null;
       var walk = function (g) {
         if (problem) return;
@@ -365,6 +410,16 @@
           if (problem) return;
           if (c.op !== undefined && Array.isArray(c.children)) { walk(c); return; }
           if (!c.value) { problem = "Every condition needs a value (or remove the empty row)."; return; }
+          var kind = valueKind(c.operator);
+          // A range and a subnet NAME are their own value kinds; the server
+          // re-checks both (an IPv4 first-to-last range; a valid wildcard).
+          if (kind === "ipRange") {
+            if (!RANGE_ISH.test(c.value)) {
+              problem = 'Range "' + c.value + '" should run first to last, e.g. 10.20.0.10-10.20.0.50 (or 10.20.0.10-50).';
+            }
+            return;
+          }
+          if (kind === "subnetName") return;
           // Both CIDR-valued fields — an IP block rule stores the block's own
           // CIDR, so it is refused here on the same terms the server refuses it.
           if ((c.field === "subnet" || c.field === "ipBlock") && !CIDR_ISH.test(c.value)) {

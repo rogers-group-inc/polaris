@@ -264,6 +264,15 @@ Holds, severity bands, resets, maintenance windows and dependency suppression
 all work as for any other automation. The Polaris server is the exception: no
 device filter, maintenance window or dependency applies to it.
 
+**The alert email shows the path.** A Path Monitor alert's email carries the
+check's path graph, drawn as on the Paths tab: the recent traceroutes folded
+into one view, each link coloured by the latency it adds on the newest trace,
+with a ✕ where the destination was not reached. A grouped alert shows up to
+four graphs — one per device when it lists several devices, one per automation
+when it lists one device — worst first. Nothing is drawn while traceroute is
+off for the check or before its first trace. An email layout of your own needs
+the `{path.graph}` variable to include it.
+
 For route changes, set the Path Monitor trigger to fire when **a check's route
 changes (traceroute)**. Polaris writes this event (`path_check.path_changed`) at
 most once every 10 minutes per host and check, naming the host. A route change

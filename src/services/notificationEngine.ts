@@ -31,9 +31,11 @@ import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareReposito
 import { triggerSummary, triggerTokenParts } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, chartTokenForMetric, CHART_TOKENS, type ChartToken } from "./alertChartService.js";
+import { PATH_GRAPH_METRICS } from "./alertPathGraphService.js";
 import { INTERFACE_DIMENSION_METRICS } from "./alertInterfaceService.js";
 import { processRankingForMetric } from "./alertProcessService.js";
 import { poeIsFault } from "../utils/poePorts.js";
+import { resolveAssetCadenceSec } from "./notificationCadenceService.js";
 import { REGION_TAG_PREFIX, rootCauseAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "./notificationService.js";
 import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import {
@@ -76,6 +78,10 @@ import {
   ruleGroupsByAsset,
   alertScopeOf,
   groupKeyOf,
+  subnetFoldTarget,
+  automationFoldTarget,
+  deviceAutomationFoldTarget,
+  memberMatches,
   mergeMembers,
   markMemberLeft,
   activeMembers,
@@ -134,7 +140,7 @@ import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js
 import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "./dependencyTreeService.js";
 import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
-import { ipInCidr, bareInterfaceIp } from "../utils/cidr.js";
+import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
 import { computeStorageForecast } from "./storageForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
@@ -303,6 +309,9 @@ interface DbRule {
    *  the per-component fold AND folds this rule's alerts together with every
    *  other member's on the same device. */
   alertGroupId: string | null;
+  /** That group's fold axis — one of ALERT_GROUP_FOLD_BY. Null
+   *  with no group. Optional so a rule built without it reads as "device". */
+  alertGroupFoldBy?: string | null;
 }
 
 /** Best-effort action fan-out — never breaks rule evaluation. (executeActions
@@ -2356,8 +2365,16 @@ function readingContextParts(
   members?: AlertMember[] | null,
 ): TemplateContextParts {
   const trigger = rule.trigger;
+  // A subnet-folded alert is about the SUBNET; its members are the devices. An
+  // automation-folded one spans devices with nothing else to name them by, so
+  // {asset} counts them — "Monitor down on {asset}" reads "… on 5 devices".
+  const subnetLabel = members?.find((m) => m.subnet)?.subnet;
+  const spansDevices = !!members?.some((m) => m.assetId);
+  const deviceCount = spansDevices ? new Set(activeMembers(members!).map((m) => m.assetId)).size : 0;
   const base = {
-    asset: reading.hostname || reading.assetId || "host",
+    asset: subnetLabel
+      || (spansDevices ? `${deviceCount} device${deviceCount === 1 ? "" : "s"}` : "")
+      || reading.hostname || reading.assetId || "host",
     dimension: members?.length ? renderMemberList(members) : (reading.dimLabel || ""),
     // What that component IS, so the email can label it rather than leaving the
     // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
@@ -2366,7 +2383,7 @@ function readingContextParts(
     // A GROUPED alert names several components of the same KIND (they all came
     // from the same per-dimension trigger), so the noun still applies — and it
     // reads correctly in the plural position the list puts it in.
-    dimensionNoun: (members?.length || reading.dimLabel) ? dimensionNounOf(trigger) : "",
+    dimensionNoun: spansDevices ? "Devices" : (members?.length || reading.dimLabel) ? dimensionNounOf(trigger) : "",
     severity: rule.severity,
     time: now,
     link: notificationsPageUrl(),
@@ -2450,6 +2467,21 @@ function renderMessage(
       return `${own} — ${ctx["dependency.headline"] || "DEPENDENCY DOWN"}`;
     }
     return own;
+  }
+  if (members?.length && members.some((m) => m.subnet)) {
+    // A subnet fold: the members are devices, so say how many and where, then
+    // which. The dependency headline (rule 78) rides along when the leading
+    // device is dependency-down — the usual reason a whole subnet goes at once.
+    const active = activeMembers(members);
+    const n = active.length;
+    const dep = reading.dependencyDown && ctx["dependency.headline"] ? ` — ${ctx["dependency.headline"]}` : "";
+    return `${rule.name}: ${n} device${n === 1 ? "" : "s"} in ${ctx["asset"]} — ${renderMemberList(members)}${dep}`;
+  }
+  if (members?.length && members.some((m) => m.assetId)) {
+    // An automation fold: one automation across devices. {asset} already
+    // reads "5 devices"; then which, and the same dependency headline.
+    const dep = reading.dependencyDown && ctx["dependency.headline"] ? ` — ${ctx["dependency.headline"]}` : "";
+    return `${rule.name}: ${ctx["asset"]} — ${renderMemberList(members)}${dep}`;
   }
   if (members?.length) {
     const active = activeMembers(members);
@@ -4246,6 +4278,29 @@ interface GroupFire {
 /** assetId → the contributions that crossed into firing on this tick. */
 type GroupBuffer = Map<string, GroupFire[]>;
 
+/** What one alert spans when it holds SEVERAL devices: the registry subnet
+ *  they share (a SUBNET AlertGroup) or the automation they all tripped (an
+ *  AUTOMATION one). Its members are devices. */
+interface FoldSpan {
+  kind: "subnet" | "automation";
+  id: string;
+  /** "Plant A (10.1.0.0/24)", or the automation's name — what the alert names
+   *  in place of a device. */
+  label: string;
+}
+
+/** One alert's worth of a flush: the contributions that share a groupKey. */
+interface FoldBucket {
+  /** The groupKey target — an asset id, or the fold's own target
+   *  (subnetFoldTarget / automationFoldTarget / deviceAutomationFoldTarget). */
+  target: string;
+  /** Whether the rule's group governs these devices (else the rule's own key). */
+  governs: boolean;
+  /** Set only when this bucket holds several devices (subnet / automation). */
+  span: FoldSpan | null;
+  fires: GroupFire[];
+}
+
 /** What the tick still owes an alert once every rule has been evaluated.
  *
  *  Sends are drained ONCE per tick rather than once per flush, so contributions
@@ -4304,6 +4359,35 @@ class TickAlertIndex {
    *  than racing the partial unique index for a second one. */
   remember(groupKey: string, notificationId: string): void {
     this.byKey.set(groupKey, notificationId);
+  }
+
+  // ── Which subnet each device folds into (a SUBNET AlertGroup) ──────────────
+  //
+  // The registry is read once per tick and only when a subnet group actually
+  // has fires to place, so an install without one never pays the query. Asset
+  // IPs are read for the devices being placed — the firing ones, which are
+  // tens even in a storm, never the fleet.
+  private subnets: { id: string; name: string; cidr: string }[] | null = null;
+  private subnetOfAsset = new Map<string, FoldSpan | null>();
+
+  async subnetsOf(assetIds: string[]): Promise<Map<string, FoldSpan | null>> {
+    const missing = assetIds.filter((id) => id && !this.subnetOfAsset.has(id));
+    if (missing.length) {
+      if (!this.subnets) {
+        this.subnets = await prisma.subnet.findMany({
+          where: { status: { not: "deprecated" } },
+          select: { id: true, name: true, cidr: true },
+        });
+      }
+      const rows = await prisma.asset.findMany({ where: { id: { in: missing } }, select: { id: true, ipAddress: true } });
+      const ipOf = new Map(rows.map((r) => [r.id, r.ipAddress]));
+      for (const id of missing) {
+        const ip = ipOf.get(id);
+        const hit = ip ? mostSpecificContaining(this.subnets, `${ip}/32`) : null;
+        this.subnetOfAsset.set(id, hit ? { kind: "subnet", id: hit.id, label: `${hit.name} (${hit.cidr})` } : null);
+      }
+    }
+    return new Map(assetIds.map((id) => [id, this.subnetOfAsset.get(id) ?? null]));
   }
 
   // ── Which devices each AlertGroup GOVERNS ─────────────────────────────────
@@ -4405,13 +4489,18 @@ async function groupGovernsAsset(
 }
 
 /** Turn an engine reading into the contribution stored on the alert. */
-function memberOf(rule: DbRule, f: GroupFire, now: Date): AlertMember {
+function memberOf(rule: DbRule, f: GroupFire, now: Date, span: FoldSpan | null = null): AlertMember {
   const r = f.reading;
+  const own = r.dimLabel || r.dimKey;
   return {
     key: r.dimKey,
     // The LABEL, so the alert says "port12 (Indoor AP)" and nobody has to go
     // and look up which port that is. `dimension` on the row stays the KEY.
-    label: r.dimLabel || r.dimKey,
+    //
+    // On a subnet or automation fold the members are DEVICES, so the label
+    // leads with the host — "plc-04", or "sw-02 — port12" for a per-component
+    // trigger.
+    label: span ? (own ? `${r.hostname || r.assetId} — ${own}` : (r.hostname || r.assetId)) : own,
     ruleId: rule.id,
     ruleName: rule.name,
     severity: f.severity,
@@ -4419,12 +4508,63 @@ function memberOf(rule: DbRule, f: GroupFire, now: Date): AlertMember {
       ? undefined
       : typeof r.value === "number" ? round2(r.value) : String(r.value),
     joinedAt: now.toISOString(),
+    ...(span ? { assetId: r.assetId, ...(span.kind === "subnet" ? { subnet: span.label } : {}) } : {}),
   };
 }
 
+/** The buffered contribution the primary member stands for — the reading the
+ *  alert LEADS with ({value}, the email's charts). Matched on the device too
+ *  when the member carries one, since a subnet fold's keys repeat per host. */
+function leadFire(fires: GroupFire[], primary: AlertMember | null): GroupFire {
+  return (primary && fires.find((f) => memberMatches(primary, primary.ruleId, f.reading.dimKey, f.reading.assetId)))
+    ?? fires[0]!;
+}
+
 /**
- * Write this tick's buffered contributions: one alert per asset, created or
- * joined, with the sends recorded for the end-of-tick drain.
+ * Sort this tick's buffered contributions into the alerts they belong to.
+ *
+ * A device group (or an ungrouped rule) keeps one alert per device. A
+ * DEVICE-AND-AUTOMATION group keeps one per device per automation. An
+ * AUTOMATION group puts every device it governs into this automation's one
+ * alert, and a SUBNET group into the alert of the device's registry subnet. A
+ * device the group does not govern, or (by subnet) one in no subnet, keeps its
+ * own.
+ */
+async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertIndex | null): Promise<FoldBucket[]> {
+  const foldBy = rule.alertGroupId ? (rule.alertGroupFoldBy ?? "device") : "device";
+  const bySubnet = foldBy === "subnet" && !!tickIndex;
+  const subnets = bySubnet ? await tickIndex!.subnetsOf([...buf.keys()]) : null;
+  const automation: FoldSpan | null = foldBy === "automation" ? { kind: "automation", id: rule.id, label: rule.name } : null;
+  const out = new Map<string, FoldBucket>();
+  for (const [assetId, fires] of buf) {
+    if (!fires.length) continue;
+    // Where this rule's grouped alerts live: its AlertGroup when it belongs to
+    // one AND that group governs THIS device, else itself. The two scopes can
+    // never collide in the partial unique index.
+    //
+    // The per-device test is what lets one set of automations serve several
+    // groups — "Switch health — Ashfield" and "Switch health — Dock" over the
+    // same checks, routed to different people. On a device no group governs,
+    // the automation still folds its own components; it just does so alone.
+    const governs = await groupGovernsAsset(rule, assetId, tickIndex);
+    const span = !governs ? null : automation ?? subnets?.get(assetId) ?? null;
+    const target = !governs ? assetId
+      : span?.kind === "subnet" ? subnetFoldTarget(span.id)
+      : span?.kind === "automation" ? automationFoldTarget(rule.id)
+      : foldBy === "deviceAutomation" ? deviceAutomationFoldTarget(assetId, rule.id)
+      : assetId;
+    const k = `${governs ? "g" : "r"}|${target}`;
+    const b = out.get(k);
+    if (b) b.fires.push(...fires);
+    else out.set(k, { target, governs, span, fires: [...fires] });
+  }
+  return [...out.values()];
+}
+
+/**
+ * Write this tick's buffered contributions: one alert per whatever the fold
+ * makes it (foldBuckets), created or joined, with the sends recorded for the
+ * end-of-tick drain.
  *
  * Ordering matters at the call site — this must land its state rows BEFORE the
  * custom-reset pass, which re-reads firing rows from the database rather than
@@ -4438,42 +4578,38 @@ async function flushGroupFires(
   pending: PendingSends,
   tickIndex: TickAlertIndex | null,
 ): Promise<void> {
-  for (const [assetId, fires] of buf) {
-    if (!fires.length) continue;
-    const live = liveByAsset.get(assetId);
-    const joined = live ? await joinGroupAlert(rule, live, fires, now, pending) : false;
-    if (!joined) await createGroupAlert(rule, assetId, fires, now, pending, liveByAsset, tickIndex);
+  for (const bucket of await foldBuckets(rule, buf, tickIndex)) {
+    const live = liveByAsset.get(bucket.target);
+    const joined = live ? await joinGroupAlert(rule, live, bucket.fires, now, pending, bucket.span) : false;
+    if (!joined) await createGroupAlert(rule, bucket, now, pending, liveByAsset, tickIndex);
   }
 }
 
-/** Open a new grouped alert for this asset. */
+/** Open a new grouped alert for one fold bucket. */
 async function createGroupAlert(
   rule: DbRule,
-  assetId: string,
-  fires: GroupFire[],
+  bucket: FoldBucket,
   now: Date,
   pending: PendingSends,
   liveByAsset: Map<string, string>,
   tickIndex: TickAlertIndex | null,
 ): Promise<void> {
-  const members = mergeMembers([], fires.map((f) => memberOf(rule, f, now)), now);
+  const { fires, governs, span, target } = bucket;
+  const members = mergeMembers([], fires.map((f) => memberOf(rule, f, now, span)), now);
   const severity = groupSeverity(members, rule.severity);
   const primary = primaryMember(members);
   // The contribution the alert LEADS with — its reading is what {value} and
-  // the email's charts are about.
-  const lead = fires.find((f) => f.reading.dimKey === primary?.key) ?? fires[0]!;
+  // the email's charts are about. On a multi-device fold its device is the alert's
+  // `assetId`: the alert has to point somewhere, and the device that leads it
+  // is the one its charts already describe.
+  const lead = leadFire(fires, primary);
+  const assetId = lead.reading.assetId;
   const ctx = await buildGroupContext(rule, lead, members, severity, now);
-  // Where this rule's grouped alerts live: its AlertGroup when it belongs to
-  // one AND that group governs THIS device, else itself. The two scopes can
-  // never collide in the partial unique index.
-  //
-  // The per-device test is what lets one set of automations serve several
-  // groups — "Switch health — Ashfield" and "Switch health — Dock" over the
-  // same checks, routed to different people. On a device no group governs,
-  // the automation still folds its own components; it just does so alone.
-  const governs = await groupGovernsAsset(rule, assetId, tickIndex);
   const scope = alertScopeOf(rule, governs);
-  const groupKey = groupKeyOf(scope.scope, scope.id, assetId);
+  const groupKey = groupKeyOf(scope.scope, scope.id, target);
+  // The first send waits one polling interval of the reading that opened the
+  // alert, so whatever goes down with it is in the first email (rule 75).
+  const firstSendDueAt = new Date(now.getTime() + (await firstSendHoldSec(rule, lead.reading)) * 1000);
 
   let notif: { id: string };
   try {
@@ -4481,7 +4617,11 @@ async function createGroupAlert(
       data: {
         ruleId: rule.id,
         assetId: assetId || null,
-        assetHostname: lead.reading.hostname,
+        firstSendDueAt,
+        // A subnet (or automation) fold is about the subnet (or automation), so
+        // that is what every alert list names it as; `assetId` still points at
+        // the leading device.
+        assetHostname: span ? span.label : lead.reading.hostname,
         severity,
         message: ctx["message"] ?? "",
         regionTags: regionSnapshot(lead.reading.tags),
@@ -4506,7 +4646,8 @@ async function createGroupAlert(
         alertGroupId: governs ? (rule.alertGroupId ?? null) : null,
         members: members as unknown as Prisma.InputJsonValue,
         dimensionCount: activeMembers(members).length,
-        ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+        // Always stored here: the held first send is built from it.
+        templateCtx: ctx as any,
       },
       select: { id: true },
     });
@@ -4517,17 +4658,19 @@ async function createGroupAlert(
     if (err?.code !== "P2002") throw err;
     const existing = await prisma.notification.findFirst({ where: { groupKey, cleared: false }, select: { id: true } });
     if (!existing) throw err;
-    liveByAsset.set(assetId, existing.id);
-    await joinGroupAlert(rule, existing.id, fires, now, pending);
+    liveByAsset.set(target, existing.id);
+    await joinGroupAlert(rule, existing.id, fires, now, pending, span);
     return;
   }
 
-  liveByAsset.set(assetId, notif.id);
+  liveByAsset.set(target, notif.id);
   // Remember it TICK-wide too, so a later member automation of the same group
   // joins this alert instead of racing the unique index for a second one.
   tickIndex?.remember(groupKey, notif.id);
   await upsertGroupStates(rule, fires, notif.id, now);
-  pending.set(notif.id, { kind: "fire", notificationId: notif.id, rule, reading: lead.reading, ctx, actions: lead.actions, severity, count: activeMembers(members).length });
+  // No send recorded: the alert is live in the app from now, and its first
+  // message goes when the hold ends (releaseHeldFirstSends), naming whatever
+  // has joined by then.
 
   if (wantsEventAction(lead.actions)) {
     await logEvent({
@@ -4544,7 +4687,8 @@ async function createGroupAlert(
         dimension: primary?.key ?? null,
         severity,
         grouped: true,
-        members: members.map((m) => m.key),
+        members: members.map((m) => (m.assetId ? m.label : m.key)),
+        ...(span ? { [span.kind]: span.label } : {}),
       },
     });
   }
@@ -4565,22 +4709,26 @@ async function joinGroupAlert(
   fires: GroupFire[],
   now: Date,
   pending: PendingSends,
+  /** Set when this alert holds several devices (a subnet or automation fold)
+   *  — its members are devices. */
+  span: FoldSpan | null = null,
 ): Promise<boolean> {
   const row = await prisma.notification.findFirst({
     where: { id: notificationId, cleared: false },
-    select: { id: true, members: true, severity: true, acknowledged: true, acknowledgedBy: true, acknowledgeNote: true },
+    select: { id: true, members: true, severity: true, acknowledged: true, acknowledgedBy: true, acknowledgeNote: true, firstSendDueAt: true, firstSentAt: true },
   });
   if (!row) return false;
+  const held = firstSendHeld(row);
 
   const prev = (row.members ?? []) as unknown as AlertMember[];
-  const joining = fires.map((f) => memberOf(rule, f, now));
+  const joining = fires.map((f) => memberOf(rule, f, now, span));
   // Before the merge, which clears `leftAt` — the only trace of a component
   // that recovered and has now faulted again.
   const changes = classifyGroupChanges(prev, joining, now);
   const members = mergeMembers(prev, joining, now);
   const severity = groupSeverity(members, rule.severity);
   const primary = primaryMember(members);
-  const lead = fires.find((f) => f.reading.dimKey === primary?.key) ?? fires[0]!;
+  const lead = leadFire(fires, primary);
   const ctx = await buildGroupContext(rule, lead, members, severity, now);
 
   // A contribution arriving after someone acknowledged RE-OPENS the alert:
@@ -4598,7 +4746,7 @@ async function joinGroupAlert(
       severity,
       message: ctx["message"] ?? "",
       dimension: primary?.key || null,
-      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      ...(groupWantsContext(rule) || held ? { templateCtx: ctx as any } : {}),
       ...(reopening
         ? { acknowledged: false, acknowledgedBy: null, acknowledgedAt: null, acknowledgeNote: null, acknowledgedVia: Prisma.DbNull, escalationState: Prisma.DbNull }
         : {}),
@@ -4611,8 +4759,11 @@ async function joinGroupAlert(
   // One send per alert per tick: everything that joined folds into one message
   // naming the whole set. A "fire" already recorded for this alert stays a
   // fire — the contributions simply ride it, with no second message.
+  //
+  // An alert still HOLDING its first send owes nobody an update: the joiners
+  // are simply in the first message when the hold ends (releaseHeldFirstSends).
   const existing = pending.get(notificationId);
-  pending.set(notificationId, {
+  if (!held) pending.set(notificationId, {
     kind: existing?.kind ?? "growth",
     notificationId,
     rule,
@@ -4636,12 +4787,12 @@ async function joinGroupAlert(
     actor: "system:notification-engine",
     level: severityLevel(severity),
     message: reopening
-      ? `${rule.name}: ${fires.map((f) => f.reading.dimLabel || f.reading.dimKey).join(", ")} joined after ${row.acknowledgedBy ?? "someone"} acknowledged it`
-      : `${rule.name}: ${fires.map((f) => f.reading.dimLabel || f.reading.dimKey).join(", ")} joined this alert`,
+      ? `${rule.name}: ${joining.map((m) => m.label).join(", ")} joined after ${row.acknowledgedBy ?? "someone"} acknowledged it`
+      : `${rule.name}: ${joining.map((m) => m.label).join(", ")} joined this alert`,
     details: {
       ruleId: rule.id,
       assetId: lead.reading.assetId || null,
-      joined: fires.map((f) => f.reading.dimKey),
+      joined: span ? joining.map((m) => m.label) : fires.map((f) => f.reading.dimKey),
       severity,
       ...(reopening
         ? { priorAcknowledgedBy: row.acknowledgedBy, priorAcknowledgeNote: row.acknowledgeNote }
@@ -4696,6 +4847,115 @@ async function buildGroupContext(
  * outbound work, and holding a pooled connection across the fan-out is how a
  * storm tick starves everything else.
  */
+/** Did this alert end (or is it ending) without its first message ever going
+ *  out? Asked on a clear, so one primary-key read per recovery. Read whether or
+ *  not the row is already cleared: the clear may have been written first. */
+async function neverAnnounced(notificationId: string): Promise<boolean> {
+  const row = await prisma.notification.findUnique({
+    where: { id: notificationId },
+    select: { firstSendDueAt: true, firstSentAt: true },
+  });
+  return !!row && firstSendHeld(row);
+}
+
+/** Is this grouped alert still waiting to send its first message? */
+export function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
+  return !!row.firstSendDueAt && !row.firstSentAt;
+}
+
+/** The engine tick (evaluateNotificationRules) — the hold used when a
+ *  reading's own cadence cannot be resolved. */
+const FIRST_SEND_HOLD_FALLBACK_SEC = 60;
+
+/**
+ * How long a newly opened grouped alert holds its first send: ONE polling
+ * interval of the reading that opened it (business rule 75), so another device
+ * or automation failing on the next poll joins the first email instead of
+ * arriving as an update a minute later. A path check's interval is the
+ * check's own; everything else is the device's stream cadence.
+ *
+ * The hold is added on top of the automation's own "for N polls" — an
+ * automation waiting 3 polls of a 5-minute check opens its alert at 15
+ * minutes and sends at 20.
+ */
+async function firstSendHoldSec(rule: DbRule, reading: Reading): Promise<number> {
+  const t = rule.trigger;
+  const metric = t.type === "asset_metric" || t.type === "host_metric" ? t.metric
+    : t.type === "asset_state" ? t.field
+    : null;
+  const sec = await resolveAssetCadenceSec(reading.assetId || null, metric, reading.dimKey || null);
+  return sec && sec > 0 ? sec : FIRST_SEND_HOLD_FALLBACK_SEC;
+}
+
+/**
+ * Send the first message of every grouped alert whose hold has ended.
+ *
+ * Runs once per engine pass, before the drain, so a release and this tick's
+ * sends go out together. The message is built from the alert AS IT STANDS —
+ * its stored template context, members, severity and message, all kept current
+ * by every join while it was held — and the actions are the band of its
+ * current severity, which is what a fire at this severity would have used.
+ * The group (when one governs the alert) still swaps in its own actions at the
+ * drain, as for any fire.
+ *
+ * One indexed query (the partial index on held rows); nothing to do on a tick
+ * where no grouped alert is due, which is almost every tick.
+ */
+async function releaseHeldFirstSends(rulesById: Map<string, DbRule>, pending: PendingSends, now: Date): Promise<void> {
+  const due = await prisma.notification.findMany({
+    where: { cleared: false, firstSentAt: null, firstSendDueAt: { not: null, lte: now } },
+    select: {
+      id: true, ruleId: true, assetId: true, assetHostname: true, regionTags: true,
+      dimension: true, severity: true, templateCtx: true, members: true,
+      firstSendDueAt: true, firstSentAt: true,
+    },
+  });
+  for (const n of due) {
+    if (!firstSendHeld(n) || n.firstSendDueAt!.getTime() > now.getTime()) continue;
+    // Stamped first, and only if still held: an overlapping pass must not send twice.
+    const claimed = await prisma.notification.updateMany({
+      where: { id: n.id, cleared: false, firstSentAt: null },
+      data: { firstSentAt: now },
+    });
+    if (claimed.count === 0) continue;
+    const rule = n.ruleId ? rulesById.get(n.ruleId) : undefined;
+    // The automation was disabled or deleted while the alert waited. Nothing
+    // left to say it through; the alert itself stays as the record.
+    if (!rule) continue;
+    const ctx = (n.templateCtx ?? {}) as Record<string, string>;
+    const members = (n.members ?? []) as unknown as AlertMember[];
+    const reading: Reading = {
+      assetId: n.assetId ?? "",
+      hostname: n.assetHostname,
+      // regionTags is the stripped snapshot; enqueueAlertActions strips again.
+      tags: (n.regionTags ?? []).map((t) => REGION_TAG_PREFIX + t),
+      dimKey: n.dimension ?? "",
+      dimLabel: "",
+      value: null,
+    };
+    pending.set(n.id, {
+      kind: "fire",
+      notificationId: n.id,
+      rule,
+      reading,
+      ctx,
+      actions: tierForSeverity(rule, n.severity).actions,
+      severity: n.severity,
+      count: activeMembers(members).length,
+    });
+    await logEvent({
+      action: "notification.first_send_released",
+      resourceType: "notification",
+      resourceId: n.id,
+      resourceName: rule.name,
+      actor: "system:notification-engine",
+      level: "info",
+      message: `${rule.name}: first notification sent after the grouping hold — ${activeMembers(members).length} affected`,
+      details: { ruleId: rule.id, members: activeMembers(members).map((m) => m.label) },
+    });
+  }
+}
+
 async function drainPendingSends(pending: PendingSends): Promise<void> {
   // Business rule 75: a governed alert FIRES through its group, exactly as it
   // later escalates, reminds and resets through it. Without this the first
@@ -4985,12 +5245,13 @@ async function reconcileGroupSeverity(
 ): Promise<void> {
   const row = await prisma.notification.findFirst({
     where: { id: notificationId, cleared: false },
-    select: { id: true, members: true, severity: true },
+    select: { id: true, members: true, severity: true, firstSendDueAt: true, firstSentAt: true },
   });
   if (!row) return;
+  const held = firstSendHeld(row);
 
   const members = ((row.members ?? []) as unknown as AlertMember[]).map((m) =>
-    m.ruleId === rule.id && m.key === dimensionKey && !m.leftAt ? { ...m, severity: memberSeverity } : m,
+    memberMatches(m, rule.id, dimensionKey, reading.assetId) && !m.leftAt ? { ...m, severity: memberSeverity } : m,
   );
   const groupSev = groupSeverity(members, rule.severity);
   const changed = groupSev !== row.severity;
@@ -5025,9 +5286,14 @@ async function reconcileGroupSeverity(
       // The new band's escalation timers restart from band entry — but only
       // because the ALERT changed band, never because one component did.
       escalationState: { tiers: {}, bandSince: now.toISOString() } as any,
-      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      ...(groupWantsContext(rule) || held ? { templateCtx: ctx as any } : {}),
     },
   });
+
+  // Still holding its first send: the band change rides that first message
+  // (it is built from the alert as it stands then), so saying it now would be
+  // news about an alert nobody has been told of.
+  if (held) return;
 
   if ((increased && policy.onIncrease) || (!increased && policy.onDecrease)) {
     // WHETHER to say so is the member's band policy; WHO hears it is the owner's.
@@ -5062,6 +5328,8 @@ async function fireResolved(
   // forget; the extra count runs on a recovery transition, and only for a rule
   // that groups.
   if (await stillFiringElsewhere(st, rule)) return;
+  // Never announced (still holding its first send): there is nothing to resolve.
+  if (ruleGroupsByAsset(rule) && await neverAnnounced(st.notificationId)) return;
   // A group has no bands and no band policy of its own, so the member's policy
   // still decides whether "Resolved" is sent — but "reuse" means reuse the
   // alert's OWN recipients, and on a governed alert those are the group's.
@@ -5115,6 +5383,10 @@ async function fireReset(
   now: Date,
 ): Promise<void> {
   if (!st.notificationId) return;
+  // A grouped alert that ended while still holding its first send was never
+  // announced, so its reset actions — a "Resolved" email, a ticket closed —
+  // would answer something nobody was told (business rule 75).
+  if (ruleGroupsByAsset(rule) && await neverAnnounced(st.notificationId)) return;
   // A governed alert's reset actions are its GROUP's (business rule 75), the
   // same answer runResetActionsForCleared gives for an operator's Clear.
   const owner = await groupOwnerOf(rule, st.notificationId);
@@ -5312,6 +5584,7 @@ async function releaseGroupMember(
       st.ruleId ?? rule.id,
       st.dimensionKey ?? "",
       now,
+      st.assetId,
     );
     const remaining = activeMembers(members);
     // On the LAST release we leave the text alone: the alert is about to be
@@ -5337,7 +5610,10 @@ async function releaseGroupMember(
         resourceId: st.notificationId,
         resourceName: rule.name,
         actor: "system:notification-engine",
-        message: `${rule.name}: ${st.dimensionKey || "a component"} recovered — ${remaining.length} still affected`,
+        message: `${rule.name}: ${
+          members.find((m) => m.assetId && memberMatches(m, st.ruleId ?? rule.id, st.dimensionKey ?? "", st.assetId))?.label
+          || st.dimensionKey || "a component"
+        } recovered — ${remaining.length} still affected`,
         details: { ruleId: rule.id, assetId: st.assetId || null, dimension: st.dimensionKey ?? null, remaining: remaining.length },
       }).catch(() => {});
     } else {
@@ -5369,7 +5645,8 @@ function regroupedMessage(rule: DbRule, members: AlertMember[]): string | null {
   const list = renderMemberList(members);
   if (!list) return null;
   const count = active.length === 1 ? "" : ` (${active.length})`;
-  return `${rule.name}: ${list}${count} still affected`;
+  const subnet = members.find((m) => m.subnet)?.subnet;
+  return `${rule.name}: ${subnet ? `${subnet} — ` : ""}${list}${count} still affected`;
 }
 
 /**
@@ -6036,7 +6313,10 @@ async function primeAssetDetailCache(assetIds: Iterable<string>): Promise<void> 
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 export async function evaluateAllNotificationRules(): Promise<void> {
-  const dbRules = await prisma.notificationRule.findMany({ where: { enabled: true } });
+  const dbRules = await prisma.notificationRule.findMany({
+    where: { enabled: true },
+    include: { alertGroup: { select: { foldBy: true } } },
+  });
   const rules: DbRule[] = dbRules.map((r) => {
     // Shape-v2 normalization: legacy rows (clearBehavior/targets) and v2 rows
     // (reset/actions) evaluate identically through the v2 view.
@@ -6061,6 +6341,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       // ungrouped sibling in the carve-out index, business rule 46).
       groupByAsset: r.groupByAsset === true,
       alertGroupId: r.alertGroupId ?? null,
+      alertGroupFoldBy: r.alertGroup?.foldBy ?? null,
     };
   });
 
@@ -6101,6 +6382,12 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // sets are final, so each one's message goes out exactly once. Best-effort,
   // like every other fan-out — a failed send must not cost the fleet a tick.
   try {
+    // Grouped alerts whose first-send hold has ended join this drain. Only an
+    // install with a grouping automation can hold one, so every other skips
+    // the query.
+    if (rules.some((r) => ruleGroupsByAsset(r))) {
+      await releaseHeldFirstSends(new Map(rules.map((r) => [r.id, r])), pendingSends, new Date());
+    }
     await drainPendingSends(pendingSends);
   } catch (err) {
     await logEvent({ action: "notification.engine_error", actor: "system:notification-engine", level: "error", message: "Grouped-alert send drain failed", details: { err: (err as Error)?.message } }).catch(() => {});
@@ -6606,6 +6893,7 @@ export function applicableTemplateTokens(trigger: Trigger | null | undefined): s
     interface: !!metricKey && t?.type !== "change" && INTERFACE_DIMENSION_METRICS.has(metricKey),
     processes: !isHost && !!metricKey && processRankingForMetric(metricKey) !== null,
     dependency: !!t && ruleAlertsWhenDependencyDown(t as Trigger),
+    path: !!metricKey && PATH_GRAPH_METRICS.has(metricKey),
   };
   return TEMPLATE_VARIABLES
     .filter((v) => {

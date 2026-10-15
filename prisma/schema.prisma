@@ -5679,6 +5679,23 @@ model Notification {
   quietSummarizedAt DateTime?
   quietSource       Json?
 
+  // ─── Grouped-alert first-send hold (business rule 75) ──────────────────────
+  // A grouped alert (an AlertGroup member's, or an automation folding its own
+  // components) does not send its first message the tick it opens: it waits
+  // ONE polling interval of the reading that opened it, so the devices and
+  // automations that go down with it are in the first email rather than in a
+  // string of updates. `firstSendDueAt` is when that send is due (set at open;
+  // NULL on every alert that was never held) and `firstSentAt` when it went.
+  // Held = due set, sent NULL: the alert is live in the app, joins update it
+  // silently, escalation and reminders skip it and later count from
+  // `firstSentAt`, and one that clears while still held sends nothing at all —
+  // not its reset actions either, since nobody was told it had opened.
+  //
+  // Backed by the PARTIAL index `notifications_first_send_held`, migration SQL
+  // only — the schema diff reports it as drift, like the quiet-time one.
+  firstSendDueAt DateTime?
+  firstSentAt    DateTime?
+
   deliveries NotificationDelivery[]
 
   @@index([assetId])
@@ -5754,6 +5771,13 @@ model AlertGroup {
   /// the behaviour a group had before this column and what every existing row
   /// keeps.
   scope Json?
+
+  /// What the fold is keyed on — `ALERT_GROUP_FOLD_BY` in notificationTypes.
+  /// "device" (default): one alert per device. "subnet": one alert per
+  /// registry subnet, each down host a member — the most specific
+  /// non-deprecated Subnet containing the device's primary IP. A device in no
+  /// subnet alerts on its own. Changing it retires the group's live alerts.
+  foldBy String @default("device")
 
   /// The delivery half, lifted from NotificationRule. Seeded from the first
   /// member on create, so joining a group is not a re-authoring exercise.

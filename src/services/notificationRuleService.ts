@@ -10,6 +10,7 @@
 
 import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
 import { prisma } from "../db.js";
+import { decorateSubnetNameHits } from "./scopeRelationIndex.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
@@ -89,6 +90,8 @@ export async function findRulesMatchingAsset(assetId: string, opts: { carveOut?:
   });
 
   const views = rules.map((r) => ({ id: r.id, trigger: r.trigger as unknown as Trigger, scope: (r.scope ?? {}) as RuleScope }));
+  // Subnet-NAME leaves read the registry; a no-op (no query) without one.
+  await decorateSubnetNameHits([asset], views.map((v) => v.scope.condition));
   // Indexed over the whole enabled set, as the engine does — a peer need not
   // be listed to supersede.
   const shadowIndex = opts.carveOut ? buildShadowIndex(views) : null;

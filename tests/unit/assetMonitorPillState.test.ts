@@ -82,4 +82,22 @@ describe("assetMonitorPillState", () => {
       assetMonitorPillState({ ...base, dependencyTestUntil: new Date(Date.now() - 1_000) }),
     ).toEqual({ kind: "up", label: "Up" });
   });
+
+  it("maintenance outranks the frozen probe state and every overlay", () => {
+    expect(
+      assetMonitorPillState({
+        ...base,
+        status: "maintenance",
+        monitorStatus: "recovering",
+        dependencySuppressed: true,
+        dependencyTestUntil: new Date(Date.now() + 60_000),
+      }),
+    ).toEqual({ kind: "maintenance", label: "Maintenance" });
+  });
+
+  it("an unmonitored asset in maintenance still reads Unmonitored (matches the assets table)", () => {
+    expect(
+      assetMonitorPillState({ ...base, monitored: false, status: "maintenance" }),
+    ).toEqual({ kind: "unmonitored", label: "Unmonitored" });
+  });
 });
