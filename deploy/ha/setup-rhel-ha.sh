@@ -511,7 +511,12 @@ REPO
   if command -v semanage >/dev/null 2>&1; then
     semanage fcontext -a -t httpd_sys_content_t "$CERT_DIR(/.*)?" >/dev/null 2>&1 || true
     restorecon -R "$CERT_DIR" >/dev/null 2>&1 || true
+    # udp/443 (QUIC) and nginx → :3000, as setup-rhel.sh: without them the
+    # promoted standby's nginx refuses the Polaris server block, then 502s.
+    semanage port -a -t http_port_t -p udp 443 >/dev/null 2>&1 || \
+      semanage port -m -t http_port_t -p udp 443 >/dev/null 2>&1 || true
   fi
+  command -v setsebool >/dev/null 2>&1 && { setsebool -P httpd_can_network_connect 1 || warn "setsebool httpd_can_network_connect failed: nginx will 502"; }
   getent group nginx >/dev/null 2>&1 && usermod -aG nginx "$APP_USER"
   systemctl enable nginx >/dev/null 2>&1 || true
 

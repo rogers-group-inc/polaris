@@ -649,12 +649,26 @@ chmod 0640        "$CERT_DIR/cert.pem" "$CERT_DIR/key.pem"
 
 # SELinux: nginx must be allowed to read /etc/polaris-nginx/. semanage +
 # restorecon is the persistent path (survives relabels); plain chcon is
-# volatile. Skip silently if policycoreutils-python-utils isn't installed.
-if command -v semanage >/dev/null 2>&1; then
+# volatile.
+selinux_nginx_policy() {
+  [[ "$(getenforce 2>/dev/null)" == Disabled || -z "$(command -v getenforce)" ]] && return 0
+  command -v semanage >/dev/null 2>&1 || dnf install -y policycoreutils-python-utils >/dev/null 2>&1 || {
+    warn "semanage unavailable (install policycoreutils-python-utils): SELinux will block nginx's QUIC listener and its proxy to :3000"
+    return 0
+  }
   semanage fcontext -a -t httpd_sys_content_t "$CERT_DIR(/.*)?" 2>/dev/null || \
     semanage fcontext -m -t httpd_sys_content_t "$CERT_DIR(/.*)?" 2>/dev/null || true
   restorecon -Rv "$CERT_DIR" >/dev/null || true
-fi
+  # The QUIC listener is udp/443, which RHEL 9's policy labels reserved_port_t
+  # (http_port_t is tcp only there): the bind is denied and nginx refuses the
+  # whole Polaris server block. A policy that already has it fails both calls.
+  semanage port -a -t http_port_t -p udp 443 2>/dev/null || \
+    semanage port -m -t http_port_t -p udp 443 2>/dev/null || true
+  # nginx proxies to 127.0.0.1:3000 (ntop_port_t) and the role /metrics ports:
+  # httpd_t may only connect out with this boolean, or every request is a 502.
+  setsebool -P httpd_can_network_connect 1 || warn "setsebool httpd_can_network_connect failed: nginx will 502"
+}
+selinux_nginx_policy
 
 # ─── 7. Configure environment ────────────────────────────────────────────────
 # Node ignores the OS trust store, so on a network that re-signs HTTPS with an
@@ -834,6 +848,10 @@ fi
 
 info "Validating nginx config..."
 nginx -t
+# With nginx stopped, `nginx -t` run as root leaves an empty /run/nginx.pid
+# labelled unconfined var_run_t; SELinux then denies the real start writing
+# it, and systemd fails the unit on the empty file. Only a running nginx owns it.
+systemctl is-active -q nginx || rm -f /run/nginx.pid
 
 # ─── 10b. Install in-app nginx GUI helpers ──────────────────────────────────
 # /usr/local/sbin/polaris-nginx-apply + narrow sudoers grant + tmpfiles
@@ -898,6 +916,9 @@ systemctl enable polaris.target >/dev/null
 systemctl enable nginx >/dev/null
 
 info "Starting polaris.target (this brings up nginx first, then polaris-web + workers)..."
+# A re-run rewrote polaris.conf above, but starting an already-running nginx
+# (polaris.target pulls it in) is a no-op: reload it so the new config is live.
+if systemctl is-active -q nginx; then systemctl reload nginx || warn "nginx reload failed: journalctl -u nginx"; fi
 systemctl start polaris.target
 
 # ─── 13. Smoke checks ──────────────────────────────────────────────────────
@@ -917,7 +938,8 @@ else
   warn "✗ nginx UDP listener on :443 not detected"
   SMOKE_FAILED=1
 fi
-if ss -ltnp 2>/dev/null | grep -qE '127\\.0\\.0\\.1:3000.*node'; then
+# Address only: `ss -p` names node's listening thread (MainThread), not node.
+if ss -ltn 2>/dev/null | grep -qF '127.0.0.1:3000 '; then
   info "✓ Polaris web bound to 127.0.0.1:3000 (proxy mode)"
 else
   warn "✗ Polaris web not bound to 127.0.0.1:3000 — check journalctl -u polaris-web"

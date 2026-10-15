@@ -772,6 +772,9 @@ systemctl enable polaris-web.service polaris-discovery.service polaris-dash.serv
 systemctl enable nginx >/dev/null
 
 info "Starting polaris.target (brings up nginx first, then polaris-web + workers)..."
+# A re-run rewrote polaris.conf above, but starting an already-running nginx
+# (polaris.target pulls it in) is a no-op: reload it so the new config is live.
+if systemctl is-active -q nginx; then systemctl reload nginx || warn "nginx reload failed: journalctl -u nginx"; fi
 systemctl start polaris.target
 
 # ─── 12. Smoke checks ───────────────────────────────────────────────────────
@@ -789,7 +792,8 @@ else
   warn "✗ nginx UDP listener on :443 not detected"
   SMOKE_FAILED=1
 fi
-if ss -ltnp 2>/dev/null | grep -qE '127\\.0\\.0\\.1:3000.*node'; then
+# Address only: `ss -p` names node's listening thread (MainThread), not node.
+if ss -ltn 2>/dev/null | grep -qF '127.0.0.1:3000 '; then
   info "✓ Polaris web bound to 127.0.0.1:3000 (proxy mode)"
 else
   warn "✗ Polaris web not bound to 127.0.0.1:3000 — check journalctl -u polaris-web"

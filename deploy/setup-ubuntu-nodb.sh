@@ -726,6 +726,9 @@ for ((i=1; i<=MONITOR_REPLICAS; i++)); do
 done
 systemctl enable polaris-web.service polaris-discovery.service polaris-dash.service polaris-migrate.service polaris.target nginx >/dev/null
 info "Starting polaris.target..."
+# A re-run rewrote polaris.conf above, but starting an already-running nginx
+# (polaris.target pulls it in) is a no-op: reload it so the new config is live.
+if systemctl is-active -q nginx; then systemctl reload nginx || warn "nginx reload failed: journalctl -u nginx"; fi
 systemctl start polaris.target
 
 sleep 5

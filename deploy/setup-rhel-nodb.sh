@@ -622,11 +622,22 @@ if [[ ! -f "$CERT_DIR/cert.pem" || ! -f "$CERT_DIR/key.pem" ]]; then
 fi
 chown root:nginx "$CERT_DIR/cert.pem" "$CERT_DIR/key.pem"
 chmod 0640        "$CERT_DIR/cert.pem" "$CERT_DIR/key.pem"
-if command -v semanage >/dev/null 2>&1; then
+# SELinux — same as setup-rhel.sh: the cert dir's context, udp/443 for QUIC,
+# and nginx's outbound connect to :3000.
+selinux_nginx_policy() {
+  [[ "$(getenforce 2>/dev/null)" == Disabled || -z "$(command -v getenforce)" ]] && return 0
+  command -v semanage >/dev/null 2>&1 || dnf install -y policycoreutils-python-utils >/dev/null 2>&1 || {
+    warn "semanage unavailable (install policycoreutils-python-utils): SELinux will block nginx's QUIC listener and its proxy to :3000"
+    return 0
+  }
   semanage fcontext -a -t httpd_sys_content_t "$CERT_DIR(/.*)?" 2>/dev/null || \
     semanage fcontext -m -t httpd_sys_content_t "$CERT_DIR(/.*)?" 2>/dev/null || true
   restorecon -Rv "$CERT_DIR" >/dev/null || true
-fi
+  semanage port -a -t http_port_t -p udp 443 2>/dev/null || \
+    semanage port -m -t http_port_t -p udp 443 2>/dev/null || true
+  setsebool -P httpd_can_network_connect 1 || warn "setsebool httpd_can_network_connect failed: nginx will 502"
+}
+selinux_nginx_policy
 
 # Append proxy-mode env vars if not already in .env
 if ! grep -q '^POLARIS_PROXY_CERT_PATH=' "$APP_DIR/.env"; then
@@ -692,6 +703,9 @@ else
   mv -f "$NGINX_CONF_NEW" "$NGINX_CONF_DEST"
 fi
 nginx -t
+# A stopped nginx's `nginx -t` leaves an empty, wrongly-labelled pid file the
+# real start can't write (see setup-rhel.sh).
+systemctl is-active -q nginx || rm -f /run/nginx.pid
 
 # In-app nginx GUI helpers (wrapper + sudoers + tmpfiles + group membership).
 # Mirrors setup-rhel.sh's 10b section so fresh -nodb installs land the
@@ -734,6 +748,9 @@ for ((i=1; i<=MONITOR_REPLICAS; i++)); do
 done
 systemctl enable polaris-web.service polaris-discovery.service polaris-dash.service polaris-migrate.service polaris.target nginx >/dev/null
 info "Starting polaris.target..."
+# A re-run rewrote polaris.conf above, but starting an already-running nginx
+# (polaris.target pulls it in) is a no-op: reload it so the new config is live.
+if systemctl is-active -q nginx; then systemctl reload nginx || warn "nginx reload failed: journalctl -u nginx"; fi
 systemctl start polaris.target
 
 sleep 5

@@ -68,6 +68,30 @@ describe.each(INSTALLERS)("%s", (file) => {
   it("hands data/ itself to the app account, not only its children", () => {
     expect(src).toMatch(/mkdir -p "\$APP_DIR\/data"\nchown "\$APP_USER:\$APP_GROUP" "\$APP_DIR\/data"\n/);
   });
+
+  // A re-run rewrites polaris.conf; starting an already-running nginx is a no-op.
+  it("reloads a running nginx before starting polaris.target", () => {
+    expect(src).toMatch(/if systemctl is-active -q nginx; then systemctl reload nginx [^\n]*\nsystemctl start polaris\.target/);
+  });
+
+  it("smoke-checks :3000 by address, not by a process name ss does not print", () => {
+    expect(src).not.toMatch(/3000\.\*node/);
+  });
+});
+
+// RHEL 9.5 VM run, SELinux enforcing: udp/443 is reserved_port_t (the QUIC
+// bind fails, so nginx drops the whole Polaris server block), :3000 is
+// ntop_port_t (502 without httpd_can_network_connect), and a stopped nginx's
+// `nginx -t` leaves an unconfined /run/nginx.pid the real start can't write.
+describe.each(["deploy/setup-rhel.sh", "deploy/setup-rhel-nodb.sh", "deploy/ha/setup-rhel-ha.sh", "deploy/migrate-to-nginx.sh"])("%s SELinux", (file) => {
+  const src = read(file);
+  it("labels udp/443 http_port_t and lets nginx connect out", () => {
+    expect(src).toMatch(/semanage port -a -t http_port_t -p udp 443/);
+    expect(src).toMatch(/setsebool -P httpd_can_network_connect 1/);
+  });
+  it.skipIf(file.includes("/ha/") || file.includes("migrate"))("drops the pid file a stopped nginx's nginx -t leaves", () => {
+    expect(src).toMatch(/\nnginx -t\n(#[^\n]*\n)*systemctl is-active -q nginx \|\| rm -f \/run\/nginx\.pid\n/);
+  });
 });
 
 // RHEL 9.5 VM run: the DVD's Node 22.4 passed the old `v22*` check and npm ci
