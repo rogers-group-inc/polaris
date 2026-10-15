@@ -225,6 +225,7 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 - **Server Settings:** section tabs inside the pinned `.page-top-sticky`, over a **`.folder-card`**: one page-sized card wrapping every `.page-tab-panel`, whose own cards sit inside it.
   - `.main:has(> .folder-card)` becomes a flex column so the card fills the viewport.
   - `folder-head-card` on the head row sets `--folder-fill` to the card's fill instead of a table header's.
+  - Only the folder card lifts. It casts the sidebar's shadow recipe (left and right, plus the same pair downward), and the `.settings-card`s inside it have `box-shadow: none`.
   - The bar loses its margin-bottom and the curtain its feather (canon-shared-kit.md).
   - On a cold permission cache an admin sees only the Credentials tab until reload. This predates folder tabs: `server-settings.js` decides visibility at DOMContentLoaded. Warm the cache with one load before capturing.
 - **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.

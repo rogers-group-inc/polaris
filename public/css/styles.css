@@ -2575,9 +2575,17 @@ html[data-page-top-curtain]::after {
   background: var(--rail-glass-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  /* The sidebar's cast (.sidebar — same blur, offset and hardcoded rgba,
+     dark in every theme), left and right as the rail casts it plus the same
+     pair downward for the card's bottom edge. Its top edge needs none: it
+     runs under the pinned bar and its curtain. The card is the one surface
+     that lifts — the cards inside it lie flat on it (below). */
+  box-shadow: 8px 0 24px rgba(0,0,0,.22), 1px 0 4px rgba(0,0,0,.14),
+              -8px 0 24px rgba(0,0,0,.22), -1px 0 4px rgba(0,0,0,.14),
+              0 8px 24px rgba(0,0,0,.22), 0 1px 4px rgba(0,0,0,.14);
   padding: 1.25rem;
 }
+.folder-card .settings-card { box-shadow: none; }
 /* A pinned bar (.page-top-sticky) holding a head row sits flush on the folder
    body — no gap under it — and its curtain loses the feather: content
    scrolling up inside the folder is cut cleanly at the tab rule, as if it
