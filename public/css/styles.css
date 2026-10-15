@@ -2594,7 +2594,9 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
 /* The card draws its own top edge (rounded corners, gap under the active
    tab), so this head row draws no rule, and the tab takes the CARD's fill. */
 .table-head-row.folder-head-card {
-  --folder-fill: var(--rail-glass-bg);
+  /* The neck paints only its fillet borders here: its fill comes from the
+     card's frosted neck layer (.folder-neck-glass) underneath. */
+  --folder-fill: transparent;
   --folder-shadow-room: 32px;
   background: none;
 }
@@ -2609,8 +2611,9 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   padding-right: var(--folder-shadow-room);
   margin-right: calc(-1 * var(--folder-shadow-room));
 }
-/* Each tab rings itself in the same cast — top and sides; below its bottom
-   edge is the card (or the neck), so the cast is clipped there. */
+/* The ACTIVE tab rings itself in the card's cast — top and sides; below its
+   bottom edge is the card (or the neck), so the cast is clipped there.
+   Inactive tabs sit behind the card and cast nothing. */
 .table-head-row.folder-head-card .page-tabs .page-tab { isolation: isolate; }
 .table-head-row.folder-head-card .page-tabs .page-tab::before {
   content: "";
@@ -2619,9 +2622,17 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   z-index: -1;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: var(--shadow-lift);
+  box-shadow: none;
   clip-path: inset(-60px -60px 0 -60px);
-  transition: bottom 0.2s ease;
+  transition: bottom 0.2s ease, box-shadow 0.2s ease;
+}
+/* The active tab is the card's own surface: the sidebar's frosted glass
+   (fill + --panel-glass-blur, whose saturate() is what warms the rail), the
+   same as the card's ::after and its neck layer, so the three read as one. */
+.table-head-row.folder-head-card .page-tabs .page-tab.active {
+  background: var(--rail-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 /* The active tab stands a neck's height above the card. Its cast layer
    reaches down through the neck to the card's edge, so its sides keep casting
@@ -2629,6 +2640,7 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
    cast ended in a visible line across the tab's base. */
 .table-head-row.folder-head-card .page-tabs .page-tab.active::before {
   bottom: calc(-1 * var(--folder-r));
+  box-shadow: var(--shadow-lift);
 }
 .folder-card {
   --R: var(--radius-lg);
@@ -2664,8 +2676,55 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
     radial-gradient(circle at 0 100%,
       transparent calc(var(--R) - 1.25px), var(--color-border) calc(var(--R) - 0.75px),
       var(--color-border) calc(var(--R) - 0.25px), transparent calc(var(--R) + 0.25px))
-      100% 0 / var(--R) var(--R) no-repeat border-box,
-    var(--rail-glass-bg) padding-box;
+      100% 0 / var(--R) var(--R) no-repeat border-box;
+}
+/* The card's FILL is frosted glass like the sidebar's (fill +
+   --panel-glass-blur), on a layer behind the contents rather than on the card
+   itself: a backdrop-filter on the card would make it the containing block
+   for position:fixed popovers inside it and the backdrop root for the
+   frosted menus in its panels (the .bulk-bar::before idiom). The layer fills
+   the padding box with its inner radius, so it never covers the top edge or
+   the corner arcs, which sit in the border. */
+.folder-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: calc(var(--radius-lg) - 1px);
+  pointer-events: none;
+  background: var(--rail-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+}
+/* The same glass under the active tab's neck (whose own fill is transparent
+   here): the span between the tab's base and the card's top edge, at
+   --folder-gap-l/-r, with the fillets' concave corners cut out. Positioned
+   from the padding box, so -1px is the card's top border row. */
+.folder-neck-glass {
+  position: absolute;
+  z-index: -1;
+  left: var(--folder-gap-l, 0px);
+  width: calc(var(--folder-gap-r, 0px) - var(--folder-gap-l, 0px));
+  top: calc(-1px - var(--fr));
+  height: calc(var(--fr) + 1px);
+  pointer-events: none;
+  background: var(--rail-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  -webkit-mask-image:
+    radial-gradient(circle at 0 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
+    radial-gradient(circle at 100% 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
+    linear-gradient(#000, #000);
+  mask-image:
+    radial-gradient(circle at 0 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
+    radial-gradient(circle at 100% 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
+    linear-gradient(#000, #000);
+  -webkit-mask-size: calc(var(--fr) + 1px) 100%, calc(var(--fr) + 1px) 100%, calc(100% - 2 * (var(--fr) + 1px)) 100%;
+  mask-size: calc(var(--fr) + 1px) 100%, calc(var(--fr) + 1px) 100%, calc(100% - 2 * (var(--fr) + 1px)) 100%;
+  -webkit-mask-position: left top, right top, center top;
+  mask-position: left top, right top, center top;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
 .folder-card-scroll {
   flex: 1 1 auto;
