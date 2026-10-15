@@ -300,9 +300,26 @@
   min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  background: var(--color-bg-secondary);
+  /* The folder card's glass (styles.css "Folder CARD"), the same see-through
+     surface as the Path Monitor and other list-page cards, in place of the
+     opaque --color-bg-secondary: the page's glow shows through, frosted.
+     Drawn on ::before behind the graph rather than on the card, so the card
+     never becomes the containing block for fixed overlays or the backdrop
+     root for the frosted menus that open over the graph. */
+  background: transparent;
+  isolation: isolate;
   overflow: hidden;
   box-shadow: var(--shadow-card);
+}
+.appmap-graph::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--rail-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
 }
 
 /* Cytoscape draws into this; it fills the card, overlays sit above it. */

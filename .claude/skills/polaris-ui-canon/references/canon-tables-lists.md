@@ -248,6 +248,7 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
   - Path Monitor has no tabs, so it gets the card only. Its edge is unbroken because the gap vars are unset.
   - Cards inside a folder card lie flat: `.settings-card`, `.integration-card`, `.empty-state-card` and `.card` have `box-shadow: none`.
   - The strip is pulled up over the page header or bulk bar by the cast's room, so it is `pointer-events: none` except on its tabs and the + button.
+- **Application Map**'s graph card (`.appmap-graph`, appmap.css) takes the folder card's glass, `--rail-glass-bg` + `--panel-glass-blur`, on a `::before` behind the graph instead of its opaque fill. The card is isolated, so the layer sits under the Cytoscape canvas and the card never traps the overlays' fixed positioning or frosted menus.
 - **Device Map** isn't a folder card, but its `.map-canvas` fills the same flex column (`map.css`), so it ends at the same bottom edge.
 - **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.
 
