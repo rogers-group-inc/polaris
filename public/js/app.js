@@ -4978,6 +4978,18 @@ function wireFolderTabs() {
   document.querySelectorAll(".table-head-row").forEach(function (row) {
     if (row.__polarisFolderWired) return;
     row.__polarisFolderWired = true;
+    // A folder CARD's tabs carry the card's frosted glass on one masked layer
+    // per tab (.tab-glass, styles.css), shown on the active one. Added here
+    // so the page markup stays plain buttons.
+    if (row.classList.contains("folder-head-card")) {
+      row.querySelectorAll(".page-tab").forEach(function (t) {
+        if (t.querySelector(":scope > .tab-glass")) return;
+        var g = document.createElement("span");
+        g.className = "tab-glass";
+        g.setAttribute("aria-hidden", "true");
+        t.insertBefore(g, t.firstChild);
+      });
+    }
     var sync = function () { syncFolderTabs(row); };
     var strip = row.querySelector(".table-tabs, .page-tabs");
     if (strip) strip.addEventListener("scroll", sync, { passive: true });

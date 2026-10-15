@@ -25,8 +25,9 @@
 
       <!-- Folder tabs (styles.css "Table head row") over one page-sized card
            (.folder-card) that holds every tab's panel — the tabs open into it.
-           folder-head-card: the tab takes the card's fill, not a table
-           header's. -->
+           folder-head-card: the tab takes the card's glass, not a table
+           header's fill (wireFolderTabs() in app.js gives each tab the
+           .tab-glass layer that carries it). -->
       <div class="table-head-row folder-head-card">
         <div class="page-tabs page-tabs-glass" id="settings-tabs">
           <button class="page-tab active" data-tab="identification">Identification</button>
@@ -47,7 +48,6 @@
            (.folder-card-scroll), so its rounded top edge, the folder join and
            its ring shadow never slide under the pinned header. -->
       <div class="folder-card folder-body">
-        <div class="folder-neck-glass" aria-hidden="true"></div>
         <div class="folder-card-scroll">
           <div class="page-tab-panel active" id="tab-identification"></div>
           <div class="page-tab-panel" id="tab-credentials"></div>

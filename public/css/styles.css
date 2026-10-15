@@ -2595,7 +2595,7 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
    tab), so this head row draws no rule, and the tab takes the CARD's fill. */
 .table-head-row.folder-head-card {
   /* The neck paints only its fillet borders here: its fill comes from the
-     card's frosted neck layer (.folder-neck-glass) underneath. */
+     active tab's .tab-glass layer underneath. */
   --folder-fill: transparent;
   --folder-shadow-room: 32px;
   background: none;
@@ -2628,19 +2628,114 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
 }
 /* The active tab is the card's own surface: the sidebar's frosted glass
    (fill + --panel-glass-blur, whose saturate() is what warms the rail), the
-   same as the card's ::after and its neck layer, so the three read as one. */
-.table-head-row.folder-head-card .page-tabs .page-tab.active {
-  background: var(--rail-glass-bg);
+   same as the card's ::after. It comes from ONE layer, .tab-glass (an empty
+   span in each tab), shaped by a mask to the whole silhouette: the tab with
+   its rounded top, the neck below it and both fillets. Glass on the tab and
+   a second layer under the neck blurred to slightly different tones and the
+   neck showed as a square block. Inside the tab, the layer rises with the
+   tab's transform and cross-fades on a switch. The tab's own fill and the
+   neck's (--folder-fill) are transparent here. */
+.table-head-row.folder-head-card .page-tabs .page-tab.active { background: transparent; }
+.table-head-row.folder-head-card .tab-glass {
+  --m: var(--radius-md);
+  position: absolute;
+  /* From the padding box: the tab's border-box edge is -1px; the neck and
+     its fillets reach --folder-r (+1px for the card's top border row) past
+     the tab's sides and bottom. */
+  inset: -1px calc(-1px - var(--folder-r)) calc(-1px - var(--folder-r)) calc(-1px - var(--folder-r));
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  /* The layer paints ABOVE the tab's own border and inset accent (it is a
+     child), so it is shaped to the tab's PADDING box — the 1px side and top
+     borders show around it — and draws the accent itself, 2px at the top. */
+  background:
+    linear-gradient(var(--color-accent), var(--color-accent)) 0 1px / 100% 2px no-repeat,
+    var(--rail-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
+  /* Box coordinates: the tab's border box spans --folder-r … 100% - --folder-r
+     across and 0 … 100% - (--folder-r + 1px) down; its padding box is 1px
+     inside that; the neck fills the bottom --folder-r + 1px. Inner corner
+     radius --mi = --m - 1px. Layers: 1 the padding box below its top
+     corners, on down through the neck; 2 the top strip between the corners;
+     3-4 the rounded top corners; 5 the neck under the tab's side borders;
+     6-7 the fillets' crescents. */
+  --mi: calc(var(--m) - 1px);
+  -webkit-mask-image:
+    linear-gradient(#000, #000),
+    linear-gradient(#000, #000),
+    radial-gradient(circle at 100% 100%, #000 calc(var(--mi) - 0.5px), transparent var(--mi)),
+    radial-gradient(circle at 0 100%, #000 calc(var(--mi) - 0.5px), transparent var(--mi)),
+    linear-gradient(#000, #000),
+    radial-gradient(circle at 0 0, transparent calc(var(--folder-r) + 0.5px), #000 calc(var(--folder-r) + 1px)),
+    radial-gradient(circle at 100% 0, transparent calc(var(--folder-r) + 0.5px), #000 calc(var(--folder-r) + 1px));
+  mask-image:
+    linear-gradient(#000, #000),
+    linear-gradient(#000, #000),
+    radial-gradient(circle at 100% 100%, #000 calc(var(--mi) - 0.5px), transparent var(--mi)),
+    radial-gradient(circle at 0 100%, #000 calc(var(--mi) - 0.5px), transparent var(--mi)),
+    linear-gradient(#000, #000),
+    radial-gradient(circle at 0 0, transparent calc(var(--folder-r) + 0.5px), #000 calc(var(--folder-r) + 1px)),
+    radial-gradient(circle at 100% 0, transparent calc(var(--folder-r) + 0.5px), #000 calc(var(--folder-r) + 1px));
+  -webkit-mask-size:
+    calc(100% - 2 * var(--folder-r) - 2px) calc(100% - var(--m)),
+    calc(100% - 2 * var(--folder-r) - 2px - 2 * var(--mi)) var(--mi),
+    var(--mi) var(--mi), var(--mi) var(--mi),
+    calc(100% - 2 * var(--folder-r)) calc(var(--folder-r) + 1px),
+    calc(var(--folder-r) + 1px) calc(var(--folder-r) + 1px),
+    calc(var(--folder-r) + 1px) calc(var(--folder-r) + 1px);
+  mask-size:
+    calc(100% - 2 * var(--folder-r) - 2px) calc(100% - var(--m)),
+    calc(100% - 2 * var(--folder-r) - 2px - 2 * var(--mi)) var(--mi),
+    var(--mi) var(--mi), var(--mi) var(--mi),
+    calc(100% - 2 * var(--folder-r)) calc(var(--folder-r) + 1px),
+    calc(var(--folder-r) + 1px) calc(var(--folder-r) + 1px),
+    calc(var(--folder-r) + 1px) calc(var(--folder-r) + 1px);
+  -webkit-mask-position:
+    calc(var(--folder-r) + 1px) var(--m),
+    calc(var(--folder-r) + 1px + var(--mi)) 1px,
+    calc(var(--folder-r) + 1px) 1px,
+    calc(100% - var(--folder-r) - 1px) 1px,
+    var(--folder-r) 100%,
+    0 100%,
+    100% 100%;
+  mask-position:
+    calc(var(--folder-r) + 1px) var(--m),
+    calc(var(--folder-r) + 1px + var(--mi)) 1px,
+    calc(var(--folder-r) + 1px) 1px,
+    calc(100% - var(--folder-r) - 1px) 1px,
+    var(--folder-r) 100%,
+    0 100%,
+    100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
-/* The active tab stands a neck's height above the card. Its cast layer
-   reaches down through the neck to the card's edge, so its sides keep casting
-   to where the card's own cast takes over; stopped at the tab's bottom, the
-   cast ended in a visible line across the tab's base. */
+.table-head-row.folder-head-card .page-tab.active .tab-glass { opacity: 1; }
 .table-head-row.folder-head-card .page-tabs .page-tab.active::before {
   bottom: calc(-1 * var(--folder-r));
   box-shadow: var(--shadow-lift);
+  /* Cut the cast out of the neck's two fillets (the concave corners either
+     side of the tab's base, arcs in 22.5° steps): they are the card's own
+     surface, and the tab's sideways cast lying in them made the base read as
+     a square block rather than a curve. The box is the tab +1px each side,
+     so the tab's edges sit at 1px and 100% - 1px. */
+  clip-path: polygon(
+    -60px -60px, calc(100% + 60px) -60px, calc(100% + 60px) 100%,
+    calc(100% - 1px + var(--folder-r)) 100%,
+    calc(100% - 1px + var(--folder-r) * 0.617) calc(100% - var(--folder-r) * 0.076),
+    calc(100% - 1px + var(--folder-r) * 0.293) calc(100% - var(--folder-r) * 0.293),
+    calc(100% - 1px + var(--folder-r) * 0.076) calc(100% - var(--folder-r) * 0.617),
+    calc(100% - 1px) calc(100% - var(--folder-r)),
+    calc(100% - 1px) 100%,
+    1px 100%,
+    1px calc(100% - var(--folder-r)),
+    calc(1px - var(--folder-r) * 0.076) calc(100% - var(--folder-r) * 0.617),
+    calc(1px - var(--folder-r) * 0.293) calc(100% - var(--folder-r) * 0.293),
+    calc(1px - var(--folder-r) * 0.617) calc(100% - var(--folder-r) * 0.076),
+    calc(1px - var(--folder-r)) 100%,
+    -60px 100%);
 }
 .folder-card {
   --R: var(--radius-lg);
@@ -2695,36 +2790,6 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   background: var(--rail-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
-}
-/* The same glass under the active tab's neck (whose own fill is transparent
-   here): the span between the tab's base and the card's top edge, at
-   --folder-gap-l/-r, with the fillets' concave corners cut out. Positioned
-   from the padding box, so -1px is the card's top border row. */
-.folder-neck-glass {
-  position: absolute;
-  z-index: -1;
-  left: var(--folder-gap-l, 0px);
-  width: calc(var(--folder-gap-r, 0px) - var(--folder-gap-l, 0px));
-  top: calc(-1px - var(--fr));
-  height: calc(var(--fr) + 1px);
-  pointer-events: none;
-  background: var(--rail-glass-bg);
-  -webkit-backdrop-filter: var(--panel-glass-blur);
-  backdrop-filter: var(--panel-glass-blur);
-  -webkit-mask-image:
-    radial-gradient(circle at 0 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
-    radial-gradient(circle at 100% 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
-    linear-gradient(#000, #000);
-  mask-image:
-    radial-gradient(circle at 0 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
-    radial-gradient(circle at 100% 0, transparent calc(var(--fr) + 0.5px), #000 calc(var(--fr) + 1px)),
-    linear-gradient(#000, #000);
-  -webkit-mask-size: calc(var(--fr) + 1px) 100%, calc(var(--fr) + 1px) 100%, calc(100% - 2 * (var(--fr) + 1px)) 100%;
-  mask-size: calc(var(--fr) + 1px) 100%, calc(var(--fr) + 1px) 100%, calc(100% - 2 * (var(--fr) + 1px)) 100%;
-  -webkit-mask-position: left top, right top, center top;
-  mask-position: left top, right top, center top;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
 }
 .folder-card-scroll {
   flex: 1 1 auto;
@@ -6244,9 +6309,10 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 
 /* ─── Scrollbar ───────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; }
+/* 9px (was 6px, widened 50% on 2026-10-15): easier to grab, still slim. */
+::-webkit-scrollbar { width: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4.5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }
 
 /* ─── New Dashboard (2×2 card grid) ────────────────────────────────────── */

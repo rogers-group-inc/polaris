@@ -231,7 +231,12 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
   - The strip starts its first tab at `--radius-lg + --folder-r`, so the fillet lands on the straight edge.
   - **Glass:** the card is the sidebar's frosted glass (fill + `--panel-glass-blur`, whose `saturate(1.3)` is what warms the rail), so the two read as one shade.
     - The frost is on `.folder-card::after`, a layer behind the contents (padding box, inner radius, so the top edge and corner arcs stay in the border). On the card itself it would become the containing block for fixed popovers and the backdrop root for the panels' frosted menus.
-    - The active tab carries the same glass itself. The neck's fill is transparent (`--folder-fill: transparent`), and an empty `.folder-neck-glass` div in the card supplies that glass under it, masked to the fillets at `--folder-gap-l/-r`.
+    - The active tab's glass is ONE layer: a `.tab-glass` span that `wireFolderTabs()` inserts in each tab of a `folder-head-card` row, shown (opacity cross-fade) on the active one. Its mask covers the whole silhouette: the tab's padding box with rounded top corners, the neck below it, the strip under the tab's side borders, and both fillet crescents.
+      - The tab's own fill and the neck's (`--folder-fill`) are transparent.
+      - The span is a child, so it paints over the tab's border and inset accent. That is why it is shaped to the PADDING box and draws the 2px accent itself.
+      - It rides the tab's transform.
+      - Glass on the tab plus a separate layer under the neck blurred to two tones, and the neck read as a square block. Extending the tab down to the card ran its side borders straight past the fillets.
+    - Under 8× zoom the active tab's glass is a touch darker near its base than the card. Its backdrop blur samples the box beyond the mask, which includes the tab's own cast. It is not visible at 1×.
   - **Shadows:** only the card and its ACTIVE tab lift (inactive tabs cast nothing), with `--shadow-lift` (the sidebar's cast, halved 2026-10-15, as a ring). The `.settings-card`s inside lie flat (`box-shadow: none`).
     - The card's ring comes from `::before`, clipped by an evenodd `polygon` to everything OUTSIDE the card. The hole is the card outline (corners in 22.5° steps) plus a notch over the active tab whose sides follow the neck's fillets (`--fr`). The glass fill would otherwise show the cast beneath it as a dark band.
     - Each tab rings itself from its own `::before`, clipped at its bottom edge. The active tab's layer reaches down through the neck to the card (`bottom: -var(--folder-r)`, transitioned), or its cast ends in a line across the tab's base.
