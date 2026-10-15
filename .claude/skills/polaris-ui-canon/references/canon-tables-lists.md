@@ -225,7 +225,11 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 - **Server Settings:** section tabs inside the pinned `.page-top-sticky`, over a **`.folder-card`**: one page-sized card wrapping every `.page-tab-panel`, whose own cards sit inside it.
   - `.main:has(> .folder-card)` becomes a flex column so the card fills the viewport.
   - `folder-head-card` on the head row sets `--folder-fill` to the card's fill instead of a table header's.
-  - Only the folder card lifts. It casts the sidebar's shadow recipe (left and right, plus the same pair downward), and the `.settings-card`s inside it have `box-shadow: none`.
+  - Only the folder card lifts. It casts the sidebar's shadow recipe (left and right, plus the same pair downward), and the `.settings-card`s inside it have `box-shadow: none`. The recipe is split in two:
+    - The tight 4px contact pair sits on the card itself, so the edge line runs from the top.
+    - The wide 24px cast sits on `::before`, which starts `--folder-shadow-lead` (24px) below the card's top, so the side cast fades in from nothing at the tab rule. That layer is clipped by an evenodd `polygon` to everything OUTSIDE the card, because the glass fill would otherwise show the cast beneath it as a dark band.
+    - Casting the whole recipe from the card put a smudge above it in the curtain's left fade beside the sidebar. A `clip-path` at the top fixed that but left a hard step in the gutter.
+  - The curtain's hard cut (no feather) spans the folder body's width ONLY. Its mask is the left fade intersected with the union of a band ending at the bar's bottom edge and two feathered gutter strips (`.main`'s side padding; the right strip also covers a centred `.layout`'s margin, from `--layout-max-width`). A full-width hard cut sliced the sidebar's cast into a step at the rule.
   - The bar loses its margin-bottom and the curtain its feather (canon-shared-kit.md).
   - On a cold permission cache an admin sees only the Credentials tab until reload. This predates folder tabs: `server-settings.js` decides visibility at DOMContentLoaded. Warm the cache with one load before capturing.
 - **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.

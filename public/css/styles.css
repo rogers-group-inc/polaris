@@ -2577,13 +2577,40 @@ html[data-page-top-curtain]::after {
   border-radius: var(--radius-lg);
   /* The sidebar's cast (.sidebar — same blur, offset and hardcoded rgba,
      dark in every theme), left and right as the rail casts it plus the same
-     pair downward for the card's bottom edge. Its top edge needs none: it
-     runs under the pinned bar and its curtain. The card is the one surface
+     pair downward for the card's bottom edge. The card is the one surface
      that lifts — the cards inside it lie flat on it (below). */
-  box-shadow: 8px 0 24px rgba(0,0,0,.22), 1px 0 4px rgba(0,0,0,.14),
-              -8px 0 24px rgba(0,0,0,.22), -1px 0 4px rgba(0,0,0,.14),
-              0 8px 24px rgba(0,0,0,.22), 0 1px 4px rgba(0,0,0,.14);
+  /* Cast from ::before, which starts --folder-shadow-lead below the card's
+     top, so the side cast FADES IN from nothing at the tab rule. Cast from
+     the card itself, the blur climbed ~24px above its top into the pinned
+     bar (a dark smudge in the curtain's left fade beside the sidebar), and
+     clipping it there instead left a hard step in the gutter at the rule.
+     The layer is clipped to everything OUTSIDE the card: the card's fill is
+     glass, so any cast under it showed through as a dark band. */
+  --folder-shadow-lead: 24px;
+  /* The rail's tight contact pair stays on the card itself so the edge line
+     runs from the top: its 4px blur barely reaches above it. Started at the
+     lead it began abruptly a little way down each side. */
+  box-shadow: 1px 0 4px rgba(0,0,0,.14), -1px 0 4px rgba(0,0,0,.14), 0 1px 4px rgba(0,0,0,.14);
+  position: relative;
+  isolation: isolate;
   padding: 1.25rem;
+}
+.folder-card::before {
+  content: "";
+  position: absolute;
+  inset: var(--folder-shadow-lead) 0 0 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 8px 0 24px rgba(0,0,0,.22), -8px 0 24px rgba(0,0,0,.22), 0 8px 24px rgba(0,0,0,.22);
+  /* evenodd ring: a box well past the cast, minus the card's own box (which
+     starts --folder-shadow-lead above this layer). */
+  clip-path: polygon(evenodd,
+    -100px -100px, calc(100% + 100px) -100px,
+    calc(100% + 100px) calc(100% + 100px), -100px calc(100% + 100px),
+    -100px -100px,
+    0 calc(-1 * var(--folder-shadow-lead)), 0 100%, 100% 100%,
+    100% calc(-1 * var(--folder-shadow-lead)), 0 calc(-1 * var(--folder-shadow-lead)));
 }
 .folder-card .settings-card { box-shadow: none; }
 /* A pinned bar (.page-top-sticky) holding a head row sits flush on the folder
@@ -2593,7 +2620,40 @@ html[data-page-top-curtain]::after {
    top at rest (the feather used to fit inside the bar's margin, now gone). */
 .page-top-sticky:has(> .table-head-row) { margin-bottom: 0; }
 .page-top-sticky > .table-head-row > .page-tabs { margin-bottom: 0; }
-html[data-page-top-curtain]:has(.page-top-sticky > .table-head-row)::after { --page-top-feather: 0px; }
+/* The hard cut applies across the folder body's span ONLY. In the gutters
+   either side the curtain keeps its feather: a hard cut there sliced the
+   sidebar's cast (and the folder card's own side cast, once scrolled) into a
+   visible step at the rule. Layers: the left fade (intersect) over the union
+   of a full-width band ending at the bar's bottom edge and the two feathered
+   gutter strips. Gutter = .main's side padding; the right strip also spans
+   the margin a centred, max-width .layout leaves on a wide screen. */
+html[data-page-top-curtain]:has(.page-top-sticky > .table-head-row)::after {
+  --folder-gutter: 2.5rem;
+  --folder-right-gap: calc((100vw - min(100vw, var(--layout-max-width))) / 2);
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, #000 1.5rem),
+    linear-gradient(#000, #000),
+    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
+    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent);
+  mask-image:
+    linear-gradient(to right, transparent, #000 1.5rem),
+    linear-gradient(#000, #000),
+    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
+    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent);
+  -webkit-mask-size: 100% 100%, 100% calc(100% - var(--page-top-feather)),
+    var(--folder-gutter) 100%, calc(var(--folder-gutter) + var(--folder-right-gap)) 100%;
+  mask-size: 100% 100%, 100% calc(100% - var(--page-top-feather)),
+    var(--folder-gutter) 100%, calc(var(--folder-gutter) + var(--folder-right-gap)) 100%;
+  -webkit-mask-position: 0 0, 0 0, 0 0, 100% 0;
+  mask-position: 0 0, 0 0, 0 0, 100% 0;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-composite: source-in, source-over, source-over;
+  mask-composite: intersect, add, add;
+}
+@media (max-width: 700px) {
+  html[data-page-top-curtain]:has(.page-top-sticky > .table-head-row)::after { --folder-gutter: 1rem; }
+}
 /* Fill clipped to the padding box so the top border row stays empty: the head
    row's rule (and, in the gap, the neck) is what shows there. */
 .folder-card.folder-body,
