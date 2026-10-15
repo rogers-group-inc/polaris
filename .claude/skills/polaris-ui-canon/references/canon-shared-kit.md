@@ -285,11 +285,13 @@ unselected page tab).
   strip together — Dashboard, /dash, Server Settings, Integrations; the header draws no rule of its own, the
   tab strip's bottom border is the bar's one line) is UNFILLED — it never paints a box of its own. It casts NO shadow
   either: a bottom-only `box-shadow` on it was tried and dropped on 2026-10-08 — its blur still
-  outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead: buttons,
-  search field and tabs already had theirs, the title takes `--shadow-title` (`--shadow-control`'s
-  two drop layers, so it lifts as far as the buttons beside it; text-shadow only), the username
-  and caret take `--shadow-text` (per family) and the avatar `--shadow-control` — on every `.page-header`, frozen
-  or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
+  outlined the bar as a faint box over the glow. Its CONTENTS carry the shadows instead. Since 2026-10-15 the
+  page title, the global search field and the account badge (username, caret, avatar, role pill) carry the
+  RAIL's lift, so the header sits at the same height as the sidebar and the Server Settings folder card:
+  `--shadow-lift` (the sidebar's cast, halved, as a ring; spread stands in for the rail's sideways offset) on
+  boxes and `--shadow-lift-text` on text. These are theme-independent like the rail's rgba, and declared on
+  `:root`. The caret takes the same pair as `drop-shadow()`s. The other header buttons keep `--shadow-control`.
+  This applies on every `.page-header`, frozen or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
   (`--shadow-control`'s counterpart for things with no box); the Application Map toolbar uses it on
   its labels and status, and as `drop-shadow()` on its native checkboxes and icon-button svgs, and
   gives its select `--shadow-control`. Never `filter:
@@ -311,7 +313,7 @@ unselected page tab).
   it). Never put a scroll-linked position on it again; the bar does not move, so nothing has to
   follow it. z-index 1049 (one under the bar), and
   masked to a `--page-top-feather` (1.5rem) fade below the bar — inside the bar's own
-  margin-bottom, so at rest it covers empty page. The exception is a bar holding a `.table-head-row` (folder tabs; Server Settings): there the bar has no margin-bottom and, across the folder body's width only, the curtain ends hard at the bar's bottom edge. Content is cut cleanly at the tab rule instead of dissolving over the folder card's top, while the gutters keep the feather so the sidebar's cast isn't sliced (canon-tables-lists.md, "Table head row + folder tabs"). The curtain also has a short fade-in on its left edge so the
+  margin-bottom, so at rest it covers empty page. The exception is a bar holding a `.table-head-row` over a `.folder-card` (Server Settings). There the bar has no margin-bottom and the curtain is OFF: the card's panels scroll inside the card, so nothing ever passes under the bar, and the curtain would only hide the card's top cast (canon-tables-lists.md, "Table head row + folder tabs") (canon-tables-lists.md, "Table head row + folder tabs"). The curtain also has a short fade-in on its left edge so the
   sidebar's shadow is not cut. It lives on `<html>`, not the bar, because the glow's animated
   parts are `inherits: false` and only html's own pseudo-elements can `inherit` them; this way it
   turns with the theme frame for frame. The bar reaches up over all of `.main`'s top padding

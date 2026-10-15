@@ -223,14 +223,16 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 - **Automations:** section tabs (`.page-tabs`). The `#rules-pagination-top` cluster shows only on the Automations tab.
 - **Events:** section tabs. Its static Show / Refresh / Clear Filters cluster shows only on the Events tab. There is no `#pagination-top`, so events.js renders only the bottom page row.
 - **Server Settings:** section tabs inside the pinned `.page-top-sticky`, over a **`.folder-card`**: one page-sized card wrapping every `.page-tab-panel`, whose own cards sit inside it.
-  - `.main:has(> .folder-card)` becomes a flex column so the card fills the viewport.
-  - `folder-head-card` on the head row sets `--folder-fill` to the card's fill instead of a table header's.
-  - Only the folder card lifts. It casts the sidebar's shadow recipe (left and right, plus the same pair downward), and the `.settings-card`s inside it have `box-shadow: none`. The recipe is split in two:
-    - The tight 4px contact pair sits on the card itself, so the edge line runs from the top.
-    - The wide 24px cast sits on `::before`, which starts `--folder-shadow-lead` (24px) below the card's top, so the side cast fades in from nothing at the tab rule. That layer is clipped by an evenodd `polygon` to everything OUTSIDE the card, because the glass fill would otherwise show the cast beneath it as a dark band.
-    - Casting the whole recipe from the card put a smudge above it in the curtain's left fade beside the sidebar. A `clip-path` at the top fixed that but left a hard step in the gutter.
-  - The curtain's hard cut (no feather) spans the folder body's width ONLY. Its mask is the left fade intersected with the union of a band ending at the bar's bottom edge and two feathered gutter strips (`.main`'s side padding; the right strip also covers a centred `.layout`'s margin, from `--layout-max-width`). A full-width hard cut sliced the sidebar's cast into a step at the rule.
-  - The bar loses its margin-bottom and the curtain its feather (canon-shared-kit.md).
+  - The card stays put and its panels scroll INSIDE `.folder-card-scroll`. `.main:has(> .folder-card)` is a viewport-tall (`100dvh`) flex column that the card fills. That keeps the rounded top edge, the folder join and the ring cast from ever sliding under the pinned header.
+  - Contents fade into the card's top and bottom edges, but only on an edge with more content past it. `wireFolderScrollFades()` in app.js toggles `.fade-top` / `.fade-bottom` on scroll and on ResizeObserver (a tab switch or a lazily loaded body changes the scroll height without scrolling). The mask's depths are registered `@property` lengths, so they ease.
+  - So the page-top curtain is OFF on this page (`html[data-page-top-curtain]:has(.folder-card)::after { display: none }`). Nothing scrolls under the bar, and the curtain would hide the card's top cast.
+  - `folder-head-card` on the head row sets `--folder-fill` to the card's fill instead of a table header's, and turns off the head row's rule.
+  - The card draws its own top edge as background layers: the straight edge with the gap at `--folder-gap-l/-r`, plus both top corner arcs drawn whole, with `border-top-color: transparent`. A transparent top border alone draws only the side borders' half of each arc. `syncFolderTabs` writes the gap vars on the visible `.folder-body` too, measured from the body's own left edge.
+  - The strip starts its first tab at `--radius-lg + --folder-r`, so the fillet lands on the straight edge.
+  - **Shadows:** only the card and its tabs lift, with `--shadow-lift` (the sidebar's cast, halved 2026-10-15, as a ring). The `.settings-card`s inside lie flat (`box-shadow: none`).
+    - The card's ring comes from `::before`, clipped by an evenodd `polygon` to everything OUTSIDE the card. The hole is the card outline (corners in 22.5° steps) plus a notch over the active tab whose sides follow the neck's fillets (`--fr`). The glass fill would otherwise show the cast beneath it as a dark band.
+    - Each tab rings itself from its own `::before`, clipped at its bottom edge. The active tab's layer reaches down through the neck to the card (`bottom: -var(--folder-r)`, transitioned), or its cast ends in a line across the tab's base.
+    - The strip clips, so it is padded by `--folder-shadow-room` (32px) on top and sides and pulled back by the same negative margins.
   - On a cold permission cache an admin sees only the Credentials tab until reload. This predates folder tabs: `server-settings.js` decides visibility at DOMContentLoaded. Warm the cache with one load before capturing.
 - **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.
 

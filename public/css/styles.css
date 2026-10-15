@@ -90,6 +90,14 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  /* The rail's lift: the sidebar's cast (half its original strength since
+     2026-10-15), dark in every theme, shared by the surfaces that sit at the
+     rail's height — the folder card and its tabs, the page title, the global
+     search and the account badge. --shadow-lift rings a box (spread stands in
+     for the rail's sideways offset, so a card casts evenly all round);
+     --shadow-lift-text is the same pair for text, which takes no spread. */
+  --shadow-lift: 0 0 24px 8px rgba(0,0,0,.11), 0 0 4px 1px rgba(0,0,0,.07);
+  --shadow-lift-text: 0 0 4px rgba(0,0,0,.07), 0 0 24px rgba(0,0,0,.11);
   /* Nothing in the app paints --shadow-sm any more: it was the cards' shadow,
      and a 4px blur under a box hundreds of pixels wide is invisible on the
      daylight pair, which is what --shadow-card below replaced. Kept because the
@@ -1107,8 +1115,10 @@ code {
      dark in every theme) as the slide-over's; it lands above the content
      without a z-index change because .sidebar is already z-index 100, and the
      element's own overflow-y does not clip its own shadow. */
-  box-shadow: 8px 0 24px rgba(0,0,0,.22), 1px 0 4px rgba(0,0,0,.14),
-              -8px 0 24px rgba(0,0,0,.22), -1px 0 4px rgba(0,0,0,.14);
+  /* Halved 2026-10-15 (was .22 / .14); --shadow-lift is the same pair as a
+     ring, for the surfaces that share the rail's height. */
+  box-shadow: 8px 0 24px rgba(0,0,0,.11), 1px 0 4px rgba(0,0,0,.07),
+              -8px 0 24px rgba(0,0,0,.11), -1px 0 4px rgba(0,0,0,.07);
   padding: 1.25rem 0;
   position: sticky;
   top: 0;
@@ -1811,10 +1821,14 @@ code {
    badge lift the same everywhere. Not a filter: drop-shadow() on the bar or
    the header would make it the backdrop root of the frosted "Dashboards ▾"
    menu (see ::before) and double the buttons' own shadows. */
-.page-header h2 { text-shadow: var(--shadow-title); }
-.user-badge-name { text-shadow: var(--shadow-text); }
-.user-badge-avatar { box-shadow: var(--shadow-control); }
-.user-badge-caret { filter: drop-shadow(var(--shadow-text)); }
+/* The page title, the global search and the account badge carry the rail's
+   lift (--shadow-lift / --shadow-lift-text), so the header reads as the same
+   height as the sidebar and the page card rather than its own layer. */
+.page-header h2 { text-shadow: var(--shadow-lift-text); }
+.user-badge-name { text-shadow: var(--shadow-lift-text); }
+.user-badge-avatar { box-shadow: var(--shadow-lift); }
+.user-badge .badge { box-shadow: var(--shadow-lift); }
+.user-badge-caret { filter: drop-shadow(0 0 4px rgba(0,0,0,.07)) drop-shadow(0 0 24px rgba(0,0,0,.11)); }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
    content below is the wrapper's margin. The header draws no rule of its own:
    the tab strip's bottom border is the bar's one line. */
@@ -1933,7 +1947,7 @@ html[data-page-top-curtain]::after {
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
   outline: none;
-  box-shadow: var(--shadow-control);
+  box-shadow: var(--shadow-lift);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .global-search input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
@@ -1959,7 +1973,7 @@ html[data-page-top-curtain]::after {
    .filter-bar focus rule below repeats it. */
 .global-search input[type="search"]:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-control);
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-lift);
 }
 .global-search-dropdown {
   position: absolute;
@@ -2551,7 +2565,7 @@ html[data-page-top-curtain]::after {
 @keyframes folder-panel-in { from { opacity: 0.25; } }
 .table-head-row ~ .page-tab-panel.active,
 .table-head-row ~ #ipam-mount > .folder-body,
-.folder-card > .page-tab-panel.active {
+.folder-card-scroll > .page-tab-panel.active {
   animation: folder-panel-in 0.2s ease;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2561,102 +2575,176 @@ html[data-page-top-curtain]::after {
   }
   .table-head-row ~ .page-tab-panel.active,
   .table-head-row ~ #ipam-mount > .folder-body,
-  .folder-card > .page-tab-panel.active { animation: none; }
+  .folder-card-scroll > .page-tab-panel.active { animation: none; }
 }
 /* Folder CARD (Server Settings): one page-sized card holding every tab's
-   panel, so the tabs open into a surface rather than a table. It fills the
-   rest of the viewport (the column becomes a flex column for it) and its
-   panels' own cards sit inside it. The tab takes the CARD's fill
-   (folder-head-card), not a table header's stacked density. */
-.table-head-row.folder-head-card { --folder-fill: var(--rail-glass-bg); }
-.main:has(> .folder-card) { display: flex; flex-direction: column; min-height: 100dvh; }
-.folder-card {
-  flex: 1 0 auto;
-  background: var(--rail-glass-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  /* The sidebar's cast (.sidebar — same blur, offset and hardcoded rgba,
-     dark in every theme), left and right as the rail casts it plus the same
-     pair downward for the card's bottom edge. The card is the one surface
-     that lifts — the cards inside it lie flat on it (below). */
-  /* Cast from ::before, which starts --folder-shadow-lead below the card's
-     top, so the side cast FADES IN from nothing at the tab rule. Cast from
-     the card itself, the blur climbed ~24px above its top into the pinned
-     bar (a dark smudge in the curtain's left fade beside the sidebar), and
-     clipping it there instead left a hard step in the gutter at the rule.
-     The layer is clipped to everything OUTSIDE the card: the card's fill is
-     glass, so any cast under it showed through as a dark band. */
-  --folder-shadow-lead: 24px;
-  /* The rail's tight contact pair stays on the card itself so the edge line
-     runs from the top: its 4px blur barely reaches above it. Started at the
-     lead it began abruptly a little way down each side. */
-  box-shadow: 1px 0 4px rgba(0,0,0,.14), -1px 0 4px rgba(0,0,0,.14), 0 1px 4px rgba(0,0,0,.14);
-  position: relative;
-  isolation: isolate;
-  padding: 1.25rem;
+   panel, so the tabs open into a surface rather than a table. The column is a
+   viewport-tall flex column and the card fills what the pinned header leaves;
+   the panels scroll INSIDE it (.folder-card-scroll), so its rounded top edge,
+   the folder join and its ring shadow never slide under the header — and the
+   page-top curtain, which exists to hide content scrolling under the bar, is
+   off here (it would also hide the card's top cast). Only the card and its
+   tabs lift (--shadow-lift, the rail's cast as a ring); the panels' own cards
+   lie flat on it. */
+.main:has(> .folder-card) { display: flex; flex-direction: column; height: 100dvh; }
+.page-top-sticky:has(> .table-head-row) { margin-bottom: 0; }
+.page-top-sticky > .table-head-row > .page-tabs { margin-bottom: 0; }
+html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
+/* The card draws its own top edge (rounded corners, gap under the active
+   tab), so this head row draws no rule, and the tab takes the CARD's fill. */
+.table-head-row.folder-head-card {
+  --folder-fill: var(--rail-glass-bg);
+  --folder-shadow-room: 32px;
+  background: none;
 }
-.folder-card::before {
+/* The strip clips (it scrolls sideways), so it is padded out by the tabs'
+   cast and pulled back by the same amount; the first tab still starts clear
+   of the card's rounded corner, so its fillet lands on the straight edge. */
+.table-head-row.folder-head-card > .page-tabs {
+  padding-top: var(--folder-shadow-room);
+  margin-top: calc(-1 * var(--folder-shadow-room) + 6px);
+  padding-left: calc(var(--folder-shadow-room) + var(--radius-lg) + var(--folder-r));
+  margin-left: calc(-1 * var(--folder-shadow-room));
+  padding-right: var(--folder-shadow-room);
+  margin-right: calc(-1 * var(--folder-shadow-room));
+}
+/* Each tab rings itself in the same cast — top and sides; below its bottom
+   edge is the card (or the neck), so the cast is clipped there. */
+.table-head-row.folder-head-card .page-tabs .page-tab { isolation: isolate; }
+.table-head-row.folder-head-card .page-tabs .page-tab::before {
   content: "";
   position: absolute;
-  inset: var(--folder-shadow-lead) 0 0 0;
+  inset: -1px -1px 0;
   z-index: -1;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: 8px 0 24px rgba(0,0,0,.22), -8px 0 24px rgba(0,0,0,.22), 0 8px 24px rgba(0,0,0,.22);
-  /* evenodd ring: a box well past the cast, minus the card's own box (which
-     starts --folder-shadow-lead above this layer). */
+  box-shadow: var(--shadow-lift);
+  clip-path: inset(-60px -60px 0 -60px);
+  transition: bottom 0.2s ease;
+}
+/* The active tab stands a neck's height above the card. Its cast layer
+   reaches down through the neck to the card's edge, so its sides keep casting
+   to where the card's own cast takes over; stopped at the tab's bottom, the
+   cast ended in a visible line across the tab's base. */
+.table-head-row.folder-head-card .page-tabs .page-tab.active::before {
+  bottom: calc(-1 * var(--folder-r));
+}
+.folder-card {
+  --R: var(--radius-lg);
+  /* The neck's fillet radius (.table-head-row --folder-r): the notch in the
+     ring cast follows the fillets' curves, so the cast still reaches into
+     the concave corners either side of the active tab. */
+  --fr: 8px;
+  --folder-notch: 80px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--color-border);
+  /* The top border is drawn by the background (below): a border can't have
+     the gap the active tab opens into. Transparent, the browser would draw
+     only the side borders' half of each top corner arc, so the layers draw
+     both arcs whole and the straight edge between them. */
+  border-top-color: transparent;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(to right,
+      transparent var(--R), var(--color-border) var(--R),
+      var(--color-border) var(--folder-gap-l, 0px), transparent var(--folder-gap-l, 0px),
+      transparent var(--folder-gap-r, 0px), var(--color-border) var(--folder-gap-r, 0px),
+      var(--color-border) calc(100% - var(--R)), transparent calc(100% - var(--R)))
+      0 0 / 100% 1px no-repeat border-box,
+    radial-gradient(circle at 100% 100%,
+      transparent calc(var(--R) - 1.25px), var(--color-border) calc(var(--R) - 0.75px),
+      var(--color-border) calc(var(--R) - 0.25px), transparent calc(var(--R) + 0.25px))
+      0 0 / var(--R) var(--R) no-repeat border-box,
+    radial-gradient(circle at 0 100%,
+      transparent calc(var(--R) - 1.25px), var(--color-border) calc(var(--R) - 0.75px),
+      var(--color-border) calc(var(--R) - 0.25px), transparent calc(var(--R) + 0.25px))
+      100% 0 / var(--R) var(--R) no-repeat border-box,
+    var(--rail-glass-bg) padding-box;
+}
+.folder-card-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 1.25rem;
+  border-radius: inherit;
+  /* Content dissolves into the card's top and bottom edges rather than being
+     cut at them — but only on an edge with more content past it
+     (.fade-top / .fade-bottom, toggled on scroll by wireFolderScrollFades()
+     in app.js), so the first and last rows read at full strength once
+     reached. The mask is on the box, not the scrolled content, so it stays
+     put; the fade depths are registered so they ease in and out. */
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, #000 var(--folder-fade-top),
+    #000 calc(100% - var(--folder-fade-bottom)), transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0, #000 var(--folder-fade-top),
+    #000 calc(100% - var(--folder-fade-bottom)), transparent 100%);
+  transition: --folder-fade-top 0.2s ease, --folder-fade-bottom 0.2s ease;
+}
+@property --folder-fade-top { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --folder-fade-bottom { syntax: "<length>"; inherits: false; initial-value: 0px; }
+.folder-card-scroll.fade-top { --folder-fade-top: 2.5rem; }
+.folder-card-scroll.fade-bottom { --folder-fade-bottom: 2.5rem; }
+/* The ring cast, from a layer clipped to everything OUTSIDE the card: the
+   card's fill is glass, so a cast under it shows through as a dark band. The
+   hole is the card's outline (corners approximated in 22.5° steps) plus a
+   notch over the active tab, its sides traced down the neck's fillets
+   (--folder-gap-l/-r, measured by wireFolderTabs() in app.js); the tab casts
+   its own. */
+.folder-card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: var(--shadow-lift);
   clip-path: polygon(evenodd,
     -100px -100px, calc(100% + 100px) -100px,
     calc(100% + 100px) calc(100% + 100px), -100px calc(100% + 100px),
     -100px -100px,
-    0 calc(-1 * var(--folder-shadow-lead)), 0 100%, 100% 100%,
-    100% calc(-1 * var(--folder-shadow-lead)), 0 calc(-1 * var(--folder-shadow-lead)));
+    0 var(--R),
+    calc(var(--R) * 0.076) calc(var(--R) * 0.617),
+    calc(var(--R) * 0.293) calc(var(--R) * 0.293),
+    calc(var(--R) * 0.617) calc(var(--R) * 0.076),
+    var(--R) 0,
+    var(--folder-gap-l, 0px) 0,
+    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.383) calc(var(--fr) * -0.076),
+    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.707) calc(var(--fr) * -0.293),
+    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.924) calc(var(--fr) * -0.617),
+    calc(var(--folder-gap-l, 0px) + var(--fr)) calc(-1 * var(--fr)),
+    calc(var(--folder-gap-l, 0px) + var(--fr)) calc(-1 * var(--folder-notch)),
+    calc(var(--folder-gap-r, 0px) - var(--fr)) calc(-1 * var(--folder-notch)),
+    calc(var(--folder-gap-r, 0px) - var(--fr)) calc(-1 * var(--fr)),
+    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.924) calc(var(--fr) * -0.617),
+    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.707) calc(var(--fr) * -0.293),
+    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.383) calc(var(--fr) * -0.076),
+    var(--folder-gap-r, 0px) 0,
+    calc(100% - var(--R)) 0,
+    calc(100% - var(--R) * 0.617) calc(var(--R) * 0.076),
+    calc(100% - var(--R) * 0.293) calc(var(--R) * 0.293),
+    calc(100% - var(--R) * 0.076) calc(var(--R) * 0.617),
+    100% var(--R),
+    100% calc(100% - var(--R)),
+    calc(100% - var(--R) * 0.076) calc(100% - var(--R) * 0.617),
+    calc(100% - var(--R) * 0.293) calc(100% - var(--R) * 0.293),
+    calc(100% - var(--R) * 0.617) calc(100% - var(--R) * 0.076),
+    calc(100% - var(--R)) 100%,
+    var(--R) 100%,
+    calc(var(--R) * 0.617) calc(100% - var(--R) * 0.076),
+    calc(var(--R) * 0.293) calc(100% - var(--R) * 0.293),
+    calc(var(--R) * 0.076) calc(100% - var(--R) * 0.617),
+    0 calc(100% - var(--R)),
+    0 var(--R));
 }
 .folder-card .settings-card { box-shadow: none; }
-/* A pinned bar (.page-top-sticky) holding a head row sits flush on the folder
-   body — no gap under it — and its curtain loses the feather: content
-   scrolling up inside the folder is cut cleanly at the tab rule, as if it
-   slid under the folder's own top edge, instead of dissolving over the card's
-   top at rest (the feather used to fit inside the bar's margin, now gone). */
-.page-top-sticky:has(> .table-head-row) { margin-bottom: 0; }
-.page-top-sticky > .table-head-row > .page-tabs { margin-bottom: 0; }
-/* The hard cut applies across the folder body's span ONLY. In the gutters
-   either side the curtain keeps its feather: a hard cut there sliced the
-   sidebar's cast (and the folder card's own side cast, once scrolled) into a
-   visible step at the rule. Layers: the left fade (intersect) over the union
-   of a full-width band ending at the bar's bottom edge and the two feathered
-   gutter strips. Gutter = .main's side padding; the right strip also spans
-   the margin a centred, max-width .layout leaves on a wide screen. */
-html[data-page-top-curtain]:has(.page-top-sticky > .table-head-row)::after {
-  --folder-gutter: 2.5rem;
-  --folder-right-gap: calc((100vw - min(100vw, var(--layout-max-width))) / 2);
-  -webkit-mask-image:
-    linear-gradient(to right, transparent, #000 1.5rem),
-    linear-gradient(#000, #000),
-    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
-    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent);
-  mask-image:
-    linear-gradient(to right, transparent, #000 1.5rem),
-    linear-gradient(#000, #000),
-    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent),
-    linear-gradient(to bottom, #000 calc(100% - var(--page-top-feather)), transparent);
-  -webkit-mask-size: 100% 100%, 100% calc(100% - var(--page-top-feather)),
-    var(--folder-gutter) 100%, calc(var(--folder-gutter) + var(--folder-right-gap)) 100%;
-  mask-size: 100% 100%, 100% calc(100% - var(--page-top-feather)),
-    var(--folder-gutter) 100%, calc(var(--folder-gutter) + var(--folder-right-gap)) 100%;
-  -webkit-mask-position: 0 0, 0 0, 0 0, 100% 0;
-  mask-position: 0 0, 0 0, 0 0, 100% 0;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-composite: source-in, source-over, source-over;
-  mask-composite: intersect, add, add;
-}
-@media (max-width: 700px) {
-  html[data-page-top-curtain]:has(.page-top-sticky > .table-head-row)::after { --folder-gutter: 1rem; }
-}
 /* Fill clipped to the padding box so the top border row stays empty: the head
    row's rule (and, in the gap, the neck) is what shows there. */
-.folder-card.folder-body,
 .table-wrapper.folder-body {
   border-top-color: transparent;
   border-top-left-radius: 0;

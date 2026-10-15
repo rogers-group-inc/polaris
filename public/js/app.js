@@ -4935,29 +4935,43 @@ function syncFolderTabs(row) {
   row.querySelectorAll(".table-tab.active, .page-tab.active").forEach(function (t) {
     if (!tab && t.getClientRects().length) tab = t;
   });
-  var l = "", r = "";
-  if (tab) {
-    var fr = parseFloat(getComputedStyle(row).getPropertyValue("--folder-r")) || 0;
-    var rr = row.getBoundingClientRect();
-    var tr = tab.getBoundingClientRect();
-    // Clamped to the row: a tab scrolled partly out of the strip must not
-    // open the rule past the table's own edges.
-    var lo = Math.max(0, tr.left - rr.left - fr);
-    var hi = Math.min(rr.width, tr.right - rr.left + fr);
-    if (hi > lo) { l = lo + "px"; r = hi + "px"; }
-  }
-  // Write only on change: the observer below watches this row's attributes,
-  // and an unconditional write would re-trigger it forever.
-  if (row.style.getPropertyValue("--folder-gap-l") !== l) {
-    if (l) row.style.setProperty("--folder-gap-l", l); else row.style.removeProperty("--folder-gap-l");
-  }
-  if (row.style.getPropertyValue("--folder-gap-r") !== r) {
-    if (r) row.style.setProperty("--folder-gap-r", r); else row.style.removeProperty("--folder-gap-r");
-  }
+  // The same gap is written twice: on the row (whose rule it opens) and on
+  // the visible .folder-body after it, measured from the BODY's left edge —
+  // a folder card draws its own top edge and ring cast and opens both there.
+  var body = null;
+  document.querySelectorAll(".folder-body").forEach(function (b) {
+    if (!body && b.getClientRects().length &&
+        (row.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) body = b;
+  });
+  var tr = tab ? tab.getBoundingClientRect() : null;
+  var fr = tab ? (parseFloat(getComputedStyle(row).getPropertyValue("--folder-r")) || 0) : 0;
+  _writeFolderGap(row, tr, fr);
+  if (body) _writeFolderGap(body, tr, fr);
   var activeName = tab ? tab.getAttribute("data-tab") : null;
   row.querySelectorAll("[data-head-for]").forEach(function (el) {
     el.classList.toggle("head-off", el.getAttribute("data-head-for") !== activeName);
   });
+}
+
+// --folder-gap-l/-r on `el`: the active tab's span plus the fillet radius each
+// side, in px from el's left edge, clamped to el so a tab scrolled partly out
+// of the strip can't open the edge past el's own sides. Written only on
+// change: the observer in wireFolderTabs() watches the row's attributes, and
+// an unconditional write would re-trigger it forever.
+function _writeFolderGap(el, tr, fr) {
+  var l = "", r = "";
+  if (tr) {
+    var er = el.getBoundingClientRect();
+    var lo = Math.max(0, tr.left - er.left - fr);
+    var hi = Math.min(er.width, tr.right - er.left + fr);
+    if (hi > lo) { l = lo + "px"; r = hi + "px"; }
+  }
+  if (el.style.getPropertyValue("--folder-gap-l") !== l) {
+    if (l) el.style.setProperty("--folder-gap-l", l); else el.style.removeProperty("--folder-gap-l");
+  }
+  if (el.style.getPropertyValue("--folder-gap-r") !== r) {
+    if (r) el.style.setProperty("--folder-gap-r", r); else el.style.removeProperty("--folder-gap-r");
+  }
 }
 
 function wireFolderTabs() {
@@ -4982,8 +4996,35 @@ function wireFolderTabs() {
     sync();
   });
 }
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wireFolderTabs);
-else wireFolderTabs();
+// A folder card's scroller fades its contents into an edge only while there
+// is more past that edge (styles.css, .folder-card-scroll). Re-checked on
+// scroll and whenever the scroller or a panel in it changes size — a tab
+// switch or a lazily loaded tab body changes the scroll height without
+// scrolling.
+function wireFolderScrollFades() {
+  document.querySelectorAll(".folder-card-scroll").forEach(function (el) {
+    if (el.__polarisFadeWired) return;
+    el.__polarisFadeWired = true;
+    var update = function () {
+      el.classList.toggle("fade-top", el.scrollTop > 1);
+      el.classList.toggle("fade-bottom", el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+    };
+    el.addEventListener("scroll", update, { passive: true });
+    if (typeof ResizeObserver === "function") {
+      var ro = new ResizeObserver(update);
+      ro.observe(el);
+      Array.prototype.forEach.call(el.children, function (c) { ro.observe(c); });
+    }
+    update();
+  });
+}
+
+function wireFolderSurfaces() {
+  wireFolderTabs();
+  wireFolderScrollFades();
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wireFolderSurfaces);
+else wireFolderSurfaces();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
