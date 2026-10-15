@@ -92,6 +92,13 @@ describe.skipIf(!haveBash)("nginx_conf_ok", () => {
     expect(r.stderr).toMatch(/refused config line/);
   });
 
+  // The RHEL VM run printed `directive  name  is not one…`: the quotes around
+  // the name had closed the awk string, so the refusal never said which one.
+  it("names the refused directive", () => {
+    expect(check(inServer("include /etc/shadow;")).stderr).toMatch(/directive "include" is not one Polaris writes/);
+    expect(check(inServer("ssl_protocols { }")).stderr).toMatch(/"ssl_protocols" cannot open a block/);
+  });
+
   it("refuses load_module at the top level and an unbalanced file", () => {
     expect(check(`load_module /tmp/evil.so;\n${base}`).ok).toBe(false);
     expect(check(base.replace(/}\s*$/, "")).ok).toBe(false);
