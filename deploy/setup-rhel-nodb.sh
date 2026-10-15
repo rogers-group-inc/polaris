@@ -213,7 +213,10 @@ else
   # `module reset` first: enabling a second stream on a host already pinned to
   # nodejs:20 fails with "cannot enable multiple streams" otherwise.
   dnf module reset -y nodejs
-  dnf module enable -y nodejs:24
+  # An AppStream without the stream (an unregistered host on an older minor:
+  # the RHEL 9.5 DVD stops at Node 22) gets a clear way forward, not dnf's
+  # bare "missing groups or modules".
+  dnf module enable -y nodejs:24 || error "This host's AppStream has no Node 24 module stream. Enable its Node 22 stream and install nodejs + npm first, then re-run: an installed v22 is accepted."
   dnf install -y nodejs npm
   info "Node.js $(node -v) installed"
 fi
@@ -222,18 +225,27 @@ fi
 info "Granting Node.js low-port binding capability..."
 setcap cap_net_bind_service=+ep "$(which node)"
 
-# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go (agent builds want 1.26+) ────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). The agent's go.mod pins go 1.26 as the minimum;
-# RHEL 9's default golang AppStream module is older, so pull from the
-# go-toolset module instead — it carries 1.26 (1.26.7 on 9.6).
+# → Polaris Agent → Build); the agent's go.mod pins go 1.26 as the minimum.
+# RHEL 9 ships go-toolset as an ordinary AppStream PACKAGE — there is no
+# go-toolset module stream on RHEL 9 (that was RHEL 8), and the
+# `dnf module enable -y go-toolset` this step used to run failed and aborted
+# the whole install on every RHEL 9 host without Go already present (found on
+# a RHEL 9.5 VM, 2026-10-15). How new that package is depends on the host's
+# AppStream (1.22 on the 9.5 DVD), so an older Go is installed and reported,
+# never fatal: the install does not need Go, only the agent build does.
 if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go (go-toolset)..."
-  dnf module enable -y go-toolset
-  dnf install -y golang
-  info "Go $(go version | awk '{print $3}') installed"
+  dnf install -y go-toolset || warn "Could not install go-toolset — the agent build feature needs Go 1.26+ (https://go.dev/dl/)"
+  if command -v go &>/dev/null && ! go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
+    warn "Go $(go version | awk '{print $3}') is older than the agent's go 1.26: agent builds will fail until Go 1.26+ is installed"
+    warn "  (from https://go.dev/dl/, or a newer AppStream). Everything else in Polaris works without it."
+  elif command -v go &>/dev/null; then
+    info "Go $(go version | awk '{print $3}') installed"
+  fi
 fi
 
 # ─── 1c. Install fping (OPTIONAL — ICMP batching) ──────────────────
@@ -676,6 +688,10 @@ systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || 
 # helpers and restarts polaris.target — and a polkit rule letting $APP_USER
 # start THAT unit and restart the polaris units, nothing else.
 root_copy 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+# The manual updater an administrator runs is a reviewed root copy too
+# (business rule 117(n)); without it the docs' `sudo /usr/local/sbin/polaris-update-linux`
+# would not exist until the first update offered it.
+root_copy 0755 "$APP_DIR/deploy/update-linux.sh" /usr/local/sbin/polaris-update-linux
 root_copy 0644 "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
 mkdir -p /etc/polkit-1/rules.d
 root_copy 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules

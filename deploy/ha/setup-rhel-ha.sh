@@ -389,7 +389,8 @@ prepare_standby_host() {
   if command -v go >/dev/null 2>&1 && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
     info "Go $(go version | awk '{print $3}') already installed"
   else
-    dnf module enable -y go-toolset && dnf install -y golang
+    # RHEL 9 ships go-toolset as a plain package — no module stream (see setup-rhel.sh 1b).
+    dnf install -y go-toolset || warn "could not install go-toolset (only the agent build needs Go 1.26+)"
   fi
 
   dnf install -y git rsync openssl >/dev/null

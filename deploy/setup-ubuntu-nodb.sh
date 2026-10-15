@@ -677,6 +677,10 @@ systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || 
 # helpers and restarts polaris.target — and a polkit rule letting $APP_USER
 # start THAT unit and restart the polaris units, nothing else.
 root_copy 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+# The manual updater an administrator runs is a reviewed root copy too
+# (business rule 117(n)); without it the docs' `sudo /usr/local/sbin/polaris-update-linux`
+# would not exist until the first update offered it.
+root_copy 0755 "$APP_DIR/deploy/update-linux.sh" /usr/local/sbin/polaris-update-linux
 root_copy 0644 "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
 mkdir -p /etc/polkit-1/rules.d
 root_copy 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
