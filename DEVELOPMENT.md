@@ -216,6 +216,22 @@ channel and alert names), credits those rules and channels to `admin` rather tha
 `Datacenter`, because in a screenshot each reads as if the product shipped placeholder
 data. It is idempotent and refuses to run with `NODE_ENV=production`.
 
+Two scenario scripts sit beside the chain, each run inside the app container after
+`mock:compare`. `npm run mock:alert-grouping` seeds a switch with eight faulted PoE ports
+and an AlertGroup over two automations, which shows one alert per device (business rule
+75). `npm run mock:path-alerts` seeds three agent hosts failing a path check one poll
+apart, with traceroutes, one alert per automation and an ungrouped twin. It then keeps
+writing results every 120 s, so background it inside the container. That shows the
+grouped alert's first-send hold and the `{path.graph}` block in a real email. Its SMTP
+channel points at `mailpit:1025`, so run Mailpit on the stack's network first, and read
+the mail at http://127.0.0.1:8025:
+
+```bash
+podman run -d --name polaris-<slug>_mailpit --network polaris-<slug>_default \
+  --network-alias mailpit -p 8025:8025 docker.io/axllent/mailpit:v1.27
+podman exec polaris-<slug>_web sh -c 'cd /app && (nohup npm run mock:path-alerts > /tmp/path-alerts.log 2>&1 &)'
+```
+
 **Run `mock:demo` again after the app has been up for a minute.** The alert engine fires
 the seeded rules on its first passes, so an alert raised after the first `mock:demo` can
 still carry a seed-side name; the second pass catches it.
