@@ -297,6 +297,11 @@ export async function buildRecipientBlocks(
       where: {
         notificationId,
         transport: { in: ["web_push", "email"] },
+        // Only rows that reach someone. Under quiet-time recipient exceptions
+        // (business rule 120) one send splits into a live row and a held or
+        // deferred one sharing the dispatch; the live reader's footer must not
+        // name readers the quiet window kept it from.
+        status: { notIn: ["held", "deferred", "superseded"] },
         // Narrowed in the DATABASE, not after the read: a weekend-long outage
         // reminding every five minutes leaves hundreds of rows on one alert,
         // and pulling all of them back to keep one send's worth is the shape

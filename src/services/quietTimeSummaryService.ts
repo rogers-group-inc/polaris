@@ -78,6 +78,7 @@ import {
   quietHoldsSend,
   quietHoldsKind,
   lastQuietStretch,
+  quietRecipientFullyExempt,
   type QuietTimeConfig,
 } from "../utils/quietTime.js";
 import { quietSourceConfig, parseQuietTimeConfig, type QuietSourceKind } from "./quietTimeHoldService.js";
@@ -532,7 +533,10 @@ async function createAllQuietSummaries(now: Date, handled: Set<string>): Promise
       ? rules.filter((r) => r.id === src.id)
       : rules.filter((r) => r.enabled && r.quietTime == null && ruleCoveredByGlobal(r, src.config));
     const { addresses, userIds } = await staticRecipientsOfRules(covered);
-    const recipients = await resolveRecipients(addresses, userIds, src.name);
+    // A recipient exception held for nothing (business rule 120) was never
+    // quiet, so an email saying the quiet time passed is not theirs.
+    const recipients = (await resolveRecipients(addresses, userIds, src.name))
+      .filter((r) => !quietRecipientFullyExempt(src.config, r.address));
     const channel = await resolveSummaryChannel(src.config.summaryChannelId, []);
     const details: SummaryDetails = { outstanding: [], recurring: [], recurrenceThreshold: src.config.recurrenceThreshold ?? null, allQuiet: true, heldCount: 0 };
     let status = "pending";
@@ -902,8 +906,75 @@ export async function resendSummary(id: string, actor?: string): Promise<void> {
   await drainPendingSummaries();
 }
 
-/** One tick: create what is due, then send what is pending. */
+// ─── Deferred follow-ups (business rule 120) ────────────────────────────────
+//
+// Under a policy with recipient exceptions a reminder or escalation tier is
+// not skipped inside the window: it goes out live to the excepted readers and
+// is written `deferred` for the rest (notificationRecipientService). Those
+// readers are owed it when the window ends — rule 44's "held, never dropped",
+// per reader. Several passes may have been deferred for one reader overnight;
+// only the NEWEST goes out (it carries the latest attempt number and age),
+// the older ones become `superseded`. An alert that cleared or was
+// acknowledged meanwhile owes nobody a reminder of it, so all of its deferred
+// copies are superseded.
+
+/** Rows released per tick — a bound, not a policy; the rest go next tick. */
+const RELEASE_BATCH = 2000;
+
+export async function releaseHeldFollowUps(now: Date = new Date()): Promise<{ released: number; superseded: number }> {
+  const rows = await prisma.notificationDelivery.findMany({
+    where: { status: "deferred" },
+    select: {
+      id: true, notificationId: true, channelId: true, transport: true, target: true, meta: true, createdAt: true,
+      notification: { select: { cleared: true, acknowledged: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: RELEASE_BATCH,
+  });
+  if (rows.length === 0) return { released: 0, superseded: 0 };
+
+  const windowEndOf = (meta: unknown): number => {
+    const q = (meta && typeof meta === "object" ? (meta as Record<string, unknown>)["quietHold"] : null) as { windowEnd?: unknown } | null;
+    const t = q && typeof q.windowEnd === "string" ? Date.parse(q.windowEnd) : NaN;
+    // No readable window end: release it now rather than hold it forever.
+    return Number.isFinite(t) ? t : 0;
+  };
+
+  const release: string[] = [];
+  const supersede: string[] = [];
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    if (r.notification?.cleared || r.notification?.acknowledged) { supersede.push(r.id); continue; }
+    if (windowEndOf(r.meta) > now.getTime()) continue;
+    const key = `${r.notificationId}|${r.channelId}|${r.transport}|${r.target}`;
+    const g = groups.get(key) ?? [];
+    g.push(r);
+    groups.set(key, g);
+  }
+  for (const g of groups.values()) {
+    // Ascending by createdAt, so the last is the newest.
+    release.push(g[g.length - 1]!.id);
+    for (const r of g.slice(0, -1)) supersede.push(r.id);
+  }
+  if (release.length === 0 && supersede.length === 0) return { released: 0, superseded: 0 };
+
+  await prisma.$transaction([
+    ...chunkArray(release, 500).map((ids) =>
+      prisma.notificationDelivery.updateMany({ where: { id: { in: ids }, status: "deferred" }, data: { status: "pending" } })),
+    ...chunkArray(supersede, 500).map((ids) =>
+      prisma.notificationDelivery.updateMany({ where: { id: { in: ids }, status: "deferred" }, data: { status: "superseded" } })),
+  ]);
+  if (release.length > 0) {
+    logger.info({ released: release.length, superseded: supersede.length }, "quiet time: deferred follow-ups released");
+  }
+  return { released: release.length, superseded: supersede.length };
+}
+
+/** One tick: release owed follow-ups, create what is due, then send what is pending. */
 export async function runQuietTimeSummaries(now: Date = new Date()): Promise<{ created: number; sent: number; failed: number }> {
+  await releaseHeldFollowUps(now).catch((err) => {
+    logger.warn({ err: (err as Error)?.message }, "quiet time: releasing deferred follow-ups failed; retrying next tick");
+  });
   const created = await createDueSummaries(now);
   const { sent, failed } = await drainPendingSummaries(now);
   return { created, sent, failed };

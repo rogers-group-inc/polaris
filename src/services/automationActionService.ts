@@ -95,6 +95,11 @@ export interface ActionExecContext {
    *  makes the subject worth reading in a full inbox. */
   /** `change`: what joined or came back, for the subject ("port7 back"). */
   growth?: { count: number; change?: string };
+  /** Set by the escalation sweep on a reminder or tier inside a quiet window
+   *  whose policy carries recipient exceptions (business rule 120): the pass
+   *  goes out live to the excepted readers and is written held for the rest,
+   *  who get it when the window ends (`releaseHeldFollowUps`). */
+  quietHold?: QuietHold;
   /** Audit actor; defaults to "system:automation". */
   actor?: string;
 }
@@ -230,6 +235,18 @@ export async function executeActions(
       }
     }
   }
+  // Recipient exceptions (business rule 120): the fire may have reached some
+  // readers live while it was held for the rest. Then the all-clear is not
+  // dropped — it goes to everyone who was told, and skips only the readers
+  // the fire was held for and who have heard nothing since.
+  let excludeRecipients: { addresses: Set<string>; userIds: Set<string>; chat: boolean } | undefined;
+  if (dropPeopleFacing) {
+    const split = await heldFireAudience(notificationId).catch((err) => {
+      logger.warn({ err: (err as Error)?.message, notificationId }, "quiet-time all-clear split could not read the deliveries — dropping as before");
+      return null;
+    });
+    if (split) { excludeRecipients = split; dropPeopleFacing = false; }
+  }
   if (dropPeopleFacing) {
     await logEvent({
       action: "notification.quiet_allclear_dropped",
@@ -242,12 +259,17 @@ export async function executeActions(
       details: { ruleId: exec.ruleId ?? null, assetId: exec.assetId ?? null },
     }).catch(() => {});
   }
-  if (hold && stampHold) {
+  // With recipient exceptions the stamp waits until the fan-out has said
+  // whether ANYONE was actually held: an alert that went out live to every
+  // one of its readers owes no summary and must not be stamped as held.
+  const deferStamp = !!hold?.split;
+  const holdStats = { live: 0, held: 0 };
+  const stampHeld = async (h: QuietHold): Promise<void> => {
     await prisma.notification.update({
       where: { id: notificationId },
       // The NAME rides along so a summary for a since-deleted schedule can
       // still say which one held the alert.
-      data: { quietHeldAt: new Date(), quietSource: { kind: hold.source.kind, id: hold.source.id, name: hold.source.name } },
+      data: { quietHeldAt: new Date(), quietSource: { kind: h.source.kind, id: h.source.id, name: h.source.name } },
     });
     await logEvent({
       action: "notification.quiet_held",
@@ -257,16 +279,22 @@ export async function executeActions(
       actor: exec.actor ?? "system:automation",
       level: "info",
       message:
-        `Held for quiet time (${hold.source.kind === "global" ? "global quiet time" : "automation quiet time"} "${hold.source.name}") — ` +
-        `a summary of outstanding alerts goes out after ${formatLocalIsoMinute(hold.windowEnd)}`,
+        `Held for quiet time (${h.source.kind === "global" ? "global quiet time" : "automation quiet time"} "${h.source.name}") — ` +
+        `a summary of outstanding alerts goes out after ${formatLocalIsoMinute(h.windowEnd)}` +
+        (holdStats.live > 0 ? ` (sent live to ${holdStats.live} excepted recipient ${holdStats.live === 1 ? "copy" : "copies"})` : ""),
       details: {
         ruleId: exec.ruleId ?? null,
         assetId: exec.assetId ?? null,
-        source: { kind: hold.source.kind, id: hold.source.id, name: hold.source.name },
-        windowEnd: formatLocalIsoMinute(hold.windowEnd),
+        source: { kind: h.source.kind, id: h.source.id, name: h.source.name },
+        windowEnd: formatLocalIsoMinute(h.windowEnd),
+        ...(h.split ? { liveRows: holdStats.live, heldRows: holdStats.held } : {}),
       },
     }).catch(() => {});
-  }
+  };
+  if (hold && stampHold && !deferStamp) await stampHeld(hold);
+  // The hold this fan-out writes under: the fire's own, or the one the sweep
+  // handed in for a split reminder/tier (rule 120).
+  const fanHold = hold ?? exec.quietHold ?? null;
 
   let _bothMethods: boolean | null = null;
   const groupOffersBothMethods = async (): Promise<boolean> => {
@@ -305,7 +333,9 @@ export async function executeActions(
           dispatchId,
           ...(allClear ? { noAck: true } : {}),
           ...(action.respectUserPreference ? { enforceUserPreference: await groupOffersBothMethods() } : {}),
-          ...(hold ? { hold: { kind: hold.source.kind, id: hold.source.id, windowEnd: hold.windowEnd } } : {}),
+          ...(fanHold ? { hold: { kind: fanHold.source.kind, id: fanHold.source.id, windowEnd: fanHold.windowEnd, ...(fanHold.split ? { isHeldFor: fanHold.isHeldFor } : {}) } } : {}),
+          ...(excludeRecipients ? { excludeRecipients } : {}),
+          stats: holdStats,
         });
         if (rows > 0) executed++;
       } else if (action.type === "api_call") {
@@ -391,6 +421,7 @@ export async function executeActions(
       }).catch(() => {});
     }
   }
+  if (hold && stampHold && deferStamp && holdStats.held > 0) await stampHeld(hold);
   return { executed, failed };
 }
 
@@ -428,6 +459,61 @@ export async function actionsCarryBothMethods(actions: AutomationAction[]): Prom
       .filter((t) => t === "email" || t === "web_push"),
   );
   return methods.size >= 2;
+}
+
+
+/**
+ * Who the all-clear of a quiet-held alert must skip, or null when it must be
+ * dropped whole (business rules 92 + 120).
+ *
+ * Rule 92 drops the all-clear of an alert whose fire was held and never
+ * summarised, because nobody was told it started. With recipient exceptions
+ * that is only true per reader: the excepted ones got the fire live (or a
+ * reminder since). So: when NO row of this alert ever went out (`pending` /
+ * `sent`), the answer is null and the all-clear drops exactly as before.
+ * Otherwise it goes out, skipping the readers a held fire row named who have
+ * not been reached by any live row since (a `deferred` reminder copy has not
+ * reached anyone; one the window-end release sent has). Chat rows have no reader to tell
+ * apart, so they are skipped when the chat send was held and never went live.
+ */
+export async function heldFireAudience(
+  notificationId: string,
+): Promise<{ addresses: Set<string>; userIds: Set<string>; chat: boolean } | null> {
+  const rows = await prisma.notificationDelivery.findMany({
+    where: { notificationId, status: { in: ["held", "pending", "sent"] } },
+    select: { transport: true, target: true, status: true, meta: true },
+  });
+  const live = rows.filter((r) => r.status !== "held");
+  if (live.length === 0) return null;
+  const metaOf = (m: unknown) => (m && typeof m === "object" ? m : {}) as Record<string, unknown>;
+  const collect = (rs: typeof rows) => {
+    const addresses = new Set<string>();
+    const userIds = new Set<string>();
+    let chat = false;
+    for (const r of rs) {
+      const meta = metaOf(r.meta);
+      if (r.transport === "email") {
+        const list: unknown[] = [
+          ...r.target.split(","),
+          ...(Array.isArray(meta["cc"]) ? (meta["cc"] as unknown[]) : []),
+          ...(Array.isArray(meta["bcc"]) ? (meta["bcc"] as unknown[]) : []),
+        ];
+        for (const a of list) if (typeof a === "string" && a.trim()) addresses.add(a.trim().toLowerCase());
+      } else if (r.transport === "web_push") {
+        if (typeof meta["userId"] === "string" && meta["userId"]) userIds.add(meta["userId"]);
+      } else {
+        chat = true;
+      }
+    }
+    return { addresses, userIds, chat };
+  };
+  const heldFire = collect(rows.filter((r) => r.status === "held"));
+  const told = collect(live);
+  return {
+    addresses: new Set(Array.from(heldFire.addresses).filter((a) => !told.addresses.has(a))),
+    userIds: new Set(Array.from(heldFire.userIds).filter((u) => !told.userIds.has(u))),
+    chat: heldFire.chat && !told.chat,
+  };
 }
 
 /**
