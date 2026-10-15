@@ -343,6 +343,9 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
         { alertGroupId: { in: Array.from(groups.keys()) } },
       ],
       triggeredAt: { lte: new Date(now.getTime() - minAfterMin * 60_000) },
+      // A grouped alert still holding its first send (business rule 75) has
+      // told nobody yet, so there is nothing to escalate or remind about.
+      NOT: { firstSendDueAt: { not: null }, firstSentAt: null },
     },
     select: {
       id: true, ruleId: true, alertGroupId: true, assetId: true, assetHostname: true, severity: true, message: true,
@@ -353,6 +356,8 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       // Quiet time (business rule 92): `metric` is the alert KIND a global
       // schedule filters on; `quietSummarizedAt` restarts the clocks below.
       metric: true, quietSummarizedAt: true,
+      // The released first send of a held grouped alert: its clocks start there.
+      firstSentAt: true,
     },
   });
   if (notifs.length === 0) return 0;
@@ -452,6 +457,9 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     // "already ran" to tierIsDue forever.
     let startAt = state.bandSince ? new Date(state.bandSince) : n.triggeredAt;
     if (n.quietSummarizedAt && n.quietSummarizedAt.getTime() > startAt.getTime()) startAt = n.quietSummarizedAt;
+    // Likewise from a held grouped alert's first send (business rule 75): the
+    // hold is time nobody knew, and must not count toward a tier or reminder.
+    if (n.firstSentAt && n.firstSentAt.getTime() > startAt.getTime()) startAt = n.firstSentAt;
     let dirty = false;
 
     for (const chain of chains) {

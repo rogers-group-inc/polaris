@@ -180,6 +180,57 @@ function modalOf(values: number[]): number | null {
   return s ? s.mode : null;
 }
 
+/** The Asset columns the settings resolver needs to answer for a cadence. */
+const CADENCE_ASSET_SELECT = {
+  id: true, assetType: true, discoveredByIntegrationId: true,
+  discoveredByIntegration: { select: { type: true } },
+  monitorIntervalSec: true, probeTimeoutMs: true,
+  cpuMemoryIntervalSec: true, cpuMemoryTimeoutMs: true,
+  temperatureIntervalSec: true, temperatureTimeoutMs: true,
+  systemInfoIntervalSec: true, systemInfoTimeoutMs: true,
+  storageIntervalSec: true,
+  responseTimePolling: true,
+} as const;
+
+/**
+ * How often ONE device takes the reading `metric` names, in seconds — or null
+ * when that cannot be resolved (no such device, settings that will not
+ * resolve, an SD-WAN gate the pass does not poll).
+ *
+ * The per-alert twin of resolveScopeCadence, asked at RUN time rather than at
+ * authoring time: a grouped alert holds its first send for one polling
+ * interval of the reading that opened it (business rule 75). A path-check
+ * reading's interval is the CHECK's own, so `checkId` (the reading's dimension
+ * key) is what decides it; the device is the agent host, or none for a check
+ * Polaris runs itself.
+ */
+export async function resolveAssetCadenceSec(
+  assetId: string | null | undefined,
+  metric: string | null | undefined,
+  checkId?: string | null,
+): Promise<number | null> {
+  const stream = streamForMetric(metric);
+  if (stream === "pathCheck") {
+    if (!checkId) return null;
+    const check = await prisma.pathCheck.findUnique({ where: { id: checkId }, select: { intervalSec: true } });
+    return check && check.intervalSec > 0 ? check.intervalSec : null;
+  }
+  if (!assetId) return null;
+  const a = await prisma.asset.findUnique({ where: { id: assetId }, select: CADENCE_ASSET_SELECT });
+  if (!a) return null;
+  try {
+    const eff = await resolveMonitorSettings({
+      ...a,
+      discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
+    } as Parameters<typeof resolveMonitorSettings>[0]);
+    const field = STREAM_FIELDS[stream].interval;
+    const iv = field ? eff[field] : resolveSdwanIntervalSec(a);
+    return typeof iv === "number" && iv > 0 ? iv : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The cadence at which the devices in `scope` take the reading `metric` names.
  * Monitored-only, like every other question the builder asks about a scope
@@ -213,16 +264,7 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
   const fields = STREAM_FIELDS[stream];
   const assets = await prisma.asset.findMany({
     where: { id: { in: ids } },
-    select: {
-      id: true, assetType: true, discoveredByIntegrationId: true,
-      discoveredByIntegration: { select: { type: true } },
-      monitorIntervalSec: true, probeTimeoutMs: true,
-      cpuMemoryIntervalSec: true, cpuMemoryTimeoutMs: true,
-      temperatureIntervalSec: true, temperatureTimeoutMs: true,
-      systemInfoIntervalSec: true, systemInfoTimeoutMs: true,
-      storageIntervalSec: true,
-      responseTimePolling: true,
-    },
+    select: CADENCE_ASSET_SELECT,
   });
 
   const intervals: number[] = [];

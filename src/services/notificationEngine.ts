@@ -34,6 +34,7 @@ import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, cha
 import { INTERFACE_DIMENSION_METRICS } from "./alertInterfaceService.js";
 import { processRankingForMetric } from "./alertProcessService.js";
 import { poeIsFault } from "../utils/poePorts.js";
+import { resolveAssetCadenceSec } from "./notificationCadenceService.js";
 import { REGION_TAG_PREFIX, rootCauseAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "./notificationService.js";
 import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import {
@@ -4605,6 +4606,9 @@ async function createGroupAlert(
   const ctx = await buildGroupContext(rule, lead, members, severity, now);
   const scope = alertScopeOf(rule, governs);
   const groupKey = groupKeyOf(scope.scope, scope.id, target);
+  // The first send waits one polling interval of the reading that opened the
+  // alert, so whatever goes down with it is in the first email (rule 75).
+  const firstSendDueAt = new Date(now.getTime() + (await firstSendHoldSec(rule, lead.reading)) * 1000);
 
   let notif: { id: string };
   try {
@@ -4612,6 +4616,7 @@ async function createGroupAlert(
       data: {
         ruleId: rule.id,
         assetId: assetId || null,
+        firstSendDueAt,
         // A subnet (or automation) fold is about the subnet (or automation), so
         // that is what every alert list names it as; `assetId` still points at
         // the leading device.
@@ -4640,7 +4645,8 @@ async function createGroupAlert(
         alertGroupId: governs ? (rule.alertGroupId ?? null) : null,
         members: members as unknown as Prisma.InputJsonValue,
         dimensionCount: activeMembers(members).length,
-        ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+        // Always stored here: the held first send is built from it.
+        templateCtx: ctx as any,
       },
       select: { id: true },
     });
@@ -4661,7 +4667,9 @@ async function createGroupAlert(
   // joins this alert instead of racing the unique index for a second one.
   tickIndex?.remember(groupKey, notif.id);
   await upsertGroupStates(rule, fires, notif.id, now);
-  pending.set(notif.id, { kind: "fire", notificationId: notif.id, rule, reading: lead.reading, ctx, actions: lead.actions, severity, count: activeMembers(members).length });
+  // No send recorded: the alert is live in the app from now, and its first
+  // message goes when the hold ends (releaseHeldFirstSends), naming whatever
+  // has joined by then.
 
   if (wantsEventAction(lead.actions)) {
     await logEvent({
@@ -4706,9 +4714,10 @@ async function joinGroupAlert(
 ): Promise<boolean> {
   const row = await prisma.notification.findFirst({
     where: { id: notificationId, cleared: false },
-    select: { id: true, members: true, severity: true, acknowledged: true, acknowledgedBy: true, acknowledgeNote: true },
+    select: { id: true, members: true, severity: true, acknowledged: true, acknowledgedBy: true, acknowledgeNote: true, firstSendDueAt: true, firstSentAt: true },
   });
   if (!row) return false;
+  const held = firstSendHeld(row);
 
   const prev = (row.members ?? []) as unknown as AlertMember[];
   const joining = fires.map((f) => memberOf(rule, f, now, span));
@@ -4736,7 +4745,7 @@ async function joinGroupAlert(
       severity,
       message: ctx["message"] ?? "",
       dimension: primary?.key || null,
-      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      ...(groupWantsContext(rule) || held ? { templateCtx: ctx as any } : {}),
       ...(reopening
         ? { acknowledged: false, acknowledgedBy: null, acknowledgedAt: null, acknowledgeNote: null, acknowledgedVia: Prisma.DbNull, escalationState: Prisma.DbNull }
         : {}),
@@ -4749,8 +4758,11 @@ async function joinGroupAlert(
   // One send per alert per tick: everything that joined folds into one message
   // naming the whole set. A "fire" already recorded for this alert stays a
   // fire — the contributions simply ride it, with no second message.
+  //
+  // An alert still HOLDING its first send owes nobody an update: the joiners
+  // are simply in the first message when the hold ends (releaseHeldFirstSends).
   const existing = pending.get(notificationId);
-  pending.set(notificationId, {
+  if (!held) pending.set(notificationId, {
     kind: existing?.kind ?? "growth",
     notificationId,
     rule,
@@ -4834,6 +4846,115 @@ async function buildGroupContext(
  * outbound work, and holding a pooled connection across the fan-out is how a
  * storm tick starves everything else.
  */
+/** Did this alert end (or is it ending) without its first message ever going
+ *  out? Asked on a clear, so one primary-key read per recovery. Read whether or
+ *  not the row is already cleared: the clear may have been written first. */
+async function neverAnnounced(notificationId: string): Promise<boolean> {
+  const row = await prisma.notification.findUnique({
+    where: { id: notificationId },
+    select: { firstSendDueAt: true, firstSentAt: true },
+  });
+  return !!row && firstSendHeld(row);
+}
+
+/** Is this grouped alert still waiting to send its first message? */
+export function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
+  return !!row.firstSendDueAt && !row.firstSentAt;
+}
+
+/** The engine tick (evaluateNotificationRules) — the hold used when a
+ *  reading's own cadence cannot be resolved. */
+const FIRST_SEND_HOLD_FALLBACK_SEC = 60;
+
+/**
+ * How long a newly opened grouped alert holds its first send: ONE polling
+ * interval of the reading that opened it (business rule 75), so another device
+ * or automation failing on the next poll joins the first email instead of
+ * arriving as an update a minute later. A path check's interval is the
+ * check's own; everything else is the device's stream cadence.
+ *
+ * The hold is added on top of the automation's own "for N polls" — an
+ * automation waiting 3 polls of a 5-minute check opens its alert at 15
+ * minutes and sends at 20.
+ */
+async function firstSendHoldSec(rule: DbRule, reading: Reading): Promise<number> {
+  const t = rule.trigger;
+  const metric = t.type === "asset_metric" || t.type === "host_metric" ? t.metric
+    : t.type === "asset_state" ? t.field
+    : null;
+  const sec = await resolveAssetCadenceSec(reading.assetId || null, metric, reading.dimKey || null);
+  return sec && sec > 0 ? sec : FIRST_SEND_HOLD_FALLBACK_SEC;
+}
+
+/**
+ * Send the first message of every grouped alert whose hold has ended.
+ *
+ * Runs once per engine pass, before the drain, so a release and this tick's
+ * sends go out together. The message is built from the alert AS IT STANDS —
+ * its stored template context, members, severity and message, all kept current
+ * by every join while it was held — and the actions are the band of its
+ * current severity, which is what a fire at this severity would have used.
+ * The group (when one governs the alert) still swaps in its own actions at the
+ * drain, as for any fire.
+ *
+ * One indexed query (the partial index on held rows); nothing to do on a tick
+ * where no grouped alert is due, which is almost every tick.
+ */
+async function releaseHeldFirstSends(rulesById: Map<string, DbRule>, pending: PendingSends, now: Date): Promise<void> {
+  const due = await prisma.notification.findMany({
+    where: { cleared: false, firstSentAt: null, firstSendDueAt: { not: null, lte: now } },
+    select: {
+      id: true, ruleId: true, assetId: true, assetHostname: true, regionTags: true,
+      dimension: true, severity: true, templateCtx: true, members: true,
+      firstSendDueAt: true, firstSentAt: true,
+    },
+  });
+  for (const n of due) {
+    if (!firstSendHeld(n) || n.firstSendDueAt!.getTime() > now.getTime()) continue;
+    // Stamped first, and only if still held: an overlapping pass must not send twice.
+    const claimed = await prisma.notification.updateMany({
+      where: { id: n.id, cleared: false, firstSentAt: null },
+      data: { firstSentAt: now },
+    });
+    if (claimed.count === 0) continue;
+    const rule = n.ruleId ? rulesById.get(n.ruleId) : undefined;
+    // The automation was disabled or deleted while the alert waited. Nothing
+    // left to say it through; the alert itself stays as the record.
+    if (!rule) continue;
+    const ctx = (n.templateCtx ?? {}) as Record<string, string>;
+    const members = (n.members ?? []) as unknown as AlertMember[];
+    const reading: Reading = {
+      assetId: n.assetId ?? "",
+      hostname: n.assetHostname,
+      // regionTags is the stripped snapshot; enqueueAlertActions strips again.
+      tags: (n.regionTags ?? []).map((t) => REGION_TAG_PREFIX + t),
+      dimKey: n.dimension ?? "",
+      dimLabel: "",
+      value: null,
+    };
+    pending.set(n.id, {
+      kind: "fire",
+      notificationId: n.id,
+      rule,
+      reading,
+      ctx,
+      actions: tierForSeverity(rule, n.severity).actions,
+      severity: n.severity,
+      count: activeMembers(members).length,
+    });
+    await logEvent({
+      action: "notification.first_send_released",
+      resourceType: "notification",
+      resourceId: n.id,
+      resourceName: rule.name,
+      actor: "system:notification-engine",
+      level: "info",
+      message: `${rule.name}: first notification sent after the grouping hold — ${activeMembers(members).length} affected`,
+      details: { ruleId: rule.id, members: activeMembers(members).map((m) => m.label) },
+    });
+  }
+}
+
 async function drainPendingSends(pending: PendingSends): Promise<void> {
   // Business rule 75: a governed alert FIRES through its group, exactly as it
   // later escalates, reminds and resets through it. Without this the first
@@ -5123,9 +5244,10 @@ async function reconcileGroupSeverity(
 ): Promise<void> {
   const row = await prisma.notification.findFirst({
     where: { id: notificationId, cleared: false },
-    select: { id: true, members: true, severity: true },
+    select: { id: true, members: true, severity: true, firstSendDueAt: true, firstSentAt: true },
   });
   if (!row) return;
+  const held = firstSendHeld(row);
 
   const members = ((row.members ?? []) as unknown as AlertMember[]).map((m) =>
     memberMatches(m, rule.id, dimensionKey, reading.assetId) && !m.leftAt ? { ...m, severity: memberSeverity } : m,
@@ -5163,9 +5285,14 @@ async function reconcileGroupSeverity(
       // The new band's escalation timers restart from band entry — but only
       // because the ALERT changed band, never because one component did.
       escalationState: { tiers: {}, bandSince: now.toISOString() } as any,
-      ...(groupWantsContext(rule) ? { templateCtx: ctx as any } : {}),
+      ...(groupWantsContext(rule) || held ? { templateCtx: ctx as any } : {}),
     },
   });
+
+  // Still holding its first send: the band change rides that first message
+  // (it is built from the alert as it stands then), so saying it now would be
+  // news about an alert nobody has been told of.
+  if (held) return;
 
   if ((increased && policy.onIncrease) || (!increased && policy.onDecrease)) {
     // WHETHER to say so is the member's band policy; WHO hears it is the owner's.
@@ -5200,6 +5327,8 @@ async function fireResolved(
   // forget; the extra count runs on a recovery transition, and only for a rule
   // that groups.
   if (await stillFiringElsewhere(st, rule)) return;
+  // Never announced (still holding its first send): there is nothing to resolve.
+  if (ruleGroupsByAsset(rule) && await neverAnnounced(st.notificationId)) return;
   // A group has no bands and no band policy of its own, so the member's policy
   // still decides whether "Resolved" is sent — but "reuse" means reuse the
   // alert's OWN recipients, and on a governed alert those are the group's.
@@ -5253,6 +5382,10 @@ async function fireReset(
   now: Date,
 ): Promise<void> {
   if (!st.notificationId) return;
+  // A grouped alert that ended while still holding its first send was never
+  // announced, so its reset actions — a "Resolved" email, a ticket closed —
+  // would answer something nobody was told (business rule 75).
+  if (ruleGroupsByAsset(rule) && await neverAnnounced(st.notificationId)) return;
   // A governed alert's reset actions are its GROUP's (business rule 75), the
   // same answer runResetActionsForCleared gives for an operator's Clear.
   const owner = await groupOwnerOf(rule, st.notificationId);
@@ -6248,6 +6381,12 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // sets are final, so each one's message goes out exactly once. Best-effort,
   // like every other fan-out — a failed send must not cost the fleet a tick.
   try {
+    // Grouped alerts whose first-send hold has ended join this drain. Only an
+    // install with a grouping automation can hold one, so every other skips
+    // the query.
+    if (rules.some((r) => ruleGroupsByAsset(r))) {
+      await releaseHeldFirstSends(new Map(rules.map((r) => [r.id, r])), pendingSends, new Date());
+    }
     await drainPendingSends(pendingSends);
   } catch (err) {
     await logEvent({ action: "notification.engine_error", actor: "system:notification-engine", level: "error", message: "Grouped-alert send drain failed", details: { err: (err as Error)?.message } }).catch(() => {});

@@ -103,6 +103,18 @@ async function targetsOf(ruleId: string): Promise<string[]> {
   return [...new Set(rows.map((r) => r.target))].sort();
 }
 
+/** One pass, then end every grouping hold (business rule 75: a grouped alert
+ *  holds its first send one polling interval) and pass again — the second pass
+ *  releases the first message. */
+async function evaluateAndRelease(): Promise<void> {
+  await evaluateAllNotificationRules();
+  await prisma.notification.updateMany({
+    where: { cleared: false, firstSentAt: null, firstSendDueAt: { not: null }, rule: { name: { startsWith: RULE } } },
+    data: { firstSendDueAt: new Date(Date.now() - 1000) },
+  });
+  await evaluateAllNotificationRules();
+}
+
 d("an AlertGroup delivers its alerts from the first message (business rule 75)", () => {
   beforeEach(async () => {
     await wipe();
@@ -121,7 +133,7 @@ d("an AlertGroup delivers its alerts from the first message (business rule 75)",
   it("fires a governed alert through the group's actions, not the member's", async () => {
     const groupId = await seedGroup();
     const ruleId = await seedMember(groupId);
-    await evaluateAllNotificationRules();
+    await evaluateAndRelease();
 
     const alerts = await prisma.notification.findMany({ where: { ruleId, cleared: false } });
     expect(alerts).toHaveLength(1);
@@ -133,7 +145,7 @@ d("an AlertGroup delivers its alerts from the first message (business rule 75)",
   it("is heard even when the member automation has no actions of its own", async () => {
     const groupId = await seedGroup();
     const ruleId = await seedMember(groupId, { actions: [] });
-    await evaluateAllNotificationRules();
+    await evaluateAndRelease();
     expect(await targetsOf(ruleId)).toEqual(["group@example.test"]);
   });
 
@@ -141,7 +153,7 @@ d("an AlertGroup delivers its alerts from the first message (business rule 75)",
     const elsewhere = await seedSwitch("b");
     const groupId = await seedGroup({ scope: { assetIds: [elsewhere] } });
     const ruleId = await seedMember(groupId, { scope: { assetIds: [assetId] } });
-    await evaluateAllNotificationRules();
+    await evaluateAndRelease();
 
     const alerts = await prisma.notification.findMany({ where: { ruleId, cleared: false } });
     expect(alerts).toHaveLength(1);
@@ -152,7 +164,7 @@ d("an AlertGroup delivers its alerts from the first message (business rule 75)",
   it("hands delivery back to the member when the group is disabled", async () => {
     const groupId = await seedGroup({ enabled: false });
     const ruleId = await seedMember(groupId);
-    await evaluateAllNotificationRules();
+    await evaluateAndRelease();
     expect(await targetsOf(ruleId)).toEqual(["member@example.test"]);
   });
 
@@ -169,7 +181,7 @@ d("an AlertGroup delivers its alerts from the first message (business rule 75)",
     expect(JSON.stringify(stored.escalation)).toContain("tier@example.test");
     expect(await prisma.event.count({ where: { action: "alert_group.seeded", resourceId: g.id } })).toBe(1);
 
-    await evaluateAllNotificationRules();
+    await evaluateAndRelease();
     expect(await targetsOf(ruleId)).toEqual(["member@example.test"]);
 
     // Copied ONCE: editing the member afterwards leaves the group alone, and a
@@ -193,7 +205,7 @@ d("an AlertGroup delivers its alerts from the first message (business rule 75)",
   it("runs the group's reset actions when the alert ends, not the member's", async () => {
     const groupId = await seedGroup({ resetActions: [notify("group-reset@example.test")] });
     const ruleId = await seedMember(groupId, { resetActions: [notify("member-reset@example.test")] });
-    await evaluateAllNotificationRules();
+    await evaluateAndRelease();
     expect(await targetsOf(ruleId)).toEqual(["group@example.test"]);
 
     // Every port recovers: the last contribution out ends the alert.
