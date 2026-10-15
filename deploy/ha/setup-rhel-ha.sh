@@ -786,6 +786,8 @@ EOF
   # the split-role layout shipped and installed by no script until now.
   # Business rule 117: it covers starting polaris-update-sync.service (the
   # fixed root helper below) and restarting the polaris units — nothing else.
+  # A minimal RHEL 9 host has no polkit to read the rule (see setup-rhel.sh).
+  rpm -q polkit >/dev/null 2>&1 || dnf install -y polkit || warn "Could not install polkit: the in-app updater can restart only the web role"
   mkdir -p /etc/polkit-1/rules.d
   ha_root_file 0644 "$SRC_DIR/../polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
   ha_root_file 0755 "$SRC_DIR/../scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync

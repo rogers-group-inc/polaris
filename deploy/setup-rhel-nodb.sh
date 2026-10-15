@@ -725,6 +725,10 @@ root_copy 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/
 # would not exist until the first update offered it.
 root_copy 0755 "$APP_DIR/deploy/update-linux.sh" /usr/local/sbin/polaris-update-linux
 root_copy 0644 "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
+# A minimal RHEL 9 host has no polkit at all: the rule below is then read by
+# nothing, and every start/restart the in-app updater asks systemd for is
+# Access denied.
+rpm -q polkit >/dev/null 2>&1 || dnf install -y polkit || warn "Could not install polkit: the in-app updater can restart only the web role"
 mkdir -p /etc/polkit-1/rules.d
 root_copy 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
 systemctl daemon-reload

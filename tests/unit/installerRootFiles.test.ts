@@ -74,6 +74,11 @@ describe.each(INSTALLERS)("%s", (file) => {
     expect(src).toMatch(/if systemctl is-active -q nginx; then systemctl reload nginx [^\n]*\nsystemctl start polaris\.target/);
   });
 
+  // RHEL 9.5 minimal: no polkit, so every updater start/restart was Access denied.
+  it("installs polkit before laying down the rule it reads", () => {
+    expect(src).toMatch(/(rpm -q polkit [^\n]*dnf install -y polkit|dpkg -s polkitd [^\n]*apt-get install -y polkitd)[\s\S]{0,400}mkdir -p \/etc\/polkit-1\/rules\.d/);
+  });
+
   it("smoke-checks :3000 by address, not by a process name ss does not print", () => {
     expect(src).not.toMatch(/3000\.\*node/);
   });

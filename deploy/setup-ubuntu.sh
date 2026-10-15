@@ -738,6 +738,14 @@ root_copy 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/
 # would not exist until the first update offered it.
 root_copy 0755 "$APP_DIR/deploy/update-linux.sh" /usr/local/sbin/polaris-update-linux
 root_copy 0644 "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
+# A minimal server has no polkit daemon: the rule below is then read by
+# nothing, and every start/restart the in-app updater asks systemd for is
+# Access denied. polkit 0.105 (Ubuntu 22.04) has a daemon but reads no
+# JavaScript rules at all.
+dpkg -s polkitd >/dev/null 2>&1 || apt-get install -y polkitd || warn "Could not install polkitd: the in-app updater can restart only the web role"
+if [[ "$(dpkg-query -W -f='${Version}' polkitd 2>/dev/null)" == 0.105* ]]; then
+  warn "polkit 0.105 ignores /etc/polkit-1/rules.d: the in-app updater can restart only the web role (Ubuntu 24.04 ships a polkit that reads it)"
+fi
 mkdir -p /etc/polkit-1/rules.d
 root_copy 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
 systemctl daemon-reload
