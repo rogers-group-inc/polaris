@@ -242,6 +242,13 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
     - Each tab rings itself from its own `::before`, clipped at its bottom edge. The active tab's layer reaches down through the neck to the card (`bottom: -var(--folder-r)`, transitioned), or its cast ends in a line across the tab's base.
     - The strip clips, so it is padded by `--folder-shadow-room` (32px) on top and sides and pulled back by the same negative margins.
   - On a cold permission cache an admin sees only the Credentials tab until reload. This predates folder tabs: `server-settings.js` decides visibility at DOMContentLoaded. Warm the cache with one load before capturing.
+- **Every tabbed list page uses the folder card** (since 2026-10-15): Assets, Automations, Events, IPAM and Integrations as well as Server Settings. Each head row carries `folder-head-card`, so the active tab takes the card's glass and cast, inactive tabs lie flat, and every card ends at the same bottom edge (`.main:has(> .folder-card)` is a `100dvh` flex column).
+  - Table panels: the `.table-wrapper` sits directly in the card (Assets, Path Monitor), in the active `.page-tab-panel` (Automations → Automations, Events → Events), or in the card-classed `#ipam-mount` (IPAM). It drops its own card chrome and fills the leftover height, so `sizeStickyTableWrappers()` skips wrappers inside a `.folder-card`. The bottom page row carries `.folder-card-foot`.
+  - Content panels (Automations → Delivery / Groups / Scripts / Address Book, Events → Calendar) carry `folder-card-scroll` themselves.
+  - Path Monitor has no tabs, so it gets the card only. Its edge is unbroken because the gap vars are unset.
+  - Cards inside a folder card lie flat: `.settings-card`, `.integration-card`, `.empty-state-card` and `.card` have `box-shadow: none`.
+  - The strip is pulled up over the page header or bulk bar by the cast's room, so it is `pointer-events: none` except on its tabs and the + button.
+- **Device Map** isn't a folder card, but its `.map-canvas` fills the same flex column (`map.css`), so it ends at the same bottom edge.
 - **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.
 
 **Canonical implementation:**

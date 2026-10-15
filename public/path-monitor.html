@@ -35,6 +35,9 @@
         Checks run from this <strong>Polaris server</strong>, from the <strong>Polaris Agent</strong> on the hosts you choose: an HTTP / HTTPS request, a TCP connect or a ping, with a traceroute of the path. Results appear under each check's <strong>Results</strong> and on each agent host's <strong>Paths</strong> tab. To be alerted, create an <a href="/automations.html">automation</a> on the <em>Path</em> metrics (latency, failure rate, HTTP status…); these alert on agent hosts. A check has no threshold of its own, and never changes a host's own Up / Down status.
       </p>
       <div id="path-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+      <!-- Folder card (styles.css "Folder CARD"): the table fills it down to
+           the viewport's foot; the page buttons sit at its foot. -->
+      <div class="folder-card folder-body">
       <div class="table-wrapper table-wrapper-sticky">
         <table>
           <thead>
@@ -56,7 +59,8 @@
           </tbody>
         </table>
       </div>
-      <div class="pagination" id="path-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+      <div class="pagination folder-card-foot" id="path-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+      </div>
     </main>
   </div>
 

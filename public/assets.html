@@ -100,7 +100,7 @@
            with Refresh / Clear Filters / Show N on the same row to the right
            (#pagination-top renders WITHOUT page navigation here — topNav:false
            in _renderAssetsPageControls; the page buttons live below the table). -->
-      <div class="table-head-row">
+      <div class="table-head-row folder-head-card">
         <!-- Per-user view tabs (assets-tabs.js). Each tab holds its own filter +
              sort state, its own base filter, and its own favorites; the set is
              persisted per user at /me/table-tabs. Rendered client-side — the strip
@@ -112,7 +112,11 @@
         <div id="pagination-top" class="table-head-controls"></div>
       </div>
 
-      <div class="table-wrapper table-wrapper-sticky folder-body" id="assets-table-wrapper">
+      <!-- Folder card (styles.css "Folder CARD"): the table fills it down to
+           the viewport's foot and scrolls inside; the page buttons sit at its
+           foot. -->
+      <div class="folder-card folder-body">
+      <div class="table-wrapper table-wrapper-sticky" id="assets-table-wrapper">
         <table>
           <thead>
             <tr>
@@ -172,7 +176,8 @@
           </tbody>
         </table>
       </div>
-      <div id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+      <div id="pagination" class="folder-card-foot" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+      </div>
     </main>
   </div>
 

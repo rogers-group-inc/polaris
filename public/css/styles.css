@@ -2494,11 +2494,6 @@ html[data-page-top-curtain]::after {
 }
 /* !important: renderPageControls stamps an inline display on its -top row. */
 .table-head-row .head-off { display: none !important; }
-/* Panels with no folder body start a little below the rule rather than on it.
-   Padding on the panel, not a margin on its first child: TableSF inserts a
-   zero-height .sf-col-gear-anchor ahead of a table, and its first child's
-   inline margins (Delivery's intro <p>) would beat a stylesheet margin. */
-.table-head-row ~ .page-tab-panel:not(:has(> .folder-body)) { padding-top: 1.25rem; }
 .table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab) {
   position: relative;
   flex: 0 0 auto;
@@ -2570,8 +2565,8 @@ html[data-page-top-curtain]::after {
    IPAM's freshly mounted table). Opacity only, and no fill-mode, so nothing is
    left behind once it ends. */
 @keyframes folder-panel-in { from { opacity: 0.25; } }
-.table-head-row ~ .page-tab-panel.active,
-.table-head-row ~ #ipam-mount > .folder-body,
+.folder-card > .page-tab-panel.active,
+#ipam-mount.folder-card > .table-wrapper,
 .folder-card-scroll > .page-tab-panel.active {
   animation: folder-panel-in 0.2s ease;
 }
@@ -2580,8 +2575,8 @@ html[data-page-top-curtain]::after {
   .table-head-row :is(.table-tabs, .page-tabs) :is(.table-tab, .page-tab)::after {
     transition: none;
   }
-  .table-head-row ~ .page-tab-panel.active,
-  .table-head-row ~ #ipam-mount > .folder-body,
+  .folder-card > .page-tab-panel.active,
+  #ipam-mount.folder-card > .table-wrapper,
   .folder-card-scroll > .page-tab-panel.active { animation: none; }
 }
 /* Folder CARD (Server Settings): one page-sized card holding every tab's
@@ -2609,7 +2604,7 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
 /* The strip clips (it scrolls sideways), so it is padded out by the tabs'
    cast and pulled back by the same amount; the first tab still starts clear
    of the card's rounded corner, so its fillet lands on the straight edge. */
-.table-head-row.folder-head-card > .page-tabs {
+.table-head-row.folder-head-card > :is(.page-tabs, .table-tabs) {
   padding-top: var(--folder-shadow-room);
   margin-top: calc(-1 * var(--folder-shadow-room) + 6px);
   padding-left: calc(var(--folder-shadow-room) + var(--radius-lg) + var(--folder-r));
@@ -2620,8 +2615,8 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
 /* The ACTIVE tab rings itself in the card's cast — top and sides; below its
    bottom edge is the card (or the neck), so the cast is clipped there.
    Inactive tabs sit behind the card and cast nothing. */
-.table-head-row.folder-head-card .page-tabs .page-tab { isolation: isolate; }
-.table-head-row.folder-head-card .page-tabs .page-tab::before {
+.table-head-row.folder-head-card :is(.page-tabs, .table-tabs) :is(.page-tab, .table-tab) { isolation: isolate; }
+.table-head-row.folder-head-card :is(.page-tabs, .table-tabs) :is(.page-tab, .table-tab)::before {
   content: "";
   position: absolute;
   inset: -1px -1px 0;
@@ -2641,7 +2636,7 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
    neck showed as a square block. Inside the tab, the layer rises with the
    tab's transform and cross-fades on a switch. The tab's own fill and the
    neck's (--folder-fill) are transparent here. */
-.table-head-row.folder-head-card .page-tabs .page-tab.active { background: transparent; }
+.table-head-row.folder-head-card :is(.page-tabs, .table-tabs) :is(.page-tab, .table-tab).active { background: transparent; }
 .table-head-row.folder-head-card .tab-glass {
   --m: var(--radius-md);
   position: absolute;
@@ -2718,8 +2713,8 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
 }
-.table-head-row.folder-head-card .page-tab.active .tab-glass { opacity: 1; }
-.table-head-row.folder-head-card .page-tabs .page-tab.active::before {
+.table-head-row.folder-head-card :is(.page-tab, .table-tab).active .tab-glass { opacity: 1; }
+.table-head-row.folder-head-card :is(.page-tabs, .table-tabs) :is(.page-tab, .table-tab).active::before {
   bottom: calc(-1 * var(--folder-r));
   box-shadow: var(--shadow-lift);
   /* Cut the cast out of the neck's two fillets (the concave corners either
@@ -2873,14 +2868,42 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
     0 calc(100% - var(--R)),
     0 var(--R));
 }
-.folder-card .settings-card { box-shadow: none; }
-/* Fill clipped to the padding box so the top border row stays empty: the head
-   row's rule (and, in the gap, the neck) is what shows there. */
-.table-wrapper.folder-body {
-  border-top-color: transparent;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  background-clip: padding-box;
+/* Cards inside the folder card lie flat on it — it is the one surface that
+   lifts (Server Settings, Integrations, Automations → Delivery). */
+.folder-card :is(.settings-card, .integration-card, .empty-state-card, .card) { box-shadow: none; }
+/* The strip is padded out by the tabs' cast and pulled back over whatever
+   sits above it (the page header, the Assets bulk bar), so the padding must
+   not take that area's clicks: only the tabs and the + button do. */
+.table-head-row.folder-head-card > :is(.page-tabs, .table-tabs) { pointer-events: none; }
+.table-head-row.folder-head-card > :is(.page-tabs, .table-tabs) :is(.page-tab, .table-tab, .table-tab-add) { pointer-events: auto; }
+/* Tab panels inside a folder card (Automations, Events): the active panel
+   fills the card as a flex column, so a table in it can take the height
+   left over; a panel of loose content (Delivery, Calendar, …) is a
+   .folder-card-scroll itself and scrolls inside the card. */
+.folder-card > .page-tab-panel.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.folder-card > .page-tab-panel.folder-card-scroll.active { display: block; }
+/* A list table inside a folder card IS the card's body: it drops its own
+   card chrome (the folder card draws the border, glass and cast), fills the
+   height left over and scrolls inside — sizeStickyTableWrappers() in app.js
+   leaves these alone. Its top corners follow the card's inner radius so the
+   sticky header doesn't square them off. */
+.folder-card .table-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: none;
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* The list's page buttons sit at the card's foot. */
+.folder-card .folder-card-foot {
+  flex: 0 0 auto;
+  padding: 0 1rem 0.75rem;
 }
 .table-tabs-list { display: flex; align-items: flex-end; gap: 2px; }
 .table-tab {

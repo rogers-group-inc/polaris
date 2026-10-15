@@ -188,9 +188,14 @@
 }
 
 
+/* The page column is a viewport-tall flex column and the canvas takes what
+   the header and toolbar leave, so it ends where the folder cards on the
+   list pages and Server Settings do (the column's bottom padding above the
+   viewport's foot) rather than at a fixed 200px off the viewport height. */
+.main:has(> .map-canvas) { display: flex; flex-direction: column; height: 100dvh; }
 .map-canvas {
   width: 100%;
-  height: calc(100vh - 200px);
+  flex: 1 1 auto;
   min-height: 520px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);

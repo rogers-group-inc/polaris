@@ -54,7 +54,7 @@
            same line (data-head-for: only while the Events tab is active). The
            page buttons are below the table only — with no #pagination-top,
            events.js renders just the bottom row. -->
-      <div class="table-head-row">
+      <div class="table-head-row folder-head-card">
         <div class="page-tabs page-tabs-glass" id="ev-tabs">
           <button type="button" class="page-tab active" data-tab="log">Events</button>
           <button type="button" class="page-tab" data-tab="calendar">Calendar</button>
@@ -75,33 +75,38 @@
         </div>
       </div>
 
-      <div class="page-tab-panel active" id="ev-tab-log">
-      <div class="table-wrapper table-wrapper-sticky folder-body">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:160px" data-col-no-resize="true" data-col-id="timestamp"    data-sf-key="timestamp"    data-sf-type="date">Timestamp</th>
-              <th style="width:90px"  data-col-no-resize="true" data-col-id="level"        data-sf-key="level"        data-sf-type="string" data-sf-options="info|warning|error">Level</th>
-              <th style="width:140px" data-col-id="action"       data-sf-key="action"       data-sf-type="string">Action</th>
-              <th style="width:100px" data-col-id="resource"     data-sf-key="resourceType" data-sf-type="string" data-sf-options="">Resource</th>
-              <th style="width:160px" data-col-id="resourceName" data-sf-key="resourceName" data-sf-type="string">Resource Name</th>
-              <th                       data-col-id="message"    data-sf-key="message"      data-sf-type="string">Message</th>
-              <th style="width:100px" data-col-id="user"         data-sf-key="actor"        data-sf-type="string">User</th>
-              <th style="width:60px"  data-col-id="actions" data-col-required="true"></th>
-            </tr>
-          </thead>
-          <tbody id="events-tbody">
-            <tr><td colspan="8" class="empty-state">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <!-- Folder card (styles.css "Folder CARD"): every tab's panel sits in
+           one viewport-tall card the tabs open into. A table panel fills it
+           (page buttons at its foot); the others scroll inside it. -->
+      <div class="folder-card folder-body">
+        <div class="page-tab-panel active" id="ev-tab-log">
+        <div class="table-wrapper table-wrapper-sticky">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:160px" data-col-no-resize="true" data-col-id="timestamp"    data-sf-key="timestamp"    data-sf-type="date">Timestamp</th>
+                <th style="width:90px"  data-col-no-resize="true" data-col-id="level"        data-sf-key="level"        data-sf-type="string" data-sf-options="info|warning|error">Level</th>
+                <th style="width:140px" data-col-id="action"       data-sf-key="action"       data-sf-type="string">Action</th>
+                <th style="width:100px" data-col-id="resource"     data-sf-key="resourceType" data-sf-type="string" data-sf-options="">Resource</th>
+                <th style="width:160px" data-col-id="resourceName" data-sf-key="resourceName" data-sf-type="string">Resource Name</th>
+                <th                       data-col-id="message"    data-sf-key="message"      data-sf-type="string">Message</th>
+                <th style="width:100px" data-col-id="user"         data-sf-key="actor"        data-sf-type="string">User</th>
+                <th style="width:60px"  data-col-id="actions" data-col-required="true"></th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody">
+              <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
 
-      <div class="pagination" id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0">
-      </div>
-      </div>
+        <div class="pagination folder-card-foot" id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center">
+        </div>
+        </div>
 
-      <div class="page-tab-panel" id="ev-tab-calendar">
-        <div id="ops-calendar-host"><div class="empty-state">Loading…</div></div>
+        <div class="page-tab-panel folder-card-scroll" id="ev-tab-calendar">
+          <div id="ops-calendar-host"><div class="empty-state">Loading…</div></div>
+        </div>
       </div>
     </main>
   </div>

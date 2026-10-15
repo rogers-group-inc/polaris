@@ -49,7 +49,7 @@
            mount ipam.js moves the template's [data-head-controls] cluster
            (its Add buttons + #pagination-top — Refresh / Clear Filters /
            Show N, no page buttons inside a head row) into it. -->
-      <div class="table-head-row">
+      <div class="table-head-row folder-head-card">
         <div class="page-tabs page-tabs-glass" id="ipam-tabs">
           <button class="page-tab" data-tab="blocks">IP Blocks</button>
           <button class="page-tab active" data-tab="networks">Networks</button>
@@ -64,7 +64,10 @@
         pagination, *-tbody, etc.) collide between Blocks and Networks, so
         only ONE tab's markup is in the DOM at a time.
       -->
-      <div id="ipam-mount"></div>
+      <!-- The mount is the folder card (styles.css "Folder CARD"): the
+           mounted table fills it down to the viewport's foot and its page
+           buttons sit at its foot. -->
+      <div id="ipam-mount" class="folder-card folder-body"></div>
 
       <template id="ipam-tpl-blocks">
         <div data-head-controls style="display:contents">
@@ -72,7 +75,7 @@
           <button class="btn btn-primary btn-sm" id="btn-add-block" data-manage-blocks>+ Add Block</button>
         </div>
 
-        <div class="table-wrapper table-wrapper-sticky folder-body">
+        <div class="table-wrapper table-wrapper-sticky">
           <table>
             <thead>
               <tr>
@@ -92,7 +95,7 @@
             </tbody>
           </table>
         </div>
-        <div id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+        <div id="pagination" class="folder-card-foot" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       </template>
 
       <template id="ipam-tpl-networks">
@@ -103,7 +106,7 @@
           <button class="btn btn-primary btn-sm" id="btn-add-subnet" data-create-networks>+ Add Network</button>
         </div>
 
-        <div class="table-wrapper table-wrapper-sticky folder-body">
+        <div class="table-wrapper table-wrapper-sticky">
           <table>
             <thead>
               <tr>
@@ -138,7 +141,7 @@
             </tbody>
           </table>
         </div>
-        <div id="pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+        <div id="pagination" class="folder-card-foot" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       </template>
     </main>
   </div>

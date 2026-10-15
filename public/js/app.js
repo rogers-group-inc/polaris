@@ -4774,6 +4774,9 @@ function showFormModal(title, formHTML, confirmLabel) {
  */
 function sizeStickyTableWrappers() {
   document.querySelectorAll(".table-wrapper-sticky").forEach(function (w) {
+    // Inside a folder card the wrapper is sized by the card's flex column
+    // (styles.css "Folder CARD"), not by the viewport.
+    if (w.closest(".folder-card")) { w.style.maxHeight = ""; return; }
     var docTop = w.getBoundingClientRect().top + window.scrollY;
     var h = window.innerHeight - docTop - 72;
     w.style.maxHeight = Math.max(260, Math.round(h)) + "px";
@@ -4931,6 +4934,20 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
 // row; a MutationObserver re-runs it on any tab switch, re-render, rename or
 // show/hide, so no page script has to call it.
 function syncFolderTabs(row) {
+  // A folder CARD's tabs carry the card's frosted glass on one masked layer
+  // per tab (.tab-glass, styles.css), shown on the active one. Ensured on
+  // every sync, not once: the Assets strip rewrites a tab's contents on each
+  // render, which drops the layer. Inserting it re-fires the observer once;
+  // the next pass finds every tab already carrying one and changes nothing.
+  if (row.classList.contains("folder-head-card")) {
+    row.querySelectorAll(".page-tab, .table-tab").forEach(function (t) {
+      if (t.querySelector(":scope > .tab-glass")) return;
+      var g = document.createElement("span");
+      g.className = "tab-glass";
+      g.setAttribute("aria-hidden", "true");
+      t.insertBefore(g, t.firstChild);
+    });
+  }
   var tab = null;
   row.querySelectorAll(".table-tab.active, .page-tab.active").forEach(function (t) {
     if (!tab && t.getClientRects().length) tab = t;
@@ -4978,18 +4995,6 @@ function wireFolderTabs() {
   document.querySelectorAll(".table-head-row").forEach(function (row) {
     if (row.__polarisFolderWired) return;
     row.__polarisFolderWired = true;
-    // A folder CARD's tabs carry the card's frosted glass on one masked layer
-    // per tab (.tab-glass, styles.css), shown on the active one. Added here
-    // so the page markup stays plain buttons.
-    if (row.classList.contains("folder-head-card")) {
-      row.querySelectorAll(".page-tab").forEach(function (t) {
-        if (t.querySelector(":scope > .tab-glass")) return;
-        var g = document.createElement("span");
-        g.className = "tab-glass";
-        g.setAttribute("aria-hidden", "true");
-        t.insertBefore(g, t.firstChild);
-      });
-    }
     var sync = function () { syncFolderTabs(row); };
     var strip = row.querySelector(".table-tabs, .page-tabs");
     if (strip) strip.addEventListener("scroll", sync, { passive: true });
