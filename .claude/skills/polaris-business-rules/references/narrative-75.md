@@ -518,6 +518,45 @@ every clock at `firstSentAt` when that is later, the same shift quiet time's sum
 never re-sent — and they are written per recipient AFTER the owner's actions resolve. The hold is
 earlier and simpler: no send is recorded at all until it ends, so nothing has to be un-held.
 
+### The update cadence
+
+The hold fixed the first email; the next problem was every one after it (2026-10-15). A Path
+Monitor group whose hosts flap sent an `[UPDATED]` email each tick something joined, and nothing
+at all when a host recovered — so the inbox overstated the outage on the way up and never said
+when it shrank. The operator asked for one update per polling interval naming everything that
+changed, recoveries included.
+
+**What paces it.** `sendIntervalSec` is measured once, at open, by the same `firstSendHoldSec`
+the hold waits — the polling interval of the reading that opened the alert. The first send
+(`releaseDueGroupSends`, the renamed release pass) stamps `nextUpdateDueAt = firstSentAt +
+interval`; each update moves it on by another interval. Between those, changes are QUEUED, not
+sent: `joinGroupAlert` (a join, or a return after recovering) and `releaseGroupMember` (a
+recovery that leaves others firing — kind `"recovered"`, new) write `pendingChanges`
+(`{ changes, reopenedFrom? }`) through `queueGroupChanges`. `mergeGroupChanges` keeps ONE entry
+per component with its latest state, so a host that joined and recovered inside one interval
+drops out (it was never worth an email) and one that recovered and faulted again reads as
+"back". The release pass sends one `"growth"` send per due alert from the stored context — which
+is why a recovery refreshes `templateCtx` with `refreshMemberContext` (the member tokens,
+`{asset}`'s device count, the list inside `{trigger.summary}`): a recovery carries no reading to
+rebuild one from. The claim is the queue itself (`pendingChanges → NULL` where not NULL), so an
+overlapping pass sends nothing twice.
+
+**What it leaves alone.** An alert opened before the cadence existed (`sendIntervalSec` NULL)
+keeps sending each change at once. A re-open still clears the acknowledgement the moment the
+change lands; the update that says so comes at the next due time. Severity-band changes
+(`reconcileGroupSeverity`) still send at once, under the band policy — they are a different
+statement (the alert got worse), and pacing them would delay the one email the bands exist for.
+Reminders and escalation run on their own clocks, unchanged.
+
+**Per path check.** On the same day an AUTOMATION fold stopped putting every check a Path
+Monitor automation watches into one alert: a path check is a fleet-wide object, so "ERP HTTPS
+failing from these hosts" is the finding, and an automation watching every check is really one
+monitor per check. `foldBuckets` buckets those fires by `(automation, check)`
+(`automationFoldTarget(rule.id, checkId)`), members are the bare host (the check is named once,
+in `AlertMember.component`), and the alert, message and regrouped message name the check.
+Components that are part of one device (ports, mounts) do NOT split — port2 on two switches is
+not one finding.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.

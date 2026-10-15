@@ -40,6 +40,9 @@ import {
   deviceAutomationFoldTarget,
   foldSpansDevices,
   ALERT_GROUP_FOLD_BY,
+  mergeGroupChanges,
+  queueGroupChanges,
+  refreshMemberContext,
 } from "../../src/services/notificationTypes.js";
 
 const RULE = "11111111-1111-4111-8111-111111111111";
@@ -641,5 +644,49 @@ describe("automation folding (foldBy = automation | deviceAutomation)", () => {
     ];
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys[2]).toBe(`grp:g1|a1/auto:${RULE}`);
+  });
+});
+
+describe("the update cadence (business rule 75): queued changes", () => {
+  it("splits a Path Monitor automation per check, and keeps the plain key otherwise", () => {
+    expect(automationFoldTarget(RULE, "chk1")).toBe(`auto:${RULE}/chk1`);
+    expect(automationFoldTarget(RULE)).toBe(`auto:${RULE}`);
+  });
+
+  it("says what recovered, and tags it in the subject", () => {
+    const d = describeGroupChanges([{ label: "pc-02", kind: "recovered" }, { label: "pc-03", kind: "joined" }]);
+    expect(d?.sentence).toBe("Update: pc-03 joined this alert; pc-02 recovered.");
+    expect(d?.subjectTag).toBe("−pc-02, +pc-03");
+  });
+
+  it("names each component once with its latest state", () => {
+    expect(mergeGroupChanges([{ label: "a", kind: "joined" }], [{ label: "a", kind: "recovered" }])).toEqual([]);
+    expect(mergeGroupChanges([{ label: "a", kind: "recovered" }], [{ label: "a", kind: "joined" }]))
+      .toEqual([{ label: "a", kind: "returned" }]);
+    expect(mergeGroupChanges([{ label: "a", kind: "joined" }], [{ label: "b", kind: "recovered" }]).map((c) => c.label)).toEqual(["a", "b"]);
+  });
+
+  it("queues onto what is stored, keeping who had acknowledged it", () => {
+    expect(queueGroupChanges(null, [])).toBeNull();
+    const first = queueGroupChanges(null, [{ label: "a", kind: "joined" }], "alice");
+    expect(first).toEqual({ changes: [{ label: "a", kind: "joined" }], reopenedFrom: "alice" });
+    expect(queueGroupChanges(first, [{ label: "b", kind: "recovered" }])).toEqual({
+      changes: [{ label: "a", kind: "joined" }, { label: "b", kind: "recovered" }], reopenedFrom: "alice",
+    });
+  });
+
+  it("refreshes the stored context's member tokens for an update that has no reading", () => {
+    const members = [
+      member("c1", { label: "pc-01", assetId: "a1" }),
+      member("c1", { label: "pc-02", assetId: "a2", leftAt: T1.toISOString() }),
+    ];
+    const ctx = { dimension: "pc-01, pc-02", asset: "2 devices", "trigger.summary": "Path check result on pc-01, pc-02 is 0", message: "old" };
+    const out = refreshMemberContext(ctx, members, "new message");
+    expect(out["dimension"]).toBe("pc-01");
+    expect(out["dimension.count"]).toBe("1");
+    expect(out["asset"]).toBe("1 device");
+    expect(out["trigger.summary"]).toBe("Path check result on pc-01 is 0");
+    expect(out["message"]).toBe("new message");
+    expect(ctx["dimension"]).toBe("pc-01, pc-02");
   });
 });

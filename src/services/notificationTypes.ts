@@ -4785,6 +4785,10 @@ export interface AlertMember {
   /** Set only on a subnet-folded alert: the subnet it is about, as a human
    *  reads it — "Plant A (10.1.0.0/24)". What {asset} renders as there. */
   subnet?: string;
+  /** Set only on an automation-folded alert split per COMPONENT (a Path
+   *  Monitor automation: one alert per path check): the component every
+   *  device on the alert shares, as a human reads it — the check's name. */
+  component?: string;
 }
 
 /** A 48-port switch plus its SFPs. Past this an alert has stopped being about
@@ -4879,8 +4883,9 @@ export function subnetFoldTarget(subnetId: string): string {
 
 /** The `groupKey` target of an automation-folded alert: one per member
  *  automation, whatever devices it covers. */
-export function automationFoldTarget(ruleId: string): string {
-  return `auto:${ruleId}`;
+export function automationFoldTarget(ruleId: string, componentKey?: string | null): string {
+  // A Path Monitor automation splits per path check: `auto:<rule>/<checkId>`.
+  return componentKey ? `auto:${ruleId}/${componentKey}` : `auto:${ruleId}`;
 }
 
 /** The `groupKey` target of a device-and-automation alert: the device, split
@@ -5014,8 +5019,9 @@ export function markMemberLeft(
 export interface GroupChange {
   label: string;
   /** "joined": never on this alert before. "returned": it recovered (its
-   *  member row carries `leftAt`) and has faulted again. */
-  kind: "joined" | "returned";
+   *  member row carries `leftAt`) and has faulted again. "recovered": it was
+   *  on the alert and has come good while others still have not. */
+  kind: "joined" | "returned" | "recovered";
   /** How long it had been recovered, for a "returned" contribution. */
   awayMs?: number;
 }
@@ -5069,9 +5075,13 @@ export function describeGroupChanges(
   if (!changes.length) return null;
   const joined = changes.filter((c) => c.kind === "joined");
   const returned = changes.filter((c) => c.kind === "returned");
+  const recovered = changes.filter((c) => c.kind === "recovered");
   const clauses: string[] = [];
   if (joined.length) {
     clauses.push(`${listLabels(joined.map((c) => c.label))} joined this alert`);
+  }
+  if (recovered.length) {
+    clauses.push(`${listLabels(recovered.map((c) => c.label))} recovered`);
   }
   for (const c of returned) {
     clauses.push(c.awayMs !== undefined
@@ -5082,11 +5092,87 @@ export function describeGroupChanges(
   if (opts.reopenedFrom !== undefined) {
     sentence += ` Re-opened — ${opts.reopenedFrom || "someone"} had acknowledged it.`;
   }
-  const tags = changes.map((c) => (c.kind === "joined" ? `+${c.label}` : `${c.label} back`));
+  const tags = changes.map((c) => (c.kind === "joined" ? `+${c.label}` : c.kind === "recovered" ? `−${c.label}` : `${c.label} back`));
   const subjectTag = tags.length > CHANGE_SUBJECT_CAP
     ? `${tags.slice(0, CHANGE_SUBJECT_CAP).join(", ")} +${tags.length - CHANGE_SUBJECT_CAP} more`
     : tags.join(", ");
   return { sentence, subjectTag };
+}
+
+/**
+ * Fold one batch of changes into those already waiting to be sent, so an
+ * update email names each component once with its LATEST state (business rule
+ * 75, the update cadence). A component that joined and recovered inside the
+ * same interval was never worth an email and drops out; one that recovered and
+ * faulted again reads as "back"; later states replace earlier ones otherwise.
+ */
+export function mergeGroupChanges(pending: GroupChange[] | null | undefined, incoming: GroupChange[]): GroupChange[] {
+  const out = new Map<string, GroupChange>();
+  for (const c of pending ?? []) out.set(c.label, c);
+  for (const c of incoming) {
+    const before = out.get(c.label);
+    if (before?.kind === "joined" && c.kind === "recovered") { out.delete(c.label); continue; }
+    if (before?.kind === "recovered" && (c.kind === "returned" || c.kind === "joined")) {
+      out.set(c.label, { ...c, kind: "returned" });
+      continue;
+    }
+    out.set(c.label, c);
+  }
+  return [...out.values()];
+}
+
+/** What `Notification.pendingChanges` holds: the changes since the last send,
+ *  and who had acknowledged the alert when a change re-opened it. */
+export interface PendingGroupChanges {
+  changes: GroupChange[];
+  reopenedFrom?: string;
+}
+
+/**
+ * The next value of `Notification.pendingChanges` after `incoming` (and,
+ * when this change re-opened an acknowledged alert, who had acknowledged it),
+ * or null when there is nothing new to queue — the column is then left alone.
+ */
+export function queueGroupChanges(
+  stored: unknown,
+  incoming: GroupChange[],
+  reopenedFrom?: string,
+): PendingGroupChanges | null {
+  if (!incoming.length && reopenedFrom === undefined) return null;
+  const prev = stored && typeof stored === "object" ? (stored as Partial<PendingGroupChanges>) : {};
+  const changes = mergeGroupChanges(Array.isArray(prev.changes) ? prev.changes : [], incoming);
+  const reopened = prev.reopenedFrom ?? reopenedFrom;
+  return { changes, ...(reopened !== undefined ? { reopenedFrom: reopened } : {}) };
+}
+
+/**
+ * Refresh the member-derived keys of a stored template context so an update
+ * sent from it — a recovery carries no reading to rebuild one from — names the
+ * alert as it stands now: {dimension} and its siblings, {asset} on an alert
+ * spanning devices that names no subnet, the message, and the component list
+ * inside {trigger.summary}. Returns a NEW object; the stored one is untouched.
+ */
+export function refreshMemberContext(
+  ctx: Record<string, string>,
+  members: AlertMember[],
+  message: string | null,
+): Record<string, string> {
+  const out = { ...ctx };
+  const before = out["dimension"] ?? "";
+  const list = renderMemberList(members);
+  const active = activeMembers(members);
+  out["dimension"] = list;
+  out["dimension.count"] = String(active.length);
+  out["dimension.first"] = primaryMember(members)?.label ?? "";
+  out["dimension.list"] = renderMemberList(members, Number.MAX_SAFE_INTEGER);
+  out["dimension.suffix"] = list ? ` · ${list}` : "";
+  if (members.some((m) => m.assetId) && !members.some((m) => m.subnet)) {
+    const n = new Set(active.map((m) => m.assetId)).size;
+    out["asset"] = `${n} device${n === 1 ? "" : "s"}`;
+  }
+  if (before && out["trigger.summary"]?.includes(before)) out["trigger.summary"] = out["trigger.summary"].replace(before, list);
+  if (message !== null) out["message"] = message;
+  return out;
 }
 
 /** "a", "a and b", "a, b and c" — capped at GROUP_LABEL_CAP like the message. */

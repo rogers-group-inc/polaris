@@ -39,7 +39,7 @@
    *  shows beside a group that folds any way but the default. */
   var FOLD_OPTIONS = [
     { value: "device", label: "Device", badge: "per device", hint: "everything wrong with one device is one alert" },
-    { value: "automation", label: "Automation", badge: "per automation", hint: "every device one automation trips shares that automation's alert" },
+    { value: "automation", label: "Automation", badge: "per automation", hint: "every device one automation trips shares that automation's alert (a Path Monitor automation: one alert per path check)" },
     { value: "deviceAutomation", label: "Device + automation", badge: "per device + automation", hint: "one alert per device for each automation; two automations on one device stay two alerts" },
     { value: "subnet", label: "Subnet", badge: "per subnet", hint: "every device in the same subnet shares one alert" },
   ];
@@ -270,7 +270,8 @@
       }).join("") +
       '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' +
         "By automation or by subnet, one alert lists every device, so a switch taking twelve hosts down with it is one page listing the twelve, not twelve pages. A device belongs to the most specific subnet in the registry that holds its IP; one in no subnet alerts on its own. " +
-        "Those two also take a <em>monitor status is down</em> automation — turn on <em>Also alert when the device is dependency-down</em> there, so the hosts behind a failed switch report at all. Changing this retires the group's open alerts; the next check raises them again the new way." +
+        "Those two also take a <em>monitor status is down</em> automation — turn on <em>Also alert when the device is dependency-down</em> there, so the hosts behind a failed switch report at all. Changing this retires the group's open alerts; the next check raises them again the new way. " +
+        "Whichever you pick, the first email waits one polling interval, and after it whatever joins or recovers goes out as one update email at most once per interval." +
       "</p>" +
 
       "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +

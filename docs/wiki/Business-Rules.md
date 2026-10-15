@@ -853,6 +853,8 @@ opens, so the devices and automations that fail with it are in that first
 email rather than in a string of updates. The alert shows in Polaris straight
 away; only the email (and the other actions) waits. An alert that recovers
 before its first email went sends nothing at all — no "Resolved" either.
+After the first email, devices joining or recovering are collected and sent as
+one update email at most once per polling interval.
 
 Turning grouping on or off, changing a group's members, devices or fold, or disabling
 or deleting a group ends the affected live alerts, and the next check raises
