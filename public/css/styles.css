@@ -2221,6 +2221,12 @@ html[data-page-top-curtain]::after {
 /* A disabled button is flat — the shadow is an affordance, and leaving it on
    something that cannot be pressed is the one place it misleads. */
 .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+/* Page-level buttons — a page header's actions (including a section's own
+   header, e.g. Users → Roles) and a tab row's list controls — carry the
+   rail's lift, like the title and search beside them. Buttons inside tables,
+   cards, modals and menus keep --shadow-control. */
+.page-header-actions .btn:not(.btn-icon):not(:disabled),
+.table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift); }
 .btn-primary {
   background: var(--color-accent);
   color: #0d0d1a;
@@ -3195,6 +3201,9 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
      per-theme "this floats above the page" value. */
   box-shadow: var(--shadow-md);
 }
+/* A table that stands as a page's own card (the Users page's Users, Roles and
+   Group Mappings) lifts like the sidebar and the Server Settings card. */
+.table-wrapper.lift-card { box-shadow: var(--shadow-lift); }
 /* Sticky-header variant (Assets / Events / IPAM Blocks + Networks list
    tables): the wrapper is height-bounded to the viewport by the shared
    sizeStickyTableWrappers() in app.js (hooked into renderPageControls /
