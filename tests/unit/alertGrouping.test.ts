@@ -36,6 +36,10 @@ import {
   describeGroupChanges,
   memberMatches,
   subnetFoldTarget,
+  automationFoldTarget,
+  deviceAutomationFoldTarget,
+  foldSpansDevices,
+  ALERT_GROUP_FOLD_BY,
 } from "../../src/services/notificationTypes.js";
 
 const RULE = "11111111-1111-4111-8111-111111111111";
@@ -599,5 +603,43 @@ describe("subnet folding (an AlertGroup with foldBy = subnet)", () => {
     const back = mergeMembers(left, [member("", { label: "plc-01", assetId: "a1" })], T2);
     expect(back).toHaveLength(1);
     expect(back[0]!.leftAt).toBeUndefined();
+  });
+});
+
+describe("automation folding (foldBy = automation | deviceAutomation)", () => {
+  const down = { type: "asset_state", field: "monitorStatus", operator: "==", value: "down" } as never;
+  const poe = { type: "asset_state", field: "poeStatus", operator: "==", value: "fault" } as never;
+
+  it("offers the four folds, device first (the default)", () => {
+    expect([...ALERT_GROUP_FOLD_BY]).toEqual(["device", "automation", "deviceAutomation", "subnet"]);
+  });
+
+  it("spans devices by automation or subnet, never per device", () => {
+    expect(foldSpansDevices("automation")).toBe(true);
+    expect(foldSpansDevices("subnet")).toBe(true);
+    expect(foldSpansDevices("device")).toBe(false);
+    expect(foldSpansDevices("deviceAutomation")).toBe(false);
+    expect(foldSpansDevices(null)).toBe(false);
+  });
+
+  it("admits a whole-device trigger by automation, and refuses it per device and automation", () => {
+    expect(triggerCanJoinGroup(down, "automation")).toBe(true);
+    expect(triggerCanJoinGroup(down, "deviceAutomation")).toBe(false);
+    expect(triggerCanJoinGroup(poe, "deviceAutomation")).toBe(true);
+    expect(triggerCanJoinGroup(poe, "automation")).toBe(true);
+    expect(ruleGroupsByAsset({ alertGroupId: "g1", alertGroupFoldBy: "automation", trigger: down })).toBe(true);
+    expect(ruleGroupsByAsset({ alertGroupId: "g1", alertGroupFoldBy: "deviceAutomation", trigger: down })).toBe(false);
+  });
+
+  it("keys every fold apart within one group", () => {
+    const keys = [
+      groupKeyOf("grp", "g1", "a1"),
+      groupKeyOf("grp", "g1", automationFoldTarget(RULE)),
+      groupKeyOf("grp", "g1", deviceAutomationFoldTarget("a1", RULE)),
+      groupKeyOf("grp", "g1", deviceAutomationFoldTarget("a1", RULE_B)),
+      groupKeyOf("grp", "g1", subnetFoldTarget("a1")),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys[2]).toBe(`grp:g1|a1/auto:${RULE}`);
   });
 });

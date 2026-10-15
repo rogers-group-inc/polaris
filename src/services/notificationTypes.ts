@@ -4770,7 +4770,7 @@ export interface AlertMember {
   /** ISO. Set when the contribution recovered or left; the row is KEPT, because
    *  what this alert covered is the history the snapshot exists to carry. */
   leftAt?: string;
-  /** Set ONLY on a subnet-folded alert, where contributions come from several
+  /** Set ONLY on a subnet- or automation-folded alert, where contributions come from several
    *  devices: the device this one is about. It joins the identity, because two
    *  hosts both "down" are two findings with the same (rule, key). */
   assetId?: string;
@@ -4798,7 +4798,9 @@ export const GROUP_LABEL_CAP = 6;
  *  group therefore changes its key, which is what keeps the old episode's row
  *  and the new one from fighting over it. */
 export function groupKeyOf(scope: "rule" | "grp", id: string, target: string): string {
-  // `target` is the asset id, or `subnetFoldTarget(...)` on a subnet group.
+  // `target` is the asset id, or the fold's own target on a group that folds
+  // another way (subnetFoldTarget / automationFoldTarget /
+  // deviceAutomationFoldTarget).
   return `${scope}:${id}|${target}`;
 }
 
@@ -4830,8 +4832,9 @@ export function ruleGroupsByAsset(rule: {
    *  in a group and still got eight alerts per switch would reasonably call
    *  that broken. */
   alertGroupId?: string | null;
-  /** The group's fold axis. A SUBNET group also takes whole-device triggers
-   *  (monitor status is down), so membership alone no longer settles it. */
+  /** The group's fold axis. A SUBNET or AUTOMATION group also takes
+   *  whole-device triggers (monitor status is down), so membership alone no
+   *  longer settles it. */
   alertGroupFoldBy?: string | null;
   trigger: Trigger;
 }): boolean {
@@ -4842,18 +4845,40 @@ export function ruleGroupsByAsset(rule: {
 /** What an AlertGroup folds its members' alerts by.
  *
  *  `device` — one alert per device, its components and automations folded in
- *  (the original shape). `subnet` — one alert per registry SUBNET: every
- *  device the group governs whose primary IP falls in the same subnet (the
- *  most specific non-deprecated Subnet row containing it) shares one alert, so
- *  a switch dropping twelve hosts behind it is one page, not twelve. A device
- *  in no registry subnet still alerts, on its own. */
-export const ALERT_GROUP_FOLD_BY = ["device", "subnet"] as const;
+ *  (the original shape). `automation` — one alert per member AUTOMATION: every
+ *  device the group governs that trips it shares that automation's one alert,
+ *  each device a member. `deviceAutomation` — one alert per device PER
+ *  automation: one automation's components on a device fold together, but two
+ *  automations on the same device stay two alerts. `subnet` — one alert per
+ *  registry SUBNET: every device the group governs whose primary IP falls in
+ *  the same subnet (the most specific non-deprecated Subnet row containing it)
+ *  shares one alert, so a switch dropping twelve hosts behind it is one page,
+ *  not twelve. A device in no registry subnet still alerts, on its own. */
+export const ALERT_GROUP_FOLD_BY = ["device", "automation", "deviceAutomation", "subnet"] as const;
 export type AlertGroupFoldBy = (typeof ALERT_GROUP_FOLD_BY)[number];
+
+/** Does this fold put SEVERAL devices into one alert? Its members then carry
+ *  their device (`AlertMember.assetId`), which joins their identity. */
+export function foldSpansDevices(foldBy: string | null | undefined): boolean {
+  return foldBy === "subnet" || foldBy === "automation";
+}
 
 /** The `groupKey` target of a subnet-folded alert. Prefixed so it can never be
  *  mistaken for an asset id in the same group's key space. */
 export function subnetFoldTarget(subnetId: string): string {
   return `subnet:${subnetId}`;
+}
+
+/** The `groupKey` target of an automation-folded alert: one per member
+ *  automation, whatever devices it covers. */
+export function automationFoldTarget(ruleId: string): string {
+  return `auto:${ruleId}`;
+}
+
+/** The `groupKey` target of a device-and-automation alert: the device, split
+ *  by the automation raising it. */
+export function deviceAutomationFoldTarget(assetId: string, ruleId: string): string {
+  return `${assetId}/auto:${ruleId}`;
 }
 
 /**
@@ -4873,14 +4898,15 @@ export function subnetFoldTarget(subnetId: string): string {
  */
 export function triggerCanJoinGroup(
   trigger: Trigger | null | undefined,
-  /** A SUBNET group folds DEVICES, so a whole-device trigger — "monitor status
-   *  is down" above all — has something to fold there, where a device group
-   *  would only ever hold one contribution per alert. */
+  /** A SUBNET or AUTOMATION group folds DEVICES, so a whole-device trigger —
+   *  "monitor status is down" above all — has something to fold there, where a
+   *  device (or device-and-automation) group would only ever hold one
+   *  contribution per alert. */
   foldBy?: string | null,
 ): boolean {
   if (!trigger) return false;
   if (trigger.type === "composite") return trigger.kind !== "host";
-  if (foldBy === "subnet") return trigger.type === "asset_metric" || trigger.type === "asset_state";
+  if (foldSpansDevices(foldBy)) return trigger.type === "asset_metric" || trigger.type === "asset_state";
   return triggerIsPerDimension(trigger);
 }
 
@@ -5071,7 +5097,7 @@ function memberIdentity(m: AlertMember): string {
 }
 
 /** Does this stored member stand for THIS contribution? The device is compared
- *  only when the member carries one (a subnet-folded alert), so every member
+ *  only when the member carries one (a subnet- or automation-folded alert), so every member
  *  stored before subnet folding existed matches exactly as it did. */
 export function memberMatches(m: AlertMember, ruleId: string, key: string, assetId?: string | null): boolean {
   return m.ruleId === ruleId && m.key === key && (!m.assetId || m.assetId === assetId);
@@ -5084,7 +5110,7 @@ export function memberMatches(m: AlertMember, ruleId: string, key: string, asset
  *  separator is always the boundary and nothing in the left half can imitate
  *  it. Splitting is never needed anyway — this string is only ever compared. */
 function memberIdentityOf(ruleId: string, key: string, assetId?: string): string {
-  // The device only on a subnet-folded alert's members, so every member stored
+  // The device only on a multi-device fold's members, so every member stored
   // before that existed keeps exactly the identity it had.
   return assetId ? `${ruleId}|@${assetId}|${key}` : `${ruleId}|${key}`;
 }

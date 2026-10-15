@@ -117,11 +117,11 @@ d("an AlertGroup folding by SUBNET (business rule 75)", () => {
 
   it("refuses a down automation in a device group and takes it in a subnet group", async () => {
     const ruleId = await seedDownRule(null);
-    await expect(createGroup({ name: `${NAME} device`, ruleIds: [ruleId] }, "tester")).rejects.toThrow(/fold by subnet/);
+    await expect(createGroup({ name: `${NAME} device`, ruleIds: [ruleId] }, "tester")).rejects.toThrow(/per automation or per subnet/);
     const g = await createGroup({ name: `${NAME} subnet`, foldBy: "subnet", ruleIds: [ruleId] }, "tester");
     expect(g.foldBy).toBe("subnet");
     // ...and will not quietly keep it when switched back to per-device.
-    await expect(updateGroup(g.id, { name: `${NAME} subnet`, foldBy: "device" }, "tester")).rejects.toThrow(/fold by subnet/);
+    await expect(updateGroup(g.id, { name: `${NAME} subnet`, foldBy: "device" }, "tester")).rejects.toThrow(/per automation or per subnet/);
   });
 
   it("folds the down hosts of one subnet into one alert, and keeps subnets apart", async () => {

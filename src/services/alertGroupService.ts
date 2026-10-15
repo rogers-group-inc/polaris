@@ -38,7 +38,7 @@ import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { assertActionRefs } from "./notificationRuleService.js";
 import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
-import { triggerCanJoinGroup, normalizeRuleToV2, type Trigger, type AlertGroupFoldBy } from "./notificationTypes.js";
+import { triggerCanJoinGroup, foldSpansDevices, normalizeRuleToV2, type Trigger, type AlertGroupFoldBy } from "./notificationTypes.js";
 
 export interface AlertGroupInput {
   name: string;
@@ -123,8 +123,8 @@ function reasonCannotJoin(trigger: Trigger | null | undefined, foldBy: string = 
   if (type === "event" || type === "change") {
     return "Fires on an instant rather than on a reading it keeps watching, so Polaris cannot tell when its part in a shared alert has ended.";
   }
-  if (foldBy !== "subnet" && (type === "asset_state" || type === "asset_metric")) {
-    return "Reports once per device already, so there is nothing for a device group to fold. Set the group to fold by subnet to combine it across the devices of one subnet.";
+  if (!foldSpansDevices(foldBy) && (type === "asset_state" || type === "asset_metric")) {
+    return "Reports once per device already, so there is nothing to fold per device. Set the group to one alert per automation or per subnet to combine it across devices.";
   }
   return "Reports once per device already, so there is nothing for a group to fold.";
 }
@@ -218,7 +218,7 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   if (JSON.stringify(existing.scope ?? null) !== JSON.stringify(input.scope ?? null)) {
     await retireGroupAlerts(id, "system:group-rescoped");
   } else if (existing.foldBy !== foldBy) {
-    // Device <-> subnet changes what ONE alert is: a live alert per device
+    // A new fold changes what ONE alert is: a live alert per device
     // cannot become a member of one per subnet in place. Same retire-and-
     // re-raise as every other reshape.
     await retireGroupAlerts(id, "system:group-refolded");

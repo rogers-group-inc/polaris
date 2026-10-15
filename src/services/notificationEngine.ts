@@ -77,6 +77,8 @@ import {
   alertScopeOf,
   groupKeyOf,
   subnetFoldTarget,
+  automationFoldTarget,
+  deviceAutomationFoldTarget,
   memberMatches,
   mergeMembers,
   markMemberLeft,
@@ -305,7 +307,7 @@ interface DbRule {
    *  the per-component fold AND folds this rule's alerts together with every
    *  other member's on the same device. */
   alertGroupId: string | null;
-  /** That group's fold axis — "device" or "subnet" (ALERT_GROUP_FOLD_BY). Null
+  /** That group's fold axis — one of ALERT_GROUP_FOLD_BY. Null
    *  with no group. Optional so a rule built without it reads as "device". */
   alertGroupFoldBy?: string | null;
 }
@@ -2361,10 +2363,16 @@ function readingContextParts(
   members?: AlertMember[] | null,
 ): TemplateContextParts {
   const trigger = rule.trigger;
-  // A subnet-folded alert is about the SUBNET; its members are the devices.
+  // A subnet-folded alert is about the SUBNET; its members are the devices. An
+  // automation-folded one spans devices with nothing else to name them by, so
+  // {asset} counts them — "Monitor down on {asset}" reads "… on 5 devices".
   const subnetLabel = members?.find((m) => m.subnet)?.subnet;
+  const spansDevices = !!members?.some((m) => m.assetId);
+  const deviceCount = spansDevices ? new Set(activeMembers(members!).map((m) => m.assetId)).size : 0;
   const base = {
-    asset: subnetLabel || reading.hostname || reading.assetId || "host",
+    asset: subnetLabel
+      || (spansDevices ? `${deviceCount} device${deviceCount === 1 ? "" : "s"}` : "")
+      || reading.hostname || reading.assetId || "host",
     dimension: members?.length ? renderMemberList(members) : (reading.dimLabel || ""),
     // What that component IS, so the email can label it rather than leaving the
     // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
@@ -2373,7 +2381,7 @@ function readingContextParts(
     // A GROUPED alert names several components of the same KIND (they all came
     // from the same per-dimension trigger), so the noun still applies — and it
     // reads correctly in the plural position the list puts it in.
-    dimensionNoun: subnetLabel ? "Devices" : (members?.length || reading.dimLabel) ? dimensionNounOf(trigger) : "",
+    dimensionNoun: spansDevices ? "Devices" : (members?.length || reading.dimLabel) ? dimensionNounOf(trigger) : "",
     severity: rule.severity,
     time: now,
     link: notificationsPageUrl(),
@@ -2466,6 +2474,12 @@ function renderMessage(
     const n = active.length;
     const dep = reading.dependencyDown && ctx["dependency.headline"] ? ` — ${ctx["dependency.headline"]}` : "";
     return `${rule.name}: ${n} device${n === 1 ? "" : "s"} in ${ctx["asset"]} — ${renderMemberList(members)}${dep}`;
+  }
+  if (members?.length && members.some((m) => m.assetId)) {
+    // An automation fold: one automation across devices. {asset} already
+    // reads "5 devices"; then which, and the same dependency headline.
+    const dep = reading.dependencyDown && ctx["dependency.headline"] ? ` — ${ctx["dependency.headline"]}` : "";
+    return `${rule.name}: ${ctx["asset"]} — ${renderMemberList(members)}${dep}`;
   }
   if (members?.length) {
     const active = activeMembers(members);
@@ -4262,21 +4276,26 @@ interface GroupFire {
 /** assetId → the contributions that crossed into firing on this tick. */
 type GroupBuffer = Map<string, GroupFire[]>;
 
-/** The registry subnet a device folds into, on a SUBNET AlertGroup. */
-interface FoldSubnet {
+/** What one alert spans when it holds SEVERAL devices: the registry subnet
+ *  they share (a SUBNET AlertGroup) or the automation they all tripped (an
+ *  AUTOMATION one). Its members are devices. */
+interface FoldSpan {
+  kind: "subnet" | "automation";
   id: string;
-  /** "Plant A (10.1.0.0/24)" — what the alert names in place of a device. */
+  /** "Plant A (10.1.0.0/24)", or the automation's name — what the alert names
+   *  in place of a device. */
   label: string;
 }
 
 /** One alert's worth of a flush: the contributions that share a groupKey. */
 interface FoldBucket {
-  /** The groupKey target — an asset id, or `subnetFoldTarget(subnet.id)`. */
+  /** The groupKey target — an asset id, or the fold's own target
+   *  (subnetFoldTarget / automationFoldTarget / deviceAutomationFoldTarget). */
   target: string;
   /** Whether the rule's group governs these devices (else the rule's own key). */
   governs: boolean;
-  /** Set only when this bucket is a subnet fold. */
-  subnet: FoldSubnet | null;
+  /** Set only when this bucket holds several devices (subnet / automation). */
+  span: FoldSpan | null;
   fires: GroupFire[];
 }
 
@@ -4347,9 +4366,9 @@ class TickAlertIndex {
   // IPs are read for the devices being placed — the firing ones, which are
   // tens even in a storm, never the fleet.
   private subnets: { id: string; name: string; cidr: string }[] | null = null;
-  private subnetOfAsset = new Map<string, FoldSubnet | null>();
+  private subnetOfAsset = new Map<string, FoldSpan | null>();
 
-  async subnetsOf(assetIds: string[]): Promise<Map<string, FoldSubnet | null>> {
+  async subnetsOf(assetIds: string[]): Promise<Map<string, FoldSpan | null>> {
     const missing = assetIds.filter((id) => id && !this.subnetOfAsset.has(id));
     if (missing.length) {
       if (!this.subnets) {
@@ -4363,7 +4382,7 @@ class TickAlertIndex {
       for (const id of missing) {
         const ip = ipOf.get(id);
         const hit = ip ? mostSpecificContaining(this.subnets, `${ip}/32`) : null;
-        this.subnetOfAsset.set(id, hit ? { id: hit.id, label: `${hit.name} (${hit.cidr})` } : null);
+        this.subnetOfAsset.set(id, hit ? { kind: "subnet", id: hit.id, label: `${hit.name} (${hit.cidr})` } : null);
       }
     }
     return new Map(assetIds.map((id) => [id, this.subnetOfAsset.get(id) ?? null]));
@@ -4468,7 +4487,7 @@ async function groupGovernsAsset(
 }
 
 /** Turn an engine reading into the contribution stored on the alert. */
-function memberOf(rule: DbRule, f: GroupFire, now: Date, subnet: FoldSubnet | null = null): AlertMember {
+function memberOf(rule: DbRule, f: GroupFire, now: Date, span: FoldSpan | null = null): AlertMember {
   const r = f.reading;
   const own = r.dimLabel || r.dimKey;
   return {
@@ -4476,9 +4495,10 @@ function memberOf(rule: DbRule, f: GroupFire, now: Date, subnet: FoldSubnet | nu
     // The LABEL, so the alert says "port12 (Indoor AP)" and nobody has to go
     // and look up which port that is. `dimension` on the row stays the KEY.
     //
-    // On a subnet fold the members are DEVICES, so the label leads with the
-    // host — "plc-04", or "sw-02 — port12" for a per-component trigger.
-    label: subnet ? (own ? `${r.hostname || r.assetId} — ${own}` : (r.hostname || r.assetId)) : own,
+    // On a subnet or automation fold the members are DEVICES, so the label
+    // leads with the host — "plc-04", or "sw-02 — port12" for a per-component
+    // trigger.
+    label: span ? (own ? `${r.hostname || r.assetId} — ${own}` : (r.hostname || r.assetId)) : own,
     ruleId: rule.id,
     ruleName: rule.name,
     severity: f.severity,
@@ -4486,7 +4506,7 @@ function memberOf(rule: DbRule, f: GroupFire, now: Date, subnet: FoldSubnet | nu
       ? undefined
       : typeof r.value === "number" ? round2(r.value) : String(r.value),
     joinedAt: now.toISOString(),
-    ...(subnet ? { assetId: r.assetId, subnet: subnet.label } : {}),
+    ...(span ? { assetId: r.assetId, ...(span.kind === "subnet" ? { subnet: span.label } : {}) } : {}),
   };
 }
 
@@ -4501,13 +4521,18 @@ function leadFire(fires: GroupFire[], primary: AlertMember | null): GroupFire {
 /**
  * Sort this tick's buffered contributions into the alerts they belong to.
  *
- * A device group (or an ungrouped rule) keeps one alert per device. A SUBNET
- * group puts every device it governs into the alert of its registry subnet;
- * a device it does not govern, or one in no subnet, keeps its own.
+ * A device group (or an ungrouped rule) keeps one alert per device. A
+ * DEVICE-AND-AUTOMATION group keeps one per device per automation. An
+ * AUTOMATION group puts every device it governs into this automation's one
+ * alert, and a SUBNET group into the alert of the device's registry subnet. A
+ * device the group does not govern, or (by subnet) one in no subnet, keeps its
+ * own.
  */
 async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertIndex | null): Promise<FoldBucket[]> {
-  const bySubnet = !!rule.alertGroupId && rule.alertGroupFoldBy === "subnet" && !!tickIndex;
+  const foldBy = rule.alertGroupId ? (rule.alertGroupFoldBy ?? "device") : "device";
+  const bySubnet = foldBy === "subnet" && !!tickIndex;
   const subnets = bySubnet ? await tickIndex!.subnetsOf([...buf.keys()]) : null;
+  const automation: FoldSpan | null = foldBy === "automation" ? { kind: "automation", id: rule.id, label: rule.name } : null;
   const out = new Map<string, FoldBucket>();
   for (const [assetId, fires] of buf) {
     if (!fires.length) continue;
@@ -4520,20 +4545,24 @@ async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertI
     // same checks, routed to different people. On a device no group governs,
     // the automation still folds its own components; it just does so alone.
     const governs = await groupGovernsAsset(rule, assetId, tickIndex);
-    const subnet = governs ? (subnets?.get(assetId) ?? null) : null;
-    const target = subnet ? subnetFoldTarget(subnet.id) : assetId;
+    const span = !governs ? null : automation ?? subnets?.get(assetId) ?? null;
+    const target = !governs ? assetId
+      : span?.kind === "subnet" ? subnetFoldTarget(span.id)
+      : span?.kind === "automation" ? automationFoldTarget(rule.id)
+      : foldBy === "deviceAutomation" ? deviceAutomationFoldTarget(assetId, rule.id)
+      : assetId;
     const k = `${governs ? "g" : "r"}|${target}`;
     const b = out.get(k);
     if (b) b.fires.push(...fires);
-    else out.set(k, { target, governs, subnet, fires: [...fires] });
+    else out.set(k, { target, governs, span, fires: [...fires] });
   }
   return [...out.values()];
 }
 
 /**
- * Write this tick's buffered contributions: one alert per asset (or per
- * subnet, on a subnet group), created or joined, with the sends recorded for
- * the end-of-tick drain.
+ * Write this tick's buffered contributions: one alert per whatever the fold
+ * makes it (foldBuckets), created or joined, with the sends recorded for the
+ * end-of-tick drain.
  *
  * Ordering matters at the call site — this must land its state rows BEFORE the
  * custom-reset pass, which re-reads firing rows from the database rather than
@@ -4549,12 +4578,12 @@ async function flushGroupFires(
 ): Promise<void> {
   for (const bucket of await foldBuckets(rule, buf, tickIndex)) {
     const live = liveByAsset.get(bucket.target);
-    const joined = live ? await joinGroupAlert(rule, live, bucket.fires, now, pending, bucket.subnet) : false;
+    const joined = live ? await joinGroupAlert(rule, live, bucket.fires, now, pending, bucket.span) : false;
     if (!joined) await createGroupAlert(rule, bucket, now, pending, liveByAsset, tickIndex);
   }
 }
 
-/** Open a new grouped alert for this asset (or subnet). */
+/** Open a new grouped alert for one fold bucket. */
 async function createGroupAlert(
   rule: DbRule,
   bucket: FoldBucket,
@@ -4563,12 +4592,12 @@ async function createGroupAlert(
   liveByAsset: Map<string, string>,
   tickIndex: TickAlertIndex | null,
 ): Promise<void> {
-  const { fires, governs, subnet, target } = bucket;
-  const members = mergeMembers([], fires.map((f) => memberOf(rule, f, now, subnet)), now);
+  const { fires, governs, span, target } = bucket;
+  const members = mergeMembers([], fires.map((f) => memberOf(rule, f, now, span)), now);
   const severity = groupSeverity(members, rule.severity);
   const primary = primaryMember(members);
   // The contribution the alert LEADS with — its reading is what {value} and
-  // the email's charts are about. On a subnet fold its device is the alert's
+  // the email's charts are about. On a multi-device fold its device is the alert's
   // `assetId`: the alert has to point somewhere, and the device that leads it
   // is the one its charts already describe.
   const lead = leadFire(fires, primary);
@@ -4583,9 +4612,10 @@ async function createGroupAlert(
       data: {
         ruleId: rule.id,
         assetId: assetId || null,
-        // A subnet fold is about the subnet, so that is what every alert list
-        // names it as; `assetId` still points at the leading device.
-        assetHostname: subnet ? subnet.label : lead.reading.hostname,
+        // A subnet (or automation) fold is about the subnet (or automation), so
+        // that is what every alert list names it as; `assetId` still points at
+        // the leading device.
+        assetHostname: span ? span.label : lead.reading.hostname,
         severity,
         message: ctx["message"] ?? "",
         regionTags: regionSnapshot(lead.reading.tags),
@@ -4622,7 +4652,7 @@ async function createGroupAlert(
     const existing = await prisma.notification.findFirst({ where: { groupKey, cleared: false }, select: { id: true } });
     if (!existing) throw err;
     liveByAsset.set(target, existing.id);
-    await joinGroupAlert(rule, existing.id, fires, now, pending, subnet);
+    await joinGroupAlert(rule, existing.id, fires, now, pending, span);
     return;
   }
 
@@ -4649,7 +4679,7 @@ async function createGroupAlert(
         severity,
         grouped: true,
         members: members.map((m) => (m.assetId ? m.label : m.key)),
-        ...(subnet ? { subnet: subnet.label } : {}),
+        ...(span ? { [span.kind]: span.label } : {}),
       },
     });
   }
@@ -4670,8 +4700,9 @@ async function joinGroupAlert(
   fires: GroupFire[],
   now: Date,
   pending: PendingSends,
-  /** Set when this alert is a subnet fold — its members are devices. */
-  subnet: FoldSubnet | null = null,
+  /** Set when this alert holds several devices (a subnet or automation fold)
+   *  — its members are devices. */
+  span: FoldSpan | null = null,
 ): Promise<boolean> {
   const row = await prisma.notification.findFirst({
     where: { id: notificationId, cleared: false },
@@ -4680,7 +4711,7 @@ async function joinGroupAlert(
   if (!row) return false;
 
   const prev = (row.members ?? []) as unknown as AlertMember[];
-  const joining = fires.map((f) => memberOf(rule, f, now, subnet));
+  const joining = fires.map((f) => memberOf(rule, f, now, span));
   // Before the merge, which clears `leftAt` — the only trace of a component
   // that recovered and has now faulted again.
   const changes = classifyGroupChanges(prev, joining, now);
@@ -4748,7 +4779,7 @@ async function joinGroupAlert(
     details: {
       ruleId: rule.id,
       assetId: lead.reading.assetId || null,
-      joined: subnet ? joining.map((m) => m.label) : fires.map((f) => f.reading.dimKey),
+      joined: span ? joining.map((m) => m.label) : fires.map((f) => f.reading.dimKey),
       severity,
       ...(reopening
         ? { priorAcknowledgedBy: row.acknowledgedBy, priorAcknowledgeNote: row.acknowledgeNote }
