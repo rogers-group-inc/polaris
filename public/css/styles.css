@@ -1030,17 +1030,13 @@ code {
    verbs. Only hues move from the dark base — contrast pairings are unchanged,
    so nothing needs a per-theme component override below. */
 [data-theme="nightfall"] {
-  /* The background family is lightened 5% toward white (2026-10-15; 20% was
-     tried first and washed the theme out), all five together so their order
-     is unchanged. Mixed in oklch so each keeps its own lightness step; the
-     original values are the first argument of each mix. */
-  --color-bg-primary: color-mix(in oklch, #141427 95%, #fff);
+  --color-bg-primary: #141427;
   /* Kept a step below bg-primary and on its hue, so the body ground still
      reads as behind the table wrapper rather than beside it. */
-  --color-bg-secondary: color-mix(in oklch, #0d0d1c 95%, #fff);
-  --color-bg-tertiary: color-mix(in oklch, #101021 95%, #fff);
-  --color-surface: color-mix(in oklch, #181c39 95%, #fff);
-  --color-bg-elevated: color-mix(in oklch, #22284d 95%, #fff);
+  --color-bg-secondary: #0d0d1c;
+  --color-bg-tertiary: #101021;
+  --color-surface: #181c39;
+  --color-bg-elevated: #22284d;
   --color-border: #232a52;
   --color-border-light: #1a1f3e;
   --color-text-primary: #e4e7f6;
