@@ -1030,18 +1030,13 @@ code {
    verbs. Only hues move from the dark base — contrast pairings are unchanged,
    so nothing needs a per-theme component override below. */
 [data-theme="nightfall"] {
-  /* The background family is lightened 20% toward white (2026-10-15), all
-     five together so their order is unchanged — the ground still sits a step
-     below bg-primary, and surface / elevated still read above it. Mixed in
-     oklch so each keeps its own lightness step rather than flattening. The
-     original values are the first argument of each mix. */
-  --color-bg-primary: color-mix(in oklch, #141427 80%, #fff);
+  --color-bg-primary: #141427;
   /* Kept a step below bg-primary and on its hue, so the body ground still
      reads as behind the table wrapper rather than beside it. */
-  --color-bg-secondary: color-mix(in oklch, #0d0d1c 80%, #fff);
-  --color-bg-tertiary: color-mix(in oklch, #101021 80%, #fff);
-  --color-surface: color-mix(in oklch, #181c39 80%, #fff);
-  --color-bg-elevated: color-mix(in oklch, #22284d 80%, #fff);
+  --color-bg-secondary: #0d0d1c;
+  --color-bg-tertiary: #101021;
+  --color-surface: #181c39;
+  --color-bg-elevated: #22284d;
   --color-border: #232a52;
   --color-border-light: #1a1f3e;
   --color-text-primary: #e4e7f6;
@@ -1059,10 +1054,9 @@ code {
   --shadow-md: 0 8px 32px rgba(0,0,0,.6);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.7), 0 2px 10px rgba(0,0,0,.5);
   --shadow-control: 0 3px 8px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08);
-  /* Nightfall's ground is the darkest of the three (even lightened 20%, see
-     the background family above), so the drop is pushed hardest and still
-     does little — the inset rim is carrying this one, and it is a hair
-     brighter here than in the :root dark base. */
+  /* Nightfall's ground (#0d0d1c) is the darkest of the three, so the drop is
+     pushed hardest and still does almost nothing — the inset rim is carrying
+     this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
   /* Nightfall's glow is the sliding --night-glow layer (moonlight blue at
      25%, see :root), centred here. The main glow is off and parked above

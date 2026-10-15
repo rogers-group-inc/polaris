@@ -152,10 +152,8 @@ unselected page tab).
 - **`box-shadow` replaces, it does not compose.** Every `:focus` rule on an element carrying
   `--shadow-control` re-states the shadow after the focus ring, or the field visibly flattens
   the moment it is focused.
-- **In the dark family the drop shadow is the inset rim.** The nightfall ground is near-black.
-  It was `#0d0d1c`; since 2026-10-15 nightfall's five background tokens (bg-primary / -secondary /
-  -tertiary, surface, elevated) are each `color-mix(in oklch, <old> 80%, #fff)`, 20% toward
-  white with their order kept. The mobile app's `--md-*` palette was not changed. So a black shadow has almost nothing to darken and stays invisible however far its alpha is
+- **In the dark family the drop shadow is the inset rim.** The nightfall ground is `#0d0d1c`,
+  so a black shadow has almost nothing to darken and stays invisible however far its alpha is
   pushed; `--shadow-control`'s and `--shadow-card`'s third layer is a 1px inset top highlight,
   and that is what actually reads as raised. Any future elevation token for the dark themes
   needs the same. It is worth saying plainly that a card in the dark family reads as raised
