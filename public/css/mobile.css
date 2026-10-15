@@ -1352,8 +1352,10 @@ input, select, textarea { font-family: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ae-menu { margin: 0 -24px; }
-.ae-menu-item { cursor: pointer; }
-.ae-menu-item:disabled { opacity: .55; cursor: default; }
+.ae-menu-item, .ae-menu-action { cursor: pointer; }
+.ae-menu-item:disabled, .ae-menu-action:disabled { opacity: .55; cursor: default; }
+/* The device verbs (Discover Now, Reboot) sit above the edit tabs, ruled off. */
+.ae-menu + .ae-menu { border-top: 1px solid var(--md-outline-variant); }
 .ae-section {
   font-size: 12px;
   font-weight: 500;

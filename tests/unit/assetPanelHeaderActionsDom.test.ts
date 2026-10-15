@@ -178,3 +178,81 @@ describe("asset panel frozen tab strip", () => {
     );
   });
 });
+
+// Discover Now and Reboot moved from the System tab's Status row into the
+// header, right of the hostname (2026-10): they act on the DEVICE, so they
+// belong with its name on every tab, not on one tab's row.
+describe("asset panel header verbs (Discover Now, Reboot)", () => {
+  const VERB_FNS = ["_assetDiscoverNowBtnHTML", "_assetRebootSlotHTML", "_assetHeaderVerbsHTML", "_rebootControlHTML"];
+
+  function loadVerbs(perms: { manage: boolean; read: boolean }) {
+    g.escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+    g.canManageAssets = () => perms.manage;
+    g.permAtLeast = () => perms.read;
+    g._isWorkloadPlatform = () => false;
+    g._getServerDiscoveries = () => [];
+    g._fwWhenText = () => "soon";
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(
+      "var _REBOOT_SCHEDULABLE = { available: true, blocked: true, 'agent-offline': true };\n" +
+      VERB_FNS.map(fnSrc).join("\n") + "\n" + VERB_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"),
+    )();
+  }
+
+  const GATE = {
+    id: "a1", hostname: "GATE-1", assetType: "firewall",
+    fortinetTopology: { role: "fortigate", deviceName: "GATE-1" },
+    discoveredByIntegration: { id: "i1", type: "fortigate", name: "Lab FG", enabled: true },
+  };
+
+  it("renders an empty verbs slot in the title lead, right after the title", () => {
+    const verbs = document.getElementById("asset-panel-verbs")!;
+    expect(verbs.className).toBe("slideover-header-verbs");
+    expect(verbs.parentElement!.classList.contains("slideover-header-lead")).toBe(true);
+    expect(verbs.previousElementSibling!.id).toBe("asset-panel-title");
+    expect(verbs.innerHTML).toBe("");
+    expect(cssSrc).toMatch(/\.slideover-header-verbs:empty\s*\{\s*display:\s*none/);
+  });
+
+  it("orders Discover Now before the Reboot slot", () => {
+    loadVerbs({ manage: true, read: true });
+    const host = document.getElementById("asset-panel-verbs")!;
+    host.innerHTML = g._assetHeaderVerbsHTML(GATE);
+    const kids = Array.from(host.children).map((n) => n.id);
+    expect(kids).toEqual(["btn-asset-discover-now", "asset-reboot-wrap"]);
+    expect(host.querySelector("#btn-asset-discover-now")!.textContent).toBe("Discover Now");
+  });
+
+  it("a viewer without Read-Write gets the reboot slot only", () => {
+    loadVerbs({ manage: false, read: true });
+    const html = g._assetHeaderVerbsHTML(GATE);
+    expect(html).not.toContain("btn-asset-discover-now");
+    expect(html).toContain("asset-reboot-wrap");
+  });
+
+  it("labels the reboot button plain \"Reboot\"", () => {
+    loadVerbs({ manage: true, read: true });
+    const wrap = document.createElement("div");
+    wrap.innerHTML = g._rebootControlHTML(GATE, { state: "available", available: true, authority: "Lab FG" });
+    expect(wrap.querySelector("#btn-asset-reboot")!.textContent).toBe("Reboot");
+  });
+
+  it("fills the slot per open and clears it in the loading reset", () => {
+    expect(assetsSrc).toMatch(/verbsEl\.innerHTML = _assetHeaderVerbsHTML\(a\);/);
+    const reset = assetsSrc.slice(
+      assetsSrc.indexOf('footerEl.innerHTML = "";'),
+      assetsSrc.indexOf('footerEl.innerHTML = "";') + 600,
+    );
+    expect(reset).toMatch(/verbsEl\.innerHTML = ""/);
+  });
+
+  it("the Status row holds Simulate Down LEFT of the pill, and no Discover Now or Reboot", () => {
+    const row = assetsLines.find((l) => l.includes("'<span class=\"detail-value\">' + depTestBtn"));
+    expect(row).toBeTruthy();
+    expect(row!.indexOf("depTestBtn")).toBeLessThan(row!.indexOf("asset-status-pill-wrap"));
+    expect(row).not.toContain("discoverBtn");
+    expect(row).not.toContain("_assetRebootSlotHTML");
+    expect(assetsSrc).toContain(">Simulate Down</button>");
+    expect(assetsSrc).not.toContain("Simulate Down…");
+  });
+});

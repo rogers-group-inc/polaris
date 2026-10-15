@@ -5205,6 +5205,12 @@ function _ensureAssetPanelDOM() {
               '<button type="button" class="slideover-nav-btn" id="asset-panel-fwd" aria-label="Forward to the next viewed asset" disabled>&rsaquo;</button>' +
             '</div>' +
             '<h3 id="asset-panel-title">Asset Details</h3>' +
+            // The device verbs — Discover Now, then Reboot — right of the
+            // hostname, so they sit with the device they act on on every tab
+            // rather than only on the System tab's Status row. Populated per
+            // open by openViewModal (_assetHeaderVerbsHTML); the reboot slot
+            // inside is filled async by _loadAssetRebootControl.
+            '<span class="slideover-header-verbs" id="asset-panel-verbs"></span>' +
           '</div>' +
           // Per-asset actions (Copy / Screenshot | Export / Refresh / Open
           // HTTPS / Open SSH) live in the header, right-aligned, LEFT of the
@@ -5342,6 +5348,9 @@ async function openViewModal(id, opts) {
   // Cleared alongside the footer so a walk to another asset can't leave the
   // previous device's Open HTTPS / Open SSH buttons on screen while it loads.
   if (actionsEl) actionsEl.innerHTML = "";
+  // Same for the previous device's Discover Now / Reboot.
+  var verbsEl = document.getElementById("asset-panel-verbs");
+  if (verbsEl) verbsEl.innerHTML = "";
   // A closed panel re-opened from inside another slide-over (an IP row in the
   // network panel) has to paint over it — DOM order is stacking order.
   raiseSlideover(document.getElementById("asset-panel-overlay"));
@@ -5667,6 +5676,7 @@ async function openViewModal(id, opts) {
     titleEl.innerHTML = 'Asset Details' + (a.hostname
       ? ' <span style="color:var(--color-text-secondary);font-weight:400;margin-left:6px">— ' + escapeHtml(a.hostname) + '</span>'
       : '');
+    if (verbsEl) verbsEl.innerHTML = _assetHeaderVerbsHTML(a);
 
     // IP history + firewall sightings now live in the Sources tab (no longer a
     // standalone modal). See _assetSourcesTabHTML.
@@ -6087,8 +6097,8 @@ function _wireAssetRefreshExport(a) {
     }
 }
 
-// System-tab monitor actions: override reset. (The Status row's action button
-// is Discover Now — see _wireAssetDiscoverNow. On-demand polling stays on the
+// System-tab monitor actions: override reset. (Discover Now is a header verb
+// now — see _wireAssetDiscoverNow. On-demand polling stays on the
 // mobile asset sheet's refresh gesture, which still calls probe-now.)
 function _wireAssetMonitorActions(a) {
     var monitorResetBtn = document.getElementById("btn-asset-monitor-reset");
@@ -13859,8 +13869,8 @@ function _assetOverrideResetBtn(a) {
 // not try to prove a switch's controller is in Polaris — the route answers
 // that with a clear 400.
 // ─── Reboot (business rule 115) ──────────────────────────────────────────────
-// The Status row's Reboot… button. Rendered as an empty slot with the row and
-// filled once GET /assets/:id/reboot answers, so the panel never waits on it
+// The header's Reboot button, right of Discover Now. Rendered as an empty slot
+// with the header (_assetHeaderVerbsHTML) and filled once GET /assets/:id/reboot answers, so the panel never waits on it
 // (and the openViewModal fetch wave is untouched). The SERVER decides what may
 // reboot the asset — a credential's or integration's Allow reboots, an agent
 // host's opt-in — and says why not; the button only shows it. One dialog for
@@ -13871,7 +13881,12 @@ var _REBOOT_SCHEDULABLE = { available: true, blocked: true, "agent-offline": tru
 
 function _assetRebootSlotHTML(a) {
   if (!a || typeof permAtLeast !== "function" || !permAtLeast("assets", "read")) return "";
-  return '<span id="asset-reboot-wrap" data-asset-id="' + escapeHtml(a.id) + '" style="display:inline-flex;align-items:center;gap:6px;margin-left:6px"></span>';
+  return '<span id="asset-reboot-wrap" data-asset-id="' + escapeHtml(a.id) + '" style="display:inline-flex;align-items:center;gap:6px"></span>';
+}
+
+/** The panel header's device verbs, right of the hostname: Discover Now, then Reboot. */
+function _assetHeaderVerbsHTML(a) {
+  return _assetDiscoverNowBtnHTML(a) + _assetRebootSlotHTML(a);
 }
 
 /** "fortinet" path or "agent" path, as one sentence for the dialog. Pure. */
@@ -13887,7 +13902,7 @@ function _rebootMethodText(rb) {
   }
 }
 
-/** The Status-row control for one availability answer. Pure, so the DOM test can render it. */
+/** The header's reboot control for one availability answer. Pure, so the DOM test can render it. */
 function _rebootControlHTML(a, rb) {
   if (!rb || rb.state === "unsupported") return "";
   var canAct = typeof canManageAssets === "function" && canManageAssets();
@@ -13903,7 +13918,7 @@ function _rebootControlHTML(a, rb) {
       ? "Reboot this device now or schedule it — signed by " + (rb.authority || "?")
       : (rb.reason || "") + " It can still be scheduled.");
     parts.push('<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-reboot"' + (disabledWhy ? " disabled" : "") +
-      ' title="' + escapeHtml(title) + '">Reboot…</button>');
+      ' title="' + escapeHtml(title) + '">Reboot</button>');
   }
   if (rb.schedule) {
     parts.push('<button type="button" class="badge" id="btn-asset-reboot-scheduled" style="cursor:' + (canAct ? "pointer" : "default") +
@@ -14187,7 +14202,7 @@ function _assetDiscoverNowBtnHTML(a) {
     disabledReason = 'Integration "' + (integ.name || "") + '" is disabled.';
   }
   if (disabledReason) {
-    return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" disabled style="margin-right:6px" ' +
+    return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" disabled ' +
       'title="' + escapeHtml(disabledReason) + '">Discover Now</button>';
   }
 
@@ -14204,7 +14219,7 @@ function _assetDiscoverNowBtnHTML(a) {
     var scopedToThis = running.scopeDeviceName && deviceName &&
       String(running.scopeDeviceName).toLowerCase() === String(deviceName).toLowerCase();
     var label = scopedToThis ? "Discovering…" : "Discovery running…";
-    return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" disabled style="margin-right:6px" ' +
+    return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" disabled ' +
       'title="A discovery is already running for ' + escapeHtml(integ.name) + '">' + label + '</button>';
   }
 
@@ -14227,7 +14242,7 @@ function _assetDiscoverNowBtnHTML(a) {
       "FortiSwitches and FortiAPs without a full " +
       (integ.type === "fortimanager" ? "FortiManager sweep" : "discovery cycle");
   }
-  return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" style="margin-right:6px" ' +
+  return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" ' +
     'title="' + escapeHtml(title) + '">Discover Now</button>';
 }
 
@@ -14254,7 +14269,7 @@ function assetMonitoringViewHTML(a) {
     return '<div style="padding:1rem 0">' +
       pill + overridePill + ' &nbsp; ' +
       '<span style="color:var(--color-text-secondary)">' + unmonMsg + '</span>' +
-      overrideReset + _assetRebootSlotHTML(a) +
+      overrideReset +
     '</div>';
   }
   // "Managed by" label: the integration that OWNS this asset's monitoring
@@ -14276,8 +14291,7 @@ function assetMonitoringViewHTML(a) {
   var managedByLabel = a.discoveredByIntegration
     ? _assetIntegrationLabelWithController(a, ": ")
     : "Manual";
-  var discoverBtn = _assetDiscoverNowBtnHTML(a);
-  // Admin-only "Dependency Test" trigger lives next to the Status pill on
+  // Admin-only "Dependency Test" trigger lives LEFT of the Status pill on
   // the System tab. Eligible for Fortinet infra only — workstations etc.
   // aren't part of the dependency tree, so the simulation has no children
   // to suppress and the backend rejects the call. Active state shows a
@@ -14290,9 +14304,9 @@ function assetMonitoringViewHTML(a) {
   var depTestActiveNow = a.dependencyTestUntil && new Date(a.dependencyTestUntil).getTime() > Date.now();
   if (canSimulateDependencyDown() && a.monitored && isInfraType) {
     if (depTestActiveNow) {
-      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="clearDependencyTestNow(' + jsArg(a.id) + ')" style="margin-left:6px" title="Stop the simulation immediately and let children resume">Clear Dep. Test</button>';
+      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="clearDependencyTestNow(' + jsArg(a.id) + ')" style="margin-right:6px" title="Stop the simulation immediately and let children resume">Clear Dep. Test</button>';
     } else {
-      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="startDependencyTestPrompt(' + jsArg(a.id) + ')" style="margin-left:6px" title="Admin-only: simulate this device going down to see how children react. Real probes keep running.">Simulate Down…</button>';
+      depTestBtn = '<button class="btn btn-sm btn-secondary" onclick="startDependencyTestPrompt(' + jsArg(a.id) + ')" style="margin-right:6px" title="Admin-only: simulate this device going down to see how children react. Real probes keep running.">Simulate Down</button>';
     }
   }
   var rangeBtns =
@@ -14341,9 +14355,11 @@ function assetMonitoringViewHTML(a) {
       // The pill + override badge live in an id'd wrapper so the Refresh
       // button's probe-now handler can re-render just the Status after a probe
       // (a down→up flip would otherwise leave the pill stale). depTestBtn sits
-      // outside the wrapper — a probe never changes the dependency-test state.
+      // outside the wrapper, left of it — a probe never changes the
+      // dependency-test state. Discover Now and Reboot live in the panel
+      // header (_assetHeaderVerbsHTML), not here.
       '<div class="detail-row"><span class="detail-label">Status</span>' +
-        '<span class="detail-value">' + discoverBtn + '<span id="asset-status-pill-wrap">' + pill + overridePill + '</span>' + overrideReset + depTestBtn + _assetRebootSlotHTML(a) + '</span></div>' +
+        '<span class="detail-value">' + depTestBtn + '<span id="asset-status-pill-wrap">' + pill + overridePill + '</span>' + overrideReset + '</span></div>' +
       // Last hour intermittency bar — one cell per probe sample, colored
       // by the resolved monitor state at that point. Sits in a single
       // grid column (half the panel); the value cell is flex:1 so the bar

@@ -178,7 +178,7 @@ the modal; it is set through the [API](API) on the integration's config.
 **Allow reboots**, under *Device Actions* on the General tab (off by default),
 lets this integration's API token reboot the FortiGates it discovered, and
 restart the FortiSwitches and FortiAPs those FortiGates manage, from an asset's
-**Reboot…** button — now or on a schedule — for anyone with Read-Write on
+**Reboot** button — now or on a schedule — for anyone with Read-Write on
 Assets ([Assets → Reboot](Assets#reboot), [rule 115](Business-Rules#rule-115)).
 The token is sent the same way as every other request this integration makes:
 through FortiManager's proxy, or straight to the gate in direct mode. A switch

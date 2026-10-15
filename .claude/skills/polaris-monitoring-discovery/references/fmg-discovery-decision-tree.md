@@ -281,7 +281,7 @@ FMG Integration Discovery
 
 ## Discovering a single FortiGate (and its switches/APs)
 
-The **Discover Now** button on a FortiGate firewall asset's details panel (System tab, where Poll Now used to sit; requires assets write access) re-runs discovery for **that one gate only** — useful after changing DHCP scopes, switch/AP membership, or VIPs on a single site without waiting for (or paying the cost of) a full FMG sweep.
+The **Discover Now** button on a FortiGate firewall asset's details panel (in the panel header, right of the hostname; requires assets write access) re-runs discovery for **that one gate only** — useful after changing DHCP scopes, switch/AP membership, or VIPs on a single site without waiting for (or paying the cost of) a full FMG sweep.
 
 What it does:
 - Runs the normal per-device pipeline for the one gate: subnets, static reservations, leases, interface IPs, VIPs, FortiSwitch/FortiAP sync, endpoint enrichment, stale VIP/reservation release for that gate.
