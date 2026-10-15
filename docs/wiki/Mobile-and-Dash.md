@@ -114,6 +114,13 @@ tab, and each replaces the tab's setting for the same field: a type chip
 replaces the tab's Type filter, a status pick its Status filter, and a sort its
 sort.
 
+**Clear a desktop filter from the phone.** When the tab showing carries a
+filter, a **Clear filters** chip leads the chip row. Tapping it clears the
+tab's column filters and keeps its sort, the same as **Clear Filters** on the
+desktop. If the tab has a base filter, the chip reads **Reset filter** and puts
+the tab back to that base instead. The reset is saved to the tab, so the
+desktop shows it too. The chip goes away once there is nothing left to clear.
+
 **Favorites belong to the tab, as on the desktop.** The tab's starred assets come
 first in the list and show a filled star, and the tab names how many it holds.
 Tap a star to add or remove a favorite. The change is saved to that tab, so

@@ -246,6 +246,8 @@
     var on = strip.querySelector(".view-tab.on");
     if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {} }
     PolarisListControls.updateSortChip("assets", sortLabel(), sortDirShown(), prefs().monitor.length > 0);
+    // The reset chip follows the tab showing (and its state after a reset).
+    renderChips();
   }
 
   function wireViewTabs() {
@@ -473,10 +475,75 @@
     });
   }
 
+  // ─── Reset the tab's filter ─────────────────────────────────────────────
+  // A filter built at the desk rides the tab onto the phone (applyViewState),
+  // and none of the phone's own controls can remove it — they only narrow on
+  // top. This chip does what the desktop's Clear Filters / Reset Filter button
+  // does (assets.js _renderAssetsPageControls): back to the tab's BASE filter
+  // when it pins one (assets-tabs.js resetToDefault), otherwise every column
+  // filter cleared with the sort kept. It writes the tab, so the desk sees the
+  // reset too — the same re-read-then-save as a favorite.
+  function emptyFilterState(st) {
+    return { sfFilters: {}, sortKey: (st && st.sortKey) || null, sortDir: (st && st.sortDir) || null };
+  }
+
+  function cloneFilterState(st) {
+    return {
+      sfFilters: JSON.parse(JSON.stringify((st && st.sfFilters) || {})),
+      sortKey: (st && st.sortKey) || null,
+      sortDir: (st && st.sortDir) || null,
+    };
+  }
+
+  // The state a reset would put the tab in, or null when it is already there.
+  function viewResetTarget(tab) {
+    if (!tab) return null;
+    var cur = cloneFilterState(tab.state);
+    var target = tab.defaultState ? cloneFilterState(tab.defaultState) : emptyFilterState(cur);
+    return JSON.stringify(cur) === JSON.stringify(target) ? null : target;
+  }
+
+  function resetChipHTML() {
+    var tab = activeView();
+    if (!viewResetTarget(tab)) return "";
+    var label = tab.defaultState ? "Reset filter" : "Clear filters";
+    var title = tab.defaultState
+      ? "Back to this tab’s base filter “" + (tab.defaultFilterName || "base") + "”"
+      : "Clear every column filter this tab carries from the desktop";
+    return '<button class="chip chip-reset" id="assets-reset-filter" title="' + escapeHtml(title) + '">'
+      + '<svg viewBox="0 0 24 24"><use href="#i-close"/></svg>' + label + '</button>';
+  }
+
+  function resetViewFilter() {
+    var view = activeView();
+    if (!view || !viewResetTarget(view) || !api.tableTabs || typeof api.tableTabs.save !== "function") return Promise.resolve();
+    var viewId = view.id;
+    var viewName = view.name || "this tab";
+    var wasBase = !!view.defaultState;
+    return api.tableTabs.get(TABS_SCOPE).then(function (layout) {
+      var tabs = layout && Array.isArray(layout.tabs) ? layout.tabs : [];
+      var tab = null;
+      tabs.forEach(function (t) { if (t.id === viewId) tab = t; });
+      if (!tab) throw new Error("“" + viewName + "” was closed on another device");
+      var target = viewResetTarget(tab);
+      if (!target) return layout; // already reset at the desk since this list loaded
+      tab.state = target;
+      return api.tableTabs.save(TABS_SCOPE, { tabs: tabs, activeId: layout.activeId });
+    }).then(function (saved) {
+      setViews(saved && Array.isArray(saved.tabs) ? saved : _state.views);
+      renderViewTabs();
+      reload();
+      PolarisTabs.showSnackbar((wasBase ? "Reset to the base filter in " : "Cleared the filters in ") + viewName);
+    }).catch(function (err) {
+      renderChips();
+      PolarisTabs.showSnackbar((err && err.message) || "Couldn’t reset the filter", { error: true });
+    });
+  }
+
   function renderChips() {
     var row = document.getElementById("assets-chips");
     if (!row) return;
-    row.innerHTML = FILTERS.map(function (f) {
+    row.innerHTML = resetChipHTML() + FILTERS.map(function (f) {
       var sel = f.key === _state.filterKey;
       return ''
         + '<button class="chip ' + (sel ? "selected" : "") + '" data-key="' + f.key + '">'
@@ -484,7 +551,12 @@
         + escapeHtml(f.label)
         + '</button>';
     }).join("");
-    row.querySelectorAll(".chip").forEach(function (btn) {
+    var reset = document.getElementById("assets-reset-filter");
+    if (reset) reset.addEventListener("click", function () {
+      reset.disabled = true;
+      resetViewFilter();
+    });
+    row.querySelectorAll(".chip[data-key]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var key = btn.dataset.key;
         if (key === _state.filterKey) return;
@@ -560,7 +632,9 @@
         + '  <div class="desc">' + (_state.search || prefs().monitor.length
           ? 'Nothing matches this filter. Clear it, or pick “Any” status in Sort &amp; filter.'
           : activeView()
-          ? 'Nothing in “' + escapeHtml(activeView().name || "this tab") + '” matches. Try “All”, or another tab.'
+          ? 'Nothing in “' + escapeHtml(activeView().name || "this tab") + '” matches. Try “All”, '
+            + (viewResetTarget(activeView()) ? (activeView().defaultState ? '“Reset filter”' : '“Clear filters”') + ', ' : '')
+            + 'or another tab.'
           : 'Nothing matches this filter. Try “All” or run a discovery to populate the inventory.') + '</div>'
         + '</div>';
       return;
