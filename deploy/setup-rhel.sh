@@ -271,7 +271,11 @@ enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO
-  dnf install -y nginx
+  # nginx.org builds each release against the CURRENT RHEL minor: 1.30.6 needs
+  # OpenSSL 3.5, which a 9.5 host without newer updates lacks (found on a RHEL
+  # 9.5 VM). --nobest then takes the newest stable build this host can run.
+  dnf install -y nginx || dnf install -y --nobest nginx
+  nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])' || error "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') is older than 1.30 (HTTP/3) — update the host (dnf upgrade) and re-run"
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') installed"
 fi
 
