@@ -8335,6 +8335,37 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   .maint-cal-day { min-height: 70px; }
   .maint-cal-hint { display: none; }
 }
+/* Events → Calendar: the calendar fills the folder card instead of sitting
+   at its natural height in the top of it. A column of flex boxes from the
+   panel down to the grid hands the grid the height left over; the month's
+   weeks share it equally (1fr rows — never below their content, so a busy
+   week still grows) and each week's day row stretches to fill its week. The
+   day and week views' hour scroller takes the same height in place of its
+   60vh cap. Scoped to the Events page: the same calendar in the Assets →
+   Maintenance dialog keeps its natural size. The panel still scrolls when
+   the viewport is too short for the cells' minimum height. */
+#ev-tab-calendar.active { display: flex; flex-direction: column; }
+#ev-tab-calendar #ops-calendar-host,
+#ev-tab-calendar .maint-cal,
+#ev-tab-calendar .maint-cal-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#ev-tab-calendar .maint-cal-grid:not(.maint-cal-grid-list):not(.maint-cal-grid-time) {
+  display: grid;
+  grid-auto-rows: 1fr;
+}
+#ev-tab-calendar .maint-cal-week { display: flex; flex-direction: column; }
+#ev-tab-calendar .maint-cal-week > .maint-cal-days { flex: 1 1 auto; }
+#ev-tab-calendar .maint-cal-time {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#ev-tab-calendar .maint-cal-time-scroll { flex: 1 1 auto; min-height: 0; max-height: none; }
 
 /* ─── Auto-Allocate: multiple-IP row grid ──────────────────────────────────
    The IP-panel Auto-Allocate modal's "Multiple IPs" mode. Same grid-of-rows
