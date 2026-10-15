@@ -588,7 +588,9 @@ enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO
-  dnf install -y nginx
+  # Latest el9 build may need a newer OpenSSL than this host has (1.30.6 needs 3.5;
+  # RHEL 9.5 ships 3.2) — --nobest takes the newest stable build it can run. See setup-rhel.sh 1c.
+  dnf install -y nginx || dnf install -y --nobest nginx
 fi
 
 # Self-signed cert for the public hostname.
