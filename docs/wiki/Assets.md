@@ -1181,9 +1181,11 @@ instead of showing nothing.
 
 SD-WAN has its own polling pass, separate from interfaces: every 60 seconds by
 default, set per integration by the SD-WAN tab's **Polling Interval** (see
-[Integration-Fortinet](Integration-Fortinet)). An on-demand poll (the mobile asset sheet's refresh, or
-`POST /assets/:id/probe-now` over the [API](API)) re-reads SD-WAN along with the
-probe; the snapshot tabs' **Poll** (which re-reads system info) does not.
+[Integration-Fortinet](Integration-Fortinet)). The only way to re-read SD-WAN on
+demand is `POST /assets/:id/probe-now` over the [API](API), which runs it along
+with the probe. Nothing in the UI does: the snapshot tabs' **Poll** re-reads
+system info only, and the mobile asset sheet's refresh just reloads what
+Polaris already has stored.
 
 ### Path Monitor (hosts with the Polaris Agent)
 
