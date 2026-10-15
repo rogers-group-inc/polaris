@@ -233,6 +233,63 @@ describe("mobile Assets view tabs", () => {
     expect(document.querySelector("#app-body > #assets-list-host .asset-card")).toBeTruthy();
   });
 
+  it("clears a desk-built filter from the showing tab, keeping its sort, and writes it back", async () => {
+    mount();
+    await flush(); await flush();
+    const chip = document.getElementById("assets-reset-filter") as HTMLButtonElement;
+    expect(chip).toBeTruthy();
+    expect(chip.textContent).toBe("Clear filters");
+    chip.click();
+    await flush(); await flush();
+    expect(saves).toHaveLength(1);
+    expect(saves[0].tabs.find((t: any) => t.id === "t2").state).toEqual({ sfFilters: {}, sortKey: "hostname", sortDir: "asc" });
+    // The other tab, the desktop's active pick and the favorites are untouched.
+    expect(saves[0].tabs.find((t: any) => t.id === "t1").state.sfFilters).toEqual({});
+    expect(saves[0].activeId).toBe("t2");
+    expect(saves[0].tabs.find((t: any) => t.id === "t2").favoriteIds).toEqual(["a2"]);
+    const last = requests[requests.length - 1];
+    expect(last.assetType).toBeUndefined();
+    expect(last.hostname).toBeUndefined();
+    expect(last).toMatchObject({ sortBy: "hostname", favoriteIds: "a2" });
+    // Nothing left to clear, so the chip goes.
+    expect(document.getElementById("assets-reset-filter")).toBeNull();
+  });
+
+  it("hides the chip on a tab with no filter", async () => {
+    localStorage.setItem("polaris-mobile-assets-view", "t1");
+    mount();
+    await flush(); await flush();
+    expect(document.getElementById("assets-reset-filter")).toBeNull();
+  });
+
+  it("resets to the tab's base filter when it pins one", async () => {
+    mount();
+    layout.tabs[1].defaultFilterId = "p1";
+    layout.tabs[1].defaultFilterName = "FortiGates";
+    layout.tabs[1].defaultState = { sfFilters: { assetType: ["firewall"] }, sortKey: null, sortDir: null };
+    (g.PolarisAssetsTab.spec.onPullToRefresh)();
+    await flush(); await flush();
+    const chip = document.getElementById("assets-reset-filter") as HTMLButtonElement;
+    expect(chip.textContent).toBe("Reset filter");
+    chip.click();
+    await flush(); await flush();
+    expect(saves[0].tabs.find((t: any) => t.id === "t2").state).toEqual({ sfFilters: { assetType: ["firewall"] }, sortKey: null, sortDir: null });
+    expect(requests[requests.length - 1]).toMatchObject({ assetType: "firewall" });
+    expect(requests[requests.length - 1].hostname).toBeUndefined();
+    expect(document.getElementById("assets-reset-filter")).toBeNull();
+  });
+
+  it("keeps the filter and says so when the reset save fails", async () => {
+    mount({ saveFails: true });
+    await flush(); await flush();
+    (document.getElementById("assets-reset-filter") as HTMLButtonElement).click();
+    await flush(); await flush();
+    expect(g.PolarisTabs.showSnackbar).toHaveBeenCalledWith("save refused", { error: true });
+    const chip = document.getElementById("assets-reset-filter") as HTMLButtonElement;
+    expect(chip).toBeTruthy();
+    expect(chip.disabled).toBe(false);
+  });
+
   it("with no tabs, the plain list: no strip, no stars, no favorites param", async () => {
     mount({ tabs: false });
     await flush(); await flush();
