@@ -2390,7 +2390,8 @@ html[data-page-top-curtain]::after {
 /* ─── List-page view tabs (Assets page tab strip) ──────────────────────────
    Per-user tabs, each holding its own filter + sort state. Visually a lighter
    sibling of .page-tabs (which navigates between whole sections) — these sit
-   directly above the table's bulk bar and are editable/closable in place. */
+   on the table's top edge, below the bulk bar (.table-head-row), and are
+   editable/closable in place. */
 .table-tabs {
   display: flex;
   align-items: flex-end;
@@ -2408,6 +2409,31 @@ html[data-page-top-curtain]::after {
   scrollbar-width: thin;
 }
 .table-tabs:empty { display: none; }
+/* Table head row (Assets): the view tabs on the table's top-left edge and the
+   list controls (Refresh / Clear Filters / Show N — #pagination-top with
+   topNav:false) on the same line to the right. The rule the tabs sit on spans
+   the whole row, and the table starts directly beneath it so the tabs read as
+   attached to it. */
+.table-head-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.table-head-row .table-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-bottom: none;
+  margin-bottom: 0;
+}
+.table-head-row .table-head-controls {
+  flex: 0 0 auto;
+  padding-bottom: 6px;
+}
+.table-head-row + .table-wrapper {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
 .table-tabs-list { display: flex; align-items: flex-end; gap: 2px; }
 .table-tab {
   display: flex;

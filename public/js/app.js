@@ -4840,8 +4840,22 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
   // in polaris-ui-canon → "Paginated list controls row".
   var pageSizes = (opts && opts.pageSizes) || [15, 25, 50, 100];
   var hasTop = !!topEl; // render the size selector only once (top row when present)
+  // opts.topNav === false: the top row carries only the right cluster (action
+  // buttons + "Show N") and no page navigation — the page buttons stay in the
+  // bottom row. Assets uses it so the top row can share a line with its view
+  // tabs (.table-head-row).
+  var topNav = !(opts && opts.topNav === false);
 
   containers.forEach(function (container) {
+    if (container === topEl && !topNav) {
+      container.style.display = "flex";
+      container.style.margin = "";
+      container.style.gridTemplateColumns = "";
+      container.innerHTML =
+        '<div class="pg-right" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end"></div>';
+      _fillPageControlsRight(container.querySelector(".pg-right"), true);
+      return;
+    }
     container.style.display = "grid";
     // Breathing room against the table: the top row sits above the wrapper and
     // the bottom row below it, and flush against the border both read as table
@@ -4871,7 +4885,11 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
       });
     });
 
-    var right = container.querySelector('.pg-right');
+    _fillPageControlsRight(container.querySelector('.pg-right'), !hasTop || container === topEl);
+  });
+  sizeStickyTableWrappers();
+
+  function _fillPageControlsRight(right, withSize) {
     if (opts && opts.actionButtons && opts.actionButtons.length) {
       opts.actionButtons.forEach(function (cfg) {
         var btn = document.createElement("button");
@@ -4884,7 +4902,7 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
         right.appendChild(btn);
       });
     }
-    if (typeof onSizeChange === "function" && (!hasTop || container === topEl)) {
+    if (typeof onSizeChange === "function" && withSize) {
       var lbl = document.createElement("label");
       lbl.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;font-size:0.82rem;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:0.04em";
       lbl.appendChild(document.createTextNode("Show"));
@@ -4900,8 +4918,7 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
       lbl.appendChild(sel);
       right.appendChild(lbl);
     }
-  });
-  sizeStickyTableWrappers();
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
