@@ -1096,17 +1096,22 @@ export interface AssetMonitorPillFields {
   monitorStatus: string | null;
   dependencySuppressed?: boolean | null;
   dependencyTestUntil?: Date | null;
+  /** Lifecycle status — "maintenance" outranks every probe state. */
+  status?: string | null;
 }
 
 /**
  * Derive the monitor Status pill for a search hit — mirrors the precedence
  * of `assetMonitorBadge` in public/js/assets.js (the assets-table Status
- * column): unmonitored → Dependency Test overlay → Dep. Down overlay →
- * five-state machine (unknown/null renders as Pending). `kind` maps 1:1
- * onto the existing `.badge-*` monitor classes client-side.
+ * column): unmonitored → Maintenance → Dependency Test overlay → Dep. Down
+ * overlay → five-state machine (unknown/null renders as Pending). `kind` maps
+ * 1:1 onto the existing `.badge-*` monitor classes client-side.
  */
 export function assetMonitorPillState(a: AssetMonitorPillFields): { kind: string; label: string } {
   if (!a.monitored) return { kind: "unmonitored", label: "Unmonitored" };
+  // A maintenance window pauses polling, so monitorStatus is frozen at
+  // whatever the last probe left (often Recovering) — not a live state.
+  if (a.status === "maintenance") return { kind: "maintenance", label: "Maintenance" };
   if (a.dependencyTestUntil && a.dependencyTestUntil.getTime() > Date.now()) {
     return { kind: "dep-test", label: "Dependency Test" };
   }

@@ -2006,6 +2006,7 @@ function _renderSearchDropdown(results) {
     "passive":     "badge-monitor-passive",
     "dep-down":    "badge-monitor-dep-down",
     "dep-test":    "badge-monitor-dep-test",
+    "maintenance": "badge-maintenance",
     // An IPsec tunnel with some phase-2 selectors up and some down.
     "partial":     "badge-monitor-warning",
   };
