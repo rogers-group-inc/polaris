@@ -167,6 +167,83 @@ describe("list controls", () => {
   });
 });
 
+describe("list fade under the top bar + pinned block (PolarisTabs.installListFade)", () => {
+  const LISTED = ".app:has(> .app-body > .list-sticky-head)";
+
+  beforeAll(() => {
+    g.escapeHtml = (s: any) => String(s ?? "");
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(mobile("tabs.js"))();
+  });
+
+  const rect = (el: Element, top: number, bottom: number) => {
+    (el as any).getBoundingClientRect = () => ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top });
+  };
+
+  it("pulls the body under the top bar and pins the block below it, only on list pages", () => {
+    expect(rule(LISTED + " > #topbar-slot")).toMatch(/margin-bottom:\s*calc\(-1 \* var\(--topbar-h\)\)/);
+    expect(rule(LISTED + " > .app-body")).toMatch(/padding-top:\s*var\(--topbar-h\)/);
+    // A sticky box pins inside the scroller's padding, so the block keeps
+    // top: 0 — a top of the bar's height pinned it a whole bar too low (seen
+    // in Chrome: 128px under a 64px bar).
+    expect(rule(".list-sticky-head")).toMatch(/top:\s*0/);
+    expect(CSS).not.toContain(LISTED + " .list-sticky-head {");
+    // The PTR puck is absolutely placed, which padding does not move.
+    expect(rule(LISTED + " .ptr-indicator")).toMatch(/top:\s*calc\(var\(--topbar-h\) \+ 8px\)/);
+  });
+
+  it("masks the list from transparent at the body top to opaque at the block's bottom", () => {
+    const decl = rule(".app-body > .list-sticky-head ~ :not(.ptr-indicator)");
+    expect(decl).toContain("linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px))");
+    expect(decl).toMatch(/-webkit-mask-image/);
+  });
+
+  it("places the two stops in the list's own coordinates on scroll", async () => {
+    const body = document.createElement("main");
+    body.className = "app-body";
+    body.innerHTML = '<div class="list-sticky-head"></div><div id="host"></div><div class="ptr-indicator"></div>';
+    document.body.appendChild(body);
+    const head = body.querySelector(".list-sticky-head")!;
+    const host = body.querySelector("#host") as HTMLElement;
+    const ptr = body.querySelector(".ptr-indicator") as HTMLElement;
+    rect(body, 0, 800);
+    rect(head, 64, 214);      // pinned below a 64px bar, 150px tall
+    rect(host, -300, 2000);   // scrolled 514px up
+    Object.defineProperty(body, "scrollTop", { value: 514, configurable: true });
+    g.PolarisTabs.installListFade(body);
+    g.PolarisTabs.installListFade(body); // idempotent
+    body.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(host.style.getPropertyValue("--fade-from")).toBe("300px");
+    // Opaque 24px below the block's edge (214 + 24), in the list's coordinates.
+    expect(host.style.getPropertyValue("--fade-to")).toBe("538px");
+    expect(ptr.style.getPropertyValue("--fade-to")).toBe("");
+
+    // Barely scrolled: the lead is only as deep as the scroll, so a list at
+    // rest is never faded.
+    Object.defineProperty(body, "scrollTop", { value: 5, configurable: true });
+    rect(host, 209, 2000);
+    body.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(host.style.getPropertyValue("--fade-to")).toBe("10px");
+  });
+
+  it("does nothing on a page with no pinned block", async () => {
+    const body = document.createElement("main");
+    body.innerHTML = '<div id="plain"></div>';
+    document.body.appendChild(body);
+    g.PolarisTabs.installListFade(body);
+    body.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 30));
+    expect((body.querySelector("#plain") as HTMLElement).style.getPropertyValue("--fade-to")).toBe("");
+  });
+
+  it("is installed on the shell's body", () => {
+    const shell = APP.slice(APP.indexOf("function renderShell("), APP.indexOf("function renderShell(") + 600);
+    expect(shell).toContain('PolarisTabs.installListFade(document.getElementById("app-body"))');
+  });
+});
+
 describe("search entry point", () => {
   it("hides the search bar until search is open", () => {
     expect(rule("#search-slot")).toMatch(/display:\s*none/);

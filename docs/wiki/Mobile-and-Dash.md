@@ -45,7 +45,7 @@ topology; a legend at the bottom left names each marker colour: Up, Warn, Down,
 Maint, Unmonitored, Unknown) and **Blocks**; **Events** (the audit log, last 7 days); the **Notification
 preference**; **Add to Home Screen** when the app is not installed yet; the
 **theme strip** (tap to move through the day, as the desktop's theme band
-does); your **Account**; **Desktop view**; and **Sign out**. Its **Account** row shows your name, your
+does; on Android the phone's status bar takes the theme's colour too); your **Account**; **Desktop view**; and **Sign out**. Its **Account** row shows your name, your
 role and, under them, the regions and tags your account is scoped to — the ones
 from your role, your user and your sign-in groups together, regions first. An
 account with no tag scope shows no tags there.
@@ -99,7 +99,9 @@ again to drop it, or tap **Any** to clear them all.
 
 On **Alerts**, **Assets** and **Networks** the controls above the list (the
 severity counts, Assets' tab row, the filter field, the sort chip and the chips)
-stay at the top while the list scrolls under them. Every sheet that slides up
+stay at the top while the list scrolls under them. The list passes under the
+page's title bar as well, and fades out as it goes, so the title bar and the
+controls read as one frosted band. Every sheet that slides up
 does the same with its header: its title and its **close** button (and, on a
 device, the screenshot and refresh buttons) stay at the top however far down
 you scroll.

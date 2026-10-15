@@ -289,6 +289,11 @@
 /* Morning — amber parchment: yellow-brown grounds, orange accent, softest
    contrast of the daylight palettes. */
 [data-theme="morning"] {
+  /* The phone's status bar (meta theme-color, app.js _syncStatusBar): the
+     colour measured at the very top of the screen in this theme, glow
+     included, so the bar runs on into the page instead of sitting on it as a
+     band. Re-measure when the theme's surface or glow changes. */
+  --status-bar-color:           #f7e6c8;
   --md-primary:                 #b25e0a;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #ead7b3;
@@ -339,6 +344,8 @@
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
 [data-theme="noon"] {
+  /* Status bar: measured top edge, noon's sunlight included (see morning). */
+  --status-bar-color:           #fcf0d1;
   --md-primary:                 #b5451c;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #eee5d9;
@@ -374,6 +381,8 @@
    between noon and nightfall, so it has to be the strongest shift of the four
    or the middle of the sweep passes unseen. */
 [data-theme="afternoon"] {
+  /* Status bar: measured top edge (see morning). */
+  --status-bar-color:           #d5cad5;
   --md-primary:                 #c33d15;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #e4c2b0;
@@ -425,6 +434,8 @@
    with cont and highest interpolated on the same hue. Text, accent and
    status colours are the desktop tokens as they stand. */
 [data-theme="nightfall"] {
+  /* Status bar: the manifest's theme_color, as it always was (see morning). */
+  --status-bar-color:           #1d2244;
   --md-primary:                 #4bbcee;
   --md-on-primary:              #00293d;
   --md-primary-container:       #0f4d6e;
@@ -2844,6 +2855,31 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
   pointer-events: none;
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
+}
+/* On those pages the top bar is the same glass as the pinned block: the body
+   is pulled UP beneath #topbar-slot (the navbar's trick, top edge), so the
+   list scrolls under the bar as well as the block, and the block pins just
+   below the bar. Without this the bar had nothing behind it but the page
+   glow, and read as solid next to the block's frosted cards. Scoped to pages
+   with a pinned block, so the map, chat, detail and More screens keep their
+   layout. The block keeps `top: 0`: a sticky box pins inside the scroller's
+   PADDING, so the padding-top alone holds it under the bar (a `top` equal to
+   the bar's height pinned it a whole bar lower). The PTR puck is absolutely
+   placed, which padding does not move, so it drops by the bar explicitly. */
+.app:has(> .app-body > .list-sticky-head) > #topbar-slot {
+  position: relative;
+  z-index: 6;
+  margin-bottom: calc(-1 * var(--topbar-h));
+}
+.app:has(> .app-body > .list-sticky-head) > .app-body { padding-top: var(--topbar-h); }
+.app:has(> .app-body > .list-sticky-head) .ptr-indicator { top: calc(var(--topbar-h) + 8px); }
+/* The list fades out as it goes under the block and the bar: opaque at the
+   block's bottom edge, transparent at the top of the screen. The two stops are
+   placed per scroll frame by PolarisTabs.installListFade (tabs.js); unset they
+   are both 0, which masks nothing. */
+.app-body > .list-sticky-head ~ :not(.ptr-indicator) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px));
+  mask-image: linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px));
 }
 
 /* Alerts tab severity breakdown: one tile per severity with something in it,
