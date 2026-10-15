@@ -848,6 +848,12 @@ also accepts automations about the whole device (as a per-automation group does)
 all — which a device group refuses. See
 [One alert per subnet](Automations#one-alert-per-subnet).
 
+A grouped alert's **first email waits one polling interval** after the alert
+opens, so the devices and automations that fail with it are in that first
+email rather than in a string of updates. The alert shows in Polaris straight
+away; only the email (and the other actions) waits. An alert that recovers
+before its first email went sends nothing at all — no "Resolved" either.
+
 Turning grouping on or off, changing a group's members, devices or fold, or disabling
 or deleting a group ends the affected live alerts, and the next check raises
 them again under whoever owns them now. An alert never changes hands mid-life.

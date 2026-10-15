@@ -482,6 +482,42 @@ chain) over several automations whose alerts should still stay apart.
 
 Changing between any two of the four folds retires the group's live alerts, as above.
 
+### The first-send hold
+
+A grouped alert does not send its first message the tick it opens (2026-10). It waits ONE polling
+interval of the reading that opened it, because the whole point of folding is lost when the
+first email names one device and the next nine arrive as a string of `[UPDATED]` messages a
+minute apart: the hosts behind a failed switch cross their own "for N polls" on the same poll or
+the next one, and the hold is what lets them all be in the first page. It is added ON TOP of the
+automation's own hold — 3 polls of a 5-minute path check opens the alert at 15 minutes, and the
+grouped alert's first email goes at 20.
+
+**How long.** `firstSendHoldSec(rule, reading)` asks `resolveAssetCadenceSec(assetId, metric,
+dimKey)` — the per-device twin of the wizard's `resolveScopeCadence`: the device's stream
+cadence through the monitor-settings hierarchy, the integration's SD-WAN interval, or, for a path
+check, the CHECK's `intervalSec` (the dimension key is the check id, so a server-run check with no
+device resolves too). Anything unresolvable holds 60 s, one engine tick.
+
+**What happens while held.** The alert is live in the app from the first tick (the in-app alert
+is the row). `createGroupAlert` stamps `firstSendDueAt` and always stores `templateCtx`; it
+records no pending send. `joinGroupAlert` and `reconcileGroupSeverity` keep the row and its
+context current but record no growth or band message. `releaseHeldFirstSends` runs once per
+engine pass before `drainPendingSends`: one query on the partial index
+`notifications_first_send_held`, a claim by stamping `firstSentAt` (so an overlapping pass cannot
+send twice), and a "fire" built from the row AS IT STANDS — stored context, members, severity,
+message, and `tierForSeverity(rule, severity).actions`; the group still swaps in its own actions
+at the drain. An Event `notification.first_send_released` records it.
+
+**What nobody was told cannot be resolved.** An alert that ends while held sends nothing:
+`fireReset` and `fireResolved` return early on `neverAnnounced`, and `runResetActionsForCleared`
+(an operator's Clear) skips held rows — a "Resolved" email or a ticket-closing API call would
+answer an alert nobody heard of. Escalation (`runEscalationSweep`) excludes held rows and starts
+every clock at `firstSentAt` when that is later, the same shift quiet time's summary makes.
+
+**Why not reuse quiet time's `held` delivery rows.** Those are terminal — they are summarised,
+never re-sent — and they are written per recipient AFTER the owner's actions resolve. The hold is
+earlier and simpler: no send is recorded at all until it ends, so nothing has to be un-held.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.

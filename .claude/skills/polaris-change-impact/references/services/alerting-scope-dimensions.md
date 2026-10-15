@@ -206,9 +206,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns** — nothing persistent. Read-only lookup answering "how often do THESE devices take the reading this automation watches?", so the automations wizard can count its hold and window fields in POLLS while `forDurationSec` / `windowSec` / `reset.sustainSec` stay stored in SECONDS.
 
-**Public API** — `resolveScopeCadence(scope, metric)` → `{ stream, mode, min, max, timeoutMs, assetCount }`; `streamForMetric(metric)`; `summarizeIntervals(values)` (pure, unit-tested); `METRIC_STREAM`; `HOST_METRIC_INTERVAL_SEC`.
+**Public API** — `resolveScopeCadence(scope, metric)` → `{ stream, mode, min, max, timeoutMs, assetCount }`; `resolveAssetCadenceSec(assetId, metric, checkId?)` → seconds | null, ONE device's cadence (a path check's own `intervalSec` when `checkId` is given) — the engine's grouped-alert first-send hold (business rule 75); `streamForMetric(metric)`; `summarizeIntervals(values)` (pure, unit-tested); `METRIC_STREAM`; `HOST_METRIC_INTERVAL_SEC`.
 
-**Readers / callers** — `api/routes/notificationRules.ts` only (`POST /automations/poll-cadence`, `automationManagement:read`). Client consumer: `public/js/automations-wizard.js` — `awCadence()` / `refreshCadence()` cache it per (metric, scope) the `_dimValues` way, `syncPollFields` paints every `.aw-poll-input` caption from it, and the down-detection caption (`syncDownDetection`) reads the SAME lookup rather than a second one.
+**Readers / callers** — `api/routes/notificationRules.ts` (`POST /automations/poll-cadence`, `automationManagement:read`) for `resolveScopeCadence`; `notificationEngine.firstSendHoldSec` for `resolveAssetCadenceSec` (the two modules import each other — function-level only, never at module init). Client consumer: `public/js/automations-wizard.js` — `awCadence()` / `refreshCadence()` cache it per (metric, scope) the `_dimValues` way, `syncPollFields` paints every `.aw-poll-input` caption from it, and the down-detection caption (`syncDownDetection`) reads the SAME lookup rather than a second one.
 
 **Depends on** — `notificationEngine.loadScopeAssetIds` (monitored-only, the same loader the tick uses) and `monitoringService.resolveMonitorSettings` (the whole monitor-settings hierarchy).
 

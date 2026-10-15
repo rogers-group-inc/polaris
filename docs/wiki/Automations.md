@@ -218,6 +218,20 @@ Adding or removing a member, changing the device filter, switching **One alert
 per**, and turning off or deleting a group all **end the affected live
 alerts**; the next check raises them again under whoever now delivers them.
 
+### The first email waits one poll
+
+A grouped alert — from a group, or from an automation set to one alert per
+device — shows up in Polaris the moment it opens, but its **first email waits
+one polling interval** of whatever opened it: the device's poll interval for
+that reading, or a path check's own interval. Anything that fails in that time
+joins the alert and is in the first email. The wait comes **after** the
+automation's own *for N polls*: an automation that waits 3 polls of a
+5-minute path check opens its alert at 15 minutes and emails at 20.
+
+While it waits, nothing else is sent either — no updates, no escalation, no
+reminders (those count from the first email). An alert that recovers before
+its first email sends nothing at all, not even "Resolved".
+
 ### One alert per automation, or per device and automation
 
 **One alert per** decides what a single alert stands for:
