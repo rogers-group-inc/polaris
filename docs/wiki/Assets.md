@@ -104,8 +104,8 @@ carries the whole message: neither colour nor motion reaches every reader.
 ### View tabs and saved filters
 
 A strip on the table's top-left edge, below the bulk bar, sharing its row with
-**Refresh**, **Clear Filters** and **Show N** (the page buttons are under the
-table). Each tab holds its own filter and sort state, saved
+**Refresh**, **Clear Filters** and **Show N** (the page buttons are below the
+page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
 or F2 renames, ✕ closes (never the last one), + adds.
 
