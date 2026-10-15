@@ -81,6 +81,7 @@ const harness = [
   extractFn("_themeViewTransitions"),
   extractFn("_beginThemeFade"),
   extractFn("_applyMobileTheme"),
+  extractFn("_syncStatusBar"),
   extractBlock(MOBILE_APP_JS, "window.PolarisTheme = {") + ";",
   "return { POS: THEME_STRIP_POS, THEMES: MOBILE_THEMES, TRANSIT: MOBILE_TRANSIT_THEMES,",
   "         theme: _mobileTheme, api: window.PolarisTheme };",
@@ -140,6 +141,28 @@ function stripPos(): number {
 function freshApi(): Api {
   return new Function(harness)() as Api;
 }
+
+describe("status bar colour", () => {
+  const CSS = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
+
+  it("is declared by every theme block, selectable and transit alike", () => {
+    for (const id of ["morning", "noon", "afternoon", "nightfall"]) {
+      const block = extractBlock(CSS, `[data-theme="${id}"] {`);
+      expect(block, id).toMatch(/--status-bar-color:\s*#[0-9a-f]{6};/i);
+    }
+  });
+
+  it("keeps nightfall on the manifest's colour, which the static meta also carries", () => {
+    expect(extractBlock(CSS, '[data-theme="nightfall"] {')).toMatch(/--status-bar-color:\s*#1d2244;/);
+  });
+
+  it("is set at boot, right after the saved theme is applied", () => {
+    const boot = MOBILE_APP_JS.slice(0, MOBILE_APP_JS.indexOf("function _mobileTheme("));
+    const applied = boot.indexOf('document.documentElement.setAttribute("data-theme", saved);');
+    expect(applied).toBeGreaterThan(0);
+    expect(boot.indexOf("_syncStatusBar(_mobileTheme(saved));")).toBeGreaterThan(applied);
+  });
+});
 
 describe("THEME_STRIP_POS", () => {
   const api = freshApi();
@@ -222,11 +245,26 @@ describe("PolarisTheme.set", () => {
     expect(document.querySelector(".theme-strip-name")!.textContent).toBe("Afternoon");
   });
 
-  it("keeps the installed app's chrome colour in step with the FAMILY", () => {
+  it("falls back to the FAMILY colour when the stylesheet has no status-bar token", () => {
     api.api.set("noon");
     expect(document.querySelector('meta[name="theme-color"]')!.getAttribute("content")).toBe("#eef0f7");
     api.api.set("nightfall");
     expect(document.querySelector('meta[name="theme-color"]')!.getAttribute("content")).toBe("#1d2244");
+  });
+
+  it("paints the status bar the theme's own --status-bar-color", () => {
+    const style = document.createElement("style");
+    style.textContent = '[data-theme="morning"] { --status-bar-color: #f7e6c8; }'
+      + '[data-theme="noon"] { --status-bar-color: #fcf0d1; }';
+    document.head.appendChild(style);
+    try {
+      api.api.set("morning");
+      expect(document.querySelector('meta[name="theme-color"]')!.getAttribute("content")).toBe("#f7e6c8");
+      api.api.set("noon");
+      expect(document.querySelector('meta[name="theme-color"]')!.getAttribute("content")).toBe("#fcf0d1");
+    } finally {
+      style.remove();
+    }
   });
 
   it("arms the crossfade only for a real change", () => {

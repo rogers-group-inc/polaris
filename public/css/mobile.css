@@ -289,6 +289,11 @@
 /* Morning — amber parchment: yellow-brown grounds, orange accent, softest
    contrast of the daylight palettes. */
 [data-theme="morning"] {
+  /* The phone's status bar (meta theme-color, app.js _syncStatusBar): the
+     colour measured at the very top of the screen in this theme, glow
+     included, so the bar runs on into the page instead of sitting on it as a
+     band. Re-measure when the theme's surface or glow changes. */
+  --status-bar-color:           #f7e6c8;
   --md-primary:                 #b25e0a;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #ead7b3;
@@ -339,6 +344,8 @@
 /* Noon — neutral near-white, terracotta, the highest contrast of any palette.
    The cool daylight palette; cream here and it reads as morning. */
 [data-theme="noon"] {
+  /* Status bar: measured top edge, noon's sunlight included (see morning). */
+  --status-bar-color:           #fcf0d1;
   --md-primary:                 #b5451c;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #eee5d9;
@@ -374,6 +381,8 @@
    between noon and nightfall, so it has to be the strongest shift of the four
    or the middle of the sweep passes unseen. */
 [data-theme="afternoon"] {
+  /* Status bar: measured top edge (see morning). */
+  --status-bar-color:           #d5cad5;
   --md-primary:                 #c33d15;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #e4c2b0;
@@ -425,6 +434,8 @@
    with cont and highest interpolated on the same hue. Text, accent and
    status colours are the desktop tokens as they stand. */
 [data-theme="nightfall"] {
+  /* Status bar: the manifest's theme_color, as it always was (see morning). */
+  --status-bar-color:           #1d2244;
   --md-primary:                 #4bbcee;
   --md-on-primary:              #00293d;
   --md-primary-container:       #0f4d6e;

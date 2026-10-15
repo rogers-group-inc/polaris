@@ -56,6 +56,11 @@ var MOBILE_THEME_IDS = { light: "morning", dark: "nightfall" };
     saved = light ? "morning" : "nightfall";
   }
   document.documentElement.setAttribute("data-theme", saved);
+  // The status bar follows from the first paint, not from the first theme
+  // change: the static meta in mobile.html is nightfall's colour, so a
+  // daylight phone opened on the wrong bar until the strip was tapped.
+  // A function declaration further down this file, so it is hoisted here.
+  _syncStatusBar(_mobileTheme(saved));
 })();
 
 // Resolves selectable AND transit ids — PolarisTheme.set has to be able to
@@ -242,12 +247,23 @@ function _applyMobileTheme(t, prevId) {
   for (i = 0; i < strips.length; i++) {
     strips[i].setAttribute("aria-label", "Time of day: " + t.label + ". Tap to move through the day.");
   }
-  // Keep the installed app’s chrome (Android status bar / task switcher) in
-  // step with the theme. The manifest colour itself is frozen at install time
-  // and only affects the launch splash, so a light-mode user still gets a dark
-  // splash — cosmetic and unavoidable.
+  _syncStatusBar(t);
+}
+
+// Keep the phone's chrome (Android status bar / task switcher) in step with
+// the theme: the theme's --status-bar-color (mobile.css), the colour at the
+// top edge of the screen, so the bar runs on into the page. It was one cool
+// near-white for every daylight theme, which sat on morning's parchment and
+// noon's sunlight as a white band. The fallbacks cover a stylesheet without
+// the token. The manifest colour itself is frozen at install time and only
+// affects the launch splash, so a light-mode user still gets a dark splash —
+// cosmetic and unavoidable.
+function _syncStatusBar(t) {
   var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2244" : "#eef0f7");
+  if (!meta) return;
+  var c = "";
+  try { c = getComputedStyle(document.documentElement).getPropertyValue("--status-bar-color").trim(); } catch (e) {}
+  meta.setAttribute("content", c || (t.family === "dark" ? "#1d2244" : "#eef0f7"));
 }
 
 // Where the strip is headed: the destination of a sweep still in flight, or
