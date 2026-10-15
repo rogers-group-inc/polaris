@@ -508,6 +508,37 @@ describe("the sweep's quiet time", () => {
     expect(state.tiers.repeat).toBeUndefined();
   });
 
+  it("with recipient exceptions the reminder goes out live to the excepted address and is deferred for the rest (rule 120)", async () => {
+    const TWO = { ...NOTIFY, addresses: ["oncall@example.com", "noc@example.com"] };
+    seedRule({ actions: [TWO], repeat: QUIET_REPEAT, quietTime: { ...QUIET_TIME, recipients: [{ address: "noc@example.com", held: {} }] } });
+    seedNotif({ triggeredAt: firedAt });
+
+    const runs = await runEscalationSweep(NIGHT);
+
+    expect(runs).toBe(1);
+    const email = db.deliveries.filter((d) => d.transport === "email");
+    expect(email).toHaveLength(2);
+    expect(email.find((d) => d.target === "noc@example.com").status).toBeUndefined();
+    const deferred = email.find((d) => d.target === "oncall@example.com");
+    expect(deferred.status).toBe("deferred");
+    expect(deferred.meta.quietHold.windowEnd).toBe(atLocal(2026, 8, 26, 6, 0).toISOString());
+    // The pass counts as sent — the excepted reader was told on time — so the
+    // clock moves and nothing is recorded as paused.
+    const state = db.notifUpdates[db.notifUpdates.length - 1].data.escalationState;
+    expect(state.tiers["a0:repeat"].count).toBe(1);
+    expect(state.quietHeldSince).toBeUndefined();
+    expect(db.events.filter((e) => e.action === "notification.reminders_paused")).toHaveLength(0);
+  });
+
+  it("an exception that is not in this automation's audience changes nothing about the sends (rule 120)", async () => {
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: { ...QUIET_TIME, recipients: [{ address: "noc@example.com", held: {} }] } });
+    seedNotif({ triggeredAt: firedAt });
+    await runEscalationSweep(NIGHT);
+    const email = db.deliveries.filter((d) => d.transport === "email");
+    expect(email).toHaveLength(1);
+    expect(email[0].status).toBe("deferred");
+  });
+
   it("audits the pause ONCE per hold, naming when reminders resume", async () => {
     seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT, quietTime: QUIET_TIME });
     seedNotif({ triggeredAt: firedAt });

@@ -54,6 +54,14 @@ const quietScheduleInputSchema = z.object({
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severities"], message: `Unknown severity "${s}"` });
       }
     }
+    // Recipient exceptions (business rule 120) key their own map by severity.
+    (q.recipients ?? []).forEach((r, i) => {
+      for (const s of Object.keys(r.held)) {
+        if (!(SEVERITIES as readonly string[]).includes(s)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recipients", i, "held", s], message: `Unknown severity "${s}"` });
+        }
+      }
+    });
   }),
 });
 

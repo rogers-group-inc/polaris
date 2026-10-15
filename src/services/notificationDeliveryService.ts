@@ -648,6 +648,9 @@ export function pushStillInPlay(siblings: FallbackSibling[], userId: string): bo
   );
 }
 
+/** Delivery statuses that never reached anyone (business rules 92 + 120). */
+const NEVER_SENT = new Set(["held", "deferred", "superseded"]);
+
 /**
  * Has this address already been emailed on this channel for this alert — by
  * the automation's own email target, or by an earlier pass's fallback?
@@ -666,9 +669,12 @@ export function alreadyEmailedOnChannel(
   const needle = address.trim().toLowerCase();
   // A HELD row (business rule 92) never reached anyone — it is the record of
   // who a quiet window kept the alert from — so it must not count as "already
-  // emailed" against a later, real fallback for the same address.
+  // emailed" against a later, real fallback for the same address. Nor do the
+  // two states of a reminder held for one reader under recipient exceptions
+  // (business rule 120): `deferred` (owed at the window's end) and
+  // `superseded` (replaced by a newer copy, or retired with the alert).
   return siblings.some(
-    (s) => s.transport === "email" && s.channelId === channelId && s.status !== "held" &&
+    (s) => s.transport === "email" && s.channelId === channelId && !NEVER_SENT.has(s.status) &&
       s.target.toLowerCase().includes(needle),
   );
 }

@@ -256,6 +256,13 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  *                       every fire time; null = off.
  *   summaryAlways       send the summary even when nothing was held (the
  *                       "all quiet" email). Absent = true.
+ *   recipients          RECIPIENT EXCEPTIONS (business rule 120): addresses
+ *                       that do not follow the policy's `held` map. Each one
+ *                       carries its own per-severity map under the SAME
+ *                       windows and summary time; an empty map means the
+ *                       address ignores this quiet time entirely. A push
+ *                       recipient is matched by its account's email. Absent =
+ *                       everyone follows the policy.
  *
  * Severity values are plain strings here because `SEVERITIES` lives in
  * notificationTypes, which imports this module; the two consumers refine
@@ -281,6 +288,25 @@ const SEND_TO_KIND: Record<QuietSend, keyof HeldKinds> = {
   escalationReminder: "escalationReminders",
 };
 
+/** Cap on recipient exceptions in one policy. */
+export const MAX_QUIET_RECIPIENTS = 50;
+
+/**
+ * One recipient exception (business rule 120): an address and the sends of
+ * each severity that are held FOR IT during the policy's windows. `{}` = never
+ * held — the address ignores the quiet time. A severity with no entry, or with
+ * every kind unticked, goes out live to this address. It may also be STRICTER
+ * than the policy: a kind held here is held for this address even when the
+ * policy lets it through.
+ */
+export const quietRecipientSchema = z
+  .object({
+    address: z.string().trim().toLowerCase().email().max(320),
+    held: z.record(z.string().min(1).max(32), heldKindsSchema),
+  })
+  .strict();
+export type QuietRecipient = z.infer<typeof quietRecipientSchema>;
+
 export const quietTimeConfigSchema = z
   .object({
     windows: z.array(scheduleShapeSchema).min(1).max(MAX_QUIET_WINDOWS),
@@ -296,11 +322,19 @@ export const quietTimeConfigSchema = z
     // the email path are working. Absent = true (on by default, the operator's
     // call 2026-10-05); only `false` is ever written.
     summaryAlways: z.boolean().optional(),
+    recipients: z.array(quietRecipientSchema).max(MAX_QUIET_RECIPIENTS).optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {
     const problem = summaryTimeConflicts(cfg);
     if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["summaryAt"], message: problem });
+    const seen = new Set<string>();
+    (cfg.recipients ?? []).forEach((r, i) => {
+      if (seen.has(r.address)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recipients", i, "address"], message: `${r.address} is listed twice` });
+      }
+      seen.add(r.address);
+    });
   });
 
 export type QuietTimeConfig = z.infer<typeof quietTimeConfigSchema>;
@@ -492,6 +526,48 @@ export function heldKindsFor(cfg: HoldPolicy, severity: string): HeldKinds | nul
 export function quietHoldsSend(cfg: HoldPolicy, severity: string, send: QuietSend): boolean {
   const k = heldKindsFor(cfg, severity);
   return !!k && k[SEND_TO_KIND[send]];
+}
+
+// ─── Recipient exceptions (business rule 120) ───────────────────────────────
+
+type RecipientPolicy = HoldPolicy & { recipients?: QuietRecipient[] | null };
+
+/** The exception row for `address`, or null when the address follows the policy. */
+export function quietRecipientFor(cfg: RecipientPolicy, address: string | null | undefined): QuietRecipient | null {
+  if (!address || !cfg.recipients || cfg.recipients.length === 0) return null;
+  const want = address.trim().toLowerCase();
+  return cfg.recipients.find((r) => r.address === want) ?? null;
+}
+
+/** Does the policy carry any recipient exception? When it does not, every
+ *  recipient is held alike and the hold path stays exactly what it was. */
+export function quietHasRecipientExceptions(cfg: RecipientPolicy): boolean {
+  return !!cfg.recipients && cfg.recipients.length > 0;
+}
+
+/**
+ * Is THIS send of THIS severity held for `address`? An exception row answers
+ * for its address alone; everyone else (and a recipient with no address — a
+ * chat webhook, an account with no email) follows the policy.
+ */
+export function quietHoldsSendFor(cfg: RecipientPolicy, address: string | null | undefined, severity: string, send: QuietSend): boolean {
+  const r = quietRecipientFor(cfg, address);
+  if (!r) return quietHoldsSend(cfg, severity, send);
+  const k = r.held[severity];
+  return !!k && !!k[SEND_TO_KIND[send]];
+}
+
+/** Is this send held for ANYONE — the policy, or any exception stricter than it?
+ *  The window opens a hold when it is; who is actually held is per address. */
+export function quietHoldsSendAny(cfg: RecipientPolicy, severity: string, send: QuietSend): boolean {
+  if (quietHoldsSend(cfg, severity, send)) return true;
+  return (cfg.recipients ?? []).some((r) => !!r.held[severity]?.[SEND_TO_KIND[send]]);
+}
+
+/** Is `address` held for nothing at all — no summary, no all-quiet email? */
+export function quietRecipientFullyExempt(cfg: RecipientPolicy, address: string | null | undefined): boolean {
+  const r = quietRecipientFor(cfg, address);
+  return !!r && !Object.values(r.held).some(anyKind);
 }
 
 /** Is `severity` one the policy holds anything of? */
