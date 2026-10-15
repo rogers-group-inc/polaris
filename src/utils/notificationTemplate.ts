@@ -53,7 +53,7 @@ export type TemplateVariableSection = (typeof TEMPLATE_VARIABLE_SECTIONS)[number
  */
 export type TemplateVariableScope =
   | "device" | "metric" | "threshold" | "component" | "composite"
-  | "event" | "chart" | "interface" | "processes" | "dependency";
+  | "event" | "chart" | "interface" | "processes" | "dependency" | "path";
 
 /**
  * When a token is filled. Absent = at fire time, so the wizard's example can
@@ -144,6 +144,7 @@ const PLACEMENT: Record<string, Placement> = {
   "{dependency.rootCause}": { section: "dependency", appliesTo: "dependency" },
   "{dependency.tag}": { section: "dependency", appliesTo: "dependency" },
   "{dependency.path}": { section: "dependency", appliesTo: "dependency", sentOn: "delivery" },
+  "{path.graph}": { section: "charts", appliesTo: "path", sentOn: "delivery" },
   "{time.local}": { section: "time" },
   "{time}": { section: "time" },
   "{time.zone}": { section: "time" },
@@ -264,6 +265,7 @@ const RAW_TEMPLATE_VARIABLES: Array<Omit<TemplateVariable, keyof Placement>> = [
   { token: "{dependency.rootCause}", label: "Root cause", description: "Dependency-down alerts: the device further up that is actually down, when it is not the upstream device itself — the FortiGate above a dependency-down switch. Empty when the upstream device is the root cause, and on every other alert", group: "notification" },
   { token: "{dependency.headline}", label: "Dependency-down headline", description: "The compact notice, for a message that already names the device: \"DEPENDENCY DOWN — upstream SW-PLANT-3 is down\". Empty on every other alert", group: "notification" },
   { token: "{dependency.path}", label: "Dependency path diagram", description: "Dependency-down alerts: a diagram of the chain the alert blames — the root cause on the left, the alerting device on the right, each device in its Device Map location box (a:/b:/f:/r:/jb: codes; a generic box labelled with its Location when it has none) and the link ports where LLDP knows them. At most four devices: a longer chain keeps two at each end with a \"+N more\" gap. An image in HTML email, one line in plain text. Renders away entirely on every other alert", group: "notification" },
+  { token: "{path.graph}", label: "Path graph", description: "Path Monitor alerts: the traceroute path graph of the check the alert is about, as the Paths tab draws it — the recent traces folded into one view, each link coloured by the latency it adds on the newest one, with a ✕ where the destination was not reached. A grouped alert draws up to four, one per device (or per automation) first. An image in HTML email, one line per path in plain text. Renders away when traceroute is off for the check, before its first trace, and on every other alert", group: "notification" },
   { token: "{dependency.tag}", label: "Dependency-down tag", description: "\" · DEPENDENCY DOWN\" on a dependency-down alert, with its own separator so a subject line can append it unconditionally; empty on every other alert", group: "notification" },
 ];
 
@@ -782,6 +784,10 @@ const TOKEN_RE = /\{([a-zA-Z][\w.]*)\}/g;
  * Deferred for the charts' reasons: an inline image attachment, and HTML and
  * text forms that differ.
  *
+ * `{path.graph}` — a Path Monitor alert's traceroute path graph, drawn at
+ * delivery by alertPathGraphService — is enumerated for the same reason: an
+ * inline image (up to four), and HTML and text forms that differ.
+ *
  * The process half (`{processes.top}` — the top-5 programs by CPU or memory on a
  * CPU / memory alert, read at delivery by alertProcessService) is deferred for
  * the interface half's two reasons: a DB read, and different HTML and text
@@ -803,7 +809,7 @@ const TOKEN_RE = /\{([a-zA-Z][\w.]*)\}/g;
  * file is a pure util that must not import the chart service (which pulls in
  * Prisma) just to enumerate its own tokens.
  */
-const DEFERRED_TOKEN_NAMES: ReadonlySet<string> = new Set(["ack", "email.recipients", "dependency.path"]);
+const DEFERRED_TOKEN_NAMES: ReadonlySet<string> = new Set(["ack", "email.recipients", "dependency.path", "path.graph"]);
 
 export function isDeferredToken(name: string): boolean {
   return (

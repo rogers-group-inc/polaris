@@ -26,6 +26,7 @@ import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor,
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
 import { buildTopProcessBlocks, processTokensIn, substituteProcessTokens } from "./alertProcessService.js";
 import { buildDependencyPathBlocks, dependencyPathTokensIn, substituteDependencyPathTokens } from "./alertDependencyPathService.js";
+import { buildPathGraphBlocks, pathGraphTokensIn, substitutePathGraphTokens } from "./alertPathGraphService.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 import { buildAlertBrandBlock, brandTokensIn, substituteBrandTokens, BRAND_LOGO_CID } from "./alertBrandService.js";
 import {
@@ -151,10 +152,12 @@ interface RenderMemo {
   processes: Map<string, Promise<{ html: string; text: string }>>;
   /** The dependency-path diagram, keyed by notification: one render per alert. */
   dependencyPath: Map<string, Promise<{ html: string; text: string; attachment: InlineAttachment | null }>>;
+  /** The Path Monitor path graphs, keyed by notification: one render per alert. */
+  pathGraph: Map<string, Promise<{ html: string; text: string; attachments: InlineAttachment[] }>>;
 }
 
 function newRenderMemo(): RenderMemo {
-  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map(), processes: new Map(), dependencyPath: new Map() };
+  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map(), processes: new Map(), dependencyPath: new Map(), pathGraph: new Map() };
 }
 
 /** Memoized read-through: one build per (alert, exact chart set) per drain. */
@@ -350,6 +353,22 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
         if (path.attachment && html.includes(`cid:${path.attachment.cid}`)) {
           attachments = [...(attachments ?? []), path.attachment];
         }
+      }
+    }
+
+    // The traceroute path graph on a Path Monitor alert — the Paths tab's
+    // NetPath-style view of the recent traces, one per path the alert names
+    // (up to four on a grouped alert, alertPathGraphService). A complete block
+    // or nothing: every alert that is not about a path check returns before
+    // any read. Built here, like the charts, so an escalation shows the route
+    // as it is now; memoized per alert so a fan-out's email rows share it.
+    if (pathGraphTokensIn(text, html).size > 0) {
+      const graphs = await memoize(memo.pathGraph, d.notification.id, () => buildPathGraphBlocks(d.notification));
+      text = pruneEmptyTextLines(substitutePathGraphTokens(text, graphs.text));
+      if (html) {
+        html = substitutePathGraphTokens(html, graphs.html);
+        const used = graphs.attachments.filter((a) => html!.includes(`cid:${a.cid}`));
+        if (used.length) attachments = [...(attachments ?? []), ...used];
       }
     }
 

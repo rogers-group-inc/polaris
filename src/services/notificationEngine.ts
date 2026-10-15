@@ -31,6 +31,7 @@ import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareReposito
 import { triggerSummary, triggerTokenParts } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, chartTokenForMetric, CHART_TOKENS, type ChartToken } from "./alertChartService.js";
+import { PATH_GRAPH_METRICS } from "./alertPathGraphService.js";
 import { INTERFACE_DIMENSION_METRICS } from "./alertInterfaceService.js";
 import { processRankingForMetric } from "./alertProcessService.js";
 import { poeIsFault } from "../utils/poePorts.js";
@@ -6892,6 +6893,7 @@ export function applicableTemplateTokens(trigger: Trigger | null | undefined): s
     interface: !!metricKey && t?.type !== "change" && INTERFACE_DIMENSION_METRICS.has(metricKey),
     processes: !isHost && !!metricKey && processRankingForMetric(metricKey) !== null,
     dependency: !!t && ruleAlertsWhenDependencyDown(t as Trigger),
+    path: !!metricKey && PATH_GRAPH_METRICS.has(metricKey),
   };
   return TEMPLATE_VARIABLES
     .filter((v) => {
