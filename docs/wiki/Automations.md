@@ -232,6 +232,14 @@ While it waits, nothing else is sent either — no updates, no escalation, no
 reminders (those count from the first email). An alert that recovers before
 its first email sends nothing at all, not even "Resolved".
 
+**After the first email, updates go at most once per interval too.** A device
+that joins the alert, comes back after recovering, or recovers while others are
+still affected is not emailed straight away. Polaris collects the changes and
+sends **one** `[UPDATED]` email naming all of them — `+pc-03, −pc-01` in the
+subject, "pc-03 joined this alert; pc-01 recovered" at the top — one interval
+after the previous email. A device that joins and recovers inside the same
+interval is left out. A worse severity band is still emailed at once.
+
 ### One alert per automation, or per device and automation
 
 **One alert per** decides what a single alert stands for:
@@ -247,6 +255,9 @@ its first email sends nothing at all, not even "Resolved".
 fires — *"Device down: 5 devices — sw-01, sw-02, …"*. The alert is named after
 the automation, ends when the **last** device recovers, and (like Subnet) also
 accepts automations about the whole device, such as `monitorStatus == down`.
+A **Path Monitor** automation gets one alert **per path check** rather than one
+for every check it watches — *"Path Monitor — ERP HTTPS: 3 devices — pc-01,
+pc-02, pc-04"* — with hosts added and removed as they fail and recover.
 
 **Device + automation** keeps different checks apart on the same device — a PoE
 fault and a high temperature on one switch are two alerts — while each
