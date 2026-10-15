@@ -5696,6 +5696,20 @@ model Notification {
   firstSendDueAt DateTime?
   firstSentAt    DateTime?
 
+  // ─── Grouped-alert update cadence (business rule 75) ──────────────────────
+  // After the first send, what joins or recovers is not emailed the tick it
+  // happens: the changes collect in `pendingChanges` ({ changes: GroupChange[],
+  // reopenedFrom? }, merged by notificationTypes.mergeGroupChanges) and ONE
+  // [UPDATED] email naming them all goes when `nextUpdateDueAt` passes — the
+  // first send plus `sendIntervalSec`, then each update plus it again.
+  // `sendIntervalSec` is the polling interval of the reading that opened the
+  // alert, measured once at open (the figure the first-send hold waited).
+  // NULL on every ungrouped alert. Backed by the PARTIAL index
+  // `notifications_group_update_due`, migration SQL only — drift expected.
+  sendIntervalSec Int?
+  pendingChanges  Json?
+  nextUpdateDueAt DateTime?
+
   deliveries NotificationDelivery[]
 
   @@index([assetId])
