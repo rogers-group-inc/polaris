@@ -156,3 +156,19 @@ describe("PolarisTopN.renderRows header severity counts", () => {
     ]);
   });
 });
+
+describe("PolarisTopN.renderRows value labels", () => {
+  // The Highest Temperature widget passes "°F" when the install renders
+  // Fahrenheit; a °C-only branch used to drop it through to the "%" fallback.
+  it.each([
+    ["°C", 84.4, "84 °C"],
+    ["°F", 183.2, "183 °F"],
+    ["ms", 12.6, "13 ms"],
+    ["%", 42, "42%"],
+  ])("renders unit %s value %s as %s", (unit, value, expected) => {
+    const { el } = mountWidget();
+    TopN.renderRows(el, [{ id: "a", hostname: "node", value }], { unit, config: {} });
+    expect(el.textContent).toContain(expected);
+    if (unit !== "%") expect(el.textContent).not.toMatch(/\d%/);
+  });
+});

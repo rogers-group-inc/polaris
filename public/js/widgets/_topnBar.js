@@ -55,7 +55,10 @@
 
   function formatValue(value, unit) {
     if (unit === "ms") return Math.round(value) + " ms";
-    if (unit === "°C") return Math.round(value) + " °C";
+    // Both temperature labels: the Highest Temperature widget passes "°F" when
+    // the install renders Fahrenheit (temp-unit.js), and a °C-only branch
+    // dropped that through to the "%" fallback.
+    if (unit === "°C" || unit === "°F") return Math.round(value) + " " + unit;
     return value + "%";
   }
 
