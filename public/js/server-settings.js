@@ -8819,9 +8819,10 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
         '<span style="color:var(--color-text-secondary);font-size:0.82rem">No login required — reachable only from the networks configured under API Documentation Access below.</span></p>' +
       tableHtml +
     '</div>' +
-    '<div class="settings-section" style="margin-top:1.5rem">' +
-      '<h4 style="margin:0 0 0.75rem">Create New Token</h4>' +
-      '<div style="display:grid;gap:0.75rem;max-width:560px">' +
+    '<div class="settings-cards-row" style="margin-top:1.5rem">' +
+    '<div class="settings-card">' +
+      '<h4>Create New Token</h4>' +
+      '<div style="display:grid;gap:0.75rem">' +
         '<div>' +
           '<label class="form-label" for="f-token-name">Name <span style="color:var(--color-danger,#c0392b)">*</span></label>' +
           '<input type="text" id="f-token-name" class="form-input" placeholder="e.g. SIEM Quarantine" maxlength="80">' +
@@ -8854,7 +8855,8 @@ function renderApiTokensTab(tokens, roles, quarantineIntegrations, apiBaseUrl, d
         '<div><button class="btn btn-primary" id="btn-create-api-token">Create Token</button></div>' +
       '</div>' +
     '</div>' +
-    _apiDocsCardHtml(docsAccess);
+    _apiDocsCardHtml(docsAccess) +
+    '</div>';
 
   document.getElementById("btn-create-api-token").addEventListener("click", createApiToken);
   _wireApiDocsCard(docsAccess);
@@ -8946,8 +8948,8 @@ function editApiTokenTrustedHosts(id) {
 
 function _apiDocsCardHtml(docsAccess) {
   var head =
-    '<div class="settings-section" style="margin-top:1.5rem">' +
-      '<h4 style="margin:0 0 0.35rem">API Documentation Access</h4>' +
+    '<div class="settings-card">' +
+      '<h4>API Documentation Access</h4>' +
       '<p style="color:var(--color-text-secondary);font-size:0.82rem;margin:0 0 0.75rem">' +
         'The documentation at <code class="mono">/api</code> is readable without a login, so which networks can reach it is the whole access control. ' +
         'Loopback (the Polaris host itself) is always allowed while the page is enabled; only private (RFC1918) networks can be added.</p>';
@@ -8966,7 +8968,7 @@ function _apiDocsCardHtml(docsAccess) {
     '</label>';
   };
   return head +
-    '<div style="display:grid;gap:0.75rem;max-width:560px">' +
+    '<div style="display:grid;gap:0.75rem">' +
       '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
         '<input type="checkbox" id="docs-enabled"' + (s.enabled ? ' checked' : '') + '>' +
         '<span>Serve the API documentation page</span>' +
