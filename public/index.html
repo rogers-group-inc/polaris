@@ -39,12 +39,23 @@
           <button type="button" id="dashboard-create" class="btn btn-secondary" hidden>Create New Dashboard</button>
         </div>
       </div>
-      <div id="dashboard-tabs" class="dashboard-tabs" hidden></div>
+      <!-- Folder tabs (styles.css "Table head row"; public/js/folder-tabs.js)
+           over the page card the widgets sit in. The strip only shows with
+           more than one dashboard; with one, the card's edge is unbroken. -->
+      <div class="table-head-row folder-head-card">
+        <div id="dashboard-tabs" class="dashboard-tabs" hidden></div>
       </div>
-      <div id="dashboard-empty-state" class="dashboard-empty">
-        Click <strong>Customize Page</strong>, then <strong>Add Widgets</strong>, to build your dashboard.
       </div>
-      <div id="dashboard-canvas" class="dashboard-canvas" hidden></div>
+      <!-- The page card (styles.css "Folder CARD"): fills the viewport down to
+           its foot; the widgets scroll inside it. -->
+      <div class="folder-card folder-body">
+        <div class="folder-card-scroll">
+          <div id="dashboard-empty-state" class="dashboard-empty">
+            Click <strong>Customize Page</strong>, then <strong>Add Widgets</strong>, to build your dashboard.
+          </div>
+          <div id="dashboard-canvas" class="dashboard-canvas" hidden></div>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -82,6 +93,7 @@
   <script src="/js/brand-logo.js"></script>
   <script src="/js/assistant-markdown.js"></script>
   <script src="/js/assistant.js"></script>
+  <script src="/js/folder-tabs.js"></script>
   <script src="/js/app.js"></script>
   <span id="polaris-nav-ready" hidden></span>
   <!-- Canonical asset-details slide-in (openViewModal in assets.js), reused

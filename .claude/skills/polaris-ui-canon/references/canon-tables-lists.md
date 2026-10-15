@@ -242,14 +242,16 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
     - Each tab rings itself from its own `::before`, clipped at its bottom edge. The active tab's layer reaches down through the neck to the card (`bottom: -var(--folder-r)`, transitioned), or its cast ends in a line across the tab's base.
     - The strip clips, so it is padded by `--folder-shadow-room` (32px) on top and sides and pulled back by the same negative margins.
   - On a cold permission cache an admin sees only the Credentials tab until reload. This predates folder tabs: `server-settings.js` decides visibility at DOMContentLoaded. Warm the cache with one load before capturing.
-- **Every tabbed list page uses the folder card** (since 2026-10-15): Assets, Automations, Events, IPAM and Integrations as well as Server Settings. Each head row carries `folder-head-card`, so the active tab takes the card's glass and cast, inactive tabs lie flat, and every card ends at the same bottom edge (`.main:has(> .folder-card)` is a `100dvh` flex column).
+- **Every tabbed list page uses the folder card** (since 2026-10-15): Assets, Automations, Events, IPAM, Integrations, Path Monitor, the Dashboard and the /dash wallboard as well as Server Settings. Each head row carries `folder-head-card`, so the active tab takes the card's glass and cast, inactive tabs lie flat, and every card ends at the same bottom edge (`.main:has(> .folder-card)` is a `100dvh` flex column).
   - Table panels: the `.table-wrapper` sits directly in the card (Assets, Path Monitor), in the active `.page-tab-panel` (Automations → Automations, Events → Events), or in the card-classed `#ipam-mount` (IPAM). It drops its own card chrome and fills the leftover height, so `sizeStickyTableWrappers()` skips wrappers inside a `.folder-card`. The page navigation row sits BELOW the card (`.folder-card-nav`):
     - IPAM's is moved from the mounted template into `#ipam-nav` by `mountTab`.
     - The Automations and Events rows hide while a non-table tab is open, via `.main:has(#…:not(.active))`.
     - A `-top` row inside a head row implies the bottom row carries no `actionButtons`, so Refresh / Clear Filters appear on the tab row only. Path Monitor has no tab row, so its bottom row keeps them.
     - The tab row's "Show N" label and select carry `--shadow-lift`.
   - Content panels (Automations → Delivery / Groups / Scripts / Address Book, Events → Calendar) carry `folder-card-scroll` themselves.
-  - Path Monitor has no tabs, so it gets the card only. Its edge is unbroken because the gap vars are unset.
+  - Path Monitor has no tabs, but its `#path-pagination-top` sits in a tab-less `.table-head-row folder-head-card`. So it drops its page numbers and carries Refresh / Clear Filters / Show N on the right (`.table-head-controls:first-child` takes `margin-left: auto`).
+  - The **Dashboard** (`index.html`) and the **`/dash` wallboard** (`dash.html`) wrap `#dashboard-tabs` in a head row and the empty state + widget canvas in `.folder-card > .folder-card-scroll`. The folder selectors include `.dashboard-tabs` / `.dashboard-tab`, and a widget lies flat in the card except while `.lifted` (being dragged).
+  - With no active tab (no strip, or a single dashboard's hidden one) there are no gap vars. `.folder-card:not([style*="--folder-gap-l"])::before` then swaps to a notch-free cast polygon; otherwise the notch's points collapse onto the left edge and cut a shadowless wedge above the top-left corner.
   - Cards inside a folder card lie flat: `.settings-card`, `.integration-card`, `.empty-state-card` and `.card` have `box-shadow: none`.
   - The strip is pulled up over the page header or bulk bar by the cast's room, so it is `pointer-events: none` except on its tabs and the + button.
 - **Application Map**'s graph card (`.appmap-graph`, appmap.css) takes the folder card's glass, `--rail-glass-bg` + `--panel-glass-blur`, on a `::before` behind the graph instead of its opaque fill. The card is isolated, so the layer sits under the Cytoscape canvas and the card never traps the overlays' fixed positioning or frosted menus.
@@ -260,7 +262,10 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 - Markup: `<div class="table-head-row">` holding the tab strip, then a `.table-head-controls` cluster.
 - The table under it carries **`.folder-body`**.
 - CSS: "Table head row" block in [public/css/styles.css](public/css/styles.css).
-- JS: `wireFolderTabs()` / `syncFolderTabs()` in [public/js/app.js](public/js/app.js). They auto-wire every head row on load, and a MutationObserver re-syncs on any tab switch, re-render, rename or show/hide, so no page script calls them.
+- JS: `wireFolderTabs()` / `syncFolderTabs()` / `wireFolderScrollFades()` in [public/js/folder-tabs.js](public/js/folder-tabs.js).
+  - They auto-wire every head row and card scroller on load, and a MutationObserver re-syncs on any tab switch, re-render, rename or show/hide, so no page script calls them.
+  - They are in their own file, not app.js, because the `/dash` wallboard boots with `dash-boot.js` instead of app.js.
+  - On app pages the script is loaded BEFORE app.js: `pageTransitionWiring.test.ts` requires the `polaris-nav-ready` marker to follow app.js directly.
 
 **Key conventions:**
 - **The rule is the head row's own bottom line**, drawn as a 1px background with a gap at `--folder-gap-l/-r` under the active tab.
