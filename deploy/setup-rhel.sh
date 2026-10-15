@@ -68,6 +68,17 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+# node_ok — an installed Node that meets the project floor: 24+, or 22.12+
+# (package.json engines ">=22.12.0"; Prisma's preinstall refuses anything
+# older, so an accepted v22.4 failed `npm ci` halfway through the install —
+# found on a RHEL 9.5 VM, whose DVD carries 22.4). Lockstep with engines.node.
+node_ok() {
+  local v
+  v="$(node -v 2>/dev/null)" || return 1
+  [[ "$v" =~ ^v([0-9]+)\.([0-9]+) ]] || return 1
+  (( BASH_REMATCH[1] >= 24 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12) ))
+}
+
 # ─── Root-owned files on a re-run (business rule 117(k)/(l)) ─────────────────
 #
 # On a fresh install root itself clones the tree moments before using it. On a
@@ -203,30 +214,42 @@ info "  Prometheus IP:     $PROMETHEUS_IP"
 #
 # An existing v22 install is accepted rather than forced up: it satisfies the
 # floor and is supported until ~April 2027. v20 and below are replaced.
-if command -v node &>/dev/null && [[ "$(node -v)" == v24* || "$(node -v)" == v22* ]]; then
+if node_ok; then
   info "Node.js $(node -v) already installed"
 else
   info "Installing Node.js 24..."
   # `module reset` first: enabling a second stream on a host already pinned to
   # nodejs:20 fails with "cannot enable multiple streams" otherwise.
   dnf module reset -y nodejs
-  dnf module enable -y nodejs:24
+  # An AppStream without the stream (an unregistered host on an older minor:
+  # the RHEL 9.5 DVD stops at Node 22) gets a clear way forward, not dnf's
+  # bare "missing groups or modules".
+  dnf module enable -y nodejs:24 || error "This host's AppStream has no Node 24 module stream. Enable its Node 22 stream and install nodejs + npm first, then re-run: an installed v22 is accepted."
   dnf install -y nodejs npm
   info "Node.js $(node -v) installed"
 fi
 
-# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go (agent builds want 1.26+) ────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). The agent's go.mod pins go 1.26 as the minimum;
-# RHEL 9's default golang AppStream module is older, so pull from the
-# go-toolset module instead — it carries 1.26 (1.26.7 on 9.6).
+# → Polaris Agent → Build); the agent's go.mod pins go 1.26 as the minimum.
+# RHEL 9 ships go-toolset as an ordinary AppStream PACKAGE — there is no
+# go-toolset module stream on RHEL 9 (that was RHEL 8), and the
+# `dnf module enable -y go-toolset` this step used to run failed and aborted
+# the whole install on every RHEL 9 host without Go already present (found on
+# a RHEL 9.5 VM, 2026-10-15). How new that package is depends on the host's
+# AppStream (1.22 on the 9.5 DVD), so an older Go is installed and reported,
+# never fatal: the install does not need Go, only the agent build does.
 if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go (go-toolset)..."
-  dnf module enable -y go-toolset
-  dnf install -y golang
-  info "Go $(go version | awk '{print $3}') installed"
+  dnf install -y go-toolset || warn "Could not install go-toolset — the agent build feature needs Go 1.26+ (https://go.dev/dl/)"
+  if command -v go &>/dev/null && ! go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
+    warn "Go $(go version | awk '{print $3}') is older than the agent's go 1.26: agent builds will fail until Go 1.26+ is installed"
+    warn "  (from https://go.dev/dl/, or a newer AppStream). Everything else in Polaris works without it."
+  elif command -v go &>/dev/null; then
+    info "Go $(go version | awk '{print $3}') installed"
+  fi
 fi
 
 # ─── 1c. Install nginx stable (HTTP/3 ≥ 1.30 required) ─────────────────────
@@ -259,7 +282,11 @@ enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO
-  dnf install -y nginx
+  # nginx.org builds each release against the CURRENT RHEL minor: 1.30.6 needs
+  # OpenSSL 3.5, which a 9.5 host without newer updates lacks (found on a RHEL
+  # 9.5 VM). --nobest then takes the newest stable build this host can run.
+  dnf install -y nginx || dnf install -y --nobest nginx
+  nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])' || error "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') is older than 1.30: every nginx.org 1.30 build for el9 needs OpenSSL 3.5, which comes with RHEL 9.7. Update the host (dnf upgrade, on a registered system) and re-run"
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') installed"
 fi
 
@@ -474,6 +501,11 @@ fi
 # uses $APP_DIR/.cache/go-build as Go's build cache (HOME=$APP_DIR for the
 # build subprocess). Create both upfront with the right ownership so the
 # first click doesn't crash trying to mkdir under root-owned ancestors.
+# data/ itself must be polaris-owned too: the app creates data/backups and
+# friends at boot, and a re-run (or this step running before the clone)
+# would otherwise leave it root:root and polaris-web exits on EACCES.
+mkdir -p "$APP_DIR/data"
+chown "$APP_USER:$APP_GROUP" "$APP_DIR/data"
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 # The firmware repository (Server Settings → Repository) stores switch / AP / FortiGate
@@ -617,12 +649,26 @@ chmod 0640        "$CERT_DIR/cert.pem" "$CERT_DIR/key.pem"
 
 # SELinux: nginx must be allowed to read /etc/polaris-nginx/. semanage +
 # restorecon is the persistent path (survives relabels); plain chcon is
-# volatile. Skip silently if policycoreutils-python-utils isn't installed.
-if command -v semanage >/dev/null 2>&1; then
+# volatile.
+selinux_nginx_policy() {
+  [[ "$(getenforce 2>/dev/null)" == Disabled || -z "$(command -v getenforce)" ]] && return 0
+  command -v semanage >/dev/null 2>&1 || dnf install -y policycoreutils-python-utils >/dev/null 2>&1 || {
+    warn "semanage unavailable (install policycoreutils-python-utils): SELinux will block nginx's QUIC listener and its proxy to :3000"
+    return 0
+  }
   semanage fcontext -a -t httpd_sys_content_t "$CERT_DIR(/.*)?" 2>/dev/null || \
     semanage fcontext -m -t httpd_sys_content_t "$CERT_DIR(/.*)?" 2>/dev/null || true
   restorecon -Rv "$CERT_DIR" >/dev/null || true
-fi
+  # The QUIC listener is udp/443, which RHEL 9's policy labels reserved_port_t
+  # (http_port_t is tcp only there): the bind is denied and nginx refuses the
+  # whole Polaris server block. A policy that already has it fails both calls.
+  semanage port -a -t http_port_t -p udp 443 2>/dev/null || \
+    semanage port -m -t http_port_t -p udp 443 2>/dev/null || true
+  # nginx proxies to 127.0.0.1:3000 (ntop_port_t) and the role /metrics ports:
+  # httpd_t may only connect out with this boolean, or every request is a 502.
+  setsebool -P httpd_can_network_connect 1 || warn "setsebool httpd_can_network_connect failed: nginx will 502"
+}
+selinux_nginx_policy
 
 # ─── 7. Configure environment ────────────────────────────────────────────────
 # Node ignores the OS trust store, so on a network that re-signs HTTPS with an
@@ -802,6 +848,10 @@ fi
 
 info "Validating nginx config..."
 nginx -t
+# With nginx stopped, `nginx -t` run as root leaves an empty /run/nginx.pid
+# labelled unconfined var_run_t; SELinux then denies the real start writing
+# it, and systemd fails the unit on the empty file. Only a running nginx owns it.
+systemctl is-active -q nginx || rm -f /run/nginx.pid
 
 # ─── 10b. Install in-app nginx GUI helpers ──────────────────────────────────
 # /usr/local/sbin/polaris-nginx-apply + narrow sudoers grant + tmpfiles
@@ -831,7 +881,15 @@ fi
 # restarting the polaris units — nothing else.
 if [[ -f "$APP_DIR/deploy/polkit/49-polaris.rules" ]]; then
   root_copy 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+  # The manual updater an administrator runs is a reviewed root copy too
+  # (business rule 117(n)); without it the docs' `sudo /usr/local/sbin/polaris-update-linux`
+  # would not exist until the first update offered it.
+  root_copy 0755 "$APP_DIR/deploy/update-linux.sh" /usr/local/sbin/polaris-update-linux
   root_copy 0644 "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
+  # A minimal RHEL 9 host has no polkit at all: the rule below is then read by
+  # nothing, and every start/restart the in-app updater asks systemd for is
+  # Access denied.
+  rpm -q polkit >/dev/null 2>&1 || dnf install -y polkit || warn "Could not install polkit: the in-app updater can restart only the web role"
   mkdir -p /etc/polkit-1/rules.d
   root_copy 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
   systemctl daemon-reload
@@ -862,6 +920,9 @@ systemctl enable polaris.target >/dev/null
 systemctl enable nginx >/dev/null
 
 info "Starting polaris.target (this brings up nginx first, then polaris-web + workers)..."
+# A re-run rewrote polaris.conf above, but starting an already-running nginx
+# (polaris.target pulls it in) is a no-op: reload it so the new config is live.
+if systemctl is-active -q nginx; then systemctl reload nginx || warn "nginx reload failed: journalctl -u nginx"; fi
 systemctl start polaris.target
 
 # ─── 13. Smoke checks ──────────────────────────────────────────────────────
@@ -881,7 +942,8 @@ else
   warn "✗ nginx UDP listener on :443 not detected"
   SMOKE_FAILED=1
 fi
-if ss -ltnp 2>/dev/null | grep -qE '127\\.0\\.0\\.1:3000.*node'; then
+# Address only: `ss -p` names node's listening thread (MainThread), not node.
+if ss -ltn 2>/dev/null | grep -qF '127.0.0.1:3000 '; then
   info "✓ Polaris web bound to 127.0.0.1:3000 (proxy mode)"
 else
   warn "✗ Polaris web not bound to 127.0.0.1:3000 — check journalctl -u polaris-web"

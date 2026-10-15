@@ -85,7 +85,7 @@ function statement(opener,    name) {
     nt = 0; return
   }
   if (quoted[1]) refuse("a quoted directive name")
-  if (!(name in allowed)) refuse("directive "" name "" is not one Polaris writes")
+  if (!(name in allowed)) refuse("directive \"" name "\" is not one Polaris writes")
   if (name == "ssl_certificate" && !(nt == 2 && tok[2] == "/etc/polaris-nginx/cert.pem"))
     refuse("ssl_certificate must be /etc/polaris-nginx/cert.pem")
   if (name == "ssl_certificate_key" && !(nt == 2 && tok[2] == "/etc/polaris-nginx/key.pem"))
@@ -95,11 +95,11 @@ function statement(opener,    name) {
   if (opener) {
     if (name == "server" || name == "map") { if (depth != 0) refuse(name " must be at the top level") }
     else if (name == "location") { if (depth < 1) refuse("location outside a server") }
-    else refuse(""" name "" cannot open a block")
+    else refuse("\"" name "\" cannot open a block")
     depth++
     if (name == "map") { inmap = 1; mapdepth = depth }
   } else if (name == "server" || name == "location" || name == "map") {
-    refuse(""" name "" without a block")
+    refuse("\"" name "\" without a block")
   }
   nt = 0
 }

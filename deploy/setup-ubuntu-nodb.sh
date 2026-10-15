@@ -33,6 +33,17 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
+# node_ok — an installed Node that meets the project floor: 24+, or 22.12+
+# (package.json engines ">=22.12.0"; Prisma's preinstall refuses anything
+# older, so an accepted v22.4 failed `npm ci` halfway through the install —
+# found on a RHEL 9.5 VM, whose DVD carries 22.4). Lockstep with engines.node.
+node_ok() {
+  local v
+  v="$(node -v 2>/dev/null)" || return 1
+  [[ "$v" =~ ^v([0-9]+)\.([0-9]+) ]] || return 1
+  (( BASH_REMATCH[1] >= 24 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 12) ))
+}
+
 # ─── Root-owned files on a re-run (business rule 117(k)/(l)) ─────────────────
 #
 # On a fresh install root itself clones the tree moments before using it. On a
@@ -200,7 +211,7 @@ apt-get update -qq
 # 22.12 is the hard floor (pg-boss declares >=22.12.0, @prisma/streams-local
 # >=22) and v20 went EOL in April 2026. An existing v22 is accepted; v20 and
 # below are replaced.
-if command -v node &>/dev/null && [[ "$(node -v)" == v24* || "$(node -v)" == v22* ]]; then
+if node_ok; then
   info "Node.js $(node -v) already installed"
 else
   info "Installing Node.js 24 via NodeSource..."
@@ -319,6 +330,11 @@ else
 fi
 
 # ─── 4b. Bootstrap Polaris Agent build directories ──────────────────────────
+# data/ itself must be polaris-owned too: the app creates data/backups and
+# friends at boot, and a re-run (or this step running before the clone)
+# would otherwise leave it root:root and polaris-web exits on EACCES.
+mkdir -p "$APP_DIR/data"
+chown "$APP_USER:$APP_GROUP" "$APP_DIR/data"
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 # The firmware repository (Server Settings → Repository) stores switch / AP / FortiGate
@@ -677,7 +693,19 @@ systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || 
 # helpers and restarts polaris.target — and a polkit rule letting $APP_USER
 # start THAT unit and restart the polaris units, nothing else.
 root_copy 0755 "$APP_DIR/deploy/scripts/polaris-update-sync.sh" /usr/local/sbin/polaris-update-sync
+# The manual updater an administrator runs is a reviewed root copy too
+# (business rule 117(n)); without it the docs' `sudo /usr/local/sbin/polaris-update-linux`
+# would not exist until the first update offered it.
+root_copy 0755 "$APP_DIR/deploy/update-linux.sh" /usr/local/sbin/polaris-update-linux
 root_copy 0644 "$APP_DIR/deploy/polaris-update-sync.service" /etc/systemd/system/polaris-update-sync.service
+# A minimal server has no polkit daemon: the rule below is then read by
+# nothing, and every start/restart the in-app updater asks systemd for is
+# Access denied. polkit 0.105 (Ubuntu 22.04) has a daemon but reads no
+# JavaScript rules at all.
+dpkg -s polkitd >/dev/null 2>&1 || apt-get install -y polkitd || warn "Could not install polkitd: the in-app updater can restart only the web role"
+if [[ "$(dpkg-query -W -f='${Version}' polkitd 2>/dev/null)" == 0.105* ]]; then
+  warn "polkit 0.105 ignores /etc/polkit-1/rules.d: the in-app updater can restart only the web role (Ubuntu 24.04 ships a polkit that reads it)"
+fi
 mkdir -p /etc/polkit-1/rules.d
 root_copy 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
 systemctl daemon-reload
@@ -706,6 +734,9 @@ for ((i=1; i<=MONITOR_REPLICAS; i++)); do
 done
 systemctl enable polaris-web.service polaris-discovery.service polaris-dash.service polaris-migrate.service polaris.target nginx >/dev/null
 info "Starting polaris.target..."
+# A re-run rewrote polaris.conf above, but starting an already-running nginx
+# (polaris.target pulls it in) is a no-op: reload it so the new config is live.
+if systemctl is-active -q nginx; then systemctl reload nginx || warn "nginx reload failed: journalctl -u nginx"; fi
 systemctl start polaris.target
 
 sleep 5

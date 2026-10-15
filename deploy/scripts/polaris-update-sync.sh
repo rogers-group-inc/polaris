@@ -237,7 +237,11 @@ root_helper() {   # root_helper <src> <dest> <mode> [validator [arg]]
   if [[ -f "$2" ]]; then diff -u "$2" "$snap" | head -n 400; else echo "(not installed yet)"; head -n 200 "$snap"; fi
   local yes=$ASSUME_YES ans=""
   if [[ $yes -eq 0 ]]; then
-    read -r -p "Install $2? [y/N] " ans </dev/tty || ans=""
+    if { : </dev/tty; } 2>/dev/null; then
+      read -r -p "Install $2? [y/N] " ans </dev/tty || ans=""
+    else
+      echo "No terminal to ask on: not installing $2 (review it from a shell, or pass --yes)"
+    fi
     [[ "$ans" == [yY]* ]] && yes=1
   fi
   if [[ $yes -eq 1 ]]; then
