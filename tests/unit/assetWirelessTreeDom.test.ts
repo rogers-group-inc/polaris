@@ -62,7 +62,7 @@ const FN_NAMES = [
   "_wirelessBandLabel",
   "_renderWirelessStationsCard",
   "_renderWirelessFlatTable",
-  // The cadence · freshness · Refresh strip every branch of the tab renders.
+  // The cadence · freshness · Poll strip every branch of the tab renders.
   "_formatPollingInterval",
   "_cadenceChipHTML",
   "_freshnessStampHTML",
@@ -342,7 +342,7 @@ describe("Wireless filter box", () => {
     const box = type("nothing-here");
     expect(container.querySelector("#asset-wireless-filter")).toBe(box);
     expect(container.textContent).toContain("No radios, SSIDs or clients match that filter.");
-    // A Refresh re-renders the card: the filter comes back with it.
+    // A Poll re-renders the card: the filter comes back with it.
     g._renderWirelessStationsCard(container, { apRadios: makeRadios(), wirelessStations: STATIONS }, ASSET);
     expect((container.querySelector("#asset-wireless-filter") as HTMLInputElement).value).toBe("nothing-here");
   });
@@ -358,7 +358,7 @@ describe("Wireless filter box", () => {
   });
 });
 
-// ─── Cadence · freshness · Refresh strip ───────────────────────────────────
+// ─── Cadence · freshness · Poll strip ──────────────────────────────────────
 //
 // The three snapshot tabs (Wireless here, MAC Table and ARP Table elsewhere)
 // share this strip. What is pinned is the part a reader has no other way to
@@ -403,16 +403,16 @@ describe("_freshnessStampHTML", () => {
 });
 
 describe("_currentStateStripHTML", () => {
-  it("offers Refresh to an operator holding assetsProbe", () => {
+  it("offers Poll to an operator holding assetsProbe", () => {
     g.canProbeAssets = () => true;
     const html = g._currentStateStripHTML({ title: "Wireless", refreshId: "r1", lastAt: null, cadenceSec: 60 });
     expect(html).toContain('id="r1"');
-    expect(html).toContain("Refresh");
+    expect(html).toContain(">Poll</button>");
   });
 
   // The button dials the device, so it mirrors the route's assetsProbe gate —
   // rendering it for a reader who would get a 403 is the failure mode.
-  it("omits Refresh without that grant", () => {
+  it("omits Poll without that grant", () => {
     g.canProbeAssets = () => false;
     const html = g._currentStateStripHTML({ title: "Wireless", refreshId: "r1", lastAt: null, cadenceSec: 60 });
     expect(html).not.toContain('id="r1"');
@@ -424,7 +424,7 @@ describe("Wireless tab strip", () => {
   const fresh = () => new Date(Date.now() - 10 * 1000).toISOString();
   const overdue = () => new Date(Date.now() - 600 * 1000).toISOString();
 
-  it("carries the cadence, the age and Refresh on the radio tree", () => {
+  it("carries the cadence, the age and Poll on the radio tree", () => {
     g._renderWirelessStationsCard(container, {
       apRadios: makeRadios(), wirelessStations: [], lastSystemInfoAt: fresh(),
     }, ASSET);
