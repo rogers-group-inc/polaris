@@ -573,6 +573,7 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
       + buildNavbar();
     wireSearchbar();
     wireNavbar();
+    if (window.PolarisTabs && PolarisTabs.installListFade) PolarisTabs.installListFade(document.getElementById("app-body"));
   }
 
   // The searchbar. Hidden until search is opened: every page's top bar carries

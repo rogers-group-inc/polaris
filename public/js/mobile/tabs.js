@@ -723,6 +723,54 @@
     sheet.classList.toggle("scrolled", sheet.scrollTop > 0);
   }
 
+  // ─── List fade under the pinned header ─────────────────────────────────
+  // On a page with a .list-sticky-head (Assets, Alerts, Networks) the list
+  // scrolls up under that block AND under the top bar (mobile.css pulls the
+  // body up beneath #topbar-slot), and fades out as it goes: opaque at the
+  // pinned block's bottom edge, fully transparent at the top of the body. The
+  // fade is a mask on each list element after the head; a mask scrolls with
+  // its element, so the two stops are re-placed in the element's own
+  // coordinates on every scroll frame (--fade-from / --fade-to). Unset, both
+  // are 0px — fully opaque, which is right at scrollTop 0, so a fresh render
+  // needs no call. Installed once on #app-body (app.js renderShell); a page
+  // with no sticky head finds nothing and does nothing.
+  var FADE_LEAD_PX = 24;
+  function installListFade(scrollEl) {
+    if (!scrollEl || scrollEl.__listFadeWired) return;
+    scrollEl.__listFadeWired = true;
+    var queued = false;
+    function update() {
+      queued = false;
+      var head = null;
+      for (var i = 0; i < scrollEl.children.length; i++) {
+        if (scrollEl.children[i].classList.contains("list-sticky-head")) { head = scrollEl.children[i]; break; }
+      }
+      if (!head) return;
+      var top = scrollEl.getBoundingClientRect().top;
+      // The fade starts a little BELOW the block's edge, so a card softens as
+      // it tucks under instead of meeting the chips at full strength — but
+      // only as far as the list has scrolled, so nothing is faded at rest.
+      var headBottom = head.getBoundingClientRect().bottom + Math.min(FADE_LEAD_PX, scrollEl.scrollTop);
+      var lists = [];
+      for (var el = head.nextElementSibling; el; el = el.nextElementSibling) {
+        if (el.classList.contains("ptr-indicator")) continue;
+        lists.push({ el: el, top: el.getBoundingClientRect().top });
+      }
+      // Reads above, writes below — one layout per frame.
+      lists.forEach(function (l) {
+        l.el.style.setProperty("--fade-from", Math.round(top - l.top) + "px");
+        l.el.style.setProperty("--fade-to", Math.round(headBottom - l.top) + "px");
+      });
+    }
+    function queue() {
+      if (queued) return;
+      queued = true;
+      (window.requestAnimationFrame || setTimeout)(update);
+    }
+    scrollEl.addEventListener("scroll", queue, { passive: true });
+    window.addEventListener("resize", queue);
+  }
+
   // ─── Pull-to-refresh ───────────────────────────────────────────────────
   // Touch-pull on a scrollable element (typically #app-body) to trigger an
   // async refresh. MD3-style: only the indicator puck moves; body content
@@ -875,5 +923,6 @@
     attachSwipeToDismiss: attachSwipeToDismiss,
     pinSheetHead: pinSheetHead,
     installPullRefresh: installPullRefresh,
+    installListFade: installListFade,
   };
 })();

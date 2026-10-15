@@ -99,7 +99,9 @@ again to drop it, or tap **Any** to clear them all.
 
 On **Alerts**, **Assets** and **Networks** the controls above the list (the
 severity counts, Assets' tab row, the filter field, the sort chip and the chips)
-stay at the top while the list scrolls under them. Every sheet that slides up
+stay at the top while the list scrolls under them. The list passes under the
+page's title bar as well, and fades out as it goes, so the title bar and the
+controls read as one frosted band. Every sheet that slides up
 does the same with its header: its title and its **close** button (and, on a
 device, the screenshot and refresh buttons) stay at the top however far down
 you scroll.

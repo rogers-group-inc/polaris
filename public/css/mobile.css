@@ -2845,6 +2845,31 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
 }
+/* On those pages the top bar is the same glass as the pinned block: the body
+   is pulled UP beneath #topbar-slot (the navbar's trick, top edge), so the
+   list scrolls under the bar as well as the block, and the block pins just
+   below the bar. Without this the bar had nothing behind it but the page
+   glow, and read as solid next to the block's frosted cards. Scoped to pages
+   with a pinned block, so the map, chat, detail and More screens keep their
+   layout. The block keeps `top: 0`: a sticky box pins inside the scroller's
+   PADDING, so the padding-top alone holds it under the bar (a `top` equal to
+   the bar's height pinned it a whole bar lower). The PTR puck is absolutely
+   placed, which padding does not move, so it drops by the bar explicitly. */
+.app:has(> .app-body > .list-sticky-head) > #topbar-slot {
+  position: relative;
+  z-index: 6;
+  margin-bottom: calc(-1 * var(--topbar-h));
+}
+.app:has(> .app-body > .list-sticky-head) > .app-body { padding-top: var(--topbar-h); }
+.app:has(> .app-body > .list-sticky-head) .ptr-indicator { top: calc(var(--topbar-h) + 8px); }
+/* The list fades out as it goes under the block and the bar: opaque at the
+   block's bottom edge, transparent at the top of the screen. The two stops are
+   placed per scroll frame by PolarisTabs.installListFade (tabs.js); unset they
+   are both 0, which masks nothing. */
+.app-body > .list-sticky-head ~ :not(.ptr-indicator) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px));
+  mask-image: linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px));
+}
 
 /* Alerts tab severity breakdown: one tile per severity with something in it,
    sharing the row evenly (five fit at 320px). Each tile is a toggle on the
