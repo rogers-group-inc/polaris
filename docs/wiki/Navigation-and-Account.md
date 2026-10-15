@@ -77,6 +77,9 @@ asset hits.
 An asset hit carries a **coloured dot** when it has a live alert, before the
 monitor pill — the alert is the reason to look, the monitor state is the
 detail, and a device can carry both since an alerting device is often up.
+The monitor pill reads exactly as the Assets list's Status column does: a
+device in a maintenance window shows **Maintenance**, not whatever its last
+probe said before polling paused.
 
 ### The theme band
 
