@@ -657,6 +657,13 @@ var _rulesPage = 1;
             renderRules();
             _saveRulesPrefs();
           },
+        }, {
+          // Right of Clear on this tab; the header's Refresh (which reloads
+          // whichever tab is open) hides while this one shows.
+          label: "Refresh",
+          className: "btn-glyph btn-glyph-refresh",
+          title: "Reload the automations",
+          onClick: function () { loadRules(); },
         }],
       });
   }

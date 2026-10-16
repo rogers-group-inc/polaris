@@ -2454,6 +2454,7 @@ function renderUserBadge() {
   badge.title = currentUsername + ' (' + roleLabel + ')';
   badge.addEventListener("click", function () { openUserMenu(badge); });
   header.appendChild(badge);
+  if (typeof _renderHelpButton === "function") _renderHelpButton(header, badge);
 }
 
 // The operator documentation, on the upstream project's GitHub wiki. It is a
@@ -2463,6 +2464,60 @@ function renderUserBadge() {
 // lives in this repo under docs/wiki/ and is published from there; a fork
 // serving its own documentation changes this one constant.
 var WIKI_URL = "https://github.com/rogers-group-inc/polaris/wiki";
+
+// Which wiki page documents the page the operator is on: the page file, then
+// (for a tabbed page) the open tab, falling back to the wiki's Home. Page
+// names are docs/wiki/*.md without the extension — a renamed wiki page must
+// be renamed here too (check:wiki does not see this table).
+var WIKI_PAGE_FOR = {
+  "index": "Dashboard", "": "Dashboard",
+  "ipam": "IPAM", "blocks": "IPAM", "subnets": "IPAM",
+  "assets": "Assets",
+  "map": "Device-Map",
+  "appmap": "Application-Map",
+  "path-monitor": "Path-Monitor",
+  "events": "Events",
+  "automations": "Automations",
+  "integrations": "Integrations",
+  "users": "Users-Roles-and-Permissions",
+  "server-settings": "Server-Settings",
+};
+var WIKI_PAGE_FOR_TAB = {
+  "automations": { delivery: "Delivery-Channels", scripts: "Automation-Scripts", contacts: "Address-Book" },
+  "events": { calendar: "Maintenance-Windows" },
+  "integrations": { agents: "Polaris-Agent" },
+};
+
+function _currentWikiPage() {
+  var file = (location.pathname.split("/").pop() || "").replace(/\.html$/, "");
+  var tabs = WIKI_PAGE_FOR_TAB[file];
+  if (tabs) {
+    var active = document.querySelector(".table-head-row .page-tab.active");
+    var key = active && active.getAttribute("data-tab");
+    if (key && tabs[key]) return tabs[key];
+  }
+  return WIKI_PAGE_FOR[file] || "";
+}
+
+// The Help button, left of the account badge: the wiki page for this page
+// (and tab), in a new tab. It always renders — the wiki documents every page,
+// and a reader who cannot find a feature is exactly who needs it.
+function _renderHelpButton(header, badge) {
+  var old = header.querySelector(".page-help-btn");
+  if (old) old.remove();
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-secondary btn-icon-only page-help-btn";
+  btn.title = "Help for this page (opens the Polaris wiki in a new tab)";
+  btn.innerHTML = ICONS.help + "Help";
+  btn.addEventListener("click", function () {
+    var page = _currentWikiPage();
+    // noopener: the wiki is a third-party origin and must not get a handle on
+    // this window.
+    window.open(WIKI_URL + (page ? "/" + page : ""), "_blank", "noopener");
+  });
+  header.insertBefore(btn, badge);
+}
 
 /**
  * The account menu behind the page-header user badge: notification
@@ -2497,25 +2552,12 @@ function openUserMenu(anchor) {
   var passkeys = _passkeyMenuItem();
   if (passkeys) items.push(passkeys);
 
-  // Help sits between the account's own settings and Logout, in its own group:
-  // it is neither a preference nor the way out. It always renders — the wiki
-  // documents every page, including the ones this account cannot open, and a
-  // reader who cannot find a feature is exactly who needs it.
-  if (items.length) items.push({ separator: true });
-  items.push({
-    label: "Help",
-    icon: ICONS.help,
-    title: "Open the Polaris wiki on GitHub (new tab)",
-    onSelect: function () {
-      // noopener: the wiki is a third-party origin and must not get a handle
-      // on this window.
-      window.open(WIKI_URL, "_blank", "noopener");
-    },
-  });
+  // Help is no longer here: it is its own button left of this badge
+  // (_renderHelpButton), opening the wiki page for the page it is on.
 
-  // Only separate Logout from something — with no preference or 2FA row the menu is
-  // Logout alone, and a leading rule would be a divider above nothing.
-  items.push({ separator: true });
+  // Only separate Logout from something — with no preference or 2FA row the
+  // menu is Logout alone, and a leading rule would be a divider above nothing.
+  if (items.length) items.push({ separator: true });
   items.push({
     label: "Logout",
     icon: ICONS.logout,

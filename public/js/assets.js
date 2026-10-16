@@ -1734,15 +1734,9 @@ function _renderAssetsPageControls() {
     _saveAssetsPrefs();
   }, {
     // The top row shares a line with the view tabs (.table-head-row), so it
-    // carries only Refresh / Clear Filters / Show N — page buttons are below.
+    // carries only Clear / Refresh / Show N — page buttons are below.
     topNav: false,
     actionButtons: [
-      {
-        label: "Refresh",
-        className: "btn-glyph btn-glyph-refresh",
-        title: "Refresh",
-        onClick: loadAssets,
-      },
       {
         label: _base ? "Reset Filter" : "Clear",
         title: _base
@@ -1758,6 +1752,12 @@ function _renderAssetsPageControls() {
           if (_assetsSF) _assetsSF.clearFilters();
           assetsApplyFilterState();
         },
+      },
+      {
+        label: "Refresh",
+        className: "btn-glyph btn-glyph-refresh",
+        title: "Refresh",
+        onClick: loadAssets,
       },
     ],
   });

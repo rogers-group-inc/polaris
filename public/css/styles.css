@@ -2138,9 +2138,12 @@ html[data-page-top-curtain]::after {
   border-radius: var(--radius-md);
   transition: background 0.12s;
 }
+/* No box behind it on hover or while open: it painted --color-bg-secondary,
+   a near-black block on the dark family that boxed the name in. The name
+   brightening and the caret lighting up are the feedback. */
 .user-menu-trigger:hover,
 .user-menu-trigger[aria-expanded="true"] {
-  background: var(--color-bg-secondary);
+  background: none;
 }
 .user-menu-trigger:hover .user-badge-name,
 .user-menu-trigger[aria-expanded="true"] .user-badge-name {
@@ -2655,6 +2658,10 @@ html[data-page-top-curtain]::after {
 }
 /* A head row with no tab strip (Path Monitor) keeps its controls on the right. */
 .table-head-row > .table-head-controls:first-child { margin-left: auto; }
+/* Automations: on the Automations tab, Refresh is the list row's own (right of
+   Clear); the header-cluster Refresh — which reloads whichever tab is open —
+   serves the other tabs. */
+.main:has(#auto-tab-manage.active) #btn-refresh { display: none; }
 /* !important: renderPageControls stamps an inline display on its -top row. */
 .table-head-row .head-off { display: none !important; }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab) {
@@ -3203,6 +3210,23 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   transition: color 0.15s, background 0.15s;
 }
 .table-tab-add:hover { color: var(--color-accent); background: var(--rail-glass-bg); }
+/* On a folder tab row the + is a little tab of its own: an inactive tab's
+   shape and seat (rounded top, open bottom, sitting behind the card's edge),
+   narrower and a touch shorter, so it reads as "one more tab". */
+.table-head-row.folder-head-card .table-tab-add {
+  align-self: flex-end;
+  margin-bottom: 0;
+  padding: 0.25rem 0.6rem 0.2rem;
+  font-size: 1rem;
+  line-height: 1.2;
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--color-bg-tertiary) 14%, transparent);
+  border: 1px solid var(--color-border);
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  opacity: 0.85;
+}
+.table-head-row.folder-head-card .table-tab-add:hover { opacity: 1; color: var(--color-accent); background: var(--rail-glass-bg); }
 
 /* ─── Named-preset menu (Assets → Filters ▾, Dashboard → Dashboards ▾) ─────
    A dropdown whose list rows carry a trailing delete button, so each row is a

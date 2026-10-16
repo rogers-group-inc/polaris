@@ -132,7 +132,7 @@ describe("renderAssetsPage — zero rows", () => {
     g.renderAssetsPage();
 
     const buttons = calls[0]!.opts?.actionButtons ?? [];
-    expect(buttons.map((b) => b.label)).toEqual(["Refresh", "Clear"]);
+    expect(buttons.map((b) => b.label)).toEqual(["Clear", "Refresh"]);
 
     buttons.find((b) => b.label === "Clear")!.onClick();
     expect(clearedFilters).toBe(1);
@@ -194,11 +194,11 @@ describe("Clear Filters vs Reset Filter", () => {
     g._renderAssetsPageControls();
 
     const buttons = calls[0]!.opts?.actionButtons ?? [];
-    expect(buttons.map((b) => b.label)).toEqual(["Refresh", "Reset Filter"]);
+    expect(buttons.map((b) => b.label)).toEqual(["Reset Filter", "Refresh"]);
     // The base is named where the operator can find it — the label can't be.
-    expect((buttons[1] as unknown as { title: string }).title).toContain("Down switches");
+    expect((buttons[0] as unknown as { title: string }).title).toContain("Down switches");
 
-    buttons[1]!.onClick();
+    buttons[0]!.onClick();
     expect(resets).toBe(1);
     // Reset REPLACES the clear — clearing as well would drop the base's own
     // filters and land on the unfiltered table.
@@ -210,8 +210,8 @@ describe("Clear Filters vs Reset Filter", () => {
     activeBase = null;
     g._renderAssetsPageControls();
     const buttons = calls[0]!.opts?.actionButtons ?? [];
-    expect(buttons.map((b) => b.label)).toEqual(["Refresh", "Clear"]);
-    buttons[1]!.onClick();
+    expect(buttons.map((b) => b.label)).toEqual(["Clear", "Refresh"]);
+    buttons[0]!.onClick();
     expect(clearedFilters).toBe(1);
     expect(resets).toBe(0);
   });
