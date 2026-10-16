@@ -170,11 +170,21 @@ already shows exactly the sites you may read.
 Opens from a site. A Cytoscape graph of the gates, switches and APs at that
 site, with a column solver for layout and a dagre fallback. The gate sits at
 the left and each switch one column further right than its uplink; a
-switch's APs stack directly beneath it in the column to its right, and a
-link that leaves a switch for a child switch on another row runs along the
-switch's row, turns in the gap between columns and runs along the child's
-row, so lines travel the gutters instead of cutting across other devices.
-Drag anything to override the layout; the positions are saved per site.
+switch's APs stack beneath it in the column to its right. A link that leaves
+a switch for a child switch on another row turns up or down right next to the
+switch and runs along the child's row, so it never shares a line with the
+switch's straight link to the next switch along, and lines travel the gutters
+instead of cutting across other devices. Its port label sits on the upright
+part of the bend. Drag anything to override the layout; the positions are
+saved per site.
+
+On the light themes (morning and noon) the links and location boxes are drawn
+in darker shades of the same colours, so they stay readable on the pale
+background; the legend matches the theme you are using.
+
+With **Locations** on, the details pane lists the switches and APs in the same
+nesting as the location boxes (area › building › floor › room › junction box),
+under a heading per group, with devices that have no location last.
 
 | Control | |
 |---|---|

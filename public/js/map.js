@@ -131,6 +131,12 @@
           // at render time rather than reactively — so an open modal has to be
           // re-rendered here or it keeps the palette of the theme it opened in.
           repaintOpenTopology();
+          // The legend's link and box swatches are per family too.
+          var legendBody = document.getElementById("topology-legend-body");
+          if (legendBody && legendBody.dataset.rendered) {
+            delete legendBody.dataset.rendered;
+            renderTopologyLegend();
+          }
           break;
         }
       }
@@ -937,9 +943,14 @@
     var titleEl = document.getElementById("topology-title");
     var site = titleEl ? (titleEl.textContent || "").trim() : "";
     var spec = R.topologyLegendSpec();
+    // Links export through the daylight stylesheet below, so their key rows
+    // take the light shades whatever theme is on screen. Location boxes keep
+    // the on-screen family: their colours are per-node bypasses the export
+    // reads as painted.
+    var lightSpec = R.topologyLegendSpec("light");
     var keyItems = [];
     spec.health.forEach(function (h) { keyItems.push({ kind: "dot", color: h.color, fill: h.color, text: h.label }); });
-    spec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
+    lightSpec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
     spec.locations.forEach(function (l) { keyItems.push({ kind: "box", color: l.color, dashed: l.style === "dashed", text: l.label }); });
     var meta = [];
     var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal"); }).length : 0;
@@ -2298,7 +2309,8 @@
       // to its leaves) route orthogonally through the gutter instead of
       // slicing diagonally across the AP column between them — geometry the
       // solver reserved cells for. Stamped from the grid, so it holds under
-      // saved positions and drags too (the turn is a fixed 1.5 columns).
+      // saved positions and drags too (the turn is a fixed half column out
+      // from the shallow end, so it never shares the spine link's row).
       window.PolarisTopologyRender.markFanOutEdges(cyInstance, columns, {
         colSpacing: TOPO_COL_SPACING,
         orientation: "horizontal",
@@ -2839,6 +2851,8 @@
             });
           }
         }
+        // The side panel's switch / AP lists follow the boxes' grouping.
+        if (topoState.data) renderTopologyInfo(topoState.data);
         locChip.className = "topology-type-chip" + (next ? "" : " is-off");
         locChip.setAttribute("aria-pressed", next ? "true" : "false");
         locChip.title = (next ? "Hide" : "Show") + " location groups (saved per user)";
@@ -3016,9 +3030,18 @@
       parts.push('<div class="detail-row"><span class="label">Coords</span>' + copyableValue(coordsText) + '</div>');
     }
 
+    // With the location boxes on, the switch and AP lists follow the boxes'
+    // nesting — area › building › floor › room › junction box — under one
+    // heading row per group, so the list reads in the same order as the graph.
+    var byLocation = topoState.hasLocationCodes && _readShowLocations();
+    var groupHeadingAt = byLocation ? _topologyLocationHeadings : function () { return null; };
+
     if ((data.switches || []).length > 0) {
+      var switchList = byLocation ? _sortByLocationGroups(data.switches) : data.switches;
       parts.push('<div class="topology-section"><h5>FortiSwitches (' + data.switches.length + ')</h5><ul>');
-      data.switches.forEach(function (s) {
+      switchList.forEach(function (s, si) {
+        var swHeading = groupHeadingAt(switchList, si);
+        if (swHeading) parts.push(swHeading);
         var endpointCount = s.endpointCount || 0;
         var endpoints = s.endpoints || [];
         parts.push(
@@ -3051,8 +3074,11 @@
       parts.push('</ul></div>');
     }
     if ((data.aps || []).length > 0) {
+      var apList = byLocation ? _sortByLocationGroups(data.aps) : data.aps;
       parts.push('<div class="topology-section"><h5>FortiAPs (' + data.aps.length + ')</h5><ul>');
-      data.aps.forEach(function (a) {
+      apList.forEach(function (a, ai) {
+        var apHeading = groupHeadingAt(apList, ai);
+        if (apHeading) parts.push(apHeading);
         var meta = a.peerSwitch ? (a.peerSwitch + "/" + (a.peerPort || "?")) : "direct";
         parts.push(
           '<li><a href="/assets.html#asset=' + encodeURIComponent(a.id) + '">' + escapeHtml(a.hostname || "(unnamed)") + '</a>' +
@@ -3121,6 +3147,56 @@
     var infoEl = document.getElementById("topology-info");
     infoEl.innerHTML = parts.join("");
     _wireCopyableValues(infoEl);
+  }
+
+  // The location tiers in nesting order — the same chain the grouping boxes
+  // nest by (topology-render.js locationData).
+  var _TOPO_LOC_TIERS = ["area", "building", "floor", "room", "junctionBox"];
+  function _topoLocKey(value) {
+    return String(value).replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  // Group path of one device: the tier keys it carries, outermost first.
+  function _topoLocPath(item) {
+    var loc = (item && item.location) || {};
+    var path = [];
+    _TOPO_LOC_TIERS.forEach(function (t) {
+      if (loc[t]) path.push({ tier: t, key: _topoLocKey(loc[t]), name: String(loc[t]) });
+    });
+    return path;
+  }
+  // Stable sort by group path, tier by tier (a device stops at its innermost
+  // tier, so it lists ahead of the groups nested inside it), devices with no
+  // location last, then by hostname. Names compare numerically, so Floor 2
+  // comes before Floor 10.
+  function _sortByLocationGroups(items) {
+    function cmpText(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }); }
+    return items
+      .map(function (item, i) { return { item: item, path: _topoLocPath(item), i: i }; })
+      .sort(function (x, y) {
+        if (!x.path.length !== !y.path.length) return x.path.length ? -1 : 1;
+        for (var k = 0; k < Math.min(x.path.length, y.path.length); k++) {
+          var tx = _TOPO_LOC_TIERS.indexOf(x.path[k].tier);
+          var ty = _TOPO_LOC_TIERS.indexOf(y.path[k].tier);
+          if (tx !== ty) return tx - ty;
+          var c = cmpText(x.path[k].key, y.path[k].key);
+          if (c) return c;
+        }
+        if (x.path.length !== y.path.length) return x.path.length - y.path.length;
+        var h = cmpText(x.item.hostname || "", y.item.hostname || "");
+        return h || x.i - y.i;
+      })
+      .map(function (w) { return w.item; });
+  }
+  // A heading row for items[i] when it opens a new group (its path differs
+  // from the previous item's), or null.
+  function _topologyLocationHeadings(items, i) {
+    function sig(item) { return _topoLocPath(item).map(function (p) { return p.tier + ":" + p.key; }).join("|"); }
+    if (i > 0 && sig(items[i]) === sig(items[i - 1])) return null;
+    var path = _topoLocPath(items[i]);
+    var label = path.length
+      ? path.map(function (p) { return escapeHtml(p.name); }).join(' <span class="sep">›</span> ')
+      : "No location";
+    return '<li class="topology-loc-group' + (path.length ? "" : " is-none") + '">' + label + '</li>';
   }
 
   // Renders a value cell with a click-to-copy affordance. Falls back to a
