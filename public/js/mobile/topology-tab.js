@@ -349,6 +349,8 @@
         orientation: "vertical",
       });
     }
+    // Port labels on bent links sit on their end legs (see topology-render.js).
+    window.PolarisTopologyRender.wireBentEdgeLabels(_cy);
     _cy.layout(layoutConfig).run();
   }
 

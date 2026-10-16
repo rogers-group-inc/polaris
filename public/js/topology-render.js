@@ -1650,6 +1650,250 @@
     return TOPOLOGY_NODE_WEIGHT[role] != null ? TOPOLOGY_NODE_WEIGHT[role] : 4;
   }
 
+  // ── Labels on bent links ───────────────────────────────────────────────
+  // Cytoscape centres an edge label on the path's midpoint, which on a taxi
+  // or routed (segments) link lands on a middle leg far from both devices.
+  // Operator rules (2026-10-16):
+  //   • ONE bend → the port label sits halfway along the second leg (the leg
+  //     into the target);
+  //   • two or more bends → halfway along the FIRST leg and again halfway
+  //     along the LAST leg, so each end's ports read next to that end;
+  //   • never on a stretch where several links run together — a label there
+  //     can't say which line it belongs to. The label moves to the middle of
+  //     the longest part of its leg no other link shares; a leg shared end
+  //     to end hands the label to the next leg inward; a link with nothing
+  //     unshared shows no label.
+  // Straight links keep the midpoint unless the midpoint is on a shared
+  // stretch. Curved (bezier with control points — parallel links between one
+  // pair) are left alone: they bow apart, so they never run together.
+  // Done with per-edge bypasses: text-margin-x/y shift the main label from
+  // the midpoint (Cytoscape adds the margin BEFORE rotating, about the shifted
+  // point) and text-rotation lays it along its leg (autorotate would follow
+  // the midpoint's leg); the second copy is a target-label offset along the
+  // path back from the target, autorotated. A hidden label is `label: ""`.
+  // The PDF / Visio export reads the shifted main label (it applies
+  // text-margin) and prints it horizontally; it does not draw target-label
+  // copies.
+  var BENT_LABEL_PROPS = "label text-margin-x text-margin-y text-rotation target-label target-text-offset target-text-rotation";
+  var SHARED_TOL = 3;       // px: lines this close and parallel read as one
+  var MIN_LABEL_RUN = 24;   // px: shortest unshared stretch a label is put on
+
+  // The drawn path of an edge as merged points: repeated points dropped and
+  // collinear runs merged (a taxi edge whose turn lands on an endpoint
+  // reports a zero-length leg, which is no bend). Null for a path we can't
+  // read or don't place (curved beziers).
+  function _edgePolyline(e) {
+    var src = e.sourceEndpoint(), tgt = e.targetEndpoint();
+    if (!src || !tgt || !isFinite(src.x) || !isFinite(tgt.x)) return null;
+    var cs = e.style("curve-style");
+    var seg = [];
+    if (cs === "taxi" || cs === "segments") {
+      seg = e.segmentPoints ? (e.segmentPoints() || []) : [];
+    } else if (cs === "bezier" || cs === "unbundled-bezier") {
+      var ctrl = e.controlPoints ? e.controlPoints() : null;
+      if (ctrl && ctrl.length) return null;
+    } else if (cs !== "straight") {
+      return null;
+    }
+    var pts = [];
+    [src].concat(seg, [tgt]).forEach(function (p) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+      var last = pts[pts.length - 1];
+      if (last && Math.abs(last.x - p.x) < 0.5 && Math.abs(last.y - p.y) < 0.5) return;
+      if (pts.length >= 2) {
+        var a = pts[pts.length - 2];
+        var cross = (last.x - a.x) * (p.y - a.y) - (last.y - a.y) * (p.x - a.x);
+        if (Math.abs(cross) < 0.5) { pts[pts.length - 1] = p; return; }
+      }
+      pts.push(p);
+    });
+    return pts.length >= 2 ? pts : null;
+  }
+  function _legsOf(pts) {
+    var legs = [];
+    for (var i = 0; i + 1 < pts.length; i++) {
+      var dx = pts[i + 1].x - pts[i].x, dy = pts[i + 1].y - pts[i].y;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      var axis = Math.abs(dy) < 0.5 ? "h" : (Math.abs(dx) < 0.5 ? "v" : null);
+      legs.push({ a: pts[i], b: pts[i + 1], len: len, dx: dx, dy: dy, axis: axis });
+    }
+    return legs;
+  }
+  // Leg angle normalised to (-90°, 90°] so text never reads upside down.
+  function _readableAngle(dx, dy) {
+    var ang = Math.atan2(dy, dx);
+    if (ang > Math.PI / 2) ang -= Math.PI;
+    else if (ang <= -Math.PI / 2) ang += Math.PI;
+    return ang;
+  }
+  // Index every axis-aligned leg by its line (y for horizontal, x for
+  // vertical) in SHARED_TOL buckets, so finding the legs that run along one
+  // is a few bucket reads instead of a pass over every edge — this runs once
+  // per animation frame while a node is dragged. Diagonal legs are not
+  // indexed: two diagonals almost never coincide in this layout.
+  function _legIndex(paths) {
+    var idx = { h: {}, v: {} };
+    paths.forEach(function (p) {
+      p.legs.forEach(function (l) {
+        if (!l.axis) return;
+        var line = l.axis === "h" ? l.a.y : l.a.x;
+        var lo = l.axis === "h" ? Math.min(l.a.x, l.b.x) : Math.min(l.a.y, l.b.y);
+        var hi = l.axis === "h" ? Math.max(l.a.x, l.b.x) : Math.max(l.a.y, l.b.y);
+        var k = Math.round(line / SHARED_TOL);
+        (idx[l.axis][k] = idx[l.axis][k] || []).push({ id: p.id, line: line, lo: lo, hi: hi });
+      });
+    });
+    return idx;
+  }
+  // The longest stretch of `leg` no OTHER edge runs along, as [t0, t1]
+  // distances from leg.a, or null when none is MIN_LABEL_RUN long.
+  function _freeRun(leg, id, idx) {
+    if (leg.len < MIN_LABEL_RUN) return null;
+    if (!leg.axis) return [0, leg.len];
+    var line = leg.axis === "h" ? leg.a.y : leg.a.x;
+    var start = leg.axis === "h" ? leg.a.x : leg.a.y;
+    var dir = (leg.axis === "h" ? leg.dx : leg.dy) >= 0 ? 1 : -1;
+    var k = Math.round(line / SHARED_TOL);
+    var cover = [];
+    for (var b = k - 1; b <= k + 1; b++) {
+      (idx[leg.axis][b] || []).forEach(function (o) {
+        if (o.id === id || Math.abs(o.line - line) > SHARED_TOL) return;
+        // Into this leg's own distance coordinates.
+        var t0 = (o.lo - start) * dir, t1 = (o.hi - start) * dir;
+        var lo = Math.max(0, Math.min(t0, t1)), hi = Math.min(leg.len, Math.max(t0, t1));
+        if (hi > lo) cover.push([lo, hi]);
+      });
+    }
+    cover.sort(function (x, y) { return x[0] - y[0]; });
+    var best = null, at = 0;
+    function consider(lo, hi) {
+      if (hi - lo >= MIN_LABEL_RUN && (!best || hi - lo > best[1] - best[0])) best = [lo, hi];
+    }
+    cover.forEach(function (c) {
+      if (c[0] > at) consider(at, c[0]);
+      if (c[1] > at) at = c[1];
+    });
+    consider(at, leg.len);
+    return best;
+  }
+  // First leg, in `order`, with a free run → { leg index, point, distance
+  // along the leg }; null when every candidate is shared.
+  function _placeOn(legs, order, id, idx, skip) {
+    for (var i = 0; i < order.length; i++) {
+      var li = order[i];
+      if (li === skip) continue;
+      var run = _freeRun(legs[li], id, idx);
+      if (!run) continue;
+      var t = (run[0] + run[1]) / 2;
+      var l = legs[li];
+      var f = l.len ? t / l.len : 0;
+      return { li: li, t: t, x: l.a.x + l.dx * f, y: l.a.y + l.dy * f };
+    }
+    return null;
+  }
+  function refreshBentEdgeLabels(cy) {
+    if (!cy || typeof cy.edges !== "function") return;
+    var paths = [];
+    cy.edges().forEach(function (e) {
+      if (e.visible && !e.visible()) return;
+      var pts = _edgePolyline(e);
+      paths.push({ e: e, id: e.id ? e.id() : e, pts: pts, legs: pts ? _legsOf(pts) : [] });
+    });
+    var idx = _legIndex(paths);
+    cy.batch(function () {
+      paths.forEach(function (p) {
+        var e = p.e;
+        var text = e.data("label");
+        var legs = p.legs;
+        var place = null;
+        var copy = null;
+        var n = legs.length;
+        if (text && n === 1) {
+          // Straight: Cytoscape's own midpoint (no bypass), unless it is shared.
+          var run = _freeRun(legs[0], p.id, idx);
+          var mid = legs[0].len / 2;
+          if (!run) place = { hidden: true };
+          else if (mid < run[0] || mid > run[1]) place = _placeOn(legs, [0], p.id, idx);
+        } else if (text && n > 1) {
+          var inward = [], outward = [];
+          for (var i = 0; i < n; i++) { inward.push(i); outward.push(n - 1 - i); }
+          if (n === 2) {
+            place = _placeOn(legs, [1, 0], p.id, idx);
+          } else {
+            place = _placeOn(legs, inward, p.id, idx);
+            copy = _placeOn(legs, outward, p.id, idx, place ? place.li : -1);
+            // Never two labels on one leg, nor the copy before the main one.
+            if (copy && place && copy.li <= place.li) copy = null;
+            if (!place && copy) { place = copy; copy = null; }
+          }
+          if (!place) place = { hidden: true };
+        }
+        if (!place) {
+          if (e.data("_bentLabel")) { e.removeStyle(BENT_LABEL_PROPS); e.data("_bentLabel", 0); }
+          return;
+        }
+        // `_bentLabel` holds a signature of what was last applied, so an
+        // unchanged edge is not re-styled — during a drag only the moved
+        // node's links change, and re-styling every edge every frame would
+        // re-render the whole graph.
+        if (place.hidden) {
+          if (e.data("_bentLabel") === "hidden") return;
+          e.style({ label: "", "target-label": "" });
+          e.data("_bentLabel", "hidden");
+          return;
+        }
+        var mp = e.midpoint();
+        var L = legs[place.li];
+        var style = {
+          label: text,
+          "text-margin-x": place.x - mp.x,
+          "text-margin-y": place.y - mp.y,
+          "text-rotation": _readableAngle(L.dx, L.dy),
+          "target-label": "",
+        };
+        if (copy) {
+          // target-text-offset is measured along the path from the target.
+          var back = legs[copy.li].len - copy.t;
+          for (var j = copy.li + 1; j < legs.length; j++) back += legs[j].len;
+          style["target-label"] = text;
+          style["target-text-offset"] = back;
+          style["target-text-rotation"] = "autorotate";
+        }
+        var sig = [text, style["text-margin-x"], style["text-margin-y"], style["text-rotation"],
+          style["target-label"], style["target-text-offset"]]
+          .map(function (v) { return typeof v === "number" ? v.toFixed(1) : String(v); }).join("|");
+        if (e.data("_bentLabel") === sig) return;
+        e.style(style);
+        e.data("_bentLabel", sig);
+      });
+    });
+  }
+  // Keeps the labels on their legs as the graph moves: after any layout
+  // (dagre is async) and on node position changes, coalesced to one pass per
+  // frame — a drag fires position events per pointer move, and a preset
+  // layout's position events land after markFanOutEdges has stamped the
+  // taxi geometry. Callers that change edge GEOMETRY by style alone
+  // (curve-style bypasses, no node moving) call refreshBentEdgeLabels
+  // themselves; the exported routeInterGroupEdges already does.
+  function wireBentEdgeLabels(cy) {
+    if (!cy || cy.__bentLabelsWired) return;
+    cy.__bentLabelsWired = true;
+    var pending = false;
+    var raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : function (f) { return setTimeout(f, 16); };
+    function schedule() {
+      if (pending) return;
+      pending = true;
+      raf(function () {
+        pending = false;
+        if (cy.destroyed && cy.destroyed()) return;
+        refreshBentEdgeLabels(cy);
+      });
+    }
+    cy.on("layoutstop", schedule);
+    cy.on("position", "node", schedule);
+    schedule();
+  }
+
   // ── Fan-out edge model ─────────────────────────────────────────────────
   // An edge between two positioned nodes in DIFFERENT columns (two or more
   // apart) AND different rows is drawn orthogonally, not as a diagonal: it
@@ -2513,7 +2757,14 @@
     renderLocationGroups: renderLocationGroups,
     removeLocationGroups: removeLocationGroups,
     refreshLocationGroups: refreshLocationGroups,
-    routeInterGroupEdges: routeInterGroupEdges,
+    // Routing changes edge geometry by style bypass (no position event), so
+    // the bent-link labels are re-placed after every route pass.
+    routeInterGroupEdges: function (cy) {
+      routeInterGroupEdges(cy);
+      refreshBentEdgeLabels(cy);
+    },
+    refreshBentEdgeLabels: refreshBentEdgeLabels,
+    wireBentEdgeLabels: wireBentEdgeLabels,
     locationGroupTooltipParts: locationGroupTooltipParts,
     compareFloors: compareFloors,
     computeFloorViews: computeFloorViews,
