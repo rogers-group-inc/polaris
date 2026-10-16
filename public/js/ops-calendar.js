@@ -34,10 +34,11 @@
     pending: "scheduled", started: "started", cancelled: "cancelled", refused: "refused", missed: "missed",
     queued: "starting", running: "running", sending: "sending", rebooting: "rebooting",
     succeeded: "succeeded", failed: "failed", unverified: "unverified",
+    completed: "finished", // a group firmware upgrade (rule 122)
   };
   /** Status → the class family that colours it. */
   function statusClass(st) {
-    if (st === "succeeded") return "ok";
+    if (st === "succeeded" || st === "completed") return "ok";
     if (st === "failed" || st === "refused" || st === "missed") return "bad";
     if (st === "unverified") return "warn";
     if (st === "cancelled") return "off";

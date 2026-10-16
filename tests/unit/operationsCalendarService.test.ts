@@ -35,13 +35,14 @@ vi.mock("../../src/db.js", () => ({
     },
     firmwareUpgradeSchedule: { findMany: vi.fn(async (args: any) => (args.where.runId ? [] : h.firmwareSchedules)) },
     firmwareUpgradeRun: { findMany: vi.fn(async (args: any) => (args.where.id ? [] : h.firmwareRuns)) },
+    firmwareGroupSchedule: { findMany: vi.fn(async () => []) },
   },
 }));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
   listOccurrences: vi.fn(async () => h.occurrences),
 }));
 
-import { listCalendar, mergeDeviceItems, calendarRange, MAX_DEVICE_ITEMS } from "../../src/services/operationsCalendarService.js";
+import { listCalendar, mergeDeviceItems, calendarRange, groupItem, MAX_DEVICE_ITEMS } from "../../src/services/operationsCalendarService.js";
 import { AppError } from "../../src/utils/errors.js";
 
 const local = (y: number, mo: number, d: number, hh: number, mm: number) => new Date(y, mo - 1, d, hh, mm, 0, 0);
@@ -92,6 +93,15 @@ describe("mergeDeviceItems", () => {
       { id: "b2", assetId: "a2", scheduledFor: NOW, status: "pending", runId: null, createdBy: "x", error: null, asset: null },
     ], [], new Map(), new Set(), NOW);
     expect(items.map((i) => i.assetName)).toEqual(["10.0.0.9", "a2"]);
+  });
+});
+
+describe("groupItem (rule 122)", () => {
+  it("draws a group booking on its FortiGate, carrying the group id for the click-through", () => {
+    const at = new Date(2026, 9, 17, 2, 0);
+    const item = groupItem({ id: "g1", gateAssetId: "gate-1", scheduledFor: at, status: "pending", createdBy: "alice", error: null, finishedAt: null, gate: { hostname: "FGT-HQ", ipAddress: null }, _count: { members: 7 } }, at);
+    expect(item).toMatchObject({ kind: "firmware", id: "group:g1", assetId: "gate-1", assetName: "group of 7 on FGT-HQ", booked: true, scheduleId: null, runId: null, status: "pending", groupId: "g1" });
+    expect(item.start).toBe("2026-10-17T02:00");
   });
 });
 
