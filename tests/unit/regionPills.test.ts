@@ -105,12 +105,15 @@ describe("rgbTriplet", () => {
 });
 
 describe("pill markup", () => {
-  it("paints the region's own color as translucent fill + full-strength border and text", async () => {
+  it("paints the region's own color as translucent fill + border, and a theme-pulled label", async () => {
     const p = load(async () => CATALOG);
     await p.load();
     const html = p.pill("Southeast");
     expect(html).toContain("background:rgba(79, 195, 247,0.18)");
-    expect(html).toContain("color:#4fc3f7");
+    // The raw hex as text vanishes on its own tint for a pale hue (a yellow on
+    // the daylight theme) — the label is mixed toward the theme's text colour.
+    expect(html).toContain("color:color-mix(in srgb, #4fc3f7 55%, var(--color-text-primary))");
+    expect(html).not.toContain("color:#4fc3f7");
     expect(html).toContain("border:1px solid rgba(79, 195, 247,0.45)");
     expect(html).toContain(">Southeast<");
   });

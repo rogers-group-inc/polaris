@@ -54,6 +54,13 @@
     return parseInt(m[1], 16) + ", " + parseInt(m[2], 16) + ", " + parseInt(m[3], 16);
   }
 
+  // The label colour for a pill tinted `color` — the same pull toward the
+  // theme's primary text as app.js `tagColorText`, so a pale region hue (a
+  // yellow) still reads on the daylight theme and a deep one reads on dark.
+  function textColor(color) {
+    return "color-mix(in srgb, " + color + " 55%, var(--color-text-primary))";
+  }
+
   // One badge, optionally carrying a title (callers use it to say WHERE the
   // region came from — the account, the role, or an IdP group).
   function pill(name, title) {
@@ -61,7 +68,7 @@
     var rgb = rgbTriplet(hex);
     return '<span class="badge"' +
       (title ? ' title="' + window.escapeHtml(title) + '"' : "") +
-      ' style="background:rgba(' + rgb + ',0.18);color:' + hex + ';border:1px solid rgba(' + rgb + ',0.45)">' +
+      ' style="background:rgba(' + rgb + ',0.18);color:' + textColor(hex) + ';border:1px solid rgba(' + rgb + ',0.45)">' +
       window.escapeHtml(name) +
     '</span>';
   }
@@ -81,6 +88,7 @@
     names: function () { return Object.keys(byName).sort(); },
     colorFor: colorFor,
     rgbTriplet: rgbTriplet,
+    textColor: textColor,
     pill: pill,
     html: html,
   };

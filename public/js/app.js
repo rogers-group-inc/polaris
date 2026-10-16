@@ -4898,6 +4898,18 @@ function tagColorTint(color, pct) {
   return css ? "color-mix(in srgb, " + css + " " + pct + "%, transparent)" : "";
 }
 
+/** The label colour for a chip tinted `color`. The raw colour is fine as a
+ *  border or a translucent fill, but as TEXT a pale hue (yellow, mint) on its
+ *  own tint vanishes on the daylight theme, and a deep one (navy) does the same
+ *  on dark — so it is pulled part-way toward the theme's primary text, keeping
+ *  the hue recognizable while the label reads on whichever theme is live.
+ *  A severity reference is left as its token: those are already tuned per theme. */
+function tagColorText(color) {
+  var css = tagColorCss(color);
+  if (!css || tagColorSeverity(color)) return css;
+  return "color-mix(in srgb, " + css + " 55%, var(--color-text-primary))";
+}
+
 // ─── Tag field (enforced or free-text) ─────────────────────────────────────
 
 // `failed` is the difference between "this install has no tags" and "we could

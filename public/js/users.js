@@ -273,11 +273,13 @@ function userTagPillsHtml(u) {
   html += tags.map(function (t) {
     var color = tagColorFor(t);
     return '<span class="badge" title="Per-user tag scope" style="background:' + tagColorTint(color, 18) + ';color:' +
-      tagColorCss(color) + ';border:1px solid ' + tagColorTint(color, 45) + ';font-size:0.7rem;padding:0.1rem 0.4rem">' +
+      tagColorText(color) + ';border:1px solid ' + tagColorTint(color, 45) + '">' +
       escapeHtml(t) +
     '</span>';
   }).join("");
-  return '<div style="margin-top:0.25rem;display:flex;flex-wrap:wrap;gap:0.25rem">' + html + '</div>';
+  // Region and tag pills share the plain .badge box (no per-kind font-size or
+  // padding), so their labels sit on one line instead of drifting vertically.
+  return '<div style="margin-top:0.25rem;display:flex;flex-wrap:wrap;align-items:center;gap:0.25rem">' + html + '</div>';
 }
 
 /**

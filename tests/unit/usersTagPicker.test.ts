@@ -369,7 +369,8 @@ describe("severity-referenced tag colors", () => {
     expect(html).toContain("color:var(--color-sev-warning)");
     expect(html).toContain("color:var(--color-sev-serious)");
     expect(html).not.toContain("url(x)");
-    expect(html).toContain("color:#9e9e9e");
+    // A hex label is pulled toward the theme text; a severity token is not.
+    expect(html).toContain("color:color-mix(in srgb, #9e9e9e 55%, var(--color-text-primary))");
     setCatalog(true, CATALOG);
   });
 
@@ -418,6 +419,19 @@ describe("userTagPillsHtml", () => {
     const html = userTagPillsHtml({ otherTags: ["legacy-tag"] });
     expect(html).toContain("legacy-tag");
     expect(html).toContain("#9e9e9e");
+  });
+
+  it("mixes the label toward the theme text so a pale tag colour stays legible", () => {
+    const html = userTagPillsHtml({ otherTags: ["PCI"] });
+    expect(html).toContain("color:color-mix(in srgb, #ef5350 55%, var(--color-text-primary))");
+  });
+
+  it("gives tag pills the same box as region pills, so labels share a baseline", () => {
+    // A tag pill carried its own font-size + padding while a region pill used
+    // the plain .badge box; side by side the two labels sat at different heights.
+    const html = userTagPillsHtml({ regionTags: ["Memphis"], otherTags: ["PCI"] });
+    expect(html).not.toMatch(/font-size|padding/);
+    expect(html).toContain("align-items:center");
   });
 
   it("renders nothing at all for an unscoped user", () => {
