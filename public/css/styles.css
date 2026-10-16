@@ -2670,12 +2670,17 @@ html[data-page-top-curtain]::after {
   white-space: nowrap;
   padding: 0.35rem 0.8rem;
   font-size: 0.84rem;
-  background: color-mix(in srgb, var(--color-bg-tertiary) 14%, transparent);
+  /* An inactive tab is a solid chip with the resting lift, its label one
+     step down from full text — not a faded outline. Dimming the whole tab
+     with opacity and filling it at 14% left the labels washed into dark
+     backgrounds; the active tab still reads above its peers through the
+     accent edge and the card's glass. */
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
   border: 1px solid var(--color-border);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  box-shadow: none;
-  opacity: 0.85;
+  box-shadow: var(--shadow-tab-idle);
   /* Every tab is LAID OUT lifted by the neck's height, and an inactive one is
      translated back down onto the rule. Switching tabs then animates a
      transform, never layout: if the lift were a margin, the row's height —
@@ -2686,10 +2691,10 @@ html[data-page-top-curtain]::after {
   transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease,
     opacity 0.2s ease, box-shadow 0.2s ease;
 }
-.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { opacity: 1; background: var(--rail-glass-bg); }
+.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: color-mix(in srgb, var(--color-text-primary) 12%, transparent); }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab).active {
   z-index: 2;
-  opacity: 1;
+  color: var(--color-accent);
   transform: none;
   background: var(--folder-fill);
   border-color: var(--color-border);
