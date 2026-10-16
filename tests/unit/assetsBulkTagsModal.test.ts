@@ -80,7 +80,7 @@ beforeAll(() => {
     extractVar(appSrc, "REGION_TAG_CATEGORY"),
     extractVar(appSrc, "AZURE_TAG_PREFIX"),
     extractVar(appSrc, "TAG_SEVERITY_COLORS"),
-    ...["isPickerHiddenTag", "_ensureTagCache", "tagColorSeverity", "tagColorCss", "tagColorTint", "_tagChipStyle", "_tagChipHTML", "_canCreateRegistryTags", "_renderTagChips",
+    ...["isPickerHiddenTag", "_ensureTagCache", "tagColorSeverity", "tagColorCss", "tagColorTint", "tagHueStyle", "_tagChipHue", "_tagChipHTML", "_canCreateRegistryTags", "_renderTagChips",
         "tagFieldHTML", "getTagFieldValue", "_wireChipListeners", "wireTagPicker"]
       .map((n) => extractFunction(appSrc, n)),
     "var _assetsSelected = new Set();",

@@ -188,7 +188,7 @@ function renderUsersBody() {
     var roleColorStyle = roleBadgeStyleFromColor(roleColor);
     if (roleColorStyle) {
       // Stored color wins — survives renames + colors custom roles.
-      roleBadge = '<span class="badge" style="' + roleColorStyle + '">' + escapeHtml(roleLabelText) + '</span>';
+      roleBadge = '<span class="badge hue-pill" style="' + roleColorStyle + '">' + escapeHtml(roleLabelText) + '</span>';
     } else if (roleKey === "admin") roleBadge = '<span class="badge badge-admin">admin</span>';
     else if (roleKey === "networkadmin") roleBadge = '<span class="badge badge-network-admin">network admin</span>';
     else if (roleKey === "assetsadmin") roleBadge = '<span class="badge badge-assets-admin">assets admin</span>';
@@ -272,12 +272,13 @@ function userTagPillsHtml(u) {
   }
   html += tags.map(function (t) {
     var color = tagColorFor(t);
-    return '<span class="badge" title="Per-user tag scope" style="background:' + tagColorTint(color, 18) + ';color:' +
-      tagColorCss(color) + ';border:1px solid ' + tagColorTint(color, 45) + ';font-size:0.7rem;padding:0.1rem 0.4rem">' +
+    return '<span class="badge hue-pill" title="Per-user tag scope" style="' + tagHueStyle(color) + '">' +
       escapeHtml(t) +
     '</span>';
   }).join("");
-  return '<div style="margin-top:0.25rem;display:flex;flex-wrap:wrap;gap:0.25rem">' + html + '</div>';
+  // Region and tag pills share the plain .badge box (no per-kind font-size or
+  // padding), so their labels sit on one line instead of drifting vertically.
+  return '<div style="margin-top:0.25rem;display:flex;flex-wrap:wrap;align-items:center;gap:0.25rem">' + html + '</div>';
 }
 
 /**
@@ -1757,7 +1758,7 @@ async function openRoleSlideover(roleId) {
   function syncColorPreview() {
     if (!colorPreview) return;
     var style = roleBadgeStyleFromColor(colorInput ? colorInput.value : null);
-    if (style) colorPreview.setAttribute("style", style);
+    if (style) colorPreview.setAttribute("style", style);   // --hue only; .hue-pill does the rest
     var nm = nameInput ? nameInput.value.trim() : "";
     colorPreview.textContent = nm || "preview";
   }
@@ -1896,7 +1897,7 @@ function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
       '<input type="color" id="f-role-color" value="' + escapeHtml(initialColor) + '"' + (isProtected ? " disabled" : "") +
         ' style="width:48px;height:34px;padding:2px;border:1px solid var(--color-border);border-radius:6px;background:none;cursor:' + (isProtected ? "default" : "pointer") + '">' +
       (isProtected ? "" : '<button type="button" class="btn btn-sm btn-secondary" id="f-role-color-random">Randomize</button>') +
-      '<span class="badge" id="role-color-preview" style="' + roleBadgeStyleFromColor(initialColor) + '">' + escapeHtml(previewLabel) + '</span>' +
+      '<span class="badge hue-pill" id="role-color-preview" style="' + roleBadgeStyleFromColor(initialColor) + '">' + escapeHtml(previewLabel) + '</span>' +
     '</div>' +
     '<p class="hint">Pill color shown in the sidebar, the users list, and this list.</p>' +
   '</div>';
@@ -1971,7 +1972,6 @@ async function loadRegionList() {
 // neutral fallback for a tag outside the catalogue, and the hex->rgba pill
 // markup all live there; these keep the existing call sites reading naturally.
 function regionColorFor(name)  { return window.PolarisRegionPills.colorFor(name); }
-function hexToRgbTriplet(hex)  { return window.PolarisRegionPills.rgbTriplet(hex); }
 function regionPillsHtml(names, titleFor) { return window.PolarisRegionPills.html(names, titleFor); }
 
 // Render every map-region as a clickable pill colored by the region's stored
@@ -2015,7 +2015,7 @@ function regionPickerHtml(idPrefix, selected) {
     ? '<div style="margin-bottom:0.5rem">' +
         '<div style="font-size:0.78rem;color:var(--color-text-tertiary);margin-bottom:0.25rem">' + escapeHtml(orphanNote) + '</div>' +
         orphans.map(function (n) {
-          return '<span class="badge region-chip" data-region="' + escapeHtml(n) + '" data-selected="1" style="display:inline-flex;align-items:center;gap:0.35rem;background:rgba(158,158,158,0.18);color:#9e9e9e;border:1px solid rgba(158,158,158,0.45);padding:0.2rem 0.5rem;margin:0.15rem 0.25rem 0.15rem 0">' +
+          return '<span class="badge hue-pill region-chip" data-region="' + escapeHtml(n) + '" data-selected="1" style="--hue:#9e9e9e;display:inline-flex;align-items:center;gap:0.35rem;padding:0.2rem 0.5rem;margin:0.15rem 0.25rem 0.15rem 0">' +
             escapeHtml(n) +
             ' <button type="button" class="region-chip-remove" aria-label="Remove" style="background:none;border:none;cursor:pointer;color:inherit;padding:0;font-size:1.1em;line-height:1">&times;</button>' +
           '</span>';
@@ -2033,12 +2033,10 @@ function regionPickerHtml(idPrefix, selected) {
     : '<div class="region-pill-grid" style="display:flex;flex-wrap:wrap;gap:0.4rem">' +
         _regionList.map(function (n) {
           var hex = regionColorFor(n);
-          var rgb = hexToRgbTriplet(hex);
           var isSel = selSet[n.toLowerCase()];
-          var style = isSel
-            ? "background:rgba(" + rgb + ",0.22);color:" + hex + ";border:1px solid rgba(" + rgb + ",0.55)"
-            : "background:transparent;color:" + hex + ";border:1px solid rgba(" + rgb + ",0.45);opacity:0.75";
-          return '<button type="button" class="badge region-chip" data-region="' + escapeHtml(n) + '" data-selected="' + (isSel ? "1" : "0") + '" data-color="' + escapeHtml(hex) + '" data-rgb="' + escapeHtml(rgb) + '" style="cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;text-transform:capitalize;' + style + '">' +
+          // Selected / not selected ride .hue-strong / .hue-off (styles.css),
+          // which also keep the label legible whatever colour the region has.
+          return '<button type="button" class="badge hue-pill ' + (isSel ? "hue-strong" : "hue-off") + ' region-chip" data-region="' + escapeHtml(n) + '" data-selected="' + (isSel ? "1" : "0") + '" data-color="' + escapeHtml(hex) + '" style="--hue:' + escapeHtml(hex) + ';cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;text-transform:capitalize">' +
             escapeHtml(n) +
           '</button>';
         }).join("") +
@@ -2063,16 +2061,10 @@ document.addEventListener("click", function (e) {
   if (!pill || pill.getAttribute("data-selected") === null) return;
   // Orphan rows have no data-color and only respond to the × button above.
   if (!pill.hasAttribute("data-color")) return;
-  var isSel = pill.getAttribute("data-selected") === "1";
-  var hex = pill.getAttribute("data-color");
-  var rgb = pill.getAttribute("data-rgb");
-  if (isSel) {
-    pill.setAttribute("data-selected", "0");
-    pill.style.cssText = "cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;text-transform:capitalize;background:transparent;color:" + hex + ";border:1px solid rgba(" + rgb + ",0.45);opacity:0.75";
-  } else {
-    pill.setAttribute("data-selected", "1");
-    pill.style.cssText = "cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;text-transform:capitalize;background:rgba(" + rgb + ",0.22);color:" + hex + ";border:1px solid rgba(" + rgb + ",0.55)";
-  }
+  var nowSel = pill.getAttribute("data-selected") !== "1";
+  pill.setAttribute("data-selected", nowSel ? "1" : "0");
+  pill.classList.toggle("hue-strong", nowSel);
+  pill.classList.toggle("hue-off", !nowSel);
 });
 
 function collectRegionPicker(idPrefix) {
@@ -2161,16 +2153,15 @@ function otherTagChipHtml(t) {
   '</span>';
 }
 
-function _otherTagPillStyle(color, isSel) {
-  var css = tagColorCss(color);
-  return "cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;" + (isSel
-    ? "background:" + tagColorTint(color, 22) + ";color:" + css + ";border:1px solid " + tagColorTint(color, 55)
-    : "background:transparent;color:" + css + ";border:1px solid " + tagColorTint(color, 45) + ";opacity:0.75");
+// Selected / not selected ride .hue-strong / .hue-off (styles.css) — the same
+// pair the region picker uses, so the two rows of one picker read alike.
+function _otherTagPillStyle(color) {
+  return "cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;" + tagHueStyle(color);
 }
 
 function otherTagPillHtml(name, isSel) {
   var color = tagColorFor(name);
-  return '<button type="button" class="badge other-tag-pill" data-tag="' + escapeHtml(name) + '" data-selected="' + (isSel ? "1" : "0") + '" data-color="' + escapeHtml(color) + '" style="' + _otherTagPillStyle(color, isSel) + '">' +
+  return '<button type="button" class="badge hue-pill ' + (isSel ? "hue-strong" : "hue-off") + ' other-tag-pill" data-tag="' + escapeHtml(name) + '" data-selected="' + (isSel ? "1" : "0") + '" data-color="' + escapeHtml(color) + '" style="' + _otherTagPillStyle(color) + '">' +
     escapeHtml(name) +
   '</button>';
 }
@@ -2268,7 +2259,8 @@ function otherTagsPickerHtml(idPrefix, selected) {
 
 function _setOtherTagPillSelected(pill, isSel) {
   pill.setAttribute("data-selected", isSel ? "1" : "0");
-  pill.style.cssText = _otherTagPillStyle(pill.getAttribute("data-color"), isSel);
+  pill.classList.toggle("hue-strong", isSel);
+  pill.classList.toggle("hue-off", !isSel);
 }
 
 // Select an existing pill by name (case-insensitive), reporting whether one

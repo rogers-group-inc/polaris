@@ -4850,15 +4850,17 @@ function renderIdentificationTab() {
       } else {
         html += '<div class="tag-chip-list">';
         tags.forEach(function (t) {
-          var chipColor = tagColorCss(t.color);
-          var colorStyle = chipColor ? ' style="background:' + tagColorTint(t.color, 13) + ';border-color:' + chipColor + ';color:' + chipColor + '"' : '';
+          // .hue-pill (styles.css) draws the chip from `--hue` alone and keeps
+          // the label legible whatever colour the operator picked.
+          var hueStyle = tagHueStyle(t.color);
+          var colorStyle = hueStyle ? ' style="' + hueStyle + '"' : '';
           // Either filter shape counts — a tag written before the condition-tree
           // cutover still auto-assigns through the folded-forward flat blob.
           var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
           var autoMark = managed
             ? '<span title="Auto-assigned by device filter" style="margin-right:4px">&#9881;</span>'
             : '';
-          html += '<span class="tag-chip"' + colorStyle + '>' +
+          html += '<span class="tag-chip' + (hueStyle ? ' hue-pill hue-strong' : '') + '"' + colorStyle + '>' +
             autoMark +
             escapeHtml(t.name) +
             (isAdmin() ? '<button class="tag-chip-edit" data-tag-id="' + t.id + '" title="Edit" style="margin-left:4px;background:none;border:none;color:inherit;cursor:pointer;font-size:0.75rem;opacity:0.7;padding:0">&#9998;</button>' : '') +

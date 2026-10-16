@@ -127,21 +127,27 @@ describe("tag picker — region tags are editable", () => {
     // text stayed full-strength color, so every chip read as "active" (the
     // 2026-08 report against the Map Regions row). Pin the three-channel split.
     render(["region:Ashfield"]);
-    const styleOf = (name: string) =>
-      (chipInput(name)!.parentElement as unknown as HTMLElement).getAttribute("style") ?? "";
+    const chip = (name: string) => chipInput(name)!.parentElement as unknown as HTMLElement;
 
-    // Tints are color-mix over transparent (a severity-reference color is a theme
-    // token, with no hex to append an alpha to) — 27 / 7 / 25 / 60 % are the old
-    // 44 / 11 / 40 / 99 hex alphas.
-    const mix = (c: string, pct: number) => "color-mix(in srgb, " + c + " " + pct + "%, transparent)";
-    const on = styleOf("region:Ashfield"); // color #4fc3f7
-    expect(on).toContain("background:" + mix("#4fc3f7", 27));
-    expect(on).toContain("border-color:#4fc3f7;");
-    expect(on).toContain("color:#4fc3f7");
+    // The chip carries only its colour (`--hue`) inline; the selected / not
+    // selected looks are the .hue-strong / .hue-off classes in styles.css, which
+    // also clamp the label's lightness so a pale or a deep colour stays legible.
+    const on = chip("region:Ashfield"); // color #4fc3f7
+    expect(on.getAttribute("style")).toBe("--hue:#4fc3f7");
+    expect(on.classList.contains("hue-pill")).toBe(true);
+    expect(on.classList.contains("hue-strong")).toBe(true);
+    expect(on.classList.contains("hue-off")).toBe(false);
 
-    const off = styleOf("region:Atlanta"); // color #4ade80
-    expect(off).toContain("background:" + mix("#4ade80", 7));
-    expect(off).toContain("border-color:" + mix("#4ade80", 25));
-    expect(off).toContain("color:" + mix("#4ade80", 60));
+    const off = chip("region:Atlanta"); // color #4ade80
+    expect(off.getAttribute("style")).toBe("--hue:#4ade80");
+    expect(off.classList.contains("hue-off")).toBe(true);
+    expect(off.classList.contains("hue-strong")).toBe(false);
+
+    // ...and .hue-off dims all three channels, not just the background.
+    const css = readFileSync(resolve(__dirname, "../../public/css/styles.css"), "utf8");
+    const offRule = /\.hue-pill\.hue-off\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(offRule).toMatch(/background:/);
+    expect(offRule).toMatch(/border-color:/);
+    expect(offRule).toMatch(/(^|[;\s])color:/);
   });
 });

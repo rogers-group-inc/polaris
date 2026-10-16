@@ -366,10 +366,10 @@ describe("severity-referenced tag colors", () => {
   it("a user's tag pill paints with the token; a malformed color falls back to grey", () => {
     setCatalog(true, CATALOG.concat(SEV_ROWS));
     const html = userTagPillsHtml({ regionTags: [], otherTags: ["Warning", "Serious", "Bogus"] });
-    expect(html).toContain("color:var(--color-sev-warning)");
-    expect(html).toContain("color:var(--color-sev-serious)");
+    expect(html).toContain("--hue:var(--color-sev-warning)");
+    expect(html).toContain("--hue:var(--color-sev-serious)");
     expect(html).not.toContain("url(x)");
-    expect(html).toContain("color:#9e9e9e");
+    expect(html).toContain("--hue:#9e9e9e");
     setCatalog(true, CATALOG);
   });
 
@@ -418,6 +418,23 @@ describe("userTagPillsHtml", () => {
     const html = userTagPillsHtml({ otherTags: ["legacy-tag"] });
     expect(html).toContain("legacy-tag");
     expect(html).toContain("#9e9e9e");
+  });
+
+  it("hands the tag colour to .hue-pill rather than painting it as the label", () => {
+    // A pale stored colour (yellow, white) as text vanished on its own tint in
+    // the daylight themes; .hue-pill clamps the label's lightness per theme.
+    const html = userTagPillsHtml({ otherTags: ["PCI"] });
+    expect(html).toContain('class="badge hue-pill"');
+    expect(html).toContain("--hue:#ef5350");
+    expect(html).not.toMatch(/[";]color:/);
+  });
+
+  it("gives tag pills the same box as region pills, so labels share a baseline", () => {
+    // A tag pill carried its own font-size + padding while a region pill used
+    // the plain .badge box; side by side the two labels sat at different heights.
+    const html = userTagPillsHtml({ regionTags: ["Memphis"], otherTags: ["PCI"] });
+    expect(html).not.toMatch(/font-size|padding/);
+    expect(html).toContain("align-items:center");
   });
 
   it("renders nothing at all for an unscoped user", () => {
