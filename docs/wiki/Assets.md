@@ -54,14 +54,19 @@ IPAM network the device's primary IP sits in: the most specific
 non-deprecated network that contains it, the same one **View Lease** opens.
 Hover it for the CIDR; a device whose IP is in no recorded network shows `-`.
 
-**Tags** lists the asset's tags. Its filter matches any single tag containing
-the text (case doesn't matter), so `prod` finds `Production`; **Is empty** finds
-untagged assets. Clicking the filter box lists every tag in use, and the list
-narrows as you type; click one (or pick it with the arrow keys and Enter) to
-filter by it. A picked tag is still matched as text, so picking `prod` also
-shows assets tagged `production`, and a leading `!` (exclude) is kept. Sorting
-orders by each asset's alphabetically-first tag, and untagged assets sit at the
-bottom whichever way you sort.
+**Tags** lists the asset's tags. Click its filter box to open a menu of every
+tag in use: tick as many as you like (the search box at the top narrows a long
+list), then click **OK** (or press Enter) to filter. Nothing changes until you
+click OK; **Cancel**, Escape or a click elsewhere leaves the filter as it was,
+and **Clear** unticks everything. **Any** (the default) shows assets carrying
+at least one ticked tag; **All** shows only assets carrying every one of them.
+Tick **(No tags)** to include untagged assets (with **Any** only). Tags match
+exactly, so ticking `prod` does not also show `production`. Once applied, the
+box reads the tag's name when one is ticked and "N selected" when several are;
+hover it to see the full list. A saved view from before the menu existed keeps
+its old text filter (the box shows it in quotes) until you pick tags and click
+OK. Sorting orders by each asset's alphabetically-first tag, and untagged
+assets sit at the bottom whichever way you sort.
 
 ### Two columns worth explaining
 

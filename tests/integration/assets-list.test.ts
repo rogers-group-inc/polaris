@@ -381,6 +381,22 @@ d("GET /api/v1/assets — tags column", () => {
     expect(hostnames(set.body)).toEqual(["alpha-srv", "beta-sw", "gamma-fw"]);
   });
 
+  it("any_of / all_of (the column's pick menu) match exact names", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const q = (names: string[], op: string, extra = "") =>
+      agent.get(`/api/v1/assets?tags=${encodeURIComponent(JSON.stringify(names))}&tagsOp=${op}&sortBy=hostname&sortDir=asc${extra}`);
+    expect(hostnames((await q(["lab", "edge"], "any_of")).body)).toEqual(["beta-sw", "gamma-fw"]);
+    // Exact, case-sensitive: "prod" is not "Production".
+    expect(hostnames((await q(["prod"], "any_of")).body)).toEqual([]);
+    expect(hostnames((await q(["Production", "dc1"], "all_of")).body)).toEqual(["alpha-srv"]);
+    expect(hostnames((await q(["Production", "lab"], "all_of")).body)).toEqual([]);
+    expect(hostnames((await q(["lab"], "any_of", "&tagsUntagged=1")).body))
+      .toEqual(["beta-sw", "delta-srv", "epsilon-srv", "zeta-wks"]);
+    const bad = await agent.get("/api/v1/assets?tags=nope&tagsOp=any_of");
+    expect(bad.status).toBe(200);
+  });
+
   it("combines with the other column filters", async () => {
     await seedTags();
     const { agent } = await authedAgent(app);
