@@ -503,13 +503,20 @@ function _renderIpList(data) {
     var statusLabel = _pres.label;
     var statusTooltip = _pres.tooltip;
 
-    // Click-to-copy for hostname / MAC: render the value as a .copy-on-click
-    // span carrying the raw value in data-copy. The delegated handler at the
-    // bottom of _renderIpPanel reads data-copy on the closest ancestor and
-    // copies to clipboard via navigator.clipboard, with a toast confirm. Plain
-    // dashes ("-") stay non-clickable.
+    // A row linked to an asset renders its hostname as the link to that asset
+    // (there is no separate View Asset button) — the reservation's hostname,
+    // else the asset's own, so a linked row with no reservation hostname still
+    // has something to click. Any other hostname / MAC is click-to-copy: a
+    // .copy-on-click span carrying the raw value in data-copy. The delegated
+    // handler at the bottom of _renderIpPanel reads data-copy on the closest
+    // ancestor and copies to clipboard via navigator.clipboard, with a toast
+    // confirm. Plain dashes ("-") stay non-clickable.
     var hostnameText;
-    if (r && r.hostname) {
+    var linkName = ip.assetId ? ((r && r.hostname) || ip.assetHostname || "") : "";
+    if (ip.assetId) {
+      hostnameText = '<a href="/assets.html#view=asset:' + encodeURIComponent(ip.assetId) + '" class="ip-asset-link" data-aid="' + escapeHtml(ip.assetId) + '" title="Open asset details">' +
+        (linkName ? escapeHtml(linkName) : "Asset") + '</a>';
+    } else if (r && r.hostname) {
       hostnameText = '<span class="copy-on-click" data-copy="' + escapeHtml(r.hostname) + '" title="Click to copy">' + escapeHtml(r.hostname) + '</span>';
     } else if (r) {
       hostnameText = "-";
@@ -540,10 +547,8 @@ function _renderIpList(data) {
     // canManageNetworks() (that's subnets=fullwrite and has nothing to do with
     // reservation rights).
     var canEditThis = canEditReservation(r);
-    var assetBtn = ip.assetId
-      ? '<button class="btn btn-sm btn-secondary ip-asset-btn" data-aid="' + escapeHtml(ip.assetId) + '" title="Open asset details">View Asset</button>'
-      : '';
-    // Action column order is fixed: Reserve → Free → View Asset → Edit.
+    // Action column order is fixed: Reserve → Free → Edit. (The asset is
+    // opened from the hostname link, not from a button here.)
     // Each row only renders the buttons that apply to its state; any
     // unavailable button is skipped, but the visible buttons stay in that
     // sequence so the column scans cleanly down the table.
@@ -568,12 +573,12 @@ function _renderIpList(data) {
       // Precedence matches the status-pill logic above so a stale
       // owner="dhcp-lease" placeholder on a dhcp_reservation row can't trip
       // the lease branch below.
-      actions = freeBtn + assetBtn + editBtn;
+      actions = freeBtn + editBtn;
     } else if (isLeaseRow) {
       var reserveBtn = canReserveIps()
         ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-lease-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" data-rid="' + escapeHtml(r.id) + '" data-mac="' + escapeHtml(macRaw || "") + '" data-hostname="' + escapeHtml(r.hostname || "") + '" title="' + reserveTitle + '">Reserve</button>'
         : '';
-      actions = reserveBtn + freeBtn + assetBtn + editBtn;
+      actions = reserveBtn + freeBtn + editBtn;
     } else if (r && r.status === "active" && r.sourceType === "vip") {
       // A VIP is device config, so there is still no Release and no Edit here
       // — Polaris did not grant the address and the metadata would claim an
@@ -585,14 +590,14 @@ function _renderIpList(data) {
       var vipReserveBtn = canReserveIps()
         ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-lease-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" data-rid="' + escapeHtml(r.id) + '" data-mac="' + escapeHtml(macRaw || "") + '" data-hostname="' + escapeHtml(r.hostname || "") + '" title="' + reserveTitle + '">Reserve</button>'
         : '';
-      actions = vipReserveBtn + assetBtn;
+      actions = vipReserveBtn;
     } else if (r && r.status === "active" && r.sourceType === "interface_ip") {
       // An address configured on the router/firewall's own interface. Unlike a
       // VIP this one genuinely cannot be handed to anything else, so Polaris
-      // reports it and nothing more. "View Asset" stays, because knowing WHICH
-      // device holds the address is the whole question an operator has when
-      // they land on one of these rows.
-      actions = assetBtn;
+      // reports it and nothing more. The hostname link to the asset stays,
+      // because knowing WHICH device holds the address is the whole question
+      // an operator has when they land on one of these rows.
+      actions = "";
     } else if (r && r.status === "active" && r.sourceType === "dns_resolved") {
       // DNS-resolved is a system-created placeholder for assets whose IP falls
       // inside a known subnet. Reserve promotes it to a real manual reservation;
@@ -602,7 +607,7 @@ function _renderIpList(data) {
       var dnsReserveBtn = canReserveIps()
         ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-dns-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" data-mac="' + escapeHtml(macRaw || "") + '" data-hostname="' + escapeHtml(r.hostname || "") + '" title="' + reserveTitle + '">Reserve</button>'
         : '';
-      actions = dnsReserveBtn + assetBtn + editBtn;
+      actions = dnsReserveBtn + editBtn;
     } else if (_isLeaseBackedInfra(r)) {
       // Reserve reuses the lease take-over button — same server path, which
       // releases this row and creates the operator's claim in its place.
@@ -612,18 +617,18 @@ function _renderIpList(data) {
       var infraReserveBtn = canReserveIps()
         ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-lease-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" data-rid="' + escapeHtml(r.id) + '" data-mac="' + escapeHtml(macRaw || "") + '" data-hostname="' + escapeHtml(r.hostname || "") + '" title="' + reserveTitle + '">Reserve</button>'
         : '';
-      actions = infraReserveBtn + assetBtn + editBtn;
+      actions = infraReserveBtn + editBtn;
     } else if (r && r.status === "active") {
-      actions = retryBtn + freeBtn + assetBtn + editBtn;
+      actions = retryBtn + freeBtn + editBtn;
     } else if (r && r.status === "expired") {
       var expiredReserveBtn = canReserveIps()
         ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" title="' + reserveTitle + '">Reserve</button>'
         : '';
-      actions = expiredReserveBtn + assetBtn + editBtn;
+      actions = expiredReserveBtn + editBtn;
     } else if (!r && canReserveIps()) {
-      actions = '<button class="btn btn-sm ' + reserveBtnClass + ' ip-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" title="' + reserveTitle + '">Reserve</button>' + assetBtn;
+      actions = '<button class="btn btn-sm ' + reserveBtnClass + ' ip-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" title="' + reserveTitle + '">Reserve</button>';
     } else {
-      actions = assetBtn;
+      actions = "";
     }
 
     // The warning triangle marks a row whose STATE wants attention, and the
@@ -777,11 +782,15 @@ function _renderIpList(data) {
       }
     });
   });
-  // The asset details slide-over, in place over this panel — PolarisPanels
-  // loads assets.js on demand on a page that doesn't carry it.
-  body.querySelectorAll(".ip-asset-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var aid = btn.getAttribute("data-aid");
+  // The hostname link opens the asset details slide-over, in place over this
+  // panel — PolarisPanels loads assets.js on demand on a page that doesn't
+  // carry it. A modified click (Ctrl / Shift / middle) keeps the href and
+  // opens the asset page in a new tab.
+  body.querySelectorAll(".ip-asset-link").forEach(function (link) {
+    link.addEventListener("click", function (e) {
+      if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      var aid = link.getAttribute("data-aid");
       if (typeof PolarisPanels !== "undefined" && PolarisPanels.openAsset) { PolarisPanels.openAsset(aid); return; }
       window.location.href = '/assets.html#view=asset:' + encodeURIComponent(aid);
     });

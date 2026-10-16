@@ -362,6 +362,33 @@ d("GET /api/v1/subnets/:id/ips", () => {
     expect(resp.body.subnet.hasConflict).toBe(false);
     expect(resp.body.subnet.conflictMessage).toBeNull();
   });
+
+  // The panel's hostname IS the link to the asset (there is no View Asset
+  // button), so a row the server links to an asset must carry a name to click
+  // even when the address has no reservation hostname — or no reservation.
+  it("names the linked asset on each row, reservation hostname or not", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const subnetId = await seed(agent, csrf);
+    await prisma.reservation.create({
+      data: { subnetId, ipAddress: "10.70.0.2", hostname: null, status: "active", sourceType: "manual", createdBy: "t" },
+    });
+    const withRes = await prisma.asset.create({
+      data: { hostname: "PANEL-LINK-A", assetType: "server", status: "active", ipAddress: "10.70.0.2" },
+    });
+    const bare = await prisma.asset.create({
+      data: { hostname: "PANEL-LINK-B", assetType: "server", status: "active", ipAddress: "10.70.0.3" },
+    });
+    try {
+      const resp = await agent.get(`/api/v1/subnets/${subnetId}/ips?page=1&pageSize=4`);
+      expect(resp.status).toBe(200);
+      const byIp = new Map(resp.body.ips.map((i: any) => [i.address, i]));
+      expect(byIp.get("10.70.0.2")).toMatchObject({ assetId: withRes.id, assetHostname: "PANEL-LINK-A" });
+      expect(byIp.get("10.70.0.3")).toMatchObject({ assetId: bare.id, assetHostname: "PANEL-LINK-B", reservation: null });
+      expect(byIp.get("10.70.0.1")).toMatchObject({ assetId: null, assetHostname: null });
+    } finally {
+      await prisma.asset.deleteMany({ where: { id: { in: [withRes.id, bare.id] } } });
+    }
+  });
 });
 
 // ─── GET /api/v1/subnets/:id ──────────────────────────────────────────────────

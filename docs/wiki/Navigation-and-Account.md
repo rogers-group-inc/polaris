@@ -266,7 +266,7 @@ Most detail in Polaris opens in a **slide-over** (a panel from the right) or a
 - **Every slide-over opens on every page.** An asset, a network or a block opens
   in place over the page you are on — from a search result, a dashboard row, an
   Events conflict card, a credential's usage list, the network panel's
-  **View Asset** button, an interface's **Open network**, or a block's network
+  hostname link, an interface's **Open network**, or a block's network
   list — instead of taking you to the Assets or IPAM page. Panels stack: the one
   opened last is on top, and **Escape** closes one panel at a time, top first.
   Ctrl-click or middle-click a link to open it in a new tab instead.
