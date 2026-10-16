@@ -13,16 +13,15 @@ two people on the same install legitimately see different dashboards.
 
 ## Working with the canvas
 
-The canvas is read-only until you press the pencil (**Customize Page**) at the top right; **Done Editing**
+The canvas is read-only until you press the pencil (**Customize Page**) at the top right; the tick (**Done Editing**) in its place
 saves and leaves edit mode. The layout is a row of **columns**, each a stack of
 widgets.
 
 | Action | How |
 |---|---|
-| Add a widget | the pencil (**Customize Page**) → **Add Widgets** — a picker that docks over the dashboard, with a group list, a search box, A–Z / Z–A sort and favourites; drag a widget into place or click it (a click adds it to the last column) |
-| Add to a particular column | the green **+ Add widget** at the bottom of that column, while customizing |
-| Start a new column | the green **+ New block** after the last column — click it and pick a widget, or drop a widget on it |
-| Move one | drag its **⠿** grip to any column; a green **+** marks where it will land, and dropping on **+ New block** starts a new one |
+| Add a widget | the pencil (**Customize Page**), then the green **+ Add Widget** at the bottom of a column — a picker that docks over the dashboard, with a group list, a search box, A–Z / Z–A sort and favourites; drag a widget into place or click it (a click adds it to that column) |
+| Start a new column | the green **+ New Widget Block** after the last column — click it and pick a widget, or drop a widget on it |
+| Move one | drag its **⠿** grip to any column; a green **+** marks where it will land, and dropping on **+ New Widget Block** starts a new one |
 | Column width | the column's **¼ / ⅓ / ½ / Full** control |
 | Widget height | the **1× / 2× / 3×** toggle on the widget, click to cycle |
 | Configure one | the gear on the widget — most carry options (row count, filters, grouping). Changes apply at once; click anywhere else, or press Escape, to close it |
@@ -30,10 +29,11 @@ widgets.
 | Export one to CSV | the download button on the widget's header, while you are *not* customizing |
 | Remove one | the **×** on the widget, while customizing |
 
-**Several dashboards, as tabs.** **Create New Dashboard** — shown while you
-are customizing — adds another canvas and opens it in edit mode. Once you have more than one, a tab bar appears under
-the header: click a tab to switch; while customizing, type over the active
-tab's name to rename it, drag a tab's grip to reorder, or **×** to delete it.
+**Several dashboards, as tabs.** Each dashboard is a tab above the canvas —
+the tab shows even when you have only one. While customizing, the **+** after
+the last tab adds another dashboard and opens it in edit mode; click a tab to
+switch; while customizing, type over the active tab's name to rename it, drag
+a tab's grip to reorder, or **×** to delete it.
 
 Your personal layout — every tab — saves automatically to your account
 (`/me/dashboard`), so it follows you to another browser.
