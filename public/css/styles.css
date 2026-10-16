@@ -3224,14 +3224,15 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   padding: 0.25rem 0.6rem 0.2rem;
   font-size: 1rem;
   line-height: 1.2;
-  color: var(--color-text-tertiary);
-  background: color-mix(in srgb, var(--color-bg-tertiary) 14%, transparent);
+  /* The inactive tabs' solid-chip look (their rule above). */
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
   border: 1px solid var(--color-border);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  opacity: 0.85;
+  box-shadow: var(--shadow-tab-idle);
 }
-.table-head-row.folder-head-card .table-tab-add:hover { opacity: 1; color: var(--color-accent); background: var(--rail-glass-bg); }
+.table-head-row.folder-head-card .table-tab-add:hover { color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 12%, transparent); }
 
 /* ─── Named-preset menu (Assets → Filters ▾, Dashboard → Dashboards ▾) ─────
    A dropdown whose list rows carry a trailing delete button, so each row is a
