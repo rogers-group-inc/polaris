@@ -262,6 +262,7 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
     - The glyph is a `::before` masked from a data-URI SVG and painted in `currentColor`. The label text stays in the DOM at `font-size: 0`, as the accessible name and `title`, so handlers that rewrite the text ("Refreshing…" on the asset panel) cannot wipe the icon.
     - A `renderPageControls` action button takes it via `className`.
     - Inside a tab row the glyph is 14px, to match the `.btn-sm` buttons beside it.
+    - The button is a SQUARE: `padding` on all four sides (`!important`, since the tab row's widen-the-moved-buttons rule would otherwise pad one icon and not the other), and `gap: 0` (the hidden label is still a flex item beside the glyph). That gives 24×24 next to a 24px `.btn-sm`.
   - Integrations: + Add Integration is the card's top-right cluster.
   - Path Monitor: gains Clear Filters, and its row now renders on an empty result instead of being cleared.
   - Assets is the exception: its five page buttons sit on a `.page-actions-row` of their own between the selection bar and the tab row, right aligned.

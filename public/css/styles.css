@@ -2246,7 +2246,6 @@ html[data-page-top-curtain]::after {
 }
 .table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) svg,
 .table-head-row .table-head-controls .btn.btn-glyph::before { width: 14px; height: 14px; }
-.table-head-row .table-head-controls .btn.btn-glyph { min-width: 28px; padding-left: 0.4rem; padding-right: 0.4rem; }
 /* …and so do the tab row's "Show N" label and its page-size select. */
 .table-head-row .table-head-controls label { text-shadow: var(--shadow-lift-text); }
 .table-head-row .table-head-controls select { box-shadow: var(--shadow-lift); }
@@ -2307,17 +2306,22 @@ html[data-page-top-curtain]::after {
    accessible name and a handler that rewrites it ("Refreshing…") cannot
    wipe the icon. The button keeps its own variant (btn-secondary / -sm),
    border and shadow — only its content becomes the glyph. */
+/* A square: the same padding on all four sides around a square glyph, so
+   width = height = the height of a text button of the same size. !important
+   because the tab row's rule that shrinks moved header buttons (padding
+   0.3rem 0.6rem) would otherwise widen one icon button and not the other. */
 .btn.btn-glyph {
   font-size: 0 !important;
   line-height: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 34px;
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
+  /* The hidden label is still a flex item: a .btn gap would sit beside it. */
+  gap: 0;
+  padding: 0.5rem !important;
 }
-.btn.btn-sm.btn-glyph { min-width: 28px; padding-left: 0.4rem; padding-right: 0.4rem; }
+.btn.btn-sm.btn-glyph,
+.table-head-row .table-head-controls .btn.btn-glyph { padding: 0.3rem !important; }
 .btn.btn-glyph::before {
   content: "";
   width: 16px;
