@@ -58,6 +58,10 @@ const TAB_STATES: any[] = [
   { sfFilters: { model: "!FG-60", serialNumber: { op: "empty" }, os: { op: "notempty" }, tags: { op: "not-contains", q: " lab " } } },
   { sfFilters: { _server: "vc01", description: "  ", macAddress: "!", dnsName: { op: "not-contains", q: "" } } },
   { sfFilters: { lastSeen: { type: "date", from: "2026-10-01", to: "2026-10-12" }, manufacturer: "Fortinet" } },
+  // The Tags column's pick menu: any / all, the "(No tags)" row, and that row alone.
+  { sfFilters: { tags: { op: "pick", mode: "any", values: ["prod", "dc,1"], none: true } } },
+  { sfFilters: { tags: { op: "pick", mode: "all", values: ["prod", "edge"], none: true } } },
+  { sfFilters: { tags: { op: "pick", mode: "any", values: [], none: true } } },
 ];
 
 let requests: any[] = [];

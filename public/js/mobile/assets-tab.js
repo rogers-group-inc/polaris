@@ -309,6 +309,15 @@
         if (!q) return;
         params[paramKey] = q;
         params[paramKey + "Op"] = "not_contains";
+      } else if (raw.op === "pick") {
+        // The desktop Tags column's pick menu — same mapping as assets.js.
+        var vals = (raw.values || []).filter(function (v) { return typeof v === "string" && v; });
+        var none = !!raw.none && raw.mode !== "all";
+        if (!vals.length && !none) return;
+        if (!vals.length) { params[paramKey + "Op"] = "empty"; return; }
+        params[paramKey] = JSON.stringify(vals);
+        params[paramKey + "Op"] = raw.mode === "all" ? "all_of" : "any_of";
+        if (none) params[paramKey + "Untagged"] = "1";
       } else if (raw.op === "in-networks") {
         var terms = (raw.terms || []).map(function (t) { return String(t).trim(); }).filter(Boolean);
         if (!terms.length) return;

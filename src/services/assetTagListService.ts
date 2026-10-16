@@ -9,6 +9,8 @@
  *   - filter: `contains` / `not_contains` resolve the matching asset ids with
  *     ONE raw query (any element ILIKE the term), and the route folds them in
  *     as `id IN` / `id NOT IN`; the blank ops use Prisma's `isEmpty` directly.
+ *     The column's picker (pick several tags, OK) sends `any_of` / `all_of`
+ *     with exact names, which ARE expressible: `hasSome` / `hasEvery`.
  *   - sort: the rows matching the active filters are read with a two-column
  *     select (id, tags), ordered in memory by `tagSortKey`, and the requested
  *     page is sliced out of that order. At 2000 assets that is one narrow scan
@@ -41,16 +43,49 @@ export async function findAssetIdsByTagSubstring(term: string): Promise<string[]
   return rows.map((r) => r.id);
 }
 
+/** Most tags one picker filter may name — the column's picker lists the tags in use. */
+export const TAG_PICK_MAX = 200;
+
+/**
+ * The picker's value: a JSON array of exact tag names. Anything that is not an
+ * array of strings reads as no tags at all (a no-op filter, never a 500).
+ */
+export function parseTagPickValue(value: string | undefined): string[] {
+  if (!value) return [];
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  const out: string[] = [];
+  for (const v of parsed) {
+    if (typeof v === "string" && v && !out.includes(v)) out.push(v);
+    if (out.length >= TAG_PICK_MAX) break;
+  }
+  return out;
+}
+
 /**
  * Translate the Tags column filter into a where fragment. `matchingIds` is the
  * `findAssetIdsByTagSubstring` result for the term (only consulted by the two
  * term-bearing ops). Returns undefined for a no-op filter.
+ *
+ * `any_of` / `all_of` are the column picker's ops: `value` is a JSON array of
+ * exact tag names (see parseTagPickValue), matched with hasSome / hasEvery.
+ * `includeUntagged` (any_of only) widens the match to rows with no tags — the
+ * picker's "(No tags)" row.
  */
 export function buildTagFilter(
   value: string | undefined,
   op: string | undefined,
   matchingIds: string[],
+  includeUntagged = false,
 ): Record<string, unknown> | undefined {
+  if (op === "any_of" || op === "all_of") {
+    const names = parseTagPickValue(value);
+    if (op === "all_of") return names.length ? { tags: { hasEvery: names } } : undefined;
+    if (!names.length) return includeUntagged ? { tags: { isEmpty: true } } : undefined;
+    const some = { tags: { hasSome: names } };
+    return includeUntagged ? { OR: [some, { tags: { isEmpty: true } }] } : some;
+  }
   if (op === "empty") return { tags: { isEmpty: true } };
   if (op === "is_not_empty") return { NOT: { tags: { isEmpty: true } } };
   if (!(value || "").trim()) return undefined;
@@ -60,7 +95,7 @@ export function buildTagFilter(
 
 /** True when the filter needs `findAssetIdsByTagSubstring` resolved first. */
 export function tagFilterNeedsLookup(value: string | undefined, op: string | undefined): boolean {
-  if (op === "empty" || op === "is_not_empty") return false;
+  if (op === "empty" || op === "is_not_empty" || op === "any_of" || op === "all_of") return false;
   return !!(value || "").trim();
 }
 

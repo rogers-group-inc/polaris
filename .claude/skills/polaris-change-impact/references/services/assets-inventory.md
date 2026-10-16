@@ -90,9 +90,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/assetTagListService.ts
 
-**What it owns:** The Assets list's **Tags** column on the server side — the filter (`contains` / `not_contains` / `empty` / `is_not_empty`, matching any single tag by case-insensitive substring) and the sort (alphabetically-first tag, untagged rows last in both directions). `Asset.tags` is a `String[]`, and Prisma can neither substring-match inside a scalar list nor order by one; that gap is the reason this service exists.
+**What it owns:** The Assets list's **Tags** column on the server side — the filter (the column's pick menu: `any_of` / `all_of` over EXACT names sent as a JSON array, plus `tagsUntagged=1`; and the older text ops `contains` / `not_contains` / `empty` / `is_not_empty`, matching any single tag by case-insensitive substring, still honoured for saved views written before the menu) and the sort (alphabetically-first tag, untagged rows last in both directions). `Asset.tags` is a `String[]`, and Prisma can neither substring-match inside a scalar list nor order by one; that gap is the reason this service exists.
 
-**Public API:** `findAssetIdsByTagSubstring(term)` (one raw `EXISTS (… unnest(tags) … ILIKE …)` query, LIKE wildcards escaped); the pure `buildTagFilter(value, op, matchingIds)`, `tagFilterNeedsLookup(value, op)`, `tagSortKey(tags)`, `sortIdsByTags(rows, dir, favoriteIds?)`; `pageAssetIdsByTags(where, dir, offset, limit, favoriteIds?)`; `listAssetsWithTag(tag)` → `{ total, assets }` — EXACT match (`tags: { has }`), six-column select, hostname order, capped at `ASSETS_WITH_TAG_LIMIT`.
+**Public API:** `findAssetIdsByTagSubstring(term)` (one raw `EXISTS (… unnest(tags) … ILIKE …)` query, LIKE wildcards escaped); the pure `buildTagFilter(value, op, matchingIds, includeUntagged?)`, `parseTagPickValue(value)` + `TAG_PICK_MAX`, `tagFilterNeedsLookup(value, op)`, `tagSortKey(tags)`, `sortIdsByTags(rows, dir, favoriteIds?)`; `pageAssetIdsByTags(where, dir, offset, limit, favoriteIds?)`; `listAssetsWithTag(tag)` → `{ total, assets }` — EXACT match (`tags: { has }`), six-column select, hostname order, capped at `ASSETS_WITH_TAG_LIMIT`.
 
 **Cross-service deps:** `prisma.$queryRaw` on `assets`; `prisma.asset.findMany` with `select: { id, tags }`.
 
@@ -102,6 +102,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `sortBy=tags` keeps the favorites-first contract: starred rows lead, each bucket sorted the same way.
 - `not_contains` keeps untagged rows; a term matching nothing makes it a no-op rather than `notIn []`.
 - A typed `%` / `_` is literal.
+- `any_of` / `all_of` never throw on a bad `tags` value: anything but a JSON array of strings is no filter (`parseTagPickValue`); `tagsUntagged` widens `any_of` only — `all_of` ignores it, as a row cannot be untagged and carry every tag. Matching is exact and case-sensitive by design: the values come from `GET /assets/tags`.
 
 **When changing this:** the Tags sort reads `id, tags` for EVERY row matching the active filters and sorts in memory, then fetches only the page's rows. At 2000 assets that is one narrow scan per page load (the same scan `GET /assets/tags` does); at 100 it is trivial. If fleets grow an order of magnitude past that, move the ordering into SQL (a raw ordered id query) rather than widening the select. The `contains` path's `id IN (…)` list is bounded by the number of tagged assets matching the term.
 

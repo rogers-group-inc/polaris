@@ -960,7 +960,7 @@ function buildAssetListWhere(
   const tagsVal = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
   const tagsOp = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
   if (tagsVal != null || tagsOp != null) {
-    const frag = buildTagFilter(tagsVal, tagsOp, tagIds ?? []);
+    const frag = buildTagFilter(tagsVal, tagsOp, tagIds ?? [], raw["tagsUntagged"] === "1");
     if (frag) and.push(frag);
   }
 

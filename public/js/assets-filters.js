@@ -116,6 +116,11 @@ function _sflDescribeFilter(key, raw) {
     if (raw.op === "not-contains") return label + " excludes " + (raw.q || "");
     if (raw.op === "contains")     return label + " contains " + (raw.q || "");
     if (raw.op === "in-networks")  return label + " in " + (raw.terms || []).join(" or ");
+    if (raw.op === "pick") {
+      var picked = (raw.values || []).slice();
+      if (raw.none && raw.mode !== "all") picked.unshift("(none)");
+      return label + (raw.mode === "all" ? " has all of " : ": ") + picked.join(raw.mode === "all" ? " and " : ", ");
+    }
   }
   return label;
 }
