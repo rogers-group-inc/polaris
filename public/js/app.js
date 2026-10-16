@@ -1602,16 +1602,21 @@ function renderNav() {
   // ─── In-app update progress ───────────────────────────────────────────
   // Sidebar panel that mirrors the discovery indicator while an in-app
   // update is being applied (Server Settings → Maintenance kicks it off,
-  // but it should be visible from any page). Reads the same in-memory
-  // /updates/status the Maintenance card polls; surfaced only while the
-  // update is actually running (state applying/restarting). Admin-only,
-  // matching checkSidebarUpdate — the status route is serverSettingsSystem-
-  // gated, so polling it as a non-admin would only earn 403s.
+  // but it should be visible from any page). Shown to EVERY signed-in user —
+  // the update restarts the app under all of them — and only while the update
+  // is actually running (state applying/restarting). It used to be admin-only
+  // because the full /updates/status is serverSettingsSystem-gated, so the
+  // people the restart surprised were exactly the ones never told. Callers who
+  // can read the full status keep reading it (the panel then shows the step's
+  // message too); everyone else reads /updates/activity, an auth-only
+  // projection carrying just the state and the current step's name.
   var _updateStatus = null;
+  var _updateFullStatus = permAtLeast("serverSettingsSystem", "read");
   async function pollUpdateProgress() {
-    if (!isAdmin()) return;
     try {
-      _updateStatus = await api.serverSettings.getUpdateStatus();
+      _updateStatus = _updateFullStatus
+        ? await api.serverSettings.getUpdateStatus()
+        : await api.serverSettings.getUpdateActivity();
     } catch (_) {
       // Mid-restart the web process is briefly unreachable and the poll
       // fails. Keep the last known status so the panel persists across the
@@ -1624,42 +1629,41 @@ function renderNav() {
     renderUpdateStatus();
   }
   // Self-scheduling instead of a flat interval: 5 s while an update is
-  // actually mid-flight (responsive enough for per-step progress), 60 s
+  // actually mid-flight (responsive enough for per-step progress), 15 s
   // otherwise. It was a flat 5 s for the whole session — 12 requests a
-  // minute, forever, to learn that no update is running — and server-settings.js
-  // already had the start/stop shape for its own card. A hidden tab stops
-  // asking unless an update IS in flight, where the operator may well switch
-  // away and back.
+  // minute, forever, to learn that no update is running — then 60 s idle,
+  // which held only for the admin who clicked Apply (Apply kicks the poller):
+  // every OTHER open tab could sleep through the whole applying phase and
+  // meet the restart with no warning. 15 s is an in-memory read. A hidden tab
+  // stops asking unless an update IS in flight, where the operator may well
+  // switch away and back.
   var _updateTimer = null;
   function _updateApplying() {
     return !!(_updateStatus && (_updateStatus.state === "applying" || _updateStatus.state === "restarting"));
   }
   function _scheduleUpdatePoll() {
     if (_updateTimer) clearTimeout(_updateTimer);
-    _updateTimer = setTimeout(_runUpdatePoll, _updateApplying() ? 5000 : 60000);
+    _updateTimer = setTimeout(_runUpdatePoll, _updateApplying() ? 5000 : 15000);
   }
   function _runUpdatePoll() {
     if (document.hidden && !_updateApplying()) { _scheduleUpdatePoll(); return; }
     pollUpdateProgress().then(_scheduleUpdatePoll, _scheduleUpdatePoll);
   }
-  if (isAdmin()) {
-    pollUpdateProgress().then(_scheduleUpdatePoll, _scheduleUpdatePoll);
-    // Same immediate re-read every pollVisible() poller gets on un-hiding: an
-    // update that started while the tab was in the background is already
-    // several steps in, and the panel exists to be seen — waiting out the
-    // remaining 60 s idle interval can outlast the whole applying phase.
-    document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) window._pollUpdateProgress();
-    });
-  }
+  pollUpdateProgress().then(_scheduleUpdatePoll, _scheduleUpdatePoll);
+  // Same immediate re-read every pollVisible() poller gets on un-hiding: an
+  // update that started while the tab was in the background is already
+  // several steps in, and the panel exists to be seen — waiting out the
+  // remaining idle interval can outlast the whole applying phase.
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) window._pollUpdateProgress();
+  });
   // Callers that just kicked an update (or want the panel fresh now) get an
   // immediate read AND a re-paced loop — without this an Apply click could
-  // sit up to a minute before the sidebar panel showed progress. The Apply
-  // button in server-settings.js is the one caller that MUST use this: with
-  // the idle poll at 60 s and a short applying phase, the sidebar otherwise
-  // slept through the entire update and the panel never appeared at all.
+  // sit out the idle interval before the sidebar panel showed progress. The
+  // Apply button in server-settings.js is the one caller that MUST use this:
+  // with a short applying phase, the sidebar otherwise slept through the
+  // entire update and the panel never appeared at all.
   window._pollUpdateProgress = function () {
-    if (!isAdmin()) return Promise.resolve(null);
     return pollUpdateProgress().then(function (r) { _scheduleUpdatePoll(); return r; }, function (e) { _scheduleUpdatePoll(); throw e; });
   };
   window._getUpdateStatus = function () { return _updateStatus; };
@@ -3148,10 +3152,18 @@ function renderUpdateStatus() {
           '</div></li></ul>'
       : "");
 
-  container.style.cursor = "pointer";
-  container.onclick = function () {
-    window.location.href = "/server-settings.html?tab=database";
-  };
+  // The click-through lands on the Maintenance card, which only
+  // serverSettingsSystem readers can open — everyone else gets the panel
+  // without a link that would bounce them.
+  if (permAtLeast("serverSettingsSystem", "read")) {
+    container.style.cursor = "pointer";
+    container.onclick = function () {
+      window.location.href = "/server-settings.html?tab=database";
+    };
+  } else {
+    container.style.cursor = "";
+    container.onclick = null;
+  }
 }
 
 // ─── Tracked PDF Export ─────────────────────────────────────────────────────
