@@ -24154,12 +24154,11 @@ function _renderAssetRuleRows(rTbody, rules, sent, assetId) {
 function _assetEventsTabHTML(assetId) {
   return '<div class="section-block">' +
     '<div class="filter-bar" style="justify-content:flex-end;margin-bottom:0.5rem">' +
-      '<label>Show</label>' +
-      '<select id="asset-view-events-pagesize" style="width:auto">' +
-        '<option value="15" selected>15</option>' +
-        '<option value="25">25</option>' +
-        '<option value="50">50</option>' +
-        '<option value="100">100</option>' +
+      '<select id="asset-view-events-pagesize" style="width:auto" aria-label="Rows per page">' +
+        '<option value="15" selected>15 / page</option>' +
+        '<option value="25">25 / page</option>' +
+        '<option value="50">50 / page</option>' +
+        '<option value="100">100 / page</option>' +
       '</select>' +
       '<button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="asset-view-events-refresh" title="Refresh">Refresh</button>' +
     '</div>' +

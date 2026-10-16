@@ -65,16 +65,15 @@
         </div>
         <!-- .filter-bar for its field shadows only: its own opaque fill and
              sticky pin are for the full-width bar, and here they drew a dark
-             box behind "Show". -->
+             box behind the page-size select. -->
         <div class="table-head-controls filter-bar" data-head-for="log" style="margin:0;padding:0 0 7px;background:none;position:static;border:none;box-shadow:none">
           <button class="btn btn-secondary btn-sm" id="btn-clear-filters" title="Clear every column filter on this list">Clear</button>
           <button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="btn-refresh" title="Refresh">Refresh</button>
-          <label>Show</label>
-          <select id="filter-pagesize" style="width:auto">
-            <option value="15" selected>15</option>
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
+          <select id="filter-pagesize" style="width:auto" aria-label="Rows per page">
+            <option value="15" selected>15 / page</option>
+            <option value="25">25 / page</option>
+            <option value="50">50 / page</option>
+            <option value="100">100 / page</option>
           </select>
         </div>
       </div>

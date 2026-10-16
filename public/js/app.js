@@ -4730,20 +4730,19 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
       });
     }
     if (typeof onSizeChange === "function" && withSize) {
-      var lbl = document.createElement("label");
-      lbl.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;font-size:0.82rem;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:0.04em";
-      lbl.appendChild(document.createTextNode("Show"));
+      // No "Show" label: each option says what it is ("25 / page").
       var sel = document.createElement("select");
+      sel.className = "page-size-select";
       sel.style.width = "auto";
+      sel.setAttribute("aria-label", "Rows per page");
       pageSizes.forEach(function (s) {
         var o = document.createElement("option");
-        o.value = String(s); o.textContent = String(s);
+        o.value = String(s); o.textContent = s + " / page";
         if (s === pageSize) o.selected = true;
         sel.appendChild(o);
       });
       sel.addEventListener("change", function () { onSizeChange(parseInt(sel.value, 10) || pageSize); });
-      lbl.appendChild(sel);
-      right.appendChild(lbl);
+      right.appendChild(sel);
     }
   }
 }

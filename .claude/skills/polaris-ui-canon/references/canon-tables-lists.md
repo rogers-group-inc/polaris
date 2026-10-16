@@ -198,6 +198,10 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 navigation **centered** across the full width, with action buttons + the
 page-size ("Show N") selector **right-aligned**. There is **no separate
 top-of-page "Show" filter-bar** — the selector lives in the controls row.
+Since 2026-10-16 the selector has **no "Show" label on any page**: its options
+read `15 / page`, `25 / page`… and it carries `aria-label="Rows per page"`
+(`renderPageControls` and the static selects on Blocks, Networks, Events and an
+asset's Events tab alike). "Show N" below names the control, not a label.
 
 **Canonical implementation:** `renderPageControls(containerId, total, pageSize, currentPage, onPageChange, onSizeChange, opts)` in [public/js/app.js](public/js/app.js). It renders into `#<containerId>` and `#<containerId>-top` as a **CSS grid** `1fr auto 1fr` — empty left cell, centered pagination in the middle, and a right cell (`.pg-right`) holding `opts.actionButtons` (e.g. Refresh / Clear Filters) followed by the page-size selector. Used by [public/js/assets.js](public/js/assets.js), [public/js/blocks.js](public/js/blocks.js), [public/js/subnets.js](public/js/subnets.js), [public/js/automations.js](public/js/automations.js) (`renderRulesPageControls`).
 
@@ -248,7 +252,8 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
     - IPAM's is moved from the mounted template into `#ipam-nav` by `mountTab`.
     - The Automations and Events rows hide while a non-table tab is open, via `.main:has(#…:not(.active))`.
     - A `-top` row inside a head row implies the bottom row carries no `actionButtons`, so Refresh / Clear Filters appear on the tab row only. Path Monitor has no tab row, so its bottom row keeps them.
-    - The tab row's "Show N" label and select carry `--shadow-lift`.
+    - The tab row's page-size select and buttons carry `--shadow-lift-control` (half `--shadow-lift`'s blur and spread, 2026-10-16).
+  - **The active tab's accent** (2026-10-16) is 2px across the top, curves down round both rounded corners and fades out by 60% of the tab's height down each side. On folder-card rows `.tab-glass` paints it as five background layers (top strip, two ring-segment arcs the mask's corners trim to the curve, two fading side strokes starting at the top so they close the arc seam); on any other tab row a masked `::before` ring (`mask-composite: exclude`) over the border box does it. Never an inset `box-shadow`: that stopped at the corners.
   - Content panels (Automations → Delivery / Groups / Scripts / Address Book, Events → Calendar) carry `folder-card-scroll` themselves.
   - Path Monitor has no tabs, but its `#path-pagination-top` sits in a tab-less `.table-head-row folder-head-card`. So it drops its page numbers and carries Refresh / Clear Filters / Show N on the right (`.table-head-controls:first-child` takes `margin-left: auto`).
   - The **Dashboard** (`index.html`) and the **`/dash` wallboard** (`dash.html`) wrap `#dashboard-tabs` in a head row and the empty state + widget canvas in `.folder-card > .folder-card-scroll`. The folder selectors include `.dashboard-tabs` / `.dashboard-tab`, and a widget lies flat in the card except while `.lifted` (being dragged).
