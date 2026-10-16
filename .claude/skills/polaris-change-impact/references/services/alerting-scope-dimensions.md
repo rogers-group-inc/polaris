@@ -163,7 +163,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/operationsCalendarService.ts
 
-**What it owns:** The Events page's Calendar tab — every planned or past operation Polaris runs on a schedule, over a local day range, in one response. Three kinds: `maintenance` (every schedule's occurrences), `reboot` (`RebootSchedule` bookings + `RebootRun` runs, business rule 115) and `firmware` (`FirmwareUpgradeSchedule` + `FirmwareUpgradeRun`, rules 87 / 93). Read-only: it writes nothing.
+**What it owns:** The Events page's Calendar tab — every planned or past operation Polaris runs on a schedule, over a local day range, in one response. Three kinds: `maintenance` (every schedule's occurrences), `reboot` (`RebootSchedule` bookings + `RebootRun` runs, business rule 115) and `firmware` (`FirmwareUpgradeSchedule` + `FirmwareUpgradeRun`, rules 87 / 93, plus one item per `FirmwareGroupSchedule` drawn on its FortiGate — `groupItem`, id `group:<id>`, carrying `groupId` so the click opens the group's detail, rule 122). Read-only: it writes nothing.
 
 **Public API:** `listCalendar({ from, to, kinds, now? })` → `{ from, to, maintenance, reboot, firmware, truncated }` (a kind not in `kinds` is `null`); `mergeDeviceItems(kind, bookings, runs, runsById, bookedRunIds, now)` (PURE — exported for the tests); `calendarRange(from, to)` (`[start, endExclusive)` Dates, 400 AppError on a bad or reversed range or one wider than 400 days); `MAX_DEVICE_ITEMS` (2000); types `CalendarKind`, `CalendarDeviceItem`, `CalendarResult`.
 

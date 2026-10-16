@@ -3,7 +3,8 @@
  *
  * Every 60 s: fire the firmware upgrades operators booked for now (business
  * rule 93) — start them through `startFirmwareUpgrade`, which re-takes every
- * rule-87 gate, or record and email why not. Web/all role only (imported under
+ * rule-87 gate, or record and email why not — then start due GROUP upgrades
+ * and advance the running ones (rule 122, firmwareGroupService). Web/all role only (imported under
  * runsSchedulers): the flash runs with `setImmediate` on the process that holds
  * the image on disk, so the starter must live there too. Best-effort: a failed
  * tick logs and retries next interval; a booking is claimed before it fires,
@@ -14,6 +15,7 @@
 
 import { logger } from "../utils/logger.js";
 import { runDueSchedules } from "../services/firmwareScheduleService.js";
+import { runDueGroupSchedules } from "../services/firmwareGroupService.js";
 import { runInstrumentedJob } from "./_metrics.js";
 
 const INTERVAL_MS = 60 * 1000;
@@ -27,6 +29,13 @@ async function tick(): Promise<void> {
       const res = await runDueSchedules();
       if (res.started + res.refused + res.missed > 0) {
         logger.info(res, "scheduled firmware upgrades fired");
+      }
+      // Group upgrades (rule 122): start due groups, then advance every
+      // running one. A member's run ending also advances its group at once;
+      // this tick is what retries a waiting member and survives a restart.
+      const groups = await runDueGroupSchedules();
+      if (groups.started + groups.missed > 0) {
+        logger.info(groups, "group firmware upgrades fired");
       }
     });
   } catch (err: any) {

@@ -1899,6 +1899,12 @@ function _assetsUpdateBulkBar() {
       : "Edit the selected asset";
   }
 
+  // Upgrade (group firmware upgrade, rule 122) owns its rule in
+  // assets-firmware-group.js: grey for a non-Fortinet selection, RED when the
+  // selection spans more than one controlling FortiGate (a server read,
+  // debounced), normal when it is one FortiGate's fleet.
+  if (window.PolarisFirmwareGroup) window.PolarisFirmwareGroup.syncButton();
+
   // Merge is pairwise — show only when exactly two assets are selected, and
   // only to admins (same gate as the Sources-tab "Merge asset..." button).
   var bMerge = document.getElementById("assets-bulk-merge-btn");
@@ -6903,6 +6909,7 @@ function assetFirmwarePanelHTML(a, fw) {
         : '<p class="hint" style="margin:0">Starting an upgrade needs Read-Write on Assets — ask an administrator.</p>');
   }
   if (!fw.error && fw.schedule) body += _fwScheduleHTML(fw.schedule, canFlash);
+  if (!fw.error && fw.group) body += _fwGroupNoteHTML(fw.group);
   if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
   return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-card)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
@@ -6910,6 +6917,21 @@ function assetFirmwarePanelHTML(a, fw) {
     '</div>' +
     body +
     (fw.error ? '' : _fwRunHistoryHTML(a)) +
+  '</div>';
+}
+
+/**
+ * The device is in a pending / running GROUP upgrade (rule 122): the group
+ * flashes it, so the card says so and links to the group instead of offering
+ * a single-device booking beside it.
+ */
+function _fwGroupNoteHTML(group) {
+  var running = group.status === "running";
+  return '<div class="fw-group-note" style="margin-top:0.6rem;padding:0.5rem 0.75rem;border:1px solid var(--color-border);border-radius:6px;font-size:0.85rem;display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
+    '<span>Part of a group upgrade on <strong>' + escapeHtml(group.gateName) + '</strong> — ' +
+      (running ? 'running now' : 'scheduled for ' + escapeHtml(_fwWhenText(group.scheduledFor))) +
+      (group.memberState && group.memberState !== "planned" ? ' (this device: ' + escapeHtml(group.memberState) + ')' : '') + '.</span>' +
+    '<button type="button" class="btn btn-sm btn-secondary" id="btn-fw-group-open" data-group-id="' + escapeHtml(group.id) + '">View group upgrade</button>' +
   '</div>';
 }
 
@@ -6974,6 +6996,9 @@ function _fwApprovalModalHTML(a, fw, opts) {
   var schedulePart;
   if (mode === "change") {
     schedulePart = '<div id="fw-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _fwScheduleFieldsHTML(fw, existing, opts.defaults) + '</div>';
+  } else if (fw.group) {
+    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">This device is in a group upgrade on ' + escapeHtml(fw.group.gateName) +
+      ' (' + escapeHtml(fw.group.status === "running" ? "running now" : _fwWhenText(fw.group.scheduledFor)) + ') — scheduling it is done by the group.</p>';
   } else if (fw.schedule) {
     schedulePart = '<p class="hint" style="margin:0.75rem 0 0">An upgrade to ' + escapeHtml(fw.schedule.toVersion) + ' is already scheduled for ' + escapeHtml(_fwWhenText(fw.schedule.scheduledFor)) + ' — change or cancel it on the Firmware card.</p>';
   } else {
@@ -7249,6 +7274,9 @@ async function _openRebootRunLogModal(assetId, runId) {
 async function _openBookingFromCalendar(a, ob) {
   var sysTab = document.querySelector('#asset-view-tabs .page-tab[data-tab="system"]');
   if (sysTab) sysTab.click();
+  // A group firmware upgrade (rule 122) is drawn on its FortiGate; it opens
+  // the group's own progress, not one device's booking.
+  if (ob.groupId) { _openFirmwareGroupDetail(ob.groupId); return; }
   var pending = ob.status === "pending" && ob.scheduleId;
   try {
     if (ob.kind === "reboot") {
@@ -7281,6 +7309,19 @@ async function _openBookingFromCalendar(a, ob) {
   }
 }
 
+/**
+ * The group detail lives in assets-firmware-group.js, which only the Assets
+ * page loads; elsewhere (the asset panel opened from global search) load it
+ * on demand.
+ */
+function _openFirmwareGroupDetail(groupId) {
+  if (window.PolarisFirmwareGroup) { window.PolarisFirmwareGroup.openDetail(groupId); return; }
+  var s = document.createElement("script");
+  s.src = "/js/assets-firmware-group.js";
+  s.onload = function () { if (window.PolarisFirmwareGroup) window.PolarisFirmwareGroup.openDetail(groupId); };
+  document.head.appendChild(s);
+}
+
 function _wireFirmwarePanel(a, fw) {
   var up = document.getElementById("btn-fw-upgrade");
   if (up) up.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw); });
@@ -7288,6 +7329,8 @@ function _wireFirmwarePanel(a, fw) {
   if (schEdit && fw.schedule) schEdit.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw, fw.schedule); });
   var schCancel = document.getElementById("btn-fw-schedule-cancel");
   if (schCancel && fw.schedule) schCancel.addEventListener("click", function () { _cancelFirmwareSchedule(a, fw.schedule); });
+  var grp = document.getElementById("btn-fw-group-open");
+  if (grp && fw.group) grp.addEventListener("click", function () { _openFirmwareGroupDetail(fw.group.id); });
   var hist = document.getElementById("btn-fw-history");
   if (hist) {
     hist.addEventListener("click", function () {

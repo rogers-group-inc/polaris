@@ -62,6 +62,18 @@ import {
   defaultRecipientsFor,
   MAX_RECIPIENTS,
 } from "../../services/firmwareScheduleService.js";
+import {
+  MAX_GROUP_SIZE,
+  MAX_CONCURRENCY,
+  resolveGroupSources,
+  planGroup,
+  createGroupSchedule,
+  recordGroupCredentialUse,
+  cancelGroupSchedule,
+  listGroupSchedules,
+  getGroupSchedule,
+  activeGroupForAsset,
+} from "../../services/firmwareGroupService.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -135,6 +147,27 @@ const UpdateScheduleSchema = z.object({
 
 const ScheduleListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+// ─── Group upgrades (business rule 122) ──────────────────────────────────────
+
+const GroupAssetIdsSchema = z.array(z.string().uuid()).min(1, "Select at least one device").max(MAX_GROUP_SIZE, `A group upgrade can select at most ${MAX_GROUP_SIZE} devices`);
+
+const GroupSelectionSchema = z.object({ assetIds: GroupAssetIdsSchema });
+
+const CreateGroupSchema = z.object({
+  assetIds: GroupAssetIdsSchema,
+  scheduledFor: ScheduledForSchema,
+  concurrency: z.number().int().min(1).max(MAX_CONCURRENCY).default(1),
+  notifyEmails: RecipientsSchema,
+  // The operator saw the single-device bookings this group supersedes.
+  cancelIndividual: z.boolean().default(false),
+});
+
+const GroupListQuerySchema = z.object({
+  gateAssetId: z.string().uuid().optional(),
+  status: z.enum(["pending", "running", "completed", "cancelled", "missed", "refused"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
 function handle(fn: (req: Request, res: Response) => Promise<void>) {
@@ -285,8 +318,8 @@ export const firmwareAssetRouter: Router = Router({ mergeParams: true });
 // governs the repository, not the device.
 firmwareAssetRouter.get("/", requirePermission("assets", "read"), handle(async (req, res) => {
   const assetId = String(req.params.id);
-  const [availability, schedule] = await Promise.all([getUpgradeAvailability(assetId), getPendingSchedule(assetId)]);
-  res.json({ ...availability, schedule });
+  const [availability, schedule, group] = await Promise.all([getUpgradeAvailability(assetId), getPendingSchedule(assetId), activeGroupForAsset(assetId)]);
+  res.json({ ...availability, schedule, group });
 }));
 
 // Flashing a device. 202 — the run is watched, not awaited.
@@ -357,6 +390,61 @@ firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", 
 firmwareAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "write"), handle(async (req, res) => {
   const schedule = await cancelSchedule(String(req.params.id), String(req.params.scheduleId), requestActor(req) ?? "unknown");
   res.json({ schedule });
+}));
+
+// ─── /assets/firmware-groups (business rule 122) ─────────────────────────────
+// A group upgrade flashes devices, so booking and cancelling it are
+// `assets:write` like a single-device flash (rule 43(g)); reading the grouping
+// and a group's progress is `assets:read`. The preview is `assets:write`: it
+// is the booking dialog's own read and names credential gaps.
+
+export const firmwareGroupRouter: Router = Router();
+
+// Which FortiGate each selected device sits under — the Assets bulk bar's
+// Upgrade button turns red when the selection spans more than one.
+firmwareGroupRouter.post("/sources", requirePermission("assets", "read"), handle(async (req, res) => {
+  const body = GroupSelectionSchema.safeParse(req.body ?? {});
+  if (!body.success) throw new AppError(400, firstIssue(body.error));
+  res.json(await resolveGroupSources(body.data.assetIds));
+}));
+
+firmwareGroupRouter.post("/preview", requirePermission("assets", "write"), handle(async (req, res) => {
+  const body = GroupSelectionSchema.safeParse(req.body ?? {});
+  if (!body.success) throw new AppError(400, firstIssue(body.error));
+  res.json({
+    plan: await planGroup(body.data.assetIds),
+    defaults: { notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS, maxConcurrency: MAX_CONCURRENCY },
+  });
+}));
+
+firmwareGroupRouter.get("/", requirePermission("assets", "read"), handle(async (req, res) => {
+  const q = GroupListQuerySchema.safeParse(req.query);
+  if (!q.success) throw new AppError(400, firstIssue(q.error));
+  res.json({ groups: await listGroupSchedules(q.data) });
+}));
+
+firmwareGroupRouter.post("/", requirePermission("assets", "write"), handle(async (req, res) => {
+  const body = CreateGroupSchema.safeParse(req.body ?? {});
+  if (!body.success) throw new AppError(400, firstIssue(body.error));
+  const { group, plan } = await createGroupSchedule({
+    assetIds: body.data.assetIds,
+    scheduledFor: new Date(body.data.scheduledFor),
+    concurrency: body.data.concurrency,
+    notifyEmails: body.data.notifyEmails,
+    cancelIndividual: body.data.cancelIndividual,
+    actor: requestActor(req) ?? "unknown",
+  });
+  await recordGroupCredentialUse(plan.included.map((m) => m.assetId), credentialUseActor(req));
+  res.status(201).json({ group });
+}));
+
+firmwareGroupRouter.get("/:groupId", requirePermission("assets", "read"), handle(async (req, res) => {
+  res.json({ group: await getGroupSchedule(String(req.params.groupId)) });
+}));
+
+// Cancel a pending group, or stop a running one (in-flight flashes finish).
+firmwareGroupRouter.delete("/:groupId", requirePermission("assets", "write"), handle(async (req, res) => {
+  res.json({ group: await cancelGroupSchedule(String(req.params.groupId), requestActor(req) ?? "unknown") });
 }));
 
 export default firmwareRouter;

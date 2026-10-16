@@ -1033,6 +1033,16 @@ const api = {
     scheduleFirmwareUpgrade:  (id, body)      => _bookingWrite(request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body)),
     updateFirmwareSchedule:   (id, sid, body) => _bookingWrite(request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body)),
     cancelFirmwareSchedule:   (id, sid)       => _bookingWrite(request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`)),
+    // Group upgrades (business rule 122): which FortiGate each selected device
+    // sits under (the bulk bar's red Upgrade button), the booking dialog's
+    // plan, book (`{ assetIds, scheduledFor ISO, concurrency, notifyEmails,
+    // cancelIndividual }`), read one, list, cancel / stop.
+    firmwareGroupSources: (assetIds)  => request("POST", "/assets/firmware-groups/sources", { assetIds }),
+    firmwareGroupPreview: (assetIds)  => request("POST", "/assets/firmware-groups/preview", { assetIds }),
+    createFirmwareGroup:  (body)      => _bookingWrite(request("POST", "/assets/firmware-groups", body)),
+    firmwareGroups:       (params)    => request("GET", "/assets/firmware-groups" + toQuery(params)),
+    firmwareGroup:        (groupId)   => request("GET", `/assets/firmware-groups/${encodeURIComponent(groupId)}`),
+    cancelFirmwareGroup:  (groupId)   => _bookingWrite(request("DELETE", `/assets/firmware-groups/${encodeURIComponent(groupId)}`)),
     // Reboots (business rule 115): what may reboot this asset and how (plus
     // its pending booking, `schedule`), reboot now (assets:write), the run
     // history, bookings, and an agent host's opt-in (assets:fullwrite).

@@ -141,6 +141,7 @@ Select rows to raise the bulk bar:
 | **Edit** | `assets:write`, exactly **one** selected | opens the edit modal |
 | **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
+| **Upgrade** | `assets:write`, FortiGates / FortiSwitches / FortiAPs under **one** FortiGate | schedules a group firmware upgrade in dependency order — see [Group firmware upgrades](#group-firmware-upgrades). Turns **red** when the selection spans more than one FortiGate; clicking it then explains why |
 | **Quarantine selected** / **Release Quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
 | **Delete selected** | `assets:write` | deletes the selection after a confirmation — see [Deleting an asset](#deleting-an-asset) |
 
@@ -153,6 +154,84 @@ first.
 
 A selection past the 500-id cap is refused **with the count**, rather than
 400-ing after you have filled in the form.
+
+### Group firmware upgrades
+
+**Upgrade** on the bulk bar books one firmware upgrade for a FortiGate and the
+FortiSwitches and FortiAPs behind it, and runs them in dependency order
+([rule 122](Business-Rules#rule-122)). It uses the same images, device logins
+and checks as a single-device upgrade from the [Firmware](#firmware) card.
+
+**One FortiGate at a time.** Every selected device must sit under the same
+FortiGate and come from the same integration. The button is:
+
+- **grey** with nothing selected, or when a selected asset is not a FortiGate,
+  FortiSwitch or FortiAP;
+- **red** when the selection spans more than one FortiGate, or includes a device
+  Polaris cannot place under one. Clicking it lists each FortiGate with the
+  devices selected under it, and **Keep only these** narrows the selection to
+  that one;
+- **normal** when it is one FortiGate's devices. Clicking it opens the booking
+  dialog.
+
+Only one group upgrade can be scheduled or running per FortiGate. Cancel the
+existing one first.
+
+**The booking dialog** shows:
+
+- the **upgrade order**, by stage: access points first, then the switches above
+  them, then the FortiGate;
+- the devices **dropped from this schedule**, with why: already on the newest
+  image, no image for its platform in the
+  [Repository](Server-Settings#repository), an HA cluster member, no address,
+  or no device login bound;
+- any devices that already have **their own upgrade scheduled**. Booking the
+  group cancels those, and you must tick a box to confirm it;
+- **Run at** (your local time), **At once** (how many devices on separate
+  branches may upgrade at the same time, 1 to 10), and who gets the summary
+  email.
+
+**How it runs.**
+
+- A device never upgrades while a device above it, below it or paired with it
+  (MCLAG) is upgrading.
+- A device only upgrades once everything behind it finished cleanly.
+- If a device **fails** or comes back **unverified**, every device above it is
+  **skipped** and nothing is sent to them. The other branches carry on.
+- Each device's **health is checked just before it starts**. One that is down,
+  warning, recovering, behind a parent that is down, or not monitorable is
+  **skipped**, and the next device starts. A device skipped for health does
+  *not* stop the devices above it.
+- A device that was upgraded some other way since the booking is recorded as
+  already current.
+- If a newer image was made primary since the booking, the device is dropped
+  rather than given an image nobody approved.
+
+While a group is scheduled or running, a device in it cannot be scheduled on
+its own. While the group is running, it cannot be upgraded on its own either.
+Its Firmware card says **Part of a group upgrade** and links to the group.
+
+**The group's progress** opens after you book it, from the device's Firmware
+card, or from its item on [Events → Calendar](Events). It shows every device's
+state, why it was skipped or dropped, and the stage of a running upgrade.
+**Cancel group upgrade** (before it starts) sends nothing. **Stop group
+upgrade** (while it runs) lets the devices already upgrading finish and starts
+nothing else.
+
+**One summary email** goes out when the group finishes, or when it was stopped
+or missed. It lists, in order:
+
+- the devices that **failed** (with the stage they stopped at) or came back
+  **unverified**;
+- the devices **skipped for health**, with what was wrong;
+- the devices **skipped because a device behind them did not finish cleanly**,
+  naming that device;
+- then what was **upgraded** (from → to), already current, and **dropped**.
+
+**FortiAPs managed by a FortiGate** often have their own web interface
+turned off, and the upgrade talks to each device directly. The dialog warns
+on every FortiAP that has never been upgraded successfully: if it fails, the
+switch and FortiGate above it are skipped.
 
 ---
 
@@ -665,6 +744,11 @@ device. It is one of:
 - **Upgrade available** — the running version, the image on offer (its
   version, platform and which model node it came from), the login that will be
   used and where it is inherited from.
+
+A device that is part of a scheduled or running
+[group firmware upgrade](#group-firmware-upgrades) shows **Part of a group
+upgrade** with a link to the group. The group schedules it, so it cannot be
+scheduled on its own here.
 
 **Upgrade firmware to …** needs **Read-Write on Assets**: whoever may edit an
 asset may upgrade it. The card itself shows to anyone who can open the asset;

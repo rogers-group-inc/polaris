@@ -67,6 +67,8 @@ export interface CalendarDeviceItem {
   /** Firmware only: the version it moves to. */
   toVersion: string | null;
   error: string | null;
+  /** Firmware only: a GROUP upgrade booking (rule 122), drawn on its FortiGate. */
+  groupId?: string | null;
 }
 
 export interface CalendarResult {
@@ -207,9 +209,49 @@ async function firmwareItems(start: Date, end: Date, now: Date): Promise<{ items
       select: { id: true, assetId: true, status: true, startedBy: true, startedAt: true, finishedAt: true, error: true, toVersion: true, asset: ASSET_NAME },
     }),
   ]);
-  return finish("firmware", bookings, runs, now,
-    (ids) => prisma.firmwareUpgradeRun.findMany({ where: { id: { in: ids } }, select: { id: true, assetId: true, status: true, startedBy: true, startedAt: true, finishedAt: true, error: true, toVersion: true, asset: ASSET_NAME } }),
-    (ids) => prisma.firmwareUpgradeSchedule.findMany({ where: { runId: { in: ids } }, select: { runId: true } }));
+  const [single, groups] = await Promise.all([
+    finish("firmware", bookings, runs, now,
+      (ids) => prisma.firmwareUpgradeRun.findMany({ where: { id: { in: ids } }, select: { id: true, assetId: true, status: true, startedBy: true, startedAt: true, finishedAt: true, error: true, toVersion: true, asset: ASSET_NAME } }),
+      (ids) => prisma.firmwareUpgradeSchedule.findMany({ where: { runId: { in: ids } }, select: { runId: true } })),
+    prisma.firmwareGroupSchedule.findMany({
+      where: { scheduledFor: { gte: start, lt: end } },
+      orderBy: { scheduledFor: "asc" },
+      take: MAX_DEVICE_ITEMS + 1,
+      select: {
+        id: true, gateAssetId: true, scheduledFor: true, status: true, createdBy: true, error: true, finishedAt: true,
+        gate: ASSET_NAME, _count: { select: { members: { where: { state: { not: "dropped" } } } } },
+      },
+    }),
+  ]);
+  // Group bookings (rule 122) — one item on the gate; each member's flash is
+  // also drawn as its own run, above.
+  const groupItems = groups.slice(0, MAX_DEVICE_ITEMS).map((g) => groupItem(g, now));
+  const items = [...single.items, ...groupItems].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.assetName.localeCompare(b.assetName)));
+  return { items: items.slice(0, MAX_DEVICE_ITEMS), truncated: single.truncated || groups.length > MAX_DEVICE_ITEMS || items.length > MAX_DEVICE_ITEMS };
+}
+
+/** A group firmware booking as a calendar item. Pure (exported for the tests). */
+export function groupItem(
+  g: { id: string; gateAssetId: string; scheduledFor: Date; status: string; createdBy: string; error: string | null; finishedAt: Date | null; gate: { hostname: string | null; ipAddress: string | null } | null; _count: { members: number } },
+  now: Date,
+): CalendarDeviceItem {
+  const end = g.status === "running" || g.finishedAt ? runEnd(g.scheduledFor, g.finishedAt, now) : new Date(g.scheduledFor.getTime() + NOMINAL_MS);
+  return {
+    kind: "firmware",
+    id: `group:${g.id}`,
+    assetId: g.gateAssetId,
+    assetName: `group of ${g._count.members} on ${nameOf(g.gate, g.gateAssetId)}`,
+    start: formatLocalIsoMinute(g.scheduledFor),
+    end: formatLocalIsoMinute(end),
+    booked: true,
+    scheduleId: null,
+    runId: null,
+    status: g.status,
+    by: g.createdBy,
+    toVersion: null,
+    error: g.error,
+    groupId: g.id,
+  };
 }
 
 /**
