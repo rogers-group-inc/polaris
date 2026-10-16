@@ -71,13 +71,31 @@ see [Actions](Automation-Actions#level-scoped-region-routing).
 
 The **Regions** button in the map's top-right corner, **ungated beyond viewing
 the map** — how an install's regions nest is not privileged information.
-Clicking it opens the **Regions** panel, which lists each region with its
-colour and level; the panel's **×** folds it back into the button.
+Clicking it opens the **Regions** panel, which lists the regions **as their
+nesting tree** — each region indented under the region that contains it, with
+its colour and level; the panel's **×** folds it back into the button.
 
 Open, it paints the polygons read-only, with a permanent label only on the outermost
 ring of a nested set (fill opacity is held low because nesting stacks it), and
 **hovering renders the containment tree**, each row badged with its derived
-level.
+level. **Smaller regions always draw on top of the regions around them** (in
+edit mode too), so an L1 inside an L2 is the one you click.
+
+### Nesting a region by dragging
+
+In edit mode, drag a region's row in the panel onto another row to nest it
+there. Only a region whose polygon **contains** it on the map accepts the drop
+— this chooses between real containers, it does not override the map. The
+case it exists for: a sub-region inside a state inside a division can be
+nested **directly under the division**, and the levels re-compute (the state,
+left with nothing inside it, drops to L1). A refused drop says why in the
+status line. The change saves immediately, like a rename, and is recorded in
+Events (`region.nesting_changed`, plus `region.levels_shifted` for the other
+regions it moved). A region nested by hand shows its name in *italics*; drop it
+back on its smallest container to return it to automatic nesting. If a later
+reshape means the chosen region no longer contains it, it goes back under its
+smallest container until the shape is restored. See
+[Rule 121](Business-Rules#rule-121).
 
 ### Edit regions
 

@@ -1737,6 +1737,9 @@ const api = {
     create: (name, polygon, color) => request("POST",   "/map/regions", color ? { name, polygon, color } : { name, polygon }),
     update: (id, body)             => request("PUT",    `/map/regions/${id}`, body),
     delete: (id)                   => request("DELETE", `/map/regions/${id}`),
+    // Drag-to-nest: parentId must be a region whose polygon contains this one
+    // (400 otherwise); null = back to automatic nesting.
+    setNesting: (id, parentId)     => request("PUT",    `/map/regions/${id}/nesting`, { parentId }),
     // The Save Regions review: full reconcile + strip stale region tags off
     // pinned FortiGates that are no longer inside the named polygon.
     reconcile: ()                  => request("POST",   "/map/regions/reconcile"),

@@ -46,6 +46,9 @@ type Tree = {
   warningsHtml: (p: unknown) => string;
   paintOrder: (p: unknown) => OverlayRegion[];
   overlayStyle: (level: number, maxLevel: number) => Record<string, unknown>;
+  polygonArea: (p: unknown) => number;
+  buildPanelTreeHtml: (p: unknown, opts?: { draggable?: boolean; emptyText?: string }) => string;
+  canNestUnder: (p: unknown, childId: string, targetId: string) => { ok: boolean; reason: string };
   attachTreeTooltip: (
     button: unknown,
     getPayload: () => Promise<unknown>,
@@ -305,5 +308,92 @@ describe("attachTreeTooltip", () => {
     const t = load();
     expect(() => t.attachTreeTooltip(null, async () => NESTED, fakeTip())).not.toThrow();
     expect(() => t.attachTreeTooltip(fakeButton(), async () => NESTED, null as any)).not.toThrow();
+  });
+});
+
+function sq(lat: number, lng: number, size: number): Array<[number, number]> {
+  return [[lat, lng], [lat, lng + size], [lat + size, lng + size], [lat + size, lng]];
+}
+
+describe("buildPanelTreeHtml (the Regions panel list)", () => {
+  it("nests each region's row inside its parent's children block, with its L#", () => {
+    const html = load().buildPanelTreeHtml(NESTED);
+    // Bartlett's row sits inside Memphis's children, inside South's children.
+    expect(html).toMatch(/data-region-id="south"[\s\S]*map-regions-children[\s\S]*data-region-id="memphis"[\s\S]*map-regions-children[\s\S]*data-region-id="bartlett"/);
+    expect(html).toContain("<em>L3</em>");
+    expect((html.match(/map-regions-row"/g) || []).length).toBe(5);
+    // Roots name-sorted: Elsewhere before South.
+    expect(html.indexOf('data-region-id="elsewhere"')).toBeLessThan(html.indexOf('data-region-id="south"'));
+  });
+
+  it("makes rows draggable only when asked", () => {
+    const t = load();
+    expect(t.buildPanelTreeHtml(NESTED)).not.toContain("draggable");
+    expect(t.buildPanelTreeHtml(NESTED, { draggable: true })).toContain('draggable="true"');
+  });
+
+  it("escapes names and states the empty case", () => {
+    const t = load();
+    const html = t.buildPanelTreeHtml({ regions: [{ id: "x", name: "<b>x</b>", level: 1, parentId: null }] });
+    expect(html).not.toContain("<b>x</b>");
+    expect(t.buildPanelTreeHtml({ regions: [] }, { emptyText: "Draw one." })).toContain("Draw one.");
+    expect(t.buildPanelTreeHtml(null)).toContain("No regions");
+  });
+
+  it("still lists a region a malformed payload left unreachable", () => {
+    const html = load().buildPanelTreeHtml({ regions: [{ id: "a", name: "A", parentId: "b" }, { id: "b", name: "B", parentId: "a" }] });
+    expect(html).toContain('data-region-id="a"');
+    expect(html).toContain('data-region-id="b"');
+  });
+});
+
+describe("canNestUnder (drag-to-nest)", () => {
+  const P = {
+    regions: [
+      { id: "south", name: "South", parentId: null, containerIds: [] },
+      { id: "memphis", name: "Memphis", parentId: "south", containerIds: ["south"] },
+      { id: "bartlett", name: "Bartlett", parentId: "memphis", containerIds: ["memphis", "south"] },
+      { id: "elsewhere", name: "Elsewhere", parentId: null, containerIds: [] },
+    ],
+  };
+
+  it("allows any containing region other than the current parent", () => {
+    expect(load().canNestUnder(P, "bartlett", "south").ok).toBe(true);
+  });
+
+  it("refuses a region that does not contain it, and says why", () => {
+    const v = load().canNestUnder(P, "bartlett", "elsewhere");
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain("not inside");
+  });
+
+  it("refuses the current parent and itself", () => {
+    const t = load();
+    expect(t.canNestUnder(P, "bartlett", "memphis").ok).toBe(false);
+    expect(t.canNestUnder(P, "bartlett", "bartlett")).toEqual({ ok: false, reason: "" });
+  });
+});
+
+describe("paintOrder by area", () => {
+  it("paints a larger polygon under a smaller one even at the same depth", () => {
+    // Bartlett was nested straight under South, so it shares depth 1 with
+    // Memphis — whose polygon still surrounds it and must paint first.
+    const order = load()
+      .paintOrder({
+        regions: [
+          { id: "south", name: "South", depth: 0, polygon: sq(30, -95, 20) },
+          { id: "aaa", name: "Aaa Bartlett", depth: 1, polygon: sq(35, -88, 1) },
+          { id: "memphis", name: "Memphis", depth: 1, polygon: sq(34, -89, 5) },
+        ],
+      })
+      .map((r) => r.id);
+    expect(order).toEqual(["south", "memphis", "aaa"]);
+  });
+
+  it("computes shoelace area and is 0 for junk", () => {
+    const t = load();
+    expect(t.polygonArea(sq(0, 0, 2))).toBe(4);
+    expect(t.polygonArea(null)).toBe(0);
+    expect(t.polygonArea([[0, 0]])).toBe(0);
   });
 });

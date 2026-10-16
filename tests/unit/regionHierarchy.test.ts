@@ -153,6 +153,45 @@ describe("buildRegionHierarchy — nesting", () => {
     const reversed = buildRegionHierarchy([...NESTED_3].reverse());
     expect(reversed).toEqual(forward);
   });
+
+  it("lists every container, smallest first", () => {
+    const h = buildRegionHierarchy(NESTED_3);
+    expect(h.byId["city"]!.containerIds).toEqual(["division", "state"]);
+    expect(h.byId["division"]!.containerIds).toEqual(["state"]);
+    expect(h.byId["state"]!.containerIds).toEqual([]);
+  });
+});
+
+describe("buildRegionHierarchy — nestUnderId (drag-to-nest)", () => {
+  it("honours a chosen parent that really contains the region, and re-levels", () => {
+    const input = NESTED_3.map((r) => (r.id === "city" ? { ...r, nestUnderId: "state" } : r));
+    const h = buildRegionHierarchy(input);
+    expect(h.byId["city"]!.parentId).toBe("state");
+    expect(h.byId["city"]!.depth).toBe(1);
+    expect(h.byId["city"]!.ancestorIds).toEqual(["state"]);
+    // division lost its only child: L2 → L1; state still holds two L1s → L2.
+    expect(h.byId["division"]!.level).toBe(1);
+    expect(h.byId["state"]!.level).toBe(2);
+    expect(h.byId["state"]!.childIds.sort()).toEqual(["city", "division"]);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("ignores a chosen parent that does NOT contain the region, with a warning", () => {
+    const input: RegionInput[] = [
+      ...NESTED_3.map((r) => (r.id === "city" ? { ...r, nestUnderId: "elsewhere" } : r)),
+      region("elsewhere", 0, 0, 5),
+    ];
+    const h = buildRegionHierarchy(input);
+    expect(h.byId["city"]!.parentId).toBe("division");
+    expect(h.warnings).toEqual([expect.objectContaining({ kind: "nest-ignored", regionId: "city", otherRegionId: "elsewhere" })]);
+  });
+
+  it("silently ignores a chosen parent that no longer exists", () => {
+    const input = NESTED_3.map((r) => (r.id === "city" ? { ...r, nestUnderId: "gone" } : r));
+    const h = buildRegionHierarchy(input);
+    expect(h.byId["city"]!.parentId).toBe("division");
+    expect(h.warnings).toEqual([]);
+  });
 });
 
 describe("buildRegionHierarchy — degenerate and hostile input", () => {

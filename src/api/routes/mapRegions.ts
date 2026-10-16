@@ -159,6 +159,11 @@ const UpdateRegionSchema = z.object({
   color: HexColorSchema.optional(),
 });
 
+// null = back to automatic nesting (the smallest containing region).
+const SetNestingSchema = z.object({
+  parentId: z.string().min(1).max(64).nullable(),
+});
+
 // GET /map/regions
 // Serves the DECORATED projection — each region additionally carries its
 // derived `level` / `depth` / `parentId` / `childIds` / `ancestorIds`. Purely
@@ -373,6 +378,49 @@ router.put("/:id", requirePermission("mapRegions", "write"), async (req, res, ne
         details: summary,
       });
     }
+    res.json(result.region);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /map/regions/:id/nesting
+// The Regions panel's drag-to-nest: choose which CONTAINING region is this
+// one's parent (or null for automatic). Only a region whose polygon really
+// contains it is accepted — 400 otherwise. No tag reconcile: region tags follow
+// each polygon's own membership, which a parent choice does not move; what it
+// moves is levels, and so who level-routed alerts reach — hence the Events.
+router.put("/:id/nesting", requirePermission("mapRegions", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const input = SetNestingSchema.parse(req.body);
+    const { regions: beforeRegions, hierarchy: beforeLevels } = await service.getRegionHierarchy();
+    const result = await service.setRegionNesting(id, input.parentId);
+    const nameOf = (rid: string | null) => (rid ? beforeRegions.find((r) => r.id === rid)?.name ?? rid : null);
+    const levels = await levelDetails(id);
+    const from = nameOf(result.previousParentId);
+    const to = nameOf(result.parentId);
+    logEvent({
+      action: "region.nesting_changed",
+      resourceType: "map-region",
+      resourceId: result.region.id,
+      resourceName: result.region.name,
+      actor: req.session?.username,
+      message:
+        `Map region "${result.region.name}" nested ` +
+        (to ? `under "${to}"` : "at the top level") +
+        (input.parentId === null ? " (automatic)" : "") +
+        (from !== to ? ` (was ${from ? `under "${from}"` : "top level"})` : "") +
+        `, now level ${levels.level ?? 1}`,
+      details: {
+        previousParentId: result.previousParentId,
+        previousParentName: from,
+        parentId: result.parentId,
+        chosen: result.region.nestUnderId ?? null,
+        ...levels,
+      },
+    });
+    await logLevelShifts(beforeLevels, id, req.session?.username);
     res.json(result.region);
   } catch (err) {
     next(err);
