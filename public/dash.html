@@ -58,11 +58,17 @@
   </div>
 
   <!-- Add-Widgets picker: same markup as index.html. -->
-  <div class="widget-picker-overlay" id="widget-library-overlay" aria-hidden="true">
-    <div class="widget-picker" role="dialog" aria-labelledby="widget-picker-title">
-      <div class="widget-picker-header">
-        <h3 id="widget-picker-title">Add Widgets</h3>
-        <button type="button" class="btn btn-icon" id="widget-library-close" aria-label="Close">&times;</button>
+  <!-- A standard slide-over (.slideover-overlay / .slideover /
+       .slideover-header-top), so it takes the slide-overs' glass theme, the
+       panel lock app.js / panel-lock.js inject beside the X, and the
+       off-click X bloom while locked. -->
+  <div class="slideover-overlay widget-picker-overlay" id="widget-library-overlay" aria-hidden="true">
+    <div class="slideover widget-picker" role="dialog" aria-labelledby="widget-picker-title">
+      <div class="slideover-header widget-picker-header">
+        <div class="slideover-header-top">
+          <h3 id="widget-picker-title">Add Widgets</h3>
+          <button type="button" class="btn-icon" id="widget-library-close" aria-label="Close" title="Close">&times;</button>
+        </div>
       </div>
       <div class="widget-picker-toolbar">
         <input type="search" id="widget-picker-search" placeholder="Search widgets…" aria-label="Search widgets">
@@ -89,6 +95,7 @@
   <script src="/js/vendor/leaflet/leaflet.markercluster.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/temp-unit.js"></script>
+  <script src="/js/panel-lock.js"></script>
   <script src="/js/dash-boot.js"></script>
   <script src="/js/legend-toggle.js"></script>
   <script src="/js/folder-tabs.js"></script>

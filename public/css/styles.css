@@ -7445,46 +7445,23 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 
 /* ── Add-Widgets picker ──────────────────────────────────────────────────
-   Translucent overlay (the dashboard shows through, dimmed) docking a panel
-   on the right with a Group-By list + searchable/sortable widget list. */
-.widget-picker-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1100;
-  background: rgba(0,0,0,0.45);
-  display: none;
-  justify-content: flex-end;
-  /* Backdrop is pass-through so a card dragged out of the panel reaches the
-     dashboard canvas underneath (HTML5 drag events hit-test through
-     pointer-events:none elements). The panel re-enables pointer events below.
-     Trade-off: no click-on-backdrop-to-close — the × button and Esc close. */
-  pointer-events: none;
-}
-.widget-picker-overlay.open { display: flex; }
+   A standard slide-over (.slideover-overlay / .slideover in index.html and
+   dash.html): the slide-overs' glass, backdrop, slide-in and header, the
+   panel lock beside its X and the off-click X bloom while locked all come
+   from those classes. These rules only size it and lay out its inside.
+   The backdrop takes clicks now (an unlocked off-click closes it): a widget
+   dragged out still reaches the canvas, because the whole picker hides for
+   the drag (.drag-hidden below). */
+.widget-picker-overlay { z-index: 1100; }
 /* While a card is being dragged out, hide the whole picker so the dashboard
-   (incl. columns behind the panel) is fully exposed as a drop target.
-   After .open so it wins on equal specificity. */
+   (incl. columns behind the panel) is fully exposed as a drop target. */
 .widget-picker-overlay.drag-hidden { display: none; }
-.widget-picker {
+.slideover.widget-picker {
   width: 56vw;
   max-width: 920px;
   min-width: 420px;
-  height: 100%;
-  background: var(--color-bg-secondary); /* page surface; --color-bg doesn't exist */
-  border-left: 1px solid var(--color-border, rgba(255,255,255,0.10));
-  box-shadow: -8px 0 28px rgba(0,0,0,0.40);
-  display: flex;
-  flex-direction: column;
-  pointer-events: auto;
 }
-.widget-picker-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.08));
-}
-.widget-picker-header h3 { margin: 0; font-size: 1.05rem; }
+.widget-picker-header .slideover-header-top { margin-bottom: 0; }
 .widget-picker-toolbar {
   display: flex;
   gap: 10px;
@@ -7603,7 +7580,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   font-size: 0.72rem;
 }
 @media (max-width: 720px) {
-  .widget-picker { width: 100%; min-width: 0; }
+  .slideover.widget-picker { width: 100%; min-width: 0; }
   .widget-library-card { grid-template-columns: 28px 1fr; }
   .widget-library-preview { display: none; }
 }

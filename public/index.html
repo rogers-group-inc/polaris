@@ -57,13 +57,19 @@
     </main>
   </div>
 
-  <!-- Add-Widgets picker: translucent overlay (dashboard shows through) docking
-       a Group-By list + searchable/sortable/favoritable widget list. -->
-  <div class="widget-picker-overlay" id="widget-library-overlay" aria-hidden="true">
-    <div class="widget-picker" role="dialog" aria-labelledby="widget-picker-title">
-      <div class="widget-picker-header">
-        <h3 id="widget-picker-title">Add Widgets</h3>
-        <button type="button" class="btn btn-icon" id="widget-library-close" aria-label="Close">&times;</button>
+  <!-- Add-Widgets picker: a Group-By list + searchable/sortable/favoritable
+       widget list. -->
+  <!-- A standard slide-over (.slideover-overlay / .slideover /
+       .slideover-header-top), so it takes the slide-overs' glass theme, the
+       panel lock app.js / panel-lock.js inject beside the X, and the
+       off-click X bloom while locked. -->
+  <div class="slideover-overlay widget-picker-overlay" id="widget-library-overlay" aria-hidden="true">
+    <div class="slideover widget-picker" role="dialog" aria-labelledby="widget-picker-title">
+      <div class="slideover-header widget-picker-header">
+        <div class="slideover-header-top">
+          <h3 id="widget-picker-title">Add Widgets</h3>
+          <button type="button" class="btn-icon" id="widget-library-close" aria-label="Close" title="Close">&times;</button>
+        </div>
       </div>
       <div class="widget-picker-toolbar">
         <input type="search" id="widget-picker-search" placeholder="Search widgets…" aria-label="Search widgets">
@@ -93,6 +99,7 @@
   <script src="/js/assistant.js"></script>
   <script src="/js/legend-toggle.js"></script>
   <script src="/js/folder-tabs.js"></script>
+  <script src="/js/panel-lock.js"></script>
   <script src="/js/app.js"></script>
   <span id="polaris-nav-ready" hidden></span>
   <!-- Canonical asset-details slide-in (openViewModal in assets.js), reused
