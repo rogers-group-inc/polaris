@@ -241,3 +241,9 @@ monitored **sites** with status dots and **live weather radar** (proxied
 server-side, with a direct-CDN fallback).
 
 The **Device Map** widget is the gate-level map with click-through to topology.
+
+On both widgets the sun / moon basemap button sits in the map's top-left
+corner, above the zoom buttons, as on this page. The Site Map's **°F**,
+**Radar** and **Loop** buttons, and fullscreen, are at the top right; a button
+that is on looks pressed. Like the rest of the map's buttons and its legend,
+they follow the app theme.
