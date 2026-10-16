@@ -628,7 +628,11 @@ sample, and the `+add` / `-remove` delta against the tag's current assignments.
 A tag's colour is either a **custom colour** or a **severity colour**
 (*Severity: Notice* … *Severity: Critical* in the Color field). A severity
 colour follows the theme: the tag is drawn in the same colour as that
-severity's chart bands, on whichever theme you are using. Through the API,
+severity's chart bands, on whichever theme you are using. A custom colour fills
+the pill as picked, but its **label** is darkened on the light themes and
+lightened on the dark one as far as it takes to stay readable, so a white or
+pale-yellow tag (or a navy or black one) still reads. Region and role colours
+are drawn the same way. Through the API,
 `color` is a hex (`#rrggbb` or `#rgb`) or `severity:<level>`
 (`severity:warning`); anything else is refused.
 
