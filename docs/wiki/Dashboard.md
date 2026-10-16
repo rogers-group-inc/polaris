@@ -56,6 +56,10 @@ edits by its owner do not follow it.
 | `savedDashboards:write` | **publish** one — which reaches every operator *and* the unauthenticated Dash wallboard |
 | `savedDashboards:fullwrite` | delete anyone's |
 
+A role with `savedDashboards` at **None** does not see the **Dashboards ▾**
+menu at all. Custom roles created before saved dashboards existed were given
+None, so if a user is missing the menu, raise that key on their role.
+
 Publishing is the escalated level on purpose: a public dashboard is visible on a
 NOC wallboard that has no session at all. See
 [Mobile and Dash](Mobile-and-Dash#dash-wallboard).
