@@ -55,6 +55,10 @@ function flashModalCloseBtn(closeBtn) {
   // over body-level fixed elements. Re-home the bloom into whatever is
   // fullscreen (else body) so it still shows over the topology modal there;
   // a position:fixed child of the top-layer element renders in the top layer.
+  // `screen` can only lighten, so over a light theme's cream it all but
+  // vanishes; there it multiplies instead, which tints the page red.
+  var light = getComputedStyle(document.documentElement).colorScheme === "light";
+  bloom.style.mixBlendMode = light ? "multiply" : "screen";
   var bloomHost = document.fullscreenElement || document.body;
   if (bloom.parentNode !== bloomHost) bloomHost.appendChild(bloom);
   // No bloom on the first off-click; from the 2nd on it starts at 1/4 the full

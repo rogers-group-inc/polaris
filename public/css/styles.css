@@ -589,8 +589,8 @@ html[data-glow-turn] {
      to the left, ready for the next nightfall. Animated, it would sweep
      across the page right to left.
    - into morning (from nightfall): the main glow is transparent on
-     nightfall, so its geometry jumps to the sunrise's and only the colours
-     fade, bringing the sun up in place at the bottom while the blue glow
+     nightfall, so its SHAPE jumps to the sunrise's while it rises from
+     below the bottom edge into place, colours fading in, as the blue glow
      slides out to the right. */
 /* Noon → nightfall's glow move takes 2.5 s, half a second longer than the
    other turns' 2 s; the palette keeps its 1.6 s. Keyed on the AFTERNOON
@@ -599,7 +599,10 @@ html[data-glow-turn] {
    nothing and the transition runs on at this duration. Duration only;
    the property list and curves are the bare html rule's. */
 html[data-glow-turn][data-theme="afternoon"] {
-  transition-duration: 2500ms;
+  /* The main glow (the first eleven) sinks and fades on the palette's
+     1.6 s, so the sun is down and gone as the red turns to blue; the
+     night glow (the last two) keeps the 2.5 s slide. */
+  transition-duration: 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 2500ms, 2500ms;
 }
 html[data-theme="noon"] {
   transition-property: --page-glow-y,
@@ -622,7 +625,35 @@ html[data-theme="noon"] {
    The height reaching the width (140vw) is a true circle on any screen
    shape, which a percentage pair (of width, of height) never is. */
 html[data-glow-turn="morning-noon"] {
-  animation: page-glow-round 2000ms cubic-bezier(0.37, 0, 0.63, 1);
+  animation: page-glow-round 2000ms cubic-bezier(0.37, 0, 0.63, 1),
+             page-glow-band-fade 2000ms linear;
+}
+/* Morning's red band (the outer stops, --page-glow-c2 / -c3) LINGERS on
+   the climb, then is gone by the time the sun reaches mid-page: held at
+   morning's colours for the first 20% (the glow still low, ~80% down),
+   then eased out to noon's by 35%, where the climb's curve (the bare
+   html rule's cubic-bezier(0.4, 0, 0.2, 1), 100% to 0%) puts the glow's
+   centre at 50%. Re-time both frames together if the climb's curve or
+   length changes. Same rule as the rounding: c2 / c3 leave the noon
+   transition list for the turn (the rule below), since a running
+   transition outranks an animation. The end frame is noon's own value
+   (#ffc928 at 24%, x 0.629 / 0.286), so nothing jumps when
+   data-glow-turn drops. Linear overall; the fade's own ease is per frame. */
+html[data-glow-turn="morning-noon"][data-theme="noon"] {
+  transition-property: --page-glow-y,
+    --page-glow-c0, --page-glow-c1,
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+}
+@keyframes page-glow-band-fade {
+  0%, 20% {
+    --page-glow-c2: rgba(243,154,76,.34);
+    --page-glow-c3: rgba(238,154,90,.14);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  35%, 100% {
+    --page-glow-c2: rgba(255,201,40,.151);
+    --page-glow-c3: rgba(255,201,40,.0686);
+  }
 }
 @keyframes page-glow-round {
   /* Round by 12.5% (0.25 s), and HELD round until three quarters (1.5 s):
@@ -673,7 +704,11 @@ html[data-glow-turn="nightfall-morning"] {
   100% { --night-glow-w: 70vw;   --night-glow-h: 70vw; }
 }
 html[data-theme="morning"] {
-  transition-property: --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
+  /* The sunrise RISES into place from below the bottom edge, where
+     nightfall parks it, its colours (the red band with them) fading in
+     as it comes; it eases out to land (the first curve). */
+  transition-property: --page-glow-y,
+    --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --night-glow-x, --night-glow-c;
   /* The exit is the entrance played backwards: same path, mirrored. Its
      position takes the REVERSED ease (STD's control points swapped and
@@ -685,7 +720,8 @@ html[data-theme="morning"] {
      both are on screen 1.46 s at the same speeds. Size and colour keep the
      gentle sine, which is symmetric already: it shrinks to half size
      evenly, and stays moonlight blue (morning parks it in that colour). */
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1),
+    cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.8, 0, 0.6, 1),
     cubic-bezier(0.37, 0, 0.63, 1);
 }
@@ -1011,13 +1047,13 @@ code {
      2 s clock (see the html rule in the crossfade block), so the turn from
      noon starts a single glow transition here, and the second leg into
      nightfall changes none of these values and lets it run on unbroken —
-     noon's sunlight rising up and away as it fades, the blue glow sliding in
+     noon's sunlight sinking down and away as it fades, the blue glow sliding in
      and growing. A half-way value here would restart the glow mid-
      flight at 800 ms and lurch. The colour stays noon's sunlight (not this
      palette's clay accent) so the fade never turns into a colour change. */
   --page-glow-color: #ffc928;
   --page-glow-strength: 0%;
-  --page-glow-y: -45%;
+  --page-glow-y: 145%;
   --night-glow-x: 50%;
   --night-glow-c: rgba(109,151,255,.25);
   --night-glow-w: 140vw;
@@ -1059,13 +1095,14 @@ code {
      this one, and it is a hair brighter here than in the :root dark base. */
   --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
   /* Nightfall's glow is the sliding --night-glow layer (moonlight blue at
-     25%, see :root), centred here. The main glow is off and parked above
-     the top edge: on the turn from noon its sunlight rises up and away as it
+     25%, see :root), centred here. The main glow is off and parked below
+     the bottom edge: on the turn from noon its sunlight sinks down and away as it
      fades (afternoon carries the same values), while the blue glow slides in from
      the left. Its visible half-height is 70% of a 60% radius, 42% of the
-     viewport, so -45% is just clear. */
+     viewport, so 145% is just clear, and the turn to morning raises the
+     sunrise from there. */
   --page-glow-strength: 0%;
-  --page-glow-y: -45%;
+  --page-glow-y: 145%;
   --night-glow-x: 50%;
   --night-glow-c: rgba(109,151,255,.25);
   --night-glow-w: 140vw;
@@ -1933,7 +1970,7 @@ html[data-page-top-curtain]::after {
 }
 .page-header-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   /* Wraps rather than overhanging its parent: four header buttons plus the
      user badge overflow a narrow viewport, and the badge is LAST, so it is
@@ -2090,6 +2127,29 @@ html[data-page-top-curtain]::after {
   color: var(--color-text-tertiary);
 }
 
+/* Help (app.js _renderHelpButton): a bare icon beside the user area, like
+   the badge it sits next to (no box) -- it read as a stray card otherwise.
+   !important beats the header cluster's .btn chrome and lift shadow. */
+.btn.page-help-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
+  gap: 0;
+  justify-content: center;
+  border: none !important;
+  border-radius: 50%;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--color-text-secondary);
+  filter: drop-shadow(0 0 2px rgba(0,0,0,.07)) drop-shadow(0 0 12px rgba(0,0,0,.11));
+}
+.btn.page-help-btn svg { width: 20px; height: 20px; }
+.btn.page-help-btn:hover,
+.btn.page-help-btn:focus-visible {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent) !important;
+}
+.btn.page-help-btn:focus:not(:focus-visible) { outline: none; }
 .user-badge {
   display: flex;
   align-items: center;
@@ -2252,7 +2312,7 @@ html[data-page-top-curtain]::after {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 6px;
   margin-bottom: 8px;
 }
 /* Buttons moved into a tab row from a page header take the row's small size
@@ -2613,7 +2673,10 @@ html[data-page-top-curtain]::after {
   --folder-fill: color-mix(in srgb, var(--color-bg-tertiary) 51%, transparent);
   display: flex;
   align-items: flex-end;
-  gap: 12px;
+  /* 6px: the gap inside every control cluster too, so neighbouring
+     clusters (Export, the Add / Settings group, Clear + Refresh) space like
+     one row of buttons. */
+  gap: 6px;
   /* The bottom row overlaps the folder body's (transparent) top border row,
      so the rule and the neck both land exactly on the table's top edge. */
   margin-bottom: -1px;
@@ -7736,26 +7799,17 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    read as a hole punched in the map. Values are hardcoded, not theme tokens:
    the map theme is its own per-user preference (a light app theme can hold a
    dark map), so these must follow the BASEMAP, not the app palette. Scoped to
-   the zoom buttons and the Site Map home button, both of which draw glyphs in
-   `color`; the leaflet-draw toolbar's buttons are dark sprite images on white
-   and would go invisible on a dark background. */
-.sitemap-body.sitemap-dark .leaflet-control-zoom a,
-.polaris-basemap-dark .leaflet-control-zoom a,
-.sitemap-body.sitemap-dark .leaflet-bar a.sitemap-home,
-.polaris-basemap-dark .leaflet-bar a.sitemap-home {
+   the zoom buttons, which draw glyphs in `color`; the leaflet-draw toolbar's
+   buttons are dark sprite images on white and would go invisible on a dark
+   background. Now only the mobile map tab: the Device Map page (map.css)
+   and the map widgets (below) wear the app's button colours instead. */
+.polaris-basemap-dark .leaflet-control-zoom a {
   background-color: #1c1f24; color: #e6e8eb; border-bottom-color: rgba(255,255,255,0.12);
 }
-.sitemap-body.sitemap-dark .leaflet-control-zoom a:hover,
-.sitemap-body.sitemap-dark .leaflet-control-zoom a:focus,
 .polaris-basemap-dark .leaflet-control-zoom a:hover,
-.polaris-basemap-dark .leaflet-control-zoom a:focus,
-.sitemap-body.sitemap-dark .leaflet-bar a.sitemap-home:hover,
-.sitemap-body.sitemap-dark .leaflet-bar a.sitemap-home:focus,
-.polaris-basemap-dark .leaflet-bar a.sitemap-home:hover,
-.polaris-basemap-dark .leaflet-bar a.sitemap-home:focus {
+.polaris-basemap-dark .leaflet-control-zoom a:focus {
   background-color: #262a31; color: #fff;
 }
-.sitemap-body.sitemap-dark .leaflet-control-zoom a.leaflet-disabled,
 .polaris-basemap-dark .leaflet-control-zoom a.leaflet-disabled {
   background-color: #171a1e; color: #5f666f;
 }
@@ -7822,29 +7876,64 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .sitemap-legend {
   position: absolute; left: 8px; bottom: 8px; pointer-events: auto;
   display: flex; flex-direction: column; gap: 3px;
-  background: rgba(13,16,22,0.82); border: 1px solid rgba(255,255,255,0.22);
-  border-radius: 5px; padding: 6px 8px; font-size: 0.72rem; color: #f1f3f5;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+  /* The app theme, like the map buttons around it (see .sitemap-wx). */
+  background: var(--color-bg-primary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 6px 8px; font-size: 0.72rem; color: var(--color-text-primary);
+  box-shadow: var(--map-btn-shadow, 0 1px 2px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.25));
 }
 .sitemap-legend span { display: flex; align-items: center; gap: 6px; }
 .sitemap-legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 .sitemap-wx { position: absolute; right: 8px; top: 8px; pointer-events: auto; display: flex; gap: 4px; }
-.sitemap-wx button {
-  background: rgba(13,16,22,0.92); border: 1px solid rgba(255,255,255,0.3);
-  color: #ffffff; border-radius: 3px; padding: 3px 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
-  cursor: pointer; font-family: inherit; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+/* The map widgets' buttons ON the map (Status Map + Device Map widgets) --
+   the weather / fullscreen chips, the theme toggle (top-left, above zoom)
+   and the zoom bar -- wear the app's secondary button, as on the Device
+   Map page (map.css), with its tight map-button shadow. Active (on) marks
+   in the accent. */
+.sitemap-body {
+  --map-btn-shadow: 0 1px 2px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.25);
 }
-.sitemap-wx button:hover { border-color: var(--color-accent); }
-/* Active keeps the same dark chip as every other button; the accent text + border
-   mark it on (readable now that the chip is near-opaque, unlike the old
-   cyan-on-cyan-tint). Accent, not a literal — this used to hardcode the retired
-   cyan and stayed cyan in all three themes. */
+.sitemap-wx button,
+.sitemap-theme-control button {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  padding: 3px 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  cursor: pointer; font-family: inherit;
+  box-shadow: var(--map-btn-shadow);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.sitemap-wx button:hover,
+.sitemap-theme-control button:hover { background: var(--color-surface); color: var(--color-text-primary); }
 .sitemap-wx button.active { border-color: var(--color-accent); color: var(--color-accent); }
+.sitemap-theme-control button {
+  width: 32px; height: 32px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sitemap-body .leaflet-control.leaflet-bar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--map-btn-shadow);
+  overflow: hidden;
+}
+.sitemap-body .leaflet-bar a {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  border-bottom-color: var(--color-border);
+}
+.sitemap-body .leaflet-bar a:hover,
+.sitemap-body .leaflet-bar a:focus { background-color: var(--color-surface); color: var(--color-text-primary); }
+.sitemap-body .leaflet-control-zoom a.leaflet-disabled {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-tertiary);
+  opacity: 0.6;
+}
+.sitemap-body .legend-collapsible > .legend-toggle-open { box-shadow: var(--map-btn-shadow); }
 .sitemap-radar-clock {
   position: absolute; right: 8px; top: 40px; pointer-events: none; display: none;
-  background: rgba(13,16,22,0.82); border: 1px solid rgba(255,255,255,0.22);
-  border-radius: 3px; padding: 3px 7px; font-size: 10px; font-weight: 600; font-family: "Roboto Mono", monospace; color: #f1f3f5;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+  background: var(--color-bg-primary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 3px 7px; font-size: 10px; font-weight: 600; font-family: "Roboto Mono", monospace; color: var(--color-text-secondary);
+  box-shadow: var(--map-btn-shadow);
 }
 
 

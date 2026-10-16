@@ -120,7 +120,14 @@ describe("the band and the strip read the same clock", () => {
       const keyframes = css.slice(css.indexOf("@keyframes page-glow-round"), css.indexOf("}\n}", css.indexOf("@keyframes page-glow-round")));
       expect(keyframes).not.toContain("--page-glow-w");
       // Noon -> nightfall's glow runs 2.5 s, keyed on the afternoon waypoint.
-      expect(css).toContain('html[data-glow-turn][data-theme="afternoon"] {\n  transition-duration: 2500ms;\n}');
+      // The sun sinks and fades on the palette's 1.6 s; the night glow keeps 2.5 s.
+      expect(css).toContain('html[data-glow-turn][data-theme="afternoon"] {');
+      expect(css).toContain("transition-duration: 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 1600ms, 2500ms, 2500ms;");
+      // Morning's red band fades out by mid-screen on the climb to noon.
+      expect(css).toContain("page-glow-band-fade 2000ms linear;");
+      // Nightfall parks the sun below the bottom edge; morning raises it from there.
+      const morning = css.slice(css.indexOf('html[data-theme="morning"] {'), css.indexOf("}", css.indexOf('html[data-theme="morning"] {')));
+      expect(morning).toContain("transition-property: --page-glow-y,");
       // Glow transitions only during a theme change, never on page load.
       expect(css).toContain("html[data-glow-turn] {\n  transition-property: --page-glow-y,");
       expect(css).not.toContain("html {\n  transition-property: --page-glow-y,");

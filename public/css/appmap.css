@@ -14,7 +14,7 @@
 .appmap-toolbar-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .appmap-toolbar-controls {
