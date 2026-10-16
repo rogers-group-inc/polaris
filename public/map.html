@@ -36,10 +36,8 @@
              (renderMyRegions) once /auth/me has answered. -->
         <div class="map-my-regions" id="map-my-regions" hidden></div>
         <div id="map-status" class="map-status"></div>
-        <div class="map-edit-actions" id="map-edit-actions">
-          <button type="button" id="map-discard-regions" class="btn btn-secondary" hidden>Discard Changes</button>
-          <button type="button" id="map-save-regions" class="btn btn-primary" hidden>Save Regions</button>
-        </div>
+        <!-- Region edit mode's save / undo / redo / discard live in the
+             Regions panel's header (map.js buildRegionsPanel). -->
       </div>
 
       <div id="map" class="map-canvas"></div>

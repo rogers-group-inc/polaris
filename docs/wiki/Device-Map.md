@@ -81,9 +81,19 @@ level.
 
 ### Edit regions
 
-Needs `mapRegions`: the **pencil** in the Regions panel's header. Draw, edit
-and delete polygons, then **Save Regions** or **Discard Changes** in the
-toolbar.
+Needs `mapRegions`: the **pencil** left of the Regions panel's title. Draw,
+edit and delete polygons. While you edit, the panel's header holds the
+controls:
+
+| Control | |
+|---|---|
+| **✓** (where the pencil was) | save every reshaped region and leave edit mode |
+| **Undo** / **Redo** (or Ctrl+Z / Ctrl+Y) | step back and forward through vertex drags, added points and deleted points |
+| **×** | discard unsaved shape changes and leave edit mode; it asks first when there are any |
+
+Undo covers only shape changes, which stay local until you save. Drawing,
+renaming, recolouring and deleting a region are saved the moment you do
+them, so undo cannot reverse them.
 
 The two region layers **hand off rather than stack**: entering edit mode hides
 the read-only overlay and disables the Regions button; leaving restores it and **drops

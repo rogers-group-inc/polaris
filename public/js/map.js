@@ -3204,7 +3204,10 @@
     editing: false,
     layer: null,           // L.featureGroup of L.polygon
     drawControl: null,
-    polygonsByRegionId: {} // id → L.polygon
+    polygonsByRegionId: {}, // id → L.polygon
+    drawing: false,         // a new polygon is being drawn (its own clicks own the keys)
+    undo: [],               // shape edits this session: { id, before, after }
+    redo: []
   };
 
   // ─── Read-only region overlay ("Show regions", any map viewer) ────────────
@@ -3279,13 +3282,14 @@
   function wireRegionEditing() {
     var editBtn    = document.getElementById("map-edit-regions");
     var saveBtn    = document.getElementById("map-save-regions");
-    var discardBtn = document.getElementById("map-discard-regions");
+    var undoBtn    = document.getElementById("map-undo-region");
+    var redoBtn    = document.getElementById("map-redo-region");
     if (!editBtn) return;
     if (typeof canManageNetworks === "function" && !canManageNetworks()) return;
     editBtn.hidden = false;
-    // Save + Discard stay hidden until the operator enters edit mode; they're
-    // only meaningful while there are in-flight vertex changes to commit or
-    // revert. Visibility flips in setEditModeButtons.
+    // The check mark (save), undo and redo stay hidden until the operator
+    // enters edit mode, where the check takes the pencil's place and the
+    // panel's × discards. Visibility flips in setEditModeButtons.
     editBtn.addEventListener("click", function () {
       enterRegionEditMode().catch(function (err) {
         setStatus("Failed to load regions: " + (err && err.message ? err.message : err));
@@ -3298,11 +3302,110 @@
         });
       });
     }
-    if (discardBtn) {
-      discardBtn.addEventListener("click", function () {
-        discardAndExitRegionEditMode();
-      });
+    if (undoBtn) undoBtn.addEventListener("click", function () { undoRegionEdit(); });
+    if (redoBtn) redoBtn.addEventListener("click", function () { redoRegionEdit(); });
+    // While editing, the panel's × is Discard Changes rather than "hide".
+    // Caught on the panel in the capture phase so legend-toggle's own click
+    // handler on the × (which would fold the panel) never runs.
+    var panel = editBtn.closest(".map-regions-panel");
+    if (panel) {
+      panel.addEventListener("click", function (e) {
+        if (!regionState.editing) return;
+        if (!e.target.closest || !e.target.closest(".legend-toggle-close")) return;
+        e.stopPropagation();
+        e.preventDefault();
+        confirmDiscardRegionEdits();
+      }, true);
     }
+    document.addEventListener("keydown", function (e) {
+      if (!regionState.editing || regionState.drawing) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      var t = e.target;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector(".modal-overlay.open, .modal-overlay.active")) return;
+      var k = (e.key || "").toLowerCase();
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); undoRegionEdit(); }
+      else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redoRegionEdit(); }
+    });
+  }
+
+  async function confirmDiscardRegionEdits() {
+    var dirty = 0;
+    for (var rid in regionState.polygonsByRegionId) {
+      var p = regionState.polygonsByRegionId[rid];
+      if (p && p._polarisDirty) dirty++;
+    }
+    if (dirty > 0) {
+      var ok = await showConfirm("Discard " + dirty + " unsaved region change" + (dirty === 1 ? "" : "s") + "?");
+      if (!ok) return;
+    }
+    discardAndExitRegionEditMode();
+  }
+
+  // ---- Undo / redo (edit mode) ----------------------------------------------
+  // Covers the edits that are still local until the check mark saves them:
+  // vertex drags, midpoint-to-vertex conversions and vertex deletions. Draw,
+  // rename, recolor and delete write to the server on the spot (and run the
+  // tag reconcile), so they are not in the history. Each entry is the whole
+  // ring before and after one leaflet-draw "edit" event.
+  function samePairs(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i][0] !== b[i][0] || a[i][1] !== b[i][1]) return false;
+    }
+    return true;
+  }
+
+  function setPolygonShape(poly, pairs) {
+    poly.setLatLngs(pairs);
+    // Re-enable to move the vertex handles with the outline (as Discard does).
+    if (poly.editing) { poly.editing.disable(); poly.editing.enable(); }
+    setTimeout(function () { colorEditMarkers(poly); }, 0);
+    poly._polarisLastPairs = pairs;
+    poly._polarisDirty = !samePairs(pairs, poly._polarisSavedPolygon);
+  }
+
+  function stepRegionHistory(from, to, field) {
+    while (from.length) {
+      var entry = from.pop();
+      var poly = regionState.polygonsByRegionId[entry.id];
+      if (!poly) continue; // the region was deleted since; nothing to reshape
+      setPolygonShape(poly, entry[field]);
+      to.push(entry);
+      break;
+    }
+    updateUndoRedoButtons();
+  }
+  function undoRegionEdit() { stepRegionHistory(regionState.undo, regionState.redo, "before"); }
+  function redoRegionEdit() { stepRegionHistory(regionState.redo, regionState.undo, "after"); }
+
+  function updateUndoRedoButtons() {
+    var undoBtn = document.getElementById("map-undo-region");
+    var redoBtn = document.getElementById("map-redo-region");
+    if (undoBtn) undoBtn.disabled = regionState.undo.length === 0;
+    if (redoBtn) redoBtn.disabled = regionState.redo.length === 0;
+  }
+
+  // The panel's rows while editing: read from the edit layer, so a region
+  // drawn, renamed, recoloured or deleted this session shows at once. Levels
+  // are left off — they are derived on the server and an edit can move them.
+  function renderEditRegionsList() {
+    var list = [];
+    for (var rid in regionState.polygonsByRegionId) {
+      var p = regionState.polygonsByRegionId[rid];
+      if (p) list.push({ name: p._polarisRegionName || "", color: p._polarisRegionColor || null });
+    }
+    list.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    var el = document.getElementById("map-regions-list");
+    if (!el) return;
+    if (!list.length) {
+      el.innerHTML = '<span class="map-regions-empty">No regions yet. Draw one with the polygon tool.</span>';
+      return;
+    }
+    el.innerHTML = list.map(function (r) {
+      var color = r.color ? ' style="background:' + escapeHtml(r.color) + '"' : "";
+      return '<span><i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' + escapeHtml(r.name) + "</span>";
+    }).join("");
   }
 
   // ---- "Show regions" (read-only) -----------------------------------------
@@ -3324,6 +3427,15 @@
   var PENCIL_ICON =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" aria-hidden="true">' +
       '<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+  var CHECK_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true">' +
+      '<polyline points="20 6 9 17 4 12"/></svg>';
+  var UNDO_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true">' +
+      '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>';
+  var REDO_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true">' +
+      '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>';
   var regionsPanelApi = null;
 
   function buildRegionsPanel() {
@@ -3332,9 +3444,14 @@
       var div = L.DomUtil.create("div", "map-legend map-regions-panel");
       div.innerHTML =
         '<div class="legend-toggle-head">' +
-          '<span>Regions</span>' +
+          '<span class="map-regions-title">' +
+            '<button type="button" id="map-edit-regions" class="map-regions-tool" title="Edit regions" aria-label="Edit regions" hidden>' + PENCIL_ICON + "</button>" +
+            '<button type="button" id="map-save-regions" class="map-regions-tool map-regions-save" title="Save region changes" aria-label="Save region changes" hidden>' + CHECK_ICON + "</button>" +
+            '<span class="map-regions-name">Regions</span>' +
+          "</span>" +
           '<span class="map-regions-actions">' +
-            '<button type="button" id="map-edit-regions" class="map-regions-edit" title="Edit regions" aria-label="Edit regions" hidden>' + PENCIL_ICON + "</button>" +
+            '<button type="button" id="map-undo-region" class="map-regions-tool" title="Undo (Ctrl+Z)" aria-label="Undo" hidden disabled>' + UNDO_ICON + "</button>" +
+            '<button type="button" id="map-redo-region" class="map-regions-tool" title="Redo (Ctrl+Y)" aria-label="Redo" hidden disabled>' + REDO_ICON + "</button>" +
             '<button type="button" class="legend-toggle-close" title="Hide regions" aria-label="Hide regions">&times;</button>' +
           "</span>" +
         "</div>" +
@@ -3467,16 +3584,27 @@
     setShowRegionsButton(false);
   }
 
-  // Swap the three toolbar buttons between view ("Edit regions" visible) and
-  // edit ("Save Regions" + "Discard Changes" visible) modes. Single helper so
-  // the visibility rule lives in one place.
+  // Swap the Regions panel's header between view (pencil, × hides) and edit
+  // (check mark saves, undo / redo, × discards). Single helper so the
+  // visibility rule lives in one place.
   function setEditModeButtons(editing) {
-    var editBtn    = document.getElementById("map-edit-regions");
-    var saveBtn    = document.getElementById("map-save-regions");
-    var discardBtn = document.getElementById("map-discard-regions");
-    if (editBtn)    editBtn.hidden    = editing;
-    if (saveBtn)    saveBtn.hidden    = !editing;
-    if (discardBtn) discardBtn.hidden = !editing;
+    var editBtn = document.getElementById("map-edit-regions");
+    var saveBtn = document.getElementById("map-save-regions");
+    var undoBtn = document.getElementById("map-undo-region");
+    var redoBtn = document.getElementById("map-redo-region");
+    if (editBtn) editBtn.hidden = editing;
+    if (saveBtn) saveBtn.hidden = !editing;
+    if (undoBtn) undoBtn.hidden = !editing;
+    if (redoBtn) redoBtn.hidden = !editing;
+    var panel = editBtn && editBtn.closest(".map-regions-panel");
+    var close = panel && panel.querySelector(".legend-toggle-close");
+    if (close) {
+      var label = editing ? "Discard changes" : "Hide regions";
+      close.title = label;
+      close.setAttribute("aria-label", label);
+    }
+    if (panel) panel.classList.toggle("map-regions-editing", !!editing);
+    updateUndoRedoButtons();
   }
 
   async function enterRegionEditMode() {
@@ -3493,7 +3621,12 @@
     }
     regionState.editing = true;
     regionState.polygonsByRegionId = {};
+    regionState.undo = [];
+    regionState.redo = [];
     regionState.layer = L.featureGroup().addTo(map);
+    // The panel stays open while editing: its header holds save / undo /
+    // redo / discard.
+    if (regionsPanelApi) regionsPanelApi.setExpanded(true);
 
     var regions = [];
     try {
@@ -3501,6 +3634,13 @@
     } catch (e) {
       regionState.editing = false;
       if (regionState.layer) { map.removeLayer(regionState.layer); regionState.layer = null; }
+      if (showBtn) { showBtn.disabled = false; showBtn.title = ""; }
+      if (regionViewState.wasShowing) {
+        regionViewState.wasShowing = false;
+        showRegionOverlay().catch(function () { /* the Regions button can retry */ });
+      } else if (regionsPanelApi) {
+        regionsPanelApi.setExpanded(false);
+      }
       throw e;
     }
     if (Array.isArray(regions)) {
@@ -3519,10 +3659,16 @@
     map.addControl(regionState.drawControl);
 
     map.on(L.Draw.Event.CREATED, onRegionCreated);
+    map.on(L.Draw.Event.DRAWSTART, onRegionDrawStart);
+    map.on(L.Draw.Event.DRAWSTOP, onRegionDrawStop);
 
     setEditModeButtons(true);
-    setStatus("Editing regions: draw a polygon, drag any vertex to reshape, click an existing region to rename/delete, or right-click-drag to pan. Click \"Save Regions\" to commit changes or \"Discard Changes\" to revert.");
+    renderEditRegionsList();
+    setStatus("Editing regions: draw a polygon, drag any vertex to reshape (undo / redo in the Regions panel, or Ctrl+Z / Ctrl+Y), click an existing region to rename/delete, or right-click-drag to pan. Click the check mark to save or × to discard.");
   }
+
+  function onRegionDrawStart() { regionState.drawing = true; }
+  function onRegionDrawStop() { regionState.drawing = false; }
 
   // Walk every region polygon in edit mode and PUT the ones whose vertices
   // were dragged this session. On all-success, exit edit mode. On any
@@ -3572,7 +3718,7 @@
       }
     }
     if (failures > 0) {
-      setStatus(failures + " region" + (failures === 1 ? "" : "s") + " failed to save — still in edit mode, click Save Regions to retry or Discard Changes to abandon.");
+      setStatus(failures + " region" + (failures === 1 ? "" : "s") + " failed to save — still in edit mode; click the check mark to retry or × to discard.");
       return;
     }
     teardownRegionEditMode();
@@ -3633,10 +3779,15 @@
   // happens here.
   function teardownRegionEditMode() {
     regionState.editing = false;
+    regionState.drawing = false;
     map.off(L.Draw.Event.CREATED, onRegionCreated);
+    map.off(L.Draw.Event.DRAWSTART, onRegionDrawStart);
+    map.off(L.Draw.Event.DRAWSTOP, onRegionDrawStop);
     if (regionState.drawControl) { map.removeControl(regionState.drawControl); regionState.drawControl = null; }
     if (regionState.layer) { map.removeLayer(regionState.layer); regionState.layer = null; }
     regionState.polygonsByRegionId = {};
+    regionState.undo = [];
+    regionState.redo = [];
     setEditModeButtons(false);
 
     // Hand the polygons back. The memoized payload is DROPPED rather than
@@ -3648,6 +3799,8 @@
     if (regionViewState.wasShowing) {
       regionViewState.wasShowing = false;
       showRegionOverlay().catch(function () { /* the toolbar button can retry */ });
+    } else if (regionsPanelApi) {
+      regionsPanelApi.setExpanded(false);
     }
   }
 
@@ -3692,6 +3845,7 @@
     // editvertex fired afterward marks the polygon dirty so the Save / Discard
     // paths know which ones need attention; clean polygons are skipped.
     poly._polarisSavedPolygon = polygonLatLngsToPairs(poly);
+    poly._polarisLastPairs = poly._polarisSavedPolygon;
     poly._polarisDirty = false;
     // leaflet-draw 1.0.4 fires plain "edit" on the polygon at each vertex
      // drag-end / midpoint-drag-conversion / vertex-deletion. The map gets
@@ -3702,7 +3856,14 @@
       // remove them. Either way, re-color so the dot set always matches the
       // region. Deferred so the marker DOM is settled when we walk it.
       setTimeout(function () { colorEditMarkers(poly); }, 0);
-      poly._polarisDirty = true;
+      var after = polygonLatLngsToPairs(poly);
+      if (!samePairs(after, poly._polarisLastPairs)) {
+        regionState.undo.push({ id: poly._polarisRegionId, before: poly._polarisLastPairs, after: after });
+        regionState.redo = [];
+        poly._polarisLastPairs = after;
+        updateUndoRedoButtons();
+      }
+      poly._polarisDirty = !samePairs(after, poly._polarisSavedPolygon);
     });
   }
 
@@ -3749,6 +3910,7 @@
       // Replace the temporary draw layer with our managed L.polygon so
       // it picks up the styled className + click handler.
       addRegionPolygon(saved);
+      renderEditRegionsList();
       setStatus("Region \"" + saved.name + "\" saved.");
     } catch (err) {
       showToast("Failed to save region: " + (err && err.message ? err.message : err), "error");
@@ -3820,6 +3982,7 @@
         applyRegionColor(poly, updated.color);
         colorEditMarkers(poly);
       }
+      renderEditRegionsList();
       setStatus("Region \"" + name + "\" recolored.");
     } catch (err) {
       showToast("Failed to recolor region: " + (err && err.message ? err.message : err), "error");
@@ -3836,6 +3999,7 @@
         poly._polarisRegionName = updated.name;
         if (poly.getTooltip()) poly.setTooltipContent(escapeHtml(updated.name));
       }
+      renderEditRegionsList();
       setStatus("Region renamed to \"" + updated.name + "\".");
     } catch (err) {
       showToast("Failed to rename region: " + (err && err.message ? err.message : err), "error");
@@ -3850,6 +4014,7 @@
       var poly = regionState.polygonsByRegionId[id];
       if (poly && regionState.layer) regionState.layer.removeLayer(poly);
       delete regionState.polygonsByRegionId[id];
+      renderEditRegionsList();
       setStatus("Region \"" + name + "\" deleted.");
     } catch (err) {
       showToast("Failed to delete region: " + (err && err.message ? err.message : err), "error");
