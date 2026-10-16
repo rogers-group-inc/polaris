@@ -2688,20 +2688,20 @@ html[data-glow-turn="morning-noon"] {
   animation: page-glow-round 2000ms cubic-bezier(0.37, 0, 0.63, 1),
              page-glow-band-fade 2000ms linear;
 }
-/* Morning's red band (c2 / c3) lingers on the climb and is gone by
-   mid-screen; the reasoning and the timing are styles.css's. */
+/* Morning's red band (c2 / c3) lingers for 1 s of the climb; the
+   reasoning and the timing are styles.css's. */
 html[data-glow-turn="morning-noon"][data-theme="noon"] {
   transition-property: --page-glow-y,
     --page-glow-c0, --page-glow-c1,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
 }
 @keyframes page-glow-band-fade {
-  0%, 20% {
+  0%, 30% {
     --page-glow-c2: rgba(243,154,76,.34);
     --page-glow-c3: rgba(238,154,90,.14);
     animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
   }
-  35%, 100% {
+  50%, 100% {
     --page-glow-c2: rgba(255,201,40,.151);
     --page-glow-c3: rgba(255,201,40,.0686);
   }

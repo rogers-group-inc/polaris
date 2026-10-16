@@ -629,12 +629,11 @@ html[data-glow-turn="morning-noon"] {
              page-glow-band-fade 2000ms linear;
 }
 /* Morning's red band (the outer stops, --page-glow-c2 / -c3) LINGERS on
-   the climb, then is gone by the time the sun reaches mid-page: held at
-   morning's colours for the first 20% (the glow still low, ~80% down),
-   then eased out to noon's by 35%, where the climb's curve (the bare
-   html rule's cubic-bezier(0.4, 0, 0.2, 1), 100% to 0%) puts the glow's
-   centre at 50%. Re-time both frames together if the climb's curve or
-   length changes. Same rule as the rounding: c2 / c3 leave the noon
+   the climb for 1 s of the 2 s turn: held at morning's colours for the
+   first 30% (0.6 s, the glow still low, ~60% down), then eased out to
+   noon's by 50% (1 s, the glow ~30% down on the climb's curve, the bare
+   html rule's cubic-bezier(0.4, 0, 0.2, 1)). Change both frames together
+   to retime it. Same rule as the rounding: c2 / c3 leave the noon
    transition list for the turn (the rule below), since a running
    transition outranks an animation. The end frame is noon's own value
    (#ffc928 at 24%, x 0.629 / 0.286), so nothing jumps when
@@ -645,12 +644,12 @@ html[data-glow-turn="morning-noon"][data-theme="noon"] {
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
 }
 @keyframes page-glow-band-fade {
-  0%, 20% {
+  0%, 30% {
     --page-glow-c2: rgba(243,154,76,.34);
     --page-glow-c3: rgba(238,154,90,.14);
     animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
   }
-  35%, 100% {
+  50%, 100% {
     --page-glow-c2: rgba(255,201,40,.151);
     --page-glow-c3: rgba(255,201,40,.0686);
   }
