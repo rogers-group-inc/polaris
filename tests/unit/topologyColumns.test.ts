@@ -724,9 +724,11 @@ describe("computeTopologyColumns — location-code row clustering", () => {
     // diagonal crossing the AP's column (3) at lane 1 — exactly swW's row —
     // so without a building code the AP was pushed down (the b: code made
     // the leaf pass ignore foreign pass-throughs). Under the fan-out model
-    // that edge runs along row 0 through column 3 and turns in the gutter,
-    // so it occupies (3,0) and never (3,1): the AP shares its parent's row
-    // in BOTH variants, and the building code changes nothing here.
+    // that edge turns half a column out of swA and runs along its OWN row
+    // through column 3, and the anchor footprint reserves that leaf-column
+    // cell — so swB1/swB2 drop below swW's planned AP (rows 2 and 3) instead
+    // of running through (3,1): the AP shares its parent's row in BOTH
+    // variants, and the building code changes nothing here.
     const build = (withCode: boolean) => {
       const els = [
         node("fg", "fortigate"),
@@ -746,14 +748,15 @@ describe("computeTopologyColumns — location-code row clustering", () => {
       return computeTopologyColumns(els)!;
     };
     const coded = build(true);
-    // Sanity: the shape still puts swW on row 1 and swB2 on row 2, so the
-    // old diagonal WOULD have crossed (3,1).
+    // swW keeps row 1; swA's fan-out children skip the row its AP holds.
     expect(coded.swW.lane).toBe(1);
-    expect(coded.swB2.lane).toBe(2);
+    expect(coded.swB1.lane).toBe(2);
+    expect(coded.swB2.lane).toBe(3);
     expect(coded.apW.lane).toBe(coded.swW.lane); // same row as its parent
     const plain = build(false);
     expect(plain.swW.lane).toBe(1);
-    expect(plain.swB2.lane).toBe(2);
+    expect(plain.swB1.lane).toBe(2);
+    expect(plain.swB2.lane).toBe(3);
     expect(plain.apW.lane).toBe(plain.swW.lane); // no dodge needed any more
   });
 });
@@ -917,8 +920,8 @@ describe("computeTopologyColumns — fan-out edge model", () => {
     ]);
     markFanOutEdges(cy, columns, { colSpacing: 130, orientation: "horizontal" });
     const d = (i: number) => cy.store[i].data() as Record<string, unknown>;
-    expect(d(0)).toMatchObject({ isFanOut: 1, fanOutDir: "horizontal", fanOutTurn: 195 });
-    expect(d(1)).toMatchObject({ isFanOut: 1, fanOutDir: "horizontal", fanOutTurn: -195 });
+    expect(d(0)).toMatchObject({ isFanOut: 1, fanOutDir: "horizontal", fanOutTurn: 65 });
+    expect(d(1)).toMatchObject({ isFanOut: 1, fanOutDir: "horizontal", fanOutTurn: -65 });
     expect(d(2).isFanOut).toBeUndefined();
     expect(d(3).isFanOut).toBeUndefined();
     expect(d(4).isFanOut).toBeUndefined();
@@ -930,12 +933,83 @@ describe("computeTopologyColumns — fan-out edge model", () => {
     const columns: Cols = { fg: { depth: 0, lane: 0 }, sw: { depth: 2, lane: 1 } };
     const cy = fakeCy([{ source: "fg", target: "sw" }]);
     markFanOutEdges(cy, columns, { colSpacing: 110, orientation: "vertical" });
-    expect(cy.store[0].data()).toMatchObject({ isFanOut: 1, fanOutDir: "vertical", fanOutTurn: 165 });
+    expect(cy.store[0].data()).toMatchObject({ isFanOut: 1, fanOutDir: "vertical", fanOutTurn: 55 });
   });
 
   it("markFanOutEdges is a no-op without a grid", () => {
     const cy = fakeCy([{ source: "fg", target: "sw" }]);
     markFanOutEdges(cy, null, { colSpacing: 130 });
     expect((cy.store[0].data() as Record<string, unknown>).isFanOut).toBeUndefined();
+  });
+});
+
+describe("fan-out L next to the parent's own APs", () => {
+  it("a non-spine child switch stays beside its parent's AP stack; the APs slide past its link", () => {
+    // swA has a spine child (swB), a non-spine child (swC) and three APs.
+    // swC's link turns half a column out of swA and runs along swC's row
+    // through the AP column, so swC may sit on a row swA's APs had planned
+    // (it isn't pushed below all of them) and the APs dodge that row.
+    const els = [
+      node("fg", "fortigate"),
+      node("swA", "fortiswitch"),
+      node("swB", "fortiswitch"),
+      node("swC", "fortiswitch"),
+      node("ap1", "fortiap"),
+      node("ap2", "fortiap"),
+      node("ap3", "fortiap"),
+      edge("fg", "swA"),
+      edge("swA", "swB"),
+      edge("swA", "swC"),
+      edge("swA", "ap1"),
+      edge("swA", "ap2"),
+      edge("swA", "ap3"),
+    ];
+    const cols = computeTopologyColumns(els)!;
+    expect(cols.swB).toEqual({ depth: 4, lane: 0 });
+    expect(cols.swC).toEqual({ depth: 4, lane: 1 });
+    const apLanes = ["ap1", "ap2", "ap3"].map((id) => cols[id].lane).sort((a, b) => a - b);
+    expect(apLanes).toEqual([2, 3, 4]);
+    for (const id of ["ap1", "ap2", "ap3"]) expect(cols[id].depth).toBe(3);
+  });
+});
+
+describe("topology palette by theme family", () => {
+  let R: Record<string, any>;
+  beforeAll(() => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const code = readFileSync(resolve(here, "../../public/js/topology-render.js"), "utf8");
+    const health = { up: "#1", degraded: "#2", down: "#3", maintenance: "#4", passive: "#5", unknown: "#6", unmonitored: "#7" };
+    const sandbox: { window: Record<string, any> } = { window: { POLARIS_HEALTH_COLORS: health } };
+    vm.createContext(sandbox);
+    vm.runInContext(code, sandbox);
+    R = sandbox.window.PolarisTopologyRender;
+  });
+
+  it("the light legend carries the daylight shades and the dark one the pastels", () => {
+    const light = R.topologyLegendSpec("light");
+    const dark = R.topologyLegendSpec("dark");
+    const byLabel = (rows: { label: string; color: string }[]) =>
+      Object.fromEntries(rows.map((r) => [r.label, r.color]));
+    expect(byLabel(light.edges)["Interface-inferred"]).toBe("#0f766e");
+    expect(byLabel(dark.edges)["Interface-inferred"]).toBe("#14b8a6");
+    expect(byLabel(light.locations).Building).toBe("#0369a1");
+    expect(byLabel(dark.locations).Building).toBe("#4fc3f7");
+  });
+
+  it("the stylesheet draws each link kind in the legend's colour for that family", () => {
+    for (const fam of ["light", "dark"]) {
+      const sheet = R.topologyStylesheet(fam) as { selector: string; style: Record<string, unknown> }[];
+      const legend = Object.fromEntries(
+        (R.topologyLegendSpec(fam).edges as { label: string; color: string }[]).map((r) => [r.label, r.color]),
+      );
+      const line = (sel: string) => sheet.find((r) => r.selector === sel)!.style["line-color"];
+      expect(line("edge")).toBe(legend.Controller);
+      expect(line("edge[isIface = 1]")).toBe(legend["Interface-inferred"]);
+      expect(line("edge[isLldp = 1]")).toBe(legend.LLDP);
+      expect(line("edge[isMclag = 1]")).toBe(legend["MCLAG ICL"]);
+      expect(line("edge[isMesh = 1]")).toBe(legend.Mesh);
+      expect(line("edge[isApLink = 1]")).toBe(legend["AP ↔ switch"]);
+      expect(line("edge[isFortilinkFallback = 1]")).toBe(legend["FortiLink (virtual)"]);
+    }
   });
 });

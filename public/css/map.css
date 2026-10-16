@@ -856,6 +856,19 @@
   justify-content: space-between;
   gap: 0.5rem;
 }
+/* Location group heading inside the switch / AP lists (Locations chip on). */
+.topology-info .topology-section li.topology-loc-group {
+  display: block;
+  margin-top: 0.4rem;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.topology-info .topology-section li.topology-loc-group:first-child { margin-top: 0; }
+.topology-info .topology-section li.topology-loc-group .sep { color: var(--color-text-tertiary); font-weight: 400; }
+.topology-info .topology-section li.topology-loc-group.is-none { font-style: italic; font-weight: 400; }
 .topology-info .topology-section li .meta {
   color: var(--color-text-tertiary);
   font-family: "Roboto Mono", monospace;
