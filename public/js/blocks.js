@@ -153,6 +153,7 @@ function _renderBlocksPageControls(total) {
   }, {
     actionButtons: [{
       label: "Refresh",
+      className: "btn-glyph btn-glyph-refresh",
       title: "Reload the block list",
       onClick: function () { loadBlocks(); },
     }, {

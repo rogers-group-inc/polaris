@@ -1080,7 +1080,7 @@
       // the server is no asset, so it has no slide-over to open. The ids
       // are the slide-over Paths tab's, whose renderer draws both.
       '<div id="path-server-detail" style="margin-top:1rem"></div>';
-    var footer = '<button class="btn btn-secondary" id="path-res-refresh">Refresh</button>' +
+    var footer = '<button class="btn btn-glyph btn-glyph-refresh btn-secondary" id="path-res-refresh" title="Refresh">Refresh</button>' +
       (canEdit() ? '<button class="btn btn-secondary" id="path-res-edit">Edit</button>' : "") +
       '<button class="btn btn-primary" id="path-res-close">Close</button>';
     openModal("Results — " + check.name, body, footer, { large: true });

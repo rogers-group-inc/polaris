@@ -287,6 +287,7 @@ function _renderSubnetsPageControls(total) {
   }, {
     actionButtons: [{
       label: "Refresh",
+      className: "btn-glyph btn-glyph-refresh",
       title: "Reload the network list",
       onClick: function () { loadSubnets(); },
     }, {

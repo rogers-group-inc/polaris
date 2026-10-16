@@ -2775,7 +2775,7 @@ async function loadDatabaseInfo() {
       '</div>' +
 
       '<div style="display:flex;gap:8px;align-items:center">' +
-        '<button class="btn btn-secondary" id="btn-db-refresh">Refresh</button>' +
+        '<button class="btn btn-glyph btn-glyph-refresh btn-secondary" id="btn-db-refresh" title="Refresh">Refresh</button>' +
       '</div>';
 
     // Wire up events

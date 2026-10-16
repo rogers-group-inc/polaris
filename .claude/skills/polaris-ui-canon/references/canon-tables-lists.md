@@ -257,7 +257,11 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 - **Application Map**'s graph card (`.appmap-graph`, appmap.css) takes the folder card's glass, `--rail-glass-bg` + `--panel-glass-blur`, on a `::before` behind the graph instead of its opaque fill. The card is isolated, so the layer sits under the Cytoscape canvas and the card never traps the overlays' fixed positioning or frosted menus.
 - **A list page's own action buttons live on its tab row, left of the list controls** (since 2026-10-15). Order, left to right: page actions, then Refresh, Clear Filters, Show N.
   - Automations, Events and Path Monitor: the page's action buttons move from the page header into a `.table-head-controls` cluster ahead of the list controls. Automations keeps its per-tab buttons there; the Events cluster has no `data-head-for`, so Conflicts / Alerts / Settings stay on the Calendar tab.
-  - IPAM: the template's Add buttons come before `#pagination-top`. Blocks and Networks gain a Refresh `actionButton`.
+  - IPAM: Export is its own tab-row cluster, first and outside the `#ipam-head-controls` slot that `mountTab` empties, since it serves both tabs. The template's Add buttons come before `#pagination-top`. Blocks and Networks gain a Refresh `actionButton`.
+  - **Refresh and Export are icons app-wide** (`.btn-glyph` + `.btn-glyph-refresh` / `.btn-glyph-download`, the Application Map toolbar's glyphs).
+    - The glyph is a `::before` masked from a data-URI SVG and painted in `currentColor`. The label text stays in the DOM at `font-size: 0`, as the accessible name and `title`, so handlers that rewrite the text ("Refreshing…" on the asset panel) cannot wipe the icon.
+    - A `renderPageControls` action button takes it via `className`.
+    - Inside a tab row the glyph is 14px, to match the `.btn-sm` buttons beside it.
   - Integrations: + Add Integration is the card's top-right cluster.
   - Path Monitor: gains Clear Filters, and its row now renders on an empty result instead of being cleared.
   - Assets is the exception: its five page buttons sit on a `.page-actions-row` of their own between the selection bar and the tab row, right aligned.
