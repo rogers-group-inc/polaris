@@ -1764,13 +1764,14 @@ function hexToRgba(hex, alpha) {
   return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
 }
 
-// Inline style string for a role badge given its stored color. Returns "" when
-// the color is missing/invalid so the caller can fall back to a CSS class.
+// Inline style string for a role badge given its stored color — only the
+// `--hue` of a `.hue-pill` (styles.css), so the caller's badge must carry that
+// class. Returns "" when the color is missing/invalid so the caller can fall
+// back to a CSS class. The label is never the raw colour: a role coloured pale
+// yellow or white would vanish on daylight, a navy one on nightfall.
 function roleBadgeStyleFromColor(color) {
-  var solid = hexToRgba(color, 1);
-  if (!solid) return "";
-  return "background:" + hexToRgba(color, 0.14) + ";color:" + color +
-    ";border:1px solid " + hexToRgba(color, 0.30);
+  var m = /^#?([0-9a-fA-F]{6})$/.exec(String(color || "").trim());
+  return m ? "--hue:#" + m[1] : "";
 }
 
 // A pleasant random `#rrggbb` for the new-role color picker default — random
@@ -2441,7 +2442,7 @@ function renderUserBadge() {
   // fall back to the legacy name-keyed badge class when no color is set.
   var roleColorStyle = roleBadgeStyleFromColor(currentUserRoleColor);
   var roleBadgeAttrs = roleColorStyle
-    ? 'class="badge" style="font-size:0.7rem;padding:1px 6px;' + roleColorStyle + '"'
+    ? 'class="badge hue-pill" style="font-size:0.7rem;padding:1px 6px;' + roleColorStyle + '"'
     : 'class="badge ' + _getRoleBadgeClass(currentUserRole) + '" style="font-size:0.7rem;padding:1px 6px"';
 
   // The badge is the account menu's trigger — theme, notification preference
@@ -4898,16 +4899,14 @@ function tagColorTint(color, pct) {
   return css ? "color-mix(in srgb, " + css + " " + pct + "%, transparent)" : "";
 }
 
-/** The label colour for a chip tinted `color`. The raw colour is fine as a
- *  border or a translucent fill, but as TEXT a pale hue (yellow, mint) on its
- *  own tint vanishes on the daylight theme, and a deep one (navy) does the same
- *  on dark — so it is pulled part-way toward the theme's primary text, keeping
- *  the hue recognizable while the label reads on whichever theme is live.
- *  A severity reference is left as its token: those are already tuned per theme. */
-function tagColorText(color) {
+/** The inline half of a `.hue-pill` (styles.css) for a tag colour: just the
+ *  `--hue` custom property, or "" when the colour is unusable. Fill, label and
+ *  border all come from the class, which clamps the label's lightness per theme
+ *  — never write a stored colour into a chip's `color:` directly, because a
+ *  pale one (yellow, white) vanishes on daylight and a deep one on nightfall. */
+function tagHueStyle(color) {
   var css = tagColorCss(color);
-  if (!css || tagColorSeverity(color)) return css;
-  return "color-mix(in srgb, " + css + " 55%, var(--color-text-primary))";
+  return css ? "--hue:" + css : "";
 }
 
 // ─── Tag field (enforced or free-text) ─────────────────────────────────────
@@ -4946,18 +4945,17 @@ function _ensureTagCache() {
 // The Map Regions category carries a hint saying exactly that.
 var REGION_TAG_CATEGORY = "Map Regions";
 
-// Inline style for one tag chip. Selected/unselected must be tellable apart at
-// a glance for ANY tag color, so the distinction rides three channels — an
-// unselected chip dims its border and text as well as its background. Background
+// Class + inline style for one tag chip. Selected/unselected must be tellable
+// apart at a glance for ANY tag color, so the distinction rides three channels
+// — an unselected chip (.hue-off) dims its border and text as well as its
+// background; a selected one (.hue-strong) carries a full border. Background
 // alpha alone (the old 44-vs-11 split) left every chip's full-strength border +
-// text looking equally "on" in a dark theme.
-function _tagChipStyle(color, checked) {
-  var c = tagColorCss(color);
-  if (!c) return '';
-  // Alphas as before the severity references: 44 / 11 / 40 / 99 hex → 27 / 7 / 25 / 60 %.
-  return checked
-    ? 'background:' + tagColorTint(color, 27) + ';border-color:' + c + ';color:' + c
-    : 'background:' + tagColorTint(color, 7) + ';border-color:' + tagColorTint(color, 25) + ';color:' + tagColorTint(color, 60);
+// text looking equally "on" in a dark theme. A chip with no usable colour gets
+// neither, and keeps the plain .tag-picker-chip look.
+function _tagChipHue(color, checked) {
+  var style = tagHueStyle(color);
+  if (!style) return { cls: '', style: '' };
+  return { cls: ' hue-pill ' + (checked ? 'hue-strong' : 'hue-off'), style: style };
 }
 
 // Creating a registry tag is gated write (the top rung) on serverSettingsSystem; a failed
@@ -5044,7 +5042,8 @@ function isPickerHiddenTag(name) {
 }
 
 function _tagChipHTML(name, color, checked) {
-  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + '" style="' + _tagChipStyle(color, checked) + '">' +
+  var hue = _tagChipHue(color, checked);
+  return '<label class="tag-picker-chip' + (checked ? ' selected' : '') + hue.cls + '" style="' + hue.style + '">' +
     '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + '>' +
     escapeHtml(name) +
   '</label>';
@@ -5064,8 +5063,8 @@ function tagFieldHTML(selected, opts) {
     _tagCache.tags.forEach(function (t) { tagsByName[t.name] = t; });
     var chips = visibleSelected.map(function (name) {
       var t = tagsByName[name];
-      var style = _tagChipStyle(t && t.color ? t.color : '', true);
-      return '<span class="tag-picker-chip selected" style="' + style + '">' + escapeHtml(name) + '</span>';
+      var hue = _tagChipHue(t && t.color ? t.color : '', true);
+      return '<span class="tag-picker-chip selected' + hue.cls + '" style="' + hue.style + '">' + escapeHtml(name) + '</span>';
     }).join('');
     return '<div class="form-group"><label>Tags</label><div class="tag-picker" style="pointer-events:none">' + chips + '</div></div>';
   }
@@ -5126,8 +5125,9 @@ function _wireChipListeners(container) {
         label.classList.remove("selected");
       }
       var tag = _tagCache.tags.find(function (t) { return t.name === cb.value; });
-      if (tag && tag.color) {
-        label.style.cssText = _tagChipStyle(tag.color, cb.checked);
+      if (tag && tag.color && tagHueStyle(tag.color)) {
+        label.classList.toggle("hue-strong", cb.checked);
+        label.classList.toggle("hue-off", !cb.checked);
       }
     });
   });

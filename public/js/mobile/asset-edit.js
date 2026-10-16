@@ -106,13 +106,14 @@
     if (m && TAG_SEVERITY_TOKENS[m[1]]) return "var(" + TAG_SEVERITY_TOKENS[m[1]] + ")";
     return /^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(String(color || "")) ? color : "";
   }
-  function tagChipStyle(color, on) {
+  // Only `--hue` goes inline; mobile.css `.chip.hue-pill` draws the chip and
+  // keeps the label legible whatever colour the tag has (see the class).
+  function tagChipStyle(color) {
     var c = tagColorCss(color);
-    if (!c) return "";
-    function tint(p) { return "color-mix(in srgb, " + c + " " + p + "%, transparent)"; }
-    return on
-      ? "background:" + tint(27) + ";border-color:" + c + ";color:" + c
-      : "background:" + tint(7) + ";border-color:" + tint(25) + ";color:" + tint(60);
+    return c ? "--hue:" + c : "";
+  }
+  function tagChipClass(color, on) {
+    return tagColorCss(color) ? " hue-pill " + (on ? "hue-strong" : "hue-off") : "";
   }
 
   // ─── Small helpers ──────────────────────────────────────────────────────
@@ -484,7 +485,7 @@
     });
     function chip(name, color) {
       var on = selected.indexOf(name) !== -1;
-      return '<label class="chip ae-tag' + (on ? ' selected' : '') + '" data-color="' + esc(color || "") + '" style="' + tagChipStyle(color, on) + '">' +
+      return '<label class="chip ae-tag' + (on ? ' selected' : '') + tagChipClass(color, on) + '" data-color="' + esc(color || "") + '" style="' + tagChipStyle(color) + '">' +
         '<input type="checkbox" name="ae-tag" value="' + esc(name) + '"' + (on ? ' checked' : '') + '>' + esc(name) + '</label>';
     }
     if (!catalog.tags.length && !unlisted.length) {
@@ -582,7 +583,10 @@
       cb.addEventListener("change", function () {
         var chip = cb.parentElement;
         chip.classList.toggle("selected", cb.checked);
-        chip.setAttribute("style", tagChipStyle(chip.getAttribute("data-color"), cb.checked));
+        if (tagColorCss(chip.getAttribute("data-color"))) {
+          chip.classList.toggle("hue-strong", cb.checked);
+          chip.classList.toggle("hue-off", !cb.checked);
+        }
       });
     });
     var revert = $("ae-ipRevert");

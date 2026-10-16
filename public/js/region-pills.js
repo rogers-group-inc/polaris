@@ -54,21 +54,19 @@
     return parseInt(m[1], 16) + ", " + parseInt(m[2], 16) + ", " + parseInt(m[3], 16);
   }
 
-  // The label colour for a pill tinted `color` — the same pull toward the
-  // theme's primary text as app.js `tagColorText`, so a pale region hue (a
-  // yellow) still reads on the daylight theme and a deep one reads on dark.
-  function textColor(color) {
-    return "color-mix(in srgb, " + color + " 55%, var(--color-text-primary))";
+  // The inline half of a `.hue-pill` (styles.css): only `--hue`. The class
+  // draws fill, label and border, clamping the label's lightness per theme so
+  // a pale region colour (a yellow) reads on daylight and a deep one on dark.
+  function hueStyle(name) {
+    return "--hue:" + colorFor(name);
   }
 
   // One badge, optionally carrying a title (callers use it to say WHERE the
   // region came from — the account, the role, or an IdP group).
   function pill(name, title) {
-    var hex = colorFor(name);
-    var rgb = rgbTriplet(hex);
-    return '<span class="badge"' +
+    return '<span class="badge hue-pill"' +
       (title ? ' title="' + window.escapeHtml(title) + '"' : "") +
-      ' style="background:rgba(' + rgb + ',0.18);color:' + textColor(hex) + ';border:1px solid rgba(' + rgb + ',0.45)">' +
+      ' style="' + hueStyle(name) + '">' +
       window.escapeHtml(name) +
     '</span>';
   }
@@ -88,7 +86,7 @@
     names: function () { return Object.keys(byName).sort(); },
     colorFor: colorFor,
     rgbTriplet: rgbTriplet,
-    textColor: textColor,
+    hueStyle: hueStyle,
     pill: pill,
     html: html,
   };

@@ -366,11 +366,10 @@ describe("severity-referenced tag colors", () => {
   it("a user's tag pill paints with the token; a malformed color falls back to grey", () => {
     setCatalog(true, CATALOG.concat(SEV_ROWS));
     const html = userTagPillsHtml({ regionTags: [], otherTags: ["Warning", "Serious", "Bogus"] });
-    expect(html).toContain("color:var(--color-sev-warning)");
-    expect(html).toContain("color:var(--color-sev-serious)");
+    expect(html).toContain("--hue:var(--color-sev-warning)");
+    expect(html).toContain("--hue:var(--color-sev-serious)");
     expect(html).not.toContain("url(x)");
-    // A hex label is pulled toward the theme text; a severity token is not.
-    expect(html).toContain("color:color-mix(in srgb, #9e9e9e 55%, var(--color-text-primary))");
+    expect(html).toContain("--hue:#9e9e9e");
     setCatalog(true, CATALOG);
   });
 
@@ -421,9 +420,13 @@ describe("userTagPillsHtml", () => {
     expect(html).toContain("#9e9e9e");
   });
 
-  it("mixes the label toward the theme text so a pale tag colour stays legible", () => {
+  it("hands the tag colour to .hue-pill rather than painting it as the label", () => {
+    // A pale stored colour (yellow, white) as text vanished on its own tint in
+    // the daylight themes; .hue-pill clamps the label's lightness per theme.
     const html = userTagPillsHtml({ otherTags: ["PCI"] });
-    expect(html).toContain("color:color-mix(in srgb, #ef5350 55%, var(--color-text-primary))");
+    expect(html).toContain('class="badge hue-pill"');
+    expect(html).toContain("--hue:#ef5350");
+    expect(html).not.toMatch(/[";]color:/);
   });
 
   it("gives tag pills the same box as region pills, so labels share a baseline", () => {

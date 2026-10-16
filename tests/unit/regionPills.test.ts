@@ -71,7 +71,7 @@ describe("catalogue load", () => {
     await expect(p.load()).resolves.toEqual({});
     expect(p.isLoaded()).toBe(false);
     expect(p.colorFor("Southeast")).toBe("#9e9e9e");
-    expect(p.html(["Southeast"])).toContain("158, 158, 158");
+    expect(p.html(["Southeast"])).toContain("--hue:#9e9e9e");
   });
 
   it("is a no-op when the page never loaded api.js", async () => {
@@ -105,16 +105,16 @@ describe("rgbTriplet", () => {
 });
 
 describe("pill markup", () => {
-  it("paints the region's own color as translucent fill + border, and a theme-pulled label", async () => {
+  it("hands the region's colour to .hue-pill as --hue, and never paints it as the label", async () => {
     const p = load(async () => CATALOG);
     await p.load();
     const html = p.pill("Southeast");
-    expect(html).toContain("background:rgba(79, 195, 247,0.18)");
-    // The raw hex as text vanishes on its own tint for a pale hue (a yellow on
-    // the daylight theme) — the label is mixed toward the theme's text colour.
-    expect(html).toContain("color:color-mix(in srgb, #4fc3f7 55%, var(--color-text-primary))");
-    expect(html).not.toContain("color:#4fc3f7");
-    expect(html).toContain("border:1px solid rgba(79, 195, 247,0.45)");
+    // Fill, label and border come from styles.css .hue-pill, which clamps the
+    // label's lightness per theme — the raw hex as text vanished on its own
+    // tint for a pale hue (a yellow on the daylight themes).
+    expect(html).toContain('class="badge hue-pill"');
+    expect(html).toContain('style="--hue:#4fc3f7"');
+    expect(html).not.toMatch(/[";]color:/);
     expect(html).toContain(">Southeast<");
   });
 
@@ -136,7 +136,7 @@ describe("html(names)", () => {
     const p = load(async () => CATALOG);
     await p.load();
     const html = p.html(["Southeast", "Midwest"], (n) => "source of " + n);
-    expect(html.match(/class="badge"/g)).toHaveLength(2);
+    expect(html.match(/class="badge hue-pill"/g)).toHaveLength(2);
     expect(html).toContain("source of Southeast");
     expect(html).toContain("source of Midwest");
   });
