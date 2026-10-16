@@ -50,7 +50,7 @@
       : total + " pinned certificate" + (total === 1 ? "" : "s") + ".";
     container.innerHTML =
       '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
-        '<span style="color:var(--color-text-secondary)">' + escapeHtml(text) + "</span>" +
+        '<span style="font-size:0.85rem;color:var(--color-text-secondary)">' + escapeHtml(text) + "</span>" +
         (changed ? '<span class="badge badge-conflict">' + changed + " changed</span>" : "") +
         (total ? '<button type="button" class="btn btn-sm btn-secondary" data-tls-pins-open>View pinned certificates</button>' : "") +
       "</div>";

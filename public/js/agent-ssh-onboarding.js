@@ -432,32 +432,127 @@
     );
   }
 
-  function renderHostKeys(rows) {
+  // The card carries a one-line summary and a button; the keys themselves live
+  // in a slide-over, the shape the TLS half below already has — a fleet pins
+  // hundreds of hosts and the table pushed the rest of the card off-screen.
+  var HOSTKEYS_OVERLAY_ID = "ssh-hostkeys-overlay";
+  var _hostKeys = [];
+  var _hostKeysFilter = "";
+  var _hostKeysReturnFocus = null;
+
+  function renderHostKeysSummary(rows) {
     var host = el("wssh-hostkeys");
     if (!host) return;
-    if (!rows || !rows.length) {
-      host.innerHTML = '<p class="empty-state" style="padding:0.5rem 0;margin:0">No host keys pinned yet. ' +
-        'Pins appear the first time Polaris connects to a host over SSH.</p>';
+    var total = rows ? rows.length : 0;
+    var text = total === 0
+      ? "No host keys pinned yet. Pins appear the first time Polaris connects to a host over SSH."
+      : total + " pinned host key" + (total === 1 ? "" : "s") + ".";
+    host.innerHTML =
+      '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
+        '<span style="font-size:0.85rem;color:var(--color-text-secondary)">' + escapeHtml(text) + "</span>" +
+        (total ? '<button type="button" class="btn btn-sm btn-secondary" data-wssh-hostkeys-open>View pinned host keys</button>' : "") +
+      "</div>";
+    var btn = host.querySelector("[data-wssh-hostkeys-open]");
+    if (btn) btn.addEventListener("click", function () { openHostKeysPanel(btn); });
+  }
+
+  function ensureHostKeysPanel() {
+    var overlay = document.getElementById(HOSTKEYS_OVERLAY_ID);
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = HOSTKEYS_OVERLAY_ID;
+    overlay.className = "slideover-overlay";
+    overlay.innerHTML =
+      '<div class="slideover" id="ssh-hostkeys-panel" role="dialog" aria-labelledby="ssh-hostkeys-title" tabindex="-1">' +
+        '<div class="slideover-resize-handle"></div>' +
+        '<div class="slideover-header">' +
+          '<div class="slideover-header-top">' +
+            '<div class="slideover-header-lead"><h3 id="ssh-hostkeys-title">Pinned SSH host keys</h3></div>' +
+            '<button class="btn-icon" id="ssh-hostkeys-close" title="Close" aria-label="Close pinned host keys">&times;</button>' +
+          "</div>" +
+          '<div class="slideover-meta" id="ssh-hostkeys-meta"></div>' +
+        "</div>" +
+        '<div class="slideover-body">' +
+          '<div style="padding:1rem 1.25rem 0">' +
+            '<input type="text" id="ssh-hostkeys-filter" placeholder="Filter by host, type or fingerprint" autocomplete="off" style="width:100%">' +
+          "</div>" +
+          '<div id="ssh-hostkeys-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading...</p></div>' +
+        "</div>" +
+        '<div class="slideover-footer"><button type="button" class="btn btn-secondary" id="ssh-hostkeys-done">Close</button></div>' +
+      "</div>";
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeHostKeysPanel(); });
+    document.getElementById("ssh-hostkeys-close").addEventListener("click", closeHostKeysPanel);
+    document.getElementById("ssh-hostkeys-done").addEventListener("click", closeHostKeysPanel);
+    if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closeHostKeysPanel);
+    if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("ssh-hostkeys-panel"), "polaris.panel.width.sshHostKeys");
+    document.getElementById("ssh-hostkeys-filter").addEventListener("input", function () {
+      _hostKeysFilter = this.value;
+      renderHostKeysPanel();
+    });
+    document.getElementById("ssh-hostkeys-body").addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest("[data-wssh-delpin]") : null;
+      if (btn) onDeletePin(btn);
+    });
+    return overlay;
+  }
+
+  function openHostKeysPanel(trigger) {
+    var overlay = ensureHostKeysPanel();
+    _hostKeysReturnFocus = trigger || document.activeElement;
+    if (typeof raiseSlideover === "function") raiseSlideover(overlay);
+    overlay.classList.add("open");
+    renderHostKeysPanel();
+  }
+
+  function closeHostKeysPanel() {
+    var overlay = document.getElementById(HOSTKEYS_OVERLAY_ID);
+    if (overlay) overlay.classList.remove("open");
+    if (_hostKeysReturnFocus && typeof _hostKeysReturnFocus.focus === "function") {
+      try { _hostKeysReturnFocus.focus(); } catch (_) { /* gone */ }
+    }
+    _hostKeysReturnFocus = null;
+  }
+
+  function hostKeyLabel(r) {
+    return r.host + (r.port !== 22 ? ":" + r.port : "");
+  }
+
+  function renderHostKeysPanel() {
+    var body = document.getElementById("ssh-hostkeys-body");
+    var meta = document.getElementById("ssh-hostkeys-meta");
+    if (!body) return;
+    var q = _hostKeysFilter.trim().toLowerCase();
+    var rows = !q ? _hostKeys : _hostKeys.filter(function (r) {
+      return (hostKeyLabel(r) + " " + (r.keyType || "") + " " + (r.fingerprint || "")).toLowerCase().indexOf(q) >= 0;
+    });
+    if (meta) {
+      meta.innerHTML = '<span style="color:var(--color-text-secondary);font-size:0.85rem">' + _hostKeys.length + " pinned" +
+        (q ? " · " + rows.length + " shown" : "") + "</span>";
+    }
+    if (!_hostKeys.length) {
+      body.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">No host keys pinned yet.</p>';
       return;
     }
-    var body = rows.map(function (r) {
-      return '<tr>' +
-        '<td class="mono">' + escapeHtml(r.host) + (r.port !== 22 ? ":" + escapeHtml(String(r.port)) : "") + '</td>' +
-        '<td>' + escapeHtml(r.keyType || "—") + '</td>' +
-        '<td class="mono" style="font-size:0.78rem">' + escapeHtml(r.fingerprint) + '</td>' +
-        '<td>' + escapeHtml(r.firstSeen ? new Date(r.firstSeen).toLocaleDateString() : "—") + '</td>' +
-        '<td style="text-align:right"><button class="btn btn-sm btn-secondary" data-wssh-delpin="' + escapeHtml(r.id) +
-          '" data-wssh-pinhost="' + escapeHtml(r.host) + '">Delete</button></td>' +
-      '</tr>';
-    }).join("");
-    host.innerHTML =
-      '<table class="data-table"><thead><tr>' +
+    if (!rows.length) {
+      body.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">No pinned host key matches the filter.</p>';
+      return;
+    }
+    body.innerHTML =
+      '<div style="padding:0.75rem 1.25rem 1rem"><table class="data-table"><thead><tr>' +
         '<th>Host</th><th>Type</th><th>Fingerprint</th><th>First seen</th><th></th>' +
-      '</tr></thead><tbody>' + body + '</tbody></table>';
-
-    Array.prototype.forEach.call(host.querySelectorAll("[data-wssh-delpin]"), function (btn) {
-      btn.addEventListener("click", function () { onDeletePin(btn); });
-    });
+      "</tr></thead><tbody>" +
+      rows.map(function (r) {
+        return "<tr>" +
+          '<td class="mono">' + escapeHtml(hostKeyLabel(r)) + "</td>" +
+          "<td>" + escapeHtml(r.keyType || "—") + "</td>" +
+          '<td class="mono" style="font-size:0.78rem;word-break:break-all">' + escapeHtml(r.fingerprint) + "</td>" +
+          "<td>" + escapeHtml(r.firstSeen ? new Date(r.firstSeen).toLocaleDateString() : "—") + "</td>" +
+          '<td style="text-align:right"><button type="button" class="btn btn-sm btn-secondary" data-wssh-delpin="' + escapeHtml(r.id) +
+            '" data-wssh-pinhost="' + escapeHtml(r.host) + '">Delete</button></td>' +
+        "</tr>";
+      }).join("") +
+      "</tbody></table></div>";
   }
 
   function onDeletePin(btn) {
@@ -480,8 +575,8 @@
   }
 
   // TLS pins render through the shared module (public/js/pinned-tls-certs.js),
-  // the same table Server Settings → Web Server shows, with Trust new
-  // certificate for a changed one (rule 113(f)).
+  // the same summary + slide-over Server Settings → Web Server shows, with
+  // Trust new certificate for a changed one (rule 113(f)).
   function loadCertPins() {
     var host = el("wssh-tlspins");
     if (host && window.PolarisPinnedTlsCerts) window.PolarisPinnedTlsCerts.mount(host);
@@ -490,7 +585,11 @@
   function loadHostKeys() {
     loadCertPins();
     api.serverSettings.sshHostKeysList()
-      .then(function (r) { renderHostKeys(r && r.hostKeys); })
+      .then(function (r) {
+        _hostKeys = (r && r.hostKeys) || [];
+        renderHostKeysSummary(_hostKeys);
+        renderHostKeysPanel();
+      })
       .catch(function (err) {
         var host = el("wssh-hostkeys");
         if (host) {
