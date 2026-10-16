@@ -1744,7 +1744,7 @@ function _renderAssetsPageControls() {
         onClick: loadAssets,
       },
       {
-        label: _base ? "Reset Filter" : "Clear Filters",
+        label: _base ? "Reset Filter" : "Clear",
         title: _base
           ? 'Back to this tab\'s base filter "' + (_base.name || "base") +
             '" — clear it from Filters \u25be'

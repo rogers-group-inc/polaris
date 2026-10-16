@@ -20,11 +20,16 @@
     <main class="main">
       <div class="page-header">
         <h2>Users</h2>
-        <div class="page-header-actions">
-          <button class="btn btn-secondary" id="btn-auth-settings" style="display:none">Authentication</button>
-          <button class="btn btn-secondary" id="btn-clear-filters" title="Clear every column filter on the Users list">Clear Filters</button>
-          <button class="btn btn-primary" id="btn-add-user">+ Add User</button>
-        </div>
+        <div class="page-header-actions"></div>
+      </div>
+
+      <!-- The page's action buttons, moved from the header to a row of
+           their own above the Users table, right aligned (the header's
+           side of a centred search is too narrow for them). -->
+      <div class="page-actions-row">
+        <button class="btn btn-secondary" id="btn-auth-settings" style="display:none">Authentication</button>
+        <button class="btn btn-secondary" id="btn-clear-filters" title="Clear every column filter on the Users list">Clear</button>
+        <button class="btn btn-primary" id="btn-add-user">+ Add User</button>
       </div>
 
       <div class="table-wrapper lift-card">
@@ -86,7 +91,6 @@
             <button class="btn btn-primary" id="btn-add-group-mapping">+ Add Mapping</button>
           </div>
         </div>
-        <p class="hint" style="margin:0 0 1rem">Map an identity-provider group to a role and tags. Applied at OIDC / LDAP login. A user in several mapped groups gets the highest-privilege role; region and other tags from all matched groups are combined.</p>
         <div class="table-wrapper lift-card">
           <table>
             <thead>

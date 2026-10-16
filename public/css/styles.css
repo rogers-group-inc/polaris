@@ -1787,6 +1787,18 @@ code {
   align-items: center;
   margin-bottom: 1.5rem;
 }
+/* With the global search in it, the header is a three-column grid with the
+   search in a centred middle track: equal side tracks mean its position
+   never depends on how long the page title or how wide the actions are, so
+   it holds still from page to page. */
+.page-header:has(> .global-search) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 520px) minmax(0, 1fr);
+  column-gap: 1rem;
+}
+.page-header:has(> .global-search) > h2 { justify-self: start; }
+.page-header:has(> .global-search) > .global-search { margin: 0; max-width: none; width: 100%; }
+.page-header:has(> .global-search) > .page-header-actions { justify-self: end; }
 /* Frozen top bar (Dashboard, Server Settings): a wrapper around the page
    header AND its tab strip, so the title, the actions/search and the tabs all
    stay pinned while the page scrolls — Add Widgets / Done Editing / search /
@@ -2227,6 +2239,7 @@ html[data-page-top-curtain]::after {
    cards, modals and menus keep --shadow-control. */
 .page-header-actions .btn:not(.btn-icon):not(:disabled),
 .page-actions-row .btn:not(.btn-icon):not(:disabled),
+.appmap-toolbar-actions .btn:not(.btn-icon):not(:disabled),
 .table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift); }
 /* A page's own action buttons on a row of their own (Assets: between the
    selection bar and the tab row), right aligned. */
@@ -2321,7 +2334,29 @@ html[data-page-top-curtain]::after {
   padding: 0.5rem !important;
 }
 .btn.btn-sm.btn-glyph,
-.table-head-row .table-head-controls .btn.btn-glyph { padding: 0.3rem !important; }
+.table-head-row .table-head-controls .btn.btn-glyph,
+.table-head-row .table-head-controls .btn.btn-icon-only,
+.page-actions-row .btn.btn-icon-only.btn-sm { padding: 0.3rem !important; }
+/* A button that carries its own inline <svg> plus a word (the pages'
+   Settings gears): the word is hidden the same way — font-size 0, so it stays
+   the accessible name, with the title as the tooltip — and the button is a
+   square around the icon. */
+.btn.btn-icon-only {
+  font-size: 0 !important;
+  line-height: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0.5rem !important;
+}
+.btn.btn-icon-only svg { margin: 0 !important; width: 16px; height: 16px; }
+.btn.btn-sm.btn-icon-only svg { width: 14px; height: 14px; }
+/* inline-flex above beats the UA's [hidden] rule (Application Map's Reset
+   layout ships hidden until the role may write a layout). */
+.btn.btn-icon-only[hidden],
+.btn.btn-glyph[hidden] { display: none; }
+.table-head-row .table-head-controls .btn.btn-icon-only svg { width: 14px; height: 14px; }
 .btn.btn-glyph::before {
   content: "";
   width: 16px;

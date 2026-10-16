@@ -648,7 +648,7 @@ var _rulesPage = 1;
       },
       {
         actionButtons: [{
-          label: "Clear Filters",
+          label: "Clear",
           title: "Clear every column filter on this list",
           onClick: function () {
             if (!_rulesSF) return;

@@ -197,7 +197,7 @@
       function (size) { _pageSize = size; _page = 1; renderList(); savePrefs(); },
       {
         actionButtons: [{
-          label: "Clear Filters",
+          label: "Clear",
           title: "Clear every column filter on this list",
           onClick: function () {
             if (!_sf) return;

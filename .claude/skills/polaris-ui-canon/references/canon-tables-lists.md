@@ -258,6 +258,12 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
 - **A list page's own action buttons live on its tab row, left of the list controls** (since 2026-10-15). Order, left to right: page actions, then Refresh, Clear Filters, Show N.
   - Automations, Events and Path Monitor: the page's action buttons move from the page header into a `.table-head-controls` cluster ahead of the list controls. Automations keeps its per-tab buttons there; the Events cluster has no `data-head-for`, so Conflicts / Alerts / Settings stay on the Calendar tab.
   - IPAM: Export is its own tab-row cluster, first and outside the `#ipam-head-controls` slot that `mountTab` empties, since it serves both tabs. The template's Add buttons come before `#pagination-top`. Blocks and Networks gain a Refresh `actionButton`.
+  - **Labels and icons** (2026-10-16):
+    - Clear Filters reads **"Clear"** everywhere; its `title` keeps the long form. Assets' base-filter variant is still "Reset Filter".
+    - The pages' Settings gears, the Dashboard / `/dash` **Customize Page** (now a pencil) and the Application Map toolbar's four icons are `.btn.btn-icon-only`. A button carrying its own inline `<svg>` plus a word hides the word at `font-size: 0` and becomes a square. It needs `[hidden] { display: none }` because inline-flex beats the UA rule.
+    - Assets' Filters ▾ is on the tab row, left of Refresh. Users' three header buttons are on a `.page-actions-row` above the Users table.
+    - The page explainer paragraphs on Path Monitor and Users → Group Mappings are gone.
+  - **The global search is centred and holds still.** `.page-header:has(> .global-search)` is a grid `minmax(0,1fr) minmax(0,520px) minmax(0,1fr)`, so its x never depends on the title or the actions. A page whose header actions are wider than a side track (about 330px at 1500px) wraps them and grows the header, which moves the search DOWN. Keep header actions to the badge plus about two buttons; move the rest to the tab row or a `.page-actions-row`.
   - **Refresh and Export are icons app-wide** (`.btn-glyph` + `.btn-glyph-refresh` / `.btn-glyph-download`, the Application Map toolbar's glyphs).
     - The glyph is a `::before` masked from a data-URI SVG and painted in `currentColor`. The label text stays in the DOM at `font-size: 0`, as the accessible name and `title`, so handlers that rewrite the text ("Refreshing…" on the asset panel) cannot wipe the icon.
     - A `renderPageControls` action button takes it via `className`.

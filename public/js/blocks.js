@@ -157,7 +157,7 @@ function _renderBlocksPageControls(total) {
       title: "Reload the block list",
       onClick: function () { loadBlocks(); },
     }, {
-      label: "Clear Filters",
+      label: "Clear",
       title: "Clear every column filter on this list",
       onClick: function () {
         if (!_blocksSF) return;

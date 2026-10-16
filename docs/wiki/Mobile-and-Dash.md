@@ -118,7 +118,7 @@ sort.
 
 **Clear a desktop filter from the phone.** When the tab showing carries a
 filter, a **Clear filters** chip leads the chip row. Tapping it clears the
-tab's column filters and keeps its sort, the same as **Clear Filters** on the
+tab's column filters and keeps its sort, the same as **Clear** on the
 desktop. If the tab has a base filter, the chip reads **Reset filter** and puts
 the tab back to that base instead. The reset is saved to the tab, so the
 desktop shows it too. The chip goes away once there is nothing left to clear.

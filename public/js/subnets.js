@@ -291,7 +291,7 @@ function _renderSubnetsPageControls(total) {
       title: "Reload the network list",
       onClick: function () { loadSubnets(); },
     }, {
-      label: "Clear Filters",
+      label: "Clear",
       title: "Clear every column filter on this list",
       onClick: function () {
         if (!_subnetsSF) return;

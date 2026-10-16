@@ -132,9 +132,9 @@ describe("renderAssetsPage — zero rows", () => {
     g.renderAssetsPage();
 
     const buttons = calls[0]!.opts?.actionButtons ?? [];
-    expect(buttons.map((b) => b.label)).toEqual(["Refresh", "Clear Filters"]);
+    expect(buttons.map((b) => b.label)).toEqual(["Refresh", "Clear"]);
 
-    buttons.find((b) => b.label === "Clear Filters")!.onClick();
+    buttons.find((b) => b.label === "Clear")!.onClick();
     expect(clearedFilters).toBe(1);
     expect(g._assetsPage).toBe(1);
     expect(fetches).toBe(1);
@@ -210,7 +210,7 @@ describe("Clear Filters vs Reset Filter", () => {
     activeBase = null;
     g._renderAssetsPageControls();
     const buttons = calls[0]!.opts?.actionButtons ?? [];
-    expect(buttons.map((b) => b.label)).toEqual(["Refresh", "Clear Filters"]);
+    expect(buttons.map((b) => b.label)).toEqual(["Refresh", "Clear"]);
     buttons[1]!.onClick();
     expect(clearedFilters).toBe(1);
     expect(resets).toBe(0);

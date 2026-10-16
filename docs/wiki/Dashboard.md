@@ -13,13 +13,13 @@ two people on the same install legitimately see different dashboards.
 
 ## Working with the canvas
 
-The canvas is read-only until you press **Customize Page**; **Done Editing**
+The canvas is read-only until you press the pencil (**Customize Page**) at the top right; **Done Editing**
 saves and leaves edit mode. The layout is a row of **columns**, each a stack of
 widgets.
 
 | Action | How |
 |---|---|
-| Add a widget | **Customize Page** → **Add Widgets** — a picker that docks over the dashboard, with a group list, a search box, A–Z / Z–A sort and favourites; drag a widget into place or click it (a click adds it to the last column) |
+| Add a widget | the pencil (**Customize Page**) → **Add Widgets** — a picker that docks over the dashboard, with a group list, a search box, A–Z / Z–A sort and favourites; drag a widget into place or click it (a click adds it to the last column) |
 | Add to a particular column | the green **+ Add widget** at the bottom of that column, while customizing |
 | Start a new column | the green **+ New block** after the last column — click it and pick a widget, or drop a widget on it |
 | Move one | drag its **⠿** grip to any column; a green **+** marks where it will land, and dropping on **+ New block** starts a new one |
