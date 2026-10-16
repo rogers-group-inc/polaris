@@ -2509,6 +2509,9 @@ html[data-page-top-curtain]::after {
   position: relative;
   display: inline-block;
 }
+/* inline-block above beats the UA's [hidden] rule — a permission-gated menu
+   (the Dashboard page's Dashboards ▾) set hidden and stayed on screen. */
+.btn-dropdown-wrap[hidden] { display: none; }
 /* Frosted on the same terms as the modal and slide-over. This one rule is
    every context menu in the app: .row-context-menu (showRowMenu) only adds
    position/z-index on top of it. No containing-block hazard here the way there
