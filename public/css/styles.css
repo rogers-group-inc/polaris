@@ -5675,17 +5675,22 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   margin-bottom: 1rem;
 }
 .settings-cards-row .settings-card { margin-bottom: 0; }
-.settings-cards-row-3 {
+/* Four short cards side by side — the Maintenance tab's Backup / Restore /
+   Backup History / Scheduled Backups. minmax(0, 1fr) rather than 1fr so a
+   long unbreakable token (a backup filename in the history) cannot widen its
+   own column; two-by-two below 1300px, where a quarter of the content area
+   is too narrow for the schedule's fields. */
+.settings-cards-row-4 {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
   margin-bottom: 1rem;
   align-items: stretch;
 }
-.settings-cards-row-3 .settings-card { margin-bottom: 0; }
-@media (max-width: 1000px) {
-  .settings-cards-row-3 {
-    grid-template-columns: 1fr 1fr;
+.settings-cards-row-4 .settings-card { margin-bottom: 0; }
+@media (max-width: 1300px) {
+  .settings-cards-row-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 /* Reflowing card deck — the Web Server tab. Unlike .settings-cards-row/-3,

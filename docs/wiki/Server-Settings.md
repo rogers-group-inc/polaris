@@ -387,8 +387,8 @@ passkey policies — see
 
 Cards in this order: **Database** (the capacity snapshot), **Capacity Advisor**
 and **Application Updates** side by side, **Platform Lifecycle**, then
-**Backup**, **Restore** and **Backup History** in one row, and **Scheduled
-Backups**.
+**Backup**, **Restore**, **Backup History** and **Scheduled Backups** in one
+row (two by two on a narrower window).
 
 ### Backup
 
