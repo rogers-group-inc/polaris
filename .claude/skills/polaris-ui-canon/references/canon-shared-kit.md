@@ -389,7 +389,7 @@ stack, sit in a fixed row, or reflow with the window.
 |---|---|---|
 | *(none — bare `.settings-card`)* | full-width, stacked | one card, or a card holding a wide table |
 | `.settings-cards-row` | grid, exactly 2 columns, no reflow | two cards that belong side by side at every width |
-| `.settings-cards-row-3` | grid, 3 columns → 2 under 1000px viewport | a fixed set of three short cards of similar height |
+| `.settings-cards-row-4` | grid, 4 columns → 2 under 1300px viewport (`minmax(0, 1fr)` so a long token cannot widen its column) | a fixed set of four short cards — the Maintenance tab's Backup / Restore / Backup History / Scheduled Backups |
 | `.settings-cards-flow` | `columns: 360px 3` — up to 3 columns, min 360px each, count chosen by the browser | a deck of independent cards of differing height (the Web Server tab) |
 
 **Key conventions:**

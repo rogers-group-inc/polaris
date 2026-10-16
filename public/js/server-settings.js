@@ -943,7 +943,7 @@ function renderCertsTab(container) {
   var pinnedCardHtml =
     '<div class="settings-card" id="pinned-tls-card">' +
       '<h3>Pinned server identities</h3>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0">Polaris pins the TLS certificate of a server the first time it sends it a password or token ' +
+      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin:0 0 0.75rem 0">Polaris pins the TLS certificate of a server the first time it sends it a password or token ' +
         'without verifying a CA, and refuses to send anything if the certificate later changes. In the list a changed certificate comes first: ' +
         'compare it with the server and choose Trust new certificate. After a firmware upgrade Polaris runs itself, the device\'s new ' +
         'certificate is re-pinned automatically.</p>' +
@@ -2665,8 +2665,8 @@ async function loadDatabaseInfo() {
       // column crush the advisor card already had to solve.
       lifecycleHtml +
       // ── Polaris Agent card ──
-      // ── Backup / Restore / History — three columns ──
-      '<div class="settings-cards-row-3">' +
+      // ── Backup / Restore / History / Scheduled — four columns ──
+      '<div class="settings-cards-row-4">' +
 
       // ── Backup Card ──
       '<div class="settings-card">' +
@@ -2733,8 +2733,6 @@ async function loadDatabaseInfo() {
         '<div id="backup-history-body"><p class="empty-state">Loading...</p></div>' +
       '</div>' +
 
-      '</div>' + // close 3-column row of Backup/Restore/History cards
-
       // ── Scheduled Backups card ──
       // Manual backup alone means "someone remembers to click the button".
       // This is the standing recovery point; default off so it never competes
@@ -2774,15 +2772,7 @@ async function loadDatabaseInfo() {
         '<div id="bksched-status" style="margin-top:0.5rem"></div>' +
       '</div>' +
 
-      '<div style="display:flex;gap:8px;align-items:center">' +
-        '<button class="btn btn-glyph btn-glyph-refresh btn-secondary" id="btn-db-refresh" title="Refresh">Refresh</button>' +
-      '</div>';
-
-    // Wire up events
-    document.getElementById("btn-db-refresh").addEventListener("click", function () {
-      _dbLoaded = false;
-      loadDatabaseInfo();
-    });
+      '</div>'; // close 4-column row of Backup/Restore/History/Scheduled cards
 
     initBackupControls();
     initRestoreControls();

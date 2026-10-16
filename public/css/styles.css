@@ -2776,29 +2776,11 @@ html[data-page-top-curtain]::after {
   transform: none;
   background: var(--folder-fill);
   border-color: var(--color-border);
-  /* The accent sits on the tab's top edge — the bottom is open into the
-     table — drawn by ::before below, not an inset shadow, so it can curve
-     round the corners and taper down the sides. */
-  box-shadow: none;
+  /* The accent moves from the old underline to the tab's top edge — the
+     bottom is open into the table now. */
+  box-shadow: inset 0 2px 0 var(--color-accent);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-}
-/* The accent stroke on a plain tab row (a folder-head-card row draws it in
-   .tab-glass instead, where ::before is the tab's cast): a ring over the
-   tab's border box, 2px at the top and 2px down the sides, cut out of a fill
-   that is solid across the top and fades out by 60% of the height — so it
-   bends round both rounded corners and tapers off. */
-.table-head-row:not(.folder-head-card) :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab).active::before {
-  content: "";
-  position: absolute;
-  inset: -1px -1px 0;
-  border-radius: inherit;
-  padding: 2px 2px 0;
-  pointer-events: none;
-  background: linear-gradient(var(--color-accent) var(--radius-md), transparent 60%);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
 /* The neck exists on every tab at zero height and grows on the active one, in
    step with the tab's rise (same duration and easing), so its bottom stays on
@@ -2921,25 +2903,8 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   transition: opacity 0.2s ease;
   /* The layer paints ABOVE the tab's own border and inset accent (it is a
      child), so it is shaped to the tab's PADDING box — the 1px side and top
-     borders show around it — and draws the accent itself: 2px across the
-     top, curving down round both rounded corners (a 2px ring segment the
-     mask's corner arcs trim to the curve) and tapering off down each side
-     (2px wide, fading to nothing by 60% of the tab's height). Layers: top
-     strip, left arc, right arc, left side, right side, glass. */
-  background:
-    linear-gradient(var(--color-accent), var(--color-accent))
-      left calc(var(--folder-r) + 1px + var(--mi)) top 1px / calc(100% - 2 * var(--folder-r) - 2px - 2 * var(--mi)) 2px no-repeat,
-    radial-gradient(circle at 100% 100%, transparent calc(var(--mi) - 3px), var(--color-accent) calc(var(--mi) - 2.5px))
-      left calc(var(--folder-r) + 1px) top 1px / var(--mi) var(--mi) no-repeat,
-    radial-gradient(circle at 0 100%, transparent calc(var(--mi) - 3px), var(--color-accent) calc(var(--mi) - 2.5px))
-      right calc(var(--folder-r) + 1px) top 1px / var(--mi) var(--mi) no-repeat,
-    /* The sides start at the top, not below the arcs: inside the corner box
-       the mask trims them to the curve, and the overlap closes the seam. */
-    linear-gradient(var(--color-accent) var(--mi), transparent)
-      left calc(var(--folder-r) + 1px) top 1px / 2px 60% no-repeat,
-    linear-gradient(var(--color-accent) var(--mi), transparent)
-      right calc(var(--folder-r) + 1px) top 1px / 2px 60% no-repeat,
-    var(--rail-glass-bg);
+     borders show around it — and draws the accent itself (::after below). */
+  background: var(--rail-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
   /* Box coordinates: the tab's border box spans --folder-r … 100% - --folder-r
@@ -3000,6 +2965,28 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   mask-repeat: no-repeat;
 }
 .table-head-row.folder-head-card :is(.page-tab, .table-tab, .dashboard-tab).active .tab-glass { opacity: 1; }
+/* The accent: a stroke along the inside of the tab's top edge that TAPERS —
+   2px across the top, thinning through each rounded corner (a rounded border
+   whose top and side widths differ interpolates between them along the arc)
+   to 1px down the sides, where it fades out before the tab's base. Drawn as
+   a rounded border on the padding box (1px in from the glass layer's top,
+   --folder-r + 1px in from its sides, the neck's --folder-r + 1px up from its
+   bottom), so the glass's own mask, with the same --mi corners, trims nothing.
+   A flat 2px strip stopped dead where the corners began. */
+.table-head-row.folder-head-card .tab-glass::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: calc(var(--folder-r) + 1px);
+  right: calc(var(--folder-r) + 1px);
+  bottom: calc(var(--folder-r) + 1px);
+  box-sizing: border-box;
+  border: solid var(--color-accent);
+  border-width: 2px 1px 0;
+  border-radius: var(--mi) var(--mi) 0 0;
+  -webkit-mask-image: linear-gradient(#000 calc(var(--mi) + 1px), transparent 80%);
+  mask-image: linear-gradient(#000 calc(var(--mi) + 1px), transparent 80%);
+}
 .table-head-row.folder-head-card :is(.page-tabs, .table-tabs, .dashboard-tabs) :is(.page-tab, .table-tab, .dashboard-tab).active::before {
   bottom: calc(-1 * var(--folder-r));
   box-shadow: var(--shadow-lift);
@@ -5725,17 +5712,22 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   margin-bottom: 1rem;
 }
 .settings-cards-row .settings-card { margin-bottom: 0; }
-.settings-cards-row-3 {
+/* Four short cards side by side — the Maintenance tab's Backup / Restore /
+   Backup History / Scheduled Backups. minmax(0, 1fr) rather than 1fr so a
+   long unbreakable token (a backup filename in the history) cannot widen its
+   own column; two-by-two below 1300px, where a quarter of the content area
+   is too narrow for the schedule's fields. */
+.settings-cards-row-4 {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
   margin-bottom: 1rem;
   align-items: stretch;
 }
-.settings-cards-row-3 .settings-card { margin-bottom: 0; }
-@media (max-width: 1000px) {
-  .settings-cards-row-3 {
-    grid-template-columns: 1fr 1fr;
+.settings-cards-row-4 .settings-card { margin-bottom: 0; }
+@media (max-width: 1300px) {
+  .settings-cards-row-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 /* Reflowing card deck — the Web Server tab. Unlike .settings-cards-row/-3,

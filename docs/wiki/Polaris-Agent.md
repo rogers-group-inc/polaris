@@ -352,7 +352,9 @@ Trust-on-first-use:
 Pins are per (host, port) in their own table, never on the credential. WinRM
 over HTTPS gets the same treatment for its TLS certificate when *Verify TLS
 certificate* is off. Both kinds of pin are listed under **Windows SSH
-Deployment → Pinned server identities**; delete one to trust a host that was
+Deployment → Pinned server identities**, each behind a button — **View pinned
+host keys** and **View pinned certificates** open a side panel with the list
+(the host-key panel has a filter box); delete one to trust a host that was
 legitimately rebuilt, re-keyed or re-certified. TLS certificates are also on
 **Server Settings → Web Server**: **View pinned certificates** opens a list
 with the asset each certificate belongs to, and a changed certificate shows
