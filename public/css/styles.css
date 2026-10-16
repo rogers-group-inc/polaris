@@ -2226,7 +2226,25 @@ html[data-page-top-curtain]::after {
    rail's lift, like the title and search beside them. Buttons inside tables,
    cards, modals and menus keep --shadow-control. */
 .page-header-actions .btn:not(.btn-icon):not(:disabled),
+.page-actions-row .btn:not(.btn-icon):not(:disabled),
 .table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift); }
+/* A page's own action buttons on a row of their own (Assets: between the
+   selection bar and the tab row), right aligned. */
+.page-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 8px;
+}
+/* Buttons moved into a tab row from a page header take the row's small size
+   (the list controls beside them are .btn-sm), so the row keeps one height. */
+.table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+}
+.table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) svg { width: 14px; height: 14px; }
 /* …and so do the tab row's "Show N" label and its page-size select. */
 .table-head-row .table-head-controls label { text-shadow: var(--shadow-lift-text); }
 .table-head-row .table-head-controls select { box-shadow: var(--shadow-lift); }
@@ -2488,6 +2506,10 @@ html[data-page-top-curtain]::after {
 .table-head-row .table-tabs-list { gap: 4px; }
 .table-head-row .table-head-controls {
   flex: 0 0 auto;
+  /* One height for every cluster on the row (the one holding the Show N
+     select is the tallest), so their contents — each centred in its own
+     cluster — line up across clusters on the bottom-aligned row. */
+  min-height: 39px;   /* the Show N select's 32px + the 7px bottom padding */
   display: flex;
   align-items: center;
   gap: 6px;

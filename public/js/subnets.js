@@ -286,6 +286,10 @@ function _renderSubnetsPageControls(total) {
     _saveSubnetsPrefs();
   }, {
     actionButtons: [{
+      label: "Refresh",
+      title: "Reload the network list",
+      onClick: function () { loadSubnets(); },
+    }, {
       label: "Clear Filters",
       title: "Clear every column filter on this list",
       onClick: function () {

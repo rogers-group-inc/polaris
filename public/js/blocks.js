@@ -152,6 +152,10 @@ function _renderBlocksPageControls(total) {
     _saveBlocksPrefs();
   }, {
     actionButtons: [{
+      label: "Refresh",
+      title: "Reload the block list",
+      onClick: function () { loadBlocks(); },
+    }, {
       label: "Clear Filters",
       title: "Clear every column filter on this list",
       onClick: function () {

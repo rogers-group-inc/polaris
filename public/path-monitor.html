@@ -20,10 +20,7 @@
     <main class="main" id="path-page">
       <div class="page-header">
         <h2>Path Monitor</h2>
-        <div class="page-header-actions">
-          <button class="btn btn-primary" id="btn-add-check" style="display:none">+ Add monitor</button>
-          <button class="btn btn-secondary" id="btn-refresh-checks">Refresh</button>
-        </div>
+        <div class="page-header-actions"></div>
       </div>
 
       <!-- Path checks (path-checks.js). Gated by the
@@ -38,6 +35,12 @@
            page numbers (they are below the card) and carries Refresh / Clear
            Filters / Show N on the right, as on the tabbed list pages. -->
       <div class="table-head-row folder-head-card">
+        <!-- The page's action buttons, moved from the header into the tab
+             row, left of the list controls. -->
+        <div class="table-head-controls">
+          <button class="btn btn-primary" id="btn-add-check" style="display:none">+ Add monitor</button>
+          <button class="btn btn-secondary" id="btn-refresh-checks">Refresh</button>
+        </div>
         <div id="path-pagination-top" class="table-head-controls"></div>
       </div>
       <!-- Folder card (styles.css "Folder CARD"): the table fills it down to

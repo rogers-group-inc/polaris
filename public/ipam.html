@@ -47,7 +47,7 @@
       <!-- Table head row (styles.css): the section tabs as folder tabs on the
            mounted table's top edge. #ipam-head-controls is a slot: on each
            mount ipam.js moves the template's [data-head-controls] cluster
-           (its Add buttons + #pagination-top — Refresh / Clear Filters /
+           (its Add buttons, then #pagination-top — Refresh / Clear Filters /
            Show N, no page buttons inside a head row) into it. -->
       <div class="table-head-row folder-head-card">
         <div class="page-tabs page-tabs-glass" id="ipam-tabs">
@@ -72,8 +72,8 @@
 
       <template id="ipam-tpl-blocks">
         <div data-head-controls style="display:contents">
-          <div id="pagination-top"></div>
           <button class="btn btn-primary btn-sm" id="btn-add-block" data-manage-blocks>+ Add Block</button>
+          <div id="pagination-top"></div>
         </div>
 
         <div class="table-wrapper table-wrapper-sticky">
@@ -101,10 +101,10 @@
 
       <template id="ipam-tpl-networks">
         <div data-head-controls style="display:contents">
-          <div id="pagination-top"></div>
           <button class="btn btn-secondary btn-sm" id="btn-exclusions">Exclusions</button>
           <button class="btn btn-secondary btn-sm" id="btn-auto-alloc" data-create-networks>Auto-Allocate Next</button>
           <button class="btn btn-primary btn-sm" id="btn-add-subnet" data-create-networks>+ Add Network</button>
+          <div id="pagination-top"></div>
         </div>
 
         <div class="table-wrapper table-wrapper-sticky">

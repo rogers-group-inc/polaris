@@ -255,6 +255,14 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
   - Cards inside a folder card lie flat: `.settings-card`, `.integration-card`, `.empty-state-card` and `.card` have `box-shadow: none`.
   - The strip is pulled up over the page header or bulk bar by the cast's room, so it is `pointer-events: none` except on its tabs and the + button.
 - **Application Map**'s graph card (`.appmap-graph`, appmap.css) takes the folder card's glass, `--rail-glass-bg` + `--panel-glass-blur`, on a `::before` behind the graph instead of its opaque fill. The card is isolated, so the layer sits under the Cytoscape canvas and the card never traps the overlays' fixed positioning or frosted menus.
+- **A list page's own action buttons live on its tab row, left of the list controls** (since 2026-10-15). Order, left to right: page actions, then Refresh, Clear Filters, Show N.
+  - Automations, Events and Path Monitor: the page's action buttons move from the page header into a `.table-head-controls` cluster ahead of the list controls. Automations keeps its per-tab buttons there; the Events cluster has no `data-head-for`, so Conflicts / Alerts / Settings stay on the Calendar tab.
+  - IPAM: the template's Add buttons come before `#pagination-top`. Blocks and Networks gain a Refresh `actionButton`.
+  - Integrations: + Add Integration is the card's top-right cluster.
+  - Path Monitor: gains Clear Filters, and its row now renders on an empty result instead of being cleared.
+  - Assets is the exception: its five page buttons sit on a `.page-actions-row` of their own between the selection bar and the tab row, right aligned.
+  - The header's `.page-header-actions` stays, EMPTY: `renderUserBadge` in app.js appends the account badge into the first one on the page.
+  - Every tab-row cluster takes `min-height: 39px` (the Show N select's 32px plus the 7px bottom padding), so buttons centred in different clusters line up on the bottom-aligned row. Moved header buttons take `.btn-sm` geometry.
 - **Device Map** isn't a folder card, but its `.map-canvas` fills the same flex column (`map.css`), so it ends at the same bottom edge.
 - **IPAM:** section tabs. `#ipam-head-controls` is a slot: [public/js/ipam.js](public/js/ipam.js) `mountTab` empties it, then moves the mounted template's `[data-head-controls]` cluster (Add buttons + `#pagination-top`) into it before the tab's `init()` runs. The ids collide between the templates, so emptying first is required.
 
