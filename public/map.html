@@ -28,15 +28,13 @@
       </div>
 
       <div class="map-toolbar">
-        <button type="button" id="map-theme-toggle" class="btn-icon map-theme-toggle" aria-label="Toggle map theme" title="Toggle map theme (saved per user)" style="line-height:0"></button>
+        <!-- The map-theme toggle is moved onto the map (top-left, above zoom) by
+             map.js addMapThemeControl; Show regions is the map's top-right
+             Regions panel (buildRegionsPanel). -->
+        <button type="button" id="map-theme-toggle" class="btn btn-secondary btn-icon-only map-theme-toggle" aria-label="Toggle map theme" title="Toggle map theme (saved per user)" style="line-height:0"></button>
         <!-- The viewer's own region scope, read-only. Rendered by map.js
              (renderMyRegions) once /auth/me has answered. -->
         <div class="map-my-regions" id="map-my-regions" hidden></div>
-        <!-- Read-only, and deliberately NOT permission-gated: any viewer who
-             can see the map can see how its regions nest. Hovering it shows the
-             containment tree (region-tree.js + the shared hover tooltip). -->
-        <button type="button" id="map-show-regions" class="btn btn-secondary" aria-pressed="false">Show regions</button>
-        <button type="button" id="map-edit-regions" class="btn btn-secondary" hidden>Edit regions</button>
         <div id="map-status" class="map-status"></div>
         <div class="map-edit-actions" id="map-edit-actions">
           <button type="button" id="map-discard-regions" class="btn btn-secondary" hidden>Discard Changes</button>

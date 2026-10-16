@@ -130,7 +130,6 @@ Click your username, top right. What appears depends on your account:
 | **Change password** | local accounts only |
 | **Set up two-factor auth** | local accounts only |
 | **Passkeys** | local accounts, where the install allows them and the browser can host one |
-| **Help** | always — opens this wiki in a new tab |
 | **Logout** | always |
 
 ### Notification preference
@@ -241,7 +240,10 @@ terminated at a proxy with `TRUST_PROXY` unset, and a proxy that rewrites the
 
 ### Help
 
-Opens this wiki on GitHub, in a new tab. It is a link out, not a page Polaris
+The **?** button left of your username, on every page. It opens this wiki on
+GitHub, in a new tab, **at the page for the screen you are on** — and on
+Automations, Events and Integrations, at the page for the open tab (Delivery
+Channels, Maintenance Windows, Polaris Agent…). It is a link out, not a page Polaris
 serves, so it needs internet access — an air-gapped install will not reach it.
 Nothing in Polaris depends on it.
 

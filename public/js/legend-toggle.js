@@ -14,7 +14,10 @@
  *     expanded,         // initial state, overriding storage
  *     defaultExpanded,  // when neither expanded nor storage say; default true
  *     onChange,         // fn(expanded) after a user toggle
- *   }) → { setExpanded(bool), isExpanded() }
+ *     icon, openLabel,  // the collapsed button's SVG and label (default: a
+ *                       // legend list, "Show legend") — the Device Map's
+ *                       // Regions panel passes its own
+ *   }) → { setExpanded(bool), isExpanded(), button }
  *
  * The state is a per-viewer convenience, so storage is best-effort: every
  * read and write is try/catch'd and the legend works without it.
@@ -35,12 +38,13 @@
     opts = opts || {};
     el.classList.add("legend-collapsible");
 
+    var openLabel = opts.openLabel || "Show legend";
     var open = document.createElement("button");
     open.type = "button";
     open.className = "btn btn-secondary btn-sm btn-icon-only legend-toggle-open";
-    open.title = "Show legend";
-    open.setAttribute("aria-label", "Show legend");
-    open.innerHTML = ICON + "Show legend";
+    open.title = openLabel;
+    open.setAttribute("aria-label", openLabel);
+    open.innerHTML = (opts.icon || ICON) + openLabel;
     el.insertBefore(open, el.firstChild);
 
     var close = opts.closeButton;
@@ -95,6 +99,7 @@
     var api = {
       setExpanded: function (x) { set(!!x, false); },
       isExpanded: function () { return !el.classList.contains("legend-collapsed"); },
+      button: open,
     };
     el.__legendToggle = api;
     return api;

@@ -81,8 +81,9 @@
 
     initMap();
     wireModal();
-    wireRegionEditing();
+    // The Regions panel first: it builds the pencil wireRegionEditing wires.
     wireShowRegions();
+    wireRegionEditing();
     renderMyRegions().catch(function () {});
 
     try {
@@ -166,6 +167,7 @@
     map.addLayer(markerCluster);
     wireClusterInteractions();
     addStatusLegend();
+    addMapThemeControl();
 
     attachRightClickPan();
   }
@@ -566,6 +568,25 @@
     ["monitor-unmonitored", "Unmonitored"],
     ["monitor-unknown",     "Unknown"],
   ];
+
+  // The map-theme toggle lives ON the map, top-left above the zoom buttons
+  // (moved there from the toolbar 2026-10-16). Leaflet stacks a corner's
+  // controls in the order they are added, so it is re-inserted at the top of
+  // the corner. The button element (and its click wiring) is map.html's.
+  function addMapThemeControl() {
+    var btn = document.getElementById("map-theme-toggle");
+    if (!btn) return;
+    var ctl = L.control({ position: "topleft" });
+    ctl.onAdd = function () {
+      var div = L.DomUtil.create("div", "map-theme-control");
+      div.appendChild(btn);
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    };
+    ctl.addTo(map);
+    var el = ctl.getContainer();
+    if (el && el.parentNode) el.parentNode.insertBefore(el, el.parentNode.firstChild);
+  }
 
   function addStatusLegend() {
     var ctl = L.control({ position: "bottomleft" });
@@ -3288,14 +3309,77 @@
   // Unlike Edit regions this is NOT permission-gated: any viewer who can see
   // the map can see how its regions nest. It reads /map/region-overlay, which
   // sits under the deviceMap:read mount for exactly that reason.
-  function wireShowRegions() {
-    var btn = document.getElementById("map-show-regions");
-    if (!btn) return;
-    btn.addEventListener("click", function () {
-      toggleShowRegions().catch(function (err) {
-        setStatus("Failed to load regions: " + (err && err.message ? err.message : err));
-      });
+  //
+  // Since 2026-10-16 it is a panel on the map's top-right corner that
+  // collapses into its own button (legend-toggle.js), like the status legend:
+  // opening it draws the regions and lists them; its × hides them again; its
+  // pencil (roles that may edit regions — wireRegionEditing) enters edit mode,
+  // replacing the toolbar's Edit regions. The collapsed button keeps the
+  // #map-show-regions id the edit-mode code disables, and the pencil keeps
+  // #map-edit-regions.
+  var REGIONS_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">' +
+      '<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>' +
+    "</svg>";
+  var PENCIL_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" aria-hidden="true">' +
+      '<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+  var regionsPanelApi = null;
+
+  function buildRegionsPanel() {
+    var ctl = L.control({ position: "topright" });
+    ctl.onAdd = function () {
+      var div = L.DomUtil.create("div", "map-legend map-regions-panel");
+      div.innerHTML =
+        '<div class="legend-toggle-head">' +
+          '<span>Regions</span>' +
+          '<span class="map-regions-actions">' +
+            '<button type="button" id="map-edit-regions" class="map-regions-edit" title="Edit regions" aria-label="Edit regions" hidden>' + PENCIL_ICON + "</button>" +
+            '<button type="button" class="legend-toggle-close" title="Hide regions" aria-label="Hide regions">&times;</button>' +
+          "</span>" +
+        "</div>" +
+        '<div class="map-regions-list" id="map-regions-list"></div>';
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+      return div;
+    };
+    ctl.addTo(map);
+    var panel = ctl.getContainer();
+    if (!window.PolarisLegendToggle) return null;
+    regionsPanelApi = window.PolarisLegendToggle.attach(panel, {
+      closeButton: panel.querySelector(".legend-toggle-close"),
+      icon: REGIONS_ICON,
+      openLabel: "Show regions",
+      expanded: false,
+      onChange: function (expanded) {
+        (expanded ? showRegionOverlay() : Promise.resolve(hideRegionOverlay())).catch(function (err) {
+          setStatus("Failed to load regions: " + (err && err.message ? err.message : err));
+        });
+      },
     });
+    regionsPanelApi.button.id = "map-show-regions";
+    return regionsPanelApi.button;
+  }
+
+  // The panel's rows: each region's colour, name and nesting level, in the
+  // tree's paint order (outermost first).
+  function renderRegionsList(payload, ordered) {
+    var el = document.getElementById("map-regions-list");
+    if (!el) return;
+    if (!ordered || !ordered.length) {
+      el.innerHTML = '<span class="map-regions-empty">No regions are defined yet.</span>';
+      return;
+    }
+    el.innerHTML = ordered.map(function (r) {
+      var color = r.color ? ' style="background:' + escapeHtml(r.color) + '"' : "";
+      return '<span><i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' +
+        escapeHtml(r.name) + ' <em>L' + (r.level == null ? 1 : r.level) + "</em></span>";
+    }).join("");
+  }
+
+  function wireShowRegions() {
+    var btn = buildRegionsPanel();
+    if (!btn) return;
     if (window.PolarisRegionTree && typeof window.PolarisRegionTree.attachTreeTooltip === "function") {
       // Reuses the topology edge tooltip, which is already body-mounted (so
       // modal overflow can't clip it), viewport-edge aware and in this IIFE.
@@ -3316,16 +3400,10 @@
     return regionViewState.payload;
   }
 
+  // Keeps the Regions panel open while the overlay shows and folded while it
+  // doesn't (an edit-mode handover hides the overlay, so it folds the panel).
   function setShowRegionsButton(showing) {
-    var btn = document.getElementById("map-show-regions");
-    if (!btn) return;
-    btn.textContent = showing ? "Hide regions" : "Show regions";
-    btn.setAttribute("aria-pressed", showing ? "true" : "false");
-  }
-
-  async function toggleShowRegions() {
-    if (regionViewState.showing) { hideRegionOverlay(); return; }
-    await showRegionOverlay();
+    if (regionsPanelApi) regionsPanelApi.setExpanded(!!showing);
   }
 
   async function showRegionOverlay() {
@@ -3333,6 +3411,8 @@
     var payload = await loadRegionOverlay();
     var regions = (payload && Array.isArray(payload.regions)) ? payload.regions : [];
     if (regions.length === 0) {
+      // The panel stays open to say so; there is nothing to draw.
+      renderRegionsList(payload, []);
       setStatus("No regions are defined yet.");
       return;
     }
@@ -3340,6 +3420,7 @@
     var ordered = window.PolarisRegionTree
       ? window.PolarisRegionTree.paintOrder(payload)
       : regions;
+    renderRegionsList(payload, ordered);
     for (var i = 0; i < ordered.length; i++) {
       addReadOnlyRegionPolygon(ordered[i], payload.maxLevel);
     }

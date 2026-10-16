@@ -7,30 +7,14 @@
   margin-bottom: 0.75rem;
 }
 
-/* Right-hand end of the toolbar, in order: the viewer's region scope, the
-   Edit-regions toggle, then the save/discard group. The ordering is explicit
-   (`order`) and the toolbar's slack is absorbed by `.map-status` growing,
-   rather than by an `auto` left margin on each of them: all three show and
-   hide independently, and with several auto margins live at once the slack
-   splits between whichever happen to be visible instead of pushing the
-   group to the right edge. */
-
-/* Edit-regions toggle (label flips to "Done editing" while active) lives on
-   the far right of the toolbar — operators reach for it last in the flow. */
-#map-edit-regions {
-  order: 99;
-}
-
-/* Read-only "Show regions" toggle. Deliberately the SAME order value as
-   #map-edit-regions: equal-order flex items fall back to DOM order, so this
-   lands immediately to its left without renumbering any existing rule. */
-#map-show-regions {
-  order: 99;
-}
-#map-show-regions[aria-pressed="true"] {
-  border-color: var(--color-accent, #4fc3f7);
-  color: var(--color-accent, #4fc3f7);
-}
+/* Right-hand end of the toolbar, in order: the viewer's region scope, then
+   the save/discard group (edit mode). The ordering is explicit (`order`) and
+   the toolbar's slack is absorbed by `.map-status` growing, rather than by an
+   `auto` left margin on each of them: they show and hide independently, and
+   with several auto margins live at once the slack splits between whichever
+   happen to be visible instead of pushing the group to the right edge.
+   Show regions and Edit regions left the toolbar on 2026-10-16 for the map's
+   Regions panel (map.js buildRegionsPanel; styled further down). */
 
 /* "My regions" - the region tags the signed-in operator is scoped to,
    read-only. It answers "which regions am I assigned to?", which nothing
@@ -89,7 +73,7 @@
 
 /* Save Regions + Discard Changes group sits on the right edge of the toolbar,
  * after the region strip. Ordered last so it anchors right regardless of how
- * long the status text is (see the #map-edit-regions note above). */
+ * long the status text is (see the toolbar-order note at the top). */
 .map-edit-actions {
   order: 100;
   display: flex;
@@ -289,6 +273,45 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.45);
 }
 .map-legend span { display: flex; align-items: center; gap: 6px; }
+/* Regions panel (map.js buildRegionsPanel): the status legend's chip in the
+   top-right corner, collapsing into its own button. Its header carries the
+   edit pencil beside the ×; the list scrolls past a dozen rows. */
+.map-regions-panel { min-width: 150px; max-width: 260px; }
+.map-regions-panel .map-regions-actions { gap: 4px; }
+/* Pencil, then × — pinned with order: something in Leaflet's control
+   cascade drew the × first despite the markup order. */
+.map-regions-panel .map-regions-actions .map-regions-edit { order: 1; }
+.map-regions-panel .map-regions-actions .legend-toggle-close { order: 2; }
+.map-regions-edit {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  opacity: 0.75;
+  padding: 2px 4px;
+  line-height: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.map-regions-edit:hover,
+.map-regions-edit:focus-visible { opacity: 1; color: var(--color-accent); background: rgba(255,255,255,0.12); }
+.map-regions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.map-regions-list i.map-region-swatch { border-radius: 2px; background: #9e9e9e; }
+.map-regions-list em { opacity: 0.6; font-style: normal; margin-left: auto; padding-left: 8px; }
+.map-regions-empty { opacity: 0.75; }
+/* The map-theme toggle on the map (addMapThemeControl): the zoom bar's width
+   (its 30px buttons + 2px border each side), above it in the top-left corner. */
+.map-theme-control .btn.map-theme-toggle {
+  width: 34px;
+  height: 34px;
+  padding: 0 !important;
+}
 .map-legend i {
   width: 8px;
   height: 8px;

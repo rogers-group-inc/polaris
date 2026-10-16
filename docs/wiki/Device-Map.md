@@ -69,20 +69,24 @@ see [Actions](Automation-Actions#level-scoped-region-routing).
 
 ### Show regions
 
-A read-only toggle, **ungated beyond viewing the map** — how an install's
-regions nest is not privileged information.
+The **Regions** button in the map's top-right corner, **ungated beyond viewing
+the map** — how an install's regions nest is not privileged information.
+Clicking it opens the **Regions** panel, which lists each region with its
+colour and level; the panel's **×** folds it back into the button.
 
-It paints the polygons read-only, with a permanent label only on the outermost
+Open, it paints the polygons read-only, with a permanent label only on the outermost
 ring of a nested set (fill opacity is held low because nesting stacks it), and
 **hovering renders the containment tree**, each row badged with its derived
 level.
 
 ### Edit regions
 
-Needs `mapRegions`. Draw, edit and delete polygons.
+Needs `mapRegions`: the **pencil** in the Regions panel's header. Draw, edit
+and delete polygons, then **Save Regions** or **Discard Changes** in the
+toolbar.
 
 The two region layers **hand off rather than stack**: entering edit mode hides
-the read-only overlay and disables its button; leaving restores it and **drops
+the read-only overlay and disables the Regions button; leaving restores it and **drops
 the memoised payload**, since an edit can have changed every level in the tree.
 
 ### What a rename or delete does to scopes
