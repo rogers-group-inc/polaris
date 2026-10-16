@@ -2539,3 +2539,16 @@ has the details.)
   held for nothing gets no summary — no all-quiet email and no list of what
   reached them live. The all-clear reaches everyone who heard
   the alert started and skips those who did not.
+
+### Rule 121
+
+**A region can only be nested under a region that contains it on the map.**
+Nesting is worked out from the polygons: a region inside another sits under it.
+When several regions contain one (a sub-region inside a state inside a
+division), you can drag it in the Regions panel onto a bigger one to nest it
+there instead, which changes the levels — and so who level-routed alerts reach.
+A drop onto a region that does not contain it is refused. If a later reshape
+breaks the containment, the region goes back under its smallest container
+until the shape is restored. On the map, smaller regions always draw on top
+of the regions around them, so clicking one picks the inner region.
+([Device Map](Device-Map#regions) has the details.)

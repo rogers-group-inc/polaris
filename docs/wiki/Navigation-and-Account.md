@@ -314,7 +314,7 @@ Publishing a saved filter needs `assets:write`; deleting someone else's needs
 Because inline filters are remembered, every filterable list — Assets, Events,
 IPAM's IP Blocks and Networks, Automations and Users — carries a **Clear
 Filters** button that empties every column filter in one click (and forgets
-them). It sits beside **Refresh** / the **Show** page size, or in the page
+them). It sits beside **Refresh** / the page-size select (**25 / page** …), or in the page
 header on Users, and it stays there when a filter matches nothing. On Assets it
 reads **Reset Filter** while the view tab has a base filter, and returns to that
 instead.

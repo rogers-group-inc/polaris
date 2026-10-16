@@ -3206,6 +3206,7 @@
     drawControl: null,
     polygonsByRegionId: {}, // id → L.polygon
     drawing: false,         // a new polygon is being drawn (its own clicks own the keys)
+    listPayload: null,      // decorated GET /map/regions for the panel tree + drag-to-nest
     undo: [],               // shape edits this session: { id, before, after }
     redo: []
   };
@@ -3389,23 +3390,28 @@
   // The panel's rows while editing: read from the edit layer, so a region
   // drawn, renamed, recoloured or deleted this session shows at once. Levels
   // are left off — they are derived on the server and an edit can move them.
-  function renderEditRegionsList() {
-    var list = [];
-    for (var rid in regionState.polygonsByRegionId) {
-      var p = regionState.polygonsByRegionId[rid];
-      if (p) list.push({ name: p._polarisRegionName || "", color: p._polarisRegionColor || null });
-    }
-    list.sort(function (a, b) { return a.name.localeCompare(b.name); });
+  // Edit mode's panel list: the same nested tree as view mode, from the
+  // decorated GET /map/regions (levels, parents, containerIds), with rows
+  // draggable for drag-to-nest. Re-fetched after every saved change, since a
+  // create / delete / nest can re-level the whole tree. Callers don't await
+  // it except where they report the new level.
+  async function renderEditRegionsList() {
     var el = document.getElementById("map-regions-list");
     if (!el) return;
-    if (!list.length) {
-      el.innerHTML = '<span class="map-regions-empty">No regions yet. Draw one with the polygon tool.</span>';
-      return;
+    var regions = [];
+    try {
+      regions = await api.mapRegions.list();
+    } catch (e) {
+      regions = [];
     }
-    el.innerHTML = list.map(function (r) {
-      var color = r.color ? ' style="background:' + escapeHtml(r.color) + '"' : "";
-      return '<span><i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' + escapeHtml(r.name) + "</span>";
-    }).join("");
+    if (!regionState.editing) return; // exited while the fetch was in flight
+    regionState.listPayload = { regions: Array.isArray(regions) ? regions : [] };
+    if (!window.PolarisRegionTree) { el.innerHTML = ""; return; }
+    el.innerHTML = window.PolarisRegionTree.buildPanelTreeHtml(regionState.listPayload, {
+      draggable: true,
+      emptyText: "No regions yet. Draw one with the polygon tool."
+    });
+    wireRegionsListDnD();
   }
 
   // ---- "Show regions" (read-only) -----------------------------------------
@@ -3478,20 +3484,102 @@
     return regionsPanelApi.button;
   }
 
-  // The panel's rows: each region's colour, name and nesting level, in the
-  // tree's paint order (outermost first).
-  function renderRegionsList(payload, ordered) {
+  // The panel's rows: the containment tree, each region indented under its
+  // parent with its colour, name and nesting level (region-tree.js).
+  function renderRegionsList(payload) {
     var el = document.getElementById("map-regions-list");
     if (!el) return;
-    if (!ordered || !ordered.length) {
-      el.innerHTML = '<span class="map-regions-empty">No regions are defined yet.</span>';
-      return;
+    if (!window.PolarisRegionTree) { el.innerHTML = ""; return; }
+    el.innerHTML = window.PolarisRegionTree.buildPanelTreeHtml(payload);
+  }
+
+  // ---- Drag-to-nest (edit mode) ---------------------------------------------
+  // Dragging a row onto another nests it under that region, which re-levels
+  // the tree. Geometry stays the authority: only a region whose polygon
+  // CONTAINS the dragged one accepts the drop (the server re-checks, 400
+  // otherwise), so this picks between real containers — e.g. a state inside
+  // both a sub-region and its division. Dropping it back on its smallest
+  // container returns it to automatic nesting. Saved immediately, like a
+  // rename; the check mark only saves shapes.
+  var regionNestDrag = { id: null, overId: null };
+
+  function wireRegionsListDnD() {
+    var el = document.getElementById("map-regions-list");
+    if (!el || el._polarisDnD) return;
+    el._polarisDnD = true;
+    function rowOf(ev) {
+      var t = ev.target && ev.target.closest ? ev.target.closest(".map-regions-row[data-region-id]") : null;
+      return t && el.contains(t) ? t : null;
     }
-    el.innerHTML = ordered.map(function (r) {
-      var color = r.color ? ' style="background:' + escapeHtml(r.color) + '"' : "";
-      return '<span><i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' +
-        escapeHtml(r.name) + ' <em>L' + (r.level == null ? 1 : r.level) + "</em></span>";
-    }).join("");
+    function clearMarks() {
+      el.querySelectorAll(".map-regions-drop-ok, .map-regions-drop-no").forEach(function (n) {
+        n.classList.remove("map-regions-drop-ok", "map-regions-drop-no");
+      });
+    }
+    el.addEventListener("dragstart", function (ev) {
+      var row = rowOf(ev);
+      if (!row || !regionState.editing) return;
+      regionNestDrag.id = row.getAttribute("data-region-id");
+      regionNestDrag.overId = null;
+      row.classList.add("map-regions-dragging");
+      if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = "move";
+        try { ev.dataTransfer.setData("text/plain", regionNestDrag.id); } catch (e) { /* some browsers refuse custom data */ }
+      }
+    });
+    el.addEventListener("dragover", function (ev) {
+      if (!regionNestDrag.id) return;
+      var row = rowOf(ev);
+      var targetId = row ? row.getAttribute("data-region-id") : null;
+      var verdict = targetId && window.PolarisRegionTree
+        ? window.PolarisRegionTree.canNestUnder(regionState.listPayload, regionNestDrag.id, targetId)
+        : { ok: false, reason: "" };
+      if (verdict.ok) {
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+      }
+      if (targetId === regionNestDrag.overId) return;
+      regionNestDrag.overId = targetId;
+      clearMarks();
+      if (row && targetId !== regionNestDrag.id) row.classList.add(verdict.ok ? "map-regions-drop-ok" : "map-regions-drop-no");
+      if (verdict.reason) setStatus(verdict.reason);
+      else if (verdict.ok) setStatus("Drop to nest it here.");
+    });
+    el.addEventListener("drop", function (ev) {
+      var row = rowOf(ev);
+      var childId = regionNestDrag.id;
+      var targetId = row ? row.getAttribute("data-region-id") : null;
+      if (!childId || !targetId || !window.PolarisRegionTree) return;
+      var verdict = window.PolarisRegionTree.canNestUnder(regionState.listPayload, childId, targetId);
+      if (!verdict.ok) return;
+      ev.preventDefault();
+      nestRegionUnder(childId, targetId);
+    });
+    el.addEventListener("dragend", function () {
+      regionNestDrag.id = null;
+      regionNestDrag.overId = null;
+      clearMarks();
+      el.querySelectorAll(".map-regions-dragging").forEach(function (n) { n.classList.remove("map-regions-dragging"); });
+    });
+  }
+
+  async function nestRegionUnder(childId, targetId) {
+    var regions = (regionState.listPayload && regionState.listPayload.regions) || [];
+    var child = regions.find(function (r) { return r.id === childId; });
+    var target = regions.find(function (r) { return r.id === targetId; });
+    var automatic = child && Array.isArray(child.containerIds) && child.containerIds[0] === targetId;
+    try {
+      await api.mapRegions.setNesting(childId, automatic ? null : targetId);
+      // Levels can move all the way up the tree; the read-only overlay's
+      // memoized payload is stale too.
+      regionViewState.payload = null;
+      await renderEditRegionsList();
+      var fresh = (regionState.listPayload && regionState.listPayload.regions || []).find(function (r) { return r.id === childId; });
+      setStatus('"' + (child ? child.name : "Region") + '" nested under "' + (target ? target.name : "") + '"' +
+        (fresh ? " — now L" + (fresh.level == null ? 1 : fresh.level) : "") + ".");
+    } catch (err) {
+      showToast("Failed to nest region: " + (err && err.message ? err.message : err), "error");
+    }
   }
 
   function wireShowRegions() {
@@ -3529,7 +3617,7 @@
     var regions = (payload && Array.isArray(payload.regions)) ? payload.regions : [];
     if (regions.length === 0) {
       // The panel stays open to say so; there is nothing to draw.
-      renderRegionsList(payload, []);
+      renderRegionsList(payload);
       setStatus("No regions are defined yet.");
       return;
     }
@@ -3537,7 +3625,7 @@
     var ordered = window.PolarisRegionTree
       ? window.PolarisRegionTree.paintOrder(payload)
       : regions;
-    renderRegionsList(payload, ordered);
+    renderRegionsList(payload);
     for (var i = 0; i < ordered.length; i++) {
       addReadOnlyRegionPolygon(ordered[i], payload.maxLevel);
     }
@@ -3645,6 +3733,7 @@
     }
     if (Array.isArray(regions)) {
       for (var i = 0; i < regions.length; i++) addRegionPolygon(regions[i]);
+      restackRegionPolygons();
     }
 
     regionState.drawControl = new L.Control.Draw({
@@ -3864,7 +3953,28 @@
         updateUndoRedoButtons();
       }
       poly._polarisDirty = !samePairs(after, poly._polarisSavedPolygon);
+      // A reshape can make this polygon swallow, or slip inside, another.
+      restackRegionPolygons();
     });
+  }
+
+  // Edit mode stacks polygons by AREA, largest at the back, so a region inside
+  // another (the lower L#) always sits on top and takes the click that opens
+  // its rename / delete popup. Leaflet's default is insertion order, which put
+  // a division drawn after its states over all of them. Re-run on load, after
+  // a new polygon and after every reshape; "Send to Bottom Layer" still
+  // overrides it for overlapping (not nested) regions until the next restack.
+  function restackRegionPolygons() {
+    var polys = [];
+    for (var rid in regionState.polygonsByRegionId) {
+      var p = regionState.polygonsByRegionId[rid];
+      if (p && typeof p.bringToFront === "function") {
+        var area = window.PolarisRegionTree ? window.PolarisRegionTree.polygonArea(polygonLatLngsToPairs(p)) : 0;
+        polys.push({ poly: p, area: area });
+      }
+    }
+    polys.sort(function (a, b) { return b.area - a.area; });
+    for (var i = 0; i < polys.length; i++) polys[i].poly.bringToFront();
   }
 
   // Per-polygon vertex/midpoint marker recoloring. leaflet-draw mounts each
@@ -3910,6 +4020,7 @@
       // Replace the temporary draw layer with our managed L.polygon so
       // it picks up the styled className + click handler.
       addRegionPolygon(saved);
+      restackRegionPolygons();
       renderEditRegionsList();
       setStatus("Region \"" + saved.name + "\" saved.");
     } catch (err) {

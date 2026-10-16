@@ -198,6 +198,10 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 navigation **centered** across the full width, with action buttons + the
 page-size ("Show N") selector **right-aligned**. There is **no separate
 top-of-page "Show" filter-bar** — the selector lives in the controls row.
+Since 2026-10-16 the selector has **no "Show" label on any page**: its options
+read `15 / page`, `25 / page`… and it carries `aria-label="Rows per page"`
+(`renderPageControls` and the static selects on Blocks, Networks, Events and an
+asset's Events tab alike). "Show N" below names the control, not a label.
 
 **Canonical implementation:** `renderPageControls(containerId, total, pageSize, currentPage, onPageChange, onSizeChange, opts)` in [public/js/app.js](public/js/app.js). It renders into `#<containerId>` and `#<containerId>-top` as a **CSS grid** `1fr auto 1fr` — empty left cell, centered pagination in the middle, and a right cell (`.pg-right`) holding `opts.actionButtons` (e.g. Refresh / Clear Filters) followed by the page-size selector. Used by [public/js/assets.js](public/js/assets.js), [public/js/blocks.js](public/js/blocks.js), [public/js/subnets.js](public/js/subnets.js), [public/js/automations.js](public/js/automations.js) (`renderRulesPageControls`).
 
@@ -248,7 +252,7 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
     - IPAM's is moved from the mounted template into `#ipam-nav` by `mountTab`.
     - The Automations and Events rows hide while a non-table tab is open, via `.main:has(#…:not(.active))`.
     - A `-top` row inside a head row implies the bottom row carries no `actionButtons`, so Refresh / Clear Filters appear on the tab row only. Path Monitor has no tab row, so its bottom row keeps them.
-    - The tab row's "Show N" label and select carry `--shadow-lift`.
+    - The tab row's page-size select and buttons carry `--shadow-lift-control` (half `--shadow-lift`'s blur and spread, 2026-10-16).
   - Content panels (Automations → Delivery / Groups / Scripts / Address Book, Events → Calendar) carry `folder-card-scroll` themselves.
   - Path Monitor has no tabs, but its `#path-pagination-top` sits in a tab-less `.table-head-row folder-head-card`. So it drops its page numbers and carries Refresh / Clear Filters / Show N on the right (`.table-head-controls:first-child` takes `margin-left: auto`).
   - The **Dashboard** (`index.html`) and the **`/dash` wallboard** (`dash.html`) wrap `#dashboard-tabs` in a head row and the empty state + widget canvas in `.folder-card > .folder-card-scroll`. The folder selectors include `.dashboard-tabs` / `.dashboard-tab`, and a widget lies flat in the card except while `.lifted` (being dragged).
@@ -277,6 +281,9 @@ top-of-page "Show" filter-bar** — the selector lives in the controls row.
   - **Device Map regions (2026-10-16):** Show regions and Edit regions left the toolbar.
     - Regions is a top-right panel (`buildRegionsPanel` in map.js, on `legend-toggle.js` with its `icon` / `openLabel` options). Opening it draws the overlay and lists the regions; its × hides them.
     - The pencil left of its title (`#map-edit-regions`, shown when `canManageNetworks`) enters edit mode. The panel stays open while editing and its header becomes the editor: a check mark (`#map-save-regions`) in the pencil's place saves, undo / redo (`#map-undo-region` / `#map-redo-region`, also Ctrl+Z / Ctrl+Y) step `regionState.undo` / `.redo`, and the × discards (a capture-phase listener on the panel intercepts it before legend-toggle folds the panel, and `showConfirm`s when a shape is dirty). The toolbar's Save / Discard buttons are gone. The collapsed button keeps `#map-show-regions`, which edit mode disables.
+    - **The list is the nesting tree** (2026-10-16, `PolarisRegionTree.buildPanelTreeHtml`): `.map-regions-node` rows with `.map-regions-children` indented behind a 1px guide line, swatch + name + `L#`, roots and siblings name-sorted, no node cap (the list scrolls; `overflow-x: hidden`). View mode builds it from the overlay payload; edit mode re-fetches the decorated `GET /map/regions` into `regionState.listPayload` after every saved change (`renderEditRegionsList` is async).
+    - **Drag-to-nest** (edit mode, business rule 121): rows are `draggable`; `wireRegionsListDnD` delegates dragstart / dragover / drop on `#map-regions-list`. A dragover only `preventDefault`s when `PolarisRegionTree.canNestUnder` allows it (the target is in the row's `containerIds` and is not already its parent), marking the row `.map-regions-drop-ok` or `.map-regions-drop-no` and putting the refusal reason in the status line. A drop calls `api.mapRegions.setNesting` (null when the target is the smallest container), drops the overlay memo and re-renders. Saved at once, like a rename. A hand-nested row's name is italic (`.map-regions-row-chosen`).
+    - **Paint order is by area**, largest at the back, on both layers (`PolarisRegionTree.paintOrder` for the read-only overlay — depth only when a payload has no polygons; `restackRegionPolygons` in edit mode after load, a new polygon and every reshape), so an inner region is always on top and takes the click.
     - Undo / redo hold only vertex edits (the local, unsaved part). Each leaflet-draw `edit` event pushes the whole ring before and after; dirty is recomputed as "ring differs from `_polarisSavedPolygon`", so undoing back to the loaded shape clears it. Draw / rename / recolour / delete write to the server at once and are not in the history.
     - The status legend, the Regions panel and the leaflet-draw tool wear theme tokens (bg-primary, border, text, `--map-btn-shadow`), like the zoom bar; the draw tool's dark sprite is replaced by a `currentColor` mask so it shows on dark surfaces.
     - The map-theme toggle is a top-left Leaflet control above the zoom bar (`addMapThemeControl`).

@@ -1,9 +1,10 @@
 /**
  * public/js/region-tree.js
  *
- * Everything decidable about the Device Map's read-only "Show regions" surface:
- * the containment tree HTML for its hover tooltip, the overlay paint order and
- * per-level styling, and the hover wiring itself.
+ * Everything decidable about the Device Map's region surfaces: the containment
+ * tree HTML for the hover tooltip and for the Regions panel's list, the
+ * drag-to-nest drop rule (business rule 121), the overlay paint order (by
+ * area) and per-level styling, and the hover wiring itself.
  *
  * Lives here rather than in map.js because that file is one 3000-line IIFE with
  * no exports and hard Leaflet + Cytoscape dependencies — anything put in it is
@@ -123,19 +124,124 @@
   }
 
   /**
-   * Largest first, so parents paint UNDER their children and the child stays
-   * the thing you can click. Falls back to the given order when a payload
-   * carries no depth.
+   * Shoelace area of a [[lat, lng], ...] ring, in square degrees. Only ever
+   * compared with another region's, so the projection does not matter: a ring
+   * strictly inside another always has the smaller area.
+   */
+  function polygonArea(polygon) {
+    if (!Array.isArray(polygon) || polygon.length < 3) return 0;
+    var sum = 0;
+    for (var i = 0; i < polygon.length; i++) {
+      var a = polygon[i];
+      var b = polygon[(i + 1) % polygon.length];
+      if (!Array.isArray(a) || !Array.isArray(b)) return 0;
+      sum += Number(a[1]) * Number(b[0]) - Number(b[1]) * Number(a[0]);
+    }
+    var area = Math.abs(sum) / 2;
+    return isFinite(area) ? area : 0;
+  }
+
+  /**
+   * Largest first, so a container paints UNDER every region inside it and the
+   * inner region (the lower L#) stays the thing you can click. By AREA when
+   * every region has a polygon, not by depth: a region an operator nested
+   * straight under its division (drag-to-nest) shares a depth with the state
+   * polygon it sits inside, and a depth-then-name order could paint that state
+   * over it. Falls back to depth when a payload carries no geometry.
    */
   function paintOrder(payload) {
-    return regionsOf(payload)
-      .slice()
-      .sort(function (a, b) {
-        var da = typeof a.depth === "number" ? a.depth : 0;
-        var db = typeof b.depth === "number" ? b.depth : 0;
-        if (da !== db) return da - db;
-        return String(a.name).localeCompare(String(b.name));
-      });
+    var regions = regionsOf(payload).slice();
+    var areas = {};
+    var useArea = regions.length > 0;
+    regions.forEach(function (r) {
+      areas[r.id] = polygonArea(r.polygon);
+      if (!(areas[r.id] > 0)) useArea = false;
+    });
+    return regions.sort(function (a, b) {
+      if (useArea && areas[a.id] !== areas[b.id]) return areas[b.id] - areas[a.id];
+      var da = typeof a.depth === "number" ? a.depth : 0;
+      var db = typeof b.depth === "number" ? b.depth : 0;
+      if (da !== db) return da - db;
+      return String(a.name).localeCompare(String(b.name));
+    });
+  }
+
+  /**
+   * The Regions panel's list: the containment tree as nested rows (indent +
+   * guide line per level), each with its colour, name and L#. Unlike the
+   * tooltip tree there is no node cap — the panel scrolls.
+   *
+   * `opts.draggable` (edit mode) makes each row a drag source and drop target
+   * for drag-to-nest; `canNestUnder` decides which drops are allowed.
+   */
+  function buildPanelTreeHtml(payload, opts) {
+    var options = opts || {};
+    var regions = regionsOf(payload);
+    if (regions.length === 0) {
+      return '<span class="map-regions-empty">' + esc(options.emptyText || "No regions are defined yet.") + "</span>";
+    }
+    var seen = {};
+    function rowsFor(parentId, depth) {
+      var kids = childrenOf(payload, parentId);
+      var out = "";
+      for (var i = 0; i < kids.length; i++) {
+        var r = kids[i];
+        if (seen[r.id]) continue; // a malformed payload with a cycle
+        seen[r.id] = true;
+        var color = /^#[0-9a-fA-F]{6}$/.test(String(r.color || "")) ? ' style="background:' + esc(r.color) + '"' : "";
+        // The overlay payload says so outright; the decorated list carries the
+        // stored pick, which is in force when it IS the parent.
+        var chosen = !!r.nestChosen || (!!r.nestUnderId && r.nestUnderId === r.parentId);
+        var title = chosen ? ' title="Nested here by hand — drop it on another region that contains it to move it"' : "";
+        out +=
+          '<div class="map-regions-node">' +
+            '<div class="map-regions-row' + (chosen ? " map-regions-row-chosen" : "") + '" data-region-id="' + esc(r.id) + '"' +
+              (options.draggable ? ' draggable="true"' : "") + title + ">" +
+              '<i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' +
+              '<span class="map-regions-row-name">' + esc(r.name) + "</span>" +
+              "<em>L" + esc(r.level == null ? 1 : r.level) + "</em>" +
+            "</div>";
+        var nested = depth < 32 ? rowsFor(r.id, depth + 1) : "";
+        if (nested) out += '<div class="map-regions-children">' + nested + "</div>";
+        out += "</div>";
+      }
+      return out;
+    }
+    var body = rowsFor(null, 0);
+    // Anything a malformed payload left unreachable from a root still lists.
+    regions.forEach(function (r) {
+      if (!seen[r.id]) {
+        seen[r.id] = true;
+        body += '<div class="map-regions-node"><div class="map-regions-row" data-region-id="' + esc(r.id) + '">' +
+          '<span class="map-regions-row-name">' + esc(r.name) + "</span><em>L" + esc(r.level == null ? 1 : r.level) + "</em></div></div>";
+      }
+    });
+    return body;
+  }
+
+  /**
+   * May `childId` be nested under `targetId`? Only when the target's polygon
+   * contains it (the server's containerIds — geometry stays the authority) and
+   * it is not already the parent. Returns {ok, reason}.
+   */
+  function canNestUnder(payload, childId, targetId) {
+    var byId = {};
+    regionsOf(payload).forEach(function (r) { byId[r.id] = r; });
+    var child = byId[childId];
+    var target = byId[targetId];
+    if (!child || !target) return { ok: false, reason: "That region is no longer on the map." };
+    if (childId === targetId) return { ok: false, reason: "" };
+    if ((child.parentId || null) === targetId) {
+      return { ok: false, reason: '"' + child.name + '" is already nested under "' + target.name + '".' };
+    }
+    var containers = Array.isArray(child.containerIds) ? child.containerIds : [];
+    if (containers.indexOf(targetId) === -1) {
+      return {
+        ok: false,
+        reason: '"' + child.name + '" is not inside "' + target.name + '" on the map, so it cannot be nested under it. Reshape the polygons first.',
+      };
+    }
+    return { ok: true, reason: "" };
   }
 
   /**
@@ -222,6 +328,9 @@
     buildTreeHtml: buildTreeHtml,
     warningsHtml: warningsHtml,
     paintOrder: paintOrder,
+    polygonArea: polygonArea,
+    buildPanelTreeHtml: buildPanelTreeHtml,
+    canNestUnder: canNestUnder,
     overlayStyle: overlayStyle,
     attachTreeTooltip: attachTreeTooltip,
   };

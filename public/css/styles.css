@@ -98,6 +98,13 @@
      --shadow-lift-text is the same pair for text, which takes no spread. */
   --shadow-lift: 0 0 12px 8px rgba(0,0,0,.11), 0 0 2px 1px rgba(0,0,0,.07);
   --shadow-lift-text: 0 0 2px rgba(0,0,0,.07), 0 0 12px rgba(0,0,0,.11);
+  /* The same lift for CONTROLS — the global search, the header/toolbar
+     buttons, the page-size select and the account badge (2026-10-16). Half
+     the blur and spread of --shadow-lift: a full card-sized ring round a
+     30px-tall field reads as a smudge rather than a lift. The cards and
+     folder tabs keep --shadow-lift. */
+  --shadow-lift-control: 0 0 6px 3px rgba(0,0,0,.07), 0 0 1px 1px rgba(0,0,0,.05);
+  --shadow-lift-control-text: 0 0 1px rgba(0,0,0,.05), 0 0 6px rgba(0,0,0,.07);
   /* Nothing in the app paints --shadow-sm any more: it was the cards' shadow,
      and a 4px blur under a box hundreds of pixels wide is invisible on the
      daylight pair, which is what --shadow-card below replaced. Kept because the
@@ -1870,14 +1877,15 @@ code {
    badge lift the same everywhere. Not a filter: drop-shadow() on the bar or
    the header would make it the backdrop root of the frosted "Dashboards ▾"
    menu (see ::before) and double the buttons' own shadows. */
-/* The page title, the global search and the account badge carry the rail's
-   lift (--shadow-lift / --shadow-lift-text), so the header reads as the same
-   height as the sidebar and the page card rather than its own layer. */
+/* The page title carries the rail's lift (--shadow-lift-text), so the header
+   reads as the same height as the sidebar and the page card rather than its
+   own layer; the global search and the account badge take the lighter control
+   lift (--shadow-lift-control). */
 .page-header h2 { text-shadow: var(--shadow-lift-text); }
-.user-badge-name { text-shadow: var(--shadow-lift-text); }
-.user-badge-avatar { box-shadow: var(--shadow-lift); }
-.user-badge .badge { box-shadow: var(--shadow-lift); }
-.user-badge-caret { filter: drop-shadow(0 0 2px rgba(0,0,0,.07)) drop-shadow(0 0 12px rgba(0,0,0,.11)); }
+.user-badge-name { text-shadow: var(--shadow-lift-control-text); }
+.user-badge-avatar { box-shadow: var(--shadow-lift-control); }
+.user-badge .badge { box-shadow: var(--shadow-lift-control); }
+.user-badge-caret { filter: drop-shadow(0 0 1px rgba(0,0,0,.05)) drop-shadow(0 0 6px rgba(0,0,0,.07)); }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
    content below is the wrapper's margin. The header draws no rule of its own:
    the tab strip's bottom border is the bar's one line. */
@@ -1996,7 +2004,7 @@ html[data-page-top-curtain]::after {
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
   outline: none;
-  box-shadow: var(--shadow-lift);
+  box-shadow: var(--shadow-lift-control);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .global-search input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
@@ -2022,7 +2030,7 @@ html[data-page-top-curtain]::after {
    .filter-bar focus rule below repeats it. */
 .global-search input[type="search"]:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-lift);
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-lift-control);
 }
 .global-search-dropdown {
   position: absolute;
@@ -2303,7 +2311,7 @@ html[data-page-top-curtain]::after {
 .page-actions-row .btn:not(.btn-icon):not(:disabled),
 .appmap-toolbar-actions .btn:not(.btn-icon):not(:disabled),
 .appmap-toolbar-top .btn:not(.btn-icon):not(:disabled),
-.table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift); }
+.table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift-control); }
 /* A page's own action buttons on a row of their own (Assets: between the
    selection bar and the tab row), right aligned. */
 .page-actions-row {
@@ -2330,8 +2338,16 @@ html[data-page-top-curtain]::after {
 .table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) svg,
 .table-head-row .table-head-controls .btn.btn-glyph::before { width: 14px; height: 14px; }
 /* …and so do the tab row's "Show N" label and its page-size select. */
-.table-head-row .table-head-controls label { text-shadow: var(--shadow-lift-text); }
-.table-head-row .table-head-controls select { box-shadow: var(--shadow-lift); }
+.table-head-row .table-head-controls select { box-shadow: var(--shadow-lift-control); }
+/* Page-size selects carry no "Show" label any more — the options read
+   "25 / page" (2026-10-16). Any other label in a tab row is secondary text at
+   weight 600 with no halo: tertiary text in a 12px blur halo smeared a small
+   label into the ground on the daylight themes. */
+.table-head-row .table-head-controls label {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-shadow: none;
+}
 .btn-primary {
   background: var(--color-accent);
   color: #0d0d1a;
@@ -4212,13 +4228,14 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   background: var(--color-bg-secondary);
   padding: 0.75rem 0;
 }
+/* Secondary at weight 600, no halo — same legibility pass as the tab-row labels. */
 .filter-bar label {
   font-size: 0.72rem;
-  color: var(--color-text-tertiary);
+  font-weight: 600;
+  color: var(--color-text-secondary);
   margin-right: -4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  text-shadow: var(--shadow-text);
 }
 /* The page-level search / filter fields. Scoped to .filter-bar rather than put
    on the shared `input, select, textarea` rule: that one dresses every field in

@@ -112,6 +112,13 @@ export interface MapRegion {
   polygon: LatLng[];
   /** Hex color "#rrggbb" used for the polygon stroke + fill on the map. */
   color: string;
+  /**
+   * The operator's chosen parent among the regions whose polygons CONTAIN this
+   * one (Regions panel drag-to-nest). Null / absent = automatic: the smallest
+   * container. Only ever honoured while it really contains this region — see
+   * `RegionInput.nestUnderId` in utils/regionHierarchy.ts.
+   */
+  nestUnderId?: string | null;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -739,6 +746,8 @@ export interface MapRegionWithLevel extends MapRegion {
   childIds: string[];
   /** Outermost first (root → parent). */
   ancestorIds: string[];
+  /** Every region whose polygon contains this one, smallest first — the valid drag-to-nest targets. */
+  containerIds: string[];
 }
 
 /**
@@ -767,8 +776,61 @@ export async function getRegionHierarchy(): Promise<{ regions: MapRegion[]; hier
   const { regions, version } = await loadAllWithVersion();
   return _hierarchyCache.getOrCompute(version, async () => ({
     regions,
-    hierarchy: buildRegionHierarchy(regions.map((r) => ({ id: r.id, polygon: r.polygon }))),
+    hierarchy: buildRegionHierarchy(toHierarchyInput(regions)),
   }));
+}
+
+function toHierarchyInput(regions: MapRegion[]) {
+  return regions.map((r) => ({ id: r.id, polygon: r.polygon, nestUnderId: r.nestUnderId ?? null }));
+}
+
+/**
+ * Nest a region under one of the regions that contain it, or (`parentId`
+ * null) hand it back to automatic nesting — the Regions panel's drag-to-nest.
+ *
+ * Geometry stays the authority: the target must be one of the region's
+ * geometric containers (`RegionNode.containerIds`), else 400. Choosing the
+ * smallest container — the parent automatic nesting would pick anyway — stores
+ * null, so the blob only ever records a real override.
+ */
+export async function setRegionNesting(
+  id: string,
+  parentId: string | null,
+): Promise<{ region: MapRegion; previousParentId: string | null; parentId: string | null }> {
+  return withRegionBlobLock(async (db) => {
+    const all = await loadAll(db);
+    const idx = all.findIndex((r) => r.id === id);
+    if (idx === -1) throw new AppError(404, `Region ${id} not found`);
+    const existing = all[idx]!;
+    // Containment ignoring this region's own pick, so the default parent is
+    // known. Other regions' picks cannot change who CONTAINS this one.
+    const auto = buildRegionHierarchy(
+      toHierarchyInput(all.map((r, i) => (i === idx ? { ...r, nestUnderId: null } : r))),
+    );
+    const node = auto.byId[id];
+    const previousParentId = buildRegionHierarchy(toHierarchyInput(all)).byId[id]?.parentId ?? null;
+    let nestUnderId: string | null = null;
+    if (parentId !== null) {
+      if (parentId === id) throw new AppError(400, "A region cannot be nested under itself");
+      const target = all.find((r) => r.id === parentId);
+      if (!target) throw new AppError(404, `Region ${parentId} not found`);
+      if (auto.truncated) {
+        throw new AppError(409, "Too many regions to compute nesting, so a parent cannot be chosen");
+      }
+      if (!node || !node.containerIds.includes(parentId)) {
+        throw new AppError(
+          400,
+          `"${existing.name}" is not inside "${target.name}" on the map, so it cannot be nested under it. ` +
+            `Reshape the polygons so "${target.name}" contains it first.`,
+        );
+      }
+      nestUnderId = parentId === node.containerIds[0] ? null : parentId;
+    }
+    const updated: MapRegion = { ...existing, nestUnderId, updatedAt: new Date().toISOString() };
+    all[idx] = updated;
+    await persistAll(all, db);
+    return { region: updated, previousParentId, parentId: nestUnderId ?? node?.parentId ?? null };
+  });
 }
 
 /**
@@ -792,6 +854,7 @@ export async function listRegionsWithLevels(): Promise<MapRegionWithLevel[]> {
         parentId: node?.parentId ?? null,
         childIds: node?.childIds ?? [],
         ancestorIds: node?.ancestorIds ?? [],
+        containerIds: node?.containerIds ?? [],
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -929,7 +992,13 @@ export async function deleteRegion(id: string): Promise<MapRegion> {
     const idx = all.findIndex((r) => r.id === id);
     if (idx === -1) throw new AppError(404, `Region ${id} not found`);
     const row = all[idx]!;
-    await persistAll(all.slice(0, idx).concat(all.slice(idx + 1)), db);
+    // A child that chose this region as its parent goes back to automatic
+    // nesting: a pick naming no region is dead weight in the blob.
+    const rest = all
+      .slice(0, idx)
+      .concat(all.slice(idx + 1))
+      .map((r) => (r.nestUnderId === id ? { ...r, nestUnderId: null } : r));
+    await persistAll(rest, db);
     // Same reasoning as the rename: committed with the delete, before
     // `applyDelete` gets a chance to fail half-way through the strip.
     await recordRetiredName(db, row.name, row.id, "delete");

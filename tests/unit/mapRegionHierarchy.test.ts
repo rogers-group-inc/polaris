@@ -88,6 +88,7 @@ const {
   invalidateRegionHierarchy,
   listRegions,
   listRegionsWithLevels,
+  setRegionNesting,
   updateRegion,
 } = await import("../../src/services/mapRegionService.js");
 
@@ -263,5 +264,54 @@ describe("diffRegionLevels", () => {
       { id: "alpha", polygon: square(50, 50, 5) },
     ]);
     expect(diffRegionLevels(before, after).map((d) => d.regionId)).toEqual(["alpha", "zeta"]);
+  });
+});
+
+describe("setRegionNesting (drag-to-nest)", () => {
+  /** South ⊃ Middle ⊃ Nashville, plus a disjoint Elsewhere. */
+  async function seedChain() {
+    const south = await createRegion({ name: "South", polygon: square(30, -95, 20), actor: "test" });
+    const middle = await createRegion({ name: "Middle", polygon: square(34, -89, 5), actor: "test" });
+    const nash = await createRegion({ name: "Nashville", polygon: square(35, -88, 2), actor: "test" });
+    const elsewhere = await createRegion({ name: "Elsewhere", polygon: square(60, 10, 3), actor: "test" });
+    return { south, middle, nash, elsewhere };
+  }
+
+  it("nests a region under a larger container that really contains it, and re-levels", async () => {
+    const { south, middle, nash } = await seedChain();
+    const out = await setRegionNesting(nash.id, south.id);
+    expect(out).toMatchObject({ previousParentId: middle.id, parentId: south.id });
+    expect(out.region.nestUnderId).toBe(south.id);
+
+    const byName = Object.fromEntries((await listRegionsWithLevels()).map((r) => [r.name, r]));
+    expect(byName["Nashville"]!.parentId).toBe(south.id);
+    expect(byName["Middle"]!.level).toBe(1);
+    expect(byName["Nashville"]!.containerIds).toEqual([middle.id, south.id]);
+  });
+
+  it("refuses a region whose polygon does not contain it", async () => {
+    const { nash, elsewhere } = await seedChain();
+    await expect(setRegionNesting(nash.id, elsewhere.id)).rejects.toMatchObject({ httpStatus: 400 });
+    await expect(setRegionNesting(nash.id, nash.id)).rejects.toMatchObject({ httpStatus: 400 });
+    await expect(setRegionNesting(nash.id, "missing")).rejects.toMatchObject({ httpStatus: 404 });
+  });
+
+  it("stores null when the pick is the smallest container, or when reset to automatic", async () => {
+    const { south, middle, nash } = await seedChain();
+    await setRegionNesting(nash.id, south.id);
+    const back = await setRegionNesting(nash.id, middle.id);
+    expect(back.region.nestUnderId).toBeNull();
+    await setRegionNesting(nash.id, south.id);
+    const reset = await setRegionNesting(nash.id, null);
+    expect(reset.region.nestUnderId).toBeNull();
+    expect(reset.parentId).toBe(middle.id);
+  });
+
+  it("clears picks naming a deleted region", async () => {
+    const { south, nash } = await seedChain();
+    await setRegionNesting(nash.id, south.id);
+    await deleteRegion(south.id);
+    const blob = store.settings.find((s) => s.key === "mapRegions")!.value as Array<Record<string, unknown>>;
+    expect(blob.find((r) => r.id === nash.id)!.nestUnderId).toBeNull();
   });
 });
