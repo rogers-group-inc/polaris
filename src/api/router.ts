@@ -332,6 +332,18 @@ router.get("/server-settings/tags/catalog", async (_req, res, next) => {
     res.json(await listTagCatalog());
   } catch (err) { next(err); }
 });
+// The nav bar's in-app update panel, declared above the blanket gate for the
+// tags/catalog reason: an update restarts the app under EVERY signed-in user,
+// and every non-admin built-in role holds serverSettingsSystem=none, so behind
+// the gate they never learned one was running. Auth-only, and redacted to
+// state + current step name — the full /updates/status (step output, commits,
+// failure text) stays behind the gate.
+router.get("/server-settings/updates/activity", async (_req, res, next) => {
+  try {
+    const { getUpdateActivity } = await import("../services/updateService.js");
+    res.json(getUpdateActivity());
+  } catch (err) { next(err); }
+});
 // Blanket /server-settings gate: serverSettingsSystem read floor for the
 // whole surface. Mutating routes inside additionally carry per-route
 // requirePermission escalations (serverSettingsSystem write for the

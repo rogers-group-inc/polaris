@@ -829,6 +829,29 @@ export function getUpdateStatus(): UpdateStatus {
   return { ..._status, steps: _status.steps ? [..._status.steps] : undefined };
 }
 
+/** What every signed-in user is told about a running update. */
+export interface UpdateActivity {
+  state: "idle" | "applying" | "restarting";
+  /** The step the pipeline is on — the running step's name, else the coarse
+   *  `step` string. Never the step's `message` (command output, paths). */
+  step?: string;
+}
+
+/**
+ * The redacted view of getUpdateStatus() behind the nav bar's update panel.
+ * The panel is for EVERY user — an update restarts the app under all of them —
+ * but the full status (step messages, commits, failure output) stays with
+ * serverSettingsSystem readers, so anything other than an update in flight
+ * collapses to "idle".
+ */
+export function getUpdateActivity(): UpdateActivity {
+  const s = getUpdateStatus();
+  if (s.state !== "applying" && s.state !== "restarting") return { state: "idle" };
+  const running = s.steps?.find((st) => st.status === "running");
+  const step = running?.name || s.step;
+  return step ? { state: s.state, step } : { state: s.state };
+}
+
 export function isUpdateMechanismAvailable(): boolean {
   return _updateEnvironment.available;
 }

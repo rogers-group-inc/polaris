@@ -1672,6 +1672,9 @@ const api = {
     restart: () => request("POST", "/server-settings/restart"),
     checkForUpdates: () => request("GET", "/server-settings/updates/check"),
     getUpdateStatus: () => request("GET", "/server-settings/updates/status"),
+    // Auth-only, redacted { state, step } — the nav bar's update panel for
+    // users who cannot read the full status above.
+    getUpdateActivity: () => request("GET", "/server-settings/updates/activity"),
     // allowWithoutBackup: only sent when the operator ticked the confirmation in
     // the Apply Update modal. Absent/false means the server ABORTS the update if
     // the pre-update backup fails.
