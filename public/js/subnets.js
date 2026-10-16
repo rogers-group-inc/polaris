@@ -286,7 +286,7 @@ function _renderSubnetsPageControls(total) {
     _saveSubnetsPrefs();
   }, {
     actionButtons: [{
-      label: "Clear Filters",
+      label: "Clear",
       title: "Clear every column filter on this list",
       onClick: function () {
         if (!_subnetsSF) return;
@@ -295,6 +295,11 @@ function _renderSubnetsPageControls(total) {
         renderSubnetsPage();
         _saveSubnetsPrefs();
       },
+    }, {
+      label: "Refresh",
+      className: "btn-glyph btn-glyph-refresh",
+      title: "Reload the network list",
+      onClick: function () { loadSubnets(); },
     }],
   });
 }

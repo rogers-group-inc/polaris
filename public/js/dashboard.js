@@ -325,14 +325,16 @@
     // A published dashboard belongs to whoever published it: the viewer gets
     // no Customize / Add Widgets / Create, so there is no way to build an edit
     // that could not be saved.
-    // Create New Dashboard is an edit-mode verb like Add Widgets: the
-    // read-only header offers Customize Page alone, and creating a new
-    // dashboard starts from there.
+    // Creating a dashboard is an edit-mode verb like Add Widgets: it is the +
+    // after the last tab (renderTabs), drawn only while customizing. The
+    // header's old Create New Dashboard button is gone; createBtn stays null.
     var viewingPublished = !!state.external;
     if (customizeBtn)   customizeBtn.hidden   = state.editing || viewingPublished;
-    if (addWidgetsBtn)  addWidgetsBtn.hidden  = !state.editing || viewingPublished;
+    // Widgets are added from each block's "+ Add Widget" (or "+ New Widget
+    // Block"); the header's Add Widgets button is gone, addWidgetsBtn null.
+    if (addWidgetsBtn)  addWidgetsBtn.hidden  = true;
     if (doneBtn)        doneBtn.hidden        = !state.editing || viewingPublished;
-    if (createBtn)      createBtn.hidden      = !state.editing || viewingPublished;
+    if (createBtn)      createBtn.hidden      = true;
     canvasEl.classList.toggle("is-editing", state.editing && !viewingPublished);
   }
 
@@ -362,7 +364,9 @@
     if (!tabsEl) return;
     if (state.external) { tabsEl.hidden = true; tabsEl.innerHTML = ""; return; }
     var dashes = state.layout.dashboards || [];
-    if (dashes.length <= 1) { tabsEl.hidden = true; tabsEl.innerHTML = ""; return; }
+    // The strip shows even with one dashboard: its tab names the canvas and
+    // is the folder tab the page card opens from. Only an empty layout hides it.
+    if (!dashes.length) { tabsEl.hidden = true; tabsEl.innerHTML = ""; return; }
     tabsEl.hidden = false;
     tabsEl.innerHTML = dashes.map(function (d) {
       var active = d.id === state.layout.activeId;
@@ -381,7 +385,14 @@
         nameHtml +
         (state.editing && dashes.length > 1 ? '<button type="button" class="dashboard-tab-remove" data-remove="' + escapeHtml(d.id) + '" title="Delete dashboard">&times;</button>' : '') +
       '</div>';
-    }).join("");
+    }).join("") +
+      // Edit mode: a + after the last tab adds a dashboard (it replaced the
+      // header's Create New Dashboard button).
+      (state.editing
+        ? '<button type="button" class="table-tab-add dashboard-tab-add" id="dashboard-tab-add" title="New dashboard" aria-label="New dashboard">+</button>'
+        : "");
+    var addTabBtn = tabsEl.querySelector("#dashboard-tab-add");
+    if (addTabBtn) addTabBtn.addEventListener("click", createDashboard);
     tabsEl.querySelectorAll(".dashboard-tab").forEach(function (tab) {
       var id = tab.getAttribute("data-dash");
       tab.addEventListener("click", function (e) {
@@ -548,7 +559,7 @@
     stack.className = "dashboard-column-stack";
     col.widgets.forEach(function (w) { stack.appendChild(mountWidgetShell(w)); });
     colEl.appendChild(stack);
-    // "+ Add widget" closes each block in edit mode: the picker opened from
+    // "+ Add Widget" closes each block in edit mode: the picker opened from
     // here adds to THIS block, at its bottom. Outside the stack, so the drag
     // placeholder's slot arithmetic (which counts the stack's cards) is
     // untouched.
@@ -556,7 +567,7 @@
       var add = document.createElement("button");
       add.type = "button";
       add.className = "dashboard-column-add";
-      add.textContent = "+ Add widget";
+      add.textContent = "+ Add Widget";
       add.addEventListener("click", function () {
         if (_dragStashId || _dragStashType) return;
         WidgetLibrary.open(function (type) { addWidgetToColumn(type, col.id); });
@@ -647,7 +658,7 @@
     var el = document.createElement("div");
     el.className = "dashboard-newcol-target";
     el.setAttribute("data-newcol", "1");
-    el.innerHTML = '<span>+ New block</span>';
+    el.innerHTML = '<span>+ New Widget Block</span>';
     // Click-to-add (keyboard/touch parity with drag): the widget picked here
     // STARTS a new block. It used to go through handleTapToAdd, which appends
     // to the last block — so the target said "New block" and the widget

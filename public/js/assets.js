@@ -1734,15 +1734,11 @@ function _renderAssetsPageControls() {
     _saveAssetsPrefs();
   }, {
     // The top row shares a line with the view tabs (.table-head-row), so it
-    // carries only Refresh / Clear Filters / Show N — page buttons are below.
+    // carries only Clear / Refresh / Show N — page buttons are below.
     topNav: false,
     actionButtons: [
       {
-        label: "Refresh",
-        onClick: loadAssets,
-      },
-      {
-        label: _base ? "Reset Filter" : "Clear Filters",
+        label: _base ? "Reset Filter" : "Clear",
         title: _base
           ? 'Back to this tab\'s base filter "' + (_base.name || "base") +
             '" — clear it from Filters \u25be'
@@ -1756,6 +1752,12 @@ function _renderAssetsPageControls() {
           if (_assetsSF) _assetsSF.clearFilters();
           assetsApplyFilterState();
         },
+      },
+      {
+        label: "Refresh",
+        className: "btn-glyph btn-glyph-refresh",
+        title: "Refresh",
+        onClick: loadAssets,
       },
     ],
   });
@@ -5694,7 +5696,7 @@ async function openViewModal(id, opts) {
       '<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-copy">Copy</button>' +
       '<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-screenshot">Screenshot</button>' +
       '<span class="btn-dropdown-wrap" id="asset-export-wrap" style="display:none">' +
-        '<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-export">Export &#9662;</button>' +
+        '<button type="button" class="btn btn-glyph btn-glyph-download btn-sm btn-secondary" id="btn-asset-export" title="Export">Export</button>' +
         '<div class="btn-dropdown-menu" id="asset-export-menu">' +
           '<div class="dropdown-heading">PDF</div>' +
           '<button data-export="page" data-fmt="pdf">Current page</button>' +
@@ -5709,7 +5711,7 @@ async function openViewModal(id, opts) {
       // (fresh probes, discovery writes, tag/notes edits from elsewhere),
       // preserving the active tab. Sits between Screenshot and the
       // management-access (Open HTTPS / Open SSH) buttons.
-      '<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-refresh" title="Reload this asset\'s details">Refresh</button>';
+      '<button type="button" class="btn btn-glyph btn-glyph-refresh btn-sm btn-secondary" id="btn-asset-refresh" title="Reload this asset\'s details">Refresh</button>';
     // The action group (Copy / Screenshot | Export / Refresh / management
     // access) lives in the HEADER, right-aligned and left of the lock + close
     // pair; the footer keeps only the dismiss pair (Close / Edit). Both are
@@ -22200,7 +22202,7 @@ function _assetSoftwareTabHTML() {
       '</div>' +
       '<div style="display:flex;align-items:center;gap:0.5rem;flex:none">' +
         '<select id="asset-view-sw-source" class="form-input" style="display:none;padding:2px 6px;font-size:0.82rem;width:auto" aria-label="Software source"></select>' +
-        '<button type="button" class="btn btn-secondary btn-sm" id="asset-view-sw-refresh" title="Re-read the stored lists">Refresh</button>' +
+        '<button type="button" class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="asset-view-sw-refresh" title="Re-read the stored lists">Refresh</button>' +
       '</div>' +
     '</div>' +
     '<p id="asset-view-sw-hint" style="margin:-0.25rem 0 0.5rem;font-size:0.78rem;color:var(--color-text-tertiary);display:none"></p>' +
@@ -22396,7 +22398,7 @@ function _assetServicesTabHTML() {
       '<p class="hint" style="margin:0;max-width:600px">systemd units (Linux) and Windows services reported by the Polaris Agent. Check <strong>Monitor</strong> to collect a service\'s log (its journal on Linux, its Event Log entries on Windows) — or, for a process, to collect its CPU/RAM history + logs — and <strong>Map</strong> to attribute connections on the <a href="/appmap.html">Application Map</a>. Click a row to open it.</p>' +
       '<div style="display:flex;align-items:center;gap:0.75rem;flex:none">' +
         '<label style="display:flex;align-items:center;gap:5px;font-size:0.8rem;white-space:nowrap"><input type="checkbox" id="asset-view-svc-include-proc">Include processes</label>' +
-        '<button class="btn btn-secondary btn-sm" id="asset-view-svc-refresh">Refresh</button>' +
+        '<button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="asset-view-svc-refresh" title="Refresh">Refresh</button>' +
       '</div>' +
     '</div>' +
     '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-view-svc-wrapper">' +
@@ -22865,7 +22867,7 @@ function openServiceDetailPanel(asset, svc, sharedUnits) {
           '<div style="display:flex;align-items:center;gap:10px">' +
             '<label style="font-size:0.78rem;display:flex;align-items:center;gap:4px"><input type="checkbox" id="svc-logs-flagged-only">Flagged only</label>' +
             '<button class="btn btn-sm btn-secondary" id="btn-svc-logs-export" title="Download the collected log lines as CSV">Export</button>' +
-            '<button class="btn btn-sm btn-secondary" id="btn-svc-logs-refresh">Refresh</button>' +
+            '<button class="btn btn-glyph btn-glyph-refresh btn-sm btn-secondary" id="btn-svc-logs-refresh" title="Refresh">Refresh</button>' +
           '</div>' +
         '</div>' +
         (isWin
@@ -23199,7 +23201,7 @@ async function openProcessDetailPanel(asset, name, cfg, procRow, isPinned) {
             '<label style="font-size:0.78rem;display:flex;align-items:center;gap:4px"><input type="checkbox" id="proc-logs-flagged-only">Flagged only</label>' +
             (canEdit ? '<button class="btn btn-sm btn-secondary" id="btn-proc-flag-rules">Manage flag rules</button>' : '') +
             '<button class="btn btn-sm btn-secondary" id="btn-proc-logs-export" title="Download the collected log lines as CSV">Export</button>' +
-            '<button class="btn btn-sm btn-secondary" id="btn-proc-logs-refresh">Refresh</button>' +
+            '<button class="btn btn-glyph btn-glyph-refresh btn-sm btn-secondary" id="btn-proc-logs-refresh" title="Refresh">Refresh</button>' +
           '</div>' +
         '</div>' +
         '<div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap;margin:0.4rem 0">' +
@@ -24159,7 +24161,7 @@ function _assetEventsTabHTML(assetId) {
         '<option value="50">50</option>' +
         '<option value="100">100</option>' +
       '</select>' +
-      '<button class="btn btn-secondary btn-sm" id="asset-view-events-refresh">Refresh</button>' +
+      '<button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="asset-view-events-refresh" title="Refresh">Refresh</button>' +
     '</div>' +
     '<div class="table-wrapper">' +
       '<table id="asset-view-events-table">' +

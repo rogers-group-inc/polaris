@@ -2,15 +2,15 @@
  * tests/unit/userAccountMenu.test.ts — the page-header account menu
  * (`openUserMenu` in public/js/app.js).
  *
- * The notification preference, display timezone, two-factor enrollment, help
- * and logout live behind the user badge, which means a regression here doesn't
+ * The notification preference, display timezone, two-factor enrollment and
+ * logout live behind the user badge (Help is its own header button since
+ * 2026-10-16 — helpButton.test.ts), which means a regression here doesn't
  * misalign a button — it removes the only way to log out from every page at
  * once. The theme toggle is NOT here: it sits at the bottom of the sidebar
  * (see sidebarThemeToggleDom).
  *
- * Help and Logout are the two UNCONDITIONAL rows, and they sit in separate
- * groups: help is neither a preference nor the way out. Everything above them
- * is conditional on a permission, a provider or an install setting, which is
+ * Logout is the one UNCONDITIONAL row, in a group of its own. Everything above
+ * it is conditional on a permission, a provider or an install setting, which is
  * why most of what is pinned below is a label ORDER rather than a presence.
  *
  * openUserMenu is pulled out of app.js rather than evaluating the whole file
@@ -92,15 +92,13 @@ function open(opts: {
 }
 
 describe("openUserMenu", () => {
-  it("offers help and logout even when nothing conditional is available", () => {
+  it("offers logout even when nothing conditional is available", () => {
     // The notification preference (alerts:read, and only once the account's
     // stored choice has resolved) and 2FA (local accounts only) are both
-    // conditional. Help and Logout are not — losing logout would strand the
-    // user, and help documents the pages this account CANNOT open as well as
-    // the ones it can, so a reader who cannot find a feature is exactly who
-    // needs it. With nothing conditional there is no leading separator,
-    // because a rule above nothing separates nothing.
-    expect(open().labels).toEqual(["Help", "—", "Logout"]);
+    // conditional. Logout is not — losing it would strand the user. With
+    // nothing conditional there is no leading separator, because a rule
+    // above nothing separates nothing.
+    expect(open().labels).toEqual(["Logout"]);
   });
 
   it("carries no theme row — the toggle lives in the sidebar", () => {
@@ -113,7 +111,7 @@ describe("openUserMenu", () => {
     // It names the CURRENT setting rather than an action, because the row is
     // the way into the three-way chooser, not a toggle (business rule 39).
     const r = open({ pref: { label: "Notifications: Email", icon: "<svg/>", onSelect: () => {} } });
-    expect(r.labels).toEqual(["Notifications: Email", "—", "Help", "—", "Logout"]);
+    expect(r.labels).toEqual(["Notifications: Email", "—", "Logout"]);
   });
 
   it("slots the two-factor row after the preference, still above the separator", () => {
@@ -121,7 +119,7 @@ describe("openUserMenu", () => {
       pref: { label: "Notifications: Push", icon: "<svg/>", onSelect: () => {} },
       totp: { label: "Set up two-factor auth", icon: "<svg/>", onSelect: () => {} },
     });
-    expect(r.labels).toEqual(["Notifications: Push", "Set up two-factor auth", "—", "Help", "—", "Logout"]);
+    expect(r.labels).toEqual(["Notifications: Push", "Set up two-factor auth", "—", "Logout"]);
   });
 
   it("groups the credential rows, password before the second factor on it", () => {
@@ -141,8 +139,6 @@ describe("openUserMenu", () => {
       "Set up two-factor auth",
       "Set up a passkey",
       "—",
-      "Help",
-      "—",
       "Logout",
     ]);
   });
@@ -154,7 +150,7 @@ describe("openUserMenu", () => {
       pw: { label: "Change password", icon: "<svg/>", onSelect: () => {} },
       passkeys: null,
     });
-    expect(r.labels).toEqual(["Change password", "—", "Help", "—", "Logout"]);
+    expect(r.labels).toEqual(["Change password", "—", "Logout"]);
   });
 
   it("slots the timezone row between the preference and two-factor", () => {
@@ -171,8 +167,6 @@ describe("openUserMenu", () => {
       "Timezone: America/Chicago",
       "Set up two-factor auth",
       "—",
-      "Help",
-      "—",
       "Logout",
     ]);
   });
@@ -182,7 +176,7 @@ describe("openUserMenu", () => {
     // one: what zone a timestamp is drawn in changes nothing about which data
     // an account can reach, so a role below alerts:read must still reach it.
     const r = open({ pref: null, tz: { label: "Timezone: Automatic", icon: "<svg/>", onSelect: () => {} } });
-    expect(r.labels).toEqual(["Timezone: Automatic", "—", "Help", "—", "Logout"]);
+    expect(r.labels).toEqual(["Timezone: Automatic", "—", "Logout"]);
   });
 
   it("slots the layout row after the timezone, with the display preferences", () => {
@@ -196,36 +190,18 @@ describe("openUserMenu", () => {
       "Layout: 16:9",
       "Change password",
       "—",
-      "Help",
-      "—",
       "Logout",
     ]);
   });
 
   it("omits the two-factor row for an SSO account without disturbing the rest", () => {
     const r = open({ pref: { label: "Notifications: Email", icon: "<svg/>", onSelect: () => {} }, totp: null });
-    expect(r.labels).toEqual(["Notifications: Email", "—", "Help", "—", "Logout"]);
+    expect(r.labels).toEqual(["Notifications: Email", "—", "Logout"]);
   });
 
-  it("opens the wiki in a new tab, with noopener", () => {
-    // The wiki is a third-party origin, so it must not get a handle on the
-    // Polaris window. `_blank` without `noopener` hands it `window.opener`.
-    const r = open();
-    const help = r.items.find((i) => i.label === "Help")!;
-    help.onSelect!();
-    expect(r.opened).toEqual([
-      { url: "https://wiki.test/polaris", target: "_blank", features: "noopener" },
-    ]);
-  });
-
-  it("keeps help out of the credentials group and out of the logout group", () => {
-    // Its own group in the middle: it is neither an account setting nor the
-    // way out, and grouping it with Logout would put a reference link beside
-    // the one destructive row in the menu.
-    const r = open({ pw: { label: "Change password", icon: "<svg/>", onSelect: () => {} } });
-    const i = r.labels.indexOf("Help");
-    expect(r.labels[i - 1]).toBe("—");
-    expect(r.labels[i + 1]).toBe("—");
+  it("no longer carries Help — it is its own header button", () => {
+    const r = open({ pref: { label: "Notifications: Email", icon: "<svg/>", onSelect: () => {} } });
+    expect(r.labels).not.toContain("Help");
   });
 
   it("marks logout destructive and gives every row an icon", () => {

@@ -20,9 +20,27 @@
     <main class="main">
       <div class="page-header">
         <h2>Events</h2>
-        <div class="page-header-actions">
+        <div class="page-header-actions"></div>
+      </div>
+
+      <!-- Events (the log) | Calendar (maintenance windows, reboots and firmware
+           upgrades — public/js/ops-calendar.js). #calendar opens the second. -->
+      <!-- Table head row (styles.css): the section tabs as folder tabs on the
+           log table's top edge, with Show N / Refresh / Clear Filters on the
+           same line (data-head-for: only while the Events tab is active). The
+           page buttons are below the table only — with no #pagination-top,
+           events.js renders just the bottom row. -->
+      <div class="table-head-row folder-head-card">
+        <div class="page-tabs page-tabs-glass" id="ev-tabs">
+          <button type="button" class="page-tab active" data-tab="log">Events</button>
+          <button type="button" class="page-tab" data-tab="calendar">Calendar</button>
+        </div>
+        <!-- The page's action buttons, moved from the header into the tab
+             row. Always shown (Conflicts / Alerts / Settings belong to the
+             page, not the log); events.js hides Export on the Calendar. -->
+        <div class="table-head-controls">
           <div class="btn-dropdown-wrap">
-            <button class="btn btn-secondary" id="btn-export">Export &#9662;</button>
+            <button class="btn btn-glyph btn-glyph-download btn-secondary" id="btn-export" title="Export">Export</button>
             <div class="btn-dropdown-menu" id="export-menu">
               <div class="dropdown-heading">PDF</div>
               <button data-export="page" data-fmt="pdf">Current page</button>
@@ -43,26 +61,14 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:middle;margin-right:4px"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>Alerts
             <span id="alerts-badge" style="display:none;position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;border-radius:99px;background:var(--color-warning, #ffc107);color:#000;font-size:0.68rem;font-weight:700;line-height:18px;text-align:center"></span>
           </button>
-          <button class="btn btn-secondary" id="btn-event-settings" data-admin-only title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:middle;margin-right:4px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Settings</button>
-        </div>
-      </div>
-
-      <!-- Events (the log) | Calendar (maintenance windows, reboots and firmware
-           upgrades — public/js/ops-calendar.js). #calendar opens the second. -->
-      <!-- Table head row (styles.css): the section tabs as folder tabs on the
-           log table's top edge, with Show N / Refresh / Clear Filters on the
-           same line (data-head-for: only while the Events tab is active). The
-           page buttons are below the table only — with no #pagination-top,
-           events.js renders just the bottom row. -->
-      <div class="table-head-row folder-head-card">
-        <div class="page-tabs page-tabs-glass" id="ev-tabs">
-          <button type="button" class="page-tab active" data-tab="log">Events</button>
-          <button type="button" class="page-tab" data-tab="calendar">Calendar</button>
+          <button class="btn btn-secondary btn-icon-only" id="btn-event-settings" data-admin-only title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:middle;margin-right:4px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Settings</button>
         </div>
         <!-- .filter-bar for its field shadows only: its own opaque fill and
              sticky pin are for the full-width bar, and here they drew a dark
              box behind "Show". -->
         <div class="table-head-controls filter-bar" data-head-for="log" style="margin:0;padding:0 0 7px;background:none;position:static;border:none;box-shadow:none">
+          <button class="btn btn-secondary btn-sm" id="btn-clear-filters" title="Clear every column filter on this list">Clear</button>
+          <button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="btn-refresh" title="Refresh">Refresh</button>
           <label>Show</label>
           <select id="filter-pagesize" style="width:auto">
             <option value="15" selected>15</option>
@@ -70,8 +76,6 @@
             <option value="50">50</option>
             <option value="100">100</option>
           </select>
-          <button class="btn btn-secondary btn-sm" id="btn-refresh">Refresh</button>
-          <button class="btn btn-secondary btn-sm" id="btn-clear-filters" title="Clear every column filter on this list">Clear Filters</button>
         </div>
       </div>
 
@@ -181,6 +185,7 @@
   <script src="/js/assistant-markdown.js"></script>
   <script src="/js/assistant.js"></script>
   <script src="/js/folder-tabs.js"></script>
+  <script src="/js/panel-lock.js"></script>
   <script src="/js/app.js"></script>
   <span id="polaris-nav-ready" hidden></span>
   <script src="/js/table-sf.js"></script>

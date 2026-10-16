@@ -47,6 +47,13 @@
                     aria-haspopup="true" aria-expanded="false">Saved &#9662;</button>
             <div class="appmap-saved-menu" id="appmap-saved-menu" role="menu"></div>
           </div>
+          <!-- Reset layout, beside Saved: both act on what the graph shows. -->
+          <button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="appmap-reset-layout" aria-label="Reset layout" title="Reset layout (discard manual node positions)" hidden style="line-height:0">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="1 4 1 10 7 10"/>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+          </button>
         </div>
         <div class="appmap-filter-pills" id="appmap-filter-pills"></div>
         <div class="appmap-toolbar-controls">
@@ -64,27 +71,14 @@
             <span id="appmap-status" class="appmap-status"></span>
             <!-- One Export button, as on the Device Map's topology view: its
                  menu (graph-export.js) holds Screenshot / PDF / Visio. -->
-            <button type="button" class="btn-icon" id="appmap-export" aria-label="Export" aria-haspopup="menu" title="Export: screenshot, PDF or Visio" style="line-height:0">
+            <button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="appmap-export" aria-label="Export" aria-haspopup="menu" title="Export: screenshot, PDF or Visio" style="line-height:0">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/>
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
             </button>
-            <button type="button" class="btn-icon" id="appmap-legend-btn" aria-label="Toggle legend" title="Toggle legend" style="line-height:0">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="6" cy="6" r="2"/><line x1="11" y1="6" x2="21" y2="6"/>
-                <circle cx="6" cy="12" r="2"/><line x1="11" y1="12" x2="21" y2="12"/>
-                <circle cx="6" cy="18" r="2"/><line x1="11" y1="18" x2="21" y2="18"/>
-              </svg>
-            </button>
-            <button type="button" class="btn-icon" id="appmap-reset-layout" aria-label="Reset layout" title="Reset layout (discard manual node positions)" hidden style="line-height:0">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="1 4 1 10 7 10"/>
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-              </svg>
-            </button>
-            <button type="button" class="btn-icon" id="appmap-refresh" aria-label="Refresh" title="Refresh now (auto-refreshes every 60s)" style="line-height:0">
+            <button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="appmap-refresh" aria-label="Refresh" title="Refresh now (auto-refreshes every 60s)" style="line-height:0">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polyline points="23 4 23 10 17 10"/>
                 <polyline points="1 20 1 14 7 14"/>
@@ -102,30 +96,34 @@
                not its children, or each re-render (a filter change, the 60s
                refresh) deletes them from the page. -->
           <div id="appmap-cy" class="appmap-cy"></div>
-          <div id="appmap-legend" class="appmap-legend" hidden>
-            <header class="appmap-legend-header">
-              <span>Legend</span>
-              <button type="button" class="btn-icon" id="appmap-legend-close" aria-label="Close legend" title="Close">&times;</button>
-            </header>
-            <div class="appmap-legend-body">
-              <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-asset"></span> Asset (box groups its mapped processes &amp; services)</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-proc"></span> Mapped process (lilac)</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-service"></span> Mapped service (teal)</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-unknown"></span> External / unknown IP</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-process"></span> Process &rarr; process (both ends mapped; heavier line)</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-asset"></span> Process &rarr; asset (destination known, process not mapped)</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-external"></span> External connection</div>
-              <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-stale"></span> Stale (not seen in the last 15 min)</div>
-              <div class="appmap-legend-row">Line colour is the connection's protocol/port &mdash; see the Ports key, bottom left.</div>
+          <!-- Bottom-left corner: the legend (it collapses into its own button,
+               legend-toggle.js) with the Ports key beside it. -->
+          <div class="appmap-corner-bl">
+            <div id="appmap-legend" class="appmap-legend">
+              <header class="appmap-legend-header">
+                <span>Legend</span>
+                <button type="button" class="btn-icon" id="appmap-legend-close" aria-label="Close legend" title="Close">&times;</button>
+              </header>
+              <div class="appmap-legend-body">
+                <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-asset"></span> Asset (box groups its mapped processes &amp; services)</div>
+                <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-proc"></span> Mapped process (lilac)</div>
+                <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-service"></span> Mapped service (teal)</div>
+                <div class="appmap-legend-row"><span class="appmap-legend-swatch appmap-legend-unknown"></span> External / unknown IP</div>
+                <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-process"></span> Process &rarr; process (both ends mapped; heavier line)</div>
+                <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-asset"></span> Process &rarr; asset (destination known, process not mapped)</div>
+                <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-external"></span> External connection</div>
+                <div class="appmap-legend-row"><span class="appmap-legend-line appmap-legend-line-stale"></span> Stale (not seen in the last 15 min)</div>
+                <div class="appmap-legend-row">Line colour is the connection's protocol/port &mdash; see the Ports key beside this legend.</div>
+              </div>
             </div>
-          </div>
-          <div id="appmap-port-legend" class="appmap-port-legend" hidden>
-            <header class="appmap-port-legend-header">
-              <span>Ports</span>
-              <button type="button" class="appmap-port-legend-showall" id="appmap-port-legend-showall" title="Show every port again" hidden>Show all</button>
-              <button type="button" class="btn-icon" id="appmap-port-legend-toggle" aria-label="Collapse ports key" aria-expanded="true" title="Collapse">&minus;</button>
-            </header>
-            <div class="appmap-port-legend-body"></div>
+            <div id="appmap-port-legend" class="appmap-port-legend" hidden>
+              <header class="appmap-port-legend-header">
+                <span>Ports</span>
+                <button type="button" class="appmap-port-legend-showall" id="appmap-port-legend-showall" title="Show every port again" hidden>Show all</button>
+                <button type="button" class="btn-icon" id="appmap-port-legend-toggle" aria-label="Collapse ports key" aria-expanded="true" title="Collapse">&minus;</button>
+              </header>
+              <div class="appmap-port-legend-body"></div>
+            </div>
           </div>
           <div id="appmap-empty" class="appmap-empty" hidden>
             <h3 id="appmap-empty-title">No mapped processes or services yet</h3>
@@ -161,6 +159,8 @@
   <script src="/js/brand-logo.js"></script>
   <script src="/js/assistant-markdown.js"></script>
   <script src="/js/assistant.js"></script>
+  <script src="/js/legend-toggle.js"></script>
+  <script src="/js/panel-lock.js"></script>
   <script src="/js/app.js"></script>
   <span id="polaris-nav-ready" hidden></span>
   <!-- assets.js + its UI deps power the canonical asset details slide-in

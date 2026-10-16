@@ -217,7 +217,12 @@ unselected page tab).
   circle by 12.5% (0.25 s), HELD round to 75% (1.5 s), at CONSTANT width — only `--page-glow-h`
   moves, up to the oval's own width (`140vw`; a `65vmin` circle read as the glow narrowing) — → noon's oval, as the `page-glow-round` keyframe animation on
   `html[data-glow-turn="morning-noon"]`. A transition only runs start → end, so a mid-point shape
-  needs keyframes. The theme script (`_markGlowTurn`, both app.js files) holds `data-glow-turn`
+  needs keyframes. **Morning's red band (`--page-glow-c2` / `-c3`) lasts 1 s of that climb**
+  (by the user's call, 2026-10-16): the second animation on the same rule, `page-glow-band-fade`
+  (2 s, linear), holds morning's colours to 30% (0.6 s) and eases them to noon's by 50% (1 s);
+  `html[data-glow-turn="morning-noon"][data-theme="noon"]` drops c2 / c3 from the noon list for
+  the turn, for the same outranking reason, and the end frame is noon's own value (`#ffc928` at
+  24% × 0.629 / 0.286), so nothing jumps. The theme script (`_markGlowTurn`, both app.js files) holds `data-glow-turn`
   (`"<from>-<to>"`) for `GLOW_MS` = 2000, because `data-theme-fading` comes off at 880 ms and
   would cut the animation short; the noon rule leaves `--page-glow-w` / `-h` out of its
   transition list, because a running transition outranks an animation and would flatten the
@@ -264,23 +269,23 @@ unselected page tab).
   inherited list to fit); nightfall turns the main glow off
   (`--page-glow-strength: 0%`) and centres it. It is parked just past an edge everywhere else:
   left on noon (−100% desktop / −130% phone) and right on morning (200% / 230%). **The afternoon
-  waypoint carries NIGHTFALL's glow values** (main strength 0%, y −45% / −50%, night x 50%,
-  strength 12.3%), never half-way ones: the turn from noon starts ONE 2 s glow transition on its
-  first leg, and the second leg changes nothing, so it runs on unbroken. That one transition is 2.5 s, not 2 (`html[data-theme="afternoon"] { transition-duration: 2500ms }`, by the user's call: the 1.6 s palette was right, the glow wanted half a second more). A half-way value
+  waypoint carries NIGHTFALL's glow values** (main strength 0%, y 145% / 150%, night x 50%,
+  strength 12.3%), never half-way ones: the turn from noon starts ONE glow transition on its
+  first leg, and the second leg changes nothing, so it runs on unbroken. Its durations are a per-property list on `html[data-glow-turn][data-theme="afternoon"]`: the main glow's eleven parts take the palette's 1.6 s, so the sun is down and gone as the red turns to blue (by the user's call, 2026-10-16), and the night glow's two keep 2.5 s (the slide-in, which the user had lengthened from 2 s). A half-way value
   restarts the glow at 800 ms and lurches. "Just past"
   matters: the visible radius is 70% of the ellipse's horizontal radius (~98% of the width
   on desktop, ~126% on the phone), and parking further out spends the fast first half of the
   ease off-screen. The afternoon waypoint keeps noon's sunlight HUE (`#ffc928`), not its clay
-  accent, so the fade never turns into a colour change — and noon's glow RISES UP AND AWAY while
-  it fades: nightfall (and afternoon) park the transparent main glow above the top edge
-  (`--page-glow-y` −45% desktop / −50% phone, just clear of a visible half-height of 42% / 46%). The night glow's HUE never changes during
+  accent, so the fade never turns into a colour change — and noon's glow SINKS DOWN AND AWAY while
+  it fades: nightfall (and afternoon) park the transparent main glow below the bottom edge
+  (`--page-glow-y` 145% desktop / 150% phone, just clear of a visible half-height of 42% / 46%;
+  until 2026-10-16 it rose away above the top edge, −45% / −50%). The night glow's HUE never changes during
   any of this; its position and strength move, and the ground under it is crossfading too. Two destination rules say
   what must NOT move, each a jump made while the jumping thing is invisible:
   `html[data-theme="noon"]` drops `--night-glow-x` (back from the right edge to the left; animated it
-  would sweep the page), `html[data-theme="morning"]` keeps only the four colours and the
+  would sweep the page), `html[data-theme="morning"]` keeps only `--page-glow-y`, the four colours and the
   night glow's two parts (keyed on the destination theme alone, since the transition outlives the
-  fading attribute; a transition takes its property list from the after-change style) (the transparent main glow takes the sunrise's shape at once and fades up in
-  place while the blue slides out right). Because the glow is two layers, `body` sets
+  fading attribute; a transition takes its property list from the after-change style). The transparent main glow takes the sunrise's shape at once and RISES from below the bottom edge (nightfall's parked 145%) to its 100%, ease-out (`cubic-bezier(0.22, 0.61, 0.36, 1)`, first in that rule's curve list), its colours and red band fading in as it comes, while the blue slides out right (by the user's call, 2026-10-16; it used to fade up in place). Because the glow is two layers, `body` sets
   `background-repeat` / `background-attachment` as LONGHANDS — in the shorthand, `no-repeat fixed`
   binds to the layer it follows and the other would scroll and tile. A sticky band pinned at the top of the page sits exactly where the
   glow is brightest, so `.page-top-sticky` (the wrapper that pins a page's header AND its tab

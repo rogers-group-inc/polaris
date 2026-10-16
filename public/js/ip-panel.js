@@ -189,7 +189,7 @@ function _renderPanelHeader(data) {
   var headerBtns = '<span style="margin-left:auto;display:flex;gap:6px">' +
     (canReserveIps() && !data.ipv6 ? '<button class="btn btn-sm btn-danger" id="ip-panel-free-selected-btn" disabled>Release Selected</button>' : '') +
     '<div class="btn-dropdown-wrap">' +
-      '<button class="btn btn-sm btn-secondary" id="ip-panel-export-btn">Export &#9662;</button>' +
+      '<button class="btn btn-glyph btn-glyph-download btn-sm btn-secondary" id="ip-panel-export-btn" title="Export">Export</button>' +
       '<div class="btn-dropdown-menu" id="ip-panel-export-menu">' +
         '<button data-fmt="pdf">Export as PDF</button>' +
         '<button data-fmt="csv">Export as CSV</button>' +

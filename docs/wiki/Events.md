@@ -26,7 +26,7 @@ Gated by `events`. The page has two tabs: **Events** (the log, below) and
 
 Sortable, inline-filterable, resizable, with saved layouts like every other list
 page. **Export** downloads PDF or CSV of the current page, all filtered results,
-or the entire event log; **Show** (the page size), **Refresh** and **Clear Filters**
+or the entire event log; **Export** (download icon), **Conflicts**, **Alerts**, **Settings** (gear icon), **Refresh** (circular-arrows icon), **Clear** and **Show** (the page size)
 sit on the tab row, and the page buttons are below the page card. The **Calendar**
 tab's month and week views fill the card. In a CSV, a cell that begins with `=`, `+`, `-` or `@` (a hostname or
 message that a device chose) is written with a leading apostrophe so a spreadsheet

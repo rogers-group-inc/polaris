@@ -28,20 +28,16 @@
       </div>
 
       <div class="map-toolbar">
-        <button type="button" id="map-theme-toggle" class="btn-icon map-theme-toggle" aria-label="Toggle map theme" title="Toggle map theme (saved per user)" style="line-height:0"></button>
+        <!-- The map-theme toggle is moved onto the map (top-left, above zoom) by
+             map.js addMapThemeControl; Show regions is the map's top-right
+             Regions panel (buildRegionsPanel). -->
+        <button type="button" id="map-theme-toggle" class="btn btn-secondary btn-icon-only map-theme-toggle" aria-label="Toggle map theme" title="Toggle map theme (saved per user)" style="line-height:0"></button>
         <!-- The viewer's own region scope, read-only. Rendered by map.js
              (renderMyRegions) once /auth/me has answered. -->
         <div class="map-my-regions" id="map-my-regions" hidden></div>
-        <!-- Read-only, and deliberately NOT permission-gated: any viewer who
-             can see the map can see how its regions nest. Hovering it shows the
-             containment tree (region-tree.js + the shared hover tooltip). -->
-        <button type="button" id="map-show-regions" class="btn btn-secondary" aria-pressed="false">Show regions</button>
-        <button type="button" id="map-edit-regions" class="btn btn-secondary" hidden>Edit regions</button>
         <div id="map-status" class="map-status"></div>
-        <div class="map-edit-actions" id="map-edit-actions">
-          <button type="button" id="map-discard-regions" class="btn btn-secondary" hidden>Discard Changes</button>
-          <button type="button" id="map-save-regions" class="btn btn-primary" hidden>Save Regions</button>
-        </div>
+        <!-- Region edit mode's save / undo / redo / discard live in the
+             Regions panel's header (map.js buildRegionsPanel). -->
       </div>
 
       <div id="map" class="map-canvas"></div>
@@ -72,16 +68,6 @@
               <polyline points="23 4 23 10 17 10"/>
               <polyline points="1 20 1 14 7 14"/>
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-          </button>
-          <button type="button" class="btn-icon" id="topology-legend" aria-label="Toggle legend" title="Toggle legend" style="line-height:0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="6" cy="6" r="2"/>
-              <line x1="11" y1="6" x2="21" y2="6"/>
-              <circle cx="6" cy="12" r="2"/>
-              <line x1="11" y1="12" x2="21" y2="12"/>
-              <circle cx="6" cy="18" r="2"/>
-              <line x1="11" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
           <button type="button" class="btn-icon" id="topology-save-layout" aria-label="Save layout" title="Save this layout as a restore point" style="line-height:0">
@@ -130,6 +116,14 @@
             </div>
           </div>
           <aside id="topology-info" class="topology-info"></aside>
+          <!-- The graph / details edge: hover highlights it and shows a centred
+               arrow that hides the details pane (map.js); while hidden, the
+               arrow stays at the right edge, pointing left, to bring it back. -->
+          <button type="button" id="topology-info-toggle" class="topology-edge"
+                  aria-controls="topology-info" aria-expanded="true"
+                  aria-label="Hide details" title="Hide details">
+            <span class="topology-edge-arrow" aria-hidden="true"></span>
+          </button>
         </div>
       </div>
     </div>
@@ -155,6 +149,8 @@
   <script src="/js/brand-logo.js"></script>
   <script src="/js/assistant-markdown.js"></script>
   <script src="/js/assistant.js"></script>
+  <script src="/js/legend-toggle.js"></script>
+  <script src="/js/panel-lock.js"></script>
   <script src="/js/app.js"></script>
   <span id="polaris-nav-ready" hidden></span>
   <!-- assets.js + its UI deps power the canonical asset details slide-in

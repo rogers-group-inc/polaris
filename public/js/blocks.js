@@ -152,7 +152,7 @@ function _renderBlocksPageControls(total) {
     _saveBlocksPrefs();
   }, {
     actionButtons: [{
-      label: "Clear Filters",
+      label: "Clear",
       title: "Clear every column filter on this list",
       onClick: function () {
         if (!_blocksSF) return;
@@ -161,6 +161,11 @@ function _renderBlocksPageControls(total) {
         renderBlocksPage();
         _saveBlocksPrefs();
       },
+    }, {
+      label: "Refresh",
+      className: "btn-glyph btn-glyph-refresh",
+      title: "Reload the block list",
+      onClick: function () { loadBlocks(); },
     }],
   });
 }

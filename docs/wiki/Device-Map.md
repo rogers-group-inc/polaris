@@ -34,7 +34,7 @@ instead. Each one gets a line back to a dot that marks the real location. Click
 the map or zoom to fold them back. From zoom 11 a cluster forms only where pins
 would overlap.
 
-The sun / moon button at the left of the toolbar switches the **basemap** between
+The sun / moon button in the map's top-left corner, above the zoom buttons, switches the **basemap** between
 light and dark tiles independently of the app theme. It is remembered per user in
 this browser; until you touch it, the map follows the app theme's family
 (Morning and Noon light, Nightfall dark).
@@ -69,20 +69,34 @@ see [Actions](Automation-Actions#level-scoped-region-routing).
 
 ### Show regions
 
-A read-only toggle, **ungated beyond viewing the map** — how an install's
-regions nest is not privileged information.
+The **Regions** button in the map's top-right corner, **ungated beyond viewing
+the map** — how an install's regions nest is not privileged information.
+Clicking it opens the **Regions** panel, which lists each region with its
+colour and level; the panel's **×** folds it back into the button.
 
-It paints the polygons read-only, with a permanent label only on the outermost
+Open, it paints the polygons read-only, with a permanent label only on the outermost
 ring of a nested set (fill opacity is held low because nesting stacks it), and
 **hovering renders the containment tree**, each row badged with its derived
 level.
 
 ### Edit regions
 
-Needs `mapRegions`. Draw, edit and delete polygons.
+Needs `mapRegions`: the **pencil** left of the Regions panel's title. Draw,
+edit and delete polygons. While you edit, the panel's header holds the
+controls:
+
+| Control | |
+|---|---|
+| **✓** (where the pencil was) | save every reshaped region and leave edit mode |
+| **Undo** / **Redo** (or Ctrl+Z / Ctrl+Y) | step back and forward through vertex drags, added points and deleted points |
+| **×** | discard unsaved shape changes and leave edit mode; it asks first when there are any |
+
+Undo covers only shape changes, which stay local until you save. Drawing,
+renaming, recolouring and deleting a region are saved the moment you do
+them, so undo cannot reverse them.
 
 The two region layers **hand off rather than stack**: entering edit mode hides
-the read-only overlay and disables its button; leaving restores it and **drops
+the read-only overlay and disables the Regions button; leaving restores it and **drops
 the memoised payload**, since an edit can have changed every level in the tree.
 
 ### What a rename or delete does to scopes
@@ -153,8 +167,14 @@ Drag anything to override the layout; the positions are saved per site.
 | **Reset layout** | a menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
 | **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
 | **Fullscreen** | |
-| **Legend** | |
 | **Export** | screenshot, PDF or Visio — see below |
+
+The **legend** sits at the graph's bottom left as a small button; click it to
+open the legend, and its **×** folds it back. The edge between the graph and
+the details pane hides the pane: hover the edge and click the arrow, and the
+arrow at the right edge brings the pane back. Both remember your choice in
+this browser. The Device Map's own status legend, the Application Map's and
+the Status Map widget's work the same way.
 
 **Save** is an explicit checkpoint that writes the live layout **and** the
 restore point in one statement, so a checkpoint can never be of a layout the
@@ -221,3 +241,9 @@ monitored **sites** with status dots and **live weather radar** (proxied
 server-side, with a direct-CDN fallback).
 
 The **Device Map** widget is the gate-level map with click-through to topology.
+
+On both widgets the sun / moon basemap button sits in the map's top-left
+corner, above the zoom buttons, as on this page. The Site Map's **°F**,
+**Radar** and **Loop** buttons, and fullscreen, are at the top right; a button
+that is on looks pressed. Like the rest of the map's buttons and its legend,
+they follow the app theme.

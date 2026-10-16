@@ -32,10 +32,8 @@
             <button type="button" class="btn btn-secondary" id="btn-saved-dashboards" title="Show a published dashboard, or this browser's own layout">Dashboards &#9662;</button>
             <div class="btn-dropdown-menu sfl-menu" id="saved-dashboards-menu"></div>
           </div>
-          <button type="button" id="dashboard-customize" class="btn btn-primary">Customize Page</button>
-          <button type="button" id="dashboard-add-widgets" class="btn btn-primary" hidden>Add Widgets</button>
-          <button type="button" id="dashboard-done" class="btn btn-secondary" hidden>Done Editing</button>
-          <button type="button" id="dashboard-create" class="btn btn-secondary" hidden>Create New Dashboard</button>
+          <button type="button" id="dashboard-customize" class="btn btn-primary btn-icon-only" title="Customize page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>Customize Page</button>
+          <button type="button" id="dashboard-done" class="btn btn-primary btn-icon-only" hidden title="Done editing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Done Editing</button>
         </div>
       </div>
       <!-- Folder tabs (styles.css "Table head row"; public/js/folder-tabs.js)
@@ -50,7 +48,7 @@
       <div class="folder-card folder-body">
         <div class="folder-card-scroll">
           <div id="dashboard-empty-state" class="dashboard-empty">
-            Click <strong>Customize Page</strong>, then <strong>Add Widgets</strong>, to build your dashboard.
+            Click the pencil (<strong>Customize Page</strong>), then <strong>+ Add Widget</strong>, to build your dashboard.
             Your layout is saved in this browser.
           </div>
           <div id="dashboard-canvas" class="dashboard-canvas" hidden></div>
@@ -60,11 +58,17 @@
   </div>
 
   <!-- Add-Widgets picker: same markup as index.html. -->
-  <div class="widget-picker-overlay" id="widget-library-overlay" aria-hidden="true">
-    <div class="widget-picker" role="dialog" aria-labelledby="widget-picker-title">
-      <div class="widget-picker-header">
-        <h3 id="widget-picker-title">Add Widgets</h3>
-        <button type="button" class="btn btn-icon" id="widget-library-close" aria-label="Close">&times;</button>
+  <!-- A standard slide-over (.slideover-overlay / .slideover /
+       .slideover-header-top), so it takes the slide-overs' glass theme, the
+       panel lock app.js / panel-lock.js inject beside the X, and the
+       off-click X bloom while locked. -->
+  <div class="slideover-overlay widget-picker-overlay" id="widget-library-overlay" aria-hidden="true">
+    <div class="slideover widget-picker" role="dialog" aria-labelledby="widget-picker-title">
+      <div class="slideover-header widget-picker-header">
+        <div class="slideover-header-top">
+          <h3 id="widget-picker-title">Add Widgets</h3>
+          <button type="button" class="btn-icon" id="widget-library-close" aria-label="Close" title="Close">&times;</button>
+        </div>
       </div>
       <div class="widget-picker-toolbar">
         <input type="search" id="widget-picker-search" placeholder="Search widgets…" aria-label="Search widgets">
@@ -91,7 +95,9 @@
   <script src="/js/vendor/leaflet/leaflet.markercluster.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/temp-unit.js"></script>
+  <script src="/js/panel-lock.js"></script>
   <script src="/js/dash-boot.js"></script>
+  <script src="/js/legend-toggle.js"></script>
   <script src="/js/folder-tabs.js"></script>
   <script src="/js/widgets/index.js"></script>
   <!-- Shared helper before its consumers. -->

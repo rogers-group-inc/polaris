@@ -1,8 +1,7 @@
 /**
  * public/js/widget-library.js — "Add Widgets" picker (SolarWinds-style).
  *
- * A translucent overlay (the dashboard shows through, dimmed) docking a panel
- * with: a Group-By category list, a search box, a name sort, and the available
+ * A standard slide-over (index.html / dash.html) with: a Group-By category list, a search box, a name sort, and the available
  * widgets list with live mini-previews + a per-widget favorite (★) toggle.
  * Favorites are per-user localStorage via favorites.js (entity "widgetlib").
  *
@@ -30,6 +29,11 @@
     sortEl    = document.getElementById("widget-picker-sort");
     if (!overlayEl || !bodyEl || !closeBtn) return;
     closeBtn.addEventListener("click", close);
+    // An off-click (the backdrop) closes it — unless slide-overs are locked:
+    // panel-lock.js's capture listener stops this click and blooms the X
+    // instead. initPanelLock is idempotent; calling it here is what wires the
+    // lock and injects its button on the /dash wallboard, which has no app.js.
+    if (typeof initPanelLock === "function") initPanelLock();
     overlayEl.addEventListener("click", function (e) { if (e.target === overlayEl) close(); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && isOpen()) close(); });
     if (searchEl) searchEl.addEventListener("input", function () { _search = searchEl.value.trim().toLowerCase(); renderList(); });

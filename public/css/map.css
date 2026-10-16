@@ -7,30 +7,14 @@
   margin-bottom: 0.75rem;
 }
 
-/* Right-hand end of the toolbar, in order: the viewer's region scope, the
-   Edit-regions toggle, then the save/discard group. The ordering is explicit
-   (`order`) and the toolbar's slack is absorbed by `.map-status` growing,
-   rather than by an `auto` left margin on each of them: all three show and
-   hide independently, and with several auto margins live at once the slack
-   splits between whichever happen to be visible instead of pushing the
-   group to the right edge. */
-
-/* Edit-regions toggle (label flips to "Done editing" while active) lives on
-   the far right of the toolbar — operators reach for it last in the flow. */
-#map-edit-regions {
-  order: 99;
-}
-
-/* Read-only "Show regions" toggle. Deliberately the SAME order value as
-   #map-edit-regions: equal-order flex items fall back to DOM order, so this
-   lands immediately to its left without renumbering any existing rule. */
-#map-show-regions {
-  order: 99;
-}
-#map-show-regions[aria-pressed="true"] {
-  border-color: var(--color-accent, #4fc3f7);
-  color: var(--color-accent, #4fc3f7);
-}
+/* Right-hand end of the toolbar, in order: the viewer's region scope, then
+   the save/discard group (edit mode). The ordering is explicit (`order`) and
+   the toolbar's slack is absorbed by `.map-status` growing, rather than by an
+   `auto` left margin on each of them: they show and hide independently, and
+   with several auto margins live at once the slack splits between whichever
+   happen to be visible instead of pushing the group to the right edge.
+   Show regions and Edit regions left the toolbar on 2026-10-16 for the map's
+   Regions panel (map.js buildRegionsPanel; styled further down). */
 
 /* "My regions" - the region tags the signed-in operator is scoped to,
    read-only. It answers "which regions am I assigned to?", which nothing
@@ -85,16 +69,6 @@
   min-width: 0;
   font-size: 0.85rem;
   color: var(--color-text-tertiary);
-}
-
-/* Save Regions + Discard Changes group sits on the right edge of the toolbar,
- * after the region strip. Ordered last so it anchors right regardless of how
- * long the status text is (see the #map-edit-regions note above). */
-.map-edit-actions {
-  order: 100;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
 }
 
 /* ─── Region edit-mode overlay ──────────────────────────────────────────────
@@ -272,23 +246,147 @@
 
 /* Status legend (Leaflet control, bottom-left) — the Status Map widget's
    legend (.sitemap-legend in styles.css) on the page that paints the same
-   dots. Same dark chip in both map themes: it sits over tiles, not over the
-   page surface, so a theme-token background would read as either invisible
-   or a hole punched in the map. Swatch colors come from the .map-legend i
+   dots. It wears the app theme, like the buttons beside it on the map
+   (the secondary button's surface and border, the tight map-button
+   shadow), not a fixed dark chip. Swatch colors come from the .map-legend i
    half of the .fg-marker palette above — never restate one here. */
 .map-legend {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  background: rgba(13,16,22,0.82);
-  border: 1px solid rgba(255,255,255,0.22);
-  border-radius: 5px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   padding: 6px 8px;
   font-size: 0.72rem;
-  color: #f1f3f5;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+  color: var(--color-text-primary);
+  box-shadow: var(--map-btn-shadow, 0 1px 2px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.25));
 }
 .map-legend span { display: flex; align-items: center; gap: 6px; }
+/* Regions panel (map.js buildRegionsPanel): the status legend's chip in the
+   top-right corner, collapsing into its own button. Its header carries the
+   edit pencil left of the title (a check mark — save — while editing) and,
+   while editing, undo / redo beside the × (which then discards); the list
+   scrolls past a dozen rows. */
+.map-regions-panel { min-width: 170px; max-width: 260px; }
+.map-regions-panel .map-regions-title,
+.map-regions-panel .map-regions-actions { gap: 4px; }
+/* Pinned with order: something in Leaflet's control cascade drew the × first
+   despite the markup order. */
+.map-regions-panel .map-regions-title .map-regions-tool { order: 1; }
+.map-regions-panel .map-regions-title .map-regions-name { order: 2; }
+.map-regions-panel .map-regions-actions #map-undo-region { order: 1; }
+.map-regions-panel .map-regions-actions #map-redo-region { order: 2; }
+.map-regions-panel .map-regions-actions .legend-toggle-close { order: 3; }
+.map-regions-tool[hidden] { display: none; }
+.map-regions-tool:disabled { opacity: 0.3 !important; cursor: default; background: none !important; color: inherit !important; }
+.map-regions-tool.map-regions-save { opacity: 1; color: var(--color-success); }
+.map-regions-tool.map-regions-save:hover,
+.map-regions-tool.map-regions-save:focus-visible { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 18%, transparent); }
+.map-regions-tool {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  opacity: 0.75;
+  padding: 2px 4px;
+  line-height: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.map-regions-tool:hover,
+.map-regions-tool:focus-visible { opacity: 1; color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); }
+.map-regions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.map-regions-list i.map-region-swatch { border-radius: 2px; background: #9e9e9e; }
+.map-regions-list em { opacity: 0.6; font-style: normal; margin-left: auto; padding-left: 8px; }
+.map-regions-empty { opacity: 0.75; }
+/* Device Map buttons ON the map — the zoom bar, the theme toggle, and the
+   status-legend and Regions buttons — share one look: the app's secondary
+   button (.btn-secondary tokens), not Leaflet's own bar, which follows the
+   basemap (styles.css .polaris-basemap-dark). One tighter cast for all of
+   them: the page-level lift is sized for buttons on the page ground and
+   reads as a halo over map tiles. */
+.map-canvas.leaflet-container {
+  --map-btn-shadow: 0 1px 2px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.25);
+}
+.map-canvas.leaflet-container .leaflet-control-zoom.leaflet-bar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--map-btn-shadow);
+  overflow: hidden;
+}
+.map-canvas.leaflet-container .leaflet-control-zoom a {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  border-bottom-color: var(--color-border);
+}
+.map-canvas.leaflet-container .leaflet-control-zoom a:hover,
+.map-canvas.leaflet-container .leaflet-control-zoom a:focus {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+.map-canvas.leaflet-container .leaflet-control-zoom a.leaflet-disabled {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-tertiary);
+  opacity: 0.6;
+}
+.map-canvas.leaflet-container .btn { box-shadow: var(--map-btn-shadow) !important; }
+/* Region edit mode's leaflet-draw tool (top-right, under the Regions panel)
+   and its Finish / Delete last point / Cancel strip, in the same look. The
+   tool's sprite is a dark image that vanishes on a dark surface, so the
+   polygon is redrawn as a currentColor mask instead. */
+.map-canvas.leaflet-container .leaflet-draw-toolbar.leaflet-bar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--map-btn-shadow);
+  overflow: hidden;
+}
+.map-canvas.leaflet-container .leaflet-draw-toolbar a {
+  position: relative;
+  background-color: var(--color-bg-primary);
+  background-image: none !important;
+  color: var(--color-text-secondary);
+  border-bottom-color: var(--color-border);
+}
+.map-canvas.leaflet-container .leaflet-draw-toolbar a:hover,
+.map-canvas.leaflet-container .leaflet-draw-toolbar a.leaflet-draw-toolbar-button-enabled {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+.map-canvas.leaflet-container .leaflet-draw-toolbar a.leaflet-draw-draw-polygon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3l9 6.5-3.5 10.5h-11L3 9.5z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3l9 6.5-3.5 10.5h-11L3 9.5z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.map-canvas.leaflet-container .leaflet-draw-actions a {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  border-left-color: var(--color-border);
+  box-shadow: var(--map-btn-shadow);
+}
+.map-canvas.leaflet-container .leaflet-draw-actions a:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+/* The map-theme toggle on the map (addMapThemeControl): the zoom bar's width
+   (its 30px buttons + 2px border each side), above it in the top-left corner. */
+.map-theme-control .btn.map-theme-toggle {
+  width: 34px;
+  height: 34px;
+  padding: 0 !important;
+}
 .map-legend i {
   width: 8px;
   height: 8px;
@@ -409,10 +507,86 @@
 }
 
 .topology-layout {
+  --topology-info-w: 320px;
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) var(--topology-info-w);
   height: 80vh;
   min-height: 520px;
+  transition: grid-template-columns 0.2s ease;
+}
+/* Details pane hidden (#topology-info-toggle, map.js): the graph takes the
+   whole width. */
+.topology-layout.info-collapsed { grid-template-columns: minmax(0, 1fr) 0px; }
+.topology-layout.info-collapsed > .topology-info { overflow: hidden; padding: 0; border: 0; visibility: hidden; }
+.topology-layout.info-collapsed > .topology-graph { border-right: 0; }
+/* The graph / details edge. A transparent full-height strip centred on the
+   boundary: hovering it lights the edge and shows the arrow chip at its
+   middle — pointing right (hide) — and while the pane is hidden the chip
+   stays visible at the right edge, pointing left (show). */
+.topology-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--topology-info-w) - 7px);
+  width: 14px;
+  z-index: 6;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: right 0.2s ease;
+}
+.topology-edge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 6px;
+  width: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.topology-edge-arrow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 40px;
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-accent);
+  background: var(--color-bg-primary);
+  box-shadow: var(--shadow-lift);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+/* A chevron, right-pointing; flipped when the pane is hidden. */
+.topology-edge-arrow::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-top: 2px solid var(--color-accent);
+  border-right: 2px solid var(--color-accent);
+  transform: translate(-65%, -50%) rotate(45deg);
+}
+.topology-edge:hover::before,
+.topology-edge:focus-visible::before,
+.topology-edge:hover .topology-edge-arrow,
+.topology-edge:focus-visible .topology-edge-arrow { opacity: 1; }
+.topology-edge:focus-visible { outline: none; }
+/* Clear of the modal's right edge: the 22px chip overhangs the 14px strip. */
+.topology-layout.info-collapsed > .topology-edge { right: 10px; }
+.topology-layout.info-collapsed > .topology-edge .topology-edge-arrow { opacity: 1; }
+.topology-layout.info-collapsed > .topology-edge .topology-edge-arrow::before {
+  transform: translate(-35%, -50%) rotate(-135deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .topology-layout, .topology-edge { transition: none; }
 }
 .topology-graph {
   position: relative;
@@ -500,10 +674,12 @@
   color: var(--color-accent);
 }
 
+/* Bottom-left of the graph, like every map legend; it collapses into its own
+   button there (legend-toggle.js) and is no longer dragged. */
 .topology-legend {
   position: absolute;
   bottom: 12px;
-  right: 12px;
+  left: 12px;
   z-index: 5;
   width: 260px;
   max-height: calc(100% - 24px);
@@ -526,7 +702,7 @@
   justify-content: space-between;
   padding: 6px 10px;
   border-bottom: 1px solid var(--color-border);
-  cursor: move;
+  cursor: default;
 }
 .topology-legend-title { font-weight: 600; font-size: 0.85rem; }
 .topology-legend-body {
@@ -661,6 +837,9 @@
     height: auto;
     min-height: 0;
   }
+  /* Stacked, the details pane is below the graph: there is no side edge. */
+  .topology-edge { display: none; }
+  .topology-layout.info-collapsed > .topology-info { visibility: visible; overflow: visible; padding: revert; }
   .topology-graph {
     height: 60vh;
     border-right: 0;

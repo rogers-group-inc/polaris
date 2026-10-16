@@ -188,6 +188,32 @@
     return [{ label: "Open asset — Paths tab", onSelect: handlers.openAsset }];
   }
 
+  // The list-controls row: page numbers below the card, and — on the tab row
+  // above it — Clear, Refresh and Show N (+ Add Monitor sits just left).
+  function renderControls(total) {
+    renderPageControls("path-pagination", total, _pageSize, _page,
+      function (p) { _page = p; renderList(); },
+      function (size) { _pageSize = size; _page = 1; renderList(); savePrefs(); },
+      {
+        actionButtons: [{
+          label: "Clear",
+          title: "Clear every column filter on this list",
+          onClick: function () {
+            if (!_sf) return;
+            _sf.clearFilters();
+            _page = 1;
+            renderList();
+            savePrefs();
+          },
+        }, {
+          label: "Refresh",
+          className: "btn-glyph btn-glyph-refresh",
+          title: "Reload the path checks",
+          onClick: function () { loadTab(); },
+        }],
+      });
+  }
+
   function renderList() {
     var tbody = document.getElementById("path-tbody");
     if (!tbody) return;
@@ -196,19 +222,21 @@
       return Object.assign({}, c, { tracerouteEnabled: !!(c.traceroute && c.traceroute.enabled) ? "true" : "false" });
     });
     if (_sf) data = _sf.apply(data);
+    // The controls row renders on an empty result too — clearing it would take
+    // Clear Filters away in exactly the state that needs it (polaris-ui-canon →
+    // "Paginated list controls row").
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' +
-        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add monitor" to create one.' : ".")) +
+        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add Monitor" to create one.' : ".")) +
         "</td></tr>";
-      if (typeof clearPageControls === "function") clearPageControls("path-pagination");
+      _page = 1;
+      renderControls(0);
       return;
     }
     var totalPages = Math.max(1, Math.ceil(data.length / _pageSize));
     if (_page > totalPages) _page = totalPages;
     var rows = data.slice((_page - 1) * _pageSize, _page * _pageSize);
-    renderPageControls("path-pagination", data.length, _pageSize, _page,
-      function (p) { _page = p; renderList(); },
-      function (size) { _pageSize = size; _page = 1; renderList(); savePrefs(); });
+    renderControls(data.length);
 
     tbody.innerHTML = rows.map(function (c) {
       var result;
@@ -1056,7 +1084,7 @@
       // the server is no asset, so it has no slide-over to open. The ids
       // are the slide-over Paths tab's, whose renderer draws both.
       '<div id="path-server-detail" style="margin-top:1rem"></div>';
-    var footer = '<button class="btn btn-secondary" id="path-res-refresh">Refresh</button>' +
+    var footer = '<button class="btn btn-glyph btn-glyph-refresh btn-secondary" id="path-res-refresh" title="Refresh">Refresh</button>' +
       (canEdit() ? '<button class="btn btn-secondary" id="path-res-edit">Edit</button>' : "") +
       '<button class="btn btn-primary" id="path-res-close">Close</button>';
     openModal("Results — " + check.name, body, footer, { large: true });

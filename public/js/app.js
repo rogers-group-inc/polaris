@@ -1360,7 +1360,9 @@ const ICONS = {
   blocks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect class="ac" x="8" y="2" width="8" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="9" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v10M5 17v-3h14v3"/></svg>',
   bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle class="ac" cx="12" cy="5" r="2"/><path class="ac" d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg>',
   shieldUser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><circle class="ac" cx="12" cy="9" r="2.5"/><path class="ac" d="M8 16a4 4 0 0 1 8 0"/></svg>',
-  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  // Round caps are load-bearing: the dot is a 0.01-long line, invisible
+  // under butt caps, which left a bare curl instead of a question mark.
+  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle class="ac" cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
 };
@@ -2454,6 +2456,7 @@ function renderUserBadge() {
   badge.title = currentUsername + ' (' + roleLabel + ')';
   badge.addEventListener("click", function () { openUserMenu(badge); });
   header.appendChild(badge);
+  if (typeof _renderHelpButton === "function") _renderHelpButton(header, badge);
 }
 
 // The operator documentation, on the upstream project's GitHub wiki. It is a
@@ -2463,6 +2466,60 @@ function renderUserBadge() {
 // lives in this repo under docs/wiki/ and is published from there; a fork
 // serving its own documentation changes this one constant.
 var WIKI_URL = "https://github.com/rogers-group-inc/polaris/wiki";
+
+// Which wiki page documents the page the operator is on: the page file, then
+// (for a tabbed page) the open tab, falling back to the wiki's Home. Page
+// names are docs/wiki/*.md without the extension — a renamed wiki page must
+// be renamed here too (check:wiki does not see this table).
+var WIKI_PAGE_FOR = {
+  "index": "Dashboard", "": "Dashboard",
+  "ipam": "IPAM", "blocks": "IPAM", "subnets": "IPAM",
+  "assets": "Assets",
+  "map": "Device-Map",
+  "appmap": "Application-Map",
+  "path-monitor": "Path-Monitor",
+  "events": "Events",
+  "automations": "Automations",
+  "integrations": "Integrations",
+  "users": "Users-Roles-and-Permissions",
+  "server-settings": "Server-Settings",
+};
+var WIKI_PAGE_FOR_TAB = {
+  "automations": { delivery: "Delivery-Channels", scripts: "Automation-Scripts", contacts: "Address-Book" },
+  "events": { calendar: "Maintenance-Windows" },
+  "integrations": { agents: "Polaris-Agent" },
+};
+
+function _currentWikiPage() {
+  var file = (location.pathname.split("/").pop() || "").replace(/\.html$/, "");
+  var tabs = WIKI_PAGE_FOR_TAB[file];
+  if (tabs) {
+    var active = document.querySelector(".table-head-row .page-tab.active");
+    var key = active && active.getAttribute("data-tab");
+    if (key && tabs[key]) return tabs[key];
+  }
+  return WIKI_PAGE_FOR[file] || "";
+}
+
+// The Help button, left of the account badge: the wiki page for this page
+// (and tab), in a new tab. It always renders — the wiki documents every page,
+// and a reader who cannot find a feature is exactly who needs it.
+function _renderHelpButton(header, badge) {
+  var old = header.querySelector(".page-help-btn");
+  if (old) old.remove();
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-secondary btn-icon-only page-help-btn";
+  btn.title = "Help for this page (opens the Polaris wiki in a new tab)";
+  btn.innerHTML = ICONS.help + "Help";
+  btn.addEventListener("click", function () {
+    var page = _currentWikiPage();
+    // noopener: the wiki is a third-party origin and must not get a handle on
+    // this window.
+    window.open(WIKI_URL + (page ? "/" + page : ""), "_blank", "noopener");
+  });
+  header.insertBefore(btn, badge);
+}
 
 /**
  * The account menu behind the page-header user badge: notification
@@ -2497,25 +2554,12 @@ function openUserMenu(anchor) {
   var passkeys = _passkeyMenuItem();
   if (passkeys) items.push(passkeys);
 
-  // Help sits between the account's own settings and Logout, in its own group:
-  // it is neither a preference nor the way out. It always renders — the wiki
-  // documents every page, including the ones this account cannot open, and a
-  // reader who cannot find a feature is exactly who needs it.
-  if (items.length) items.push({ separator: true });
-  items.push({
-    label: "Help",
-    icon: ICONS.help,
-    title: "Open the Polaris wiki on GitHub (new tab)",
-    onSelect: function () {
-      // noopener: the wiki is a third-party origin and must not get a handle
-      // on this window.
-      window.open(WIKI_URL, "_blank", "noopener");
-    },
-  });
+  // Help is no longer here: it is its own button left of this badge
+  // (_renderHelpButton), opening the wiki page for the page it is on.
 
-  // Only separate Logout from something — with no preference or 2FA row the menu is
-  // Logout alone, and a leading rule would be a divider above nothing.
-  items.push({ separator: true });
+  // Only separate Logout from something — with no preference or 2FA row the
+  // menu is Logout alone, and a leading rule would be a divider above nothing.
+  if (items.length) items.push({ separator: true });
   items.push({
     label: "Logout",
     icon: ICONS.logout,
@@ -3142,80 +3186,8 @@ async function trackedPdfExport(label, fn) {
 
 var _modalDrag = { active: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0 };
 
-// Escalating "use the X" hint: each off-modal click flashes the close button
-// brighter than the last, with a radial bloom that grows in quarter-size
-// increments. Resets after 1s of no off-clicks (or on close). Shared by every
-// modal overlay (IPAM modals via openModal + the Device Map topology modal in
-// map.js), so it's a global helper keyed off whichever close button is passed.
-var _modalFlashLevel = 0;
-var _modalFlashResetTimer = null;
-
-// Flash the given modal close button + bloom one escalation step. closeBtn is
-// the ".modal-close" / equivalent X element of the overlay the user clicked off.
-function flashModalCloseBtn(closeBtn) {
-  if (!closeBtn) return;
-  // Each subsequent off-click ramps brighter (capped); decays 1s after the
-  // last click, so a pause resets the escalation back to the start.
-  var lvl = (_modalFlashLevel = Math.min(_modalFlashLevel + 1, 8));
-  if (_modalFlashResetTimer) clearTimeout(_modalFlashResetTimer);
-  _modalFlashResetTimer = setTimeout(function () { _modalFlashLevel = 0; }, 1000);
-  // Drive the transition inline (matched to the bloom's 0.45s ease-out below)
-  // so the X glow and the radial bloom fade in/out together. Inline so it
-  // applies to both the modal .modal-close and the slide-over .btn-icon, and
-  // survives the class removal in the reset so the fade-OUT is also 0.45s
-  // instead of snapping back via the base .modal-close 0.15s transition.
-  closeBtn.style.transition =
-    "color 0.45s ease-out, background 0.45s ease-out, transform 0.45s ease-out," +
-    "filter 0.45s ease-out, text-shadow 0.45s ease-out";
-  closeBtn.style.background = "rgba(255,77,109," + Math.min(0.25 + lvl * 0.09, 0.95) + ")";
-  closeBtn.style.filter = "brightness(" + (1 + lvl * 0.18) + ")";
-  closeBtn.style.textShadow = "0 0 " + (lvl * 3) + "px rgba(255,77,109,0.9)";
-  closeBtn.classList.add("flash");
-  // Singleton bloom on <body>: position:fixed + high z-index so it paints over
-  // any modal and spills past the corner unclipped, regardless of which overlay
-  // owns the X. Styles are inline (not a CSS class) so a stale cached
-  // stylesheet can't render it invisible.
-  var bloom = document.getElementById("modal-close-bloom");
-  if (!bloom) {
-    bloom = document.createElement("div");
-    bloom.id = "modal-close-bloom";
-    bloom.style.cssText =
-      "position:fixed;border-radius:50%;pointer-events:none;opacity:0;z-index:100000;" +
-      "transform:translate(-50%,-50%);mix-blend-mode:screen;" +
-      "background:radial-gradient(circle,rgba(255,77,109,0.85) 0%,rgba(255,77,109,0.6) 32%,rgba(255,77,109,0) 70%);" +
-      "transition:opacity 0.45s ease-out,width 0.08s,height 0.08s;";
-  }
-  // A fullscreened element renders in the browser's top layer, which paints
-  // over body-level fixed elements. Re-home the bloom into whatever is
-  // fullscreen (else body) so it still shows over the topology modal there;
-  // a position:fixed child of the top-layer element renders in the top layer.
-  var bloomHost = document.fullscreenElement || document.body;
-  if (bloom.parentNode !== bloomHost) bloomHost.appendChild(bloom);
-  // No bloom on the first off-click; from the 2nd on it starts at 1/4 the full
-  // size and grows by quarter increments to full by the 5th.
-  var steps = Math.min(lvl - 1, 4); // 0..4
-  if (steps <= 0) {
-    bloom.style.opacity = "0";
-  } else {
-    var r = closeBtn.getBoundingClientRect();
-    var size = 280 * steps / 4; // 70px → 280px in quarter steps
-    bloom.style.left = (r.left + r.width / 2) + "px";
-    bloom.style.top = (r.top + r.height / 2) + "px";
-    bloom.style.width = size + "px";
-    bloom.style.height = size + "px";
-    bloom.style.opacity = String(0.35 + steps * 0.15); // 0.5 → 0.95
-  }
-  setTimeout(function () {
-    closeBtn.classList.remove("flash");
-    closeBtn.style.background = "";
-    closeBtn.style.filter = "";
-    closeBtn.style.textShadow = "";
-    bloom.style.opacity = "0";
-    // Let the 0.45s fade-out run, then drop the inline transition so the
-    // button's normal hover snaps back to the base .modal-close 0.15s timing.
-    setTimeout(function () { closeBtn.style.transition = ""; }, 460);
-  }, 600);
-}
+// The off-click close-button flash (flashModalCloseBtn and its escalation
+// state) lives in public/js/panel-lock.js, loaded before this file.
 
 // ─── Modal accessibility (focus trap + restore + Escape) ──────────────────────
 // Shared helpers so every openModal / showConfirm caller gets dialog semantics,
@@ -3336,165 +3308,10 @@ function _focusVisibleStepPanel(fallback) {
 }
 if (typeof window !== "undefined") window.wireModalStepKeys = wireModalStepKeys;
 
-// ─── Panel lock (per-user, app-wide) ────────────────────────────────────────
-//
-// A lock toggle next to the X on every modal and slide-over. Locking is global
-// per type — one switch governs ALL modals, another ALL slide-overs — and is
-// saved per user in localStorage. When locked, clicking the backdrop (off the
-// panel) does NOT dismiss it; when unlocked, an off-click closes it (the
-// default). The X and Escape always close regardless of lock.
-//
-// Modals route through openModal (handled inline below). Slide-overs each wire
-// their own backdrop-close handler, so a capture-phase document listener blocks
-// that close when locked instead of editing every panel. Lock buttons are
-// injected generically by a MutationObserver, so new panels get one for free.
-//
-// State lives on `window`, NOT in file scope: app.js can be evaluated more than
-// once on a page, and a fresh file-scope object would silently reset the lock
-// while the buttons already injected into the DOM kept claiming the old state.
-// Re-using the existing object makes a re-evaluation a no-op instead.
-window.__polarisPanelLock = window.__polarisPanelLock ||
-  { state: { modal: false, slideover: false }, user: "anon", wired: false };
-var _panelLockStore = window.__polarisPanelLock;
-
-function _panelLockKey() { return "polaris.panellock." + _panelLockStore.user; }
-
-function _loadPanelLock() {
-  var st = _panelLockStore.state;
-  try {
-    var v = JSON.parse(localStorage.getItem(_panelLockKey()) || "null");
-    st.modal = !!(v && v.modal);
-    st.slideover = !!(v && v.slideover);
-  } catch (_) { st.modal = false; st.slideover = false; }
-  _syncAllLockButtons();
-}
-
-function _savePanelLock() {
-  try { localStorage.setItem(_panelLockKey(), JSON.stringify(_panelLockStore.state)); } catch (_) {}
-}
-
-function _togglePanelLock(type) {
-  _panelLockStore.state[type] = !_panelLockStore.state[type];
-  _savePanelLock();
-  _syncAllLockButtons(type);
-}
-
-// Read-only accessor for page code that has to honor the lock beyond the
-// backdrop-click rule — e.g. the asset slide-over's Edit button, which
-// normally closes the panel before opening the edit modal and must not when
-// the operator has pinned the panel open.
-function isPanelLocked(type) { return !!_panelLockStore.state[type]; }
-window.isPanelLocked = isPanelLocked;
-
-function _lockBtnSvg(locked) {
-  var attrs = 'width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
-  var body = locked
-    ? '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
-    : '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>';
-  return '<svg ' + attrs + '>' + body + '</svg>';
-}
-
-function _syncLockButton(btn) {
-  if (!btn) return;
-  var type = btn.getAttribute("data-lock-type");
-  var locked = !!_panelLockStore.state[type];
-  var noun = type === "modal" ? "dialogs" : "panels";
-  btn.innerHTML = _lockBtnSvg(locked);
-  btn.classList.toggle("locked", locked);
-  btn.style.color = locked ? "var(--color-accent)" : "";
-  btn.setAttribute("aria-pressed", locked ? "true" : "false");
-  btn.setAttribute("aria-label", locked ? ("Unlock " + noun) : ("Lock " + noun));
-  btn.title = locked
-    ? ("Locked — clicking outside won’t close " + noun + ". Saved for your account. Click to unlock.")
-    : ("Unlocked — clicking outside closes it. Click to lock all " + noun + " (saved for your account).");
-}
-
-function _syncAllLockButtons(type) {
-  var sel = ".panel-lock-btn" + (type ? '[data-lock-type="' + type + '"]' : "");
-  document.querySelectorAll(sel).forEach(_syncLockButton);
-}
-
-// Insert a lock button immediately before the close (X) button in a panel
-// header. Idempotent — re-running skips headers that already have one.
-function _ensureLockButton(headerEl, type) {
-  if (!headerEl || headerEl.querySelector(".panel-lock-btn")) return;
-  var closeBtn = type === "modal"
-    ? headerEl.querySelector(".modal-close")
-    : headerEl.querySelector(".btn-icon");
-  if (!closeBtn) return;
-  var btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-icon panel-lock-btn";
-  btn.setAttribute("data-lock-type", type);
-  // Headers are flex with space-between; margin-left:auto absorbs the free
-  // space so the lock sits flush against the X instead of centered.
-  btn.style.marginLeft = "auto";
-  btn.addEventListener("click", function (e) {
-    e.stopPropagation();
-    e.preventDefault();
-    _togglePanelLock(type);
-  });
-  closeBtn.parentNode.insertBefore(btn, closeBtn);
-  _syncLockButton(btn);
-}
-
-function _injectPanelLockButtons() {
-  document.querySelectorAll(".slideover .slideover-header-top").forEach(function (h) {
-    _ensureLockButton(h, "slideover");
-  });
-  var mh = document.querySelector("#modal-overlay .modal-header");
-  if (mh) _ensureLockButton(mh, "modal");
-}
-
-// Wire the observer (injects lock buttons into newly-created panels) + the
-// capture-phase backdrop guard for slide-overs, then load the saved preference.
-//
-// Safe to call repeatedly AND safe to call late: the listeners are wired once,
-// everything else re-syncs. Call it from the SAME ready path that waits for the
-// rest of the runtime — running before the scripts resolve leaves the observer
-// unwired and keys the preference to `anon` instead of the username.
-//
-//   initPanelLock({ user: currentUsername })
-function initPanelLock(opts) {
-  if (opts && opts.user) _panelLockStore.user = opts.user;
-  _loadPanelLock();
-  if (_panelLockStore.wired) { _injectPanelLockButtons(); return; }
-  _panelLockStore.wired = true;
-
-  // Block slide-over backdrop-close when locked. Capture phase runs before the
-  // panel's own (bubbling) overlay handler, so stopping propagation here keeps
-  // it open. e.target is the overlay itself only on a genuine backdrop click.
-  document.addEventListener("click", function (e) {
-    var t = e.target;
-    if (t && t.classList && t.classList.contains("slideover-overlay") && _panelLockStore.state.slideover) {
-      e.stopPropagation();
-      // Same glow/bloom the modal X gives on an off-click while locked — flash
-      // this slide-over's close button (the btn-icon that isn't the lock).
-      var closeBtn = t.querySelector(".slideover-header-top .btn-icon:not(.panel-lock-btn)");
-      flashModalCloseBtn(closeBtn);
-    }
-  }, true);
-
-  if (window.MutationObserver) {
-    var obs = new MutationObserver(function (muts) {
-      for (var i = 0; i < muts.length; i++) {
-        var added = muts[i].addedNodes;
-        for (var j = 0; j < added.length; j++) {
-          var n = added[j];
-          if (n.nodeType !== 1) continue;
-          var isOverlay = n.classList && (n.classList.contains("slideover-overlay") || n.classList.contains("modal-overlay"));
-          if (isOverlay || (n.querySelector && n.querySelector(".slideover-overlay, .modal-overlay"))) {
-            _injectPanelLockButtons();
-            return;
-          }
-        }
-      }
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
-  }
-  _injectPanelLockButtons();
-}
-if (typeof window !== "undefined") window.initPanelLock = initPanelLock;
+// ─── Panel lock ─────────────────────────────────────────────────────────────
+// Lives in public/js/panel-lock.js (loaded before this file on every page,
+// and on the /dash wallboard, which has no app.js): initPanelLock,
+// isPanelLocked, _ensureLockButton, _injectPanelLockButtons.
 
 /**
  * Keep `tr.selected` in step with the row checkboxes under `scope` (a tbody,
@@ -4042,7 +3859,7 @@ function openModal(title, bodyHTML, footerHTML, options) {
       if (e.target === overlay) {
         // Locked → keep the dialog open (flash the X as a hint); unlocked →
         // an off-click dismisses it. See "Panel lock" above.
-        if (_panelLockStore.state.modal) {
+        if (typeof isPanelLocked === "function" && isPanelLocked("modal")) {
           flashModalCloseBtn(overlay.querySelector(".modal-close"));
         } else {
           closeModal();
@@ -4091,8 +3908,10 @@ function openModal(title, bodyHTML, footerHTML, options) {
   overlay.querySelector(".modal-footer").innerHTML = footerHTML || "";
   var slideoverOpen = !!document.querySelector(".slideover-overlay.open");
   overlay.classList.toggle("above-slideover", slideoverOpen);
-  initPanelLock();
-  _injectPanelLockButtons();
+  if (typeof initPanelLock === "function") {
+    initPanelLock();
+    _injectPanelLockButtons();
+  }
   // Remember what had focus so closeModal can restore it; trap Tab + Escape
   // inside the dialog while it's open.
   _modalReturnFocus = document.activeElement;
@@ -4128,8 +3947,8 @@ function closeModal() {
     try { _modalReturnFocus.focus(); } catch (_) { /* element gone */ }
   }
   _modalReturnFocus = null;
-  if (_modalFlashResetTimer) clearTimeout(_modalFlashResetTimer);
-  _modalFlashLevel = 0;
+  if (typeof _modalFlashResetTimer !== "undefined" && _modalFlashResetTimer) clearTimeout(_modalFlashResetTimer);
+  if (typeof _modalFlashLevel !== "undefined") _modalFlashLevel = 0;
 }
 
 // ─── Row context menu ─────────────────────────────────────────────────────────
@@ -5569,13 +5388,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 
   // Wires the observer + backdrop guard and loads the preference under whatever
   // username the cache gave us (possibly none).
-  initPanelLock({ user: currentUsername });
+  if (typeof initPanelLock === "function") initPanelLock({ user: currentUsername });
 
   await fetchCurrentUser();
 
   // Re-key to the authoritative username, reload and re-sync the buttons. This
   // is why initPanelLock has to be idempotent rather than run-once.
-  initPanelLock({ user: currentUsername });
+  if (typeof initPanelLock === "function") initPanelLock({ user: currentUsername });
 
   // Re-render if the cache was cold OR the role name changed OR the matrix
   // shifted (an admin edited the role since the last cached snapshot).
