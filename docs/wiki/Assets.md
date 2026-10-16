@@ -54,19 +54,22 @@ IPAM network the device's primary IP sits in: the most specific
 non-deprecated network that contains it, the same one **View Lease** opens.
 Hover it for the CIDR; a device whose IP is in no recorded network shows `-`.
 
-**Tags** lists the asset's tags. Click its filter box to open a menu of every
-tag in use: tick as many as you like (the search box at the top narrows a long
-list), then click **OK** (or press Enter) to filter. Nothing changes until you
-click OK; **Cancel**, Escape or a click elsewhere leaves the filter as it was,
-and **Clear** unticks everything. **Any** (the default) shows assets carrying
-at least one ticked tag; **All** shows only assets carrying every one of them.
-Tick **(No tags)** to include untagged assets (with **Any** only). Tags match
-exactly, so ticking `prod` does not also show `production`. Once applied, the
-box reads the tag's name when one is ticked and "N selected" when several are;
-hover it to see the full list. A saved view from before the menu existed keeps
-its old text filter (the box shows it in quotes) until you pick tags and click
-OK. Sorting orders by each asset's alphabetically-first tag, and untagged
-assets sit at the bottom whichever way you sort.
+**Tags** lists the asset's tags. Click its filter box to open **Filter by
+tags**: the same coloured tag chips as the asset's Edit form, grouped by
+category and all shown at once, plus an **Other tags in use** group for tags
+that are on assets but not in the tag list (ones added by discovery, for
+example). Click chips to select as many as you like, then click **OK**.
+Nothing changes until you click OK; **Cancel**, Escape or the × leaves the
+filter as it was, and **Clear** deselects everything. **Any** (the default)
+shows assets carrying at least one selected tag; **All** shows only assets
+carrying every one of them. **Include untagged assets** adds assets with no
+tags (with **Any** only). Tags match exactly, so selecting `Production` does
+not also show `Production-DR`. Once applied, the box reads the tag's name when
+one is selected and "N selected" when several are; hover it to see the full
+list. A saved view from before this dialog existed keeps its old text filter
+(the box shows it in quotes) until you pick tags and click OK. Sorting orders
+by each asset's alphabetically-first tag, and untagged assets sit at the
+bottom whichever way you sort.
 
 ### Two columns worth explaining
 
