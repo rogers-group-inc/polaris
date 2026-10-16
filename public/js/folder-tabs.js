@@ -46,7 +46,10 @@ function syncFolderTabs(row) {
   var tr = tab ? tab.getBoundingClientRect() : null;
   var fr = tab ? (parseFloat(getComputedStyle(row).getPropertyValue("--folder-r")) || 0) : 0;
   _writeFolderGap(row, tr, fr);
-  if (body) _writeFolderGap(body, tr, fr);
+  if (body) {
+    _writeFolderGap(body, tr, fr);
+    if (row.classList.contains("folder-head-card")) _writeFolderStrip(row, body);
+  }
   var activeName = tab ? tab.getAttribute("data-tab") : null;
   row.querySelectorAll("[data-head-for]").forEach(function (el) {
     el.classList.toggle("head-off", el.getAttribute("data-head-for") !== activeName);
@@ -71,6 +74,41 @@ function _writeFolderGap(el, tr, fr) {
   }
   if (el.style.getPropertyValue("--folder-gap-r") !== r) {
     if (r) el.style.setProperty("--folder-gap-r", r); else el.style.removeProperty("--folder-gap-r");
+  }
+}
+
+// --folder-strip-l/-r on a folder card: the span its tabs occupy — the first
+// visible tab's left to the last tab's (or the + button's) right, clipped to
+// the strip's visible box (it scrolls sideways) and to the card — in px from
+// the card's left edge. The card's ring cast is cut out above its top edge
+// across this span, so it never lies over the translucent inactive tabs
+// (styles.css, .folder-card::before). Written only on change, as above.
+function _writeFolderStrip(row, body) {
+  var strip = row.querySelector(":scope > :is(.page-tabs, .table-tabs, .dashboard-tabs)");
+  var l = "", r = "";
+  if (strip) {
+    var lo = Infinity, hi = -Infinity;
+    strip.querySelectorAll(".page-tab, .table-tab, .dashboard-tab, .table-tab-add").forEach(function (t) {
+      var rc = t.getBoundingClientRect();
+      if (!rc.width) return;
+      if (rc.left < lo) lo = rc.left;
+      if (rc.right > hi) hi = rc.right;
+    });
+    if (hi > lo) {
+      var sr = strip.getBoundingClientRect();
+      var er = body.getBoundingClientRect();
+      lo = Math.max(lo, sr.left);
+      hi = Math.min(hi, sr.right);
+      lo = Math.max(0, lo - er.left);
+      hi = Math.min(er.width, hi - er.left);
+      if (hi > lo) { l = lo + "px"; r = hi + "px"; }
+    }
+  }
+  if (body.style.getPropertyValue("--folder-strip-l") !== l) {
+    if (l) body.style.setProperty("--folder-strip-l", l); else body.style.removeProperty("--folder-strip-l");
+  }
+  if (body.style.getPropertyValue("--folder-strip-r") !== r) {
+    if (r) body.style.setProperty("--folder-strip-r", r); else body.style.removeProperty("--folder-strip-r");
   }
 }
 
