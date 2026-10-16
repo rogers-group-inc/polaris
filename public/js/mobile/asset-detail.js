@@ -94,6 +94,18 @@
     return { from: to - span, to: to };
   }
 
+  // The rows a stats line may count: those at or after the window's left edge.
+  // History endpoints return lookback rows before `since` only so the line
+  // enters from the edge (lineChart keeps them off-plot) — the phone half of
+  // `_inChartWindow` in public/js/assets.js.
+  function inWindow(points, since, tsKey) {
+    var list = points || [];
+    var t0 = since == null ? NaN : +new Date(since);
+    if (!isFinite(t0)) return list;
+    var key = tsKey || "timestamp";
+    return list.filter(function (p) { return !(+new Date(p && p[key]) < t0); });
+  }
+
   // Maintenance windows for the open asset, fetched ONCE per sheet open and
   // shared by every chart on it — the phone half of `_loadMaintWindowsCache`
   // in public/js/assets.js. The lookback covers the longest range (30d) plus a
@@ -1142,7 +1154,7 @@
     // min/avg/max in one round-trip. AssetHardwareSensorSample rows carry
     // sensorName + value directly.
     var byName = Object.create(null);
-    var samples = (tempHist && tempHist.samples) || [];
+    var samples = inWindow(tempHist && tempHist.samples, tempHist && tempHist.since);
     samples.forEach(function (s) {
       if (s.value == null || !s.sensorName) return;
       var b = byName[s.sensorName] || (byName[s.sensorName] = { sum: 0, n: 0, min: Infinity, max: -Infinity });
@@ -1544,9 +1556,13 @@
       var common = { maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, outages: data.outages, height: 120 };
 
       var inPts = [], outPts = [], peak = 0, inSum = 0, inN = 0, outSum = 0, outN = 0;
+      var t0 = data.since != null ? +new Date(data.since) : NaN;
       d.forEach(function (p) {
-        if (p.inBps != null)  { inPts.push({ ts: p.ts, v: p.inBps });  inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; }
-        if (p.outBps != null) { outPts.push({ ts: p.ts, v: p.outBps }); outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; }
+        // Lookback points are drawn (off-plot, so the line enters from the
+        // edge) but never counted in the averages or the axis peak.
+        var counted = !(+new Date(p.ts) < t0);
+        if (p.inBps != null)  { inPts.push({ ts: p.ts, v: p.inBps });  if (counted) { inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; } }
+        if (p.outBps != null) { outPts.push({ ts: p.ts, v: p.outBps }); if (counted) { outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; } }
       });
       if (!inPts.length && !outPts.length) {
         tputEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
@@ -1571,8 +1587,9 @@
 
       var inE = [], outE = [], inTot = 0, outTot = 0;
       d.forEach(function (p) {
-        if (p.inErr != null)  { inE.push({ ts: p.ts, v: p.inErr });  inTot += p.inErr; }
-        if (p.outErr != null) { outE.push({ ts: p.ts, v: p.outErr }); outTot += p.outErr; }
+        var counted = !(+new Date(p.ts) < t0);
+        if (p.inErr != null)  { inE.push({ ts: p.ts, v: p.inErr });  if (counted) inTot += p.inErr; }
+        if (p.outErr != null) { outE.push({ ts: p.ts, v: p.outErr }); if (counted) outTot += p.outErr; }
       });
       if (!inE.length && !outE.length) {
         errEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
@@ -1902,7 +1919,7 @@
     var maintP = maintWindowsFor(assetId).then(function (w) { maint = w; });
     Promise.all(members.map(function (m) {
       return api.assets.perfSlaHistory(assetId, m.healthCheck, m.link, { range: range })
-        .then(function (data) { return { link: m.link, samples: (data && data.samples) || [] }; })
+        .then(function (data) { return { link: m.link, samples: (data && data.samples) || [], since: data && data.since }; })
         .catch(function () { return { link: m.link, samples: [] }; });
     })).then(function (results) { return maintP.then(function () { return results; }); }).then(function (results) {
       // Bail if the operator switched health-check/range or closed the sheet
@@ -1947,13 +1964,14 @@
       // Stats line — member count, cross-member averages, and the SLA
       // thresholds (shared across the members of a health-check).
       if (statsEl) {
-        var total = results.reduce(function (n, r) { return n + r.samples.length; }, 0);
+        var visible = results.map(function (r) { return inWindow(r.samples, r.since); });
+        var total = visible.reduce(function (n, v) { return n + v.length; }, 0);
         if (!total) {
           statsEl.textContent = "No samples in this window.";
         } else {
           function avg(key) {
             var vals = [];
-            results.forEach(function (r) { r.samples.forEach(function (s) { if (typeof s[key] === "number") vals.push(s[key]); }); });
+            visible.forEach(function (v) { v.forEach(function (s) { if (typeof s[key] === "number") vals.push(s[key]); }); });
             if (!vals.length) return null;
             return vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
           }

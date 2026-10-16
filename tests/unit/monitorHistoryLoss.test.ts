@@ -26,6 +26,9 @@ const queryRaw = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A read with a `fetchSince` also runs the row-anchored lookback query
+  // (readDetailWithAnchor); the tests here queue only the main read.
+  findMany.mockResolvedValue([]);
 });
 
 const T0 = Date.parse("2026-09-30T12:00:00Z");

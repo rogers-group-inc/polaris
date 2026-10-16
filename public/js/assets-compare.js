@@ -304,7 +304,7 @@ async function _cmpLoadIfaceUsage(ifaceData) {
       }
       tasks.push(
         api.assets.interfaceHistory(pa.asset.id, iface.name, "1h").then(function (d) {
-          var derived = _derivePerIntervalSeries((d && d.samples) || [], d);
+          var derived = _inChartWindow(_derivePerIntervalSeries((d && d.samples) || [], d), d && d.since);
           var sum = 0, n = 0;
           derived.forEach(function (x) {
             if (typeof x.inBps === "number" || typeof x.outBps === "number") { sum += (x.inBps || 0) + (x.outBps || 0); n++; }
@@ -769,7 +769,9 @@ function _renderCompareChart(container, spec) {
   series.forEach(function (s) {
     if (s.data.since != null) sinceVals.push(new Date(s.data.since).getTime());
     if (s.data.until != null) untilVals.push(new Date(s.data.until).getTime());
-    s.data.points.forEach(function (p) {
+    // Lookback points before the series' own left edge are drawn (clipped) so
+    // the line enters from the edge, but never set the axis.
+    _inChartWindow(s.data.points, s.data.since, "t").forEach(function (p) {
       boundsPts.push({ timestamp: p.t });
       // Failures carry no value and plot at the baseline, so they must never
       // widen the axis. Explicit rather than relying on `null > yPeak` being

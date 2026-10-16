@@ -10721,6 +10721,26 @@ function _chartTimeBounds(samples, since, until) {
   return { t0: t0, t1: t1 };
 }
 
+// The points a chart's stated figures describe: those at or after the visible
+// window's left edge. History endpoints return lookback rows BEFORE `since`
+// (anchored on rows — one for a gauge, two for a counter) only so the line
+// enters from the edge; the clip-path hides them from the drawing, and every
+// stats line, total and axis maximum must leave them out the same way, or a
+// figure counts a reading the operator cannot see. `tsKey` names the
+// timestamp field when it is not `timestamp`.
+function _inChartWindow(points, since, tsKey) {
+  var list = points || [];
+  if (since == null) return list;
+  var t0 = typeof since === "number" ? since : new Date(since).getTime();
+  if (!isFinite(t0)) return list;
+  var key = tsKey || "timestamp";
+  return list.filter(function (p) {
+    var v = p && p[key];
+    var t = typeof v === "number" ? v : new Date(v).getTime();
+    return !(t < t0);
+  });
+}
+
 // Vertical dashed indicator at each local-midnight inside (t0, t1). The
 // time-only tick labels on ≤24h ranges hide the day boundary, so without
 // this the reader can't tell where the calendar date changes. Beyond 4d
@@ -11075,7 +11095,7 @@ async function _loadSensorHistoryFor(assetId, sensorName, range, callOpts) {
       ];
       var sensorTierPart = _tierStatsPart(data);
       if (sensorTierPart) sensorParts.unshift(sensorTierPart);
-      _renderChartStats(stats, samples.length, sensorParts);
+      _renderChartStats(stats, _inChartWindow(samples, data.since).length, sensorParts);
     }
     // Thresholds come from the engine in °C; shift them with the series or the
     // dashed reference lines would sit at the wrong height on an °F chart.
@@ -15482,8 +15502,10 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
   try {
     var data = await api.assets.interfaceHistory(assetId, ifName, opts);
     var derived = _derivePerIntervalSeries(data.samples || [], data);
-    _renderIfaceThroughputStats(tputStats, data.samples || [], derived, data);
-    _renderIfaceErrorStats(errStats, data.samples || [], derived, data);
+    var visRaw = _inChartWindow(data.samples, data.since);
+    var visDerived = _inChartWindow(derived, data.since);
+    _renderIfaceThroughputStats(tputStats, visRaw, visDerived, data);
+    _renderIfaceErrorStats(errStats, visRaw, visDerived, data);
     // Refine the title now that we know the alias; show the operator comment
     // when present.
     var titleEl = document.getElementById("iface-panel-title");
@@ -16311,7 +16333,7 @@ async function _loadIpsecHistoryFor(assetId, tunnelName, range, callOpts) {
     var data = await api.assets.ipsecHistory(assetId, tunnelName, opts);
     var samples = data.samples || [];
     var derived = _deriveIpsecThroughput(samples, data);
-    _renderIpsecStats(stats, samples, derived, data);
+    _renderIpsecStats(stats, _inChartWindow(samples, data.since), _inChartWindow(derived, data.since), data);
     var ipsecOpts = { since: data.since, until: data.until, subject: tunnelName };
     _renderIpsecStatusChart(statusEl, samples, ipsecOpts);
     _renderIpsecBpsChart(inEl,  derived, "in",  ipsecOpts);
@@ -17070,11 +17092,12 @@ async function _loadPerfSlaForHealthCheck(assetId, hcName, members, range) {
 
 function _renderPerfSlaStats(container, series, data, subject) {
   if (!container) return;
-  var total = series.reduce(function (n, s) { return n + s.samples.length; }, 0);
+  var visible = series.map(function (s) { return _inChartWindow(s.samples, data && data.since); });
+  var total = visible.reduce(function (n, v) { return n + v.length; }, 0);
   if (!total) { _renderChartStats(container, 0, []); return; }
   function avg(key) {
     var vals = [];
-    series.forEach(function (s) { s.samples.forEach(function (x) { if (typeof x[key] === "number") vals.push(x[key]); }); });
+    visible.forEach(function (v) { v.forEach(function (x) { if (typeof x[key] === "number") vals.push(x[key]); }); });
     if (!vals.length) return null;
     return vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
   }
@@ -17639,6 +17662,7 @@ async function _loadAllStorageForAsset(assetId, mountPaths, range) {
 
 function _renderStorageStats(container, samples, data, view) {
   if (!container) return;
+  samples = _inChartWindow(samples, data && data.since);
   var latest = samples.length ? samples[samples.length - 1] : null;
   var parts;
   if (view === "bytes") {
@@ -23304,8 +23328,10 @@ async function _loadProcessHistoryFor(assetId, name, range) {
       .map(function (s) { return { timestamp: s.timestamp, value: s.cpuPct }; });
     var mem = samples.filter(function (s) { return s.memRssBytes != null; })
       .map(function (s) { return { timestamp: s.timestamp, value: Number(s.memRssBytes) / 1048576 }; });
-    if (cpuStats) _renderChartStats(cpuStats, cpu.length, [{ label: "Max", value: cpu.length ? Math.max.apply(null, cpu.map(function (p) { return p.value; })).toFixed(1) + "%" : "—" }]);
-    if (memStats) _renderChartStats(memStats, mem.length, [{ label: "Max", value: mem.length ? Math.max.apply(null, mem.map(function (p) { return p.value; })).toFixed(0) + " MB" : "—" }]);
+    var cpuVis = _inChartWindow(cpu, data.since);
+    var memVis = _inChartWindow(mem, data.since);
+    if (cpuStats) _renderChartStats(cpuStats, cpuVis.length, [{ label: "Max", value: cpuVis.length ? Math.max.apply(null, cpuVis.map(function (p) { return p.value; })).toFixed(1) + "%" : "—" }]);
+    if (memStats) _renderChartStats(memStats, memVis.length, [{ label: "Max", value: memVis.length ? Math.max.apply(null, memVis.map(function (p) { return p.value; })).toFixed(0) + " MB" : "—" }]);
     // No samples in range: per-process telemetry is only collected for pinned
     // programs, so an empty series almost always means "not pinned yet" or
     // "pinned moments ago." Render a hint rather than an empty chart box.
@@ -27137,7 +27163,7 @@ function _renderPathCharts(check, data) {
   if (lat) _renderPathLatencyChart(lat, samples, copts, check);
   if (av) _renderPathAvailabilityChart(av, samples, copts);
   if (stc) _renderPathStatusStrip(stc, samples, copts);
-  var ok = samples.filter(function (s) { return s.ok; });
+  samples = _inChartWindow(samples, data && data.since);
   var lats = samples.map(function (s) { return s.latencyMs; }).filter(function (v) { return typeof v === "number"; });
   var avg = lats.length ? lats.reduce(function (x, y) { return x + y; }, 0) / lats.length : null;
   var count = samples.reduce(function (n, s) { return n + (s.sampleCount || 1); }, 0);
