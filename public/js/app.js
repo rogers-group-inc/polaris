@@ -738,7 +738,7 @@ const NAV_ITEMS = [
   // Agent-run path checks. Gate in lockstep with pageRequiredPermission
   // in src/app.ts.
   { href: "/path-monitor.html", label: "Path Monitor", icon: "route", perm: ["pathChecks", "read"] },
-  { href: "/ipam.html",       label: "IPAM",         icon: "blocks", anyPerm: [["ipBlocks", "read"], ["subnets", "read"]] },
+  { href: "/ipam.html",       label: "IP Management", icon: "blocks", anyPerm: [["ipBlocks", "read"], ["subnets", "read"]] },
   { href: "/assets.html",         label: "Assets",       icon: "monitor", perm: ["assets", "read"] },
   { href: "/events.html",         label: "Events",       icon: "activity", perm: ["events", "read"] },
   { href: "/automations.html", label: "Automations", icon: "bot", perm: ["automationManagement", "read"] },
