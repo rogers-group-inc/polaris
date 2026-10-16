@@ -47,8 +47,7 @@ beforeAll(() => {
   g.isAdmin = () => admin;
   g.openModal = () => {};
   g.closeModal = () => {};
-  g.tagColorCss = () => "";
-  g.tagColorTint = () => "";
+  g.tagHueStyle = (c: unknown) => (c ? "--hue: " + String(c) : "");
   g.raiseSlideover = () => {};
   g.wireSlideoverEscape = () => {};
   g.formatBytes = (b: unknown) => String(b);
@@ -71,6 +70,15 @@ function render(html: string) {
 }
 
 describe("tag registry chip", () => {
+  it("paints a coloured tag as a hue pill and leaves an uncoloured one plain", () => {
+    const coloured = render(chip({ id: "t1", name: "prod", color: "#ff0000" }, false));
+    expect(coloured.classList.contains("hue-pill")).toBe(true);
+    expect(coloured.getAttribute("style")).toBe("--hue: #ff0000");
+    const plain = render(chip({ id: "t1", name: "prod" }, false));
+    expect(plain.classList.contains("hue-pill")).toBe(false);
+    expect(plain.getAttribute("style")).toBeNull();
+  });
+
   it("gives an operator tag Edit and Delete for an admin", () => {
     const el = render(chip({ id: "t1", name: "prod" }, true));
     expect(el.querySelector(".tag-chip-edit")).not.toBeNull();

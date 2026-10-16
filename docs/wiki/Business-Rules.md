@@ -2569,3 +2569,19 @@ breaks the containment, the region goes back under its smallest container
 until the shape is restored. On the map, smaller regions always draw on top
 of the regions around them, so clicking one picks the inner region.
 ([Device Map](Device-Map#regions) has the details.)
+
+### Rule 122
+
+**A group firmware upgrade covers one FortiGate and the devices behind it, and
+runs from the bottom up.** Every selected device must sit under the same
+FortiGate, and only one group per FortiGate can be scheduled or running.
+Devices already on the newest image, or with no image in the Repository, are
+dropped from the schedule. Booking a group cancels a device's own scheduled
+upgrade, but only once you confirm it. Devices upgrade deepest first (access
+points, then switches, then the FortiGate), never beside a device above, below
+or paired with them. A device upgrades only after everything behind it
+finished cleanly; a failure skips only the devices above it. Health is checked
+just before each device starts: an unhealthy device is skipped, the next one
+starts, and the devices above it still upgrade. One summary email lists
+failures, health skips, devices skipped above a failure, and what was dropped.
+([Assets](Assets#group-firmware-upgrades) has the details.)

@@ -2517,7 +2517,7 @@ function generateEventCsv(events) {
     }
     var o = item.raw;
     PolarisPanels.openAsset(o.assetId, {
-      openBooking: { kind: item.kind, scheduleId: o.scheduleId, runId: o.runId, status: o.status },
+      openBooking: { kind: item.kind, scheduleId: o.scheduleId, runId: o.runId, status: o.status, groupId: o.groupId || null },
     });
   }
 

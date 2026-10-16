@@ -1425,6 +1425,30 @@ input, select, textarea { font-family: inherit; }
 .ae-tag-row { padding: 8px 0; }
 .ae-tag { position: relative; cursor: pointer; }
 .ae-tag input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+/* Stored-colour tag chips — the mobile twin of styles.css `.hue-pill` (read the
+   reasoning there). The chip sets only `--hue`; the label keeps the tag's hue
+   but has its lightness clamped into a band that reads on the live theme, so a
+   white or yellow tag survives daylight and a navy or black one survives dark. */
+:root { --hue-label-l-min: 0.78; --hue-label-l-max: 1; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) {
+  --hue-label-l-min: 0; --hue-label-l-max: 0.5;
+}
+.chip.hue-pill {
+  --hue-label: color-mix(in srgb, var(--hue) 55%, var(--md-on-surface));
+}
+@supports (color: oklch(from red l c h)) {
+  .chip.hue-pill { --hue-label: oklch(from var(--hue) clamp(var(--hue-label-l-min), l, var(--hue-label-l-max)) c h); }
+}
+.chip.hue-pill.hue-strong {
+  background: color-mix(in srgb, var(--hue) 27%, transparent);
+  border-color: var(--hue-label);
+  color: var(--hue-label);
+}
+.chip.hue-pill.hue-off {
+  background: color-mix(in srgb, var(--hue) 7%, transparent);
+  border-color: color-mix(in srgb, var(--hue-label) 25%, transparent);
+  color: color-mix(in srgb, var(--hue-label) 70%, transparent);
+}
 .ae-streams { padding: 0 0 16px; }
 .ae-agent { padding: 12px 16px; margin: 4px 0 16px; }
 .ae-agent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }

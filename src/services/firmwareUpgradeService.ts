@@ -124,11 +124,13 @@ export interface UpgradeAvailability {
   primaryVersion: string | null;
 }
 
-const ASSET_SELECT = {
+export const FIRMWARE_ASSET_SELECT = {
   id: true, hostname: true, ipAddress: true, dnsName: true, serialNumber: true, manufacturer: true, assetType: true,
   model: true, osVersion: true, status: true, monitored: true, monitorStatus: true, dependencySuppressed: true,
   discoveredByIntegrationId: true, fortinetTopology: true,
 } as const;
+const ASSET_SELECT = FIRMWARE_ASSET_SELECT;
+export type FirmwareAssetRow = AssetRow;
 type AssetRow = {
   id: string; hostname: string | null; ipAddress: string | null; dnsName: string | null; serialNumber: string | null;
   manufacturer: string | null; assetType: string; model: string | null; osVersion: string | null; status: string;
@@ -184,7 +186,7 @@ function assetLabel(a: { hostname: string | null; ipAddress: string | null }): s
 }
 
 /** The gates that read the asset's STATE (not its images). Empty = clear to flash. */
-function healthBlockers(a: AssetRow): string[] {
+export function healthBlockers(a: AssetRow): string[] {
   const out: string[] = [];
   if ((UNMONITORABLE_STATUSES as readonly string[]).includes(a.status)) out.push(`the asset is ${a.status}`);
   if (a.monitored && a.monitorStatus && ["down", "warning", "recovering"].includes(a.monitorStatus)) {
@@ -329,6 +331,12 @@ export interface StartUpgradeInput {
    * the runner is scheduled, and its recipients are emailed when the run ends.
    */
   scheduleId?: string;
+  /**
+   * The group-upgrade member this start flashes (rule 122). Linked to the run
+   * before the runner is scheduled; when the run ends the group executor is
+   * told, so the next device starts without waiting for the job's tick.
+   */
+  groupMemberId?: string;
   /** Tests: a fake device and short clocks. */
   overrides?: { scheme?: "https" | "http"; port?: number; timeouts?: Partial<FirmwareEngineTimeouts> };
 }
@@ -379,6 +387,40 @@ export async function checkSchedulableUpgrade(assetId: string, imageId: string):
   return { approved, fromVersion: a.osVersion, warnings: healthBlockers(a) };
 }
 
+/** Why a device a group upgrade selected will not be flashed (rule 122). */
+export type GroupDropKind = "current" | "no-image" | "unsupported" | "no-serial" | "no-version" | "ha-member" | "no-address" | "no-credential";
+
+export type GroupCandidateAssessment =
+  | { ok: true; image: FirmwareImageRow; fromVersion: string | null; warnings: string[] }
+  | { ok: false; kind: GroupDropKind; reason: string };
+
+/**
+ * What a GROUP upgrade (rule 122) asks of each selected device, at booking and
+ * again just before its flash: the booking gates (`checkSchedulableUpgrade`)
+ * without throwing, targeting the model's PRIMARY image only — a group never
+ * offers the backup. Health is a warning here; the executor takes it live.
+ */
+export async function assessGroupCandidate(a: AssetRow): Promise<GroupCandidateAssessment> {
+  const engine = engineFor(a.manufacturer, a.assetType, a.serialNumber);
+  if (!engine) return { ok: false, kind: "unsupported", reason: `No upgrade engine for ${a.manufacturer ?? "this manufacturer"} ${typeWord(a.assetType)}` };
+  const ha = haClusterOf(a);
+  if (ha) return { ok: false, kind: "ha-member", reason: capitalize(ha) };
+  if (!a.ipAddress && !a.dnsName) return { ok: false, kind: "no-address", reason: "The asset has no IP address to reach the web UI at" };
+  const candidates = await findUpgradeCandidates(a);
+  if (candidates.reason !== "ok" || !candidates.primary) {
+    const r = reasonFor(candidates, a);
+    const kind: GroupDropKind = r.state === "up-to-date" ? "current"
+      : r.state === "no-serial" ? "no-serial"
+      : r.state === "no-version" ? "no-version"
+      : r.state === "unsupported" ? "unsupported"
+      : "no-image";
+    return { ok: false, kind, reason: r.reason };
+  }
+  const credential = await resolveFirmwareCredential(a, { revealSecrets: false });
+  if (!credential) return { ok: false, kind: "no-credential", reason: `${capitalize(noLoginPhrase(a))} — bind one under Server Settings → Repository` };
+  return { ok: true, image: candidates.primary, fromVersion: a.osVersion, warnings: healthBlockers(a) };
+}
+
 /**
  * Rule 112: record the device login a flash on this asset signs in with,
  * aimed at the asset's address — for a flash started now ("firmware.flash")
@@ -414,6 +456,16 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
 
   const cred = (await resolveFirmwareCredential(a, { revealSecrets: true })) as ResolvedFirmwareCredential | null;
   if (!cred) throw new AppError(400, `${capitalize(noLoginPhrase(a))} — bind one under Server Settings → Repository`);
+
+  // Rule 122: while this device's group upgrade is running, only the group
+  // flashes it — a click or a single-device booking would race its ordering.
+  if (!input.groupMemberId) {
+    const inGroup = await prisma.firmwareGroupMember.findFirst({
+      where: { assetId: a.id, state: { in: ["planned", "waiting", "running"] }, group: { status: "running" } },
+      select: { group: { select: { scheduledFor: true } } },
+    });
+    if (inGroup) throw new AppError(409, `This device is in a group firmware upgrade that is running now (scheduled for ${inGroup.group.scheduledFor.toISOString()}) — the group flashes it`);
+  }
 
   if (await activeRunFor(a.id)) throw new FirmwareRunConflictError("A firmware upgrade is already running on this device");
   const conflicts = await topologyConflicts(a);
@@ -453,6 +505,10 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     await prisma.firmwareUpgradeSchedule.update({ where: { id: input.scheduleId }, data: { runId: run.id } })
       .catch((err) => logger.warn({ err, runId: run.id, scheduleId: input.scheduleId }, "firmware upgrade: could not link the run to its booking"));
   }
+  if (input.groupMemberId) {
+    await prisma.firmwareGroupMember.update({ where: { id: input.groupMemberId }, data: { runId: run.id, state: "running", startedAt: new Date(), detail: null } })
+      .catch((err) => logger.warn({ err, runId: run.id, groupMemberId: input.groupMemberId }, "firmware upgrade: could not link the run to its group member"));
+  }
 
   await logEvent({
     action: "firmware.upgrade_started",
@@ -461,8 +517,8 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     resourceName: assetLabel(a),
     actor: input.actor,
     level: "info",
-    message: `${input.scheduleId ? "Scheduled firmware upgrade" : "Firmware upgrade"} started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`,
-    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role, scheduleId: input.scheduleId ?? null },
+    message: `${input.groupMemberId ? "Group firmware upgrade" : input.scheduleId ? "Scheduled firmware upgrade" : "Firmware upgrade"} started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`,
+    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role, scheduleId: input.scheduleId ?? null, groupMemberId: input.groupMemberId ?? null },
   });
 
   // Best-effort, like takeAgentHold: a hold failure must never be the reason a
@@ -483,9 +539,20 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
       // 93) — after the terminal row and Event are written, whatever they say.
       .finally(() => {
         if (input.scheduleId) void notifyScheduledRun(run.id);
+        if (input.groupMemberId) void advanceGroupAfterRun(run.id);
       });
   });
   return summarize(run);
+}
+
+/** Lazy for the same reason: the group service imports this one. */
+async function advanceGroupAfterRun(runId: string): Promise<void> {
+  try {
+    const { advanceGroupForRun } = await import("./firmwareGroupService.js");
+    await advanceGroupForRun(runId);
+  } catch (err) {
+    logger.warn({ err, runId }, "firmware upgrade: the group upgrade could not be advanced after the run (the next job tick will)");
+  }
 }
 
 /** Lazy, like requestRediscover: the schedule service imports this one. */

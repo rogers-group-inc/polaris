@@ -158,6 +158,21 @@ async function getOwnSchedule(assetId: string, scheduleId: string): Promise<Sche
 
 // ─── Writes ───────────────────────────────────────────────────────────────────
 
+/**
+ * Rule 122: a device in a pending or running group upgrade is flashed by the
+ * group — a single-device booking beside it would race the group's ordering
+ * (and booking the group cancelled any such booking in the first place).
+ */
+async function assertNotInGroup(assetId: string): Promise<void> {
+  const m = await prisma.firmwareGroupMember.findFirst({
+    where: { assetId, state: { in: ["planned", "waiting", "running"] }, group: { status: { in: ["pending", "running"] } } },
+    select: { group: { select: { scheduledFor: true, status: true } } },
+  });
+  if (m) {
+    throw new AppError(409, `This device is in a group firmware upgrade ${m.group.status === "running" ? "that is running now" : `scheduled for ${m.group.scheduledFor.toISOString()}`} — change or cancel the group instead`);
+  }
+}
+
 export interface CreateScheduleInput {
   assetId: string;
   imageId: string;
@@ -170,6 +185,7 @@ export interface CreateScheduleInput {
 export async function createSchedule(input: CreateScheduleInput): Promise<ScheduleSummary & { warnings: string[] }> {
   assertSchedulableTime(input.scheduledFor, input.now);
   const recipients = normalizeRecipients(input.notifyEmails);
+  await assertNotInGroup(input.assetId);
   const { approved, fromVersion, warnings } = await checkSchedulableUpgrade(input.assetId, input.imageId);
   if (await prisma.firmwareUpgradeSchedule.findFirst({ where: { assetId: input.assetId, status: "pending" }, select: { id: true } })) {
     throw new AppError(409, "An upgrade is already scheduled for this device — change or cancel it");
@@ -217,6 +233,7 @@ export interface UpdateScheduleInput {
 export async function updateSchedule(input: UpdateScheduleInput): Promise<ScheduleSummary & { warnings: string[] }> {
   const current = await getOwnSchedule(input.assetId, input.scheduleId);
   if (current.status !== "pending") throw new AppError(409, `This upgrade is already ${current.status} and can no longer be changed`);
+  await assertNotInGroup(input.assetId);
   const data: { scheduledFor?: Date; notifyEmails?: string[]; imageId?: string; toVersion?: string; updatedBy: string } = { updatedBy: input.actor };
   let warnings: string[] = [];
   if (input.scheduledFor) {

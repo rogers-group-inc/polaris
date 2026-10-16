@@ -72,6 +72,8 @@ vi.mock("../../src/db.js", () => ({
       count: vi.fn(async () => h.state.images.length),
     },
     firmwareCredentialBinding: { findMany: vi.fn(async () => h.state.bindings) },
+    // Rule 122: a click is refused while the device's group runs — no group here.
+    firmwareGroupMember: { findFirst: vi.fn(async () => null), update: vi.fn(async () => ({})) },
     credential: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id, name: "cred", type: "http", config: h.state.credentialConfig, createdBy: null, createdAt: new Date(), updatedAt: new Date() })) },
     firmwareUpgradeRun: {
       findFirst: vi.fn(async (args: { where: { status?: { in?: string[]; notIn?: string[] } } }) => (args.where.status?.in ? null : null)),
@@ -191,6 +193,18 @@ describe("startFirmwareUpgrade — the gates, in order", () => {
     await start();
     expect(heldBeforeReturn).toBe(true);
     expect(h.engineRun).not.toHaveBeenCalled(); // setImmediate has not fired yet
+  });
+
+  it("refuses a click while the device's group upgrade is running; the group's own start passes and is linked (rule 122)", async () => {
+    const { prisma } = await import("../../src/db.js");
+    const gm = (prisma as unknown as { firmwareGroupMember: { findFirst: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> } }).firmwareGroupMember;
+    gm.findFirst.mockResolvedValueOnce({ group: { scheduledFor: new Date("2026-10-17T02:00:00Z") } });
+    await expect(start()).rejects.toThrow(/group firmware upgrade that is running now/);
+    expect(h.state.created).toHaveLength(0);
+    // The group's own start skips that read entirely.
+    const run = await startFirmwareUpgrade({ assetId: "asset-1", imageId: "img-primary", actor: "alice", groupMemberId: "member-1" });
+    expect(run.status).toBe("queued");
+    expect(gm.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "member-1" }, data: expect.objectContaining({ runId: run.id, state: "running" }) }));
   });
 
   it("refuses a manufacturer / type / serial no engine covers", async () => {
