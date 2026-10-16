@@ -74,16 +74,6 @@
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
           </button>
-          <button type="button" class="btn-icon" id="topology-legend" aria-label="Toggle legend" title="Toggle legend" style="line-height:0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="6" cy="6" r="2"/>
-              <line x1="11" y1="6" x2="21" y2="6"/>
-              <circle cx="6" cy="12" r="2"/>
-              <line x1="11" y1="12" x2="21" y2="12"/>
-              <circle cx="6" cy="18" r="2"/>
-              <line x1="11" y1="18" x2="21" y2="18"/>
-            </svg>
-          </button>
           <button type="button" class="btn-icon" id="topology-save-layout" aria-label="Save layout" title="Save this layout as a restore point" style="line-height:0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
@@ -130,6 +120,14 @@
             </div>
           </div>
           <aside id="topology-info" class="topology-info"></aside>
+          <!-- The graph / details edge: hover highlights it and shows a centred
+               arrow that hides the details pane (map.js); while hidden, the
+               arrow stays at the right edge, pointing left, to bring it back. -->
+          <button type="button" id="topology-info-toggle" class="topology-edge"
+                  aria-controls="topology-info" aria-expanded="true"
+                  aria-label="Hide details" title="Hide details">
+            <span class="topology-edge-arrow" aria-hidden="true"></span>
+          </button>
         </div>
       </div>
     </div>
@@ -155,6 +153,7 @@
   <script src="/js/brand-logo.js"></script>
   <script src="/js/assistant-markdown.js"></script>
   <script src="/js/assistant.js"></script>
+  <script src="/js/legend-toggle.js"></script>
   <script src="/js/app.js"></script>
   <span id="polaris-nav-ready" hidden></span>
   <!-- assets.js + its UI deps power the canonical asset details slide-in

@@ -409,10 +409,86 @@
 }
 
 .topology-layout {
+  --topology-info-w: 320px;
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) var(--topology-info-w);
   height: 80vh;
   min-height: 520px;
+  transition: grid-template-columns 0.2s ease;
+}
+/* Details pane hidden (#topology-info-toggle, map.js): the graph takes the
+   whole width. */
+.topology-layout.info-collapsed { grid-template-columns: minmax(0, 1fr) 0px; }
+.topology-layout.info-collapsed > .topology-info { overflow: hidden; padding: 0; border: 0; visibility: hidden; }
+.topology-layout.info-collapsed > .topology-graph { border-right: 0; }
+/* The graph / details edge. A transparent full-height strip centred on the
+   boundary: hovering it lights the edge and shows the arrow chip at its
+   middle — pointing right (hide) — and while the pane is hidden the chip
+   stays visible at the right edge, pointing left (show). */
+.topology-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--topology-info-w) - 7px);
+  width: 14px;
+  z-index: 6;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: right 0.2s ease;
+}
+.topology-edge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 6px;
+  width: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.topology-edge-arrow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 40px;
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-accent);
+  background: var(--color-bg-primary);
+  box-shadow: var(--shadow-lift);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+/* A chevron, right-pointing; flipped when the pane is hidden. */
+.topology-edge-arrow::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-top: 2px solid var(--color-accent);
+  border-right: 2px solid var(--color-accent);
+  transform: translate(-65%, -50%) rotate(45deg);
+}
+.topology-edge:hover::before,
+.topology-edge:focus-visible::before,
+.topology-edge:hover .topology-edge-arrow,
+.topology-edge:focus-visible .topology-edge-arrow { opacity: 1; }
+.topology-edge:focus-visible { outline: none; }
+/* Clear of the modal's right edge: the 22px chip overhangs the 14px strip. */
+.topology-layout.info-collapsed > .topology-edge { right: 10px; }
+.topology-layout.info-collapsed > .topology-edge .topology-edge-arrow { opacity: 1; }
+.topology-layout.info-collapsed > .topology-edge .topology-edge-arrow::before {
+  transform: translate(-35%, -50%) rotate(-135deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .topology-layout, .topology-edge { transition: none; }
 }
 .topology-graph {
   position: relative;
@@ -500,10 +576,12 @@
   color: var(--color-accent);
 }
 
+/* Bottom-left of the graph, like every map legend; it collapses into its own
+   button there (legend-toggle.js) and is no longer dragged. */
 .topology-legend {
   position: absolute;
   bottom: 12px;
-  right: 12px;
+  left: 12px;
   z-index: 5;
   width: 260px;
   max-height: calc(100% - 24px);
@@ -526,7 +604,7 @@
   justify-content: space-between;
   padding: 6px 10px;
   border-bottom: 1px solid var(--color-border);
-  cursor: move;
+  cursor: default;
 }
 .topology-legend-title { font-weight: 600; font-size: 0.85rem; }
 .topology-legend-body {
@@ -661,6 +739,9 @@
     height: auto;
     min-height: 0;
   }
+  /* Stacked, the details pane is below the graph: there is no side edge. */
+  .topology-edge { display: none; }
+  .topology-layout.info-collapsed > .topology-info { visibility: visible; overflow: visible; padding: revert; }
   .topology-graph {
     height: 60vh;
     border-right: 0;

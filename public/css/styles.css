@@ -2240,6 +2240,7 @@ html[data-page-top-curtain]::after {
 .page-header-actions .btn:not(.btn-icon):not(:disabled),
 .page-actions-row .btn:not(.btn-icon):not(:disabled),
 .appmap-toolbar-actions .btn:not(.btn-icon):not(:disabled),
+.appmap-toolbar-top .btn:not(.btn-icon):not(:disabled),
 .table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift); }
 /* A page's own action buttons on a row of their own (Assets: between the
    selection bar and the tab row), right aligned. */
@@ -2253,9 +2254,16 @@ html[data-page-top-curtain]::after {
 }
 /* Buttons moved into a tab row from a page header take the row's small size
    (the list controls beside them are .btn-sm), so the row keeps one height. */
-.table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) {
+.table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon):not(.btn-primary) {
   padding: 0.3rem 0.6rem;
   font-size: 0.78rem;
+}
+/* …except a page's primary Add button, which keeps the full .btn size on
+   every page — the size + Add Asset(s) has on its own row (IPAM's carry
+   .btn-sm in their templates, so this restates .btn's geometry). */
+.table-head-row .table-head-controls .btn.btn-primary {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
 }
 .table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) svg,
 .table-head-row .table-head-controls .btn.btn-glyph::before { width: 14px; height: 14px; }
@@ -2352,6 +2360,56 @@ html[data-page-top-curtain]::after {
 }
 .btn.btn-icon-only svg { margin: 0 !important; width: 16px; height: 16px; }
 .btn.btn-sm.btn-icon-only svg { width: 14px; height: 14px; }
+/* Collapsible map legend (public/js/legend-toggle.js): collapsed, the legend
+   panel drops its chrome and rows and shows only its legend-icon button, in
+   the legend's own spot; open, the button hides and a × (the panel's own, or
+   an added .legend-toggle-head) collapses it again. !important because each
+   legend's own rules (map.css, appmap.css, .sitemap-legend) set its chrome. */
+.legend-collapsible.legend-collapsed {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+.legend-collapsible.legend-collapsed > :not(.legend-toggle-open) { display: none !important; }
+.legend-collapsible:not(.legend-collapsed) > .legend-toggle-open { display: none !important; }
+.legend-collapsible > .legend-toggle-open { pointer-events: auto; box-shadow: var(--shadow-lift); }
+.legend-toggle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+/* The legends' × wears the modal X's hover — red, tinted, grown — but its
+   LOOK only, like .dashboard-widget-remove: it does not carry .modal-close,
+   so the off-click flash/bloom (flashModalCloseBtn in app.js) never reaches
+   it. #appmap-legend-close is the Application Map legend's own ×. */
+.legend-toggle-close,
+#appmap-legend-close {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  opacity: 0.75;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, transform 0.15s, opacity 0.15s;
+}
+.legend-toggle-close:hover,
+.legend-toggle-close:focus-visible,
+#appmap-legend-close:hover,
+#appmap-legend-close:focus-visible {
+  opacity: 1;
+  color: #ff4d6d;
+  background: rgba(255,77,109,0.25);
+  transform: scale(1.25);
+}
 /* inline-flex above beats the UA's [hidden] rule (Application Map's Reset
    layout ships hidden until the role may write a layout). */
 .btn.btn-icon-only[hidden],
@@ -2585,6 +2643,9 @@ html[data-page-top-curtain]::after {
      select is the tallest), so their contents — each centred in its own
      cluster — line up across clusters on the bottom-aligned row. */
   min-height: 39px;   /* the Show N select's 32px + the 7px bottom padding */
+  /* Each cluster centres its contents in that height, so the 30px Add
+     buttons and the 24px small ones share a centre line. */
+  align-items: center;
   display: flex;
   align-items: center;
   gap: 6px;

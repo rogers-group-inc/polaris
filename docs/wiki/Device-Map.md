@@ -153,8 +153,14 @@ Drag anything to override the layout; the positions are saved per site.
 | **Reset layout** | a menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
 | **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
 | **Fullscreen** | |
-| **Legend** | |
 | **Export** | screenshot, PDF or Visio — see below |
+
+The **legend** sits at the graph's bottom left as a small button; click it to
+open the legend, and its **×** folds it back. The edge between the graph and
+the details pane hides the pane: hover the edge and click the arrow, and the
+arrow at the right edge brings the pane back. Both remember your choice in
+this browser. The Device Map's own status legend, the Application Map's and
+the Status Map widget's work the same way.
 
 **Save** is an explicit checkpoint that writes the live layout **and** the
 restore point in one statement, so a checkpoint can never be of a layout the

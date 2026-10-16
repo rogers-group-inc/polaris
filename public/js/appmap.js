@@ -161,7 +161,7 @@
         hideExternal: !!(document.getElementById("appmap-hide-external") || {}).checked,
         hideWorkstations: !!(document.getElementById("appmap-hide-workstations") || {}).checked,
         fadeStale: fadeStaleEnabled(),
-        legend: !!(legend && !legend.hidden),
+        legend: !!(legend && !legend.classList.contains("legend-collapsed")),
         portLegendCollapsed: portLegendCollapsed(),
         pills: filterPills,
         hiddenPorts: hiddenPorts,
@@ -201,7 +201,7 @@
     var fs = document.getElementById("appmap-fade-stale");
     if (fs && typeof p.fadeStale === "boolean") fs.checked = p.fadeStale;
     var legend = document.getElementById("appmap-legend");
-    if (legend && p.legend === true) legend.hidden = false;
+    if (legend && legend.__legendToggle && p.legend === true) legend.__legendToggle.setExpanded(true);
     if (p.portLegendCollapsed === true) setPortLegendCollapsed(true);
     hiddenPorts = cleanHiddenPorts(p.hiddenPorts);
   }
@@ -1440,12 +1440,17 @@
     // The discovery-rules list (formerly a Discovery button + modal here) lives
     // on Integrations → Polaris Agent now; the empty-state copy points there.
 
-    var legendBtn = document.getElementById("appmap-legend-btn");
+    // The legend collapses into its own button in the graph's top-left
+    // corner (legend-toggle.js), reusing its header × to collapse it again.
+    // Closed by default; the open state is a per-user pref (savePrefs).
     var legend = document.getElementById("appmap-legend");
-    if (legendBtn && legend) {
-      legendBtn.addEventListener("click", function () { legend.hidden = !legend.hidden; savePrefs(); });
-      var legendClose = document.getElementById("appmap-legend-close");
-      if (legendClose) legendClose.addEventListener("click", function () { legend.hidden = true; savePrefs(); });
+    if (legend && window.PolarisLegendToggle) {
+      var prefsAtWire = readPrefs() || {};
+      window.PolarisLegendToggle.attach(legend, {
+        closeButton: document.getElementById("appmap-legend-close"),
+        expanded: prefsAtWire.legend === true,
+        onChange: savePrefs,
+      });
     }
     var portLegendBtn = document.getElementById("appmap-port-legend-toggle");
     if (portLegendBtn) {

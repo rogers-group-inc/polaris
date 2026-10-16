@@ -626,6 +626,13 @@
         '</div>' +
         '<div class="sitemap-radar-clock"></div>';
       el.appendChild(controls);
+      // The legend collapses into its own button in its corner
+      // (legend-toggle.js; loaded on the Dashboard and /dash).
+      if (window.PolarisLegendToggle) {
+        window.PolarisLegendToggle.attach(controls.querySelector(".sitemap-legend"), {
+          title: "Status", storageKey: "polaris.legend.siteMap",
+        });
+      }
       var clockEl = controls.querySelector(".sitemap-radar-clock");
       var btnTheme = controls.querySelector('[data-wx="theme"]');
       var btnTemp = controls.querySelector('[data-wx="temp"]');

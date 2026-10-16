@@ -189,7 +189,7 @@
   }
 
   // The list-controls row: page numbers below the card, and — on the tab row
-  // above it — Clear Filters and Show N (the header's + Add monitor and
+  // above it — Clear Filters and Show N (the header's + Add Monitor and
   // Refresh sit just left of them).
   function renderControls(total) {
     renderPageControls("path-pagination", total, _pageSize, _page,
@@ -223,7 +223,7 @@
     // "Paginated list controls row").
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' +
-        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add monitor" to create one.' : ".")) +
+        (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add Monitor" to create one.' : ".")) +
         "</td></tr>";
       _page = 1;
       renderControls(0);

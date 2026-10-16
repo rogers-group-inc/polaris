@@ -93,16 +93,15 @@
   box-shadow: var(--shadow-control), 0 0 0 2px rgba(79,195,247,0.15);
 }
 
+/* The row is RESERVED even when empty (one pill's height), so applying the
+   first filter doesn't push the controls and the graph down a row. A filter
+   set long enough to wrap still grows it. */
 .appmap-filter-pills {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
   align-items: center;
-}
-
-/* No pills → the row disappears entirely instead of reserving blank height. */
-.appmap-filter-pills:empty {
-  display: none;
+  min-height: 24px;
 }
 
 /* Saved filters: a small menu anchored under its button, styled like the
@@ -395,12 +394,24 @@
 }
 
 /* Legend overlay (top-left of the canvas) */
-.appmap-legend {
+/* Bottom-left corner group: the legend in the corner, the Ports key beside
+   it, bottoms aligned. The group passes clicks through to the graph; its
+   panels take them back. */
+.appmap-corner-bl {
   position: absolute;
-  top: 10px;
   left: 10px;
+  bottom: 10px;
   z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+.appmap-corner-bl > * { pointer-events: auto; }
+.appmap-legend {
+  position: relative;
   width: 320px;
+  max-height: calc(100% - 20px);
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -458,10 +469,7 @@
 
 /* Ports key (bottom-left of the canvas): the edge colour → protocol/port. */
 .appmap-port-legend {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  z-index: 20;
+  position: relative;
   min-width: 170px;
   max-width: 260px;
   background: var(--color-bg-primary);
