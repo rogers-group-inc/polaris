@@ -1092,22 +1092,35 @@ function _buildAssetsQuery() {
   return params;
 }
 
+// Discovery's breadcrumb tags (a device's former Entra / AD object id) — kept
+// on the asset for the matcher, never something an operator filters by. The
+// filter leaves them out unless a stored pick already names one.
+var TAG_FILTER_HIDDEN_PREFIXES = ["prev-entra:", "prev-ad:"];
+function _isTagFilterHidden(name) {
+  var n = String(name == null ? "" : name).toLowerCase();
+  return TAG_FILTER_HIDDEN_PREFIXES.some(function (p) { return n.indexOf(p) === 0; });
+}
+
 // The Tags column filter's picker: the edit form's grouped colour chips
-// (registry categories via _tagCache, the same _tagChipHTML chips), laid out
-// in full rather than in the form's 200px scroll box, plus every tag in use
-// that has no registry row ("Other tags in use" — discovery tags, azure:
-// tags, which a FILTER must offer even though the edit picker hides them).
-// Any / All and "(No tags)" sit above the chips; nothing filters until OK.
+// (registry categories, the same _tagChipHTML chips), laid out in full rather
+// than in the form's 200px scroll box. It reads the catalogue itself rather
+// than _tagCache, because the cache drops the Arc-owned `azure:` rows (the
+// EDIT picker must never offer them) and a FILTER must: they appear under
+// their own registry category in their own colours, as Server Settings → Tags
+// shows them. Tags in use with no registry row land in "Other tags in use";
+// the prev-entra: / prev-ad: breadcrumbs are left out. Any / All and
+// "Include untagged" sit above the chips; nothing filters until OK.
 // `current` is the stored { op: "pick", … } or null; `done` is TableSF's.
 async function openAssetTagFilterModal(current, done) {
   var inUse = [];
-  try {
-    var both = await Promise.all([
-      _ensureTagCache(),
-      api.assets.tags().catch(function () { return null; }),
-    ]);
-    inUse = (both[1] && both[1].tags) || [];
-  } catch (_) { /* the chips render whatever loaded */ }
+  var catalog = [];
+  var catalogFailed = false;
+  var both = await Promise.all([
+    api.serverSettings.tagCatalog().catch(function () { catalogFailed = true; return null; }),
+    api.assets.tags().catch(function () { return null; }),
+  ]);
+  catalog = ((both[0] && both[0].tags) || []).filter(function (t) { return t && t.name; });
+  inUse = (both[1] && both[1].tags) || [];
 
   var cur = current || { mode: "any", values: [], none: false };
   var selected = (cur.values || []).slice();
@@ -1115,14 +1128,17 @@ async function openAssetTagFilterModal(current, done) {
 
   var cats = {};
   var registered = {};
-  _tagCache.tags.forEach(function (t) {
+  catalog.forEach(function (t) {
+    if (_isTagFilterHidden(t.name) && selected.indexOf(t.name) < 0) return;
     var cat = t.category || "General";
     (cats[cat] = cats[cat] || []).push(t);
     registered[t.name] = true;
   });
   var others = [];
   inUse.concat(selected).forEach(function (name) {
-    if (name && !registered[name] && others.indexOf(name) < 0) others.push(name);
+    if (!name || registered[name] || others.indexOf(name) >= 0) return;
+    if (_isTagFilterHidden(name) && selected.indexOf(name) < 0) return;
+    others.push(name);
   });
   others.sort(function (a, b) { return a.localeCompare(b); });
 
@@ -1139,7 +1155,7 @@ async function openAssetTagFilterModal(current, done) {
   }
   if (!chips) {
     chips = '<p class="hint" style="margin:0">' +
-      (_tagCache.failed ? "Could not load the tag list." : "No tags in use yet.") + '</p>';
+      (catalogFailed ? "Could not load the tag list." : "No tags in use yet.") + '</p>';
   }
 
   var body =
@@ -1165,7 +1181,19 @@ async function openAssetTagFilterModal(current, done) {
   // form's save) reads every f-tags-cb in the DOCUMENT — this dialog's body
   // lingers hidden after it closes, so its ticks must not answer to that name.
   picker.querySelectorAll('input[name="f-tags-cb"]').forEach(function (cb) { cb.name = "tag-filter-cb"; });
-  _wireChipListeners(picker);
+  // Not _wireChipListeners: it re-reads each chip's colour from _tagCache,
+  // which has no azure: rows, so their chips would never brighten when
+  // picked. The chip already knows whether it is coloured.
+  picker.querySelectorAll(".tag-picker-chip input").forEach(function (cb) {
+    cb.addEventListener("change", function () {
+      var label = cb.parentElement;
+      label.classList.toggle("selected", cb.checked);
+      if (label.classList.contains("hue-pill")) {
+        label.classList.toggle("hue-strong", cb.checked);
+        label.classList.toggle("hue-off", !cb.checked);
+      }
+    });
+  });
 
   function ticked() {
     return Array.prototype.map.call(picker.querySelectorAll('input[type="checkbox"]:checked'), function (cb) { return cb.value; });

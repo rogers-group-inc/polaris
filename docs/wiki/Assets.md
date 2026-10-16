@@ -56,9 +56,12 @@ Hover it for the CIDR; a device whose IP is in no recorded network shows `-`.
 
 **Tags** lists the asset's tags. Click its filter box to open **Filter by
 tags**: the same coloured tag chips as the asset's Edit form, grouped by
-category and all shown at once, plus an **Other tags in use** group for tags
-that are on assets but not in the tag list (ones added by discovery, for
-example). Click chips to select as many as you like, then click **OK**.
+category and all shown at once. Tags mirrored from Azure by the Azure Arc
+integration appear too, under **Azure Tags** in the colours Server Settings →
+Tags gives them, though you can't add them in the Edit form. An **Other tags in
+use** group lists tags that are on assets but not in the tag list (ones added by
+discovery, for example). Discovery's `prev-entra:` and `prev-ad:` bookkeeping
+tags are left out. Click chips to select as many as you like, then click **OK**.
 Nothing changes until you click OK; **Cancel**, Escape or the × leaves the
 filter as it was, and **Clear** deselects everything. **Any** (the default)
 shows assets carrying at least one selected tag; **All** shows only assets
