@@ -412,16 +412,31 @@
     // A role with no access to the registry gets no menu at all rather than a
     // button whose every action 403s. The wallboard always keeps it: its
     // identity is the built-in readonly role, and "My layout" lives in here.
-    if (!isWallboard() && typeof permAtLeast === "function" && !permAtLeast("savedDashboards", "read")) {
-      var wrap = btn.closest(".btn-dropdown-wrap");
-      if (wrap) wrap.hidden = true; else btn.hidden = true;
-      return;
+    //
+    // A GATE, re-evaluated — never an early return. At DOMContentLoaded
+    // permAtLeast reads the localStorage snapshot of the user, which is empty
+    // on a first login and stale after a role edit; the authoritative /auth/me
+    // lands later and app.js announces it with "polaris:user-loaded". This
+    // used to hide the wrapper and RETURN before binding the click — and
+    // .btn-dropdown-wrap's display:inline-block beat the UA [hidden] rule, so
+    // the hidden button stayed on screen, dead, even for roles holding read.
+    function canUseMenu() {
+      return isWallboard() || typeof permAtLeast !== "function" || permAtLeast("savedDashboards", "read");
     }
+    function applyAccessGate() {
+      var allowed = canUseMenu();
+      var wrap = btn.closest(".btn-dropdown-wrap");
+      if (wrap) wrap.hidden = !allowed; else btn.hidden = !allowed;
+      if (!allowed) menu.classList.remove("open");
+    }
+    applyAccessGate();
+    document.addEventListener("polaris:user-loaded", applyAccessGate);
 
     renderMenu([], false);   // placeholder, so the first open isn't an empty box
 
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
+      if (!canUseMenu()) return;
       var willOpen = !menu.classList.contains("open");
       // Sibling header menus stopPropagation on their own button, so their
       // document-level close listener never fires for a click on ours.

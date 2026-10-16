@@ -223,6 +223,55 @@ describe("Dashboards menu — signed in", () => {
     // No wrapper in this fixture, so the button itself is what gets hidden.
     expect(wrap ? wrap.hasAttribute("hidden") : win.document.getElementById("btn-saved-dashboards")!.hasAttribute("hidden")).toBe(true);
   });
+
+  // The 2026-10-16 bug: the gate read the CACHED user at DOMContentLoaded
+  // (empty on a first login, stale after a role edit), hid the wrapper and
+  // returned before binding the click — and the CSS left the hidden wrapper on
+  // screen, so a role holding read got a button that did nothing.
+  it("re-checks when the authoritative user lands, and the button then opens the menu", async () => {
+    const win = new Window();
+    g.window = win;
+    g.document = win.document;
+    (win as unknown as Record<string, unknown>).POLARIS_DASH_LOCAL = undefined;
+    let canRead = false;            // cold cache: no permissions yet
+    g.permAtLeast = () => canRead;
+    g.escapeHtml = (s: unknown) => String(s ?? "");
+    let listed = 0;
+    g.api = { savedDashboards: { list: async () => { listed++; return { dashboards: [] }; } } };
+    win.document.body.innerHTML =
+      '<div class="btn-dropdown-wrap">' + HEADER_HTML + "</div>";
+    (0, eval)(SRC);
+    win.document.dispatchEvent(new win.Event("DOMContentLoaded", { bubbles: true }));
+    const wrap = win.document.querySelector(".btn-dropdown-wrap")!;
+    const btn = win.document.getElementById("btn-saved-dashboards")! as unknown as HTMLElement;
+    const menu = win.document.getElementById("saved-dashboards-menu")!;
+    expect(wrap.hasAttribute("hidden")).toBe(true);
+
+    // /auth/me resolves: the role does hold savedDashboards:read.
+    canRead = true;
+    win.document.dispatchEvent(new win.CustomEvent("polaris:user-loaded"));
+    expect(wrap.hasAttribute("hidden")).toBe(false);
+
+    btn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(menu.classList.contains("open")).toBe(true);
+    expect(listed).toBeGreaterThan(0);
+  });
+
+  it("a hidden dropdown wrapper is actually hidden — inline-block must not beat [hidden]", () => {
+    const css = readFileSync(resolve(__dirname, "../../public/css/styles.css"), "utf8");
+    expect(css).toMatch(/\.btn-dropdown-wrap\[hidden\]\s*\{\s*display:\s*none/);
+  });
+});
+
+describe("app.js announces the authoritative user", () => {
+  it("dispatches polaris:user-loaded after fetchCurrentUser", () => {
+    const app = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+    const fetchAt = app.indexOf("await fetchCurrentUser();");
+    const evtAt = app.indexOf('new CustomEvent("polaris:user-loaded")');
+    expect(fetchAt).toBeGreaterThan(-1);
+    expect(evtAt).toBeGreaterThan(fetchAt);
+  });
 });
 
 describe("Dashboards menu — Dash wallboard", () => {

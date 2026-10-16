@@ -5416,6 +5416,11 @@ document.addEventListener("DOMContentLoaded", async function () {
     renderNav();
     hideAdminOnlyElements();
   }
+  // Page scripts that gate a control on permAtLeast() at DOMContentLoaded read
+  // the CACHED snapshot (empty on a first login, stale after a role edit);
+  // this is their cue to re-check against the authoritative one.
+  // dashboard-saved.js's Dashboards ▾ menu was dead until it listened.
+  document.dispatchEvent(new CustomEvent("polaris:user-loaded"));
 
   fetchBranding();
   initAutoLogout();
