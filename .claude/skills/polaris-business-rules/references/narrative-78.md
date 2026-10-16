@@ -9,6 +9,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 
 - [Rule 78](#rule-78) — An automation may choose to speak for a silenced device, and then it must name who silenced it
 - [Rule 78a](#rule-78a) — A dependency-down alert is acknowledged when its root cause's own alert is, and says whose acknowledgement it carries
+- [Rule 78b](#rule-78b) — A new automation never makes an acknowledged outage read as unowned
 
 <a id="rule-78"></a>
 
@@ -296,3 +297,51 @@ real database, the feed's `ackInheritedFrom`, one-way only), `tests/unit/depende
 `tests/unit/notificationDependencyDownAlert.test.ts` (born acknowledged, the root-cause lookup,
 the maintenance and plain-Down exclusions) and `tests/unit/widgetActiveAlerts.test.ts` (the
 hover).
+
+
+<a id="rule-78b"></a>
+
+## Rule 78b — A new automation never makes an acknowledged outage read as unowned
+
+Asked for on 2026-10-16: a device is down, its Down alert is acknowledged, and someone then
+creates another automation with the same "monitor status is down" trigger covering that device.
+The new automation's first evaluation raises its own alert — a new `Notification` row, keyed to
+the new rule — and it is born unacknowledged. On every surface that counts unacknowledged alerts
+(the Active Alerts widget, the asset's strobing indicator, the phone) the outage the NOC already
+owns reads as unowned again. The operator's words: if the asset has a device down alert already
+acknowledged, don't undo the acknowledgement when a new automation is created with that trigger
+on that same asset.
+
+### What qualifies
+
+The firing alert must be a plain down alert from a down-detection automation
+(`isDownDetectionTrigger`: `asset_state` `monitorStatus == down`); dependency-down alerts keep
+rule 78a. The alert it inherits from is the device's own live down alert — rule 78a's
+`ROOT_DOWN_ALERT_WHERE`, on the same asset — from a DIFFERENT automation, whose rule is re-checked
+with `isDownDetectionTrigger`: every `asset_state` alert on `monitorStatus` stamps the same
+`metric`, and an acknowledged "monitor status is warning" alert is not an acknowledged outage.
+The newest acknowledgement wins.
+
+### Decisions worth keeping
+
+- **Not limited to automations created after the acknowledgement.** The same picture appears
+  when a second, pre-existing down automation finishes a longer hold after the first alert was
+  acknowledged, or re-raises after an edit cleared its own alert. In every case the outage is
+  already owned. A slower "page the manager" down automation still DELIVERS its page; what the
+  inherited acknowledgement stops is its reminders and any escalation that acknowledgement
+  stops — someone already owns the outage.
+- **Fire time only, no cascade.** Acknowledging one down alert does not acknowledge the other
+  live down alerts on the same device. Each existing alert was raised on its own and someone can
+  acknowledge it; the request was only about the new alert undoing an acknowledgement.
+- **The single-alert path only.** A grouped alert (rule 75) can fold many devices, and one
+  device's acknowledged outage does not cover the rest.
+- **Same columns as 78a, worded differently.** `inheritedAckData` copies `acknowledgedBy` and
+  the note and stamps `acknowledgedVia`; because its `assetId` is the alert's own, the feed sets
+  `AlertRow.ackInheritedSameAsset` and the ack pill hover reads "Carried over from another
+  automation's down alert on this device" instead of naming a root cause. The audit Event says
+  the outage was already acknowledged on another automation's alert.
+
+Pinned by `tests/unit/notificationDependencyDownAlert.test.ts` (born acknowledged, the lookup's
+shape, the warning-alert exclusion, a non-down automation never asking),
+`tests/unit/widgetActiveAlerts.test.ts` (the hover) and `tests/unit/dependencyDownAckInherit.test.ts`
+(`ackInheritedAssetIdOf`).

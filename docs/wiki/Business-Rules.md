@@ -1,7 +1,7 @@
 # Business rules
 
 Polaris carries **119 rule numbers**, 1 to 119: 117 rules in force plus rules
-78a and 80a, with 81 and 88 not in use. Each one records a decision *and* the reasoning
+78a, 78b and 80a, with 81 and 88 not in use. Each one records a decision *and* the reasoning
 behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -989,6 +989,23 @@ shows who acknowledged it, the line *Inherited from the root cause's alert on
 It works one way only: acknowledging a dependency-down alert acknowledges
 nothing upstream. A root cause that is in a maintenance window or under a
 dependency test raises no Down alert of its own, so there is nothing to inherit.
+
+### Rule 78b
+
+**A new automation never makes an acknowledged outage read as unowned.**
+
+If a device is down and its Down alert has been acknowledged, a *different*
+"monitor status is down" automation that then raises an alert on the same device
+(one you just created, or one with a longer hold that fires later) raises it
+already acknowledged, with the same person and note. It is still delivered;
+its reminders and acknowledgement-stopped escalation stay quiet, because
+someone already owns the outage.
+
+Hovering the **ack** pill shows *Carried over from another automation's down
+alert on this device* above the note. Only the moment a new alert is raised is
+covered: acknowledging one down alert does not acknowledge others already open
+on the device. An acknowledged *warning* alert does not count, and a grouped
+alert ([rule 75](#rule-75)) inherits nothing.
 
 ### Rule 79
 

@@ -36,7 +36,7 @@ import { INTERFACE_DIMENSION_METRICS } from "./alertInterfaceService.js";
 import { processRankingForMetric } from "./alertProcessService.js";
 import { poeIsFault } from "../utils/poePorts.js";
 import { resolveAssetCadenceSec } from "./notificationCadenceService.js";
-import { REGION_TAG_PREFIX, rootCauseAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "./notificationService.js";
+import { REGION_TAG_PREFIX, rootCauseAckFor, sameAssetDownAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "./notificationService.js";
 import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import {
   isPathTrigger,
@@ -128,6 +128,7 @@ import {
   scopeIsUnconstrained,
   allRepeatsOf,
   ruleAlertsWhenDependencyDown,
+  isDownDetectionTrigger,
   buildShadowIndex,
   isAssetShadowed,
   alertOwnerOf,
@@ -5155,7 +5156,16 @@ async function fire(
   // still DELIVERS (the plant still needs telling); the acknowledgement is
   // what keeps its reminders and acknowledge-stopped escalation quiet.
   const rootCauseId = reading.dependencyDown ? inheritableRootCauseId(blame) : null;
-  const inheritedAck: InheritedAck | null = rootCauseId ? await rootCauseAckFor(rootCauseId) : null;
+  // Business rule 78b — a plain down alert on a device whose outage another
+  // down automation's alert already acknowledged (a down automation created
+  // mid-outage, one whose hold finished later) is born acknowledged too, so a
+  // new automation never makes an owned outage read as unowned again. Like
+  // 78a it still delivers; the acknowledgement keeps reminders and
+  // acknowledge-stopped escalation quiet.
+  const sameAssetDown = !reading.dependencyDown && !!reading.assetId && isDownDetectionTrigger(rule.trigger);
+  const inheritedAck: InheritedAck | null = rootCauseId
+    ? await rootCauseAckFor(rootCauseId)
+    : sameAssetDown ? await sameAssetDownAckFor(reading.assetId, rule.id) : null;
   const notif = await prisma.notification.create({
     data: {
       ruleId: rule.id,
@@ -5234,7 +5244,9 @@ async function fire(
       resourceId: notif.id,
       resourceName: rule.name,
       actor: "system:notification-engine",
-      message: `${reading.hostname ?? "Device"}: dependency-down alert raised acknowledged — its root cause ${inheritedAck.hostname ?? inheritedAck.assetId} was already acknowledged${inheritedAck.acknowledgedBy ? ` by ${inheritedAck.acknowledgedBy}` : ""}`,
+      message: rootCauseId
+        ? `${reading.hostname ?? "Device"}: dependency-down alert raised acknowledged — its root cause ${inheritedAck.hostname ?? inheritedAck.assetId} was already acknowledged${inheritedAck.acknowledgedBy ? ` by ${inheritedAck.acknowledgedBy}` : ""}`
+        : `${reading.hostname ?? "Device"}: down alert raised acknowledged — this outage was already acknowledged${inheritedAck.acknowledgedBy ? ` by ${inheritedAck.acknowledgedBy}` : ""} on another automation's alert`,
       details: { ids: [notif.id], count: 1, hasNote: !!inheritedAck.acknowledgeNote, inheritedFrom: [inheritedAck.notificationId] },
     });
   }

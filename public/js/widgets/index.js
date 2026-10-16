@@ -1786,9 +1786,12 @@
   // `via` names the root-cause device whose down alert a dependency-down alert
   // inherited its acknowledgement from (business rule 78a): the note shown is
   // that alert's, and the hover says so rather than passing it off as this one's.
-  window.PolarisWidgets.ackPillTitle = function (by, note, via) {
+  // `sameAsset` marks one carried over from another down automation's alert on
+  // the SAME device (business rule 78b) — there is no root cause to name.
+  window.PolarisWidgets.ackPillTitle = function (by, note, via, sameAsset) {
     var head = "Acknowledged" + (by ? " by " + by : "");
-    if (via) head += "\nInherited from the root cause's alert on " + via;
+    if (sameAsset) head += "\nCarried over from another automation's down alert on this device";
+    else if (via) head += "\nInherited from the root cause's alert on " + via;
     var text = note == null ? "" : String(note).trim();
     return text ? head + "\n" + text : head;
   };
