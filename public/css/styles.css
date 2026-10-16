@@ -1771,6 +1771,12 @@ code {
 .advisor-header-ok    { font-size: 0.78rem; color: #2ecc71; font-weight: 600; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-header-ok { color: #27ae60; }
 
+/* Header band darker than the card, not the lighter bg-primary the generic
+   .ip-table header paints — the light band read as washed out on the card. */
+.advisor-table thead th {
+  background: color-mix(in srgb, var(--color-bg-primary) 88%, black);
+  color: var(--color-text-secondary);
+}
 .advisor-table tbody tr.advisor-divider td {
   padding-top: 0.85rem;
   font-size: 0.75rem;
