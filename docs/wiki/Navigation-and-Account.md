@@ -13,7 +13,7 @@ search box and your user badge on the right, and the page's own content below.
 | **Device Map** | `deviceMap:read` |
 | **Application Map** | `applicationMap:read` |
 | **Path Monitor** | `pathChecks:read` |
-| **IPAM** | `ipBlocks:read` **or** `subnets:read` |
+| **IP Management** | `ipBlocks:read` **or** `subnets:read` |
 | **Assets** | `assets:read` |
 | **Events** | `events:read` |
 | **Automations** | `automationManagement:read` |
