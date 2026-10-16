@@ -3103,12 +3103,20 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
    (--folder-gap-l/-r, measured by wireFolderTabs() in folder-tabs.js); the tab
    casts its own. The outer region also stops at the card's top edge across
    the tab strip (--folder-strip-l/-r, the first tab's left to the last tab's
-   or the + button's right, measured there too), rising only --fr over the
-   active tab's span to keep the cast in the fillets: the inactive tabs sit
-   behind the card and are translucent, so a cast above the edge lay across
-   their lower halves. Unmeasured, the strip collapses onto the active tab's
-   span. */
+   or the + button's right, measured there too): the inactive tabs sit behind
+   the card and are translucent, so a cast above the edge lay across their
+   lower halves. A fillet keeps its cast only where it reaches PAST the strip
+   — the outer fillet of an active END tab (--frl/--frr: --fr there, 0
+   inside the strip, where the neighbouring tab overlaps the fillet and the
+   cast in it showed through that tab as a small dark block). Unmeasured, the
+   strip collapses onto the active tab's span and neither fillet is cast. */
 .folder-card::before {
+  --gl: var(--folder-gap-l, 0px);
+  --gr: var(--folder-gap-r, 0px);
+  --sl: var(--folder-strip-l, var(--gl));
+  --sr: var(--folder-strip-r, var(--gr));
+  --frl: clamp(0px, calc(var(--sl) - var(--gl)), var(--fr));
+  --frr: clamp(0px, calc(var(--gr) - var(--sr)), var(--fr));
   content: "";
   position: absolute;
   inset: -1px;
@@ -3118,14 +3126,18 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   box-shadow: var(--shadow-lift);
   clip-path: polygon(evenodd,
     -100px -100px,
-    var(--folder-strip-l, var(--folder-gap-l, 0px)) -100px,
-    var(--folder-strip-l, var(--folder-gap-l, 0px)) 0,
-    var(--folder-gap-l, 0px) 0,
-    var(--folder-gap-l, 0px) calc(-1 * var(--fr)),
-    var(--folder-gap-r, 0px) calc(-1 * var(--fr)),
-    var(--folder-gap-r, 0px) 0,
-    var(--folder-strip-r, var(--folder-gap-r, 0px)) 0,
-    var(--folder-strip-r, var(--folder-gap-r, 0px)) -100px,
+    var(--sl) -100px,
+    var(--sl) 0,
+    max(var(--sl), var(--gl)) 0,
+    max(var(--sl), var(--gl)) calc(-1 * var(--frl)),
+    calc(var(--gl) + var(--fr)) calc(-1 * var(--frl)),
+    calc(var(--gl) + var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) calc(-1 * var(--frr)),
+    min(var(--sr), var(--gr)) calc(-1 * var(--frr)),
+    min(var(--sr), var(--gr)) 0,
+    var(--sr) 0,
+    var(--sr) -100px,
     calc(100% + 100px) -100px,
     calc(100% + 100px) calc(100% + 100px), -100px calc(100% + 100px),
     -100px -100px,
@@ -3134,16 +3146,18 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
     calc(var(--R) * 0.293) calc(var(--R) * 0.293),
     calc(var(--R) * 0.617) calc(var(--R) * 0.076),
     var(--R) 0,
-    var(--folder-gap-l, 0px) 0,
-    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.383) calc(var(--fr) * -0.076),
-    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.707) calc(var(--fr) * -0.293),
-    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.924) calc(var(--fr) * -0.617),
-    calc(var(--folder-gap-l, 0px) + var(--fr)) calc(-1 * var(--fr)),
-    calc(var(--folder-gap-r, 0px) - var(--fr)) calc(-1 * var(--fr)),
-    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.924) calc(var(--fr) * -0.617),
-    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.707) calc(var(--fr) * -0.293),
-    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.383) calc(var(--fr) * -0.076),
-    var(--folder-gap-r, 0px) 0,
+    calc(var(--gl) + var(--fr) - var(--frl)) 0,
+    calc(var(--gl) + var(--fr) - var(--frl) * 0.617) calc(var(--frl) * -0.076),
+    calc(var(--gl) + var(--fr) - var(--frl) * 0.293) calc(var(--frl) * -0.293),
+    calc(var(--gl) + var(--fr) - var(--frl) * 0.076) calc(var(--frl) * -0.617),
+    calc(var(--gl) + var(--fr)) calc(-1 * var(--frl)),
+    calc(var(--gl) + var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) calc(-1 * var(--frr)),
+    calc(var(--gr) - var(--fr) + var(--frr) * 0.076) calc(var(--frr) * -0.617),
+    calc(var(--gr) - var(--fr) + var(--frr) * 0.293) calc(var(--frr) * -0.293),
+    calc(var(--gr) - var(--fr) + var(--frr) * 0.617) calc(var(--frr) * -0.076),
+    calc(var(--gr) - var(--fr) + var(--frr)) 0,
     calc(100% - var(--R)) 0,
     calc(100% - var(--R) * 0.617) calc(var(--R) * 0.076),
     calc(100% - var(--R) * 0.293) calc(var(--R) * 0.293),
