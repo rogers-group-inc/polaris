@@ -748,8 +748,8 @@ document.addEventListener("DOMContentLoaded", async function () {
   // Server-side mode: never call sf.apply(). Any filter/sort change resets to
   // page 1 and re-fetches with the new state translated into API params.
   _assetsSF = new TableSF("assets-tbody", assetsApplyFilterState);
-  // Tags is a finite set, so its filter box lists every tag in use and narrows
-  // as the operator types. Fetched on first open, refreshed when stale.
+  // Tags is a finite set, so its filter is a pick menu of every tag in use
+  // (data-sf-filter="pick"). Fetched on first open, refreshed when stale.
   _assetsSF.setColumnSuggestions("tags", async function () {
     var r = await api.assets.tags();
     return (r && r.tags) || [];
@@ -1115,6 +1115,16 @@ function _pushAssetText(params, paramKey, raw) {
       if (!q) return;
       params[paramKey] = q;
       params[paramKey + "Op"] = "not_contains";
+    } else if (raw.op === "pick") {
+      // Tags column pick menu: exact names as a JSON array (a tag may hold a
+      // comma), any_of / all_of, plus the "(No tags)" row on any_of.
+      var vals = (raw.values || []).filter(function (v) { return typeof v === "string" && v; });
+      var none = !!raw.none && raw.mode !== "all";
+      if (!vals.length && !none) return;
+      if (!vals.length) { params[paramKey + "Op"] = "empty"; return; }
+      params[paramKey] = JSON.stringify(vals);
+      params[paramKey + "Op"] = raw.mode === "all" ? "all_of" : "any_of";
+      if (none) params[paramKey + "Untagged"] = "1";
     } else if (raw.op === "in-networks") {
       // IP Address column: any-of IPv4 prefixes / CIDRs (TableSF ipnet filter).
       var terms = (raw.terms || []).map(function (t) { return String(t).trim(); }).filter(Boolean);

@@ -4066,6 +4066,55 @@ body.sf-resizing * { user-select: none !important; }
 }
 .sf-btn-clear:hover { color: var(--color-text-primary); border-color: var(--color-accent); }
 
+/* ─── Pick filter (data-sf-filter="pick" — the Assets Tags column) ────────── */
+/* The list scrolls; the search box, the Any/All switch and the OK row stay put. */
+.sf-filter-pick { position: relative; }
+.sf-pick-popover {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}
+.sf-pick-popover[hidden] { display: none; }
+.sf-pick-head { padding: 8px 10px 6px; }
+.sf-pick-search { height: 24px; font-size: 0.78rem; }
+.sf-pick-list {
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  padding: 2px 0;
+}
+.sf-pick-list .sf-multi-option span { overflow: hidden; text-overflow: ellipsis; }
+.sf-pick-none { border-bottom: 1px dashed var(--color-border); font-style: italic; }
+.sf-pick-none.sf-pick-disabled { opacity: 0.5; cursor: default; }
+.sf-pick-empty { padding: 8px 10px; font-size: 0.78rem; color: var(--color-text-tertiary); }
+.sf-pick-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 0;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+.sf-pick-mode { display: inline-flex; border: 1px solid var(--color-border); border-radius: 3px; overflow: hidden; }
+.sf-pick-mode-btn {
+  font-size: 0.72rem;
+  padding: 2px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.sf-pick-mode-btn + .sf-pick-mode-btn { border-left: 1px solid var(--color-border); }
+.sf-pick-mode-btn.active { background: var(--color-accent); color: #0d0d1a; font-weight: 600; }
+.sf-pick-actions { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+.sf-pick-spacer { flex: 1; }
+
 /* ─── Bulk Action Bar ──────────────────────────────────────────────────────── */
 .bulk-bar {
   display: flex;

@@ -108,6 +108,7 @@ export function normalizeName(raw: unknown): string {
  *   { op: "contains"|"not-contains", q }     — operator text filter
  *   { op: "empty"|"notempty" }               — emptiness filter
  *   { op: "in-networks", terms: [...] }      — IP network filter (IPv4 prefixes / CIDRs, any-of)
+ *   { op: "pick", mode, values: [...], none } — pick filter (exact values, any / all; none = untagged)
  *   { type: "date", from?, to? }             — date range
  */
 export function sanitizeFilterState(raw: unknown): SavedFilterState {
@@ -170,6 +171,17 @@ function sanitizeFilterValue(key: string, value: unknown): unknown {
       if (!Array.isArray(obj.terms)) throw new AppError(400, `${where}.terms must be an array`);
       if (obj.terms.length > MAX_FILTER_VALUES) throw new AppError(400, `${where} exceeds ${MAX_FILTER_VALUES} values`);
       return { op: "in-networks", terms: obj.terms.map((t) => assertShortString(t, `${where}.terms`)) };
+    }
+    // TableSF pick filter (the Assets Tags column's checkbox menu).
+    if (obj.op === "pick") {
+      if (!Array.isArray(obj.values)) throw new AppError(400, `${where}.values must be an array`);
+      if (obj.values.length > MAX_FILTER_VALUES) throw new AppError(400, `${where} exceeds ${MAX_FILTER_VALUES} values`);
+      return {
+        op: "pick",
+        mode: obj.mode === "all" ? "all" : "any",
+        values: obj.values.map((v) => assertShortString(v, `${where}.values`)),
+        none: obj.none === true,
+      };
     }
     throw new AppError(400, `${where} is not a recognized filter shape`);
   }

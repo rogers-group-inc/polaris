@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTagFilter,
+  parseTagPickValue,
   sortIdsByTags,
+  TAG_PICK_MAX,
   tagFilterNeedsLookup,
   tagSortKey,
 } from "../../src/services/assetTagListService.js";
@@ -32,6 +34,37 @@ describe("buildTagFilter", () => {
   });
   it("a blank term is a no-op", () => {
     expect(buildTagFilter("   ", "contains", ["a"])).toBeUndefined();
+  });
+  it("any_of / all_of match exact names with hasSome / hasEvery", () => {
+    const v = JSON.stringify(["prod", "dc,1"]);
+    expect(buildTagFilter(v, "any_of", [])).toEqual({ tags: { hasSome: ["prod", "dc,1"] } });
+    expect(buildTagFilter(v, "all_of", [])).toEqual({ tags: { hasEvery: ["prod", "dc,1"] } });
+  });
+  it("any_of with the untagged row ORs in isEmpty; alone it is just isEmpty", () => {
+    expect(buildTagFilter(JSON.stringify(["prod"]), "any_of", [], true)).toEqual({
+      OR: [{ tags: { hasSome: ["prod"] } }, { tags: { isEmpty: true } }],
+    });
+    expect(buildTagFilter("[]", "any_of", [], true)).toEqual({ tags: { isEmpty: true } });
+    // all_of ignores it: a row cannot be untagged and carry every tag.
+    expect(buildTagFilter(JSON.stringify(["prod"]), "all_of", [], true)).toEqual({ tags: { hasEvery: ["prod"] } });
+  });
+  it("an empty or malformed pick is a no-op, never a throw", () => {
+    expect(buildTagFilter("[]", "any_of", [])).toBeUndefined();
+    expect(buildTagFilter("not json", "all_of", [])).toBeUndefined();
+    expect(buildTagFilter('{"a":1}', "any_of", [])).toBeUndefined();
+    expect(buildTagFilter(undefined, "any_of", [])).toBeUndefined();
+  });
+});
+
+describe("parseTagPickValue", () => {
+  it("keeps non-empty strings, de-duplicated, capped", () => {
+    expect(parseTagPickValue(JSON.stringify(["a", "a", "", 3, null, "b"]))).toEqual(["a", "b"]);
+    const many = Array.from({ length: TAG_PICK_MAX + 10 }, (_, i) => "t" + i);
+    expect(parseTagPickValue(JSON.stringify(many))).toHaveLength(TAG_PICK_MAX);
+  });
+  it("pick ops never need the substring lookup", () => {
+    expect(tagFilterNeedsLookup('["prod"]', "any_of")).toBe(false);
+    expect(tagFilterNeedsLookup('["prod"]', "all_of")).toBe(false);
   });
 });
 

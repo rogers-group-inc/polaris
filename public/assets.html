@@ -154,12 +154,13 @@
                    Settings → Sources (Setting `assetSourcePriority`). -->
               <th data-sf-key="_server" data-sf-type="string">Sources</th>
               <th style="min-width:100px" data-sf-key="description" data-sf-type="string">Description</th>
-              <!-- Asset.tags (String[]). Filter matches any single tag by
-                   substring; sort orders by the alphabetically-first tag with
-                   untagged rows last — both server-side (assetTagListService).
-                   The filter box lists the tags in use (GET /assets/tags) and
-                   narrows as you type — TableSF.setColumnSuggestions. -->
-              <th data-sf-key="tags" data-sf-type="array">Tags</th>
+              <!-- Asset.tags (String[]). The filter is a pick menu (TableSF
+                   data-sf-filter="pick"): tick tags in use (GET /assets/tags,
+                   via setColumnSuggestions), match Any / All, OK — sent as
+                   tagsOp=any_of|all_of and matched exactly server-side. Sort
+                   orders by the alphabetically-first tag with untagged rows
+                   last (assetTagListService). -->
+              <th data-sf-key="tags" data-sf-type="array" data-sf-filter="pick" data-sf-pick-none="(No tags)">Tags</th>
               <th data-sf-key="assetTag" data-sf-type="string" data-col-default-hidden="true">Asset Tag</th>
               <th data-sf-key="manufacturer" data-sf-type="string" data-col-default-hidden="true">Manufacturer</th>
               <th data-sf-key="model" data-sf-type="string" data-col-default-hidden="true">Model</th>
