@@ -1372,15 +1372,18 @@
     return buildingLabel ? buildingLabel + " — " + floorName : "Floor " + floorName;
   }
 
-  // Enumerate the location views present in a built element set: one
-  // BUILDING view per b: value (even without floors) and one FLOOR view per
-  // (area, building, floor). Keys are area-scoped so "Office" in two areas
-  // stays distinct: building "b|<aKey>|<bKey>", floor "f|<aKey>|<bKey>|<fKey>".
-  // Returns a flat array of
-  //   { key, kind: "building"|"floor", areaName, buildingName, floorName?, label }
-  // sorted area → building (unnamed bucket last) → building-view-first →
-  // underground-aware floor order. Empty array when no node carries a b: or
-  // f: code → callers render no switcher.
+  // Enumerate the location views present in a built element set: one AREA
+  // view per a: value that also carries a b: or f: code, one BUILDING view
+  // per b: value (even without floors) and one FLOOR view per (area,
+  // building, floor). Keys are area-scoped so "Office" in two areas stays
+  // distinct: area "a|<aKey>", building "b|<aKey>|<bKey>", floor
+  // "f|<aKey>|<bKey>|<fKey>". Returns a flat array of
+  //   { key, kind: "area"|"building"|"floor", areaKey, buildingKey,
+  //     areaName, buildingName, floorName?, label }
+  // sorted area → area-view-first → building (unnamed bucket last) →
+  // building-view-first → underground-aware floor order. Empty array when no
+  // node carries a b: or f: code → callers render no switcher (an a: code on
+  // its own never earns one: the area hull already says it on the flat view).
   function computeFloorViews(elements) {
     var byKey = {};
     var out = [];
@@ -1391,6 +1394,21 @@
       var b = d.locB || "";
       var aName = d.locAName || "";
       var bName = d.locBName || "";
+      if (a && (b || d.locF)) {
+        var aKey = "a|" + a;
+        if (!byKey[aKey]) {
+          byKey[aKey] = true;
+          out.push({
+            key: aKey,
+            kind: "area",
+            areaKey: a,
+            buildingKey: "",
+            areaName: aName,
+            buildingName: "",
+            label: aName || a,
+          });
+        }
+      }
       if (b) {
         var bKey = "b|" + a + "|" + b;
         if (!byKey[bKey]) {
@@ -1398,6 +1416,8 @@
           out.push({
             key: bKey,
             kind: "building",
+            areaKey: a,
+            buildingKey: b,
             areaName: aName,
             buildingName: bName,
             label: buildingViewLabel(aName, bName),
@@ -1411,6 +1431,8 @@
           out.push({
             key: fKey,
             kind: "floor",
+            areaKey: a,
+            buildingKey: b,
             areaName: aName,
             buildingName: bName,
             floorName: d.locFName || d.locF,
@@ -1421,6 +1443,7 @@
     });
     out.sort(function (x, y) {
       if (x.areaName !== y.areaName) return String(x.areaName).localeCompare(String(y.areaName));
+      if ((x.kind === "area") !== (y.kind === "area")) return x.kind === "area" ? -1 : 1; // area view tops its area
       if (x.buildingName !== y.buildingName) {
         if (!x.buildingName) return 1; // unnamed-building bucket last
         if (!y.buildingName) return -1;
@@ -1432,12 +1455,82 @@
     return out;
   }
 
+  // The location-view switcher's rows, as data: an array of rows (index =
+  // depth), each an array of { key, label, title, active } chips.
+  //   row 0  "Base" alone (view key "flat" — saved layouts are filed under it)
+  //   row 1  the top level: every area, plus any building tagged with no
+  //          area (on a site with no areas, just the buildings)
+  //   then   only under a selection, the NEXT level of it: the selected
+  //          area's buildings, then the selected building's floors
+  // Every chip on the selected path is active. `views` is computeFloorViews'
+  // output (already in display order); a building with no whole-building
+  // view (the f:-without-b: "Floors" bucket) selects its first floor. Pure.
+  function viewSwitcherRows(views, activeKey) {
+    var areas = [];
+    var areasByKey = {};
+    var groups = [];
+    var groupsByKey = {};
+    (views || []).forEach(function (v) {
+      if (v.kind === "area") {
+        var area = { view: v, groups: [] };
+        areasByKey[v.areaKey] = area;
+        areas.push(area);
+        return;
+      }
+      var gKey = v.areaKey + "|" + v.buildingKey;
+      var g = groupsByKey[gKey];
+      if (!g) {
+        g = { areaKey: v.areaKey, name: v.buildingName || "Floors", view: null, floors: [] };
+        groupsByKey[gKey] = g;
+        groups.push(g);
+        if (areasByKey[v.areaKey]) areasByKey[v.areaKey].groups.push(g);
+      }
+      if (v.kind === "building") g.view = v;
+      else g.floors.push(v);
+    });
+
+    var activeView = null;
+    (views || []).forEach(function (v) { if (v.key === activeKey) activeView = v; });
+    var activeArea = activeView ? areasByKey[activeView.areaKey] || null : null;
+    var activeGroup = activeView && activeView.kind !== "area"
+      ? groupsByKey[activeView.areaKey + "|" + activeView.buildingKey] || null
+      : null;
+
+    function chip(key, label, title, active) {
+      return { key: key, label: label, title: title, active: !!active };
+    }
+    function groupChip(g) {
+      var target = g.view || g.floors[0];
+      return chip(target.key, g.name, "Show " + target.label, g === activeGroup);
+    }
+
+    var rows = [[chip("flat", "Base", "Whole site", activeKey === "flat" || !activeView)]];
+    var top = areas.map(function (a) {
+      return chip(a.view.key, a.view.label, "Show " + a.view.label, a === activeArea);
+    });
+    groups.forEach(function (g) { if (!areasByKey[g.areaKey]) top.push(groupChip(g)); });
+    if (top.length) rows.push(top);
+    if (activeArea && activeArea.groups.length) rows.push(activeArea.groups.map(groupChip));
+    // A building's floors. The "Floors" bucket's own chip is already its
+    // first floor, so it earns a row only when there is a second to pick.
+    if (activeGroup && activeGroup.floors.length > (activeGroup.view ? 0 : 1)) {
+      rows.push(activeGroup.floors.map(function (v) {
+        return chip(v.key, v.buildingName ? v.floorName : v.label, "Show only " + v.label, v.key === activeKey);
+      }));
+    }
+    return rows;
+  }
+
   // The (kind-appropriate) view key + label a node belongs to, or null when
-  // it carries no code at that level. kind "building" needs locB; "floor"
-  // needs locF.
+  // it carries no code at that level. kind "area" needs locA; "building"
+  // needs locB; "floor" needs locF.
   function _nodeViewRef(d, kind) {
     var a = d.locA || "";
     var b = d.locB || "";
+    if (kind === "area") {
+      if (!a) return null;
+      return { key: "a|" + a, label: d.locAName || a };
+    }
     if (kind === "building") {
       if (!b) return null;
       return {
@@ -1453,8 +1546,9 @@
   }
 
   // Partition a built element set down to one view — a floor view
-  // ("f|a|b|f": that floor's tagged devices) or a building view ("b|a|b":
-  // ALL of that building's tagged devices, any floor) — plus the FortiGate
+  // ("f|a|b|f": that floor's tagged devices), a building view ("b|a|b":
+  // ALL of that building's tagged devices, any floor) or an area view
+  // ("a|a": every device tagged with that area, any building) — plus the FortiGate
   // root ALWAYS (keeps the subgraph rooted for the column solver even when
   // the FG is tagged elsewhere). Untagged devices appear only in the Flat
   // view. Edges with both ends in view are kept as-is (loop flags preserved
@@ -1466,7 +1560,8 @@
   // stubs).
   function partitionElementsForFloor(elements, viewKey) {
     var key = String(viewKey || "");
-    var kind = key.charAt(0) === "b" ? "building" : "floor";
+    var lead = key.charAt(0);
+    var kind = lead === "a" ? "area" : lead === "b" ? "building" : "floor";
     var nodeById = {};
     var inView = {};
     // True members (as opposed to the always-included FG root). Only a
@@ -2422,6 +2517,7 @@
     locationGroupTooltipParts: locationGroupTooltipParts,
     compareFloors: compareFloors,
     computeFloorViews: computeFloorViews,
+    viewSwitcherRows: viewSwitcherRows,
     partitionElementsForFloor: partitionElementsForFloor,
   };
 })();

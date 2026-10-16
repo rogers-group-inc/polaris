@@ -673,12 +673,12 @@
   opacity: 0.6;
 }
 
-/* Floor-view switcher, top-left of the graph area: two-row drill-down —
-   row 1 is "Flat" + one chip per building, row 2 (only when the active
-   building has floors) is that building's "All" + floor chips in
-   underground-aware order. Rendered only when at least one device carries a
-   b: or f: code. .is-active = the active view's chip, plus the active
-   building's chip in row 1. */
+/* Location-view switcher, top-left of the graph area: one row per level —
+   "Base" alone, then the top level (areas, plus area-less buildings; the
+   buildings when no area is tagged), then the selected area's buildings,
+   then the selected building's floors in underground-aware order. Each
+   deeper row indents a step. Rendered only when at least one device carries
+   a b: or f: code. .is-active = every chip on the selected path. */
 .topology-floor-views {
   position: absolute;
   top: 10px;
@@ -697,7 +697,8 @@
   gap: 6px;
   flex-wrap: wrap;
 }
-.topology-floor-row-floors { padding-left: 12px; }
+.topology-floor-row-depth-2 { padding-left: 12px; }
+.topology-floor-row-depth-3 { padding-left: 24px; }
 .topology-floor-chip.is-active {
   opacity: 1;
   font-weight: 600;

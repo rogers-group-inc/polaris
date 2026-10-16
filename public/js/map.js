@@ -17,9 +17,9 @@
   // Currently-open topology modal state. siteId drives Refresh + position
   // persistence; data is the latest /topology payload (used for endpoint
   // pivots from search results without a re-fetch).
-  // activeView: "flat" (default — today's whole-site render) or a floor-view
-  // key "<buildingKey>|<floorKey>" from computeFloorViews. Not persisted —
-  // the modal always opens on Flat. floorViews caches the current payload's
+  // activeView: "flat" (default — the whole-site render, chip-labelled
+  // "Base") or an area / building / floor view key from computeFloorViews.
+  // Not persisted — the modal always opens on Base. floorViews caches the current payload's
   // view list for the switcher chips.
   var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false };
   var topoSearchDebounce = null;
@@ -2586,23 +2586,29 @@
     }, true);
   }
 
-  // Which hull tiers to hide for the ACTIVE view: a building view IS the
-  // area+building (keep floors/rooms/jbs); a floor view additionally IS the
-  // floor (keep rooms/jbs). Null = flat view, show everything.
+  // Which hull tiers to hide for the ACTIVE view: an area view IS the area
+  // (keep buildings and below); a building view IS the area+building (keep
+  // floors/rooms/jbs); a floor view additionally IS the floor (keep
+  // rooms/jbs). Null = flat (Base) view, show everything.
   function _locSuppressKinds() {
     var v = topoState.activeView || "flat";
     if (v === "flat") return null;
+    if (v.charAt(0) === "a") return ["area"];
     if (v.charAt(0) === "b") return ["area", "building"];
     return ["area", "building", "floor"];
   }
 
   // ── Location-view switcher ──────────────────────────────────────────────
-  // Chips at the top-left of the graph, two-row drill-down: row 1 is "Flat"
-  // (whole site, default) plus ONE chip per building; row 2 appears only for
-  // the active building and holds its "All" + floor chips. Keeps the
-  // switcher to two compact rows on many-building sites instead of a
-  // column-per-building wall over the canvas. Rendered only when at least
-  // one device carries a b: or f: code — untagged fleets see no switcher.
+  // Chips at the top-left of the graph, one row per level of a drill-down:
+  // row 1 is "Base" alone (whole site, default; its view key stays "flat",
+  // which saved layouts are filed under). Row 2 is the top level present —
+  // the area chips, plus any building tagged with no area — or, on a site
+  // with no areas, the building chips. Each row after that appears only
+  // under a selection and lists the NEXT level of it: an area's buildings,
+  // then a building's floors. Every chip on the selected path stays lit.
+  // Keeps a many-building site to a few short rows instead of a wall of
+  // chips over the canvas. Rendered only when at least one device carries a
+  // b: or f: code — untagged fleets see no switcher.
   function _setTopologyView(key) {
     if (topoState.activeView === key) return;
     // Persist any manual drags under the OUTGOING view's key before switching.
@@ -2634,53 +2640,14 @@
       chip.addEventListener("click", function () { _setTopologyView(key); });
       return chip;
     }
-    // Group views by (area, building). computeFloorViews is already sorted
-    // area → building → building-view-first → underground-aware floor, so
-    // grouping in encounter order preserves everything, and a group's first
-    // view is its whole-building "All" view when one exists (the buildingless
-    // f:-without-b: bucket — grouped under "Floors" — has floors only).
-    var groups = [];
-    var groupsByKey = {};
-    views.forEach(function (v) {
-      var gKey = (v.areaName || "") + "|" + (v.buildingName || "");
-      var g = groupsByKey[gKey];
-      if (!g) {
-        g = {
-          name: v.buildingName
-            ? (v.areaName ? v.areaName + " — " + v.buildingName : v.buildingName)
-            : "Floors",
-          views: [],
-        };
-        groupsByKey[gKey] = g;
-        groups.push(g);
-      }
-      g.views.push(v);
+    // One row per drill-down level (topology-render.js viewSwitcherRows):
+    // Base, the top level, then the next level under each selection.
+    window.PolarisTopologyRender.viewSwitcherRows(views, topoState.activeView).forEach(function (chips, depth) {
+      var r = document.createElement("div");
+      r.className = "topology-floor-row" + (depth ? " topology-floor-row-depth-" + depth : "");
+      chips.forEach(function (c) { r.appendChild(chipEl(c.key, c.label, c.title, c.active)); });
+      wrap.appendChild(r);
     });
-    // Row 1: "Flat" + one chip per building. A building chip lights up while
-    // ANY of its views is active; clicking it selects the group's first view.
-    var buildingsRow = document.createElement("div");
-    buildingsRow.className = "topology-floor-row";
-    buildingsRow.appendChild(chipEl("flat", "Flat", "Whole site", topoState.activeView === "flat"));
-    var activeGroup = null;
-    groups.forEach(function (g) {
-      var groupActive = g.views.some(function (v) { return v.key === topoState.activeView; });
-      if (groupActive) activeGroup = g;
-      buildingsRow.appendChild(chipEl(g.views[0].key, g.name, "Show " + g.views[0].label, groupActive));
-    });
-    wrap.appendChild(buildingsRow);
-    // Row 2: the active building's views, only when it has floors to pick
-    // from — "All" for the whole-building view, floor names beneath it in
-    // the sorted order.
-    if (activeGroup && activeGroup.views.length > 1) {
-      var floorsRow = document.createElement("div");
-      floorsRow.className = "topology-floor-row topology-floor-row-floors";
-      activeGroup.views.forEach(function (v) {
-        var label = v.kind === "building" ? "All" : (v.buildingName ? v.floorName : v.label);
-        var title = v.kind === "building" ? "Show all of " + v.label : "Show only " + v.label;
-        floorsRow.appendChild(chipEl(v.key, label, title, topoState.activeView === v.key));
-      });
-      wrap.appendChild(floorsRow);
-    }
     wrap.hidden = false;
   }
 

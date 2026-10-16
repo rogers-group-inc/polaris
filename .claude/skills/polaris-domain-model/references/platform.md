@@ -344,7 +344,7 @@ TopologyLayout                  -- SHARED Device Map topology node positions (th
                                 -- the UserDashboard JSON-layout pattern)
   id            UUID PK
   siteId        String FK → Asset (cascade delete) -- the FortiGate the topology graph is rooted on
-  view          String @default("flat")            -- "flat" | computeFloorViews key ("b|<area>|<bldg>" / "f|<area>|<bldg>|<floor>").
+  view          String @default("flat")            -- "flat" | computeFloorViews key ("a|<area>" / "b|<area>|<bldg>" / "f|<area>|<bldg>|<floor>").
                                 -- Renaming a:/b:/f: codes changes view keys and orphans that view's row (harmless).
   positions     Json            -- { [nodeId]: { x, y } } pixel model coords — the exact shape map.js
                                 -- saves/loads (and previously kept only in localStorage). Full-replace per
@@ -679,7 +679,7 @@ RebootSchedule                  -- A reboot booked for later (business rule 115)
 
 #### TopologyLayout
 
-**TopologyLayout** — SHARED Device Map topology node positions, one row per (siteId = FortiGate Asset id, view = `"flat"` | `computeFloorViews` building/floor key); `positions` = `{nodeId: {x,y}}` pixel coords. Written full-replace by operator drags in the topology modal (debounced PUT, gated `deviceMap=write`, last-write-wins); embedded for every viewer as `savedLayouts` on `GET /map/sites/:id/topology` — server layout wins over the per-browser localStorage fallback. Cascades with the site Asset. Single writer: `topologyLayoutService`.
+**TopologyLayout** — SHARED Device Map topology node positions, one row per (siteId = FortiGate Asset id, view = `"flat"` | `computeFloorViews` area/building/floor key); `positions` = `{nodeId: {x,y}}` pixel coords. Written full-replace by operator drags in the topology modal (debounced PUT, gated `deviceMap=write`, last-write-wins); embedded for every viewer as `savedLayouts` on `GET /map/sites/:id/topology` — server layout wins over the per-browser localStorage fallback. Cascades with the site Asset. Single writer: `topologyLayoutService`.
 
 **The row carries TWO blobs.** `positions` is the LIVE layout — rewritten by every debounced drag save, shared with every viewer. `savedPositions` (with `savedBy` / `savedAt`) is the operator's RESTORE POINT, written ONLY by the explicit Save (`POST …/topology/layout/checkpoint`) and never by a drag: a drag is not a decision, and letting one overwrite the restore point would leave nothing to reset to. That split is the whole feature — Reset stopped being one destination and became two:
 

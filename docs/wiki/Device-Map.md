@@ -194,6 +194,7 @@ under a heading per group, with devices that have no location last.
 | **Save layout** | `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
 | **Reset layout** | a menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
 | **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
+| **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | screenshot, PDF or Visio — see below |
 
