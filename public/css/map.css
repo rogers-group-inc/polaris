@@ -305,6 +305,37 @@
 .map-regions-list i.map-region-swatch { border-radius: 2px; background: #9e9e9e; }
 .map-regions-list em { opacity: 0.6; font-style: normal; margin-left: auto; padding-left: 8px; }
 .map-regions-empty { opacity: 0.75; }
+/* Device Map buttons ON the map — the zoom bar, the theme toggle, and the
+   status-legend and Regions buttons — share one look: the app's secondary
+   button (.btn-secondary tokens), not Leaflet's own bar, which follows the
+   basemap (styles.css .polaris-basemap-dark). One tighter cast for all of
+   them: the page-level lift is sized for buttons on the page ground and
+   reads as a halo over map tiles. */
+.map-canvas.leaflet-container {
+  --map-btn-shadow: 0 1px 2px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.25);
+}
+.map-canvas.leaflet-container .leaflet-control-zoom.leaflet-bar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--map-btn-shadow);
+  overflow: hidden;
+}
+.map-canvas.leaflet-container .leaflet-control-zoom a {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  border-bottom-color: var(--color-border);
+}
+.map-canvas.leaflet-container .leaflet-control-zoom a:hover,
+.map-canvas.leaflet-container .leaflet-control-zoom a:focus {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+.map-canvas.leaflet-container .leaflet-control-zoom a.leaflet-disabled {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-tertiary);
+  opacity: 0.6;
+}
+.map-canvas.leaflet-container .btn { box-shadow: var(--map-btn-shadow) !important; }
 /* The map-theme toggle on the map (addMapThemeControl): the zoom bar's width
    (its 30px buttons + 2px border each side), above it in the top-left corner. */
 .map-theme-control .btn.map-theme-toggle {

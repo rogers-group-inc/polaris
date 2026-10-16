@@ -34,7 +34,7 @@ instead. Each one gets a line back to a dot that marks the real location. Click
 the map or zoom to fold them back. From zoom 11 a cluster forms only where pins
 would overlap.
 
-The sun / moon button at the left of the toolbar switches the **basemap** between
+The sun / moon button in the map's top-left corner, above the zoom buttons, switches the **basemap** between
 light and dark tiles independently of the app theme. It is remembered per user in
 this browser; until you touch it, the map follows the app theme's family
 (Morning and Noon light, Nightfall dark).
