@@ -2297,6 +2297,9 @@
     // depth — so a building deep in the site's chain no longer renders as a
     // huge sparse rectangle. Same {depth, lane} grid contract; falls back to
     // the flat solver on untagged sites (computeGroupedLayout returns null).
+    // Port labels on bent links sit on their end legs, re-placed as nodes
+    // move (see topology-render.js → wireBentEdgeLabels).
+    window.PolarisTopologyRender.wireBentEdgeLabels(cyInstance);
     var columns = window.PolarisTopologyRender.computeGroupedLayout(elements) ||
       window.PolarisTopologyRender.computeTopologyColumns(elements);
     if (columns) {
@@ -2816,6 +2819,7 @@
             cyInstance.edges("[isInterGroup]").forEach(function (e) {
               e.removeStyle("curve-style segment-weights segment-distances edge-distances");
             });
+            window.PolarisTopologyRender.refreshBentEdgeLabels(cyInstance);
           }
         }
         // The side panel's switch / AP lists follow the boxes' grouping.

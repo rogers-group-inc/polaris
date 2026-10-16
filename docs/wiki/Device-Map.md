@@ -174,9 +174,15 @@ switch's APs stack beneath it in the column to its right. A link that leaves
 a switch for a child switch on another row turns up or down right next to the
 switch and runs along the child's row, so it never shares a line with the
 switch's straight link to the next switch along, and lines travel the gutters
-instead of cutting across other devices. Its port label sits on the upright
-part of the bend. Drag anything to override the layout; the positions are
-saved per site.
+instead of cutting across other devices. Drag anything to override the
+layout; the positions are saved per site.
+
+Port labels (`port8 ↔ port1`) on a link with bends sit near its ends: with
+one bend, halfway along the part after the bend; with two or more, halfway
+along the first part and again halfway along the last. A label is never put
+where several links run along the same line, since it could belong to any of
+them: it moves to a stretch only its own link uses, and a link that shares
+its whole route shows no label.
 
 On the light themes (morning and noon) the links and location boxes are drawn
 in darker shades of the same colours, so they stay readable on the pale
