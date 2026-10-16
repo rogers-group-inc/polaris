@@ -157,3 +157,38 @@ export async function pageAssetIdsByTags(
   const ordered = sortIdsByTags(rows, dir, favs);
   return { ids: ordered.slice(offset, offset + limit), total: ordered.length };
 }
+
+/** Most rows `listAssetsWithTag` returns; `total` still counts every one. */
+export const ASSETS_WITH_TAG_LIMIT = 1000;
+
+export interface AssetWithTagRow {
+  id: string;
+  hostname: string | null;
+  ipAddress: string | null;
+  assetType: string;
+  status: string;
+  monitorStatus: string | null;
+}
+
+/**
+ * The assets carrying exactly `tag` (Prisma `has` — exact and case-sensitive,
+ * which is how Asset.tags stores it; the substring search above would also
+ * return a tag that merely CONTAINS the name). Ordered by hostname, capped at
+ * ASSETS_WITH_TAG_LIMIT; `total` is the uncapped count. Narrow select — a tag
+ * can sit on every asset in a 2000-asset fleet.
+ */
+export async function listAssetsWithTag(
+  tag: string,
+): Promise<{ total: number; assets: AssetWithTagRow[] }> {
+  const where = { tags: { has: tag } };
+  const [total, assets] = await Promise.all([
+    prisma.asset.count({ where }),
+    prisma.asset.findMany({
+      where,
+      orderBy: [{ hostname: "asc" }, { ipAddress: "asc" }],
+      take: ASSETS_WITH_TAG_LIMIT,
+      select: { id: true, hostname: true, ipAddress: true, assetType: true, status: true, monitorStatus: true },
+    }),
+  ]);
+  return { total, assets: assets as AssetWithTagRow[] };
+}

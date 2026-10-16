@@ -6135,6 +6135,10 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   transition: opacity 0.15s;
 }
 .tag-chip-delete:hover { opacity: 1; }
+/* A registry chip that opens the "assets with this tag" slide-in. */
+.tag-chip-open { cursor: pointer; }
+.tag-chip-open:hover { filter: brightness(1.12); }
+.tag-chip-open:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
 /* Tag picker (enforced mode) */
 .tag-picker {

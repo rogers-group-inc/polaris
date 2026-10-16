@@ -764,6 +764,8 @@ const api = {
   assets: {
     list:      (params) => request("GET", "/assets" + toQuery(params)),
     get:       (id)     => request("GET", `/assets/${id}`),
+    // Assets carrying exactly this tag (assets:read) — the tag registry's slide-in.
+    byTag:     (tag)    => request("GET", "/assets/by-tag" + toQuery({ tag: tag })),
     // Sidebar alert: last agent build shipped unsigned Windows binaries (assets:write).
     agentSigningAlert: () => request("GET", "/assets/agent-signing-alert"),
     create:    (body)   => request("POST", "/assets", body),

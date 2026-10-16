@@ -17,7 +17,8 @@
 import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
-import { syncArcDevices, syncAzureTagRegistry } from "../../src/services/discovery/discoveryEngine.js";
+import { syncArcDevices } from "../../src/services/discovery/discoveryEngine.js";
+import { syncAzureTagRegistry } from "../../src/services/tagAssignmentService.js";
 import { normalizeArcMachine } from "../../src/services/azureArcService.js";
 
 const d = dbDescribe;

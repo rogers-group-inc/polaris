@@ -68,6 +68,8 @@ import {
 } from "./notificationTypes.js";
 import { deviceFilterSelect, resolveDeviceFilterAssetIds } from "./deviceFilterService.js";
 import { decorateSubnetNameHits, type RelationDecoratable } from "./scopeRelationIndex.js";
+import { randomTagColor } from "./mapRegionService.js";
+import { AZURE_TAG_PREFIX, AZURE_TAG_CATEGORY } from "../utils/tagNormalize.js";
 
 // ─── Criteria shape ──────────────────────────────────────────────────────────
 
@@ -990,4 +992,42 @@ export async function listTagCatalog(): Promise<{
   ]);
   const value = (settings?.value ?? null) as { enforce?: unknown } | null;
   return { enforce: value?.enforce === true, tags };
+}
+
+/**
+ * Keep the Tag registry's `azure:` rows in step with Asset.tags, so the
+ * mirrored tags show in the pickers and filters like any other tag, and a
+ * row no asset carries any more disappears on its own.
+ *
+ * The registry is the Arc sync's alone: operators can neither edit nor delete
+ * an `azure:` row (PUT / DELETE /server-settings/tags/:id refuse), so this is
+ * the only remover. Read from the assets rather than from one run's machines,
+ * because the registry is global and a second Arc integration may own other
+ * `azure:` tags: a name is added when some asset carries it and removed when
+ * none does. Called at the end of every Arc run, after an asset delete, and
+ * on the periodic tag-reconcile tick (the catch for asset deletes by merge and
+ * for an Arc integration that no longer runs). One DISTINCT unnest over
+ * assets — trivial at 2000 rows. Best-effort: never throws.
+ */
+export async function syncAzureTagRegistry(): Promise<{ added: number; removed: number }> {
+  try {
+    const rows = await prisma.$queryRaw<{ t: string }[]>`
+      SELECT DISTINCT t FROM assets, unnest(tags) AS t WHERE t LIKE ${AZURE_TAG_PREFIX + "%"}`;
+    const names = rows.map((r) => r.t);
+    let added = 0;
+    if (names.length > 0) {
+      const res = await prisma.tag.createMany({
+        data: names.map((name) => ({ name, category: AZURE_TAG_CATEGORY, color: randomTagColor() })),
+        skipDuplicates: true,
+      });
+      added = res.count;
+    }
+    const { count: removed } = await prisma.tag.deleteMany({
+      where: { name: { startsWith: AZURE_TAG_PREFIX, notIn: names } },
+    });
+    return { added, removed };
+  } catch (err: any) {
+    logger.warn({ err: err?.message ?? String(err) }, "Azure tag registry sync failed (non-fatal)");
+    return { added: 0, removed: 0 };
+  }
 }

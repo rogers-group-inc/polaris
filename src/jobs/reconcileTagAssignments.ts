@@ -11,13 +11,19 @@
  * assets and removes it from drifted ones, but only ever touches engine-owned
  * (provenance-tracked) copies — hand-applied tags are never disturbed.
  *
+ * The same tick re-syncs the Arc-owned `azure:` registry rows
+ * (syncAzureTagRegistry): a row no asset carries any more is removed. Arc runs
+ * and asset deletes already do this inline; the tick catches the rest — an
+ * asset merged away, or an Arc integration disabled or deleted, whose runs
+ * would otherwise never prune again.
+ *
  * Independent `running` guard. Failures are logged at debug and never thrown.
  *
  * Import this module from src/app.ts to activate it.
  */
 
 import { logger } from "../utils/logger.js";
-import { reconcileAllTags } from "../services/tagAssignmentService.js";
+import { reconcileAllTags, syncAzureTagRegistry } from "../services/tagAssignmentService.js";
 import { logEvent } from "../services/eventLogService.js";
 import { runInstrumentedJob } from "./_metrics.js";
 
@@ -38,6 +44,15 @@ async function tick(): Promise<void> {
           resourceType: "tag",
           message: `Periodic tag reconcile: +${summary.added} / -${summary.removed}`,
           details: summary,
+        });
+      }
+      const azure = await syncAzureTagRegistry();
+      if (azure.removed > 0) {
+        logEvent({
+          action: "tag.azure_pruned",
+          resourceType: "tag",
+          message: `Removed ${azure.removed} Azure tag(s) no asset carries any more`,
+          details: azure,
         });
       }
     });
