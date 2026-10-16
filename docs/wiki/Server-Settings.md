@@ -639,8 +639,17 @@ can rename, recolour or delete them, or give them a device filter. A tag you
 already had under one of those names is left exactly as it was, whatever its
 category.
 
-Two locked behaviours:
+**Click a tag** to open a slide-in that lists every asset carrying exactly that
+tag, with each asset's address, type and state. Click an asset to open its
+details. The list needs `assets:read`, so without it the tags are not
+clickable. It shows the first 1,000 assets and gives the full count.
 
+Three locked behaviours:
+
+- **Azure tags are read-only.** Tags whose name starts with `azure:` are
+  mirrored from Azure resource tags by the [Azure Arc
+  integration](Integration-Azure-Arc#azure-tags-on-devices). They have no Edit
+  or Delete button, and Polaris removes one by itself once no asset carries it.
 - Writes **refuse the Device-Map-owned "Map Regions" category** — those rows
   belong to the map.
 - The registry **refuses the `region:` prefix by name in every category**, and

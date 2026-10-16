@@ -545,13 +545,15 @@ function assertNotRegionPrefix(name: string, verb: string): void {
  * The `azure:` prefix belongs to the Azure Arc sync, in every category.
  *
  * Each Arc run strips every `azure:` tag off the assets it touches and
- * re-adds the set Azure currently reports, and it adds and prunes the
- * registry rows to match. A hand-made `azure:` row would be pruned on the next
- * run; one carrying an auto-assign filter would put a second managed-sync
- * reconciler on a string the Arc sync already strips. So the registry refuses
- * minting one by create or by rename, refuses renaming a mirrored row (the
- * next run would re-add the old name beside it), and refuses a device filter
- * on one. Colour and category edits stay open.
+ * re-adds the set Azure currently reports, and syncAzureTagRegistry adds and
+ * prunes the registry rows to match — a row goes away by itself once no asset
+ * carries it. A hand-made `azure:` row would be pruned on the next run; one
+ * carrying an auto-assign filter would put a second managed-sync reconciler on
+ * a string the Arc sync already strips. So the registry refuses minting one by
+ * create or by rename, and a mirrored row is read-only outright: no rename (the
+ * next run would re-add the old name beside it), no colour / category / filter
+ * edit, and no delete (the next run would re-add it while an asset still
+ * carries it; once none does, the prune removes it).
  */
 function assertNotAzurePrefix(name: string, verb: string): void {
   if (!isAzureTag(name.trim())) return;
@@ -559,6 +561,16 @@ function assertNotAzurePrefix(name: string, verb: string): void {
     409,
     `Tag names starting with "${AZURE_TAG_PREFIX}" are mirrored from Azure resource tags by the Azure Arc integration — ` +
       `set the tag in Azure to ${verb} it, or pick another name.`,
+  );
+}
+
+/** A mirrored `azure:` registry row is read-only — see assertNotAzurePrefix. */
+function assertNotMirroredAzureRow(name: string, verb: "edited" | "deleted"): void {
+  if (!isAzureTag(name.trim())) return;
+  throw new AppError(
+    409,
+    `"${name}" is mirrored from an Azure resource tag by the Azure Arc integration and cannot be ${verb} here — ` +
+      `change the tag in Azure. Polaris removes it automatically once no asset carries it.`,
   );
 }
 
@@ -745,6 +757,7 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
     const id = req.params.id as string;
     const existing = await prisma.tag.findUnique({ where: { id } });
     if (!existing) throw new AppError(404, "Tag not found");
+    assertNotMirroredAzureRow(existing.name, "edited");
 
     const name = (req.body.name ?? existing.name).trim();
     if (!name) throw new AppError(400, "Tag name is required");
@@ -760,11 +773,8 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
       if (!existing.name.trim().toLowerCase().startsWith(REGION_TAG_PREFIX)) {
         assertNotRegionPrefix(name, "rename");
       }
-      // Both directions: into the prefix mints an orphan the next Arc run
-      // prunes; out of it, the next run re-adds the old name beside it.
-      if (isAzureTag(existing.name.trim())) {
-        throw new AppError(409, `"${existing.name}" is mirrored from an Azure resource tag — rename it in Azure instead.`);
-      }
+      // Into the prefix mints an orphan the next Arc run prunes (out of it is
+      // refused above with every other edit of a mirrored row).
       assertNotAzurePrefix(name, "rename");
     }
 
@@ -776,9 +786,6 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
     // The filter only changes when a shape key is present in the body. Absent =
     // leave as-is; explicit null / an empty tree = clear (becomes a manual tag).
     const posted = readPostedTagFilter(req.body, category);
-    if ((posted.condition || posted.criteria) && isAzureTag(name)) {
-      throw new AppError(409, `"${name}" is mirrored from an Azure resource tag — it cannot also carry a device filter.`);
-    }
     const filterWrite = posted.provided
       ? {
           assetCondition: posted.condition
@@ -843,6 +850,7 @@ router.delete("/tags/:id", requirePermission("serverSettingsSystem", "write"), a
     const tagId = String(req.params.id);
     const tag = await prisma.tag.findUnique({ where: { id: tagId } });
     if (!tag) throw new AppError(404, "Tag not found");
+    assertNotMirroredAzureRow(tag.name, "deleted");
     // Strip engine-applied copies (and their provenance) before deleting. Manual
     // copies on assets the engine never tagged are untouched — same as before.
     let stripped = 0;

@@ -20,7 +20,7 @@
  * Skips cleanly when DATABASE_URL isn't reachable; see _helpers.ts.
  */
 
-import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import request from "supertest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
@@ -100,18 +100,53 @@ d("tag registry — the azure: prefix belongs to the Arc sync", () => {
     expect((await put(created.body.id, { name: AZ })).status).toBe(409);
   });
 
-  it("refuses to rename a mirrored row, but lets it be recoloured", async () => {
+  it("treats a mirrored row as read-only: no rename, recolour, recategorise or delete", async () => {
     const row = await prisma.tag.create({ data: { name: AZ, category: "Azure Tags", color: "#4fc3f7" } });
     expect((await put(row.id, { name: `${PFX}-out` })).status).toBe(409);
-    const recolour = await put(row.id, { color: "#ff0000" });
-    expect(recolour.status).toBe(200);
-    expect(recolour.body.name).toBe(AZ);
+    expect((await put(row.id, { color: "#ff0000" })).status).toBe(409);
+    expect((await put(row.id, { category: "General" })).status).toBe(409);
+    expect((await agent.delete(`/api/v1/server-settings/tags/${row.id}`).set("X-CSRF-Token", csrf)).status).toBe(409);
+    const after = await prisma.tag.findUnique({ where: { id: row.id } });
+    expect(after).toMatchObject({ name: AZ, category: "Azure Tags", color: "#4fc3f7" });
+  });
+
+  it("removes a mirrored row by itself once the last asset carrying it is deleted", async () => {
+    await prisma.tag.create({ data: { name: AZ, category: "Azure Tags", color: "#4fc3f7" } });
+    const a1 = await prisma.asset.create({ data: { hostname: `${PFX}-a1`, tags: [AZ] } });
+    const a2 = await prisma.asset.create({ data: { hostname: `${PFX}-a2`, tags: [AZ] } });
+    expect((await agent.delete(`/api/v1/assets/${a1.id}`).set("X-CSRF-Token", csrf)).status).toBe(204);
+    await vi.waitFor(async () => {
+      expect(await prisma.tag.findUnique({ where: { name: AZ } })).not.toBeNull();
+    });
+    expect((await agent.delete(`/api/v1/assets/${a2.id}`).set("X-CSRF-Token", csrf)).status).toBe(204);
+    await vi.waitFor(async () => {
+      expect(await prisma.tag.findUnique({ where: { name: AZ } })).toBeNull();
+    });
   });
 
   it("refuses a device filter on a mirrored row", async () => {
     const row = await prisma.tag.create({ data: { name: AZ, category: "Azure Tags", color: "#4fc3f7" } });
     expect((await put(row.id, { assetCondition: TREE })).status).toBe(409);
     expect((await prisma.tag.findUnique({ where: { id: row.id } }))!.assetCondition).toBeNull();
+  });
+});
+
+d("GET /assets/by-tag — the registry chip's asset list", () => {
+  it("lists exactly the assets carrying the tag, not ones whose tag merely contains it", async () => {
+    await prisma.asset.create({ data: { hostname: `${PFX}-b2`, tags: [TAG_NAME] } });
+    await prisma.asset.create({ data: { hostname: `${PFX}-b1`, tags: [TAG_NAME, "other"] } });
+    await prisma.asset.create({ data: { hostname: `${PFX}-b3`, tags: [`${TAG_NAME}-longer`] } });
+    const res = await agent.get(`/api/v1/assets/by-tag?tag=${encodeURIComponent(TAG_NAME)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(2);
+    expect(res.body.assets.map((a: { hostname: string }) => a.hostname)).toEqual([`${PFX}-b1`, `${PFX}-b2`]);
+    expect(Object.keys(res.body.assets[0]).sort()).toEqual(
+      ["assetType", "hostname", "id", "ipAddress", "monitorStatus", "status"],
+    );
+  });
+
+  it("400s without a tag", async () => {
+    expect((await agent.get("/api/v1/assets/by-tag")).status).toBe(400);
   });
 });
 

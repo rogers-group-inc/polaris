@@ -110,8 +110,8 @@ import { recomputeDependencyTree } from "../dependencyTreeService.js";
 import { collectManagementAccess, type DeviceAccessGroup } from "../fortinetManagementAccessService.js";
 import { runDescriptionSyncForIntegration } from "../descriptionSyncService.js";
 import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
-import { reconcileMapRegions, randomTagColor } from "../mapRegionService.js";
-import { AZURE_TAG_PREFIX, AZURE_TAG_CATEGORY, isAzureTag } from "../../utils/tagNormalize.js";
+import { reconcileMapRegions } from "../mapRegionService.js";
+import { isAzureTag } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
@@ -122,7 +122,7 @@ import {
   runPlaceholderMacAdoption,
   type AdoptionBudget,
 } from "../placeholderMacAdoptionService.js";
-import { reconcileAllTags } from "../tagAssignmentService.js";
+import { reconcileAllTags, syncAzureTagRegistry } from "../tagAssignmentService.js";
 import * as sightings from "../assetSightingService.js";
 import { quarantineAsset, verifyAssetQuarantine } from "../assetQuarantineService.js";
 import { fetchFortigateSysLocation } from "../fortigateLocationService.js";
@@ -8466,35 +8466,6 @@ async function upsertArcClusterSource(
 function isArcManagedTag(t: string): boolean {
   if (t.startsWith("arc-") || isAzureTag(t)) return true;
   return ["azurearc", "auto-discovered"].includes(t);
-}
-
-/**
- * Keep the Tag registry's `azure:` rows in step with Asset.tags, so the
- * mirrored tags show in the pickers and filters like any other tag.
- *
- * Read from the assets rather than from this run's machines, because the
- * registry is global and a second Arc integration may own other `azure:`
- * tags: a name is added when some asset carries it and removed when none
- * does. One DISTINCT unnest over assets per Arc run — trivial at 2000 rows.
- * Best-effort: a registry failure never fails the discovery run.
- */
-export async function syncAzureTagRegistry(): Promise<void> {
-  try {
-    const rows = await prisma.$queryRaw<{ t: string }[]>`
-      SELECT DISTINCT t FROM assets, unnest(tags) AS t WHERE t LIKE ${AZURE_TAG_PREFIX + "%"}`;
-    const names = rows.map((r) => r.t);
-    if (names.length > 0) {
-      await prisma.tag.createMany({
-        data: names.map((name) => ({ name, category: AZURE_TAG_CATEGORY, color: randomTagColor() })),
-        skipDuplicates: true,
-      });
-    }
-    await prisma.tag.deleteMany({
-      where: { name: { startsWith: AZURE_TAG_PREFIX, notIn: names } },
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message ?? String(err) }, "Azure tag registry sync failed (non-fatal)");
-  }
 }
 
 /**
