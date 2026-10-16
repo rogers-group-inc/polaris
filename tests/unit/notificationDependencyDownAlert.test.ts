@@ -382,3 +382,68 @@ describe("a dependency-down alert inherits its root cause's acknowledgement (bus
     expect(created()[0].acknowledged).toBeUndefined();
   });
 });
+
+describe("a down alert keeps the outage's acknowledgement across automations (business rule 78b)", () => {
+  const DOWN_TRIGGER = { type: "asset_state", field: "monitorStatus", operator: "==", value: "down" };
+  const SIBLING_ACK = {
+    id: "n-old", assetId: "srv", assetHostname: "SRV",
+    acknowledgedBy: "jsmith", acknowledgeNote: "Power work in the server room",
+    rule: { trigger: DOWN_TRIGGER },
+  };
+  const newRule = downRule({ id: "r-new", name: "Server down (new)" });
+  const lookups = () => h.prisma.notification.findMany.mock.calls.map((c) => c[0]).filter((a) => a?.where?.acknowledged === true);
+
+  beforeEach(() => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([newRule]);
+    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
+  });
+
+  it("a down automation created mid-outage raises its alert already acknowledged", async () => {
+    h.prisma.notification.findMany.mockResolvedValue([SIBLING_ACK]);
+    await evaluateAllNotificationRules();
+
+    // The lookup is the device's OWN live down alert from any OTHER automation.
+    expect(lookups()).toHaveLength(1);
+    expect(lookups()[0].where).toMatchObject({
+      assetId: "srv", acknowledged: true, ruleId: { not: "r-new" },
+      dependencyDown: false, metric: "monitorStatus", cleared: false, testRun: false,
+    });
+    expect(created()[0]).toMatchObject({
+      acknowledged: true,
+      acknowledgedBy: "jsmith",
+      acknowledgeNote: "Power work in the server room",
+      acknowledgedVia: { notificationId: "n-old", assetId: "srv", hostname: "SRV" },
+    });
+    const acks = h.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.acknowledged");
+    expect(acks).toHaveLength(1);
+    expect(acks[0].message).toContain("already acknowledged by jsmith");
+    expect(acks[0].details).toMatchObject({ ids: ["n-new"], inheritedFrom: ["n-old"] });
+    // It still delivers — the acknowledgement does not swallow the alert.
+    expect(triggeredEvents()).toHaveLength(1);
+  });
+
+  it("stays unacknowledged when no other down alert on the device is acknowledged", async () => {
+    await evaluateAllNotificationRules();
+    expect(lookups()).toHaveLength(1);
+    expect(created()[0].acknowledged).toBeUndefined();
+  });
+
+  it("ignores an acknowledged monitorStatus alert that is not a DOWN automation's (e.g. warning)", async () => {
+    h.prisma.notification.findMany.mockResolvedValue([
+      { ...SIBLING_ACK, rule: { trigger: { ...DOWN_TRIGGER, value: "warning" } } },
+    ]);
+    await evaluateAllNotificationRules();
+    expect(created()[0].acknowledged).toBeUndefined();
+  });
+
+  it("is not asked by an automation that is not down detection", async () => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([
+      downRule({ id: "r-warn" }, { value: "warning" }),
+    ]);
+    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "warning" })]);
+    h.prisma.notification.findMany.mockResolvedValue([SIBLING_ACK]);
+    await evaluateAllNotificationRules();
+    expect(lookups()).toHaveLength(0);
+    expect(created()[0].acknowledged).toBeUndefined();
+  });
+});

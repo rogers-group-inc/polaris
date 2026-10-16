@@ -487,6 +487,37 @@ export async function rootCauseAckFor(rootCauseAssetId: string): Promise<Inherit
 }
 
 /**
+ * Business rule 78b — fire time: a plain down alert raised on a device whose
+ * OWN down alert from another automation is live and already acknowledged
+ * (an automation created mid-outage, a second down automation whose hold
+ * finished later) is born acknowledged with that acknowledgement. Same shape
+ * as rule 78a's lookup, but on the alert's own asset, never its own rule, and
+ * only from a down-detection automation (a `monitorStatus == warning` alert
+ * acknowledged is not the outage acknowledged). Never throws.
+ */
+export async function sameAssetDownAckFor(assetId: string, ruleId: string): Promise<InheritedAck | null> {
+  try {
+    const rows = await prisma.notification.findMany({
+      where: { ...ROOT_DOWN_ALERT_WHERE, assetId, acknowledged: true, ruleId: { not: ruleId } },
+      orderBy: { acknowledgedAt: "desc" },
+      take: 10,
+      select: { id: true, assetId: true, assetHostname: true, acknowledgedBy: true, acknowledgeNote: true, rule: { select: { trigger: true } } },
+    });
+    const row = rows.find((r) => r.rule && isDownDetectionTrigger(r.rule.trigger as unknown as Trigger));
+    if (!row || !row.assetId) return null;
+    return {
+      notificationId: row.id,
+      assetId: row.assetId,
+      hostname: row.assetHostname ?? null,
+      acknowledgedBy: row.acknowledgedBy ?? null,
+      acknowledgeNote: row.acknowledgeNote ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Acknowledge time: every live, unacknowledged dependency-down alert whose
  * root cause is one of these just-acknowledged down alerts' devices takes the
  * same acknowledgement. One read (the JSON-path OR is bounded by the roots in

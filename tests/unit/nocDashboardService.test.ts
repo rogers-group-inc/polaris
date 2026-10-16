@@ -505,6 +505,8 @@ describe("getRecentAlerts", () => {
       acknowledgeNote: null,
       // Business rule 78a — acknowledged directly, not inherited from a root cause.
       ackInheritedFrom: null,
+      // Business rule 78b — nor carried over from another automation's alert.
+      ackInheritedSameAsset: false,
       // Grouped alerts (business rule 75): an alert about a single thing
       // reports both as null, which is what keeps the widget's "+N" affordance
       // off every ungrouped row.

@@ -1183,6 +1183,14 @@ export function ackInheritedFromOf(via: unknown): string | null {
   return typeof v.assetId === "string" && v.assetId ? v.assetId : null;
 }
 
+/** The asset an inherited acknowledgement came from (rules 78a / 78b) — null
+ *  on a direct acknowledgement or an unreadable snapshot. */
+export function ackInheritedAssetIdOf(via: unknown): string | null {
+  if (!via || typeof via !== "object") return null;
+  const id = (via as { assetId?: unknown }).assetId;
+  return typeof id === "string" && id ? id : null;
+}
+
 export interface AlertRow {
   id: string;
   /** The alerting asset, for the widget's click-through to its details
@@ -1230,6 +1238,10 @@ export interface AlertRow {
    *  dependency-down alert took its acknowledgement (and note) from; null on
    *  a direct acknowledgement. The ack pill's hover says so. */
   ackInheritedFrom: string | null;
+  /** Business rule 78b — the inherited acknowledgement came from another
+   *  automation's down alert on THIS device, not from a root cause upstream.
+   *  The hover words it as a carry-over instead of naming a root cause. */
+  ackInheritedSameAsset: boolean;
   /** Business rule 78 — raised for a dependency-suppressed device by a down
    *  automation that opted in; the widget badges it "Dep. Down" and names the
    *  upstream device in the badge's tooltip. */
@@ -1350,6 +1362,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     acknowledgedBy: n.acknowledgedBy ?? null,
     acknowledgeNote: n.acknowledged ? n.acknowledgeNote ?? null : null,
     ackInheritedFrom: n.acknowledged ? ackInheritedFromOf(n.acknowledgedVia) : null,
+    ackInheritedSameAsset: n.acknowledged && !!n.assetId && ackInheritedAssetIdOf(n.acknowledgedVia) === n.assetId,
     dependencyDown: n.dependencyDown === true,
     dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
     testRun: n.testRun === true,

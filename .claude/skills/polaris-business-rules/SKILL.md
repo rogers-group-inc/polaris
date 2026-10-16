@@ -54,7 +54,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | resolve a device from a NAME — `lastSeenSwitch` / `lastSeenAp`, an AP's `parentSwitch`, an LLDP `systemName`, two switches or APs sharing a hostname, the duplicate-hostname merge | 91 (the scope that settles a shared name, and the refusal when nothing does), 41 and 83 (the serial identities it falls back on) |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 65, 66, 67, 75, 78, 85, 89, 90, 98 (the SD-WAN member IP filter), 106 (the per-email asset Event, and why the event tail ignores it), 118 (the stream-failing state fields), 120 (quiet-time recipient exceptions) |
 | touch the capacity snapshot's severity, who records `capacity.severity_changed` / `capacity.severity_recovered`, or how long a change must hold before it alerts | 105, then 32(e) (the verb split) and 71 (what a self-measurement must account for) |
-| touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) and 78a (its acknowledgement follows the root cause's) |
+| touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) and 78a (its acknowledgement follows the root cause's); 78b when a down alert should keep another down automation's acknowledgement on the same device |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it forbids splitting a send), then 56 and 60; 120 for the one partition quiet time makes (who is held) |
 | touch a maintenance window, a hold Polaris takes for itself, or any surface that REPORTS one | 16 (what a window does), 37 (the gate that reads it), 80 + 80a (holds and event-time), 73 (reporting) |
 | touch discovery writes (assets, descriptions, locations, ARP, MACs) — including which DHCP binding, detected-device row or network card sets an endpoint's IP | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 53, 55, 79, 83, 101, 102, 103; 100 for the Generic API feed |
@@ -184,6 +184,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 77 | A VIP describes an address; it does not claim it — and the status says every fact it has | invariants-30-43 | narrative-77 |
 | 78 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-78 |
 | 78a | A dependency-down alert is acknowledged when its root cause's own alert is, and says whose acknowledgement it carries | invariants-30-43 | narrative-78 |
+| 78b | A new automation never makes an acknowledged outage read as unowned | invariants-30-43 | narrative-78 |
 | 79 | An operator's removal of a MAC is a correction, not a suppression | invariants-30-43 | narrative-79 |
 | 80 | Downtime Polaris itself causes is not an incident — and a silence it grants expires on its own | invariants-30-43 | narrative-80 |
 | 80a | A silence is granted for when the event HAPPENED, not for when something got round to reading it | invariants-30-43 | narrative-80 |

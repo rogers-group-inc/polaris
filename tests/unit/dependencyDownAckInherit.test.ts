@@ -27,7 +27,7 @@ import {
   inheritableRootCauseId,
   inheritedAckData,
 } from "../../src/services/notificationService.js";
-import { ackInheritedFromOf } from "../../src/services/nocDashboardService.js";
+import { ackInheritedFromOf, ackInheritedAssetIdOf } from "../../src/services/nocDashboardService.js";
 
 const blame = (rootId: string, reason = "down") => ({
   upstream: { id: "sw", hostname: "SW-PLANT-3" },
@@ -70,6 +70,11 @@ describe("ackInheritedFromOf / inheritedAckData", () => {
   it("falls back to the asset id, and is null on a direct acknowledgement", () => {
     expect(ackInheritedFromOf({ notificationId: "n1", assetId: "fg", hostname: null })).toBe("fg");
     expect(ackInheritedFromOf(null)).toBeNull();
+  });
+  it("reads back the source asset id (rule 78b compares it with the alert's own)", () => {
+    expect(ackInheritedAssetIdOf({ notificationId: "n1", assetId: "srv", hostname: "SRV" })).toBe("srv");
+    expect(ackInheritedAssetIdOf({ notificationId: "n1" })).toBeNull();
+    expect(ackInheritedAssetIdOf(null)).toBeNull();
   });
 });
 
