@@ -433,6 +433,19 @@ TableSF.prototype._wirePickFilter = function (th, key) {
   wrap.addEventListener("click", function (e) { e.stopPropagation(); });
   btn.addEventListener("click", function (e) {
     e.stopPropagation();
+    // A page-supplied picker (setPickOpener) replaces the built-in menu.
+    var opener = self._pickOpeners && self._pickOpeners[key];
+    if (opener) {
+      document.querySelectorAll(".sf-multi-popover").forEach(function (p) { p.setAttribute("hidden", ""); });
+      var cur = self._filters[key];
+      opener(TableSF.isPickFilter(cur) ? JSON.parse(JSON.stringify(cur)) : null, function (next) {
+        if (next && TableSF.isPickFilter(next) && TableSF._pickSelectionCount(next)) self._filters[key] = next;
+        else delete self._filters[key];
+        self._updatePickButtonLabel(th, key);
+        self._onChange();
+      });
+      return;
+    }
     if (pop.hasAttribute("hidden")) open(); else close();
   });
   search.addEventListener("input", renderList);
@@ -467,6 +480,16 @@ TableSF.prototype._wirePickFilter = function (th, key) {
       commit();
     }
   });
+};
+
+// Replace a pick column's built-in menu with the page's own picker (the Assets
+// Tags column opens the grouped colour-chip tag picker in a dialog).
+// `fn(current, done)`: `current` is a copy of the stored pick or null; call
+// `done(next)` with a { op: "pick", … } object to apply it, or null to clear.
+// Never call `done` to cancel. Passing null removes the opener.
+TableSF.prototype.setPickOpener = function (key, fn) {
+  if (!this._pickOpeners) this._pickOpeners = {};
+  if (fn) this._pickOpeners[key] = fn; else delete this._pickOpeners[key];
 };
 
 TableSF.prototype._updatePickButtonLabel = function (th, key) {

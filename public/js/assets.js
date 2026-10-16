@@ -754,6 +754,9 @@ document.addEventListener("DOMContentLoaded", async function () {
     var r = await api.assets.tags();
     return (r && r.tags) || [];
   });
+  // ...shown as the same grouped colour-chip picker the asset edit form uses,
+  // in a dialog, instead of TableSF's checkbox list.
+  _assetsSF.setPickOpener("tags", openAssetTagFilterModal);
   var assetsTable = document.querySelector("#assets-tbody").closest("table");
   // Widths + hidden columns persist per browser in the prefs blob; the column
   // ORDER additionally rides the active view tab (assets-tabs.js), so the
@@ -1087,6 +1090,120 @@ function _buildAssetsQuery() {
     params.sortDir = _assetsSF._sortDir === "asc" ? "asc" : "desc";
   }
   return params;
+}
+
+// The Tags column filter's picker: the edit form's grouped colour chips
+// (registry categories via _tagCache, the same _tagChipHTML chips), laid out
+// in full rather than in the form's 200px scroll box, plus every tag in use
+// that has no registry row ("Other tags in use" — discovery tags, azure:
+// tags, which a FILTER must offer even though the edit picker hides them).
+// Any / All and "(No tags)" sit above the chips; nothing filters until OK.
+// `current` is the stored { op: "pick", … } or null; `done` is TableSF's.
+async function openAssetTagFilterModal(current, done) {
+  var inUse = [];
+  try {
+    var both = await Promise.all([
+      _ensureTagCache(),
+      api.assets.tags().catch(function () { return null; }),
+    ]);
+    inUse = (both[1] && both[1].tags) || [];
+  } catch (_) { /* the chips render whatever loaded */ }
+
+  var cur = current || { mode: "any", values: [], none: false };
+  var selected = (cur.values || []).slice();
+  var mode = cur.mode === "all" ? "all" : "any";
+
+  var cats = {};
+  var registered = {};
+  _tagCache.tags.forEach(function (t) {
+    var cat = t.category || "General";
+    (cats[cat] = cats[cat] || []).push(t);
+    registered[t.name] = true;
+  });
+  var others = [];
+  inUse.concat(selected).forEach(function (name) {
+    if (name && !registered[name] && others.indexOf(name) < 0) others.push(name);
+  });
+  others.sort(function (a, b) { return a.localeCompare(b); });
+
+  var chips = "";
+  Object.keys(cats).sort().forEach(function (cat) {
+    chips += '<div class="tag-picker-category"><span class="tag-picker-cat-label">' + escapeHtml(cat) + '</span>';
+    cats[cat].forEach(function (t) { chips += _tagChipHTML(t.name, t.color, selected.indexOf(t.name) >= 0); });
+    chips += '</div>';
+  });
+  if (others.length) {
+    chips += '<div class="tag-picker-category"><span class="tag-picker-cat-label">Other tags in use</span>';
+    others.forEach(function (name) { chips += _tagChipHTML(name, "", selected.indexOf(name) >= 0); });
+    chips += '</div>';
+  }
+  if (!chips) {
+    chips = '<p class="hint" style="margin:0">' +
+      (_tagCache.failed ? "Could not load the tag list." : "No tags in use yet.") + '</p>';
+  }
+
+  var body =
+    '<div class="tag-filter-head">' +
+      '<div class="sf-pick-mode" role="radiogroup" aria-label="Match">' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="any" title="Assets carrying ANY selected tag">Any</button>' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="all" title="Assets carrying EVERY selected tag">All</button>' +
+      '</div>' +
+      '<label class="tag-filter-none"><input type="checkbox" id="tag-filter-none"' + (cur.none ? " checked" : "") + '> Include untagged assets</label>' +
+    '</div>' +
+    '<div class="tag-picker tag-filter-picker" id="tag-filter-picker">' + chips + '</div>';
+  var footer =
+    '<button type="button" class="btn btn-secondary" id="tag-filter-clear" style="margin-right:auto">Clear</button>' +
+    '<span class="tag-filter-count" id="tag-filter-count"></span>' +
+    '<button type="button" class="btn btn-secondary" id="tag-filter-cancel">Cancel</button>' +
+    '<button type="button" class="btn btn-primary" id="tag-filter-ok">OK</button>';
+  openModal("Filter by tags", body, footer, { wide: true });
+
+  var picker = document.getElementById("tag-filter-picker");
+  var noneBox = document.getElementById("tag-filter-none");
+  var countEl = document.getElementById("tag-filter-count");
+  // _tagChipHTML names its boxes f-tags-cb, and getTagFieldValue (the edit
+  // form's save) reads every f-tags-cb in the DOCUMENT — this dialog's body
+  // lingers hidden after it closes, so its ticks must not answer to that name.
+  picker.querySelectorAll('input[name="f-tags-cb"]').forEach(function (cb) { cb.name = "tag-filter-cb"; });
+  _wireChipListeners(picker);
+
+  function ticked() {
+    return Array.prototype.map.call(picker.querySelectorAll('input[type="checkbox"]:checked'), function (cb) { return cb.value; });
+  }
+  function refresh() {
+    document.querySelectorAll("#modal-overlay .sf-pick-mode-btn").forEach(function (b) {
+      var on = b.getAttribute("data-mode") === mode;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    // A row cannot be untagged and carry every tag, so All turns it off.
+    noneBox.disabled = mode === "all";
+    noneBox.parentElement.classList.toggle("sf-pick-disabled", mode === "all");
+    var n = ticked().length + (noneBox.checked && mode !== "all" ? 1 : 0);
+    countEl.textContent = n ? n + " selected" : "";
+  }
+
+  document.querySelectorAll("#modal-overlay .sf-pick-mode-btn").forEach(function (b) {
+    b.addEventListener("click", function () { mode = b.getAttribute("data-mode") === "all" ? "all" : "any"; refresh(); });
+  });
+  picker.addEventListener("change", refresh);
+  noneBox.addEventListener("change", refresh);
+  document.getElementById("tag-filter-clear").addEventListener("click", function () {
+    picker.querySelectorAll('input[type="checkbox"]:checked').forEach(function (cb) {
+      cb.checked = false;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    noneBox.checked = false;
+    refresh();
+  });
+  document.getElementById("tag-filter-cancel").addEventListener("click", closeModal);
+  document.getElementById("tag-filter-ok").addEventListener("click", function () {
+    var values = ticked();
+    var none = noneBox.checked && mode !== "all";
+    closeModal();
+    done(values.length || none ? { op: "pick", mode: mode, values: values, none: none } : null);
+  });
+  refresh();
 }
 
 // Map one TableSF text-filter value onto <param> / <param>Op. Handles the

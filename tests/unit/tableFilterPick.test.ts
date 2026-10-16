@@ -177,6 +177,32 @@ describe("pick filter", () => {
     expect(sf._filters.tags).toBeUndefined();
   });
 
+  it("a page opener replaces the built-in menu and applies what it returns", () => {
+    const seen: any[] = [];
+    let finish: any = null;
+    sf.setPickOpener("tags", (cur: any, done: any) => { seen.push(cur); finish = done; });
+    button().click();
+    expect(isOpen()).toBe(false);
+    expect(seen).toEqual([null]);
+    expect(changes).toBe(0);
+    finish({ op: "pick", mode: "any", values: ["prod", "lab"], none: false });
+    expect(sf._filters.tags).toEqual({ op: "pick", mode: "any", values: ["prod", "lab"], none: false });
+    expect(button().textContent).toBe("2 selected");
+    expect(changes).toBe(1);
+
+    // The opener gets a COPY of the stored pick; null (or an empty pick) clears.
+    button().click();
+    expect(seen[1]).toEqual(sf._filters.tags);
+    expect(seen[1]).not.toBe(sf._filters.tags);
+    finish({ op: "pick", mode: "any", values: [], none: false });
+    expect(sf._filters.tags).toBeUndefined();
+    expect(button().textContent).toBe("All");
+
+    sf.setPickOpener("tags", null);
+    button().click();
+    expect(isOpen()).toBe(true);
+  });
+
   it("saved view tabs / presets accept the pick shape (the server sanitizer)", () => {
     const s = sanitizeFilterState({
       sfFilters: { tags: { op: "pick", mode: "all", values: ["prod", "dc,1"], none: false, junk: 1 } },

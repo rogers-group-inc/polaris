@@ -4118,6 +4118,14 @@ body.sf-resizing * { user-select: none !important; }
 .sf-pick-mode-btn + .sf-pick-mode-btn { border-left: 1px solid var(--color-border); }
 .sf-pick-mode-btn.active { background: var(--color-accent); color: #0d0d1a; font-weight: 600; }
 .sf-pick-actions { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+/* The Assets Tags filter dialog (assets.js → openAssetTagFilterModal): the edit
+   form's chip picker laid out in full — no 200px scroll box; a very long
+   catalogue scrolls the modal body instead. */
+.tag-filter-head { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; font-size: 0.85rem; }
+.tag-filter-none { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.tag-filter-none.sf-pick-disabled { opacity: 0.5; cursor: default; }
+.tag-picker.tag-filter-picker { max-height: none; overflow: visible; }
+.tag-filter-count { align-self: center; font-size: 0.8rem; color: var(--color-text-secondary); }
 .sf-pick-spacer { flex: 1; }
 
 /* ─── Bulk Action Bar ──────────────────────────────────────────────────────── */
