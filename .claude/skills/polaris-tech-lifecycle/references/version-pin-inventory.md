@@ -355,7 +355,7 @@ move is a project, not a dependency bump, so they are listed here and ignored in
   gitignored so every checkout regenerates via `postinstall`.
 - **zod 3**, **typescript 6**, **eslint 10** + `typescript-eslint 8`, **vitest 5** +
   `@vitest/coverage-v8` (versions must match), **pg 8**, **pg-boss 12**, **pino 10**,
-  **undici 8**, **multer 2**, **happy-dom 20**, **@simplewebauthn/server 14**.
+  **undici 8**, **multer 2**, **happy-dom 21**, **@simplewebauthn/server 14**.
   - **@simplewebauthn/server has an unversioned counterpart**: the browser half of every
     passkey ceremony is hand-rolled in `public/js/webauthn.js` rather than bundled from
     `@simplewebauthn/browser`, because this repo has no build step. So a major bump moves one
