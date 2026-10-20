@@ -1415,6 +1415,12 @@ function getAlertsFormData() {
     var pinned = blankPinned ? null : (proposed.overrideIp || existing.ipOverride || existing.ipAddress || null);
     var discovered = proposed.ipAddress || null;
     var hostLabel = existing.hostname || proposed.hostname || "(asset)";
+    // The hostname opens the asset, so the operator can review the discovery
+    // (sources, IP history) before choosing Accept or Reject.
+    var assetId = c.assetId || existing.id || null;
+    var hostLink = assetId
+      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(assetId) + '" title="Open this asset">' + escapeHtml(hostLabel) + '</a>'
+      : escapeHtml(hostLabel);
 
     var rows =
       '<tr class="conflict-changed">' +
@@ -1441,7 +1447,7 @@ function getAlertsFormData() {
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +
         '<span class="badge badge-warning">IP Override</span>' +
-        '<strong>' + escapeHtml(hostLabel) + '</strong>' +
+        '<strong>' + hostLink + '</strong>' +
         (pinned ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">pinned ' + escapeHtml(pinned) + '</span>'
           : blankPinned ? '<span class="conflict-card-subnet" style="font-size:0.78rem">address cleared</span>' : '') +
       '</div>' +
