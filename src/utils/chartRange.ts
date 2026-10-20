@@ -44,7 +44,11 @@ export function resolveRange(req: { query: Record<string, unknown> }): { since: 
  * (SVG)" section of polaris-ui-canon.
  *
  *   - detail tier (bucketSeconds=0): 5-minute lookback — covers ~1-5 polls
- *     at 1m/2m/5m cadences without bloating the query.
+ *     at 1m/2m/5m cadences without bloating the query. A slower stream
+ *     (interfaces on an agent host at 600 s, storage, path checks) has
+ *     nothing in it, so the detail readers in sampleHistoryService also
+ *     ANCHOR on rows (`readDetailWithAnchor`): the newest one row (gauges)
+ *     or two rows (counters, whose rate needs a pair) older than this.
  *   - hourly tier: one extra bucket (3600s).
  *   - daily tier:  one extra bucket (86400s).
  */

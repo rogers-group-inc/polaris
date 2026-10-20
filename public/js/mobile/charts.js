@@ -313,6 +313,13 @@
     var prepared = series.map(function (s) { return { s: s, pts: seriesPoints(s) }; });
     applySharedOutageMarkers(prepared, opts.outages);
 
+    // With an explicit range the window's left edge is `from`. History
+    // endpoints return lookback rows before it only so a line can enter from
+    // the edge; they sit off-plot (the root <svg> clips its overflow) and must
+    // neither stretch the time axis nor widen the value axis.
+    var hasRange = opts.from != null && opts.to != null && isFinite(+opts.from) && isFinite(+opts.to);
+    var edge = hasRange ? +opts.from : -Infinity;
+
     // Figure out the y-axis range across all visible points. Failed polls carry
     // no value — they plot at the baseline — so they never widen the range.
     var yMin = (opts.yMin != null) ? opts.yMin : Infinity;
@@ -320,6 +327,7 @@
     var anyValues = false, anyPoints = false;
     prepared.forEach(function (e) {
       e.pts.forEach(function (p) {
+        if (p.ts < edge) return;
         anyPoints = true;
         if (p.v == null) return;
         anyValues = true;
@@ -333,12 +341,16 @@
     var tMin = Infinity, tMax = -Infinity;
     prepared.forEach(function (e) {
       e.pts.forEach(function (p) {
+        if (p.ts < edge) return;
         if (p.ts < tMin) tMin = p.ts;
         if (p.ts > tMax) tMax = p.ts;
       });
     });
+    // A series whose first in-window reading lands after the edge still
+    // starts at the edge when a lookback row exists to enter from.
+    var anyLookback = hasRange && prepared.some(function (e) { return e.pts.length && e.pts[0].ts < edge; });
+    if (anyLookback) tMin = edge;
     var nowMs = Date.now();
-    var hasRange = opts.from != null && opts.to != null && isFinite(+opts.from) && isFinite(+opts.to);
     var bands = hasRange
       ? maintenanceSpans(opts.maintenance, +opts.from, +opts.to, nowMs)
       : (anyPoints ? maintenanceSpans(opts.maintenance, tMin, tMax, nowMs) : []);

@@ -76,6 +76,54 @@ function rate(first: number | null, last: number | null, bucketStartMs: number, 
   return delta / seconds;
 }
 
+// ─── Detail-tier lookback anchor ─────────────────────────────────────────────
+
+/**
+ * How far back the row anchor may reach. Long enough for two samples of an
+ * hourly stream (path checks top out at 3600 s); short enough that a series
+ * that stopped reporting yesterday does not slant a line across the window
+ * from a day-old reading.
+ */
+export const DETAIL_ANCHOR_CAP_MS = 2 * 60 * 60 * 1000;
+
+/** Rows a counter stream needs before `since`: a rate point is drawn at the
+ *  SECOND sample of each pair, so one row before the edge is not enough. */
+export const ANCHOR_ROWS_RATE = 2;
+/** Rows a gauge stream needs before `since`. */
+export const ANCHOR_ROWS_GAUGE = 1;
+
+type TimestampFilter = { gte?: Date; lte?: Date; lt?: Date };
+
+/**
+ * Read a detail-tier series with its lookback ANCHORED ON ROWS rather than on
+ * a guessed duration. `fetchSince` (the route's fixed overflow) is a time
+ * window, and a stream polled less often than that window — interfaces on an
+ * agent host every 600 s, storage, path checks — has nothing in it, so the
+ * line started minutes into the chart. Alongside the main read, this fetches
+ * the newest `anchorRows` rows older than `fetchSince` (within
+ * `DETAIL_ANCHOR_CAP_MS` of `since`) and prepends them. The two reads run in
+ * parallel; when the overflow window already held enough rows the anchor only
+ * adds `anchorRows` hidden rows. Callers keep filtering stats to `>= since`.
+ * Without `fetchSince` the caller asked for no lookback and gets none.
+ */
+async function readDetailWithAnchor<T extends { timestamp: Date }>(
+  since: Date,
+  until: Date,
+  fetchSince: Date | undefined,
+  anchorRows: number,
+  query: (timestamp: TimestampFilter, desc: boolean, take?: number) => Promise<T[]>,
+): Promise<T[]> {
+  const from = fetchSince ?? since;
+  const cap = new Date(since.getTime() - DETAIL_ANCHOR_CAP_MS);
+  const [rows, before] = await Promise.all([
+    query({ gte: from, lte: until }, false),
+    fetchSince && anchorRows > 0 && cap < from
+      ? query({ lt: from, gte: cap }, true, anchorRows)
+      : Promise.resolve([] as T[]),
+  ]);
+  return before.length ? [...before.reverse(), ...rows] : rows;
+}
+
 // ─── Monitor history (response time) ─────────────────────────────────────────
 
 export interface MonitorHistoryRow {
@@ -155,14 +203,21 @@ export async function readMonitorHistory(
     // matching the hourly/daily rollups this same function reads at coarser
     // tiers — otherwise the sample counts would change meaning as the operator
     // widened the range.
-    const allRows = await prisma.assetMonitorSample.findMany({
-      where: { assetId, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
-      select: {
-        timestamp: true, success: true, responseTimeMs: true, error: true, dependencyDown: true,
-        probeKind: true, packetsSent: true, packetsReceived: true,
-      },
-    });
+    // The anchor is a response-time poll: a sweep row before the edge would
+    // feed the loss line but leave the response line starting mid-chart.
+    const allRows = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_GAUGE, (timestamp, desc, take) =>
+      prisma.assetMonitorSample.findMany({
+        where: {
+          assetId, timestamp,
+          ...(desc ? { OR: [{ probeKind: null }, { probeKind: "primary" }] } : {}),
+        },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+        select: {
+          timestamp: true, success: true, responseTimeMs: true, error: true, dependencyDown: true,
+          probeKind: true, packetsSent: true, packetsReceived: true,
+        },
+      }));
     const bucketMs = monitorLossBucketMs(until.getTime() - sinceMs);
     const loss: MonitorLossSeries = {
       bucketMs,
@@ -386,9 +441,10 @@ export async function readTelemetryHistory(
   const queryFrom = fetchSince ?? since;
   const sinceMs = since.getTime();
   if (tier === "detail") {
-    const samples = await prisma.assetTelemetrySample.findMany({
-      where: { assetId, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
+    const samples = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_GAUGE, (timestamp, desc, take) => prisma.assetTelemetrySample.findMany({
+      where: { assetId, timestamp },
+      orderBy: { timestamp: desc ? "desc" : "asc" },
+      take,
       select: {
         timestamp: true, cpuPct: true, cpuCorePcts: true,
         memPct: true, memUsedBytes: true, memTotalBytes: true,
@@ -398,7 +454,7 @@ export async function readTelemetryHistory(
         memSwappedBytes: true, memCompressedBytes: true, memConsumedBytes: true,
         sessionCount: true,
       },
-    });
+    }));
     const rows: TelemetryHistoryRow[] = samples.map((s) => ({
       timestamp:     s.timestamp,
       cpuPct:        s.cpuPct,
@@ -565,10 +621,14 @@ export async function readHardwareSensorHistory(
   const queryFrom = fetchSince ?? since;
   const sinceMs = since.getTime();
   if (tier === "detail") {
-    const samples = await prisma.assetHardwareSensorSample.findMany({
-      where: { assetId, timestamp: { gte: queryFrom, lte: until }, ...(sensorName ? { sensorName } : {}) },
-      orderBy: { timestamp: "asc" },
-    });
+    // Anchored only when one sensor is asked for: across every sensor, "the
+    // newest row" belongs to one of them and leaves the rest unanchored.
+    const samples = await readDetailWithAnchor(since, until, fetchSince, sensorName ? ANCHOR_ROWS_GAUGE : 0, (timestamp, desc, take) =>
+      prisma.assetHardwareSensorSample.findMany({
+        where: { assetId, timestamp, ...(sensorName ? { sensorName } : {}) },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+      }));
     const rows: HardwareSensorHistoryRow[] = samples.map((s) => ({
       timestamp:   s.timestamp,
       sensorName:  s.sensorName,
@@ -667,10 +727,12 @@ export async function readStorageHistory(
 ): Promise<{ samples: StorageHistoryRow[] }> {
   const queryFrom = fetchSince ?? since;
   if (tier === "detail") {
-    const samples = await prisma.assetStorageSample.findMany({
-      where: { assetId, mountPath, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
-    });
+    const samples = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_GAUGE, (timestamp, desc, take) =>
+      prisma.assetStorageSample.findMany({
+        where: { assetId, mountPath, timestamp },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+      }));
     return {
       samples: samples.map((s) => ({
         timestamp:  s.timestamp,
@@ -731,10 +793,12 @@ export async function readProcessHistory(
 ): Promise<{ samples: ProcessHistoryRow[] }> {
   const queryFrom = fetchSince ?? since;
   if (tier === "detail") {
-    const samples = await prisma.assetProcessSample.findMany({
-      where: { assetId, name, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
-    });
+    const samples = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_GAUGE, (timestamp, desc, take) =>
+      prisma.assetProcessSample.findMany({
+        where: { assetId, name, timestamp },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+      }));
     return {
       samples: samples.map((s) => ({
         timestamp:     s.timestamp,
@@ -816,10 +880,14 @@ export async function readInterfaceHistory(
 ): Promise<{ samples: InterfaceHistoryRow[]; meta: InterfaceHistoryMeta }> {
   const queryFrom = fetchSince ?? since;
   if (tier === "detail") {
-    const samples = await prisma.assetInterfaceSample.findMany({
-      where: { assetId, ifName, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
-    });
+    // Counters: the client draws a rate at the second row of each pair, so
+    // the edge needs two rows behind it.
+    const samples = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_RATE, (timestamp, desc, take) =>
+      prisma.assetInterfaceSample.findMany({
+        where: { assetId, ifName, timestamp },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+      }));
     const latest = samples.length > 0 ? samples[samples.length - 1] : null;
     return {
       samples: samples.map((s) => ({
@@ -949,10 +1017,12 @@ export async function readIpsecHistory(
 ): Promise<{ samples: IpsecHistoryRow[] }> {
   const queryFrom = fetchSince ?? since;
   if (tier === "detail") {
-    const samples = await prisma.assetIpsecTunnelSample.findMany({
-      where: { assetId, tunnelName, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
-    });
+    const samples = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_RATE, (timestamp, desc, take) =>
+      prisma.assetIpsecTunnelSample.findMany({
+        where: { assetId, tunnelName, timestamp },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+      }));
     return {
       samples: samples.map((s) => ({
         timestamp:     s.timestamp,
@@ -1041,10 +1111,12 @@ export async function readPerfSlaHistory(
 ): Promise<{ samples: PerfSlaHistoryRow[] }> {
   const queryFrom = fetchSince ?? since;
   if (tier === "detail") {
-    const samples = await prisma.assetPerfSlaSample.findMany({
-      where: { assetId, healthCheck, link, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
-    });
+    const samples = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_GAUGE, (timestamp, desc, take) =>
+      prisma.assetPerfSlaSample.findMany({
+        where: { assetId, healthCheck, link, timestamp },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+      }));
     return {
       samples: samples.map((s) => ({
         timestamp:  s.timestamp,
@@ -1131,14 +1203,16 @@ export async function readPathCheckHistory(
 ): Promise<{ samples: PathCheckHistoryRow[] }> {
   const queryFrom = fetchSince ?? since;
   if (tier === "detail") {
-    const samples = await prisma.assetPathCheckSample.findMany({
-      where: { assetId, checkId, timestamp: { gte: queryFrom, lte: until } },
-      orderBy: { timestamp: "asc" },
-      select: {
-        timestamp: true, ok: true, latencyMs: true, dnsMs: true, connectMs: true,
-        tlsMs: true, ttfbMs: true, httpStatus: true, hopCount: true, error: true,
-      },
-    });
+    const samples = await readDetailWithAnchor(since, until, fetchSince, ANCHOR_ROWS_GAUGE, (timestamp, desc, take) =>
+      prisma.assetPathCheckSample.findMany({
+        where: { assetId, checkId, timestamp },
+        orderBy: { timestamp: desc ? "desc" : "asc" },
+        take,
+        select: {
+          timestamp: true, ok: true, latencyMs: true, dnsMs: true, connectMs: true,
+          tlsMs: true, ttfbMs: true, httpStatus: true, hopCount: true, error: true,
+        },
+      }));
     return { samples };
   }
   const table = tier === "hourly" ? "asset_path_check_samples_hourly" : "asset_path_check_samples_daily";
