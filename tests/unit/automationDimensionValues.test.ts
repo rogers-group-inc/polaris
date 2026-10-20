@@ -347,18 +347,22 @@ describe("SD-WAN multi-value health check / member", () => {
     ...over,
   });
 
-  it("is the SD-WAN pair only", () => {
+  it("is the SD-WAN pair and the interface filter", () => {
     expect(dims.isMulti("healthCheck")).toBe(true);
     expect(dims.isMulti("link")).toBe(true);
-    expect(dims.isMulti("ifNamePattern")).toBe(false);
+    // "ATT EPLS | port25" — the interface filter takes the same list shape.
+    expect(dims.isMulti("ifNamePattern")).toBe(true);
+    expect(dims.isMulti("mountPathPattern")).toBe(false);
   });
 
   it("stores canonically and displays spaced, so a list reads as a list", () => {
     expect(dims.storedValue("healthCheck", " Microsoft | Primary WAN | microsoft ")).toBe("Microsoft|Primary WAN");
     expect(dims.displayValue("healthCheck", "Microsoft|Primary WAN")).toBe("Microsoft | Primary WAN");
-    // A single-value dim is untouched — a "|" in an interface pattern is not a list.
-    expect(dims.storedValue("ifNamePattern", " a|b ")).toBe("a|b");
-    expect(dims.displayValue("ifNamePattern", "a|b")).toBe("a|b");
+    expect(dims.storedValue("ifNamePattern", " ATT EPLS | port25 ")).toBe("ATT EPLS|port25");
+    expect(dims.displayValue("ifNamePattern", "ATT EPLS|port25")).toBe("ATT EPLS | port25");
+    // A single-value dim is untouched — a "|" in a mount pattern is not a list.
+    expect(dims.storedValue("mountPathPattern", " a|b ")).toBe("a|b");
+    expect(dims.displayValue("mountPathPattern", "a|b")).toBe("a|b");
   });
 
   it("matches any term, mirroring the server's sdwanDimensionMatch", () => {

@@ -16,6 +16,7 @@ import { TEMPLATE_VARIABLES, TEMPLATE_VARIABLE_SECTIONS, formatElapsed } from ".
 import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
 import { SENSOR_CLASS_UNITS } from "../utils/hardwareSensors.js";
 import { POE_STATUS_VALUES } from "../utils/poePorts.js";
+import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import {
   quietConfigSchema,
   quietTimeConfigSchema,
@@ -744,7 +745,10 @@ export const CHANGE_TYPE_ACTIONS: Record<(typeof CHANGE_TYPES)[number], string> 
 
 const dimensionFilterSchema = z
   .object({
-    ifNamePattern: z.string().max(200).optional(),
+    // One interface, or several joined by "|" — any-of, each term a substring
+    // of the interface's name OR its description (interfacePatternMatch). As
+    // long as the SD-WAN pair below because it holds a list too.
+    ifNamePattern: z.string().max(1000).optional(),
     // ── Device-identifier dimensions (DEVICE_FILTER_DIMENSIONS below) ──────
     // The asset's own identity — hostname / IP / MAC / manufacturer / model —
     // available on EVERY asset metric and asset-state field. They narrow the
@@ -4511,6 +4515,29 @@ export const CHANGE_TYPE_META: Record<string, string> = {
 export function dimensionSubstringMatch(haystack: string | null | undefined, needle?: string | null): boolean {
   if (!needle) return true;
   return (haystack ?? "").toLowerCase().includes(needle.toLowerCase());
+}
+
+/**
+ * Business rule 124. Does an `ifNamePattern` select this interface? The pattern is an any-of list
+ * joined by "|" (the SD-WAN pair's shape, utils/sdwanDimensions), and each term
+ * is a case-insensitive substring of the interface's system name OR its
+ * description. The description counts because that is where operators name a
+ * circuit: one FortiGate carries "ATT EPLS" as a VLAN interface's NAME while
+ * another carries it as port25's DESCRIPTION, and the Interfaces tab shows the
+ * same words for both. A single term with no "|" reads exactly as the old
+ * name-only substring did, plus the description. Interface names don't carry
+ * "|" (FortiOS forbids it; ifName/ifDescr never use it), so the separator can't
+ * split a real name. No terms = match. MIRRORED client-side by the wizard's
+ * awSdwanDimensionMatch over the picker's names and descriptions.
+ */
+export function interfacePatternMatch(
+  ifName: string | null | undefined,
+  alias: string | null | undefined,
+  pattern?: string | null,
+): boolean {
+  const terms = sdwanDimensionTerms(pattern);
+  if (terms.length === 0) return true;
+  return terms.some((t) => dimensionSubstringMatch(ifName, t) || dimensionSubstringMatch(alias, t));
 }
 
 /**

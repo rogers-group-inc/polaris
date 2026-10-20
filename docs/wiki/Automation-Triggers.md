@@ -735,6 +735,15 @@ one alert each. A filter row
 still works there too — it folds into the condition and re-opens on the row —
 but the row is where these say what they are about.
 
+**An interface is matched by its name or its description** (business rule
+[124](Business-Rules#rule-124)). The picker lists both: a pinned `port25`
+described "ATT EPLS" appears as `port25` and as `ATT EPLS`, so one word can
+select a circuit that is a VLAN's name on one firewall and a port's
+description on another. **Pick several and the condition covers any of them**:
+the box keeps a list separated by `|` (`ATT EPLS | wan1`), the list stays open
+after each pick, and clicking a picked value again removes it. The match cue
+names any entry that matches nothing.
+
 **One condition reaches further than the pins: a PoE fault.** *Interface PoE
 status* **is** `fault` (or `other-fault`) alerts on every PoE-capable port on the
 scoped switches, whether or not you pinned it, and its picker lists those ports

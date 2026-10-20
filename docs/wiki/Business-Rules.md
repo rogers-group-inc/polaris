@@ -2585,3 +2585,14 @@ just before each device starts: an unhealthy device is skipped, the next one
 starts, and the devices above it still upgrade. One summary email lists
 failures, health skips, devices skipped above a failure, and what was dropped.
 ([Assets](Assets#group-firmware-upgrades) has the details.)
+
+### Rule 124
+
+**An interface filter matches the interface's name or its description, and can
+name several interfaces.** Type the words you see on the Interfaces tab: a
+circuit called "ATT EPLS" matches whether a firewall uses that as the
+interface's name or as the description on the port it rides. Separate several
+with `|` (`ATT EPLS | wan1`) and the condition covers any of them. The filter
+still only reaches interfaces you pinned for monitoring. Existing automations
+can now also match a pinned interface whose description contains the filter
+text. ([Automation Triggers](Automation-Triggers#filter-rows) has the details.)

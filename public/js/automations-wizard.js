@@ -1272,8 +1272,12 @@ function awMacDimensionMatch(mac, pattern) {
  *  wan2" — stored joined by "|" (FortiOS object names admit no "|"), any-of,
  *  each term a substring. Mirror of the server's utils/sdwanDimensions; keep
  *  the two in lockstep. A plain function test rather than a lookup table so the
- *  sentence factory above can call it before this part of the file has run. */
-function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link"; }
+ *  sentence factory above can call it before this part of the file has run.
+ *  The interface filter takes the same list shape ("ATT EPLS | port25"); its
+ *  server matcher is notificationTypes.interfacePatternMatch, which also reads
+ *  each interface's description — the picker offers descriptions as values, so
+ *  the any-of match below over those values agrees with it. */
+function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link" || dim === "ifNamePattern"; }
 
 /** The "|"-separated terms of a multi value — trimmed, blanks dropped. */
 function awDimTerms(value) {
@@ -1803,12 +1807,12 @@ async function openAutomationWizard(existing, opts) {
       dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick", sdwanMemberIp: "!= 0.0.0.0 (or == an address)" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick one or more, or type a name or description", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick", sdwanMemberIp: "!= 0.0.0.0 (or == an address)" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
   var DIM_INTEGRAL_PLACEHOLDER = {
-    ifNamePattern: "which interface — click to pick (blank compares every monitored interface)",
+    ifNamePattern: "which interfaces — click to pick one or more (blank compares every monitored interface)",
     tunnelName: "which IPsec tunnel — click to pick (blank compares every monitored tunnel)",
   };
   // What blank means on the ONE condition that isn't pinned-only: a PoE fault
