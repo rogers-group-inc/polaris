@@ -23,7 +23,7 @@ permissions:
 # natively, so this costs nothing to keep current.
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,7 +53,7 @@ jobs:
         run: npx vitest run tests/unit
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: postgresql://polaris:polaris@localhost:5432/polaris_test
       SESSION_SECRET: ci-integration-secret
@@ -109,7 +109,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The container started above is PostgreSQL 17; ubuntu-latest's own
+      # The container started above is PostgreSQL 17; ubuntu-24.04's own
       # pg_dump is 16, and pg_dump refuses to dump a server newer than itself.
       # Without this step backupRestore.test.ts fails on the rule-47 guard in
       # pgClientTools — which is exactly what it is there to do, and what broke
@@ -178,7 +178,7 @@ jobs:
 
   build:
     needs: [test, integration]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
