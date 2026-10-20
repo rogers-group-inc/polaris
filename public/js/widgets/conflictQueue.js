@@ -20,6 +20,7 @@
         // Reason labels for the flavours whose raw key doesn't read as English.
         if (reason === "duplicate-ip") reason = "duplicate IP " + (f.ipAddress || "");
         else if (reason === "ip-override") reason = "IP override";
+        else if (reason === "decommissioned-agent-checkin") reason = "decommissioned agent checked in";
         // Business rule 83's pair. The contested one names the gate count
         // rather than the serial: which gates are arguing is the fact, and the
         // serial is already the card's title.

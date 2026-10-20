@@ -667,6 +667,11 @@
       if (!go) return false;
       return ipChanged ? confirmAddressConfidence(asset.id, typed) : true;
     }).then(function (go) {
+      if (!go) return false;
+      return data.status === "decommissioned" && asset.status !== "decommissioned"
+        ? confirmDecommissionPins(asset)
+        : true;
+    }).then(function (go) {
       if (!go) return;
       return api.assets.update(asset.id, data).then(function (updated) {
         afterSave(updated && updated.ipConflict
@@ -698,6 +703,28 @@
       lines.push("", "Saving keeps your address and raises a Duplicate IP conflict for review. " +
         "If the two are the same device, merge them from the conflict card on the desktop.");
       return confirmSheet({ title: "Address already in use", body: lines.join("\n"), ok: "Save & submit for review" });
+    });
+  }
+
+  // Rule 123, as the desktop's _decommissionPinNotice: decommissioning an agent
+  // host archives its pinned SSH thumbprint / TLS certificate. Asked only for
+  // an agent host; a failed preview never blocks the save.
+  function confirmDecommissionPins(asset) {
+    return api.assets.decommissionPreview([asset.id]).catch(function () { return null; }).then(function (r) {
+      var one = r && r.assets && r.assets[0];
+      if (!one) return true;
+      var lines = [(asset.hostname ? '"' + asset.hostname + '"' : "This asset") + " has the Polaris Agent installed."];
+      if (one.pins.length) {
+        lines.push("Its pinned SSH thumbprint" + (one.pins.length !== 1 ? "s" : "") + " will be decommissioned as well — archived, so its address no longer refuses another machine:");
+        one.pins.forEach(function (p) {
+          lines.push("• " + (p.kind === "ssh" ? "SSH host key " : "TLS certificate ") + p.host + ":" + p.port + " — " +
+            (p.kind === "ssh" ? (p.keyType ? p.keyType + " " : "") + p.fingerprint : "SHA-256 " + p.fingerprint));
+        });
+      } else {
+        lines.push("No SSH thumbprint or TLS certificate is pinned for it right now, so nothing is archived.");
+      }
+      lines.push("", "They are reinstated if the asset is set back to an active status. If the agent checks in while the asset is decommissioned, a conflict asks whether to reactivate it and reinstate the thumbprint.");
+      return confirmSheet({ title: "Decommission agent host", body: lines.join("\n"), ok: "Decommission" });
     });
   }
 

@@ -456,7 +456,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `mintEnrollmentToken`, `consumeEnrollmentToken`, `shouldEnableMonitoringOnEnroll`, `verifyBearer`, `revokeBearer`, `ConsumedEnrollment`, `VerifiedAgent`
 
-**Cross-service deps:** `prisma` (managedAgent), password hash/verify util.
+**Cross-service deps:** `prisma` (managedAgent), password hash/verify util, `agentHostPinService.noteArchivedAgentCheckin` (business rule 123).
 
 **Used by:** `src/api/middleware/auth.ts` (`verifyBearer` for agent endpoints), `src/api/routes/agents.ts` (`consumeEnrollmentToken` at `/enroll`), `src/api/routes/agentsWs.ts` (`verifyBearer` on WS upgrade), `src/api/routes/assets.ts` (`revokeBearer` on uninstall), `src/services/agentInstallService.ts` (`mintEnrollmentToken`).
 
@@ -468,6 +468,41 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - Enrollment expiry is load-bearing for install-retry safety (operator re-mints via Reinstall) — don't make it permanent.
+- **`verifyBearer` reports a decommissioned host's check-in (business rule 123).** Its candidate select carries `hostPinsArchivedAt`; a verified row with it set calls `agentHostPinService.noteArchivedAgentCheckin(row.id, callerIp)`, which is synchronous, throttled (10 min per agent per process) and fires the conflict raise without awaiting it. Keep it that way: this function runs on EVERY agent request, so the hook must never add a query to the hot path, throw, or refuse the request — the bearer is still valid while the operator decides.
+
+---
+
+## services/agentHostPinService.ts
+
+**What it owns:** Business rule 123 — an agent host's pinned server identities across decommission. Exactly while the asset is decommissioned, the `SshHostKey` / `TlsCertPin` rows of the asset's addresses are moved off the live tables onto its `ManagedAgent` row (`archivedHostPins` JSON + `hostPinsArchivedAt`), so an address handed to another machine is not refused by a pin that belongs to the old one; they are written back verbatim when the asset leaves decommissioned. Also owns the `decommissioned-agent-checkin` Conflict flavour (raise / refresh / accept / reject) and the per-asset read + bulk preview the UI shows.
+
+**Public API:** `assetPinHosts` (pure — `ipAddress` / `dnsName` / `hostname`, trimmed and de-duplicated: the strings the install may have dialed, since a pin is keyed by that exact string), `parseArchivedPins` (pure, defensive JSON parse), `hostPinsForAsset` (`{hasAgent, live, archived}`), `previewDecommissionPins(ids)`, `archiveAgentHostPins(assetId, actor)`, `reinstateAgentHostPins(assetId, actor)` (`{restored, skipped}`), `resolvePendingCheckinConflicts(assetId, resolvedBy)`, `noteArchivedAgentCheckin(managedAgentId, callerIp)`, `raiseDecommissionedAgentConflict`, `acceptDecommissionedAgentConflict`, `logDecommissionedAgentDismissal`, `reconcileAgentHostPins()`, `DECOMMISSIONED_AGENT_COLLISION_REASON` (`"decommissioned-agent-checkin"`); types `HostPin`, `AssetHostPins`, `DecommissionPinPreview`, `ReinstateOutcome`; `_resetCheckinThrottle` (tests).
+
+**Cross-service deps:** `prisma` (asset, managedAgent, sshHostKey, tlsCertPin, conflict); `sshHostKeyService.forgetCachedHostKey` / `tlsCertPinService.forgetCachedCertPin` (drop the per-process pin cache after its own writes); `eventLogService.logEvent` (`asset.host_pins_archived`, `asset.host_pins_reinstated` — warning when a pin was skipped — `conflict.detected`, `conflict.accepted`, `conflict.rejected`).
+
+**Used by:**
+- `src/api/routes/assets.ts` — `GET /:id/host-pins` (`hostPinsForAsset`), `POST /decommission-preview` (`previewDecommissionPins`), and the `PUT /:id` post-write hook `applyAssetUpdateSideEffects` (archive on a transition TO decommissioned; reinstate + `resolvePendingCheckinConflicts` on a transition AWAY; failures logged, never thrown — the status change already landed).
+- `src/services/agentTokenService.ts` → `verifyBearer()` — `noteArchivedAgentCheckin`.
+- `src/services/conflictResolutionService.ts` — accept → `acceptDecommissionedAgentConflict`, reject → `logDecommissionedAgentDismissal`, keyed on `DECOMMISSIONED_AGENT_COLLISION_REASON`.
+- `src/api/routes/conflicts.ts` → `assertCanReactivate()` — the constant, for the extra `assets:write` gate on accept / merge.
+- `src/jobs/reconcileAgentHostPins.ts` — `reconcileAgentHostPins`.
+- `public/js/assets.js` (Sources tab Polaris Agent card, decommission confirm), `public/js/mobile/asset-edit.js`, `public/js/events.js` (`renderDecommissionedAgentConflictCard`) — through the routes.
+
+**Invariants:**
+- **The archive is non-null exactly while the asset is decommissioned.** Two writers keep it so: the PUT hook at the operator's change, and `reconcileAgentHostPins` for every other `Asset.status` writer (the stale-asset job, the directory / workload decommission sweeps, a scheduled status change, a discovery run that brings an asset back), none of which call the hook. A new status writer needs nothing — the job converges it within 10 minutes — but a new path that wants the pins moved at the moment of the change calls archive / reinstate itself.
+- **Only assets with a `ManagedAgent` are in scope** — the archive lives on that row. A non-agent asset's pins are untouched by decommission.
+- **A shared address is never archived.** An address another NON-decommissioned asset still records (`ipAddress` / `dnsName` / `hostname`) keeps its live pin — it protects that asset too. `previewDecommissionPins` applies the same rule against assets OUTSIDE the selection, so the confirm names what will actually move.
+- **Reinstate never overwrites.** A pin another machine has taken on the same endpoint since is left in place and reported in `skipped` (`asset.host_pins_reinstated` at warning); replacing a live pin is the operator's call under Pinned server identities. An identical fingerprint counts as restored.
+- **Archive and reinstate are race-safe claims.** Each is ONE transaction guarded on the archive column (`hostPinsArchivedAt: null` to archive; the exact timestamp read to reinstate) via `updateMany`, so the PUT hook and the job never both act — the loser's deletes / creates roll back and it returns null. Both are idempotent.
+- **The pin caches are dropped after the commit** (`forgetCachedHostKey` / `forgetCachedCertPin`, this process only). Another process's cache self-heals: a cached pin that disagrees re-reads the DB before refusing (the sshHostKeyService / tlsCertPinService invariant), and an archived pin no longer in the DB simply re-pins on first use.
+- **One pending check-in conflict per asset.** A later check-in REFRESHES the pending row's payload (`lastCheckinAt`, `checkinIp`, `agentVersion`, pins); a REJECTED row whose `proposedAssetFields.archivedAt` equals the current `hostPinsArchivedAt` silences that decommission — decommission again (a new archive) and the next check-in raises again. The raise never throws (logged at warn).
+- **Accept reactivates to `active` with monitoring left off** — the decommission clamped it and turning it back on is the operator's choice — then reinstates. Accept / merge on this flavour also require `assets:write` (`routes/conflicts.ts → assertCanReactivate`).
+- **Scale.** The reconcile pass is two bounded `findMany`s (200 each, on the `hostPinsArchivedAt` index) and at most 8 archive / reinstate calls in flight; an idempotent fleet issues two cheap queries every 10 min at 100 or 2000 assets. The preview is a fixed four queries for any selection size (≤ 5000 ids at the route).
+
+**When changing this:**
+- A new kind of pinned server identity (another TOFU table keyed by host:port) belongs in `livePinRows`, `HostPin.kind`, the archive / reinstate branches and the Sources-tab renderer together, or decommission strands it live.
+- If the agent install starts dialing a different address string, `assetPinHosts` must learn it — the archive finds pins only by the strings Polaris dialed.
+- Tests: `tests/unit/agentHostPinService.test.ts` (pure helpers), `tests/integration/agentHostPinArchive.test.ts` (archive / reinstate / shared address / skipped pin / check-in conflict / reject silencing / reconcile).
 
 ---
 

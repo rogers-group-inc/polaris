@@ -66,6 +66,13 @@ import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } 
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
+import {
+  archiveAgentHostPins,
+  hostPinsForAsset,
+  previewDecommissionPins,
+  reinstateAgentHostPins,
+  resolvePendingCheckinConflicts,
+} from "../../services/agentHostPinService.js";
 import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
 import { buildTagFilter, findAssetIdsByTagSubstring, listAssetsWithTag, pageAssetIdsByTags, tagFilterNeedsLookup } from "../../services/assetTagListService.js";
 import { syncAzureTagRegistry } from "../../services/tagAssignmentService.js";
@@ -4617,6 +4624,23 @@ async function applyAssetUpdateSideEffects(
       actor,
     });
   }
+  // Business rule 123: an agent host's pinned SSH host key / WinRM certificate
+  // is archived while it is decommissioned and reinstated when it returns. The
+  // reconcileAgentHostPins job repeats this for every other status writer, so
+  // a failure here is logged, not thrown — the status change already landed.
+  if (input.status !== undefined && input.status !== existing.status) {
+    try {
+      if (input.status === "decommissioned") {
+        await archiveAgentHostPins(id, actor);
+      } else if (existing.status === "decommissioned") {
+        if (await reinstateAgentHostPins(id, actor)) {
+          await resolvePendingCheckinConflicts(id, actor ?? "manual");
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, assetId: id }, "agent host-pin archive/reinstate failed; the reconcile job will retry");
+    }
+  }
   // Unmapping a process removes its accumulated connection rows immediately —
   // the Application Map must not keep drawing edges for up to the retention
   // window after the operator opted the process out.
@@ -5451,6 +5475,29 @@ router.get("/:id/tls-pins", requirePermission("assets", "read"), async (req, res
       ? { ...asset.discoveredByIntegration, config: (asset.discoveredByIntegration.config ?? {}) as Record<string, unknown> }
       : null;
     res.json({ endpoints: await assetTlsEndpoints({ assetType: asset.assetType, ipAddress: asset.ipAddress }, integration) });
+  } catch (err) { next(err); }
+});
+
+// GET /api/v1/assets/:id/host-pins — the SSH host keys and TLS certificates
+// Polaris has pinned on this asset's addresses, plus the archive its agent
+// holds while the asset is decommissioned (business rule 123). Read by the
+// Sources tab's Polaris Agent card and the decommission warning. Fingerprints
+// are public-key digests, so the same `assets:read` as the tls-pins read above.
+router.get("/:id/host-pins", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await hostPinsForAsset(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+// POST /api/v1/assets/decommission-preview — before the edit form, the bulk
+// bar or the phone sets Status to Decommissioned: which of these assets are
+// agent hosts, and which pins the change would archive (rule 123). POST only
+// because a bulk selection's ids do not fit a query string; it writes nothing.
+const DecommissionPreviewSchema = z.object({ ids: z.array(z.string().min(1).max(64)).max(5000) });
+router.post("/decommission-preview", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const { ids } = DecommissionPreviewSchema.parse(req.body ?? {});
+    res.json({ assets: await previewDecommissionPins(ids) });
   } catch (err) { next(err); }
 });
 

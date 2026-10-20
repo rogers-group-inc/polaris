@@ -16,7 +16,7 @@ queue sees every flavour.
 |---|---|
 | `discoveryConflicts:read` | see the queue |
 | `discoveryConflicts:write` | accept / reject / adopt / dismiss |
-| **plus `assets:write`** | **chained**, for the duplicate-IP verbs that change an asset's address (*Apply* a new address, *Clear*) |
+| **plus `assets:write`** | **chained**, for the duplicate-IP verbs that change an asset's address (*Apply* a new address, *Clear*), and for accepting a **decommissioned agent** check-in, which reactivates the asset |
 | **plus `assets:fullwrite`** | **chained**, for the duplicate-IP and duplicate-serial merge verbs — they delete a record |
 
 ---
@@ -29,6 +29,7 @@ queue sees every flavour.
 | **Hostname collision** | asset | a device found by Entra ID / Intune, Active Directory, vCenter, Azure Arc, Unraid, TrueNAS or Proxmox VE has the same hostname as an existing asset |
 | **`duplicate-ip`** | asset | two network-present devices claim one address |
 | **IP override** | asset | discovery disagrees with an operator's IP pin |
+| **Decommissioned agent** | asset | the Polaris Agent on a **decommissioned** asset checks in again |
 | **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
 | **`duplicate-serial`** | asset | two asset records carry the **same serial number** — usually merged automatically, see below |
 | **`chassis-replaced`** | subnet | a network's serving FortiGate answers with a different chassis serial |
@@ -276,6 +277,32 @@ it.
 
 ---
 
+## Decommissioned agent checked in
+
+Decommissioning a host that runs the Polaris Agent archives the SSH host key
+and TLS certificate Polaris pinned for it, so its address can go to another
+machine without that machine being refused
+([business rule 123](Business-Rules#rule-123); see
+[Assets](Assets#two-columns-worth-explaining)). If the agent on that host then
+**authenticates again**, the host evidently is not gone, and Polaris asks rather
+than guessing: it raises **one** pending conflict on the asset. Later check-ins
+refresh the card — the address it called from, when, the agent version — rather
+than adding more. The agent keeps working meanwhile; nothing is refused.
+
+The card is badged **Decommissioned Agent** and lists the archived pins.
+
+| Verb | Does |
+|---|---|
+| **Reactivate & reinstate thumbprint** (Accept) | sets the asset back to `active` and puts the archived SSH host key / TLS certificate back. Monitoring stays **off** — turn it on when you are ready. A pin that another machine has since been given on the same address is left alone and named in the event |
+| **Reject** | keeps the asset `decommissioned` and the pins archived. The agent goes on reporting until you uninstall it from the asset's Agent card |
+
+Accepting changes the asset's state, so it needs **`assets:write`** as well as
+`discoveryConflicts:write` — without it the button is disabled. Setting the
+asset back to an active state from the edit form does the same thing and closes
+the card for you.
+
+---
+
 ## Two FortiGates claim one device
 
 A FortiSwitch or FortiAP is discovered through the FortiGate that manages it,
@@ -451,6 +478,7 @@ finding re-raising forever. That is why the dedup keys are so specific:
 | two FortiGates claim one device | a **different pair of gates** claims it |
 | chassis replaced | a **different (old, new) serial pair** appears |
 | IP override | a **different** discovered IP is staged |
+| decommissioned agent | the asset is **decommissioned again** (a new archive) and its agent checks in |
 | field conflict from a DHCP entry or VIP | not for **30 days** after either Accept or Reject on that reservation |
 | field conflict from an interface, FortiSwitch or FortiAP | after a Reject, the next discovery run — if the values still differ |
 

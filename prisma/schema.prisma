@@ -5240,10 +5240,23 @@ model ManagedAgent {
   // "Cert pin rotation" in polaris-agent -> cross-cutting-polaris-agent.md.
   additionalServerCertFingerprints String[] @default([])
 
+  // Business rule 123: while the asset is DECOMMISSIONED, the host's server
+  // identities Polaris pinned (SshHostKey + TlsCertPin rows on the asset's
+  // addresses) are moved off the live tables and kept here, so an address
+  // reused by another machine is not refused and the old key can be put back
+  // verbatim when the asset returns. `archivedHostPins` is an array of
+  // { kind: "ssh" | "tls", host, port, fingerprint, keyType?, subject?,
+  // firstSeen, lastSeen }; `hostPinsArchivedAt` is non-null exactly while an
+  // archive is held (services/agentHostPinService.ts). An agent that checks in
+  // while it is held raises a `decommissioned-agent-checkin` Conflict.
+  archivedHostPins   Json?
+  hostPinsArchivedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([installStatus])
+  @@index([hostPinsArchivedAt])
   @@index([bearerPrefix])
   @@index([enrollmentTokenPrefix])
   @@map("managed_agents")

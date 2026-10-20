@@ -2585,3 +2585,20 @@ just before each device starts: an unhealthy device is skipped, the next one
 starts, and the devices above it still upgrade. One summary email lists
 failures, health skips, devices skipped above a failure, and what was dropped.
 ([Assets](Assets#group-firmware-upgrades) has the details.)
+
+### Rule 123
+
+**Decommissioning an agent host archives its pinned SSH thumbprint, and its
+agent coming back is a question.** Polaris pins the SSH host key (and, for
+WinRM, the TLS certificate) of every host it installs the agent on, keyed by the
+host's address. While the asset is decommissioned those pins are moved out of
+Pinned server identities and kept with the agent, so a new machine given the
+same address is not refused. Setting the asset back to an active status puts
+them back exactly as they were, except where another key has been pinned on that
+address since; that one is left alone and reported. An address another active
+asset still uses keeps its pin. Before you decommission an agent host, the
+confirmation names the pins that will be archived. If the agent checks in while
+the asset is decommissioned, a conflict asks whether to reactivate the asset and
+reinstate its thumbprint. Accepting needs read-write on Assets. Rejecting keeps
+the asset decommissioned, and the same decommission doesn't ask again.
+([Conflict Resolution](Conflict-Resolution) has the details.)

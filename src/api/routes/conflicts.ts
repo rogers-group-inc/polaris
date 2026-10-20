@@ -51,6 +51,7 @@ import {
   mergeDuplicateSerialAssets,
   DUPLICATE_SERIAL_COLLISION_REASON,
 } from "../../services/duplicateSerialConflictService.js";
+import { DECOMMISSIONED_AGENT_COLLISION_REASON } from "../../services/agentHostPinService.js";
 
 // One FortiGate swap = one decision across every subnet it raised (rule 41(a)).
 const ChassisSwapSchema = z.object({
@@ -88,6 +89,15 @@ function visibleEntityTypes(req: Request): ConflictEntityType[] {
 
 function canResolve(req: Request): boolean {
   return hasPermission(req, "discoveryConflicts", "write");
+}
+
+// Business rule 123: accepting a decommissioned-agent check-in changes the
+// asset's status, so it also takes what the asset edit form takes.
+function assertCanReactivate(req: Request, conflict: { proposedAssetFields?: unknown }): void {
+  const kind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
+  if (kind.collisionReason === DECOMMISSIONED_AGENT_COLLISION_REASON && !hasPermission(req, "assets", "write")) {
+    throw new AppError(403, "Reactivating a decommissioned asset requires read-write on Assets");
+  }
 }
 
 // GET /api/v1/conflicts — list conflicts visible to the current role
@@ -247,6 +257,7 @@ router.post("/:id/accept", async (req, res, next) => {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
 
+    assertCanReactivate(req, conflict);
     await acceptConflict(conflict, requestActor(req));
 
     res.json({ ok: true });
@@ -338,6 +349,7 @@ router.post("/:id/merge", async (req, res, next) => {
       return;
     }
 
+    assertCanReactivate(req, conflict);
     const raw = (req.body && req.body.fieldWinners) || {};
     const fieldWinners: Record<string, "existing" | "proposed"> = {};
     for (const [k, v] of Object.entries(raw)) {

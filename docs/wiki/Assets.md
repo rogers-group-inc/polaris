@@ -94,6 +94,24 @@ auto-resume monitoring — re-enabling is deliberate.
 `maintenance` is deliberately **not** on that list: a window pauses polling
 while `monitored` keeps your intent, so it survives the window.
 
+**Decommissioning a host with the Polaris Agent also archives its pinned
+identities** ([business rule 123](Business-Rules#rule-123)). Polaris pins the
+SSH host key (and, over WinRM HTTPS, the TLS certificate) of every host it
+installs the agent on, by address. Once the host is decommissioned that address
+may go to another machine, which the old pin would refuse with *Host denied
+(verification failed)*. So before the change is saved — from the edit form, the
+**State ▾** bulk action or the phone — the confirm names each agent host and the
+SSH thumbprints and TLS certificates that will be archived. While the asset stays
+`decommissioned` they leave
+[Pinned server identities](Polaris-Agent#ssh-host-key-verification) and are kept
+with the asset; set it back to an active state and they are put back exactly as
+they were. Two exceptions: an address another (not decommissioned) asset still
+uses keeps its pin, and a key some other machine has been pinned with on that
+address in the meantime is never overwritten — the
+`asset.host_pins_reinstated` event names it, and you compare the two under
+Pinned server identities. Assets without the agent are not affected. Decommissions
+made by a job or a discovery sweep are caught up within ten minutes.
+
 **Status** is the monitor pill, and it has six values — see
 [Monitor states](Monitor-States#what-the-pill-says), which also lists the
 overlays (*Dep. Down*, *Maintenance*, *Standby*…) that can replace them. With
@@ -1315,6 +1333,16 @@ The inverse is **Split**, shown to the admin role on each non-manual source
 card of an asset with more than one source: it detaches that
 source onto a new asset that starts clean, while monitoring, IP history,
 sightings and quarantine stay on the original — the recovery for a bad merge.
+
+On a host with the Polaris Agent, the **Polaris Agent** source card ends with
+**Pinned SSH thumbprint & TLS certificate**: each SSH host key and TLS
+certificate Polaris has pinned on this asset's addresses, with its fingerprint,
+key type or certificate subject, and first / last seen. "Nothing pinned yet"
+means Polaris has not connected to it over SSH (or WinRM over HTTPS) since the
+pin was cleared. While the asset is `decommissioned` the same block shows the
+**Archived on decommission** copy instead, with the date — those are the pins
+that come back when you reactivate it
+([business rule 123](Business-Rules#rule-123)).
 
 ### Discover Now
 

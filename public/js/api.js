@@ -848,6 +848,10 @@ const api = {
     snmpWalk:             (id, body, signal) => request("POST", `/assets/${id}/snmp-walk`, body, signal),
     // Rule 113(e): the TLS endpoints this asset's discovering integration dials, with their pins.
     tlsPins:              (id) => request("GET", `/assets/${id}/tls-pins`),
+    // Business rule 123: SSH host keys / TLS certificates pinned on the
+    // asset's addresses, and the archive its agent holds while decommissioned.
+    hostPins:             (id) => request("GET", `/assets/${id}/host-pins`),
+    decommissionPreview:  (ids) => request("POST", "/assets/decommission-preview", { ids: ids }),
     quarantineAvailability: ()  => request("GET", "/assets/quarantine-availability"),
     quarantine:           (id, reason) => request("POST", `/assets/${id}/quarantine`, reason !== undefined ? { reason } : {}),
     unquarantine:         (id)  => request("DELETE", `/assets/${id}/quarantine`),
