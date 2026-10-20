@@ -1037,7 +1037,9 @@ function getAlertsFormData() {
               await api.conflicts.accept(id);
               showToast(kind === "subnet"
                 ? "New FortiGate chassis adopted for this network"
-                : "Conflict accepted — discovered values applied");
+                : kind === "decommissioned-agent"
+                  ? "Asset reactivated — archived thumbprint reinstated"
+                  : "Conflict accepted — discovered values applied");
             } else if (action === "merge") {
               var card = el.closest(".conflict-card");
               var fieldWinners = {};
@@ -1465,6 +1467,75 @@ function getAlertsFormData() {
     '</div>';
   }
 
+  // Decommissioned agent checked in (business rule 123): the asset was
+  // decommissioned, which archived the SSH thumbprint / TLS certificate Polaris
+  // had pinned for it, and then its Polaris Agent authenticated again. Accept
+  // reactivates the asset and reinstates those pins; Reject keeps it
+  // decommissioned (this decommission won't re-raise). Accept changes the
+  // asset's status, so it also needs assets:write — the route enforces it.
+  function renderDecommissionedAgentConflictCard(c) {
+    var existing = c.existingAssetSnapshot || c.asset || {};
+    var proposed = c.proposedAssetFields || {};
+    var isResolved = c.status !== "pending";
+    var hostLabel = existing.hostname || proposed.hostname || "(asset)";
+    var assetId = c.assetId || null;
+    var hostLink = assetId
+      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(assetId) + '" title="Open this asset">' + escapeHtml(hostLabel) + '</a>'
+      : escapeHtml(hostLabel);
+    var pins = Array.isArray(proposed.pins) ? proposed.pins : [];
+    var muted = function (t) { return '<span style="color:var(--color-text-tertiary);font-style:italic">' + escapeHtml(t) + '</span>'; };
+
+    var rows =
+      '<tr><td class="conflict-field">Decommissioned</td><td>' +
+        (existing.statusChangedAt ? escapeHtml(formatDateTime(existing.statusChangedAt)) : muted("—")) +
+        (existing.statusChangedBy ? ' <span style="color:var(--color-text-secondary)">by ' + escapeHtml(existing.statusChangedBy) + '</span>' : '') +
+      '</td></tr>' +
+      '<tr class="conflict-changed"><td class="conflict-field">Agent checked in</td><td>' +
+        (proposed.lastCheckinAt ? escapeHtml(formatDateTime(proposed.lastCheckinAt)) : muted("—")) +
+        (proposed.checkinIp ? ' from <span class="mono">' + escapeHtml(proposed.checkinIp) + '</span>' : '') +
+        (proposed.agentVersion ? ' <span style="color:var(--color-text-secondary)">(agent v' + escapeHtml(proposed.agentVersion) + ')</span>' : '') +
+      '</td></tr>' +
+      (pins.length
+        ? pins.map(function (p) {
+            return '<tr><td class="conflict-field">' + (p.kind === "ssh" ? "SSH thumbprint" : "TLS certificate") +
+              '<div class="mono" style="font-size:0.75rem;font-weight:400">' + escapeHtml(p.host + ":" + p.port) + '</div></td>' +
+              '<td><code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(p.fingerprint) + '</code>' +
+              (p.kind === "ssh" && p.keyType ? ' <span style="color:var(--color-text-secondary)">(' + escapeHtml(p.keyType) + ')</span>' : '') +
+              '</td></tr>';
+          }).join("")
+        : '<tr><td class="conflict-field">Archived pins</td><td>' + muted("none — nothing was pinned for this host when it was decommissioned") + '</td></tr>');
+
+    var canReactivate = typeof permAtLeast !== "function" || permAtLeast("assets", "write");
+    var actions = isResolved
+      ? resolvedActionsHtml(c)
+      : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" title="Keep the asset decommissioned and its pins archived">Reject (keep decommissioned)</button>' +
+        '<button class="btn btn-primary btn-sm" data-conflict-action="accept" data-conflict-kind="decommissioned-agent" data-conflict-id="' + c.id + '"' +
+          (canReactivate
+            ? ' title="Set the asset back to Active and reinstate its archived SSH thumbprint / TLS certificate">'
+            : ' disabled title="Reactivating an asset needs read-write on Assets">') +
+          'Reactivate &amp; reinstate thumbprint</button>';
+
+    return '<div class="conflict-card">' +
+      '<div class="conflict-card-header">' +
+        '<span class="badge badge-warning">Decommissioned Agent</span>' +
+        '<strong>' + hostLink + '</strong>' +
+        (existing.ipAddress ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">' + escapeHtml(existing.ipAddress) + '</span>' : '') +
+      '</div>' +
+      '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' +
+        'This asset is decommissioned, but its Polaris Agent checked in. Decommissioning archived the SSH thumbprint' +
+        (pins.length !== 1 ? 's' : '') + ' Polaris had pinned for it. <strong>Accept</strong> to set it back to Active and reinstate ' +
+        (pins.length === 1 ? 'that thumbprint' : 'them') + ' (monitoring stays off until you turn it on; a key some other machine has pinned on the address since is left in place). ' +
+        '<strong>Reject</strong> to keep it decommissioned — uninstall the agent from its Agent card to stop it reporting.' +
+      '</div>' +
+      '<div class="conflict-table" style="padding:0">' +
+        '<table><thead><tr><th class="conflict-field">Field</th><th>Value</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+      '<div class="conflict-card-actions">' + actions + '</div>' +
+    '</div>';
+  }
+
   // Duplicate-address conflict (business rule 40): N network-present assets
   // recording ONE ipAddress. There is nothing to accept — the resolution is to
   // give one of them a different address — so the card renders a per-asset
@@ -1782,6 +1853,7 @@ function getAlertsFormData() {
   function renderAssetConflictCard(c) {
     var proposedKind = c.proposedAssetFields || {};
     if (proposedKind.collisionReason === "ip-override") return renderIpOverrideConflictCard(c);
+    if (proposedKind.collisionReason === "decommissioned-agent-checkin") return renderDecommissionedAgentConflictCard(c);
     if (proposedKind.collisionReason === "duplicate-ip") return renderDuplicateIpConflictCard(c);
     if (proposedKind.collisionReason === "serial-two-controllers") return renderSerialClaimConflictCard(c);
     if (proposedKind.collisionReason === "duplicate-serial") return renderDuplicateSerialConflictCard(c);

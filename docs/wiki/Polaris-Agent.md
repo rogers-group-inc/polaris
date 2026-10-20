@@ -359,6 +359,35 @@ legitimately rebuilt, re-keyed or re-certified. TLS certificates are also on
 **Server Settings → Web Server**: **View pinned certificates** opens a list
 with the asset each certificate belongs to, and a changed certificate shows
 both fingerprints and **Trust new certificate** pins exactly the one shown.
+A single host's pins are on its asset's **Sources** tab, at the foot of the
+**Polaris Agent** card.
+
+### When the host is decommissioned
+
+A pin belongs to an **address**, and a decommissioned host's address is often
+handed to a new machine — which the old pin would refuse with *Host denied
+(verification failed)*, for no reason anyone could see. So while an agent host's
+asset is `decommissioned`, its pinned SSH host key and TLS certificate are
+**archived** with the agent's record: they leave the lists above, and the asset's
+Polaris Agent card shows them as *Archived on decommission*
+([business rule 123](Business-Rules#rule-123)). The decommission confirm names
+them before you save.
+
+- **Set the asset back to an active state** and they are put back exactly as
+  they were. If another machine has been pinned on that address in the
+  meantime, that pin is kept and the event says so — compare and delete the one
+  you do not want.
+- **An address another live asset still uses** keeps its pin; it protects that
+  asset too.
+- **If the agent checks in while its asset is decommissioned**, Polaris raises a
+  *Decommissioned agent* conflict asking whether to reactivate the asset and
+  reinstate the thumbprint — see
+  [Conflict resolution](Conflict-Resolution#decommissioned-agent-checked-in).
+  The agent keeps working while you decide. If the host really is retired,
+  uninstall the agent so it stops reporting.
+
+A decommission made by the stale-asset job or a discovery sweep, rather than by
+you, is picked up within ten minutes.
 
 ---
 

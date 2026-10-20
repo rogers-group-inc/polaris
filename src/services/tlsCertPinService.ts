@@ -77,6 +77,13 @@ export function _resetCaches(): void {
   lastSeenWrites.clear();
 }
 
+/** Drop one endpoint from this process's cache (business rule 123's archive / reinstate). */
+export function forgetCachedCertPin(host: string, port: number): void {
+  const ck = endpointKey(host, port);
+  pinCache.delete(ck);
+  lastSeenWrites.delete(ck);
+}
+
 /** Fingerprints compare case- and separator-insensitively ("AA:BB" ≡ "aabb"). */
 export function normalizeFingerprint(fp: string): string {
   return fp.replace(/[^0-9a-f]/gi, "").toUpperCase();

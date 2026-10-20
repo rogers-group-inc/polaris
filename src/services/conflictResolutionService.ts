@@ -57,6 +57,13 @@
  *         by ipOverrideService). Accept adopts the discovered IP and releases
  *         the pin; reject keeps the pin (the same discovered IP won't
  *         re-raise). No proposedDeviceId / AssetSource identity involved.
+ *       - "decommissioned-agent-checkin" — the Polaris Agent of a
+ *         decommissioned asset authenticated again (raised by
+ *         agentHostPinService; business rule 123). Accept reactivates the
+ *         asset and reinstates the SSH host key / TLS certificate pins that
+ *         were archived at decommission (the accept route also requires
+ *         `assets:write`); reject keeps it decommissioned and silences that
+ *         decommission.
  *
  *   entityType "subnet" — the third entity, added with business rule 41.
  *     Payload lives on `proposedSubnetFields` (its own column; the asset
@@ -111,6 +118,11 @@ import {
   type WorkloadRole,
 } from "../utils/workloadSources.js";
 import { GENERIC_API_SOURCE_KIND, GENERIC_API_TYPE } from "../utils/genericApiSource.js";
+import {
+  DECOMMISSIONED_AGENT_COLLISION_REASON,
+  acceptDecommissionedAgentConflict,
+  logDecommissionedAgentDismissal,
+} from "./agentHostPinService.js";
 
 // Shared with the discovery sync that writes these tags — see
 // src/utils/assetSourceTags.ts (imported at the top of this file).
@@ -399,6 +411,12 @@ async function acceptAssetConflict(
   // field-winners degenerates to a plain accept.
   if (proposed.collisionReason === "ip-override") {
     await acceptIpOverrideConflict(conflict, actor);
+    return;
+  }
+  // A decommissioned asset's agent checked in (business rule 123). Accept =
+  // the host is back: reactivate it and reinstate its archived pins.
+  if (proposed.collisionReason === DECOMMISSIONED_AGENT_COLLISION_REASON) {
+    await acceptDecommissionedAgentConflict(conflict, actor);
     return;
   }
   // Duplicate-address conflicts have no proposed values to adopt — accepting
@@ -761,6 +779,11 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   const proposedForKind = (conflict.proposedAssetFields || {}) as Record<string, any>;
   if (proposedForKind.collisionReason === "ip-override") {
     await rejectIpOverrideConflict(conflict, actor);
+    return;
+  }
+  // Rule 123: kept decommissioned. The rejected row silences this decommission.
+  if (proposedForKind.collisionReason === DECOMMISSIONED_AGENT_COLLISION_REASON) {
+    logDecommissionedAgentDismissal(conflict, actor);
     return;
   }
   // Duplicate address, dismissed: both assets keep the address. The resolved

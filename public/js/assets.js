@@ -2991,6 +2991,52 @@ async function bulkChangeType(nextType) {
   loadAssets();
 }
 
+// Business rule 123: decommissioning an agent host archives the SSH host key /
+// WinRM TLS certificate Polaris pinned for its addresses (and reactivating it
+// puts them back). The confirm names them before the change is made.
+// `previews` is POST /assets/decommission-preview's `assets` — agent hosts only.
+function _hostPinLine(p) {
+  var what = p.kind === "ssh" ? "SSH host key" : "TLS certificate";
+  var detail = p.kind === "ssh" ? (p.keyType ? p.keyType + " " : "") + p.fingerprint : "SHA-256 " + p.fingerprint;
+  return "  • " + what + " " + p.host + ":" + p.port + " — " + detail;
+}
+function _decommissionPinNotice(previews) {
+  if (!previews || !previews.length) return "";
+  var lines = [];
+  if (previews.length === 1) {
+    var one = previews[0];
+    lines.push((one.hostname ? '"' + one.hostname + '"' : "This asset") + " has the Polaris Agent installed.");
+    if (one.pins.length) {
+      lines.push("Its pinned SSH thumbprint" + (one.pins.length !== 1 ? "s" : "") + " will be decommissioned as well — archived, so its address no longer refuses another machine:");
+      one.pins.forEach(function (p) { lines.push(_hostPinLine(p)); });
+    } else {
+      lines.push("No SSH thumbprint or TLS certificate is pinned for it right now, so nothing is archived.");
+    }
+  } else {
+    var total = previews.reduce(function (n, a) { return n + a.pins.length; }, 0);
+    lines.push(previews.length + " of these assets have the Polaris Agent installed. Their " + total +
+      " pinned SSH thumbprint" + (total !== 1 ? "s" : "") + " / TLS certificate" + (total !== 1 ? "s" : "") +
+      " will be decommissioned as well — archived, so the addresses no longer refuse another machine:");
+    previews.slice(0, 10).forEach(function (a) {
+      lines.push("  " + (a.hostname || a.assetId) + ": " + (a.pins.length ? a.pins.length + " pinned" : "none pinned"));
+    });
+    if (previews.length > 10) lines.push("  …and " + (previews.length - 10) + " more");
+  }
+  lines.push("");
+  lines.push("They are reinstated if the asset is set back to an active status. If an agent checks in while its asset is decommissioned, a conflict asks whether to reactivate it and reinstate the thumbprint.");
+  return lines.join("\n");
+}
+// Resolves to the notice text ("" when none of the ids is an agent host). A
+// failed preview must not block a decommission — the server archives anyway.
+async function _fetchDecommissionPinNotice(ids) {
+  try {
+    var r = await api.assets.decommissionPreview(ids);
+    return _decommissionPinNotice(r && r.assets);
+  } catch (_) {
+    return "";
+  }
+}
+
 // Bulk state change. The Prisma extension at src/db.ts handles the
 // "decommissioned/disabled → monitored=false" cascade, so no special-casing
 // here. quarantined is intentionally not in ASSET_STATUS_LABELS.
@@ -2998,7 +3044,9 @@ async function bulkChangeState(nextStatus) {
   var ids = Array.from(_assetsSelected);
   if (!ids.length || !nextStatus) return;
   var label = ASSET_STATUS_LABELS[nextStatus] || nextStatus;
-  var ok = await showConfirm("Change state to " + label + " for " + ids.length + " asset" + (ids.length !== 1 ? "s" : "") + "?");
+  var pinNotice = nextStatus === "decommissioned" ? await _fetchDecommissionPinNotice(ids) : "";
+  var ok = await showConfirm("Change state to " + label + " for " + ids.length + " asset" + (ids.length !== 1 ? "s" : "") + "?" +
+    (pinNotice ? "\n\n" + pinNotice : ""));
   if (!ok) return;
   var btn = document.getElementById("assets-bulk-state-btn");
   if (btn) btn.disabled = true;
@@ -5083,6 +5131,12 @@ async function openEditModal(id, opts) {
         // Rule 103: a typed address is scored (and pinged from the server)
         // before it is pinned; below the warn line the operator is asked.
         if (ipChanged && !(await _confirmAddressConfidence(id, formData.ipAddress.trim(), { probe: true }))) return;
+        // Rule 123: decommissioning an agent host archives its pinned SSH
+        // thumbprint / TLS certificate — say so before it happens.
+        if (formData.status === "decommissioned" && asset.status !== "decommissioned") {
+          var pinNotice = await _fetchDecommissionPinNotice([id]);
+          if (pinNotice && !(await showConfirm("Decommission " + (asset.hostname ? '"' + asset.hostname + '"' : "this asset") + "?\n\n" + pinNotice))) return;
+        }
         var updated = await api.assets.update(id, formData);
         var maintApplied = false;
         if (maint.requested) {
@@ -5829,6 +5883,7 @@ async function openViewModal(id, opts) {
     var tabsHTML = tabbedBodyHTML("asset-view", tabs);
     bodyEl.innerHTML = '<div class="asset-panel-content">' + tabsHTML + '</div>';
     _loadAssetTlsPins(bodyEl);
+    _loadAssetHostPins(bodyEl);
     // Lift the strip into the header slot so it doesn't scroll away with the
     // tab content. tabbedBodyHTML stamps an inline margin-bottom meant for a
     // strip sitting above its panels; in the header the header's own border
@@ -24898,6 +24953,12 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
       ? '<div class="asset-tls-pins" data-asset-id="' + escapeHtml(assetId) + '" style="margin-top:0.6rem"><em style="color:var(--color-text-secondary);font-size:0.82rem">Loading pinned certificates…</em></div>'
       : '';
     if (tlsPinsHTML) tlsPinsPlaced = true;
+    // Rule 123: the Polaris Agent card shows the SSH host key / WinRM TLS
+    // certificate Polaris pinned for this host — or, while the asset is
+    // decommissioned, the archive holding them. Filled by _loadAssetHostPins.
+    var hostPinsHTML = s.sourceKind === "polaris-agent"
+      ? '<div class="asset-host-pins" data-asset-id="' + escapeHtml(assetId) + '" style="margin-top:0.6rem"><em style="color:var(--color-text-secondary);font-size:0.82rem">Loading pinned server identities…</em></div>'
+      : '';
 
     return (
       '<div class="section-block" style="margin-bottom:1rem">' +
@@ -24908,6 +24969,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
         (meta.length ? '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' + meta.join(" · ") + '</div>' : '') +
         observedTable +
         tlsPinsHTML +
+        hostPinsHTML +
       '</div>'
     );
   }).join("");
@@ -24986,6 +25048,53 @@ function _loadAssetTlsPins(rootEl) {
     });
   }).catch(function () {
     slot.innerHTML = '<em style="color:var(--color-text-secondary);font-size:0.82rem">Pinned certificates unavailable.</em>';
+  });
+}
+
+/**
+ * Fill the Polaris Agent card's pinned-identity block (rule 123): the SSH host
+ * key(s) and TLS certificate(s) Polaris pinned on this asset's addresses, or —
+ * while the asset is decommissioned — the archive its agent holds, which is put
+ * back when the asset is reactivated.
+ */
+function _loadAssetHostPins(rootEl) {
+  var slot = rootEl && rootEl.querySelector(".asset-host-pins");
+  if (!slot) return;
+  api.assets.hostPins(slot.getAttribute("data-asset-id")).then(function (r) {
+    var archived = r && r.archived;
+    var pins = archived ? archived.pins : ((r && r.live) || []);
+    var heading = '<div class="section-label" style="margin:0.25rem 0 0.25rem 0;font-size:0.8rem">Pinned SSH thumbprint &amp; TLS certificate</div>';
+    var note = archived
+      ? '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-bottom:0.3rem">' +
+          '<span class="badge badge-maintenance">Archived on decommission</span> ' + escapeHtml(formatDateTime(archived.at)) +
+          ' — removed from Pinned server identities so this address does not refuse another machine; reinstated when the asset is reactivated.</div>'
+      : '';
+    if (!pins.length) {
+      slot.innerHTML = heading + note +
+        '<em style="color:var(--color-text-secondary);font-size:0.82rem">' +
+        (archived ? "Nothing was pinned for this host when it was decommissioned." : "Nothing pinned yet — Polaris pins a host key the first time it connects over SSH (or WinRM over HTTPS).") +
+        '</em>';
+      return;
+    }
+    var rows = pins.map(function (p) {
+      var isSsh = p.kind === "ssh";
+      var fp = isSsh ? p.fingerprint : _formatCertFingerprint(p.fingerprint);
+      var extra = isSsh ? p.keyType : p.subject;
+      return '<tr>' +
+        '<th style="text-align:left;padding:0.3rem 0.6rem 0.3rem 0;color:var(--color-text-secondary);font-weight:500;vertical-align:top">' +
+          (isSsh ? "SSH host key" : "TLS certificate (SHA-256)") +
+          '<div class="mono" style="font-size:0.75rem;font-weight:400">' + escapeHtml(p.host + ":" + p.port) + '</div></th>' +
+        '<td style="padding:0.3rem 0.6rem 0.3rem 0;vertical-align:top;white-space:nowrap">' +
+          (archived ? '<span class="badge badge-maintenance">Archived</span>' : '<span class="badge badge-active">Pinned</span>') + '</td>' +
+        '<td style="padding:0.3rem 0;vertical-align:top"><code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(fp) + '</code>' +
+          (extra ? ' <span style="color:var(--color-text-secondary)">(' + escapeHtml(extra) + ')</span>' : '') +
+          '<div style="color:var(--color-text-secondary);font-size:0.75rem">First seen ' + escapeHtml(formatDate(p.firstSeen)) + ' · last seen ' + escapeHtml(formatDate(p.lastSeen)) + '</div></td>' +
+      '</tr>';
+    }).join("");
+    slot.innerHTML = heading + note +
+      '<table style="width:100%;font-size:0.82rem;border-collapse:collapse;table-layout:fixed"><colgroup><col style="width:220px"><col style="width:150px"><col></colgroup>' + rows + '</table>';
+  }).catch(function () {
+    slot.innerHTML = '<em style="color:var(--color-text-secondary);font-size:0.82rem">Pinned server identities unavailable.</em>';
   });
 }
 

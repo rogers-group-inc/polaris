@@ -1314,6 +1314,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/resolvePolarisPushedConflicts.js",
       "./jobs/resolveStaleReservationConflicts.js",
       "./jobs/reconcileInfraReservations.js",
+      // Business rule 123: archive / reinstate an agent host's pinned server
+      // identities to match its asset's status, for every status writer that
+      // is not the asset PUT route. Scheduler role only — one pass per fleet.
+      "./jobs/reconcileAgentHostPins.js",
       "./jobs/cleanupStaleDnsResolvedReleased.js",
       "./jobs/mergeDuplicateHostnameAssets.js",
       // Duplicate-address sweep (business rule 40) — raises/closes the

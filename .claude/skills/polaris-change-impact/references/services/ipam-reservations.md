@@ -461,11 +461,12 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The Conflict review queue's reads and the per-row resolution dispatcher — `listConflicts`, `countPendingConflicts` (the nav badge), `loadPendingConflict`, and `acceptConflict` / `mergeAssetConflict` / `rejectConflict`, which dispatch on `entityType` (`reservation` | `asset` | `subnet`) to the variant's handler and then stamp the row's `status` / `resolvedBy` / `resolvedAt`. Its header carries the full conflict-variant table.
 
-**Cross-service deps:** subnetChassisConflictService (`acceptChassisReplacement`, `rejectChassisReplacement`, `chassisSwapKey`), duplicateSerialConflictService, duplicateIpConflictService, assetMergeService (the ghost absorb), eventLogService.
+**Cross-service deps:** subnetChassisConflictService (`acceptChassisReplacement`, `rejectChassisReplacement`, `chassisSwapKey`), duplicateSerialConflictService, duplicateIpConflictService, agentHostPinService (`acceptDecommissionedAgentConflict`, `logDecommissionedAgentDismissal` — the `decommissioned-agent-checkin` flavour, business rule 123), assetMergeService (the ghost absorb), eventLogService.
 
 **Used by:** `src/api/routes/conflicts.ts` (every route except the variant-specific verbs).
 
 **Invariants:**
+- **`decommissioned-agent-checkin` (business rule 123) dispatches before the generic asset paths.** Accept → `acceptDecommissionedAgentConflict` (reactivate to `active`, reinstate the archived pins); reject → `logDecommissionedAgentDismissal` only — the rejected row itself is the silencing marker for that decommission. Neither touches `AssetSource` or the Entra/AD accept logic. The route adds the `assets:write` gate (`assertCanReactivate`) before calling in, on accept AND merge; a new verb reaching this flavour needs the same gate.
 - **The badge counts decisions, not rows (rule 41(a)).** `countPendingConflicts` counts pending `chassis-replaced` rows once per (old, new) serial pair via `chassisSwapKey` — the same fold `public/js/events.js` → `groupChassisSwaps` applies to the cards. The extra read is bounded by pending subnet rows, not fleet size. A change to either fold must change the other, or the badge and the panel disagree.
 - **The swap-level verbs do NOT go through the dispatcher.** `adoptChassisSwap` / `rejectChassisSwap` stamp their rows' status themselves in one `updateMany` (the dispatcher's per-row stamp would be N round trips and N transactions), so a new per-row side effect added to `acceptConflict`'s subnet branch must be mirrored there.
 

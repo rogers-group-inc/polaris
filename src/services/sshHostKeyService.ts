@@ -105,6 +105,17 @@ export function _resetCaches(): void {
 }
 
 /**
+ * Drop one endpoint from this process's cache after a pin row was removed or
+ * written by another service (business rule 123's archive / reinstate), so the
+ * next connection reads the table instead of a fingerprint that is gone.
+ */
+export function forgetCachedHostKey(host: string, port: number): void {
+  const ck = endpointKey(host, port);
+  pinCache.delete(ck);
+  lastSeenWrites.delete(ck);
+}
+
+/**
  * The verification decision. Returns a verdict rather than throwing so the
  * caller (a ssh2 hostVerifier callback) can reject the handshake cleanly.
  *

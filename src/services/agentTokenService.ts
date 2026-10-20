@@ -38,6 +38,7 @@ import { AppError } from "../utils/errors.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import { recomputeMonitorOverrideForAssets } from "./monitorOverrideService.js";
 import { logEvent } from "./eventLogService.js";
+import { noteArchivedAgentCheckin } from "./agentHostPinService.js";
 
 // Token format constants + generator are shared with apiTokenService —
 // see utils/bearerToken.ts.
@@ -255,7 +256,7 @@ export async function verifyBearer(
       bearerHash: { not: null },
       bearerRevokedAt: null,
     },
-    select: { id: true, assetId: true, bearerHash: true, installStatus: true },
+    select: { id: true, assetId: true, bearerHash: true, installStatus: true, hostPinsArchivedAt: true },
   });
 
   for (const row of candidates) {
@@ -283,6 +284,11 @@ export async function verifyBearer(
       .catch(() => {
         /* ignore */
       });
+
+    // Business rule 123: the host's asset is decommissioned (its pins are
+    // archived) yet its agent is still talking. Ask the operator whether it is
+    // back. Throttled and fire-and-forget — never slows or fails this request.
+    if (row.hostPinsArchivedAt) noteArchivedAgentCheckin(row.id, callerIp ?? null);
 
     return { managedAgentId: row.id, assetId: row.assetId };
   }
