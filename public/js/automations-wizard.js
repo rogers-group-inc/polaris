@@ -3375,6 +3375,11 @@ async function openAutomationWizard(existing, opts) {
     var open = function (input) {
       var sug = dimSuggestOf(input);
       if (!sug || input.disabled) return;
+      // Nothing asked for this control yet (a row added by a click or a drop,
+      // which no `change` reaches): ask now. Without this the list read
+      // "Checking…" for as long as the operator typed, and only loaded on the
+      // `change` that leaving the field fires.
+      if (!dimResultOf(input)) refreshDimOptions(panel);
       sug.innerHTML = awDimSuggestHtml(dimResultOf(input), input.value, input.getAttribute("data-dim"));
       sug.classList.add("open");
     };
@@ -3465,7 +3470,10 @@ async function openAutomationWizard(existing, opts) {
           _dimValues[k] = { error: true };
         }
       }));
-      els.forEach(applyDimOptions);
+      // Re-read the panel: a row re-rendered while the request was out has a
+      // NEW input, and painting only the ones captured above left the control
+      // the operator is typing in on "Checking…".
+      panel.querySelectorAll(".tgl-dim[data-dim]").forEach(applyDimOptions);
     }
   }
   /** opts.lockFamily: a severity tier's row — its unit select may move between
@@ -5019,6 +5027,9 @@ async function openAutomationWizard(existing, opts) {
       syncDurationRequirement(panel);
       syncDownDetection(panel);
       refreshTriggerSentence();
+      // A row added or dropped by a click has dimension pickers no `change`
+      // has asked for — the reset tree's onChange does the same.
+      refreshDimOptions(panel);
     });
     // Delegated: any input/select change re-renders the sentence (the tree's
     // own change handler also calls it — a second render is harmless) and

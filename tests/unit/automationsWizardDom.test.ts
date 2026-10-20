@@ -3175,6 +3175,54 @@ describe("trigger filter rows", () => {
     expect(() => ruleInputSchema.parse(saved)).not.toThrow();
   });
 
+  it("fills the list of a row re-rendered while its values were still loading", async () => {
+    // The operator's report: the interface list sat on "Checking…" while they
+    // typed and only appeared after they left the field. A response used to be
+    // painted only onto the inputs that existed when the request went out, so a
+    // row re-rendered in between kept its open list on "Checking…" until the
+    // next `change` (leaving the field) re-asked.
+    const win = g.window as InstanceType<typeof Window>;
+    const automations = (g.api as { automations: Record<string, any> }).automations;
+    const orig = automations.dimensionValues;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let calls = 0;
+    automations.dimensionValues = async (body: unknown) => { calls++; await gate; return orig(body); };
+    try {
+      doc.body.innerHTML = "";
+      savedPayloads.length = 0;
+      toastErrors.length = 0;
+      // A scope no other test uses, so the picker cache can't already hold it.
+      await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+        ...BASE, id: "r-filter-loading", name: "loading",
+        scope: { condition: { op: "and", children: [{ field: "assetType", operator: "equals", value: "firewall" }] } },
+        trigger: { type: "asset_state", field: "ifOperStatus", operator: "==", value: "down", forDurationSec: 0, dimensionFilter: { ifNamePattern: "ATT EPLS" } },
+      });
+      for (let i = 0; i < 2; i++) {
+        (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(calls).toBeGreaterThan(0);
+      // The interface is the condition's integral dimension, so its box is on
+      // the condition row itself. Re-render that row while the request is out.
+      const before = doc.querySelector("#aw-trig-root .tgl-dim[data-dim='ifNamePattern']") as unknown as { closest: (s: string) => Element };
+      expect(before).toBeTruthy();
+      await pickWhat(before.closest(".scr-row"), "f:ifOperStatus");
+      const input = Array.from(doc.querySelectorAll("#aw-trig-root .tgl-dim[data-dim='ifNamePattern']")).pop() as unknown as
+        { value: string; dispatchEvent: (e: unknown) => void; closest: (s: string) => Element };
+      input.dispatchEvent(new win.Event("focusin", { bubbles: true }));
+      const combo = input.closest(".aw-combo");
+      expect(combo.querySelector(".aw-suggest.open .aw-suggest-empty")!.textContent).toContain("Checking");
+      release();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(combo.querySelectorAll(".aw-suggest.open .aw-suggest-item").length).toBeGreaterThan(0);
+      expect(toastErrors).toEqual([]);
+    } finally {
+      release();
+      automations.dimensionValues = orig;
+    }
+  });
+
   it("folds interface-name + hostname rows into a state condition", async () => {
     await openAtStep3("r-filter-state");
     await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifOperStatus");
