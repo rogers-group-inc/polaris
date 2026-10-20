@@ -4361,6 +4361,50 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   color: var(--color-text-tertiary);
   margin-top: 3px;
 }
+/* Location-code nesting diagram (app.js → locationCodesDiagramHTML): one
+   box per a:/b:/f:/r:/jb: tier, each inside the one above it, in that tier's
+   Device Map hull colour (--loc-c, set inline per theme family). */
+.loc-diagram {
+  margin-top: 8px;
+  font-size: 0.74rem;
+  line-height: 1.3;
+}
+.loc-diagram-box {
+  border: 1.5px solid var(--loc-c);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--loc-c) 6%, transparent);
+  padding: 3px 8px 8px;
+  margin-top: 4px;
+}
+.loc-diagram > .loc-diagram-box { margin-top: 0; }
+.loc-diagram-label {
+  color: var(--loc-c);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.loc-diagram-label code {
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.loc-diagram-device {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+}
+.loc-diagram-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex: none;
+}
+.loc-diagram-caption {
+  margin-top: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 0.74rem;
+}
 /* Integration modal tabs: a hint outside a form-group (tab intros, bullet
    lists, calloutHTML bodies) inherited full body size, so the feature tabs
    rendered their prose larger than General's info box and field hints. That
