@@ -1556,6 +1556,7 @@
           'next code, so multi-word names need no quotes. Codes in the asset’s Notes override ' +
           'the same code here.' +
         '</div>' +
+        (typeof locationCodesDiagramHTML === "function" ? locationCodesDiagramHTML() : '') +
       '</div>';
     var footer =
       '<button type="button" class="btn btn-secondary" id="topo-desc-cancel">Cancel</button>' +

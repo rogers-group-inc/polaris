@@ -3681,6 +3681,7 @@ function assetFormHTML(defaults) {
   '</div>' +
   '<div class="form-group"><label>Description</label><input type="text" id="f-description" maxlength="255" value="' + escapeHtml(d.description || "") + '" placeholder="e.g. b:Shop f:2 r:North Closet jb:112-305">' +
     '<p class="hint">Device Map grouping codes: <code>a:</code>area &nbsp;<code>b:</code>building &nbsp;<code>f:</code>floor &nbsp;<code>r:</code>room &nbsp;<code>jb:</code>junction box — e.g. <code>a:Mine b:Shop f:2 r:North Closet jb:112-305</code>. Values may contain spaces; each runs until the next code. Codes here (falling back to the device-side description) group this device into building/floor/room shapes and floor views on the topology map.</p>' +
+    (typeof locationCodesDiagramHTML === "function" ? '<div class="hint">' + locationCodesDiagramHTML() + '</div>' : '') +
     '<p class="hint">On Fortinet assets with Description Sync enabled, this writes to the device (FortiGate alias / FortiSwitch description / FortiAP location) — Polaris is primary: a value here always wins and pushes to the device. Leave empty to adopt the device\'s value.</p>' +
     descriptionCapWarningHTML(descTarget, "f-description-cap-warn") + '</div>' +
   '<div class="form-group"><label>Notes</label><textarea id="f-notes" rows="2" placeholder="Optional notes">' + escapeHtml(d.notes || "") + '</textarea></div>' +

@@ -3744,6 +3744,39 @@ function calloutHTML(variant, title, bodyHtml) {
     '</div>';
 }
 
+// ─── Location-code nesting diagram ──────────────────────────────────────────
+// How the a:/b:/f:/r:/jb: description codes nest on the Device Map: each tier
+// is a box inside the one above it, drawn in that tier's hull colour and
+// border style. Shown under the grouping-shortcut hint wherever a description
+// is edited (the Device Map's right-click editor, the asset Edit form). The
+// colours MIRROR LOC_GROUP_KINDS in topology-render.js (dark = color, daylight
+// = colorLight) — that file is not loaded on every page that edits a
+// description; tests/unit/locationDiagram.test.ts holds the two equal.
+var LOC_DIAGRAM_TIERS = [
+  { code: "a",  name: "Area",         example: "Mine",         color: "#f472b6", colorLight: "#be185d", dash: "solid" },
+  { code: "b",  name: "Building",     example: "Shop",         color: "#4fc3f7", colorLight: "#0369a1", dash: "solid" },
+  { code: "f",  name: "Floor",        example: "2",            color: "#a78bfa", colorLight: "#6d28d9", dash: "dashed" },
+  { code: "r",  name: "Room",         example: "North Closet", color: "#4ade80", colorLight: "#15803d", dash: "solid" },
+  { code: "jb", name: "Junction box", example: "112-305",      color: "#f59e0b", colorLight: "#b45309", dash: "dashed" },
+];
+function locationCodesDiagramHTML() {
+  var light = typeof isLightTheme === "function" && isLightTheme();
+  var inner = '<div class="loc-diagram-device"><span class="loc-diagram-dot"></span>this device</div>';
+  for (var i = LOC_DIAGRAM_TIERS.length - 1; i >= 0; i--) {
+    var t = LOC_DIAGRAM_TIERS[i];
+    inner =
+      '<div class="loc-diagram-box" style="--loc-c:' + (light ? t.colorLight : t.color) + ';border-style:' + t.dash + '">' +
+        '<div class="loc-diagram-label"><code>' + t.code + ':' + t.example + '</code> ' + t.name + '</div>' +
+        inner +
+      '</div>';
+  }
+  return '<div class="loc-diagram" role="img" aria-label="Area contains building, building contains floor, floor contains room, room contains junction box">' +
+      inner +
+    '</div>' +
+    '<div class="loc-diagram-caption">Each code draws a box inside the one above it. Skip any level you ' +
+      'don\u2019t need \u2014 <code>b:Shop f:2</code> puts a device in Floor 2 of Shop with no area, room or junction box.</div>';
+}
+
 // ─── Integration modal (the standard shape) ─────────────────────────────────
 //
 // Every "connect us to another system" dialog is the SAME dialog. Polaris grew

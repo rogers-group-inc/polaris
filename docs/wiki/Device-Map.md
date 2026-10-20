@@ -192,6 +192,15 @@ With **Locations** on, the details pane lists the switches and APs in the same
 nesting as the location boxes (area › building › floor › room › junction box),
 under a heading per group, with devices that have no location last.
 
+Right-click a device to edit its description in place: that is the quick way
+to put it into a location box. The codes are `a:` area, `b:` building, `f:`
+floor, `r:` room and `jb:` junction box, written anywhere in the description
+(`a:Mine b:Shop f:2 r:North Closet jb:112-305`); each value runs until the
+next code. Each level is a box inside the one above it, and the editor shows
+that nesting as a small diagram in the map's own box colours. Skip any level
+you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
+The asset **Edit** form's Description field shows the same diagram.
+
 | Control | |
 |---|---|
 | **Search** | find a node |
