@@ -9,7 +9,9 @@
  * holds — WinRM listeners, devices it upgrades, and every FortiGate /
  * FortiManager it talks to with SSL verification off (rule 113(e)) — each with
  * the asset(s) at that address as links that open the asset panel in place,
- * the integration(s) that dial it, its subject, fingerprint and dates.
+ * the integration(s) that dial it, its subject, fingerprint and dates. A
+ * filter row in the header narrows the cards by IP, hostname, thumbprint and
+ * subject (client-side; every filled field must match).
  *
  * A pin whose server now presents a DIFFERENT certificate is listed first with
  * both SHA-256 fingerprints and "Trust new certificate", which pins exactly the
@@ -98,6 +100,15 @@
             '<button class="btn-icon" id="tls-pins-close" title="Close" aria-label="Close pinned certificates">&times;</button>' +
           "</div>" +
           '<div class="slideover-meta" id="tls-pins-meta"></div>' +
+          // In the header, not the body, so it stays put while the cards
+          // scroll. A plain grid rather than .filter-bar: that is the
+          // page-level sticky bar and reads as a slab inside a slide-over.
+          '<div id="tls-pins-filters" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-top:0.6rem">' +
+            filterInput("ip", "IP address") +
+            filterInput("hostname", "Hostname") +
+            filterInput("thumbprint", "Thumbprint") +
+            filterInput("subject", "Subject") +
+          "</div>" +
         "</div>" +
         '<div class="slideover-body" id="tls-pins-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading...</p></div>' +
         '<div class="slideover-footer"><button type="button" class="btn btn-secondary" id="tls-pins-done">Close</button></div>' +
@@ -109,7 +120,59 @@
     if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, close);
     if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("tls-pins-panel"), "polaris.panel.width.tlsPins");
     document.getElementById("tls-pins-body").addEventListener("click", onBodyClick);
+    document.getElementById("tls-pins-filters").addEventListener("input", function () { renderPanel(lastRows); });
     return overlay;
+  }
+
+  function filterInput(key, label) {
+    return '<input type="text" data-pin-filter="' + key + '" placeholder="' + label + '" aria-label="Filter by ' +
+      label.toLowerCase() + '" autocomplete="off" spellcheck="false" style="padding:0.3rem 0.55rem;font-size:0.8rem">';
+  }
+
+  // ─── Filtering ───────────────────────────────────────────────────────────
+  // Every non-empty field must match (AND); each is a case-insensitive
+  // substring. IP looks at the pinned host and every asset address at it;
+  // Hostname at the asset hostnames and a pinned host that is a name, not an
+  // address; Thumbprint at both the pinned and the now-presented SHA-256 with
+  // colons, spaces and case ignored, so a value pasted from openssl or
+  // Windows' certificate dialog matches; Subject at both subjects.
+
+  var lastRows = [];
+
+  function filterValues() {
+    var out = {};
+    var inputs = document.querySelectorAll("#tls-pins-filters [data-pin-filter]");
+    for (var i = 0; i < inputs.length; i++) {
+      var v = inputs[i].value.trim().toLowerCase();
+      if (v) out[inputs[i].getAttribute("data-pin-filter")] = v;
+    }
+    return out;
+  }
+
+  function isIpLiteral(s) {
+    return /^[0-9.]+$/.test(s) || s.indexOf(":") >= 0;
+  }
+
+  function hexOnly(s) {
+    return String(s || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
+  }
+
+  function contains(hay, needle) {
+    return String(hay || "").toLowerCase().indexOf(needle) >= 0;
+  }
+
+  function matches(r, f) {
+    var assets = r.assets || [];
+    if (f.ip && !contains(r.host, f.ip) &&
+        !assets.some(function (a) { return contains(a.ipAddress, f.ip); })) return false;
+    if (f.hostname && !(!isIpLiteral(String(r.host || "")) && contains(r.host, f.hostname)) &&
+        !assets.some(function (a) { return contains(a.hostname, f.hostname); })) return false;
+    if (f.thumbprint) {
+      var want = hexOnly(f.thumbprint);
+      if (!want || (hexOnly(r.fingerprint).indexOf(want) < 0 && hexOnly(r.pendingFingerprint).indexOf(want) < 0)) return false;
+    }
+    if (f.subject && !contains(r.subject, f.subject) && !contains(r.pendingSubject, f.subject)) return false;
+    return true;
   }
 
   function open(trigger) {
@@ -187,17 +250,26 @@
     var body = document.getElementById("tls-pins-body");
     var meta = document.getElementById("tls-pins-meta");
     rows = rows || [];
+    lastRows = rows;
     var changed = rows.filter(function (r) { return !!r.pendingFingerprint; }).length;
-    meta.innerHTML = '<span style="color:var(--color-text-secondary);font-size:0.85rem">' + rows.length + " pinned" +
+    var f = filterValues();
+    var filtering = Object.keys(f).length > 0;
+    var shown = filtering ? rows.filter(function (r) { return matches(r, f); }) : rows;
+    meta.innerHTML = '<span style="color:var(--color-text-secondary);font-size:0.85rem">' +
+      (filtering ? shown.length + " of " : "") + rows.length + " pinned" +
       (changed ? " · " + changed + " changed" : "") + "</span>";
     if (!rows.length) {
       body.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">No certificates pinned yet.</p>';
       return;
     }
+    if (!shown.length) {
+      body.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">No pinned certificate matches the filter.</p>';
+      return;
+    }
     var canManage = typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
     // Changed certificates come first from the server: they are what an
     // administrator opened this for.
-    body.innerHTML = '<div style="padding:1rem 1.25rem">' + rows.map(function (r) { return pinCard(r, canManage); }).join("") + "</div>";
+    body.innerHTML = '<div style="padding:1rem 1.25rem">' + shown.map(function (r) { return pinCard(r, canManage); }).join("") + "</div>";
   }
 
   function onBodyClick(e) {

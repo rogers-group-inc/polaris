@@ -117,6 +117,46 @@ describe("pinned certificates summary + slide-over", () => {
     expect(document.querySelector("[data-pin-del]")).toBeNull();
   });
 
+  it("the header filters narrow the cards by IP, hostname, thumbprint and subject", async () => {
+    boot(true);
+    await flush();
+    (document.querySelector("[data-tls-pins-open]") as HTMLButtonElement).click();
+    await flush();
+    const field = (k: string) => document.querySelector(`#tls-pins-filters [data-pin-filter="${k}"]`) as HTMLInputElement;
+    const set = (k: string, v: string) => { field(k).value = v; field(k).dispatchEvent(new Event("input", { bubbles: true })); };
+    const hosts = () => Array.from(document.querySelectorAll(".tls-pin-card > div:first-child > .mono")).map((e) => e.textContent);
+
+    set("ip", "10.0.0");
+    expect(hosts()).toEqual(["10.0.0.5:443"]);
+    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("1 of 2 pinned");
+    set("ip", "");
+
+    set("hostname", "spk");
+    expect(hosts()).toEqual(["172.22.128.104:443"]);
+    // An IP pin host is not a hostname: "10.0" must not match through it.
+    set("hostname", "10.0");
+    expect(document.querySelectorAll(".tls-pin-card")).toHaveLength(0);
+    expect(document.getElementById("tls-pins-body")!.textContent).toContain("No pinned certificate matches");
+    set("hostname", "");
+
+    // Colons and case ignored; the now-presented fingerprint counts too.
+    set("thumbprint", "cd:cd:CD");
+    expect(hosts()).toEqual(["172.22.128.104:443"]);
+    set("thumbprint", "efef");
+    expect(hosts()).toEqual(["10.0.0.5:443"]);
+    set("thumbprint", "");
+
+    set("subject", "fmg");
+    expect(hosts()).toEqual(["10.0.0.5:443"]);
+    // Fields AND together.
+    set("ip", "172.22");
+    expect(document.querySelectorAll(".tls-pin-card")).toHaveLength(0);
+    set("subject", "");
+    set("ip", "");
+    expect(document.querySelectorAll(".tls-pin-card")).toHaveLength(2);
+    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("2 pinned · 1 changed");
+  });
+
   it("closes from the X, the footer button and a backdrop click", async () => {
     boot(true);
     await flush();
