@@ -354,7 +354,9 @@ over HTTPS gets the same treatment for its TLS certificate when *Verify TLS
 certificate* is off. Both kinds of pin are listed under **Windows SSH
 Deployment → Pinned server identities**, each behind a button — **View pinned
 host keys** and **View pinned certificates** open a side panel with the list
-(the host-key panel has a filter box); delete one to trust a host that was
+(the host-key panel has a filter box; the certificate panel has IP address,
+Hostname, Thumbprint and Subject filters that narrow the list together, and a
+thumbprint matches with or without colons); delete one to trust a host that was
 legitimately rebuilt, re-keyed or re-certified. TLS certificates are also on
 **Server Settings → Web Server**: **View pinned certificates** opens a list
 with the asset each certificate belongs to, and a changed certificate shows
