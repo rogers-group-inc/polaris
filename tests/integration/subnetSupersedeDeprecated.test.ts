@@ -103,7 +103,9 @@ const run = (device: string, serial: string) =>
     resultWith(device, serial), "tester", "full",
   );
 
-d("Phase 1 — a dead subnet does not squat on its CIDR", () => {
+// Each case drives the real Phase 1 (the last one twice), which runs past the
+// 5 s default on a loaded CI runner as well as on Windows/WSL podman.
+d("Phase 1 — a dead subnet does not squat on its CIDR", { timeout: 60_000 }, () => {
   it("retires it and creates the new gate's subnet when a DIFFERENT gate serves the range", async () => {
     // The reported failure, end to end: subnet deprecated with no serial (it
     // predates the column), a differently-named gate now reports the range.
