@@ -2602,3 +2602,14 @@ the asset is decommissioned, a conflict asks whether to reactivate the asset and
 reinstate its thumbprint. Accepting needs read-write on Assets. Rejecting keeps
 the asset decommissioned, and the same decommission doesn't ask again.
 ([Conflict Resolution](Conflict-Resolution) has the details.)
+
+### Rule 124
+
+**An interface filter matches the interface's name or its description, and can
+name several interfaces.** Type the words you see on the Interfaces tab: a
+circuit called "ATT EPLS" matches whether a firewall uses that as the
+interface's name or as the description on the port it rides. Separate several
+with `|` (`ATT EPLS | wan1`) and the condition covers any of them. The filter
+still only reaches interfaces you pinned for monitoring. Existing automations
+can now also match a pinned interface whose description contains the filter
+text. ([Automation Triggers](Automation-Triggers#filter-rows) has the details.)

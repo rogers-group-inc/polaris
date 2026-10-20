@@ -134,6 +134,7 @@ import {
   alertOwnerOf,
   parseMemberIpFilter,
   memberIpPasses,
+  interfacePatternMatch,
   type DeliveryOwner,
   type ShadowIndex as ShadowIndexOf,
   eventFeedsAutomations,
@@ -1635,7 +1636,7 @@ async function resolveAssetMetricReadings(
       // Pinned interfaces only (interfaceIsPinned) — the same default the
       // ifOperStatus/ifAdminStatus/ifIpAddress/poeStatus resolvers apply. See its header for
       // why the pinned-only sample table isn't a gate by itself.
-      const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && substringMatch(r.ifName, df.ifNamePattern));
+      const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern));
       return rateReadings(filtered, index, (r) => r.ifName, (r) => interfaceDimLabel(r.ifName, r.alias), (r) => num((r as any)[col]), mult);
     }
     case "ipsecThroughputBps": {
@@ -1952,7 +1953,7 @@ async function unpinnedPoeFaultReadings(
     // trigger (a disabled port reports "disabled", never "fault"), kept so the
     // two paths can't drift into disagreeing about what a port reports.
     if (r.poeStatus === "disabled") continue;
-    if (!substringMatch(r.ifName, df.ifNamePattern)) continue;
+    if (!interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern)) continue;
     out.push({
       ...mk(a, r.ifName, interfaceDimLabel(r.ifName, r.alias), r.poeStatus),
       readingAt: r.lastSeen,
@@ -2116,7 +2117,7 @@ async function resolveAssetStateReadings(
         // alerting on ports PoE was deliberately turned off for. A fault rule
         // is unaffected: a disabled port reports "disabled", never "fault".
         if (trigger.field === "poeStatus" && r.poeStatus === "disabled") continue;
-        if (!substringMatch(r.ifName, df.ifNamePattern)) continue;
+        if (!interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern)) continue;
         // An address is compared as its BARE form on both the reading and the
         // series, so the shape a transport happened to report it in ("0.0.0.0"
         // vs the CMDB pair "0.0.0.0 0.0.0.0") can't decide whether an operator's

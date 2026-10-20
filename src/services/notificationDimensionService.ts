@@ -256,14 +256,29 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
     // time dimension. The noun says "monitored" so every operator-facing
     // message the wizard builds from it ("report no monitored interfaces")
     // names the gate instead of reading as "this device has no ports".
+    //
+    // A pinned interface's DESCRIPTION is offered beside its name, because the
+    // engine matches either (interfacePatternMatch): "ATT EPLS" is a VLAN's
+    // name on one gate and port25's description on another, and offering only
+    // names would hide the one word that selects both.
     noun: "monitored interfaces",
     strict: false,
     candidateWhere: { monitoredInterfaces: { isEmpty: false } },
-    pairs: async (ids) =>
-      (await prisma.asset.findMany({
+    pairs: async (ids) => {
+      const assets = await prisma.asset.findMany({
         where: { id: { in: ids } },
         select: { id: true, monitoredInterfaces: true },
-      })).flatMap((a) => a.monitoredInterfaces.map((ifName) => ({ value: ifName, assetId: a.id }))),
+      });
+      const pinned = new Map(assets.map((a) => [a.id, new Set(a.monitoredInterfaces)]));
+      const described = await prisma.assetInterface.findMany({
+        where: { assetId: { in: assets.filter((a) => a.monitoredInterfaces.length > 0).map((a) => a.id) }, alias: { not: null } },
+        select: { assetId: true, ifName: true, alias: true },
+      });
+      return [
+        ...assets.flatMap((a) => a.monitoredInterfaces.map((ifName) => ({ value: ifName, assetId: a.id }))),
+        ...describedPairs(described, (r) => pinned.get(r.assetId)?.has(r.ifName) ?? false),
+      ];
+    },
   },
   mountPathPattern: {
     // The operator-pinned set (`Asset.monitoredStorage`), mirroring
@@ -440,12 +455,26 @@ const IF_NAME_POE_FAULT_SOURCE: DimensionSource = {
   noun: "PoE-capable interfaces",
   strict: false,
   candidateWhere: { interfaces: { some: { poeStatus: { not: null } } } },
-  pairs: async (ids) =>
-    (await prisma.assetInterface.findMany({
+  pairs: async (ids) => {
+    const rows = await prisma.assetInterface.findMany({
       where: { assetId: { in: ids }, poeStatus: { not: null } },
-      select: { assetId: true, ifName: true },
-    })).map((r) => ({ value: r.ifName, assetId: r.assetId })),
+      select: { assetId: true, ifName: true, alias: true },
+    });
+    return [...rows.map((r) => ({ value: r.ifName, assetId: r.assetId })), ...describedPairs(rows, () => true)];
+  },
 };
+
+/** An interface description as a picker value — offered beside the name it
+ *  describes (interfacePatternMatch selects on either). Blank and
+ *  same-as-the-name descriptions add nothing and are dropped. */
+function describedPairs<R extends { assetId: string; ifName: string; alias: string | null }>(
+  rows: R[],
+  keep: (r: R) => boolean,
+): ValuePair[] {
+  return rows
+    .filter((r) => keep(r) && !!r.alias?.trim() && r.alias.trim() !== r.ifName)
+    .map((r) => ({ value: r.alias!.trim(), assetId: r.assetId }));
+}
 
 /**
  * The value source for one (dimension, metric, comparison). Everything reads
