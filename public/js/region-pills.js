@@ -54,14 +54,19 @@
     return parseInt(m[1], 16) + ", " + parseInt(m[2], 16) + ", " + parseInt(m[3], 16);
   }
 
+  // The inline half of a `.hue-pill` (styles.css): only `--hue`. The class
+  // draws fill, label and border, clamping the label's lightness per theme so
+  // a pale region colour (a yellow) reads on daylight and a deep one on dark.
+  function hueStyle(name) {
+    return "--hue:" + colorFor(name);
+  }
+
   // One badge, optionally carrying a title (callers use it to say WHERE the
   // region came from — the account, the role, or an IdP group).
   function pill(name, title) {
-    var hex = colorFor(name);
-    var rgb = rgbTriplet(hex);
-    return '<span class="badge"' +
+    return '<span class="badge hue-pill"' +
       (title ? ' title="' + window.escapeHtml(title) + '"' : "") +
-      ' style="background:rgba(' + rgb + ',0.18);color:' + hex + ';border:1px solid rgba(' + rgb + ',0.45)">' +
+      ' style="' + hueStyle(name) + '">' +
       window.escapeHtml(name) +
     '</span>';
   }
@@ -81,6 +86,7 @@
     names: function () { return Object.keys(byName).sort(); },
     colorFor: colorFor,
     rgbTriplet: rgbTriplet,
+    hueStyle: hueStyle,
     pill: pill,
     html: html,
   };

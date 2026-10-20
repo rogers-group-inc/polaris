@@ -101,9 +101,16 @@ change or API call. Change them in Azure.
   the next run removes them all.
 - **Tags you add by hand are never touched.** Only `azure:` tags are managed.
   For the same reason, Polaris refuses a hand-made tag whose name starts with
-  `azure:`, a rename of one of the mirrored tags, and an auto-assign filter on
-  one. Change the tag in Azure instead. You can still change a mirrored tag's
-  colour and category.
+  `azure:`.
+- **Mirrored tags are read-only in the tag registry.** In **Server Settings →
+  Identification → Tags** they have no Edit or Delete button, and the API
+  refuses to rename, recolour, recategorise, filter or delete one. Change the
+  tag in Azure instead.
+- **Polaris removes a mirrored tag from the registry by itself once no asset
+  carries it.** This happens at the end of every Azure Arc run, straight after
+  an asset is deleted, and on the six-hourly tag check. The six-hourly check
+  covers an asset merged into another and an Arc integration that is disabled
+  or deleted.
 - **Tag keys to add** limits which keys are imported (one per line, case
   ignored, wildcards like `Cost*` allowed). Leave it empty to import every key.
   Use the list when your tenant has tags whose value is different on every

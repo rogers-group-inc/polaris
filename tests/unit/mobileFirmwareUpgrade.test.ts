@@ -329,6 +329,15 @@ describe("Schedule for later", () => {
   });
 });
 
+describe("a device in a group upgrade (rule 122)", () => {
+  it("shows the group note and no Upgrade or Schedule verb", async () => {
+    availability = { ...availability, group: { id: "grp-1", gateAssetId: "g1", gateName: "FGT-A", scheduledFor: "2026-10-17T02:00:00Z", status: "pending", memberState: "planned" } };
+    await openAsset("sw");
+    expect(document.getElementById("asset-fw-group")!.textContent).toMatch(/Part of a group upgrade on FGT-A/);
+    expect(document.getElementById("asset-fw-upgrade-btn")).toBeNull();
+  });
+});
+
 describe("fwProgressText", () => {
   it("names the stage, and the percent of the flash stage in progress", () => {
     const f = g.PolarisAssetDetail._fw.fwProgressText;

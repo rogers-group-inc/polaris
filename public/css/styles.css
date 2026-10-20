@@ -98,6 +98,13 @@
      --shadow-lift-text is the same pair for text, which takes no spread. */
   --shadow-lift: 0 0 12px 8px rgba(0,0,0,.11), 0 0 2px 1px rgba(0,0,0,.07);
   --shadow-lift-text: 0 0 2px rgba(0,0,0,.07), 0 0 12px rgba(0,0,0,.11);
+  /* The same lift for CONTROLS — the global search, the header/toolbar
+     buttons, the page-size select and the account badge (2026-10-16). Half
+     the blur and spread of --shadow-lift: a full card-sized ring round a
+     30px-tall field reads as a smudge rather than a lift. The cards and
+     folder tabs keep --shadow-lift. */
+  --shadow-lift-control: 0 0 6px 3px rgba(0,0,0,.07), 0 0 1px 1px rgba(0,0,0,.05);
+  --shadow-lift-control-text: 0 0 1px rgba(0,0,0,.05), 0 0 6px rgba(0,0,0,.07);
   /* Nothing in the app paints --shadow-sm any more: it was the cards' shadow,
      and a 4px blur under a box hundreds of pixels wide is invisible on the
      daylight pair, which is what --shadow-card below replaced. Kept because the
@@ -365,14 +372,14 @@
 }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-available  { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-active     { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-reserved   { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-reserved   { background: color-mix(in srgb, var(--color-accent) 10%, transparent); border-color: color-mix(in srgb, var(--color-accent) 30%, transparent); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-deprecated { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-conflict   { background: rgba(198,40,40,0.10); color: var(--color-danger); border-color: rgba(198,40,40,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-released   { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-expired    { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-v4         { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-v4         { background: color-mix(in srgb, var(--color-accent) 10%, transparent); border-color: color-mix(in srgb, var(--color-accent) 30%, transparent); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-v6         { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-vlan       { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-vlan       { background: color-mix(in srgb, var(--color-accent) 10%, transparent); border-color: color-mix(in srgb, var(--color-accent) 30%, transparent); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-admin      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-network-admin { background: rgba(230,126,0,0.10); color: #e67e00; border-color: rgba(230,126,0,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-assets-admin { background: rgba(0,151,167,0.10); color: #00838f; border-color: rgba(0,151,167,0.30); }
@@ -384,7 +391,7 @@
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-disabled       { background: rgba(211,47,47,0.10); color: #c62828; border-color: rgba(211,47,47,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-storage        { background: rgba(156,39,176,0.10); color: #7b1fa2; border-color: rgba(156,39,176,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-quarantined    { background: rgba(183,28,28,0.12); color: #b71c1c; border-color: rgba(183,28,28,0.35); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-info    { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-info    { background: color-mix(in srgb, var(--color-accent) 10%, transparent); border-color: color-mix(in srgb, var(--color-accent) 30%, transparent); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-error   { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
 /* The severity badges (notice … critical, and level-warning) take their daylight
    colours from the --color-sev-* tokens — no per-theme override here. */
@@ -1764,6 +1771,12 @@ code {
 .advisor-header-ok    { font-size: 0.78rem; color: #2ecc71; font-weight: 600; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-header-ok { color: #27ae60; }
 
+/* Header band darker than the card, not the lighter bg-primary the generic
+   .ip-table header paints — the light band read as washed out on the card. */
+.advisor-table thead th {
+  background: color-mix(in srgb, var(--color-bg-primary) 88%, black);
+  color: var(--color-text-secondary);
+}
 .advisor-table tbody tr.advisor-divider td {
   padding-top: 0.85rem;
   font-size: 0.75rem;
@@ -1791,7 +1804,6 @@ code {
    the tint takes a body and the ink goes dark. */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-pill-change { background: rgba(255,214,0,0.30); color: #6b4400; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-pill-ok     { background: rgba(46,204,113,0.30); color: #1b5e20; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-pill-ok { background: rgba(39,174,96,0.15); color: #27ae60; }
 .advisor-cold-badge {
   display: inline-block;
   padding: 1px 6px;
@@ -1870,14 +1882,15 @@ code {
    badge lift the same everywhere. Not a filter: drop-shadow() on the bar or
    the header would make it the backdrop root of the frosted "Dashboards ▾"
    menu (see ::before) and double the buttons' own shadows. */
-/* The page title, the global search and the account badge carry the rail's
-   lift (--shadow-lift / --shadow-lift-text), so the header reads as the same
-   height as the sidebar and the page card rather than its own layer. */
+/* The page title carries the rail's lift (--shadow-lift-text), so the header
+   reads as the same height as the sidebar and the page card rather than its
+   own layer; the global search and the account badge take the lighter control
+   lift (--shadow-lift-control). */
 .page-header h2 { text-shadow: var(--shadow-lift-text); }
-.user-badge-name { text-shadow: var(--shadow-lift-text); }
-.user-badge-avatar { box-shadow: var(--shadow-lift); }
-.user-badge .badge { box-shadow: var(--shadow-lift); }
-.user-badge-caret { filter: drop-shadow(0 0 2px rgba(0,0,0,.07)) drop-shadow(0 0 12px rgba(0,0,0,.11)); }
+.user-badge-name { text-shadow: var(--shadow-lift-control-text); }
+.user-badge-avatar { box-shadow: var(--shadow-lift-control); }
+.user-badge .badge { box-shadow: var(--shadow-lift-control); }
+.user-badge-caret { filter: drop-shadow(0 0 1px rgba(0,0,0,.05)) drop-shadow(0 0 6px rgba(0,0,0,.07)); }
 /* Inside the bar the header and the tab strip sit tight; the gap to the
    content below is the wrapper's margin. The header draws no rule of its own:
    the tab strip's bottom border is the bar's one line. */
@@ -1996,7 +2009,7 @@ html[data-page-top-curtain]::after {
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
   outline: none;
-  box-shadow: var(--shadow-lift);
+  box-shadow: var(--shadow-lift-control);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .global-search input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
@@ -2022,7 +2035,7 @@ html[data-page-top-curtain]::after {
    .filter-bar focus rule below repeats it. */
 .global-search input[type="search"]:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-lift);
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-lift-control);
 }
 .global-search-dropdown {
   position: absolute;
@@ -2303,7 +2316,7 @@ html[data-page-top-curtain]::after {
 .page-actions-row .btn:not(.btn-icon):not(:disabled),
 .appmap-toolbar-actions .btn:not(.btn-icon):not(:disabled),
 .appmap-toolbar-top .btn:not(.btn-icon):not(:disabled),
-.table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift); }
+.table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift-control); }
 /* A page's own action buttons on a row of their own (Assets: between the
    selection bar and the tab row), right aligned. */
 .page-actions-row {
@@ -2330,8 +2343,16 @@ html[data-page-top-curtain]::after {
 .table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) svg,
 .table-head-row .table-head-controls .btn.btn-glyph::before { width: 14px; height: 14px; }
 /* …and so do the tab row's "Show N" label and its page-size select. */
-.table-head-row .table-head-controls label { text-shadow: var(--shadow-lift-text); }
-.table-head-row .table-head-controls select { box-shadow: var(--shadow-lift); }
+.table-head-row .table-head-controls select { box-shadow: var(--shadow-lift-control); }
+/* Page-size selects carry no "Show" label any more — the options read
+   "25 / page" (2026-10-16). Any other label in a tab row is secondary text at
+   weight 600 with no halo: tertiary text in a 12px blur halo smeared a small
+   label into the ground on the daylight themes. */
+.table-head-row .table-head-controls label {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-shadow: none;
+}
 .btn-primary {
   background: var(--color-accent);
   color: #0d0d1a;
@@ -2509,6 +2530,9 @@ html[data-page-top-curtain]::after {
   position: relative;
   display: inline-block;
 }
+/* inline-block above beats the UA's [hidden] rule — a permission-gated menu
+   (the Dashboard page's Dashboards ▾) set hidden and stayed on screen. */
+.btn-dropdown-wrap[hidden] { display: none; }
 /* Frosted on the same terms as the modal and slide-over. This one rule is
    every context menu in the app: .row-context-menu (showRowMenu) only adds
    position/z-index on top of it. No containing-block hazard here the way there
@@ -3001,7 +3025,6 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
      ring cast follows the fillets' curves, so the cast still reaches into
      the concave corners either side of the active tab. */
   --fr: 8px;
-  --folder-notch: 80px;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -3077,9 +3100,23 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
    card's fill is glass, so a cast under it shows through as a dark band. The
    hole is the card's outline (corners approximated in 22.5° steps) plus a
    notch over the active tab, its sides traced down the neck's fillets
-   (--folder-gap-l/-r, measured by wireFolderTabs() in app.js); the tab casts
-   its own. */
+   (--folder-gap-l/-r, measured by wireFolderTabs() in folder-tabs.js); the tab
+   casts its own. The outer region also stops at the card's top edge across
+   the tab strip (--folder-strip-l/-r, the first tab's left to the last tab's
+   or the + button's right, measured there too): the inactive tabs sit behind
+   the card and are translucent, so a cast above the edge lay across their
+   lower halves. A fillet keeps its cast only where it reaches PAST the strip
+   — the outer fillet of an active END tab (--frl/--frr: --fr there, 0
+   inside the strip, where the neighbouring tab overlaps the fillet and the
+   cast in it showed through that tab as a small dark block). Unmeasured, the
+   strip collapses onto the active tab's span and neither fillet is cast. */
 .folder-card::before {
+  --gl: var(--folder-gap-l, 0px);
+  --gr: var(--folder-gap-r, 0px);
+  --sl: var(--folder-strip-l, var(--gl));
+  --sr: var(--folder-strip-r, var(--gr));
+  --frl: clamp(0px, calc(var(--sl) - var(--gl)), var(--fr));
+  --frr: clamp(0px, calc(var(--gr) - var(--sr)), var(--fr));
   content: "";
   position: absolute;
   inset: -1px;
@@ -3088,7 +3125,20 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   pointer-events: none;
   box-shadow: var(--shadow-lift);
   clip-path: polygon(evenodd,
-    -100px -100px, calc(100% + 100px) -100px,
+    -100px -100px,
+    var(--sl) -100px,
+    var(--sl) 0,
+    max(var(--sl), var(--gl)) 0,
+    max(var(--sl), var(--gl)) calc(-1 * var(--frl)),
+    calc(var(--gl) + var(--fr)) calc(-1 * var(--frl)),
+    calc(var(--gl) + var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) calc(-1 * var(--frr)),
+    min(var(--sr), var(--gr)) calc(-1 * var(--frr)),
+    min(var(--sr), var(--gr)) 0,
+    var(--sr) 0,
+    var(--sr) -100px,
+    calc(100% + 100px) -100px,
     calc(100% + 100px) calc(100% + 100px), -100px calc(100% + 100px),
     -100px -100px,
     0 var(--R),
@@ -3096,18 +3146,18 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
     calc(var(--R) * 0.293) calc(var(--R) * 0.293),
     calc(var(--R) * 0.617) calc(var(--R) * 0.076),
     var(--R) 0,
-    var(--folder-gap-l, 0px) 0,
-    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.383) calc(var(--fr) * -0.076),
-    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.707) calc(var(--fr) * -0.293),
-    calc(var(--folder-gap-l, 0px) + var(--fr) * 0.924) calc(var(--fr) * -0.617),
-    calc(var(--folder-gap-l, 0px) + var(--fr)) calc(-1 * var(--fr)),
-    calc(var(--folder-gap-l, 0px) + var(--fr)) calc(-1 * var(--folder-notch)),
-    calc(var(--folder-gap-r, 0px) - var(--fr)) calc(-1 * var(--folder-notch)),
-    calc(var(--folder-gap-r, 0px) - var(--fr)) calc(-1 * var(--fr)),
-    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.924) calc(var(--fr) * -0.617),
-    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.707) calc(var(--fr) * -0.293),
-    calc(var(--folder-gap-r, 0px) - var(--fr) * 0.383) calc(var(--fr) * -0.076),
-    var(--folder-gap-r, 0px) 0,
+    calc(var(--gl) + var(--fr) - var(--frl)) 0,
+    calc(var(--gl) + var(--fr) - var(--frl) * 0.617) calc(var(--frl) * -0.076),
+    calc(var(--gl) + var(--fr) - var(--frl) * 0.293) calc(var(--frl) * -0.293),
+    calc(var(--gl) + var(--fr) - var(--frl) * 0.076) calc(var(--frl) * -0.617),
+    calc(var(--gl) + var(--fr)) calc(-1 * var(--frl)),
+    calc(var(--gl) + var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) 0,
+    calc(var(--gr) - var(--fr)) calc(-1 * var(--frr)),
+    calc(var(--gr) - var(--fr) + var(--frr) * 0.076) calc(var(--frr) * -0.617),
+    calc(var(--gr) - var(--fr) + var(--frr) * 0.293) calc(var(--frr) * -0.293),
+    calc(var(--gr) - var(--fr) + var(--frr) * 0.617) calc(var(--frr) * -0.076),
+    calc(var(--gr) - var(--fr) + var(--frr)) 0,
     calc(100% - var(--R)) 0,
     calc(100% - var(--R) * 0.617) calc(var(--R) * 0.076),
     calc(100% - var(--R) * 0.293) calc(var(--R) * 0.293),
@@ -4047,6 +4097,63 @@ body.sf-resizing * { user-select: none !important; }
 }
 .sf-btn-clear:hover { color: var(--color-text-primary); border-color: var(--color-accent); }
 
+/* ─── Pick filter (data-sf-filter="pick" — the Assets Tags column) ────────── */
+/* The list scrolls; the search box, the Any/All switch and the OK row stay put. */
+.sf-filter-pick { position: relative; }
+.sf-pick-popover {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}
+.sf-pick-popover[hidden] { display: none; }
+.sf-pick-head { padding: 8px 10px 6px; }
+.sf-pick-search { height: 24px; font-size: 0.78rem; }
+.sf-pick-list {
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  padding: 2px 0;
+}
+.sf-pick-list .sf-multi-option span { overflow: hidden; text-overflow: ellipsis; }
+.sf-pick-none { border-bottom: 1px dashed var(--color-border); font-style: italic; }
+.sf-pick-none.sf-pick-disabled { opacity: 0.5; cursor: default; }
+.sf-pick-empty { padding: 8px 10px; font-size: 0.78rem; color: var(--color-text-tertiary); }
+.sf-pick-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 0;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+.sf-pick-mode { display: inline-flex; border: 1px solid var(--color-border); border-radius: 3px; overflow: hidden; }
+.sf-pick-mode-btn {
+  font-size: 0.72rem;
+  padding: 2px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.sf-pick-mode-btn + .sf-pick-mode-btn { border-left: 1px solid var(--color-border); }
+.sf-pick-mode-btn.active { background: var(--color-accent); color: #0d0d1a; font-weight: 600; }
+.sf-pick-actions { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+/* The Assets Tags filter dialog (assets.js → openAssetTagFilterModal): the edit
+   form's chip picker laid out in full — no 200px scroll box; a very long
+   catalogue scrolls the modal body instead. */
+.tag-filter-head { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; font-size: 0.85rem; }
+.tag-filter-none { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.tag-filter-none.sf-pick-disabled { opacity: 0.5; cursor: default; }
+.tag-picker.tag-filter-picker { max-height: none; overflow: visible; }
+.tag-filter-count { align-self: center; font-size: 0.8rem; color: var(--color-text-secondary); }
+.sf-pick-spacer { flex: 1; }
+
 /* ─── Bulk Action Bar ──────────────────────────────────────────────────────── */
 .bulk-bar {
   display: flex;
@@ -4212,13 +4319,14 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   background: var(--color-bg-secondary);
   padding: 0.75rem 0;
 }
+/* Secondary at weight 600, no halo — same legibility pass as the tab-row labels. */
 .filter-bar label {
   font-size: 0.72rem;
-  color: var(--color-text-tertiary);
+  font-weight: 600;
+  color: var(--color-text-secondary);
   margin-right: -4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  text-shadow: var(--shadow-text);
 }
 /* The page-level search / filter fields. Scoped to .filter-bar rather than put
    on the shared `input, select, textarea` rule: that one dresses every field in
@@ -4406,7 +4514,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   outline-offset: 1px;
 }
 .badge-available  { background: rgba(0,200,83,0.12); color: var(--color-success); border: 1px solid rgba(0,200,83,0.25); }
-.badge-reserved   { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); }
+.badge-reserved   { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent); }
 .badge-deprecated { background: rgba(117,117,117,0.12); color: var(--color-deprecated); border: 1px solid rgba(117,117,117,0.25); }
 /* Same red as .badge-admin and .btn-danger: a conflict is a problem to act on,
    and the softer red read as merely informational. */
@@ -4416,17 +4524,31 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 /* An Unraid container / TrueNAS App with a newer image or version waiting (rule 94). */
 .badge-update     { background: rgba(255,214,0,0.12); color: var(--color-warning); border: 1px solid rgba(255,214,0,0.25); }
 .badge-released   { background: rgba(117,117,117,0.12); color: var(--color-deprecated); border: 1px solid rgba(117,117,117,0.25); }
-.badge-v4         { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); }
+.badge-v4         { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent); }
 .badge-v6         { background: rgba(255,214,0,0.12); color: var(--color-warning); border: 1px solid rgba(255,214,0,0.25); }
-.badge-vlan       { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); font-family: var(--font-mono); font-size: 0.72rem; }
+.badge-vlan       { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent); font-family: var(--font-mono); font-size: 0.72rem; }
 /* "Auto" marker on machine-created discovery rules (Integrations → Polaris Agent) */
-.badge-auto-rule  { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); }
+.badge-auto-rule  { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent); }
 .badge-admin      { background: rgba(255,23,68,0.12); color: var(--color-danger); border: 1px solid rgba(255,23,68,0.25); }
 .badge-network-admin { background: rgba(255,152,0,0.12); color: #ff9800; border: 1px solid rgba(255,152,0,0.25); }
 .badge-assets-admin { background: rgba(0,188,212,0.12); color: #00bcd4; border: 1px solid rgba(0,188,212,0.25); }
 .badge-readonly { background: rgba(158,158,158,0.12); color: #9e9e9e; border: 1px solid rgba(158,158,158,0.25); }
 .badge-user      { background: rgba(0,200,83,0.18); color: var(--color-success); border: 1px solid rgba(0,200,83,0.40); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-user { background: rgba(46,125,50,0.14); border-color: rgba(46,125,50,0.40); }
+/* Generic outcome badges — status lines (backup / restore / schedule), "Asset
+   Override", "Quiet now", monitored-via, API-token roles. Callers used these
+   names for years with no rule behind them, so each one rendered as a bare
+   .badge: inherited text, no fill, an edge only where the theme's pill shadow
+   happened to show (there on daylight, gone on nightfall). Built from theme
+   tokens via color-mix, so each re-tunes with the theme and needs no per-theme
+   override. */
+.badge-success { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
+.badge-warning { background: color-mix(in srgb, var(--color-warning) 12%, transparent); color: var(--color-warning); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent); }
+.badge-info    { background: color-mix(in srgb, var(--color-accent) 12%, transparent);  color: var(--color-accent);  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent); }
+.badge-error,
+.badge-danger  { background: color-mix(in srgb, var(--color-danger) 12%, transparent);  color: var(--color-danger);  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); }
+.badge-neutral,
+.badge-type    { background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); color: var(--color-text-secondary); border: 1px solid color-mix(in srgb, var(--color-text-secondary) 28%, transparent); }
 
 .vip-badge {
   display: inline-block;
@@ -5102,15 +5224,17 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   border-top: 1px solid var(--color-border);
 }
 .badge-source-vip        { background: rgba(156,39,176,0.12); color: #ce93d8; border: 1px solid rgba(156,39,176,0.25); }
-.badge-source-dhcp       { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); }
+.badge-source-dhcp       { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent); }
 .badge-source-interface  { background: rgba(255,152,0,0.12); color: #ff9800; border: 1px solid rgba(255,152,0,0.25); }
 .badge-source-device     { background: rgba(0,200,83,0.12); color: var(--color-success); border: 1px solid rgba(0,200,83,0.25); }
 
 /* ─── Asset Badges & Styles ───────────────────────────────────────────────── */
 .badge-asset-type {
-  background: rgba(79,195,247,0.10);
+  /* Fill + border follow the live theme's accent, like the label: a fixed cyan
+     here put a blue tint under a rust or orange label on the daylight themes. */
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   color: var(--color-accent);
-  border: 1px solid rgba(79,195,247,0.2);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 /* NOTE: .badge-maintenance is defined once, in the monitor-state block below
    (muted purple). An amber definition used to sit HERE and lost on source
@@ -5183,7 +5307,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-passive    { background: transparent; color: #3949ab; border-color: rgba(57,73,171,0.45); }
 
 /* Event level badges */
-.badge-level-info    { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
+.badge-level-info    { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent); font-size: 0.7rem; letter-spacing: 0.5px; }
 .badge-level-error   { background: rgba(255,23,68,0.12); color: var(--color-danger); border: 1px solid rgba(255,23,68,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
 /* Notification severities (notice < informational < warning < serious < critical),
    plus the legacy event level `warning`, which means the same thing. Text, fill
@@ -6045,6 +6169,10 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   transition: opacity 0.15s;
 }
 .tag-chip-delete:hover { opacity: 1; }
+/* A registry chip that opens the "assets with this tag" slide-in. */
+.tag-chip-open { cursor: pointer; }
+.tag-chip-open:hover { filter: brightness(1.12); }
+.tag-chip-open:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
 /* Tag picker (enforced mode) */
 .tag-picker {
@@ -6100,6 +6228,53 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
    selected/unselected distinction (the dimming half is inline, per tag color). */
 label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .tag-picker-chip:hover { border-color: var(--color-accent); }
+
+/* ── Stored-colour pills (.hue-pill) ─────────────────────────────────────────
+   Every pill painted in an OPERATOR-CHOSEN colour — a region's map colour, a
+   registry tag's colour, a role's colour — sets only `--hue` inline and takes
+   the rest from here. The raw colour is fine as a translucent fill, but as the
+   LABEL it is whatever the operator picked: a yellow or a white vanishes on its
+   own tint in the daylight themes, a navy or a near-black does the same on
+   nightfall. So the label keeps the hue and chroma but has its OKLCH lightness
+   clamped into a band that reads on the live theme, and the border is drawn
+   from the label (not the raw colour) so a white pill on a white row, or a
+   black one on a black row, still has an edge. `--hue` may be a theme token
+   (a tag's `severity:<level>` reference) as well as a hex.
+     .hue-pill            applied / static (scope pills, role badge, registry)
+     .hue-pill.hue-strong a picker chip that is selected
+     .hue-pill.hue-off    a picker chip that is not selected
+   Browsers without relative-colour syntax get a 55% pull toward the theme's
+   text colour instead — weaker on the extremes, never worse than the raw hue. */
+:root {
+  --hue-label-l-min: 0.78;
+  --hue-label-l-max: 1;
+}
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) {
+  --hue-label-l-min: 0;
+  --hue-label-l-max: 0.5;
+}
+.hue-pill {
+  --hue: #9e9e9e;
+  --hue-label: color-mix(in srgb, var(--hue) 55%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--hue) 18%, transparent);
+  color: var(--hue-label);
+  border: 1px solid color-mix(in srgb, var(--hue-label) 45%, transparent);
+}
+@supports (color: oklch(from red l c h)) {
+  .hue-pill {
+    --hue-label: oklch(from var(--hue) clamp(var(--hue-label-l-min), l, var(--hue-label-l-max)) c h);
+  }
+}
+.hue-pill.hue-strong {
+  background: color-mix(in srgb, var(--hue) 27%, transparent);
+  border-color: var(--hue-label);
+}
+.hue-pill.hue-off {
+  background: color-mix(in srgb, var(--hue) 7%, transparent);
+  border-color: color-mix(in srgb, var(--hue-label) 25%, transparent);
+  color: color-mix(in srgb, var(--hue-label) 70%, transparent);
+}
+.tag-picker-chip.hue-pill:hover { border-color: var(--color-accent); }
 
 .upload-area {
   border: 2px dashed var(--color-border);

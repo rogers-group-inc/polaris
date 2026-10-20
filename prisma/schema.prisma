@@ -1329,7 +1329,9 @@ model Asset {
   maintenanceHolds   MaintenanceHold[]
   firmwareUpgradeRuns FirmwareUpgradeRun[]
   firmwareUpgradeSchedules FirmwareUpgradeSchedule[]
-  rebootRuns         RebootRun[]
+  firmwareGroupSchedules FirmwareGroupSchedule[] // as the controlling FortiGate
+  firmwareGroupMembers   FirmwareGroupMember[]
+  rebootRuns        RebootRun[]
   rebootSchedules    RebootSchedule[]
   topologyLayouts    TopologyLayout[]
   processConnections AssetProcessConnection[]
@@ -6236,6 +6238,7 @@ model FirmwareImage {
 
   runs FirmwareUpgradeRun[]
   schedules FirmwareUpgradeSchedule[]
+  groupMembers FirmwareGroupMember[]
 
   @@index([manufacturer, assetType, platform]) // the per-asset candidate lookup
   @@index([manufacturer, assetType, model])    // the tree
@@ -6291,6 +6294,7 @@ model FirmwareUpgradeRun {
   startedAt       DateTime       @default(now())
   finishedAt      DateTime?
   schedule        FirmwareUpgradeSchedule?
+  groupMember     FirmwareGroupMember?
 
   @@index([assetId, startedAt])
   @@index([status])
@@ -6332,6 +6336,78 @@ model FirmwareUpgradeSchedule {
   @@index([assetId, createdAt])
   @@index([scheduledFor]) // the Events Calendar tab (operationsCalendarService)
   @@map("firmware_upgrade_schedules")
+}
+
+// A GROUP firmware upgrade (business rule 122): one controlling FortiGate and
+// the FortiSwitches / FortiAPs behind it, booked together from the Assets bulk
+// bar and flashed in dependency order — deepest first, never a device beside
+// its ancestor / descendant / MCLAG peer, a parent only after everything
+// planned behind it ended clean (the fortinet-updater ordering). Each member's
+// flash is an ordinary rule-87 FirmwareUpgradeRun started by the group
+// executor (services/firmwareGroupService.ts). At most one pending / running
+// group per gate (partial unique index in the migration).
+model FirmwareGroupSchedule {
+  id            String                @id @default(uuid())
+  gateAssetId   String
+  gate          Asset                 @relation(fields: [gateAssetId], references: [id], onDelete: Cascade)
+  integrationId String?               // the gate's discovering integration when booked (no FK — informational)
+  scheduledFor  DateTime
+  concurrency   Int                   @default(1) // 1–10 (CHECK); parallelism across independent branches only
+  notifyEmails  String[]              // lower-cased, de-duplicated; never empty
+  status        String                @default("pending") // pending | running | completed | cancelled | missed | refused
+  error         String?               @db.Text
+  createdBy     String
+  createdAt     DateTime              @default(now())
+  updatedBy     String?
+  updatedAt     DateTime              @updatedAt
+  cancelledBy   String?
+  cancelledAt   DateTime?
+  firedAt       DateTime?             // when the executor claimed it (or recorded it missed)
+  finishedAt    DateTime?
+  notifiedAt    DateTime?             // when the summary email went out
+  notifyError   String?               @db.Text
+  members       FirmwareGroupMember[]
+
+  @@index([status, scheduledFor])
+  @@index([gateAssetId, createdAt])
+  @@index([scheduledFor]) // the Events Calendar tab
+  @@map("firmware_group_schedules")
+}
+
+// One device in a group firmware upgrade. Dropped devices (already current, no
+// Repository image, HA member, no login…) are rows too, so the dialog and the
+// summary email can say why. `ancestorIds` / `mclagPeerIds` are the topology
+// snapshot taken at booking that orders the run.
+model FirmwareGroupMember {
+  id           String                @id @default(uuid())
+  groupId      String
+  group        FirmwareGroupSchedule @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  assetId      String
+  asset        Asset                 @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  imageId      String?
+  image        FirmwareImage?        @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  fromVersion  String?
+  toVersion    String?               // null on a member dropped for having no image
+  depth        Int                   @default(1) // 1 = the gate, 2 = directly behind it, …
+  ancestorIds  String[]              // members' asset ids above this one, nearest first
+  mclagPeerIds String[]
+  // planned | waiting | running | upgraded | already-current | failed |
+  // unverified | skipped | dropped (CHECK)
+  state        String                @default("planned")
+  // On `skipped`: health (does NOT hold back its ancestors) | subtree (a
+  // device behind it did not end clean) | cancelled (the group was stopped
+  // or missed) | timeout (waited past the conflict wait on a related flash).
+  skipKind     String?
+  detail       String?               @db.Text // why it was dropped / skipped / is waiting, or the run's error
+  runId        String?               @unique
+  run          FirmwareUpgradeRun?   @relation(fields: [runId], references: [id], onDelete: SetNull)
+  eligibleAt   DateTime?             // first pass it could have started — the conflict-wait clock
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  @@unique([groupId, assetId])
+  @@index([assetId, state])
+  @@map("firmware_group_members")
 }
 
 // One reboot of one asset (business rule 115): a FortiGate, a FortiSwitch or

@@ -67,6 +67,7 @@ vi.mock("../../src/services/nginxRenderer.js", () => ({ renderNginxConfig: vi.fn
 const {
   applyUpdate,
   getUpdateStatus,
+  getUpdateActivity,
   clearUpdateStatus,
   isUpdateMechanismAvailable,
   _setExecRunnerForTests,
@@ -742,5 +743,45 @@ d("checkForUpdates — measures against the RUNNING commit, not the checkout's H
     await checkForUpdates();
     expect(calls.some((c) => c.includes("rm -rf"))).toBe(false);
     expect(calls).toContain("git rev-list --count HEAD..origin/HEAD");
+  });
+});
+
+// The nav bar's update panel for every signed-in user reads this auth-only
+// projection, so it must say "an update is running, on step X" and nothing
+// the serverSettingsSystem-gated full status carries.
+d("getUpdateActivity — the redacted nav-bar view", () => {
+  it("is idle when nothing is running, and after a failure", async () => {
+    expect(getUpdateActivity()).toEqual({ state: "idle" });
+
+    stubExec({ failOn: "npm ci" });
+    await runUpdate();
+    expect(getUpdateStatus().state).toBe("failed");
+    expect(getUpdateActivity()).toEqual({ state: "idle" });
+  });
+
+  it("names the running step mid-flight, without its message", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    _setExecRunnerForTests(async (cmd: string) => {
+      if (cmd.includes("npm ci")) await gate;
+      return { stdout: "", stderr: "" };
+    });
+
+    const run = applyUpdate(null, false);
+    // Let the pipeline reach the blocked npm ci.
+    for (let i = 0; i < 50 && getUpdateStatus().steps?.[STEP.DEPS]?.status !== "running"; i++) {
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(getUpdateStatus().state).toBe("applying");
+    const runningStep = getUpdateStatus().steps![STEP.DEPS]!;
+    expect(getUpdateActivity()).toEqual({ state: "applying", step: runningStep.name });
+    expect(Object.keys(getUpdateActivity()).sort()).toEqual(["state", "step"]);
+
+    release();
+    await run;
+    await Promise.resolve();
+    expect(getUpdateStatus().state).toBe("restarting");
+    expect(getUpdateActivity().state).toBe("restarting");
   });
 });

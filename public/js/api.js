@@ -764,6 +764,8 @@ const api = {
   assets: {
     list:      (params) => request("GET", "/assets" + toQuery(params)),
     get:       (id)     => request("GET", `/assets/${id}`),
+    // Assets carrying exactly this tag (assets:read) — the tag registry's slide-in.
+    byTag:     (tag)    => request("GET", "/assets/by-tag" + toQuery({ tag: tag })),
     // Sidebar alert: last agent build shipped unsigned Windows binaries (assets:write).
     agentSigningAlert: () => request("GET", "/assets/agent-signing-alert"),
     create:    (body)   => request("POST", "/assets", body),
@@ -1033,6 +1035,16 @@ const api = {
     scheduleFirmwareUpgrade:  (id, body)      => _bookingWrite(request("POST",   `/assets/${id}/firmware-upgrade/schedules`, body)),
     updateFirmwareSchedule:   (id, sid, body) => _bookingWrite(request("PATCH",  `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`, body)),
     cancelFirmwareSchedule:   (id, sid)       => _bookingWrite(request("DELETE", `/assets/${id}/firmware-upgrade/schedules/${encodeURIComponent(sid)}`)),
+    // Group upgrades (business rule 122): which FortiGate each selected device
+    // sits under (the bulk bar's red Upgrade button), the booking dialog's
+    // plan, book (`{ assetIds, scheduledFor ISO, concurrency, notifyEmails,
+    // cancelIndividual }`), read one, list, cancel / stop.
+    firmwareGroupSources: (assetIds)  => request("POST", "/assets/firmware-groups/sources", { assetIds }),
+    firmwareGroupPreview: (assetIds)  => request("POST", "/assets/firmware-groups/preview", { assetIds }),
+    createFirmwareGroup:  (body)      => _bookingWrite(request("POST", "/assets/firmware-groups", body)),
+    firmwareGroups:       (params)    => request("GET", "/assets/firmware-groups" + toQuery(params)),
+    firmwareGroup:        (groupId)   => request("GET", `/assets/firmware-groups/${encodeURIComponent(groupId)}`),
+    cancelFirmwareGroup:  (groupId)   => _bookingWrite(request("DELETE", `/assets/firmware-groups/${encodeURIComponent(groupId)}`)),
     // Reboots (business rule 115): what may reboot this asset and how (plus
     // its pending booking, `schedule`), reboot now (assets:write), the run
     // history, bookings, and an agent host's opt-in (assets:fullwrite).
@@ -1672,6 +1684,9 @@ const api = {
     restart: () => request("POST", "/server-settings/restart"),
     checkForUpdates: () => request("GET", "/server-settings/updates/check"),
     getUpdateStatus: () => request("GET", "/server-settings/updates/status"),
+    // Auth-only, redacted { state, step } — the nav bar's update panel for
+    // users who cannot read the full status above.
+    getUpdateActivity: () => request("GET", "/server-settings/updates/activity"),
     // allowWithoutBackup: only sent when the operator ticked the confirmation in
     // the Apply Update modal. Absent/false means the server ABORTS the update if
     // the pre-update backup fails.
@@ -1737,6 +1752,9 @@ const api = {
     create: (name, polygon, color) => request("POST",   "/map/regions", color ? { name, polygon, color } : { name, polygon }),
     update: (id, body)             => request("PUT",    `/map/regions/${id}`, body),
     delete: (id)                   => request("DELETE", `/map/regions/${id}`),
+    // Drag-to-nest: parentId must be a region whose polygon contains this one
+    // (400 otherwise); null = back to automatic nesting.
+    setNesting: (id, parentId)     => request("PUT",    `/map/regions/${id}/nesting`, { parentId }),
     // The Save Regions review: full reconcile + strip stale region tags off
     // pinned FortiGates that are no longer inside the named polygon.
     reconcile: ()                  => request("POST",   "/map/regions/reconcile"),

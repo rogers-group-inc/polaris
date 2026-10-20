@@ -73,6 +73,13 @@ where that came from, the **update train**, and a *Recent updates* history.
 Every update writes `server.update.started` and `server.update.applied` (or
 `server.update.failed`) Events.
 
+While an update is applying and restarting, **every signed-in user** sees an
+*Applying update* panel in the sidebar naming the current step, so nobody is
+surprised by the restart. Users who can open Server Settings also see the
+step's detail and can click through to the Maintenance card. Everyone else
+sees only the step name. An open page picks the update up within about 15
+seconds.
+
 ### Update train
 
 | Train | Follows |

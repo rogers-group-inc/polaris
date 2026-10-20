@@ -112,8 +112,8 @@
       "</td>" +
       "<td>" + memberText + "</td>" +
       "<td>" + escapeHtml(tellsSummary(g)) + "</td>" +
-      // badge-active / badge-deprecated are the real classes (styles.css);
-      // there is no badge-success.
+      // badge-active / badge-deprecated: the lifecycle pair every list page
+      // uses for on / off.
       "<td>" + (g.enabled
         ? '<span class="badge badge-active">Active</span>'
         : '<span class="badge badge-deprecated">Off</span> <span style="font-size:0.78rem;color:var(--color-text-tertiary)">members deliver on their own</span>') + "</td>" +

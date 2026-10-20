@@ -748,12 +748,15 @@ document.addEventListener("DOMContentLoaded", async function () {
   // Server-side mode: never call sf.apply(). Any filter/sort change resets to
   // page 1 and re-fetches with the new state translated into API params.
   _assetsSF = new TableSF("assets-tbody", assetsApplyFilterState);
-  // Tags is a finite set, so its filter box lists every tag in use and narrows
-  // as the operator types. Fetched on first open, refreshed when stale.
+  // Tags is a finite set, so its filter is a pick menu of every tag in use
+  // (data-sf-filter="pick"). Fetched on first open, refreshed when stale.
   _assetsSF.setColumnSuggestions("tags", async function () {
     var r = await api.assets.tags();
     return (r && r.tags) || [];
   });
+  // ...shown as the same grouped colour-chip picker the asset edit form uses,
+  // in a dialog, instead of TableSF's checkbox list.
+  _assetsSF.setPickOpener("tags", openAssetTagFilterModal);
   var assetsTable = document.querySelector("#assets-tbody").closest("table");
   // Widths + hidden columns persist per browser in the prefs blob; the column
   // ORDER additionally rides the active view tab (assets-tabs.js), so the
@@ -1089,6 +1092,148 @@ function _buildAssetsQuery() {
   return params;
 }
 
+// Discovery's breadcrumb tags (a device's former Entra / AD object id) — kept
+// on the asset for the matcher, never something an operator filters by. The
+// filter leaves them out unless a stored pick already names one.
+var TAG_FILTER_HIDDEN_PREFIXES = ["prev-entra:", "prev-ad:"];
+function _isTagFilterHidden(name) {
+  var n = String(name == null ? "" : name).toLowerCase();
+  return TAG_FILTER_HIDDEN_PREFIXES.some(function (p) { return n.indexOf(p) === 0; });
+}
+
+// The Tags column filter's picker: the edit form's grouped colour chips
+// (registry categories, the same _tagChipHTML chips), laid out in full rather
+// than in the form's 200px scroll box. It reads the catalogue itself rather
+// than _tagCache, because the cache drops the Arc-owned `azure:` rows (the
+// EDIT picker must never offer them) and a FILTER must: they appear under
+// their own registry category in their own colours, as Server Settings → Tags
+// shows them. Tags in use with no registry row land in "Other tags in use";
+// the prev-entra: / prev-ad: breadcrumbs are left out. Any / All and
+// "Include untagged" sit above the chips; nothing filters until OK.
+// `current` is the stored { op: "pick", … } or null; `done` is TableSF's.
+async function openAssetTagFilterModal(current, done) {
+  var inUse = [];
+  var catalog = [];
+  var catalogFailed = false;
+  var both = await Promise.all([
+    api.serverSettings.tagCatalog().catch(function () { catalogFailed = true; return null; }),
+    api.assets.tags().catch(function () { return null; }),
+  ]);
+  catalog = ((both[0] && both[0].tags) || []).filter(function (t) { return t && t.name; });
+  inUse = (both[1] && both[1].tags) || [];
+
+  var cur = current || { mode: "any", values: [], none: false };
+  var selected = (cur.values || []).slice();
+  var mode = cur.mode === "all" ? "all" : "any";
+
+  var cats = {};
+  var registered = {};
+  catalog.forEach(function (t) {
+    if (_isTagFilterHidden(t.name) && selected.indexOf(t.name) < 0) return;
+    var cat = t.category || "General";
+    (cats[cat] = cats[cat] || []).push(t);
+    registered[t.name] = true;
+  });
+  var others = [];
+  inUse.concat(selected).forEach(function (name) {
+    if (!name || registered[name] || others.indexOf(name) >= 0) return;
+    if (_isTagFilterHidden(name) && selected.indexOf(name) < 0) return;
+    others.push(name);
+  });
+  others.sort(function (a, b) { return a.localeCompare(b); });
+
+  var chips = "";
+  Object.keys(cats).sort().forEach(function (cat) {
+    chips += '<div class="tag-picker-category"><span class="tag-picker-cat-label">' + escapeHtml(cat) + '</span>';
+    cats[cat].forEach(function (t) { chips += _tagChipHTML(t.name, t.color, selected.indexOf(t.name) >= 0); });
+    chips += '</div>';
+  });
+  if (others.length) {
+    chips += '<div class="tag-picker-category"><span class="tag-picker-cat-label">Other tags in use</span>';
+    others.forEach(function (name) { chips += _tagChipHTML(name, "", selected.indexOf(name) >= 0); });
+    chips += '</div>';
+  }
+  if (!chips) {
+    chips = '<p class="hint" style="margin:0">' +
+      (catalogFailed ? "Could not load the tag list." : "No tags in use yet.") + '</p>';
+  }
+
+  var body =
+    '<div class="tag-filter-head">' +
+      '<div class="sf-pick-mode" role="radiogroup" aria-label="Match">' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="any" title="Assets carrying ANY selected tag">Any</button>' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="all" title="Assets carrying EVERY selected tag">All</button>' +
+      '</div>' +
+      '<label class="tag-filter-none"><input type="checkbox" id="tag-filter-none"' + (cur.none ? " checked" : "") + '> Include untagged assets</label>' +
+    '</div>' +
+    '<div class="tag-picker tag-filter-picker" id="tag-filter-picker">' + chips + '</div>';
+  var footer =
+    '<button type="button" class="btn btn-secondary" id="tag-filter-clear" style="margin-right:auto">Clear</button>' +
+    '<span class="tag-filter-count" id="tag-filter-count"></span>' +
+    '<button type="button" class="btn btn-secondary" id="tag-filter-cancel">Cancel</button>' +
+    '<button type="button" class="btn btn-primary" id="tag-filter-ok">OK</button>';
+  openModal("Filter by tags", body, footer, { wide: true });
+
+  var picker = document.getElementById("tag-filter-picker");
+  var noneBox = document.getElementById("tag-filter-none");
+  var countEl = document.getElementById("tag-filter-count");
+  // _tagChipHTML names its boxes f-tags-cb, and getTagFieldValue (the edit
+  // form's save) reads every f-tags-cb in the DOCUMENT — this dialog's body
+  // lingers hidden after it closes, so its ticks must not answer to that name.
+  picker.querySelectorAll('input[name="f-tags-cb"]').forEach(function (cb) { cb.name = "tag-filter-cb"; });
+  // Not _wireChipListeners: it re-reads each chip's colour from _tagCache,
+  // which has no azure: rows, so their chips would never brighten when
+  // picked. The chip already knows whether it is coloured.
+  picker.querySelectorAll(".tag-picker-chip input").forEach(function (cb) {
+    cb.addEventListener("change", function () {
+      var label = cb.parentElement;
+      label.classList.toggle("selected", cb.checked);
+      if (label.classList.contains("hue-pill")) {
+        label.classList.toggle("hue-strong", cb.checked);
+        label.classList.toggle("hue-off", !cb.checked);
+      }
+    });
+  });
+
+  function ticked() {
+    return Array.prototype.map.call(picker.querySelectorAll('input[type="checkbox"]:checked'), function (cb) { return cb.value; });
+  }
+  function refresh() {
+    document.querySelectorAll("#modal-overlay .sf-pick-mode-btn").forEach(function (b) {
+      var on = b.getAttribute("data-mode") === mode;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    // A row cannot be untagged and carry every tag, so All turns it off.
+    noneBox.disabled = mode === "all";
+    noneBox.parentElement.classList.toggle("sf-pick-disabled", mode === "all");
+    var n = ticked().length + (noneBox.checked && mode !== "all" ? 1 : 0);
+    countEl.textContent = n ? n + " selected" : "";
+  }
+
+  document.querySelectorAll("#modal-overlay .sf-pick-mode-btn").forEach(function (b) {
+    b.addEventListener("click", function () { mode = b.getAttribute("data-mode") === "all" ? "all" : "any"; refresh(); });
+  });
+  picker.addEventListener("change", refresh);
+  noneBox.addEventListener("change", refresh);
+  document.getElementById("tag-filter-clear").addEventListener("click", function () {
+    picker.querySelectorAll('input[type="checkbox"]:checked').forEach(function (cb) {
+      cb.checked = false;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    noneBox.checked = false;
+    refresh();
+  });
+  document.getElementById("tag-filter-cancel").addEventListener("click", closeModal);
+  document.getElementById("tag-filter-ok").addEventListener("click", function () {
+    var values = ticked();
+    var none = noneBox.checked && mode !== "all";
+    closeModal();
+    done(values.length || none ? { op: "pick", mode: mode, values: values, none: none } : null);
+  });
+  refresh();
+}
+
 // Map one TableSF text-filter value onto <param> / <param>Op. Handles the
 // plain-string contains form, the "!"-prefix negation, and the object forms
 // ({op:"not-contains",q}, {op:"empty"}, {op:"notempty"}) that table-sf stores.
@@ -1115,6 +1260,16 @@ function _pushAssetText(params, paramKey, raw) {
       if (!q) return;
       params[paramKey] = q;
       params[paramKey + "Op"] = "not_contains";
+    } else if (raw.op === "pick") {
+      // Tags column pick menu: exact names as a JSON array (a tag may hold a
+      // comma), any_of / all_of, plus the "(No tags)" row on any_of.
+      var vals = (raw.values || []).filter(function (v) { return typeof v === "string" && v; });
+      var none = !!raw.none && raw.mode !== "all";
+      if (!vals.length && !none) return;
+      if (!vals.length) { params[paramKey + "Op"] = "empty"; return; }
+      params[paramKey] = JSON.stringify(vals);
+      params[paramKey + "Op"] = raw.mode === "all" ? "all_of" : "any_of";
+      if (none) params[paramKey + "Untagged"] = "1";
     } else if (raw.op === "in-networks") {
       // IP Address column: any-of IPv4 prefixes / CIDRs (TableSF ipnet filter).
       var terms = (raw.terms || []).map(function (t) { return String(t).trim(); }).filter(Boolean);
@@ -1898,6 +2053,12 @@ function _assetsUpdateBulkBar() {
       ? "Select a single asset to edit"
       : "Edit the selected asset";
   }
+
+  // Upgrade (group firmware upgrade, rule 122) owns its rule in
+  // assets-firmware-group.js: grey for a non-Fortinet selection, RED when the
+  // selection spans more than one controlling FortiGate (a server read,
+  // debounced), normal when it is one FortiGate's fleet.
+  if (window.PolarisFirmwareGroup) window.PolarisFirmwareGroup.syncButton();
 
   // Merge is pairwise — show only when exactly two assets are selected, and
   // only to admins (same gate as the Sources-tab "Merge asset..." button).
@@ -6903,6 +7064,7 @@ function assetFirmwarePanelHTML(a, fw) {
         : '<p class="hint" style="margin:0">Starting an upgrade needs Read-Write on Assets — ask an administrator.</p>');
   }
   if (!fw.error && fw.schedule) body += _fwScheduleHTML(fw.schedule, canFlash);
+  if (!fw.error && fw.group) body += _fwGroupNoteHTML(fw.group);
   if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
   return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-card)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
@@ -6910,6 +7072,21 @@ function assetFirmwarePanelHTML(a, fw) {
     '</div>' +
     body +
     (fw.error ? '' : _fwRunHistoryHTML(a)) +
+  '</div>';
+}
+
+/**
+ * The device is in a pending / running GROUP upgrade (rule 122): the group
+ * flashes it, so the card says so and links to the group instead of offering
+ * a single-device booking beside it.
+ */
+function _fwGroupNoteHTML(group) {
+  var running = group.status === "running";
+  return '<div class="fw-group-note" style="margin-top:0.6rem;padding:0.5rem 0.75rem;border:1px solid var(--color-border);border-radius:6px;font-size:0.85rem;display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
+    '<span>Part of a group upgrade on <strong>' + escapeHtml(group.gateName) + '</strong> — ' +
+      (running ? 'running now' : 'scheduled for ' + escapeHtml(_fwWhenText(group.scheduledFor))) +
+      (group.memberState && group.memberState !== "planned" ? ' (this device: ' + escapeHtml(group.memberState) + ')' : '') + '.</span>' +
+    '<button type="button" class="btn btn-sm btn-secondary" id="btn-fw-group-open" data-group-id="' + escapeHtml(group.id) + '">View group upgrade</button>' +
   '</div>';
 }
 
@@ -6974,6 +7151,9 @@ function _fwApprovalModalHTML(a, fw, opts) {
   var schedulePart;
   if (mode === "change") {
     schedulePart = '<div id="fw-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _fwScheduleFieldsHTML(fw, existing, opts.defaults) + '</div>';
+  } else if (fw.group) {
+    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">This device is in a group upgrade on ' + escapeHtml(fw.group.gateName) +
+      ' (' + escapeHtml(fw.group.status === "running" ? "running now" : _fwWhenText(fw.group.scheduledFor)) + ') — scheduling it is done by the group.</p>';
   } else if (fw.schedule) {
     schedulePart = '<p class="hint" style="margin:0.75rem 0 0">An upgrade to ' + escapeHtml(fw.schedule.toVersion) + ' is already scheduled for ' + escapeHtml(_fwWhenText(fw.schedule.scheduledFor)) + ' — change or cancel it on the Firmware card.</p>';
   } else {
@@ -7249,6 +7429,9 @@ async function _openRebootRunLogModal(assetId, runId) {
 async function _openBookingFromCalendar(a, ob) {
   var sysTab = document.querySelector('#asset-view-tabs .page-tab[data-tab="system"]');
   if (sysTab) sysTab.click();
+  // A group firmware upgrade (rule 122) is drawn on its FortiGate; it opens
+  // the group's own progress, not one device's booking.
+  if (ob.groupId) { _openFirmwareGroupDetail(ob.groupId); return; }
   var pending = ob.status === "pending" && ob.scheduleId;
   try {
     if (ob.kind === "reboot") {
@@ -7281,6 +7464,19 @@ async function _openBookingFromCalendar(a, ob) {
   }
 }
 
+/**
+ * The group detail lives in assets-firmware-group.js, which only the Assets
+ * page loads; elsewhere (the asset panel opened from global search) load it
+ * on demand.
+ */
+function _openFirmwareGroupDetail(groupId) {
+  if (window.PolarisFirmwareGroup) { window.PolarisFirmwareGroup.openDetail(groupId); return; }
+  var s = document.createElement("script");
+  s.src = "/js/assets-firmware-group.js";
+  s.onload = function () { if (window.PolarisFirmwareGroup) window.PolarisFirmwareGroup.openDetail(groupId); };
+  document.head.appendChild(s);
+}
+
 function _wireFirmwarePanel(a, fw) {
   var up = document.getElementById("btn-fw-upgrade");
   if (up) up.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw); });
@@ -7288,6 +7484,8 @@ function _wireFirmwarePanel(a, fw) {
   if (schEdit && fw.schedule) schEdit.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw, fw.schedule); });
   var schCancel = document.getElementById("btn-fw-schedule-cancel");
   if (schCancel && fw.schedule) schCancel.addEventListener("click", function () { _cancelFirmwareSchedule(a, fw.schedule); });
+  var grp = document.getElementById("btn-fw-group-open");
+  if (grp && fw.group) grp.addEventListener("click", function () { _openFirmwareGroupDetail(fw.group.id); });
   var hist = document.getElementById("btn-fw-history");
   if (hist) {
     hist.addEventListener("click", function () {
@@ -24180,12 +24378,11 @@ function _renderAssetRuleRows(rTbody, rules, sent, assetId) {
 function _assetEventsTabHTML(assetId) {
   return '<div class="section-block">' +
     '<div class="filter-bar" style="justify-content:flex-end;margin-bottom:0.5rem">' +
-      '<label>Show</label>' +
-      '<select id="asset-view-events-pagesize" style="width:auto">' +
-        '<option value="15" selected>15</option>' +
-        '<option value="25">25</option>' +
-        '<option value="50">50</option>' +
-        '<option value="100">100</option>' +
+      '<select id="asset-view-events-pagesize" style="width:auto" aria-label="Rows per page">' +
+        '<option value="15" selected>15 / page</option>' +
+        '<option value="25">25 / page</option>' +
+        '<option value="50">50 / page</option>' +
+        '<option value="100">100 / page</option>' +
       '</select>' +
       '<button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="asset-view-events-refresh" title="Refresh">Refresh</button>' +
     '</div>' +

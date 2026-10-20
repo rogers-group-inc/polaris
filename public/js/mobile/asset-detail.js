@@ -2821,6 +2821,12 @@
   function fwSlotHtml(fw) {
     if (!fw || fw.error) return "";
     if (fw.state === "running" && fw.activeRun) return fwRunningHtml(fw.activeRun);
+    // In a pending / running GROUP upgrade (business rule 122): the group
+    // flashes it, and the group is managed from the desktop Assets page.
+    if (fw.group) {
+      return '<div class="muted" id="asset-fw-group" style="font-size:12px;margin-top:4px;">Part of a group upgrade on ' + escapeHtml(fw.group.gateName) + ' — '
+        + (fw.group.status === "running" ? "running now" : escapeHtml(fwWhenText(fw.group.scheduledFor))) + '</div>';
+    }
     var out = "";
     // Blocked is about NOW: the same verb opens the sheet with "Schedule for
     // later" ticked and locked, because a booking re-takes every gate when it

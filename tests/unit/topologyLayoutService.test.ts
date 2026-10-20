@@ -22,6 +22,8 @@ describe("isValidViewKey", () => {
     expect(isValidViewKey("f|plant 4|mill|2nd floor")).toBe(true);
     // Arealess building view — computeFloorViews emits an empty area segment.
     expect(isValidViewKey("b||shop")).toBe(true);
+    // Area view — the Base → area drill-down level.
+    expect(isValidViewKey("a|pugmill")).toBe(true);
   });
 
   it("rejects non-strings, empty, oversize, control chars, and foreign prefixes", () => {

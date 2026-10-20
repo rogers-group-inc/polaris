@@ -17,9 +17,9 @@
   // Currently-open topology modal state. siteId drives Refresh + position
   // persistence; data is the latest /topology payload (used for endpoint
   // pivots from search results without a re-fetch).
-  // activeView: "flat" (default — today's whole-site render) or a floor-view
-  // key "<buildingKey>|<floorKey>" from computeFloorViews. Not persisted —
-  // the modal always opens on Flat. floorViews caches the current payload's
+  // activeView: "flat" (default — the whole-site render, chip-labelled
+  // "Base") or an area / building / floor view key from computeFloorViews.
+  // Not persisted — the modal always opens on Base. floorViews caches the current payload's
   // view list for the switcher chips.
   var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false };
   var topoSearchDebounce = null;
@@ -131,6 +131,12 @@
           // at render time rather than reactively — so an open modal has to be
           // re-rendered here or it keeps the palette of the theme it opened in.
           repaintOpenTopology();
+          // The legend's link and box swatches are per family too.
+          var legendBody = document.getElementById("topology-legend-body");
+          if (legendBody && legendBody.dataset.rendered) {
+            delete legendBody.dataset.rendered;
+            renderTopologyLegend();
+          }
           break;
         }
       }
@@ -937,9 +943,14 @@
     var titleEl = document.getElementById("topology-title");
     var site = titleEl ? (titleEl.textContent || "").trim() : "";
     var spec = R.topologyLegendSpec();
+    // Links export through the daylight stylesheet below, so their key rows
+    // take the light shades whatever theme is on screen. Location boxes keep
+    // the on-screen family: their colours are per-node bypasses the export
+    // reads as painted.
+    var lightSpec = R.topologyLegendSpec("light");
     var keyItems = [];
     spec.health.forEach(function (h) { keyItems.push({ kind: "dot", color: h.color, fill: h.color, text: h.label }); });
-    spec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
+    lightSpec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
     spec.locations.forEach(function (l) { keyItems.push({ kind: "box", color: l.color, dashed: l.style === "dashed", text: l.label }); });
     var meta = [];
     var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal"); }).length : 0;
@@ -2286,6 +2297,9 @@
     // depth — so a building deep in the site's chain no longer renders as a
     // huge sparse rectangle. Same {depth, lane} grid contract; falls back to
     // the flat solver on untagged sites (computeGroupedLayout returns null).
+    // Port labels on bent links sit on their end legs, re-placed as nodes
+    // move (see topology-render.js → wireBentEdgeLabels).
+    window.PolarisTopologyRender.wireBentEdgeLabels(cyInstance);
     var columns = window.PolarisTopologyRender.computeGroupedLayout(elements) ||
       window.PolarisTopologyRender.computeTopologyColumns(elements);
     if (columns) {
@@ -2298,7 +2312,8 @@
       // to its leaves) route orthogonally through the gutter instead of
       // slicing diagonally across the AP column between them — geometry the
       // solver reserved cells for. Stamped from the grid, so it holds under
-      // saved positions and drags too (the turn is a fixed 1.5 columns).
+      // saved positions and drags too (the turn is a fixed half column out
+      // from the shallow end, so it never shares the spine link's row).
       window.PolarisTopologyRender.markFanOutEdges(cyInstance, columns, {
         colSpacing: TOPO_COL_SPACING,
         orientation: "horizontal",
@@ -2574,23 +2589,29 @@
     }, true);
   }
 
-  // Which hull tiers to hide for the ACTIVE view: a building view IS the
-  // area+building (keep floors/rooms/jbs); a floor view additionally IS the
-  // floor (keep rooms/jbs). Null = flat view, show everything.
+  // Which hull tiers to hide for the ACTIVE view: an area view IS the area
+  // (keep buildings and below); a building view IS the area+building (keep
+  // floors/rooms/jbs); a floor view additionally IS the floor (keep
+  // rooms/jbs). Null = flat (Base) view, show everything.
   function _locSuppressKinds() {
     var v = topoState.activeView || "flat";
     if (v === "flat") return null;
+    if (v.charAt(0) === "a") return ["area"];
     if (v.charAt(0) === "b") return ["area", "building"];
     return ["area", "building", "floor"];
   }
 
   // ── Location-view switcher ──────────────────────────────────────────────
-  // Chips at the top-left of the graph, two-row drill-down: row 1 is "Flat"
-  // (whole site, default) plus ONE chip per building; row 2 appears only for
-  // the active building and holds its "All" + floor chips. Keeps the
-  // switcher to two compact rows on many-building sites instead of a
-  // column-per-building wall over the canvas. Rendered only when at least
-  // one device carries a b: or f: code — untagged fleets see no switcher.
+  // Chips at the top-left of the graph, one row per level of a drill-down:
+  // row 1 is "Base" alone (whole site, default; its view key stays "flat",
+  // which saved layouts are filed under). Row 2 is the top level present —
+  // the area chips, plus any building tagged with no area — or, on a site
+  // with no areas, the building chips. Each row after that appears only
+  // under a selection and lists the NEXT level of it: an area's buildings,
+  // then a building's floors. Every chip on the selected path stays lit.
+  // Keeps a many-building site to a few short rows instead of a wall of
+  // chips over the canvas. Rendered only when at least one device carries a
+  // b: or f: code — untagged fleets see no switcher.
   function _setTopologyView(key) {
     if (topoState.activeView === key) return;
     // Persist any manual drags under the OUTGOING view's key before switching.
@@ -2622,53 +2643,14 @@
       chip.addEventListener("click", function () { _setTopologyView(key); });
       return chip;
     }
-    // Group views by (area, building). computeFloorViews is already sorted
-    // area → building → building-view-first → underground-aware floor, so
-    // grouping in encounter order preserves everything, and a group's first
-    // view is its whole-building "All" view when one exists (the buildingless
-    // f:-without-b: bucket — grouped under "Floors" — has floors only).
-    var groups = [];
-    var groupsByKey = {};
-    views.forEach(function (v) {
-      var gKey = (v.areaName || "") + "|" + (v.buildingName || "");
-      var g = groupsByKey[gKey];
-      if (!g) {
-        g = {
-          name: v.buildingName
-            ? (v.areaName ? v.areaName + " — " + v.buildingName : v.buildingName)
-            : "Floors",
-          views: [],
-        };
-        groupsByKey[gKey] = g;
-        groups.push(g);
-      }
-      g.views.push(v);
+    // One row per drill-down level (topology-render.js viewSwitcherRows):
+    // Base, the top level, then the next level under each selection.
+    window.PolarisTopologyRender.viewSwitcherRows(views, topoState.activeView).forEach(function (chips, depth) {
+      var r = document.createElement("div");
+      r.className = "topology-floor-row" + (depth ? " topology-floor-row-depth-" + depth : "");
+      chips.forEach(function (c) { r.appendChild(chipEl(c.key, c.label, c.title, c.active)); });
+      wrap.appendChild(r);
     });
-    // Row 1: "Flat" + one chip per building. A building chip lights up while
-    // ANY of its views is active; clicking it selects the group's first view.
-    var buildingsRow = document.createElement("div");
-    buildingsRow.className = "topology-floor-row";
-    buildingsRow.appendChild(chipEl("flat", "Flat", "Whole site", topoState.activeView === "flat"));
-    var activeGroup = null;
-    groups.forEach(function (g) {
-      var groupActive = g.views.some(function (v) { return v.key === topoState.activeView; });
-      if (groupActive) activeGroup = g;
-      buildingsRow.appendChild(chipEl(g.views[0].key, g.name, "Show " + g.views[0].label, groupActive));
-    });
-    wrap.appendChild(buildingsRow);
-    // Row 2: the active building's views, only when it has floors to pick
-    // from — "All" for the whole-building view, floor names beneath it in
-    // the sorted order.
-    if (activeGroup && activeGroup.views.length > 1) {
-      var floorsRow = document.createElement("div");
-      floorsRow.className = "topology-floor-row topology-floor-row-floors";
-      activeGroup.views.forEach(function (v) {
-        var label = v.kind === "building" ? "All" : (v.buildingName ? v.floorName : v.label);
-        var title = v.kind === "building" ? "Show all of " + v.label : "Show only " + v.label;
-        floorsRow.appendChild(chipEl(v.key, label, title, topoState.activeView === v.key));
-      });
-      wrap.appendChild(floorsRow);
-    }
     wrap.hidden = false;
   }
 
@@ -2837,8 +2819,11 @@
             cyInstance.edges("[isInterGroup]").forEach(function (e) {
               e.removeStyle("curve-style segment-weights segment-distances edge-distances");
             });
+            window.PolarisTopologyRender.refreshBentEdgeLabels(cyInstance);
           }
         }
+        // The side panel's switch / AP lists follow the boxes' grouping.
+        if (topoState.data) renderTopologyInfo(topoState.data);
         locChip.className = "topology-type-chip" + (next ? "" : " is-off");
         locChip.setAttribute("aria-pressed", next ? "true" : "false");
         locChip.title = (next ? "Hide" : "Show") + " location groups (saved per user)";
@@ -3016,9 +3001,18 @@
       parts.push('<div class="detail-row"><span class="label">Coords</span>' + copyableValue(coordsText) + '</div>');
     }
 
+    // With the location boxes on, the switch and AP lists follow the boxes'
+    // nesting — area › building › floor › room › junction box — under one
+    // heading row per group, so the list reads in the same order as the graph.
+    var byLocation = topoState.hasLocationCodes && _readShowLocations();
+    var groupHeadingAt = byLocation ? _topologyLocationHeadings : function () { return null; };
+
     if ((data.switches || []).length > 0) {
+      var switchList = byLocation ? _sortByLocationGroups(data.switches) : data.switches;
       parts.push('<div class="topology-section"><h5>FortiSwitches (' + data.switches.length + ')</h5><ul>');
-      data.switches.forEach(function (s) {
+      switchList.forEach(function (s, si) {
+        var swHeading = groupHeadingAt(switchList, si);
+        if (swHeading) parts.push(swHeading);
         var endpointCount = s.endpointCount || 0;
         var endpoints = s.endpoints || [];
         parts.push(
@@ -3051,8 +3045,11 @@
       parts.push('</ul></div>');
     }
     if ((data.aps || []).length > 0) {
+      var apList = byLocation ? _sortByLocationGroups(data.aps) : data.aps;
       parts.push('<div class="topology-section"><h5>FortiAPs (' + data.aps.length + ')</h5><ul>');
-      data.aps.forEach(function (a) {
+      apList.forEach(function (a, ai) {
+        var apHeading = groupHeadingAt(apList, ai);
+        if (apHeading) parts.push(apHeading);
         var meta = a.peerSwitch ? (a.peerSwitch + "/" + (a.peerPort || "?")) : "direct";
         parts.push(
           '<li><a href="/assets.html#asset=' + encodeURIComponent(a.id) + '">' + escapeHtml(a.hostname || "(unnamed)") + '</a>' +
@@ -3121,6 +3118,56 @@
     var infoEl = document.getElementById("topology-info");
     infoEl.innerHTML = parts.join("");
     _wireCopyableValues(infoEl);
+  }
+
+  // The location tiers in nesting order — the same chain the grouping boxes
+  // nest by (topology-render.js locationData).
+  var _TOPO_LOC_TIERS = ["area", "building", "floor", "room", "junctionBox"];
+  function _topoLocKey(value) {
+    return String(value).replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  // Group path of one device: the tier keys it carries, outermost first.
+  function _topoLocPath(item) {
+    var loc = (item && item.location) || {};
+    var path = [];
+    _TOPO_LOC_TIERS.forEach(function (t) {
+      if (loc[t]) path.push({ tier: t, key: _topoLocKey(loc[t]), name: String(loc[t]) });
+    });
+    return path;
+  }
+  // Stable sort by group path, tier by tier (a device stops at its innermost
+  // tier, so it lists ahead of the groups nested inside it), devices with no
+  // location last, then by hostname. Names compare numerically, so Floor 2
+  // comes before Floor 10.
+  function _sortByLocationGroups(items) {
+    function cmpText(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }); }
+    return items
+      .map(function (item, i) { return { item: item, path: _topoLocPath(item), i: i }; })
+      .sort(function (x, y) {
+        if (!x.path.length !== !y.path.length) return x.path.length ? -1 : 1;
+        for (var k = 0; k < Math.min(x.path.length, y.path.length); k++) {
+          var tx = _TOPO_LOC_TIERS.indexOf(x.path[k].tier);
+          var ty = _TOPO_LOC_TIERS.indexOf(y.path[k].tier);
+          if (tx !== ty) return tx - ty;
+          var c = cmpText(x.path[k].key, y.path[k].key);
+          if (c) return c;
+        }
+        if (x.path.length !== y.path.length) return x.path.length - y.path.length;
+        var h = cmpText(x.item.hostname || "", y.item.hostname || "");
+        return h || x.i - y.i;
+      })
+      .map(function (w) { return w.item; });
+  }
+  // A heading row for items[i] when it opens a new group (its path differs
+  // from the previous item's), or null.
+  function _topologyLocationHeadings(items, i) {
+    function sig(item) { return _topoLocPath(item).map(function (p) { return p.tier + ":" + p.key; }).join("|"); }
+    if (i > 0 && sig(items[i]) === sig(items[i - 1])) return null;
+    var path = _topoLocPath(items[i]);
+    var label = path.length
+      ? path.map(function (p) { return escapeHtml(p.name); }).join(' <span class="sep">›</span> ')
+      : "No location";
+    return '<li class="topology-loc-group' + (path.length ? "" : " is-none") + '">' + label + '</li>';
   }
 
   // Renders a value cell with a click-to-copy affordance. Falls back to a
@@ -3206,6 +3253,7 @@
     drawControl: null,
     polygonsByRegionId: {}, // id → L.polygon
     drawing: false,         // a new polygon is being drawn (its own clicks own the keys)
+    listPayload: null,      // decorated GET /map/regions for the panel tree + drag-to-nest
     undo: [],               // shape edits this session: { id, before, after }
     redo: []
   };
@@ -3389,23 +3437,28 @@
   // The panel's rows while editing: read from the edit layer, so a region
   // drawn, renamed, recoloured or deleted this session shows at once. Levels
   // are left off — they are derived on the server and an edit can move them.
-  function renderEditRegionsList() {
-    var list = [];
-    for (var rid in regionState.polygonsByRegionId) {
-      var p = regionState.polygonsByRegionId[rid];
-      if (p) list.push({ name: p._polarisRegionName || "", color: p._polarisRegionColor || null });
-    }
-    list.sort(function (a, b) { return a.name.localeCompare(b.name); });
+  // Edit mode's panel list: the same nested tree as view mode, from the
+  // decorated GET /map/regions (levels, parents, containerIds), with rows
+  // draggable for drag-to-nest. Re-fetched after every saved change, since a
+  // create / delete / nest can re-level the whole tree. Callers don't await
+  // it except where they report the new level.
+  async function renderEditRegionsList() {
     var el = document.getElementById("map-regions-list");
     if (!el) return;
-    if (!list.length) {
-      el.innerHTML = '<span class="map-regions-empty">No regions yet. Draw one with the polygon tool.</span>';
-      return;
+    var regions = [];
+    try {
+      regions = await api.mapRegions.list();
+    } catch (e) {
+      regions = [];
     }
-    el.innerHTML = list.map(function (r) {
-      var color = r.color ? ' style="background:' + escapeHtml(r.color) + '"' : "";
-      return '<span><i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' + escapeHtml(r.name) + "</span>";
-    }).join("");
+    if (!regionState.editing) return; // exited while the fetch was in flight
+    regionState.listPayload = { regions: Array.isArray(regions) ? regions : [] };
+    if (!window.PolarisRegionTree) { el.innerHTML = ""; return; }
+    el.innerHTML = window.PolarisRegionTree.buildPanelTreeHtml(regionState.listPayload, {
+      draggable: true,
+      emptyText: "No regions yet. Draw one with the polygon tool."
+    });
+    wireRegionsListDnD();
   }
 
   // ---- "Show regions" (read-only) -----------------------------------------
@@ -3478,20 +3531,102 @@
     return regionsPanelApi.button;
   }
 
-  // The panel's rows: each region's colour, name and nesting level, in the
-  // tree's paint order (outermost first).
-  function renderRegionsList(payload, ordered) {
+  // The panel's rows: the containment tree, each region indented under its
+  // parent with its colour, name and nesting level (region-tree.js).
+  function renderRegionsList(payload) {
     var el = document.getElementById("map-regions-list");
     if (!el) return;
-    if (!ordered || !ordered.length) {
-      el.innerHTML = '<span class="map-regions-empty">No regions are defined yet.</span>';
-      return;
+    if (!window.PolarisRegionTree) { el.innerHTML = ""; return; }
+    el.innerHTML = window.PolarisRegionTree.buildPanelTreeHtml(payload);
+  }
+
+  // ---- Drag-to-nest (edit mode) ---------------------------------------------
+  // Dragging a row onto another nests it under that region, which re-levels
+  // the tree. Geometry stays the authority: only a region whose polygon
+  // CONTAINS the dragged one accepts the drop (the server re-checks, 400
+  // otherwise), so this picks between real containers — e.g. a state inside
+  // both a sub-region and its division. Dropping it back on its smallest
+  // container returns it to automatic nesting. Saved immediately, like a
+  // rename; the check mark only saves shapes.
+  var regionNestDrag = { id: null, overId: null };
+
+  function wireRegionsListDnD() {
+    var el = document.getElementById("map-regions-list");
+    if (!el || el._polarisDnD) return;
+    el._polarisDnD = true;
+    function rowOf(ev) {
+      var t = ev.target && ev.target.closest ? ev.target.closest(".map-regions-row[data-region-id]") : null;
+      return t && el.contains(t) ? t : null;
     }
-    el.innerHTML = ordered.map(function (r) {
-      var color = r.color ? ' style="background:' + escapeHtml(r.color) + '"' : "";
-      return '<span><i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' +
-        escapeHtml(r.name) + ' <em>L' + (r.level == null ? 1 : r.level) + "</em></span>";
-    }).join("");
+    function clearMarks() {
+      el.querySelectorAll(".map-regions-drop-ok, .map-regions-drop-no").forEach(function (n) {
+        n.classList.remove("map-regions-drop-ok", "map-regions-drop-no");
+      });
+    }
+    el.addEventListener("dragstart", function (ev) {
+      var row = rowOf(ev);
+      if (!row || !regionState.editing) return;
+      regionNestDrag.id = row.getAttribute("data-region-id");
+      regionNestDrag.overId = null;
+      row.classList.add("map-regions-dragging");
+      if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = "move";
+        try { ev.dataTransfer.setData("text/plain", regionNestDrag.id); } catch (e) { /* some browsers refuse custom data */ }
+      }
+    });
+    el.addEventListener("dragover", function (ev) {
+      if (!regionNestDrag.id) return;
+      var row = rowOf(ev);
+      var targetId = row ? row.getAttribute("data-region-id") : null;
+      var verdict = targetId && window.PolarisRegionTree
+        ? window.PolarisRegionTree.canNestUnder(regionState.listPayload, regionNestDrag.id, targetId)
+        : { ok: false, reason: "" };
+      if (verdict.ok) {
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+      }
+      if (targetId === regionNestDrag.overId) return;
+      regionNestDrag.overId = targetId;
+      clearMarks();
+      if (row && targetId !== regionNestDrag.id) row.classList.add(verdict.ok ? "map-regions-drop-ok" : "map-regions-drop-no");
+      if (verdict.reason) setStatus(verdict.reason);
+      else if (verdict.ok) setStatus("Drop to nest it here.");
+    });
+    el.addEventListener("drop", function (ev) {
+      var row = rowOf(ev);
+      var childId = regionNestDrag.id;
+      var targetId = row ? row.getAttribute("data-region-id") : null;
+      if (!childId || !targetId || !window.PolarisRegionTree) return;
+      var verdict = window.PolarisRegionTree.canNestUnder(regionState.listPayload, childId, targetId);
+      if (!verdict.ok) return;
+      ev.preventDefault();
+      nestRegionUnder(childId, targetId);
+    });
+    el.addEventListener("dragend", function () {
+      regionNestDrag.id = null;
+      regionNestDrag.overId = null;
+      clearMarks();
+      el.querySelectorAll(".map-regions-dragging").forEach(function (n) { n.classList.remove("map-regions-dragging"); });
+    });
+  }
+
+  async function nestRegionUnder(childId, targetId) {
+    var regions = (regionState.listPayload && regionState.listPayload.regions) || [];
+    var child = regions.find(function (r) { return r.id === childId; });
+    var target = regions.find(function (r) { return r.id === targetId; });
+    var automatic = child && Array.isArray(child.containerIds) && child.containerIds[0] === targetId;
+    try {
+      await api.mapRegions.setNesting(childId, automatic ? null : targetId);
+      // Levels can move all the way up the tree; the read-only overlay's
+      // memoized payload is stale too.
+      regionViewState.payload = null;
+      await renderEditRegionsList();
+      var fresh = (regionState.listPayload && regionState.listPayload.regions || []).find(function (r) { return r.id === childId; });
+      setStatus('"' + (child ? child.name : "Region") + '" nested under "' + (target ? target.name : "") + '"' +
+        (fresh ? " — now L" + (fresh.level == null ? 1 : fresh.level) : "") + ".");
+    } catch (err) {
+      showToast("Failed to nest region: " + (err && err.message ? err.message : err), "error");
+    }
   }
 
   function wireShowRegions() {
@@ -3529,7 +3664,7 @@
     var regions = (payload && Array.isArray(payload.regions)) ? payload.regions : [];
     if (regions.length === 0) {
       // The panel stays open to say so; there is nothing to draw.
-      renderRegionsList(payload, []);
+      renderRegionsList(payload);
       setStatus("No regions are defined yet.");
       return;
     }
@@ -3537,7 +3672,7 @@
     var ordered = window.PolarisRegionTree
       ? window.PolarisRegionTree.paintOrder(payload)
       : regions;
-    renderRegionsList(payload, ordered);
+    renderRegionsList(payload);
     for (var i = 0; i < ordered.length; i++) {
       addReadOnlyRegionPolygon(ordered[i], payload.maxLevel);
     }
@@ -3645,6 +3780,7 @@
     }
     if (Array.isArray(regions)) {
       for (var i = 0; i < regions.length; i++) addRegionPolygon(regions[i]);
+      restackRegionPolygons();
     }
 
     regionState.drawControl = new L.Control.Draw({
@@ -3864,7 +4000,28 @@
         updateUndoRedoButtons();
       }
       poly._polarisDirty = !samePairs(after, poly._polarisSavedPolygon);
+      // A reshape can make this polygon swallow, or slip inside, another.
+      restackRegionPolygons();
     });
+  }
+
+  // Edit mode stacks polygons by AREA, largest at the back, so a region inside
+  // another (the lower L#) always sits on top and takes the click that opens
+  // its rename / delete popup. Leaflet's default is insertion order, which put
+  // a division drawn after its states over all of them. Re-run on load, after
+  // a new polygon and after every reshape; "Send to Bottom Layer" still
+  // overrides it for overlapping (not nested) regions until the next restack.
+  function restackRegionPolygons() {
+    var polys = [];
+    for (var rid in regionState.polygonsByRegionId) {
+      var p = regionState.polygonsByRegionId[rid];
+      if (p && typeof p.bringToFront === "function") {
+        var area = window.PolarisRegionTree ? window.PolarisRegionTree.polygonArea(polygonLatLngsToPairs(p)) : 0;
+        polys.push({ poly: p, area: area });
+      }
+    }
+    polys.sort(function (a, b) { return b.area - a.area; });
+    for (var i = 0; i < polys.length; i++) polys[i].poly.bringToFront();
   }
 
   // Per-polygon vertex/midpoint marker recoloring. leaflet-draw mounts each
@@ -3910,6 +4067,7 @@
       // Replace the temporary draw layer with our managed L.polygon so
       // it picks up the styled className + click handler.
       addRegionPolygon(saved);
+      restackRegionPolygons();
       renderEditRegionsList();
       setStatus("Region \"" + saved.name + "\" saved.");
     } catch (err) {

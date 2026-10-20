@@ -54,13 +54,24 @@ IPAM network the device's primary IP sits in: the most specific
 non-deprecated network that contains it, the same one **View Lease** opens.
 Hover it for the CIDR; a device whose IP is in no recorded network shows `-`.
 
-**Tags** lists the asset's tags. Its filter matches any single tag containing
-the text (case doesn't matter), so `prod` finds `Production`; **Is empty** finds
-untagged assets. Clicking the filter box lists every tag in use, and the list
-narrows as you type; click one (or pick it with the arrow keys and Enter) to
-filter by it. A picked tag is still matched as text, so picking `prod` also
-shows assets tagged `production`, and a leading `!` (exclude) is kept. Sorting
-orders by each asset's alphabetically-first tag, and untagged assets sit at the
+**Tags** lists the asset's tags. Click its filter box to open **Filter by
+tags**: the same coloured tag chips as the asset's Edit form, grouped by
+category and all shown at once. Tags mirrored from Azure by the Azure Arc
+integration appear too, under **Azure Tags** in the colours Server Settings →
+Tags gives them, though you can't add them in the Edit form. An **Other tags in
+use** group lists tags that are on assets but not in the tag list (ones added by
+discovery, for example). Discovery's `prev-entra:` and `prev-ad:` bookkeeping
+tags are left out. Click chips to select as many as you like, then click **OK**.
+Nothing changes until you click OK; **Cancel**, Escape or the × leaves the
+filter as it was, and **Clear** deselects everything. **Any** (the default)
+shows assets carrying at least one selected tag; **All** shows only assets
+carrying every one of them. **Include untagged assets** adds assets with no
+tags (with **Any** only). Tags match exactly, so selecting `Production` does
+not also show `Production-DR`. Once applied, the box reads the tag's name when
+one is selected and "N selected" when several are; hover it to see the full
+list. A saved view from before this dialog existed keeps its old text filter
+(the box shows it in quotes) until you pick tags and click OK. Sorting orders
+by each asset's alphabetically-first tag, and untagged assets sit at the
 bottom whichever way you sort.
 
 ### Two columns worth explaining
@@ -104,7 +115,7 @@ carries the whole message: neither colour nor motion reaches every reader.
 ### View tabs and saved filters
 
 A strip on the table's top-left edge, below the bulk bar, sharing its row with
-**Filters**, **Refresh** (the circular-arrows icon), **Clear** and **Show N** (the page buttons are below the
+**Filters**, **Refresh** (the circular-arrows icon), **Clear** and the page size (**25 / page** …) (the page buttons are below the
 page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
 or F2 renames, ✕ closes (never the last one), + adds.
@@ -141,6 +152,7 @@ Select rows to raise the bulk bar:
 | **Edit** | `assets:write`, exactly **one** selected | opens the edit modal |
 | **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
+| **Upgrade** | `assets:write`, FortiGates / FortiSwitches / FortiAPs under **one** FortiGate | schedules a group firmware upgrade in dependency order — see [Group firmware upgrades](#group-firmware-upgrades). Turns **red** when the selection spans more than one FortiGate; clicking it then explains why |
 | **Quarantine selected** / **Release Quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
 | **Delete selected** | `assets:write` | deletes the selection after a confirmation — see [Deleting an asset](#deleting-an-asset) |
 
@@ -153,6 +165,84 @@ first.
 
 A selection past the 500-id cap is refused **with the count**, rather than
 400-ing after you have filled in the form.
+
+### Group firmware upgrades
+
+**Upgrade** on the bulk bar books one firmware upgrade for a FortiGate and the
+FortiSwitches and FortiAPs behind it, and runs them in dependency order
+([rule 122](Business-Rules#rule-122)). It uses the same images, device logins
+and checks as a single-device upgrade from the [Firmware](#firmware) card.
+
+**One FortiGate at a time.** Every selected device must sit under the same
+FortiGate and come from the same integration. The button is:
+
+- **grey** with nothing selected, or when a selected asset is not a FortiGate,
+  FortiSwitch or FortiAP;
+- **red** when the selection spans more than one FortiGate, or includes a device
+  Polaris cannot place under one. Clicking it lists each FortiGate with the
+  devices selected under it, and **Keep only these** narrows the selection to
+  that one;
+- **normal** when it is one FortiGate's devices. Clicking it opens the booking
+  dialog.
+
+Only one group upgrade can be scheduled or running per FortiGate. Cancel the
+existing one first.
+
+**The booking dialog** shows:
+
+- the **upgrade order**, by stage: access points first, then the switches above
+  them, then the FortiGate;
+- the devices **dropped from this schedule**, with why: already on the newest
+  image, no image for its platform in the
+  [Repository](Server-Settings#repository), an HA cluster member, no address,
+  or no device login bound;
+- any devices that already have **their own upgrade scheduled**. Booking the
+  group cancels those, and you must tick a box to confirm it;
+- **Run at** (your local time), **At once** (how many devices on separate
+  branches may upgrade at the same time, 1 to 10), and who gets the summary
+  email.
+
+**How it runs.**
+
+- A device never upgrades while a device above it, below it or paired with it
+  (MCLAG) is upgrading.
+- A device only upgrades once everything behind it finished cleanly.
+- If a device **fails** or comes back **unverified**, every device above it is
+  **skipped** and nothing is sent to them. The other branches carry on.
+- Each device's **health is checked just before it starts**. One that is down,
+  warning, recovering, behind a parent that is down, or not monitorable is
+  **skipped**, and the next device starts. A device skipped for health does
+  *not* stop the devices above it.
+- A device that was upgraded some other way since the booking is recorded as
+  already current.
+- If a newer image was made primary since the booking, the device is dropped
+  rather than given an image nobody approved.
+
+While a group is scheduled or running, a device in it cannot be scheduled on
+its own. While the group is running, it cannot be upgraded on its own either.
+Its Firmware card says **Part of a group upgrade** and links to the group.
+
+**The group's progress** opens after you book it, from the device's Firmware
+card, or from its item on [Events → Calendar](Events). It shows every device's
+state, why it was skipped or dropped, and the stage of a running upgrade.
+**Cancel group upgrade** (before it starts) sends nothing. **Stop group
+upgrade** (while it runs) lets the devices already upgrading finish and starts
+nothing else.
+
+**One summary email** goes out when the group finishes, or when it was stopped
+or missed. It lists, in order:
+
+- the devices that **failed** (with the stage they stopped at) or came back
+  **unverified**;
+- the devices **skipped for health**, with what was wrong;
+- the devices **skipped because a device behind them did not finish cleanly**,
+  naming that device;
+- then what was **upgraded** (from → to), already current, and **dropped**.
+
+**FortiAPs managed by a FortiGate** often have their own web interface
+turned off, and the upgrade talks to each device directly. The dialog warns
+on every FortiAP that has never been upgraded successfully: if it fails, the
+switch and FortiGate above it are skipped.
 
 ---
 
@@ -665,6 +755,11 @@ device. It is one of:
 - **Upgrade available** — the running version, the image on offer (its
   version, platform and which model node it came from), the login that will be
   used and where it is inherited from.
+
+A device that is part of a scheduled or running
+[group firmware upgrade](#group-firmware-upgrades) shows **Part of a group
+upgrade** with a link to the group. The group schedules it, so it cannot be
+scheduled on its own here.
 
 **Upgrade firmware to …** needs **Read-Write on Assets**: whoever may edit an
 asset may upgrade it. The card itself shows to anyone who can open the asset;

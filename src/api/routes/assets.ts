@@ -60,14 +60,15 @@ import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
 import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
-import { withArcOwnedTags } from "../../utils/tagNormalize.js";
+import { isAzureTag, withArcOwnedTags } from "../../utils/tagNormalize.js";
 import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
 import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
-import { buildTagFilter, findAssetIdsByTagSubstring, pageAssetIdsByTags, tagFilterNeedsLookup } from "../../services/assetTagListService.js";
+import { buildTagFilter, findAssetIdsByTagSubstring, listAssetsWithTag, pageAssetIdsByTags, tagFilterNeedsLookup } from "../../services/assetTagListService.js";
+import { syncAzureTagRegistry } from "../../services/tagAssignmentService.js";
 import { shapeMacRows, selectPrimaryMac, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { isAllZeroMac } from "../../utils/mac.js";
 import { csvParam } from "../../utils/text.js";
@@ -799,6 +800,10 @@ const ASSET_LIST_MAX_LIMIT = 10000;
 // dozens). Keeps the IN/NOT IN clause bounded if the localStorage set is huge.
 const ASSET_FAVORITES_MAX = 5000;
 
+const AssetsByTagQuerySchema = z.object({
+  tag: z.string().trim().min(1).max(128),
+});
+
 const AssetListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(ASSET_LIST_MAX_LIMIT).optional(),
   offset: z.coerce.number().int().min(0).optional(),
@@ -955,7 +960,7 @@ function buildAssetListWhere(
   const tagsVal = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
   const tagsOp = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
   if (tagsVal != null || tagsOp != null) {
-    const frag = buildTagFilter(tagsVal, tagsOp, tagIds ?? []);
+    const frag = buildTagFilter(tagsVal, tagsOp, tagIds ?? [], raw["tagsUntagged"] === "1");
     if (frag) and.push(frag);
   }
 
@@ -1246,6 +1251,21 @@ router.get("/tags", requirePermission("assets", "read"), async (_req, res, next)
     const set = new Set<string>();
     for (const r of rows) for (const t of r.tags) set.add(t);
     res.json({ tags: Array.from(set).sort() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/assets/by-tag?tag=<name> — the assets carrying exactly this tag
+// (case-sensitive, as Asset.tags stores it). Drives the Server Settings tag
+// registry's "assets with this tag" slide-over. The list endpoint's Tags filter
+// is a substring match ("prod" also finds "production"), so it cannot answer
+// this. Capped; `total` is the uncapped count.
+router.get("/by-tag", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const parsed = AssetsByTagQuerySchema.safeParse(req.query);
+    if (!parsed.success) throw new AppError(400, "Invalid query: " + parsed.error.issues[0].message);
+    res.json(await listAssetsWithTag(parsed.data.tag));
   } catch (err) {
     next(err);
   }
@@ -5514,6 +5534,8 @@ router.delete("/", requirePermission("assets", "write"), async (req, res, next) 
     }
     const { count } = await prisma.asset.deleteMany({ where: { id: { in: ids as string[] } } });
     logEvent({ action: "asset.bulk_deleted", resourceType: "asset", actor: requestActor(req), message: `Bulk deleted ${count} asset(s)` });
+    // An `azure:` registry row no remaining asset carries goes with them.
+    void syncAzureTagRegistry();
     res.json({ deleted: count });
   } catch (err) {
     next(err);
@@ -5535,6 +5557,7 @@ router.delete("/:id", requirePermission("assets", "write"), async (req, res, nex
       await releaseInfraReservationsForAssets([id], { reason: "asset deleted", actor: requestActor(req) });
     }
     await prisma.asset.delete({ where: { id } });
+    if (existing.tags.some(isAzureTag)) void syncAzureTagRegistry();
     logEvent({ action: "asset.deleted", resourceType: "asset", resourceId: id, resourceName: existing.hostname || existing.ipAddress || undefined, actor: requestActor(req), message: `Asset "${existing.hostname || existing.ipAddress || "unknown"}" deleted` });
     res.status(204).send();
   } catch (err) {

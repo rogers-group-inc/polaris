@@ -1,7 +1,7 @@
 # Business rules
 
 Polaris carries **119 rule numbers**, 1 to 119: 117 rules in force plus rules
-78a and 80a, with 81 and 88 not in use. Each one records a decision *and* the reasoning
+78a, 78b and 80a, with 81 and 88 not in use. Each one records a decision *and* the reasoning
 behind it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -989,6 +989,23 @@ shows who acknowledged it, the line *Inherited from the root cause's alert on
 It works one way only: acknowledging a dependency-down alert acknowledges
 nothing upstream. A root cause that is in a maintenance window or under a
 dependency test raises no Down alert of its own, so there is nothing to inherit.
+
+### Rule 78b
+
+**A new automation never makes an acknowledged outage read as unowned.**
+
+If a device is down and its Down alert has been acknowledged, a *different*
+"monitor status is down" automation that then raises an alert on the same device
+(one you just created, or one with a longer hold that fires later) raises it
+already acknowledged, with the same person and note. It is still delivered;
+its reminders and acknowledgement-stopped escalation stay quiet, because
+someone already owns the outage.
+
+Hovering the **ack** pill shows *Carried over from another automation's down
+alert on this device* above the note. Only the moment a new alert is raised is
+covered: acknowledging one down alert does not acknowledge others already open
+on the device. An acknowledged *warning* alert does not count, and a grouped
+alert ([rule 75](#rule-75)) inherits nothing.
 
 ### Rule 79
 
@@ -2539,3 +2556,32 @@ has the details.)
   held for nothing gets no summary — no all-quiet email and no list of what
   reached them live. The all-clear reaches everyone who heard
   the alert started and skips those who did not.
+
+### Rule 121
+
+**A region can only be nested under a region that contains it on the map.**
+Nesting is worked out from the polygons: a region inside another sits under it.
+When several regions contain one (a sub-region inside a state inside a
+division), you can drag it in the Regions panel onto a bigger one to nest it
+there instead, which changes the levels — and so who level-routed alerts reach.
+A drop onto a region that does not contain it is refused. If a later reshape
+breaks the containment, the region goes back under its smallest container
+until the shape is restored. On the map, smaller regions always draw on top
+of the regions around them, so clicking one picks the inner region.
+([Device Map](Device-Map#regions) has the details.)
+
+### Rule 122
+
+**A group firmware upgrade covers one FortiGate and the devices behind it, and
+runs from the bottom up.** Every selected device must sit under the same
+FortiGate, and only one group per FortiGate can be scheduled or running.
+Devices already on the newest image, or with no image in the Repository, are
+dropped from the schedule. Booking a group cancels a device's own scheduled
+upgrade, but only once you confirm it. Devices upgrade deepest first (access
+points, then switches, then the FortiGate), never beside a device above, below
+or paired with them. A device upgrades only after everything behind it
+finished cleanly; a failure skips only the devices above it. Health is checked
+just before each device starts: an unhealthy device is skipped, the next one
+starts, and the devices above it still upgrade. One summary email lists
+failures, health skips, devices skipped above a failure, and what was dropped.
+([Assets](Assets#group-firmware-upgrades) has the details.)

@@ -56,6 +56,10 @@ edits by its owner do not follow it.
 | `savedDashboards:write` | **publish** one — which reaches every operator *and* the unauthenticated Dash wallboard |
 | `savedDashboards:fullwrite` | delete anyone's |
 
+A role with `savedDashboards` at **None** does not see the **Dashboards ▾**
+menu at all. Custom roles created before saved dashboards existed were given
+None, so if a user is missing the menu, raise that key on their role.
+
 Publishing is the escalated level on purpose: a public dashboard is visible on a
 NOC wallboard that has no session at all. See
 [Mobile and Dash](Mobile-and-Dash#dash-wallboard).
@@ -240,7 +244,10 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
   An acknowledged row keeps an **ack** pill naming its owner; hover it to read
   the note they wrote. A dependency-down alert acknowledged along with the
   device that is actually down says so on the hover, above that alert's note
-  ([rule 78a](Business-Rules#rule-78a)).
+  ([rule 78a](Business-Rules#rule-78a)). A down alert raised by a second
+  down automation after the device's outage was already acknowledged keeps
+  that acknowledgement, and its hover says it was carried over
+  ([rule 78b](Business-Rules#rule-78b)).
 - **Clear** (`alerts:fullwrite`) — ends the alert. This stops escalation and
   runs the automation's reset actions, so it is confirmed first.
 

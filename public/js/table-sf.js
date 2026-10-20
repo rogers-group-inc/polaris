@@ -20,6 +20,10 @@
  * Suggestion list on a text filter: sf.setColumnSuggestions(key, values | loader)
  * lists known values under the box on focus and narrows them as the operator
  * types; picking one fills the box. The filter itself stays free text.
+ *
+ * Pick filter: th data-sf-filter="pick" + sf.setColumnSuggestions(key, …)
+ * turns the box into a button that opens a checkbox menu of those values
+ * (search, Any / All, Clear / Cancel / OK) — see _wirePickFilter.
  */
 
 // Shared debounce. Declared at the top of table-sf.js (loaded before every
@@ -87,6 +91,12 @@ TableSF.prototype._setup = function () {
             '<div class="sf-date-actions"><button type="button" class="sf-btn-clear">Clear</button></div>' +
           '</div>' +
         '</div>';
+    } else if (th.getAttribute("data-sf-filter") === "pick") {
+      th.innerHTML = headerHtml +
+        '<div class="sf-filter-pick">' +
+          '<button type="button" class="sf-filter sf-multi-button sf-pick-button" title="Pick values to filter by">All</button>' +
+          '<div class="sf-multi-popover sf-pick-popover" role="dialog" hidden></div>' +
+        '</div>';
     } else if (th.getAttribute("data-sf-filter") === "ipnet") {
       th.innerHTML = headerHtml +
         '<div class="sf-filter-ipnet">' +
@@ -152,6 +162,8 @@ TableSF.prototype._setup = function () {
       });
     } else if (typeAttr === "date") {
       self._wireDateFilter(th, key);
+    } else if (th.querySelector(".sf-filter-pick")) {
+      self._wirePickFilter(th, key);
     } else if (th.querySelector(".sf-filter-ipnet")) {
       self._wireIpNetFilter(th, key);
     } else {
@@ -271,6 +283,241 @@ TableSF.prototype._wireTextFilter = function (th, key) {
     self._updateTextOpUI(th, key);
     self._onChange();
   });
+};
+
+// Pick filter (th data-sf-filter="pick") — the Assets page's Tags column. The
+// box is a button; clicking it opens a menu listing every known value (from
+// setColumnSuggestions, so the same loader + staleness as a suggestion list)
+// as checkboxes, with a search box, an Any / All match switch, an optional
+// "(No <thing>)" row (th data-sf-pick-none="(No tags)" — any-mode only), and
+// Clear / Cancel / OK. Ticks are a DRAFT: nothing filters until OK, and
+// Cancel, Escape or a click outside throw the draft away. The button reads
+// "All", the single value, or "N selected".
+//
+// Stored as { op: "pick", mode: "any" | "all", values: [...], none: bool }.
+// A preset saved while the column was a text filter (a string, or a
+// not-contains / empty / notempty object) is KEPT and still applied — the
+// button describes it — until the operator presses OK on a new pick.
+TableSF.isPickFilter = function (raw) {
+  return !!(raw && typeof raw === "object" && raw.op === "pick");
+};
+
+TableSF._pickSelectionCount = function (raw) {
+  if (!TableSF.isPickFilter(raw)) return 0;
+  return (raw.values || []).length + (raw.none && raw.mode !== "all" ? 1 : 0);
+};
+
+TableSF.prototype._wirePickFilter = function (th, key) {
+  var self = this;
+  var wrap = th.querySelector(".sf-filter-pick");
+  var btn = wrap.querySelector(".sf-pick-button");
+  var pop = wrap.querySelector(".sf-pick-popover");
+  var noneLabel = th.getAttribute("data-sf-pick-none") || "";
+  var draft = null; // { mode, values: {name: true}, order: [...], none }
+
+  function source() { return self._suggest ? self._suggest[key] : null; }
+  function close() { pop.setAttribute("hidden", ""); draft = null; }
+
+  pop.innerHTML =
+    '<div class="sf-pick-head">' +
+      '<input class="sf-filter sf-pick-search" type="text" spellcheck="false" autocomplete="off" placeholder="Search…" aria-label="Search values">' +
+    '</div>' +
+    '<div class="sf-pick-list" role="group"></div>' +
+    '<div class="sf-pick-foot">' +
+      '<div class="sf-pick-mode" role="radiogroup" aria-label="Match">' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="any" title="Rows carrying ANY ticked value">Any</button>' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="all" title="Rows carrying EVERY ticked value">All</button>' +
+      '</div>' +
+      '<span class="sf-pick-count"></span>' +
+    '</div>' +
+    '<div class="sf-pick-actions">' +
+      '<button type="button" class="sf-btn-clear sf-pick-clear">Clear</button>' +
+      '<span class="sf-pick-spacer"></span>' +
+      '<button type="button" class="btn btn-secondary btn-sm sf-pick-cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary btn-sm sf-pick-ok">OK</button>' +
+    '</div>';
+  var search = pop.querySelector(".sf-pick-search");
+  var list = pop.querySelector(".sf-pick-list");
+  var countEl = pop.querySelector(".sf-pick-count");
+
+  function renderList() {
+    if (!draft) return;
+    var src = source();
+    var q = search.value.trim().toLowerCase();
+    // Ticked values the source no longer lists (a tag removed since) stay
+    // visible and ticked, so OK never silently drops part of the selection.
+    var known = (src ? src.values : []).slice();
+    draft.order.forEach(function (v) { if (known.indexOf(v) < 0) known.push(v); });
+    var hits = known.filter(function (v) { return !q || v.toLowerCase().indexOf(q) >= 0; });
+    var html = "";
+    if (noneLabel && !q) {
+      html += '<label class="sf-multi-option sf-pick-none' + (draft.mode === "all" ? ' sf-pick-disabled' : '') + '"' +
+        (draft.mode === "all" ? ' title="Only with Any — a row cannot be untagged and carry every tag"' : '') + '>' +
+        '<input type="checkbox" data-pick-none' + (draft.none && draft.mode !== "all" ? " checked" : "") +
+        (draft.mode === "all" ? " disabled" : "") + '>' +
+        '<span>' + escapeHtml(noneLabel) + '</span></label>';
+    }
+    html += hits.slice(0, TableSF.SUGGEST_MAX).map(function (v) {
+      return '<label class="sf-multi-option" title="' + escapeHtml(v) + '">' +
+        '<input type="checkbox" value="' + escapeHtml(v) + '"' + (draft.values[v] ? " checked" : "") + '>' +
+        '<span>' + escapeHtml(v) + '</span></label>';
+    }).join("");
+    if (!hits.length) {
+      html += '<div class="sf-pick-empty">' +
+        (src && src.pending && !known.length ? "Loading…" : q ? "No match" : "Nothing to pick") + '</div>';
+    }
+    list.innerHTML = html;
+    renderFoot();
+  }
+
+  function renderFoot() {
+    pop.querySelectorAll(".sf-pick-mode-btn").forEach(function (b) {
+      var on = b.getAttribute("data-mode") === draft.mode;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    var n = draft.order.length + (draft.none && draft.mode !== "all" ? 1 : 0);
+    countEl.textContent = n ? n + " selected" : "";
+  }
+
+  function open() {
+    var raw = self._filters[key];
+    var pick = TableSF.isPickFilter(raw) ? raw : null;
+    draft = { mode: pick && pick.mode === "all" ? "all" : "any", values: {}, order: [], none: !!(pick && pick.none) };
+    ((pick && pick.values) || []).forEach(function (v) {
+      if (!draft.values[v]) { draft.values[v] = true; draft.order.push(v); }
+    });
+    search.value = "";
+    document.querySelectorAll(".sf-multi-popover").forEach(function (p) {
+      if (p !== pop) p.setAttribute("hidden", "");
+    });
+    pop.removeAttribute("hidden");
+    renderList();
+    self._positionPopover(btn, pop);
+    // Wider than its button, so on a right-hand column it would run off the
+    // screen: slide it left by the overflow (a delta, so a transformed host's
+    // offset from _positionPopover still holds).
+    var over = pop.getBoundingClientRect().right - (window.innerWidth - 8);
+    if (over > 0) pop.style.left = Math.max(8, parseFloat(pop.style.left) - over) + "px";
+    // preventScroll: the popover lives inside its <th>, so a plain focus()
+    // scrolls the table wrapper to "reveal" it — and a scroll of the
+    // container holding the button closes every popover (_wireDocClose).
+    search.focus({ preventScroll: true });
+    var src = source();
+    if (src && src.load && !src.pending && Date.now() - src.loadedAt > TableSF.SUGGEST_STALE_MS) {
+      src.pending = true;
+      Promise.resolve().then(src.load).then(function (l) {
+        src.values = TableSF._normalizeSuggestions(l);
+        src.loadedAt = Date.now();
+      }, function () { /* keep the cached list */ }).then(function () {
+        src.pending = false;
+        if (draft) renderList();
+      });
+    }
+  }
+
+  function commit() {
+    if (!draft) return;
+    var values = draft.order.slice();
+    var none = draft.none && draft.mode !== "all";
+    if (values.length || none) {
+      self._filters[key] = { op: "pick", mode: draft.mode, values: values, none: none };
+    } else {
+      delete self._filters[key];
+    }
+    close();
+    self._updatePickButtonLabel(th, key);
+    self._onChange();
+  }
+
+  wrap.addEventListener("click", function (e) { e.stopPropagation(); });
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    // A page-supplied picker (setPickOpener) replaces the built-in menu.
+    var opener = self._pickOpeners && self._pickOpeners[key];
+    if (opener) {
+      document.querySelectorAll(".sf-multi-popover").forEach(function (p) { p.setAttribute("hidden", ""); });
+      var cur = self._filters[key];
+      opener(TableSF.isPickFilter(cur) ? JSON.parse(JSON.stringify(cur)) : null, function (next) {
+        if (next && TableSF.isPickFilter(next) && TableSF._pickSelectionCount(next)) self._filters[key] = next;
+        else delete self._filters[key];
+        self._updatePickButtonLabel(th, key);
+        self._onChange();
+      });
+      return;
+    }
+    if (pop.hasAttribute("hidden")) open(); else close();
+  });
+  search.addEventListener("input", renderList);
+  search.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+  });
+  list.addEventListener("change", function (e) {
+    var cb = e.target;
+    if (!draft || !cb || cb.type !== "checkbox") return;
+    if (cb.hasAttribute("data-pick-none")) {
+      draft.none = cb.checked;
+    } else if (cb.checked) {
+      if (!draft.values[cb.value]) { draft.values[cb.value] = true; draft.order.push(cb.value); }
+    } else if (draft.values[cb.value]) {
+      delete draft.values[cb.value];
+      draft.order = draft.order.filter(function (v) { return v !== cb.value; });
+    }
+    renderFoot();
+  });
+  pop.addEventListener("click", function (e) {
+    if (!draft) return;
+    var modeBtn = e.target.closest(".sf-pick-mode-btn");
+    if (modeBtn) {
+      draft.mode = modeBtn.getAttribute("data-mode") === "all" ? "all" : "any";
+      renderList();
+    } else if (e.target.closest(".sf-pick-clear")) {
+      draft.values = {}; draft.order = []; draft.none = false;
+      renderList();
+    } else if (e.target.closest(".sf-pick-cancel")) {
+      close();
+    } else if (e.target.closest(".sf-pick-ok")) {
+      commit();
+    }
+  });
+};
+
+// Replace a pick column's built-in menu with the page's own picker (the Assets
+// Tags column opens the grouped colour-chip tag picker in a dialog).
+// `fn(current, done)`: `current` is a copy of the stored pick or null; call
+// `done(next)` with a { op: "pick", … } object to apply it, or null to clear.
+// Never call `done` to cancel. Passing null removes the opener.
+TableSF.prototype.setPickOpener = function (key, fn) {
+  if (!this._pickOpeners) this._pickOpeners = {};
+  if (fn) this._pickOpeners[key] = fn; else delete this._pickOpeners[key];
+};
+
+TableSF.prototype._updatePickButtonLabel = function (th, key) {
+  var btn = th.querySelector(".sf-pick-button");
+  if (!btn) return;
+  var raw = this._filters[key];
+  var label = "All";
+  var title = "Pick values to filter by";
+  if (TableSF.isPickFilter(raw)) {
+    var n = TableSF._pickSelectionCount(raw);
+    var names = (raw.values || []).slice();
+    if (raw.none && raw.mode !== "all") names.unshift(th.getAttribute("data-sf-pick-none") || "(none)");
+    if (n === 1) label = names[0];
+    else if (n > 1) label = n + " selected";
+    if (n) title = (raw.mode === "all" ? "Every one of: " : "Any of: ") + names.join(", ");
+  } else if (typeof raw === "string" && raw.trim()) {
+    var neg = raw.charAt(0) === "!";
+    label = (neg ? "not “" : "“") + (neg ? raw.slice(1) : raw).trim() + "”";
+    title = "Text filter from a saved view — open to replace it with a pick";
+  } else if (raw && typeof raw === "object") {
+    if (raw.op === "not-contains") label = "not “" + (raw.q || "") + "”";
+    else if (raw.op === "empty") label = "(is empty)";
+    else if (raw.op === "notempty") label = "(is not empty)";
+    title = "Text filter from a saved view — open to replace it with a pick";
+  }
+  btn.textContent = label;
+  btn.title = title;
+  btn.classList.toggle("sf-multi-active", raw != null);
 };
 
 // IP network filter (th data-sf-filter="ipnet"). Each box takes one IPv4 term —
@@ -839,6 +1086,19 @@ TableSF.prototype.restoreFilterUI = function () {
     var dateWrap = th.querySelector(".sf-filter-date");
     var textWrap = th.querySelector(".sf-filter-text");
     var ipWrap = th.querySelector(".sf-filter-ipnet");
+    if (th.querySelector(".sf-filter-pick")) {
+      // Anything but a pick or a still-meaningful text-filter form is dropped;
+      // a pick with nothing in it is no filter at all.
+      if (TableSF.isPickFilter(raw)) {
+        if (!TableSF._pickSelectionCount(raw)) delete self._filters[key];
+      } else if (Array.isArray(raw) || (raw != null && typeof raw !== "string" && typeof raw !== "object")) {
+        delete self._filters[key];
+      }
+      var pickPop = th.querySelector(".sf-pick-popover");
+      if (pickPop) pickPop.setAttribute("hidden", "");
+      self._updatePickButtonLabel(th, key);
+      return;
+    }
     if (ipWrap) {
       // A preset saved before this column became a network filter holds a
       // plain "contains" string: read it as one term when it is a valid one,
@@ -1017,6 +1277,17 @@ TableSF.prototype.apply = function (data) {
             var qn = String(raw.q || "").toLowerCase();
             if (!qn) return true;
             return !String(self._val(row, k)).toLowerCase().includes(qn);
+          }
+          if (raw.op === "pick") {
+            var picks = raw.values || [];
+            var pv = self._rawVal(row, k);
+            var have = Array.isArray(pv) ? pv.map(String) : (pv == null || pv === "" ? [] : [String(pv)]);
+            if (raw.mode === "all") {
+              return picks.every(function (p) { return have.indexOf(p) >= 0; });
+            }
+            if (raw.none && !have.length) return true;
+            if (!picks.length) return !raw.none;
+            return picks.some(function (p) { return have.indexOf(p) >= 0; });
           }
           if (raw.op === "in-networks") {
             var nets = ipNets[k] || (ipNets[k] = (raw.terms || []).map(TableSF.parseIpNetTerm).filter(Boolean));

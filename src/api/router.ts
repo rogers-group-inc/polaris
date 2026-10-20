@@ -31,7 +31,7 @@ import serverSettingsRouter from "./routes/serverSettings.js";
 import proxySettingsRouter from "./routes/proxySettings.js";
 import mibsRouter from "./routes/mibs.js";
 import manufacturerProfilesRouter from "./routes/manufacturerProfiles.js";
-import { firmwareRouter, firmwareAssetRouter } from "./routes/firmware.js";
+import { firmwareRouter, firmwareAssetRouter, firmwareGroupRouter } from "./routes/firmware.js";
 import { workloadAssetRouter } from "./routes/workloads.js";
 import { rebootAssetRouter } from "./routes/reboot.js";
 import deviceIconsRouter from "./routes/deviceIcons.js";
@@ -195,6 +195,10 @@ router.use("/asset-types", assetTypesRouter);
 // router. Gated on the `firmware` key per route: read for availability and
 // run history, fullwrite to start a flash.
 router.use("/assets/:id/firmware-upgrade", firmwareAssetRouter);
+// Group firmware upgrades (business rule 122), before /assets so
+// "firmware-groups" is never read as an asset id. assets:read / assets:write
+// per route, like the per-asset surface above.
+router.use("/assets/firmware-groups", firmwareGroupRouter);
 // Unraid / TrueNAS VM + container control (business rule 94), mounted before
 // /assets for the same first-match reason. assets:read to read, assets:write
 // to act — gated per route.
@@ -330,6 +334,18 @@ router.get("/server-settings/tags/catalog", async (_req, res, next) => {
   try {
     const { listTagCatalog } = await import("../services/tagAssignmentService.js");
     res.json(await listTagCatalog());
+  } catch (err) { next(err); }
+});
+// The nav bar's in-app update panel, declared above the blanket gate for the
+// tags/catalog reason: an update restarts the app under EVERY signed-in user,
+// and every non-admin built-in role holds serverSettingsSystem=none, so behind
+// the gate they never learned one was running. Auth-only, and redacted to
+// state + current step name — the full /updates/status (step output, commits,
+// failure text) stays behind the gate.
+router.get("/server-settings/updates/activity", async (_req, res, next) => {
+  try {
+    const { getUpdateActivity } = await import("../services/updateService.js");
+    res.json(getUpdateActivity());
   } catch (err) { next(err); }
 });
 // Blanket /server-settings gate: serverSettingsSystem read floor for the

@@ -111,6 +111,10 @@ router.get("/region-overlay", async (_req, res, next) => {
           parentId: node?.parentId ?? null,
           childIds: node?.childIds ?? [],
           ancestorIds: node?.ancestorIds ?? [],
+          containerIds: node?.containerIds ?? [],
+          // True when an operator chose this parent (drag-to-nest) rather than
+          // automatic nesting picking the smallest container.
+          nestChosen: !!r.nestUnderId && node?.parentId === r.nestUnderId,
         };
       }),
       roots: hierarchy.rootIds,

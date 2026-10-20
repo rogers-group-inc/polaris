@@ -4814,6 +4814,8 @@ function renderIdentificationTab() {
     if (!categories[cat]) categories[cat] = [];
   });
   var catNames = Object.keys(categories).sort();
+  // GET /assets/by-tag is gated assets:read, which this tab does not imply.
+  var canOpenTagAssets = typeof permAtLeast === "function" && permAtLeast("assets", "read");
 
   html +=
     '<div class="settings-card">' +
@@ -4850,15 +4852,17 @@ function renderIdentificationTab() {
       } else {
         html += '<div class="tag-chip-list">';
         tags.forEach(function (t) {
-          var chipColor = tagColorCss(t.color);
-          var colorStyle = chipColor ? ' style="background:' + tagColorTint(t.color, 13) + ';border-color:' + chipColor + ';color:' + chipColor + '"' : '';
+          // .hue-pill (styles.css) draws the chip from `--hue` alone and keeps
+          // the label legible whatever colour the operator picked.
+          var hueStyle = tagHueStyle(t.color);
+          var colorStyle = hueStyle ? ' style="' + hueStyle + '"' : '';
           // Either filter shape counts — a tag written before the condition-tree
           // cutover still auto-assigns through the folded-forward flat blob.
           var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
           var autoMark = managed
             ? '<span title="Auto-assigned by device filter" style="margin-right:4px">&#9881;</span>'
             : '';
-          html += '<span class="tag-chip"' + colorStyle + '>' +
+          html += '<span class="tag-chip' + (hueStyle ? ' hue-pill hue-strong' : '') + '"' + colorStyle + '>' +
             autoMark +
             escapeHtml(t.name) +
             (isAdmin() ? '<button class="tag-chip-edit" data-tag-id="' + t.id + '" title="Edit" style="margin-left:4px;background:none;border:none;color:inherit;cursor:pointer;font-size:0.75rem;opacity:0.7;padding:0">&#9998;</button>' : '') +
@@ -4926,6 +4930,15 @@ function renderIdentificationTab() {
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
       deleteTag(btn.getAttribute("data-tag-id"));
+    });
+  });
+
+  container.querySelectorAll(".tag-chip-open").forEach(function (chip) {
+    var open = function () { openTagAssetsPanel(chip.getAttribute("data-tag-name")); };
+    chip.addEventListener("click", open);
+    chip.addEventListener("keydown", function (e) {
+      if (e.target !== chip) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
     });
   });
 
@@ -7529,6 +7542,167 @@ function renderCredentialsTab() {
   // Manufacturer profile controls (admin-only) — only rendered above for admin.
   if (adminUser) {
     wireManufacturerProfileControls();
+  }
+}
+
+// ─── Tag assets slide-in ─────────────────────────────────────────────────────
+// Clicking a chip in the Tags card lists the assets carrying exactly that tag
+// (GET /assets/by-tag). Same shape as the credential-usage slide-in below; a
+// row opens the asset panel in place through PolarisPanels.
+var _tagAssetsReturnFocus = null;
+var _tagAssetsCurrent = null;
+
+function _ensureTagAssetsPanelDOM() {
+  if (document.getElementById("tag-assets-overlay")) return;
+  var overlay = document.createElement("div");
+  overlay.id = "tag-assets-overlay";
+  overlay.className = "slideover-overlay";
+  overlay.innerHTML =
+    '<div class="slideover" id="tag-assets-panel" role="dialog" aria-labelledby="tag-assets-title" tabindex="-1">' +
+      '<div class="slideover-resize-handle"></div>' +
+      '<div class="slideover-header">' +
+        '<div class="slideover-header-top">' +
+          '<h3 id="tag-assets-title">Tag</h3>' +
+          '<button class="btn-icon" id="tag-assets-close" title="Close">&times;</button>' +
+        '</div>' +
+        '<div class="slideover-meta" id="tag-assets-meta"></div>' +
+      '</div>' +
+      '<div class="slideover-body" id="tag-assets-body"></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener("click", function (e) { if (e.target === overlay) closeTagAssetsPanel(); });
+  document.getElementById("tag-assets-close").addEventListener("click", closeTagAssetsPanel);
+  wireSlideoverEscape(overlay, closeTagAssetsPanel);
+
+  var body = document.getElementById("tag-assets-body");
+  var openRow = function (row) {
+    var assetId = row.getAttribute("data-asset-id");
+    if (!assetId) return;
+    if (window.PolarisPanels && typeof window.PolarisPanels.openAsset === "function") {
+      window.PolarisPanels.openAsset(assetId);
+      return;
+    }
+    window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
+  };
+  body.addEventListener("click", function (e) {
+    var row = e.target.closest ? e.target.closest("[data-asset-id]") : null;
+    if (row) openRow(row);
+  });
+  body.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var row = e.target.closest ? e.target.closest("[data-asset-id]") : null;
+    if (row) { e.preventDefault(); openRow(row); }
+  });
+
+  if (typeof initSlideoverResize === "function") {
+    initSlideoverResize(document.getElementById("tag-assets-panel"), "polaris.panel.width.tagassets");
+  }
+}
+
+function closeTagAssetsPanel() {
+  var overlay = document.getElementById("tag-assets-overlay");
+  if (overlay) overlay.classList.remove("open");
+  _tagAssetsCurrent = null;
+  if (_tagAssetsReturnFocus && typeof _tagAssetsReturnFocus.focus === "function") {
+    try { _tagAssetsReturnFocus.focus(); } catch (_) { }
+  }
+  _tagAssetsReturnFocus = null;
+}
+
+function _tagAssetsRow(a) {
+  var label = a.hostname || a.ipAddress || a.id;
+  var sub = [];
+  if (a.ipAddress && a.hostname) sub.push(escapeHtml(a.ipAddress));
+  if (a.assetType) sub.push(escapeHtml(a.assetType));
+  if (a.status && a.status !== "active") sub.push(escapeHtml(a.status));
+  if (a.monitorStatus) sub.push(escapeHtml(a.monitorStatus));
+  return '<div data-asset-id="' + escapeHtml(a.id) + '" role="button" tabindex="0" title="Open asset details" ' +
+    'style="padding:0.5rem 0.6rem;border:1px solid var(--color-border);border-radius:0.35rem;margin-bottom:0.4rem;cursor:pointer;background:var(--color-surface)">' +
+    '<div style="font-weight:500;color:var(--color-accent)">' + escapeHtml(label) + '</div>' +
+    (sub.length ? '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-top:0.1rem">' + sub.join(" · ") + '</div>' : "") +
+    '</div>';
+}
+
+/**
+ * One chip in the Tags card. `canOpenTagAssets` makes it the button that opens
+ * the assets-with-this-tag slide-in (GET /assets/by-tag needs assets:read).
+ */
+function _tagRegistryChipHTML(t, canOpenTagAssets) {
+  // .hue-pill (styles.css) draws the chip from `--hue` alone and keeps the
+  // label legible whatever colour the operator picked.
+  var hueStyle = tagHueStyle(t.color);
+  var colorStyle = hueStyle ? ' style="' + hueStyle + '"' : '';
+  // Either filter shape counts — a tag written before the condition-tree
+  // cutover still auto-assigns through the folded-forward flat blob.
+  var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
+  var autoMark = managed
+    ? '<span title="Auto-assigned by device filter" style="margin-right:4px">&#9881;</span>'
+    : '';
+  // An `azure:` row is the Arc sync's: read-only here (the server
+  // refuses PUT / DELETE), and removed automatically once no asset
+  // carries it — so it offers neither verb.
+  var mirrored = /^azure:/i.test(t.name);
+  var canEdit = isAdmin() && !mirrored;
+  var chipTitle = [
+    canOpenTagAssets ? "Show the assets with this tag" : "",
+    mirrored ? "Mirrored from Azure by the Azure Arc integration — change it in Azure; Polaris removes it once no asset carries it" : "",
+  ].filter(Boolean).join(". ");
+  return '<span class="tag-chip' + (hueStyle ? ' hue-pill hue-strong' : '') + (canOpenTagAssets ? ' tag-chip-open' : '') + '"' +
+      ' data-tag-name="' + escapeHtml(t.name) + '"' +
+      (chipTitle ? ' title="' + escapeHtml(chipTitle) + '"' : '') +
+      (canOpenTagAssets ? ' role="button" tabindex="0"' : '') +
+      colorStyle + '>' +
+    autoMark +
+    escapeHtml(t.name) +
+    (canEdit ? '<button class="tag-chip-edit" data-tag-id="' + t.id + '" title="Edit" style="margin-left:4px;background:none;border:none;color:inherit;cursor:pointer;font-size:0.75rem;opacity:0.7;padding:0">&#9998;</button>' : '') +
+    (canEdit ? '<button class="tag-chip-delete" data-tag-id="' + t.id + '" title="Delete">&times;</button>' : '') +
+  '</span>';
+}
+
+async function openTagAssetsPanel(tagName) {
+  if (!tagName) return;
+  _ensureTagAssetsPanelDOM();
+  var overlay = document.getElementById("tag-assets-overlay");
+  // A first open records the trigger; a chip clicked while the panel already
+  // shows another tag pivots it in place.
+  if (!overlay.classList.contains("open")) _tagAssetsReturnFocus = document.activeElement;
+  _tagAssetsCurrent = tagName;
+  var metaEl = document.getElementById("tag-assets-meta");
+  var bodyEl = document.getElementById("tag-assets-body");
+  document.getElementById("tag-assets-title").textContent = tagName;
+  metaEl.textContent = "";
+  bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading...</p>';
+
+  raiseSlideover(overlay);
+  requestAnimationFrame(function () {
+    overlay.classList.add("open");
+    var panel = document.getElementById("tag-assets-panel");
+    if (panel) panel.focus();
+  });
+
+  try {
+    var r = await api.assets.byTag(tagName);
+    // A late answer for a tag the panel has since left (or closed) is dropped.
+    if (_tagAssetsCurrent !== tagName) return;
+    var total = r.total || 0;
+    var rows = r.assets || [];
+    metaEl.innerHTML = '<span>' + total + ' asset' + (total === 1 ? "" : "s") + ' with this tag</span>';
+    if (total === 0) {
+      bodyEl.innerHTML = '<div style="padding:1rem 1.25rem"><p class="empty-state" style="padding:1rem 0">No assets carry this tag.</p></div>';
+      return;
+    }
+    bodyEl.innerHTML =
+      '<div style="padding:1rem 1.25rem">' +
+        (rows.length < total
+          ? '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin:0 0 0.75rem">Showing the first ' + rows.length + ' of ' + total + '.</p>'
+          : '') +
+        rows.map(_tagAssetsRow).join("") +
+      '</div>';
+  } catch (err) {
+    if (_tagAssetsCurrent !== tagName) return;
+    bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem;color:var(--color-danger)">' +
+      escapeHtml(err.message || "Failed to load") + '</p>';
   }
 }
 

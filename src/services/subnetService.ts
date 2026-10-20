@@ -1113,21 +1113,29 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
       : [];
     const assetByIpV6 = new Map<string, string>();
     const assetByHostnameV6 = new Map<string, string>();
+    const assetHostnameByIdV6 = new Map<string, string | null>();
     for (const a of v6Assets) {
       if (a.ipAddress) assetByIpV6.set(a.ipAddress, a.id);
       if (a.hostname && !assetByHostnameV6.has(a.hostname)) assetByHostnameV6.set(a.hostname, a.id);
+      assetHostnameByIdV6.set(a.id, a.hostname);
     }
 
     const ips = allReservations
       .filter(r => r.ipAddress)
-      .map(r => ({
-        address: r.ipAddress!,
-        type: "host" as const,
-        reservation: toReservationDto(r),
-        assetId:
+      .map(r => {
+        const assetId =
           assetByIpV6.get(r.ipAddress!) ??
-          (r.hostname ? assetByHostnameV6.get(r.hostname) ?? null : null),
-      }));
+          (r.hostname ? assetByHostnameV6.get(r.hostname) ?? null : null);
+        return {
+          address: r.ipAddress!,
+          type: "host" as const,
+          reservation: toReservationDto(r),
+          assetId,
+          // The linked asset's own hostname, so the panel can name (and link)
+          // a row whose reservation carries no hostname of its own.
+          assetHostname: assetId ? assetHostnameByIdV6.get(assetId) ?? null : null,
+        };
+      });
     return {
       subnet: subnetInfo,
       ips,
@@ -1175,20 +1183,24 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
     : [];
   const assetByIp = new Map<string, string>();
   const assetByHostname = new Map<string, string>();
+  const assetHostnameById = new Map<string, string | null>();
   for (const a of pageAssets) {
     if (a.ipAddress) assetByIp.set(a.ipAddress, a.id);
     if (a.hostname && !assetByHostname.has(a.hostname)) assetByHostname.set(a.hostname, a.id);
+    assetHostnameById.set(a.id, a.hostname);
   }
 
   const ips = addresses.map(addr => {
     const r = reservationMap.get(addr.address);
+    const assetId =
+      assetByIp.get(addr.address) ??
+      (r?.hostname ? assetByHostname.get(r.hostname) ?? null : null);
     return {
       address: addr.address,
       type: addr.type,
       reservation: r ? toReservationDto(r) : null,
-      assetId:
-        assetByIp.get(addr.address) ??
-        (r?.hostname ? assetByHostname.get(r.hostname) ?? null : null),
+      assetId,
+      assetHostname: assetId ? assetHostnameById.get(assetId) ?? null : null,
     };
   });
 

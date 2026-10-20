@@ -403,20 +403,43 @@
   // whichever ground the graph pane paints. `opts.includeEndpointOverlay` adds
   // the synthetic endpoint and dim styles used by desktop's connection-path
   // overlay — mobile doesn't carry that feature so it leaves it off.
+  // Anything that isn't a family is resolved from the document rather than
+  // silently taking the else-branch: `theme === "dark"` on its own turns a
+  // theme id ("nightfall") — or a stale per-user basemap preference that has
+  // nothing to do with this canvas — into the LIGHT palette, which is how
+  // #1a1a1a node labels ended up on nightfall's #0d0d1a graph pane.
+  function paletteFamily(theme) {
+    if (theme === "dark" || theme === "light") return theme;
+    var themeId = typeof document !== "undefined" && document.documentElement
+      ? document.documentElement.getAttribute("data-theme") : null;
+    return (themeId === "morning" || themeId === "noon") ? "light" : "dark";
+  }
+
+  // Link colours per palette family. The dark set is the 300/400 Tailwind
+  // shades; on the daylight grounds (noon #f1efec, morning #eed9b2) those
+  // measured 1.3–2.4:1 — the cyan wireless and amber LLDP lines all but
+  // vanished — so the light set steps each hue down to its 600/700 shade,
+  // ≥ 3.4:1 on morning and ≥ 4.1:1 on noon (WCAG non-text minimum 3:1).
+  // Same hue per link kind in both families, so the legend reads the same.
+  // The legend (topologyLegendSpec) reads this table — change them together.
+  var EDGE_COLORS = {
+    dark: {
+      controller: "#6a7388", fortilink: "#6a7388", iface: "#14b8a6", lldp: "#f59e0b",
+      mclag: "#d946ef", wireless: "#22d3ee", mesh: "#a78bfa", apLink: "#3b82f6", loop: "#eab308",
+    },
+    light: {
+      controller: "#64748b", fortilink: "#64748b", iface: "#0f766e", lldp: "#b45309",
+      mclag: "#a21caf", wireless: "#0e7490", mesh: "#6d28d9", apLink: "#1d4ed8", loop: "#a16207",
+    },
+  };
+
   function topologyStylesheet(theme, opts) {
     opts = opts || {};
-    // Anything that isn't a family is resolved from the document rather than
-    // silently taking the else-branch: `theme === "dark"` on its own turns a
-    // theme id ("nightfall") — or a stale per-user basemap preference that has
-    // nothing to do with this canvas — into the LIGHT palette, which is how
-    // #1a1a1a node labels ended up on nightfall's #0d0d1a graph pane.
-    if (theme !== "dark" && theme !== "light") {
-      var themeId = document.documentElement.getAttribute("data-theme");
-      theme = (themeId === "morning" || themeId === "noon") ? "light" : "dark";
-    }
+    theme = paletteFamily(theme);
     var isDark = theme === "dark";
+    var ec = EDGE_COLORS[theme];
     var textColor = isDark ? "#eef0f4" : "#1a1a1a";
-    var edgeColor = isDark ? "#6a7388" : "#9aa2b1";
+    var edgeColor = ec.controller;
     var textBg    = isDark ? "#1c2029" : "#ffffff";
 
     var style = [
@@ -547,16 +570,16 @@
         selector: 'edge[isLldp = 1]',
         style: {
           "line-style": "dashed",
-          "line-color": "#f59e0b",
-          "target-arrow-color": "#f59e0b",
+          "line-color": ec.lldp,
+          "target-arrow-color": ec.lldp,
         },
       },
       {
         selector: 'edge[isIface = 1]',
         style: {
           "line-style": "solid",
-          "line-color": "#14b8a6",
-          "target-arrow-color": "#14b8a6",
+          "line-color": ec.iface,
+          "target-arrow-color": ec.iface,
           width: 2.4,
         },
       },
@@ -568,8 +591,8 @@
         selector: 'edge[isMclag = 1]',
         style: {
           "line-style": "dashed",
-          "line-color": "#d946ef",
-          "target-arrow-color": "#d946ef",
+          "line-color": ec.mclag,
+          "target-arrow-color": ec.mclag,
           "target-arrow-shape": "none",
           width: 2.4,
         },
@@ -581,8 +604,8 @@
         selector: 'edge[isWireless = 1]',
         style: {
           "line-style": "dashed",
-          "line-color": "#22d3ee",
-          "target-arrow-color": "#22d3ee",
+          "line-color": ec.wireless,
+          "target-arrow-color": ec.wireless,
           width: 1.4,
           opacity: 0.7,
         },
@@ -594,8 +617,8 @@
         selector: 'edge[isMesh = 1]',
         style: {
           "line-style": "dashed",
-          "line-color": "#a78bfa",
-          "target-arrow-color": "#a78bfa",
+          "line-color": ec.mesh,
+          "target-arrow-color": ec.mesh,
           "target-arrow-shape": "triangle",
           width: 2.2,
         },
@@ -608,8 +631,8 @@
         selector: 'edge[isApLink = 1]',
         style: {
           "line-style": "solid",
-          "line-color": "#3b82f6",
-          "target-arrow-color": "#3b82f6",
+          "line-color": ec.apLink,
+          "target-arrow-color": ec.apLink,
           "target-arrow-shape": "triangle",
           width: 2.2,
         },
@@ -621,8 +644,8 @@
         selector: 'edge[isFortilinkFallback = 1]',
         style: {
           "line-style": "dashed",
-          "line-color": "#6a7388",
-          "target-arrow-color": "#6a7388",
+          "line-color": ec.fortilink,
+          "target-arrow-color": ec.fortilink,
           opacity: 0.7,
         },
       },
@@ -633,14 +656,14 @@
       {
         selector: 'edge[inLoop = 1]',
         style: {
-          "line-outline-color": "#eab308",
+          "line-outline-color": ec.loop,
           "line-outline-width": 2,
         },
       },
       // Fan-out links (stamped by markFanOutEdges from the column solver's
       // grid): a link between two nodes two-plus columns apart on different
       // rows routes orthogonally — along the shallow end's row, a turn in
-      // the gutter one and a half columns along (data(fanOutTurn), signed so
+      // the gutter half a column along (data(fanOutTurn), signed so
       // it is measured from the shallow end), then along the deep end's
       // row. One rule per screen axis because the phone transposes the grid
       // (depth → y). Geometry only — color/dash still come from the type
@@ -695,9 +718,9 @@
         selector: "node[isLocGroup]",
         style: {
           "z-compound-depth": "bottom",
-          "background-opacity": isDark ? 0.06 : 0.08,
+          "background-opacity": isDark ? 0.06 : 0.07,
           "border-width": 2,
-          "border-opacity": 0.55,
+          "border-opacity": isDark ? 0.55 : 0.8,
           label: "data(label)",
           "font-size": "16px",
           "font-weight": 700,
@@ -799,8 +822,13 @@
   // Legend rows for the topology overlay. Colors here mirror the constants
   // used by `fortinetNodeColor()` (status hues) and `topologyStylesheet()`
   // (node fills + edge styles) so a stylesheet change has exactly one place
-  // the legend has to follow.
-  function topologyLegendSpec() {
+  // the legend has to follow. `theme` is a family like topologyStylesheet's
+  // (omitted → the document's), since links and boxes take a darker shade on
+  // the daylight themes.
+  function topologyLegendSpec(theme) {
+    var fam = paletteFamily(theme);
+    var ec = EDGE_COLORS[fam];
+    function loc(kind) { return locGroupColor(kind, fam); }
     return {
       nodes: [
         { label: "FortiGate",         kind: "circle",          size: "lg", fill: "data(nodeColor)", desc: "Color = monitor health" },
@@ -819,24 +847,24 @@
         { label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
       ],
       edges: [
-        { label: "Controller",        color: "#6a7388", style: "solid",  desc: "FortiLink / managed-AP authoritative" },
-        { label: "FortiLink (virtual)",color: "#6a7388", style: "dashed", desc: "Unverified FortiLink uplink — no physical cable confirmed" },
-        { label: "Interface-inferred",color: "#14b8a6", style: "solid",  desc: "Naming-convention peer link" },
-        { label: "LLDP",              color: "#f59e0b", style: "dashed" },
-        { label: "MCLAG ICL",         color: "#d946ef", style: "dashed", desc: "Inter-Chassis Link between MCLAG-peer switches" },
-        { label: "Mesh",              color: "#a78bfa", style: "dashed", desc: "Wireless backhaul: root AP → mesh leaf AP" },
-        { label: "AP ↔ switch",       color: "#3b82f6", style: "solid",  desc: "Wired: AP's switch uplink / switch bridged behind an AP" },
-        { label: "In physical loop",  color: "#eab308", style: "solid",  desc: "Yellow halo: wired edge on a redundant/ring path" },
+        { label: "Controller",        color: ec.controller, style: "solid",  desc: "FortiLink / managed-AP authoritative" },
+        { label: "FortiLink (virtual)",color: ec.fortilink, style: "dashed", desc: "Unverified FortiLink uplink — no physical cable confirmed" },
+        { label: "Interface-inferred",color: ec.iface, style: "solid",  desc: "Naming-convention peer link" },
+        { label: "LLDP",              color: ec.lldp, style: "dashed" },
+        { label: "MCLAG ICL",         color: ec.mclag, style: "dashed", desc: "Inter-Chassis Link between MCLAG-peer switches" },
+        { label: "Mesh",              color: ec.mesh, style: "dashed", desc: "Wireless backhaul: root AP → mesh leaf AP" },
+        { label: "AP ↔ switch",       color: ec.apLink, style: "solid",  desc: "Wired: AP's switch uplink / switch bridged behind an AP" },
+        { label: "In physical loop",  color: ec.loop, style: "solid",  desc: "Yellow halo: wired edge on a redundant/ring path" },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
       // fixed per-level color).
       locations: [
-        { label: "Area",         shape: "rect", style: "solid",  color: "#f472b6", desc: "From a:/b:/f:/r:/jb: codes in the asset description (or the device-side description)" },
-        { label: "Building",     shape: "rect", style: "solid",  color: "#4fc3f7" },
-        { label: "Floor",        shape: "rect", style: "dashed", color: "#a78bfa" },
-        { label: "Room",         shape: "rect", style: "solid",  color: "#4ade80" },
-        { label: "Junction box", shape: "rect", style: "dashed", color: "#f59e0b" },
+        { label: "Area",         shape: "rect", style: "solid",  color: loc("area"), desc: "From a:/b:/f:/r:/jb: codes in the asset description (or the device-side description)" },
+        { label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
+        { label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
+        { label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
+        { label: "Junction box", shape: "rect", style: "dashed", color: loc("jb") },
       ],
     };
   }
@@ -868,16 +896,20 @@
   // scaleW/scaleH remain for any future non-rectangular shape (a rect
   // inscribed in an ellipse needs axes ×√2); all 1 while everything is
   // rectangular.
+  // `colorLight` is the daylight-family shade of the same hue (see
+  // EDGE_COLORS — the pastel set measured 1.3–2.3:1 on noon / morning, which
+  // left the box labels unreadable).
   var LOC_GROUP_KINDS = {
-    area:     { rank: 0, pad: 42, color: "#f472b6", shape: "round-rectangle", dash: "solid",  z: 1, scaleW: 1, scaleH: 1 },
-    building: { rank: 1, pad: 34, color: "#4fc3f7", shape: "round-rectangle", dash: "solid",  z: 2, scaleW: 1, scaleH: 1 },
-    floor:    { rank: 2, pad: 26, color: "#a78bfa", shape: "round-rectangle", dash: "dashed", z: 3, scaleW: 1, scaleH: 1 },
-    room:     { rank: 3, pad: 18, color: "#4ade80", shape: "round-rectangle", dash: "solid",  z: 4, scaleW: 1, scaleH: 1 },
-    jb:       { rank: 4, pad: 12, color: "#f59e0b", shape: "round-rectangle", dash: "dashed", z: 5, scaleW: 1, scaleH: 1 },
+    area:     { rank: 0, pad: 42, color: "#f472b6", colorLight: "#be185d", shape: "round-rectangle", dash: "solid",  z: 1, scaleW: 1, scaleH: 1 },
+    building: { rank: 1, pad: 34, color: "#4fc3f7", colorLight: "#0369a1", shape: "round-rectangle", dash: "solid",  z: 2, scaleW: 1, scaleH: 1 },
+    floor:    { rank: 2, pad: 26, color: "#a78bfa", colorLight: "#6d28d9", shape: "round-rectangle", dash: "dashed", z: 3, scaleW: 1, scaleH: 1 },
+    room:     { rank: 3, pad: 18, color: "#4ade80", colorLight: "#15803d", shape: "round-rectangle", dash: "solid",  z: 4, scaleW: 1, scaleH: 1 },
+    jb:       { rank: 4, pad: 12, color: "#f59e0b", colorLight: "#b45309", shape: "round-rectangle", dash: "dashed", z: 5, scaleW: 1, scaleH: 1 },
   };
 
-  function locGroupColor(kind) {
-    return (LOC_GROUP_KINDS[kind] || LOC_GROUP_KINDS.building).color;
+  function locGroupColor(kind, theme) {
+    var cfg = LOC_GROUP_KINDS[kind] || LOC_GROUP_KINDS.building;
+    return paletteFamily(theme) === "light" ? cfg.colorLight : cfg.color;
   }
 
   // Enumerate the location groups present among the VISIBLE device nodes of a
@@ -1340,15 +1372,18 @@
     return buildingLabel ? buildingLabel + " — " + floorName : "Floor " + floorName;
   }
 
-  // Enumerate the location views present in a built element set: one
-  // BUILDING view per b: value (even without floors) and one FLOOR view per
-  // (area, building, floor). Keys are area-scoped so "Office" in two areas
-  // stays distinct: building "b|<aKey>|<bKey>", floor "f|<aKey>|<bKey>|<fKey>".
-  // Returns a flat array of
-  //   { key, kind: "building"|"floor", areaName, buildingName, floorName?, label }
-  // sorted area → building (unnamed bucket last) → building-view-first →
-  // underground-aware floor order. Empty array when no node carries a b: or
-  // f: code → callers render no switcher.
+  // Enumerate the location views present in a built element set: one AREA
+  // view per a: value that also carries a b: or f: code, one BUILDING view
+  // per b: value (even without floors) and one FLOOR view per (area,
+  // building, floor). Keys are area-scoped so "Office" in two areas stays
+  // distinct: area "a|<aKey>", building "b|<aKey>|<bKey>", floor
+  // "f|<aKey>|<bKey>|<fKey>". Returns a flat array of
+  //   { key, kind: "area"|"building"|"floor", areaKey, buildingKey,
+  //     areaName, buildingName, floorName?, label }
+  // sorted area → area-view-first → building (unnamed bucket last) →
+  // building-view-first → underground-aware floor order. Empty array when no
+  // node carries a b: or f: code → callers render no switcher (an a: code on
+  // its own never earns one: the area hull already says it on the flat view).
   function computeFloorViews(elements) {
     var byKey = {};
     var out = [];
@@ -1359,6 +1394,21 @@
       var b = d.locB || "";
       var aName = d.locAName || "";
       var bName = d.locBName || "";
+      if (a && (b || d.locF)) {
+        var aKey = "a|" + a;
+        if (!byKey[aKey]) {
+          byKey[aKey] = true;
+          out.push({
+            key: aKey,
+            kind: "area",
+            areaKey: a,
+            buildingKey: "",
+            areaName: aName,
+            buildingName: "",
+            label: aName || a,
+          });
+        }
+      }
       if (b) {
         var bKey = "b|" + a + "|" + b;
         if (!byKey[bKey]) {
@@ -1366,6 +1416,8 @@
           out.push({
             key: bKey,
             kind: "building",
+            areaKey: a,
+            buildingKey: b,
             areaName: aName,
             buildingName: bName,
             label: buildingViewLabel(aName, bName),
@@ -1379,6 +1431,8 @@
           out.push({
             key: fKey,
             kind: "floor",
+            areaKey: a,
+            buildingKey: b,
             areaName: aName,
             buildingName: bName,
             floorName: d.locFName || d.locF,
@@ -1389,6 +1443,7 @@
     });
     out.sort(function (x, y) {
       if (x.areaName !== y.areaName) return String(x.areaName).localeCompare(String(y.areaName));
+      if ((x.kind === "area") !== (y.kind === "area")) return x.kind === "area" ? -1 : 1; // area view tops its area
       if (x.buildingName !== y.buildingName) {
         if (!x.buildingName) return 1; // unnamed-building bucket last
         if (!y.buildingName) return -1;
@@ -1400,12 +1455,82 @@
     return out;
   }
 
+  // The location-view switcher's rows, as data: an array of rows (index =
+  // depth), each an array of { key, label, title, active } chips.
+  //   row 0  "Base" alone (view key "flat" — saved layouts are filed under it)
+  //   row 1  the top level: every area, plus any building tagged with no
+  //          area (on a site with no areas, just the buildings)
+  //   then   only under a selection, the NEXT level of it: the selected
+  //          area's buildings, then the selected building's floors
+  // Every chip on the selected path is active. `views` is computeFloorViews'
+  // output (already in display order); a building with no whole-building
+  // view (the f:-without-b: "Floors" bucket) selects its first floor. Pure.
+  function viewSwitcherRows(views, activeKey) {
+    var areas = [];
+    var areasByKey = {};
+    var groups = [];
+    var groupsByKey = {};
+    (views || []).forEach(function (v) {
+      if (v.kind === "area") {
+        var area = { view: v, groups: [] };
+        areasByKey[v.areaKey] = area;
+        areas.push(area);
+        return;
+      }
+      var gKey = v.areaKey + "|" + v.buildingKey;
+      var g = groupsByKey[gKey];
+      if (!g) {
+        g = { areaKey: v.areaKey, name: v.buildingName || "Floors", view: null, floors: [] };
+        groupsByKey[gKey] = g;
+        groups.push(g);
+        if (areasByKey[v.areaKey]) areasByKey[v.areaKey].groups.push(g);
+      }
+      if (v.kind === "building") g.view = v;
+      else g.floors.push(v);
+    });
+
+    var activeView = null;
+    (views || []).forEach(function (v) { if (v.key === activeKey) activeView = v; });
+    var activeArea = activeView ? areasByKey[activeView.areaKey] || null : null;
+    var activeGroup = activeView && activeView.kind !== "area"
+      ? groupsByKey[activeView.areaKey + "|" + activeView.buildingKey] || null
+      : null;
+
+    function chip(key, label, title, active) {
+      return { key: key, label: label, title: title, active: !!active };
+    }
+    function groupChip(g) {
+      var target = g.view || g.floors[0];
+      return chip(target.key, g.name, "Show " + target.label, g === activeGroup);
+    }
+
+    var rows = [[chip("flat", "Base", "Whole site", activeKey === "flat" || !activeView)]];
+    var top = areas.map(function (a) {
+      return chip(a.view.key, a.view.label, "Show " + a.view.label, a === activeArea);
+    });
+    groups.forEach(function (g) { if (!areasByKey[g.areaKey]) top.push(groupChip(g)); });
+    if (top.length) rows.push(top);
+    if (activeArea && activeArea.groups.length) rows.push(activeArea.groups.map(groupChip));
+    // A building's floors. The "Floors" bucket's own chip is already its
+    // first floor, so it earns a row only when there is a second to pick.
+    if (activeGroup && activeGroup.floors.length > (activeGroup.view ? 0 : 1)) {
+      rows.push(activeGroup.floors.map(function (v) {
+        return chip(v.key, v.buildingName ? v.floorName : v.label, "Show only " + v.label, v.key === activeKey);
+      }));
+    }
+    return rows;
+  }
+
   // The (kind-appropriate) view key + label a node belongs to, or null when
-  // it carries no code at that level. kind "building" needs locB; "floor"
-  // needs locF.
+  // it carries no code at that level. kind "area" needs locA; "building"
+  // needs locB; "floor" needs locF.
   function _nodeViewRef(d, kind) {
     var a = d.locA || "";
     var b = d.locB || "";
+    if (kind === "area") {
+      if (!a) return null;
+      return { key: "a|" + a, label: d.locAName || a };
+    }
     if (kind === "building") {
       if (!b) return null;
       return {
@@ -1421,8 +1546,9 @@
   }
 
   // Partition a built element set down to one view — a floor view
-  // ("f|a|b|f": that floor's tagged devices) or a building view ("b|a|b":
-  // ALL of that building's tagged devices, any floor) — plus the FortiGate
+  // ("f|a|b|f": that floor's tagged devices), a building view ("b|a|b":
+  // ALL of that building's tagged devices, any floor) or an area view
+  // ("a|a": every device tagged with that area, any building) — plus the FortiGate
   // root ALWAYS (keeps the subgraph rooted for the column solver even when
   // the FG is tagged elsewhere). Untagged devices appear only in the Flat
   // view. Edges with both ends in view are kept as-is (loop flags preserved
@@ -1434,7 +1560,8 @@
   // stubs).
   function partitionElementsForFloor(elements, viewKey) {
     var key = String(viewKey || "");
-    var kind = key.charAt(0) === "b" ? "building" : "floor";
+    var lead = key.charAt(0);
+    var kind = lead === "a" ? "area" : lead === "b" ? "building" : "floor";
     var nodeById = {};
     var inView = {};
     // True members (as opposed to the always-included FG root). Only a
@@ -1523,22 +1650,271 @@
     return TOPOLOGY_NODE_WEIGHT[role] != null ? TOPOLOGY_NODE_WEIGHT[role] : 4;
   }
 
+  // ── Labels on bent links ───────────────────────────────────────────────
+  // Cytoscape centres an edge label on the path's midpoint, which on a taxi
+  // or routed (segments) link lands on a middle leg far from both devices.
+  // Operator rules (2026-10-16):
+  //   • ONE bend → the port label sits halfway along the second leg (the leg
+  //     into the target);
+  //   • two or more bends → halfway along the FIRST leg and again halfway
+  //     along the LAST leg, so each end's ports read next to that end;
+  //   • never on a stretch where several links run together — a label there
+  //     can't say which line it belongs to. The label moves to the middle of
+  //     the longest part of its leg no other link shares; a leg shared end
+  //     to end hands the label to the next leg inward; a link with nothing
+  //     unshared shows no label.
+  // Straight links keep the midpoint unless the midpoint is on a shared
+  // stretch. Curved (bezier with control points — parallel links between one
+  // pair) are left alone: they bow apart, so they never run together.
+  // Done with per-edge bypasses: text-margin-x/y shift the main label from
+  // the midpoint (Cytoscape adds the margin BEFORE rotating, about the shifted
+  // point) and text-rotation lays it along its leg (autorotate would follow
+  // the midpoint's leg); the second copy is a target-label offset along the
+  // path back from the target, autorotated. A hidden label is `label: ""`.
+  // The PDF / Visio export reads the shifted main label (it applies
+  // text-margin) and prints it horizontally; it does not draw target-label
+  // copies.
+  var BENT_LABEL_PROPS = "label text-margin-x text-margin-y text-rotation target-label target-text-offset target-text-rotation";
+  var SHARED_TOL = 3;       // px: lines this close and parallel read as one
+  var MIN_LABEL_RUN = 24;   // px: shortest unshared stretch a label is put on
+
+  // The drawn path of an edge as merged points: repeated points dropped and
+  // collinear runs merged (a taxi edge whose turn lands on an endpoint
+  // reports a zero-length leg, which is no bend). Null for a path we can't
+  // read or don't place (curved beziers).
+  function _edgePolyline(e) {
+    var src = e.sourceEndpoint(), tgt = e.targetEndpoint();
+    if (!src || !tgt || !isFinite(src.x) || !isFinite(tgt.x)) return null;
+    var cs = e.style("curve-style");
+    var seg = [];
+    if (cs === "taxi" || cs === "segments") {
+      seg = e.segmentPoints ? (e.segmentPoints() || []) : [];
+    } else if (cs === "bezier" || cs === "unbundled-bezier") {
+      var ctrl = e.controlPoints ? e.controlPoints() : null;
+      if (ctrl && ctrl.length) return null;
+    } else if (cs !== "straight") {
+      return null;
+    }
+    var pts = [];
+    [src].concat(seg, [tgt]).forEach(function (p) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+      var last = pts[pts.length - 1];
+      if (last && Math.abs(last.x - p.x) < 0.5 && Math.abs(last.y - p.y) < 0.5) return;
+      if (pts.length >= 2) {
+        var a = pts[pts.length - 2];
+        var cross = (last.x - a.x) * (p.y - a.y) - (last.y - a.y) * (p.x - a.x);
+        if (Math.abs(cross) < 0.5) { pts[pts.length - 1] = p; return; }
+      }
+      pts.push(p);
+    });
+    return pts.length >= 2 ? pts : null;
+  }
+  function _legsOf(pts) {
+    var legs = [];
+    for (var i = 0; i + 1 < pts.length; i++) {
+      var dx = pts[i + 1].x - pts[i].x, dy = pts[i + 1].y - pts[i].y;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      var axis = Math.abs(dy) < 0.5 ? "h" : (Math.abs(dx) < 0.5 ? "v" : null);
+      legs.push({ a: pts[i], b: pts[i + 1], len: len, dx: dx, dy: dy, axis: axis });
+    }
+    return legs;
+  }
+  // Leg angle normalised to (-90°, 90°] so text never reads upside down.
+  function _readableAngle(dx, dy) {
+    var ang = Math.atan2(dy, dx);
+    if (ang > Math.PI / 2) ang -= Math.PI;
+    else if (ang <= -Math.PI / 2) ang += Math.PI;
+    return ang;
+  }
+  // Index every axis-aligned leg by its line (y for horizontal, x for
+  // vertical) in SHARED_TOL buckets, so finding the legs that run along one
+  // is a few bucket reads instead of a pass over every edge — this runs once
+  // per animation frame while a node is dragged. Diagonal legs are not
+  // indexed: two diagonals almost never coincide in this layout.
+  function _legIndex(paths) {
+    var idx = { h: {}, v: {} };
+    paths.forEach(function (p) {
+      p.legs.forEach(function (l) {
+        if (!l.axis) return;
+        var line = l.axis === "h" ? l.a.y : l.a.x;
+        var lo = l.axis === "h" ? Math.min(l.a.x, l.b.x) : Math.min(l.a.y, l.b.y);
+        var hi = l.axis === "h" ? Math.max(l.a.x, l.b.x) : Math.max(l.a.y, l.b.y);
+        var k = Math.round(line / SHARED_TOL);
+        (idx[l.axis][k] = idx[l.axis][k] || []).push({ id: p.id, line: line, lo: lo, hi: hi });
+      });
+    });
+    return idx;
+  }
+  // The longest stretch of `leg` no OTHER edge runs along, as [t0, t1]
+  // distances from leg.a, or null when none is MIN_LABEL_RUN long.
+  function _freeRun(leg, id, idx) {
+    if (leg.len < MIN_LABEL_RUN) return null;
+    if (!leg.axis) return [0, leg.len];
+    var line = leg.axis === "h" ? leg.a.y : leg.a.x;
+    var start = leg.axis === "h" ? leg.a.x : leg.a.y;
+    var dir = (leg.axis === "h" ? leg.dx : leg.dy) >= 0 ? 1 : -1;
+    var k = Math.round(line / SHARED_TOL);
+    var cover = [];
+    for (var b = k - 1; b <= k + 1; b++) {
+      (idx[leg.axis][b] || []).forEach(function (o) {
+        if (o.id === id || Math.abs(o.line - line) > SHARED_TOL) return;
+        // Into this leg's own distance coordinates.
+        var t0 = (o.lo - start) * dir, t1 = (o.hi - start) * dir;
+        var lo = Math.max(0, Math.min(t0, t1)), hi = Math.min(leg.len, Math.max(t0, t1));
+        if (hi > lo) cover.push([lo, hi]);
+      });
+    }
+    cover.sort(function (x, y) { return x[0] - y[0]; });
+    var best = null, at = 0;
+    function consider(lo, hi) {
+      if (hi - lo >= MIN_LABEL_RUN && (!best || hi - lo > best[1] - best[0])) best = [lo, hi];
+    }
+    cover.forEach(function (c) {
+      if (c[0] > at) consider(at, c[0]);
+      if (c[1] > at) at = c[1];
+    });
+    consider(at, leg.len);
+    return best;
+  }
+  // First leg, in `order`, with a free run → { leg index, point, distance
+  // along the leg }; null when every candidate is shared.
+  function _placeOn(legs, order, id, idx, skip) {
+    for (var i = 0; i < order.length; i++) {
+      var li = order[i];
+      if (li === skip) continue;
+      var run = _freeRun(legs[li], id, idx);
+      if (!run) continue;
+      var t = (run[0] + run[1]) / 2;
+      var l = legs[li];
+      var f = l.len ? t / l.len : 0;
+      return { li: li, t: t, x: l.a.x + l.dx * f, y: l.a.y + l.dy * f };
+    }
+    return null;
+  }
+  function refreshBentEdgeLabels(cy) {
+    if (!cy || typeof cy.edges !== "function") return;
+    var paths = [];
+    cy.edges().forEach(function (e) {
+      if (e.visible && !e.visible()) return;
+      var pts = _edgePolyline(e);
+      paths.push({ e: e, id: e.id ? e.id() : e, pts: pts, legs: pts ? _legsOf(pts) : [] });
+    });
+    var idx = _legIndex(paths);
+    cy.batch(function () {
+      paths.forEach(function (p) {
+        var e = p.e;
+        var text = e.data("label");
+        var legs = p.legs;
+        var place = null;
+        var copy = null;
+        var n = legs.length;
+        if (text && n === 1) {
+          // Straight: Cytoscape's own midpoint (no bypass), unless it is shared.
+          var run = _freeRun(legs[0], p.id, idx);
+          var mid = legs[0].len / 2;
+          if (!run) place = { hidden: true };
+          else if (mid < run[0] || mid > run[1]) place = _placeOn(legs, [0], p.id, idx);
+        } else if (text && n > 1) {
+          var inward = [], outward = [];
+          for (var i = 0; i < n; i++) { inward.push(i); outward.push(n - 1 - i); }
+          if (n === 2) {
+            place = _placeOn(legs, [1, 0], p.id, idx);
+          } else {
+            place = _placeOn(legs, inward, p.id, idx);
+            copy = _placeOn(legs, outward, p.id, idx, place ? place.li : -1);
+            // Never two labels on one leg, nor the copy before the main one.
+            if (copy && place && copy.li <= place.li) copy = null;
+            if (!place && copy) { place = copy; copy = null; }
+          }
+          if (!place) place = { hidden: true };
+        }
+        if (!place) {
+          if (e.data("_bentLabel")) { e.removeStyle(BENT_LABEL_PROPS); e.data("_bentLabel", 0); }
+          return;
+        }
+        // `_bentLabel` holds a signature of what was last applied, so an
+        // unchanged edge is not re-styled — during a drag only the moved
+        // node's links change, and re-styling every edge every frame would
+        // re-render the whole graph.
+        if (place.hidden) {
+          if (e.data("_bentLabel") === "hidden") return;
+          e.style({ label: "", "target-label": "" });
+          e.data("_bentLabel", "hidden");
+          return;
+        }
+        var mp = e.midpoint();
+        var L = legs[place.li];
+        var style = {
+          label: text,
+          "text-margin-x": place.x - mp.x,
+          "text-margin-y": place.y - mp.y,
+          "text-rotation": _readableAngle(L.dx, L.dy),
+          "target-label": "",
+        };
+        if (copy) {
+          // target-text-offset is measured along the path from the target.
+          var back = legs[copy.li].len - copy.t;
+          for (var j = copy.li + 1; j < legs.length; j++) back += legs[j].len;
+          style["target-label"] = text;
+          style["target-text-offset"] = back;
+          style["target-text-rotation"] = "autorotate";
+        }
+        var sig = [text, style["text-margin-x"], style["text-margin-y"], style["text-rotation"],
+          style["target-label"], style["target-text-offset"]]
+          .map(function (v) { return typeof v === "number" ? v.toFixed(1) : String(v); }).join("|");
+        if (e.data("_bentLabel") === sig) return;
+        e.style(style);
+        e.data("_bentLabel", sig);
+      });
+    });
+  }
+  // Keeps the labels on their legs as the graph moves: after any layout
+  // (dagre is async) and on node position changes, coalesced to one pass per
+  // frame — a drag fires position events per pointer move, and a preset
+  // layout's position events land after markFanOutEdges has stamped the
+  // taxi geometry. Callers that change edge GEOMETRY by style alone
+  // (curve-style bypasses, no node moving) call refreshBentEdgeLabels
+  // themselves; the exported routeInterGroupEdges already does.
+  function wireBentEdgeLabels(cy) {
+    if (!cy || cy.__bentLabelsWired) return;
+    cy.__bentLabelsWired = true;
+    var pending = false;
+    var raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : function (f) { return setTimeout(f, 16); };
+    function schedule() {
+      if (pending) return;
+      pending = true;
+      raf(function () {
+        pending = false;
+        if (cy.destroyed && cy.destroyed()) return;
+        refreshBentEdgeLabels(cy);
+      });
+    }
+    cy.on("layoutstop", schedule);
+    cy.on("position", "node", schedule);
+    schedule();
+  }
+
   // ── Fan-out edge model ─────────────────────────────────────────────────
   // An edge between two positioned nodes in DIFFERENT columns (two or more
   // apart) AND different rows is drawn orthogonally, not as a diagonal: it
   // leaves the SHALLOWER endpoint (nearer the firewall — smaller |depth|)
-  // along that endpoint's own row, turns in the gutter one and a half
-  // columns toward the deeper endpoint (nothing ever sits on a half column),
-  // and runs along the DEEPER endpoint's row the rest of the way. The lane
-  // solver reserves exactly the cells this shape crosses — the leaf-column
-  // cell on the shallow row, and the corridor cells on the deep row when the
-  // endpoints are four or more columns apart — and markFanOutEdges stamps
-  // the matching taxi geometry onto the rendered edges, so a switch's links
-  // to its child switches no longer slice through the AP column between
-  // them and its APs can sit directly beneath it. Same-row edges are straight
-  // lines either way and adjacent-column edges cross no column, so neither
-  // is a fan-out edge.
-  var FAN_OUT_TURN_COLS = 1.5;
+  // along that endpoint's own row, turns in the gutter HALF a column toward
+  // the deeper endpoint (nothing ever sits on a half column), and runs along
+  // the DEEPER endpoint's row the rest of the way — an L hugging the shallow
+  // end. The turn is that close so the edge never shares the shallow row
+  // with the switch's straight spine link: at 1.5 columns both links ran
+  // together out of the same side of the switch and read as one cable. The
+  // spine's port label now sits clear to the right of the L, and this
+  // edge's own label lands on its vertical leg (Cytoscape centres a taxi
+  // label on the middle segment). The deep-row run crosses the leaf column
+  // at the deep row; the leaf pass dodges it (edgeLaneAt), and the anchor
+  // footprint reserves the corridor cells past the leaf column when the
+  // endpoints are four or more columns apart. markFanOutEdges stamps the
+  // matching taxi geometry onto the rendered edges, so a switch's links to
+  // its child switches never slice diagonally through the AP column. Same-
+  // row edges are straight lines either way and adjacent-column edges cross
+  // no column, so neither is a fan-out edge.
+  var FAN_OUT_TURN_COLS = 0.5;
   function isFanOutGeometry(aDepth, aLane, bDepth, bLane) {
     return Math.abs(aDepth - bDepth) >= 2 && aLane !== bLane;
   }
@@ -1548,16 +1924,18 @@
     return Math.abs(aDepth) <= Math.abs(bDepth);
   }
   // The row a fan-out edge occupies where it crosses integer column `col`,
-  // or null when it doesn't strictly pass through that column.
+  // or null when it doesn't strictly pass through that column. The turn is
+  // before the first integer column, so every column crossed is on the deep
+  // row.
   function fanOutLaneAt(shallowDepth, shallowLane, deepDepth, deepLane, col) {
     var lo = Math.min(shallowDepth, deepDepth);
     var hi = Math.max(shallowDepth, deepDepth);
     if (col <= lo || col >= hi) return null;
-    var step = deepDepth > shallowDepth ? 1 : -1;
-    return col === shallowDepth + step ? shallowLane : deepLane;
+    return deepLane;
   }
-  // Integer columns the deep-row run crosses strictly between the turn
-  // gutter and the deep endpoint — empty when the endpoints are two apart.
+  // Integer columns the deep-row run crosses past the shallow end's leaf
+  // column (the leaf pass dodges that one instead) — empty when the
+  // endpoints are two apart.
   function fanOutCorridorCols(shallowDepth, deepDepth) {
     var step = deepDepth > shallowDepth ? 1 : -1;
     var cols = [];
@@ -1978,9 +2356,12 @@
     var lane = {};
     var maxReservedLane = 0;
     var reserved = {}; // col -> { lane: true } — anchor cells + planned leaf blocks
+    // A planned leaf cell is stamped "leaf:<member id>" rather than true, so
+    // a fan-out child's leaf-column edge cell can pass over its OWN parent's
+    // planned APs (they dodge the edge in the leaf pass) but no one else's.
     function cellTaken(c, L) { return !!(reserved[c] && reserved[c][L]); }
-    function reserveCell(c, L) {
-      (reserved[c] = reserved[c] || {})[L] = true;
+    function reserveCell(c, L, owner) {
+      (reserved[c] = reserved[c] || {})[L] = owner || true;
       if (L > maxReservedLane) maxReservedLane = L;
     }
     // The spine chain: this anchor plus every descendant that inherits its
@@ -2013,21 +2394,24 @@
     function leafBlockStart(chain, i, L) {
       return i + 1 < chain.length ? L + 1 : L;
     }
-    // Every cell a chain claims at row L, as [col, lane] pairs: each member's
-    // own cell; its planned leaf block one column right; the SPINE-EDGE cell
-    // — (member's column + 1, L) — for every member whose chain continues,
-    // because the member's outgoing links (the spine, and every fan-out edge
-    // to a non-spine child) all leave along row L through the leaf column
-    // before turning (see the fan-out edge model); and, for the chain's
-    // root, the CORRIDOR cells its own fan-out edge from `parentCol` runs
-    // through along row L once past the turn gutter (non-empty only when the
-    // root sits four or more columns from its parent — a mesh-root AP whose
-    // weight ranks it a column past its sibling switches, say). Without the
-    // spine-edge cell a sibling placed one row below an earlier sibling's
-    // last planned AP ran its spine straight through that AP's cell, and the
-    // leaf pass then slid the whole AP block down past the conflict — the
-    // switch's APs ended up rows away from it.
-    function footprintCells(chain, L, parentCol) {
+    // Every cell a chain claims at row L, as [col, lane, owner?, passOwner?]:
+    // each member's own cell; its planned leaf block one column right (owner
+    // "leaf:<member>"); the SPINE-EDGE cell — (member's column + 1, L) — for
+    // every member whose chain continues, because the spine leaves along row
+    // L through the leaf column; and, for the chain's root, every cell its
+    // own fan-out edge from `parent` crosses along row L after its turn half
+    // a column out (see the fan-out edge model) — the leaf-column cell next
+    // to the parent, plus the corridor beyond it when the root sits four or
+    // more columns away. The leaf-column cell may sit on the PARENT's own
+    // planned APs (passOwner): the leaf pass slides them past the edge, so a
+    // switch's child switches stay beside its AP stack instead of being
+    // pushed below all of it. Anyone else's cell there blocks the row —
+    // otherwise the run cut straight through a neighbouring switch's APs.
+    // Without the spine-edge cell a sibling placed one row below an earlier
+    // sibling's last planned AP ran its spine straight through that AP's
+    // cell, and the leaf pass then slid the whole AP block down past the
+    // conflict — the switch's APs ended up rows away from it.
+    function footprintCells(chain, L, parent, parentCol) {
       var cells = [];
       for (var i = 0; i < chain.length; i++) {
         var m = chain[i];
@@ -2035,19 +2419,24 @@
         cells.push([c, L]);
         var n = leafChildCount[m] || 0;
         var b = leafBlockStart(chain, i, L);
-        for (var k = 0; k < n; k++) cells.push([c + 1, b + k]);
+        for (var k = 0; k < n; k++) cells.push([c + 1, b + k, "leaf:" + m]);
         if (i + 1 < chain.length) cells.push([c + 1, L]);
       }
       var rootCol = depth[chain[0]];
-      if (parentCol != null && Math.abs(rootCol - parentCol) >= 4) {
+      if (parentCol != null && Math.abs(rootCol - parentCol) >= 2) {
+        var step = rootCol > parentCol ? 1 : -1;
+        cells.push([parentCol + step, L, null, "leaf:" + parent]);
         fanOutCorridorCols(parentCol, rootCol).forEach(function (cc) { cells.push([cc, L]); });
       }
       return cells;
     }
-    function footprintFits(chain, L, parentCol) {
-      var cells = footprintCells(chain, L, parentCol);
+    function footprintFits(chain, L, parent, parentCol) {
+      var cells = footprintCells(chain, L, parent, parentCol);
       for (var i = 0; i < cells.length; i++) {
-        if (cellTaken(cells[i][0], cells[i][1])) return false;
+        var cl = cells[i];
+        if (!cellTaken(cl[0], cl[1])) continue;
+        if (cl[3] && reserved[cl[0]][cl[1]] === cl[3]) continue;
+        return false;
       }
       return true;
     }
@@ -2060,8 +2449,13 @@
       var parentCol = parent != null && lane[parent] != null &&
         !!inFallbackRegion[parent] === fallbackRegion ? depth[parent] : null;
       var L = startLane;
-      while (!footprintFits(chain, L, parentCol)) L++;
-      footprintCells(chain, L, parentCol).forEach(function (cell) { reserveCell(cell[0], cell[1]); });
+      while (!footprintFits(chain, L, parent, parentCol)) L++;
+      footprintCells(chain, L, parent, parentCol).forEach(function (cell) {
+        // An edge cell over the parent's planned AP keeps the AP's stamp, so
+        // the next sibling can pass over it too.
+        if (cell[3] && cellTaken(cell[0], cell[1])) return;
+        reserveCell(cell[0], cell[1], cell[2]);
+      });
       for (var ci = 0; ci < chain.length; ci++) lane[chain[ci]] = L;
       // Non-spine children of every chain member, left-to-right so the
       // earliest columns' children get the rows closest to the chain. Each
@@ -2112,8 +2506,8 @@
     // Lane of an edge where it crosses integer column `col`, or null when
     // the edge doesn't strictly pass through that column (or an endpoint
     // isn't positioned yet). A fan-out edge (two-plus columns apart, rows
-    // differ) is drawn orthogonally and occupies the shallow row in the
-    // first column and the deep row after the turn — the same model
+    // differ) is drawn orthogonally and occupies the deep row in every
+    // column it crosses (the turn is half a column out) — the same model
     // markFanOutEdges renders and the anchor footprint reserved. Anything
     // else is a straight line, interpolated.
     function edgeLaneAt(s, t, col) {
@@ -2363,10 +2757,18 @@
     renderLocationGroups: renderLocationGroups,
     removeLocationGroups: removeLocationGroups,
     refreshLocationGroups: refreshLocationGroups,
-    routeInterGroupEdges: routeInterGroupEdges,
+    // Routing changes edge geometry by style bypass (no position event), so
+    // the bent-link labels are re-placed after every route pass.
+    routeInterGroupEdges: function (cy) {
+      routeInterGroupEdges(cy);
+      refreshBentEdgeLabels(cy);
+    },
+    refreshBentEdgeLabels: refreshBentEdgeLabels,
+    wireBentEdgeLabels: wireBentEdgeLabels,
     locationGroupTooltipParts: locationGroupTooltipParts,
     compareFloors: compareFloors,
     computeFloorViews: computeFloorViews,
+    viewSwitcherRows: viewSwitcherRows,
     partitionElementsForFloor: partitionElementsForFloor,
   };
 })();

@@ -38,6 +38,7 @@ interface AlertRow {
   acknowledgedBy?: string | null;
   acknowledgeNote?: string | null;
   ackInheritedFrom?: string | null;
+  ackInheritedSameAsset?: boolean;
   raisedAt?: string;
   maintenanceHold?: "self" | "upstream" | null;
   triggerType?: string | null;
@@ -146,6 +147,21 @@ describe("dependency-down badge (business rule 78)", () => {
     );
     // A direct acknowledgement reads exactly as before.
     expect(ackPill(rows[1]).getAttribute("title")).toBe("Acknowledged by amy\nrebooting");
+  });
+
+  // Business rule 78b — carried over from another automation's down alert on
+  // the same device: there is no root cause to name.
+  it("hovers a same-device carry-over as one, not as a root cause", () => {
+    const el = render([
+      alert({
+        id: "new", severity: "critical", hostname: "SRV-1",
+        acknowledged: true, acknowledgedBy: "jsmith", acknowledgeNote: "power work", ackInheritedFrom: "SRV-1", ackInheritedSameAsset: true,
+      }),
+    ], 1, { minSeverity: "warning", rowLimit: 100 });
+    const pill = (Array.from(rowsOf(el)[0].querySelectorAll(".widget-pill")) as any[]).find((p) => /^ack/.test(p.textContent));
+    expect(pill.getAttribute("title")).toBe(
+      "Acknowledged by jsmith\nCarried over from another automation's down alert on this device\npower work",
+    );
   });
 });
 

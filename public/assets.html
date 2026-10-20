@@ -58,6 +58,8 @@
 
         <button class="btn btn-sm btn-secondary" id="assets-bulk-maint-btn" data-maintenance-mgmt title="Create a maintenance schedule targeting the selected assets — one-time or recurring">Maintenance</button>
 
+        <button class="btn btn-sm btn-secondary" id="assets-bulk-firmware-btn" data-manage-assets title="Select FortiGates, FortiSwitches or FortiAPs to upgrade their firmware together" disabled>Upgrade</button>
+
         <button class="btn btn-sm btn-danger" id="assets-bulk-quarantine-btn" data-quarantine-assets title="Quarantine selected assets — pushes MAC block to FortiGate(s) that have seen each asset" style="display:none">Quarantine selected</button>
         <button class="btn btn-sm btn-secondary" id="assets-bulk-unquarantine-btn" data-quarantine-assets title="Release quarantine on selected assets" style="display:none">Release Quarantine</button>
 
@@ -154,12 +156,13 @@
                    Settings → Sources (Setting `assetSourcePriority`). -->
               <th data-sf-key="_server" data-sf-type="string">Sources</th>
               <th style="min-width:100px" data-sf-key="description" data-sf-type="string">Description</th>
-              <!-- Asset.tags (String[]). Filter matches any single tag by
-                   substring; sort orders by the alphabetically-first tag with
-                   untagged rows last — both server-side (assetTagListService).
-                   The filter box lists the tags in use (GET /assets/tags) and
-                   narrows as you type — TableSF.setColumnSuggestions. -->
-              <th data-sf-key="tags" data-sf-type="array">Tags</th>
+              <!-- Asset.tags (String[]). The filter is a pick menu (TableSF
+                   data-sf-filter="pick"): tick tags in use (GET /assets/tags,
+                   via setColumnSuggestions), match Any / All, OK — sent as
+                   tagsOp=any_of|all_of and matched exactly server-side. Sort
+                   orders by the alphabetically-first tag with untagged rows
+                   last (assetTagListService). -->
+              <th data-sf-key="tags" data-sf-type="array" data-sf-filter="pick" data-sf-pick-none="(No tags)">Tags</th>
               <th data-sf-key="assetTag" data-sf-type="string" data-col-default-hidden="true">Asset Tag</th>
               <th data-sf-key="manufacturer" data-sf-type="string" data-col-default-hidden="true">Manufacturer</th>
               <th data-sf-key="model" data-sf-type="string" data-col-default-hidden="true">Model</th>
@@ -218,6 +221,7 @@
   <script src="/js/temp-unit.js"></script>
   <script src="/js/chart-severity.js"></script>
   <script src="/js/assets.js"></script>
+  <script src="/js/assets-firmware-group.js"></script>
   <!-- Asset modal Alerts tab: the Trigger summary + click-a-name-to-edit open the
        automation wizard in place. Standalone — it owns its builder catalogs, so
        automations.js is not needed here. -->

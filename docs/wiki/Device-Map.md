@@ -71,13 +71,31 @@ see [Actions](Automation-Actions#level-scoped-region-routing).
 
 The **Regions** button in the map's top-right corner, **ungated beyond viewing
 the map** — how an install's regions nest is not privileged information.
-Clicking it opens the **Regions** panel, which lists each region with its
-colour and level; the panel's **×** folds it back into the button.
+Clicking it opens the **Regions** panel, which lists the regions **as their
+nesting tree** — each region indented under the region that contains it, with
+its colour and level; the panel's **×** folds it back into the button.
 
 Open, it paints the polygons read-only, with a permanent label only on the outermost
 ring of a nested set (fill opacity is held low because nesting stacks it), and
 **hovering renders the containment tree**, each row badged with its derived
-level.
+level. **Smaller regions always draw on top of the regions around them** (in
+edit mode too), so an L1 inside an L2 is the one you click.
+
+### Nesting a region by dragging
+
+In edit mode, drag a region's row in the panel onto another row to nest it
+there. Only a region whose polygon **contains** it on the map accepts the drop
+— this chooses between real containers, it does not override the map. The
+case it exists for: a sub-region inside a state inside a division can be
+nested **directly under the division**, and the levels re-compute (the state,
+left with nothing inside it, drops to L1). A refused drop says why in the
+status line. The change saves immediately, like a rename, and is recorded in
+Events (`region.nesting_changed`, plus `region.levels_shifted` for the other
+regions it moved). A region nested by hand shows its name in *italics*; drop it
+back on its smallest container to return it to automatic nesting. If a later
+reshape means the chosen region no longer contains it, it goes back under its
+smallest container until the shape is restored. See
+[Rule 121](Business-Rules#rule-121).
 
 ### Edit regions
 
@@ -152,11 +170,27 @@ already shows exactly the sites you may read.
 Opens from a site. A Cytoscape graph of the gates, switches and APs at that
 site, with a column solver for layout and a dagre fallback. The gate sits at
 the left and each switch one column further right than its uplink; a
-switch's APs stack directly beneath it in the column to its right, and a
-link that leaves a switch for a child switch on another row runs along the
-switch's row, turns in the gap between columns and runs along the child's
-row, so lines travel the gutters instead of cutting across other devices.
-Drag anything to override the layout; the positions are saved per site.
+switch's APs stack beneath it in the column to its right. A link that leaves
+a switch for a child switch on another row turns up or down right next to the
+switch and runs along the child's row, so it never shares a line with the
+switch's straight link to the next switch along, and lines travel the gutters
+instead of cutting across other devices. Drag anything to override the
+layout; the positions are saved per site.
+
+Port labels (`port8 ↔ port1`) on a link with bends sit near its ends: with
+one bend, halfway along the part after the bend; with two or more, halfway
+along the first part and again halfway along the last. A label is never put
+where several links run along the same line, since it could belong to any of
+them: it moves to a stretch only its own link uses, and a link that shares
+its whole route shows no label.
+
+On the light themes (morning and noon) the links and location boxes are drawn
+in darker shades of the same colours, so they stay readable on the pale
+background; the legend matches the theme you are using.
+
+With **Locations** on, the details pane lists the switches and APs in the same
+nesting as the location boxes (area › building › floor › room › junction box),
+under a heading per group, with devices that have no location last.
 
 | Control | |
 |---|---|
@@ -166,6 +200,7 @@ Drag anything to override the layout; the positions are saved per site.
 | **Save layout** | `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
 | **Reset layout** | a menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
 | **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
+| **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | screenshot, PDF or Visio — see below |
 

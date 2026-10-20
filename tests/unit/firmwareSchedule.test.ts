@@ -28,6 +28,7 @@ const h = vi.hoisted(() => {
     sent: [] as Array<{ to: string[]; subject: string; text: string }>,
     sendFails: new Set<string>(),
     seq: 0,
+    groupMember: null as { group: { scheduledFor: Date; status: string } } | null,
   };
   return {
     state, FakeAppError, FakeConflict,
@@ -78,6 +79,8 @@ vi.mock("../../src/db.js", () => ({
       }),
     },
     firmwareUpgradeRun: { findUnique: vi.fn(async ({ where }: any) => h.state.runs.get(where.id) ?? null) },
+    // Rule 122: a booking is refused while the device is in a group — tested below.
+    firmwareGroupMember: { findFirst: vi.fn(async () => h.state.groupMember ?? null) },
     asset: { findUnique: vi.fn(async () => ({ hostname: "lab-sw1", ipAddress: "10.0.0.5", model: "FortiSwitch S108FF", osVersion: "7.4.3 build0542" })) },
     user: { findMany: vi.fn(async () => h.state.users), findUnique: vi.fn(async () => ({ email: "Ops@Example.com" })) },
   },
@@ -129,6 +132,7 @@ async function book(over: Partial<{ scheduledFor: Date; notifyEmails: string[]; 
 }
 
 beforeEach(() => {
+  h.state.groupMember = null;
   h.state.rows = [];
   h.state.runs = new Map();
   h.state.users = [];
@@ -160,6 +164,14 @@ describe("normalizeRecipients / assertSchedulableTime (pure)", () => {
 });
 
 describe("booking", () => {
+  it("is refused while the device is in a pending or running group upgrade (rule 122)", async () => {
+    h.state.groupMember = { group: { scheduledFor: LATER, status: "pending" } };
+    await expect(book()).rejects.toThrow(/group firmware upgrade scheduled for/);
+    h.state.groupMember = { group: { scheduledFor: LATER, status: "running" } };
+    await expect(book()).rejects.toThrow(/running now/);
+    expect(h.state.rows).toHaveLength(0);
+  });
+
   it("takes the image gates, stores the approved image's version and writes an Event", async () => {
     const s = await book({ imageId: "img-backup" });
     expect(h.checkSchedulableUpgrade).toHaveBeenCalledWith("asset-1", "img-backup");

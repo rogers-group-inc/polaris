@@ -256,6 +256,8 @@ PDF-imported assets are created in `storage`, which (a) excludes.
 An operator pins an asset's IP; discovery then stages a **different** one.
 
 The pin is re-asserted, and **one** pending conflict is raised per asset.
+The asset's name on the card links to the asset, so you can check its sources
+and IP history before you decide.
 
 | Verb | Does |
 |---|---|

@@ -13,7 +13,7 @@ search box and your user badge on the right, and the page's own content below.
 | **Device Map** | `deviceMap:read` |
 | **Application Map** | `applicationMap:read` |
 | **Path Monitor** | `pathChecks:read` |
-| **IPAM** | `ipBlocks:read` **or** `subnets:read` |
+| **IP Management** | `ipBlocks:read` **or** `subnets:read` |
 | **Assets** | `assets:read` |
 | **Events** | `events:read` |
 | **Automations** | `automationManagement:read` |
@@ -266,7 +266,7 @@ Most detail in Polaris opens in a **slide-over** (a panel from the right) or a
 - **Every slide-over opens on every page.** An asset, a network or a block opens
   in place over the page you are on — from a search result, a dashboard row, an
   Events conflict card, a credential's usage list, the network panel's
-  **View Asset** button, an interface's **Open network**, or a block's network
+  hostname link, an interface's **Open network**, or a block's network
   list — instead of taking you to the Assets or IPAM page. Panels stack: the one
   opened last is on top, and **Escape** closes one panel at a time, top first.
   Ctrl-click or middle-click a link to open it in a new tab instead.
@@ -314,7 +314,7 @@ Publishing a saved filter needs `assets:write`; deleting someone else's needs
 Because inline filters are remembered, every filterable list — Assets, Events,
 IPAM's IP Blocks and Networks, Automations and Users — carries a **Clear
 Filters** button that empties every column filter in one click (and forgets
-them). It sits beside **Refresh** / the **Show** page size, or in the page
+them). It sits beside **Refresh** / the page-size select (**25 / page** …), or in the page
 header on Users, and it stays there when a filter matches nothing. On Assets it
 reads **Reset Filter** while the view tab has a base filter, and returns to that
 instead.

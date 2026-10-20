@@ -2,7 +2,9 @@
  * src/utils/regionHierarchy.ts
  *
  * Derives the map-region containment FOREST and a level per region from polygon
- * nesting alone. Pure, no DB, no I/O.
+ * nesting. Pure, no DB, no I/O. The one operator input is `nestUnderId`, which
+ * can only choose WHICH real container is a region's parent (when several
+ * contain it) — never nest a region under one that does not contain it.
  *
  * Why derived rather than a flag an operator sets: a region "is" a division
  * because it contains other regions, so a stored level is a second source of
@@ -10,7 +12,7 @@
  * desynchronize — and the drift would be invisible, because nothing would
  * recompute to compare.
  *
- * Input is `{id, polygon}` only — no names, no colors. The presenter joins those
+ * Input is `{id, polygon, nestUnderId?}` only — no names, no colors. The presenter joins those
  * back on. That keeps this file trivially testable and stops it drifting into a
  * service.
  *
@@ -93,8 +95,17 @@ export const DEFAULT_LEVEL_RULE: LevelRule = levelByDepth;
 
 export interface RegionNode {
   id: string;
-  /** The SMALLEST container — the immediate parent. Null for a top-level region. */
+  /**
+   * The immediate parent: the region's `nestUnderId` when that region really
+   * contains it, otherwise the SMALLEST container. Null for a top-level region.
+   */
   parentId: string | null;
+  /**
+   * Every region whose polygon contains this one, smallest first — the parents
+   * an operator may choose between (`nestUnderId`). Empty for a region nothing
+   * contains.
+   */
+  containerIds: string[];
   childIds: string[];
   /** Outermost first (root → parent). Empty for a top-level region. */
   ancestorIds: string[];
@@ -112,7 +123,8 @@ export type RegionHierarchyWarningKind =
   | "self-intersecting"
   | "ambiguous-parent"
   | "approximate"
-  | "cap-exceeded";
+  | "cap-exceeded"
+  | "nest-ignored";
 
 export interface RegionHierarchyWarning {
   kind: RegionHierarchyWarningKind;
@@ -135,6 +147,14 @@ export interface RegionHierarchy {
 export interface RegionInput {
   id: string;
   polygon: LatLng[];
+  /**
+   * The operator's chosen parent among the regions that CONTAIN this one (the
+   * Regions panel's drag-to-nest). Honoured only while that region's polygon
+   * still contains this one — geometry stays the authority, so a preference
+   * can pick between real containers but never invent a nesting. Otherwise
+   * ignored (with a `nest-ignored` warning) and the smallest container wins.
+   */
+  nestUnderId?: string | null;
 }
 
 export interface BuildOptions {
@@ -168,6 +188,7 @@ function flatHierarchy(regions: RegionInput[], warnings: RegionHierarchyWarning[
       id: r.id,
       parentId: null,
       childIds: [],
+      containerIds: [],
       ancestorIds: [],
       depth: 0,
       level: 1,
@@ -308,11 +329,32 @@ export function buildRegionHierarchy(regions: RegionInput[], opts: BuildOptions 
   // impossible here (they'd have compared "equal-area"), but a tie is still
   // handled rather than left to sort stability.
   const areaById = new Map(prepared.map((p) => [p.id, p.area]));
+  const nestUnderById = new Map(regions.map((r) => [r.id, r.nestUnderId ?? null]));
   const byId: Record<string, RegionNode> = {};
   for (const p of prepared) {
     const list = containers.get(p.id)!;
+    // Smallest first (then id), so containerIds[0] is the default parent.
+    const containerIds = [...list].sort(
+      (a, b) => (areaById.get(a)! - areaById.get(b)!) || (a < b ? -1 : a > b ? 1 : 0),
+    );
     let parentId: string | null = null;
-    if (list.length > 0) {
+    const nestUnder = nestUnderById.get(p.id) ?? null;
+    if (nestUnder && list.includes(nestUnder)) {
+      // The operator's pick among real containers. No tie warning: the
+      // ambiguity it would report is exactly what the pick resolved.
+      parentId = nestUnder;
+    } else if (nestUnder && areaById.has(nestUnder)) {
+      // A pick that no longer contains it (a polygon was redrawn). Kept in
+      // the blob — it applies again if the geometry comes back — but said out
+      // loud, since the tree the operator arranged is not the one in force.
+      warnings.push({
+        kind: "nest-ignored",
+        regionId: p.id,
+        otherRegionId: nestUnder,
+        message: "Chosen parent no longer contains this region, so the smallest containing region was used",
+      });
+    }
+    if (parentId === null && list.length > 0) {
       let best = list[0]!;
       let tied = false;
       for (const cand of list.slice(1)) {
@@ -340,6 +382,7 @@ export function buildRegionHierarchy(regions: RegionInput[], opts: BuildOptions 
       id: p.id,
       parentId,
       childIds: [],
+      containerIds,
       ancestorIds: [],
       depth: 0,
       level: 1,

@@ -52,17 +52,20 @@ function extractFn(src: string, name: string): string {
 type Step = { name: string; status: string; message?: string };
 type Status = { state: string; step?: string; steps?: Step[] } | null;
 
-const render = new Function(
+const renderAs = new Function(
   "status",
+  "canReadSettings",
   [
     // The real escapeHtml lives in api.js; the panel only needs it to not throw.
     "function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }",
+    "function permAtLeast() { return canReadSettings; }",
     "window._getUpdateStatus = function () { return status; };",
     extractFn(APP_JS, "renderUpdateStatus"),
     "renderUpdateStatus();",
     "return document.getElementById('update-status');",
   ].join("\n")
-) as (status: Status) => HTMLElement;
+) as (status: Status, canReadSettings: boolean) => HTMLElement;
+const render = (status: Status) => renderAs(status, true);
 
 describe("sidebar update progress panel", () => {
   beforeEach(() => {
@@ -114,6 +117,32 @@ describe("sidebar update progress panel", () => {
 
     const idle = render({ state: "idle" });
     expect(idle.onclick).toBeNull();
+  });
+
+  it("renders the redacted /updates/activity shape for a user without serverSettingsSystem, with no click-through", () => {
+    const el = renderAs({ state: "applying", step: "Building" }, false);
+    expect(el.style.display).toBe("block");
+    expect(el.textContent).toContain("Applying update");
+    expect(el.textContent).toContain("Building");
+    // The Maintenance card would bounce them — no link.
+    expect(el.onclick).toBeNull();
+    expect(el.style.cursor).toBe("");
+  });
+});
+
+describe("the sidebar poller runs for every user", () => {
+  const i = APP_JS.indexOf("// ─── In-app update progress");
+  const block = APP_JS.slice(i, APP_JS.indexOf("window._getUpdateStatus", i));
+
+  it("is not gated on isAdmin — an update restarts the app under everyone", () => {
+    expect(i).toBeGreaterThan(-1);
+    expect(block).not.toContain("isAdmin()");
+  });
+
+  it("reads the full status only for serverSettingsSystem readers, the auth-only activity route otherwise", () => {
+    expect(block).toContain('permAtLeast("serverSettingsSystem", "read")');
+    expect(block).toContain("api.serverSettings.getUpdateStatus()");
+    expect(block).toContain("api.serverSettings.getUpdateActivity()");
   });
 });
 
