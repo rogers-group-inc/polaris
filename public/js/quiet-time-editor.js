@@ -307,10 +307,18 @@
   function openRecipientsModal(host) {
     if (typeof buildOverlay !== "function") return null;
     var section = host.querySelector(".qte-recipients");
-    var sevs = ALL_SEVERITIES;
-    try { sevs = JSON.parse(section.getAttribute("data-qte-sevs")) || ALL_SEVERITIES; } catch (_) { /* default */ }
+    // Both values are read back out of the DOM, so they are canonicalized
+    // rather than trusted: the severities are re-picked from the constant list
+    // and the prefix must be a bare id token. CodeQL does not follow esc(), and
+    // reads the attribute round trip as DOM text reinterpreted as HTML.
+    var parsed = null;
+    try { parsed = JSON.parse(section.getAttribute("data-qte-sevs")); } catch (_) { /* default */ }
+    var sevs = Array.isArray(parsed)
+      ? ALL_SEVERITIES.filter(function (sv) { return parsed.indexOf(sv) !== -1; })
+      : ALL_SEVERITIES;
     var qte = host.classList && host.classList.contains("qte") ? host : host.querySelector(".qte");
-    var prefix = ((qte && qte.getAttribute("data-qte-prefix")) || "qte") + "-rx";
+    var rawPrefix = (qte && qte.getAttribute("data-qte-prefix")) || "";
+    var prefix = (/^[A-Za-z0-9_-]+$/.test(rawPrefix) ? rawPrefix : "qte") + "-rx";
     var body =
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">These addresses do not follow the quiet time’s own choices. Tick what stays held for each one; an address with nothing ticked hears every alert, reminder and escalation live. Everyone else follows the quiet time. A reminder held for someone is sent to them when the quiet period ends.</p>' +
       '<div class="qte-rx-list"></div>' +

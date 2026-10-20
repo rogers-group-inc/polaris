@@ -100,10 +100,14 @@ when WSL restarts, so read it each time instead of pasting the last one.
 Pick the port by looking at `podman ps` first — other sessions' stacks are usually up, and
 they are not yours to stop. Write a `DEVLOCK` while it runs, and `podman rm -f` it when done.
 
-`tests/integration/subnetSupersedeDeprecated.test.ts` times out on this hardware — all 6
-cases, `Test timed out in 5000ms`, and they pass in CI. It is the container's latency, not a
-regression: re-run that file alone with `--testTimeout=30000` before believing it. Confirmed
-again 2026-09-18 on a full serial run.
+`tests/integration/subnetSupersedeDeprecated.test.ts` drives the real discovery Phase 1 per
+case and used to time out at the 5 s default — on Windows/WSL podman always, and on a hosted
+CI runner from 2026-10-20. Its describe now carries `{ timeout: 60_000 }` (6/6 in ~70 s
+locally), so a timeout there at 60 s is a real signal, not container latency.
+A test that counts the `Event` rows a request wrote must `await expect.poll(...)` when the
+writer does not await `logEvent()` — the login source gate in `src/app.ts` is one. A single
+`count` right after the response flaked in CI (`routeGateVariants`, expected 1 got 0, on the
+first, cold case), and the late row would otherwise survive into the next case's `beforeEach`.
 And having watched a new test pass, make it FAIL once (comment out the guard it covers) before
 trusting it — a route-level assertion that never saw red has proven nothing.
 

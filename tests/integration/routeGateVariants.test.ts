@@ -82,8 +82,10 @@ d("local login source gate", () => {
     // The gate's own answer: the same generic 401 a wrong password gets, with a
     // blocked-source Event — not the handler's, which would have no such Event.
     expect(res.status).toBe(401);
-    const blocked = await prisma.event.count({ where: { action: "auth.login.blocked_source" } });
-    expect(blocked).toBe(1);
+    // The gate does not await logEvent(), so the 401 can land before the row;
+    // poll rather than count once. Waiting for it here also stops a late row
+    // from surviving into the next case's beforeEach.
+    await expect.poll(() => prisma.event.count({ where: { action: "auth.login.blocked_source" } })).toBe(1);
   });
 
   it.each(["/login.html", "/LOGIN.HTML"])("drops the page request for %s", async (path) => {
