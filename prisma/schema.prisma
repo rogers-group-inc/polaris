@@ -44,6 +44,11 @@ enum ReservationSourceType {
   // query (business rule 100(j)). Deliberate (rule 40), never pushed, never
   // supersedable by a create — released when the feed stops listing it.
   external
+  // An IPv6 address a FortiGate sees a client using but did not assign (SLAAC
+  // or static), from device inventory / detected-device rows — business rule
+  // 125. Evidence, not a claim: never pushed, never a conflict, supersedable
+  // by a create, and aged out through expiresAt when it stops being seen.
+  observed
 }
 
 enum ConflictStatus {

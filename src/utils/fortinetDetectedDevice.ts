@@ -17,6 +17,7 @@ import type {
   DiscoveredArpEntry,
   DiscoveryProgressCallback,
 } from "../services/fortimanagerService.js";
+import { clientIpv6Address } from "./fortiosIpv6.js";
 
 export function processDetectedDeviceRows(opts: {
   rows: unknown[];
@@ -58,7 +59,9 @@ export function processDetectedDeviceRows(opts: {
       vlanId,
       lastSeen: Number.isFinite(d.last_seen) ? Number(d.last_seen) : undefined,
       ipv4Address: typeof d.ipv4_address === "string" && d.ipv4_address ? d.ipv4_address : undefined,
-      ipv6Address: typeof d.ipv6_address === "string" && d.ipv6_address ? d.ipv6_address : undefined,
+      // Canonicalised and IPAM-space only: it feeds the `observed`
+      // reservations of business rule 125.
+      ipv6Address: clientIpv6Address(d.ipv6_address),
       deviceName: typeof d.device_name === "string" && d.device_name ? d.device_name : undefined,
       deviceType: typeof d.device_type === "string" && d.device_type ? d.device_type : undefined,
       osName: typeof d.os_name === "string" && d.os_name ? d.os_name : undefined,

@@ -36,6 +36,9 @@
  * device is alive somewhere), OS/vendor fingerprints, the user sighting.
  */
 
+import { isIpv6Address } from "./cidr.js";
+import { clientIpv6Address } from "./fortiosIpv6.js";
+
 /**
  * Extract FortiSwitch attribution from a raw `user/device/query` client row.
  * Field names vary by FortiOS build: older builds emit `switch_fortilink` /
@@ -65,7 +68,7 @@ export function inventorySwitchAttribution(
 export const INVENTORY_QUERY_FORMAT =
   "mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|detected_interface|interface" +
   "|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name" +
-  "|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen";
+  "|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address";
 
 /** One parsed `user/device/query` client row — the DiscoveredInventoryDevice shape. */
 export interface ParsedInventoryClient {
@@ -83,9 +86,11 @@ export interface ParsedInventoryClient {
   user: string;
   isOnline: boolean;
   lastSeen: string;
+  /** `ipv6_address`, canonicalised; absent when none or not IPAM space (rule 125). */
+  ipv6Address?: string;
 }
 
-const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
+const str =(v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
 
 /**
  * Parse one raw `user/device/query` client row, for both the FMG-proxied and
@@ -101,18 +106,27 @@ const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" 
  *   interface detected_interface → interface
  *   user      user → detected_user → unauth_user
  *
+ * `ipAddress` is IPv4 only — it is the address claim business rule 101
+ * ranks. The client's IPv6 address rides `ipv6Address` (`ipv6_address`, or an
+ * old build's `ip` when that held IPv6), which business rule 125 records in
+ * IPAM and never lets re-address the asset.
+ *
  * Returns null for a row with neither MAC nor address, or no `last_seen`.
  */
 export function parseInventoryClient(client: Record<string, any>, device: string): ParsedInventoryClient | null {
   const mac = str(client.mac);
-  const ip = str(client.ipv4_address) || str(client.ip);
-  if (!mac && !ip) return null;
+  const rawIp = str(client.ipv4_address) || str(client.ip);
+  const rawIsV6 = isIpv6Address(rawIp);
+  const ipv6Address = clientIpv6Address(client.ipv6_address) ?? (rawIsV6 ? clientIpv6Address(rawIp) : undefined);
+  const ip = rawIsV6 ? "" : rawIp;
+  if (!mac && !ip && !ipv6Address) return null;
   if (!client.last_seen) return null;
   const sw = inventorySwitchAttribution(client);
   return {
     device,
     macAddress: mac,
     ipAddress: ip,
+    ...(ipv6Address ? { ipv6Address } : {}),
     hostname: str(client.hostname) || str(client.host),
     os: str(client.os_name) || str(client.os) || str(client.type),
     osVersion: str(client.os_version),

@@ -248,6 +248,7 @@ depending on what is there:
 | Existing row | Creating over it |
 |---|---|
 | `dhcp_lease` | **takeover** — the lease is observed presence, not a claim |
+| `observed` | takeover — an IPv6 address the gate only saw in use ([rule 125](Business-Rules#rule-125)) |
 | `dns_resolved` | takeover — it defers to everything |
 | `fortiswitch` / `fortinap` **with `dhcpBinding: "lease"`** | takeover |
 | `vip` | **takeover** — the VIP is kept, see below ([rule 77](Business-Rules#rule-77)) |
@@ -349,6 +350,11 @@ real `reserved-address` entry on the FortiGate at create time.
   create entirely — **no row is persisted**. You do not end up with a Polaris
   reservation the gate has never heard of.
 - Releasing a reservation expires the gate's lease.
+- **IPv6 reservations are never pushed.** FortiOS has no DHCPv6 reservations,
+  so a reservation in an IPv6 network stays in Polaris only, and releasing an
+  IPv6 lease does not contact the gate ([rule 125](Business-Rules#rule-125)).
+  Polaris stores IPv6 addresses in their compressed lower-case form, so
+  `2001:DB8::0005` and `2001:db8::5` are the same reservation.
 
 ### Reservation notes become the entry's description
 

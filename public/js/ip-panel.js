@@ -397,6 +397,14 @@ function _ipAllocationPresentation(r, active, ctx) {
       urgent: false,
     };
   }
+  if (active && r.sourceType === "observed") {
+    // Business rule 125: a sighting, not a claim — the address is free to reserve.
+    return {
+      dotClass: "ip-dot-dhcp-lease", label: "Observed", short: "Observed",
+      tooltip: "The FortiGate saw a client using this IPv6 address (SLAAC or static). Not assigned by the gate; released a day after it was last seen. Reserving it replaces this row.",
+      urgent: false,
+    };
+  }
   if (active && (r.sourceType === "dhcp_lease" || r.owner === "dhcp-lease")) {
     return { dotClass: "ip-dot-dhcp-lease", label: "DHCP Lease", short: "Leased", tooltip: "", urgent: false };
   }
@@ -582,7 +590,9 @@ function _renderIpList(data) {
       // owner="dhcp-lease" placeholder on a dhcp_reservation row can't trip
       // the lease branch below.
       actions = freeBtn + editBtn;
-    } else if (isLeaseRow) {
+    } else if (isLeaseRow || (r && r.status === "active" && r.sourceType === "observed")) {
+      // An observed IPv6 sighting (business rule 125) is claimable exactly
+      // like a lease — createReservation supersedes it server-side.
       var reserveBtn = canReserveIps()
         ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-lease-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" data-rid="' + escapeHtml(r.id) + '" data-mac="' + escapeHtml(macRaw || "") + '" data-hostname="' + escapeHtml(r.hostname || "") + '" title="' + reserveTitle + '">Reserve</button>'
         : '';
