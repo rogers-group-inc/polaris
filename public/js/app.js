@@ -2227,20 +2227,10 @@ function _searchTargetFor(hit) {
         },
       };
     }
-    // Regular asset click — pan-to on map page if it's a pinned marker,
-    // otherwise open the asset details page.
-    if (window.location.pathname === "/map.html" &&
-        typeof window.polarisMapPanToAsset === "function") {
-      return {
-        page: "/map.html",
-        hash: "",
-        handler: function () {
-          if (!window.polarisMapPanToAsset(hit.id)) {
-            window.location.href = "/assets.html#view=asset:" + encodeURIComponent(hit.id);
-          }
-        },
-      };
-    }
+    // Regular asset hit (the Assets group, and all an `a:` scope returns) —
+    // the asset slide-over, in place, on every page including the Device
+    // Map. Panning to the marker / opening the topology is the Device Map
+    // group's job; doing it here too made `a:` unable to open an asset there.
     return {
       page: "/assets.html",
       hash: "#view=asset:" + encodeURIComponent(hit.id),

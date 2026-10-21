@@ -65,6 +65,11 @@ Prefixes narrow it:
 | `tag:` | `t:` | tag substrings across networks **and** assets |
 | `ipsec:` or `vpn:` | `v:` | IPsec tunnels and VPN connections only |
 
+**Clicking a hit opens it where you are.** An asset opens in its slide-over on
+whatever page you are on, the Device Map included. On the Device Map, only a
+hit under **Device Map** pans to a firewall and opens its topology. Use `a:`
+there when you want the asset itself.
+
 **IPsec / VPN** hits are what a firewall's IPsec tab lists: its tunnels, and the
 ADVPN spokes, dial-up peers and FortiClient / SSL-VPN users connected through
 them. Type a tunnel name, a peer's address, a peer id or a VPN user name. Each
