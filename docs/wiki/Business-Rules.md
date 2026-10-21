@@ -2262,7 +2262,7 @@ different identity.
   is deleted without a copy.
 
 A server that presents a different certificate is listed first when you click
-**View pinned certificates** under **Server Settings → Web Server → Pinned
+**View pinned identities** under **Server Settings → Web Server → Pinned
 server identities** (or on the Windows SSH Deployment card). The slide-over
 shows each certificate with the asset at that address (click it to open the
 asset) and the integration that uses it, and a changed one with the pinned and

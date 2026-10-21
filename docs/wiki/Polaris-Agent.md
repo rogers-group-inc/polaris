@@ -351,16 +351,16 @@ Trust-on-first-use:
 
 Pins are per (host, port) in their own table, never on the credential. WinRM
 over HTTPS gets the same treatment for its TLS certificate when *Verify TLS
-certificate* is off. Both kinds of pin are listed under **Windows SSH
-Deployment → Pinned server identities**, each behind a button — **View pinned
-host keys** and **View pinned certificates** open a side panel with the list
-(the host-key panel has a filter box; the certificate panel has IP address,
-Hostname, Thumbprint and Subject filters that narrow the list together, and a
-thumbprint matches with or without colons); delete one to trust a host that was
-legitimately rebuilt, re-keyed or re-certified. TLS certificates are also on
-**Server Settings → Web Server**: **View pinned certificates** opens a list
-with the asset each certificate belongs to, and a changed certificate shows
-both fingerprints and **Trust new certificate** pins exactly the one shown.
+certificate* is off. Both kinds of pin are in one list, under **Windows SSH
+Deployment → Pinned server identities** and **Server Settings → Web Server →
+Pinned server identities**. **View pinned identities** opens a side panel
+with every SSH host key and TLS certificate, each with the asset at that
+address. One filter bar narrows it. Type an IP address, hostname, subject,
+key type or thumbprint: a thumbprint matches with or without colons, and
+several words must all match. The **All kinds / TLS certificates / SSH host
+keys** menu shows one kind. Delete a pin to trust a host that was legitimately
+rebuilt, re-keyed or re-certified. A changed certificate shows both
+fingerprints, and **Trust new certificate** pins exactly the one shown.
 A single host's pins are on its asset's **Sources** tab, at the foot of the
 **Polaris Agent** card.
 

@@ -3,11 +3,12 @@
  * tests/unit/pinnedTlsCertsDom.test.ts — the Pinned server identities
  * surface (business rule 113(f)). Server Settings → Web Server and the
  * Windows SSH Deployment card mount a one-line summary and a "View pinned
- * certificates" button; the button opens a slide-over listing every pin with
- * its asset(s) as links that open the asset panel in place
- * (`/assets.html#view=asset:<id>`, which app.js's delegate intercepts), the
- * integration(s) that dial it, both fingerprints for a changed certificate and
- * Trust / Delete for an administrator.
+ * identities" button; the button opens one slide-over listing every TLS
+ * certificate AND SSH host key pin with its asset(s) as links that open the
+ * asset panel in place (`/assets.html#view=asset:<id>`, which app.js's
+ * delegate intercepts), the integration(s) that dial it, both fingerprints for
+ * a changed certificate, Trust / Delete for an administrator, and one filter
+ * bar (search + kind) over both kinds.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -32,6 +33,14 @@ const PINS = [
   },
 ];
 
+const HOST_KEYS = [
+  {
+    id: "k1", host: "10.0.0.5", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:Zm9vYmFyYmF6cXV4",
+    firstSeen: "2026-10-02T00:00:00Z", lastSeen: "2026-10-14T00:00:00Z",
+    assets: [{ id: "asset-db01", hostname: "db01", ipAddress: "10.0.0.5" }],
+  },
+];
+
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function boot(canManage: boolean) {
@@ -49,6 +58,8 @@ function boot(canManage: boolean) {
       tlsCertPinsList: vi.fn(async () => ({ certPins: PINS })),
       tlsCertPinTrust: vi.fn(async () => ({})),
       tlsCertPinDelete: vi.fn(async () => ({})),
+      sshHostKeysList: vi.fn(async () => ({ hostKeys: HOST_KEYS })),
+      sshHostKeyDelete: vi.fn(async () => ({})),
     },
   };
   new Function(SRC)();
@@ -58,15 +69,25 @@ function boot(canManage: boolean) {
 
 beforeEach(() => { document.body.innerHTML = ""; });
 
-describe("pinned certificates summary + slide-over", () => {
-  it("mounts a summary with the changed count and a button, not a table", async () => {
+describe("pinned server identities summary + slide-over", () => {
+  it("mounts a summary counting both kinds, the changed count and a button, not a table", async () => {
     boot(true);
     await flush();
     const host = document.getElementById("host")!;
-    expect(host.textContent).toContain("2 pinned certificates.");
+    expect(host.textContent).toContain("Pinned: 2 certificates · 1 SSH host key.");
     expect(host.querySelector(".badge-conflict")!.textContent).toBe("1 changed");
     expect(host.querySelector("table")).toBeNull();
-    expect(host.querySelector("[data-tls-pins-open]")!.textContent).toBe("View pinned certificates");
+    expect(host.querySelector("[data-tls-pins-open]")!.textContent).toBe("View pinned identities");
+  });
+
+  it("a failed SSH list still shows the certificates and names the failure", async () => {
+    const g = boot(true);
+    g.api.serverSettings.sshHostKeysList = vi.fn(async () => { throw new Error("boom"); });
+    g.PolarisPinnedTlsCerts.mount(document.getElementById("host"));
+    await flush(); await flush();
+    const host = document.getElementById("host")!;
+    expect(host.textContent).toContain("2 certificates · 0 SSH host keys");
+    expect(host.textContent).toContain("Could not load pinned SSH host keys: boom");
   });
 
   it("opens a slide-over listing each pin with asset links, integrations and both fingerprints", async () => {
@@ -78,6 +99,7 @@ describe("pinned certificates summary + slide-over", () => {
     expect(overlay.classList.contains("open")).toBe(true);
     expect(g.raiseSlideover).toHaveBeenCalledWith(overlay);
     expect(g.wireSlideoverEscape).toHaveBeenCalled();
+    expect(overlay.querySelectorAll(".pin-card")).toHaveLength(3);
     const cards = overlay.querySelectorAll(".tls-pin-card");
     expect(cards).toHaveLength(2);
 
@@ -93,7 +115,32 @@ describe("pinned certificates summary + slide-over", () => {
     expect(cards[1].querySelector("a")).toBeNull();
     expect(cards[1].textContent).toContain("No asset at this address");
     expect(cards[1].textContent).toContain("Corp FMG");
-    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("2 pinned · 1 changed");
+    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("3 pinned · 1 changed");
+  });
+
+  it("lists a host's SSH key beside its certificate, after the changed one", async () => {
+    boot(true);
+    await flush();
+    (document.querySelector("[data-tls-pins-open]") as HTMLButtonElement).click();
+    await flush();
+    const order = Array.from(document.querySelectorAll(".pin-card")).map((c) => c.className.split(" ")[1] + " " + c.querySelector(".mono")!.textContent);
+    expect(order).toEqual(["tls-pin-card 172.22.128.104:443", "tls-pin-card 10.0.0.5:443", "ssh-pin-card 10.0.0.5:22"]);
+    const ssh = document.querySelector(".ssh-pin-card")!;
+    expect(ssh.textContent).toContain("ssh-ed25519");
+    expect(ssh.textContent).toContain("SHA256:Zm9vYmFyYmF6cXV4");
+    expect(ssh.querySelector("a")!.getAttribute("href")).toBe("/assets.html#view=asset:asset-db01");
+  });
+
+  it("Delete on an SSH card deletes the host key pin and reloads", async () => {
+    const g = boot(true);
+    await flush();
+    (document.querySelector("[data-tls-pins-open]") as HTMLButtonElement).click();
+    await flush();
+    (document.querySelector("[data-ssh-del]") as HTMLButtonElement).click();
+    await flush(); await flush();
+    expect(g.api.serverSettings.sshHostKeyDelete).toHaveBeenCalledWith("k1");
+    expect(g.api.serverSettings.tlsCertPinDelete).not.toHaveBeenCalled();
+    expect(g.api.serverSettings.sshHostKeysList.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
 
   it("Trust sends the exact pending fingerprint, then reloads the panel and the summary", async () => {
@@ -115,46 +162,57 @@ describe("pinned certificates summary + slide-over", () => {
     await flush();
     expect(document.querySelector("[data-pin-trust]")).toBeNull();
     expect(document.querySelector("[data-pin-del]")).toBeNull();
+    expect(document.querySelector("[data-ssh-del]")).toBeNull();
   });
 
-  it("the header filters narrow the cards by IP, hostname, thumbprint and subject", async () => {
+  it("one filter bar narrows both kinds by address, hostname, thumbprint, subject, key type and kind", async () => {
     boot(true);
     await flush();
     (document.querySelector("[data-tls-pins-open]") as HTMLButtonElement).click();
     await flush();
-    const field = (k: string) => document.querySelector(`#tls-pins-filters [data-pin-filter="${k}"]`) as HTMLInputElement;
-    const set = (k: string, v: string) => { field(k).value = v; field(k).dispatchEvent(new Event("input", { bubbles: true })); };
-    const hosts = () => Array.from(document.querySelectorAll(".tls-pin-card > div:first-child > .mono")).map((e) => e.textContent);
+    expect(document.querySelectorAll("#tls-pins-filters input")).toHaveLength(1);
+    const q = document.querySelector('#tls-pins-filters [data-pin-filter="q"]') as HTMLInputElement;
+    const kind = document.querySelector('#tls-pins-filters [data-pin-filter="kind"]') as HTMLSelectElement;
+    const set = (v: string) => { q.value = v; q.dispatchEvent(new Event("input", { bubbles: true })); };
+    const pick = (v: string) => { kind.value = v; kind.dispatchEvent(new Event("change", { bubbles: true })); };
+    const hosts = () => Array.from(document.querySelectorAll(".pin-card > div:first-child .mono")).map((e) => e.textContent);
 
-    set("ip", "10.0.0");
-    expect(hosts()).toEqual(["10.0.0.5:443"]);
-    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("1 of 2 pinned");
-    set("ip", "");
+    set("10.0.0");
+    expect(hosts()).toEqual(["10.0.0.5:443", "10.0.0.5:22"]);
+    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("2 of 3 pinned");
 
-    set("hostname", "spk");
+    // Hostname reaches through the asset join on both kinds.
+    set("spk2");
     expect(hosts()).toEqual(["172.22.128.104:443"]);
-    // An IP pin host is not a hostname: "10.0" must not match through it.
-    set("hostname", "10.0");
-    expect(document.querySelectorAll(".tls-pin-card")).toHaveLength(0);
-    expect(document.getElementById("tls-pins-body")!.textContent).toContain("No pinned certificate matches");
-    set("hostname", "");
+    set("DB01");
+    expect(hosts()).toEqual(["10.0.0.5:22"]);
 
-    // Colons and case ignored; the now-presented fingerprint counts too.
-    set("thumbprint", "cd:cd:CD");
+    // A pasted thumbprint: colons, spaces and case ignored; the now-presented one counts.
+    set("cd:cd:CD");
     expect(hosts()).toEqual(["172.22.128.104:443"]);
-    set("thumbprint", "efef");
+    set("ef ef ef");
     expect(hosts()).toEqual(["10.0.0.5:443"]);
-    set("thumbprint", "");
+    // An SSH fingerprint as ssh-keygen prints it.
+    set("SHA256:Zm9v");
+    expect(hosts()).toEqual(["10.0.0.5:22"]);
 
-    set("subject", "fmg");
+    // Words AND together: subject + address, key type + address.
+    set("fmg 10.0");
     expect(hosts()).toEqual(["10.0.0.5:443"]);
-    // Fields AND together.
-    set("ip", "172.22");
-    expect(document.querySelectorAll(".tls-pin-card")).toHaveLength(0);
-    set("subject", "");
-    set("ip", "");
-    expect(document.querySelectorAll(".tls-pin-card")).toHaveLength(2);
-    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("2 pinned · 1 changed");
+    set("ed25519 172.22");
+    expect(document.querySelectorAll(".pin-card")).toHaveLength(0);
+    expect(document.getElementById("tls-pins-body")!.textContent).toContain("No pinned identity matches");
+
+    set("");
+    pick("ssh");
+    expect(hosts()).toEqual(["10.0.0.5:22"]);
+    pick("tls");
+    set("10.0.0.5");
+    expect(hosts()).toEqual(["10.0.0.5:443"]);
+    pick("");
+    set("");
+    expect(document.querySelectorAll(".pin-card")).toHaveLength(3);
+    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("3 pinned · 1 changed");
   });
 
   it("closes from the X, the footer button and a backdrop click", async () => {

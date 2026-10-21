@@ -2240,8 +2240,8 @@ router.post(
 // re-opens first-use trust for that host.
 router.get("/agents/ssh-host-keys", requirePermission("serverSettingsSystem", "read"), async (_req, res, next) => {
   try {
-    const { listHostKeys } = await import("../../services/sshHostKeyService.js");
-    res.json({ hostKeys: await listHostKeys() });
+    const { listHostKeysWithAssets } = await import("../../services/sshHostKeyService.js");
+    res.json({ hostKeys: await listHostKeysWithAssets() });
   } catch (err) { next(err); }
 });
 

@@ -218,6 +218,29 @@ export async function listHostKeys(): Promise<SshHostKeyRecord[]> {
 }
 
 /**
+ * The pins with the asset(s) at each pinned address, for the Pinned server
+ * identities slide-over — the same join `listCertPinsWithUsers` gives the TLS
+ * half, so one filter finds an SSH pin by hostname as well as by address.
+ */
+export async function listHostKeysWithAssets(): Promise<
+  Array<SshHostKeyRecord & { assets: Array<{ id: string; hostname: string | null; ipAddress: string | null }> }>
+> {
+  const pins = await listHostKeys();
+  if (!pins.length) return [];
+  const hosts = [...new Set(pins.map((p) => p.host))];
+  const assets = await prisma.asset.findMany({
+    where: { OR: [{ ipAddress: { in: hosts } }, { hostname: { in: hosts, mode: "insensitive" } }] },
+    select: { id: true, hostname: true, ipAddress: true },
+    orderBy: { hostname: "asc" },
+    take: 500,
+  });
+  return pins.map((p) => {
+    const host = p.host.toLowerCase();
+    return { ...p, assets: assets.filter((a) => a.ipAddress === p.host || (a.hostname ?? "").toLowerCase() === host) };
+  });
+}
+
+/**
  * Forget a pin so the next connection re-pins whatever answers. This is the
  * documented recovery for a legitimately rebuilt or re-keyed host — and the
  * reason it is audited: it deliberately re-opens first-use trust.

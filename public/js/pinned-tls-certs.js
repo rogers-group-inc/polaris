@@ -1,22 +1,26 @@
 /**
  * public/js/pinned-tls-certs.js — Pinned server identities (business rule
  * 113), shared by Server Settings → Web Server and the Windows SSH Deployment
- * card on Integrations.
+ * card on Integrations. One surface for both kinds of pin: the TLS
+ * certificates and the SSH host keys Polaris trusted on first use.
  *
  * window.PolarisPinnedTlsCerts.mount(containerEl) renders a one-line summary
- * (how many certificates are pinned, how many changed) and a "View pinned
- * certificates" button. The button opens a slide-over listing every pin Polaris
- * holds — WinRM listeners, devices it upgrades, and every FortiGate /
- * FortiManager it talks to with SSL verification off (rule 113(e)) — each with
- * the asset(s) at that address as links that open the asset panel in place,
- * the integration(s) that dial it, its subject, fingerprint and dates. A
- * filter row in the header narrows the cards by IP, hostname, thumbprint and
- * subject (client-side; every filled field must match).
+ * (how many certificates and host keys are pinned, how many certificates
+ * changed) and a "View pinned identities" button. The button opens a
+ * slide-over listing every pin Polaris holds — WinRM listeners, devices it
+ * upgrades, every FortiGate / FortiManager it talks to with SSL verification
+ * off (rule 113(e)), and every host it reached over SSH — each with the
+ * asset(s) at that address as links that open the asset panel in place, the
+ * integration(s) that dial it (TLS), its subject or key type, fingerprint and
+ * dates. One filter bar in the header narrows the cards: a search field and a
+ * kind selector (client-side).
  *
- * A pin whose server now presents a DIFFERENT certificate is listed first with
+ * A certificate whose server now presents a DIFFERENT one is listed first with
  * both SHA-256 fingerprints and "Trust new certificate", which pins exactly the
- * certificate shown (rule 113(f)); Delete stays for a host that was rebuilt and
- * should simply be re-pinned on its next connection.
+ * certificate shown (rule 113(f)); Delete stays, on both kinds, for a host
+ * that was rebuilt and should simply be re-pinned on its next connection. An
+ * SSH host key that changes is refused outright — there is no pending key to
+ * trust, only the pin to delete.
  *
  * Needs api.js and app.js (escapeHtml, showToast, showConfirm, permAtLeast,
  * raiseSlideover, wireSlideoverEscape, initSlideoverResize).
@@ -41,33 +45,56 @@
       '</span><span class="detail-value">' + valueHtml + "</span></div>";
   }
 
+  function errText(err) {
+    return (err && err.message) || "unknown error";
+  }
+
+  // Both lists in one go. A failure of one still shows the other, with the
+  // failure named, rather than blanking the whole surface.
+  function loadPins() {
+    return Promise.all([
+      api.serverSettings.tlsCertPinsList().then(function (r) { return { rows: (r && r.certPins) || [] }; },
+        function (err) { return { rows: [], error: err }; }),
+      api.serverSettings.sshHostKeysList().then(function (r) { return { rows: (r && r.hostKeys) || [] }; },
+        function (err) { return { rows: [], error: err }; }),
+    ]).then(function (res) {
+      return { tls: res[0].rows, ssh: res[1].rows, tlsError: res[0].error, sshError: res[1].error };
+    });
+  }
+
   // ─── Summary + button (what a host page mounts) ──────────────────────────
 
-  function renderSummary(container, rows) {
-    var total = rows ? rows.length : 0;
-    var changed = (rows || []).filter(function (r) { return !!r.pendingFingerprint; }).length;
-    var text = total === 0
-      ? "No certificates pinned yet. A pin appears the first time Polaris sends a password or token to a server without " +
-        "verifying a CA: a WinRM listener, a device it upgrades, or a FortiGate / FortiManager with SSL verification off."
-      : total + " pinned certificate" + (total === 1 ? "" : "s") + ".";
+  function plural(n, word) {
+    return n + " " + word + (n === 1 ? "" : "s");
+  }
+
+  function renderSummary(container, data) {
+    var tls = data.tls.length;
+    var ssh = data.ssh.length;
+    var changed = data.tls.filter(function (r) { return !!r.pendingFingerprint; }).length;
+    var text = tls + ssh === 0
+      ? "Nothing pinned yet. A pin appears the first time Polaris connects to a host over SSH, or sends a password or " +
+        "token to a server without verifying a CA: a WinRM listener, a device it upgrades, or a FortiGate / FortiManager " +
+        "with SSL verification off."
+      : "Pinned: " + plural(tls, "certificate") + " · " + plural(ssh, "SSH host key") + ".";
+    var failed = [data.tlsError && "certificates", data.sshError && "SSH host keys"].filter(Boolean);
     container.innerHTML =
       '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
         '<span style="font-size:0.85rem;color:var(--color-text-secondary)">' + escapeHtml(text) + "</span>" +
         (changed ? '<span class="badge badge-conflict">' + changed + " changed</span>" : "") +
-        (total ? '<button type="button" class="btn btn-sm btn-secondary" data-tls-pins-open>View pinned certificates</button>' : "") +
-      "</div>";
+        (tls + ssh ? '<button type="button" class="btn btn-sm btn-secondary" data-tls-pins-open>View pinned identities</button>' : "") +
+      "</div>" +
+      (failed.length
+        ? '<p class="empty-state" style="padding:0.35rem 0 0;margin:0">Could not load pinned ' + failed.join(" or ") + ": " +
+            escapeHtml(errText(data.tlsError || data.sshError)) + "</p>"
+        : "");
     var btn = container.querySelector("[data-tls-pins-open]");
     if (btn) btn.addEventListener("click", function () { open(btn); });
   }
 
   function loadSummary(container) {
     if (!container) return;
-    api.serverSettings.tlsCertPinsList()
-      .then(function (r) { renderSummary(container, r && r.certPins); })
-      .catch(function (err) {
-        container.innerHTML = '<p class="empty-state" style="padding:0.5rem 0;margin:0">Could not load pinned certificates: ' +
-          escapeHtml((err && err.message) || "unknown error") + "</p>";
-      });
+    loadPins().then(function (data) { renderSummary(container, data); });
   }
 
   function mount(container) {
@@ -97,17 +124,21 @@
         '<div class="slideover-header">' +
           '<div class="slideover-header-top">' +
             '<div class="slideover-header-lead"><h3 id="tls-pins-title">Pinned server identities</h3></div>' +
-            '<button class="btn-icon" id="tls-pins-close" title="Close" aria-label="Close pinned certificates">&times;</button>' +
+            '<button class="btn-icon" id="tls-pins-close" title="Close" aria-label="Close pinned server identities">&times;</button>' +
           "</div>" +
           '<div class="slideover-meta" id="tls-pins-meta"></div>' +
           // In the header, not the body, so it stays put while the cards
-          // scroll. A plain grid rather than .filter-bar: that is the
+          // scroll. A plain flex row rather than .filter-bar: that is the
           // page-level sticky bar and reads as a slab inside a slide-over.
-          '<div id="tls-pins-filters" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-top:0.6rem">' +
-            filterInput("ip", "IP address") +
-            filterInput("hostname", "Hostname") +
-            filterInput("thumbprint", "Thumbprint") +
-            filterInput("subject", "Subject") +
+          '<div id="tls-pins-filters" style="display:flex;gap:6px;margin-top:0.6rem">' +
+            '<input type="text" data-pin-filter="q" placeholder="Filter by IP, hostname, thumbprint, subject or key type" ' +
+              'aria-label="Filter pinned identities" autocomplete="off" spellcheck="false" ' +
+              'style="flex:1 1 auto;min-width:0;padding:0.3rem 0.55rem;font-size:0.8rem">' +
+            '<select data-pin-filter="kind" aria-label="Kind of pin" style="flex:0 0 auto;padding:0.3rem 0.55rem;font-size:0.8rem">' +
+              '<option value="">All kinds</option>' +
+              '<option value="tls">TLS certificates</option>' +
+              '<option value="ssh">SSH host keys</option>' +
+            "</select>" +
           "</div>" +
         "</div>" +
         '<div class="slideover-body" id="tls-pins-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading...</p></div>' +
@@ -120,59 +151,63 @@
     if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, close);
     if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("tls-pins-panel"), "polaris.panel.width.tlsPins");
     document.getElementById("tls-pins-body").addEventListener("click", onBodyClick);
-    document.getElementById("tls-pins-filters").addEventListener("input", function () { renderPanel(lastRows); });
+    var filters = document.getElementById("tls-pins-filters");
+    filters.addEventListener("input", function () { renderPanel(lastData); });
+    filters.addEventListener("change", function () { renderPanel(lastData); });
     return overlay;
   }
 
-  function filterInput(key, label) {
-    return '<input type="text" data-pin-filter="' + key + '" placeholder="' + label + '" aria-label="Filter by ' +
-      label.toLowerCase() + '" autocomplete="off" spellcheck="false" style="padding:0.3rem 0.55rem;font-size:0.8rem">';
-  }
-
   // ─── Filtering ───────────────────────────────────────────────────────────
-  // Every non-empty field must match (AND); each is a case-insensitive
-  // substring. IP looks at the pinned host and every asset address at it;
-  // Hostname at the asset hostnames and a pinned host that is a name, not an
-  // address; Thumbprint at both the pinned and the now-presented SHA-256 with
-  // colons, spaces and case ignored, so a value pasted from openssl or
-  // Windows' certificate dialog matches; Subject at both subjects.
+  // One search field. A value made only of hex digits and the separators a
+  // thumbprint is copied with (colons, spaces, dashes) — as openssl or
+  // Windows' certificate dialog prints it — matches a certificate's pinned or
+  // now-presented SHA-256 with those ignored. Otherwise the value is split on
+  // whitespace and every word must appear (case-insensitive) somewhere on the
+  // card: address, port, asset hostname or IP, integration, subject, key type
+  // or fingerprint — so "10.0 ssh-ed25519" narrows by both.
 
-  var lastRows = [];
+  var lastData = { tls: [], ssh: [] };
 
   function filterValues() {
-    var out = {};
-    var inputs = document.querySelectorAll("#tls-pins-filters [data-pin-filter]");
-    for (var i = 0; i < inputs.length; i++) {
-      var v = inputs[i].value.trim().toLowerCase();
-      if (v) out[inputs[i].getAttribute("data-pin-filter")] = v;
-    }
-    return out;
-  }
-
-  function isIpLiteral(s) {
-    return /^[0-9.]+$/.test(s) || s.indexOf(":") >= 0;
+    var q = document.querySelector('#tls-pins-filters [data-pin-filter="q"]');
+    var kind = document.querySelector('#tls-pins-filters [data-pin-filter="kind"]');
+    return { q: q ? q.value.trim().toLowerCase() : "", kind: kind ? kind.value : "" };
   }
 
   function hexOnly(s) {
     return String(s || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
   }
 
-  function contains(hay, needle) {
-    return String(hay || "").toLowerCase().indexOf(needle) >= 0;
+  function haystack(r) {
+    var parts = [r.host, r.host + ":" + r.port, r.subject, r.pendingSubject, r.keyType, r.fingerprint, r.pendingFingerprint,
+      r.kind === "ssh" ? "ssh host key" : "tls certificate"];
+    (r.assets || []).forEach(function (a) { parts.push(a.hostname, a.ipAddress); });
+    (r.integrations || []).forEach(function (i) { parts.push(i.name); });
+    return parts.filter(Boolean).join(" ").toLowerCase();
   }
 
-  function matches(r, f) {
-    var assets = r.assets || [];
-    if (f.ip && !contains(r.host, f.ip) &&
-        !assets.some(function (a) { return contains(a.ipAddress, f.ip); })) return false;
-    if (f.hostname && !(!isIpLiteral(String(r.host || "")) && contains(r.host, f.hostname)) &&
-        !assets.some(function (a) { return contains(a.hostname, f.hostname); })) return false;
-    if (f.thumbprint) {
-      var want = hexOnly(f.thumbprint);
-      if (!want || (hexOnly(r.fingerprint).indexOf(want) < 0 && hexOnly(r.pendingFingerprint).indexOf(want) < 0)) return false;
-    }
-    if (f.subject && !contains(r.subject, f.subject) && !contains(r.pendingSubject, f.subject)) return false;
-    return true;
+  function matches(r, q) {
+    var hex = hexOnly(q);
+    if (hex.length >= 4 && /^[0-9a-f:\s-]+$/.test(q) &&
+        (hexOnly(r.fingerprint).indexOf(hex) >= 0 || hexOnly(r.pendingFingerprint).indexOf(hex) >= 0)) return true;
+    var hay = haystack(r);
+    return q.split(/\s+/).every(function (w) { return hay.indexOf(w) >= 0; });
+  }
+
+  // Changed certificates first (what an administrator opened this for), then
+  // by address so a host's certificate and host key sit together.
+  function combined(data) {
+    var all = data.tls.map(function (r) { return Object.assign({ kind: "tls" }, r); })
+      .concat(data.ssh.map(function (r) { return Object.assign({ kind: "ssh" }, r); }));
+    return all.sort(function (a, b) {
+      var ca = a.pendingFingerprint ? 0 : 1;
+      var cb = b.pendingFingerprint ? 0 : 1;
+      if (ca !== cb) return ca - cb;
+      var h = String(a.host).localeCompare(String(b.host), undefined, { numeric: true });
+      if (h) return h;
+      if (a.kind !== b.kind) return a.kind === "tls" ? -1 : 1;
+      return a.port - b.port;
+    });
   }
 
   function open(trigger) {
@@ -193,13 +228,7 @@
   }
 
   function loadPanel() {
-    var body = document.getElementById("tls-pins-body");
-    api.serverSettings.tlsCertPinsList()
-      .then(function (r) { renderPanel(r && r.certPins); })
-      .catch(function (err) {
-        body.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Could not load pinned certificates: ' +
-          escapeHtml((err && err.message) || "unknown error") + "</p>";
-      });
+    loadPins().then(renderPanel);
   }
 
   function assetLinks(r) {
@@ -211,7 +240,20 @@
     }).join("<br>");
   }
 
-  function pinCard(r, canManage) {
+  function cardShell(r, changed, cls, kindLabel, badgeHtml, rowsHtml, actions) {
+    return '<div class="pin-card ' + cls + '" style="border:1px solid ' + (changed ? "var(--color-danger, #c0392b)" : "var(--color-border)") +
+        ';border-radius:var(--radius-md, 8px);padding:0.75rem 0.9rem;margin-bottom:0.75rem">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.35rem">' +
+        '<span><span class="mono" style="font-weight:600">' + escapeHtml(r.host + ":" + r.port) + "</span>" +
+          ' <span style="color:var(--color-text-secondary);font-size:0.8rem">' + kindLabel + "</span></span>" +
+        badgeHtml +
+      "</div>" +
+      rowsHtml +
+      (actions ? '<div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem">' + actions + "</div>" : "") +
+    "</div>";
+  }
+
+  function tlsCard(r, canManage) {
     var changed = !!r.pendingFingerprint;
     var hostPort = r.host + ":" + r.port;
     var actions = "";
@@ -223,12 +265,8 @@
       actions += '<button type="button" class="btn btn-sm btn-secondary" data-pin-del="' + escapeHtml(r.id) + '" data-pin-host="' +
         escapeHtml(hostPort) + '">Delete</button>';
     }
-    return '<div class="tls-pin-card" style="border:1px solid ' + (changed ? "var(--color-danger, #c0392b)" : "var(--color-border)") +
-        ';border-radius:var(--radius-md, 8px);padding:0.75rem 0.9rem;margin-bottom:0.75rem">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.35rem">' +
-        '<span class="mono" style="font-weight:600">' + escapeHtml(hostPort) + "</span>" +
-        (changed ? '<span class="badge badge-conflict">Certificate changed</span>' : '<span class="badge badge-active">Pinned</span>') +
-      "</div>" +
+    return cardShell(r, changed, "tls-pin-card", "TLS certificate",
+      changed ? '<span class="badge badge-conflict">Certificate changed</span>' : '<span class="badge badge-active">Pinned</span>',
       row("Asset", assetLinks(r)) +
       (r.integrations && r.integrations.length
         ? row("Integration", r.integrations.map(function (i) { return escapeHtml(i.name); }).join(", "))
@@ -241,40 +279,69 @@
             ' <span style="color:var(--color-text-secondary)">since ' + escapeHtml(when(r.pendingSeenAt)) + "</span>", true)
         : "") +
       row("First seen", escapeHtml(when(r.firstSeen))) +
-      row("Last seen", escapeHtml(when(r.lastSeen))) +
-      (actions ? '<div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem">' + actions + "</div>" : "") +
-    "</div>";
+      row("Last seen", escapeHtml(when(r.lastSeen))),
+      actions);
   }
 
-  function renderPanel(rows) {
+  function sshCard(r, canManage) {
+    var actions = canManage
+      ? '<button type="button" class="btn btn-sm btn-secondary" data-ssh-del="' + escapeHtml(r.id) + '" data-pin-host="' +
+          escapeHtml(r.host + ":" + r.port) + '">Delete</button>'
+      : "";
+    return cardShell(r, false, "ssh-pin-card", "SSH host key", '<span class="badge badge-active">Pinned</span>',
+      row("Asset", assetLinks(r)) +
+      row("Key type", escapeHtml(r.keyType || "—")) +
+      // Already the `ssh-keygen -lf` form (SHA256:<base64>), so shown as is.
+      row("Fingerprint", '<code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(r.fingerprint || "—") + "</code>", true) +
+      row("First seen", escapeHtml(when(r.firstSeen))) +
+      row("Last seen", escapeHtml(when(r.lastSeen))),
+      actions);
+  }
+
+  function renderPanel(data) {
     var body = document.getElementById("tls-pins-body");
     var meta = document.getElementById("tls-pins-meta");
-    rows = rows || [];
-    lastRows = rows;
-    var changed = rows.filter(function (r) { return !!r.pendingFingerprint; }).length;
+    if (!body) return;
+    lastData = data = data || { tls: [], ssh: [] };
+    var rows = combined(data);
+    var changed = data.tls.filter(function (r) { return !!r.pendingFingerprint; }).length;
     var f = filterValues();
-    var filtering = Object.keys(f).length > 0;
-    var shown = filtering ? rows.filter(function (r) { return matches(r, f); }) : rows;
+    var filtering = !!(f.q || f.kind);
+    var shown = !filtering ? rows : rows.filter(function (r) {
+      return (!f.kind || r.kind === f.kind) && (!f.q || matches(r, f.q));
+    });
     meta.innerHTML = '<span style="color:var(--color-text-secondary);font-size:0.85rem">' +
       (filtering ? shown.length + " of " : "") + rows.length + " pinned" +
       (changed ? " · " + changed + " changed" : "") + "</span>";
+    var failed = [data.tlsError && "certificates", data.sshError && "SSH host keys"].filter(Boolean);
+    var failHtml = failed.length
+      ? '<p class="empty-state" style="padding:1rem 1.25rem 0;margin:0">Could not load pinned ' + failed.join(" or ") + ": " +
+          escapeHtml(errText(data.tlsError || data.sshError)) + "</p>"
+      : "";
     if (!rows.length) {
-      body.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">No certificates pinned yet.</p>';
+      body.innerHTML = failHtml + (failed.length === 2 ? "" : '<p class="empty-state" style="padding:1rem 1.25rem">Nothing pinned yet.</p>');
       return;
     }
     if (!shown.length) {
-      body.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">No pinned certificate matches the filter.</p>';
+      body.innerHTML = failHtml + '<p class="empty-state" style="padding:1rem 1.25rem">No pinned identity matches the filter.</p>';
       return;
     }
     var canManage = typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
-    // Changed certificates come first from the server: they are what an
-    // administrator opened this for.
-    body.innerHTML = '<div style="padding:1rem 1.25rem">' + shown.map(function (r) { return pinCard(r, canManage); }).join("") + "</div>";
+    body.innerHTML = failHtml + '<div style="padding:1rem 1.25rem">' + shown.map(function (r) {
+      return r.kind === "ssh" ? sshCard(r, canManage) : tlsCard(r, canManage);
+    }).join("") + "</div>";
+  }
+
+  function afterChange(message) {
+    showToast(message, "success");
+    loadPanel();
+    refreshSummaries();
   }
 
   function onBodyClick(e) {
     var trust = e.target.closest ? e.target.closest("[data-pin-trust]") : null;
     var del = e.target.closest ? e.target.closest("[data-pin-del]") : null;
+    var sshDel = e.target.closest ? e.target.closest("[data-ssh-del]") : null;
     if (trust) {
       var hostPort = trust.getAttribute("data-pin-host");
       var fp = trust.getAttribute("data-pin-fp");
@@ -286,7 +353,7 @@
         if (!ok) return;
         trust.disabled = true;
         api.serverSettings.tlsCertPinTrust(trust.getAttribute("data-pin-trust"), fp)
-          .then(function () { showToast("Trusted the new certificate of " + hostPort, "success"); loadPanel(); refreshSummaries(); })
+          .then(function () { afterChange("Trusted the new certificate of " + hostPort); })
           .catch(function (err) { trust.disabled = false; showToast((err && err.message) || "Could not trust the certificate", "error"); });
       });
     } else if (del) {
@@ -299,8 +366,21 @@
         if (!ok) return;
         del.disabled = true;
         api.serverSettings.tlsCertPinDelete(del.getAttribute("data-pin-del"))
-          .then(function () { showToast("Pin deleted", "success"); loadPanel(); refreshSummaries(); })
+          .then(function () { afterChange("Pin deleted"); })
           .catch(function (err) { del.disabled = false; showToast((err && err.message) || "Could not delete the pin", "error"); });
+      });
+    } else if (sshDel) {
+      var sh = sshDel.getAttribute("data-pin-host");
+      showConfirm(
+        "Delete the pinned SSH host key for " + sh + "?\n\n" +
+        "The next connection to this host will trust and pin whatever answers. Only do this if you know the host " +
+        "was legitimately rebuilt or re-keyed — otherwise you would be accepting an impersonator."
+      ).then(function (ok) {
+        if (!ok) return;
+        sshDel.disabled = true;
+        api.serverSettings.sshHostKeyDelete(sshDel.getAttribute("data-ssh-del"))
+          .then(function () { afterChange("Pin deleted"); })
+          .catch(function (err) { sshDel.disabled = false; showToast((err && err.message) || "Could not delete the pin", "error"); });
       });
     }
   }
