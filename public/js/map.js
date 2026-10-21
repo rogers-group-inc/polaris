@@ -1084,6 +1084,9 @@
   // Cytoscape ships a built-in cy.png() that respects the current layout/colors
   // and renders independently of the live <canvas>. We pull it as a Blob and
   // copy to the clipboard, mirroring the chart-screenshot UX in assets.js.
+  // full:false — the viewport, not the whole graph: whatever the operator has
+  // zoomed or panned out of view stays out of the picture (as every topology
+  // and Application Map export does).
   function screenshotTopology() {
     if (!cyInstance) {
       if (typeof showToast === "function") showToast("Topology not loaded", "error");
@@ -1092,7 +1095,7 @@
     var rootCs = getComputedStyle(document.documentElement);
     var bg = rootCs.getPropertyValue("--color-bg-primary").trim() ||
              rootCs.getPropertyValue("--color-surface").trim() || "#ffffff";
-    var blob = cyInstance.png({ output: "blob", scale: 2, full: true, bg: bg });
+    var blob = cyInstance.png({ output: "blob", scale: 2, full: false, bg: bg });
     if (!blob) {
       if (typeof showToast === "function") showToast("Screenshot failed", "error");
       return;
@@ -1106,7 +1109,9 @@
   // live graph exactly as laid out, read through the DAYLIGHT stylesheet —
   // paper is white whatever the theme — with the topology legend as the key.
   // Health and link colours come from the same legend spec the on-screen
-  // legend draws, so the printed key cannot drift from it.
+  // legend draws, so the printed key cannot drift from it. Only what is in
+  // the viewer (viewport: true → clipSceneToExtent): zoom in, and whatever
+  // leaves the view leaves the export — and the device / link count with it.
   function topologyExportContext() {
     var R = window.PolarisTopologyRender;
     var titleEl = document.getElementById("topology-title");
@@ -1122,8 +1127,13 @@
     lightSpec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
     spec.locations.forEach(function (l) { keyItems.push({ kind: "box", color: l.color, dashed: l.style === "dashed", text: l.label }); });
     var meta = [];
-    var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal"); }).length : 0;
-    var links = cyInstance ? cyInstance.edges(":visible").length : 0;
+    var ext = cyInstance ? cyInstance.extent() : null;
+    var inView = function (ele) {
+      var b = ele.boundingBox({ includeLabels: false });
+      return b.x2 >= ext.x1 && b.x1 <= ext.x2 && b.y2 >= ext.y1 && b.y1 <= ext.y2;
+    };
+    var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal") && inView(n); }).length : 0;
+    var links = cyInstance ? cyInstance.edges(":visible").filter(inView).length : 0;
     meta.push(nodes + " device" + (nodes === 1 ? "" : "s") + " · " + links + " link" + (links === 1 ? "" : "s"));
     var showFull = document.getElementById("topology-show-full");
     if (showFull && !showFull.hidden) meta.push("Narrowed to an endpoint search — the export shows the narrowed view");
@@ -1135,7 +1145,8 @@
       noun: "topology",
       metaLines: meta,
       keyItems: keyItems,
-      scopeNote: "Exports the topology as it is on screen now, in its current layout.",
+      viewport: true,
+      scopeNote: "Exports what is in the viewer now — only the part of the topology on screen at the current zoom and pan — in its current layout.",
     };
   }
 
@@ -1151,7 +1162,8 @@
     var rootCs = getComputedStyle(document.documentElement);
     var pick = function (n, f) { var v = rootCs.getPropertyValue(n).trim(); return v || f; };
     var bg = pick("--color-bg-primary", pick("--color-surface", "#ffffff"));
-    var uri = cyInstance.png({ output: "base64uri", scale: 2, full: true, bg: bg });
+    // The viewport only, as screenshotTopology.
+    var uri = cyInstance.png({ output: "base64uri", scale: 2, full: false, bg: bg });
     var mapImg = new Image();
     mapImg.onload = function () { _composeTopologyModalCanvas(mapImg, pick); };
     mapImg.onerror = function () {
