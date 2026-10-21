@@ -266,6 +266,11 @@ Users with **Assets Read-Write** see an action bar on a VM or App:
 
 Reading the live state needs only Assets Read-Only.
 
+TrueNAS reports an update or restart finished while the App is still
+**DEPLOYING**. The card waits for it: it shows *Waiting for … to settle*,
+re-reads every few seconds for up to two minutes, and brings the buttons back
+once the App is running again.
+
 **Update** upgrades a catalog App to the **latest version in the catalog**. For
 a custom App, it pulls the App's images and redeploys it. **Polaris never
 chooses a version**: it is always the catalog's latest, or the images the custom

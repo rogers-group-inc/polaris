@@ -11701,8 +11701,21 @@ function _wireWorkloadActions(mount, asset, res) {
   var what = v.role === "vm" ? "VM" : (v.platform === "truenas" ? "App" : "container");
   bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">Reading live state…</span>';
 
-  function render(status) {
-    var verbs = status.verbs || [];
+  // The platform reports an action done before the workload has settled — a
+  // TrueNAS App comes back from app.upgrade / app.redeploy still DEPLOYING —
+  // so after a verb the card re-reads until it reaches the state the verb
+  // aims at, with the verbs held off meanwhile.
+  var SETTLE_TARGET = { start: "running", restart: "running", update: "running", stop: "stopped" };
+  var SETTLE_POLL_MS = 3000;
+  var SETTLE_MAX_MS = 120000;
+
+  // "other" is a transitional platform state (DEPLOYING); name it, not "other".
+  function stateHtml(status) {
+    return status.state === "other" && status.rawState ? _wlStateBadge(status.rawState) : _wlStateBadge(status.state);
+  }
+
+  function render(status, settling) {
+    var verbs = settling ? [] : (status.verbs || []);
     var labels = { start: "Start", stop: "Stop", restart: "Restart", update: "Update" };
     var btns = verbs.map(function (verb) {
       var cls = verb === "stop" ? "btn-danger" : verb === "update" ? "btn-primary" : "btn-secondary";
@@ -11715,7 +11728,9 @@ function _wireWorkloadActions(mount, asset, res) {
       if (pveState) pveState.innerHTML = _wlStateBadge(status.state);
       return;
     }
-    if (status.role === "container") {
+    if (settling) {
+      btns = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">Waiting for "' + escapeHtml(name) + '" to settle…</span>';
+    } else if (status.role === "container") {
       btns += '<button type="button" class="btn btn-sm btn-secondary" data-wl-check style="margin-right:6px">Check for updates</button>';
     }
     var keepMon = verbs.indexOf("stop") !== -1
@@ -11723,7 +11738,7 @@ function _wireWorkloadActions(mount, asset, res) {
       : "";
     bar.innerHTML = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">' + btns + keepMon + '</div>';
     var stateCell = mount.querySelector("[data-wl-state]");
-    if (stateCell) stateCell.innerHTML = _wlStateBadge(status.state);
+    if (stateCell) stateCell.innerHTML = stateHtml(status);
     var updCell = mount.querySelector("[data-wl-update]");
     if (updCell) updCell.innerHTML = status.updateAvailable === true ? _wlUpdateBadge(true) : status.updateAvailable === false ? "Up to date" : '<span style="color:var(--color-text-tertiary)">Not checked</span>';
 
@@ -11747,8 +11762,10 @@ function _wireWorkloadActions(mount, asset, res) {
           showToast((r && r.message) || "Done", "success");
         } catch (err) {
           showToast((err && err.message) || "Action failed", "error");
+          load();
+          return;
         }
-        load();
+        settle(SETTLE_TARGET[verb], Date.now() + SETTLE_MAX_MS);
       });
     });
     var check = bar.querySelector("[data-wl-check]");
@@ -11767,10 +11784,23 @@ function _wireWorkloadActions(mount, asset, res) {
     }
   }
 
+  function showError(err) {
+    bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml((err && err.message) || "Live state unavailable") + '</span>';
+  }
+
   function load() {
-    api.assets.workload(asset.id).then(render).catch(function (err) {
-      bar.innerHTML = '<span style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml((err && err.message) || "Live state unavailable") + '</span>';
-    });
+    api.assets.workload(asset.id).then(function (s) { render(s); }).catch(showError);
+  }
+
+  // Re-read until the workload reaches `target` or the deadline passes; a
+  // closed panel (bar detached) stops the loop.
+  function settle(target, deadline) {
+    api.assets.workload(asset.id).then(function (s) {
+      if (!bar.isConnected) return;
+      var waiting = target && s.state !== target && Date.now() < deadline;
+      render(s, waiting);
+      if (waiting) setTimeout(function () { settle(target, deadline); }, SETTLE_POLL_MS);
+    }).catch(showError);
   }
   load();
 }
