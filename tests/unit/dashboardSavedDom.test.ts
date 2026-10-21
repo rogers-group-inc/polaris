@@ -60,7 +60,7 @@ interface Harness {
  * off window.POLARIS_DASH_LOCAL at call time, so the two surfaces are two
  * boots rather than a flag flipped mid-test.
  */
-function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: boolean; pinned?: string; rows?: unknown[]; portable?: boolean } = {}): Harness {
+function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: boolean; pinned?: string; rows?: unknown[]; portable?: boolean; editing?: boolean } = {}): Harness {
   const win = new Window();
   const doc = win.document;
   const created: Record<string, unknown>[] = [];
@@ -101,9 +101,11 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
       delete: async (id: string) => { deleted.push(id); },
     },
   };
-  // dashboard.js's seam.
+  // dashboard.js's seam. Customizing by default: the menu only shows then
+  // (or while a published dashboard is on screen).
   (win as unknown as Record<string, unknown>).PolarisDashboard = {
     isWallboard: () => !!opts.wallboard,
+    isEditing: () => opts.editing !== false,
     snapshot: () => ({ name: "Dashboard 2", layout: LAYOUT }),
     widgetCount: () => 4,
     publishedId: () => published,
@@ -207,6 +209,26 @@ describe("Dashboards menu — signed in", () => {
     const pub = h.doc.querySelector('input[name="sd-vis"][value="public"]')!;
     expect(pub.hasAttribute("disabled")).toBe(true);
     expect(h.doc.querySelector(".modal")!.textContent).toContain("Requires saved-dashboard write access");
+  });
+
+  it("shows only while customizing or viewing a published dashboard", async () => {
+    const view = boot({ editing: false }) as H;
+    const btn = view.doc.getElementById("btn-saved-dashboards")!;
+    expect(btn.hasAttribute("hidden")).toBe(true);
+    // A stale click while hidden opens nothing.
+    await view.open();
+    expect(view.menu().classList.contains("open")).toBe(false);
+
+    // Customize Page: dashboard.js announces the mode change.
+    const seam = (view.win as unknown as { PolarisDashboard: { isEditing: () => boolean } }).PolarisDashboard;
+    seam.isEditing = () => true;
+    view.doc.dispatchEvent(new view.win.CustomEvent("polaris:dashboard-mode"));
+    expect(btn.hasAttribute("hidden")).toBe(false);
+
+    // Viewing a published dashboard: no Customize there, so the menu is the
+    // only way back to the viewer's own layout.
+    const pinned = boot({ editing: false, pinned: "d2" }) as H;
+    expect(pinned.doc.getElementById("btn-saved-dashboards")!.hasAttribute("hidden")).toBe(false);
   });
 
   it("hides the whole menu for a role with no access at all", () => {

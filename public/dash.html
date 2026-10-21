@@ -24,23 +24,27 @@
       <div class="page-top-sticky">
       <div class="page-header">
         <h2 id="dash-title">Dashboard</h2>
-        <div class="page-header-actions">
-          <!-- Saved dashboards (dashboard-saved.js): on the wallboard this is
-               "My layout" plus every PUBLISHED dashboard — read-only, no saving. The menu
-               body is rendered from the server list on every open. -->
-          <div class="btn-dropdown-wrap">
-            <button type="button" class="btn btn-secondary" id="btn-saved-dashboards" title="Show a published dashboard, or this browser's own layout">Dashboards &#9662;</button>
-            <div class="btn-dropdown-menu sfl-menu" id="saved-dashboards-menu"></div>
-          </div>
-          <button type="button" id="dashboard-customize" class="btn btn-primary btn-icon-only" title="Customize page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>Customize Page</button>
-          <button type="button" id="dashboard-done" class="btn btn-primary btn-icon-only" hidden title="Done editing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Done Editing</button>
-        </div>
+        <div class="page-header-actions"></div>
       </div>
       <!-- Folder tabs (styles.css "Table head row"; public/js/folder-tabs.js)
            over the page card the widgets sit in. The strip only shows with
            more than one dashboard; with one, the card's edge is unbroken. -->
       <div class="table-head-row folder-head-card">
         <div id="dashboard-tabs" class="dashboard-tabs" hidden></div>
+        <!-- The edit verbs, moved from the header to the card's top right. -->
+        <div class="table-head-controls">
+          <!-- Saved dashboards (dashboard-saved.js): on the wallboard this is
+               "My layout" plus every PUBLISHED dashboard — read-only, no saving. The menu
+               body is rendered from the server list on every open. Shown only
+               while customizing or viewing a published dashboard
+               (dashboard.js setHeaderMode). -->
+          <div class="btn-dropdown-wrap" hidden>
+            <button type="button" class="btn btn-secondary" id="btn-saved-dashboards" title="Show a published dashboard, or this browser's own layout">Dashboards &#9662;</button>
+            <div class="btn-dropdown-menu sfl-menu" id="saved-dashboards-menu"></div>
+          </div>
+          <button type="button" id="dashboard-customize" class="btn btn-primary btn-icon-only" title="Customize page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>Customize Page</button>
+          <button type="button" id="dashboard-done" class="btn btn-primary btn-icon-only" hidden title="Done editing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Done Editing</button>
+        </div>
       </div>
       </div>
       <!-- The page card (styles.css "Folder CARD"): fills the viewport down to

@@ -13,7 +13,7 @@ two people on the same install legitimately see different dashboards.
 
 ## Working with the canvas
 
-The canvas is read-only until you press the pencil (**Customize Page**) at the top right; the tick (**Done Editing**) in its place
+The canvas is read-only until you press the pencil (**Customize Page**) just above the page card's top right corner, level with the dashboard tabs; the tick (**Done Editing**) in its place
 saves and leaves edit mode. The layout is a row of **columns**, each a stack of
 widgets.
 
@@ -41,9 +41,11 @@ Your personal layout — every tab — saves automatically to your account
 ## Saved dashboards
 
 A layout can also be **named and saved** as a `SavedDashboard`, private or
-public, from the **Dashboards ▾** menu → **Save this dashboard…**. What is
-saved is the tab you are looking at — its widgets, columns, sizes and
-per-widget settings. Saving over one of your own names replaces it.
+public, from the **Dashboards ▾** menu → **Save this dashboard…**. The menu
+sits beside the pencil and **shows only while you are customizing** (or while
+a published dashboard is on screen, where it is the way back to your own
+layout). What is saved is the tab you are looking at — its widgets, columns,
+sizes and per-widget settings. Saving over one of your own names replaces it.
 
 The same menu lists **My dashboards** and **Shared dashboards** (everyone's
 published ones). Loading one adds it as a **new tab of your own layout — a
