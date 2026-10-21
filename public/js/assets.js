@@ -5433,7 +5433,7 @@ function _ensureAssetPanelDOM() {
             // inside is filled async by _loadAssetRebootControl.
             '<span class="slideover-header-verbs" id="asset-panel-verbs"></span>' +
           '</div>' +
-          // Per-asset actions (Copy / Screenshot | Export / Refresh / Open
+          // Per-asset actions (Screenshot + PDF | Export / Refresh / Open
           // HTTPS / Open SSH) live in the header, right-aligned, LEFT of the
           // lock button _ensureLockButton injects in front of the X — see
           // .slideover-header-actions in styles.css for how the two share the
@@ -5902,16 +5902,17 @@ async function openViewModal(id, opts) {
 
     // IP history + firewall sightings now live in the Sources tab (no longer a
     // standalone modal). See _assetSourcesTabHTML.
-    // On the Events tab the Screenshot button gives way to an Export dropdown
-    // (same page/all × CSV/PDF shape as the Events page export, scoped to
-    // this asset). Both are rendered up front; _syncAssetFooterButtons flips
-    // visibility on tab clicks. The menu drops DOWN (the default) since this
-    // group lives in the panel HEADER, and right-anchors (also the default) so
-    // it stays inside the slide-over — the group sits at the header's right
-    // edge, left of the lock + close pair.
+    // Screenshot (camera — copies the tab as a PNG) and PDF (download tray —
+    // saves the same capture as a PDF) are glyph buttons. On the Events tab
+    // both give way to an Export dropdown (same page/all × CSV/PDF shape as
+    // the Events page export, scoped to this asset). All are rendered up
+    // front; _syncAssetFooterButtons flips visibility on tab clicks. The menu
+    // drops DOWN (the default) since this group lives in the panel HEADER, and
+    // right-anchors (also the default) so it stays inside the slide-over — the
+    // group sits at the header's right edge, left of the lock + close pair.
     var copyBtns =
-      '<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-copy">Copy</button>' +
-      '<button type="button" class="btn btn-sm btn-secondary" id="btn-asset-screenshot">Screenshot</button>' +
+      '<button type="button" class="btn btn-glyph btn-glyph-camera btn-sm btn-secondary" id="btn-asset-screenshot" title="Screenshot — copy this tab as an image">Screenshot</button>' +
+      '<button type="button" class="btn btn-glyph btn-glyph-download btn-sm btn-secondary" id="btn-asset-pdf" title="Export this tab to PDF">Export PDF</button>' +
       '<span class="btn-dropdown-wrap" id="asset-export-wrap" style="display:none">' +
         '<button type="button" class="btn btn-glyph btn-glyph-download btn-sm btn-secondary" id="btn-asset-export" title="Export">Export</button>' +
         '<div class="btn-dropdown-menu" id="asset-export-menu">' +
@@ -5926,10 +5927,10 @@ async function openViewModal(id, opts) {
       '</span>' +
       // Re-fetches the asset and re-renders the whole slide-over in place
       // (fresh probes, discovery writes, tag/notes edits from elsewhere),
-      // preserving the active tab. Sits between Screenshot and the
+      // preserving the active tab. Sits between Screenshot / PDF and the
       // management-access (Open HTTPS / Open SSH) buttons.
       '<button type="button" class="btn btn-glyph btn-glyph-refresh btn-sm btn-secondary" id="btn-asset-refresh" title="Reload this asset\'s details">Refresh</button>';
-    // The action group (Copy / Screenshot | Export / Refresh / management
+    // The action group (Screenshot + PDF | Export / Refresh / management
     // access) lives in the HEADER, right-aligned and left of the lock + close
     // pair; the footer keeps only the dismiss pair (Close / Edit). Both are
     // wired the same way either side of the move — every handler below finds
@@ -5970,9 +5971,11 @@ async function openViewModal(id, opts) {
     _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
     _wireHoverTriggersIn(bodyEl);
     bodyEl.addEventListener("click", _handleCopyClick);
-    document.getElementById("btn-asset-copy").addEventListener("click", _copyAssetDetails);
     document.getElementById("btn-asset-screenshot").addEventListener("click", function () {
       _openScreenshotOptions(a);
+    });
+    document.getElementById("btn-asset-pdf").addEventListener("click", function () {
+      _openScreenshotOptions(a, "pdf");
     });
     _wireAssetRefreshExport(a);
     _wireManagementAccessButtons(a);
@@ -18482,8 +18485,8 @@ function _extractTabBlocks(root) {
   return blocks;
 }
 
-// Render extracted blocks (see _extractTabBlocks) as plaintext lines. Shared
-// by the asset-details Copy button and the process/service slide-in's Copy.
+// Render extracted blocks (see _extractTabBlocks) as plaintext lines, for the
+// process/service slide-in's Copy.
 function _blocksToPlaintext(blocks) {
   var lines = [];
   blocks.forEach(function (b) {
@@ -18509,14 +18512,6 @@ function _blocksToPlaintext(blocks) {
   return lines.join('\n');
 }
 
-function _copyAssetDetails() {
-  var blocks = _extractTabBlocks(_activeAssetPanel());
-  if (blocks.length === 0) { showToast("Nothing to copy", "error"); return; }
-  copyTextToClipboard(_blocksToPlaintext(blocks)).then(function (ok) {
-    showToast(ok ? "Asset details copied to clipboard" : "Copy failed", ok ? "success" : "error");
-  });
-}
-
 // Faithful screenshot of the active tab panel, rendered at a canonical
 // CAPTURE_WIDTH so the output is identical regardless of the operator's
 // display size or drag-resized slide-over. The live DOM subtree is
@@ -18536,8 +18531,10 @@ function _copyAssetDetails() {
 //
 // `opts.filter` (optional) is forwarded to html-to-image — return false for a
 // node to prune it and its whole subtree from the clone. The options modal
-// uses it to drop deselected sections. Returns a Promise that resolves when
-// the capture has finished (success or toast'd failure — it never rejects).
+// uses it to drop deselected sections. `opts.output === "pdf"` saves the
+// composed canvas as a letter-portrait PDF (_saveCaptureAsPdf) instead of
+// copying it to the clipboard. Returns a Promise that resolves when the
+// capture has finished (success or toast'd failure — it never rejects).
 function _runScreenshotCapture(asset, opts) {
   opts = opts || {};
   var panel = _activeAssetPanel();
@@ -18552,9 +18549,9 @@ function _runScreenshotCapture(asset, opts) {
   var clrText   = cs.getPropertyValue("--color-text-primary").trim() || "#111";
   var fontSans  = cs.getPropertyValue("--font-sans").trim() || "system-ui,-apple-system,sans-serif";
 
-  var btn = document.getElementById("btn-asset-screenshot");
-  if (btn) btn.disabled = true;
-  function done() { if (btn) btn.disabled = false; }
+  var btns = [document.getElementById("btn-asset-screenshot"), document.getElementById("btn-asset-pdf")];
+  btns.forEach(function (b) { if (b) b.disabled = true; });
+  function done() { btns.forEach(function (b) { if (b) b.disabled = false; }); }
 
   // Capture at a canonical width so the screenshot is independent of the
   // operator's display / drag-resized slide-over (initSlideoverResize stamps
@@ -18619,6 +18616,16 @@ function _runScreenshotCapture(asset, opts) {
           // 1:1 device-pixel blit (w×h CSS px under the 2x transform), so the
           // captured tab is never resampled.
           ctx.drawImage(capture, pad, titleH, w, h);
+          if (opts.output === "pdf") {
+            try {
+              _saveCaptureAsPdf(canvas, asset, tabLabel);
+            } catch (err) {
+              showToast("PDF export failed: " + (err.message || "Unknown error"), "error");
+            }
+            done();
+            resolve();
+            return;
+          }
           canvas.toBlob(function (blob) {
             done();
             if (!blob) { showToast("Screenshot failed", "error"); resolve(); return; }
@@ -18631,11 +18638,49 @@ function _runScreenshotCapture(asset, opts) {
         .catch(function () {
           release();
           done();
-          showToast("Screenshot failed", "error");
+          showToast(opts.output === "pdf" ? "PDF export failed" : "Screenshot failed", "error");
           resolve();
         });
     });
   });
+}
+
+// Lay a composed capture canvas onto letter-portrait PDF pages: scaled to
+// the printable width, then sliced into page-height bands so a tall tab runs
+// across as many pages as it needs. Each page is filled with the capture's
+// own background first so a dark-theme capture doesn't sit on white margins
+// (read off the canvas's top-left pixel — the theme token may be any CSS
+// colour syntax, which jsPDF's setFillColor doesn't parse).
+function _saveCaptureAsPdf(canvas, asset, tabLabel) {
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    throw new Error("PDF library not loaded. Check your internet connection and reload the page.");
+  }
+  var doc = new window.jspdf.jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  var pageW = doc.internal.pageSize.getWidth();
+  var pageH = doc.internal.pageSize.getHeight();
+  var margin = 24;
+  var printW = pageW - margin * 2;
+  var printH = pageH - margin * 2;
+  var ptPerPx = printW / canvas.width;
+  var slicePx = Math.max(1, Math.floor(printH / ptPerPx));
+  var bg = canvas.getContext("2d").getImageData(0, 0, 1, 1).data;
+
+  for (var y = 0, page = 0; y < canvas.height; y += slicePx, page++) {
+    var h = Math.min(slicePx, canvas.height - y);
+    var slice = document.createElement("canvas");
+    slice.width = canvas.width;
+    slice.height = h;
+    slice.getContext("2d").drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+    if (page > 0) doc.addPage();
+    doc.setFillColor(bg[0], bg[1], bg[2]);
+    doc.rect(0, 0, pageW, pageH, "F");
+    doc.addImage(slice.toDataURL("image/png"), "PNG", margin, margin, printW, h * ptPerPx);
+  }
+
+  var tabPart = tabLabel ? "-" + String(tabLabel).replace(/[^A-Za-z0-9._-]+/g, "-") : "";
+  var filename = "asset-" + _assetExportSubject(asset) + tabPart + "-" + new Date().toISOString().slice(0, 10) + ".pdf";
+  doc.save(filename);
+  showToast("Exported " + filename);
 }
 
 // Enumerate the active tab's screenshot-eligible sections from the live DOM.
@@ -18690,7 +18735,8 @@ function _currentChartSelection(chartKey) {
 // Range-swap + capture + restore orchestration behind the options modal's
 // Capture button. `choices` is:
 //   { exclude: [section wrapper els], hiddenIfaces: bool,
-//     charts: [{ chartKey, desired }] }   // desired = string range or {from,to}
+//     charts: [{ chartKey, desired }],    // desired = string range or {from,to}
+//     output?: "pdf" }                    // omitted = copy PNG to clipboard
 // Charts re-render at the desired range (their loaders cancel their own
 // auto-refresh timers on entry), hidden interface rows are revealed for the
 // capture only, and EVERYTHING is restored in the finally — the operator's
@@ -18700,14 +18746,18 @@ var _screenshotBusy = false; // re-entrancy guard across the whole swap→captur
 async function _captureWithChoices(asset, choices) {
   if (_screenshotBusy) return;
   _screenshotBusy = true;
-  var shotBtn = document.getElementById("btn-asset-screenshot");
-  if (shotBtn) shotBtn.disabled = true;
+  function setDisabled(v) {
+    ["btn-asset-screenshot", "btn-asset-pdf"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = v;
+    });
+  }
+  setDisabled(true);
   try {
     await _captureWithChoicesInner(asset, choices);
   } finally {
     _screenshotBusy = false;
-    shotBtn = document.getElementById("btn-asset-screenshot");
-    if (shotBtn) shotBtn.disabled = false;
+    setDisabled(false);
   }
 }
 
@@ -18797,6 +18847,7 @@ async function _captureWithChoicesInner(asset, choices) {
   try {
     await _runScreenshotCapture(asset, {
       filter: function (node) { return !(node && excl.has(node)); },
+      output: choices.output,
     });
   } finally {
     for (i = 0; i < hiddenForCapture.length; i++) {
@@ -18811,7 +18862,9 @@ async function _captureWithChoicesInner(asset, choices) {
   }
 }
 
-// Screenshot options modal — the footer Screenshot button lands here. Lists
+// Screenshot options modal — the header Screenshot (camera) and PDF buttons
+// both land here; `output` "pdf" retitles it and saves a PDF instead of
+// copying a PNG. Lists
 // the active tab's sections (from the data-shot-section wrappers) with
 // include/exclude checkboxes, an "Include hidden interfaces" sub-option on
 // the Interfaces section, and a time-range picker (1h/12h/24h/7d/30d/Custom)
@@ -18819,11 +18872,13 @@ async function _captureWithChoicesInner(asset, choices) {
 // on-screen selection. Checkbox + hidden-iface choices persist per user+tab
 // (polaris-prefs-screenshot-<user>); ranges intentionally don't. Tabs with a
 // single plain section (SNMP Walk, Stations) skip the modal entirely.
-function _openScreenshotOptions(asset) {
+function _openScreenshotOptions(asset, output) {
+  var isPdf = output === "pdf";
+  var noun = isPdf ? "PDF export" : "Screenshot";
   var panel = _activeAssetPanel();
-  if (!panel) { showToast("Nothing to screenshot", "error"); return; }
+  if (!panel) { showToast("Nothing to " + (isPdf ? "export" : "screenshot"), "error"); return; }
   if (typeof htmlToImage === "undefined") {
-    showToast("Screenshot failed — capture library not loaded", "error");
+    showToast(noun + " failed — capture library not loaded", "error");
     return;
   }
   if (_screenshotBusy) return;
@@ -18832,7 +18887,7 @@ function _openScreenshotOptions(asset) {
   if (sections.length <= 1 && !hasOptions) {
     // Route through the orchestrator (no swaps/exclusions) for its
     // re-entrancy guard.
-    _captureWithChoices(asset, {});
+    _captureWithChoices(asset, { output: output });
     return;
   }
 
@@ -18882,12 +18937,12 @@ function _openScreenshotOptions(asset) {
   }).join("");
 
   var body =
-    '<p style="margin:0 0 0.5rem;font-size:0.85rem;color:var(--color-text-secondary)">Choose which sections of this tab to include in the screenshot.</p>' +
+    '<p style="margin:0 0 0.5rem;font-size:0.85rem;color:var(--color-text-secondary)">Choose which sections of this tab to include in the ' + (isPdf ? "PDF" : "screenshot") + '.</p>' +
     '<div id="shot-section-list">' + rowsHtml + '</div>';
   var footer =
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
-    '<button class="btn btn-primary" id="btn-shot-capture">Capture</button>';
-  openModal("Screenshot — " + _activeAssetTabLabel(), body, footer);
+    '<button class="btn btn-primary" id="btn-shot-capture">' + (isPdf ? "Export PDF" : "Capture") + '</button>';
+  openModal((isPdf ? "Export PDF" : "Screenshot") + " — " + _activeAssetTabLabel(), body, footer);
 
   var list = document.getElementById("shot-section-list");
   list.querySelectorAll(".shot-sec").forEach(function (cb) {
@@ -18949,7 +19004,7 @@ function _openScreenshotOptions(asset) {
 
     _setScreenshotPrefs(tabKey, { sections: secState, includeHiddenIfaces: hiddenCb ? hiddenCb.checked : prefs.includeHiddenIfaces === true });
     closeModal();
-    await _captureWithChoices(asset, { exclude: excludeEls, hiddenIfaces: hiddenIfaces, charts: chartChoices });
+    await _captureWithChoices(asset, { exclude: excludeEls, hiddenIfaces: hiddenIfaces, charts: chartChoices, output: output });
   });
 }
 
@@ -24687,8 +24742,8 @@ function _wireAssetEventsTab(assetId) {
 }
 
 // ── Events-tab export (footer Export dropdown) ──────────────────────────────
-// The footer's Screenshot button becomes an Export dropdown while the Events
-// tab is active (_syncAssetFooterButtons). Mirrors the Events page export
+// The header's Screenshot + PDF buttons become an Export dropdown while the
+// Events tab is active (_syncAssetFooterButtons). Mirrors the Events page export
 // (events.js handleEventExport / generateEventCsv / generateEventPdf) but is
 // scoped to this asset via _buildAssetEventsQuery — "all" honors the
 // operator's active column filters + sort, pinned to assetId.
@@ -24708,8 +24763,10 @@ function _syncAssetFooterButtons() {
   var active = document.querySelector("#asset-view-tabs .page-tab.active");
   var isEvents = !!(active && active.getAttribute("data-tab") === "events");
   var shot = document.getElementById("btn-asset-screenshot");
+  var pdf = document.getElementById("btn-asset-pdf");
   var wrap = document.getElementById("asset-export-wrap");
   if (shot) shot.style.display = isEvents ? "none" : "";
+  if (pdf) pdf.style.display = isEvents ? "none" : "";
   if (wrap) wrap.style.display = isEvents ? "" : "none";
 }
 

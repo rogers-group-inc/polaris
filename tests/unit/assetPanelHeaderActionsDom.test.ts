@@ -2,7 +2,7 @@
  * tests/unit/assetPanelHeaderActionsDom.test.ts — the asset-details slide-over's
  * per-asset action group lives in the HEADER (public/js/assets.js + styles.css).
  *
- * Copy / Screenshot | Export / Refresh / Open HTTPS / Open SSH moved out of the
+ * Screenshot + PDF | Export / Refresh / Open HTTPS / Open SSH moved out of the
  * footer in 2026-08: they act on the tab the operator is reading, and at the
  * bottom of a full-height panel they sat a screen away from it. Three things
  * about that placement break silently:
