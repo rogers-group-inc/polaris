@@ -262,6 +262,29 @@ describe("global search off the record's home page", () => {
     expect(win.location.pathname).toBe("/events.html");
   });
 
+  it("opens an Assets-group hit on the Device Map in place, not the map's pan/topology", () => {
+    setup("https://polaris.test/map.html");
+    const openAsset = vi.spyOn(g.PolarisPanels, "openAsset").mockResolvedValue(true);
+    const pan = vi.fn().mockReturnValue(true);
+    const topo = vi.fn();
+    (win as any).polarisMapPanToAsset = pan;
+    (win as any).polarisMapOpenSiteTopology = topo;
+    // An `a:`-scoped hit still carries its origin FortiGate, but no mapEntry.
+    g.openSearchResult({ type: "asset", id: "A1", context: { siteId: "FG1", focusHostname: "ws1" } });
+    expect(openAsset).toHaveBeenCalledWith("A1");
+    expect(pan).not.toHaveBeenCalled();
+    expect(topo).not.toHaveBeenCalled();
+    expect(win.location.pathname).toBe("/map.html");
+  });
+
+  it("still opens the topology for a Device Map group entry", () => {
+    setup("https://polaris.test/map.html");
+    const topo = vi.fn();
+    (win as any).polarisMapOpenSiteTopology = topo;
+    g.openSearchResult({ type: "asset", id: "A1", context: { siteId: "FG1", focusHostname: "ws1", mapEntry: true } });
+    expect(topo).toHaveBeenCalledWith("FG1", "ws1");
+  });
+
   it("opens a subnet, a reservation and an IP hit in the network slide-over", () => {
     const openNetwork = vi.spyOn(g.PolarisPanels, "openNetwork").mockResolvedValue(true);
     g.openSearchResult({ type: "subnet", id: "S1" });
