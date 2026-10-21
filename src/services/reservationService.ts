@@ -5,7 +5,7 @@
 import type { ReservationStatus } from "../generated/prisma/client.js";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
-import { ipInCidr, isValidIpAddress, enumerateSubnetIps, detectIpVersion } from "../utils/cidr.js";
+import { ipInCidr, isValidIpAddress, enumerateSubnetIps, detectIpVersion, isIpv6Address, canonicalIp } from "../utils/cidr.js";
 import {
   isLeaseBackedInfraRow,
   shouldReleaseInfraReservation,
@@ -106,7 +106,7 @@ export async function listReservations(filter: ListReservationsFilter = {}) {
   const decorated = reservations.map((r) => {
     const s = r.subnet as { integration: { type: string; config: unknown } | null } | null;
     const integration = s?.integration ?? null;
-    const pushEligible = !!(r.ipAddress && integrationPushEnabled(integration));
+    const pushEligible = !!(r.ipAddress && !isIpv6Address(r.ipAddress) && integrationPushEnabled(integration));
     // Strip the integration blob from the response — callers only need the
     // computed flag, and config can carry credentials.
     const { integration: _omit, ...subnetOut } = (r.subnet ?? {}) as Record<string, unknown>;
@@ -146,6 +146,11 @@ function resolvePushEligibility(
   ipAddress: string | null,
 ): { eligible: boolean; integration: { id: string; type: string; config: unknown } | null; deviceName: string } {
   if (!ipAddress) return { eligible: false, integration: null, deviceName: "" };
+  // FortiOS has no DHCPv6 reservations (business rule 125): an IPv6 row is
+  // never pushed. Without this a manual reservation in a discovered IPv6
+  // network found no IPv4 scope to push into, failed permanently, and rolled
+  // the create back.
+  if (isIpv6Address(ipAddress)) return { eligible: false, integration: null, deviceName: "" };
   if (!integration || !integrationPushEnabled(integration)) {
     return { eligible: false, integration: null, deviceName: "" };
   }
@@ -206,6 +211,10 @@ async function releaseSupersededDhcpLeaseAt(
       status: "active",
       OR: [
         { sourceType: "dhcp_lease" as any },
+        // An observed IPv6 sighting (business rule 125): a pure DB release —
+        // it has no push pointers, and the gate-side lease expiry keys on
+        // dhcp_lease.
+        { sourceType: "observed" as any },
         // A FortiGate VIP, admitted by business rule 77. Like the infra case
         // below, releasing one reaches no device: it carries no push pointers
         // and its sourceType isn't dhcp_reservation, so neither unpush branch
@@ -267,6 +276,9 @@ function isSupersedableByCreate(row: {
   dhcpBinding?: string | null;
 }): boolean {
   if (row.sourceType === "dns_resolved" || row.sourceType === "dhcp_lease") return true;
+  // An IPv6 address the gate merely SAW in use (business rule 125) — the
+  // most observational row there is.
+  if (row.sourceType === "observed") return true;
   if (row.sourceType === "vip") return true;
   return isLeaseBackedInfraRow(row);
 }
@@ -403,6 +415,10 @@ const ZERO_MAC_MSG =
 
 async function createReservationFlow(input: CreateReservationInput) {
   if (isAllZeroMac(input.macAddress)) throw new AppError(400, ZERO_MAC_MSG);
+  // One spelling per IPv6 address, the one discovery writes (business rule
+  // 125): the collision check and the unique index compare strings, so
+  // "2001:DB8::0005" must not sit beside a discovered "2001:db8::5".
+  if (isIpv6Address(input.ipAddress)) input = { ...input, ipAddress: canonicalIp(input.ipAddress) ?? input.ipAddress };
 
   // 1. Load the target subnet (with integration for push eligibility)
   const subnet = await prisma.subnet.findUnique({
@@ -714,7 +730,9 @@ export async function updateReservation(
   const pushEligible =
     integrationPushEnabled(integration) &&
     !!reservation.subnet.fortigateDevice &&
-    !!reservation.ipAddress;
+    !!reservation.ipAddress &&
+    // No DHCPv6 reservations on FortiOS (business rule 125).
+    !isIpv6Address(reservation.ipAddress);
 
   // Business rule 74.
   // The notes an edit stores are the device-side description's body — on the
@@ -876,6 +894,10 @@ async function releaseLeaseBestEffort(opts: {
   failureContext: string;
 }): Promise<void> {
   const { integration, deviceName, ip } = opts;
+  // release-lease is the IPv4 DHCP server's verb; a DHCPv6 lease is released
+  // in Polaris only (business rule 125) rather than sent where its effect on
+  // the gate is unverified.
+  if (isIpv6Address(ip)) return;
   try {
     await releaseDhcpLease({ integration, deviceName, ip });
     void logEvent({
