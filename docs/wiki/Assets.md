@@ -333,6 +333,12 @@ the device. Rows hidden underneath a collapsed parent are left out, and the
 image says how many, so it cannot be mistaken for the full list: expand them
 first if you want them in.
 
+When the section's data has gone stale — the amber **Last successful update …
+ago** (or **No successful poll yet**) warning is showing above it — a table's or
+a chart's camera carries that warning into the image, in amber under the title,
+so a picture of old data is never mistaken for a live one once it is pasted
+elsewhere.
+
 Copying to the clipboard needs a browser clipboard permission, and on most
 browsers an **HTTPS** page (or `localhost`). On a plain-HTTP install the
 capture still runs but the copy is refused, and the toast says so.
