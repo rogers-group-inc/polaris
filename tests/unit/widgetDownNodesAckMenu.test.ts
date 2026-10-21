@@ -45,10 +45,11 @@ interface Node {
   alertAcknowledgedBy?: string | null;
   alertAcknowledgeNote?: string | null;
 }
-interface Cfg { groupBy?: string; rowLimit?: number | null }
+interface Cfg { groupBy?: string; rowLimit?: number | null; hideAcknowledged?: boolean }
 interface WidgetModule {
   type: string;
   renderInstance: (el: unknown, config: Cfg, data: unknown, ctx: { onUnmount: (fn: () => void) => void }) => void;
+  renderConfig: (el: unknown, config: Cfg, onChange: (k: string, v: unknown) => void) => void;
 }
 
 let mod: WidgetModule;
@@ -204,6 +205,47 @@ describe("an acknowledged row reads as owned", () => {
       expect(ackPill(row)).toBeNull();
       expect(row.innerHTML).not.toContain("opacity");
     }
+  });
+});
+
+describe("hide acknowledged outages (gear toggle)", () => {
+  function ids(nodes: Node[], config: Cfg) {
+    const el = mountWidget();
+    const cleanups: Array<() => void> = [];
+    mod.renderInstance(el, config, { nodes, total: nodes.length }, { onUnmount: (fn) => cleanups.push(fn) });
+    cleanups.forEach((fn) => fn());
+    return { el, ids: Array.from(el.querySelectorAll(".dash-alert-item")).map((r) => r.getAttribute("data-asset-id")) };
+  }
+  const mixed = () => [
+    node({ id: "open", alertId: "n-1", alertAcknowledged: false }),
+    node({ id: "owned", alertId: "n-2", alertAcknowledged: true, alertAcknowledgedBy: "jsmith" }),
+    node({ id: "bare" }),
+  ];
+
+  it("lists acknowledged outages by default", () => {
+    expect(ids(mixed(), { groupBy: "none", rowLimit: 10 }).ids).toEqual(["open", "owned", "bare"]);
+  });
+
+  it("drops only the acknowledged outage when on — an alert-less node stays", () => {
+    expect(ids(mixed(), { groupBy: "none", rowLimit: 10, hideAcknowledged: true }).ids).toEqual(["open", "bare"]);
+  });
+
+  it("says they are acknowledged when that is what emptied it", () => {
+    const { el } = ids([mixed()[1], node({ id: "o2", alertId: "n-3", alertAcknowledged: true })],
+      { groupBy: "none", rowLimit: 10, hideAcknowledged: true });
+    expect(el.querySelector(".empty-state")?.textContent)
+      .toBe("All 2 down assets here are acknowledged — acknowledged outages are hidden");
+  });
+
+  it("offers the checkbox in the gear and writes a boolean", () => {
+    const el = mountWidget();
+    const changes: Array<[string, unknown]> = [];
+    mod.renderConfig(el, {}, (k, v) => changes.push([k, v]));
+    const cb = el.querySelector('[data-b="hideAcknowledged"]') as unknown as HTMLInputElement;
+    expect(cb.checked).toBe(false);
+    cb.checked = true;
+    cb.dispatchEvent(new (win as unknown as { Event: typeof Event }).Event("change"));
+    expect(changes).toEqual([["hideAcknowledged", true]]);
   });
 });
 

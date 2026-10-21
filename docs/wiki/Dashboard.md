@@ -169,6 +169,13 @@ field that reads **All regions**, **All FortiGates**, **All asset types** or
 | **Asset types** | the types you leave ticked. The pills are the types *shown* |
 | **Tags** (Active Alerts and Event Alerts) | alerts on assets carrying **any** of the tags you pick. An alert about Polaris itself, with no device, stays listed |
 
+**Hiding acknowledged alerts.** Active Alerts, Event Alerts and Down Assets keep
+an acknowledged alert listed by default, greyed out with an **ack** pill. To show
+only what nobody has taken yet, as on a wallboard, tick **Hide acknowledged
+alerts** (Down Assets: **Hide acknowledged outages**) in the widget's gear. The
+setting is per widget. A down asset with no alert at all is always listed. When
+the setting is what empties a widget, the widget says so.
+
 The filters combine: a widget narrowed by region *and* type shows what matches
 both.
 
