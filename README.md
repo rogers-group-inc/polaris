@@ -42,7 +42,7 @@ How Polaris knows what to monitor. Full detail: [Assets](https://github.com/roge
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-assets.png">
-  <img alt="The Assets table: hostname, IP, serial, type, state, monitor status, monitoring transport, sources, tags and last seen, with a per-column filter row and a bulk-action bar." src="docs/img/screenshots/desktop-noon-assets.png">
+  <img alt="The Assets table: hostname, IP, serial, type, state, monitor status, monitoring transport, sources, description, tags and last seen, with a per-column filter row and a bulk-action bar." src="docs/img/screenshots/desktop-noon-assets.png">
 </picture>
 
 ## Also in the box
