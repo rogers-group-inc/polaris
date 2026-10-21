@@ -534,7 +534,11 @@ With `assets:write`, a VM or container carries an action bar: **Start**,
 container **Update** (when one is available) and **Check for updates**. Every
 verb confirms first. Restart and Update hold the workload in maintenance for
 their duration; Stop pauses its monitoring unless you keep it, and a Start from
-Polaris resumes it ([rule 94](Business-Rules#rule-94)). Details are on
+Polaris resumes it ([rule 94](Business-Rules#rule-94)). After a verb the card
+shows *Waiting for … to settle* and re-reads the state every few seconds, for up
+to two minutes, until the workload is running (or stopped, after a Stop) — a
+TrueNAS App reports an update or restart done while it is still *DEPLOYING*.
+The verbs come back once it settles. Details are on
 [Unraid → Workload actions](Integration-Unraid#workload-actions).
 
 #### Proxmox VE nodes and guests
