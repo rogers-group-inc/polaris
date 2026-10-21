@@ -7286,6 +7286,10 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .dashboard-tab .dashboard-tab-name-input {
   width: auto;
   padding: 0.2rem 0.5rem;
+  /* Its padding + border pulled back out of the tab's height, so the active
+     tab — and with it the whole tab row, the edit buttons and the page card
+     — does not drop 7-8px when Customize turns the name into this field. */
+  margin-block: calc(-0.2rem - 1px);
   font: inherit;
   font-weight: 500;
   color: var(--color-text-primary);
@@ -7651,10 +7655,15 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 
 /* Widget config popover (gear icon) — small, anchored, NOT a full modal. */
 .widget-config-popover {
-  position: absolute;
+  /* Fixed and clamped to the viewport by openGearPopover() (dashboard.js):
+     absolute, it extended the document and scrolled the page card. */
+  position: fixed;
   z-index: 1200;
   min-width: 240px;
   max-width: 320px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  box-sizing: border-box;
   padding: 12px;
   background: var(--color-bg-elevated, #1c1f24);
   border: 1px solid var(--color-border, rgba(255,255,255,0.10));
