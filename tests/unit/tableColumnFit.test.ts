@@ -267,3 +267,74 @@ describe("column fit — padding on sliver-width columns", () => {
     expect(generatedCss()).not.toContain("padding-left");
   });
 });
+
+/**
+ * Double-clicking a resize handle sizes that column to its content: the
+ * header label and every rendered body cell, untruncated. happy-dom does no
+ * layout, so the probe the helper measures each cell's content in is given a
+ * width of 10px per character, and no stylesheet means zero padding.
+ */
+describe("column fit — double-click to autofit", () => {
+  beforeEach(() => {
+    const proto = (win as any).HTMLElement.prototype;
+    const orig = proto.getBoundingClientRect;
+    proto.getBoundingClientRect = function (this: any) {
+      if (this.classList && this.classList.contains("sf-autofit-probe")) {
+        const w = (this.textContent || "").length * 10;
+        return { width: w, height: 10, top: 0, left: 0, right: w, bottom: 10 };
+      }
+      return orig.call(this);
+    };
+  });
+
+  function dblclickHandle(colId: string): void {
+    const handle = doc.querySelector(`thead th[data-col-id="${colId}"] .sf-resize-handle`)!;
+    handle.dispatchEvent(new (win as any).Event("dblclick", { bubbles: true, cancelable: true }));
+  }
+
+  function setCell(colId: string, text: string): void {
+    const ids = Array.from(doc.querySelectorAll("thead th")).map((t) => t.getAttribute("data-col-id"));
+    (doc.querySelector("#tb tr")!.children[ids.indexOf(colId)] as any).textContent = text;
+  }
+
+  it("shrinks a column to its widest content and hands the width to its neighbor", () => {
+    // Stretched render: hostname 216 / ip 433. "Hostname" (80) beats "host-1" (60).
+    layout.setPrefs({ widths: { hostname: 100, ip: 200, created: 100 } });
+    dblclickHandle("hostname");
+
+    expect(widthOf("hostname")).toBe(80);
+    expect(widthOf("ip")).toBe(569);
+    expect(colWidths().reduce((a, b) => a + b, 0)).toBe(AVAIL);
+    expect(doc.querySelector(".sf-autofit-probe")).toBeNull();
+  });
+
+  it("grows a column to a body cell wider than its label, taking from the neighbor", () => {
+    setCell("hostname", "a-very-long-hostname-01"); // 230
+    layout.setPrefs({ widths: { hostname: 50, ip: 400, created: 400 } });
+    const before = widthOf("ip");
+    dblclickHandle("hostname");
+
+    expect(widthOf("hostname")).toBe(230);
+    expect(widthOf("ip")).toBe(before - (230 - 50));
+  });
+
+  it("never squeezes the neighbor below its own content width", () => {
+    // ip's content is "IP Address" (100); it can give only 10 of the 180 asked.
+    setCell("hostname", "a-very-long-hostname-01");
+    layout.setPrefs({ widths: { hostname: 50, ip: 110, created: 706 } });
+    dblclickHandle("hostname");
+
+    expect(widthOf("hostname")).toBe(230);
+    expect(widthOf("ip")).toBe(100);
+  });
+
+  it("persists through onChange like a drag does", () => {
+    let calls = 0;
+    // setup() already wired the handles to a no-op onChange; re-wire fresh ones.
+    doc.querySelectorAll(".sf-resize-handle").forEach((h) => h.remove());
+    layout = g.setupColumnLayout(doc.querySelector("table"), { onChange: () => { calls++; } });
+    dblclickHandle("hostname");
+    expect(calls).toBe(1);
+    expect(layout.getPrefs().widths.hostname).toBe(80);
+  });
+});
