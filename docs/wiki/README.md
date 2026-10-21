@@ -45,8 +45,8 @@ README, deletes wiki pages the source no longer has, writes LF and re-reads ever
 committed blob to prove it, and pushes `master`. Each publish commit is titled
 `wiki: sync from polaris@<sha>`; the next run reports how far `docs/wiki/` has
 moved since. A fork gets its own wiki for free — the URL is derived from
-`origin` (`--wiki-url` overrides). `/polaris-deploy` offers the publish after
-every push that changed `docs/wiki/`.
+`origin` (`--wiki-url` overrides). `/polaris-deploy` runs the publish whenever
+the plan shows the live wiki is behind `docs/wiki/`.
 
 The traps it handles — worth knowing when it reports one:
 
