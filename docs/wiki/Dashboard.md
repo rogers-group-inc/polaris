@@ -24,7 +24,7 @@ widgets.
 | Move one | drag its **⠿** grip to any column; a green **+** marks where it will land, and dropping on **+ New Widget Block** starts a new one |
 | Column width | the column's **¼ / ⅓ / ½ / Full** control |
 | Widget height | the **1× / 2× / 3×** toggle on the widget, click to cycle |
-| Configure one | the gear on the widget — most carry options (row count, filters, grouping). Changes apply at once; click anywhere else, or press Escape, to close it |
+| Configure one | the gear on the widget — most carry options (row count, filters, grouping). Changes apply at once; click anywhere else, press Escape, or scroll the page to close it. On a widget near the bottom of the screen it opens upward, so it always fits on screen |
 | Sort one | the **⇅** button on the widget's header, while you are customizing |
 | Export one to CSV | the download button on the widget's header, while you are *not* customizing |
 | Remove one | the **×** on the widget, while customizing |

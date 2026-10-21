@@ -1010,22 +1010,54 @@
       fieldsEl.innerHTML = '<p style="font-size:0.82rem;color:var(--color-text-secondary)">This widget has no configurable options.</p>';
     }
 
-    var anchorRect = anchorEl.getBoundingClientRect();
+    // Fixed, in viewport coordinates, and kept inside the viewport. It was
+    // absolute at page coordinates: opened from a widget near the bottom it
+    // hung past the viewport, which made the DOCUMENT scrollable, so a wheel
+    // over it slid the page card up under the pinned tab row. Without room
+    // below the gear it opens upward instead; taller than the viewport, it
+    // scrolls inside (styles.css max-height).
     var width = 260;
     pop.style.width = width + "px";
-    var top = anchorRect.top + window.scrollY;
-    var leftSide = anchorRect.left + window.scrollX - width - 6;
-    var rightSide = anchorRect.right + window.scrollX + 6;
-    var left = leftSide >= 8 ? leftSide : rightSide;
-    var viewportRight = window.scrollX + document.documentElement.clientWidth - 8;
-    if (left + width > viewportRight) left = Math.max(8, viewportRight - width);
-    pop.style.top = top + "px";
-    pop.style.left = left + "px";
+    function place() {
+      var a = anchorEl.getBoundingClientRect();
+      var vw = document.documentElement.clientWidth;
+      var vh = document.documentElement.clientHeight;
+      var h = pop.offsetHeight;
+      var leftSide = a.left - width - 6;
+      var left = leftSide >= 8 ? leftSide : a.right + 6;
+      if (left + width > vw - 8) left = Math.max(8, vw - 8 - width);
+      var top = a.top;
+      if (top + h > vh - 8) top = a.bottom - h;
+      top = Math.max(8, Math.min(top, vh - 8 - h));
+      pop.style.top = top + "px";
+      pop.style.left = left + "px";
+    }
+    place();
+    // A field that loads its options after the first paint changes the height.
+    var resizeObs = typeof ResizeObserver === "function" ? new ResizeObserver(place) : null;
+    if (resizeObs) resizeObs.observe(pop);
+    // Fixed no longer travels with the gear, so a scroll that moves the gear
+    // (the page card, the page) closes it. A widget body's own auto-scroll
+    // does not hold the gear and is ignored; so is a scroll inside the popover.
+    function onScroll(e) {
+      var t = e.target;
+      if (pop.contains(t)) return;
+      if (t === document || (t.contains && t.contains(anchorEl))) closePopover();
+    }
+    window.addEventListener("scroll", onScroll, true);
 
-    openPopover = { el: pop, widgetId: w.id };
+    openPopover = {
+      el: pop,
+      widgetId: w.id,
+      cleanup: function () {
+        if (resizeObs) resizeObs.disconnect();
+        window.removeEventListener("scroll", onScroll, true);
+      },
+    };
   }
   function closePopover() {
     if (!openPopover) return;
+    try { openPopover.cleanup && openPopover.cleanup(); } catch (_) {}
     try { document.body.removeChild(openPopover.el); } catch (_) {}
     openPopover = null;
   }
