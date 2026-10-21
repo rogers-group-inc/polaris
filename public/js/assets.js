@@ -1122,9 +1122,11 @@ async function openAssetTagFilterModal(current, done) {
   catalog = ((both[0] && both[0].tags) || []).filter(function (t) { return t && t.name; });
   inUse = (both[1] && both[1].tags) || [];
 
-  var cur = current || { mode: "any", values: [], none: false };
+  // A fresh filter starts on All: each extra tag narrows the list, which is
+  // what picking a second tag reads as. A stored filter keeps its own mode.
+  var cur = current || { mode: "all", values: [], none: false };
   var selected = (cur.values || []).slice();
-  var mode = cur.mode === "all" ? "all" : "any";
+  var mode = cur.mode === "any" ? "any" : "all";
 
   var cats = {};
   var registered = {};

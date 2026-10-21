@@ -63,9 +63,9 @@ use** group lists tags that are on assets but not in the tag list (ones added by
 discovery, for example). Discovery's `prev-entra:` and `prev-ad:` bookkeeping
 tags are left out. Click chips to select as many as you like, then click **OK**.
 Nothing changes until you click OK; **Cancel**, Escape or the × leaves the
-filter as it was, and **Clear** deselects everything. **Any** (the default)
-shows assets carrying at least one selected tag; **All** shows only assets
-carrying every one of them. **Include untagged assets** adds assets with no
+filter as it was, and **Clear** deselects everything. **All** (the default)
+shows only assets carrying every selected tag, so each extra tag narrows the
+list; **Any** shows assets carrying at least one of them. **Include untagged assets** adds assets with no
 tags (with **Any** only). Tags match exactly, so selecting `Production` does
 not also show `Production-DR`. Once applied, the box reads the tag's name when
 one is selected and "N selected" when several are; hover it to see the full
