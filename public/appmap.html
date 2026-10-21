@@ -69,15 +69,24 @@
           <label class="appmap-check" title="Dim connections not seen in the last 15 minutes"><input type="checkbox" id="appmap-fade-stale" checked> Fade stale</label>
           <div class="appmap-toolbar-actions">
             <span id="appmap-status" class="appmap-status"></span>
-            <!-- One Export button, as on the Device Map's topology view: its
-                 menu (graph-export.js) holds Screenshot / PDF / Visio. -->
-            <button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="appmap-export" aria-label="Export" aria-haspopup="menu" title="Export: screenshot, PDF or Visio" style="line-height:0">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- The Full screen button fills the viewport with this whole row —
+           graph AND info rail, so a node's details still open beside it. -->
+      <div class="appmap-layout" id="appmap-layout">
+        <div id="appmap-graph" class="appmap-graph">
+          <!-- Cytoscape's OWN container. cy.destroy() removes every child of the
+               element it was given, so the overlays below must be its siblings,
+               not its children, or each re-render (a filter change, the 60s
+               refresh) deletes them from the page. -->
+          <div id="appmap-cy" class="appmap-cy"></div>
+          <!-- Top-right corner: Full screen / Refresh / Export, the same
+               cluster as the Device Map's (.map-view-tools). Export
+               (graph-export.js) takes only what is in view. -->
+          <div class="map-view-tools appmap-corner-tr">
+            <button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="appmap-fullscreen" aria-label="Full screen" title="Full screen" style="line-height:0"></button>
             <button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="appmap-refresh" aria-label="Refresh" title="Refresh now (auto-refreshes every 60s)" style="line-height:0">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polyline points="23 4 23 10 17 10"/>
@@ -85,17 +94,14 @@
                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
               </svg>
             </button>
+            <button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="appmap-export" aria-label="Export" aria-haspopup="menu" title="Export what is in view: screenshot, PDF or Visio" style="line-height:0">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </button>
           </div>
-        </div>
-      </div>
-
-      <div class="appmap-layout">
-        <div id="appmap-graph" class="appmap-graph">
-          <!-- Cytoscape's OWN container. cy.destroy() removes every child of the
-               element it was given, so the overlays below must be its siblings,
-               not its children, or each re-render (a filter change, the 60s
-               refresh) deletes them from the page. -->
-          <div id="appmap-cy" class="appmap-cy"></div>
           <!-- Bottom-left corner: the legend (it collapses into its own button,
                legend-toggle.js) with the Ports key beside it. -->
           <div class="appmap-corner-bl">
@@ -190,6 +196,7 @@
   <script src="/js/recurrence-editor.js"></script>
   <script src="/js/quiet-time-editor.js"></script>
   <script src="/js/assets-maintenance.js"></script>
+  <script src="/js/map-fullscreen.js"></script>
   <script src="/js/appmap.js"></script>
   <script src="/js/graph-export.js"></script>
   <script src="/js/appmap-export.js"></script>

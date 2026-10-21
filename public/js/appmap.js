@@ -1433,6 +1433,12 @@
     });
     var refresh = document.getElementById("appmap-refresh");
     if (refresh) refresh.addEventListener("click", function () { loadGraph(true); });
+    // Full screen takes the graph + info rail row (map-fullscreen.js); the
+    // graph re-measures its container but keeps the operator's zoom and pan.
+    if (window.PolarisMapFullscreen) {
+      window.PolarisMapFullscreen.attach(document.getElementById("appmap-fullscreen"),
+        document.getElementById("appmap-layout"), function () { if (cy) cy.resize(); });
+    }
 
     // The screenshot is an item on the Export menu (appmap-export.js), which
     // reaches it through PolarisAppMap.screenshot.
@@ -1729,7 +1735,9 @@
     var GAP = 16 * SCALE;
 
     try {
-      var graphUri = cy.png({ output: "base64uri", scale: SCALE, full: true, bg: bg });
+      // full:false — the viewport, not the whole graph: what the operator has
+      // zoomed or panned out of view stays out of the picture.
+      var graphUri = cy.png({ output: "base64uri", scale: SCALE, full: false, bg: bg });
       var graphImg = await new Promise(function (resolve, reject) {
         var im = new Image();
         im.onload = function () { resolve(im); };
@@ -1774,8 +1782,7 @@
       var leftW = Math.max(graphImg.width, keyCanvas ? keyCanvas.width : 0);
       out.width = leftW + (railW ? GAP + railW : 0);
       // The key sits BELOW the graph (bottom-left, as on screen) rather than
-      // over it: cy.png({full:true}) is cropped to the elements, so an overlay
-      // would land on top of nodes.
+      // over it, where it would land on top of nodes.
       var keyH = keyCanvas ? GAP + keyCanvas.height : 0;
       out.height = Math.max(graphImg.height + keyH, railCanvas ? railCanvas.height : 0);
       var ctx = out.getContext("2d");

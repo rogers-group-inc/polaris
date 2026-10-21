@@ -378,6 +378,43 @@
 
   function allBoxes(scene) { return scene.under.concat(scene.parents, scene.nodes); }
 
+  // PURE (exposed for tests): `scene` cut down to the model-px rectangle `ext`
+  // ({x1,y1,x2,y2} — cy.extent(), the part of the graph on screen). A box or
+  // connection with no part inside it is dropped; one that straddles the edge
+  // is kept, and the PDF writer clips it at `clip` so nothing past the edge of
+  // the view prints. The drawing's extent becomes the view itself. Returns
+  // null when nothing is in view.
+  function clipSceneToExtent(scene, ext) {
+    function hits(r) { return r.x2 >= ext.x1 && r.x1 <= ext.x2 && r.y2 >= ext.y1 && r.y1 <= ext.y2; }
+    function boxRect(b) {
+      var r = { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 };
+      if (b.label) {
+        var blk = nodeLabelBlock(b, b.label, b.label.fontPx * 1.2);
+        r.y1 = Math.min(r.y1, blk.top); r.y2 = Math.max(r.y2, blk.top + blk.h);
+      }
+      return r;
+    }
+    function edgeRect(e) {
+      var xs = [], ys = [];
+      e.path.forEach(function (p) { xs.push(p.x); ys.push(p.y); if (p.type === "Q") { xs.push(p.cx); ys.push(p.cy); } });
+      return { x1: Math.min.apply(null, xs), y1: Math.min.apply(null, ys), x2: Math.max.apply(null, xs), y2: Math.max.apply(null, ys) };
+    }
+    function keepBox(b) { return hits(boxRect(b)); }
+    var out = {
+      under: scene.under.filter(keepBox), parents: scene.parents.filter(keepBox), nodes: scene.nodes.filter(keepBox),
+      edges: scene.edges.filter(function (e) { return hits(edgeRect(e)); }),
+      icons: scene.icons, minFontPx: Infinity,
+      bbox: { x1: ext.x1, y1: ext.y1, x2: ext.x2, y2: ext.y2, w: ext.x2 - ext.x1, h: ext.y2 - ext.y1 },
+      clip: { x1: ext.x1, y1: ext.y1, x2: ext.x2, y2: ext.y2 },
+    };
+    if (!out.nodes.length && !out.parents.length && !out.edges.length) return null;
+    allBoxes(out).concat(out.edges).forEach(function (it) {
+      if (it.label && it.label.fontPx < out.minFontPx) out.minFontPx = it.label.fontPx;
+    });
+    if (!isFinite(out.minFontPx)) out.minFontPx = scene.minFontPx;
+    return out;
+  }
+
   // Where a node label's text block sits, in model px: the centre x and the
   // top y of the block, given Cytoscape's valign/halign/margin semantics.
   function nodeLabelBlock(b, lbl, lineH) {
@@ -559,6 +596,13 @@
     doc.rect(area.x, area.y, area.w, area.h, null);
     doc.clip();
     doc.discardPath();
+    // A viewport export (clipSceneToExtent) also stops at the edge of the
+    // view; PDF clips intersect, so this narrows the area clip above.
+    if (scene.clip) {
+      doc.rect(X(scene.clip.x1), Y(scene.clip.y1), (scene.clip.x2 - scene.clip.x1) * s, (scene.clip.y2 - scene.clip.y1) * s, null);
+      doc.clip();
+      doc.discardPath();
+    }
 
     function drawBox(b) {
       var style = b.fill && b.stroke ? "FD" : b.fill ? "F" : b.stroke ? "S" : null;
@@ -1179,7 +1223,8 @@
   }
 
   // ctx: { cy, lightStylesheet | scene, title, fileBase, noun, metaLines,
-  //        keyItems, scopeNote } — see the header comment.
+  //        keyItems, scopeNote, viewport? } — see the header comment and
+  //        sceneOf.
   function checkCtx(ctx) {
     var empty = !ctx || (ctx.scene ? !ctx.scene.nodes.length : !ctx.cy || ctx.cy.nodes(":visible").length === 0);
     if (empty) {
@@ -1190,7 +1235,19 @@
   }
 
   // A page that draws its own graph hands the scene over already built.
-  function sceneOf(ctx) { return ctx.scene || sceneFromCy(ctx.cy, ctx.lightStylesheet); }
+  // `ctx.viewport` limits a Cytoscape export to what is on screen: anything
+  // zoomed or panned out of the view is left out. Null when nothing is in view.
+  function sceneOf(ctx) {
+    if (ctx.scene) return ctx.scene;
+    var scene = sceneFromCy(ctx.cy, ctx.lightStylesheet);
+    return ctx.viewport ? clipSceneToExtent(scene, ctx.cy.extent()) : scene;
+  }
+
+  function sceneOrToast(ctx) {
+    var scene = sceneOf(ctx);
+    if (!scene) showToast("Nothing in view to export — zoom or pan to bring the " + (ctx.noun || "graph") + " into view", "error");
+    return scene;
+  }
 
   function openPdfDialog(ctx) {
     if (!checkCtx(ctx)) return;
@@ -1198,7 +1255,8 @@
       showToast("PDF library not loaded. Reload the page and try again.", "error");
       return;
     }
-    var scene = sceneOf(ctx);
+    var scene = sceneOrToast(ctx);
+    if (!scene) return;
     var o = readOpts();
     function options(list, cur) {
       return list.map(function (v) {
@@ -1335,7 +1393,9 @@
   function exportVisio(ctx) {
     if (!checkCtx(ctx)) return;
     try {
-      var scene = withHeaderAndKey(sceneOf(ctx), ctx);
+      var inView = sceneOrToast(ctx);
+      if (!inView) return;
+      var scene = withHeaderAndKey(inView, ctx);
       var bytes = zipStore(vsdxParts(scene, appName() + " " + ctx.title, ctx.title));
       download(bytes, "application/vnd.ms-visio.drawing", ctx.fileBase + "-" + new Date().toISOString().slice(0, 10) + ".vsdx");
       showToast(ctx.title + " exported for Visio");
@@ -1374,6 +1434,7 @@
     pdfText: pdfText,
     shapeKind: shapeKind,
     nodeLabelBlock: nodeLabelBlock,
+    clipSceneToExtent: clipSceneToExtent,
     crc32: crc32,
     zipStore: zipStore,
     vsdxPageXml: vsdxPageXml,

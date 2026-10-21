@@ -408,6 +408,19 @@
   pointer-events: none;
 }
 .appmap-corner-bl > * { pointer-events: auto; }
+/* Top-right corner: Full screen / Refresh / Export (.map-view-tools). */
+.appmap-corner-tr {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+}
+/* Full screen (map-fullscreen.js) takes the graph + info rail row; the
+   page's own background goes behind it, with the cards' breathing room. */
+.appmap-layout.map-fullscreen {
+  padding: 12px;
+  background: var(--color-bg-primary);
+}
 .appmap-legend {
   position: relative;
   width: 320px;

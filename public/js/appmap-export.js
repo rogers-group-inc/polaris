@@ -1,8 +1,9 @@
 // public/js/appmap-export.js — the Application Map's Export menu.
 //
-// The toolbar's Export button opens the shared menu (graph-export.js):
-// Screenshot / PDF / Visio. This file only says what the App Map's export
-// contains — its title, what narrowed the view, and the Ports key — and
+// The map's top-right Export button opens the shared menu (graph-export.js):
+// Screenshot / PDF / Visio, each limited to what is in the viewer. This file
+// only says what the App Map's export contains — its title, what narrowed the
+// view, and the Ports key — and
 // leaves drawing, paging and the minimum printed text size to
 // window.PolarisGraphExport.
 //
@@ -59,7 +60,10 @@
       noun: "map",
       metaLines: metaLines(raw),
       keyItems: keyItems(raw),
-      scopeNote: "Exports what is on screen now: the current filters, hidden ports and node positions.",
+      // Only the part of the map in the viewer: zoom in and whatever leaves
+      // the view leaves the export too (graph-export.js clipSceneToExtent).
+      viewport: true,
+      scopeNote: "Exports what is in the viewer now — only the part of the map on screen at the current zoom and pan — with the current filters, hidden ports and node positions.",
     };
   }
 

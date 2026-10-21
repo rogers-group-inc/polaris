@@ -30,7 +30,8 @@
       <div class="map-toolbar">
         <!-- The map-theme toggle is moved onto the map (top-left, above zoom) by
              map.js addMapThemeControl; Show regions is the map's top-right
-             Regions panel (buildRegionsPanel). -->
+             Regions panel (buildRegionsPanel), with Full screen / Refresh /
+             Export to its right (addMapViewTools). -->
         <button type="button" id="map-theme-toggle" class="btn btn-secondary btn-icon-only map-theme-toggle" aria-label="Toggle map theme" title="Toggle map theme (saved per user)" style="line-height:0"></button>
         <!-- The viewer's own region scope, read-only. Rendered by map.js
              (renderMyRegions) once /auth/me has answered. -->
@@ -184,6 +185,7 @@
   <script src="/js/assets-maintenance.js"></script>
   <script src="/js/topology-render.js"></script>
   <script src="/js/graph-export.js"></script>
+  <script src="/js/map-fullscreen.js"></script>
   <script src="/js/map.js"></script>
 </body>
 </html>

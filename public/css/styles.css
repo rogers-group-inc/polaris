@@ -2459,6 +2459,28 @@ html[data-page-top-curtain]::after {
 .legend-collapsible.legend-collapsed > :not(.legend-toggle-open) { display: none !important; }
 .legend-collapsible:not(.legend-collapsed) > .legend-toggle-open { display: none !important; }
 .legend-collapsible > .legend-toggle-open { pointer-events: auto; box-shadow: var(--shadow-lift); }
+/* On-map view tools (Device Map + Application Map): Full screen / Refresh /
+   Export as one row of icon buttons in the map's top-right corner, lifted off
+   the map the way the collapsed legend buttons are. */
+.map-view-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.map-view-tools .btn { box-shadow: var(--shadow-lift); }
+/* Full screen (map-fullscreen.js): the map fills the viewport. 500 is over
+   the sidebar (100) and page chrome, under the row/Export menus (900),
+   modals (1000) and slide-overs (1050), which open on top of it. */
+.map-fullscreen {
+  position: fixed !important;
+  inset: 0;
+  z-index: 500;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+}
 .legend-toggle-head {
   display: flex;
   align-items: center;

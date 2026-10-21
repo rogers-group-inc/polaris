@@ -120,7 +120,12 @@ Stacked, so a long filter set cannot squeeze the typing area:
 **Top row** — the filter box and the **Saved** menu.
 **Second row** — the applied pills (collapses when empty).
 **Third row** — Seen within · Hide external · Hide workstations · Fade stale,
-with the status and action icons right-aligned.
+with the status right-aligned.
+
+**Full screen**, **Refresh** and **Export** are on the map itself, in its
+top-right corner. Full screen fills the screen with the map and its info
+panel; click it again, or press Esc, to come back. Refresh reloads now (the map
+also refreshes itself every 60 seconds).
 
 ### The filter box
 
@@ -149,10 +154,14 @@ removed.** On by default.
 
 ### Export
 
-The **Export** button (the download icon) opens a menu with three choices. Each
-exports the map **as it is on screen**: current filters, hidden ports and node
-positions. The Device Map's site topology has the same menu
-([Device Map](Device-Map#exporting-the-topology)).
+The **Export** button (the download icon, top right of the map) opens a menu
+with three choices. Each exports **only what is in the viewer**: the part of
+the map on screen at your current zoom and position, with the current filters,
+hidden ports and node positions. Zoom in, and whatever leaves the view leaves
+the export too; a box cut by the edge of the view is cut at the same place on
+the PDF. To export the whole map, zoom out until all of it is in view first.
+The Device Map's site topology has the same menu
+([Device Map](Device-Map#exporting-the-topology)), but exports its whole graph.
 
 - **Copy screenshot (map + info panel)**: composites the graph canvas with a
   capture of the info rail, so the listening-port list is **in** the image, with
@@ -160,9 +169,10 @@ positions. The Device Map's site topology has the same menu
   the page. Clipboard first, download as fallback.
 - **Export PDF…**: a PDF drawn as vectors, so it prints sharp and its text is
   searchable (details below).
-- **Export to Visio (.vsdx)**: one Visio page sized to the map, where every box,
+- **Export to Visio (.vsdx)**: one Visio page sized to the view, where every box,
   external node and connection is a separate shape you can recolour, move or
-  annotate. Text keeps its on-screen size. Connections are drawn lines, **not
+  annotate. A box the edge of the view cuts through comes across whole. Text
+  keeps its on-screen size. Connections are drawn lines, **not
   glued connectors**, so moving a box in Visio does not drag its lines with it.
   Text uses Visio's default font. The title and filter lines sit above the
   map, and the key sits in a box at its bottom left, as on the PDF. Each part
