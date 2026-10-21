@@ -72,6 +72,7 @@ import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 import { splitInterfaceAddresses } from "../utils/interfaceAddress.js";
+import { parseInterfaceIpv6 } from "../utils/fortiosIpv6.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -3297,6 +3298,7 @@ export function buildVcenterSystemInfo(reading: VcenterReading): SystemInfoSampl
         operStatus: nic.connected === null ? null : nic.connected ? "up" : "down",
         macAddress: nic.macAddress,
         ipAddress:  nic.ipAddress,
+        ipv6Address: nic.ipv6Address,
       });
     }
     for (const fs of reading.row.guestDisks ?? []) {
@@ -3357,6 +3359,7 @@ export function buildVcenterSystemInfo(reading: VcenterReading): SystemInfoSampl
         ifName:      vmk.device,
         macAddress:  vmk.macAddress,
         ipAddress:   vmk.ipAddress,
+        ipv6Address: vmk.ipv6Address,
         // A vmk publishes no link state of its own — see the note above the
         // function — so operStatus stays absent rather than claiming "up".
         vlanId:      pg?.vlanId ?? null,
@@ -6121,6 +6124,13 @@ export interface FortiCmdbInterfaceEntry {
    *  see `backfillFortiCmdbOnlyTunnels`; the monitor's runtime IP wins
    *  everywhere else. */
   ipAddress: string | null;
+  /** The CMDB's configured IPv6 (`ipv6.ip6-address`, else the first
+   *  `ip6-extra-addr`), via utils/fortiosIpv6.ts → parseInterfaceIpv6;
+   *  null when unset / link-local. The monitor endpoint carries no IPv6 at
+   *  all (FortiOS 7.6.7 / 8.0.1), so this is the interface's only IPv6
+   *  source on both transports (business rule 126). A dhcp / pppoe /
+   *  delegated interface's IPv6 is runtime state the CMDB does not hold. */
+  ipv6Address: string | null;
   /** A `type tunnel` interface's underlay (CMDB `interface`, e.g. "wan1");
    *  null for every other type and for FortiOS's built-in per-VDOM
    *  pseudo-tunnels (`ssl.root`, `l2t.root`, `naf.root`), which carry none. */
@@ -6187,6 +6197,7 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
       addressingMode,
       adminStatus,
       ipAddress,
+      ipv6Address: parseInterfaceIpv6(c).addresses[0]?.ipAddress ?? null,
       tunnelUnderlay: t === "tunnel" && typeof c.interface === "string" && c.interface.trim() ? c.interface.trim() : null,
     });
   }
@@ -6242,6 +6253,7 @@ export function buildFortiInterfaceSamples(
       speedBps:    speedMbps != null ? Math.round(speedMbps * 1_000_000) : null,
       duplex:      fortiMonitorDuplex(i.link, i.duplex),
       ipAddress:   ip,
+      ipv6Address: cmdbEntry?.ipv6Address ?? null,
       macAddress:  typeof i.mac === "string" ? i.mac.toUpperCase() : null,
       inOctets:    pickFiniteNumber(i.rx_bytes),
       outOctets:   pickFiniteNumber(i.tx_bytes),
@@ -6359,13 +6371,14 @@ export function backfillFortiCmdbOnlyTunnels(
   const present = new Set(interfaces.map((s) => s.ifName));
   for (const [name, c] of cmdbByName) {
     if (c.type !== "tunnel" || present.has(name)) continue;
-    if (!c.ipAddress && !c.tunnelUnderlay) continue;
+    if (!c.ipAddress && !c.ipv6Address && !c.tunnelUnderlay) continue;
     interfaces.push({
       ifName:      name,
       adminStatus: c.adminStatus,
       operStatus:  null,
       speedBps:    null,
       ipAddress:   c.ipAddress,
+      ipv6Address: c.ipv6Address,
       macAddress:  null,
       inOctets:    null,
       outOctets:   null,

@@ -608,7 +608,10 @@ export function parseTrueNasAppStats(
 
 /** One interface's addressing from interface.query, keyed by interface name. */
 export interface TrueNasIfaceAddressing {
+  /** First reportable IPv4. */
   ipAddress: string | null;
+  /** First reportable IPv6 — never fe80:: (business rule 126). */
+  ipv6Address: string | null;
   macAddress: string | null;
   vlanId: number | null;
 }
@@ -619,9 +622,10 @@ export interface TrueNasIfaceAddressing {
  * and the bridge (br0) a host with VMs carries its address on, read "—".
  * `state` is the live kernel view (DHCP leases, the bridge's inherited MAC);
  * the configured `aliases` are the fallback for an address set but not up.
- * One address per row, IPv4 first (the agent's rule): an IPv6-only interface
- * shows its first routable IPv6 — never the fe80:: link-local every IPv6
- * interface carries.
+ * One address per family (business rule 126): the first reportable INET in
+ * `ipAddress`, the first reportable INET6 in `ipv6Address` — never the fe80::
+ * link-local every IPv6 interface carries. The IPv6-only fallback into
+ * `ipAddress` this used to make is gone now that IPv6 has its own column.
  */
 export function parseTrueNasIfaceAddressing(rows: any[]): Map<string, TrueNasIfaceAddressing> {
   const out = new Map<string, TrueNasIfaceAddressing>();
@@ -638,8 +642,8 @@ export function parseTrueNasIfaceAddressing(rows: any[]): Map<string, TrueNasIfa
     if (!name) continue;
     const st = r?.state ?? {};
     out.set(name, {
-      ipAddress: first(name, st.aliases, "INET") ?? first(name, r?.aliases, "INET")
-        ?? first(name, st.aliases, "INET6") ?? first(name, r?.aliases, "INET6"),
+      ipAddress: first(name, st.aliases, "INET") ?? first(name, r?.aliases, "INET"),
+      ipv6Address: first(name, st.aliases, "INET6") ?? first(name, r?.aliases, "INET6"),
       macAddress: mac(st.link_address) ?? mac(st.permanent_link_address),
       vlanId: num(r?.vlan_tag),
     });
@@ -654,7 +658,7 @@ export function applyTrueNasIfaceAddressing(
 ): WorkloadInterfaceReading[] {
   return interfaces.map((i) => {
     const a = addressing.get(i.name);
-    return a ? { ...i, ipAddress: a.ipAddress, macAddress: a.macAddress, vlanId: a.vlanId } : i;
+    return a ? { ...i, ipAddress: a.ipAddress, ipv6Address: a.ipv6Address, macAddress: a.macAddress, vlanId: a.vlanId } : i;
   });
 }
 

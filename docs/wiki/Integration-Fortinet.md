@@ -333,6 +333,10 @@ interface set to DHCP, PPPoE or delegated mode, and a DHCPv6 server whose
 prefix is delegated from upstream. Those addresses are not in the gate's
 configuration, which is what discovery reads.
 
+The firewall's own **Interfaces** tab shows the same configured IPv6 under
+each interface's **IPv6** column, over both transports. Monitoring reads it
+from the gate's configuration too, so the same runtime gap applies there.
+
 ### Assets
 
 FortiGates, managed FortiSwitches, managed FortiAPs, and — from device

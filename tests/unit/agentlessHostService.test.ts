@@ -21,6 +21,8 @@ import {
   winEventLevelToLevel,
   buildJournalctlCommand,
   buildWindowsEventLogScript,
+  LINUX_INTERFACES_COMMAND,
+  WINDOWS_INTERFACES_SCRIPT,
 } from "../../src/services/agentlessHostService.js";
 
 describe("parseLinuxCpuMem", () => {
@@ -98,6 +100,26 @@ describe("parseLinuxInterfaces", () => {
   it("leaves speed null when there is no negotiated rate", () => {
     expect(parseLinuxInterfaces(sample)[1].speedBps).toBeNull();
     expect(parseLinuxInterfaces("IF=x\nSPEED=-1")[0].speedBps).toBeNull();
+  });
+
+  // Business rule 126: `ip -o addr` lines (ADDR=addr/prefix), as a real Linux
+  // host printed them — one reportable address per family, loopback and
+  // link-local never. Before this the collector recorded no address at all.
+  it("reads the interface's IPv4 and IPv6 from the ADDR lines", () => {
+    const rows = parseLinuxInterfaces([
+      "IF=eth0", "OPER=up", "ADDR=192.0.2.10/24", "ADDR=fe80::78d0:2bff:feef:ee/64", "ADDR=2001:db8::10/64",
+      "IF=lo", "OPER=unknown", "ADDR=127.0.0.1/8", "ADDR=::1/128",
+      "IF=eth1", "OPER=down",
+    ].join("\n"));
+    expect(rows.map((r) => [r.ifName, r.ipAddress, r.ipv6Address])).toEqual([
+      ["eth0", "192.0.2.10", "2001:db8::10"],
+      ["lo", null, null],
+      ["eth1", null, null],
+    ]);
+  });
+
+  it("asks iproute2 for every interface's addresses", () => {
+    expect(LINUX_INTERFACES_COMMAND).toMatch(/ip -o addr show dev "\$n"/);
   });
 
   it("maps operstate onto an admin flag", () => {
@@ -184,6 +206,29 @@ describe("Windows parsers", () => {
     expect(rows[0].speedBps).toBe(1_000_000_000);
     expect(rows[0].ipAddress).toBe("10.0.0.5");
     expect(rows[0].operStatus).toBe("up");
+  });
+
+  // Business rule 126: the script now sends every address on the adapter
+  // (`ips`, privacy addresses last); one reportable address per family is kept.
+  it("parseWindowsInterfaces picks one IPv4 and one IPv6 out of the adapter's addresses", () => {
+    const rows = parseWindowsInterfaces(JSON.stringify([
+      { n: "Ethernet", ips: ["fe80::1%12", "2001:db8::10", "169.254.3.4", "192.0.2.10", "2001:db8::99"] },
+      { n: "Loopback", ips: ["::1", "127.0.0.1"] },
+      { n: "Wi-Fi", ips: "2001:db8::20" },
+      { n: "Old", ip: "192.0.2.30" },
+    ]));
+    expect(rows.map((r) => [r.ifName, r.ipAddress, r.ipv6Address])).toEqual([
+      ["Ethernet", "192.0.2.10", "2001:db8::10"],
+      ["Loopback", null, null],
+      ["Wi-Fi", null, "2001:db8::20"],
+      ["Old", "192.0.2.30", null],
+    ]);
+  });
+
+  it("the Windows script reads both families, privacy addresses last, without Sort-Object", () => {
+    expect(WINDOWS_INTERFACES_SCRIPT).not.toMatch(/-AddressFamily IPv4/);
+    expect(WINDOWS_INTERFACES_SCRIPT).not.toMatch(/\bsort\b|Sort-Object/i);
+    expect(WINDOWS_INTERFACES_SCRIPT.indexOf("-ne 'Random'")).toBeLessThan(WINDOWS_INTERFACES_SCRIPT.indexOf("-eq 'Random'"));
   });
 
   // ConvertTo-Json emits a bare object, not an array, for a single row.

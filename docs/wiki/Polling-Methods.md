@@ -157,7 +157,7 @@ eventLog**.
 |---|---|---|
 | CPU | `/proc/stat` read **twice, a second apart** — CPU is a rate | `Win32_OperatingSystem` |
 | Memory | `/proc/meminfo` (`MemAvailable`) | same |
-| Interfaces | `/sys/class/net/*` | `Get-NetAdapter` + `Get-NetAdapterStatistics` |
+| Interfaces | `/sys/class/net/*`, plus `ip -o addr` for each interface's IPv4 and IPv6 address | `Get-NetAdapter` + `Get-NetAdapterStatistics`, plus `Get-NetIPAddress` for both address families |
 | Storage | `df -PkT` | `Get-Volume` |
 | Processes | inventory + a 60 s pinned/mapped sub-pass | same |
 | Event log | `journalctl -o json -p warning` | `Get-WinEvent` levels 1–3 |

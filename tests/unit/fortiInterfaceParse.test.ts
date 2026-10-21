@@ -136,6 +136,26 @@ describe("buildFortiInterfaceSamples", () => {
       ifType: "vlan", ifParent: "lan", vlanId: 200, alias: "IoT", description: "IoT segment",
     });
   });
+
+  // Business rule 126: the CMDB `ipv6` block is the only IPv6 source — the
+  // monitor payload carries none on 7.6.7 / 8.0.1. Shape as read off the lab.
+  it("takes the interface's IPv6 from the CMDB ipv6 block, and nothing from an unset one", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([
+      { name: "lan", ip: "192.0.2.1 255.255.255.0", ipv6: { "ip6-address": "2001:DB8:10::1/64", "ip6-extra-addr": [] } },
+      { name: "wan2", ipv6: { "ip6-address": "::/0", "ip6-extra-addr": [{ prefix: "2001:db8:20::2/64" }] } },
+      { name: "dmz", ipv6: { "ip6-address": "::/0", "ip6-extra-addr": [] } },
+      { name: "port9" },
+    ]);
+    const rows = buildFortiInterfaceSamples(
+      { lan: { link: true, ip: "192.0.2.1" }, wan2: { link: true }, dmz: { link: false }, port9: { link: false } },
+      cmdb,
+    );
+    const by = Object.fromEntries(rows.map((r) => [r.ifName, r]));
+    expect(by.lan).toMatchObject({ ipAddress: "192.0.2.1", ipv6Address: "2001:db8:10::1" });
+    expect(by.wan2.ipv6Address).toBe("2001:db8:20::2");
+    expect(by.dmz.ipv6Address).toBeNull();
+    expect(by.port9.ipv6Address).toBeNull();
+  });
 });
 
 describe("backfillFortiAggregateMembers", () => {

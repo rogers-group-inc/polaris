@@ -149,6 +149,11 @@ its uplink pNICs and the VMkernel ports riding its port groups stamped as its
 children. That is the FortiSwitch-trunk shape, so the System tab nests it
 unchanged. Each VMkernel port picks up its port group's VLAN id.
 
+A VMkernel port shows its configured IPv4 under **IP** and its first routable
+IPv6 under **IPv6**. A VM's network adapters do the same with the addresses
+VMware Tools reports. Link-local addresses (fe80::, 169.254.x.x) are never
+shown.
+
 A vSwitch's operational status is **derived** — up while any uplink is up, and
 **null with no uplinks at all**, because an internal-only vSwitch is not an
 outage. It carries no speed, vCenter publishing no aggregate rate.
