@@ -426,8 +426,14 @@ GET    /reservations/push-queue
 Behaviours to code against:
 
 - **Creating over a `dhcp_lease` is a create, not a release.** The lease is
-  observed presence; Polaris supersedes it server-side. Creating over a
-  `manual`, `dhcp_reservation`, `vip` or `interface_ip` row returns **409**.
+  observed presence; Polaris supersedes it server-side. The same goes for an
+  `observed` row, an IPv6 address a FortiGate saw a client using without
+  assigning it, which carries an `expiresAt` a day past its last sighting
+  ([rule 125](Business-Rules#rule-125)). Creating over a `manual`,
+  `dhcp_reservation`, `vip` or `interface_ip` row returns **409**.
+- **An IPv6 `ipAddress` is stored in compressed lower-case form** (RFC 5952),
+  whatever spelling you send, and an IPv6 reservation is never pushed to a
+  FortiGate, even on a push-enabled network.
 - **On a push-enabled network the push is verified by read-back, and any failure
   aborts the create entirely.** You never end up with a Polaris row the gate has
   never heard of — so a 5xx here means *nothing was written*, not *partially

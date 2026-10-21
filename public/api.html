@@ -1339,7 +1339,11 @@
           <code>fullwrite</code> to edit/delete/retry). Every reservation carries a
           <code>sourceType</code> — <code>manual</code> for API/UI-created rows, discovery types
           (<code>dhcp_lease</code>, <code>dhcp_reservation</code>, <code>vip</code>,
-          <code>interface_ip</code>, <code>dns_resolved</code>, …) for rows Polaris observed.
+          <code>interface_ip</code>, <code>dns_resolved</code>, <code>observed</code>, …) for rows
+          Polaris observed. <code>observed</code> is an IPv6 address a FortiGate saw a client
+          using without assigning it (SLAAC or static); it carries an <code>expiresAt</code> a
+          day past its last sighting. An IPv6 <code>ipAddress</code> is stored in its compressed
+          lower-case form, and is never pushed to a FortiGate.
         </p>
 
         <div class="endpoint">
@@ -1360,7 +1364,7 @@
             <code>400</code>: it names no device. Omit it instead.</p>
           <p>Collision semantics: an existing <em>active</em> row at the same address is a
             <code>409</code> — unless it is merely observed presence (<code>dhcp_lease</code>,
-            <code>dns_resolved</code>, or a lease-backed infra row), which the create supersedes
+            <code>dns_resolved</code>, <code>observed</code>, or a lease-backed infra row), which the create supersedes
             in place. Device-owned rows (<code>vip</code>, <code>interface_ip</code>) and
             authoritative types always <code>409</code>. A deprecated subnet refuses new
             reservations.</p>

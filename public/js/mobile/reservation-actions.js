@@ -370,6 +370,7 @@
           else if (src === "fortinap") msg = ip + " is in use by a FortiAP";
           else if (src === "dns_resolved") msg = ip + " is already in use (DNS-resolved)";
           else if (src === "external") msg = ip + " is allocated in an external IPAM";
+          else if (src === "observed") msg = ip + " is in use by a client the gate saw";
           else msg = ip + " is already reserved";
           PolarisTabs.showSnackbar(msg, { error: true });
         }).catch(function () {

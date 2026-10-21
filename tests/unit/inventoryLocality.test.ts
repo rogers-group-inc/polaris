@@ -217,6 +217,21 @@ describe("parseInventoryClient", () => {
     expect(parseInventoryClient({ mac: "aa:bb:cc:00:00:01" }, "G")).toBeNull();
   });
 
+  // Business rule 125: IPv6 rides its own field and never becomes the claim.
+  it("reads ipv6_address into ipv6Address, canonicalised, leaving ipAddress IPv4", () => {
+    const p = parseInventoryClient({ ...ROW_7X, ipv6_address: "2001:DB8:1:0::10" }, "GW-1")!;
+    expect(p.ipAddress).toBe("10.40.25.235");
+    expect(p.ipv6Address).toBe("2001:db8:1::10");
+    expect(parseInventoryClient({ ...ROW_7X, ipv6_address: "fe80::1" }, "GW-1")!.ipv6Address).toBeUndefined();
+    expect(INVENTORY_QUERY_FORMAT.split("|")).toContain("ipv6_address");
+  });
+
+  it("moves an IPv6 an old build put in `ip` out of the address claim", () => {
+    const p = parseInventoryClient({ mac: "aa:bb:cc:00:00:01", ip: "2001:db8:1::11", last_seen: 1 }, "G")!;
+    expect(p.ipAddress).toBe("");
+    expect(p.ipv6Address).toBe("2001:db8:1::11");
+  });
+
   it("asks FortiOS for both spellings of every renamed field", () => {
     const fields = INVENTORY_QUERY_FORMAT.split("|");
     for (const f of ["ipv4_address", "ip", "os_name", "os", "detected_interface", "interface", "unauth_user", "user"]) {

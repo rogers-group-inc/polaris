@@ -64,6 +64,11 @@ function makeRouter(device: Record<string, unknown>, opts: { failOnProxy?: boole
         "reserved-address": [{ id: 7, ip: "10.10.10.50", mac: "AA:BB:CC:DD:EE:01", description: "printer" }],
       }]);
     }
+    // DHCPv6 (business rule 125): the unconfigured server FortiOS 7.6.7 ships
+    // with — prefix "::/0" — which must add no network.
+    if (url === "/pm/config/device/FGT-A/vdom/root/system/dhcp6/server") {
+      return nativeData([{ id: 1, status: 1, subnet: "::/0", interface: "fortilink", "ip-mode": 0, "ip-range": [] }]);
+    }
     if (url === "/pm/config/device/FGT-A/vdom/root/system/interface") {
       return nativeData([
         { name: "lan", ip: ["10.10.10.1", "255.255.255.0"], "switch-controller-mgmt-vlan": 20 },

@@ -55,6 +55,7 @@ const RESERVATION_SOURCE_TYPES = new Set([
   "fortigate",
   "external",
   "dns_resolved",
+  "observed",
 ]);
 
 function parseSourceTypesParam(raw: unknown): string[] | undefined {

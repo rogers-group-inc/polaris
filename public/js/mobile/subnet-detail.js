@@ -310,7 +310,9 @@
     // with dhcpBinding "reservation" or null stay authoritative.
     var isLeaseBackedInfra = (r.sourceType === "fortiswitch" || r.sourceType === "fortinap")
       && r.dhcpBinding === "lease";
-    if ((isLease || isLeaseBackedInfra) && canCreate) {
+    // An observed IPv6 sighting (business rule 125) is claimable like a lease.
+    var isObserved = r.sourceType === "observed";
+    if ((isLease || isLeaseBackedInfra || isObserved) && canCreate) {
       var reserveCls = pushEligible ? "btn-success" : "btn-filled";
       var reserveTitle = pushEligible ? "Reserve on Gate" : "Reserve in Polaris";
       buttons.push('<button class="btn ' + reserveCls + '" data-act="reserve" data-ip="' + escapeHtml(ip.address) + '" title="' + reserveTitle + '">Reserve</button>');
