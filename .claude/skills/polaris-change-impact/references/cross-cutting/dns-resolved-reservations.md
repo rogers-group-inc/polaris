@@ -19,7 +19,7 @@
 - dns_resolved release is implemented as `deleteMany`, not `updateMany({status: "released"})`. The unique constraint applies to every status value, so a released-state row at `(sub, ip, "released")` would permanently occupy that slot and block later status transitions at the same target. dns_resolved is a system-created fallback with no audit value once it's gone — hard-delete is the correct semantic, never re-introduce the soft-release path. The matching `cleanupStaleDnsResolvedReleased` startup job clears any pre-cutover released-state rows that slipped into the table before this rule landed.
 - `createdBy="system:dns-resolved"` is the stable system actor — the existing ownership middleware treats `system:*` as "no operator owns this", which is the intended UX (non-admins can't edit).
 - Eligible asset statuses: active / maintenance / storage / quarantined. decommissioned / disabled MUST release the existing row (don't keep stale claims).
-- IPv4 only (Netmask helpers are IPv4-only and the IP-panel UI is IPv4-shaped). IPv6 assets silently skip.
+- IPv4 only, by rule 11's own scope: IPv6 assets silently skip. (Not a library limit — the `utils/cidr.ts` helpers handle IPv6, netmask 2.x parses it — and an asset's primary `ipAddress` is IPv4 anyway, business rules 125 / 126.)
 - Never push to FortiGate. The service writes via raw `prisma.reservation.create` and bypasses `reservationService.createReservation` so the push path is never reachable.
 - Never raise Conflict rows. The defer-to-authoritative branch returns early without touching `prisma.conflict`.
 - Real-time hook is best-effort fire-and-forget — the periodic job is the safety net.
