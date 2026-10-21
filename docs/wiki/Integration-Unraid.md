@@ -199,6 +199,9 @@ The host's **Interfaces** table shows each interface's traffic, link state,
 addressing through two different parts of its API, and Polaris reads both on
 each pass.
 
+- **IPv6:** an Unraid API that lists per-interface IPv6 addresses also fills
+  the **IPv6** column, with the first routable one (never fe80::). An API
+  without that list still shows the IPv4 address.
 - **Older Unraid API:** if it has no per-interface addresses, the table shows
   MAC and speed only. If it has neither, it shows traffic only. Monitoring
   keeps working either way.
