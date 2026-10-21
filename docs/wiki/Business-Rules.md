@@ -1531,6 +1531,20 @@ never used to recognise the device on a later run. Assets that are neither
 monitored nor credentialed keep matching by name, so a laptop's Wi-Fi and
 wired addresses still land on one card.
 
+**91(c) A managed switch or access point is recognised by its serial on its
+own address.** A FortiSwitch or FortiAP takes its management address by DHCP
+from its FortiGate, and the FortiGate lists that client under the device's
+serial number instead of its name. When the lease or detected-device row is on
+the address the FortiSwitch or FortiAP discovery itself reported for that
+device, Polaris treats it as that device: the MAC is added to the switch or
+access point, and no separate "other" asset is created for it. That separate
+asset used to appear on every new switch whose MAC was not yet known, and it
+raised a Duplicate IP conflict until the next discovery run merged it. The
+switch keeps its own name, address, type and firmware version. The row adds
+only the MAC and fills blank fields. A row that carries the serial on any other
+address is still only a name the client sent, and changes nothing on the
+switch.
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time
