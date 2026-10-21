@@ -244,12 +244,16 @@ server has not stored.
 ### Exporting the topology
 
 The **Export** button at the top right of the topology header opens a menu.
-Each choice exports the graph **as it is on screen**, in its current layout,
-including a narrowed endpoint-search view.
+Each choice exports **only what is in the viewer**: the part of the graph on
+screen at your current zoom and position, in its current layout, including a
+narrowed endpoint-search view. Zoom in, and whatever leaves the view leaves the
+export too; a device cut by the edge of the view is cut at the same place on
+the PDF, and the device and link count above it counts only what is in view.
+To export the whole site, zoom out until all of it is in view first.
 
 - **Copy screenshot (map + details)**: the graph and the right-hand details
   panel as one image. Clipboard first, download as fallback. The small camera
-  inside the graph area still copies the graph alone.
+  inside the graph area copies the graph in view alone.
 - **Export PDF…**: the graph drawn as vectors on white paper whatever theme you
   are using, so it prints sharp and its text is searchable. Choose the paper
   size, orientation and **minimum text size** (7 pt by default): **nothing on
@@ -259,10 +263,11 @@ including a narrowed endpoint-search view.
   page carries the legend (health colours, link types, location groups) in a
   box at the bottom left.
   Characters the PDF fonts cannot print are simplified: `↔` prints as `<->`.
-- **Export to Visio (.vsdx)**: one Visio page sized to the graph, every device,
+- **Export to Visio (.vsdx)**: one Visio page sized to the view, every device,
   location box and link a separate editable shape, health colours and link
   styles kept. Links are drawn lines, **not glued connectors** (moving a device
-  in Visio does not drag its links), and text uses Visio's default font. The title and summary line sit above the graph, and
+  in Visio does not drag its links), and text uses Visio's default font. A
+  device the edge of the view cuts through comes across whole. The title and summary line sit above the graph, and
   the legend sits in a box at its bottom left, as on the PDF.
 
 The Application Map has the same menu ([Application Map](Application-Map#export)).

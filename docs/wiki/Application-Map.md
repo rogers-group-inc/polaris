@@ -161,7 +161,7 @@ hidden ports and node positions. Zoom in, and whatever leaves the view leaves
 the export too; a box cut by the edge of the view is cut at the same place on
 the PDF. To export the whole map, zoom out until all of it is in view first.
 The Device Map's site topology has the same menu
-([Device Map](Device-Map#exporting-the-topology)), but exports its whole graph.
+([Device Map](Device-Map#exporting-the-topology)) and the same in-view rule.
 
 - **Copy screenshot (map + info panel)**: composites the graph canvas with a
   capture of the info rail, so the listening-port list is **in** the image, with
