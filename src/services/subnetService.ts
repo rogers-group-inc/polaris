@@ -1083,6 +1083,9 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
     pushError: r.pushError,
     notes: r.notes,
     expiresAt: r.expiresAt,
+    // A lease-backed FortiSwitch/FortiAP row's lease clock. Display only: such
+    // a row can't carry expiresAt without being expired by the TTL job.
+    leaseExpiresAt: r.leaseExpiresAt,
     createdBy: r.createdBy,
     conflictMessage: r.conflictMessage,
   });

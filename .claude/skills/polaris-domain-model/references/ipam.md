@@ -138,6 +138,12 @@ Reservation
   -- expireReservations and churn a live AP. See business rule 23 +
   -- src/utils/infraDhcpBinding.ts.
   dhcpBinding       String?
+  -- leaseExpiresAt: the gate's lease clock for a dhcpBinding="lease" infra row,
+  -- from Phase 5's entry.expireTime. DISPLAY ONLY (IP panel Lease Expiry
+  -- column + mobile detail fall back to it when expiresAt is null) — nothing
+  -- expires, releases or alerts on it. Written on change, cleared when the
+  -- binding becomes "reservation" or the lease reports no expiry.
+  leaseExpiresAt    DateTime?
   conflicts       Conflict[]
   @@unique([subnetId, ipAddress, status])
 
