@@ -295,21 +295,18 @@ The rest are conditional:
 - **SNMP Walk** — with the **Asset Probes** permission, **and** only when at
   least one monitoring stream actually resolves to SNMP for this asset.
 
-The header also carries **Copy** and **Screenshot** (below), **Open HTTPS** /
+The header also carries **Screenshot** and **Export PDF** (below), **Open HTTPS** /
 **Open RDP** / **Open SSH** where the device has them, and **Edit** for
 `assets:write`. Edit opens the edit modal (**General · Monitoring**, plus
 **Maintenance** where it applies) over the panel and returns you to it.
 Right of the device's name, on every tab, are its two verbs:
 [Discover Now](#discover-now) and [Reboot](#reboot).
 
-### Copy and Screenshot
+### Screenshot and Export PDF
 
-The slide-over header carries **Copy** and **Screenshot**, and both act on the
-tab you are reading — not on the whole asset.
-
-**Copy** writes the tab out as plain text: labelled values, tables as rows,
-headings kept. It is the form to paste into a ticket, a change record or a
-chat.
+The slide-over header carries two icon buttons, **Screenshot** (the camera) and
+**Export PDF** (the download tray), and both act on the tab you are reading —
+not on the whole asset.
 
 **Screenshot** opens a picker first. Every section of the tab gets an include
 checkbox (your choices are remembered per tab), chart sections get a time-range
@@ -318,8 +315,13 @@ Interfaces section can be told to include the interfaces it is hiding. On
 **Capture**, Polaris renders the tab at a fixed width — so the image looks the
 same whether your window is wide or narrow, or the panel has been dragged to a
 new size — and copies it to the clipboard as a PNG. Charts, badges, colours and
-your theme all come across as they appear on screen. On the **Events** tab the
-button gives way to an **Export** dropdown instead (CSV or PDF, this page or
+your theme all come across as they appear on screen.
+
+**Export PDF** offers the same picker and the same capture, but saves it as a
+PDF file (letter size, portrait) named after the device and the tab. A long tab
+runs onto as many pages as it needs.
+
+On the **Events** tab both buttons give way to an **Export** dropdown instead (CSV or PDF, this page or
 every event for the asset).
 
 Individual tables and charts have their own camera buttons: for a table, beside

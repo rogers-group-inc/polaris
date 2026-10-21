@@ -258,7 +258,7 @@ Everything else is shared on purpose and must stay so: the four group operators 
 
 ## Screenshot-eligible section (asset-details tabs)
 
-**What it is:** The asset-details Screenshot button opens a section-picker modal whose checkbox list is enumerated from the live panel — any section wrapped in the annotation div participates automatically, with zero modal-side changes.
+**What it is:** The asset-details Screenshot and PDF buttons open a section-picker modal whose checkbox list is enumerated from the live panel — any section wrapped in the annotation div participates automatically, with zero modal-side changes.
 
 **Canonical implementation:** the System tab sections in `assetSystemViewHTML` (public/js/assets.js); consumed by `_collectShotSections` / `_openScreenshotOptions` / `_captureWithChoices` in the same file.
 
@@ -268,7 +268,7 @@ Everything else is shared on purpose and must stay so: the four group operators 
 - `data-shot-chart="assetMonitor|assetSystem|assetSdwan"` — only on chart-bearing sections; adds a 1h/12h/24h/7d/30d/Custom range picker defaulting to the chart's current selection, and requires a matching branch in `_currentChartSelection` + `_captureWithChoices.loadChart`.
 - `data-shot-sub="hiddenIfaces"` — Interfaces only; surfaces the "Include hidden interfaces" sub-checkbox.
 
-**Key conventions:** wrappers with no rendered content (empty async mounts) are skipped by `_collectShotSections`, so conditional sections need no special handling. Excluded sections are pruned from the html-to-image clone via its `filter` option — never hide live DOM for exclusion. The Events tab gets no annotations (its footer button is the Export dropdown, not Screenshot).
+**Key conventions:** wrappers with no rendered content (empty async mounts) are skipped by `_collectShotSections`, so conditional sections need no special handling. Excluded sections are pruned from the html-to-image clone via its `filter` option — never hide live DOM for exclusion. The Events tab gets no annotations (its header shows the Export dropdown, not Screenshot / PDF).
 
 ---
 
