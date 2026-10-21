@@ -316,6 +316,11 @@ or per account depending on the thing:
 | **View tabs** | server-side, follow you across browsers | Assets, above the bulk bar |
 | **Saved dashboards** | server-side, private or public | Dashboard |
 
+To resize a column, drag the divider on its right edge; **double-click** the
+divider to fit the column to its widest header or cell on the current page.
+The column to its right gives up the difference, but never below its own
+content; anything it can't give widens the table into a horizontal scroll.
+
 Publishing a saved filter needs `assets:write`; deleting someone else's needs
 `assets:fullwrite`.
 

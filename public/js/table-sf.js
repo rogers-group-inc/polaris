@@ -1898,6 +1898,114 @@ function setupColumnLayout(tableEl, options) {
     });
   }
 
+  /** Horizontal padding + borders of a cell, in px. */
+  function cellChromeX(cell) {
+    var cs = getComputedStyle(cell);
+    return (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) +
+           (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
+  }
+
+  /**
+   * The width column `i` needs to show its header label and every rendered
+   * body cell without truncating — what a double-click on its handle sizes it
+   * to. Each cell's content is cloned into an absolutely-positioned
+   * max-content, nowrap probe appended INSIDE that cell, so the page's
+   * descendant selectors (`.data-table td .badge`) still style it the way the
+   * real content is styled; the probe is removed in the same task, so nothing
+   * paints. The header measures only its label + sort icon (`.sf-header`) —
+   * the filter input under it has an intrinsic width of its own and would size
+   * every text column to the input rather than the label.
+   */
+  function contentWidthOf(i) {
+    var pos = displayIds().indexOf(colIds[i]);
+    // A column squeezed under NARROW_COL_W has had its padding stripped by
+    // rewriteHideStyle; once fitted it gets it back, so measure with the
+    // padding a normal cell in the same row carries.
+    var narrow = (parseFloat(cols[i].style.width) || 0) <= NARROW_COL_W;
+    function chromeFor(row, cell) {
+      if (!narrow) return cellChromeX(cell);
+      var disp = displayIds();
+      for (var k = 0; k < row.children.length; k++) {
+        var id = disp[k];
+        if (k === pos || !id || hidden[id] || !isResizableCol(id)) continue;
+        if ((parseFloat(cols[srcIdxOf[id]].style.width) || 0) > NARROW_COL_W) return cellChromeX(row.children[k]);
+      }
+      return cellChromeX(cell);
+    }
+    function measure(cell, nodes) {
+      var probe = document.createElement("span");
+      probe.className = "sf-autofit-probe";
+      probe.style.cssText = "position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;" +
+        "display:inline-block;width:max-content;white-space:nowrap;";
+      Array.prototype.forEach.call(nodes, function (n) {
+        // The resize handle is absolutely positioned and sizes nothing.
+        if (n.nodeType === 1 && n.classList.contains("sf-resize-handle")) return;
+        probe.appendChild(n.cloneNode(true));
+      });
+      cell.appendChild(probe);
+      var w = probe.getBoundingClientRect().width || 0;
+      cell.removeChild(probe);
+      return w;
+    }
+    var th = ths[i];
+    var sfHeader = th.querySelector(".sf-header");
+    var best = measure(th, sfHeader ? [sfHeader] : th.childNodes) + chromeFor(headerRow, th);
+    ownBodies().forEach(function (tb) {
+      Array.prototype.forEach.call(tb.children, function (row) {
+        // Colspan / section-header rows don't map onto the column set.
+        if (row.tagName !== "TR" || row.children.length !== colIds.length) return;
+        var cell = row.children[pos];
+        if (!cell || !cell.childNodes.length) return;
+        var w = measure(cell, cell.childNodes);
+        if (w > 0) best = Math.max(best, w + chromeFor(row, cell));
+      });
+    });
+    return Math.ceil(best);
+  }
+
+  /**
+   * Double-click on a handle: size its column to fit its content. Behaves like
+   * a drag to that width — the delta is traded with the right neighbour, so
+   * the rest of the table stays put — except that a neighbour asked to GIVE
+   * width only gives down to its own content width; whatever it can't give
+   * widens the table into the wrapper's horizontal scroll instead of
+   * truncating the column next door. Capped at the container width so one
+   * long notes cell can't push a column off the screen.
+   */
+  function autofitColumn(i) {
+    if (i === lastVisibleResizableIdx()) return;
+    ensureAllWidthsMeasured();
+    commitStretchedWidths();
+    var id = colIds[i];
+    var parent = tableEl.parentElement;
+    var cap = (parent && parent.clientWidth) || tableEl.getBoundingClientRect().width || 0;
+    var fit = contentWidthOf(i);
+    if (!(fit > 0)) return;
+    if (cap > 0) fit = Math.min(fit, cap);
+    fit = Math.max(MIN_COL_W, fit);
+    var startW = widths[id] || ths[i].getBoundingClientRect().width;
+    var d = fit - startW;
+    var lastIdx = lastVisibleResizableIdx();
+    var dispNow = displayIds();
+    for (var nk = dispNow.indexOf(id) + 1; nk > 0 && nk < dispNow.length; nk++) {
+      var nId = dispNow[nk];
+      if (hidden[nId] || !isResizableCol(nId)) continue;
+      var nIdx = srcIdxOf[nId];
+      // The auto-fill column absorbs the delta on its own.
+      if (nIdx === lastIdx) break;
+      var startWNext = widths[nId] || ths[nIdx].getBoundingClientRect().width;
+      if (d < 0) widths[nId] = Math.round(startWNext - d);
+      else {
+        var give = Math.max(0, Math.min(d, startWNext - contentWidthOf(nIdx)));
+        widths[nId] = Math.round(startWNext - give);
+      }
+      break;
+    }
+    widths[id] = fit;
+    applyWidths();
+    if (typeof options.onChange === "function") options.onChange();
+  }
+
   ths.forEach(function (th, i) {
     if (!isResizableCol(colIds[i])) return;        // utility + static-width columns get no handle
     if (th.querySelector(".sf-resize-handle")) return;
@@ -1908,9 +2016,14 @@ function setupColumnLayout(tableEl, options) {
     if (getComputedStyle(th).position === "static") th.style.position = "relative";
     var handle = document.createElement("span");
     handle.className = "sf-resize-handle";
-    handle.title = "Drag to resize";
+    handle.title = "Drag to resize · double-click to fit";
     th.appendChild(handle);
     handle.addEventListener("click", function (e) { e.stopPropagation(); });
+    handle.addEventListener("dblclick", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      autofitColumn(i);
+    });
     handle.addEventListener("mousedown", function (e) {
       e.preventDefault();
       e.stopPropagation();
