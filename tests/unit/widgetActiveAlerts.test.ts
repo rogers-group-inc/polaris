@@ -47,7 +47,7 @@ interface AlertRow {
   testRun?: boolean;
   tags?: string[];
 }
-interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string; tagScope?: string; tags?: string[] }
+interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string; tagScope?: string; tags?: string[]; hideAcknowledged?: boolean }
 interface WidgetModule {
   type: string;
   defaultConfig: Cfg & Record<string, unknown>;
@@ -545,5 +545,54 @@ describe("gear config", () => {
   it("ships a defaultConfig carrying the row limit", () => {
     expect(mod.defaultConfig.rowLimit).toBe(50);
     expect(mod.defaultConfig.minSeverity).toBe("warning");
+  });
+});
+
+describe("hide acknowledged alerts (gear toggle)", () => {
+  const ids = (el: any) => rowsOf(el).map((r: any) => r.getAttribute("data-alert-id"));
+  const mixed = () => [
+    alert({ id: "open", severity: "critical" }),
+    alert({ id: "owned", severity: "critical", acknowledged: true, acknowledgedBy: "jsmith" }),
+  ];
+
+  it("lists acknowledged alerts by default — the toggle is opt-in", () => {
+    expect(mod.defaultConfig.hideAcknowledged).toBe(false);
+    expect(ids(render(mixed(), 2, { minSeverity: "warning" }))).toEqual(["open", "owned"]);
+  });
+
+  it("drops acknowledged alerts when on, in both alert widgets", () => {
+    expect(ids(render(mixed(), 2, { minSeverity: "warning", hideAcknowledged: true } as Cfg))).toEqual(["open"]);
+    const evRows = mixed().map((r) => ({ ...r, triggerType: "event" }));
+    expect(ids(render(evRows, 2, { minSeverity: "warning", hideAcknowledged: true } as Cfg, evMod))).toEqual(["open"]);
+  });
+
+  it("says the alerts are acknowledged when that is what emptied it", () => {
+    const el = render([mixed()[1]], 1, { minSeverity: "warning", hideAcknowledged: true } as Cfg);
+    expect((el.querySelector(".empty-state") as any).textContent)
+      .toBe("The 1 alert here is acknowledged — acknowledged alerts are hidden");
+  });
+
+  it("counts a filtered-out acknowledged row as gone from the clip note", () => {
+    const rows = [
+      ...Array.from({ length: 5 }, (_, i) => alert({ id: "o" + i, severity: "critical" })),
+      ...Array.from({ length: 5 }, (_, i) => alert({ id: "a" + i, severity: "critical", acknowledged: true })),
+    ];
+    const el = render(rows, 10, { minSeverity: "warning", rowLimit: 10, hideAcknowledged: true } as Cfg);
+    expect(rowsOf(el)).toHaveLength(5);
+    expect(noteText(el)).toBeNull();
+  });
+
+  it("offers the checkbox in the gear and writes a boolean", () => {
+    for (const m of [mod, evMod]) {
+      const el = mountWidget();
+      const changes: Array<[string, unknown]> = [];
+      m.renderConfig(el, {}, (k, v) => changes.push([k, v]));
+      const cb = el.querySelector('[data-b="hideAcknowledged"]') as any;
+      expect(cb).toBeTruthy();
+      expect(cb.checked).toBe(false);
+      cb.checked = true;
+      cb.dispatchEvent(new (doc.defaultView as any).Event("change"));
+      expect(changes).toEqual([["hideAcknowledged", true]]);
+    }
   });
 });

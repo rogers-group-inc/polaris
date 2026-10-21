@@ -132,6 +132,17 @@
     if (PolarisWidgets.minSeverityRank(config)) {
       nodes = PolarisWidgets.filterByMinSeverity(nodes, config);
     }
+    // Gear "Hide acknowledged outages": drop a node whose active alert someone
+    // has acknowledged. Off by default — the device is still down, so the
+    // dimmed row with its owner pill is the default answer. A node with no
+    // alert at all has nothing to acknowledge and always stays.
+    var ackHidden = 0;
+    if (config && config.hideAcknowledged) {
+      nodes = nodes.filter(function (n) {
+        if (n.alertId && n.alertAcknowledged) { ackHidden++; return false; }
+        return true;
+      });
+    }
     // Operator's sort (⇅, edit mode) — applied BEFORE the export provider and
     // the clip so all three agree on which outages lead and which get cut.
     var sorts = sortsFor(config);
@@ -160,7 +171,10 @@
     // the panel shows. Stamped before the empty return so they clear with it.
     PolarisWidgets.setHeaderSeverityCounts(el, clipped);
     if (!clipped.length) {
-      var empty = PolarisWidgets.minSeverityEmptyText(config) || "No assets down";
+      var empty = ackHidden
+        ? (ackHidden === 1 ? "The 1 down asset here is acknowledged" : "All " + ackHidden + " down assets here are acknowledged") +
+          " — acknowledged outages are hidden"
+        : PolarisWidgets.minSeverityEmptyText(config) || "No assets down";
       el.innerHTML = '<p class="empty-state">' + escapeHtml(empty) + '</p>';
       return;
     }
@@ -203,7 +217,7 @@
     description: "Monitored assets currently down — newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise.",
     defaultSize: { width: 6, height: 1 },
     minSize: { width: 4, height: 1 },
-    defaultConfig: { groupBy: "site", rowLimit: 10, regionScope: "mine", includeDependencyDown: false, sortBy: "severity" },
+    defaultConfig: { groupBy: "site", rowLimit: 10, regionScope: "mine", includeDependencyDown: false, hideAcknowledged: false, sortBy: "severity" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {
@@ -274,7 +288,13 @@
           '<input type="checkbox" data-b="includeDependencyDown"' + (config.includeDependencyDown ? " checked" : "") + '>' +
           ' Include dependency-down assets' +
         '</label>' +
-        '<p class="widget-config-hint">Off (the default) hides assets whose parent is also down, so a dead gate counts as one outage rather than one per device behind it.</p>';
+        '<p class="widget-config-hint">Off (the default) hides assets whose parent is also down, so a dead gate counts as one outage rather than one per device behind it.</p>' +
+        '<label>Acknowledged</label>' +
+        '<label class="widget-config-typeopt">' +
+          '<input type="checkbox" data-b="hideAcknowledged"' + (config.hideAcknowledged ? " checked" : "") + '>' +
+          ' Hide acknowledged outages' +
+        '</label>' +
+        '<p class="widget-config-hint">Off (the default) keeps them listed, dimmed, with who has them. An asset with no alert always stays.</p>';
       el.querySelectorAll("[data-b]").forEach(function (cb) {
         cb.addEventListener("change", function () { onChange(cb.getAttribute("data-b"), cb.checked); });
       });

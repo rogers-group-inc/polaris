@@ -179,9 +179,18 @@
     var fetched = data && data.rows ? data.rows.length : 0;
     var min = minRankOf(config);
     var pickedTags = tagFilterOf(config);
+    // Gear "Hide acknowledged alerts" — off by default, since an acknowledged
+    // alert is still active and the dimmed row with its owner pill is the
+    // default answer. A wallboard that only wants what nobody owns yet opts in.
+    // Applied last so the empty text can tell "all of them are owned" apart
+    // from the tag and severity filters emptying it.
+    var hideAcked = !!(config && config.hideAcknowledged);
+    var ackHidden = 0;
     var filtered = rows.filter(function (r) {
       if (!matchesTags(r, pickedTags)) return false;
-      return (RANK[severityOf(r)] || 0) >= min;
+      if ((RANK[severityOf(r)] || 0) < min) return false;
+      if (hideAcked && r.acknowledged) { ackHidden++; return false; }
+      return true;
     });
     // Operator's sort (⇅, edit mode) — applied BEFORE the export provider and
     // the clip so all three agree on which alerts lead and which get cut.
@@ -222,7 +231,10 @@
       var allUntagged = pickedTags && rows.length > 0 && rows.every(function (r) { return !matchesTags(r, pickedTags); });
       var empty = allUntagged
         ? kind.none + " on assets with the selected tags"
-        : (rows.length ? PolarisWidgets.minSeverityEmptyText({ minSeverity: PolarisWidgets.severityTierForRank(min) }) : null);
+        : ackHidden
+          ? (ackHidden === 1 ? "The 1 alert here is acknowledged" : "All " + ackHidden + " alerts here are acknowledged") +
+            " — acknowledged alerts are hidden"
+          : (rows.length ? PolarisWidgets.minSeverityEmptyText({ minSeverity: PolarisWidgets.severityTierForRank(min) }) : null);
       el.innerHTML = '<p class="empty-state">' + escapeHtml(empty || kind.none) + '</p>';
       return;
     }
@@ -309,7 +321,8 @@
           : "Paused — this device is in a maintenance window. No reminders or escalation until it ends.") +
         '">MAINT</span>'
       : "";
-    // An acknowledged alert is still active — hiding it would surprise, so it
+    // An acknowledged alert is still active — hiding it would surprise, so by
+    // default (the gear's "Hide acknowledged alerts" opts out) it
     // stays listed and says who has it, and the alert dims to push the
     // unhandled alerts forward on a wallboard.
     //
@@ -402,7 +415,7 @@
       description: kind.description,
       defaultSize: { width: 6, height: 1 },
       minSize: { width: 4, height: 1 },
-      defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS, tagScope: "all", tags: [], sortBy: SORTS[0].key },
+      defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS, tagScope: "all", tags: [], sortBy: SORTS[0].key, hideAcknowledged: false },
       // The feed reads Notification rows, so this is alerts:read, not events:read.
       // Every role was seeded that key at read, so no dashboard loses the widget.
       requiredPermission: { key: "alerts", level: "read" },
@@ -469,9 +482,18 @@
       renderConfig: function (el, config, onChange) {
         el.innerHTML =
           '<label>Row limit</label>' +
-          '<select data-k="rowLimit">' + PolarisWidgets.rowLimitOptionsHTML(config.rowLimit == null ? DEFAULT_ROWS : config.rowLimit) + '</select>';
+          '<select data-k="rowLimit">' + PolarisWidgets.rowLimitOptionsHTML(config.rowLimit == null ? DEFAULT_ROWS : config.rowLimit) + '</select>' +
+          '<label>Acknowledged</label>' +
+          '<label class="widget-config-typeopt">' +
+            '<input type="checkbox" data-b="hideAcknowledged"' + (config.hideAcknowledged ? " checked" : "") + '>' +
+            ' Hide acknowledged alerts' +
+          '</label>' +
+          '<p class="widget-config-hint">Off (the default) keeps them listed, dimmed, with who has them.</p>';
         el.querySelector('[data-k="rowLimit"]').addEventListener("change", function (e) {
           onChange("rowLimit", PolarisWidgets.parseRowLimit(e.target.value));
+        });
+        el.querySelector('[data-b="hideAcknowledged"]').addEventListener("change", function (e) {
+          onChange("hideAcknowledged", e.target.checked);
         });
         // Seed the shared control from the effective floor so a pre-control
         // `severities` config renders as the tier it actually behaves like; the
