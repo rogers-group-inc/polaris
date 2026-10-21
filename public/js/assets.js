@@ -8867,6 +8867,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // column. A FortiGate, a server, or a switch polled over REST would
   // otherwise show a dash on every row for a feature it never reports.
   var showPoeCol = rows.some(function (r) { return r.poeStatus != null; });
+  // And for IPv6 (business rule 126): an IPv4-only device would show a dash in
+  // every row, so the column appears once any interface reports an IPv6.
+  var showIpv6Col = rows.some(function (r) { return !!r.ipv6Address; });
   // Every interface and tunnel renders (2026-08). Traffic-less rows used to
   // ship hidden behind a "Show N inactive interfaces" expander so a 48-port
   // switch with 6 live ports wasn't a wall of zeros — but "no counters yet" is
@@ -8878,7 +8881,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // descending for the busy ports, filter Status for what's up, filter Native
   // VLAN for a segment. The nesting + collapse tree stays as the DEFAULT view;
   // the table flattens the moment a sort or a filter is active (renderBody).
-  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0);
+  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0);
   // Per-user, per-asset collapsed parents. Read HERE rather than in the wiring
   // phase because every row build has to bake the current state into its own
   // markup: a sort/filter re-render replaces the whole tbody, so a post-hoc
@@ -9072,6 +9075,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       "<td>" + statusCell(iface) + "</td>" +
       "<td>" + speed + "</td>" +
       '<td class="mono">' + escapeHtml(iface.ipAddress  || "—") + "</td>" +
+      (showIpv6Col ? '<td class="mono">' + escapeHtml(iface.ipv6Address || "—") + "</td>" : "") +
       addressingCell(iface) +
       '<td class="mono">' + escapeHtml(iface.macAddress || "—") + "</td>" +
       vlanCellsHTML(iface) +
@@ -9179,6 +9183,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       status: statusLabelOf(iface),
       speed: iface.speedBps != null ? Number(iface.speedBps) : null,
       ip: iface.ipAddress || "",
+      ipv6: iface.ipv6Address || "",
       addressing: iface.addressingMode ? String(iface.addressingMode).toLowerCase() : "",
       mac: iface.macAddress || "",
       "native-vlan": iface.nativeVlan != null ? Number(iface.nativeVlan) : null,
@@ -9288,6 +9293,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
       '<th data-col-id="speed" data-sf-key="speed" data-sf-type="number" data-sf-nofilter>Speed</th>' +
       '<th data-col-id="ip" data-sf-key="ip" data-sf-type="ip">IP</th>' +
+      (showIpv6Col ? '<th data-col-id="ipv6" data-sf-key="ipv6" data-sf-type="ip" title="The interface\'s IPv6 address — the first one that is not link-local (fe80::) or loopback">IPv6</th>' : "") +
       '<th data-col-id="addressing" data-sf-key="addressing" data-sf-options="dhcp=DHCP|static=Static|pppoe=PPPoE" title="L3 addressing mode — FortiOS only (CMDB system/interface mode). DHCP, Static, or PPPoE; other sources show —">Addressing</th>' +
       '<th data-col-id="mac" data-sf-key="mac" data-sf-type="string">MAC</th>' +
       vlanHeader +
@@ -9597,7 +9603,9 @@ function _ifaceIpForLookup(raw) {
 // that fails, or lands after the table re-rendered under it, opens the
 // interface rather than nothing.
 function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
-  var ip = _ifaceIpForLookup(row && row.ipAddress);
+  // IPv4 first; an IPv6-only interface looks its IPv6 network up instead
+  // (business rule 126).
+  var ip = _ifaceIpForLookup(row && row.ipAddress) || _ifaceIpForLookup(row && row.ipv6Address);
   var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
   var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
   if (!ip || !canReadNetworks || !canLookup) {
@@ -15657,8 +15665,13 @@ function _ifaceUnpinnedNoticeHTML(asset, ifName) {
   );
 }
 
+// The current-state row the open interface panel was opened from — the
+// history loader's address line compares the window's addresses against it.
+var _ifacePanelRow = null;
+
 async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
   if (!asset || !ifName) return;
+  _ifacePanelRow = ifaceRow || null;
   _ensureIfacePanelDOM();
   var titleEl  = document.getElementById("iface-panel-title");
   var metaEl   = document.getElementById("iface-panel-meta");
@@ -15719,6 +15732,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
             '</div>'
           : '') +
       '</div>' +
+      _ifaceAddressBlockHTML(ifaceRow) +
       _ifaceVlanBlockHTML(ifaceRow) +
       '<div id="iface-lldp-block" style="margin-bottom:0.75rem"></div>' +
       _ifaceUnpinnedNoticeHTML(asset, ifName) +
@@ -15833,6 +15847,7 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
     }
     _populateInterfaceCommentEditor(assetId, ifName, data, { silent: silent });
     _renderIfaceLldpBlock(data.lldpNeighbors || []);
+    _renderIfaceAddressHistory(visRaw, _ifacePanelRow);
     var ifaceOpts = { since: data.since, until: data.until, subject: ifName, outages: data.outages };
     _renderIfaceThroughputChart(tputEl, derived, ifaceOpts);
     _renderIfaceErrorChart(errEl, derived, ifaceOpts);
@@ -16139,6 +16154,50 @@ function _renderIfaceErrorStats(container, rawSamples, derived, data) {
 // ports overlaid from the parent FortiGate's CMDB). Other asset types and
 // SNMP-only paths on non-Fortinet switches return empty markup so the
 // surrounding layout stays unchanged.
+// The interface's addresses, IPv4 and IPv6 (business rule 126), as the
+// current-state row has them. `_renderIfaceAddressHistory` adds what the
+// history window saw once the samples land. Always rendered — an interface
+// with no address says so — so the history half has a place to write.
+function _ifaceAddressBlockHTML(iface) {
+  var v4 = (iface && iface.ipAddress) || "";
+  var v6 = (iface && iface.ipv6Address) || "";
+  function line(label, value) {
+    return '<div><span style="font-size:0.75rem;color:var(--color-text-secondary);display:inline-block;min-width:3.2rem">' + label + '</span> ' +
+      '<span class="mono" style="margin-left:6px">' + (value ? escapeHtml(value) : "—") + '</span></div>';
+  }
+  return '<div id="iface-addr-block" style="margin-bottom:0.75rem;padding:0.5rem 0.65rem;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px">' +
+    '<div style="font-size:0.8rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:0.25rem">Addresses</div>' +
+    line("IPv4", v4) + line("IPv6", v6) +
+    '<div id="iface-addr-history" style="margin-top:0.25rem;font-size:0.75rem;color:var(--color-text-secondary)"></div>' +
+  '</div>';
+}
+
+// Pure: every distinct address (either family) the window's samples carried,
+// oldest first, minus the current ones — a renumbered port or a rotated IPv6
+// is visible without reading the samples.
+function _ifaceAddressesSeen(samples, current) {
+  var skip = {};
+  (current || []).forEach(function (a) { if (a) skip[a] = true; });
+  var seen = {}, out = [];
+  (samples || []).forEach(function (s) {
+    [s && s.ipAddress, s && s.ipv6Address].forEach(function (a) {
+      if (!a || skip[a] || seen[a]) return;
+      seen[a] = true;
+      out.push(a);
+    });
+  });
+  return out;
+}
+
+function _renderIfaceAddressHistory(samples, ifaceRow) {
+  var el = document.getElementById("iface-addr-history");
+  if (!el) return;
+  var others = _ifaceAddressesSeen(samples, [ifaceRow && ifaceRow.ipAddress, ifaceRow && ifaceRow.ipv6Address]);
+  el.innerHTML = others.length
+    ? 'Also held in this range: <span class="mono">' + others.map(escapeHtml).join(", ") + '</span>'
+    : "";
+}
+
 function _ifaceVlanBlockHTML(iface) {
   if (!iface) return "";
   var native = (iface.nativeVlan != null) ? iface.nativeVlan : null;
