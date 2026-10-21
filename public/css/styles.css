@@ -2143,8 +2143,8 @@ html[data-page-top-curtain]::after {
    the badge it sits next to (no box) -- it read as a stray card otherwise.
    !important beats the header cluster's .btn chrome and lift shadow. */
 .btn.page-help-btn {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   padding: 0 !important;
   gap: 0;
   justify-content: center;
@@ -2155,7 +2155,7 @@ html[data-page-top-curtain]::after {
   color: var(--color-text-secondary);
   filter: drop-shadow(0 0 2px rgba(0,0,0,.07)) drop-shadow(0 0 12px rgba(0,0,0,.11));
 }
-.btn.page-help-btn svg { width: 20px; height: 20px; }
+.btn.page-help-btn svg { width: 24px; height: 24px; }
 .btn.page-help-btn:hover,
 .btn.page-help-btn:focus-visible {
   color: var(--color-text-primary);
@@ -2744,6 +2744,9 @@ html[data-page-top-curtain]::after {
 }
 /* A head row with no tab strip (Path Monitor) keeps its controls on the right. */
 .table-head-row > .table-head-controls:first-child { margin-left: auto; }
+/* Dashboard: the strip is hidden (not absent) on an empty layout or a
+   published view, so :first-child never matches; pin the cluster right. */
+.table-head-row > .dashboard-tabs + .table-head-controls { margin-left: auto; }
 /* Automations: on the Automations tab, Refresh is the list row's own (right of
    Clear); the header-cluster Refresh — which reloads whichever tab is open —
    serves the other tabs. */

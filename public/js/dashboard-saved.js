@@ -423,20 +423,28 @@
     function canUseMenu() {
       return isWallboard() || typeof permAtLeast !== "function" || permAtLeast("savedDashboards", "read");
     }
+    // And only while customizing, or while a published dashboard is on screen
+    // (Customize is withdrawn there, so this menu is the only way back to the
+    // viewer's own layout). dashboard.js announces each mode change.
+    function inMenuMode() {
+      var d = dash();
+      return !d || (d.isEditing && d.isEditing()) || !!d.publishedId();
+    }
     function applyAccessGate() {
-      var allowed = canUseMenu();
+      var allowed = canUseMenu() && inMenuMode();
       var wrap = btn.closest(".btn-dropdown-wrap");
       if (wrap) wrap.hidden = !allowed; else btn.hidden = !allowed;
       if (!allowed) menu.classList.remove("open");
     }
     applyAccessGate();
     document.addEventListener("polaris:user-loaded", applyAccessGate);
+    document.addEventListener("polaris:dashboard-mode", applyAccessGate);
 
     renderMenu([], false);   // placeholder, so the first open isn't an empty box
 
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
-      if (!canUseMenu()) return;
+      if (!canUseMenu() || !inMenuMode()) return;
       var willOpen = !menu.classList.contains("open");
       // Sibling header menus stopPropagation on their own button, so their
       // document-level close listener never fires for a click on ours.

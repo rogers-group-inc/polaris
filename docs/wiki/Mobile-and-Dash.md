@@ -342,7 +342,8 @@ cannot read **hide themselves**.
 operators about live incidents, and the wallboard has no login, so its **ack**
 pills name the owner but hovering them shows no note.
 
-Its **Dashboards ▾** menu offers:
+Its **Dashboards ▾** menu — shown, as on the Dashboard page, only while
+customizing or while a published dashboard is on screen — offers:
 
 - **"My layout — this browser"**, kept in that browser's storage;
 - every **public** [saved dashboard](Dashboard#saved-dashboards).

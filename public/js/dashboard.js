@@ -336,6 +336,12 @@
     if (doneBtn)        doneBtn.hidden        = !state.editing || viewingPublished;
     if (createBtn)      createBtn.hidden      = true;
     canvasEl.classList.toggle("is-editing", state.editing && !viewingPublished);
+    // The Dashboards menu (dashboard-saved.js) shows only while customizing
+    // or viewing a published dashboard; it re-gates on this.
+    // The document's own realm's constructor: a DOM test evals this file
+    // where the global CustomEvent is Node's, which happy-dom rejects.
+    var view = document.defaultView || window;
+    document.dispatchEvent(new view.CustomEvent("polaris:dashboard-mode"));
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -1159,6 +1165,9 @@
       updateConfig(id, key, value);
       return true;
     },
+
+    /** True while customizing (Customize Page clicked, Done not yet). */
+    isEditing: function () { return !!state.editing && !state.external; },
 
     /** Id of the published dashboard being viewed, or null. */
     publishedId: function () { return state.external ? state.external.id : null; },
