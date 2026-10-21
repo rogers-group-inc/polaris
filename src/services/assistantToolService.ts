@@ -192,6 +192,7 @@ const searchTool: ToolDef = {
       assets:       hasPermission(req, "assets", "read"),
       sites:        hasPermission(req, "deviceMap", "read"),
       ipsec:        hasPermission(req, "assets", "read"),
+      pins:         hasPermission(req, "serverSettingsSystem", "read"),
     });
     const cap = Math.min(ctx.maxRows, 25);
     const trimmed: Record<string, unknown> = {};

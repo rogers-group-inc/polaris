@@ -2240,8 +2240,8 @@ router.post(
 // re-opens first-use trust for that host.
 router.get("/agents/ssh-host-keys", requirePermission("serverSettingsSystem", "read"), async (_req, res, next) => {
   try {
-    const { listHostKeys } = await import("../../services/sshHostKeyService.js");
-    res.json({ hostKeys: await listHostKeys() });
+    const { listHostKeysWithAssets } = await import("../../services/sshHostKeyService.js");
+    res.json({ hostKeys: await listHostKeysWithAssets() });
   } catch (err) { next(err); }
 });
 
@@ -2250,6 +2250,15 @@ router.delete("/agents/ssh-host-keys/:id", requirePermission("serverSettingsSyst
     const { deleteHostKey } = await import("../../services/sshHostKeyService.js");
     await deleteHostKey(String(req.params.id), requestActor(req) || "unknown");
     res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// The pins held in decommissioned agent hosts' archives (business rule 123),
+// listed read-only beside the live ones on the Pinned server identities list.
+router.get("/agents/archived-host-pins", requirePermission("serverSettingsSystem", "read"), async (_req, res, next) => {
+  try {
+    const { listArchivedHostPins } = await import("../../services/agentHostPinService.js");
+    res.json({ archivedPins: await listArchivedHostPins() });
   } catch (err) { next(err); }
 });
 

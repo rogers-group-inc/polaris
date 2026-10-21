@@ -936,15 +936,16 @@ function renderCertsTab(container) {
       '</p>' +
     '</div>';
 
-  // Rule 113(e)/(f): every certificate Polaris pinned instead of verifying a
-  // CA — WinRM listeners, devices it upgrades, FortiGates / FortiManagers with
-  // SSL verification off — with the changed ones first and "Trust new
-  // certificate". Lives here, where certificate problems get looked for.
+  // Rule 113: every identity Polaris pinned on first use — the certificates
+  // it pinned instead of verifying a CA (WinRM listeners, devices it upgrades,
+  // FortiGates / FortiManagers with SSL verification off) with the changed
+  // ones first and "Trust new certificate", and the SSH host keys. Lives here,
+  // where certificate problems get looked for.
   var pinnedCardHtml =
     '<div class="settings-card" id="pinned-tls-card">' +
       '<h3>Pinned server identities</h3>' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin:0 0 0.75rem 0">Polaris pins the TLS certificate of a server the first time it sends it a password or token ' +
-        'without verifying a CA, and refuses to send anything if the certificate later changes. In the list a changed certificate comes first: ' +
+        'without verifying a CA, and the SSH host key of every host it reaches over SSH, and refuses to send anything if either later changes. In the list a changed certificate comes first: ' +
         'compare it with the server and choose Trust new certificate. After a firmware upgrade Polaris runs itself, the device\'s new ' +
         'certificate is re-pinned automatically.</p>' +
       '<div id="pinned-tls-body"><p class="empty-state" style="padding:0.5rem 0;margin:0">Loading&hellip;</p></div>' +

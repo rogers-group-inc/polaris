@@ -1474,6 +1474,7 @@ const api = {
     // Pinned SSH host keys (trust-on-first-use). Deleting one re-opens
     // first-use trust for that host — the recovery path after a rebuild.
     sshHostKeysList:          () => request("GET",    "/server-settings/agents/ssh-host-keys"),
+    archivedHostPinsList:     () => request("GET",    "/server-settings/agents/archived-host-pins"),
     tlsCertPinsList:          () => request("GET",    "/server-settings/agents/tls-cert-pins"),
     tlsCertPinDelete:         (id) => request("DELETE", "/server-settings/agents/tls-cert-pins/" + encodeURIComponent(id)),
     // Rule 113(f): trust exactly the changed certificate the operator compared.

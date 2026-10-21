@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { assetPinHosts, parseArchivedPins } from "../../src/services/agentHostPinService.js";
+import { assetPinHosts, parseArchivedPins, pinFingerprintQuery } from "../../src/services/agentHostPinService.js";
 
 describe("assetPinHosts", () => {
   it("lists ip, dns name and hostname in dial order, de-duplicated and trimmed", () => {
@@ -36,4 +36,25 @@ describe("parseArchivedPins", () => {
     expect(parseArchivedPins(null)).toEqual([]);
     expect(parseArchivedPins({ kind: "ssh" })).toEqual([]);
   });
+
+describe("pinFingerprintQuery", () => {
+  it("reads a hex thumbprint with colons, spaces or dashes as upper-case hex", () => {
+    expect(pinFingerprintQuery("ab:cd:ef:01")?.hex).toBe("ABCDEF01");
+    expect(pinFingerprintQuery("ab cd ef 01 23")?.hex).toBe("ABCDEF0123");
+    expect(pinFingerprintQuery("AB-CD-EF-01")?.hex).toBe("ABCDEF01");
+  });
+
+  it("reads an SSH fingerprint with or without SHA256: and its padding, case kept", () => {
+    expect(pinFingerprintQuery("SHA256:AbCdEf+/12")?.ssh).toBe("AbCdEf+/12");
+    expect(pinFingerprintQuery("AbCdEf+/12==")?.ssh).toBe("AbCdEf+/12");
+    expect(pinFingerprintQuery("SHA256:AbCdEf+/12")?.hex).toBeNull();
+  });
+
+  it("ignores anything shorter than 8 characters or shaped like neither", () => {
+    expect(pinFingerprintQuery("abcd")).toBeNull();
+    expect(pinFingerprintQuery("ab:cd:ef")).toBeNull();
+    expect(pinFingerprintQuery("web-01.corp.example")).toBeNull();
+    expect(pinFingerprintQuery("10.0.0.5")).toBeNull();
+  });
+});
 });

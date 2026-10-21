@@ -85,6 +85,17 @@ with one query per pin table, and returns agent hosts only — a selection with 
 shows the same confirm it always did. A failed preview never blocks the change; the
 server archives regardless.
 
+**Archived pins stay findable (f).** Archiving takes a pin out of enforcement,
+not out of sight. An operator holding a thumbprint ("which machine was this?")
+must still reach the decommissioned asset. So the Pinned server identities list
+shows archived pins read-only (`GET /server-settings/agents/archived-host-pins`,
+`listArchivedHostPins`), and global search resolves an archived thumbprint to its
+asset (`findAssetsByPinFingerprint`). Neither offers Delete or Trust. The only way
+back is reactivation or accepting the check-in conflict, and a second door would
+let a pin return without the never-overwrite check of `reinstateAgentHostPins`.
+The search half is gated `serverSettingsSystem:read`, the list's own gate, on top
+of `assets:read`.
+
 **Rejected alternatives.**
 - *An Asset FK on `SshHostKey`.* The table's own comment says why not: a host is often
   pinned before it exists as an asset, and the key is the address dialed.

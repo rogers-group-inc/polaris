@@ -24,8 +24,11 @@ function findRow(where: any): FakeRow | null {
   return null;
 }
 
+const assetRows: Array<{ id: string; hostname: string | null; ipAddress: string | null }> = [];
+
 vi.mock("../../src/db.js", () => ({
   prisma: {
+    asset: { findMany: vi.fn(async () => [...assetRows]) },
     sshHostKey: {
       findUnique: vi.fn(async ({ where }: any) => findRow(where)),
       findMany: vi.fn(async () => [...db.rows]),
@@ -60,6 +63,7 @@ vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async 
 import {
   verifyOrPin,
   listHostKeys,
+  listHostKeysWithAssets,
   deleteHostKey,
   fingerprintKeyBlob,
   keyTypeFromBlob,
@@ -222,6 +226,20 @@ describe("listHostKeys", () => {
     await verifyOrPin("10.0.0.5", 22, KEY_A);
     await verifyOrPin("10.0.0.6", 22, KEY_B);
     expect(await listHostKeys()).toHaveLength(2);
+  });
+});
+
+describe("listHostKeysWithAssets", () => {
+  it("attaches the assets at each pinned address or hostname", async () => {
+    await verifyOrPin("10.0.0.5", 22, KEY_A);
+    await verifyOrPin("Web01.corp", 22, KEY_B);
+    assetRows.splice(0, assetRows.length,
+      { id: "a1", hostname: "db01", ipAddress: "10.0.0.5" },
+      { id: "a2", hostname: "web01.corp", ipAddress: "10.0.0.9" });
+    const rows = await listHostKeysWithAssets();
+    expect(rows.find((r) => r.host === "10.0.0.5")!.assets.map((a) => a.id)).toEqual(["a1"]);
+    expect(rows.find((r) => r.host === "Web01.corp")!.assets.map((a) => a.id)).toEqual(["a2"]);
+    assetRows.length = 0;
   });
 });
 

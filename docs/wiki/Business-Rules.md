@@ -2262,7 +2262,7 @@ different identity.
   is deleted without a copy.
 
 A server that presents a different certificate is listed first when you click
-**View pinned certificates** under **Server Settings → Web Server → Pinned
+**View pinned identities** under **Server Settings → Web Server → Pinned
 server identities** (or on the Windows SSH Deployment card). The slide-over
 shows each certificate with the asset at that address (click it to open the
 asset) and the integration that uses it, and a changed one with the pinned and
@@ -2594,9 +2594,11 @@ failures, health skips, devices skipped above a failure, and what was dropped.
 **Decommissioning an agent host archives its pinned SSH thumbprint, and its
 agent coming back is a question.** Polaris pins the SSH host key (and, for
 WinRM, the TLS certificate) of every host it installs the agent on, keyed by the
-host's address. While the asset is decommissioned those pins are moved out of
-Pinned server identities and kept with the agent, so a new machine given the
-same address is not refused. Setting the asset back to an active status puts
+host's address. While the asset is decommissioned those pins stop being
+enforced and are kept with the agent, so a new machine given the same address
+is not refused. They are still listed, read-only and marked Archived, under
+Pinned server identities, and global search still finds the asset by its old
+thumbprint. Setting the asset back to an active status puts
 them back exactly as they were, except where another key has been pinned on that
 address since; that one is left alone and reported. An address another active
 asset still uses keeps its pin. Before you decommission an agent host, the

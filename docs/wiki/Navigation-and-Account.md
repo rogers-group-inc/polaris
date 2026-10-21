@@ -74,6 +74,14 @@ opens the firewall's IPsec tab. An address that is nobody's primary IP is often
 exactly a tunnel's remote gateway, so an address search shows these beside the
 asset hits.
 
+**A thumbprint finds its asset.** Paste a TLS certificate's SHA-256, with or
+without colons or spaces, or an SSH host key's fingerprint, with or without
+`SHA256:`. The asset that pin belongs to is listed first under Assets, and
+the line under it names the pin, e.g. *SSH host key 10.0.0.5:22*. A
+decommissioned agent host's archived thumbprint finds it too, marked
+*archived on decommission*. You need 8 or more characters of the thumbprint,
+and read access to Server Settings, where the pins themselves are listed.
+
 An asset hit carries a **coloured dot** when it has a live alert, before the
 monitor pill — the alert is the reason to look, the monitor state is the
 detail, and a device can carry both since an alerting device is often up.
