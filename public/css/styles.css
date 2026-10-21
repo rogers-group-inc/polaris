@@ -31,10 +31,11 @@
 @property --night-glow-h { syntax: "<length>"; inherits: false; initial-value: 0px; }
 
 :root {
-  /* The logo's north-ray red. The same in every theme (no theme block
-     redefines it): it is the brand, not a palette colour. Paints the duotone
-     shape of the active sidebar icon. */
-  --color-brand-red: #f2154a;
+  /* The logo's north-ray red, sampled from img/brand/polaris-symbol-*.png.
+     The same in every theme (no theme block redefines it): it is the brand,
+     not a palette colour. Strokes the accent shape of the active sidebar
+     icon. */
+  --color-brand-red: #f71341;
   --color-bg-primary: #151528;
   --color-bg-secondary: #0d0d1a;
   --color-bg-tertiary: #111122;
@@ -1278,11 +1279,15 @@ code {
   opacity: 0.7;
 }
 .sidebar-nav a.active svg { opacity: 1; }
-/* Duotone: on the active entry only, the icon's key shape (class="ac" in
-   app.js → ICONS) takes a translucent brand-red fill under the accent stroke.
-   Inactive entries stay monochrome. */
+/* Red accent: on the active entry only, the icon's key shape (class="ac" in
+   app.js → ICONS) is DRAWN in brand red — its stroke, never a fill — while
+   the rest of the glyph keeps the accent colour. Inactive entries stay
+   monochrome. */
 .sidebar-nav a.active svg .ac,
-.sidebar-bottom-link.active svg .ac { fill: var(--color-brand-red); fill-opacity: 0.45; }
+.sidebar-bottom-link.active svg .ac { stroke: var(--color-brand-red); }
+/* Events' pulse: red only at the spike tips, fading to the accent through the
+   baseline — the gradient lives in the icon (app.js → ICONS.activity). */
+.sidebar-nav a.active svg .ac-tips { stroke: url(#ac-activity-tips); }
 .sidebar-bottom-link {
   display: flex;
   align-items: center;
@@ -2767,9 +2772,13 @@ html[data-page-top-curtain]::after {
      step down from full text — not a faded outline. Dimming the whole tab
      with opacity and filling it at 14% left the labels washed into dark
      backgrounds; the active tab still reads above its peers through the
-     accent edge and the card's glass. */
+     accent edge and the card's glass. The fill is a highlight that starts
+     at the tab's top edge and fades out toward the rule, not one flat wash
+     over the whole chip. */
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--color-text-primary) 14%, transparent),
+    transparent 85%);
   border: 1px solid var(--color-border);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
@@ -2784,7 +2793,7 @@ html[data-page-top-curtain]::after {
   transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease,
     opacity 0.2s ease, box-shadow 0.2s ease;
 }
-.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: color-mix(in srgb, var(--color-text-primary) 12%, transparent); }
+.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: linear-gradient(to bottom, color-mix(in srgb, var(--color-text-primary) 22%, transparent), transparent 85%); }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab).active {
   z-index: 2;
   color: var(--color-accent);
