@@ -292,6 +292,14 @@ function _isLeaseBackedInfra(r) {
  * Pure and top-level so tests/unit/ipPanelStatusDom.test.ts can slice it out;
  * it reads only its arguments.
  */
+// The date the Lease Expiry column shows. A lease-backed FortiSwitch/FortiAP
+// row keeps its lease clock in leaseExpiresAt, not expiresAt — expiresAt on it
+// would let the TTL job expire a live device's row — so fall back to it.
+function _leaseExpiryOf(r) {
+  if (!r) return null;
+  return r.expiresAt || r.leaseExpiresAt || null;
+}
+
 function _ipStatusPresentation(r, ctx) {
   ctx = ctx || {};
   if (ctx.isSpecial) {
@@ -642,8 +650,9 @@ function _renderIpList(data) {
         (_pres.warn ? ' <span class="conflict-icon">&#9888;</span>' : '') + '</span>'
       : statusLabel;
 
-    var leaseExpiry = r && r.expiresAt
-      ? '<span style="font-size:0.75rem">' + escapeHtml(formatDate(r.expiresAt)) + '</span>'
+    var leaseExpiryAt = _leaseExpiryOf(r);
+    var leaseExpiry = leaseExpiryAt
+      ? '<span style="font-size:0.75rem">' + escapeHtml(formatDate(leaseExpiryAt)) + '</span>'
       : '<span style="color:var(--color-text-tertiary)">-</span>';
 
     var canRelease = !isSpecial && r && r.status === "active" && canEditReservation(r);
@@ -2017,7 +2026,7 @@ function _generateIpPanelPdf(s, allIps) {
     var macMatch = r && r.notes ? r.notes.match(/MAC:\s*([\w:]+)/) : null;
     var mac = macMatch ? macMatch[1] : "-";
     var owner = r ? (r.owner || "-") : "-";
-    var expiry = r && r.expiresAt ? formatDate(r.expiresAt) : "-";
+    var expiry = _leaseExpiryOf(r) ? formatDate(_leaseExpiryOf(r)) : "-";
 
     return [
       ip.address,
@@ -2075,7 +2084,7 @@ function _generateIpPanelCsv(s, allIps) {
     var macMatch = r && r.notes ? r.notes.match(/MAC:\s*([\w:]+)/) : null;
     var mac = macMatch ? macMatch[1] : "";
     var owner = r ? (r.owner || "") : "";
-    var expiry = r && r.expiresAt ? formatDate(r.expiresAt) : "";
+    var expiry = _leaseExpiryOf(r) ? formatDate(_leaseExpiryOf(r)) : "";
     return [ip.address, r ? (r.hostname || "") : "", mac, owner, expiry, statusLabel];
   });
   var filename = "polaris-network-" + s.cidr.replace(/[\/]/g, "_") + "-" + new Date().toISOString().slice(0, 10) + ".csv";

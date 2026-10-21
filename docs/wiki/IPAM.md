@@ -233,6 +233,12 @@ are both true, and they call for different handling. In the same way an address
 can carry a VIP *and* be leased to a client — which is why the Status column
 reports two facts where two exist.
 
+The Lease Expiry column shows when a lease-backed FortiAP or FortiSwitch
+address's lease runs out, as of the last discovery. It is a display only:
+Polaris never expires or releases a managed device's row on that clock. The
+date moves forward each time the device renews, and it clears once the gate
+holds a real reservation for the address.
+
 ### Which rows Polaris may overwrite
 
 Only one **active** reservation may exist per address per network. Creating one

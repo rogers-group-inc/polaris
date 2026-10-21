@@ -126,6 +126,33 @@ describe("decideInfraDhcpBinding", () => {
     expect(decideInfraDhcpBinding(reserved, leaseEntry)).toEqual({ dhcpBinding: "lease" });
   });
 
+  it("records the lease clock in leaseExpiresAt, never expiresAt", () => {
+    const settled = apRow({ macAddress: "48:3A:02:00:00:01", dhcpBinding: "lease" });
+    const patch = decideInfraDhcpBinding(settled, { ...leaseEntry, expireTime: 1_793_000_000 });
+    expect(patch).toEqual({ leaseExpiresAt: new Date(1_793_000_000 * 1000) });
+  });
+
+  it("writes no lease clock it already holds, so a cycle between renewals is write-free", () => {
+    const settled = apRow({
+      macAddress: "48:3A:02:00:00:01", dhcpBinding: "lease",
+      leaseExpiresAt: new Date(1_793_000_000 * 1000),
+    });
+    expect(decideInfraDhcpBinding(settled, { ...leaseEntry, expireTime: 1_793_000_000 })).toBeNull();
+    // A renewal moves the clock, and that is the one write.
+    expect(decideInfraDhcpBinding(settled, { ...leaseEntry, expireTime: 1_793_014_400 }))
+      .toEqual({ leaseExpiresAt: new Date(1_793_014_400 * 1000) });
+  });
+
+  it("clears the lease clock once the gate reserves the address, or stops reporting an expiry", () => {
+    const leased = apRow({
+      macAddress: "48:3A:02:00:00:01", dhcpBinding: "lease",
+      leaseExpiresAt: new Date(1_793_000_000 * 1000),
+    });
+    expect(decideInfraDhcpBinding(leased, { ...reservedEntry, expireTime: 1_793_000_000 }))
+      .toEqual({ dhcpBinding: "reservation", leaseExpiresAt: null });
+    expect(decideInfraDhcpBinding(leased, leaseEntry)).toEqual({ leaseExpiresAt: null });
+  });
+
   it("normalizes the lease MAC into storage form", () => {
     const patch = decideInfraDhcpBinding(apRow(), { type: "dhcp-lease", macAddress: "48-3a-02-00-00-01" });
     expect(patch?.macAddress).toBe("48:3A:02:00:00:01");

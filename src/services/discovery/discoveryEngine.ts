@@ -5573,12 +5573,14 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           // sourceType is deliberately NOT flipped: it answers "who owns this
           // IP" and is still correct. Only the orthogonal binding fact is
           // recorded. See utils/infraDhcpBinding.ts for why expiresAt is never
-          // stamped here and why the MAC comes from the lease entry only.
+          // stamped here (the lease clock goes to the display-only
+          // leaseExpiresAt) and why the MAC comes from the lease entry only.
           const patch = decideInfraDhcpBinding(existingRes, entry);
           if (patch) {
             const update: Record<string, unknown> = {};
             if (patch.dhcpBinding) update.dhcpBinding = patch.dhcpBinding;
             if (patch.macAddress) update.macAddress = patch.macAddress;
+            if (patch.leaseExpiresAt !== undefined) update.leaseExpiresAt = patch.leaseExpiresAt;
             if (patch.lastSeenLeased) {
               update.lastSeenLeased = new Date();
               update.staleNotifiedAt = null;
@@ -5592,6 +5594,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             phase5Stats.writesReservationUpdate++;
             if (patch.dhcpBinding) existingRes.dhcpBinding = patch.dhcpBinding;
             if (patch.macAddress) existingRes.macAddress = patch.macAddress;
+            if (patch.leaseExpiresAt !== undefined) existingRes.leaseExpiresAt = patch.leaseExpiresAt;
           } else {
             // Steady state — the overwhelmingly common case once a fleet has
             // been through one cycle. No write: this runs per DHCP entry per

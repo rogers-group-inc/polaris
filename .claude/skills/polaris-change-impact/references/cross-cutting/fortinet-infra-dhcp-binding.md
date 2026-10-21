@@ -20,13 +20,14 @@
 - `public/js/placeholder-mac.js` — the ONE generator (`window.PolarisPlaceholderMac`), shared by `ip-panel.js` and both mobile surfaces; loaded by ipam.html / subnets.html / mobile.html.
 
 **Readers** (files that consume it):
-- `src/services/subnetService.ts` (`toReservationDto`) — surfaces `dhcpBinding` on the IP-panel payload.
+- `src/services/subnetService.ts` (`toReservationDto`) — surfaces `dhcpBinding` and `leaseExpiresAt` on the IP-panel payload.
+- `public/js/ip-panel.js` (`_leaseExpiryOf`) — the Lease Expiry column and its PDF/CSV exports fall back to `leaseExpiresAt` when `expiresAt` is null; `public/js/mobile/subnet-detail.js` shows it as "Lease expires".
 - `public/js/ip-panel.js` (`_isLeaseBackedInfra`) — "FortiAP (lease)" / "FortiSwitch (lease)" pill + tooltip, the Reserve button (reusing `ip-lease-reserve-btn`), and the supersede wording in `_openLeaseReserveModal`.
 - `public/js/mobile/subnet-detail.js` — same predicate inline for the mobile row actions.
 
 **Invariants:**
 - `sourceType` is NEVER flipped by this branch. Ownership is a separate fact, and Phase 5b's sweep exclusion + Phase 2b decommission semantics both key on it.
-- `expiresAt` is NEVER stamped on an infra row. A lease carries an expiry; stamping it hands the row to `expireReservations`, which would expire a live AP's row on the gate's lease clock and let discovery re-create it — churn plus windows where the device reads as unreserved.
+- `expiresAt` is NEVER stamped on an infra row. A lease carries an expiry; stamping it hands the row to `expireReservations`, which would expire a live AP's row on the gate's lease clock and let discovery re-create it — churn plus windows where the device reads as unreserved. The clock goes to `Reservation.leaseExpiresAt` instead: display-only, staged by `decideInfraDhcpBinding` only when it differs (one write per renewal), cleared when the binding becomes `"reservation"` or the lease reports no expiry. Nothing may expire, release or alert on it — a job that did would recreate exactly the churn this column exists to avoid.
 - `macAddress` is fill-only and comes from the DHCP entry, never from `ap.baseMac` / `sw.baseMac`. Only the MAC the gate saw requesting the address can be bound by a future MAC→IP push; a base MAC that isn't the DHCP client MAC yields an entry that looks correct on both sides and never binds.
 - `null` is NOT "free". It means no DHCP data has ever been observed for the address (a statically-addressed AP, or one not currently leasing), and such rows stay authoritative.
 - Releasing a lease-backed infra row must stay a pure DB release. It has no push pointers and its `sourceType` isn't `dhcp_reservation`, so neither unpush branch fires, and the gate-lease-expiry branch keys on `dhcp_lease` — claiming an AP's address must not bounce its lease.

@@ -34,6 +34,7 @@ export interface InfraReservationRow {
   hostname?: string | null;
   dhcpBinding?: string | null;
   pushedToId?: string | null;
+  leaseExpiresAt?: Date | null;
 }
 
 /** The subset of a discovered DHCP entry these decisions read. */
@@ -43,6 +44,8 @@ export interface InfraDhcpEntry {
   macAddress?: string | null;
   /** True when the monitor side confirmed a client is actively holding the IP. */
   seenLeased?: boolean;
+  /** Unix seconds the lease runs out (FortiOS `expire_time`); leases only. */
+  expireTime?: number;
 }
 
 /** The two source types whose binding state Phase 5 is the only observer of. */
@@ -80,6 +83,8 @@ export interface InfraBindingPatch {
   macAddress?: string;
   /** Presence stamp, mirroring the dhcp_* branch's staleness bump. */
   lastSeenLeased?: true;
+  /** Display-only lease clock; null clears it. Present only on change. */
+  leaseExpiresAt?: Date | null;
 }
 
 /**
@@ -95,7 +100,10 @@ export interface InfraBindingPatch {
  *   • `expiresAt` is never staged. A lease carries an expiry, and stamping it
  *     here would hand these rows to expireReservations — the row would expire on
  *     the gate's lease clock, be re-created by the next discovery, and churn,
- *     with windows where a live AP reads as unreserved.
+ *     with windows where a live AP reads as unreserved. The expiry goes to
+ *     `leaseExpiresAt` instead, which nothing acts on; the IP panel shows it.
+ *     It changes only when the device renews, so the change-only rule above
+ *     still holds — one write per renewal, not one per cycle.
  *   • `macAddress` is taken from the LEASE ENTRY only, and only to fill a blank.
  *     It is the MAC the gate actually saw requesting the address, which is the
  *     only MAC a future MAC→IP push may bind. A device's base MAC is not
@@ -124,6 +132,16 @@ export function decideInfraDhcpBinding(
   // rows — but it keeps these rows consistent with the presence model, and it is
   // the evidence a future pool/staleness surface would read.
   if (entry.seenLeased) patch.lastSeenLeased = true;
+
+  // A reservation entry has no lease clock, so it clears one left by an
+  // earlier lease; a lease without a usable expiry clears it too rather than
+  // keep showing a date the gate no longer reports.
+  const leaseExpiresAt =
+    binding === "lease" && typeof entry.expireTime === "number" && entry.expireTime > 0
+      ? new Date(entry.expireTime * 1000)
+      : null;
+  const current = row.leaseExpiresAt ? new Date(row.leaseExpiresAt).getTime() : null;
+  if ((leaseExpiresAt ? leaseExpiresAt.getTime() : null) !== current) patch.leaseExpiresAt = leaseExpiresAt;
 
   return Object.keys(patch).length > 0 ? patch : null;
 }

@@ -291,6 +291,8 @@
     if (r.notes)    detailRows.push(ipDetailRow("Notes", escapeHtml(r.notes)));
     if (r.macAddress) detailRows.push(ipDetailRow("MAC", '<span class="mono">' + escapeHtml(r.macAddress) + '</span>'));
     if (r.expiresAt) detailRows.push(ipDetailRow("Expires", escapeHtml(_formatDateShort(r.expiresAt))));
+    // A lease-backed FortiSwitch/FortiAP row's lease clock (never expiresAt on those rows).
+    else if (r.leaseExpiresAt) detailRows.push(ipDetailRow("Lease expires", escapeHtml(_formatDateShort(r.leaseExpiresAt))));
     if (r.createdBy) detailRows.push(ipDetailRow("Created by", escapeHtml(r.createdBy)));
 
     var actions = window.PolarisReservationActions || {};

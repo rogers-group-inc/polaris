@@ -228,6 +228,13 @@ model Reservation {
   // these rows — that would hand them to expireReservations and churn them.
   dhcpBinding String?
 
+  // When the gate's dynamic lease on a lease-backed fortiswitch/fortinap row
+  // runs out, as Phase 5 last read it. DISPLAY ONLY — the IP panel's Lease
+  // Expiry column falls back to it. It exists because expiresAt can't carry
+  // this on those rows (see dhcpBinding above): nothing expires, releases or
+  // alerts on this column. Cleared when the binding becomes "reservation".
+  leaseExpiresAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
