@@ -30,7 +30,7 @@ import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
-import { normalizeWorkloadState, reportableWorkloadIpv4, workloadHostUsageKey } from "../utils/workloadSources.js";
+import { normalizeWorkloadState, reportableWorkloadIp, workloadHostUsageKey } from "../utils/workloadSources.js";
 import type {
   WorkloadContainer,
   WorkloadDisk,
@@ -595,7 +595,7 @@ export function parseUnraidIfaceAddressing(data: any): Map<string, UnraidIfaceAd
     if (!name) continue;
     const listed = ((i?.ipv4Addresses ?? []) as any[]).map((a) => str(a?.address)).find((a): a is string => !!a);
     out.set(name, {
-      ipAddress: reportableWorkloadIpv4(name, listed ?? str(i?.ipAddress)),
+      ipAddress: reportableWorkloadIp(name, listed ?? str(i?.ipAddress)),
       macAddress: mac(i?.macAddress),
       speedMbps: speed(i?.speed),
       vlanId: num(i?.vlanId),

@@ -89,7 +89,7 @@ describe("truenas parsing", () => {
     expect(tick(200, 0, 60_000)).toMatchObject({ rxBytes: 9000, txBytes: 1500 });
   });
 
-  it("reads interface.query addressing: live state first, the bridge keeps its address, plumbing does not", () => {
+  it("reads interface.query addressing: live state first, IPv4 before IPv6, the bridge keeps its address, plumbing does not", () => {
     const a = tn.parseTrueNasIfaceAddressing([
       { id: "br0", name: "br0", type: "BRIDGE", aliases: [], state: {
         link_address: "aa:bb:cc:00:11:22",
@@ -98,7 +98,12 @@ describe("truenas parsing", () => {
       { id: "eno1", name: "eno1", type: "PHYSICAL", aliases: [], state: { link_address: "", permanent_link_address: "aa:bb:cc:00:11:33", aliases: [] } },
       { id: "vlan20", name: "vlan20", type: "VLAN", vlan_tag: 20, aliases: [{ type: "INET", address: "198.51.100.4", netmask: 24 }], state: { link_address: "00:00:00:00:00:00", aliases: [] } },
       { id: "docker0", name: "docker0", type: "BRIDGE", aliases: [], state: { link_address: "02:42:ac:11:00:01", aliases: [{ type: "INET", address: "172.17.0.1" }] } },
+      { id: "eno2", name: "eno2", type: "PHYSICAL", aliases: [], state: { link_address: "aa:bb:cc:00:11:44",
+        aliases: [{ type: "INET6", address: "fe80::a8bb:ccff:fe00:1144" }, { type: "INET6", address: "2001:db8::44" }] } },
+      { id: "eno3", name: "eno3", type: "PHYSICAL", aliases: [], state: { link_address: "aa:bb:cc:00:11:55", aliases: [{ type: "INET6", address: "fe80::1" }] } },
     ]);
+    expect(a.get("eno2")?.ipAddress).toBe("2001:db8::44"); // IPv6-only: the routable one, not fe80::
+    expect(a.get("eno3")?.ipAddress).toBeNull();           // link-local only: no address worth recording
     expect(a.get("br0")).toEqual({ ipAddress: "192.0.2.10", macAddress: "AA:BB:CC:00:11:22", vlanId: null });
     expect(a.get("eno1")).toEqual({ ipAddress: null, macAddress: "AA:BB:CC:00:11:33", vlanId: null });
     expect(a.get("vlan20")).toEqual({ ipAddress: "198.51.100.4", macAddress: null, vlanId: 20 });

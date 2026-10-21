@@ -17,6 +17,8 @@
  * Proxmox is the one clustered platform: one integration, many hosts (nodes).
  */
 
+import { ipInCidr, isLinkLocalIp, isLoopbackIp, isValidIpAddress } from "./cidr.js";
+
 export type WorkloadPlatform = "unraid" | "truenas" | "proxmox";
 export type WorkloadRole = "host" | "vm" | "container";
 
@@ -150,9 +152,13 @@ export function workloadContainerKey(c: { name: string; identityKey?: string | n
  */
 const HOST_INTERNAL_IFACE_RE = /^(docker\d+|br-[0-9a-f]+|veth|virbr\d+|vnet\d+|shim-|vhost|tunl\d+)/i;
 
-/** A workload host interface's IPv4 as worth recording, or null (plumbing, loopback, link-local). */
-export function reportableWorkloadIpv4(ifName: string, ip: string | null): string | null {
+/**
+ * A workload host interface's address (IPv4 or IPv6) as worth recording, or
+ * null: plumbing, not an address, loopback, link-local (fe80:: is on every
+ * IPv6 interface and identifies nothing) or 0.0.0.0/8.
+ */
+export function reportableWorkloadIp(ifName: string, ip: string | null): string | null {
   if (!ip || HOST_INTERNAL_IFACE_RE.test(ifName)) return null;
-  if (/^(127\.|169\.254\.|0\.)/.test(ip)) return null;
+  if (!isValidIpAddress(ip) || isLoopbackIp(ip) || isLinkLocalIp(ip) || ipInCidr(ip, "0.0.0.0/8")) return null;
   return ip;
 }

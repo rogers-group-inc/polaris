@@ -31,7 +31,7 @@
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
-import { normalizeWorkloadState, reportableWorkloadIpv4, workloadHostUsageKey } from "../utils/workloadSources.js";
+import { normalizeWorkloadState, reportableWorkloadIp, workloadHostUsageKey } from "../utils/workloadSources.js";
 import { RATE_COUNTER_MAX_GAP_MS, RateCounters } from "../utils/rateCounters.js";
 import type {
   WorkloadContainer,
@@ -619,6 +619,9 @@ export interface TrueNasIfaceAddressing {
  * and the bridge (br0) a host with VMs carries its address on, read "—".
  * `state` is the live kernel view (DHCP leases, the bridge's inherited MAC);
  * the configured `aliases` are the fallback for an address set but not up.
+ * One address per row, IPv4 first (the agent's rule): an IPv6-only interface
+ * shows its first routable IPv6 — never the fe80:: link-local every IPv6
+ * interface carries.
  */
 export function parseTrueNasIfaceAddressing(rows: any[]): Map<string, TrueNasIfaceAddressing> {
   const out = new Map<string, TrueNasIfaceAddressing>();
@@ -626,16 +629,17 @@ export function parseTrueNasIfaceAddressing(rows: any[]): Map<string, TrueNasIfa
     const s = str(v);
     return s && !/^0{2}([:-]?0{2}){5}$/.test(s) ? s.toUpperCase().replace(/-/g, ":") : null;
   };
-  const inet = (aliases: unknown) => ((Array.isArray(aliases) ? aliases : []) as any[])
-    .filter((a) => String(a?.type ?? "").toUpperCase() === "INET")
-    .map((a) => str(a?.address))
+  const first = (name: string, aliases: unknown, type: "INET" | "INET6") => ((Array.isArray(aliases) ? aliases : []) as any[])
+    .filter((a) => String(a?.type ?? "").toUpperCase() === type)
+    .map((a) => reportableWorkloadIp(name, str(a?.address)))
     .find((a): a is string => !!a) ?? null;
   for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
     const name = str(r?.name) ?? str(r?.id);
     if (!name) continue;
     const st = r?.state ?? {};
     out.set(name, {
-      ipAddress: reportableWorkloadIpv4(name, inet(st.aliases) ?? inet(r?.aliases)),
+      ipAddress: first(name, st.aliases, "INET") ?? first(name, r?.aliases, "INET")
+        ?? first(name, st.aliases, "INET6") ?? first(name, r?.aliases, "INET6"),
       macAddress: mac(st.link_address) ?? mac(st.permanent_link_address),
       vlanId: num(r?.vlan_tag),
     });
