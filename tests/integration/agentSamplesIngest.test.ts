@@ -161,6 +161,37 @@ d("POST /agents/samples", () => {
     expect(await prisma.assetAssociatedIp.count({ where: { assetId, source: "agent-interface" } })).toBe(2);
   });
 
+  // Business rule 126 — and the server-side half of the agent fix: an agent
+  // that predates it reports `lo` as 127.0.0.1 and an IPv6-only NIC as fe80::
+  // in ipAddress. Neither may reach the address list; an IPv6 it put in
+  // ipAddress moves to the IPv6 column; a dual-stack NIC lists both.
+  it("interfaces: both families listed, loopback and link-local filtered, IPv4 stays primary", async () => {
+    const before = await prisma.asset.findUniqueOrThrow({ where: { id: assetId }, select: { ipAddress: true } });
+    const resp = await post({
+      stream: "interfaces",
+      samples: [
+        { ifName: "eth0", operStatus: "up", ipAddress: "10.98.0.10", ipv6Address: "2001:DB8::10", macAddress: "aa:bb:cc:00:00:01" },
+        { ifName: "eth3", operStatus: "up", ipAddress: "2001:db8::20", macAddress: "aa:bb:cc:00:00:03" },
+        { ifName: "eth2", operStatus: "up", ipAddress: "fe80::aa:bb" },
+        { ifName: "lo", operStatus: "up", ipAddress: "127.0.0.1" },
+      ],
+    });
+    expect(resp.status).toBe(200);
+    const rows = await prisma.assetAssociatedIp.findMany({ where: { assetId, source: "agent-interface" }, select: { ip: true, mac: true, interfaceName: true } });
+    expect(rows.map((r) => r.ip).sort()).toEqual(["10.98.0.10", "2001:db8::10", "2001:db8::20"]);
+    expect(rows.find((r) => r.ip === "2001:db8::10")).toMatchObject({ interfaceName: "eth0", mac: "AA:BB:CC:00:00:01" });
+
+    const ifaces = await prisma.assetInterface.findMany({ where: { assetId }, select: { ifName: true, ipAddress: true, ipv6Address: true } });
+    const byName = new Map(ifaces.map((i) => [i.ifName, i]));
+    expect(byName.get("eth0")).toMatchObject({ ipAddress: "10.98.0.10", ipv6Address: "2001:db8::10" });
+    expect(byName.get("eth3")).toMatchObject({ ipAddress: null, ipv6Address: "2001:db8::20" });
+    expect(byName.get("eth2")).toMatchObject({ ipAddress: null, ipv6Address: null });
+    expect(byName.get("lo")).toMatchObject({ ipAddress: null, ipv6Address: null });
+
+    const after = await prisma.asset.findUniqueOrThrow({ where: { id: assetId }, select: { ipAddress: true } });
+    expect(after.ipAddress).toBe(before.ipAddress);
+  });
+
   it("storage: classifies pinned mounts fast and stamps lastSystemInfoAt", async () => {
     await prisma.asset.update({ where: { id: assetId }, data: { monitoredStorage: ["/data"] } });
     const resp = await post({

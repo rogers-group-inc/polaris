@@ -71,6 +71,7 @@ import { agentConfigChecks, pathCheckEtagFold } from "../../services/pathCheckSe
 import { ingestPathCheckSamples, ingestPathCheckTraceroutes } from "../../services/pathCheckIngestService.js";
 import { logger } from "../../utils/logger.js";
 import { normalizeMacOrNull } from "../../utils/mac.js";
+import { splitInterfaceAddresses } from "../../utils/interfaceAddress.js";
 
 // ─── /enroll (public) ─────────────────────────────────────────────────
 //
@@ -230,6 +231,10 @@ const InterfaceSampleSchema = z.object({
   // the duplex reading, never reject the whole push.
   duplex:        z.string().max(16).nullable().optional(),
   ipAddress:     z.string().max(64).regex(/^[A-Za-z0-9._:%\[\]-]+$/, "ipAddress may contain only letters, digits and . _ : % [ ] -").nullable().optional(),
+  // The NIC's first routable IPv6 (business rule 126). Normalised server-side
+  // like ipAddress, so an un-upgraded agent's loopback / fe80:: reported in
+  // ipAddress is filtered (or moved here) on ingest.
+  ipv6Address:   z.string().max(64).regex(/^[A-Za-z0-9._:%\[\]-]+$/, "ipv6Address may contain only letters, digits and . _ : % [ ] -").nullable().optional(),
   macAddress:    z.string().max(64).nullable().optional(),
   inOctets:      z.number().int().nullable().optional(),
   outOctets:     z.number().int().nullable().optional(),
@@ -547,7 +552,11 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
   // below. Only the PINNED subset is enqueued as time-series (see the filter
   // after this map, and persistInterfaceSampleStream for the rationale), so
   // every row that does get enqueued is "fast" by construction.
-  const rows = samples.map((s) => ({
+  const rows = samples.map((s) => {
+    // Business rule 126: IPv4 / IPv6 split and filtered here, the way every
+    // other collector's rows are.
+    const addr = splitInterfaceAddresses(s.ipAddress, s.ipv6Address);
+    return {
     assetId,
     timestamp:   sampleTs,
     cadence:     "fast" as const,
@@ -556,7 +565,8 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
     operStatus:  s.operStatus ?? null,
     speedBps:    s.speedBps != null ? BigInt(Math.round(s.speedBps)) : null,
     duplex:      s.duplex === "full" || s.duplex === "half" ? s.duplex : null,
-    ipAddress:   s.ipAddress ?? null,
+    ipAddress:   addr.ipAddress,
+    ipv6Address: addr.ipv6Address,
     macAddress:  s.macAddress ?? null,
     inOctets:    s.inOctets  != null ? BigInt(Math.round(s.inOctets))  : null,
     outOctets:   s.outOctets != null ? BigInt(Math.round(s.outOctets)) : null,
@@ -580,7 +590,8 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
     // report here.
     poeStatus: null,
     poeClass: null,
-  }));
+    };
+  });
   // Time-series for PINNED interfaces only — unpinned rows used to land here as
   // cadence="slow" and be deleted 24h later, which was the bulk of the largest
   // table in the database for rows nothing read as history. Current state for

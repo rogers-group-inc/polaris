@@ -288,6 +288,7 @@ export function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSam
       operStatus: i.operUp === null ? null : i.operUp ? "up" : "down",
       speedBps: i.speedMbps !== null ? i.speedMbps * 1_000_000 : null,
       ...(i.ipAddress != null ? { ipAddress: i.ipAddress } : {}),
+      ...(i.ipv6Address != null ? { ipv6Address: i.ipv6Address } : {}),
       ...(i.macAddress != null ? { macAddress: i.macAddress } : {}),
       ...(i.vlanId != null ? { vlanId: i.vlanId } : {}),
       inOctets: i.rxBytes,

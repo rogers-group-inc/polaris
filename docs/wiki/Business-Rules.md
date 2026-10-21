@@ -2646,3 +2646,13 @@ monitoring, and an IPv6 reservation is never pushed to the gate, because
 FortiOS has no DHCPv6 reservations.
 ([FortiManager and standalone FortiGate](Integration-Fortinet#ipv6) has the
 details.)
+
+### Rule 126
+
+**An interface shows its IPv6 address beside its IPv4 address, but never a
+loopback or link-local one, and a device stays monitored on IPv4.** Each
+interface on the Interfaces tab can now carry both. Both are added to the
+asset's address list and IP history, under the same interface and MAC.
+Addresses such as 127.0.0.1 and fe80:: are never recorded, even from an agent
+that has not been upgraded yet. Polaris never moves a device onto an IPv6
+address on its own; only pinning one yourself does that.

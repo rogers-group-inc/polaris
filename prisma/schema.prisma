@@ -1565,6 +1565,7 @@ model AssetInterfaceSample {
   operStatus     String?
   speedBps       BigInt?
   ipAddress      String?
+  ipv6Address    String?  // business rule 126 — ipAddress stays IPv4
   macAddress     String?
   inOctets       BigInt?
   outOctets      BigInt?
@@ -1679,6 +1680,9 @@ model AssetInterface {
   // "full" | "half" | null — same semantics as AssetInterfaceSample.duplex.
   duplex      String?
   ipAddress   String?
+  // First reportable IPv6 address on the interface (never loopback / link-local);
+  // ipAddress stays IPv4. Business rule 126.
+  ipv6Address String?
   macAddress  String?
 
   // Cumulative counters as of the last full scrape. Current values only -- rate
@@ -3227,6 +3231,7 @@ model AssetInterfaceSampleHourly {
   lastAdminStatus    String?
   lastOperStatus     String?
   lastIpAddress      String?
+  lastIpv6Address    String?
   lastMacAddress     String?
   lastAlias          String?
   lastDescription    String?
@@ -3269,6 +3274,7 @@ model AssetInterfaceSampleDaily {
   lastAdminStatus    String?
   lastOperStatus     String?
   lastIpAddress      String?
+  lastIpv6Address    String?
   lastMacAddress     String?
   lastAlias          String?
   lastDescription    String?

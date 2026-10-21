@@ -66,6 +66,7 @@ import {
   type IpOverrideOutcome,
 } from "./utils/assetInvariants.js";
 import { normalizeOsInData } from "./utils/osNormalize.js";
+import { isIpv6Address } from "./utils/cidr.js";
 import { deriveAssetSources, type AssetSnapshot } from "./utils/assetSourceDerivation.js";
 import { sealValue, openValue, isSealed } from "./utils/secretBox.js";
 import {
@@ -429,10 +430,16 @@ async function enforceOperatorOverrides(
       // order only matters for a row that somehow carries both. The card read
       // fires only for a pinned asset's IP-staging write — discovery cadence.
       if (row?.primaryAddressMac && row.primaryAddressIp) {
-        const card = await base.assetAssociatedIp.findMany({
+        const cardRows = await base.assetAssociatedIp.findMany({
           where: { assetId: row.id, mac: row.primaryAddressMac },
           select: { ip: true, lastSeen: true },
         });
+        // Business rule 126: a pin follows its card only within the pinned
+        // address's own family. A card's IPv6 is listed beside its IPv4 now, and
+        // "the card reports only that address" must never carry an IPv4 pin
+        // onto the IPv6 when the IPv4 goes quiet.
+        const pinnedV6 = isIpv6Address(row.primaryAddressIp);
+        const card = cardRows.filter((c) => isIpv6Address(c.ip) === pinnedV6);
         const pin = applyPrimaryAddressPin(d, { mac: row.primaryAddressMac, ip: row.primaryAddressIp }, card);
         if (pin.action === "followed") return { ip, stagedIpSource, pinFollowed: pin };
         if (pin.action !== "none") return null;

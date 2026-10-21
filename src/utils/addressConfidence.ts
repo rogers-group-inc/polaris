@@ -289,8 +289,12 @@ export function pinReleaseVerdict(
 ): { release: boolean; pinnedScore: number; bestOther: { ip: string; score: number } | null } {
   const pinnedScore = scores.get(pinnedIp)?.discoveryScore ?? 0;
   let bestOther: { ip: string; score: number } | null = null;
+  // Business rule 126: the pin competes only with addresses of its own family
+  // — a card's listed IPv6 is not an alternative to its IPv4, so it must not
+  // hold an IPv4 pin in place.
+  const pinnedV6 = pinnedIp.includes(":");
   for (const [ip, r] of scores) {
-    if (ip === pinnedIp) continue;
+    if (ip === pinnedIp || ip.includes(":") !== pinnedV6) continue;
     if (!bestOther || r.discoveryScore > bestOther.score) bestOther = { ip, score: r.discoveryScore };
   }
   const release = pinnedScore >= CONFIDENCE_WARN_BELOW && (!bestOther || pinnedScore > bestOther.score);

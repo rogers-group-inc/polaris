@@ -32,6 +32,7 @@
  */
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
+import { splitInterfaceAddresses } from "../utils/interfaceAddress.js";
 import { logEvent } from "./eventLogService.js";
 import {
   buildInterfaceIdentity,
@@ -69,13 +70,17 @@ export type InterfaceInventoryRow = Omit<
  * interface can't drift.
  */
 function toRow(i: InterfaceSample): InterfaceInventoryRow {
+  // Business rule 126: IPv4 in ipAddress, IPv6 in ipv6Address, neither ever
+  // loopback / link-local — whatever the collector handed over.
+  const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
   return {
     ifName:      i.ifName,
     adminStatus: i.adminStatus ?? null,
     operStatus:  i.operStatus ?? null,
     speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
     duplex:      i.duplex ?? null,
-    ipAddress:   i.ipAddress ?? null,
+    ipAddress:   addr.ipAddress,
+    ipv6Address: addr.ipv6Address,
     macAddress:  i.macAddress ?? null,
     inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
     outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,

@@ -71,6 +71,7 @@ import type { WinRmConnection } from "../utils/winrm.js";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
+import { splitInterfaceAddresses } from "../utils/interfaceAddress.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -4720,7 +4721,10 @@ export interface InterfaceSample {
   speedBps?:    number | null;
   /** Negotiated duplex of an UP link, "full" | "half"; null when down or unknown. EtherLike-MIB dot3StatsDuplexStatus (SNMP), FortiOS monitor `duplex`, the Polaris Agent, vCenter pNIC links. */
   duplex?:      string | null;
+  /** The interface's IPv4 address (one bare address). IPv6 rides `ipv6Address` (business rule 126). */
   ipAddress?:   string | null;
+  /** First reportable IPv6 on the interface — never loopback / link-local (utils/interfaceAddress.ts). Listed and kept in history; never the asset's primary address (business rule 126). */
+  ipv6Address?: string | null;
   macAddress?:  string | null;
   inOctets?:    number | null;
   outOctets?:   number | null;
@@ -5451,7 +5455,8 @@ export async function recordFastFilteredResult(assetId: string, result: Collecti
       operStatus:  i.operStatus ?? null,
       speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
       duplex:      i.duplex ?? null,
-      ipAddress:   i.ipAddress ?? null,
+      // ipAddress + ipv6Address, normalised (business rule 126).
+      ...splitInterfaceAddresses(i.ipAddress, i.ipv6Address),
       macAddress:  i.macAddress ?? null,
       inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
       outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
@@ -9854,7 +9859,11 @@ async function persistInterfaceSampleStream(
   // split, the rollup + prune paths are shared, and legacy slow rows age out
   // through the existing 24h prune rather than needing a migration.
   const pinnedOnly = interfaces.filter((i) => pinnedIfaces.has(i.ifName));
-  const pinnedRows: InterfaceSampleRow[] = pinnedOnly.map((i) => ({
+  const pinnedRows: InterfaceSampleRow[] = pinnedOnly.map((i) => {
+    // Business rule 126 — the same normalisation interfaceInventoryService
+    // applies to the current-state row, so the two cannot disagree.
+    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
+    return {
     assetId,
     timestamp: now,
     cadence:     "fast" as const,
@@ -9863,7 +9872,8 @@ async function persistInterfaceSampleStream(
     operStatus:  i.operStatus ?? null,
     speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
     duplex:      i.duplex ?? null,
-    ipAddress:   i.ipAddress ?? null,
+    ipAddress:   addr.ipAddress,
+    ipv6Address: addr.ipv6Address,
     macAddress:  i.macAddress ?? null,
     inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
     outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
@@ -9880,7 +9890,8 @@ async function persistInterfaceSampleStream(
     addressingMode: i.addressingMode ?? null,
     poeStatus:   i.poeStatus ?? null,
     poeClass:    i.poeClass  ?? null,
-  }));
+    };
+  });
   if (pinnedRows.length > 0) {
     enqueueInterfaceSamples(pinnedRows);
     void recordInterfaceLinkEvents(pinnedRows);
@@ -10058,7 +10069,7 @@ export type InterfaceAddressSource = "monitor-system-info" | "agent-interface";
  */
 export async function persistAgentAddressRows(
   assetId: string,
-  interfaces: ReadonlyArray<Pick<InterfaceSample, "ifName" | "ipAddress" | "macAddress">>,
+  interfaces: ReadonlyArray<Pick<InterfaceSample, "ifName" | "ipAddress" | "ipv6Address" | "macAddress">>,
   now: Date,
 ): Promise<void> {
   const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { ipAddress: true } });
@@ -11802,20 +11813,26 @@ function buildMonitorAssocIpEntries(
   }> = [];
   const seenIps = new Set<string>();
   for (const i of interfaces) {
-    if (!i.ipAddress) continue;
-    if (seenIps.has(i.ipAddress)) continue; // dedupe within a single scrape
-    seenIps.add(i.ipAddress);
-    out.push({
-      ip:            i.ipAddress,
-      source,
-      interfaceName: i.ifName,
-      // Colon-uppercase like every other address/MAC row: the asset panel
-      // groups addresses under the MAC list by exact string, and REST / agent
-      // / WinRM collectors report lowercase or dashed MACs.
-      mac:           normalizeMacOrNull(i.macAddress),
-      lastSeen:      now,
-      firstSeen:     now,
-    });
+    // Business rule 126: one row per reportable address, both families, under
+    // the same interface and MAC. Loopback and link-local never land — the
+    // agent used to report `lo` as 127.0.0.1 and an IPv6-only NIC as fe80::,
+    // and this list feeds IP history, path-check hop resolution and search.
+    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
+    for (const ip of [addr.ipAddress, addr.ipv6Address]) {
+      if (!ip || seenIps.has(ip)) continue; // dedupe within a single scrape
+      seenIps.add(ip);
+      out.push({
+        ip,
+        source,
+        interfaceName: i.ifName,
+        // Colon-uppercase like every other address/MAC row: the asset panel
+        // groups addresses under the MAC list by exact string, and REST / agent
+        // / WinRM collectors report lowercase or dashed MACs.
+        mac:           normalizeMacOrNull(i.macAddress),
+        lastSeen:      now,
+        firstSeen:     now,
+      });
+    }
   }
   return out;
 }
