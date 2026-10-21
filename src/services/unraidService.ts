@@ -567,6 +567,14 @@ export function parseUnraidHostUsage(data: any): WorkloadUsage & { interfaces: W
  * GraphQL query, and this must cost at most the addressing.
  */
 export const UNRAID_IFACE_QUERIES = [
+  // Business rule 126. `ipv6Addresses { address }` is InfoNetworkInterface's
+  // field per the unraid/api generated schema (checked 2026-10-21: it sits
+  // beside ipv4Addresses, entries `{ address: String!, prefixLength: Int }`).
+  // Its own tier, not added to the next one, because nothing says it shipped
+  // in the same API release as ipv4Addresses — a field the server does not
+  // know fails the whole query, and folding it in would drop an API that has
+  // ipv4Addresses but not this to the address-less legacy tier.
+  `query PolarisIfacesV6 { info { networkInterfaces { name macAddress speed vlanId ipAddress ipv4Addresses { address } ipv6Addresses { address } } } }`,
   `query PolarisIfaces { info { networkInterfaces { name macAddress speed vlanId ipAddress ipv4Addresses { address } } } }`,
   `query PolarisIfacesLegacy { info { devices { network { iface mac speed } } } }`,
 ] as const;
@@ -574,6 +582,8 @@ export const UNRAID_IFACE_QUERIES = [
 /** One row of addressing, keyed by interface name. */
 export interface UnraidIfaceAddressing {
   ipAddress: string | null;
+  /** First reportable IPv6 (never fe80::) — only from the PolarisIfacesV6 tier. */
+  ipv6Address: string | null;
   macAddress: string | null;
   speedMbps: number | null;
   vlanId: number | null;
@@ -594,8 +604,12 @@ export function parseUnraidIfaceAddressing(data: any): Map<string, UnraidIfaceAd
     const name = str(i?.name);
     if (!name) continue;
     const listed = ((i?.ipv4Addresses ?? []) as any[]).map((a) => str(a?.address)).find((a): a is string => !!a);
+    const v6 = ((i?.ipv6Addresses ?? []) as any[])
+      .map((a) => reportableWorkloadIp(name, str(a?.address)))
+      .find((a): a is string => !!a && a.includes(":")) ?? null;
     out.set(name, {
       ipAddress: reportableWorkloadIp(name, listed ?? str(i?.ipAddress)),
+      ipv6Address: v6,
       macAddress: mac(i?.macAddress),
       speedMbps: speed(i?.speed),
       vlanId: num(i?.vlanId),
@@ -604,7 +618,7 @@ export function parseUnraidIfaceAddressing(data: any): Map<string, UnraidIfaceAd
   for (const d of (data?.info?.devices?.network ?? []) as any[]) {
     const name = str(d?.iface);
     if (!name || out.has(name)) continue;
-    out.set(name, { ipAddress: null, macAddress: mac(d?.mac), speedMbps: speed(d?.speed), vlanId: null });
+    out.set(name, { ipAddress: null, ipv6Address: null, macAddress: mac(d?.mac), speedMbps: speed(d?.speed), vlanId: null });
   }
   return out;
 }
@@ -621,6 +635,7 @@ export function applyUnraidIfaceAddressing(
       ...i,
       speedMbps: i.speedMbps ?? a.speedMbps,
       ipAddress: a.ipAddress,
+      ipv6Address: a.ipv6Address,
       macAddress: a.macAddress,
       vlanId: a.vlanId,
     };

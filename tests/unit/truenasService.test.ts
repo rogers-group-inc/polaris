@@ -89,7 +89,7 @@ describe("truenas parsing", () => {
     expect(tick(200, 0, 60_000)).toMatchObject({ rxBytes: 9000, txBytes: 1500 });
   });
 
-  it("reads interface.query addressing: live state first, IPv4 before IPv6, the bridge keeps its address, plumbing does not", () => {
+  it("reads interface.query addressing: live state first, one address per family, the bridge keeps its address, plumbing does not", () => {
     const a = tn.parseTrueNasIfaceAddressing([
       { id: "br0", name: "br0", type: "BRIDGE", aliases: [], state: {
         link_address: "aa:bb:cc:00:11:22",
@@ -102,12 +102,14 @@ describe("truenas parsing", () => {
         aliases: [{ type: "INET6", address: "fe80::a8bb:ccff:fe00:1144" }, { type: "INET6", address: "2001:db8::44" }] } },
       { id: "eno3", name: "eno3", type: "PHYSICAL", aliases: [], state: { link_address: "aa:bb:cc:00:11:55", aliases: [{ type: "INET6", address: "fe80::1" }] } },
     ]);
-    expect(a.get("eno2")?.ipAddress).toBe("2001:db8::44"); // IPv6-only: the routable one, not fe80::
-    expect(a.get("eno3")?.ipAddress).toBeNull();           // link-local only: no address worth recording
-    expect(a.get("br0")).toEqual({ ipAddress: "192.0.2.10", macAddress: "AA:BB:CC:00:11:22", vlanId: null });
-    expect(a.get("eno1")).toEqual({ ipAddress: null, macAddress: "AA:BB:CC:00:11:33", vlanId: null });
-    expect(a.get("vlan20")).toEqual({ ipAddress: "198.51.100.4", macAddress: null, vlanId: 20 });
-    expect(a.get("docker0")).toEqual({ ipAddress: null, macAddress: "02:42:AC:11:00:01", vlanId: null });
+    // Business rule 126: IPv6 has its own column — the routable one, not fe80:: — and
+    // an IPv6-only interface no longer puts it in ipAddress.
+    expect(a.get("eno2")).toMatchObject({ ipAddress: null, ipv6Address: "2001:db8::44" });
+    expect(a.get("eno3")).toMatchObject({ ipAddress: null, ipv6Address: null }); // link-local only
+    expect(a.get("br0")).toEqual({ ipAddress: "192.0.2.10", ipv6Address: null, macAddress: "AA:BB:CC:00:11:22", vlanId: null });
+    expect(a.get("eno1")).toEqual({ ipAddress: null, ipv6Address: null, macAddress: "AA:BB:CC:00:11:33", vlanId: null });
+    expect(a.get("vlan20")).toEqual({ ipAddress: "198.51.100.4", ipv6Address: null, macAddress: null, vlanId: 20 });
+    expect(a.get("docker0")).toEqual({ ipAddress: null, ipv6Address: null, macAddress: "02:42:AC:11:00:01", vlanId: null });
 
     const rows = tn.parseTrueNasRealtime({ interfaces: { br0: { link_state: "LINK_STATE_UP" }, tap0: { link_state: "LINK_STATE_UP" } } }).interfaces;
     const [br0, tap0] = tn.applyTrueNasIfaceAddressing(rows, a);

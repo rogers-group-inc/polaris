@@ -39,7 +39,7 @@ invariants** (one bullet per entity — the contract), **Schema** (the field dum
 IpVersion:               v4 | v6
 SubnetStatus:            available | reserved | deprecated
 ReservationStatus:       active | expired | released
-ReservationSourceType:   manual | dhcp_reservation | dhcp_lease | interface_ip | vip | fortiswitch | fortinap | fortimanager | fortigate | dns_resolved | external
+ReservationSourceType:   manual | dhcp_reservation | dhcp_lease | interface_ip | vip | fortiswitch | fortinap | fortimanager | fortigate | dns_resolved | external | observed
 ConflictStatus:          pending | accepted | rejected
 // UserRole enum retired in the dynamic-roles cutover (migration
 // 20260524000000_roles_table_cutover). Role identity + permission matrix

@@ -5899,7 +5899,7 @@ function _gaCheckDetailMap(block) {
 var _GA_MONITOR_STREAMS = {
   responseTime: ["Response time (up / down)", ["up", "latencyMs", "uptimeSec"], false],
   cpuMemory:    ["CPU / memory",              ["cpuPct", "memPct", "memUsed", "memTotal", "memFree"], false],
-  interfaces:   ["Interfaces",                ["name", "operStatus", "adminStatus", "speedBps", "speedMbps", "inOctets", "outOctets", "inErrors", "outErrors", "macAddress", "ipAddress", "description", "alias"], true],
+  interfaces:   ["Interfaces",                ["name", "operStatus", "adminStatus", "speedBps", "speedMbps", "inOctets", "outOctets", "inErrors", "outErrors", "macAddress", "ipAddress", "ipv6Address", "description", "alias"], true],
   storage:      ["Storage",                   ["mountPath", "total", "used", "free"], true],
   temperature:  ["Temperature",               ["name", "celsius"], true],
   lldp:         ["LLDP neighbors",            ["localIfName", "chassisId", "portId", "portDescription", "systemName", "systemDescription", "managementIp"], true],

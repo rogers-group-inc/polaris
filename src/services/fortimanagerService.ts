@@ -11,6 +11,13 @@ import { tlsFetch } from "../utils/tlsDispatcher.js";
 import { logger } from "../utils/logger.js";
 import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
 import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
+import {
+  advertisedPrefixSubnets,
+  DHCP_MONITOR_FORMAT,
+  parseDhcp6Servers,
+  parseDhcpMonitorAddress,
+  parseInterfaceIpv6,
+} from "../utils/fortiosIpv6.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
 import type { ApLldpNeighborSample } from "../utils/fortiapLldp.js";
@@ -933,6 +940,11 @@ export interface DiscoveredSubnet {
   fortigateSerial?: string;
   dhcpServerId: string;
   vlan?: number;          // 802.1Q VLAN ID from the interface, if present
+  // Where the network came from — names the created subnet. Absent means an
+  // IPv4 DHCP scope (every source that predates IPv6). "dhcp6" is a DHCPv6
+  // server scope, "ra" a prefix the gate announces by router advertisement
+  // (business rule 125; utils/fortiosIpv6.ts).
+  origin?: "dhcp" | "dhcp6" | "ra";
 }
 
 export interface DiscoveredDevice {
@@ -1062,6 +1074,10 @@ export interface DiscoveredInventoryDevice {
   user: string;             // Logged-in / registered user (if available)
   isOnline: boolean;
   lastSeen: string;         // ISO timestamp
+  // The client's IPv6 address as the gate sees it (`ipv6_address`),
+  // canonicalised; absent when none or not IPAM space. Never an address
+  // claim on the asset — it becomes an `observed` reservation (rule 125).
+  ipv6Address?: string;
 }
 
 export interface DiscoveredFortiSwitch {
@@ -1245,9 +1261,9 @@ export interface DiscoveredSwitchMacEntry {
   portName: string;
   mac: string;                 // Normalized: uppercase, colon-separated
   vlanId?: number;
-  lastSeen?: number;           // FortiOS Unix epoch
+  lastSeen?: number;           // FortiOS `last_seen` — SECONDS AGO on 7.6.7 (a live row read 7), not an epoch
   ipv4Address?: string;
-  ipv6Address?: string;
+  ipv6Address?: string;        // canonical, IPAM space only — feeds the rule-125 observed rows
   deviceName?: string;
   deviceType?: string;
   osName?: string;
@@ -1912,6 +1928,25 @@ async function fmgStepDhcpConfig(ctx: FmgDeviceCtx): Promise<void> {
     } catch (err: any) {
       log("discover.dhcp", "error", `${deviceName}: Failed to query DHCP server config — ${err.message || "Unknown error"}`, deviceName);
     }
+
+    // DHCPv6 server scopes → networks (business rule 125). Native CMDB like
+    // the IPv4 read above, so an offline gate still reports them. FortiOS has
+    // no DHCPv6 reservations. A failure costs only the IPv6 networks; it
+    // never touches the reservation sweep's flag.
+    try {
+      const dhcp6Res = await rpc(baseUrl, {
+        id: 2,
+        method: "get",
+        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/dhcp6/server` }],
+      }, apiUser, apiToken, verifySsl, signal, integrationId);
+      const v6Subnets = parseDhcp6Servers(dhcp6Res.result?.[0]?.data, deviceName, ctx.localDevice.serial || undefined);
+      localSubnets.push(...v6Subnets);
+      if (v6Subnets.length > 0) {
+        log("discover.dhcp", "info", `${deviceName}: Found ${v6Subnets.length} DHCPv6 subnet(s)`, deviceName);
+      }
+    } catch (err: any) {
+      log("discover.dhcp", "error", `${deviceName}: Failed to query DHCPv6 server config — ${err.message || "Unknown error"}`, deviceName);
+    }
 }
 
 // Step 3a: live DHCP monitor (merges INTO the CMDB list). Offline gates skip.
@@ -1929,7 +1964,9 @@ async function fmgStepDhcpMonitor(ctx: FmgDeviceCtx): Promise<void> {
           data: {
             target: [`/adom/${adom}/device/${deviceName}`],
             action: "get",
-            resource: "/api/v2/monitor/system/dhcp?format=ip|mac|hostname|interface|reserved|expire_time|access_point|ssid|vci",
+            // ipv6=true: the combined table, DHCPv6 leases beside the IPv4
+            // rows (business rule 125).
+            resource: `/api/v2/monitor/system/dhcp?format=${DHCP_MONITOR_FORMAT}&ipv6=true`,
           },
         }],
       };
@@ -1969,10 +2006,11 @@ async function fmgStepDhcpMonitor(ctx: FmgDeviceCtx): Promise<void> {
 
       let deviceEntryCount = 0;
       for (const lease of flatLeases) {
-        const leaseIp = lease.ip;
-        const leaseMac = lease.mac || "";
+        const parsedLease = parseDhcpMonitorAddress(lease);
+        if (!parsedLease) continue;
+        const leaseIp = parsedLease.ip;
+        const leaseMac = parsedLease.mac;
         let leaseIface = lease.interface || lease._serverIface || "";
-        if (!leaseIp || leaseIp === "0.0.0.0") continue;
 
         // CMDB already has this static reservation — mark it as currently
         // leased so the stale-reservation job knows the target has been
@@ -2028,13 +2066,17 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
         // secondary-ip is a child mkey table on system/interface — each row
         // carries its own `ip` (in "x.x.x.x y.y.y.y" form). Asking for the
         // parent field returns the whole nested array as embedded JSON.
-        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip"] }],
+        // `ipv6` is the interface's IPv6 sub-object (addresses, RA prefixes —
+        // business rule 125), returned whole like secondary-ip.
+        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip", "ipv6"] }],
       };
       const ifaceRes = await rpc(baseUrl, ifacePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       const ifaceData = ifaceRes.result?.[0]?.data;
       const ifaceVlanMap = new Map<string, number>();
       let ifaceIpCount = 0;
       let secondaryIpCount = 0;
+      let ipv6IpCount = 0;
+      let raSubnetCount = 0;
       if (Array.isArray(ifaceData)) {
         for (const iface of ifaceData) {
           const ifaceName = iface.name || "";
@@ -2044,8 +2086,22 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
           };
           const vid = parseVid(iface.vlanid) || parseVid(iface["switch-controller-mgmt-vlan"]);
           if (vid > 0) ifaceVlanMap.set(ifaceName, vid);
+          // Router-advertised prefixes are networks the gate serves (business
+          // rule 125) — the IPv6 counterpart of a DHCP scope, so they answer
+          // to the DHCP include / exclude filter, not the interface filter.
+          const v6 = parseInterfaceIpv6(iface);
+          if (ifaceName) {
+            for (const s of advertisedPrefixSubnets(ifaceName, v6, deviceName, ctx.localDevice.serial || undefined, localSubnets)) {
+              localSubnets.push(s);
+              raSubnetCount++;
+            }
+          }
           if (ifaceName === mgmtIfaceName) continue;
           if (!matchesInterfaceFilter(ifaceName, config)) continue;
+          for (const a of v6.addresses) {
+            localInterfaceIps.push({ device: deviceName, interfaceName: ifaceName, ipAddress: a.ipAddress, role: a.role });
+            ipv6IpCount++;
+          }
           const ipArr = iface.ip;
           if (Array.isArray(ipArr) && ipArr.length >= 1 && ipArr[0] && ipArr[0] !== "0.0.0.0") {
             localInterfaceIps.push({ device: deviceName, interfaceName: ifaceName, ipAddress: ipArr[0], role: "interface" });
@@ -2073,7 +2129,7 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
         const vid = ifaceVlanMap.get(sub.name);
         if (vid) sub.vlan = vid;
       }
-      log("discover.interfaces", "info", `${deviceName}: Resolved ${ifaceIpCount} interface IP(s)${secondaryIpCount > 0 ? ` + ${secondaryIpCount} secondary IP(s)` : ""}`, deviceName);
+      log("discover.interfaces", "info", `${deviceName}: Resolved ${ifaceIpCount} interface IP(s)${secondaryIpCount > 0 ? ` + ${secondaryIpCount} secondary IP(s)` : ""}${ipv6IpCount > 0 ? ` + ${ipv6IpCount} IPv6 address(es)` : ""}${raSubnetCount > 0 ? `, ${raSubnetCount} advertised IPv6 prefix(es)` : ""}`, deviceName);
     } catch (err: any) {
       log("discover.interfaces", "error", `${deviceName}: Failed to query interfaces — ${err.message || "Unknown error"}`, deviceName);
     }

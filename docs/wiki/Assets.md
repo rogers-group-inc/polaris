@@ -619,7 +619,18 @@ When the interface's address sits inside a network Polaris knows, the click
 offers **Open interface** or **Open network** instead; *Open network* slides
 that network's address table in over the asset, scrolled to the address. The
 choice appears only for roles that can read networks, and only when a network
-actually contains the address.
+actually contains the address. An interface with no IPv4 address looks up the
+network of its IPv6 address instead.
+
+**An interface's IPv6 address has its own column.** The **IPv6** column, beside
+**IP**, appears when at least one interface on the asset reports an IPv6
+address, and it sorts and filters like **IP**. Each interface shows its first
+IPv6 address that is not link-local (fe80::) or loopback. **IP** shows the IPv4
+address only. Both addresses are added to the asset's address list and IP
+history under that interface and its MAC. The asset keeps its IPv4 address for
+monitoring ([rule 126](Business-Rules#rule-126)). The history panel's
+**Addresses** box shows the interface's current IPv4 and IPv6 addresses, and
+lists any other address it held during the selected range.
 
 **CPU & Memory is one chart, or two, depending on what is collecting it.**
 Three sources report CPU per core and memory in bytes, and on those the

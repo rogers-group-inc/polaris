@@ -25,6 +25,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
+import { isIpv6Address } from "../utils/cidr.js";
 import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { logEvent } from "./eventLogService.js";
 import { resolvePendingIpOverrideConflicts } from "./ipOverrideService.js";
@@ -195,7 +196,9 @@ async function bestListedAddress(
   listed: string[],
   current: string | null,
 ): Promise<{ ip: string; evidenceScore: number } | null> {
-  const candidates = [...new Set(listed)];
+  // Business rule 126: an unpin re-projects onto IPv4 only — the address list
+  // carries the card's IPv6 too, and every probe transport dials IPv4.
+  const candidates = [...new Set(listed)].filter((ip) => !isIpv6Address(ip));
   if (candidates.length === 0) return null;
   const scores = (await buildAddressConfidence([assetId])).get(assetId);
   let best: { ip: string; evidenceScore: number } | null = null;

@@ -290,6 +290,8 @@ export interface WorkloadInterfaceReading {
   speedMbps: number | null;
   /** First IPv4, bare (no prefix) — the shape every other collector writes. */
   ipAddress?: string | null;
+  /** First reportable IPv6, bare (business rule 126). */
+  ipv6Address?: string | null;
   /** Upper-case, colon-separated. */
   macAddress?: string | null;
   vlanId?: number | null;

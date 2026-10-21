@@ -88,6 +88,18 @@ describe("builders", () => {
     ]);
   });
 
+  // Business rule 126: an optional ipv6Address mapping, prefix stripped, and
+  // an IPv4 mapped there dropped (normalisation of the rest is the write path's).
+  it("interfaces: reads an ipv6Address mapping", () => {
+    const ifq = q({ stream: "interfaces", map: { name: "id", ipAddress: "v4", ipv6Address: "v6" } });
+    const rows = gm.buildInterfaces([
+      { id: "eth0", v4: "192.0.2.5", v6: "2001:db8::5/64" },
+      { id: "eth1", v6: "192.0.2.6" },
+    ], ifq);
+    expect(rows[0]).toMatchObject({ ifName: "eth0", ipAddress: "192.0.2.5", ipv6Address: "2001:db8::5" });
+    expect(rows[1].ipv6Address).toBeUndefined();
+  });
+
   it("storage, temperature and LLDP rows", () => {
     expect(gm.buildStorage({ v: [{ n: "/", t: 100, f: 40 }] }, q({ stream: "storage", itemsPath: "v", map: { mountPath: "n", total: "t", free: "f" }, byteUnit: "KB" })))
       .toEqual([{ mountPath: "/", totalBytes: 102_400, usedBytes: 61_440 }]);

@@ -172,6 +172,7 @@ export interface InterfaceSampleRow {
   speedBps: bigint | null;
   duplex: string | null;
   ipAddress: string | null;
+  ipv6Address?: string | null;  // business rule 126
   macAddress: string | null;
   inOctets: bigint | null;
   outOctets: bigint | null;

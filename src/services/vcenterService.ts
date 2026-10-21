@@ -37,6 +37,7 @@ import { xmlEscape } from "../utils/winrm.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { getConfiguredResolver } from "./dnsService.js";
 import { logger } from "../utils/logger.js";
+import { pickInterfaceAddresses } from "../utils/interfaceAddress.js";
 
 export interface VcenterConfig {
   host: string;
@@ -894,8 +895,10 @@ export interface VcenterGuestNic {
   network: string | null;
   macAddress: string | null;
   connected: boolean | null;
-  /** First IPv4 the guest reports on this adapter. */
+  /** First reportable IPv4 the guest reports on this adapter. */
   ipAddress: string | null;
+  /** First reportable IPv6 (never fe80::) on this adapter — business rule 126. */
+  ipv6Address: string | null;
 }
 
 const QUICKSTATS_PATHS = [
@@ -975,13 +978,14 @@ export function parseGuestNics(block: string): VcenterGuestNic[] | null {
         ? `Network adapter ${deviceConfigId - 4000 + 1}`
         : network || (deviceConfigId !== null ? `vNIC ${deviceConfigId}` : "vNIC");
     // Every <ipAddress> in the block — the bare guest-reported list and the
-    // ipConfig entries both use that tag. First IPv4 wins.
-    let ipAddress: string | null = null;
+    // ipConfig entries both use that tag, and both carry IPv6 beside IPv4.
+    // The first reportable of each family (business rule 126): fe80:: and
+    // 169.254/16, which a guest reports on every adapter, are passed over.
+    const candidates: string[] = [];
     const ipRe = /<ipAddress>([^<]+)<\/ipAddress>/g;
     let ipm: RegExpExecArray | null;
-    while ((ipm = ipRe.exec(entry)) !== null) {
-      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ipm[1])) { ipAddress = ipm[1]; break; }
-    }
+    while ((ipm = ipRe.exec(entry)) !== null) candidates.push(ipm[1]);
+    const { ipAddress, ipv6Address } = pickInterfaceAddresses(candidates);
     const connectedRaw = entry.match(/<connected>([^<]+)<\/connected>/)?.[1];
     out.push({
       deviceConfigId,
@@ -990,6 +994,7 @@ export function parseGuestNics(block: string): VcenterGuestNic[] | null {
       macAddress: entry.match(/<macAddress>([^<]+)<\/macAddress>/)?.[1] || null,
       connected: connectedRaw === undefined ? null : connectedRaw === "true" || connectedRaw === "1",
       ipAddress,
+      ipv6Address,
     });
   }
   return out;
@@ -1202,7 +1207,10 @@ export interface VcenterHostVnic {
   device: string;              // "vmk0"
   portgroup: string | null;
   macAddress: string | null;
+  /** `spec.ip.ipAddress` — the vmk's IPv4, never an IPv6 (business rule 126). */
   ipAddress: string | null;
+  /** First reportable `spec.ip.ipV6Config.ipV6Address[].ipAddress` — never fe80::. */
+  ipv6Address: string | null;
   mtu: number | null;
 }
 
@@ -1364,11 +1372,24 @@ export function parseHostVnics(block: string): VcenterHostVnic[] | null {
     const device = entry.match(/<device>([^<]+)<\/device>/)?.[1];
     if (!device) continue;
     const mtu = Number(entry.match(/<mtu>(\d+)<\/mtu>/)?.[1]);
+    // `spec.ip` is HostIpConfig: its own <ipAddress> is the IPv4, and the IPv6
+    // addresses are the <ipAddress> elements inside <ipV6Config>. Taking the
+    // first <ipAddress> ANYWHERE (as this did) handed a vmk with no IPv4 its
+    // fe80:: link-local. Each family is read from its own place, then the
+    // first reportable one kept (business rule 126).
+    const ipBlock = entry.match(/<ip>([\s\S]*?)<\/ip>/)?.[1] ?? "";
+    const [v4Part, v6Rest] = ipBlock.split("<ipV6Config>");
+    const v4 = pickInterfaceAddresses([v4Part?.match(/<ipAddress>([^<]+)<\/ipAddress>/)?.[1]]).ipAddress;
+    const v6Candidates: string[] = [];
+    const v6Re = /<ipAddress>([^<]+)<\/ipAddress>/g;
+    let v6m: RegExpExecArray | null;
+    while (v6Rest !== undefined && (v6m = v6Re.exec(v6Rest)) !== null) v6Candidates.push(v6m[1]);
     out.push({
       device,
       portgroup: entry.match(/<portgroup>([^<]*)<\/portgroup>/)?.[1] || null,
       macAddress: entry.match(/<mac>([^<]+)<\/mac>/)?.[1] || null,
-      ipAddress: entry.match(/<ipAddress>([^<]+)<\/ipAddress>/)?.[1] || null,
+      ipAddress: v4,
+      ipv6Address: pickInterfaceAddresses(v6Candidates).ipv6Address,
       mtu: Number.isFinite(mtu) ? mtu : null,
     });
   }

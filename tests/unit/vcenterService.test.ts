@@ -264,6 +264,7 @@ describe("SOAP quickStats parsing", () => {
       macAddress: "00:50:56:aa:bb:cc",
       connected: true,
       ipAddress: "10.1.2.3",
+      ipv6Address: null,
     });
     expect(nics?.[1]).toMatchObject({ label: "Network adapter 2", connected: false, ipAddress: null });
   });
@@ -363,7 +364,38 @@ describe("SOAP ESXi host parsing", () => {
   it("reads VMkernel ports with their management address", () => {
     const block = extractObjectBlocks(HOST_XML)[0];
     expect(parseHostVnics(block)).toEqual([
-      { device: "vmk0", portgroup: "Management Network", macAddress: "3c:ec:ef:11:22:33", ipAddress: "10.1.1.11", mtu: 1500 },
+      { device: "vmk0", portgroup: "Management Network", macAddress: "3c:ec:ef:11:22:33", ipAddress: "10.1.1.11", ipv6Address: null, mtu: 1500 },
+    ]);
+  });
+
+  // Business rule 126 — HostIpConfig per the VIM schema: spec.ip.ipAddress is
+  // the IPv4, spec.ip.ipV6Config.ipV6Address[] the IPv6. The first <ipAddress>
+  // anywhere used to hand a vmk with no IPv4 its fe80::.
+  it("reads a vmk's IPv4 and IPv6 from their own places, never fe80::", () => {
+    const vnic = (device: string, ip: string) =>
+      `<HostVirtualNic><device>${device}</device><portgroup>PG</portgroup><spec><ip>${ip}</ip><mac>aa:bb:cc:dd:ee:01</mac><mtu>9000</mtu></spec></HostVirtualNic>`;
+    const v6cfg = (...addrs: string[]) =>
+      `<ipV6Config>${addrs.map((a) => `<ipV6Address><ipAddress>${a}</ipAddress><prefixLength>64</prefixLength><origin>other</origin><dadState>preferred</dadState></ipV6Address>`).join("")}<autoConfigurationEnabled>false</autoConfigurationEnabled></ipV6Config>`;
+    const block = `<objects><obj type="HostSystem">host-99</obj><propSet><name>config.network.vnic</name><val xsi:type="ArrayOfHostVirtualNic">` +
+      vnic("vmk1", `<dhcp>false</dhcp><ipAddress>192.0.2.11</ipAddress><subnetMask>255.255.255.0</subnetMask>${v6cfg("fe80::1", "2001:db8::11")}`) +
+      vnic("vmk2", `<dhcp>false</dhcp><ipAddress></ipAddress>${v6cfg("fe80::2", "2001:DB8::12")}`) +
+      `</val></propSet></objects>`;
+    expect(parseHostVnics(block)!.map((v) => [v.device, v.ipAddress, v.ipv6Address])).toEqual([
+      ["vmk1", "192.0.2.11", "2001:db8::11"],
+      ["vmk2", null, "2001:db8::12"],
+    ]);
+  });
+
+  it("reads a guest NIC's IPv6 beside its IPv4, passing over link-local", () => {
+    const block = `<objects><obj type="VirtualMachine">vm-99</obj><propSet><name>guest.net</name><val xsi:type="ArrayOfGuestNicInfo">` +
+      `<GuestNicInfo><network>VM Network</network><ipAddress>fe80::50:56ff:fe00:1</ipAddress><ipAddress>192.0.2.20</ipAddress><ipAddress>2001:db8::20</ipAddress>` +
+      `<macAddress>00:50:56:00:00:01</macAddress><connected>true</connected><deviceConfigId>4000</deviceConfigId></GuestNicInfo>` +
+      `<GuestNicInfo><network>VM Network</network><ipAddress>169.254.1.5</ipAddress><ipAddress>fe80::2</ipAddress>` +
+      `<macAddress>00:50:56:00:00:02</macAddress><connected>true</connected><deviceConfigId>4001</deviceConfigId></GuestNicInfo>` +
+      `</val></propSet></objects>`;
+    expect(parseGuestNics(block)!.map((n) => [n.label, n.ipAddress, n.ipv6Address])).toEqual([
+      ["Network adapter 1", "192.0.2.20", "2001:db8::20"],
+      ["Network adapter 2", null, null],
     ]);
   });
 

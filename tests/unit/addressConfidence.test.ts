@@ -174,6 +174,12 @@ describe("pinReleaseVerdict (rule 103(a))", () => {
     expect(v).toEqual({ release: true, pinnedScore: 85, bestOther: { ip: "10.0.0.6", score: 70 } });
   });
 
+  // Business rule 126: the card's listed IPv6 is no rival to an IPv4 pin.
+  it("compares the pin only with addresses of its own family", () => {
+    const v = pinReleaseVerdict("10.0.0.5", new Map([["10.0.0.5", s(85)], ["2001:db8::5", s(95)]]));
+    expect(v).toEqual({ release: true, pinnedScore: 85, bestOther: null });
+  });
+
   it("holds while another address scores as high or higher", () => {
     expect(pinReleaseVerdict("10.0.0.5", new Map([["10.0.0.5", s(70)], ["10.0.0.6", s(70)]])).release).toBe(false);
     expect(pinReleaseVerdict("10.0.0.5", new Map([["10.0.0.5", s(60)], ["10.0.0.6", s(90)]])).release).toBe(false);

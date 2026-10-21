@@ -287,6 +287,56 @@ Load-balance **virtual servers** ride the same query. The VS's external address
 reserves with role `external`, and **each realserver pool member gets its own
 reservation** with role `realserver`.
 
+### IPv6
+
+Both FortiManager and standalone FortiGate discovery read the gate's IPv6
+configuration as well as its IPv4 configuration
+([rule 125](Business-Rules#rule-125)).
+
+**Networks** come from two places:
+
+- **DHCPv6 servers.** Each configured scope becomes a network named
+  `DHCPv6: <interface> (<gate>)`.
+- **Router advertisements.** An interface with *Router advertisement* enabled
+  announces one or more prefixes to its clients. Each prefix becomes a network
+  named `IPv6 RA: <interface> (<gate>)`. This is how a SLAAC network is found.
+
+Both answer to the integration's DHCP include and exclude filters, as IPv4 DHCP
+scopes do. As with every discovered network, an IPv6 network is created only
+when an **IPv6 block** in [IPAM](IPAM) contains it. Without one, the run lists
+it as skipped with "no matching parent block". Create a block that covers your
+IPv6 space first.
+
+**Addresses** inside those networks:
+
+| Kind | Source |
+|---|---|
+| **Interface IPs** | the gate's own IPv6 interface addresses, primary and extra |
+| **DHCP leases** | DHCPv6 leases from the gate's live DHCP table |
+| **Observed** | an address the gate sees a client using that it did not assign, such as a SLAAC or privacy address, read from device inventory and FortiSwitch detected devices |
+
+An **observed** row is a sighting, not a claim. It never overrides another row
+at the address, it raises no conflict, and Reserve on it simply replaces it.
+It is released a day after the gate last saw the address in use, so clients
+that rotate their privacy addresses do not pile up rows.
+
+What IPv6 never does:
+
+- **It never changes the address a device is monitored on.** An asset's
+  primary address stays IPv4 whatever IPv6 the gate reports for it.
+- **It is never pushed.** FortiOS has no DHCPv6 reservations, so a reservation
+  you make in an IPv6 network is kept in Polaris only, even on an integration
+  with DHCP Push enabled.
+
+Discovery cannot see an IPv6 address the gate learns at runtime. That covers an
+interface set to DHCP, PPPoE or delegated mode, and a DHCPv6 server whose
+prefix is delegated from upstream. Those addresses are not in the gate's
+configuration, which is what discovery reads.
+
+The firewall's own **Interfaces** tab shows the same configured IPv6 under
+each interface's **IPv6** column, over both transports. Monitoring reads it
+from the gate's configuration too, so the same runtime gap applies there.
+
 ### Assets
 
 FortiGates, managed FortiSwitches, managed FortiAPs, and — from device

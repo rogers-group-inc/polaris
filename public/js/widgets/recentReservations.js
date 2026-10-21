@@ -7,7 +7,7 @@
 (function () {
   var SOURCE_TYPES = [
     "manual", "dhcp_reservation", "dhcp_lease", "interface_ip", "vip",
-    "fortiswitch", "fortinap", "fortimanager", "fortigate", "dns_resolved", "external",
+    "fortiswitch", "fortinap", "fortimanager", "fortigate", "dns_resolved", "external", "observed",
   ];
 
   function renderRows(el, rows, config) {

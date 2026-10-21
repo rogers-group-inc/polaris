@@ -849,6 +849,8 @@ export interface InterfaceHistoryRow {
   operStatus:  string | null;
   speedBps:    number | null;
   ipAddress:   string | null;
+  /** Business rule 126; null on rows written before the column existed. */
+  ipv6Address: string | null;
   macAddress:  string | null;
   // Detail-tier counter values (cumulative). Omitted on rollup tier.
   inOctets?:   number | null;
@@ -896,6 +898,7 @@ export async function readInterfaceHistory(
         operStatus:  s.operStatus,
         speedBps:    bn(s.speedBps),
         ipAddress:   s.ipAddress,
+        ipv6Address: s.ipv6Address,
         macAddress:  s.macAddress,
         inOctets:    bn(s.inOctets),
         outOctets:   bn(s.outOctets),
@@ -923,6 +926,7 @@ export async function readInterfaceHistory(
     lastAdminStatus: string | null;
     lastOperStatus: string | null;
     lastIpAddress: string | null;
+    lastIpv6Address: string | null;
     lastMacAddress: string | null;
     lastAlias: string | null;
     lastDescription: string | null;
@@ -935,7 +939,7 @@ export async function readInterfaceHistory(
             "firstOutErrors", "lastOutErrors",
             "maxSpeedBps",
             "lastAdminStatus", "lastOperStatus",
-            "lastIpAddress", "lastMacAddress",
+            "lastIpAddress", "lastIpv6Address", "lastMacAddress",
             "lastAlias", "lastDescription",
             "lastBucketSampleAt"
      FROM "${table}"
@@ -957,6 +961,7 @@ export async function readInterfaceHistory(
       operStatus:      r.lastOperStatus,
       speedBps:        bn(r.maxSpeedBps),
       ipAddress:       r.lastIpAddress,
+      ipv6Address:     r.lastIpv6Address,
       macAddress:      r.lastMacAddress,
       inBytesPerSec:   rate(bn(r.firstInOctets),  bn(r.lastInOctets),  startMs, lastMs),
       outBytesPerSec:  rate(bn(r.firstOutOctets), bn(r.lastOutOctets), startMs, lastMs),

@@ -117,6 +117,8 @@ export interface ResolverInterface {
    * resolver blocks never filter on it directly.
    */
   ipAddress?: string | null;
+  /** The interface's IPv6 address (business rule 126) — an IPv6-only parent is still addressed. */
+  ipv6Address?: string | null;
   /**
    * True only for synthetic rows produced by `mergeTunnelsIntoInterfaces` —
    * i.e. FortiOS phase1-interface IPsec tunnels surfaced from
@@ -373,7 +375,8 @@ export function mergeTunnelsIntoInterfaces(
         parent !== undefined &&
         !parent.isIpsecTunnel &&
         parent.operStatus === "down" &&
-        hasNoUsableIp(parent.ipAddress);
+        hasNoUsableIp(parent.ipAddress) &&
+        !parent.ipv6Address;
       const existingRow = byName.get(t.tunnelName);
       if (existingRow) {
         // Real interface row for this tunnel (e.g. always-"up" SNMP IF-MIB):
@@ -445,7 +448,7 @@ export async function loadLatestInterfaces(
   const staleCutoff = new Date(Date.now() - INTERFACE_STALE_MS);
   const ifacesPromise = prisma.assetInterface.findMany({
     where: { assetId: { in: assetIds }, lastSeen: { gt: staleCutoff } },
-    select: { assetId: true, ifName: true, ifType: true, operStatus: true, ipAddress: true },
+    select: { assetId: true, ifName: true, ifType: true, operStatus: true, ipAddress: true, ipv6Address: true },
   });
   // IPsec tunnels (fortigate only): same 72h-bounded DISTINCT ON shape so the
   // picker surfaces phase1-interface tunnels the REST monitor endpoint omits.
@@ -464,7 +467,7 @@ export async function loadLatestInterfaces(
   const [rows, tunnelRows] = await Promise.all([ifacesPromise, tunnelsPromise]);
   for (const r of rows) {
     if (!out.has(r.assetId)) out.set(r.assetId, []);
-    out.get(r.assetId)!.push({ ifName: r.ifName, ifType: r.ifType, operStatus: r.operStatus, ipAddress: r.ipAddress });
+    out.get(r.assetId)!.push({ ifName: r.ifName, ifType: r.ifType, operStatus: r.operStatus, ipAddress: r.ipAddress, ipv6Address: r.ipv6Address });
   }
   if (tunnelRows.length > 0) {
     const tunnelsByAsset = new Map<string, TunnelObservation[]>();

@@ -71,6 +71,14 @@ import type { WinRmConnection } from "../utils/winrm.js";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
+import { pickInterfaceAddresses, splitInterfaceAddresses } from "../utils/interfaceAddress.js";
+import {
+  IP_ADDRESS_IF_INDEX_OID,
+  IP_ADDRESS_TYPE_OID,
+  addressesByIfIndexFromIpAddressTable,
+  addressesByIfIndexFromIpAddrTable,
+} from "../utils/snmpIpAddressTable.js";
+import { parseInterfaceIpv6 } from "../utils/fortiosIpv6.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -3296,6 +3304,7 @@ export function buildVcenterSystemInfo(reading: VcenterReading): SystemInfoSampl
         operStatus: nic.connected === null ? null : nic.connected ? "up" : "down",
         macAddress: nic.macAddress,
         ipAddress:  nic.ipAddress,
+        ipv6Address: nic.ipv6Address,
       });
     }
     for (const fs of reading.row.guestDisks ?? []) {
@@ -3356,6 +3365,7 @@ export function buildVcenterSystemInfo(reading: VcenterReading): SystemInfoSampl
         ifName:      vmk.device,
         macAddress:  vmk.macAddress,
         ipAddress:   vmk.ipAddress,
+        ipv6Address: vmk.ipv6Address,
         // A vmk publishes no link state of its own — see the note above the
         // function — so operStatus stays absent rather than claiming "up".
         vlanId:      pg?.vlanId ?? null,
@@ -4720,7 +4730,10 @@ export interface InterfaceSample {
   speedBps?:    number | null;
   /** Negotiated duplex of an UP link, "full" | "half"; null when down or unknown. EtherLike-MIB dot3StatsDuplexStatus (SNMP), FortiOS monitor `duplex`, the Polaris Agent, vCenter pNIC links. */
   duplex?:      string | null;
+  /** The interface's IPv4 address (one bare address). IPv6 rides `ipv6Address` (business rule 126). */
   ipAddress?:   string | null;
+  /** First reportable IPv6 on the interface — never loopback / link-local (utils/interfaceAddress.ts). Listed and kept in history; never the asset's primary address (business rule 126). */
+  ipv6Address?: string | null;
   macAddress?:  string | null;
   inOctets?:    number | null;
   outOctets?:   number | null;
@@ -5451,7 +5464,8 @@ export async function recordFastFilteredResult(assetId: string, result: Collecti
       operStatus:  i.operStatus ?? null,
       speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
       duplex:      i.duplex ?? null,
-      ipAddress:   i.ipAddress ?? null,
+      // ipAddress + ipv6Address, normalised (business rule 126).
+      ...splitInterfaceAddresses(i.ipAddress, i.ipv6Address),
       macAddress:  i.macAddress ?? null,
       inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
       outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
@@ -6116,6 +6130,13 @@ export interface FortiCmdbInterfaceEntry {
    *  see `backfillFortiCmdbOnlyTunnels`; the monitor's runtime IP wins
    *  everywhere else. */
   ipAddress: string | null;
+  /** The CMDB's configured IPv6 (`ipv6.ip6-address`, else the first
+   *  `ip6-extra-addr`), via utils/fortiosIpv6.ts → parseInterfaceIpv6;
+   *  null when unset / link-local. The monitor endpoint carries no IPv6 at
+   *  all (FortiOS 7.6.7 / 8.0.1), so this is the interface's only IPv6
+   *  source on both transports (business rule 126). A dhcp / pppoe /
+   *  delegated interface's IPv6 is runtime state the CMDB does not hold. */
+  ipv6Address: string | null;
   /** A `type tunnel` interface's underlay (CMDB `interface`, e.g. "wan1");
    *  null for every other type and for FortiOS's built-in per-VDOM
    *  pseudo-tunnels (`ssl.root`, `l2t.root`, `naf.root`), which carry none. */
@@ -6182,6 +6203,7 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
       addressingMode,
       adminStatus,
       ipAddress,
+      ipv6Address: parseInterfaceIpv6(c).addresses[0]?.ipAddress ?? null,
       tunnelUnderlay: t === "tunnel" && typeof c.interface === "string" && c.interface.trim() ? c.interface.trim() : null,
     });
   }
@@ -6237,6 +6259,7 @@ export function buildFortiInterfaceSamples(
       speedBps:    speedMbps != null ? Math.round(speedMbps * 1_000_000) : null,
       duplex:      fortiMonitorDuplex(i.link, i.duplex),
       ipAddress:   ip,
+      ipv6Address: cmdbEntry?.ipv6Address ?? null,
       macAddress:  typeof i.mac === "string" ? i.mac.toUpperCase() : null,
       inOctets:    pickFiniteNumber(i.rx_bytes),
       outOctets:   pickFiniteNumber(i.tx_bytes),
@@ -6354,13 +6377,14 @@ export function backfillFortiCmdbOnlyTunnels(
   const present = new Set(interfaces.map((s) => s.ifName));
   for (const [name, c] of cmdbByName) {
     if (c.type !== "tunnel" || present.has(name)) continue;
-    if (!c.ipAddress && !c.tunnelUnderlay) continue;
+    if (!c.ipAddress && !c.ipv6Address && !c.tunnelUnderlay) continue;
     interfaces.push({
       ifName:      name,
       adminStatus: c.adminStatus,
       operStatus:  null,
       speedBps:    null,
       ipAddress:   c.ipAddress,
+      ipv6Address: c.ipv6Address,
       macAddress:  null,
       inOctets:    null,
       outOctets:   null,
@@ -8647,6 +8671,42 @@ async function collectVendorDiskFallback(
   }
 }
 
+/**
+ * Per host: did IP-MIB's ipAddressTable answer the last time it was walked?
+ * Lets the FAST cadence skip the empty walk on a device that only has the
+ * legacy ipAddrTable — every tick, at fleet scale, that would be a wasted
+ * round trip per pinned asset. The heavy pass always re-probes (`probe`), so a
+ * device that gains the table, or answered empty once, is re-learned on its
+ * next full pass.
+ */
+const ipAddressTableAnswered = new Map<string, boolean>();
+
+/**
+ * An interface's addresses over SNMP, both families (business rule 126):
+ * `ifIndex → [address…]` in walk order. ipAddressTable (RFC 4293 — IPv4 and
+ * IPv6, with ipAddressType so only unicast rows count) first; the legacy
+ * IPv4-only ipAddrTable when the device has none. Cost on a device with the
+ * current table: two small walks (one varbind per ADDRESS, not per interface)
+ * where there was one; on a legacy device, after its first full pass, the
+ * same single walk as before.
+ */
+async function walkInterfaceAddressesSnmp(session: any, host: string, probe: boolean): Promise<Map<string, string[]>> {
+  const toNums = (m: Map<string, unknown>) => new Map([...m].map(([k, v]) => [k, snmpVbToNumber(v)] as [string, number | null]));
+  if (probe || ipAddressTableAnswered.get(host) !== false) {
+    const [ifIdx, types] = await Promise.all([
+      snmpWalk(session, IP_ADDRESS_IF_INDEX_OID).catch(() => new Map<string, unknown>()),
+      snmpWalk(session, IP_ADDRESS_TYPE_OID).catch(() => new Map<string, unknown>()),
+    ]);
+    if (ifIdx.size > 0) {
+      ipAddressTableAnswered.set(host, true);
+      return addressesByIfIndexFromIpAddressTable(toNums(ifIdx), toNums(types));
+    }
+    ipAddressTableAnswered.set(host, false);
+  }
+  const legacy = await snmpWalk(session, OID.ipAdEntIfIndex).catch(() => new Map<string, unknown>());
+  return addressesByIfIndexFromIpAddrTable(toNums(legacy));
+}
+
 async function collectSystemInfoSnmp(
   host: string,
   config: Record<string, unknown>,
@@ -8781,7 +8841,7 @@ async function collectSystemInfoSnmp(
         snmpWalk(session, OID.ifOutOctets).catch(() => new Map()),
         snmpWalk(session, OID.ifHCInOctets).catch(() => new Map()),
         snmpWalk(session, OID.ifHCOutOctets).catch(() => new Map()),
-        snmpWalk(session, OID.ipAdEntIfIndex).catch(() => new Map()),
+        walkInterfaceAddressesSnmp(session, host, true),
         snmpWalk(session, OID.ifInErrors).catch(() => new Map()),
         snmpWalk(session, OID.ifOutErrors).catch(() => new Map()),
         snmpWalk(session, OID.ifType).catch(() => new Map()),
@@ -8791,13 +8851,8 @@ async function collectSystemInfoSnmp(
         snmpWalk(session, OID.dot3StatsDuplexStatus).catch(() => new Map()),
       ]);
 
-      // Build ifIndex → first IP map by inverting ipAdEntIfIndex (suffix is the IP itself).
-      const ipByIfIndex = new Map<string, string>();
-      for (const [ip, idxRaw] of ipMap.entries()) {
-        const idx = String(snmpVbToNumber(idxRaw) ?? "");
-        if (!idx) continue;
-        if (!ipByIfIndex.has(idx)) ipByIfIndex.set(idx, ip);
-      }
+      // ifIndex → [addresses], both families (walkInterfaceAddressesSnmp).
+      const addrsByIfIndex = ipMap as Map<string, string[]>;
 
       const allIdx = new Set<string>([
         ...names.keys(), ...descrs.keys(), ...admin.keys(), ...oper.keys(),
@@ -8828,7 +8883,8 @@ async function collectSystemInfoSnmp(
           // Duplex only describes a link that is up; some agents keep
           // reporting the last negotiated value after the cable is pulled.
           duplex:      operStatus === "up" ? dot3DuplexLabel(snmpVbToNumber(duplexes.get(idx))) : null,
-          ipAddress:   ipByIfIndex.get(idx) || null,
+          // First reportable IPv4 and IPv6 on the ifIndex (business rule 126).
+          ...pickInterfaceAddresses(addrsByIfIndex.get(idx) ?? []),
           macAddress:  snmpMacFromBuffer(mac.get(idx)),
           inOctets:    inHi != null  ? inHi  : snmpVbToNumber(in32.get(idx)),
           outOctets:   outHi != null ? outHi : snmpVbToNumber(out32.get(idx)),
@@ -9022,12 +9078,16 @@ async function collectSystemInfoSnmp(
  *      no longer exists on the device). Speed/IP/MAC follow the same picker
  *      rules as the full walk: high-counter prefers `ifHC*Octets` over the
  *      legacy 32-bit columns, speed prefers `ifHighSpeed * 1e6` over
- *      `ifSpeed`, IP comes from inverting `ipAdEntIfIndex` for ipByIfIndex.
+ *      `ifSpeed`, the addresses come from `walkInterfaceAddressesSnmp`.
  *
- * IP resolution is the one gotcha: `ipAdEntIfIndex` is a small walk (one
- * varbind per IPv4 address on the device, not per interface) — we walk it once
- * here so the pinned interface gets its IP. On devices with many IPs (large
- * branches) this is the dominant cost; still tiny compared to the full pass.
+ * Address resolution is the one gotcha: the address tables are indexed by the
+ * ADDRESS, not by ifIndex, so they have to be walked (one varbind per address
+ * on the device, not per interface) — once here, so the pinned interfaces get
+ * their IPv4 and IPv6 (business rule 126). ipAddressTable is two small walks
+ * (ifIndex + type); a legacy-only device, once its first full pass has said
+ * so, pays the single ipAddrTable walk it always did. On devices with many
+ * addresses (large branches) this is the dominant cost; still tiny compared to
+ * the full pass.
  *
  * Returns the same `SystemInfoSample` shape as `collectSystemInfoSnmp` so
  * `recordSystemInfoResult` downstream is unchanged. LLDP and wireless are
@@ -9136,18 +9196,13 @@ async function collectFastFilteredSnmp(
     // to walk it. Tiny on most devices (one varbind per IPv4 address). Skip
     // when no interfaces are pinned (storage-only fast cadence is rare but
     // technically possible).
-    const ipByIfIndex = new Map<string, string>();
+    // Both families (business rule 126) — the same walk the full pass does,
+    // minus the re-probe: a legacy-only device pays one walk, as before.
+    let addrsByIfIndex = new Map<string, string[]>();
     if (ifIndexByName.size > 0) {
       const endIpWalk = startPhase("fastfiltered.snmp.ip_walk");
-      try {
-        const ipMap = await snmpWalk(session, OID.ipAdEntIfIndex);
-        for (const [ip, idxRaw] of ipMap.entries()) {
-          const idx = String(snmpVbToNumber(idxRaw) ?? "");
-          if (!idx) continue;
-          if (!ipByIfIndex.has(idx)) ipByIfIndex.set(idx, ip);
-        }
-      } catch { /* leave empty */ }
-      endIpWalk({ ipMappings: ipByIfIndex.size });
+      addrsByIfIndex = await walkInterfaceAddressesSnmp(session, host, false).catch(() => new Map<string, string[]>());
+      endIpWalk({ ipMappings: addrsByIfIndex.size });
     }
 
     // ── Phase 3: one batched multi-GET, then assembly ─────────────────────
@@ -9194,7 +9249,7 @@ async function collectFastFilteredSnmp(
         operStatus,
         speedBps,
         duplex:      operStatus === "up" ? dot3DuplexLabel(snmpVbToNumber(duplexByIdx.get(`${OID.dot3StatsDuplexStatus}.${idx}`))) : null,
-        ipAddress:   ipByIfIndex.get(idx) || null,
+        ...pickInterfaceAddresses(addrsByIfIndex.get(idx) ?? []),
         macAddress:  snmpMacFromBuffer(vbByOid.get(`${OID.ifPhysAddress}.${idx}`)),
         inOctets:    inHi != null  ? inHi  : snmpVbToNumber(vbByOid.get(`${OID.ifInOctets}.${idx}`)),
         outOctets:   outHi != null ? outHi : snmpVbToNumber(vbByOid.get(`${OID.ifOutOctets}.${idx}`)),
@@ -9854,7 +9909,11 @@ async function persistInterfaceSampleStream(
   // split, the rollup + prune paths are shared, and legacy slow rows age out
   // through the existing 24h prune rather than needing a migration.
   const pinnedOnly = interfaces.filter((i) => pinnedIfaces.has(i.ifName));
-  const pinnedRows: InterfaceSampleRow[] = pinnedOnly.map((i) => ({
+  const pinnedRows: InterfaceSampleRow[] = pinnedOnly.map((i) => {
+    // Business rule 126 — the same normalisation interfaceInventoryService
+    // applies to the current-state row, so the two cannot disagree.
+    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
+    return {
     assetId,
     timestamp: now,
     cadence:     "fast" as const,
@@ -9863,7 +9922,8 @@ async function persistInterfaceSampleStream(
     operStatus:  i.operStatus ?? null,
     speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
     duplex:      i.duplex ?? null,
-    ipAddress:   i.ipAddress ?? null,
+    ipAddress:   addr.ipAddress,
+    ipv6Address: addr.ipv6Address,
     macAddress:  i.macAddress ?? null,
     inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
     outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
@@ -9880,7 +9940,8 @@ async function persistInterfaceSampleStream(
     addressingMode: i.addressingMode ?? null,
     poeStatus:   i.poeStatus ?? null,
     poeClass:    i.poeClass  ?? null,
-  }));
+    };
+  });
   if (pinnedRows.length > 0) {
     enqueueInterfaceSamples(pinnedRows);
     void recordInterfaceLinkEvents(pinnedRows);
@@ -10058,7 +10119,7 @@ export type InterfaceAddressSource = "monitor-system-info" | "agent-interface";
  */
 export async function persistAgentAddressRows(
   assetId: string,
-  interfaces: ReadonlyArray<Pick<InterfaceSample, "ifName" | "ipAddress" | "macAddress">>,
+  interfaces: ReadonlyArray<Pick<InterfaceSample, "ifName" | "ipAddress" | "ipv6Address" | "macAddress">>,
   now: Date,
 ): Promise<void> {
   const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { ipAddress: true } });
@@ -11802,20 +11863,26 @@ function buildMonitorAssocIpEntries(
   }> = [];
   const seenIps = new Set<string>();
   for (const i of interfaces) {
-    if (!i.ipAddress) continue;
-    if (seenIps.has(i.ipAddress)) continue; // dedupe within a single scrape
-    seenIps.add(i.ipAddress);
-    out.push({
-      ip:            i.ipAddress,
-      source,
-      interfaceName: i.ifName,
-      // Colon-uppercase like every other address/MAC row: the asset panel
-      // groups addresses under the MAC list by exact string, and REST / agent
-      // / WinRM collectors report lowercase or dashed MACs.
-      mac:           normalizeMacOrNull(i.macAddress),
-      lastSeen:      now,
-      firstSeen:     now,
-    });
+    // Business rule 126: one row per reportable address, both families, under
+    // the same interface and MAC. Loopback and link-local never land — the
+    // agent used to report `lo` as 127.0.0.1 and an IPv6-only NIC as fe80::,
+    // and this list feeds IP history, path-check hop resolution and search.
+    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
+    for (const ip of [addr.ipAddress, addr.ipv6Address]) {
+      if (!ip || seenIps.has(ip)) continue; // dedupe within a single scrape
+      seenIps.add(ip);
+      out.push({
+        ip,
+        source,
+        interfaceName: i.ifName,
+        // Colon-uppercase like every other address/MAC row: the asset panel
+        // groups addresses under the MAC list by exact string, and REST / agent
+        // / WinRM collectors report lowercase or dashed MACs.
+        mac:           normalizeMacOrNull(i.macAddress),
+        lastSeen:      now,
+        firstSeen:     now,
+      });
+    }
   }
   return out;
 }

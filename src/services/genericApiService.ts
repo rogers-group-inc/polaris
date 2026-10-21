@@ -143,7 +143,7 @@ export const GENERIC_API_MONITOR_FIELDS: Record<GenericApiMonitorStream, { keys:
   responseTime: { keys: ["up", "latencyMs", "uptimeSec"], required: [["up"]] },
   cpuMemory:    { keys: ["cpuPct", "memPct", "memUsed", "memTotal", "memFree"], required: [["cpuPct", "memPct", "memUsed"]] },
   interfaces:   {
-    keys: ["name", "operStatus", "adminStatus", "speedBps", "speedMbps", "inOctets", "outOctets", "inErrors", "outErrors", "macAddress", "ipAddress", "description", "alias"],
+    keys: ["name", "operStatus", "adminStatus", "speedBps", "speedMbps", "inOctets", "outOctets", "inErrors", "outErrors", "macAddress", "ipAddress", "ipv6Address", "description", "alias"],
     required: [["name"]],
   },
   storage:      { keys: ["mountPath", "total", "used", "free"], required: [["mountPath"], ["total"]] },

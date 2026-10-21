@@ -655,3 +655,39 @@ describe("IPsec tunnels live on the IPsec tab, not here", () => {
     expect(doc.getElementById("ifaces")!.textContent).toMatch(/on the IPsec tab/);
   });
 });
+
+// Business rule 126: the interface's IPv6 gets its own column — only on a
+// device that reports one — filterable like IP, and an IPv6-only interface
+// looks up its network by its IPv6.
+describe("IPv6 column", () => {
+  function renderWithV6(): void {
+    const si = makeSi();
+    si.interfaces[0] = { ...si.interfaces[0], ipv6Address: "2001:db8::5" };
+    si.interfaces[5] = { ...si.interfaces[5], ipAddress: null, ipv6Address: "2001:db8:50::1" };
+    doc.body.innerHTML = '<div id="ifaces"></div>';
+    g._renderInterfacesTable(doc.getElementById("ifaces"), si, ASSET);
+  }
+  const cellTexts = (tr: Element) => Array.from(tr.querySelectorAll(":scope > td")).map((td) => td.textContent!.trim());
+
+  it("is absent on a device whose interfaces carry no IPv6", () => {
+    expect(doc.querySelector('th[data-sf-key="ipv6"]')).toBeNull();
+  });
+
+  it("appears beside IP once an interface reports one, and filters by text", async () => {
+    renderWithV6();
+    const heads = Array.from(doc.querySelectorAll("thead th")).map((th) => th.getAttribute("data-col-id"));
+    expect(heads.indexOf("ipv6")).toBe(heads.indexOf("ip") + 1);
+    expect(cellTexts(rowFor("port1"))).toContain("2001:db8::5");
+    await typeFilter("ipv6", "2001:db8:50");
+    expect(names()).toEqual(["vlan50"]);
+  });
+
+  it("looks up an IPv6-only interface's network by its IPv6", async () => {
+    renderWithV6();
+    canReadNetworks = true;
+    ipContextResult = { ip: "2001:db8:50::1", subnet: { id: "S6", cidr: "2001:db8:50::/64", name: "v6" } };
+    click(rowFor("vlan50").querySelector(".asset-iface-link"));
+    await settle();
+    expect(g.api.assets.ipContext).toHaveBeenCalledWith("2001:db8:50::1");
+  });
+});

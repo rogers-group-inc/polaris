@@ -41,7 +41,7 @@ import { createTtlCache } from "../utils/ttlCache.js";
 import { readJsonPathString, readJsonPathStrings, selectRecords } from "../utils/jsonPath.js";
 import { evaluateStateMap, normalizeStateMap, type StateMap } from "../utils/stateProbes.js";
 import { GENERIC_API_SOURCE_KIND, GENERIC_API_TYPE, genericApiIdentityFromExternalId } from "../utils/genericApiSource.js";
-import { isValidIpAddress } from "../utils/cidr.js";
+import { isIpv6Address, isValidIpAddress } from "../utils/cidr.js";
 import { normalizeMacsDistinct } from "../utils/mac.js";
 import {
   GENERIC_API_BYTE_UNITS,
@@ -354,6 +354,10 @@ export function buildInterfaces(doc: unknown, q: GenericApiMonitorQuery): Interf
     const bps = readNumber(r, map.speedBps) ?? (mbps !== null ? mbps * 1_000_000 : null);
     const mac = normalizeMacsDistinct(readJsonPathStrings(r, map.macAddress))[0] ?? null;
     const ip = (str(r, map.ipAddress) ?? "").split("/")[0].trim();
+    // Business rule 126: an optional IPv6 mapping of its own. The write path
+    // normalises both (an IPv6 the operator mapped to ipAddress moves over,
+    // loopback / link-local are dropped), so this only has to read it.
+    const ip6 = (str(r, map.ipv6Address) ?? "").split("/")[0].trim();
     const counter = (p: string | undefined) => { const n = readNumber(r, p); return n !== null && n >= 0 ? Math.round(n) : null; };
     out.push({
       ifName,
@@ -366,6 +370,7 @@ export function buildInterfaces(doc: unknown, q: GenericApiMonitorQuery): Interf
       outErrors: counter(map.outErrors),
       ...(mac ? { macAddress: mac } : {}),
       ...(ip && isValidIpAddress(ip) ? { ipAddress: ip } : {}),
+      ...(ip6 && isIpv6Address(ip6) ? { ipv6Address: ip6 } : {}),
       ...(str(r, map.description) ? { description: str(r, map.description) } : {}),
       ...(str(r, map.alias) ? { alias: str(r, map.alias) } : {}),
     });

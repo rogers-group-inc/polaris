@@ -29,6 +29,13 @@ import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
 import { readSystemStatus, readHaPeers } from "../utils/fortiosEnvelope.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
+import {
+  advertisedPrefixSubnets,
+  DHCP_MONITOR_FORMAT,
+  parseDhcp6Servers,
+  parseDhcpMonitorAddress,
+  parseInterfaceIpv6,
+} from "../utils/fortiosIpv6.js";
 import type {
   DiscoveredSubnet,
   DiscoveredDevice,
@@ -671,14 +678,35 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
     log("discover.dhcp", "error", `${deviceHostname}: Failed to query DHCP servers — ${err.message || "Unknown error"}`, deviceHostname);
   }
 
+  // Step 3 (IPv6): DHCPv6 server scopes → networks (business rule 125). Read
+  // before 3b so a prefix the interface ALSO advertises is recorded once, as
+  // this server's. FortiOS has no DHCPv6 reservations, so there is nothing
+  // else to take from the table. A failure loses only the IPv6 networks; it
+  // never touches the IPv4 reads or the reservation sweep's flag above.
+  try {
+    const dhcp6Data = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system.dhcp6/server", { query: queryBase, signal });
+    const v6Subnets = parseDhcp6Servers(dhcp6Data, deviceName, deviceSerial);
+    for (const s of v6Subnets) {
+      discovered.push(s);
+      dhcpInterfaceNames.push(s.name);
+    }
+    if (v6Subnets.length > 0) {
+      log("discover.dhcp", "info", `${deviceHostname}: Found ${v6Subnets.length} DHCPv6 subnet(s)`, deviceHostname);
+    }
+  } catch (err: any) {
+    log("discover.dhcp", "error", `${deviceHostname}: Failed to query DHCPv6 servers — ${err.message || "Unknown error"}`, deviceHostname);
+  }
+
       // ── Inside Chain A: 3a (live monitor) + 3b (interfaces) run in
       // parallel once Step 3 has populated `discovered` + `dhcpInterfaceNames`.
       await Promise.all([
         // Step 3a: Live DHCP table (reservations + leases) via monitor endpoint
         (async () => {
           try {
+            // ipv6=true makes this the COMBINED table — IPv4 rows unchanged,
+            // DHCPv6 leases added (business rule 125; FortiOS 7.6.7 / 8.0.1).
             const leases = await fgRequest<any[]>(config, "GET", "/api/v2/monitor/system/dhcp", {
-      query: { ...queryBase, format: "ip|mac|hostname|interface|reserved|expire_time|access_point|ssid|vci" },
+      query: { ...queryBase, format: DHCP_MONITOR_FORMAT, ipv6: "true" },
       signal,
     });
     flags.didDhcpLeasesQuery = true;
@@ -708,10 +736,11 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
 
     let deviceEntryCount = 0;
     for (const lease of flatLeases) {
-      const leaseIp = lease.ip;
-      const leaseMac = lease.mac || "";
+      const parsedLease = parseDhcpMonitorAddress(lease);
+      if (!parsedLease) continue;
+      const leaseIp = parsedLease.ip;
+      const leaseMac = parsedLease.mac;
       let leaseIface = lease.interface || lease._serverIface || "";
-      if (!leaseIp || leaseIp === "0.0.0.0") continue;
 
       const existingIdx = dhcpEntries.findIndex((e) => e.ipAddress === leaseIp && e.device === deviceName);
       if (existingIdx >= 0) {
@@ -767,6 +796,8 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
     const ifaceVlanMap = new Map<string, number>();
     let ifaceIpCount = 0;
     let secondaryIpCount = 0;
+    let ipv6IpCount = 0;
+    let raSubnetCount = 0;
     if (Array.isArray(ifaceData)) {
       const parseVid = (v: unknown): number => {
         const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
@@ -778,6 +809,18 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         if (vid > 0) ifaceVlanMap.set(ifaceName, vid);
 
         if (!ifaceName) continue;
+
+        // A prefix the gate announces by router advertisement is a NETWORK it
+        // serves (business rule 125) — the IPv6 counterpart of a DHCP scope,
+        // so like a scope it answers to the DHCP include / exclude filter
+        // (applied after the chains), not to the interface filter below.
+        const v6 = parseInterfaceIpv6(iface);
+        for (const s of advertisedPrefixSubnets(ifaceName, v6, deviceName, deviceSerial, discovered)) {
+          discovered.push(s);
+          dhcpInterfaceNames.push(ifaceName);
+          raSubnetCount++;
+        }
+
         if (ifaceName === mgmtIfaceName) continue;
         if (!matchesInterfaceFilter(ifaceName, config)) continue;
 
@@ -814,6 +857,12 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
             }
           }
         }
+        // The gate's own IPv6 addresses (business rule 125), under the same
+        // interface filter as the IPv4 ones above.
+        for (const a of v6.addresses) {
+          interfaceIps.push({ device: deviceName, interfaceName: ifaceName, ipAddress: a.ipAddress, role: a.role });
+          ipv6IpCount++;
+        }
       }
     }
 
@@ -821,7 +870,7 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
       const vid = ifaceVlanMap.get(sub.name);
       if (vid) sub.vlan = vid;
     }
-    log("discover.interfaces", "info", `${deviceHostname}: Resolved ${ifaceIpCount} interface IP(s)${secondaryIpCount > 0 ? ` + ${secondaryIpCount} secondary IP(s)` : ""}`, deviceHostname);
+    log("discover.interfaces", "info", `${deviceHostname}: Resolved ${ifaceIpCount} interface IP(s)${secondaryIpCount > 0 ? ` + ${secondaryIpCount} secondary IP(s)` : ""}${ipv6IpCount > 0 ? ` + ${ipv6IpCount} IPv6 address(es)` : ""}${raSubnetCount > 0 ? `, ${raSubnetCount} advertised IPv6 prefix(es)` : ""}`, deviceHostname);
   } catch (err: any) {
     log("discover.interfaces", "error", `${deviceHostname}: Failed to query interfaces — ${err.message || "Unknown error"}`, deviceHostname);
   }

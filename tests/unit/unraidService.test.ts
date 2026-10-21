@@ -250,14 +250,28 @@ describe("interface addressing", () => {
       { name: "eth0", macAddress: "aa:bb:cc:dd:ee:02", speed: 2500, vlanId: null, ipAddress: null, ipv4Addresses: [] },
       { name: "br0.20", macAddress: "aa-bb-cc-dd-ee-03", speed: null, vlanId: 20, ipAddress: "10.0.20.2", ipv4Addresses: [] },
     ] } });
-    expect(a.get("br0")).toEqual({ ipAddress: "10.0.0.2", macAddress: "AA:BB:CC:DD:EE:01", speedMbps: null, vlanId: null });
-    expect(a.get("eth0")).toEqual({ ipAddress: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 2500, vlanId: null });
+    expect(a.get("br0")).toEqual({ ipAddress: "10.0.0.2", ipv6Address: null, macAddress: "AA:BB:CC:DD:EE:01", speedMbps: null, vlanId: null });
+    expect(a.get("eth0")).toEqual({ ipAddress: null, ipv6Address: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 2500, vlanId: null });
     expect(a.get("br0.20")).toMatchObject({ ipAddress: "10.0.20.2", macAddress: "AA:BB:CC:DD:EE:03", vlanId: 20 });
   });
 
   it("falls back to the older devices.network list for MAC + speed", () => {
     const a = parseUnraidIfaceAddressing({ info: { devices: { network: [{ iface: "eth0", mac: "aa:bb:cc:dd:ee:02", speed: 1000 }] } } });
-    expect(a.get("eth0")).toEqual({ ipAddress: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 1000, vlanId: null });
+    expect(a.get("eth0")).toEqual({ ipAddress: null, ipv6Address: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 1000, vlanId: null });
+  });
+
+  // Business rule 126: the PolarisIfacesV6 tier's ipv6Addresses — first
+  // routable one, never fe80::, never on Docker plumbing.
+  it("reads the first routable IPv6 from ipv6Addresses", () => {
+    const a = parseUnraidIfaceAddressing({ info: { networkInterfaces: [
+      { name: "br0", macAddress: "aa:bb:cc:dd:ee:01", ipv4Addresses: [{ address: "192.0.2.2" }],
+        ipv6Addresses: [{ address: "fe80::1", prefixLength: 64 }, { address: "2001:db8::2", prefixLength: 64 }] },
+      { name: "docker0", macAddress: "02:42:ac:11:00:01", ipv6Addresses: [{ address: "2001:db8:d::1" }] },
+      { name: "eth0", macAddress: "aa:bb:cc:dd:ee:02", ipv4Addresses: [] },
+    ] } });
+    expect(a.get("br0")).toMatchObject({ ipAddress: "192.0.2.2", ipv6Address: "2001:db8::2" });
+    expect(a.get("docker0")!.ipv6Address).toBeNull();
+    expect(a.get("eth0")!.ipv6Address).toBeNull();
   });
 
   it("records no address for Docker's own plumbing, link-local, or an all-zero MAC — but keeps their MAC", () => {
@@ -275,18 +289,22 @@ describe("interface addressing", () => {
 
   it("fills the metrics rows by name, keeping their counters, and leaves an unnamed row alone", () => {
     const filled = applyUnraidIfaceAddressing(metrics, new Map([
-      ["br0", { ipAddress: "10.0.0.2", macAddress: "AA:BB:CC:DD:EE:01", speedMbps: null, vlanId: null }],
-      ["eth0", { ipAddress: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 2500, vlanId: null }],
+      ["br0", { ipAddress: "10.0.0.2", ipv6Address: "2001:db8::2", macAddress: "AA:BB:CC:DD:EE:01", speedMbps: null, vlanId: null }],
+      ["eth0", { ipAddress: null, ipv6Address: null, macAddress: "AA:BB:CC:DD:EE:02", speedMbps: 2500, vlanId: null }],
     ]));
-    expect(filled[0]).toMatchObject({ name: "br0", rxBytes: 10, ipAddress: "10.0.0.2", macAddress: "AA:BB:CC:DD:EE:01" });
+    expect(filled[0]).toMatchObject({ name: "br0", rxBytes: 10, ipAddress: "10.0.0.2", ipv6Address: "2001:db8::2", macAddress: "AA:BB:CC:DD:EE:01" });
     expect(filled[1]).toMatchObject({ name: "eth0", speedMbps: 2500, macAddress: "AA:BB:CC:DD:EE:02" });
     expect(filled[3]).toBe(metrics[3]);
   });
 
   it("asks for the addressing in queries of their own, never the inventory query", () => {
     expect(UNRAID_INVENTORY_QUERY).not.toMatch(/networkInterfaces/);
-    expect(UNRAID_IFACE_QUERIES[0]).toMatch(/networkInterfaces/);
-    expect(UNRAID_IFACE_QUERIES[1]).toMatch(/devices \{ network/);
+    // Tiered, newest first: the IPv6 field has its own tier so an API without
+    // it still gets IPv4 addressing from the next one (business rule 126).
+    expect(UNRAID_IFACE_QUERIES[0]).toMatch(/ipv6Addresses \{ address \}/);
+    expect(UNRAID_IFACE_QUERIES[1]).toMatch(/networkInterfaces/);
+    expect(UNRAID_IFACE_QUERIES[1]).not.toMatch(/ipv6Addresses/);
+    expect(UNRAID_IFACE_QUERIES[2]).toMatch(/devices \{ network/);
   });
 });
 

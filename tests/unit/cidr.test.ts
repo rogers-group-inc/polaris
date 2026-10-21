@@ -31,7 +31,41 @@ import {
   bareInterfaceIp,
   interfaceIpIsUnaddressed,
   unwrapMappedIpv4,
+  isIpv6Address,
+  canonicalIp,
+  isIpamIpv6Address,
 } from "../../src/utils/cidr.js";
+
+// Business rule 125: the IPv6 helpers discovery's IPAM writes go through.
+describe("IPv6 address helpers", () => {
+  it("isIpv6Address accepts IPv6 only", () => {
+    expect(isIpv6Address("2001:db8::1")).toBe(true);
+    expect(isIpv6Address("192.0.2.1")).toBe(false);
+    expect(isIpv6Address("2001:db8::/64")).toBe(false);
+    expect(isIpv6Address(null)).toBe(false);
+  });
+  it("canonicalIp compresses and lower-cases IPv6 the way normalizeCidr writes a base", () => {
+    expect(canonicalIp("2001:DB8:0:0:0:0:0:5")).toBe("2001:db8::5");
+    expect(canonicalIp("2001:db8:0000:1::0001")).toBe("2001:db8:0:1::1");
+    expect(normalizeCidr("2001:db8:0:1:0:0:0:0/64").split("/")[0]).toBe(canonicalIp("2001:db8:0:1::"));
+    expect(canonicalIp("192.0.2.1")).toBe("192.0.2.1");
+    expect(canonicalIp("not-an-ip")).toBeNull();
+  });
+  it("isIpamIpv6Address refuses what no operator manages", () => {
+    expect(isIpamIpv6Address("2001:db8::1")).toBe(true);
+    expect(isIpamIpv6Address("fd00::2")).toBe(true);
+    for (const ip of ["::", "::1", "fe80::1", "ff02::1", "::ffff:192.0.2.1", "192.0.2.1"]) {
+      expect(isIpamIpv6Address(ip)).toBe(false);
+    }
+  });
+  it("the range helpers work for IPv6 and never across families", () => {
+    expect(ipInCidr("2001:db8:1::5", "2001:db8:1::/64")).toBe(true);
+    expect(ipInCidr("2001:db8:1::5", "10.0.0.0/8")).toBe(false);
+    expect(ipInCidr("10.0.0.5", "2001:db8::/32")).toBe(false);
+    expect(cidrContains("2001:db8::/32", "2001:db8:1::/64")).toBe(true);
+    expect(buildCidrMatcher(["10.0.0.0/8", "2001:db8:1::/64"])("2001:db8:1::ab")).toBe("2001:db8:1::/64");
+  });
+});
 
 describe("normalizeCidr", () => {
   it("zeroes host bits", () => {

@@ -2632,3 +2632,27 @@ with `|` (`ATT EPLS | wan1`) and the condition covers any of them. The filter
 still only reaches interfaces you pinned for monitoring. Existing automations
 can now also match a pinned interface whose description contains the filter
 text. ([Automation Triggers](Automation-Triggers#filter-rows) has the details.)
+
+### Rule 125
+
+**IPv6 addresses a FortiGate knows are added to IPAM, and never become the
+address a device is monitored on.** Discovery records DHCPv6 scopes and the
+prefixes a gate advertises to its clients as networks, and the gate's own IPv6
+addresses, its DHCPv6 leases and the addresses it sees clients using as
+reservations inside them. An address the gate only saw in use is marked
+*observed*: it never overrides another row, Reserve replaces it, and it is
+released a day after it was last seen. An asset keeps its IPv4 address for
+monitoring, and an IPv6 reservation is never pushed to the gate, because
+FortiOS has no DHCPv6 reservations.
+([FortiManager and standalone FortiGate](Integration-Fortinet#ipv6) has the
+details.)
+
+### Rule 126
+
+**An interface shows its IPv6 address beside its IPv4 address, but never a
+loopback or link-local one, and a device stays monitored on IPv4.** Each
+interface on the Interfaces tab can now carry both. Both are added to the
+asset's address list and IP history, under the same interface and MAC.
+Addresses such as 127.0.0.1 and fe80:: are never recorded, even from an agent
+that has not been upgraded yet. Polaris never moves a device onto an IPv6
+address on its own; only pinning one yourself does that.

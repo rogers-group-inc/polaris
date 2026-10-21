@@ -61,6 +61,7 @@
     fortigate:         "a FortiGate",
     dns_resolved:      "a DNS-resolved record",
     external:          "an external IPAM assignment",
+    observed:          "a client the gate saw using this IPv6 address",
   };
 
   function reservationText(r) {

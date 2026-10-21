@@ -231,6 +231,42 @@ export function expandIpv6(ip: string): string {
   return groups.map((g) => g.padStart(4, "0")).join(":");
 }
 
+/** True for a syntactically valid IPv6 address (no prefix, no zone index). */
+export function isIpv6Address(ip: string | null | undefined): boolean {
+  return typeof ip === "string" && isIP(ip) === 6;
+}
+
+/**
+ * The one spelling of an address that string comparison can rely on: IPv6
+ * lower-cased and compressed per RFC 5952 (the form `normalizeCidr` already
+ * writes a network's base in), IPv4 returned as given. A reservation key is
+ * `subnetId|ip`, so "2001:DB8:0::1" and "2001:db8::1" must not become two rows.
+ * Null for anything that is not a valid address.
+ */
+export function canonicalIp(ip: string | null | undefined): string | null {
+  if (typeof ip !== "string") return null;
+  const v = isIP(ip);
+  if (v === 4) return ip;
+  if (v !== 6) return null;
+  // WHATWG URL serialisation IS RFC 5952 compression.
+  return new URL(`http://[${ip}]/`).hostname.slice(1, -1);
+}
+
+// Address space an IPv6 interface carries but that is never a network an
+// operator manages: unspecified, loopback, link-local (every interface has
+// one), multicast, and IPv4-mapped.
+const NON_IPAM_IPV6_RANGES = ["::/128", "::1/128", "fe80::/10", "ff00::/8", "::ffff:0:0/96"];
+
+/**
+ * True for an IPv6 address that can belong to an IPAM network: a valid
+ * address outside `NON_IPAM_IPV6_RANGES`. Global unicast and ULA (fc00::/7)
+ * pass.
+ */
+export function isIpamIpv6Address(ip: string | null | undefined): boolean {
+  if (!isIpv6Address(ip)) return false;
+  return !NON_IPAM_IPV6_RANGES.some((r) => ipInCidr(ip as string, r));
+}
+
 /**
  * Reverse-DNS PTR query name for an IPv4 or IPv6 address
  * (`d.c.b.a.in-addr.arpa` / nibble-reversed `ip6.arpa`).
@@ -349,7 +385,9 @@ export function mostSpecificContaining<T extends { cidr: string }>(
 }
 
 /**
- * Return true if the given IP address is within the CIDR range.
+ * Return true if the given IP address is within the CIDR range. Both IP
+ * versions (netmask 2.x parses IPv6); an address of one version is never
+ * inside a range of the other.
  */
 export function ipInCidr(ip: string, cidr: string): boolean {
   try {
@@ -372,8 +410,8 @@ export function ipInCidr(ip: string, cidr: string): boolean {
  *
  * Unparseable CIDRs are dropped rather than throwing: the caller is matching
  * against discovery-supplied rows, and one bad row must not blind the rest.
- * IPv4 only (Netmask), same as `ipInCidr` — an IPv6 address simply matches
- * nothing.
+ * Both IP versions, same as `ipInCidr`; an address only ever matches a range
+ * of its own version.
  */
 export function buildCidrMatcher(cidrs: string[]): (ip: string) => string | null {
   const blocks: Array<{ cidr: string; block: Netmask }> = [];
@@ -390,7 +428,7 @@ export function buildCidrMatcher(cidrs: string[]): (ip: string) => string | null
       try {
         if (b.block.contains(ip)) return b.cidr;
       } catch {
-        /* not an IPv4 address this block can evaluate */
+        /* not an address this block can evaluate */
       }
     }
     return null;

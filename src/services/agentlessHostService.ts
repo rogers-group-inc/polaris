@@ -33,6 +33,7 @@
 
 import type { WinRmConnection } from "../utils/winrm.js";
 import { withSshClient, sshExec, winrmRunPowershell } from "../utils/remoteExec.js";
+import { pickInterfaceAddresses } from "../utils/interfaceAddress.js";
 
 export interface AgentlessTelemetry {
   cpuPct: number | null;
@@ -47,7 +48,10 @@ export interface AgentlessInterface {
   operStatus: string | null;
   speedBps: number | null;
   macAddress: string | null;
+  /** First reportable IPv4. */
   ipAddress: string | null;
+  /** First reportable IPv6 — never fe80:: (business rule 126). */
+  ipv6Address?: string | null;
   inOctets: number | null;
   outOctets: number | null;
   inErrors: number | null;
@@ -152,12 +156,24 @@ export const LINUX_INTERFACES_COMMAND =
   'echo "TXB=$(cat $d/statistics/tx_bytes 2>/dev/null)"; ' +
   'echo "RXE=$(cat $d/statistics/rx_errors 2>/dev/null)"; ' +
   'echo "TXE=$(cat $d/statistics/tx_errors 2>/dev/null)"; ' +
+  // Addresses aren't in sysfs. `ip -o` prints one address per line whatever
+  // the distro, the 4th field being "addr/prefix"; each becomes an ADDR line
+  // and the parser keeps one reportable address per family (business rule
+  // 126). No iproute2 means no ADDR lines — the row is as it always was.
+  'ip -o addr show dev "$n" 2>/dev/null | while read -r _i _n _f a _r; do echo "ADDR=$a"; done; ' +
   "done'";
 
 export function parseLinuxInterfaces(stdout: string): AgentlessInterface[] {
   const out: AgentlessInterface[] = [];
   let cur: AgentlessInterface | null = null;
-  const push = () => { if (cur && cur.ifName) out.push(cur); };
+  let addrs: string[] = [];
+  const push = () => {
+    if (!cur || !cur.ifName) return;
+    const picked = pickInterfaceAddresses(addrs);
+    cur.ipAddress = picked.ipAddress;
+    cur.ipv6Address = picked.ipv6Address;
+    out.push(cur);
+  };
   for (const raw of stdout.split("\n")) {
     const line = raw.trim();
     const eq = line.indexOf("=");
@@ -166,6 +182,7 @@ export function parseLinuxInterfaces(stdout: string): AgentlessInterface[] {
     const val = line.slice(eq + 1).trim();
     if (key === "IF") {
       push();
+      addrs = [];
       cur = {
         ifName: val, adminStatus: null, operStatus: null, speedBps: null, macAddress: null,
         ipAddress: null, inOctets: null, outOctets: null, inErrors: null, outErrors: null,
@@ -188,6 +205,7 @@ export function parseLinuxInterfaces(stdout: string): AgentlessInterface[] {
       case "TXB":  cur.outOctets = num(val); break;
       case "RXE":  cur.inErrors  = num(val); break;
       case "TXE":  cur.outErrors = num(val); break;
+      case "ADDR": if (val) addrs.push(val); break;
     }
   }
   push();
@@ -267,9 +285,16 @@ export function parseWindowsCpuMem(stdout: string): AgentlessTelemetry {
 export const WINDOWS_INTERFACES_SCRIPT = [
   "$ErrorActionPreference='SilentlyContinue'",
   "$s=@{};Get-NetAdapterStatistics|%{$s[$_.Name]=$_}",
-  "$ip=@{};Get-NetIPAddress -AddressFamily IPv4|%{if(-not $ip[$_.InterfaceAlias]){$ip[$_.InterfaceAlias]=$_.IPAddress}}",
+  // Every address per adapter, both families (business rule 126), privacy
+  // (SuffixOrigin Random) addresses last so a stable one is picked first. Two
+  // filtered passes over one read rather than Sort-Object, which is not stable
+  // on Windows PowerShell 5.1 and could reorder an adapter's IPv4 addresses.
+  // The server picks one reportable address per family — fe80:: never.
+  "$ip=@{};$a=@(Get-NetIPAddress)",
+  "$a|?{$_.SuffixOrigin -ne 'Random'}|%{$ip[$_.InterfaceAlias]+=@([string]$_.IPAddress)}",
+  "$a|?{$_.SuffixOrigin -eq 'Random'}|%{$ip[$_.InterfaceAlias]+=@([string]$_.IPAddress)}",
   "@(Get-NetAdapter|%{[pscustomobject]@{n=$_.Name;admin=$_.AdminStatus;oper=$_.Status;speed=$_.LinkSpeed;" +
-    "mac=$_.MacAddress;ip=$ip[$_.Name];rxb=$s[$_.Name].ReceivedBytes;txb=$s[$_.Name].SentBytes;" +
+    "mac=$_.MacAddress;ips=@($ip[$_.Name]);rxb=$s[$_.Name].ReceivedBytes;txb=$s[$_.Name].SentBytes;" +
     "rxe=$s[$_.Name].ReceivedPacketsDiscarded;txe=$s[$_.Name].OutboundPacketsDiscarded}})|ConvertTo-Json -Depth 3 -Compress",
 ].join(";");
 
@@ -293,6 +318,10 @@ export function parseWindowsInterfaces(stdout: string): AgentlessInterface[] {
     const r = row as Record<string, unknown>;
     const ifName = typeof r.n === "string" ? r.n : "";
     if (!ifName) continue;
+    // `ips` is every address on the adapter; `ip` the single IPv4 an older
+    // script sent. One per family, reportable only (business rule 126).
+    const listed = Array.isArray(r.ips) ? r.ips.map((v) => (typeof v === "string" ? v : null)) : typeof r.ips === "string" ? [r.ips] : [];
+    const addr = pickInterfaceAddresses(listed.length ? listed : [typeof r.ip === "string" ? r.ip : null]);
     out.push({
       ifName,
       adminStatus: r.admin != null ? String(r.admin).toLowerCase() : null,
@@ -301,7 +330,8 @@ export function parseWindowsInterfaces(stdout: string): AgentlessInterface[] {
       // Windows renders a MAC with dashes; every other source in Polaris uses
       // colons, and the identity joins downstream assume it.
       macAddress: typeof r.mac === "string" && r.mac ? r.mac.replace(/-/g, ":").toLowerCase() : null,
-      ipAddress: typeof r.ip === "string" ? r.ip : null,
+      ipAddress: addr.ipAddress,
+      ipv6Address: addr.ipv6Address,
       inOctets: num(r.rxb),
       outOctets: num(r.txb),
       inErrors: num(r.rxe),

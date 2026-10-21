@@ -176,7 +176,7 @@ query feeds **one** of:
 |---|---|
 | Response time (up / down) | `up` (required), `latencyMs`, `uptimeSec`; **Values that mean up** (blank: true, up, online, ok, running, 1, yes, active, healthy, connected, available) |
 | CPU / memory | `cpuPct`, `memPct`, `memUsed`, `memTotal`, `memFree` (at least one of the first three); **Sizes are in** bytes, KB, MB, GB or TB |
-| Interfaces | per row: `name` (required), `operStatus`, `adminStatus`, `speedBps` or `speedMbps`, `inOctets`, `outOctets`, `inErrors`, `outErrors`, `macAddress`, `ipAddress`, `description`, `alias` |
+| Interfaces | per row: `name` (required), `operStatus`, `adminStatus`, `speedBps` or `speedMbps`, `inOctets`, `outOctets`, `inErrors`, `outErrors`, `macAddress`, `ipAddress` (IPv4), `ipv6Address`, `description`, `alias` |
 | Storage | per row: `mountPath` and `total` (required), `used` or `free` |
 | Temperature | per row: `name` and `celsius` |
 | LLDP neighbors | per row: `localIfName`, plus one of `chassisId`, `portId`, `systemName`; also `portDescription`, `systemDescription`, `managementIp` |
