@@ -179,8 +179,9 @@ type InterfaceSample struct {
 	AdminStatus *string `json:"adminStatus,omitempty"` // "up" | "down" | ...
 	OperStatus  *string `json:"operStatus,omitempty"`
 	SpeedBps    *uint64 `json:"speedBps,omitempty"`
-	Duplex      *string `json:"duplex,omitempty"` // "full" | "half"; omitted when unknown
-	IPAddress   *string `json:"ipAddress,omitempty"`
+	Duplex      *string `json:"duplex,omitempty"`      // "full" | "half"; omitted when unknown
+	IPAddress   *string `json:"ipAddress,omitempty"`   // first routable IPv4
+	IPv6Address *string `json:"ipv6Address,omitempty"` // first routable IPv6, never fe80:: (agent ≥ 0.28.0)
 	MACAddress  *string `json:"macAddress,omitempty"`
 	InOctets    *uint64 `json:"inOctets,omitempty"`
 	OutOctets   *uint64 `json:"outOctets,omitempty"`

@@ -42,6 +42,7 @@ func InterfacesOnce() []*transport.InterfaceSample {
 	type ifMeta struct {
 		mac   string
 		ip    string
+		ip6   string
 		admin string
 		index int
 		flags net.Flags
@@ -60,26 +61,17 @@ func InterfacesOnce() []*transport.InterfaceSample {
 			} else {
 				m.admin = "down"
 			}
-			// First non-loopback IPv4, fall back to first IPv6.
+			// The first routable IPv4 and the first routable IPv6, each in
+			// its own field. This used to take the first non-loopback IPv4
+			// and otherwise the first address of ANY family, unfiltered — so
+			// `lo` reported 127.0.0.1 and an IPv6-only NIC its fe80::, both
+			// of which landed in the server's address list and IP history.
 			if addrs, err := ifc.Addrs(); err == nil {
-				var fallback string
+				strs := make([]string, 0, len(addrs))
 				for _, a := range addrs {
-					ipStr := stripCIDR(a.String())
-					ip := net.ParseIP(ipStr)
-					if ip == nil {
-						continue
-					}
-					if ip.To4() != nil && !ip.IsLoopback() {
-						m.ip = ipStr
-						break
-					}
-					if fallback == "" {
-						fallback = ipStr
-					}
+					strs = append(strs, a.String())
 				}
-				if m.ip == "" {
-					m.ip = fallback
-				}
+				m.ip, m.ip6 = pickAddresses(strs)
 			}
 			meta[ifc.Name] = m
 		}
@@ -111,6 +103,10 @@ func InterfacesOnce() []*transport.InterfaceSample {
 			if m.ip != "" {
 				ip := m.ip
 				s.IPAddress = &ip
+			}
+			if m.ip6 != "" {
+				ip6 := m.ip6
+				s.IPv6Address = &ip6
 			}
 			admin := m.admin
 			s.AdminStatus = &admin
@@ -184,6 +180,32 @@ func classifyIfType(name string) string {
 		return "tunnel"
 	}
 	return "physical"
+}
+
+// pickAddresses returns the first routable IPv4 and the first routable IPv6
+// out of an interface's address strings ("192.0.2.1/24", "fe80::1/64", …), in
+// order. Routable = global unicast (private IPv4 and IPv6 ULA included) and
+// not 0.0.0.0/8: loopback, link-local (169.254/16, fe80::/10), multicast and
+// unspecified addresses are never reported. The server filters the same way
+// (utils/interfaceAddress.ts) for agents older than this one.
+func pickAddresses(addrs []string) (v4, v6 string) {
+	for _, a := range addrs {
+		ip := net.ParseIP(stripCIDR(a))
+		if ip == nil || !ip.IsGlobalUnicast() {
+			continue
+		}
+		if ip4 := ip.To4(); ip4 != nil {
+			if v4 == "" && ip4[0] != 0 {
+				v4 = ip4.String()
+			}
+		} else if v6 == "" {
+			v6 = ip.String()
+		}
+		if v4 != "" && v6 != "" {
+			break
+		}
+	}
+	return v4, v6
 }
 
 // stripCIDR turns "192.0.2.1/24" or "fe80::1/64" into the address half.
