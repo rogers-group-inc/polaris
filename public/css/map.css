@@ -418,6 +418,16 @@
   height: 34px;
   padding: 0 !important;
 }
+/* Full screen / Refresh / Export (map.js addMapViewTools), top-right. Added
+   to the corner BEFORE the Regions panel, so it floats rightmost; neither
+   clears, so the collapsed Regions button sits on the same row, to its left
+   (and the open panel beside it). Leaflet's later top-right controls (the
+   region draw toolbar) still clear onto rows of their own. */
+.leaflet-top.leaflet-right .map-view-tools,
+.leaflet-top.leaflet-right .map-regions-panel { clear: none; }
+/* Same 6px step as between the tools themselves, not Leaflet's 10px. */
+.leaflet-top.leaflet-right .map-view-tools + .map-regions-panel { margin-right: 6px; }
+.map-canvas.map-fullscreen { border-radius: 0; border: 0; }
 .map-legend i {
   width: 8px;
   height: 8px;

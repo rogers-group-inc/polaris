@@ -201,6 +201,38 @@ function tinyScene() {
   };
 }
 
+describe("clipSceneToExtent (export only what is in the viewer)", () => {
+  it("keeps what is in view, drops what is zoomed or panned out, and frames the view", () => {
+    // The view takes the first node and the start of the edge; the second node (180..200) is out.
+    const s = G.clipSceneToExtent(tinyScene(), { x1: -5, y1: -5, x2: 60, y2: 50 });
+    expect(s.nodes).toHaveLength(1);
+    expect(s.nodes[0].x1).toBe(0);
+    expect(s.edges).toHaveLength(1);
+    expect(s.bbox).toEqual({ x1: -5, y1: -5, x2: 60, y2: 50, w: 65, h: 55 });
+    // The writer clips at the edge of the view, so the edge's off-screen half never prints.
+    expect(s.clip).toEqual({ x1: -5, y1: -5, x2: 60, y2: 50 });
+    // The smallest font is the smallest one still in view.
+    expect(s.minFontPx).toBe(9);
+  });
+
+  it("counts a node's label as part of it: a name hanging into view keeps its node", () => {
+    // Node 1's label sits below it (valign bottom, my 4): y 24..36.
+    const s = G.clipSceneToExtent(tinyScene(), { x1: -5, y1: 30, x2: 8, y2: 40 });
+    expect(s.nodes.map((n: any) => n.x1)).toEqual([0]);
+  });
+
+  it("returns null when nothing is in view", () => {
+    expect(G.clipSceneToExtent(tinyScene(), { x1: 1000, y1: 1000, x2: 1100, y2: 1100 })).toBeNull();
+  });
+
+  it("leaves the full scene untouched", () => {
+    const base = tinyScene();
+    G.clipSceneToExtent(base, { x1: -5, y1: -5, x2: 60, y2: 50 });
+    expect(base.nodes).toHaveLength(2);
+    expect((base as any).clip).toBeUndefined();
+  });
+});
+
 describe("vsdxPageXml / vsdxParts", () => {
   it("sizes the page to the drawing at 1 px = 1 pt plus margins", () => {
     const p = G.vsdxPageXml(tinyScene());

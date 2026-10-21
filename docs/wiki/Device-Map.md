@@ -39,6 +39,23 @@ light and dark tiles independently of the app theme. It is remembered per user i
 this browser; until you touch it, the map follows the app theme's family
 (Morning and Noon light, Nightfall dark).
 
+### Full screen, Refresh and Export
+
+Three buttons sit in the map's top-right corner, to the right of the
+[Regions](#regions) button:
+
+- **Full screen** fills the screen with the map. Click it again, or press
+  Esc, to come back. A FortiGate's topology and the asset details still open
+  over it.
+- **Refresh** reloads the FortiGates and their status without moving the map:
+  your zoom and position stay where they are.
+- **Export** exports **what is in view**, exactly as the map shows it: the
+  area on screen at the current zoom, with the pins, clusters, any regions you
+  are showing, the status legend and the map credit. Anything you have panned
+  or zoomed out of view is not in it. **Copy screenshot** puts a PNG on the
+  clipboard (or downloads it, where the browser will not allow the clipboard);
+  **Export PDF** saves it on a letter page with the time it was taken.
+
 ### Where coordinates come from
 
 Three tiers, highest first — see

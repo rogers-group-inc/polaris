@@ -174,8 +174,170 @@
     wireClusterInteractions();
     addStatusLegend();
     addMapThemeControl();
+    // Before the Regions panel (wireShowRegions), so it is the rightmost
+    // control in the top-right corner — see .map-view-tools in map.css.
+    addMapViewTools();
 
     attachRightClickPan();
+  }
+
+  // ─── View tools: Full screen / Refresh / Export (top-right) ───────────────
+  var ICON_REFRESH =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>' +
+      '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
+  var ICON_EXPORT =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  var ICON_MENU_CAMERA =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+  var ICON_MENU_DOC =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+
+  function addMapViewTools() {
+    var ctl = L.control({ position: "topright" });
+    ctl.onAdd = function () {
+      var div = L.DomUtil.create("div", "map-view-tools");
+      div.innerHTML =
+        '<button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="map-fullscreen" style="line-height:0"></button>' +
+        '<button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="map-refresh" aria-label="Refresh" title="Refresh the map" style="line-height:0">' + ICON_REFRESH + "</button>" +
+        '<button type="button" class="btn btn-secondary btn-sm btn-icon-only" id="map-export" aria-label="Export" aria-haspopup="menu" title="Export what is in view: screenshot or PDF" style="line-height:0">' + ICON_EXPORT + "</button>";
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+      return div;
+    };
+    ctl.addTo(map);
+
+    if (window.PolarisMapFullscreen) {
+      window.PolarisMapFullscreen.attach(document.getElementById("map-fullscreen"), map.getContainer(),
+        function () { map.invalidateSize(); });
+    }
+    var refreshBtn = document.getElementById("map-refresh");
+    refreshBtn.addEventListener("click", async function () {
+      refreshBtn.disabled = true;
+      try {
+        await loadSites({ keepView: true });
+      } catch (err) {
+        setStatus("Failed to load sites: " + (err && err.message ? err.message : err));
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    });
+    var exportBtn = document.getElementById("map-export");
+    exportBtn.addEventListener("click", function () {
+      showRowMenu(exportBtn, [
+        { label: "Copy screenshot", icon: ICON_MENU_CAMERA, onSelect: function () { exportMapView("png"); } },
+        { label: "Export PDF", icon: ICON_MENU_DOC, onSelect: function () { exportMapView("pdf"); } },
+      ], { align: "end", label: "Export" });
+    });
+  }
+
+  // The map as it is in the viewer, on a canvas at 2x: exactly the visible
+  // area — what is panned or zoomed out of view is not in it. Two layers,
+  // because html-to-image fetch()es every <img> it inlines and the CSP's
+  // connect-src does not (and need not) list the tile host: the basemap tiles
+  // are drawn straight from their loaded <img> elements (CORS-loaded, see
+  // applyBasemapTheme, so the canvas stays exportable) under the tile pane's
+  // own filter (the dark basemap), then html-to-image renders everything
+  // else — markers, clusters, region polygons, the status legend and the
+  // attribution — over them with the tile pane and the top corners' buttons
+  // left out.
+  async function captureMapCanvas() {
+    var el = map.getContainer();
+    var box = el.getBoundingClientRect();
+    var SCALE = 2;
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.round(box.width * SCALE);
+    canvas.height = Math.round(box.height * SCALE);
+    var ctx = canvas.getContext("2d");
+    ctx.scale(SCALE, SCALE);
+    ctx.fillStyle = getComputedStyle(el).backgroundColor || "#ffffff";
+    ctx.fillRect(0, 0, box.width, box.height);
+
+    var tilePane = el.querySelector(".leaflet-tile-pane");
+    if (tilePane) {
+      var f = getComputedStyle(tilePane).filter;
+      ctx.filter = f && f !== "none" ? f : "none";
+      tilePane.querySelectorAll("img.leaflet-tile-loaded").forEach(function (img) {
+        var r = img.getBoundingClientRect();
+        if (r.right < box.left || r.left > box.right || r.bottom < box.top || r.top > box.bottom) return;
+        ctx.drawImage(img, r.left - box.left, r.top - box.top, r.width, r.height);
+      });
+      ctx.filter = "none";
+    }
+
+    if (typeof htmlToImage !== "undefined" && htmlToImage.toCanvas) {
+      var overlay = await htmlToImage.toCanvas(el, {
+        pixelRatio: SCALE,
+        // The container's own card background would paint over the tiles.
+        style: { background: "transparent", backgroundColor: "transparent", boxShadow: "none" },
+        filter: function (node) {
+          var cl = node && node.classList;
+          return !(cl && (cl.contains("leaflet-tile-pane") || cl.contains("leaflet-top")));
+        },
+      });
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(overlay, 0, 0, canvas.width, canvas.height);
+    }
+    return canvas;
+  }
+
+  async function exportMapView(kind) {
+    var canvas;
+    try {
+      canvas = await captureMapCanvas();
+    } catch (err) {
+      showToast("Export failed: " + (err && err.message ? err.message : err), "error");
+      return;
+    }
+    var stamp = new Date().toISOString().slice(0, 10);
+    if (kind === "pdf") {
+      if (!window.jspdf || !window.jspdf.jsPDF) {
+        showToast("PDF library not loaded. Reload the page and try again.", "error");
+        return;
+      }
+      try {
+        var doc = new window.jspdf.jsPDF({ orientation: canvas.width >= canvas.height ? "landscape" : "portrait", unit: "pt", format: "letter" });
+        var pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+        var M = 28, now = new Date();
+        doc.setFontSize(14);
+        doc.setTextColor(26, 26, 26);
+        doc.text(((typeof _branding !== "undefined" && _branding && _branding.appName) || "Polaris") + " — Device Map", M, M + 10);
+        doc.setFontSize(8);
+        doc.setTextColor(110, 110, 110);
+        var statusEl = document.getElementById("map-status");
+        var sub = "Generated: " + now.toLocaleDateString() + " " + now.toLocaleTimeString() +
+          (statusEl && statusEl.textContent ? "  |  " + statusEl.textContent : "");
+        doc.text(sub, M, M + 24);
+        var top = M + 34, aw = pw - 2 * M, ah = ph - top - M;
+        var k = Math.min(aw / canvas.width, ah / canvas.height);
+        var w = canvas.width * k, h = canvas.height * k;
+        // JPEG: map tiles are photographic enough that a PNG of the 2x capture
+        // made a 15 MB PDF; at 0.9 it is a small fraction of that, unblurred.
+        doc.addImage(canvas.toDataURL("image/jpeg", 0.9), "JPEG", M + (aw - w) / 2, top, w, h);
+        doc.save("polaris-device-map-" + stamp + ".pdf");
+        showToast("Device Map exported as PDF");
+      } catch (err) {
+        showToast("Export failed: " + (err && err.message ? err.message : err), "error");
+      }
+      return;
+    }
+    var blob = await new Promise(function (resolve) {
+      try { canvas.toBlob(resolve, "image/png"); } catch (e) { resolve(null); }
+    });
+    if (!blob) { showToast("Screenshot failed", "error"); return; }
+    if (await copyPngToClipboard(blob)) {
+      showToast("Map copied to clipboard");
+      return;
+    }
+    // Clipboard unavailable or refused (needs HTTPS + permission): download.
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "polaris-device-map-" + stamp + ".png";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
   }
 
   // Right-click drag pans the map. Useful when left-click is captured by
@@ -262,7 +424,10 @@
     var url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
     var attribution = "© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors";
     if (basemapLayer) map.removeLayer(basemapLayer);
-    basemapLayer = L.tileLayer(url, { maxZoom: 19, attribution: attribution }).addTo(map);
+    // crossOrigin: tiles are fetched in CORS mode (tile.openstreetmap.org
+    // answers Access-Control-Allow-Origin: *) so the Export menu can paint
+    // them onto a canvas without tainting it (captureMapCanvas).
+    basemapLayer = L.tileLayer(url, { maxZoom: 19, attribution: attribution, crossOrigin: "anonymous" }).addTo(map);
     // Dark is the same tiles under a filter — see the note in initMap.
     map.getContainer().classList.toggle("polaris-basemap-dark", isDark);
     paintMapThemeToggle();
@@ -494,7 +659,11 @@
   }
 
   // ─── Sites load ───────────────────────────────────────────────────────────
-  async function loadSites() {
+  // opts.keepView (the on-map Refresh button): re-read the sites without
+  // re-fitting the view or re-running the URL hash's pan / topology open —
+  // the operator's zoom and pan stay where they are.
+  async function loadSites(opts) {
+    opts = opts || {};
     setStatus("Loading FortiGates…");
     var sites = await api.map.sites();
     siteCache = Array.isArray(sites) ? sites : [];
@@ -517,7 +686,7 @@
       latlngs.push([s.latitude, s.longitude]);
     });
 
-    if (latlngs.length > 0) {
+    if (latlngs.length > 0 && !opts.keepView) {
       var bounds = L.latLngBounds(latlngs);
       // Tighter fit — 5% padding around the actual asset bounds (was 20%)
       // so the operator's eye lands on the cluster, not the empty
@@ -536,7 +705,7 @@
     //                                                    modal to highlight
     //                                                    a specific endpoint
     // Defer one frame so fitBounds completes before the override.
-    var hash = window.location.hash || "";
+    var hash = opts.keepView ? "" : (window.location.hash || "");
     if (hash.startsWith("#site=")) {
       var params = {};
       hash.slice(1).split("&").forEach(function (kv) {
