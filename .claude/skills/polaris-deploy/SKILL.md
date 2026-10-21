@@ -1,6 +1,6 @@
 ---
 name: polaris-deploy
-description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges THIS worktree's branch to main and pushes — no other worktree is listed or merged — and invoking it is the go-ahead for that merge and push. It ends by offering to publish docs/wiki/ to the GitHub wiki (npm run wiki:publish), which needs the user's own yes. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
+description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges THIS worktree's branch to main and pushes — no other worktree is listed or merged — and invoking it is the go-ahead for that merge and push. It ends by publishing docs/wiki/ to the GitHub wiki (npm run wiki:publish -- --apply --push) only when the live wiki differs from origin/main's docs/wiki/ — invoking it is the go-ahead for that publish too. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
 disable-model-invocation: true
 ---
 
@@ -33,10 +33,10 @@ manual restart unless asked.
 ## The release pipeline — what `/polaris-deploy` does, in order
 
 Invoking this skill on a finished worktree is the user's go-ahead for everything below,
-**including the merge and the push**. Do not ask for the docs-sync review, the merge or the
-push separately; the only things that stop the pipeline are a failing check, a merge
-conflict, or `main` behind `origin/main`. The one question it asks comes after the push: whether
-to publish the wiki (step 7).
+**including the merge, the push and — when the live wiki is out of date — the wiki publish**.
+Do not ask for the docs-sync review, the merge, the push or the wiki publish separately; the
+only things that stop the pipeline are a failing check, a merge conflict, or `main` behind
+`origin/main`.
 
 0. **Restore `WORKLOCK` if the worktree has none.** The usual way to reach this pipeline is a
    task already finished the CLAUDE.md way — `WORKLOCK` deleted, work committed — and the
@@ -81,16 +81,19 @@ to publish the wiki (step 7).
 6. **Push** per push-protocol.md § 1–2: `git push origin main` (stop and report if `main` is
    behind `origin/main`). Clean-up (§ 3) covers **this worktree and its branch only** — not
    other `worktree-*` branches that happen to be fully merged.
-7. **Offer the wiki publish. This is the one step that asks.** Run `npm run wiki:publish` from
-   the main checkout (plan only: it fetches, diffs `origin/main`'s `docs/wiki/` against the live
-   wiki and changes nothing). If it says "the wiki is current", say so in the report and stop.
-   Otherwise show its plan, including any **DELETE** line, and ask "Publish N wiki pages? (y/n)".
-   On a yes, run `npm run wiki:publish -- --apply --push`. Invoking `/polaris-deploy` approves
-   the merge and the push, **not** a write to the separate, public `<repo>.wiki.git`, and the
-   auto-mode classifier blocks that push without the user's own yes. On a no, report the
-   pending page count; the next run's plan still shows them, since it diffs content and not
-   commits. The script's header lists what it guards against: `master` not `main`, CRLF, mirrored
-   deletes, README skipped, `check:wiki` over the ref. Never hand-copy pages instead.
+7. **Publish the wiki — do not ask.** Run `npm run wiki:publish` from the main checkout (plan
+   only: it fetches, diffs `origin/main`'s `docs/wiki/` against the live wiki and changes
+   nothing). **Publish only when it needs updating:** if the plan says "the wiki is current",
+   there is nothing to publish — say so in the report and move on; never run `--apply` against a
+   current wiki. When the plan lists pages to add, update or delete, run
+   `npm run wiki:publish -- --apply --push` straight away — the user decided (2026-10-21) that
+   invoking `/polaris-deploy` approves that write to the separate, public `<repo>.wiki.git`
+   along with the merge and the push. Carry the plan's page list, **DELETE** lines included,
+   into the report. If the harness or the auto-mode
+   classifier still refuses the push, that refusal is the only reason to ask: show the plan and
+   ask "Publish N wiki pages? (y/n)". The script's header lists what it guards against: `master`
+   not `main`, CRLF, mirrored deletes, README skipped, `check:wiki` over the ref. Never hand-copy
+   pages instead.
 8. **Report**: the pushed range, the worktree and branch removed, skill entries changed, the
    wiki publish (its `polaris@<sha>` marker, or pending / current), and anything skipped with
    the reason.
