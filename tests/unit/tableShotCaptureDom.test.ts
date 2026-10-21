@@ -49,6 +49,7 @@ const FN_NAMES = [
   "_shotHiddenRowCount",
   "_shotTransparentBg",
   "_shotBackdropColor",
+  "_staleBannerTextFor",
   "_screenshotTableEl",
 ];
 

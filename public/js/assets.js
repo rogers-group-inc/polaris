@@ -8584,6 +8584,31 @@ function _staleBannerHTML(assetId, asset, streamKey, lastAt, failureError) {
   return '<div class="asset-stale-banner-slot" data-asset-id="' + escapeHtml(assetId || "") + '" data-stream="' + escapeHtml(streamKey) + '" data-last-at="' + escapeHtml(lastAt || "") + '" data-failure="' + escapeHtml(failureError || "") + '">' + inner + '</div>';
 }
 
+// The stale banner text that belongs to `el` (a chart container or a table
+// being screenshotted), or "" when its section is fresh. The section's banner
+// is the nearest slot before `el` inside the closest ancestor that holds one —
+// an empty slot means fresh, so the search ends there rather than borrowing a
+// neighbouring section's banner. Bounded by the asset tab panel. Banners
+// written without a slot (the Response Time chart's) are matched by id.
+function _staleBannerTextFor(el) {
+  if (!el || !el.closest) return "";
+  var stop = el.closest('[id^="asset-view-tab-"], .slideover, .modal-body') || document.body;
+  var SEL = ".asset-stale-banner-slot, #asset-monitor-stale";
+  for (var node = el; node && node !== stop.parentNode; node = node.parentElement) {
+    var slots = node.querySelectorAll(SEL);
+    var pick = null;
+    for (var i = 0; i < slots.length; i++) {
+      if (slots[i].contains(el)) continue;
+      // Inside el (a chart container emits its banner above its svg), or
+      // before it — DOCUMENT_POSITION_FOLLOWING: el comes after the slot.
+      if (el.contains(slots[i]) || (slots[i].compareDocumentPosition(el) & 4)) pick = slots[i];
+    }
+    if (pick) return (pick.textContent || "").replace(/\s+/g, " ").trim();
+    if (node === stop) break;
+  }
+  return "";
+}
+
 // Re-evaluates every stale-banner slot for an asset using the now-cached
 // /effective-monitor-settings resolved values. Called from
 // _updateStreamSourceBadgesFromEffective so badge + banner refresh together.
@@ -12154,6 +12179,7 @@ function _captureChartAsPng(container, meta, callback) {
   // slide-over surface render, so the capture matches what's on screen.
   var bgPrimary  = pickVar("--color-bg-primary", "#ffffff");
   var textSec    = pickVar("--color-text-secondary", "#666666");
+  var warnColor  = pickVar("--color-warning", "#f57f17");
   var resolvedText = getComputedStyle(svgEl).color || pickVar("--color-text-primary", "#111111");
 
   var serialized = _serializeChartSvgForRaster(svgEl, width, height);
@@ -12179,6 +12205,7 @@ function _captureChartAsPng(container, meta, callback) {
     if (meta.asset)   headerLines.push({ text: meta.asset });
     if (meta.range)   headerLines.push({ text: meta.range });
     if (meta.stats)   headerLines.push({ text: meta.stats });
+    if (meta.stale)   headerLines.push({ text: meta.stale, warn: true });
     var headerH = headerLines.length ? 8 + headerLines.length * 16 : 0;
 
     var footerH  = meta.xAxis ? 22 : 0;
@@ -12202,8 +12229,8 @@ function _captureChartAsPng(container, meta, callback) {
       var headerX = leftPadW + 8;
       var nextY = 8;
       headerLines.forEach(function (line) {
-        ctx.fillStyle = line.bold ? resolvedText : textSec;
-        ctx.font = (line.bold ? "600 13px " : "11px ") + fontFamily;
+        ctx.fillStyle = line.warn ? warnColor : line.bold ? resolvedText : textSec;
+        ctx.font = (line.bold ? "600 13px " : line.warn ? "600 11px " : "11px ") + fontFamily;
         ctx.fillText(line.text, headerX, nextY);
         nextY += 16;
       });
@@ -12314,6 +12341,9 @@ function _addChartScreenshotButton(container, label, axisOpts) {
       // captured image is unambiguous about what it shows. Read at click
       // time from the dataset the loaders stamp on the container.
       range: _chartCustomRangeLabel(container),
+      // The section's amber "Last successful update …" banner, so a chart of
+      // stalled data says so once it leaves the page.
+      stale: _staleBannerTextFor(container),
     };
     _captureChartAsPng(container, meta, function (blob) {
       if (!blob) { showToast("Screenshot failed", "error"); return; }
@@ -19116,11 +19146,13 @@ function _screenshotTableEl(tableEl, label, opts) {
 
   var a = _currentAssetForRefresh;
   var assetName = a ? (a.hostname || a.dnsName || a.ipAddress || a.id || "") : "";
+  var staleText = _staleBannerTextFor(tableEl);
 
   var cs = getComputedStyle(document.documentElement);
   var bgPrimary = cs.getPropertyValue("--color-bg-primary").trim() || "#ffffff";
   var clrText   = cs.getPropertyValue("--color-text-primary").trim() || "#111";
   var clrMuted  = cs.getPropertyValue("--color-text-tertiary").trim() || "#888";
+  var clrWarn   = cs.getPropertyValue("--color-warning").trim() || "#f57f17";
   var fontSans  = cs.getPropertyValue("--font-sans").trim() || "system-ui,-apple-system,sans-serif";
   var backdrop  = _shotBackdropColor(tableEl, view, bgPrimary);
 
@@ -19143,15 +19175,18 @@ function _screenshotTableEl(tableEl, label, opts) {
         .then(function (capture) {
           release();
           var pad = 20;
-          var titleH = assetName ? 48 : 32;
+          var staleY = assetName ? 58 : 40;
+          var titleH = (assetName ? 48 : 32) + (staleText ? 20 : 0);
           var w = capture.width / scale;
           var h = capture.height / scale;
           var noteH = hiddenNote ? 24 : 0;
-          // The note can be wider than the table — widen the canvas for it.
+          // The note and stale line can be wider than the table — widen the canvas for them.
           var measure = document.createElement("canvas").getContext("2d");
           measure.font = "italic 12px " + fontSans;
           var noteW = hiddenNote ? measure.measureText(hiddenNote).width : 0;
-          var cw = Math.max(w, Math.ceil(noteW)) + pad * 2;
+          measure.font = "600 12px " + fontSans;
+          var staleW = staleText ? measure.measureText(staleText).width : 0;
+          var cw = Math.max(w, Math.ceil(noteW), Math.ceil(staleW)) + pad * 2;
           var ch = titleH + h + noteH + pad;
           var canvas = document.createElement("canvas");
           canvas.width = cw * scale;
@@ -19168,6 +19203,11 @@ function _screenshotTableEl(tableEl, label, opts) {
             ctx.fillStyle = clrMuted;
             ctx.font = "12px " + fontSans;
             ctx.fillText(assetName, pad, 40);
+          }
+          if (staleText) {
+            ctx.fillStyle = clrWarn;
+            ctx.font = "600 12px " + fontSans;
+            ctx.fillText(staleText, pad, staleY);
           }
           // 1:1 device-pixel blit (w×h CSS px under the 2x transform), so the
           // captured table is never resampled.
@@ -19244,11 +19284,14 @@ function _screenshotTableElText(tableEl, label, opts) {
   var clrBorder = cs.getPropertyValue("--color-border").trim() || "#e0e0e0";
   var clrText   = cs.getPropertyValue("--color-text-primary").trim() || "#111";
   var clrMuted  = cs.getPropertyValue("--color-text-tertiary").trim() || "#888";
+  var clrWarn   = cs.getPropertyValue("--color-warning").trim() || "#f57f17";
+  var staleText = _staleBannerTextFor(tableEl);
 
   var scale = 2;
   var pad = 20;
   var headerLines = (assetName ? 2 : 1);
-  var titleH = headerLines === 2 ? 48 : 32;
+  var staleY = headerLines === 2 ? 58 : 40;
+  var titleH = (headerLines === 2 ? 48 : 32) + (staleText ? 20 : 0);
   var tableHeaderH = 26;
   var tableRowH = 22;
   var cellPadX = 10;
@@ -19273,7 +19316,9 @@ function _screenshotTableElText(tableEl, label, opts) {
   // The note can be wider than the (auto-fit) table — widen the canvas for it.
   var noteW = 0;
   if (hiddenNote) { measureCtx.font = "italic 12px " + fontFamily; noteW = measureCtx.measureText(hiddenNote).width; }
-  var w = Math.max(contentW, Math.ceil(noteW)) + pad * 2;
+  var staleW = 0;
+  if (staleText) { measureCtx.font = "600 12px " + fontFamily; staleW = measureCtx.measureText(staleText).width; }
+  var w = Math.max(contentW, Math.ceil(noteW), Math.ceil(staleW)) + pad * 2;
   var hdrH = headers.length ? tableHeaderH : 0;
   var h = titleH + hdrH + rows.length * tableRowH + noteH + pad;
 
@@ -19301,6 +19346,11 @@ function _screenshotTableElText(tableEl, label, opts) {
     ctx.fillStyle = clrMuted;
     ctx.font = "12px " + fontFamily;
     ctx.fillText(assetName, pad, 40);
+  }
+  if (staleText) {
+    ctx.fillStyle = clrWarn;
+    ctx.font = "600 12px " + fontFamily;
+    ctx.fillText(staleText, pad, staleY);
   }
 
   var ty = titleH;
