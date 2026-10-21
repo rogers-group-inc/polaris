@@ -232,6 +232,46 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     expect(h.prisma.notification.create).not.toHaveBeenCalled();
   });
 
+  it("an upstream maintenance window silences it too — the bypass is for an outage, not planned work", async () => {
+    // The PLC is Dep. Down because the switch above it is in a window: rule 16
+    // wins exactly as it does for the PLC's own window.
+    const maint = { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" };
+    h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint] });
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+  });
+
+  it("…however far up the window is: a switch dark behind a maintained gate", async () => {
+    h.blame.mockResolvedValue({
+      ...TWO_HOPS,
+      rootCause: { id: "fg", hostname: "FG-PLANT", reason: "maintenance" },
+      chain: [TWO_HOPS.chain[0], { id: "fg", hostname: "FG-PLANT", reason: "maintenance" }],
+    });
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+  });
+
+  it("a live dependency-down alert is frozen, not handed off, once its upstream enters a window", async () => {
+    // The sweep retires it (rule 16(a)); the engine must not raise a plain
+    // Down alert in its place on the way.
+    const maint = { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" };
+    h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint] });
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "n-dep")]);
+    h.prisma.notification.findMany.mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(clearedBy()).not.toContain("system:dependency-released");
+  });
+
   it("an un-suppressed device on the same automation fires as plain Down, with no dependency flavour", async () => {
     h.prisma.asset.findMany.mockResolvedValue([
       scopeAsset("srv", { monitorStatus: "down" }),
@@ -315,6 +355,30 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
     expect(clearedBy()).not.toContain("system:dependency-down");
   });
 
+  it("never hands off a member of a GROUPED alert — the alert has no flavour to disagree with", async () => {
+    // The production loop: a subnet-folded alert is created without
+    // `dependencyDown`, so every Dep. Down member read as "flavour changed",
+    // was handed off and fired straight back in — "in fault again after
+    // recovering for 0m" on every paced update. The lookup now asks only for
+    // ungrouped rows; the mock honours that filter like the database would.
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "g-plant")]);
+    const rows = [{ id: "g-plant", dependencyDown: false, groupKey: "rule:r1:subnet:s1" }];
+    h.prisma.notification.findMany.mockImplementation(async (args: any) =>
+      rows.filter((r) => !(args?.where && "groupKey" in args.where && args.where.groupKey === null && r.groupKey !== null)));
+
+    await evaluateAllNotificationRules();
+
+    expect(h.prisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: ["g-plant"] }, groupKey: null }) }),
+    );
+    expect(clearedBy()).not.toContain("system:dependency-down");
+    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(h.logEvent.mock.calls.map((c) => (c[0] as any).action)).not.toContain("notification.superseded");
+  });
+
   it("looks the flavour up only for an opted-in automation's firing rows", async () => {
     h.prisma.notificationRule.findMany.mockResolvedValue([downRule()]);
     h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
@@ -364,8 +428,11 @@ describe("a dependency-down alert inherits its root cause's acknowledgement (bus
     expect(created()[0].acknowledged).toBeUndefined();
   });
 
-  it("does not look for one when the root cause is in maintenance — it raises no down alert of its own", async () => {
-    h.blame.mockResolvedValue({ ...ONE_HOP, rootCause: { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" } });
+  it("does not look for one when the root cause is under a dependency test — it raises no down alert of its own", async () => {
+    // (A maintenance root cause raises no dependency-down alert at all now —
+    // see "an upstream maintenance window silences it too" above.)
+    const testNode = { id: "sw", hostname: "SW-PLANT-3", reason: "dependency_test" };
+    h.blame.mockResolvedValue({ ...ONE_HOP, upstream: testNode, rootCause: testNode, chain: [testNode] });
     h.prisma.asset.findMany.mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);

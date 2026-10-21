@@ -14,7 +14,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { findRulesMatchingAsset } from "./notificationRuleService.js";
-import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf, isDownDetectionTrigger, type Trigger } from "./notificationTypes.js";
+import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf, isDownDetectionTrigger, ruleAlertsWhenDependencyDown, type Trigger } from "./notificationTypes.js";
 import { higherAlertSeverity } from "../utils/alertSeverity.js";
 
 // Both moved to utils/tagNormalize (a leaf) so regionHierarchyService can use
@@ -666,22 +666,25 @@ const MAINTENANCE_CLEARED_BY = "system:maintenance";
  * reconciler and has no edge of its own here.
  */
 export async function clearSuppressedAlerts(): Promise<number> {
-  const open = await prisma.notification.findMany({
+  const openRows = await prisma.notification.findMany({
     where: {
       cleared: false,
       // A system-scoped alert (capacity, backups) has no asset and can't be
       // suppressed by one.
       assetId: { not: null },
-      // Business rule 78 — an alert RAISED FOR a dependency-suppressed device
-      // (by a down automation that opted in) is the one alert that is supposed
-      // to be live on a suppressed asset. Retiring it here would re-raise it on
-      // the next engine tick, forever. The engine owns its end: the device
-      // recovers, or the flavour is handed off when the upstream comes back.
-      dependencyDown: false,
     },
-    select: { id: true, assetId: true, rule: { select: { name: true, trigger: true } } },
+    select: { id: true, assetId: true, groupKey: true, dependencyDown: true, rule: { select: { name: true, trigger: true } } },
     take: SUPPRESSION_SWEEP_CAP,
   });
+  // A grouped alert (rule 75) never carries `dependencyDown` — it folds several
+  // devices — so the flag cannot say whether one was raised by an opted-in down
+  // automation. Its `assetId` is only the device that leads it; retiring the
+  // whole alert because THAT device turned Dep. Down would end it for every
+  // member and the engine would raise it again next tick. The engine owns it,
+  // whatever the reason.
+  const open = openRows.filter(
+    (n) => !(n.groupKey && n.rule?.trigger && ruleAlertsWhenDependencyDown(n.rule.trigger as unknown as Trigger)),
+  );
   if (open.length === 0) return 0;
 
   const candidates = await prisma.asset.findMany({
@@ -724,6 +727,13 @@ export async function clearSuppressedAlerts(): Promise<number> {
   for (const n of open) {
     const hit = reasonById.get(n.assetId as string);
     if (!hit) continue;
+    // Business rule 78 — an alert RAISED FOR a dependency-suppressed device (by
+    // a down automation that opted in) is the one alert that is supposed to be
+    // live behind an upstream OUTAGE. Retiring it for that would have the engine
+    // re-raise it next tick, forever. Behind a maintenance window it is a down
+    // alert like any other and rule 16(a) retires it: the bypass never reaches
+    // planned work, and the engine will not raise it again while the window holds.
+    if (n.dependencyDown && hit.reason !== "maintenance") continue;
     // Rule 16(a) — a window retires only DOWN alerts; everything else freezes.
     if (hit.reason === "maintenance" && !isDownDetectionTrigger(n.rule?.trigger as unknown as Trigger)) continue;
     byReason[hit.reason].push(n.id);

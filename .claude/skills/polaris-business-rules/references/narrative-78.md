@@ -209,6 +209,40 @@ nothing. The pause the pill described was real; only its cause was wrong, so the
 badge's tooltip now says reminders and escalation wait for the upstream. Pinned by
 `tests/integration/alertMaintenanceHold.test.ts`.
 
+### Maintenance upstream silences it too (2026-10-21)
+
+"Maintenance still silences" was implemented as the DEVICE's own window only: the gate loop
+dropped a device whose `status` was `maintenance`, and kept one that was merely Dep. Down. But a
+device is Dep. Down behind a maintained parent as readily as behind a dead one, so a PLC under a
+switch scheduled for a firmware upgrade got a DEPENDENCY DOWN email naming the switch as down —
+exactly the page the paragraph above says must not happen. The operator's words: *dependency-down
+bypass shouldn't bypass maintenance*. The gate loop now asks the blame walk
+(`suppressionOwedToMaintenance`, through the tick's blame cache, only for the suppressed few) and
+a device whose chain holds a `maintenance` link stays in `suppressedIds` like any other
+automation's. A live dependency-down alert is no longer exempt from the sweep when the reason is
+maintenance: rule 16(a) retires a down alert in a window, and this is one. The exemption stays
+for an upstream OUTAGE, which is the case it was written for. A failed walk claims nothing, and
+the alert goes out as before.
+
+### A grouped alert has no flavour (2026-10-21)
+
+Rule 75 grouping and this rule met for the first time on a subnet-folded plant automation with
+the bypass on. `createGroupAlert` never stamps `dependencyDown` (one alert, several devices,
+some Dep. Down and some down in their own right), so the flavour lookup read `false` for it,
+every Dep. Down member's reading disagreed, and each tick handed every one of them off and fired
+it straight back in: the paced update read *"Boone CUG19 Belt Scale is in fault again after
+recovering for 0m; …"* for six devices that had never recovered, and any acknowledgement was
+re-opened. The flavour lookup now asks for ungrouped rows only (`groupKey: null`), and the sweep
+leaves a grouped alert of an opted-in automation to the engine — its `assetId` is only the
+leading device, and retiring the whole alert because that one turned Dep. Down would end it for
+every member. A grouped alert therefore does not say DEPENDENCY DOWN per member; that is a gap,
+not a decision.
+
+Pinned by `tests/unit/notificationDependencyDownAlert.test.ts` (the upstream-window silence, the
+frozen-not-handed-off live alert, the grouped no-handoff case) and
+`tests/unit/notificationSuppressionSweep.test.ts` (the maintenance retire, the outage exemption,
+the grouped exemption).
+
 ### Where it shows
 
 The Active Alerts widget, the asset's Notifications tab and the phone's alert list badge the row

@@ -208,15 +208,61 @@ describe("clearSuppressedAlerts", () => {
     expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
   });
 
-  it("never retires an alert RAISED FOR a dependency-suppressed device (business rule 78)", async () => {
+  it("never retires an alert RAISED FOR a dependency-suppressed device behind an OUTAGE (business rule 78)", async () => {
     // A down automation that opted in raises that alert on purpose; the sweep
-    // clearing it would re-raise it on the next tick, forever. The exclusion is
-    // in the QUERY — such rows never even reach the asset lookup.
-    h.prisma.notification.findMany.mockResolvedValue([]);
-    await clearSuppressedAlerts();
-    expect(h.prisma.notification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ cleared: false, dependencyDown: false }) }),
+    // clearing it would re-raise it on the next tick, forever.
+    h.prisma.notification.findMany.mockResolvedValue([{ ...DOWN_ALERT("n15", "a15"), dependencyDown: true }]);
+    h.prisma.asset.findMany.mockResolvedValue([{ id: "a15", hostname: "PLC-15", status: "active" }]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a15", blame("down")]]));
+
+    expect(await clearSuppressedAlerts()).toBe(0);
+    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("retires a dependency-down alert once its upstream is in a MAINTENANCE window — the bypass never reaches planned work", async () => {
+    h.prisma.notification.findMany.mockResolvedValue([{ ...DOWN_ALERT("n16", "a16"), dependencyDown: true }]);
+    h.prisma.asset.findMany.mockResolvedValue([{ id: "a16", hostname: "PLC-16", status: "active" }]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a16", blame("suppressed", "maintenance")]]));
+
+    expect(await clearSuppressedAlerts()).toBe(1);
+    expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ["n16"] }, cleared: false },
+        data: expect.objectContaining({ clearedBy: "system:maintenance" }),
+      }),
     );
+  });
+
+  it("never retires a GROUPED alert from an opted-in down automation — it carries no flavour to exclude by", async () => {
+    // A subnet-folded "Plant down" alert: its assetId is only the device that
+    // leads it. That device turning Dep. Down must not end the alert for every
+    // device on it — the engine would raise it again next tick.
+    const OPTED_IN = { ...DOWN_TRIGGER, alertWhenDependencyDown: true };
+    h.prisma.notification.findMany.mockResolvedValue([
+      { id: "g1", assetId: "a20", groupKey: "rule:r1:subnet:s1", rule: { name: "Plant down", trigger: OPTED_IN } },
+      // Same automation, ungrouped: the ordinary rule-78 contract still applies.
+      { id: "n21", assetId: "a21", groupKey: null, rule: { name: "Plant down", trigger: OPTED_IN } },
+    ]);
+    h.prisma.asset.findMany.mockResolvedValue([{ id: "a21", hostname: "PLC-21", status: "active" }]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a21", blame("down")]]));
+
+    expect(await clearSuppressedAlerts()).toBe(1);
+    expect(h.prisma.asset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: ["a21"] } }) }),
+    );
+    expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["n21"] }, cleared: false } }),
+    );
+  });
+
+  it("still retires a grouped alert from an automation that did NOT opt in", async () => {
+    h.prisma.notification.findMany.mockResolvedValue([
+      { id: "g2", assetId: "a22", groupKey: "rule:r2:subnet:s1", rule: { name: "Device down", trigger: DOWN_TRIGGER } },
+    ]);
+    h.prisma.asset.findMany.mockResolvedValue([{ id: "a22", hostname: "SW-22", status: "active" }]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a22", blame("down")]]));
+
+    expect(await clearSuppressedAlerts()).toBe(1);
   });
 
   it("only ever considers alerts that have an asset", async () => {

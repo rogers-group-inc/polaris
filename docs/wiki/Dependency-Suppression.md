@@ -203,7 +203,9 @@ A `monitor status is down` automation can opt out of the silence with the
   recovered while the device stayed dark is raised again as the device's own
   outage. Neither handoff sends a "resolved" message; nothing recovered;
 - a **maintenance window still silences** it — announced downtime is not an
-  outage to report.
+  outage to report. That holds for a window on any device above it too: a
+  device that is Dep. Down only because its switch is in maintenance gets no
+  alert, and one already live when the window opens is retired.
 
 Every other automation keeps ignoring a suppressed device, and the toggle is
 refused anywhere but on a sole `monitor status is down` condition.

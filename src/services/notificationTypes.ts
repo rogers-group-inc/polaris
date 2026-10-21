@@ -5563,7 +5563,8 @@ export function buildSchemaCatalog() {
         "A device behind a down switch or firewall is normally silenced (Dep. Down). " +
         "With this on, this automation still raises its alert the moment the device turns Dep. Down, " +
         "and the message names the upstream device that is actually down. " +
-        "One notification only — reminders and escalation wait until the upstream device is back.",
+        "One notification only — reminders and escalation wait until the upstream device is back. " +
+        "A maintenance window still silences it, on the device or on anything above it.",
     },
     // Per-dimension alerting vocabulary — which state fields report per
     // dimension, and what one dimension is called. The reset step reads both to
