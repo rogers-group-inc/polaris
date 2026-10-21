@@ -41,6 +41,8 @@ const HOST_KEYS = [
   },
 ];
 
+let ARCHIVED: unknown[] = [];
+
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function boot(canManage: boolean) {
@@ -60,6 +62,7 @@ function boot(canManage: boolean) {
       tlsCertPinDelete: vi.fn(async () => ({})),
       sshHostKeysList: vi.fn(async () => ({ hostKeys: HOST_KEYS })),
       sshHostKeyDelete: vi.fn(async () => ({})),
+      archivedHostPinsList: vi.fn(async () => ({ archivedPins: ARCHIVED })),
     },
   };
   new Function(SRC)();
@@ -67,7 +70,7 @@ function boot(canManage: boolean) {
   return g;
 }
 
-beforeEach(() => { document.body.innerHTML = ""; });
+beforeEach(() => { document.body.innerHTML = ""; ARCHIVED = []; });
 
 describe("pinned server identities summary + slide-over", () => {
   it("mounts a summary counting both kinds, the changed count and a button, not a table", async () => {
@@ -229,5 +232,37 @@ describe("pinned server identities summary + slide-over", () => {
     open(); await flush();
     overlay().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(overlay().classList.contains("open")).toBe(false);
+  });
+
+  it("lists archived pins last, read-only, and the Archived kind shows only them", async () => {
+    ARCHIVED = [{
+      kind: "ssh", host: "10.9.9.9", port: 22, fingerprint: "SHA256:b2xkTWFjaGluZUtleQ", keyType: "ssh-ed25519",
+      firstSeen: "2026-09-01T00:00:00Z", lastSeen: "2026-10-01T00:00:00Z", archivedAt: "2026-10-10T00:00:00Z",
+      asset: { id: "asset-old", hostname: "oldbox", ipAddress: "10.9.9.9", status: "decommissioned" },
+    }];
+    boot(true);
+    await flush();
+    expect(document.getElementById("host")!.textContent).toContain("· 1 archived.");
+    (document.querySelector("[data-tls-pins-open]") as HTMLButtonElement).click();
+    await flush();
+    const cards = Array.from(document.querySelectorAll(".pin-card"));
+    expect(cards).toHaveLength(4);
+    const last = cards[cards.length - 1];
+    expect(last.classList.contains("archived-pin-card")).toBe(true);
+    expect(last.textContent).toContain("Archived");
+    expect(last.querySelector("a")!.getAttribute("href")).toBe("/assets.html#view=asset:asset-old");
+    expect(last.querySelector("button")).toBeNull();
+    expect(document.getElementById("tls-pins-meta")!.textContent).toContain("4 pinned · 1 changed · 1 archived");
+
+    const q = document.querySelector('#tls-pins-filters [data-pin-filter="q"]') as HTMLInputElement;
+    q.value = "oldbox"; q.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(document.querySelectorAll(".pin-card")).toHaveLength(1);
+    q.value = ""; q.dispatchEvent(new Event("input", { bubbles: true }));
+    const kind = document.querySelector('#tls-pins-filters [data-pin-filter="kind"]') as HTMLSelectElement;
+    kind.value = "archived"; kind.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(Array.from(document.querySelectorAll(".pin-card")).map((c) => c.classList.contains("archived-pin-card"))).toEqual([true]);
+    // SSH includes the archived host key alongside the live one.
+    kind.value = "ssh"; kind.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(document.querySelectorAll(".pin-card")).toHaveLength(2);
   });
 });

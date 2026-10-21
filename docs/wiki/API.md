@@ -366,6 +366,9 @@ connected through them (`id` is `<gateAssetId>|tunnel|<name>` or
 the far-end device when known). Supports the same
 [prefixes](Navigation-and-Account#global-search) the UI does
 (`block:`, `network:`, `asset:`, `reservation:`, `map:`, `tag:`, `ipsec:` / `vpn:`).
+A query that reads as a TLS or SSH thumbprint (8+ characters) also returns the
+asset that pin belongs to, archived pins included, first in `assets` with
+`context.pinMatch` — for a caller with `serverSettingsSystem` read.
 
 ### IPAM — blocks
 

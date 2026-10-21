@@ -2253,6 +2253,15 @@ router.delete("/agents/ssh-host-keys/:id", requirePermission("serverSettingsSyst
   } catch (err) { next(err); }
 });
 
+// The pins held in decommissioned agent hosts' archives (business rule 123),
+// listed read-only beside the live ones on the Pinned server identities list.
+router.get("/agents/archived-host-pins", requirePermission("serverSettingsSystem", "read"), async (_req, res, next) => {
+  try {
+    const { listArchivedHostPins } = await import("../../services/agentHostPinService.js");
+    res.json({ archivedPins: await listArchivedHostPins() });
+  } catch (err) { next(err); }
+});
+
 // Pinned TLS certificates (business rule 113) — the WinRM and firmware HTTPS
 // counterpart of the SSH host keys above, listed on the same card with the
 // same recovery: delete a pin to trust a legitimately re-issued certificate.

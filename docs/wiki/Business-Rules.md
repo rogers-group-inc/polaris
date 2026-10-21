@@ -2594,9 +2594,11 @@ failures, health skips, devices skipped above a failure, and what was dropped.
 **Decommissioning an agent host archives its pinned SSH thumbprint, and its
 agent coming back is a question.** Polaris pins the SSH host key (and, for
 WinRM, the TLS certificate) of every host it installs the agent on, keyed by the
-host's address. While the asset is decommissioned those pins are moved out of
-Pinned server identities and kept with the agent, so a new machine given the
-same address is not refused. Setting the asset back to an active status puts
+host's address. While the asset is decommissioned those pins stop being
+enforced and are kept with the agent, so a new machine given the same address
+is not refused. They are still listed, read-only and marked Archived, under
+Pinned server identities, and global search still finds the asset by its old
+thumbprint. Setting the asset back to an active status puts
 them back exactly as they were, except where another key has been pinned on that
 address since; that one is left alone and reported. An address another active
 asset still uses keeps its pin. Before you decommission an agent host, the

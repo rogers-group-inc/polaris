@@ -23,8 +23,11 @@ import {
   reconcileAgentHostPins,
   previewDecommissionPins,
   hostPinsForAsset,
+  listArchivedHostPins,
+  findAssetsByPinFingerprint,
   DECOMMISSIONED_AGENT_COLLISION_REASON,
 } from "../../src/services/agentHostPinService.js";
+import { searchAll } from "../../src/services/searchService.js";
 import { acceptConflict, rejectConflict, loadPendingConflict } from "../../src/services/conflictResolutionService.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
 
@@ -208,5 +211,41 @@ d("agent host pin archive (business rule 123)", () => {
     const r = await agent.post("/api/v1/assets/decommission-preview").set("X-CSRF-Token", csrf).send({ ids: [assetId, plain.id] });
     expect(r.status).toBe(200);
     expect(r.body.assets.map((a: { assetId: string }) => a.assetId)).toEqual([assetId]);
+  });
+
+  it("a thumbprint finds its asset, live or archived, and only with the pins gate", async () => {
+    // Live: TLS by a colon-separated fragment, SSH with and without the prefix.
+    expect(await findAssetsByPinFingerprint("aa:aa:aa:aa:aa")).toEqual([
+      { assetId, kind: "tls", host: IP, port: 5986, archived: false },
+    ]);
+    expect((await findAssetsByPinFingerprint("SHA256:originalHostKey"))[0]).toMatchObject({ assetId, kind: "ssh", archived: false });
+    expect((await findAssetsByPinFingerprint("originalHostKey"))[0]).toMatchObject({ assetId, kind: "ssh" });
+    // Too short to be a thumbprint: never reaches the pin tables.
+    expect(await findAssetsByPinFingerprint("aaaa")).toEqual([]);
+
+    const allowed = { blocks: true, subnets: true, reservations: true, assets: true, sites: true, ipsec: true };
+    const hit = (await searchAll("AA AA AA AA AA", { ...allowed, pins: true })).assets.find((h) => h.id === assetId);
+    expect(hit?.subtitle).toContain(`TLS certificate ${IP}:5986`);
+    expect((await searchAll("AA AA AA AA AA", { ...allowed, pins: false })).assets.find((h) => h.id === assetId)).toBeUndefined();
+    expect((await searchAll("AA AA AA AA AA", { ...allowed, assets: false, pins: true })).assets).toEqual([]);
+
+    // Archived on decommission: still found, by the archive, and listed.
+    await archiveAgentHostPins(assetId, "tester");
+    expect(await findAssetsByPinFingerprint("SHA256:originalHostKey")).toEqual([
+      { assetId, kind: "ssh", host: IP, port: 22, archived: true },
+    ]);
+    const archivedHit = (await searchAll("aaaaaaaaaa", { ...allowed, pins: true })).assets.find((h) => h.id === assetId);
+    expect(archivedHit?.subtitle).toContain("archived on decommission");
+    const list = (await listArchivedHostPins()).filter((p) => p.asset.id === assetId);
+    expect(list.map((p) => p.kind).sort()).toEqual(["ssh", "tls"]);
+    expect(list[0].archivedAt).toBeTruthy();
+
+    const { agent } = await authedAgent(app);
+    const r = await agent.get("/api/v1/server-settings/agents/archived-host-pins");
+    expect(r.status).toBe(200);
+    expect(r.body.archivedPins.filter((p: { asset: { id: string } }) => p.asset.id === assetId)).toHaveLength(2);
+    const s = await agent.get("/api/v1/search").query({ q: "SHA256:originalHostKey" });
+    expect(s.status).toBe(200);
+    expect(s.body.assets.map((h: { id: string }) => h.id)).toContain(assetId);
   });
 });

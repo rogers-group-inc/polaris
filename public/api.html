@@ -1092,6 +1092,12 @@
                 <code>name</code>, <code>remoteGateway</code>, <code>userName</code>, and
                 <code>peerAssetId</code>/<code>peerHostname</code> when the far end resolves to an
                 asset. The gate's own hostname is not a searched column.</li>
+            <li>A query of 8+ characters that reads as a thumbprint — a TLS SHA-256 fragment
+                (hex, colons / spaces / dashes ignored) or an SSH host-key fingerprint fragment
+                (with or without <code>SHA256:</code>) — also returns the asset(s) that pin belongs
+                to, live or archived on decommission, first in <code>assets</code>, with
+                <code>context.pinMatch</code> <code>{ kind: "ssh"|"tls", host, port, archived }</code>.
+                Needs <code>serverSettingsSystem</code> read as well as <code>assets</code>.</li>
             <li>Caps: 8 hits per group unscoped; 200 for a scoped query. No paging — scope the
                 query instead.</li>
           </ul>

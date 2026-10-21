@@ -370,10 +370,13 @@ A pin belongs to an **address**, and a decommissioned host's address is often
 handed to a new machine — which the old pin would refuse with *Host denied
 (verification failed)*, for no reason anyone could see. So while an agent host's
 asset is `decommissioned`, its pinned SSH host key and TLS certificate are
-**archived** with the agent's record: they leave the lists above, and the asset's
+**archived** with the agent's record. They stop being enforced, and the asset's
 Polaris Agent card shows them as *Archived on decommission*
 ([business rule 123](Business-Rules#rule-123)). The decommission confirm names
-them before you save.
+them before you save. They stay in **View pinned identities**, last, with an
+**Archived** badge and the asset they belong to. Choose **Archived
+(decommissioned)** in the kind menu to see only those. They have no Delete or
+Trust button: they go back by reactivating the asset.
 
 - **Set the asset back to an active state** and they are put back exactly as
   they were. If another machine has been pinned on that address in the

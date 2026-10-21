@@ -15,6 +15,7 @@ import { MONITOR_STATUS_LABELS } from "../utils/monitorStatus.js";
 import { findAssetIdsByDiscoveredHostname } from "./discoveredHostnameService.js";
 import { activeAlertSummaryByAsset, type AssetActiveAlertSummary } from "./notificationService.js";
 import { resolveIpsToAssets } from "./applicationMapService.js";
+import { findAssetsByPinFingerprint, type PinFingerprintMatch } from "./agentHostPinService.js";
 
 export interface SearchHit {
   // `ipsec`: a FortiGate's phase-1 tunnel or a peer connected through one
@@ -180,10 +181,17 @@ export interface SearchAllowed {
   sites: boolean;
   /** IPsec tunnels + VPN connections: the IPsec tab's data, so `assets:read`. Optional for older callers (= allowed). */
   ipsec?: boolean;
+  /**
+   * A thumbprint finds the asset its pinned SSH host key or TLS certificate
+   * belongs to, archived pins included (rule 123). The pins are Server
+   * Settings data, so `serverSettingsSystem:read` — and the hit is an asset,
+   * so `assets` must be allowed too. Must be explicitly true.
+   */
+  pins?: boolean;
 }
 
 const ALLOW_ALL: SearchAllowed = {
-  blocks: true, subnets: true, reservations: true, assets: true, sites: true, ipsec: true,
+  blocks: true, subnets: true, reservations: true, assets: true, sites: true, ipsec: true, pins: true,
 };
 
 export async function searchAll(
@@ -281,10 +289,13 @@ async function runSearch(
   }
   if (scope === "asset") {
     if (!allowed.assets) return empty;
-    const assetRows = await searchAssets(terms, mac, SCOPED_LIMIT, discovered);
+    const [assetRows, pinMatches] = await Promise.all([
+      searchAssets(terms, mac, SCOPED_LIMIT, discovered),
+      allowed.pins === true ? findAssetsByPinFingerprint(q, SCOPED_LIMIT) : Promise.resolve([]),
+    ]);
     const originBySrcId = await resolveOriginFortigates(assetRows.map((a) => a.id));
     const assetHits = assetRows.map((a) => decorateAssetHit(a, originBySrcId.get(a.id)));
-    return { ...empty, assets: assetHits };
+    return { ...empty, assets: await withPinHits(assetHits, pinMatches, SCOPED_LIMIT) };
   }
   if (scope === "ipsec") {
     if (!ipsecAllowed) return empty;
@@ -313,7 +324,7 @@ async function runSearch(
   // own group (`sites`) with an independent PER_GROUP_LIMIT budget so
   // they don't get crowded out of `assets` by alphabetically-earlier
   // workstations/switches matching the same site code on large fleets.
-  const [blocks, subnets, reservations, assets, sites, ipHit, ipsec] = await Promise.all([
+  const [blocks, subnets, reservations, assets, sites, ipHit, ipsec, pinMatches] = await Promise.all([
     allowed.blocks       ? searchBlocks(terms)                          : Promise.resolve([]),
     allowed.subnets      ? searchSubnets(terms, isCidr ? q : null)      : Promise.resolve([]),
     allowed.reservations ? searchReservations(terms, isIp ? q : null)   : Promise.resolve([]),
@@ -321,6 +332,9 @@ async function runSearch(
     allowed.sites        ? searchPinnedFirewalls(terms, mac, PER_GROUP_LIMIT, discovered) : Promise.resolve([]),
     isIp && allowed.subnets && allowed.reservations ? resolveIp(q) : Promise.resolve(null),
     ipsecAllowed         ? searchIpsec(terms, PER_GROUP_LIMIT)          : Promise.resolve([]),
+    // The whole query, not the terms: a thumbprint pasted with spaces
+    // ("ab cd ef …") is several terms but one value.
+    allowed.assets && allowed.pins === true ? findAssetsByPinFingerprint(q) : Promise.resolve([]),
   ]);
 
   const assetsWithoutSites = assets;
@@ -344,11 +358,42 @@ async function runSearch(
     blocks: blocks.map(blockHit),
     subnets: subnets.map(subnetHit),
     reservations: reservations.map(reservationHit),
-    assets: assetHits,
+    assets: await withPinHits(assetHits, pinMatches, PER_GROUP_LIMIT),
     ips: ipHit ? [ipHit] : [],
     sites: sites.map(siteHit),
     ipsec,
   };
+}
+
+/**
+ * Put the assets a thumbprint matched (findAssetsByPinFingerprint) at the
+ * head of the asset group, each subtitled with the pin that matched — the
+ * hit otherwise looks like it matched nothing the operator typed. An asset
+ * already in the group is replaced by its pin hit, not listed twice. One
+ * asset query for the matches not already loaded.
+ */
+async function withPinHits(hits: SearchHit[], matches: PinFingerprintMatch[], limit: number): Promise<SearchHit[]> {
+  if (matches.length === 0) return hits;
+  const byId = new Map(hits.map((h) => [h.id, h]));
+  const missing = matches.map((m) => m.assetId).filter((id) => !byId.has(id));
+  if (missing.length) {
+    const rows = await prisma.asset.findMany({ where: { id: { in: missing } } });
+    for (const r of rows) byId.set(r.id, assetHit(r));
+  }
+  const pinned: SearchHit[] = [];
+  for (const m of matches) {
+    const base = byId.get(m.assetId);
+    if (!base) continue;
+    pinned.push({
+      ...base,
+      subtitle: `${m.kind === "ssh" ? "SSH host key" : "TLS certificate"} ${m.host}:${m.port}` +
+        (m.archived ? " — archived on decommission" : "") +
+        (base.subtitle ? ` — ${base.subtitle}` : ""),
+      context: { ...(base.context ?? {}), pinMatch: { kind: m.kind, host: m.host, port: m.port, archived: m.archived } },
+    });
+  }
+  const pinnedIds = new Set(pinned.map((h) => h.id));
+  return [...pinned, ...hits.filter((h) => !pinnedIds.has(h.id))].slice(0, limit);
 }
 
 /**

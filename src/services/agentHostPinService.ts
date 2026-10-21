@@ -561,3 +561,134 @@ export async function reconcileAgentHostPins(): Promise<{ archived: number; rein
   });
   return { archived, reinstated };
 }
+
+// ─── Fleet-wide views: the archive list and the thumbprint lookup ─────────
+
+export interface ArchivedHostPin extends HostPin {
+  archivedAt: string;
+  asset: { id: string; hostname: string | null; ipAddress: string | null; status: string };
+}
+
+/**
+ * Every pin held in an archive, for the Pinned server identities slide-over
+ * (read-only there: an archived pin goes back only by reactivating its asset
+ * or accepting the check-in conflict). One query — an archive is held only by
+ * a decommissioned agent host.
+ */
+export async function listArchivedHostPins(): Promise<ArchivedHostPin[]> {
+  const agents = await prisma.managedAgent.findMany({
+    where: { hostPinsArchivedAt: { not: null } },
+    select: {
+      archivedHostPins: true,
+      hostPinsArchivedAt: true,
+      asset: { select: { id: true, hostname: true, ipAddress: true, status: true } },
+    },
+    orderBy: { hostPinsArchivedAt: "desc" },
+  });
+  return agents.flatMap((a) =>
+    parseArchivedPins(a.archivedHostPins).map((p) => ({
+      ...p,
+      archivedAt: a.hostPinsArchivedAt!.toISOString(),
+      asset: a.asset,
+    })),
+  );
+}
+
+/**
+ * Read a search query as a thumbprint, or return null. `hex` is a TLS
+ * SHA-256 fragment — only hex digits and the separators a thumbprint is
+ * copied with (colons, spaces, dashes), compacted to upper-case hex. `ssh` is
+ * an SSH fingerprint fragment, with or without the `SHA256:` prefix and its
+ * padding, compared case-sensitively (base64 is). Each needs 8 characters, so
+ * a short word never fans out over the pin tables. Pure.
+ */
+export function pinFingerprintQuery(raw: string): { hex: string | null; ssh: string | null } | null {
+  const q = raw.trim();
+  const hex = /^[0-9a-f:\s-]+$/i.test(q) ? q.replace(/[^0-9a-f]/gi, "").toUpperCase() : "";
+  const body = q.replace(/^sha256:/i, "");
+  const ssh = /^[A-Za-z0-9+/]+=*$/.test(body) ? body.replace(/=+$/, "") : "";
+  const out = { hex: hex.length >= 8 ? hex : null, ssh: ssh.length >= 8 ? ssh : null };
+  return out.hex || out.ssh ? out : null;
+}
+
+export interface PinFingerprintMatch {
+  assetId: string;
+  kind: "ssh" | "tls";
+  host: string;
+  port: number;
+  /** The pin is in a decommissioned agent host's archive (rule 123), not live. */
+  archived: boolean;
+}
+
+/**
+ * Which assets a thumbprint belongs to — global search's pin lookup. A live
+ * pin resolves through its host to every asset whose ipAddress / dnsName /
+ * hostname is that string (the addresses `assetPinHosts` says Polaris may have
+ * dialed); an archived one names its asset directly. A TLS pin matches on its
+ * pinned or its now-presented fingerprint. One asset appears once, its first
+ * match kept. Bounded: `limit` rows per table, one asset query.
+ */
+export async function findAssetsByPinFingerprint(raw: string, limit = 8): Promise<PinFingerprintMatch[]> {
+  const fq = pinFingerprintQuery(raw);
+  if (!fq) return [];
+  const [tls, ssh, archives] = await Promise.all([
+    fq.hex
+      ? prisma.$queryRaw<{ host: string; port: number }[]>`
+          SELECT host, port FROM tls_cert_pins
+          WHERE replace(upper(fingerprint), ':', '') LIKE ${"%" + fq.hex + "%"}
+             OR replace(upper(coalesce(pending_fingerprint, '')), ':', '') LIKE ${"%" + fq.hex + "%"}
+          ORDER BY host, port LIMIT ${limit}`
+      : Promise.resolve([]),
+    fq.ssh
+      ? prisma.sshHostKey.findMany({
+          where: { fingerprint: { contains: fq.ssh } },
+          select: { host: true, port: true },
+          orderBy: [{ host: "asc" }, { port: "asc" }],
+          take: limit,
+        })
+      : Promise.resolve([]),
+    prisma.managedAgent.findMany({
+      where: { hostPinsArchivedAt: { not: null } },
+      select: { assetId: true, archivedHostPins: true },
+    }),
+  ]);
+
+  const live: Array<{ kind: "ssh" | "tls"; host: string; port: number }> = [
+    ...tls.map((r) => ({ kind: "tls" as const, host: r.host, port: Number(r.port) })),
+    ...ssh.map((r) => ({ kind: "ssh" as const, host: r.host, port: r.port })),
+  ];
+  const hosts = [...new Set(live.map((p) => p.host))];
+  const assets = hosts.length
+    ? await prisma.asset.findMany({
+        where: { OR: [{ ipAddress: { in: hosts } }, { dnsName: { in: hosts } }, { hostname: { in: hosts } }] },
+        select: { id: true, hostname: true, ipAddress: true, dnsName: true },
+        take: limit * 4,
+      })
+    : [];
+
+  const out: PinFingerprintMatch[] = [];
+  const seen = new Set<string>();
+  const push = (m: PinFingerprintMatch) => {
+    if (seen.has(m.assetId) || out.length >= limit) return;
+    seen.add(m.assetId);
+    out.push(m);
+  };
+  for (const p of live) {
+    for (const a of assets) {
+      if (assetPinHosts(a).includes(p.host)) push({ assetId: a.id, ...p, archived: false });
+    }
+  }
+  for (const a of archives) {
+    for (const p of parseArchivedPins(a.archivedHostPins)) {
+      const hit = p.kind === "tls"
+        ? !!fq.hex && normalizeHex(p.fingerprint).includes(fq.hex)
+        : !!fq.ssh && p.fingerprint.includes(fq.ssh);
+      if (hit) push({ assetId: a.assetId, kind: p.kind, host: p.host, port: p.port, archived: true });
+    }
+  }
+  return out;
+}
+
+function normalizeHex(fp: string): string {
+  return fp.replace(/[^0-9a-f]/gi, "").toUpperCase();
+}

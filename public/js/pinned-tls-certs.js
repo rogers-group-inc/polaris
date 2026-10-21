@@ -22,6 +22,11 @@
  * SSH host key that changes is refused outright — there is no pending key to
  * trust, only the pin to delete.
  *
+ * The pins held in a decommissioned agent host's archive (business rule 123)
+ * are listed last, read-only, with an "Archived" badge and the asset they
+ * belong to; the kind menu's Archived shows only those. They go back when the
+ * asset is reactivated, never from here.
+ *
  * Needs api.js and app.js (escapeHtml, showToast, showConfirm, permAtLeast,
  * raiseSlideover, wireSlideoverEscape, initSlideoverResize).
  */
@@ -57,8 +62,11 @@
         function (err) { return { rows: [], error: err }; }),
       api.serverSettings.sshHostKeysList().then(function (r) { return { rows: (r && r.hostKeys) || [] }; },
         function (err) { return { rows: [], error: err }; }),
+      // Rule 123's archives: shown, never acted on, so a failure is quiet.
+      api.serverSettings.archivedHostPinsList().then(function (r) { return { rows: (r && r.archivedPins) || [] }; },
+        function () { return { rows: [] }; }),
     ]).then(function (res) {
-      return { tls: res[0].rows, ssh: res[1].rows, tlsError: res[0].error, sshError: res[1].error };
+      return { tls: res[0].rows, ssh: res[1].rows, archived: res[2].rows, tlsError: res[0].error, sshError: res[1].error };
     });
   }
 
@@ -71,18 +79,20 @@
   function renderSummary(container, data) {
     var tls = data.tls.length;
     var ssh = data.ssh.length;
+    var archived = (data.archived || []).length;
     var changed = data.tls.filter(function (r) { return !!r.pendingFingerprint; }).length;
-    var text = tls + ssh === 0
+    var text = tls + ssh + archived === 0
       ? "Nothing pinned yet. A pin appears the first time Polaris connects to a host over SSH, or sends a password or " +
         "token to a server without verifying a CA: a WinRM listener, a device it upgrades, or a FortiGate / FortiManager " +
         "with SSL verification off."
-      : "Pinned: " + plural(tls, "certificate") + " · " + plural(ssh, "SSH host key") + ".";
+      : "Pinned: " + plural(tls, "certificate") + " · " + plural(ssh, "SSH host key") +
+        (archived ? " · " + archived + " archived" : "") + ".";
     var failed = [data.tlsError && "certificates", data.sshError && "SSH host keys"].filter(Boolean);
     container.innerHTML =
       '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
         '<span style="font-size:0.85rem;color:var(--color-text-secondary)">' + escapeHtml(text) + "</span>" +
         (changed ? '<span class="badge badge-conflict">' + changed + " changed</span>" : "") +
-        (tls + ssh ? '<button type="button" class="btn btn-sm btn-secondary" data-tls-pins-open>View pinned identities</button>' : "") +
+        (tls + ssh + archived ? '<button type="button" class="btn btn-sm btn-secondary" data-tls-pins-open>View pinned identities</button>' : "") +
       "</div>" +
       (failed.length
         ? '<p class="empty-state" style="padding:0.35rem 0 0;margin:0">Could not load pinned ' + failed.join(" or ") + ": " +
@@ -138,6 +148,7 @@
               '<option value="">All kinds</option>' +
               '<option value="tls">TLS certificates</option>' +
               '<option value="ssh">SSH host keys</option>' +
+              '<option value="archived">Archived (decommissioned)</option>' +
             "</select>" +
           "</div>" +
         "</div>" +
@@ -164,9 +175,10 @@
   // now-presented SHA-256 with those ignored. Otherwise the value is split on
   // whitespace and every word must appear (case-insensitive) somewhere on the
   // card: address, port, asset hostname or IP, integration, subject, key type
-  // or fingerprint — so "10.0 ssh-ed25519" narrows by both.
+  // or fingerprint — so "10.0 ssh-ed25519" narrows by both. The kind menu's
+  // TLS / SSH take archived pins of that kind too; Archived takes only those.
 
-  var lastData = { tls: [], ssh: [] };
+  var lastData = { tls: [], ssh: [], archived: [] };
 
   function filterValues() {
     var q = document.querySelector('#tls-pins-filters [data-pin-filter="q"]');
@@ -180,7 +192,8 @@
 
   function haystack(r) {
     var parts = [r.host, r.host + ":" + r.port, r.subject, r.pendingSubject, r.keyType, r.fingerprint, r.pendingFingerprint,
-      r.kind === "ssh" ? "ssh host key" : "tls certificate"];
+      r.kind === "ssh" ? "ssh host key" : "tls certificate", r.archived ? "archived decommissioned" : ""];
+    if (r.asset) parts.push(r.asset.hostname, r.asset.ipAddress);
     (r.assets || []).forEach(function (a) { parts.push(a.hostname, a.ipAddress); });
     (r.integrations || []).forEach(function (i) { parts.push(i.name); });
     return parts.filter(Boolean).join(" ").toLowerCase();
@@ -195,13 +208,16 @@
   }
 
   // Changed certificates first (what an administrator opened this for), then
-  // by address so a host's certificate and host key sit together.
+  // by address so a host's certificate and host key sit together, and the
+  // archived ones (which nothing dials any more) last.
   function combined(data) {
     var all = data.tls.map(function (r) { return Object.assign({ kind: "tls" }, r); })
-      .concat(data.ssh.map(function (r) { return Object.assign({ kind: "ssh" }, r); }));
+      .concat(data.ssh.map(function (r) { return Object.assign({ kind: "ssh" }, r); }))
+      .concat((data.archived || []).map(function (r) { return Object.assign({}, r, { archived: true }); }));
+    function rank(r) { return r.pendingFingerprint ? 0 : r.archived ? 2 : 1; }
     return all.sort(function (a, b) {
-      var ca = a.pendingFingerprint ? 0 : 1;
-      var cb = b.pendingFingerprint ? 0 : 1;
+      var ca = rank(a);
+      var cb = rank(b);
       if (ca !== cb) return ca - cb;
       var h = String(a.host).localeCompare(String(b.host), undefined, { numeric: true });
       if (h) return h;
@@ -298,21 +314,44 @@
       actions);
   }
 
+  // Rule 123: a decommissioned agent host's pin, held off the live tables.
+  // Read-only — it goes back only when the asset is reactivated or its agent's
+  // check-in conflict is accepted, so Delete / Trust would bypass the rule.
+  function archivedCard(r) {
+    var a = r.asset || {};
+    var assetHtml = a.id
+      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(a.id) + '">' + escapeHtml(a.hostname || a.ipAddress || "Asset") + "</a>" +
+        (a.hostname && a.ipAddress ? ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(a.ipAddress) + "</span>" : "")
+      : '<span style="color:var(--color-text-tertiary)">—</span>';
+    var fp = r.kind === "ssh" ? r.fingerprint : fmt(r.fingerprint);
+    return cardShell(r, false, "archived-pin-card", r.kind === "ssh" ? "SSH host key" : "TLS certificate",
+      '<span class="badge badge-maintenance">Archived</span>',
+      row("Asset", assetHtml) +
+      (r.kind === "ssh" ? row("Key type", escapeHtml(r.keyType || "—")) : row("Subject", escapeHtml(r.subject || "—"))) +
+      row(r.kind === "ssh" ? "Fingerprint" : "SHA-256", '<code class="mono" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(fp || "—") + "</code>", true) +
+      row("Archived", escapeHtml(when(r.archivedAt)) + ' <span style="color:var(--color-text-secondary)">on decommission &mdash; restored when the asset is reactivated</span>') +
+      row("First seen", escapeHtml(when(r.firstSeen))),
+      "");
+  }
+
   function renderPanel(data) {
     var body = document.getElementById("tls-pins-body");
     var meta = document.getElementById("tls-pins-meta");
     if (!body) return;
-    lastData = data = data || { tls: [], ssh: [] };
+    lastData = data = data || { tls: [], ssh: [], archived: [] };
     var rows = combined(data);
     var changed = data.tls.filter(function (r) { return !!r.pendingFingerprint; }).length;
+    var archivedCount = (data.archived || []).length;
     var f = filterValues();
     var filtering = !!(f.q || f.kind);
     var shown = !filtering ? rows : rows.filter(function (r) {
-      return (!f.kind || r.kind === f.kind) && (!f.q || matches(r, f.q));
+      var kindOk = !f.kind || (f.kind === "archived" ? !!r.archived : r.kind === f.kind);
+      return kindOk && (!f.q || matches(r, f.q));
     });
     meta.innerHTML = '<span style="color:var(--color-text-secondary);font-size:0.85rem">' +
       (filtering ? shown.length + " of " : "") + rows.length + " pinned" +
-      (changed ? " · " + changed + " changed" : "") + "</span>";
+      (changed ? " · " + changed + " changed" : "") +
+      (archivedCount ? " · " + archivedCount + " archived" : "") + "</span>";
     var failed = [data.tlsError && "certificates", data.sshError && "SSH host keys"].filter(Boolean);
     var failHtml = failed.length
       ? '<p class="empty-state" style="padding:1rem 1.25rem 0;margin:0">Could not load pinned ' + failed.join(" or ") + ": " +
@@ -328,6 +367,7 @@
     }
     var canManage = typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
     body.innerHTML = failHtml + '<div style="padding:1rem 1.25rem">' + shown.map(function (r) {
+      if (r.archived) return archivedCard(r);
       return r.kind === "ssh" ? sshCard(r, canManage) : tlsCard(r, canManage);
     }).join("") + "</div>";
   }

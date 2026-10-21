@@ -27,6 +27,9 @@ router.get("/", async (req, res, next) => {
       sites:        hasPermission(req, "deviceMap", "read"),
       // IPsec tunnels + VPN connections are the asset IPsec tab's rows.
       ipsec:        hasPermission(req, "assets", "read"),
+      // A thumbprint → the asset it is pinned for: the pins are Server
+      // Settings data (the Pinned server identities list's own gate).
+      pins:         hasPermission(req, "serverSettingsSystem", "read"),
     });
     res.json(results);
   } catch (err) {
