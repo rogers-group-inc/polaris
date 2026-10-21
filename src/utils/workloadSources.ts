@@ -136,3 +136,23 @@ export function workloadContainerExternalId(integrationId: string, name: string)
 export function workloadContainerKey(c: { name: string; identityKey?: string | null }): string {
   return c.identityKey ?? c.name;
 }
+
+/**
+ * Interfaces whose address is private to the host's Docker / libvirt plumbing:
+ * docker0 (172.17.0.1 on EVERY Docker host), user bridges (br-<id>), veth
+ * pairs, libvirt's virbr / vnet, and the macvlan `shim-` interfaces that mirror
+ * the host's own address. Their MAC still shows; their address is not
+ * recorded — an interface IP becomes an associated IP (IP history, path-check
+ * hop resolution, the application map, search), and one shared 172.17.0.1
+ * would tie every NAS in the fleet to the same address. A plain bridge the
+ * operator built (br0, the usual home of a TrueNAS / Unraid host's address)
+ * is NOT plumbing and keeps its address.
+ */
+const HOST_INTERNAL_IFACE_RE = /^(docker\d+|br-[0-9a-f]+|veth|virbr\d+|vnet\d+|shim-|vhost|tunl\d+)/i;
+
+/** A workload host interface's IPv4 as worth recording, or null (plumbing, loopback, link-local). */
+export function reportableWorkloadIpv4(ifName: string, ip: string | null): string | null {
+  if (!ip || HOST_INTERNAL_IFACE_RE.test(ifName)) return null;
+  if (/^(127\.|169\.254\.|0\.)/.test(ip)) return null;
+  return ip;
+}

@@ -30,7 +30,7 @@ import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
-import { normalizeWorkloadState, workloadHostUsageKey } from "../utils/workloadSources.js";
+import { normalizeWorkloadState, reportableWorkloadIpv4, workloadHostUsageKey } from "../utils/workloadSources.js";
 import type {
   WorkloadContainer,
   WorkloadDisk,
@@ -579,23 +579,6 @@ export interface UnraidIfaceAddressing {
   vlanId: number | null;
 }
 
-/**
- * Interfaces whose address is private to the host's Docker / libvirt plumbing:
- * docker0 (172.17.0.1 on EVERY Docker host), user bridges (br-<id>), veth
- * pairs, libvirt's virbr / vnet, and the macvlan `shim-` interfaces that mirror
- * the host's own address. Their MAC still shows; their address is not
- * recorded — an interface IP becomes an associated IP (IP history, path-check
- * hop resolution, the application map, search), and one shared 172.17.0.1
- * would tie every Unraid server in the fleet to the same address.
- */
-const HOST_INTERNAL_IFACE_RE = /^(docker\d+|br-[0-9a-f]+|veth|virbr\d+|vnet\d+|shim-|vhost|tunl\d+)/i;
-
-function reportableIpv4(name: string, ip: string | null): string | null {
-  if (!ip || HOST_INTERNAL_IFACE_RE.test(name)) return null;
-  if (/^(127\.|169\.254\.|0\.)/.test(ip)) return null;
-  return ip;
-}
-
 /** Either query's answer → addressing by interface name. */
 export function parseUnraidIfaceAddressing(data: any): Map<string, UnraidIfaceAddressing> {
   const out = new Map<string, UnraidIfaceAddressing>();
@@ -612,7 +595,7 @@ export function parseUnraidIfaceAddressing(data: any): Map<string, UnraidIfaceAd
     if (!name) continue;
     const listed = ((i?.ipv4Addresses ?? []) as any[]).map((a) => str(a?.address)).find((a): a is string => !!a);
     out.set(name, {
-      ipAddress: reportableIpv4(name, listed ?? str(i?.ipAddress)),
+      ipAddress: reportableWorkloadIpv4(name, listed ?? str(i?.ipAddress)),
       macAddress: mac(i?.macAddress),
       speedMbps: speed(i?.speed),
       vlanId: num(i?.vlanId),

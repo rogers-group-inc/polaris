@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  reportableWorkloadIpv4,
   ALL_WORKLOAD_SOURCE_KINDS,
   assetTypeForWorkloadRole,
   isWorkloadPlatform,
@@ -99,5 +100,18 @@ describe("workload integration filter", () => {
     expect(assetMatchesIntegrationFilter(
       { hostname: "DESKTOP-ABC", vmName: "win-11", learnedLocation: null, assetType: "server" }, cfg,
     ).included).toBe(true);
+  });
+});
+
+describe("reportableWorkloadIpv4", () => {
+  it("keeps an operator bridge's address and drops Docker / libvirt plumbing and loopback", () => {
+    expect(reportableWorkloadIpv4("br0", "192.0.2.10")).toBe("192.0.2.10");
+    expect(reportableWorkloadIpv4("eno1", "192.0.2.11")).toBe("192.0.2.11");
+    expect(reportableWorkloadIpv4("docker0", "172.17.0.1")).toBeNull();
+    expect(reportableWorkloadIpv4("br-1a2b3c", "172.18.0.1")).toBeNull();
+    expect(reportableWorkloadIpv4("vnet3", "192.0.2.12")).toBeNull();
+    expect(reportableWorkloadIpv4("eno1", "169.254.1.1")).toBeNull();
+    expect(reportableWorkloadIpv4("lo", "127.0.0.1")).toBeNull();
+    expect(reportableWorkloadIpv4("eno1", null)).toBeNull();
   });
 });

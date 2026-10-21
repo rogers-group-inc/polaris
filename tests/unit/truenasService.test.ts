@@ -89,6 +89,27 @@ describe("truenas parsing", () => {
     expect(tick(200, 0, 60_000)).toMatchObject({ rxBytes: 9000, txBytes: 1500 });
   });
 
+  it("reads interface.query addressing: live state first, the bridge keeps its address, plumbing does not", () => {
+    const a = tn.parseTrueNasIfaceAddressing([
+      { id: "br0", name: "br0", type: "BRIDGE", aliases: [], state: {
+        link_address: "aa:bb:cc:00:11:22",
+        aliases: [{ type: "LINK", address: "aa:bb:cc:00:11:22" }, { type: "INET6", address: "fe80::1" }, { type: "INET", address: "192.0.2.10", netmask: 24 }],
+      } },
+      { id: "eno1", name: "eno1", type: "PHYSICAL", aliases: [], state: { link_address: "", permanent_link_address: "aa:bb:cc:00:11:33", aliases: [] } },
+      { id: "vlan20", name: "vlan20", type: "VLAN", vlan_tag: 20, aliases: [{ type: "INET", address: "198.51.100.4", netmask: 24 }], state: { link_address: "00:00:00:00:00:00", aliases: [] } },
+      { id: "docker0", name: "docker0", type: "BRIDGE", aliases: [], state: { link_address: "02:42:ac:11:00:01", aliases: [{ type: "INET", address: "172.17.0.1" }] } },
+    ]);
+    expect(a.get("br0")).toEqual({ ipAddress: "192.0.2.10", macAddress: "AA:BB:CC:00:11:22", vlanId: null });
+    expect(a.get("eno1")).toEqual({ ipAddress: null, macAddress: "AA:BB:CC:00:11:33", vlanId: null });
+    expect(a.get("vlan20")).toEqual({ ipAddress: "198.51.100.4", macAddress: null, vlanId: 20 });
+    expect(a.get("docker0")).toEqual({ ipAddress: null, macAddress: "02:42:AC:11:00:01", vlanId: null });
+
+    const rows = tn.parseTrueNasRealtime({ interfaces: { br0: { link_state: "LINK_STATE_UP" }, tap0: { link_state: "LINK_STATE_UP" } } }).interfaces;
+    const [br0, tap0] = tn.applyTrueNasIfaceAddressing(rows, a);
+    expect(br0).toMatchObject({ name: "br0", operUp: true, ipAddress: "192.0.2.10", macAddress: "AA:BB:CC:00:11:22" });
+    expect(tap0).toBe(rows[1]);
+  });
+
   it("restarts a counter after a long gap rather than inventing the traffic in between", () => {
     const c = new tn.RateCounters();
     c.advance("k", 100, 0);
@@ -191,12 +212,13 @@ describe("truenas session (stub server)", () => {
           case "vm.query": return fail("Insufficient privileges"); // a key without VM_READ
           case "disk.temperatures": return reply({ sda: 33 });
           case "disk.query": return reply([{ name: "sda", serial: "S1", pool: "tank" }]);
+          case "interface.query": return reply([{ id: "br0", name: "br0", state: { link_address: "aa:bb:cc:00:11:22", aliases: [{ type: "INET", address: "192.0.2.10" }] } }]);
           case "core.subscribe": {
             reply("sub-1");
             const name = String(m.params[0]);
             setTimeout(() => {
               const fields = name.startsWith("reporting.realtime")
-                ? { cpu: { cpu: { usage: 11 } }, memory: { physical_memory_total: 100, physical_memory_available: 40 }, interfaces: {} }
+                ? { cpu: { cpu: { usage: 11 } }, memory: { physical_memory_total: 100, physical_memory_available: 40 }, interfaces: { br0: { link_state: "LINK_STATE_UP" } } }
                 : [{ app_name: "plex", cpu_usage: 3, memory: 50, networks: [], blkio: { read: 0, write: 0 } }];
               ws.send(JSON.stringify({ jsonrpc: "2.0", method: "collection_update", params: { msg: "added", collection: name.split(":")[0], fields } }));
             }, 20);
@@ -245,6 +267,7 @@ describe("truenas session (stub server)", () => {
     expect(snap.inventory.hosts).toHaveLength(1);
     expect(snap.hosts.get("")?.cpuPct).toBe(11);
     expect(snap.hosts.get("")?.memUsedBytes).toBe(60);
+    expect(snap.hosts.get("")?.interfaces?.[0]).toMatchObject({ name: "br0", ipAddress: "192.0.2.10", macAddress: "AA:BB:CC:00:11:22" });
     expect(snap.containerUsage.get("plex")).toEqual({ cpuPct: 3, memUsedBytes: 50, memTotalBytes: null });
   });
 
