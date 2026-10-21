@@ -71,7 +71,13 @@ import type { WinRmConnection } from "../utils/winrm.js";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
-import { splitInterfaceAddresses } from "../utils/interfaceAddress.js";
+import { pickInterfaceAddresses, splitInterfaceAddresses } from "../utils/interfaceAddress.js";
+import {
+  IP_ADDRESS_IF_INDEX_OID,
+  IP_ADDRESS_TYPE_OID,
+  addressesByIfIndexFromIpAddressTable,
+  addressesByIfIndexFromIpAddrTable,
+} from "../utils/snmpIpAddressTable.js";
 import { parseInterfaceIpv6 } from "../utils/fortiosIpv6.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
@@ -8665,6 +8671,42 @@ async function collectVendorDiskFallback(
   }
 }
 
+/**
+ * Per host: did IP-MIB's ipAddressTable answer the last time it was walked?
+ * Lets the FAST cadence skip the empty walk on a device that only has the
+ * legacy ipAddrTable — every tick, at fleet scale, that would be a wasted
+ * round trip per pinned asset. The heavy pass always re-probes (`probe`), so a
+ * device that gains the table, or answered empty once, is re-learned on its
+ * next full pass.
+ */
+const ipAddressTableAnswered = new Map<string, boolean>();
+
+/**
+ * An interface's addresses over SNMP, both families (business rule 126):
+ * `ifIndex → [address…]` in walk order. ipAddressTable (RFC 4293 — IPv4 and
+ * IPv6, with ipAddressType so only unicast rows count) first; the legacy
+ * IPv4-only ipAddrTable when the device has none. Cost on a device with the
+ * current table: two small walks (one varbind per ADDRESS, not per interface)
+ * where there was one; on a legacy device, after its first full pass, the
+ * same single walk as before.
+ */
+async function walkInterfaceAddressesSnmp(session: any, host: string, probe: boolean): Promise<Map<string, string[]>> {
+  const toNums = (m: Map<string, unknown>) => new Map([...m].map(([k, v]) => [k, snmpVbToNumber(v)] as [string, number | null]));
+  if (probe || ipAddressTableAnswered.get(host) !== false) {
+    const [ifIdx, types] = await Promise.all([
+      snmpWalk(session, IP_ADDRESS_IF_INDEX_OID).catch(() => new Map<string, unknown>()),
+      snmpWalk(session, IP_ADDRESS_TYPE_OID).catch(() => new Map<string, unknown>()),
+    ]);
+    if (ifIdx.size > 0) {
+      ipAddressTableAnswered.set(host, true);
+      return addressesByIfIndexFromIpAddressTable(toNums(ifIdx), toNums(types));
+    }
+    ipAddressTableAnswered.set(host, false);
+  }
+  const legacy = await snmpWalk(session, OID.ipAdEntIfIndex).catch(() => new Map<string, unknown>());
+  return addressesByIfIndexFromIpAddrTable(toNums(legacy));
+}
+
 async function collectSystemInfoSnmp(
   host: string,
   config: Record<string, unknown>,
@@ -8799,7 +8841,7 @@ async function collectSystemInfoSnmp(
         snmpWalk(session, OID.ifOutOctets).catch(() => new Map()),
         snmpWalk(session, OID.ifHCInOctets).catch(() => new Map()),
         snmpWalk(session, OID.ifHCOutOctets).catch(() => new Map()),
-        snmpWalk(session, OID.ipAdEntIfIndex).catch(() => new Map()),
+        walkInterfaceAddressesSnmp(session, host, true),
         snmpWalk(session, OID.ifInErrors).catch(() => new Map()),
         snmpWalk(session, OID.ifOutErrors).catch(() => new Map()),
         snmpWalk(session, OID.ifType).catch(() => new Map()),
@@ -8809,13 +8851,8 @@ async function collectSystemInfoSnmp(
         snmpWalk(session, OID.dot3StatsDuplexStatus).catch(() => new Map()),
       ]);
 
-      // Build ifIndex → first IP map by inverting ipAdEntIfIndex (suffix is the IP itself).
-      const ipByIfIndex = new Map<string, string>();
-      for (const [ip, idxRaw] of ipMap.entries()) {
-        const idx = String(snmpVbToNumber(idxRaw) ?? "");
-        if (!idx) continue;
-        if (!ipByIfIndex.has(idx)) ipByIfIndex.set(idx, ip);
-      }
+      // ifIndex → [addresses], both families (walkInterfaceAddressesSnmp).
+      const addrsByIfIndex = ipMap as Map<string, string[]>;
 
       const allIdx = new Set<string>([
         ...names.keys(), ...descrs.keys(), ...admin.keys(), ...oper.keys(),
@@ -8846,7 +8883,8 @@ async function collectSystemInfoSnmp(
           // Duplex only describes a link that is up; some agents keep
           // reporting the last negotiated value after the cable is pulled.
           duplex:      operStatus === "up" ? dot3DuplexLabel(snmpVbToNumber(duplexes.get(idx))) : null,
-          ipAddress:   ipByIfIndex.get(idx) || null,
+          // First reportable IPv4 and IPv6 on the ifIndex (business rule 126).
+          ...pickInterfaceAddresses(addrsByIfIndex.get(idx) ?? []),
           macAddress:  snmpMacFromBuffer(mac.get(idx)),
           inOctets:    inHi != null  ? inHi  : snmpVbToNumber(in32.get(idx)),
           outOctets:   outHi != null ? outHi : snmpVbToNumber(out32.get(idx)),
@@ -9040,12 +9078,16 @@ async function collectSystemInfoSnmp(
  *      no longer exists on the device). Speed/IP/MAC follow the same picker
  *      rules as the full walk: high-counter prefers `ifHC*Octets` over the
  *      legacy 32-bit columns, speed prefers `ifHighSpeed * 1e6` over
- *      `ifSpeed`, IP comes from inverting `ipAdEntIfIndex` for ipByIfIndex.
+ *      `ifSpeed`, the addresses come from `walkInterfaceAddressesSnmp`.
  *
- * IP resolution is the one gotcha: `ipAdEntIfIndex` is a small walk (one
- * varbind per IPv4 address on the device, not per interface) — we walk it once
- * here so the pinned interface gets its IP. On devices with many IPs (large
- * branches) this is the dominant cost; still tiny compared to the full pass.
+ * Address resolution is the one gotcha: the address tables are indexed by the
+ * ADDRESS, not by ifIndex, so they have to be walked (one varbind per address
+ * on the device, not per interface) — once here, so the pinned interfaces get
+ * their IPv4 and IPv6 (business rule 126). ipAddressTable is two small walks
+ * (ifIndex + type); a legacy-only device, once its first full pass has said
+ * so, pays the single ipAddrTable walk it always did. On devices with many
+ * addresses (large branches) this is the dominant cost; still tiny compared to
+ * the full pass.
  *
  * Returns the same `SystemInfoSample` shape as `collectSystemInfoSnmp` so
  * `recordSystemInfoResult` downstream is unchanged. LLDP and wireless are
@@ -9154,18 +9196,13 @@ async function collectFastFilteredSnmp(
     // to walk it. Tiny on most devices (one varbind per IPv4 address). Skip
     // when no interfaces are pinned (storage-only fast cadence is rare but
     // technically possible).
-    const ipByIfIndex = new Map<string, string>();
+    // Both families (business rule 126) — the same walk the full pass does,
+    // minus the re-probe: a legacy-only device pays one walk, as before.
+    let addrsByIfIndex = new Map<string, string[]>();
     if (ifIndexByName.size > 0) {
       const endIpWalk = startPhase("fastfiltered.snmp.ip_walk");
-      try {
-        const ipMap = await snmpWalk(session, OID.ipAdEntIfIndex);
-        for (const [ip, idxRaw] of ipMap.entries()) {
-          const idx = String(snmpVbToNumber(idxRaw) ?? "");
-          if (!idx) continue;
-          if (!ipByIfIndex.has(idx)) ipByIfIndex.set(idx, ip);
-        }
-      } catch { /* leave empty */ }
-      endIpWalk({ ipMappings: ipByIfIndex.size });
+      addrsByIfIndex = await walkInterfaceAddressesSnmp(session, host, false).catch(() => new Map<string, string[]>());
+      endIpWalk({ ipMappings: addrsByIfIndex.size });
     }
 
     // ── Phase 3: one batched multi-GET, then assembly ─────────────────────
@@ -9212,7 +9249,7 @@ async function collectFastFilteredSnmp(
         operStatus,
         speedBps,
         duplex:      operStatus === "up" ? dot3DuplexLabel(snmpVbToNumber(duplexByIdx.get(`${OID.dot3StatsDuplexStatus}.${idx}`))) : null,
-        ipAddress:   ipByIfIndex.get(idx) || null,
+        ...pickInterfaceAddresses(addrsByIfIndex.get(idx) ?? []),
         macAddress:  snmpMacFromBuffer(vbByOid.get(`${OID.ifPhysAddress}.${idx}`)),
         inOctets:    inHi != null  ? inHi  : snmpVbToNumber(vbByOid.get(`${OID.ifInOctets}.${idx}`)),
         outOctets:   outHi != null ? outHi : snmpVbToNumber(vbByOid.get(`${OID.ifOutOctets}.${idx}`)),
