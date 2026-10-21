@@ -151,7 +151,7 @@ is the source default for this integration's assets. It covers:
 |---|---|---|---|
 | **Response Time** | ICMP by default | when it has no IP | yes (Apps have no IP of their own) |
 | **CPU / Memory** | yes, from the `reporting.realtime` event | **no** (see below) | yes, from `app.stats` |
-| **Interfaces** | yes | — | its networks' traffic, from `app.stats` |
+| **Interfaces** | yes: link state and traffic from `reporting.realtime`, IP / MAC / VLAN from the interface list (on a bridged host the address is on `br0`; one address per interface, IPv4 first, a routable IPv6 when it has no IPv4) | — | its networks' traffic, from `app.stats` |
 | **Storage** | yes: the ZFS pools | — | — |
 | **Hardware Sensors** | yes: disk temperatures | — | — |
 | **LLDP** | — | — | — |

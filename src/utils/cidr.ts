@@ -121,6 +121,22 @@ export function isLoopbackIp(ip: string): boolean {
 }
 
 /**
+ * Link-local check: IPv4 169.254.0.0/16, IPv6 fe80::/10. Every IPv6
+ * interface carries one, so it identifies nothing beyond the link. False for
+ * anything that isn't a valid address.
+ */
+export function isLinkLocalIp(ip: string): boolean {
+  const candidate = (ip ?? "").trim();
+  if (!isValidIpAddress(candidate)) return false;
+  if (!candidate.includes(":")) {
+    const [a, b] = candidate.split(".").map(Number);
+    return a === 169 && b === 254;
+  }
+  const first = parseInt(expandIpv6(candidate).slice(0, 4), 16);
+  return (first & 0xffc0) === 0xfe80;
+}
+
+/**
  * RFC 1918 private-range OR loopback check for source-IP gating (the Dash
  * wallboard's app-level gate). Accepts:
  *   - the three RFC 1918 ranges (via isPrivateIpv4)

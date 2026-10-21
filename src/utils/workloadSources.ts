@@ -17,6 +17,8 @@
  * Proxmox is the one clustered platform: one integration, many hosts (nodes).
  */
 
+import { ipInCidr, isLinkLocalIp, isLoopbackIp, isValidIpAddress } from "./cidr.js";
+
 export type WorkloadPlatform = "unraid" | "truenas" | "proxmox";
 export type WorkloadRole = "host" | "vm" | "container";
 
@@ -135,4 +137,28 @@ export function workloadContainerExternalId(integrationId: string, name: string)
  */
 export function workloadContainerKey(c: { name: string; identityKey?: string | null }): string {
   return c.identityKey ?? c.name;
+}
+
+/**
+ * Interfaces whose address is private to the host's Docker / libvirt plumbing:
+ * docker0 (172.17.0.1 on EVERY Docker host), user bridges (br-<id>), veth
+ * pairs, libvirt's virbr / vnet, and the macvlan `shim-` interfaces that mirror
+ * the host's own address. Their MAC still shows; their address is not
+ * recorded — an interface IP becomes an associated IP (IP history, path-check
+ * hop resolution, the application map, search), and one shared 172.17.0.1
+ * would tie every NAS in the fleet to the same address. A plain bridge the
+ * operator built (br0, the usual home of a TrueNAS / Unraid host's address)
+ * is NOT plumbing and keeps its address.
+ */
+const HOST_INTERNAL_IFACE_RE = /^(docker\d+|br-[0-9a-f]+|veth|virbr\d+|vnet\d+|shim-|vhost|tunl\d+)/i;
+
+/**
+ * A workload host interface's address (IPv4 or IPv6) as worth recording, or
+ * null: plumbing, not an address, loopback, link-local (fe80:: is on every
+ * IPv6 interface and identifies nothing) or 0.0.0.0/8.
+ */
+export function reportableWorkloadIp(ifName: string, ip: string | null): string | null {
+  if (!ip || HOST_INTERNAL_IFACE_RE.test(ifName)) return null;
+  if (!isValidIpAddress(ip) || isLoopbackIp(ip) || isLinkLocalIp(ip) || ipInCidr(ip, "0.0.0.0/8")) return null;
+  return ip;
 }

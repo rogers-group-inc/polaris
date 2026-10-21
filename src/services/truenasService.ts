@@ -31,7 +31,7 @@
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
-import { normalizeWorkloadState, workloadHostUsageKey } from "../utils/workloadSources.js";
+import { normalizeWorkloadState, reportableWorkloadIp, workloadHostUsageKey } from "../utils/workloadSources.js";
 import { RATE_COUNTER_MAX_GAP_MS, RateCounters } from "../utils/rateCounters.js";
 import type {
   WorkloadContainer,
@@ -606,6 +606,58 @@ export function parseTrueNasAppStats(
   return out;
 }
 
+/** One interface's addressing from interface.query, keyed by interface name. */
+export interface TrueNasIfaceAddressing {
+  ipAddress: string | null;
+  macAddress: string | null;
+  vlanId: number | null;
+}
+
+/**
+ * interface.query → addressing by name. reporting.realtime is link state and
+ * traffic only — no address, no MAC — so without this every host interface,
+ * and the bridge (br0) a host with VMs carries its address on, read "—".
+ * `state` is the live kernel view (DHCP leases, the bridge's inherited MAC);
+ * the configured `aliases` are the fallback for an address set but not up.
+ * One address per row, IPv4 first (the agent's rule): an IPv6-only interface
+ * shows its first routable IPv6 — never the fe80:: link-local every IPv6
+ * interface carries.
+ */
+export function parseTrueNasIfaceAddressing(rows: any[]): Map<string, TrueNasIfaceAddressing> {
+  const out = new Map<string, TrueNasIfaceAddressing>();
+  const mac = (v: unknown) => {
+    const s = str(v);
+    return s && !/^0{2}([:-]?0{2}){5}$/.test(s) ? s.toUpperCase().replace(/-/g, ":") : null;
+  };
+  const first = (name: string, aliases: unknown, type: "INET" | "INET6") => ((Array.isArray(aliases) ? aliases : []) as any[])
+    .filter((a) => String(a?.type ?? "").toUpperCase() === type)
+    .map((a) => reportableWorkloadIp(name, str(a?.address)))
+    .find((a): a is string => !!a) ?? null;
+  for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
+    const name = str(r?.name) ?? str(r?.id);
+    if (!name) continue;
+    const st = r?.state ?? {};
+    out.set(name, {
+      ipAddress: first(name, st.aliases, "INET") ?? first(name, r?.aliases, "INET")
+        ?? first(name, st.aliases, "INET6") ?? first(name, r?.aliases, "INET6"),
+      macAddress: mac(st.link_address) ?? mac(st.permanent_link_address),
+      vlanId: num(r?.vlan_tag),
+    });
+  }
+  return out;
+}
+
+/** Fill the realtime rows' addressing; a row interface.query does not name is left as it was. */
+export function applyTrueNasIfaceAddressing(
+  interfaces: WorkloadInterfaceReading[],
+  addressing: ReadonlyMap<string, TrueNasIfaceAddressing>,
+): WorkloadInterfaceReading[] {
+  return interfaces.map((i) => {
+    const a = addressing.get(i.name);
+    return a ? { ...i, ipAddress: a.ipAddress, macAddress: a.macAddress, vlanId: a.vlanId } : i;
+  });
+}
+
 // RateCounters moved to utils/rateCounters.ts (shared with Proxmox); re-exported
 // so this module's callers and tests keep their import.
 export { RateCounters };
@@ -710,18 +762,28 @@ export async function fetchTrueNasSnapshot(config: TrueNasConfig): Promise<Workl
     const started = Date.now();
     const raw = await readRaw(s);
     const durationMs = Date.now() - started;
-    const [realtime, appStats] = await Promise.all([
+    const [realtime, appStats, ifaces] = await Promise.all([
       s.firstEvent("reporting.realtime"),
       raw.apps.length > 0 ? s.firstEvent("app.stats") : Promise.resolve(null),
+      // Addressing only — a key without NETWORK_INTERFACE_READ still monitors.
+      s.call<any[]>("interface.query").catch((err: any) => {
+        logger.debug({ err: err?.message }, "truenas: interface.query failed");
+        return null;
+      }),
     ]);
+    const hostUsage = realtime
+      ? parseTrueNasRealtime(realtime, countersFor(config.host), Date.now())
+      : null;
+    if (hostUsage && ifaces) {
+      hostUsage.interfaces = applyTrueNasIfaceAddressing(hostUsage.interfaces, parseTrueNasIfaceAddressing(ifaces));
+    }
     const vmUsage = new Map<string, WorkloadUsage>();
     return {
       fetchedAt: Date.now(),
       durationMs,
       inventory: toResult(raw, config),
-      hosts: new Map([[workloadHostUsageKey(null), realtime
-        ? parseTrueNasRealtime(realtime, countersFor(config.host), Date.now())
-        : { cpuPct: null, perCorePct: null, memUsedBytes: null, memTotalBytes: num(raw.info?.physmem), interfaces: [] }]]),
+      hosts: new Map([[workloadHostUsageKey(null), hostUsage
+        ?? { cpuPct: null, perCorePct: null, memUsedBytes: null, memTotalBytes: num(raw.info?.physmem), interfaces: [] }]]),
       vmUsage,
       containerUsage: appStats ? appUsageWithCounters(config.host, appStats) : new Map(),
     };

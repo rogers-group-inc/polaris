@@ -24,6 +24,7 @@ import {
   ipToPtrName,
   isPrivateOrLoopbackIp,
   isLoopbackIp,
+  isLinkLocalIp,
   isRfc1918Cidr,
   normalizeAllowlistCidr,
   buildCidrMatcher,
@@ -384,6 +385,26 @@ describe("isPrivateOrLoopbackIp", () => {
     expect(isPrivateOrLoopbackIp("2001:db8::1")).toBe(false);
     expect(isPrivateOrLoopbackIp("")).toBe(false);
     expect(isPrivateOrLoopbackIp("not-an-ip")).toBe(false);
+  });
+});
+
+describe("isLinkLocalIp", () => {
+  it("matches 169.254/16 and the whole of fe80::/10", () => {
+    expect(isLinkLocalIp("169.254.10.1")).toBe(true);
+    expect(isLinkLocalIp("fe80::1")).toBe(true);
+    expect(isLinkLocalIp("FE80::a00:27ff:fe4e:66a1")).toBe(true);
+    expect(isLinkLocalIp("febf::1")).toBe(true);
+  });
+
+  it("rejects routable, ULA, loopback and junk input", () => {
+    expect(isLinkLocalIp("169.253.0.1")).toBe(false);
+    expect(isLinkLocalIp("192.0.2.1")).toBe(false);
+    expect(isLinkLocalIp("fec0::1")).toBe(false);
+    expect(isLinkLocalIp("fd00::1")).toBe(false);
+    expect(isLinkLocalIp("2001:db8::1")).toBe(false);
+    expect(isLinkLocalIp("::1")).toBe(false);
+    expect(isLinkLocalIp("not-an-ip")).toBe(false);
+    expect(isLinkLocalIp("")).toBe(false);
   });
 });
 

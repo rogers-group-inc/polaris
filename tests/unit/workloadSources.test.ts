@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  reportableWorkloadIp,
   ALL_WORKLOAD_SOURCE_KINDS,
   assetTypeForWorkloadRole,
   isWorkloadPlatform,
@@ -99,5 +100,24 @@ describe("workload integration filter", () => {
     expect(assetMatchesIntegrationFilter(
       { hostname: "DESKTOP-ABC", vmName: "win-11", learnedLocation: null, assetType: "server" }, cfg,
     ).included).toBe(true);
+  });
+});
+
+describe("reportableWorkloadIp", () => {
+  it("keeps an operator bridge's address and drops Docker / libvirt plumbing and loopback", () => {
+    expect(reportableWorkloadIp("br0", "192.0.2.10")).toBe("192.0.2.10");
+    expect(reportableWorkloadIp("eno1", "192.0.2.11")).toBe("192.0.2.11");
+    expect(reportableWorkloadIp("docker0", "172.17.0.1")).toBeNull();
+    expect(reportableWorkloadIp("br-1a2b3c", "172.18.0.1")).toBeNull();
+    expect(reportableWorkloadIp("vnet3", "192.0.2.12")).toBeNull();
+    expect(reportableWorkloadIp("eno1", "169.254.1.1")).toBeNull();
+    expect(reportableWorkloadIp("lo", "127.0.0.1")).toBeNull();
+    expect(reportableWorkloadIp("eno1", null)).toBeNull();
+    expect(reportableWorkloadIp("eno1", "2001:db8::10")).toBe("2001:db8::10");
+    expect(reportableWorkloadIp("eno1", "fd12:3456::10")).toBe("fd12:3456::10");
+    expect(reportableWorkloadIp("eno1", "fe80::1")).toBeNull();
+    expect(reportableWorkloadIp("eno1", "::1")).toBeNull();
+    expect(reportableWorkloadIp("docker0", "fd00:dead::1")).toBeNull();
+    expect(reportableWorkloadIp("eno1", "0.0.0.0")).toBeNull();
   });
 });
