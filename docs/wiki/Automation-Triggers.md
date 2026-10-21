@@ -284,7 +284,8 @@ it covers ([rule 36](Business-Rules#rule-36)).
   78](Business-Rules#rule-78)). The alert fires the moment the device turns
   Dep. Down, says **DEPENDENCY DOWN**, and names the upstream device that is
   actually down. One notification only: reminders and escalation wait until
-  the upstream is back. See [Dependency suppression](Dependency-Suppression).
+  the upstream is back. It never reaches a maintenance window — the device's
+  own or one on anything above it. See [Dependency suppression](Dependency-Suppression).
 
 See [Monitor states](Monitor-States) for the whole machine.
 

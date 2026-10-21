@@ -962,7 +962,10 @@ device is still down is ended and raised again as the device's own outage.
 Neither sends a "resolved" message — nothing recovered.
 
 Three things the toggle does **not** change. A **maintenance window still
-silences** the device. **Reminders and escalation still wait** while the device
+silences** the device, whether the window is on the device itself or on
+anything above it: a PLC behind a switch that is being upgraded is planned
+downtime, not an outage, and an alert already live when that window opens is
+retired. **Reminders and escalation still wait** while the device
 is dependency-down — you get one notification, and the follow-ups resume when
 the upstream is back. And every automation **without** the toggle stays silent
 about a dependency-down device.

@@ -666,6 +666,27 @@ export function isSuppressedForNotifications(a: { status: string; dependencySupp
 }
 
 /**
+ * Business rule 78 stops at maintenance, upstream included: of these assets,
+ * the dependency-suppressed ones whose blame chain runs through a maintenance
+ * window. An opted-in down automation keeps those silent, exactly as every
+ * other automation does — Dependency-Down Bypass is for an OUTAGE upstream.
+ *
+ * Walked through the tick's blame cache, so the fire that follows for the rest
+ * re-reads nothing, and only for the suppressed handful. A failed walk claims
+ * nothing (rule 78: the alert goes out unnamed rather than not at all).
+ */
+async function suppressionOwedToMaintenance(assets: ScopeAssetRow[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  const candidates = assets.filter((a) => a.dependencySuppressed && String(a.status) !== "maintenance");
+  if (candidates.length === 0) return out;
+  const blames = await Promise.all(candidates.map((a) => resolveDependencyBlame(a.id, _blameCache)));
+  candidates.forEach((a, i) => {
+    if (blames[i]?.chain.some((n) => n.reason === "maintenance")) out.add(a.id);
+  });
+  return out;
+}
+
+/**
  * FROZEN, NOT DEAF (business rule 16). A suppressed asset's live alert is
  * frozen — it neither fires nor escalates — but it may still RECOVER on
  * evidence gathered during the suppression: a window stops server-driven
@@ -2822,12 +2843,15 @@ async function evaluateThresholdRule(
       );
     }
     const active: ScopeAssetRow[] = [];
+    const maintOwed = speaksForSuppressed ? await suppressionOwedToMaintenance(assets) : null;
     for (const a of assets) {
       // Business rule 78: a down automation that opted in keeps its
       // dependency-suppressed devices — it is about to speak for them. A
       // MAINTENANCE window still silences (rule 16 wins: announced downtime
-      // is not an outage to report), so the carve-out is dependency-only.
-      const spokenFor = speaksForSuppressed && a.dependencySuppressed && String(a.status) !== "maintenance";
+      // is not an outage to report), so the carve-out is dependency-only —
+      // and that holds for a window on an UPSTREAM device too: a PLC dark
+      // behind a switch being upgraded is planned, not an outage.
+      const spokenFor = speaksForSuppressed && a.dependencySuppressed && String(a.status) !== "maintenance" && !maintOwed?.has(a.id);
       if (isSuppressedForNotifications(a) && !spokenFor) { suppressedIds.add(a.id); suppressedAssets.push(a); }
       else if (shadowable && isAssetShadowed(shadowIndex!, rule, sig!, rank, a)) shadowedIds.add(a.id);
       else if (needsAnswering ? !assetIsAnsweringProbes(a) : handsOffWhenDown && assetIsDown(a)) notAnsweringIds.add(a.id);
@@ -2882,11 +2906,18 @@ async function evaluateThresholdRule(
   // in (plain Down, or dependency-down), so a firing row can be handed off when
   // the asset's suppression flag no longer agrees with its alert. Read only for
   // an opted-in rule and only for its firing rows: a handful of ids.
+  //
+  // A GROUPED alert (rule 75, `groupKey` set) has no flavour and is left out:
+  // it folds several devices, some Dep. Down and some down in their own right,
+  // and createGroupAlert never stamps `dependencyDown`. Comparing each device's
+  // reading against that unstamped `false` handed every Dep. Down member off
+  // and straight back in on every tick — "is in fault again after recovering
+  // for 0m" on each paced update, and a re-open of any acknowledgement.
   const flavourByNotif = new Map<string, boolean>();
   if (speaksForSuppressed) {
     const firingIds = states.filter((s) => s.state === "firing" && s.notificationId).map((s) => s.notificationId as string);
     if (firingIds.length > 0) {
-      const rows = await prisma.notification.findMany({ where: { id: { in: firingIds } }, select: { id: true, dependencyDown: true } });
+      const rows = await prisma.notification.findMany({ where: { id: { in: firingIds }, groupKey: null }, select: { id: true, dependencyDown: true } });
       for (const r of rows) flavourByNotif.set(r.id, r.dependencyDown);
     }
   }
