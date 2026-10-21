@@ -2743,7 +2743,11 @@ html[data-page-top-curtain]::after {
   padding-bottom: 7px;
 }
 /* A head row with no tab strip (Path Monitor) keeps its controls on the right. */
-.table-head-row > .table-head-controls:first-child { margin-left: auto; }/* Automations: on the Automations tab, Refresh is the list row's own (right of
+.table-head-row > .table-head-controls:first-child { margin-left: auto; }
+/* Dashboard: the strip is hidden (not absent) on an empty layout or a
+   published view, so :first-child never matches; pin the cluster right. */
+.table-head-row > .dashboard-tabs + .table-head-controls { margin-left: auto; }
+/* Automations: on the Automations tab, Refresh is the list row's own (right of
    Clear); the header-cluster Refresh — which reloads whichever tab is open —
    serves the other tabs. */
 .main:has(#auto-tab-manage.active) #btn-refresh { display: none; }
