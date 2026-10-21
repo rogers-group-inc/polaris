@@ -64,6 +64,51 @@ move a device onto an IPv6. Three paths could have:
 An operator may still pin an IPv6 explicitly. That is a choice they made, not one Polaris made
 for them.
 
+### Each collector, and why it reads IPv6 the way it does
+
+- **FortiOS REST / FortiManager.** The CMDB `system/interface` `ipv6` block (`ip6-address`,
+  else the first `ip6-extra-addr`), parsed by `utils/fortiosIpv6.ts` and shared with rule 125's
+  discovery. Confirmed on the lab gates: the monitor endpoint carries no IPv6 field at all. Both
+  integration types monitor through the same direct-REST builder, so parity holds by
+  construction. A dhcp / pppoe / delegated interface's IPv6 is runtime state the CMDB does not
+  hold, and it is not shown.
+- **SNMP.** IP-MIB's RFC 4293 `ipAddressTable` first (`ipAddressIfIndex` plus `ipAddressType`),
+  and the RFC 1213 `ipAddrTable` when a device has no current table. The type column is not
+  optional. A real net-snmp agent lists its interface's BROADCAST address as a table row typed
+  `broadcast(3)`, between the unicast IPv4 and the IPv6 rows, so without the type it would be
+  a candidate address. Scale: two small walks (one varbind per address) where there was one,
+  and a per-host memo keeps a legacy-only device at its single walk on the fast cadence.
+- **vCenter.** VM guest NICs take every `<ipAddress>` and keep one per family. VMkernel ports
+  read their IPv4 from `spec.ip.ipAddress` and their IPv6 from `spec.ip.ipV6Config`. Taking the
+  first `<ipAddress>` anywhere had handed a vmk with no IPv4 its fe80::.
+- **WinRM.** `Get-NetIPAddress` without `-AddressFamily IPv4`, every address per adapter,
+  privacy (`SuffixOrigin Random`) addresses last so a stable one is picked. The order comes from
+  two filtered passes, not `Sort-Object`, which is not stable on Windows PowerShell 5.1.
+- **Linux agentless SSH.** It recorded no address of either family. It now runs
+  `ip -o addr show dev <if>` inside the existing sysfs loop. That was run against a real Linux
+  shell. A host without iproute2 reports no addresses, as before.
+- **TrueNAS.** INET6 aliases fill the IPv6 column, and the IPv6-only fallback into `ipAddress`
+  is dropped: with its own column, `ipAddress` keeps one meaning.
+- **Unraid.** `ipv6Addresses { address }` was confirmed in the unraid/api generated schema, but
+  nothing showed it shipped with `ipv4Addresses`. A field the server does not know fails the
+  whole query, so it went into a tier of its own ahead of the existing query rather than into
+  it.
+- **Generic API.** An optional `ipv6Address` map key, with its editor (the map textarea), so a
+  stored mapping is not stripped on save.
+- **Polaris Agent (0.28.0).** `pickAddresses` sends the first global-unicast address of each
+  family. The server-side filter is what fixes the fleet: an agent that is never upgraded stops
+  polluting the address list as soon as the server is updated.
+
+### Deferred
+
+- **Proxmox VE.** A node and a guest each have ONE synthetic "all interfaces" row, because
+  Proxmox publishes only node-wide traffic. Reading `/nodes/{node}/network` would give real
+  per-interface rows with `address6`, but no counters, beside a synthetic row that holds all
+  the traffic. That mixed model would mislead the Interfaces tab and interface automations more
+  than a missing IPv6 does, so it needs a design of its own. The guest agent's IPv6 entries are
+  not an interface-row concern while guests have no per-NIC rows; today they only pick the
+  guest's own IPv4.
+
 ### Rule 126 — the invariant as stated in full
 
 See `invariants-30-43.md` § 126.
