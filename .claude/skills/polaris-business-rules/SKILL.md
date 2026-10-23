@@ -210,7 +210,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 95 | The assistant answers as the person asking, only reads, and never types a figure into a report | invariants-30-43 | narrative-95 |
 | 96 | Polaris never drives a FortiGate's API-key lockout: few requests at once, nothing after a 401 until a pause runs out, and a probe it did not send is not a miss | invariants-30-43 | narrative-96 |
 | 97 | The all-zero MAC means "no MAC": it never becomes an asset's MAC, and a reservation refuses it as a change | invariants-30-43 | narrative-97 |
-| 98 | An SD-WAN condition may be narrowed to the members whose CURRENT address passes a comparison, and a member whose address cannot be read is kept | invariants-30-43 | narrative-98 |
+| 98 | An SD-WAN condition may be narrowed to the members whose CURRENT address passes a comparison, and a member whose address cannot be read is kept; 98(a) a null address on a gate that reports addresses on any interface is unaddressed (rule 126 stores 0.0.0.0 as null) | invariants-30-43 | narrative-98 |
 | 99 | Polaris never restarts its own container: in a container it asks the operator to | invariants-30-43 | narrative-99 |
 | 100 | A feed an operator describes is an inventory claim: it never vouches for presence or decides monitoring, never outranks a first-party source, and never reaches past its own host | invariants-30-43 | narrative-100 |
 | 101 | An address is ranked by how directly it is known: a reservation the device holds, then what the gate sees online, then a held lease, then ARP — and a detection the gate's ARP contradicts decides nothing | invariants-30-43 | narrative-101 |

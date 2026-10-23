@@ -809,8 +809,11 @@ on every gate but nobody plugged in.
 - A member is matched to the interface of the same name (`wan1`, `Overlay-1`),
   and its **current** address is compared. `0.0.0.0` matches every form a gate
   reports for "no address".
-- A member whose address Polaris could not read (no interface row, or a scrape
-  that returned no address) is always kept.
+- A member whose interface shows no address ("—") counts as `0.0.0.0`, as long
+  as the gate has an address on some other interface. A member with only an IPv6
+  address counts as addressed.
+- A member whose address Polaris could not read (no interface row, or a gate
+  where no interface has an address) is always kept.
 - A member that stops passing never raises an alert, and an alert already open
   on it clears.
 - **Watch out:** a DHCP WAN that loses its lease also reads `0.0.0.0` while it is

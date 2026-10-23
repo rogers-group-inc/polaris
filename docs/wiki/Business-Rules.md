@@ -1731,8 +1731,14 @@ leaves out every member with no address.
 
 - The member is matched to the interface of the same name.
 - `0.0.0.0` matches every form a gate reports for "no address".
-- A member with no interface row, or whose scrape returned no address, is kept.
-  The filter only removes members it has evidence about.
+- A member with no interface row is kept, and so is a member with no address on a
+  gate where Polaris has read no address on any interface. The filter only
+  removes members it has evidence about.
+- A member with no address on a gate that has an address on some other
+  interface counts as `0.0.0.0` (rule 98(a)). Polaris stores an unaddressed
+  interface as blank rather than `0.0.0.0` ([rule 126](#rule-126)), so the
+  interface table shows "—" for it. A member with only an IPv6 address counts as
+  addressed.
 - A member that stops passing raises no alert, and an alert already open on it
   clears.
 - The filter is part of what makes two automations "the same trigger" for
