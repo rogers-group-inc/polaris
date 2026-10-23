@@ -533,6 +533,12 @@ decide_root_files
 
 cd "$APP_DIR"
 
+# Node security floor (CVE-2026-111497 and successors). Warn, never refuse:
+# a distro repo can trail an upstream security release by days, and the
+# Platform Lifecycle card keeps saying so until the host is patched.
+NODE_FLOOR_MSG="$(node "$APP_DIR/scripts/check-node-security-floor.mjs" 2>/dev/null || true)"
+[[ -n "$NODE_FLOOR_MSG" ]] && warn "$NODE_FLOOR_MSG"
+
 # ─── 5b. Generate self-signed TLS cert ───────────────────────────────────────
 mkdir -p "$CERT_DIR"
 if [[ -f "$CERT_DIR/cert.pem" && -f "$CERT_DIR/key.pem" ]]; then

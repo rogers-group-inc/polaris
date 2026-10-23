@@ -48,15 +48,35 @@ Each technology:
 | `trackGranularity` | `major` or `major.minor` — vendors disagree, so it is per technology |
 | `policy` | `dated` (real EOL dates), `compat` (a compatibility horizon, no dates), `none` (vendor publishes nothing) |
 | `securityExposed` | true for network-reachable, unpatchable surfaces. Drives whether an EOL grades critical or warning |
-| `polarisMinimum` | below this, the install is misconfigured — always critical |
+| `polarisMinimum` | below this, the install is misconfigured — always critical. A MAJOR floor; a patch-level floor is a track's `securityFloor` (below) |
 | `polarisTarget` | what Polaris wants you on. **Needs an operational reason to sit above `polarisMinimum`** — a newer version merely existing is not one. Anything below it grades `behind_target` on every install, forever, so an unjustified target is permanent noise. Set it equal to the minimum when the honest answer is "stay put"; the EOL clock will raise `aging` on its own when the time comes. Java briefly targeted 21 on no better grounds than 21 being newer, and made every healthy install report a behind-target JDK |
 | `polarisMaximumTested` | above this, `ahead_of_tested` (a watch, not a problem) |
 | `upgradePlaybook` | id into `playbooks[]` |
 | `source` / `sourceCheckedOn` / `confidence` | the provenance a human recorded |
-| `tracks[]` | `{ track, released, eol, activeSupportEnds?, extendedSupport?, lts?, prerelease?, note? }` |
+| `tracks[]` | `{ track, released, eol, activeSupportEnds?, extendedSupport?, lts?, prerelease?, note?, securityFloor? }` |
 
 `eol: null` means "still supported, no announced date" — different from a missing `eol`, and
 different from `policy: "none"`.
+
+**`securityFloor`** — `{ version, advisories[], source, sourceCheckedOn }` on a *track*: the
+lowest release on that track with no known exploitable advisory open against it. Graded against
+the FULL observed version (component-wise, so `24.9` < `24.22`), and an installed version below it
+grades `unpatched`: critical when `securityExposed`, capped at warning for the capacity snapshot
+like EOL, because a distro repo can trail an upstream security release by days or weeks and the
+operator cannot clear it until the vendor ships. EOL outranks it (an EOL track has no patch to move
+to). Added 2026-10-23 for CVE-2026-111497 (Brotli RCE in `node:zlib`), which hit every supported
+Node line at once and which nothing major-granular could see.
+
+- **Record one only from the vendor's own security advisory**, never an aggregator, and list the
+  advisories that justify it — the card shows them. Raise it when a newer advisory lands; never
+  lower it.
+- **A distro build can carry a backported fix under an older version string** — Node's own fix
+  for CVE-2026-111497 was a cherry-pick that left `process.versions.brotli` at `1.2.0`. Polaris's
+  install paths (official Docker image, NodeSource, RHEL AppStream) all track upstream version
+  numbers, so the version compare is sound for them. A host on a distro that renumbers would
+  false-positive; that is the accepted cost of not probing per-CVE fingerprints.
+- **Also read by `scripts/check-node-security-floor.mjs`** — the setup scripts and
+  `deploy/upgrade-node.sh` call it, so the floor has one copy. It warns and always exits 0.
 
 Each playbook: `{ id, title, docAnchor, risk, steps[], files[] }`. `files[]` is the lockstep
 list — every path that must move together — and `check:versions` asserts each one exists,

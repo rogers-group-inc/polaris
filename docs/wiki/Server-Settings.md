@@ -598,6 +598,14 @@ A component **below the minimum** is flagged critical. An upstream end-of-life
 is flagged and emailed but deliberately does **not** hold a permanent banner
 open, since it clears only in a maintenance window.
 
+**Security update** means the version line is supported but the installed
+patch has a published security advisory open against it — the row names the
+advisories and the release to move to. It is flagged and emailed like an
+end-of-life, and for the same reason does not hold the banner open: the fix
+often waits on your OS vendor's package repository catching up. On a systemd
+install, `deploy/upgrade-node.sh` applies a Node patch in place; on Docker,
+pull the current image.
+
 ### Database tools
 
 Polaris checks the **resolved** `pg_dump` and `psql` for compatibility with the

@@ -1911,6 +1911,7 @@ function _lifecycleStateLabel(state) {
   if (state === "below_minimum") return "Below minimum";
   if (state === "eol") return "End of life";
   if (state === "eol_extended") return "EOL (extended support)";
+  if (state === "unpatched") return "Security update";
   if (state === "approaching_eol") return "Approaching EOL";
   if (state === "aging") return "Aging";
   // Distinct from "Aging" on purpose: this row is below the version Polaris
@@ -1957,7 +1958,17 @@ function _lifecycleRowHtml(c) {
 
   var detail = "";
   var interesting = g.severity && g.severity !== "none";
-  if (interesting && c.playbook) {
+  // An open advisory is a patch-level update inside the same track, so the
+  // major-upgrade playbook below would be the wrong instructions.
+  if (g.state === "unpatched" && g.securityFloor) {
+    var sf = g.securityFloor;
+    detail =
+      '<tr class="lifecycle-detail-row"><td colspan="6" style="padding:0 8px 8px;font-size:0.8rem">' +
+        "Update to <strong>" + escapeHtml(sf.version) + "</strong> or later on this line — " +
+        escapeHtml((sf.advisories || []).join(", ")) +
+        (sf.source ? ' <span class="hint">(' + escapeHtml(sf.source) + ")</span>" : "") +
+      "</td></tr>";
+  } else if (interesting && c.playbook) {
     var steps = (c.playbook.steps || []).map(function (s) {
       return "<li>" + escapeHtml(s) + "</li>";
     }).join("");

@@ -17,7 +17,9 @@
 #
 # What this does:
 #   1. Preflight: root, app dir, app user, systemd units, disk space, and the
-#      currently installed Node version (already-satisfied hosts exit cleanly)
+#      currently installed Node version (already-satisfied hosts exit cleanly).
+#      A host on the right major but below its security floor
+#      (src/data/platformEol.json) gets a patch update within that major.
 #   2. Optional pg_dump backup, because step 6 runs migrations
 #   3. Stops polaris.target — the service stays down for the WHOLE window, not
 #      just a restart at the end: native modules are compiled against the Node
@@ -136,6 +138,20 @@ else
   warn "Node $CURRENT_NODE is BELOW the >=${MIN_MAJOR}.${MIN_MINOR} floor required by pg-boss and @prisma/streams-local."
 fi
 
+# Security floor: a supported major can still be on a patch with an open
+# advisory (CVE-2026-111497). The floor lives in src/data/platformEol.json,
+# read by the same helper the setup scripts use. Only relevant when the major
+# is staying — a major change installs the newest patch anyway.
+NEED_PATCH=0
+node_floor_msg() { node "$APP_DIR/scripts/check-node-security-floor.mjs" 2>/dev/null || true; }
+if [[ $NEED_NODE -eq 0 ]]; then
+  FLOOR_MSG="$(node_floor_msg)"
+  if [[ -n "$FLOOR_MSG" ]]; then
+    warn "$FLOOR_MSG"
+    NEED_PATCH=1
+  fi
+fi
+
 # Is the build already current? (dist newer than the newest source file)
 BUILD_STALE=1
 if [[ -d "$APP_DIR/dist" ]]; then
@@ -148,7 +164,7 @@ else
   info "dist/ looks current."
 fi
 
-if [[ $NEED_NODE -eq 0 && $BUILD_STALE -eq 0 && $DO_PULL -eq 0 ]]; then
+if [[ $NEED_NODE -eq 0 && $NEED_PATCH -eq 0 && $BUILD_STALE -eq 0 && $DO_PULL -eq 0 ]]; then
   info "Nothing to do: Node meets the floor and the build is current."
   info "Note this check does NOT look for pending database migrations — it avoids"
   info "taking the service down for a host that appears healthy. If you know a"
@@ -167,6 +183,7 @@ fi
 echo
 info "Plan:"
 info "  target Node:      ${TARGET_MAJOR}.x LTS   (install needed: $([[ $NEED_NODE -eq 1 ]] && echo yes || echo no))"
+[[ $NEED_PATCH -eq 1 ]] && info "  security patch:   yes — update within the installed ${CUR_MAJOR}.x line"
 info "  pre-migration backup: $([[ $SKIP_BACKUP -eq 1 ]] && echo skipped || echo yes)"
 info "  fast-forward checkout: $([[ $DO_PULL -eq 1 ]] && echo yes || echo no)"
 info "  service downtime: from step 3 until step 7"
@@ -232,7 +249,25 @@ fi
 
 # ─── 4. Replace the runtime ───────────────────────────────────────────────
 step "4/7 Node runtime"
-if [[ $NEED_NODE -eq 0 ]]; then
+if [[ $NEED_NODE -eq 0 && $NEED_PATCH -eq 1 ]]; then
+  # Same major, newer patch: no stream change and no module reset. Whatever
+  # repo installed this Node is the one asked; if it has not shipped the fix
+  # yet the re-check below says so and the service comes back regardless.
+  if [[ "$PKG" == "dnf" ]]; then
+    run "dnf upgrade -y nodejs npm"
+  else
+    run "apt-get update -qq"
+    run "apt-get install -y --only-upgrade nodejs"
+  fi
+  if [[ $DRY_RUN -eq 0 ]]; then
+    info "Node is now: $(node -v 2>/dev/null || echo none)"
+    FLOOR_MSG="$(node_floor_msg)"
+    if [[ -n "$FLOOR_MSG" ]]; then
+      warn "Still below the security floor — this host's package repository does not carry the fix yet."
+      warn "Continuing so the service comes back; re-run this script once the repository has it."
+    fi
+  fi
+elif [[ $NEED_NODE -eq 0 ]]; then
   info "Already satisfies the floor — leaving the runtime alone."
 elif [[ "$PKG" == "dnf" ]]; then
   # `module reset` first: a host pinned to nodejs:20 refuses a second stream

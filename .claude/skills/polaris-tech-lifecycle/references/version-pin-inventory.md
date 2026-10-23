@@ -62,6 +62,17 @@ agree with each other, the pins agree with each other, and the floor never excee
 does **not** demand one number, because that would force a choice between lying in `engines.node`
 and lying in the Dockerfile.
 
+**A third number: the security floor.** Separate from both, and NOT a pin: the per-track
+`securityFloor` in `src/data/platformEol.json` (24.22.1 / 22.23.4 since CVE-2026-111497,
+2026-10-23). No repo site names an exact Node patch, so a security release moves nothing here —
+the floor is graded at runtime (`unpatched` on the Platform Lifecycle card) and warned about by
+`scripts/check-node-security-floor.mjs` from the four setup scripts (after the clone — Node is
+installed before the tree exists) and `deploy/upgrade-node.sh`, which also patches in place within
+the installed major when only the floor is unmet. `deploy/ha/setup-rhel-ha.sh` does not call it;
+the in-app card covers that host once it runs. Never turn the warning into a refusal: RHEL
+AppStream trails upstream security releases, and a refusal strands every fresh install until it
+catches up. `check:versions` does not read the floor.
+
 **Live divergences and standing facts.**
 
 - **A host on the floor has under a year of runway.** Node 22 ends 2027-04-30. The accept-checks

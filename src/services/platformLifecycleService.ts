@@ -495,7 +495,8 @@ export const LIFECYCLE_REASON_FAMILY = "platform_lifecycle";
  * even when the component grades critical. It stays red on the card, still
  * fires an error-level Event and still emails — but it cannot hold the
  * non-dismissible sidebar alert open for the months between "PostgreSQL went
- * EOL" and "we booked the window". `below_minimum` is uncapped and does reach
+ * EOL" and "we booked the window". `unpatched` is capped the same way: the fix
+ * waits on the host's package repository, not on the operator. `below_minimum` is uncapped and does reach
  * that alert, because it is a misconfiguration of this install and one package
  * command from fixed.
  */
@@ -530,6 +531,10 @@ export function lifecycleCapacityReasons(result: PlatformLifecycleResult): Lifec
       code = "platform_below_minimum";
       message = `${c.label} ${c.observedVersion ?? g.track ?? "(unknown)"} is below Polaris's minimum (${c.label} ${c.polarisMinimum}).`;
       suggestion = `Upgrade the runtime on this host. ${target}`;
+    } else if (g.state === "unpatched" && g.securityFloor) {
+      code = "platform_unpatched";
+      message = `${c.label} ${c.observedVersion ?? g.track} has a published security advisory open against it (${g.securityFloor.advisories.join(", ")}).`;
+      suggestion = `Update ${c.label} on this host to ${g.securityFloor.version} or later — a patch-level update within the ${g.track} line. If the host's package repository does not carry it yet, it will shortly.`;
     } else if (g.state === "eol" || g.state === "eol_extended") {
       code = "platform_eol";
       const extended = g.state === "eol_extended" && g.extendedSupportUntil

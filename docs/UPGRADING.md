@@ -72,6 +72,16 @@ script arguments, not Polaris runtime settings.
 The script is idempotent: on a host that already meets the floor with a current
 build it reports that and exits without stopping anything.
 
+**Security patches within the same major.** When the installed major is fine
+but the patch is below the security floor Polaris records for it (for example
+Node 24 below 24.22.1, for CVE-2026-111497), the script updates Node *within*
+that major from whatever repository installed it — `dnf upgrade nodejs npm` or
+`apt-get install --only-upgrade nodejs` — then runs the same rebuild and
+restart. If that repository has not shipped the fix yet, it says so and brings
+the service back anyway; re-run it once the package is available. The Platform
+Lifecycle card shows **Security update** for as long as the host is below the
+floor.
+
 ### The manual path
 
 Equivalent to the above, if you would rather run each step yourself:

@@ -143,6 +143,7 @@ against committed end-of-life dates, and links the upgrade steps.
 |---|---|
 | **below the minimum** | flagged **critical** |
 | **past upstream EOL** | flagged and emailed, but deliberately **does not hold a permanent banner open** — it clears only in a maintenance window |
+| **security update** | the line is supported but this patch has an open security advisory; flagged and emailed the same way, naming the advisories and the release to move to |
 
 **Upgrading the *platform* is a separate procedure from updating Polaris**, and
 every one of those runbooks lives in
