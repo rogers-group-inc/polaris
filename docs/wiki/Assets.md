@@ -1195,6 +1195,21 @@ then the general monitor credential. The tab shows the freshest sample and
 says so when none has arrived yet. Widgets from a Generic API integration have
 no switch and update with the integration's telemetry.
 
+**Arranging the cards.** With the Manufacturer Profiles permission, a pencil
+button sits at the tab's top right. Click it to arrange the cards the way the
+Dashboard's **Customize Page** works:
+- Drag a card by its **⠿** grip into any column, or onto **Drop here for a
+  new column**.
+- Click a column's **3/12** button to cycle its width through 3, 4, 6 and 12
+  twelfths of the row, and **‹ ›** to move the column.
+- Click a card's **1×** button to cycle its height through 1×, 2× and 3×.
+
+Click the pencil again (now a ✓) to save, **Cancel** to discard, or **Reset**
+then ✓ to go back to the default grid. The arrangement is saved on the
+**manufacturer profile**, so every asset of that manufacturer shows the same
+layout. A widget added to the profile later appears after the arranged ones
+until the layout is edited again. On a phone every column is full width.
+
 ### Wireless (access points)
 
 Radios → the SSIDs each one broadcasts → the clients connected to each, as one

@@ -7435,6 +7435,61 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .dashboard-column-remove:hover { color: var(--color-danger); background: var(--color-hover-tint); }
 
 /* Trailing "new column" drop target — only in edit mode. */
+/* ── Asset Custom MIB tab layout (the dashboard's column model, per
+   manufacturer profile). Same edit-mode language as the dashboard: accent
+   dashed block outlines, green "something goes here" targets, a ⠿ grip. */
+.cmib-layout {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.cmib-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cmib-layout.editing .cmib-col {
+  outline: 1px dashed color-mix(in srgb, var(--color-accent) 55%, transparent);
+  outline-offset: 5px;
+  border-radius: 6px;
+  min-height: 80px;
+}
+.cmib-col-bar {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.72rem; color: var(--color-text-tertiary);
+}
+.cmib-col-bar .cmib-col-bar-fill { flex: 1; }
+.cmib-tool {
+  background: transparent; border: 1px solid var(--color-border); border-radius: 4px;
+  color: var(--color-text-secondary); font-size: 0.72rem; line-height: 1; padding: 3px 6px; cursor: pointer;
+}
+.cmib-tool:hover { color: var(--color-text-primary); background: var(--color-hover-tint); }
+.cmib-tool:disabled { opacity: 0.4; cursor: default; }
+.cmib-grip {
+  cursor: grab; user-select: none; color: var(--color-text-tertiary);
+  font-size: 1rem; line-height: 1; padding: 2px 4px; border-radius: 4px; flex-shrink: 0;
+}
+.cmib-grip:hover { color: var(--color-text-primary); background: var(--color-hover-tint); }
+.cmib-grip:active { cursor: grabbing; }
+.custom-mib-card.lifted { opacity: 0.5; outline: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent); }
+.cmib-drop-marker {
+  height: 0; border-top: 3px solid var(--color-success); border-radius: 2px; margin: -6px 0;
+}
+.cmib-newcol {
+  grid-column: span 3;
+  min-height: 80px;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed color-mix(in srgb, var(--color-success) 65%, transparent);
+  border-radius: 11px;
+  color: var(--color-success);
+  font-size: 0.82rem;
+}
+.cmib-newcol.drag-over {
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+@media (max-width: 760px) {
+  /* One column on a phone, whatever the saved widths say. */
+  .cmib-layout > .cmib-col, .cmib-layout > .cmib-newcol { grid-column: span 12 !important; }
+}
+
 .dashboard-newcol-target {
   grid-column: span 3;
   min-height: 120px;

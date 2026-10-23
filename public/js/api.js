@@ -1690,6 +1690,9 @@ const api = {
     // rule 130), and the bulk switch: body { enable?: [assetId], disable?: [...] }.
     listProfileWidgetAssets:     (id, widgetId) =>
       request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}/assets`),
+    // The Custom MIB tab's widget arrangement for a profile (null = default grid).
+    setProfileWidgetLayout:      (id, layout) =>
+      request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widget-layout`, { layout: layout }),
     setProfileWidgetAssets:      (id, widgetId, body) =>
       request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}/assets`, body),
     getPgTuning: () => request("GET", "/server-settings/pg-tuning"),

@@ -4453,6 +4453,13 @@ model ManufacturerProfile {
   // manufacturer), and the MIB-pin redirect. Seeded from the constant's
   // alternations; validated like modelPattern.
   matchPattern String?
+  // How the Custom MIB tab arranges this profile's widgets — the dashboard's
+  // column model, edited with the tab's pencil button and shared by every
+  // asset under the profile: { version: 1, columns: [{ id, width: 3|4|6|12,
+  // widgets: [{ id, height: 1|2|3 }] }] }. NULL = the default auto-fit grid.
+  // Sanitized on write (manufacturerProfileService.sanitizeWidgetLayout);
+  // a widget missing from it renders after the laid-out ones.
+  widgetLayout Json?
   createdBy    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

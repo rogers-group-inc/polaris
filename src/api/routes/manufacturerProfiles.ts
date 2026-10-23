@@ -20,7 +20,7 @@ import {
   listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
   updateMetricRow, createOverride, updateOverride, deleteOverride,
   createWidget, updateWidget, deleteWidget, listManufacturerSuggestions,
-  symbolWarningsForProfile,
+  symbolWarningsForProfile, setWidgetLayout,
 } from "../../services/manufacturerProfileService.js";
 import {
   TRANSFORM_KINDS,
@@ -40,6 +40,22 @@ import { listWidgetCandidates, setWidgetAssets } from "../../services/customWidg
 const WidgetAssetsSchema = z.object({
   enable:  z.array(z.string().min(1)).max(5000).optional(),
   disable: z.array(z.string().min(1)).max(5000).optional(),
+});
+
+// PUT /:id/widget-layout. Shape-checked here, then sanitized against the
+// profile's own widgets in the service (unknown ids dropped).
+const WidgetLayoutSchema = z.object({
+  layout: z.object({
+    version: z.literal(1),
+    columns: z.array(z.object({
+      id:      z.string().min(1).max(64),
+      width:   z.union([z.literal(3), z.literal(4), z.literal(6), z.literal(12)]),
+      widgets: z.array(z.object({
+        id:     z.string().min(1).max(64),
+        height: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+      })).max(500),
+    })).max(48),
+  }).nullable(),
 });
 
 const router: Router = Router();
@@ -251,6 +267,25 @@ router.delete("/:id/widgets/:widgetId", requirePermission("manufacturerProfiles"
     message: "Manufacturer profile custom widget deleted",
   });
   res.status(204).end();
+}));
+
+// PUT /:id/widget-layout — the Custom MIB tab's arrangement of this profile's
+// widgets (the pencil button's save). Shared by every asset under the profile,
+// so it is a profile write. `layout: null` restores the default grid.
+router.put("/:id/widget-layout", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = WidgetLayoutSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  const layout = await setWidgetLayout(String(req.params.id), parsed.data.layout);
+  logEvent({
+    action: "manufacturer_profile.widget_layout_updated",
+    resourceType: "manufacturer_profile",
+    resourceId: String(req.params.id),
+    actor: requestActor(req),
+    message: layout
+      ? `Custom MIB widget layout saved (${layout.columns.length} column(s))`
+      : "Custom MIB widget layout reset to the default grid",
+  });
+  send(res, { layout });
 }));
 
 // GET /:id/widgets/:widgetId/assets — the assets a widget applies to, each with

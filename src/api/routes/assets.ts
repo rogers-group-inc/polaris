@@ -3378,6 +3378,7 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
       assetId:         asset.id,
       manufacturer:    asset.manufacturer,
       profileId:       profile?.id ?? null,
+      widgetLayout:    profile?.widgetLayout ?? null,
       polling:         asset.customWidgetPolling ?? null,
       lastCustomWidgetAt: asset.lastCustomWidgetAt,
       widgets: applicableWidgets.map((w) => {

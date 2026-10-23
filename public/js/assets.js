@@ -10747,7 +10747,107 @@ function _renderWirelessFlatTable(container, stations, asset, filter) {
 // (default 60s); the renderer doesn't poll — it shows the freshest sample
 // the server has; it refreshes on the next collector cycle.
 
+// Tab state: the payload last rendered, and the layout editor's working copy.
+// The layout belongs to the MANUFACTURER PROFILE (every asset under it shares
+// it); the pencil at the tab's top right edits it with the dashboard's column
+// model — drag a card by its grip into any column, cycle a column's width
+// (3/4/6/12 of 12) and a card's height (1×/2×/3×) — and the second click saves.
+var _cmib = { payload: null, editing: false, working: null };
+var CMIB_WIDTHS = [3, 4, 6, 12];
+var CMIB_ROW_PX = 170;   // one height step; 2× / 3× add the gap between steps
+var CMIB_GAP_PX = 12;
+var CMIB_PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+var CMIB_CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
+function _cmibIsMfr(w) { return w.enabled !== null && w.enabled !== undefined; }
+
+/**
+ * A complete layout for these widgets: the saved one with unknown ids dropped,
+ * then every manufacturer widget it does not mention appended as its own
+ * 3-wide column (so a widget created after the layout was saved still shows).
+ * With nothing saved, every widget gets its own 3-wide column — four across,
+ * close to the default grid.
+ */
+function _cmibCompleteLayout(saved, widgets) {
+  var ids = widgets.filter(_cmibIsMfr).map(function (w) { return w.id; });
+  var seen = {};
+  var columns = [];
+  ((saved && saved.columns) || []).forEach(function (c) {
+    var ws = (c.widgets || []).filter(function (x) {
+      if (ids.indexOf(x.id) === -1 || seen[x.id]) return false;
+      seen[x.id] = 1;
+      return true;
+    }).map(function (x) { return { id: x.id, height: [1, 2, 3].indexOf(x.height) !== -1 ? x.height : 1 }; });
+    if (ws.length) columns.push({ id: c.id, width: CMIB_WIDTHS.indexOf(c.width) !== -1 ? c.width : 3, widgets: ws });
+  });
+  ids.forEach(function (id) {
+    if (!seen[id]) columns.push({ id: "col-" + id, width: 3, widgets: [{ id: id, height: 1 }] });
+  });
+  return { version: 1, columns: columns };
+}
+
+function _cmibCardHTML(w, opts) {
+  opts = opts || {};
+  var hasSwitch = _cmibIsMfr(w);
+  var off = hasSwitch && !w.enabled;
+  var toggle = !hasSwitch ? "" :
+    '<label class="toggle-switch" style="flex-shrink:0" title="' +
+      (w.enabled ? "Polling on — click to stop polling this widget on this asset" : "Polling off — click to start polling this widget on this asset") + '">' +
+      '<input type="checkbox" class="custom-widget-toggle" data-widget-id="' + escapeHtml(w.id) + '"' +
+        (w.enabled ? " checked" : "") + (canManageAssets() && !opts.editing ? "" : " disabled") + '>' +
+      '<span class="toggle-slider"></span>' +
+    '</label>';
+  var height = opts.height
+    ? ';height:' + (opts.height * CMIB_ROW_PX + (opts.height - 1) * CMIB_GAP_PX) + 'px;overflow:auto;box-sizing:border-box'
+    : '';
+  return '<div class="custom-mib-card" data-widget-id="' + escapeHtml(w.id) + '" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '" style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))' + height + '">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">' +
+      '<span style="display:flex;align-items:center;gap:4px;min-width:0">' +
+        (opts.editing ? '<span class="cmib-grip" draggable="true" data-widget-id="' + escapeHtml(w.id) + '" title="Drag to move (to any column)">⠿</span>' : '') +
+        '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
+      '</span>' +
+      '<span style="display:flex;align-items:center;gap:8px;min-width:0">' +
+        '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis">' + escapeHtml(w.symbol) + '</span>' +
+        (opts.editing ? '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : toggle) +
+      '</span>' +
+    '</div>' +
+    (off
+      ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.' +
+          (w.latest || (w.stateRows && w.stateRows.length) ? ' Showing the last reading collected.' : '') + '</p>' +
+        (w.latest || (w.stateRows && w.stateRows.length) ? '<div style="opacity:0.55">' + _renderCustomWidgetBody(w) + '</div>' : '')
+      : _renderCustomWidgetBody(w)) +
+  '</div>';
+}
+
+function _cmibLayoutHTML(layout, byId, editing) {
+  var html = '<div class="cmib-layout' + (editing ? ' editing' : '') + '">';
+  layout.columns.forEach(function (c, ci) {
+    html += '<div class="cmib-col" data-col-id="' + escapeHtml(c.id) + '" style="grid-column:span ' + c.width + '">';
+    if (editing) {
+      html += '<div class="cmib-col-bar">' +
+        '<button type="button" class="cmib-tool cmib-col-move" data-col-id="' + escapeHtml(c.id) + '" data-dir="-1" title="Move column left"' + (ci === 0 ? ' disabled' : '') + '>‹</button>' +
+        '<button type="button" class="cmib-tool cmib-col-move" data-col-id="' + escapeHtml(c.id) + '" data-dir="1" title="Move column right"' + (ci === layout.columns.length - 1 ? ' disabled' : '') + '>›</button>' +
+        '<span class="cmib-col-bar-fill"></span>' +
+        '<button type="button" class="cmib-tool cmib-width" data-col-id="' + escapeHtml(c.id) + '" title="Column width (click to cycle 3/4/6/12 of 12)">' + c.width + '/12</button>' +
+      '</div>';
+    }
+    c.widgets.forEach(function (x) {
+      var w = byId[x.id];
+      if (w) html += _cmibCardHTML(w, { editing: editing, height: x.height });
+    });
+    html += '</div>';
+  });
+  if (editing) html += '<div class="cmib-newcol" data-newcol="1">Drop here for a new column</div>';
+  return html + '</div>';
+}
+
 function _customMibTabHTML(payload) {
+  // A different asset (or a fresh open) never inherits an edit in progress.
+  if (!_cmib.payload || _cmib.payload.assetId !== payload.assetId) {
+    _cmib.editing = false;
+    _cmib.working = null;
+  }
+  _cmib.payload = payload;
   var feeds = [];
   var anyMfr = false;
   payload.widgets.forEach(function (w) {
@@ -10770,9 +10870,13 @@ function _customMibTabHTML(payload) {
   var hint = parts.join(" ");
   // Business rule 130: a manufacturer widget polls this asset only once its
   // card's switch is on. `enabled` is null on a Generic API widget (no switch).
-  var mfrWidgets = payload.widgets.filter(function (w) { return w.enabled !== null && w.enabled !== undefined; });
+  var mfrWidgets = payload.widgets.filter(_cmibIsMfr);
+  var genericWidgets = payload.widgets.filter(function (w) { return !_cmibIsMfr(w); });
   var anyOn = mfrWidgets.some(function (w) { return w.enabled; });
-  if (mfrWidgets.length && !anyOn) {
+  if (_cmib.editing) {
+    hint = '<b>Editing the layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset.</b> ' +
+      'Drag a card by ⠿ into any column, set each column\'s width and each card\'s height, then click ✓ to save.';
+  } else if (mfrWidgets.length && !anyOn) {
     hint += ' <span style="color:var(--color-warning)">Polling is off for every widget — ' +
       (canManageAssets() ? 'switch a card on to start collecting.' : 'an asset editor can switch one on.') + '</span>';
   } else if (payload.polling === "disabled") {
@@ -10780,36 +10884,208 @@ function _customMibTabHTML(payload) {
   } else if (!payload.lastCustomWidgetAt) {
     hint += ' <span style="color:var(--color-text-tertiary)">No sample collected yet — waiting for the next probe cycle.</span>';
   }
-  var html = '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">' + hint + '</div>';
-  html += '<div class="custom-mib-grid" data-asset-id="' + escapeHtml(payload.assetId || "") + '" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">';
-  payload.widgets.forEach(function (w) {
-    var hasSwitch = w.enabled !== null && w.enabled !== undefined;
-    var off = hasSwitch && !w.enabled;
-    var toggle = !hasSwitch ? "" :
-      '<label class="toggle-switch" style="flex-shrink:0" title="' +
-        (w.enabled ? "Polling on — click to stop polling this widget on this asset" : "Polling off — click to start polling this widget on this asset") + '">' +
-        '<input type="checkbox" class="custom-widget-toggle" data-widget-id="' + escapeHtml(w.id) + '"' +
-          (w.enabled ? " checked" : "") + (canManageAssets() ? "" : " disabled") + '>' +
-        '<span class="toggle-slider"></span>' +
-      '</label>';
-    html += '<div class="custom-mib-card" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '" style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">' +
-        '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
-        '<span style="display:flex;align-items:center;gap:8px;min-width:0">' +
-          '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis">' + escapeHtml(w.symbol) + '</span>' +
-          toggle +
-        '</span>' +
-      '</div>' +
-      (off
-        ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.' +
-            (w.latest || (w.stateRows && w.stateRows.length) ? ' Showing the last reading collected.' : '') + '</p>' +
-          (w.latest || (w.stateRows && w.stateRows.length) ? '<div style="opacity:0.55">' + _renderCustomWidgetBody(w) + '</div>' : '')
-        : _renderCustomWidgetBody(w)) +
+  // The pencil: a profile write, so only for a role that can save one.
+  var canLayout = mfrWidgets.length > 0 && !!payload.profileId && permAtLeast("manufacturerProfiles", "write");
+  var tools = !canLayout ? "" : (_cmib.editing
+    ? '<button type="button" class="btn btn-sm btn-secondary cmib-reset" title="Return to the default grid when saved">Reset</button>' +
+      '<button type="button" class="btn btn-sm btn-secondary cmib-cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Done editing — save this layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset">' + CMIB_CHECK_SVG + '</button>'
+    : '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Customize this layout (shared by every ' + escapeHtml(payload.manufacturer || "") + ' asset)">' + CMIB_PENCIL_SVG + '</button>');
+
+  var html = '<div class="custom-mib-tab" data-asset-id="' + escapeHtml(payload.assetId || "") + '">' +
+    '<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:0.75rem">' +
+      '<div style="flex:1;font-size:0.82rem;color:var(--color-text-secondary)">' + hint + '</div>' +
+      (tools ? '<div style="display:flex;gap:6px;flex-shrink:0">' + tools + '</div>' : '') +
     '</div>';
-  });
-  html += '</div>';
-  return html;
+
+  var byId = {};
+  payload.widgets.forEach(function (w) { byId[w.id] = w; });
+  if (_cmib.editing) {
+    html += _cmibLayoutHTML(_cmib.working, byId, true);
+  } else if (payload.widgetLayout && mfrWidgets.length) {
+    html += _cmibLayoutHTML(_cmibCompleteLayout(payload.widgetLayout, payload.widgets), byId, false);
+  } else {
+    html += '<div class="custom-mib-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">' +
+      mfrWidgets.map(function (w) { return _cmibCardHTML(w); }).join("") + '</div>';
+  }
+  // Generic API widgets are an integration's, not the profile's: never part of
+  // the profile layout, always after it.
+  if (genericWidgets.length) {
+    html += '<div class="custom-mib-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:12px">' +
+      genericWidgets.map(function (w) { return _cmibCardHTML(w); }).join("") + '</div>';
+  }
+  return html + '</div>';
 }
+
+function _cmibRerender() {
+  var panel = document.getElementById("asset-view-tab-customMib");
+  if (panel && _cmib.payload) panel.innerHTML = _customMibTabHTML(_cmib.payload);
+}
+
+function _cmibFindCol(colId) {
+  var cols = _cmib.working ? _cmib.working.columns : [];
+  for (var i = 0; i < cols.length; i++) if (cols[i].id === colId) return i;
+  return -1;
+}
+
+/** Move a widget to column `colId` (or a new trailing column when null) at
+ *  `index`; empty columns left behind are dropped. */
+function _cmibMoveWidget(widgetId, colId, index) {
+  var cols = _cmib.working.columns;
+  var entry = null;
+  cols.forEach(function (c) {
+    var i = c.widgets.findIndex(function (x) { return x.id === widgetId; });
+    if (i !== -1) {
+      if (c.id === colId && i < index) index--;
+      entry = c.widgets.splice(i, 1)[0];
+    }
+  });
+  if (!entry) return;
+  if (colId === null) {
+    cols.push({ id: "col-" + Date.now().toString(36), width: 3, widgets: [entry] });
+  } else {
+    var target = cols[_cmibFindCol(colId)];
+    if (!target) return;
+    target.widgets.splice(Math.max(0, Math.min(index, target.widgets.length)), 0, entry);
+  }
+  _cmib.working.columns = cols.filter(function (c) { return c.widgets.length > 0; });
+}
+
+// The insertion index within a column for a pointer at clientY: before the
+// first card whose midpoint is below it.
+function _cmibDropIndex(colEl, clientY) {
+  var cards = Array.prototype.slice.call(colEl.querySelectorAll(":scope > .custom-mib-card:not(.lifted)"));
+  for (var i = 0; i < cards.length; i++) {
+    var r = cards[i].getBoundingClientRect();
+    if (clientY < r.top + r.height / 2) return { index: i, before: cards[i] };
+  }
+  return { index: cards.length, before: null };
+}
+
+function _cmibClearDropCues() {
+  document.querySelectorAll(".cmib-drop-marker").forEach(function (m) { m.remove(); });
+  document.querySelectorAll(".cmib-newcol.drag-over").forEach(function (n) { n.classList.remove("drag-over"); });
+}
+
+var _cmibDragId = null;
+
+document.addEventListener("click", async function (e) {
+  var t = e.target && e.target.closest ? e.target : null;
+  if (!t || !t.closest(".custom-mib-tab")) return;
+  var editBtn = t.closest(".cmib-edit-btn");
+  if (editBtn) {
+    if (!_cmib.editing) {
+      _cmib.working = _cmibCompleteLayout(_cmib.payload.widgetLayout, _cmib.payload.widgets);
+      _cmib.reset = false;
+      _cmib.editing = true;
+      _cmibRerender();
+      return;
+    }
+    editBtn.disabled = true;
+    try {
+      var resp = await api.serverSettings.setProfileWidgetLayout(_cmib.payload.profileId, _cmib.reset ? null : _cmib.working);
+      _cmib.payload.widgetLayout = resp ? resp.layout : null;
+      _cmib.editing = false;
+      _cmib.working = null;
+      showToast("Layout saved for every " + (_cmib.payload.manufacturer || "") + " asset", "success");
+      _cmibRerender();
+    } catch (err) {
+      editBtn.disabled = false;
+      showToast(err.message || "Could not save the layout", "error");
+    }
+    return;
+  }
+  if (!_cmib.editing) return;
+  if (t.closest(".cmib-cancel")) {
+    _cmib.editing = false;
+    _cmib.working = null;
+    _cmibRerender();
+    return;
+  }
+  if (t.closest(".cmib-reset")) {
+    _cmib.working = _cmibCompleteLayout(null, _cmib.payload.widgets);
+    _cmib.reset = true;
+    _cmibRerender();
+    return;
+  }
+  var widthBtn = t.closest(".cmib-width");
+  if (widthBtn) {
+    var col = _cmib.working.columns[_cmibFindCol(widthBtn.getAttribute("data-col-id"))];
+    if (col) col.width = CMIB_WIDTHS[(CMIB_WIDTHS.indexOf(col.width) + 1) % CMIB_WIDTHS.length];
+    _cmib.reset = false;
+    _cmibRerender();
+    return;
+  }
+  var heightBtn = t.closest(".cmib-height");
+  if (heightBtn) {
+    var wid = heightBtn.getAttribute("data-widget-id");
+    _cmib.working.columns.forEach(function (c) {
+      c.widgets.forEach(function (x) { if (x.id === wid) x.height = (x.height % 3) + 1; });
+    });
+    _cmib.reset = false;
+    _cmibRerender();
+    return;
+  }
+  var moveBtn = t.closest(".cmib-col-move");
+  if (moveBtn) {
+    var cols = _cmib.working.columns;
+    var i = _cmibFindCol(moveBtn.getAttribute("data-col-id"));
+    var j = i + Number(moveBtn.getAttribute("data-dir"));
+    if (i !== -1 && j >= 0 && j < cols.length) {
+      var tmp = cols[i]; cols[i] = cols[j]; cols[j] = tmp;
+    }
+    _cmib.reset = false;
+    _cmibRerender();
+  }
+});
+
+document.addEventListener("dragstart", function (e) {
+  var grip = e.target && e.target.closest ? e.target.closest(".cmib-grip") : null;
+  if (!grip || !_cmib.editing) return;
+  _cmibDragId = grip.getAttribute("data-widget-id");
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", _cmibDragId);
+  var card = grip.closest(".custom-mib-card");
+  if (card) card.classList.add("lifted");
+});
+
+document.addEventListener("dragover", function (e) {
+  if (!_cmibDragId) return;
+  var t = e.target && e.target.closest ? e.target : null;
+  var col = t && t.closest(".cmib-layout.editing .cmib-col");
+  var newCol = t && t.closest(".cmib-layout.editing .cmib-newcol");
+  if (!col && !newCol) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  _cmibClearDropCues();
+  if (newCol) { newCol.classList.add("drag-over"); return; }
+  var spot = _cmibDropIndex(col, e.clientY);
+  var marker = document.createElement("div");
+  marker.className = "cmib-drop-marker";
+  if (spot.before) col.insertBefore(marker, spot.before); else col.appendChild(marker);
+});
+
+document.addEventListener("drop", function (e) {
+  if (!_cmibDragId) return;
+  var t = e.target && e.target.closest ? e.target : null;
+  var col = t && t.closest(".cmib-layout.editing .cmib-col");
+  var newCol = t && t.closest(".cmib-layout.editing .cmib-newcol");
+  if (!col && !newCol) return;
+  e.preventDefault();
+  var id = _cmibDragId;
+  if (newCol) _cmibMoveWidget(id, null, 0);
+  else _cmibMoveWidget(id, col.getAttribute("data-col-id"), _cmibDropIndex(col, e.clientY).index);
+  _cmibDragId = null;
+  _cmib.reset = false;
+  _cmibRerender();
+});
+
+document.addEventListener("dragend", function () {
+  if (!_cmibDragId) return;
+  _cmibDragId = null;
+  _cmibClearDropCues();
+  document.querySelectorAll(".custom-mib-card.lifted").forEach(function (c) { c.classList.remove("lifted"); });
+});
 
 // The Custom MIB card switch (business rule 130). Delegated at the document so
 // the panel can re-render freely; on success the panel is redrawn from a fresh
@@ -10817,8 +11093,8 @@ function _customMibTabHTML(payload) {
 document.addEventListener("change", async function (e) {
   var input = e.target;
   if (!input || !input.classList || !input.classList.contains("custom-widget-toggle")) return;
-  var grid = input.closest(".custom-mib-grid");
-  var assetId = grid && grid.getAttribute("data-asset-id");
+  var tab = input.closest(".custom-mib-tab");
+  var assetId = tab && tab.getAttribute("data-asset-id");
   if (!assetId) return;
   var want = input.checked;
   input.disabled = true;
