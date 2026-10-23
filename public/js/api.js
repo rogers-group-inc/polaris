@@ -1503,7 +1503,7 @@ const api = {
     // Dash wallboard (unauthenticated read-only /dash surface) toggle + IP scope.
     dashGet:              ()      => request("GET",  "/server-settings/dash"),
     dashPut:              (body)  => request("PUT",  "/server-settings/dash", body),
-    // IPv6 gate (rule 127): auto (on when this host has a routable IPv6) / on / off.
+    // IPv6 switch (rule 127): set at install from the host, then { enabled } toggles it.
     ipv6Get:              ()      => request("GET",  "/server-settings/ipv6"),
     ipv6Put:              (body)  => request("PUT",  "/server-settings/ipv6", body),
     // Local login source-IP restriction (login form + password endpoints).

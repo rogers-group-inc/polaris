@@ -22,7 +22,7 @@ import { prisma } from "../../src/db.js";
 import { hashPassword } from "../../src/utils/password.js";
 import { FUNCTION_KEYS } from "../../src/api/middleware/permissions.js";
 import { dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
-import { setIpv6Mode, _resetIpv6GateForTests } from "../../src/services/ipv6GateService.js";
+import { setIpv6Enabled, initializeIpv6Setting, _resetIpv6GateForTests } from "../../src/services/ipv6GateService.js";
 import { reconcilePrimaryIpv6 } from "../../src/services/primaryIpv6Service.js";
 
 const d = dbDescribe;
@@ -95,7 +95,7 @@ beforeEach(async () => {
   if (!dbReachable) return;
   await cleanup();
   _resetIpv6GateForTests();
-  await setIpv6Mode("on", "test");
+  await setIpv6Enabled(true, "test");
   const seen = new Date();
   assetId = (await prisma.asset.create({
     data: {
@@ -158,7 +158,7 @@ d("primary IPv6 (rule 127)", () => {
     const pinned = await prisma.asset.create({
       data: { hostname: PFX + "-pinned", assetType: "other", status: "active", ipv6Address: V6_A, ipv6Pinned: true },
     });
-    await setIpv6Mode("off", "test");
+    await setIpv6Enabled(false, "test");
 
     const w = await loginAs(writeUser);
     expect((await w.agent.put(`/api/v1/assets/${assetId}/primary-ipv6`).set("X-CSRF-Token", w.csrf).send({ ip: V6_A })).status).toBe(409);
@@ -168,21 +168,36 @@ d("primary IPv6 (rule 127)", () => {
     expect((await prisma.asset.findUniqueOrThrow({ where: { id: pinned.id } })).ipv6Address).toBe(V6_A);
   });
 
-  it("Server Settings reads and writes the mode", async () => {
+  it("Server Settings reads and writes the toggle", async () => {
     const a = await loginAs(adminUser);
-    const put = await a.agent.put("/api/v1/server-settings/ipv6").set("X-CSRF-Token", a.csrf).send({ mode: "off" });
+    const put = await a.agent.put("/api/v1/server-settings/ipv6").set("X-CSRF-Token", a.csrf).send({ enabled: false });
     expect(put.status).toBe(200);
-    expect(put.body.ipv6).toMatchObject({ mode: "off", enabled: false });
+    expect(put.body.ipv6).toMatchObject({ enabled: false, setBy: "operator" });
     const get = await a.agent.get("/api/v1/server-settings/ipv6");
-    expect(get.body.ipv6.mode).toBe("off");
+    expect(get.body.ipv6.enabled).toBe(false);
     expect(Array.isArray(get.body.ipv6.hostAddresses)).toBe(true);
     expect(typeof get.body.ipv6.hasRoute).toBe("boolean");
     expect(get.body.ipv6.dialable).toBe(false); // off is never dialable
-    expect(get.body.ipv6.heldUntil).toBeNull(); // only "auto" ever holds
-    expect((await a.agent.put("/api/v1/server-settings/ipv6").set("X-CSRF-Token", a.csrf).send({ mode: "sometimes" })).status).toBe(400);
+    expect((await a.agent.put("/api/v1/server-settings/ipv6").set("X-CSRF-Token", a.csrf).send({ enabled: "yes" })).status).toBe(400);
 
     const w = await loginAs(writeUser);
-    expect((await w.agent.put("/api/v1/server-settings/ipv6").set("X-CSRF-Token", w.csrf).send({ mode: "on" })).status).toBe(403);
+    expect((await w.agent.put("/api/v1/server-settings/ipv6").set("X-CSRF-Token", w.csrf).send({ enabled: true })).status).toBe(403);
+  });
+
+  it("the install-time decision is made once, from the host, and never overrides a choice", async () => {
+    await prisma.setting.deleteMany({ where: { key: "ipv6Config" } });
+    _resetIpv6GateForTests();
+    const first = await initializeIpv6Setting();
+    expect(first.initialized).toBe(true);
+    const row = await prisma.setting.findUnique({ where: { key: "ipv6Config" } });
+    expect(row?.value).toMatchObject({ enabled: first.enabled, setBy: "install" });
+    expect(await prisma.event.count({ where: { action: "settings.ipv6.initialized" } })).toBeGreaterThan(0);
+
+    // Later boots: no-op. An operator's choice is kept even when it differs from the host.
+    await setIpv6Enabled(!first.enabled, "test");
+    _resetIpv6GateForTests();
+    const again = await initializeIpv6Setting();
+    expect(again).toEqual({ initialized: false, enabled: !first.enabled });
   });
 
   it("/auth/me carries the switch", async () => {

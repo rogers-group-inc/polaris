@@ -886,48 +886,47 @@ function renderCertsTab(container) {
     '</div>';
 
   // IPv6 card — business rule 127. Off means no IPv6 is discovered, collected,
-  // stored or shown anywhere; "auto" turns it on only when this server itself
-  // holds a routable IPv6 address. PUT is serverSettingsSystem write-gated.
+  // stored or shown anywhere. Set once at install from whether this server had
+  // a routable IPv6 address; a plain toggle from then on. PUT is
+  // serverSettingsSystem write-gated.
   var v6 = _ipv6Settings;
-  var v6Mode = (v6 && v6.mode) || "auto";
   var v6Hosts = (v6 && Array.isArray(v6.hostAddresses)) ? v6.hostAddresses : [];
+  var v6Origin = !v6 ? '' :
+    v6.setBy === "install"
+      ? (v6.enabled
+          ? 'Switched on at install, because this server had a routable IPv6 address.'
+          : 'Switched off at install, because this server had no routable IPv6 address.')
+      : v6.setBy === "operator" ? 'Set in Server Settings.' : '';
   var ipv6CardHtml =
     '<div class="settings-card">' +
       '<h4>IPv6</h4>' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
         'When IPv6 is off, Polaris discovers, collects, stores and shows no IPv6 addresses, and every device is ' +
         'monitored on its IPv4 address. When it is on, a device with no IPv4 address is monitored on its primary IPv6 address, ' +
-        'as long as this server can reach IPv6. <strong>Automatic</strong> turns IPv6 on only when this server has a routable IPv6 address. ' +
-        'In a container the server is the container: on Docker or podman compose, enable IPv6 on the compose network ' +
-        '(see the install guide) and leave this on Automatic.' +
+        'as long as this server can reach IPv6. Polaris sets this once at install, from whether this server has a ' +
+        'routable IPv6 address; after that only this switch changes it. In a container the server is the container: ' +
+        'on Docker or podman compose, enable IPv6 on the compose network first (see the install guide).' +
       '</p>' +
       (v6 === null
         ? '<p style="font-size:0.85rem;color:var(--color-text-secondary)">Unavailable — could not load the IPv6 setting.</p>'
-        : '<p style="font-size:0.85rem;margin-bottom:0.75rem"><strong>Current:</strong> ' +
-            (v6.enabled ? '<span class="badge badge-success">On</span>' : '<span class="badge badge-neutral">Off</span>') +
-          '</p>' +
+        : '<div class="form-group">' +
+            '<label><input type="checkbox" id="ipv6-enabled"' + (v6.enabled ? " checked" : "") + '> Enable IPv6</label>' +
+            (v6Origin ? '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-top:0.2rem">' + v6Origin + '</div>' : '') +
+          '</div>' +
           (v6.enabled && !v6.dialable
             ? '<p style="font-size:0.82rem;color:#f59e0b;margin-bottom:0.75rem">This server has no IPv6 address or route, so it cannot reach IPv6 devices. ' +
                 'IPv6 addresses are still discovered and shown, but a device with only an IPv6 address is not polled. ' +
-                'In a container, enable IPv6 on the compose network instead of forcing this on.</p>'
+                'In a container, enable IPv6 on the compose network.</p>'
             : '') +
-          (v6.heldUntil
-            ? '<p style="font-size:0.82rem;color:#f59e0b;margin-bottom:0.75rem">This server lost its IPv6 address. IPv6 stays on until ' +
-                escapeHtml(formatDateTime(v6.heldUntil)) + ' and turns off then unless the address comes back, so a short outage does not clear ' +
-                'every primary IPv6.</p>'
+          (!v6.enabled && v6Hosts.length
+            ? '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">This server now has a routable IPv6 address. ' +
+                'Turn IPv6 on to discover and monitor IPv6 devices.</p>'
             : '') +
           '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">This server\'s IPv6: ' +
             (v6Hosts.length
               ? '<code>' + v6Hosts.map(escapeHtml).join(", ") + '</code>'
               : 'none routable (link-local and loopback addresses are not counted)') +
           '</p>' +
-          '<div class="form-group">' +
-            '<div style="display:flex;flex-direction:column;gap:0.3rem">' +
-              '<label><input type="radio" name="ipv6-mode" value="auto"' + (v6Mode === "auto" ? " checked" : "") + '> Automatic (on when this server uses IPv6)</label>' +
-              '<label><input type="radio" name="ipv6-mode" value="on"' + (v6Mode === "on" ? " checked" : "") + '> Always on (when detection is wrong; devices are polled over IPv6 only if this server can reach it)</label>' +
-              '<label><input type="radio" name="ipv6-mode" value="off"' + (v6Mode === "off" ? " checked" : "") + '> Always off</label>' +
-            '</div>' +
-          '</div>' +
           '<div style="margin-top:0.5rem"><button class="btn btn-sm btn-primary" id="ipv6-save-btn">Save</button></div>') +
     '</div>';
 
@@ -1052,14 +1051,13 @@ function renderCertsTab(container) {
 
 
 async function handleIpv6Save(container) {
-  var modeEl = document.querySelector('input[name="ipv6-mode"]:checked');
-  var mode = modeEl ? modeEl.value : "auto";
-  if (mode === "off" && _ipv6Settings && _ipv6Settings.enabled &&
+  var enabled = !!(document.getElementById("ipv6-enabled") || {}).checked;
+  if (!enabled && _ipv6Settings && _ipv6Settings.enabled &&
       !(await showConfirm("Turn IPv6 off? Polaris stops discovering and showing IPv6 addresses, and devices that only have an IPv6 address stop being polled."))) {
     return;
   }
   try {
-    var result = await api.serverSettings.ipv6Put({ mode: mode });
+    var result = await api.serverSettings.ipv6Put({ enabled: enabled });
     _ipv6Settings = (result && result.ipv6) || _ipv6Settings;
     showToast("IPv6 " + (_ipv6Settings && _ipv6Settings.enabled ? "on" : "off") + " — other pages pick it up when reloaded");
     renderCertsTab(container);

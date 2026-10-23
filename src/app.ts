@@ -1241,6 +1241,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // bit. See its header.
       "./jobs/clampFailureBucket.js",
       "./jobs/bootstrapProxyConfig.js",
+      // Rule 127: the install-time IPv6 decision (on when this host has a
+      // routable IPv6). The Setting row is its own marker; an operator's
+      // choice is never overwritten.
+      "./jobs/initIpv6Setting.js",
       "./jobs/migrateAutomationRuleShape.js",
       "./jobs/migrateContactFilterShape.js",
       "./jobs/migrateTagFilterShape.js",

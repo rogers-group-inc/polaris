@@ -1,7 +1,8 @@
 /**
  * Business rule 127 — the install-wide IPv6 switch and the primary IPv6 address.
  *
- * Pins the pure halves: host detection, the mode decision, the dial address
+ * Pins the pure halves: host detection, the install-time decision and the
+ * stored toggle, reachability, the dial address
  * (IPv4 first, IPv6 only for an asset with no IPv4 and only while on), the
  * URL-host bracketing, the discovery filter that drops every IPv6 fact, the
  * interface split refusing IPv6, the loss-sweep target, and how the primary
@@ -11,8 +12,7 @@
 import { describe, it, expect } from "vitest";
 import type { networkInterfaces } from "node:os";
 import {
-  routableHostIpv6, decideIpv6Enabled, decideIpv6Dialable, hasIpv6Route, autoChangeEvent, AUTO_OFF_HOLD_MS,
-  type Ipv6Status,
+  routableHostIpv6, decideIpv6Enabled, decideIpv6Dialable, hasIpv6Route, parseIpv6Config,
 } from "../../src/services/ipv6GateService.js";
 import { pickPrimaryIpv6 } from "../../src/services/primaryIpv6Service.js";
 import { assetDialAddress } from "../../src/utils/assetDialAddress.js";
@@ -45,44 +45,29 @@ describe("routableHostIpv6", () => {
 });
 
 describe("decideIpv6Enabled", () => {
-  it("auto follows the host", () => {
-    expect(decideIpv6Enabled("auto", [])).toBe(false);
-    expect(decideIpv6Enabled("auto", ["2001:db8::5"])).toBe(true);
+  it("before the install-time decision, follows the host", () => {
+    expect(decideIpv6Enabled(null, [])).toBe(false);
+    expect(decideIpv6Enabled(null, ["2001:db8::5"])).toBe(true);
   });
-  it("on and off override the host", () => {
-    expect(decideIpv6Enabled("on", [])).toBe(true);
-    expect(decideIpv6Enabled("off", ["2001:db8::5"])).toBe(false);
-  });
-});
-
-describe("auto hold before switching off", () => {
-  const now = 10_000_000;
-  it("stays on inside the hold after the host loses its address", () => {
-    expect(decideIpv6Enabled("auto", [], now - 60_000, now)).toBe(true);
-    expect(decideIpv6Enabled("auto", [], now - AUTO_OFF_HOLD_MS - 1, now)).toBe(false);
-  });
-  it("a process that never saw an address starts off, and forced modes ignore the hold", () => {
-    expect(decideIpv6Enabled("auto", [], 0, now)).toBe(false);
-    expect(decideIpv6Enabled("off", [], now - 1, now)).toBe(false);
+  it("once decided, the stored switch wins whatever the host has now", () => {
+    expect(decideIpv6Enabled(true, [])).toBe(true);
+    expect(decideIpv6Enabled(false, ["2001:db8::5"])).toBe(false);
   });
 });
 
-describe("autoChangeEvent", () => {
-  const s = (over: Partial<Ipv6Status>): Ipv6Status => ({
-    mode: "auto", hostAddresses: [], hasRoute: false, enabled: false, dialable: false, heldUntil: null, ...over,
+describe("parseIpv6Config", () => {
+  it("a missing row is undecided", () => {
+    expect(parseIpv6Config(undefined)).toEqual({ enabled: null, setBy: null, installHostAddresses: [] });
   });
-  const on = s({ hostAddresses: ["2001:db8::5"], enabled: true, dialable: true });
-  const held = s({ enabled: true, heldUntil: "2026-10-22T20:15:00.000Z" });
-  it("records turning on, the start of a hold, and turning off", () => {
-    expect(autoChangeEvent(s({}), on)?.action).toBe("settings.ipv6.auto_on");
-    expect(autoChangeEvent(on, held)).toMatchObject({ action: "settings.ipv6.auto_hold", level: "warning" });
-    expect(autoChangeEvent(held, s({}))).toMatchObject({ action: "settings.ipv6.auto_off", level: "warning" });
-    expect(autoChangeEvent(held, on)).toMatchObject({ action: "settings.ipv6.auto_hold_ended", level: "info" });
+  it("reads a stored decision and who made it", () => {
+    expect(parseIpv6Config({ enabled: true, setBy: "install", installHostAddresses: ["2001:db8::5"] }))
+      .toEqual({ enabled: true, setBy: "install", installHostAddresses: ["2001:db8::5"] });
+    expect(parseIpv6Config({ enabled: false, setBy: "operator" }).enabled).toBe(false);
   });
-  it("records nothing for a steady state, a hold that continues, or a change of mode", () => {
-    expect(autoChangeEvent(on, on)).toBeNull();
-    expect(autoChangeEvent(held, held)).toBeNull();
-    expect(autoChangeEvent(s({ mode: "off" }), on)).toBeNull();
+  it("maps the pre-release { mode } shape: on / off kept, auto left for the install-time decision", () => {
+    expect(parseIpv6Config({ mode: "on" })).toMatchObject({ enabled: true, setBy: "operator" });
+    expect(parseIpv6Config({ mode: "off" })).toMatchObject({ enabled: false, setBy: "operator" });
+    expect(parseIpv6Config({ mode: "auto" })).toMatchObject({ enabled: null, setBy: null });
   });
 });
 
@@ -92,8 +77,8 @@ describe("decideIpv6Dialable", () => {
     expect(decideIpv6Dialable(true, ["2001:db8::5"], false)).toBe(true);
     expect(decideIpv6Dialable(true, [], true)).toBe(true);
   });
-  it("forced on in a container with no IPv6 network is not dialable", () => {
-    expect(decideIpv6Dialable(decideIpv6Enabled("on", []), [], false)).toBe(false);
+  it("switched on in a container with no IPv6 network is not dialable", () => {
+    expect(decideIpv6Dialable(decideIpv6Enabled(true, []), [], false)).toBe(false);
   });
 });
 
