@@ -10,9 +10,10 @@
  * Reported from prod on the state-probe form; it affected every field on the
  * metric rows and override rows too.
  *
- * server-settings.js is a plain browser script whose only load-time side effect
- * is a DOMContentLoaded listener (never dispatched here), so it evals into a
- * happy-dom Window and its `function`/`var` declarations land on that global.
+ * server-settings.js is a plain browser script whose only load-time side effects
+ * are event listeners (DOMContentLoaded, never dispatched here, and the Symbol
+ * combobox's delegated document handlers), so it evals into a happy-dom Window
+ * and its `function`/`var` declarations land on that global.
  */
 
 import { describe, it, expect, beforeAll } from "vitest";

@@ -8,11 +8,13 @@
 
 import { Router } from "express";
 import multer from "multer";
+import { z } from "zod";
 import {
   uploadIcon,
   listIcons,
   getIconImage,
   deleteIcon,
+  updateIconKey,
 } from "../../services/deviceIconService.js";
 import { logEvent } from "./events.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -20,6 +22,13 @@ import { requirePermission } from "../middleware/permissions.js";
 import { AppError } from "../../utils/errors.js";
 
 const router = Router();
+
+// PUT /device-icons/:id — re-key an icon; the image is untouched.
+const UpdateIconKeySchema = z.object({
+  scope:        z.enum(["manufacturer-type", "manufacturer-model"]),
+  manufacturer: z.string().trim().min(1, "Manufacturer is required").max(200),
+  typeOrModel:  z.string().trim().min(1, "Asset type or model is required").max(200),
+});
 
 // Hard cap matches deviceIconService's MAX_ICON_BYTES (raster cap is
 // the larger of the two; the service enforces the lower SVG cap after
@@ -80,6 +89,31 @@ router.post("/", requirePermission("deviceIcons", "write"), upload.single("file"
       message: `Uploaded device icon for ${summary.scope}:${summary.key} (${summary.size} bytes, ${summary.mimeType})`,
     });
     res.json({ ...summary, url: `/api/v1/device-icons/${summary.id}/image` });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /device-icons/:id — change what an icon is keyed to (manufacturer,
+// asset type or model, and which of the two it matches by), keeping the
+// image. A key another icon already holds is a 409, never a replace.
+router.put("/:id", requirePermission("deviceIcons", "write"), async (req, res, next) => {
+  try {
+    const parsed = UpdateIconKeySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+    }
+    const { icon, previous } = await updateIconKey(String(req.params.id), parsed.data);
+    logEvent({
+      action: "device_icon.updated",
+      resourceType: "device_icon",
+      resourceId: icon.id,
+      resourceName: `${icon.scope}:${icon.key}`,
+      actor: (req as any).session?.username,
+      level: "info",
+      message: `Re-keyed device icon from ${previous.scope}:${previous.key} to ${icon.scope}:${icon.key}`,
+    });
+    res.json({ ...icon, url: `/api/v1/device-icons/${icon.id}/image` });
   } catch (err) {
     next(err);
   }

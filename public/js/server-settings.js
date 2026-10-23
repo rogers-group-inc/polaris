@@ -4776,7 +4776,10 @@ function renderIdentificationTab() {
       '</div>' +
       '<div style="flex:1;min-width:160px">' +
         '<label style="font-size:0.78rem;font-weight:500">Manufacturer</label>' +
-        '<input type="text" id="f-oui-manufacturer" placeholder="e.g. Custom Switch Co.">' +
+        '<span class="aw-combo aw-combo-dim">' +
+          '<input type="text" id="f-oui-manufacturer" autocomplete="off" placeholder="e.g. Custom Switch Co.">' +
+          '<div class="aw-suggest" id="oui-mfr-suggest"></div>' +
+        '</span>' +
       '</div>' +
       '<div style="flex:1;min-width:160px">' +
         '<label style="font-size:0.78rem;font-weight:500">Device <span style="color:var(--color-text-tertiary);font-weight:400">(optional)</span></label>' +
@@ -4835,11 +4838,17 @@ function renderIdentificationTab() {
     '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">' +
       '<div style="flex:2;min-width:160px">' +
         '<label style="font-size:0.78rem;font-weight:500">Alias <span style="color:var(--color-text-tertiary);font-weight:400">(input)</span></label>' +
-        '<input type="text" id="f-alias-input" placeholder="e.g. Fortinet, Inc.">' +
+        '<span class="aw-combo aw-combo-dim">' +
+          '<input type="text" id="f-alias-input" autocomplete="off" placeholder="e.g. Fortinet, Inc.">' +
+          '<div class="aw-suggest" id="alias-input-suggest"></div>' +
+        '</span>' +
       '</div>' +
       '<div style="flex:1;min-width:120px">' +
         '<label style="font-size:0.78rem;font-weight:500">Canonical</label>' +
-        '<input type="text" id="f-alias-canonical" placeholder="e.g. Fortinet">' +
+        '<span class="aw-combo aw-combo-dim">' +
+          '<input type="text" id="f-alias-canonical" autocomplete="off" placeholder="e.g. Fortinet">' +
+          '<div class="aw-suggest" id="alias-canonical-suggest"></div>' +
+        '</span>' +
       '</div>' +
       '<button class="btn btn-primary" id="btn-add-alias">Add</button>' +
     '</div>' +
@@ -4983,6 +4992,12 @@ function renderIdentificationTab() {
 
   // OUI override events
   document.getElementById("btn-add-oui-override").addEventListener("click", addOuiOverride);
+  // The device-count manufacturer pickers (same as MIB upload / Device Icons).
+  // The alias's input side lists the inventory too: a device whose name hasn't
+  // been aliased yet shows up there under the spelling it reports.
+  _wireManufacturerCountCombo("f-oui-manufacturer", "oui-mfr-suggest", _knownManufacturerRows);
+  _wireManufacturerCountCombo("f-alias-input", "alias-input-suggest", _knownManufacturerRows);
+  _wireManufacturerCountCombo("f-alias-canonical", "alias-canonical-suggest", _knownManufacturerRows);
   container.querySelectorAll(".oui-override-del").forEach(function (btn) {
     btn.addEventListener("click", function () {
       deleteOuiOverrideUI(btn.getAttribute("data-prefix"));
@@ -5324,9 +5339,7 @@ function mibCardHTML() {
     return html;
   }
 
-  var mfrListId = "mib-mfr-datalist";
   var modelListId = "mib-model-datalist";
-  var mfrOpts = (_mibFacets.manufacturers || []).map(function (m) { return '<option value="' + escapeHtml(m) + '"></option>'; }).join("");
   var modelOpts = "";
   Object.keys(_mibFacets.modelsByManufacturer || {}).forEach(function (mfr) {
     (_mibFacets.modelsByManufacturer[mfr] || []).forEach(function (md) {
@@ -5337,7 +5350,6 @@ function mibCardHTML() {
   html +=
     '<div style="border-top:1px solid var(--color-border);padding-top:1rem">' +
       '<h5 style="margin:0 0 0.75rem;font-size:0.9rem">Upload MIB</h5>' +
-      '<datalist id="' + mfrListId + '">' + mfrOpts + '</datalist>' +
       '<datalist id="' + modelListId + '">' + modelOpts + '</datalist>' +
       '<div class="form-group" style="margin-bottom:0.75rem">' +
         '<label style="font-size:0.78rem;font-weight:500;display:block;margin-bottom:0.25rem">Scope</label>' +
@@ -5357,7 +5369,13 @@ function mibCardHTML() {
       '<div id="mib-upload-vendor-fields" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:0.75rem">' +
         '<div style="flex:1;min-width:160px">' +
           '<label style="font-size:0.78rem;font-weight:500">Manufacturer *</label>' +
-          '<input type="text" id="f-mib-up-mfr" list="' + mfrListId + '" placeholder="e.g. Cisco">' +
+          // The same open-on-click combobox as "+ Add Manufacturer": vendors
+          // with devices in inventory first, each with its device count, since
+          // a vendor MIB only resolves for assets whose manufacturer matches.
+          '<span class="aw-combo aw-combo-dim">' +
+            '<input type="text" id="f-mib-up-mfr" autocomplete="off" placeholder="e.g. Cisco">' +
+            '<div class="aw-suggest" id="mib-up-mfr-suggest"></div>' +
+          '</span>' +
         '</div>' +
         '<div id="mib-upload-model-field" style="flex:1;min-width:160px;display:none">' +
           '<label style="font-size:0.78rem;font-weight:500">Model *</label>' +
@@ -5423,6 +5441,7 @@ function wireMibControls() {
 
   var btn = document.getElementById("btn-mib-upload");
   if (btn) btn.addEventListener("click", uploadMibUI);
+  wireMibUploadManufacturerCombo();
 
   document.querySelectorAll(".mib-del").forEach(function (b) {
     b.addEventListener("click", function () {
@@ -6048,7 +6067,8 @@ function _wireMibWalkCopy(result) {
 //
 // Operator-uploaded images that override generic node shapes on the Device
 // Map's topology graph. Resolution at render time is most-specific-wins:
-// model-with-manufacturer → model-alone → assetType. Storage is bytes-in-DB
+// manufacturer + model → manufacturer + assetType; both need a manufacturer
+// (deviceIconService.buildResolutionCandidates). Storage is bytes-in-DB
 // behind the /api/v1/device-icons endpoints; admin-only CRUD; image-serve
 // is auth-only with HTTP cache headers so the topology modal doesn't refetch
 // on every render.
@@ -6702,35 +6722,40 @@ function openDeviceTypeApplyModal() {
   });
 }
 
+// Asset-type <option>s for the Device Icons upload form and its inline
+// editor: every type in the asset-type REGISTRY (the Device Types card's list,
+// custom types included) — the service validates against the same registry
+// (isKnownAssetType). The built-in ten are only the fallback for a registry
+// that failed to load. A stored type the registry no longer carries stays
+// selectable, so opening the editor can't silently re-key the icon.
+function _deviceIconTypeOptionsHTML(selected) {
+  var registryTypes = (_assetTypes || []).slice().sort(function (a, b) {
+    return (a.label || a.name || "").localeCompare(b.label || b.name || "");
+  });
+  var opts = registryTypes.length
+    ? registryTypes.map(function (t) { return { value: t.name, label: t.label || t.name }; })
+    : _deviceIconAssetTypes.map(function (t) { return { value: t, label: t }; });
+  var known = false;
+  var html = opts.map(function (o) {
+    var sel = o.value === selected;
+    if (sel) known = true;
+    return '<option value="' + escapeHtml(o.value) + '"' + (sel ? " selected" : "") + '>' + escapeHtml(o.label) + '</option>';
+  }).join("");
+  if (selected && !known) {
+    html += '<option value="' + escapeHtml(selected) + '" selected>' + escapeHtml(selected) + ' (unknown)</option>';
+  }
+  return html;
+}
+
+var _iconEditId = null; // the Device Icons row open in its inline editor
+
 function deviceIconsCardHTML() {
   var byScope = { "manufacturer-type": [], "manufacturer-model": [] };
   _deviceIcons.forEach(function (i) {
     if (byScope[i.scope]) byScope[i.scope].push(i);
   });
 
-  // Manufacturer datalist — merged from every source the operator already
-  // has on hand so the picker isn't empty on installs that haven't
-  // configured many aliases. Sources, in order: alias canonicals, MIB
-  // facets (which already includes the asset inventory), and the
-  // manufacturer half of every existing device-icon key. Free text is
-  // allowed for anything not in the list; the service alias-normalizes
-  // the value at write time.
-  var manufacturerOptions = "";
-  var seen = {};
-  function addManufacturerOption(name) {
-    var c = (name || "").trim();
-    if (c && !seen[c]) { seen[c] = 1; manufacturerOptions += '<option value="' + escapeHtml(c) + '">'; }
-  }
-  (_manufacturerAliases || []).forEach(function (a) { addManufacturerOption(a.canonical); });
-  ((_mibFacets && _mibFacets.manufacturers) || []).forEach(addManufacturerOption);
-  _deviceIcons.forEach(function (i) {
-    var slash = (i.key || "").indexOf("/");
-    if (slash > 0) addManufacturerOption(i.key.slice(0, slash));
-  });
-
-  var typeOptionsHtml = _deviceIconAssetTypes
-    .map(function (t) { return '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>'; })
-    .join("");
+  var typeOptionsHtml = _deviceIconTypeOptionsHTML("");
 
   var html = '<div class="settings-card">' +
     '<h4>Device Icons</h4>' +
@@ -6744,12 +6769,15 @@ function deviceIconsCardHTML() {
   // Upload form: manufacturer + scope (type|model) + type dropdown / model input + file
   html += '<div class="form-row" style="display:grid;grid-template-columns:1fr 140px 1fr 1fr auto;gap:8px;align-items:flex-end;margin-bottom:0.5rem">' +
     '<div class="form-group" style="margin:0">' +
-      '<label style="font-size:0.78rem">Manufacturer</label>' +
-      '<input type="text" id="f-icon-mfr" list="f-icon-mfr-list" placeholder="Fortinet">' +
-      '<datalist id="f-icon-mfr-list">' + manufacturerOptions + '</datalist>' +
+      '<label style="font-size:0.78rem">Match Manufacturer</label>' +
+      // The MIB upload form's combobox: inventory vendors first, with counts.
+      '<span class="aw-combo aw-combo-dim">' +
+        '<input type="text" id="f-icon-mfr" autocomplete="off" placeholder="Fortinet">' +
+        '<div class="aw-suggest" id="icon-mfr-suggest"></div>' +
+      '</span>' +
     '</div>' +
     '<div class="form-group" style="margin:0">' +
-      '<label style="font-size:0.78rem">Match by</label>' +
+      '<label style="font-size:0.78rem">And Match by</label>' +
       '<select id="f-icon-scope">' +
         '<option value="manufacturer-type">Asset type</option>' +
         '<option value="manufacturer-model">Model</option>' +
@@ -6778,20 +6806,46 @@ function deviceIconsCardHTML() {
       return s;
     }
     s += '<table class="data-table" style="font-size:0.85rem;margin-bottom:1rem"><thead><tr>' +
-      '<th style="width:60px">Preview</th><th>Manufacturer</th><th>' + escapeHtml(tailHeader) + '</th><th>Filename</th><th style="width:100px">Size</th><th style="width:160px">Uploaded</th><th style="width:80px"></th>' +
+      // nowrap: the uppercase header's letter-spacing broke "Preview" over two
+      // lines in a 60px column.
+      '<th style="width:72px;white-space:nowrap">Preview</th><th>Manufacturer</th><th>' + escapeHtml(tailHeader) + '</th><th>Filename</th><th style="width:100px">Size</th><th style="width:160px">Uploaded</th><th style="width:150px"></th>' +
     '</tr></thead><tbody>';
     list.forEach(function (i) {
       var slash = i.key.indexOf("/");
       var mfr = slash >= 0 ? i.key.slice(0, slash) : i.key;
       var tail = slash >= 0 ? i.key.slice(slash + 1) : "";
-      s += '<tr>' +
+      var editing = i.id === _iconEditId;
+      var isModel = i.scope === "manufacturer-model";
+      s += '<tr' + (editing ? ' class="icon-edit-row" data-id="' + escapeHtml(i.id) + '"' : '') + '>' +
         '<td><img src="' + escapeHtml(i.url) + '" alt="" style="width:40px;height:40px;object-fit:contain;background:#1c2029;border:1px solid var(--color-border);border-radius:4px"></td>' +
-        '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(mfr) + '</code></td>' +
-        '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(tail) + '</code></td>' +
+        (editing
+          // Inline editor: the same manufacturer picker as the upload form,
+          // and the match-by switch, so an icon can move between the two
+          // tables without a re-upload. The image is never touched.
+          ? '<td><span class="aw-combo aw-combo-dim">' +
+              '<input type="text" id="f-icon-edit-mfr" autocomplete="off" value="' + escapeHtml(mfr) + '" style="font-size:0.82rem">' +
+              '<div class="aw-suggest" id="icon-edit-mfr-suggest"></div>' +
+            '</span></td>' +
+            '<td><div style="display:flex;gap:6px">' +
+              '<select id="f-icon-edit-scope" style="font-size:0.82rem;width:auto">' +
+                '<option value="manufacturer-type"' + (isModel ? '' : ' selected') + '>Asset type</option>' +
+                '<option value="manufacturer-model"' + (isModel ? ' selected' : '') + '>Model</option>' +
+              '</select>' +
+              '<select id="f-icon-edit-type" style="font-size:0.82rem;flex:1' + (isModel ? ';display:none' : '') + '">' +
+                _deviceIconTypeOptionsHTML(isModel ? "" : tail) + '</select>' +
+              '<input type="text" id="f-icon-edit-model" value="' + escapeHtml(isModel ? tail : "") + '" placeholder="e.g. FortiGate-60F" style="font-size:0.82rem;flex:1' + (isModel ? '' : ';display:none') + '">' +
+            '</div></td>'
+          : '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(mfr) + '</code></td>' +
+            '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(tail) + '</code></td>') +
         '<td>' + escapeHtml(i.filename) + '</td>' +
         '<td>' + escapeHtml(formatBytesShort(i.size)) + '</td>' +
         '<td style="font-size:0.78rem;color:var(--color-text-secondary)">' + escapeHtml(formatDate(i.uploadedAt)) + (i.uploadedBy ? ' by ' + escapeHtml(i.uploadedBy) : '') + '</td>' +
-        '<td><button class="btn btn-sm btn-danger icon-del" data-id="' + escapeHtml(i.id) + '" data-key="' + escapeHtml(i.scope + ':' + i.key) + '">Delete</button></td>' +
+        '<td style="white-space:nowrap">' +
+          (editing
+            ? '<button class="btn btn-sm btn-primary icon-edit-save">Save</button> <button class="btn btn-sm icon-edit-cancel">Cancel</button>'
+            : '<button class="btn btn-sm icon-edit" data-id="' + escapeHtml(i.id) + '">Edit</button> ' +
+              '<button class="btn btn-sm btn-danger icon-del" data-id="' + escapeHtml(i.id) + '" data-key="' + escapeHtml(i.scope + ':' + i.key) + '">Delete</button>') +
+        '</td>' +
       '</tr>';
     });
     s += '</tbody></table>';
@@ -6807,7 +6861,25 @@ function deviceIconsCardHTML() {
 // api.js canonical (2026-08 audit — this copy capped at MB).
 var formatBytesShort = formatBytes;
 
+// Rows for the Identification tab's manufacturer pickers (Device Icons, the
+// alias pair, the MAC override) — every name the operator already has on hand,
+// so the list isn't empty on installs with few aliases: alias canonicals, MIB
+// facets (which include the asset inventory and its device counts), static
+// MAC-override manufacturers, and the manufacturer half of every icon key.
+// Free text is still allowed; each service alias-normalizes at write time.
+function _knownManufacturerRows() {
+  var names = (_manufacturerAliases || []).map(function (a) { return a.canonical; })
+    .concat((_mibFacets && _mibFacets.manufacturers) || [])
+    .concat((_ouiOverrides || []).map(function (o) { return o.manufacturer; }))
+    .concat((_deviceIcons || []).map(function (i) {
+      var slash = (i.key || "").indexOf("/");
+      return slash > 0 ? i.key.slice(0, slash) : "";
+    }));
+  return _manufacturerCountRows(names);
+}
+
 function wireDeviceIconHandlers() {
+  _wireManufacturerCountCombo("f-icon-mfr", "icon-mfr-suggest", _knownManufacturerRows);
   var btn = document.getElementById("btn-icon-upload");
   if (btn) btn.addEventListener("click", uploadIconUI);
   document.querySelectorAll(".icon-del").forEach(function (b) {
@@ -6815,6 +6887,31 @@ function wireDeviceIconHandlers() {
       deleteIconUI(b.getAttribute("data-id"), b.getAttribute("data-key"));
     });
   });
+  document.querySelectorAll(".icon-edit").forEach(function (b) {
+    b.addEventListener("click", function () {
+      _iconEditId = b.getAttribute("data-id");
+      renderIdentificationTab();
+    });
+  });
+  var editRow = document.querySelector(".icon-edit-row");
+  if (editRow) {
+    _wireManufacturerCountCombo("f-icon-edit-mfr", "icon-edit-mfr-suggest", _knownManufacturerRows);
+    var editScope = document.getElementById("f-icon-edit-scope");
+    var editType = document.getElementById("f-icon-edit-type");
+    var editModel = document.getElementById("f-icon-edit-model");
+    editScope.addEventListener("change", function () {
+      var m = editScope.value === "manufacturer-model";
+      editType.style.display = m ? "none" : "";
+      editModel.style.display = m ? "" : "none";
+    });
+    editRow.querySelector(".icon-edit-save").addEventListener("click", function () {
+      saveIconKeyUI(editRow.getAttribute("data-id"), this);
+    });
+    editRow.querySelector(".icon-edit-cancel").addEventListener("click", function () {
+      _iconEditId = null;
+      renderIdentificationTab();
+    });
+  }
 
   // Toggle the third column between the asset-type dropdown and the
   // model free-text input. Label flips too so the operator always sees
@@ -6867,6 +6964,27 @@ async function uploadIconUI() {
     showToast(err.message, "error");
     if (statusEl) statusEl.innerHTML = '<span style="color:var(--color-danger)">' + escapeHtml(err.message) + '</span>';
   } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveIconKeyUI(id, btn) {
+  var scope = document.getElementById("f-icon-edit-scope").value;
+  var manufacturer = (document.getElementById("f-icon-edit-mfr").value || "").trim();
+  var typeOrModel = scope === "manufacturer-model"
+    ? (document.getElementById("f-icon-edit-model").value || "").trim()
+    : document.getElementById("f-icon-edit-type").value;
+  if (!manufacturer) { showToast("Manufacturer is required", "error"); return; }
+  if (!typeOrModel) { showToast(scope === "manufacturer-model" ? "Model is required" : "Asset type is required", "error"); return; }
+  btn.disabled = true;
+  try {
+    var updated = await api.deviceIcons.update(id, { scope: scope, manufacturer: manufacturer, typeOrModel: typeOrModel });
+    _deviceIcons = _deviceIcons.map(function (i) { return i.id === id ? updated : i; });
+    _iconEditId = null;
+    showToast("Icon now matches " + updated.key, "success");
+    renderIdentificationTab();
+  } catch (err) {
+    showToast(err.message, "error");
     btn.disabled = false;
   }
 }
@@ -10488,28 +10606,143 @@ function renderSymbolPicker(currentSymbol, mibId, cls, type) {
   // picker still passes no type and gets the scalars list, matching its
   // pre-split behaviour.
   var names = (type === "table") ? (entry.tables || []) : (entry.scalars || []);
-  var html = '<select class="' + cls + '" style="width:100%;font-size:0.78rem">' +
-    '<option value="">— select —</option>';
-  // Defensive: if the current value isn't in the chosen list (e.g. operator
-  // had a table symbol selected and flipped Type to scalar) still surface it
-  // as a selected option so the form save round-trips cleanly while the
-  // operator decides whether to switch.
-  if (currentSymbol && names.indexOf(currentSymbol) === -1) {
-    html += '<option value="' + escapeHtml(currentSymbol) + '" selected>' +
-      escapeHtml(currentSymbol) + ' (not a ' + escapeHtml(type === "table" ? "table" : "scalar") + ')' +
-    '</option>';
-  }
-  names.forEach(function (name) {
-    html += '<option value="' + escapeHtml(name) + '"' +
-      (currentSymbol === name ? " selected" : "") + '>' +
-      escapeHtml(name) +
-    '</option>';
-  });
-  // (The "not a scalar"/"not a table" pre-pended option above already
-  // preserves any current value that isn't in the chosen list.)
-  html += '</select>';
-  return html;
+  // A type-to-filter combobox rather than a <select>: a vendor MIB carries
+  // hundreds to thousands of symbols (PowerNet-MIB alone is ~3 MB), too many
+  // to scroll. The list lives in _mfgMibSymbolsCache, so the markup carries
+  // only the MIB id + side; the delegated handlers below filter it. The
+  // saved symbol rides along as data-initial so a value not in the chosen
+  // list (a table symbol after flipping Type to scalar) still round-trips
+  // while the operator decides — what the old "(not a scalar)" option did.
+  var side = type === "table" ? "table" : "scalar";
+  var unknown = currentSymbol && names.indexOf(currentSymbol) === -1;
+  return '<span class="aw-combo aw-combo-dim">' +
+    '<input type="text" class="' + cls + ' mib-sym-combo" autocomplete="off" spellcheck="false"' +
+      ' data-mib-id="' + escapeHtml(mibId) + '" data-sym-side="' + side + '"' +
+      ' data-initial="' + escapeHtml(currentSymbol || "") + '"' +
+      ' value="' + escapeHtml(currentSymbol || "") + '"' +
+      ' placeholder="Type to filter ' + names.length + ' ' + side + ' symbol' + (names.length === 1 ? "" : "s") + '"' +
+      (unknown ? ' title="Not a ' + side + ' in this MIB"' : '') +
+      ' style="width:100%;font-size:0.78rem' + (unknown ? ';border-color:var(--color-danger)' : '') + '">' +
+    '<div class="aw-suggest"></div>' +
+  '</span>';
 }
+
+// ─── Symbol combobox (delegated) ───────────────────────────────────────────
+// One set of document-level handlers serves every Symbol picker the
+// Manufacturer Profiles card renders (metric rows, overrides, widgets), so the
+// card's many re-renders never need to re-wire anything.
+
+var _SYM_COMBO_LIMIT = 200;
+
+function _symComboNames(input) {
+  var entry = _mfgMibSymbolsCache[input.getAttribute("data-mib-id")];
+  if (!entry || entry.loading) return null;
+  return input.getAttribute("data-sym-side") === "table" ? (entry.tables || []) : (entry.scalars || []);
+}
+
+/** True when `value` is one this picker would accept on its own: a symbol in
+ *  its list, or the saved value it was rendered with. A restore after a MIB or
+ *  Type swap drops anything else — what a <select> did by itself. */
+function _symComboAccepts(input, value) {
+  if (!value) return true;
+  if (value === input.getAttribute("data-initial")) return true;
+  var names = _symComboNames(input);
+  return !!names && names.indexOf(value) !== -1;
+}
+
+function _symComboMarkUnknown(input) {
+  var v = (input.value || "").trim();
+  var names = _symComboNames(input);
+  var bad = !!(v && names && names.indexOf(v) === -1);
+  input.style.borderColor = bad ? "var(--color-danger)" : "";
+  input.title = bad ? "Not a " + input.getAttribute("data-sym-side") + " in this MIB" : "";
+}
+
+function _renderSymCombo(input) {
+  var box = input.nextElementSibling;
+  var names = _symComboNames(input);
+  if (!box || !names) return;
+  var q = (input.value || "").trim().toLowerCase();
+  // Prefix matches first (an exact match among them, leading), then interior.
+  // The exact match stays listed so a complete, correct name reads as found
+  // rather than as "no symbol matches".
+  var prefix = [], interior = [];
+  names.forEach(function (n) {
+    var v = n.toLowerCase();
+    if (q && v === q) { prefix.unshift(n); return; }
+    var at = q ? v.indexOf(q) : 0;
+    if (at === 0) prefix.push(n);
+    else if (at > 0) interior.push(n);
+  });
+  var matches = prefix.concat(interior);
+  if (!matches.length) {
+    box.innerHTML = '<div class="aw-suggest-empty">' +
+      (q ? "No symbol in this MIB matches." : "This MIB has no symbols of this type.") + '</div>';
+  } else {
+    box.innerHTML = matches.slice(0, _SYM_COMBO_LIMIT).map(function (n) {
+      return '<div class="aw-suggest-item" data-val="' + escapeHtml(n) + '">' + escapeHtml(n) + '</div>';
+    }).join("") +
+      (matches.length > _SYM_COMBO_LIMIT
+        ? '<div class="aw-suggest-empty">' + (matches.length - _SYM_COMBO_LIMIT) + ' more — keep typing to narrow</div>'
+        : "");
+  }
+  box.classList.add("open");
+}
+
+function _pickSymCombo(input, value) {
+  input.value = value;
+  _closeMfgSuggest(input.nextElementSibling);
+  _symComboMarkUnknown(input);
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+document.addEventListener("focusin", function (e) {
+  if (e.target.classList && e.target.classList.contains("mib-sym-combo")) _renderSymCombo(e.target);
+});
+document.addEventListener("click", function (e) {
+  if (e.target.classList && e.target.classList.contains("mib-sym-combo")) _renderSymCombo(e.target);
+});
+document.addEventListener("input", function (e) {
+  if (!e.target.classList || !e.target.classList.contains("mib-sym-combo")) return;
+  _renderSymCombo(e.target);
+  _symComboMarkUnknown(e.target);
+});
+document.addEventListener("focusout", function (e) {
+  var input = e.target;
+  if (!input.classList || !input.classList.contains("mib-sym-combo")) return;
+  // Delay so a mousedown on an item (which fires before blur completes) lands.
+  setTimeout(function () { _closeMfgSuggest(input.nextElementSibling); }, 150);
+});
+document.addEventListener("mousedown", function (e) {
+  var item = e.target.closest && e.target.closest(".aw-suggest-item");
+  var input = item && item.parentElement && item.parentElement.previousElementSibling;
+  if (!input || !input.classList.contains("mib-sym-combo")) return;
+  e.preventDefault(); // keep focus on the input
+  _pickSymCombo(input, item.getAttribute("data-val"));
+});
+document.addEventListener("keydown", function (e) {
+  var input = e.target;
+  if (!input.classList || !input.classList.contains("mib-sym-combo")) return;
+  var box = input.nextElementSibling;
+  if (!box || !box.classList.contains("open")) return;
+  if (e.key === "Escape") { _closeMfgSuggest(box); e.stopPropagation(); return; }
+  var items = Array.prototype.slice.call(box.querySelectorAll(".aw-suggest-item"));
+  var idx = items.findIndex(function (i) { return i.classList.contains("active"); });
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!items.length) return;
+    e.preventDefault();
+    var next = e.key === "ArrowDown" ? Math.min(idx + 1, items.length - 1) : Math.max(idx - 1, 0);
+    items.forEach(function (i) { i.classList.remove("active"); });
+    items[next].classList.add("active");
+    if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter") {
+    // Enter never submits the row from here: a highlighted (or the only)
+    // match completes the box, and the Save button stays the one way to save.
+    e.preventDefault();
+    var pick = idx >= 0 ? items[idx] : (items.length === 1 ? items[0] : null);
+    if (pick) _pickSymCombo(input, pick.getAttribute("data-val"));
+  }
+});
 
 // Lazy-fetch + cache one MIB's symbol list, split into `tables` vs
 // `scalars` so the per-row Symbol picker can populate from whichever
@@ -10980,7 +11213,10 @@ function _mfgRestoreEditors(snap) {
         if (field.type === "checkbox" || field.type === "radio") { field.checked = !!vals[fk]; return; }
         // A <select> whose options changed drops a value the new list doesn't
         // offer — which is what should happen to a Symbol after a MIB swap.
+        // The Symbol combobox is a text box, so it is told to do the same.
+        if (field.classList.contains("mib-sym-combo") && !_symComboAccepts(field, vals[fk])) return;
         field.value = vals[fk];
+        if (field.classList.contains("mib-sym-combo")) _symComboMarkUnknown(field);
       });
     });
 }
@@ -11042,22 +11278,19 @@ function _ensureMfgSuggestions() {
 function _renderMfgSuggest(input, box, rows) {
   var q = (input.value || "").trim().toLowerCase();
   // Prefix matches first, then interior — typing "ar" should offer "Aruba"
-  // before "Hikari". An exact match is dropped: nothing left to complete.
-  var matches = rows.filter(function (r) {
-    var v = r.value.toLowerCase();
-    return (!q || v.indexOf(q) !== -1) && v !== q;
-  });
-  if (q) {
-    matches.sort(function (a, b) {
-      var ap = a.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-      var bp = b.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-      return ap - bp;
-    });
-  }
+  // before "Hikari". An exact match is kept, and leads: dropping it made a
+  // correct name ("APC", carried by 8 devices) read as "No known manufacturer
+  // matches".
+  var matches = _filterSuggestRows(rows, q);
   matches = matches.slice(0, 50);
   if (!matches.length) {
+    // Suggestions leave out manufacturers that already have a profile, so a
+    // name with no match may be one of those — say so rather than invite an
+    // Add that 409s.
+    var taken = q && (_mfgProfiles || []).some(function (p) { return (p.manufacturer || "").toLowerCase() === q; });
     box.innerHTML = '<div class="aw-suggest-empty">' +
-      (q ? "No known manufacturer matches — press Add to create it anyway."
+      (taken ? "A profile for this manufacturer already exists — open it above."
+         : q ? "No known manufacturer matches — press Add to create it anyway."
          : "No suggestions yet — every known manufacturer already has a profile.") +
       '</div>';
     box.classList.add("open");
@@ -11066,15 +11299,37 @@ function _renderMfgSuggest(input, box, rows) {
   box.innerHTML = matches.map(function (r) {
     var hints = (r.sources || []).map(function (s) {
       return s === "asset" && r.assetCount
-        ? r.assetCount + " device" + (r.assetCount === 1 ? "" : "s")
+        ? _mfgDeviceCountLabel(r.assetCount)
         : (_MFG_SUGGEST_SOURCE_LABELS[s] || s);
     });
-    return '<div class="aw-suggest-item" data-val="' + escapeHtml(r.value) + '">' +
-      escapeHtml(r.value) +
-      (hints.length ? ' <span style="color:var(--color-text-tertiary)">· ' + escapeHtml(hints.join(" · ")) + '</span>' : "") +
-    '</div>';
+    return _mfgSuggestItemHTML(r.value, hints);
   }).join("");
   box.classList.add("open");
+}
+
+/** Both manufacturer pickers' filter: rows containing `q` (lowercased), the
+ *  exact match first, then prefix matches, then interior ones. The sort is
+ *  stable, so the caller's order (device count) holds within each band. */
+function _filterSuggestRows(rows, q) {
+  var matches = rows.filter(function (r) { return !q || r.value.toLowerCase().indexOf(q) !== -1; });
+  if (!q) return matches;
+  function rank(r) {
+    var v = r.value.toLowerCase();
+    return v === q ? 0 : v.indexOf(q) === 0 ? 1 : 2;
+  }
+  return matches.sort(function (a, b) { return rank(a) - rank(b); });
+}
+
+// Shared by both manufacturer pickers so "· 8 devices" reads the same on each.
+function _mfgDeviceCountLabel(n) {
+  return n + " device" + (n === 1 ? "" : "s");
+}
+
+function _mfgSuggestItemHTML(value, hints) {
+  return '<div class="aw-suggest-item" data-val="' + escapeHtml(value) + '">' +
+    escapeHtml(value) +
+    (hints.length ? ' <span style="color:var(--color-text-tertiary)">· ' + escapeHtml(hints.join(" · ")) + '</span>' : "") +
+  '</div>';
 }
 
 function _openMfgSuggest() {
@@ -11130,6 +11385,100 @@ function wireManufacturerSuggestCombo() {
       // whatever was typed, so a custom name never needs a mouse.
       if (idx >= 0) { input.value = items[idx].getAttribute("data-val"); _closeMfgSuggest(box); }
       else { _closeMfgSuggest(box); addManufacturerProfile(); }
+    }
+  });
+}
+
+// ─── Manufacturer-with-device-count typeahead ──────────────────────────────
+// Shared by the MIB upload form and the Device Icons card. A vendor MIB (or
+// icon) only applies to assets whose manufacturer matches the name it is saved
+// under, so the picker leads with the manufacturers actually in inventory —
+// most devices first, each with its count — and follows with names only an
+// earlier MIB / alias / icon carries. Free text is still accepted. Counts come
+// from `_mibFacets.assetCounts`, already loaded with the tab; no extra fetch.
+
+/** De-duplicated (case-insensitive, first spelling wins) rows with their
+ *  device counts, most devices first, then alphabetical. */
+function _manufacturerCountRows(names) {
+  var counts = (_mibFacets && _mibFacets.assetCounts) || {};
+  var byKey = {};
+  var rows = [];
+  (names || []).forEach(function (n) {
+    var v = (n || "").trim();
+    var k = v.toLowerCase();
+    if (!v || byKey[k]) return;
+    byKey[k] = { value: v, assetCount: 0 };
+    rows.push(byKey[k]);
+  });
+  // A count keyed by a different casing still lands on its row.
+  Object.keys(counts).forEach(function (m) {
+    var row = byKey[m.trim().toLowerCase()];
+    if (row) row.assetCount += counts[m];
+  });
+  return rows.sort(function (a, b) { return b.assetCount - a.assetCount || a.value.localeCompare(b.value); });
+}
+
+function _mibUploadMfrRows() {
+  return _manufacturerCountRows((_mibFacets && _mibFacets.manufacturers) || []);
+}
+
+function _renderManufacturerCountSuggest(input, box, rows) {
+  var q = (input.value || "").trim().toLowerCase();
+  var matches = _filterSuggestRows(rows, q).slice(0, 50);
+  if (!matches.length) {
+    box.innerHTML = '<div class="aw-suggest-empty">' +
+      (q ? "No known manufacturer matches — the name is used as typed."
+         : "No manufacturers in inventory yet — type the vendor name.") +
+      '</div>';
+    box.classList.add("open");
+    return;
+  }
+  box.innerHTML = matches.map(function (r) {
+    return _mfgSuggestItemHTML(r.value, r.assetCount ? [_mfgDeviceCountLabel(r.assetCount)] : []);
+  }).join("");
+  box.classList.add("open");
+}
+
+function wireMibUploadManufacturerCombo() {
+  _wireManufacturerCountCombo("f-mib-up-mfr", "mib-up-mfr-suggest", _mibUploadMfrRows);
+}
+
+function _wireManufacturerCountCombo(inputId, boxId, rowsFn) {
+  var input = document.getElementById(inputId);
+  var box = document.getElementById(boxId);
+  if (!input || !box) return;
+  function open() { _renderManufacturerCountSuggest(input, box, rowsFn()); }
+
+  input.addEventListener("focus", open);
+  input.addEventListener("click", open);
+  input.addEventListener("input", open);
+  input.addEventListener("blur", function () {
+    // Delay so a mousedown on an item (which fires before blur completes) lands.
+    setTimeout(function () { _closeMfgSuggest(box); }, 150);
+  });
+  box.addEventListener("mousedown", function (e) {
+    var item = e.target.closest && e.target.closest(".aw-suggest-item");
+    if (!item) return;
+    e.preventDefault(); // keep focus on the input
+    input.value = item.getAttribute("data-val");
+    _closeMfgSuggest(box);
+  });
+  input.addEventListener("keydown", function (e) {
+    if (!box.classList.contains("open")) return;
+    if (e.key === "Escape") { _closeMfgSuggest(box); e.stopPropagation(); return; }
+    var items = Array.prototype.slice.call(box.querySelectorAll(".aw-suggest-item"));
+    var idx = items.findIndex(function (i) { return i.classList.contains("active"); });
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!items.length) return;
+      e.preventDefault();
+      var next = e.key === "ArrowDown" ? Math.min(idx + 1, items.length - 1) : Math.max(idx - 1, 0);
+      items.forEach(function (i) { i.classList.remove("active"); });
+      items[next].classList.add("active");
+      if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && idx >= 0) {
+      e.preventDefault();
+      input.value = items[idx].getAttribute("data-val");
+      _closeMfgSuggest(box);
     }
   });
 }

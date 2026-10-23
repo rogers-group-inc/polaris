@@ -616,6 +616,8 @@ const api = {
         return _readResponseBody(res, "Icon upload failed");
       });
     },
+    // Re-key (manufacturer / type or model / scope); the image is kept.
+    update: (id, body) => request("PUT",    `/device-icons/${id}`, body),
     delete: (id)      => request("DELETE", `/device-icons/${id}`),
   },
   reservations: {

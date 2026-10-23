@@ -36,12 +36,26 @@ Five cards about what Polaris calls things it finds:
   placeholder.
 - **Device Icons** — PNG / JPEG / WebP (256 KB) or SVG (32 KB, strictly
   validated) icons overlaid on the topology graphs, keyed to a manufacturer
-  plus a type or a model. Gated `deviceIcons`.
+  plus a type or a model. Gated `deviceIcons`. An icon always needs the
+  manufacturer: a device takes its **manufacturer + model** icon when there is
+  one (the model must match exactly), otherwise its **manufacturer + asset
+  type** icon, otherwise no icon. There is no type-only or model-only icon. The
+  type list is the Device Types registry, custom types included. **Edit** on an
+  icon's row changes its manufacturer, its asset type or model, or which of the
+  two it matches by, and keeps the image. Polaris refuses the change if another
+  icon already has that match; delete that icon first. (Uploading a new image to
+  an existing match replaces that icon's image instead.)
 - **Device Types** — the asset-type registry and the matching rules that file a
   newly discovered device. Built-in types cannot be renamed or removed, but
   their rules are editable; **Apply rules to existing "Other" assets…** re-files
   what was left unclassified.
 - **[Tags](#tags)** — the tag registry.
+
+The manufacturer boxes on this tab (Device Icons, both halves of a Manufacturer
+Alias, a Prefix Override) and on the MIB Database's upload form open a list on
+click: the manufacturers in your inventory come first, most devices first, each
+with its device count (for example "APC · 8 devices"), followed by names only
+an alias, MIB or icon carries. Any other name can still be typed.
 
 ---
 
