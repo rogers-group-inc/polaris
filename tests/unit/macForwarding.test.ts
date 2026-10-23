@@ -9,8 +9,42 @@ import {
   parseFdbIndex,
   macFromFdbAddressValue,
   resolveFdbIdentity,
+  fillAccessPortVlans,
   type FdbEntry,
+  type PortVlanState,
 } from "../../src/utils/macForwarding.js";
+
+describe("fillAccessPortVlans", () => {
+  const ports = new Map<string, PortVlanState>([
+    ["port1", { nativeVlan: 30, taggedVlans: [], trunksAllVlans: false }],
+    ["port24", { nativeVlan: 1, taggedVlans: [30, 40], trunksAllVlans: false }],
+    ["port25", { nativeVlan: 1, taggedVlans: [], trunksAllVlans: true }],
+  ]);
+  const row = (ifName: string | null, vlanId: number | null = null) => ({ macAddress: "AA:BB:CC:00:00:01", ifName, vlanId });
+
+  it("fills an access port's native VLAN and marks it inferred", () => {
+    expect(fillAccessPortVlans([row("port1")], ports)[0]).toMatchObject({ vlanId: 30, vlanInferred: true });
+  });
+
+  it("leaves trunks, unknown ports and unresolved rows null", () => {
+    const out = fillAccessPortVlans([row("port24"), row("port25"), row("port99"), row(null)], ports);
+    expect(out.map((e) => e.vlanId)).toEqual([null, null, null, null]);
+    expect(out.every((e) => e.vlanInferred === false)).toBe(true);
+  });
+
+  it("never overrides a VLAN the switch reported", () => {
+    expect(fillAccessPortVlans([row("port1", 50)], ports)[0]).toMatchObject({ vlanId: 50, vlanInferred: false });
+  });
+
+  it("fills nothing when no port reports a tagged dimension", () => {
+    // PVID-only switch: every port, the uplink included, looks like an access port.
+    const pvidOnly = new Map<string, PortVlanState>([
+      ["port1", { nativeVlan: 30, taggedVlans: [], trunksAllVlans: false }],
+      ["port24", { nativeVlan: 1, taggedVlans: [], trunksAllVlans: false }],
+    ]);
+    expect(fillAccessPortVlans([row("port1")], pvidOnly)[0].vlanId).toBeNull();
+  });
+});
 
 describe("fdbStatusLabel / fdbStatusIsUsable", () => {
   it("decodes the RFC status enum", () => {

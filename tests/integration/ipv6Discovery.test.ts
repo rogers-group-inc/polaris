@@ -15,6 +15,7 @@
 import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
+import { setIpv6Enabled, _resetIpv6GateForTests } from "../../src/services/ipv6GateService.js";
 import { syncDhcpSubnets } from "../../src/services/discovery/discoveryEngine.js";
 import { createReservation } from "../../src/services/reservationService.js";
 
@@ -33,11 +34,16 @@ let assetId = "";
 beforeAll(async () => {
   if (!dbReachable) return;
   await prisma.$connect();
+  // IPv6 is a whole-install switch (business rule 128), decided from the host,
+  // and CI runners have no IPv6: switch it on for this suite.
+  await setIpv6Enabled(true, "test");
 });
 
 afterAll(async () => {
   if (!dbReachable) return;
   await cleanup();
+  await prisma.setting.deleteMany({ where: { key: "ipv6Config" } });
+  _resetIpv6GateForTests();
   await prisma.$disconnect();
 });
 

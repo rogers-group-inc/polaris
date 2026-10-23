@@ -9,6 +9,8 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
+import { assetDialAddress } from "../../utils/assetDialAddress.js";
+import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
 import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
@@ -53,7 +55,7 @@ import {
 } from "../../services/assetQuarantineService.js";
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
 import { descriptionSyncEnabledForRole } from "../../utils/descriptionSyncFlags.js";
-import { cidrContains, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
+import { cidrContains, isIpv6Address, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
 import { buildIpContexts } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
@@ -98,6 +100,7 @@ import { getCredential } from "../../services/credentialService.js";
 import { resolveConnectionPath } from "../../services/connectionPathService.js";
 import { resolveAssetUpstream } from "../../services/assetUpstreamService.js";
 import { resolveAssetVips } from "../../services/assetVipService.js";
+import { fillMacTableVlans, getVlanNamesForAsset } from "../../services/vlanNameService.js";
 import { shapeManagementAccessForClient } from "../../services/fortinetManagementAccessService.js";
 import { propagateAfterStatusChange, FORTINET_INFRA_ASSET_TYPES } from "../../services/dependencyTreeService.js";
 import { pickSampleTierForAsset } from "../../services/sampleQueryRouter.js";
@@ -168,6 +171,7 @@ import { triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
 import { resolveDiscoveryScopeForAsset } from "../../services/discovery/assetDiscoveryScope.js";
 import { isRunActive } from "../../services/discoveryRunState.js";
 import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } from "../../services/primaryAddressService.js";
+import { pinPrimaryIpv6, unpinPrimaryIpv6 } from "../../services/primaryIpv6Service.js";
 import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../services/assetAddressService.js";
 import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
 import { assertIpChangeMayRetargetIntegrationToken as assertIpChangeMayRetargetIntegrationTokenUtil } from "../../utils/integrationTokenTarget.js";
@@ -258,6 +262,11 @@ const macRegex = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/;
 // address list (business rule 102).
 const PrimaryAddressSchema = z.object({
   mac: z.string().trim().min(1).max(64),
+  ip: z.string().trim().min(1).max(64),
+});
+
+// PUT /assets/:id/primary-ipv6 — the asset's primary IPv6 (business rule 128).
+const PrimaryIpv6Schema = z.object({
   ip: z.string().trim().min(1).max(64),
 });
 
@@ -2488,10 +2497,12 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
 
     const asset = await prisma.asset.findUnique({
       where: { id },
-      select: { id: true, hostname: true, ipAddress: true },
+      select: { id: true, hostname: true, ipAddress: true, ipv6Address: true },
     });
     if (!asset) throw new AppError(404, "Asset not found");
-    if (!asset.ipAddress) throw new AppError(400, "Asset has no IP address to walk");
+    // IPv4, else (IPv6 on) the primary IPv6 — business rule 128.
+    const walkHost = assetDialAddress(asset, ipv6Dialable());
+    if (!walkHost) throw new AppError(400, "Asset has no IP address to walk");
 
     // Rule 112(e): this route is read-level, so only a credential the asset
     // already uses — anything else needs assets:write (re-scan F62).
@@ -2502,12 +2513,12 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
     }
     // Rule 112: the walk sends this credential's community / keys to the asset.
     await recordCredentialUse(credentialUseActor(req), "asset.snmp-walk", [
-      { credentialId: cred.id, destination: asset.ipAddress, assetId: asset.id, assetName: asset.hostname ?? asset.ipAddress },
+      { credentialId: cred.id, destination: walkHost, assetId: asset.id, assetName: asset.hostname ?? walkHost },
     ]);
 
     const label = asset.hostname || asset.ipAddress;
     try {
-      const result = await snmpWalkRaw(asset.ipAddress, cred.config as Record<string, unknown>, oid, maxRows);
+      const result = await snmpWalkRaw(walkHost, cred.config as Record<string, unknown>, oid, maxRows);
       logEvent({
         action: "asset.snmp_walk",
         resourceType: "asset",
@@ -2518,7 +2529,7 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
         message: `SNMP walk: ${label} — ${oid} → ${result.rows.length} row(s)${result.truncated ? " (truncated)" : ""}`,
         details: { oid, credentialName: cred.name, rows: result.rows.length, truncated: result.truncated, durationMs: result.durationMs },
       });
-      res.json({ ...result, oid, host: asset.ipAddress });
+      res.json({ ...result, oid, host: walkHost });
     } catch (err: any) {
       const message = err?.message || "SNMP walk failed";
       logEvent({
@@ -2746,6 +2757,8 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
           orderBy: [{ sensorClass: "asc" }, { sensorName: "asc" }],
         })
       : [];
+    // VLAN id -> name for the Native / Tagged VLAN pills (vlanNameService).
+    const vlanNames = await getVlanNamesForAsset(id);
 
     res.json({
       monitored: asset.monitored,
@@ -2794,6 +2807,7 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
         poeStatus:   i.poeStatus ?? null,
         poeClass:    i.poeClass  ?? null,
       })),
+      vlanNames,
       physicalEntities: physicalEntities.map((e) => ({
         entIndex:    e.entIndex,
         entClass:    e.entClass,
@@ -2974,8 +2988,11 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
       where: { id },
       select: { lastSystemInfoAt: true },
     });
-    res.json({
-      entries: rows.map((r) => ({
+    // A FortiSwitch answers only the VLAN-less BRIDGE-MIB table, so its rows
+    // arrive with no VLAN; an access port's native VLAN fills them in
+    // (`vlanInferred` marks those). vlanNames labels the pills.
+    const [entries, vlanNames] = await Promise.all([
+      fillMacTableVlans(id, rows.map((r) => ({
         macAddress: r.macAddress,
         vlanId:     r.vlanId,
         basePort:   r.basePort,
@@ -2984,7 +3001,12 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
         firstSeen:  r.firstSeen,
         lastSeen:   r.lastSeen,
         matchedAsset: r.matchedAsset,
-      })),
+      }))),
+      getVlanNamesForAsset(id),
+    ]);
+    res.json({
+      entries,
+      vlanNames,
       portCounts,
       collectedAt,
       lastSystemInfoAt: passAsset?.lastSystemInfoAt ?? null,
@@ -5509,6 +5531,9 @@ router.post("/decommission-preview", requirePermission("assets", "read"), async 
 router.put("/:id/primary-address", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const input = PrimaryAddressSchema.parse(req.body);
+    // The IPv4 pin is the address monitoring dials; an IPv6 has its own
+    // primary and its own endpoint (business rule 128).
+    if (isIpv6Address(input.ip)) throw new AppError(400, "That is an IPv6 address — set it as the primary IPv6 (PUT /assets/:id/primary-ipv6)");
     const pinTarget = await prisma.asset.findUnique({
       where: { id: req.params.id as string },
       select: { ipAddress: true, discoveredByIntegration: { select: { type: true } } },
@@ -5545,6 +5570,35 @@ router.delete("/:id/primary-address", requirePermission("assets", "write"), asyn
   try {
     const result = await unpinPrimaryAddress({ assetId: req.params.id as string, actor: requestActor(req) ?? "unknown" });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/v1/assets/:id/primary-ipv6 — pin the asset's primary IPv6
+// (business rule 128). The automatic choice stops until the pin is removed.
+// assets:write, like the IPv4 pin. Refused (409) while IPv6 is off for the
+// install. An asset with no IPv4 is polled on this address, so the same
+// integration-token guard as an IPv4 change applies (rule 111).
+router.put("/:id/primary-ipv6", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const input = PrimaryIpv6Schema.parse(req.body);
+    const pinTarget = await prisma.asset.findUnique({
+      where: { id: req.params.id as string },
+      select: { ipAddress: true, discoveredByIntegration: { select: { type: true } } },
+    });
+    if (pinTarget && !pinTarget.ipAddress) assertIpChangeMayRetargetIntegrationToken(req, pinTarget, input.ip);
+    res.json(await pinPrimaryIpv6({ assetId: req.params.id as string, ip: input.ip, actor: requestActor(req) ?? "unknown" }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/assets/:id/primary-ipv6 — remove the pin; the automatic
+// choice (or none) takes over straight away.
+router.delete("/:id/primary-ipv6", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    res.json(await unpinPrimaryIpv6({ assetId: req.params.id as string, actor: requestActor(req) ?? "unknown" }));
   } catch (err) {
     next(err);
   }
@@ -7087,7 +7141,7 @@ router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), asyn
     // against its own loopback. Refuse early when ALL the above sources
     // fail for a remote-host install.
     if (!process.env.POLARIS_PUBLIC_URL && !process.env.POLARIS_PUBLIC_HOST) {
-      const targetHost = asset.ipAddress || asset.dnsName || asset.hostname || "";
+      const targetHost = assetDialAddress(asset, ipv6Dialable()) || asset.dnsName || asset.hostname || "";
       const isSameBox = targetHost === "127.0.0.1" || targetHost === "::1" ||
                         targetHost === "localhost" || targetHost.toLowerCase() === "localhost.localdomain";
       if (!isSameBox) {

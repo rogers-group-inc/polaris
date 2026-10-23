@@ -150,3 +150,20 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+# IPv6 (business rule 128). The default network below is IPv4-only, so the
+# containers see no IPv6 address and Polaris switches IPv6 off at install —
+# even on a dual-stack host. To discover, show and poll IPv6 devices, uncomment
+# this block, then `docker compose down && docker compose up -d` (a restart does
+# not re-create the network), then switch IPv6 on under Server Settings → Web
+# Server → IPv6. Needs Docker Engine 27+ (IPv6 NAT on by default) or podman 4+.
+# The subnet is a unique-local (fd00::/8) prefix used only inside this network;
+# outbound traffic is translated to the host's IPv6 address. Pick another fd..
+# prefix if this one is already in use on your network.
+#
+# networks:
+#   default:
+#     enable_ipv6: true
+#     ipam:
+#       config:
+#         - subnet: fd70:6f6c:6172::/64

@@ -374,6 +374,37 @@ Behind nginx that manifests to the remote client as a 502.
 
 See [Mobile and Dash](Mobile-and-Dash#dash-wallboard).
 
+### IPv6
+
+Whether Polaris handles IPv6 at all ([rule 128](Business-Rules#rule-128)): one
+**Enable IPv6** switch. Polaris sets it once, at install: on when the server has
+a routable IPv6 address, off when it does not (link-local fe80:: and loopback
+addresses are not counted). The decision is recorded on the Events page as
+`settings.ipv6.initialized`. After that only this switch changes it. A server
+that gains or loses IPv6 later does not change the setting; the card shows the
+server's current IPv6 addresses, and notes when the server has IPv6 while the
+switch is off. An install upgraded to the version that added this switch made the
+same decision on its first start.
+
+With IPv6 on, a device with only an IPv6 address is polled only if this server
+can reach IPv6. When it cannot, the card shows a warning and those devices are
+left unpolled rather than shown as down.
+
+**In a container, "this server" is the container.** Docker's and podman's
+default networks are IPv4-only, so a container install starts with IPv6 off
+even on a dual-stack host. Enable IPv6 on the container network first, then
+turn the switch on. The install guide's *IPv6 in a container* section has the
+steps.
+
+While IPv6 is off, discovery reads no DHCPv6 scopes, router-advertised
+prefixes or IPv6 leases, interfaces record no IPv6 address, assets have no
+primary IPv6, and the IPv6 columns and lines are hidden. IPv6 networks and
+reservations already in IPAM stay until you remove them; *observed* ones
+expire within a day. Every device is monitored on IPv4. Saving needs
+`serverSettingsSystem` at *Read-Write*. Each Polaris process picks up a
+change within about a minute, and other open pages pick it up when they
+are reloaded. See [Primary IPv6](Assets#primary-ipv6).
+
 ### Trusted Certificate Authorities
 
 Upload `.pem` / `.crt` / `.cer` / `.der` CA certificates Polaris uses to verify

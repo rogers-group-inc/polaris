@@ -47,6 +47,7 @@
  */
 
 import { compileSafeRegex, safeRegexProblem } from "./safeRegex.js";
+import { urlHost } from "./cidr.js";
 
 /** Hard ceiling on how much of the response body is read and matched against. */
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -358,7 +359,7 @@ export function describeHttpTarget(host: string, target: ResolvedHttpTarget): st
   // Print the port only when it isn't the scheme's default — a URL reading
   // "https://host:443/x" invites the reader to wonder what's special about it.
   const port = target.port === defaultHttpPort(target.useHttps) ? "" : ":" + target.port;
-  return `${scheme}://${host}${port}${target.path}`;
+  return `${scheme}://${urlHost(host)}${port}${target.path}`;
 }
 
 export interface HttpCheckOutcome {

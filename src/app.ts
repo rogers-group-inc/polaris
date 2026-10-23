@@ -1241,6 +1241,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // bit. See its header.
       "./jobs/clampFailureBucket.js",
       "./jobs/bootstrapProxyConfig.js",
+      // Rule 128: the install-time IPv6 decision (on when this host has a
+      // routable IPv6). The Setting row is its own marker; an operator's
+      // choice is never overwritten.
+      "./jobs/initIpv6Setting.js",
       "./jobs/migrateAutomationRuleShape.js",
       "./jobs/migrateContactFilterShape.js",
       "./jobs/migrateTagFilterShape.js",
@@ -1329,6 +1333,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // the network now backs on its own. Scheduler role only — one pass over
       // the fleet's (few) pins.
       "./jobs/releaseConfirmedPins.js",
+      // Primary IPv6 (business rule 128): re-choose each unpinned asset's
+      // primary IPv6 from its IPv6 address-list rows. Scheduler role only.
+      "./jobs/reconcilePrimaryIpv6.js",
       // Serial sweep (business rule 83) — raises/closes the
       // `serial-two-controllers` flavour (one managed device on two
       // FortiGates' rosters) and the `duplicate-serial` flavour (one serial on

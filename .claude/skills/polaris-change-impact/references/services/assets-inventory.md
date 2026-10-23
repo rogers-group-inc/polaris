@@ -45,6 +45,27 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/primaryIpv6Service.ts
+
+**What it owns:** An asset's PRIMARY IPv6 (business rule 128) — `Asset.ipv6Address` / `ipv6Pinned` / `ipv6PinnedAt` / `ipv6PinnedBy`. Shown beside the IPv4; the dial address of an asset with no IPv4 (`utils/assetDialAddress.ts`). Never writes `Asset.ipAddress` (rule 126(d)).
+
+**Public API:** `pickPrimaryIpv6(candidates)` (pure), `reconcilePrimaryIpv6(now?)`, `pinPrimaryIpv6({assetId, ip, actor})`, `unpinPrimaryIpv6({assetId, actor})`, `Ipv6Candidate`
+
+**Cross-service deps:** `ipv6GateService` (`ipv6Enabled`), `addressConfidenceService` (`buildAddressConfidence`), `eventLogService` (`logEvent`, `logEventsBatch`), `utils/cidr.ts` (`canonicalIp`, `isIpamIpv6Address`, `isIpv6Address`).
+
+**Used by:** `jobs/reconcilePrimaryIpv6.ts`, `api/routes/assets.ts` (`PUT|DELETE /assets/:id/primary-ipv6`).
+
+**Invariants:**
+- The reconcile never touches a pinned value, and writes only assets whose choice changed (one `$transaction` per 200) — the steady state is one read and no writes at 2000 assets.
+- While IPv6 is off: reconcile clears every unpinned value with one `updateMany`, keeps pins; a pin is refused 409.
+- Tie-break is deterministic (score, newest `lastSeen`, smallest address) so equal candidates do not swap each run.
+
+**When changing this:**
+- The candidate source is the address list (`AssetAssociatedIp`, rule 126(c)); a new IPv6 source reaches the primary only by landing there.
+- The UI is `public/js/assets.js → _ipv6LineHTML` / `_handlePrimaryAddressClick` (`.primary-ipv6-set` / `.primary-ipv6-unpin`).
+
+---
+
 ## services/primaryAddressService.ts
 
 **What it owns:** The operator-pinned PRIMARY ADDRESS (business rule 102) — `Asset.primaryAddressMac` / `primaryAddressIp` / `primaryAddressPinnedAt` / `primaryAddressPinnedBy` / `primaryAddressContestedAt`: one (MAC, IP) pair from the asset's `AssetAssociatedIp` rows that the asset is monitored on. The pure enforcement lives in `applyPrimaryAddressPin` (`utils/assetInvariants.ts`), executed inside the `enforceOperatorOverrides` guard in `src/db.ts`; this service sets / clears the pin and audits.
@@ -487,6 +508,35 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:** a new `vipInfo` field means `parseVipInfo` AND the row renderer — the blob is written in three places in `discoveryEngine.ts` Phase 3c (create, VIP-rename refresh, DHCP-collision update) and all three must stamp it or the row shows it only for VIPs discovered since. If the VIP badge in `public/js/ip-panel.js` and this row ever disagree about what a stamp means, they are reading the same column and one of them is wrong. A caller that wants the gate's VERBS (Open HTTPS / SSH) needs `shapeManagementAccessForClient` on the ref, the way `assetUpstreamService` does it — the row deliberately carries only a link today.
 
 **Tests:** `tests/integration/assetVips.test.ts` (against a real DB: the gate resolved by FMG device name with a mismatched hostname, an unresolved gate, associated addresses, a same-address reservation in a non-containing subnet, the `reservations:read` gate, 404), `tests/unit/assetVipService.test.ts` (`parseVipInfo`), `tests/unit/assetVipRowsDom.test.ts` (the rows).
+
+---
+
+## services/vlanNameService.ts
+
+**What it owns:** VLAN NAMES for one asset — what lets the Interfaces table's Native / Tagged VLAN columns, the interface slide-over's VLAN card and the MAC Table show `Users_VL30` as a pill instead of `30` (the number rides the pill's hover). And the MAC Table's VLAN fill for rows the switch reported without one.
+
+**Public API:** `getVlanNamesForAsset(assetId)` → `Record<string, string>` (id as string → name; an unnamed id is absent), `fillMacTableVlans(assetId, entries)` → the entries with `vlanId` filled where it can be and `vlanInferred` on each.
+
+**Cross-service deps:** `utils/vlanNames` (`vlanNamesFromInterfaces`, `mergeVlanNames`), `utils/macForwarding` (`fillAccessPortVlans`), `utils/fortinetParentKey` (`readControllerStamp` + `parentAssetWhereOr` + `buildInfraParentIndex` + `resolveInfraParentAsset`).
+
+**Reads:** `Asset.fortinetTopology` (the controller stamp), `AssetInterface` (`ifType = "vlan"` rows of the asset and of its controller FortiGate; every row's `nativeVlan` / `taggedVlans` / `trunksAllVlans` for the fill).
+
+**Writes:** nothing — read-only, per request.
+
+**Used by:**
+- `src/api/routes/assets.ts → GET /api/v1/assets/:id/system-info` (`vlanNames`) and `GET /api/v1/assets/:id/mac-table` (`vlanNames` + the filled `entries`).
+- `public/js/assets.js → _vlanPillHTML` / `_vlanOptionLabel` (Interfaces columns + filter options, `_ifaceVlanBlockHTML`, the MAC Table cell), `public/js/mobile/asset-detail.js → loadMacSheet`.
+
+**Invariants:**
+- **A VLAN is named after the interface carrying it.** Nothing Polaris collects names a VLAN otherwise; on a FortiLink switch the VLANs ARE the controller FortiGate's VLAN interfaces, which is why a switch reads its gate's rows. The asset's OWN VLAN interfaces win per id.
+- **The gate resolves through `utils/fortinetParentKey.ts`, never by matching `controllerFortigate` against a hostname.**
+- **A tie is never guessed.** One id under several parents with different names (VLAN 30 on the FortiLink and on port5) takes the FortiLink-parented name, and otherwise stays unnamed — the UI shows "VLAN 30".
+- **The MAC fill is access-ports-only.** The BRIDGE-MIB forwarding table (the only one a FortiSwitch answers) has no VLAN at all; an access port carries exactly its native VLAN, so its rows take it, marked `vlanInferred` (dashed pill, "(inferred)" on mobile). A trunk's rows stay null. And a switch where NO port reports a tagged VLAN or trunk-all fills nothing: that is a switch whose member bitmaps were not read, where every uplink would look like an access port.
+- **Stored rows are never rewritten** — the fill is presentation-time, so `persistMacTable`'s `(asset, mac, vlan)` keying is untouched.
+
+**When changing this:** a new VLAN-name source (Q-BRIDGE `dot1qVlanStaticName` for a non-Fortinet switch, IPAM `Subnet.name` by `vlan`) is a new layer passed to `mergeVlanNames` — decide its precedence against the two here. A new surface that prints a VLAN id should take the same map and `_vlanPillHTML`, not print the number.
+
+**Tests:** `tests/unit/vlanNameService.test.ts` (own-rows-first, firewall-only gate lookup, no stamp, unknown asset, the fill skipping its query), `tests/unit/vlanNames.test.ts`, `tests/unit/macForwarding.test.ts` (`fillAccessPortVlans`), `tests/unit/assetInterfacesTableDom.test.ts` (the pills + option labels).
 
 ---
 

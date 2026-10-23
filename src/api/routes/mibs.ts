@@ -17,6 +17,8 @@ import multer from "multer";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
+import { assetDialAddress } from "../../utils/assetDialAddress.js";
+import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { requirePermission, credentialUseActor, hasPermission } from "../middleware/permissions.js";
 import { recordCredentialUse, type CredentialUseActor } from "../../services/credentialUseAuditService.js";
 import {
@@ -388,10 +390,12 @@ async function runMibWalk(opts: {
 
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { id: true, hostname: true, ipAddress: true },
+    select: { id: true, hostname: true, ipAddress: true, ipv6Address: true },
   });
   if (!asset) throw new AppError(404, "Asset not found");
-  if (!asset.ipAddress) throw new AppError(400, "Asset has no IP address to walk");
+  // IPv4, else (IPv6 on) the primary IPv6 — business rule 128.
+  const walkHost = assetDialAddress(asset, ipv6Dialable());
+  if (!walkHost) throw new AppError(400, "Asset has no IP address to walk");
 
   // Rule 112(e): both walk routes are mibDatabase:read (re-scan F60).
   await assertCredentialInAssetScope(asset.id, credentialId, opts.mayUseAnyCredential);
@@ -402,7 +406,7 @@ async function runMibWalk(opts: {
 
   // Rule 112: the walk sends this credential's community / keys to the asset.
   await recordCredentialUse(opts.useActor, "mib.walk", [
-    { credentialId: cred.id, destination: asset.ipAddress, assetId: asset.id, assetName: asset.hostname ?? asset.ipAddress },
+    { credentialId: cred.id, destination: walkHost, assetId: asset.id, assetName: asset.hostname ?? walkHost },
   ]);
 
   const baseOid = targetSymbol.fullOid;
@@ -410,7 +414,7 @@ async function runMibWalk(opts: {
 
   let walk;
   try {
-    walk = await snmpWalkRaw(asset.ipAddress, cred.config as Record<string, unknown>, baseOid, maxRows);
+    walk = await snmpWalkRaw(walkHost, cred.config as Record<string, unknown>, baseOid, maxRows);
   } catch (err: any) {
     const message = err?.message || "SNMP walk failed";
     logEvent({
@@ -504,7 +508,7 @@ async function runMibWalk(opts: {
       durationMs: walk.durationMs,
       rowCount: entries.length,
       decodedCount,
-      host: asset.ipAddress,
+      host: walkHost,
       oid: baseOid,
       objectName,
     };
@@ -517,7 +521,7 @@ async function runMibWalk(opts: {
     durationMs: walk.durationMs,
     rowCount: entries.length,
     decodedCount,
-    host: asset.ipAddress,
+    host: walkHost,
     oid: baseOid,
     objectName,
   };

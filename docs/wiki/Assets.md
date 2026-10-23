@@ -471,6 +471,32 @@ FortiGates, FortiSwitches and FortiAPs are monitored on their management IP and
 offer no pin. A device's port MACs from its interface table are collapsed into
 one *N port MACs* pill and are never a primary.
 
+#### Primary IPv6
+
+When IPv6 is on for this Polaris install ([rule 128](Business-Rules#rule-128)),
+**Address** has two lines: **IPv4**, the address described above, and
+**IPv6**, the device's primary IPv6 address. Polaris picks the primary IPv6
+from the IPv6 addresses in the asset's address list, preferring the one the
+network backs best and then the one seen most recently, and re-checks the
+choice every ten minutes. It is marked *auto*.
+
+With **Assets** set to *Write* or higher, **Set as primary IPv6** on any IPv6
+address in the IPs list pins that one instead. It is then marked *pinned*
+with an **Unpin** button, and Polaris no longer changes it. **Unpin** goes
+back to the automatic choice straight away.
+
+A device is monitored on its IPv4 address whenever it has one. A device with
+no IPv4 address at all is monitored on its primary IPv6 address, and its
+IPv6 line says *monitored*. If this Polaris server cannot reach IPv6 (common
+for a container on an IPv4-only network), the line says *not polled* instead
+and the device is left unpolled rather than shown as down. That covers ping, SNMP, SSH, WinRM and the
+FortiOS REST API.
+
+When IPv6 is off, the IPv6 line, the IPv6 addresses in the IPs list and the
+Interfaces tab's IPv6 column are all hidden, and no new IPv6 addresses are
+recorded. A pinned primary IPv6 is kept, and is used again if IPv6 is turned
+back on.
+
 #### Address confidence
 
 Every address carries a **confidence score** from 0 to 100, shown as a small
@@ -613,6 +639,14 @@ A VLAN sub-interface always has its own box: it is a separate segment with its
 own traffic, and pinning the parent does not cover it. The header checkbox
 pins or unpins every listed row that has a box, VLAN sub-interfaces included.
 
+**VLANs show by name.** On a switch that reports port VLANs, the **Native
+VLAN** and **Tagged VLANs** columns show each VLAN as a pill carrying its name;
+hover a pill for the VLAN number. The name is the VLAN interface's, read from
+the device itself and, for a FortiLink-managed FortiSwitch, from its controlling
+FortiGate. A VLAN nothing names shows as *VLAN 30*. The column filters list the
+names as well, as *30 · Users_VL30*. The interface panel's VLAN card uses the
+same pills.
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 When the interface's address sits inside a network Polaris knows, the click
@@ -623,12 +657,12 @@ actually contains the address. An interface with no IPv4 address looks up the
 network of its IPv6 address instead.
 
 **An interface's IPv6 address has its own column.** The **IPv6** column, beside
-**IP**, appears when at least one interface on the asset reports an IPv6
+**IP**, appears while IPv6 is on for the install and at least one interface on the asset reports an IPv6
 address, and it sorts and filters like **IP**. Each interface shows its first
 IPv6 address that is not link-local (fe80::) or loopback. **IP** shows the IPv4
 address only. Both addresses are added to the asset's address list and IP
 history under that interface and its MAC. The asset keeps its IPv4 address for
-monitoring ([rule 126](Business-Rules#rule-126)). The history panel's
+monitoring ([rule 126](Business-Rules#rule-126)); see [Primary IPv6](#primary-ipv6). The history panel's
 **Addresses** box shows the interface's current IPv4 and IPv6 addresses, and
 lists any other address it held during the selected range.
 
@@ -1190,8 +1224,16 @@ count and a Show link**, not dropped. On a FortiSwitch these are the trunk/LAG
 pseudo-ports, which publish no port-to-interface mapping, so every address
 behind a trunk lands there unattributable and would swamp the real per-port rows.
 
-A **filter box**, like the ARP Table's, matches a MAC, interface name, VLAN,
-status or matched hostname, and the count in the heading becomes *N of M
+The **VLAN** column shows the VLAN by name, as a pill (hover for the number),
+named the same way as on the Interfaces table. A FortiSwitch's forwarding
+table reports no VLAN at all, so on an **access port** Polaris fills in the
+port's native VLAN, which is the only VLAN that port carries. Those pills
+have a **dashed** border, and their hover says the VLAN was inferred. Entries
+on a trunk port keep a dash, because the switch does not say which of the
+trunk's VLANs they were learned in.
+
+A **filter box**, like the ARP Table's, matches a MAC, interface name, VLAN
+number or name, status or matched hostname, and the count in the heading becomes *N of M
 entries*. It filters whatever is shown, so the unresolved-port entries are only
 searched once you have clicked **Show**. The filter stays put across
 **Poll**.

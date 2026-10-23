@@ -34,6 +34,7 @@ const FNS = [
   "_assetAddressRows", "_addressMacKey", "primaryAddressMac", "_assetAddressPinnable", "primaryAddressPinHTML",
   "formatAddressSource", "formatMacSource", "_addressTooltipRowHTML", "_macTooltipRowHTML", "_addressPillHTML", "addressPillsHTML",
   "macDeleteButtonHTML", "macEntryText", "macEntryCount", "macEntriesTotal", "ipViewRow", "ipCellHTML",
+  "_addressRowHTML", "_ipv6LineHTML",
   "_confAge", "_confHours", "_addressConfidence", "_confidenceBreakdownHTML", "addressConfidenceChipHTML",
 ];
 
@@ -46,7 +47,7 @@ beforeAll(() => {
   g.assetHaInfo = () => null;
   // eslint-disable-next-line no-eval
   (0, eval)(
-    [varLine("_MAC_ROW_IPS_VISIBLE"), varLine("_ADDRESS_PRIMARY_BADGE"), varLine("_PIN_STALE_MS"), varLine("_CONF_BAND_LABEL"), ...FNS.map(fnSrc)].join("\n") +
+    [varLine("_MAC_ROW_IPS_VISIBLE"), varLine("_ADDRESS_PRIMARY_BADGE"), varLine("_ADDRESS_PRIMARY_IPV6_BADGE"), varLine("_PIN_STALE_MS"), varLine("_CONF_BAND_LABEL"), ...FNS.map(fnSrc)].join("\n") +
       "\n" + FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"),
   );
 });
@@ -129,6 +130,50 @@ describe("Address row", () => {
     expect(el.querySelector(".detail-label")!.textContent).toBe("Address");
     expect(pill(el, /^2 MACs$/)).toBeTruthy();
   });
+});
+
+describe("Address row with IPv6 on (business rule 128)", () => {
+  const withV6 = (fn: () => void) => {
+    g.polarisIpv6Enabled = true;
+    try { fn(); } finally { g.polarisIpv6Enabled = false; }
+  };
+
+  it("is one unlabelled IPv4 line while IPv6 is off", () => {
+    const el = render(g.ipViewRow(hmi({ ipv6Address: "2001:db8::5" })));
+    expect(el.querySelector(".address-family-line")).toBeNull();
+    expect(el.textContent).not.toContain("2001:db8::5");
+  });
+
+  it("labels an IPv4 line and an IPv6 line, the IPv6 marked auto", () => withV6(() => {
+    const el = render(g.ipViewRow(hmi({ ipv6Address: "2001:db8::5" })));
+    const lines = [...el.querySelectorAll(".address-family-line")] as HTMLElement[];
+    expect(lines.map((l) => l.querySelector(".address-family-tag")!.textContent)).toEqual(["IPv4", "IPv6"]);
+    expect(lines[0].textContent).toContain("172.23.25.235");
+    expect(lines[1].textContent).toContain("2001:db8::5");
+    expect(lines[1].textContent).toContain("auto");
+    expect(lines[1].textContent).not.toContain("monitored");
+  }));
+
+  it("a pinned IPv6 offers Unpin to an assets writer only", () => withV6(() => {
+    const a = hmi({ ipv6Address: "2001:db8::5", ipv6Pinned: true, ipv6PinnedBy: "dmoore" });
+    expect(render(g.ipViewRow(a)).querySelector(".primary-ipv6-unpin")).not.toBeNull();
+    canManage = false;
+    try { expect(render(g.ipViewRow(a)).querySelector(".primary-ipv6-unpin")).toBeNull(); } finally { canManage = true; }
+  }));
+
+  it("says monitored when the asset has no IPv4 and the server can reach IPv6", () => withV6(() => {
+    g.polarisIpv6Dialable = true;
+    try {
+      const el = render(g.ipViewRow(hmi({ ipAddress: null, associatedIps: [], ipv6Address: "2001:db8::5" })));
+      expect(el.textContent).toContain("monitored");
+    } finally { g.polarisIpv6Dialable = false; }
+  }));
+
+  it("says not polled when the server cannot reach IPv6", () => withV6(() => {
+    const el = render(g.ipViewRow(hmi({ ipAddress: null, associatedIps: [], ipv6Address: "2001:db8::5" })));
+    expect(el.textContent).toContain("not polled");
+    expect(el.textContent).not.toContain("monitored");
+  }));
 });
 
 describe("Address pills", () => {

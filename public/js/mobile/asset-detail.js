@@ -2323,6 +2323,9 @@
     api.assets.macTable(assetId).then(function (data) {
       if (!current()) return;
       var entries = (data && data.entries) || [];
+      // VLAN id -> name (vlanNameService); an unnamed id stays "VLAN 30".
+      var vlanNames = (data && data.vlanNames) || {};
+      function vlanLabel(id) { return vlanNames[String(id)] || ("VLAN " + id); }
       var controls = document.getElementById("table-sheet-controls");
       var meta = document.getElementById("table-sheet-meta");
       var body = document.getElementById("table-sheet-body");
@@ -2355,7 +2358,7 @@
 
       function matches(e) {
         if (!filter) return true;
-        var hay = [e.macAddress, e.ifName || "", e.vlanId != null ? "vlan " + e.vlanId : "",
+        var hay = [e.macAddress, e.ifName || "", e.vlanId != null ? "vlan " + e.vlanId + " " + vlanLabel(e.vlanId) : "",
           e.matchedAsset ? (e.matchedAsset.hostname || "") : ""].join(" ").toLowerCase();
         return hay.indexOf(filter) !== -1;
       }
@@ -2388,7 +2391,7 @@
             var summary = "· " + g.entries.length + " MAC" + (g.entries.length === 1 ? "" : "s") + (reads ? " · " + escapeHtml(reads) : "");
             var rows = g.entries.map(function (e) {
               var sub = [];
-              if (e.vlanId != null) sub.push("VLAN " + escapeHtml(String(e.vlanId)));
+              if (e.vlanId != null) sub.push(escapeHtml(vlanLabel(e.vlanId)) + (e.vlanInferred ? " (inferred)" : ""));
               if (e.status) sub.push(escapeHtml(e.status));
               var dev = matchedDeviceHtml(e.matchedAsset);
               if (dev) sub.push(dev);

@@ -33,6 +33,7 @@
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { splitInterfaceAddresses } from "../utils/interfaceAddress.js";
+import { ipv6Enabled } from "./ipv6GateService.js";
 import { logEvent } from "./eventLogService.js";
 import {
   buildInterfaceIdentity,
@@ -72,7 +73,7 @@ export type InterfaceInventoryRow = Omit<
 function toRow(i: InterfaceSample): InterfaceInventoryRow {
   // Business rule 126: IPv4 in ipAddress, IPv6 in ipv6Address, neither ever
   // loopback / link-local — whatever the collector handed over.
-  const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
+  const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address, ipv6Enabled());
   return {
     ifName:      i.ifName,
     adminStatus: i.adminStatus ?? null,

@@ -5453,7 +5453,27 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
-.mac-tooltip-row .primary-address-set { padding: 0 6px; font-size: 0.68rem; white-space: nowrap; }
+.mac-tooltip-row .primary-address-set,
+.mac-tooltip-row .primary-ipv6-set { padding: 0 6px; font-size: 0.68rem; white-space: nowrap; }
+/* With IPv6 on for the install (business rule 128) the Address row is two
+ * labelled lines — IPv4, then the primary IPv6 — right-aligned like every
+ * detail value, the pills underneath. */
+.address-family-line {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 2px;
+}
+.address-family-line + .address-family-line { margin-top: 2px; }
+.address-family-tag {
+  font-family: var(--font-sans, inherit);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  margin-right: 8px;
+}
+.address-family-line .primary-ipv6-unpin { padding: 0 6px; font-size: 0.68rem; }
 
 /* ─── Address confidence chip (business rule 103) ───────────────────────────
  * The score, 0–100, coloured by band from the status tokens. Red is kept for
@@ -6357,6 +6377,23 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   color: color-mix(in srgb, var(--hue-label) 70%, transparent);
 }
 .tag-picker-chip.hue-pill:hover { border-color: var(--color-accent); }
+
+/* A VLAN by name, its number on hover (_vlanPillHTML in assets.js). Rides
+   .hue-pill in the teal the interface VLAN badges use. `.vlan-inferred` is a
+   MAC-table VLAN filled from the access port's native VLAN, not reported. */
+.vlan-pill {
+  --hue: #0d9488;
+  display: inline-block;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  padding: 0 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  font-family: inherit;
+  cursor: default;
+}
+.vlan-pill.vlan-inferred { border-style: dashed; }
+.vlan-pills { display: inline-flex; flex-wrap: wrap; gap: 3px; vertical-align: middle; }
 
 .upload-area {
   border: 2px dashed var(--color-border);

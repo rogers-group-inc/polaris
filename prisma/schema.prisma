@@ -738,6 +738,17 @@ model Asset {
   // PIN_CONTEST_WINDOW_MS: releasing then would hand the address straight
   // back to the choice the operator overrode. Nulled when a pin is set.
   primaryAddressContestedAt DateTime?
+  // The asset's PRIMARY IPv6 (business rule 128). Chosen automatically from its
+  // IPv6 address-list rows by the address-confidence score (the
+  // reconcilePrimaryIpv6 job, services/primaryIpv6Service.ts), unless an
+  // operator pinned one (ipv6Pinned — the job then leaves it alone). Shown
+  // beside the IPv4 on the asset's General tab. Monitoring dials `ipAddress`;
+  // only an asset with NO IPv4 is polled here instead (utils/assetDialAddress.ts).
+  // Null, and never written, while IPv6 is off for the install.
+  ipv6Address     String?
+  ipv6Pinned      Boolean   @default(false)
+  ipv6PinnedAt    DateTime?
+  ipv6PinnedBy    String?
   // Polling evidence for the address-confidence score (business rule 103):
   // the IP Polaris's own probes have been answering on, and since when. Set
   // together by recordProbeResult on a successful probe Polaris SENT (never an
