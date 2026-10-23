@@ -11209,6 +11209,50 @@ function _renderCustomWidgetState(w) {
   return head + body;
 }
 
+// How a single-value widget's number is shown — display only; the stored
+// sample, and any automation on it, keep the device's own number.
+//   * A temperature unit (°C / °F on the widget) is shown in the INSTALL's unit
+//     (Server Settings temperature unit, via PolarisTempUnit), converting when
+//     they differ — a vendor reporting °F reads °C on a Celsius install.
+//   * displayOptions.format "duration_s" / "duration_ticks" reads the number as
+//     seconds / SNMP TimeTicks (hundredths of a second, e.g. APC's
+//     upsAdvBatteryRunTimeRemaining) and shows "1 h 23 m".
+// conv() maps a number into display units (gauge bounds go through it too);
+// text() is the label for one number, unit included.
+function _cwDisplay(w) {
+  var o = w.displayOptions || {};
+  var TU = window.PolarisTempUnit;
+  if (TU && TU.isTemperatureUnit && TU.isTemperatureUnit(o.unit)) {
+    var label = TU.displayUnitAny(o.unit);
+    return {
+      conv: function (n) { return TU.toDisplay(n, o.unit); },
+      text: function (n) { return _formatNumber(n) + " " + label; },
+    };
+  }
+  if (o.format === "duration_s" || o.format === "duration_ticks") {
+    var div = o.format === "duration_ticks" ? 100 : 1;
+    return {
+      conv: function (n) { return n; },
+      text: function (n) { return _formatDuration(n / div); },
+    };
+  }
+  var unit = o.unit ? " " + o.unit : "";
+  return {
+    conv: function (n) { return n; },
+    text: function (n) { return _formatNumber(n) + unit; },
+  };
+}
+
+/** Seconds as the two largest units: "2 d 3 h", "1 h 23 m", "45 m 10 s", "42 s". */
+function _formatDuration(sec) {
+  if (!Number.isFinite(sec)) return String(sec);
+  var neg = sec < 0;
+  var s = Math.round(Math.abs(sec));
+  var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  var out = d ? d + " d " + h + " h" : h ? h + " h " + m + " m" : m ? m + " m " + r + " s" : r + " s";
+  return (neg ? "-" : "") + out;
+}
+
 function _renderCustomWidgetGauge(w) {
   // Compact radial-arc — 180° sweep from min to max with one threshold
   // band drawn at displayOptions.warningAt if set, and the current value
@@ -11221,8 +11265,11 @@ function _renderCustomWidgetGauge(w) {
     return '<div style="font-size:0.85rem">' + escapeHtml(String(raw)) + '</div>';
   }
   var opts = w.displayOptions || {};
-  var min = Number.isFinite(opts.min) ? opts.min : 0;
-  var max = Number.isFinite(opts.max) ? opts.max : 100;
+  var fmt = _cwDisplay(w);
+  // Bounds are entered in the widget's own unit, so they convert with the value.
+  var min = fmt.conv(Number.isFinite(opts.min) ? opts.min : 0);
+  var max = fmt.conv(Number.isFinite(opts.max) ? opts.max : 100);
+  n = fmt.conv(n);
   var pct = max > min ? Math.max(0, Math.min(1, (n - min) / (max - min))) : 0;
   var theta = Math.PI * (1 - pct);  // 180° -> 0°
   var cx = 80, cy = 70, r = 56;
@@ -11230,16 +11277,15 @@ function _renderCustomWidgetGauge(w) {
   var endX = cx + r * Math.cos(theta);
   var endY = cy - r * Math.sin(theta);
   var largeArc = pct > 0.5 ? 1 : 0;
-  var unit = opts.unit ? (" " + opts.unit) : "";
   return '<div style="text-align:center">' +
     '<svg width="160" height="86" viewBox="0 0 160 86" aria-hidden="true">' +
       '<path d="M ' + (cx - r) + ' ' + cy + ' A ' + r + ' ' + r + ' 0 0 1 ' + (cx + r) + ' ' + cy + '" stroke="var(--color-border)" stroke-width="10" fill="none" stroke-linecap="round"/>' +
       '<path d="M ' + startX + ' ' + startY + ' A ' + r + ' ' + r + ' 0 ' + largeArc + ' 1 ' + endX + ' ' + endY + '" stroke="#22d3ee" stroke-width="10" fill="none" stroke-linecap="round"/>' +
       '<text x="' + cx + '" y="' + (cy - 6) + '" text-anchor="middle" font-size="20" font-weight="600" fill="currentColor">' +
-        escapeHtml(_formatNumber(n)) + escapeHtml(unit) +
+        escapeHtml(fmt.text(n)) +
       '</text>' +
       '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" font-size="10" fill="var(--color-text-tertiary)">' +
-        escapeHtml(_formatNumber(min)) + ' &ndash; ' + escapeHtml(_formatNumber(max)) +
+        escapeHtml(fmt.text(min)) + ' &ndash; ' + escapeHtml(fmt.text(max)) +
       '</text>' +
     '</svg>' +
   '</div>';
@@ -11250,10 +11296,11 @@ function _renderCustomWidgetLine(w) {
   // returned. We don't reuse the larger System-tab chart helper (which
   // hardcodes axes specific to telemetry / RTT) — custom widgets need to
   // adapt their y-range to the actual data domain.
+  var fmt = _cwDisplay(w);
   var pts = [];
   (w.samples || []).forEach(function (s) {
     var n = typeof s.value === "number" ? s.value : Number(s.value);
-    if (Number.isFinite(n)) pts.push({ t: new Date(s.timestamp).getTime(), v: n });
+    if (Number.isFinite(n)) pts.push({ t: new Date(s.timestamp).getTime(), v: fmt.conv(n) });
   });
   if (pts.length < 2) {
     return _renderCustomWidgetScalarFallback(w);
@@ -11268,14 +11315,13 @@ function _renderCustomWidgetLine(w) {
     var y = (H - P) - (H - 2 * P) * ((p.v - minV) / (maxV - minV));
     return x.toFixed(1) + "," + y.toFixed(1);
   });
-  var unit = (w.displayOptions && w.displayOptions.unit) ? (" " + w.displayOptions.unit) : "";
   return '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
     '<polyline fill="none" stroke="#22d3ee" stroke-width="1.4" points="' + coords.join(" ") + '"/>' +
   '</svg>' +
   '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--color-text-tertiary);margin-top:2px">' +
-    '<span>min ' + escapeHtml(_formatNumber(minV)) + escapeHtml(unit) + '</span>' +
-    '<span>latest ' + escapeHtml(_formatNumber(pts[pts.length - 1].v)) + escapeHtml(unit) + '</span>' +
-    '<span>max ' + escapeHtml(_formatNumber(maxV)) + escapeHtml(unit) + '</span>' +
+    '<span>min ' + escapeHtml(fmt.text(minV)) + '</span>' +
+    '<span>latest ' + escapeHtml(fmt.text(pts[pts.length - 1].v)) + '</span>' +
+    '<span>max ' + escapeHtml(fmt.text(maxV)) + '</span>' +
   '</div>';
 }
 
@@ -11305,10 +11351,17 @@ function _renderCustomWidgetTable(w) {
 
 function _renderCustomWidgetScalarFallback(w) {
   var v = w.latest && w.latest.value;
-  var txt = (v === null || v === undefined) ? "—" :
-            (typeof v === "object" ? JSON.stringify(v) : String(v));
-  var unit = (w.displayOptions && w.displayOptions.unit) ? (" " + w.displayOptions.unit) : "";
-  return '<div style="font-size:1.4rem;font-weight:600">' + escapeHtml(txt) + escapeHtml(unit) + '</div>';
+  var n = typeof v === "number" ? v : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+  var txt;
+  if (Number.isFinite(n)) {
+    var fmt = _cwDisplay(w);
+    txt = fmt.text(fmt.conv(n));
+  } else {
+    // Not a number (a DisplayString, a row array): shown as is, with its unit.
+    var unit = (w.displayOptions && w.displayOptions.unit) ? (" " + w.displayOptions.unit) : "";
+    txt = ((v === null || v === undefined) ? "—" : (typeof v === "object" ? JSON.stringify(v) : String(v))) + unit;
+  }
+  return '<div style="font-size:1.4rem;font-weight:600">' + escapeHtml(txt) + '</div>';
 }
 
 function _formatNumber(n) {

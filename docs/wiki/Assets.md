@@ -1178,6 +1178,12 @@ Shown when the asset's manufacturer profile defines **custom widgets**
 drawn as its type says — a gauge with its threshold ranges, a line over the
 last 60 samples, the latest value as text, a table, or a pass/fail state.
 
+A widget whose unit is **°C** or **°F** is shown in your install's
+temperature unit (Server Settings), converted when the two differ. A widget
+set to show a **duration** turns seconds, or SNMP TimeTicks, into hours and
+minutes ("1 h 23 m"). Both are display only: automations on a widget still
+compare the number the device reports.
+
 **A widget polls this asset only when its switch is on.** Each manufacturer
 widget's card has a switch at its top right. Off (the default for a new
 widget) means Polaris never asks the device for that widget. The card says

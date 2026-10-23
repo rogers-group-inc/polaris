@@ -87,6 +87,49 @@ describe("_cmibCompleteLayout (client)", () => {
   });
 });
 
+describe("value display (client: _cwDisplay / _formatDuration)", () => {
+  // A stand-in for PolarisTempUnit's two-way helpers; the real module is
+  // pinned in tempUnit.test.ts. `fahrenheit` is the install's unit.
+  function tu(fahrenheit: boolean) {
+    const isC = (u: unknown) => typeof u === "string" && /^\s*(?:°\s*)?c\s*$/i.test(u);
+    const isF = (u: unknown) => typeof u === "string" && /^\s*(?:°\s*)?f\s*$/i.test(u);
+    return {
+      isTemperatureUnit: (u: unknown) => isC(u) || isF(u),
+      displayUnitAny: () => (fahrenheit ? "°F" : "°C"),
+      toDisplay: (v: number, u: unknown) =>
+        isC(u) ? (fahrenheit ? v * 9 / 5 + 32 : v) : isF(u) ? (fahrenheit ? v : (v - 32) * 5 / 9) : v,
+    };
+  }
+  function load(fahrenheit: boolean) {
+    // eslint-disable-next-line no-new-func
+    return new Function(
+      "window",
+      `${fnSrc("_formatNumber")}\n${fnSrc("_formatDuration")}\n${fnSrc("_cwDisplay")}\nreturn { display: _cwDisplay, duration: _formatDuration };`,
+    )({ PolarisTempUnit: tu(fahrenheit) });
+  }
+  const show = (lib: any, w: any, n: number) => { const f = lib.display(w); return f.text(f.conv(n)); };
+
+  it("shows a °C widget in °F on a Fahrenheit install, and a °F widget in °C on a Celsius one", () => {
+    expect(show(load(true), { displayOptions: { unit: "°C" } }, 25)).toBe("77.0 °F");
+    expect(show(load(false), { displayOptions: { unit: "°F" } }, 212)).toBe("100.0 °C");
+    // Matching units: no conversion.
+    expect(show(load(false), { displayOptions: { unit: "C" } }, 24)).toBe("24.0 °C");
+  });
+
+  it("reads a duration from seconds or TimeTicks as the two largest units", () => {
+    const lib = load(false);
+    expect(show(lib, { displayOptions: { format: "duration_s" } }, 4980)).toBe("1 h 23 m");
+    // APC upsAdvBatteryRunTimeRemaining: 162000 TimeTicks = 1620 s.
+    expect(show(lib, { displayOptions: { format: "duration_ticks" } }, 162000)).toBe("27 m 0 s");
+    expect(lib.duration(42)).toBe("42 s");
+    expect(lib.duration(2 * 86400 + 3 * 3600 + 59)).toBe("2 d 3 h");
+  });
+
+  it("leaves a plain number with its own unit alone", () => {
+    expect(show(load(true), { displayOptions: { unit: "%" } }, 42)).toBe("42.0 %");
+  });
+});
+
 describe("display-type picker (client)", () => {
   // eslint-disable-next-line no-new-func
   const picker = new Function(

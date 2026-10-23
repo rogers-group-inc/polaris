@@ -10060,20 +10060,44 @@ function _widgetTypeSelectHTML(cls, current) {
 //   line  → unit
 //   table → no operator-tunable options; the renderer derives columns
 //           from the latest sample.
+// How a single-value widget's number reads (the asset tab's _cwDisplay):
+// "" = a plain number with its unit; a duration format reads it as seconds or
+// SNMP TimeTicks (hundredths of a second) and shows "1 h 23 m".
+var WIDGET_VALUE_FORMATS = [
+  ["", "Number"],
+  ["duration_s", "Duration (from seconds)"],
+  ["duration_ticks", "Duration (from TimeTicks)"],
+];
+var WIDGET_UNIT_HINT = '<div class="hint" style="grid-column:1/-1;margin:0;font-size:0.74rem">' +
+  'Set the unit to <b>°C</b> or <b>°F</b> for a temperature: it is shown in the install\'s temperature unit, converted when they differ.' +
+'</div>';
+
+function _widgetFormatSelectHTML(current) {
+  return '<select class="mfg-widget-opt-format" style="width:100%;font-size:0.82rem">' +
+    WIDGET_VALUE_FORMATS.map(function (f) {
+      return '<option value="' + f[0] + '"' + ((current || "") === f[0] ? " selected" : "") + '>' + f[1] + '</option>';
+    }).join("") +
+  '</select>';
+}
+
 function _widgetDisplayOptionsForm(widgetType, opts) {
   var o = opts || {};
   function num(v) { return (v === null || v === undefined) ? "" : String(v); }
   if (widgetType === "gauge") {
-    return '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px 10px">' +
+    return '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px 10px">' +
       _widgetFormField("Min", '<input type="number" class="mfg-widget-opt-min" value="' + escapeHtml(num(o.min)) + '" step="any" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Max", '<input type="number" class="mfg-widget-opt-max" value="' + escapeHtml(num(o.max)) + '" step="any" style="width:100%;font-size:0.82rem">') +
-      _widgetFormField("Unit", '<input type="text"   class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. % or clients" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Unit", '<input type="text"   class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. %, °C or clients" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Warning at", '<input type="number" class="mfg-widget-opt-warning" value="' + escapeHtml(num(o.warningAt)) + '" step="any" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
+      WIDGET_UNIT_HINT +
     '</div>';
   }
   if (widgetType === "line" || widgetType === "value") {
     return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
-      _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps or %" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps, % or °C" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
+      WIDGET_UNIT_HINT +
     '</div>';
   }
   // table — no editable options
@@ -10091,6 +10115,10 @@ function _widgetOptionsSummary(w) {
     if (o.warningAt != null) parts.push("warn " + o.warningAt);
   } else if (w.widgetType === "line" || w.widgetType === "value") {
     if (o.unit) parts.push("unit " + o.unit);
+  }
+  if (o.format) {
+    var f = WIDGET_VALUE_FORMATS.find(function (x) { return x[0] === o.format; });
+    if (f) parts.push(f[1].toLowerCase());
   }
   return parts.length ? escapeHtml(parts.join(" · ")) : "";
 }
@@ -10123,6 +10151,10 @@ function _readWidgetDisplayOptions(scope, widgetType) {
   } else if (widgetType === "line" || widgetType === "value") {
     var unitL = strOrNull(scope.querySelector(".mfg-widget-opt-unit"));
     if (unitL) out.unit = unitL;
+  }
+  if (widgetType === "gauge" || widgetType === "line" || widgetType === "value") {
+    var fmt = strOrNull(scope.querySelector(".mfg-widget-opt-format"));
+    if (fmt) out.format = fmt;
   }
   return out;
 }

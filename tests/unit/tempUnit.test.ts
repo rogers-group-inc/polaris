@@ -141,3 +141,38 @@ describe("convertCelsius", () => {
     expect(TU.convertCelsius(null)).toBeNull();
   });
 });
+
+// ── Either direction: manufacturer custom widgets declare °C OR °F ─────────
+describe("toDisplay / displayUnitAny (custom widgets)", () => {
+  const T = () => TU as typeof TU & {
+    isTemperatureUnit: (u: unknown) => boolean;
+    toDisplay: (v: unknown, u: unknown) => unknown;
+    displayUnitAny: (u: unknown) => unknown;
+  };
+
+  it("shows a °F reading in °C on a Celsius install, and leaves it on a Fahrenheit one", () => {
+    TU.setUnit("c");
+    expect(T().toDisplay(212, "°F")).toBe(100);
+    expect(T().displayUnitAny("F")).toBe("°C");
+    TU.setUnit("f");
+    expect(T().toDisplay(212, "°F")).toBe(212);
+    expect(T().displayUnitAny("°F")).toBe("°F");
+  });
+
+  it("shows a °C reading in °F on a Fahrenheit install, and leaves it on a Celsius one", () => {
+    TU.setUnit("f");
+    expect(T().toDisplay(100, "°C")).toBe(212);
+    expect(T().displayUnitAny("C")).toBe("°F");
+    TU.setUnit("c");
+    expect(T().toDisplay(100, "c")).toBe(100);
+  });
+
+  it("passes anything that is not a temperature through untouched", () => {
+    TU.setUnit("f");
+    expect(T().toDisplay(42, "%")).toBe(42);
+    expect(T().toDisplay(42, undefined)).toBe(42);
+    expect(T().displayUnitAny("V")).toBe("V");
+    expect(T().isTemperatureUnit("°F")).toBe(true);
+    expect(T().isTemperatureUnit("fps")).toBe(false);
+  });
+});

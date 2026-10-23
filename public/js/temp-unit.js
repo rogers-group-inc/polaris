@@ -101,6 +101,35 @@
     return isFahrenheit() ? FAHRENHEIT_LABEL : CELSIUS_LABEL;
   }
 
+  // ── Either direction (custom widgets) ─────────────────────────────────────
+  // A hardware sensor is always stored in Celsius, but a manufacturer custom
+  // widget reads whatever the vendor's MIB reports and declares its unit on the
+  // widget — °C or °F. These show it in the install's unit whichever it is.
+  // Display only, like everything here: the stored sample and any automation on
+  // it stay in the device's own unit.
+
+  /** Is this unit string a Fahrenheit reading? ("F", "°F", " ° f ") */
+  function isFahrenheitUnit(u) {
+    return typeof u === "string" && /^\s*(?:°\s*)?f\s*$/i.test(u);
+  }
+
+  /** Is this unit string a temperature (°C or °F) this module can convert? */
+  function isTemperatureUnit(u) { return isCelsiusUnit(u) || isFahrenheitUnit(u); }
+
+  /** A reading in `storedUnit` (°C or °F) in the install's unit; anything else unchanged. */
+  function toDisplay(v, storedUnit) {
+    if (typeof v !== "number" || !isFinite(v)) return v;
+    if (isCelsiusUnit(storedUnit)) return isFahrenheit() ? v * 9 / 5 + 32 : v;
+    if (isFahrenheitUnit(storedUnit)) return isFahrenheit() ? v : (v - 32) * 5 / 9;
+    return v;
+  }
+
+  /** The label for `storedUnit` in the install's unit — swapped for °C AND °F. */
+  function displayUnitAny(storedUnit) {
+    if (!isTemperatureUnit(storedUnit)) return storedUnit;
+    return isFahrenheit() ? FAHRENHEIT_LABEL : CELSIUS_LABEL;
+  }
+
   window.PolarisTempUnit = {
     unit: unit,
     isFahrenheit: isFahrenheit,
@@ -111,6 +140,10 @@
     convertReading: convertReading,
     displayUnit: displayUnit,
     celsiusLabel: celsiusLabel,
+    isFahrenheitUnit: isFahrenheitUnit,
+    isTemperatureUnit: isTemperatureUnit,
+    toDisplay: toDisplay,
+    displayUnitAny: displayUnitAny,
     CELSIUS_LABEL: CELSIUS_LABEL,
     FAHRENHEIT_LABEL: FAHRENHEIT_LABEL,
   };
