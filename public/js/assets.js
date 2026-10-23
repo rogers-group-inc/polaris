@@ -10786,6 +10786,31 @@ function _cmibCompleteLayout(saved, widgets) {
   return { version: 1, columns: columns };
 }
 
+// How a single-value widget is drawn — switchable from the layout editor, and
+// saved to the widget on the manufacturer profile with the layout. Only a
+// SCALAR symbol's gauge / line / value (or a table widget mistakenly pointed
+// at a scalar, offered so it can be fixed): a state probe, an HTTP check or a
+// real table walk is a different kind of widget, changed on the profile.
+var CMIB_DISPLAY_TYPES = [["gauge", "Gauge"], ["line", "Line"], ["value", "Value"]];
+function _cmibCanSwitchType(w) {
+  return w.type === "scalar" && ["gauge", "line", "value", "table"].indexOf(w.widgetType) !== -1;
+}
+function _cmibTypePickerHTML(w) {
+  if (!_cmibCanSwitchType(w)) return "";
+  var opts = CMIB_DISPLAY_TYPES.slice();
+  if (w.widgetType === "table") opts.push(["table", "Table"]);
+  return '<select class="cmib-type" data-widget-id="' + escapeHtml(w.id) + '" title="Show this widget as" style="font-size:0.72rem;padding:1px 4px;width:auto">' +
+    opts.map(function (o) {
+      return '<option value="' + o[0] + '"' + (o[0] === w.widgetType ? " selected" : "") + '>' + o[1] + '</option>';
+    }).join("") +
+  '</select>';
+}
+/** The widget as the editor shows it: its pending display type, if changed. */
+function _cmibShown(w) {
+  var t = _cmib.typeChanges && _cmib.typeChanges[w.id];
+  return t ? Object.assign({}, w, { widgetType: t }) : w;
+}
+
 function _cmibCardHTML(w, opts) {
   opts = opts || {};
   var hasSwitch = _cmibIsMfr(w);
@@ -10808,7 +10833,7 @@ function _cmibCardHTML(w, opts) {
       '</span>' +
       '<span style="display:flex;align-items:center;gap:8px;min-width:0">' +
         '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis">' + escapeHtml(w.symbol) + '</span>' +
-        (opts.editing ? '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : toggle) +
+        (opts.editing ? _cmibTypePickerHTML(w) + '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : toggle) +
       '</span>' +
     '</div>' +
     (off
@@ -10833,7 +10858,7 @@ function _cmibLayoutHTML(layout, byId, editing) {
     }
     c.widgets.forEach(function (x) {
       var w = byId[x.id];
-      if (w) html += _cmibCardHTML(w, { editing: editing, height: x.height });
+      if (w) html += _cmibCardHTML(editing ? _cmibShown(w) : w, { editing: editing, height: x.height });
     });
     html += '</div>';
   });
@@ -10875,7 +10900,7 @@ function _customMibTabHTML(payload) {
   var anyOn = mfrWidgets.some(function (w) { return w.enabled; });
   if (_cmib.editing) {
     hint = '<b>Editing the layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset.</b> ' +
-      'Drag a card by ⠿ into any column, set each column\'s width and each card\'s height, then click ✓ to save.';
+      'Drag a card by ⠿ into any column, set each column\'s width and each card\'s height, and switch a single-value widget between Gauge, Line and Value, then click ✓ to save. Display changes are saved to the widget on the profile.';
   } else if (mfrWidgets.length && !anyOn) {
     hint += ' <span style="color:var(--color-warning)">Polling is off for every widget — ' +
       (canManageAssets() ? 'switch a card on to start collecting.' : 'an asset editor can switch one on.') + '</span>';
@@ -10977,17 +11002,27 @@ document.addEventListener("click", async function (e) {
     if (!_cmib.editing) {
       _cmib.working = _cmibCompleteLayout(_cmib.payload.widgetLayout, _cmib.payload.widgets);
       _cmib.reset = false;
+      _cmib.typeChanges = {};
       _cmib.editing = true;
       _cmibRerender();
       return;
     }
     editBtn.disabled = true;
     try {
+      // Display-type changes are written to the WIDGETS on the profile first
+      // (each a partial update carrying only widgetType), then the layout.
+      var changed = Object.keys(_cmib.typeChanges || {});
+      for (var k = 0; k < changed.length; k++) {
+        var wid = changed[k];
+        await api.serverSettings.updateProfileWidget(_cmib.payload.profileId, wid, { widgetType: _cmib.typeChanges[wid] });
+        _cmib.payload.widgets.forEach(function (w) { if (w.id === wid) w.widgetType = _cmib.typeChanges[wid]; });
+      }
       var resp = await api.serverSettings.setProfileWidgetLayout(_cmib.payload.profileId, _cmib.reset ? null : _cmib.working);
       _cmib.payload.widgetLayout = resp ? resp.layout : null;
       _cmib.editing = false;
       _cmib.working = null;
-      showToast("Layout saved for every " + (_cmib.payload.manufacturer || "") + " asset", "success");
+      _cmib.typeChanges = {};
+      showToast("Layout" + (changed.length ? " and widget display" : "") + " saved for every " + (_cmib.payload.manufacturer || "") + " asset", "success");
       _cmibRerender();
     } catch (err) {
       editBtn.disabled = false;
@@ -10999,6 +11034,7 @@ document.addEventListener("click", async function (e) {
   if (t.closest(".cmib-cancel")) {
     _cmib.editing = false;
     _cmib.working = null;
+    _cmib.typeChanges = {};
     _cmibRerender();
     return;
   }
@@ -11087,6 +11123,18 @@ document.addEventListener("dragend", function () {
   document.querySelectorAll(".custom-mib-card.lifted").forEach(function (c) { c.classList.remove("lifted"); });
 });
 
+// The layout editor's display-type picker: staged until ✓, previewed at once.
+document.addEventListener("change", function (e) {
+  var sel = e.target;
+  if (!sel || !sel.classList || !sel.classList.contains("cmib-type") || !_cmib.editing) return;
+  var wid = sel.getAttribute("data-widget-id");
+  var original = (_cmib.payload.widgets.find(function (w) { return w.id === wid; }) || {}).widgetType;
+  _cmib.typeChanges = _cmib.typeChanges || {};
+  if (sel.value === original) delete _cmib.typeChanges[wid];
+  else _cmib.typeChanges[wid] = sel.value;
+  _cmibRerender();
+});
+
 // The Custom MIB card switch (business rule 130). Delegated at the document so
 // the panel can re-render freely; on success the panel is redrawn from a fresh
 // payload, on failure the switch snaps back and the error is toasted.
@@ -11120,6 +11168,7 @@ function _renderCustomWidgetBody(w) {
     return '<p class="empty-state" style="padding:0.5rem 0;margin:0">No sample yet.</p>';
   }
   if (w.widgetType === "gauge") return _renderCustomWidgetGauge(w);
+  if (w.widgetType === "value") return _renderCustomWidgetScalarFallback(w);
   if (w.widgetType === "line")  return _renderCustomWidgetLine(w);
   if (w.widgetType === "table") return _renderCustomWidgetTable(w);
   return '<p class="empty-state" style="padding:0.5rem 0;margin:0">Unknown widgetType: ' + escapeHtml(w.widgetType) + '</p>';

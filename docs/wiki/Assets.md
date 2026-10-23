@@ -1176,7 +1176,7 @@ automation in the wizard in place, for `automationManagement:write`.
 Shown when the asset's manufacturer profile defines **custom widgets**
 (Server Settings → Credentials → Manufacturer Profiles). One card per widget,
 drawn as its type says — a gauge with its threshold ranges, a line over the
-last 60 samples, a table, or a pass/fail state.
+last 60 samples, the latest value as text, a table, or a pass/fail state.
 
 **A widget polls this asset only when its switch is on.** Each manufacturer
 widget's card has a switch at its top right. Off (the default for a new
@@ -1203,6 +1203,12 @@ Dashboard's **Customize Page** works:
 - Click a column's **3/12** button to cycle its width through 3, 4, 6 and 12
   twelfths of the row, and **‹ ›** to move the column.
 - Click a card's **1×** button to cycle its height through 1×, 2× and 3×.
+- Change how a single-value widget is drawn with the picker on its card:
+  **Gauge**, **Line** or **Value** (just the latest reading as text, with
+  its unit). This changes the widget itself on the manufacturer profile, so
+  it applies on every asset. A widget showing **Table** for a single value
+  (it reads "No rows.") can be switched to Value here. State probes, HTTP
+  checks and real tables keep their type; change those on the profile.
 
 Click the pencil again (now a ✓) to save, **Cancel** to discard, or **Reset**
 then ✓ to go back to the default grid. The arrangement is saved on the

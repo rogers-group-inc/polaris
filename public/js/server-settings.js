@@ -9698,10 +9698,10 @@ function renderProfileDetail(detail) {
 // Each card has a compact view mode and an inline-expanded edit mode.
 
 var WIDGET_TYPE_LABELS = {
-  gauge: "Gauge", line: "Line chart", table: "Table",
+  gauge: "Gauge", line: "Line chart", value: "Value", table: "Table",
   state: "State (0/1)", http: "HTTP check",
 };
-var WIDGET_TYPE_ORDER  = ["gauge", "line", "table", "state", "http"];
+var WIDGET_TYPE_ORDER  = ["gauge", "line", "value", "table", "state", "http"];
 
 // ─── State probes (widgetType "state") ──────────────────────────────────
 // A status-shaped OID rather than a gauge: an alarm bit, a PSU present flag, a
@@ -10071,7 +10071,7 @@ function _widgetDisplayOptionsForm(widgetType, opts) {
       _widgetFormField("Warning at", '<input type="number" class="mfg-widget-opt-warning" value="' + escapeHtml(num(o.warningAt)) + '" step="any" style="width:100%;font-size:0.82rem">') +
     '</div>';
   }
-  if (widgetType === "line") {
+  if (widgetType === "line" || widgetType === "value") {
     return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
       _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps or %" style="width:100%;font-size:0.82rem">') +
     '</div>';
@@ -10089,7 +10089,7 @@ function _widgetOptionsSummary(w) {
     if (o.max != null) parts.push("max " + o.max);
     if (o.unit)        parts.push("unit " + o.unit);
     if (o.warningAt != null) parts.push("warn " + o.warningAt);
-  } else if (w.widgetType === "line") {
+  } else if (w.widgetType === "line" || w.widgetType === "value") {
     if (o.unit) parts.push("unit " + o.unit);
   }
   return parts.length ? escapeHtml(parts.join(" · ")) : "";
@@ -10120,7 +10120,7 @@ function _readWidgetDisplayOptions(scope, widgetType) {
     if (max != null)  out.max = max;
     if (unit)         out.unit = unit;
     if (warn != null) out.warningAt = warn;
-  } else if (widgetType === "line") {
+  } else if (widgetType === "line" || widgetType === "value") {
     var unitL = strOrNull(scope.querySelector(".mfg-widget-opt-unit"));
     if (unitL) out.unit = unitL;
   }

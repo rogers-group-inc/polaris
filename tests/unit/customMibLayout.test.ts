@@ -87,6 +87,34 @@ describe("_cmibCompleteLayout (client)", () => {
   });
 });
 
+describe("display-type picker (client)", () => {
+  // eslint-disable-next-line no-new-func
+  const picker = new Function(
+    "escapeHtml",
+    `${lines.find((l) => l.startsWith("var CMIB_DISPLAY_TYPES"))}\n${fnSrc("_cmibCanSwitchType")}\n${fnSrc("_cmibTypePickerHTML")}\nreturn { can: _cmibCanSwitchType, html: _cmibTypePickerHTML };`,
+  )((x: unknown) => String(x ?? ""));
+
+  it("is offered for a scalar gauge, line or value widget", () => {
+    for (const widgetType of ["gauge", "line", "value"]) {
+      expect(picker.can({ type: "scalar", widgetType })).toBe(true);
+    }
+  });
+
+  it("is offered for a table widget pointed at a scalar, with Table kept as an option", () => {
+    // The "Last Fail Cause" case: a scalar symbol shown as a Table reads
+    // "No rows."; the picker is how it becomes a Value.
+    expect(picker.can({ type: "scalar", widgetType: "table" })).toBe(true);
+    expect(picker.html({ id: "w", type: "scalar", widgetType: "table" })).toContain('value="table" selected');
+  });
+
+  it("is not offered for a state probe, an HTTP check or a real table walk", () => {
+    expect(picker.can({ type: "scalar", widgetType: "state" })).toBe(false);
+    expect(picker.can({ type: "scalar", widgetType: "http" })).toBe(false);
+    expect(picker.can({ type: "table", widgetType: "table" })).toBe(false);
+    expect(picker.html({ id: "w", type: "table", widgetType: "line" })).toBe("");
+  });
+});
+
 describe("_cmibMoveWidget (client)", () => {
   let state: { working: { version: 1; columns: Array<{ id: string; width: number; widgets: Array<{ id: string; height: number }> }> } };
   let move: (id: string, col: string | null, index: number) => void;

@@ -177,7 +177,7 @@ export interface CustomWidgetRow {
   /** NULL on an "http" widget — there is no MIB behind a URL. */
   mibId:          string | null;
   type:           "scalar" | "table";
-  widgetType:     "gauge" | "line" | "table" | "state" | "http";
+  widgetType:     "gauge" | "line" | "value" | "table" | "state" | "http";
   transform:      TransformKind | null;
   displayOptions: Record<string, unknown>;
   order:          number;
@@ -313,9 +313,9 @@ function asMetricRowType(value: unknown): MetricRowType {
 // "state" is the 0/1 probe (see src/utils/stateProbes.ts): same walk, but the
 // reading is mapped to a boolean at scrape time and lands in AssetStateSample
 // instead of AssetCustomWidgetSample, which is what makes it alertable per row.
-function asWidgetType(value: unknown): "gauge" | "line" | "table" | "state" | "http" {
-  if (value === "gauge" || value === "line" || value === "table" || value === "state" || value === "http") return value;
-  throw new AppError(400, "Invalid widgetType — expected gauge | line | table | state | http");
+function asWidgetType(value: unknown): "gauge" | "line" | "value" | "table" | "state" | "http" {
+  if (value === "gauge" || value === "line" || value === "value" || value === "table" || value === "state" || value === "http") return value;
+  throw new AppError(400, "Invalid widgetType — expected gauge | line | value | table | state | http");
 }
 
 /**
@@ -376,7 +376,7 @@ function asWidgetSymbolType(value: unknown): "scalar" | "table" {
  * behind that a later type flip would resurrect.
  */
 function stateFieldsForWrite(
-  widgetType: "gauge" | "line" | "table" | "state" | "http",
+  widgetType: "gauge" | "line" | "value" | "table" | "state" | "http",
   stateMap: unknown,
   labelSymbol: unknown,
 ): { stateMap: StateMap | null; labelSymbol: string | null } {

@@ -4620,7 +4620,7 @@ model ManufacturerCustomWidget {
   mibId          String?
   mib            MibFile?            @relation("ManufacturerCustomWidgetMib", fields: [mibId], references: [id])
   type           String              @default("scalar") // "scalar" | "table" (auto-detected; operator can override)
-  widgetType     String // "gauge" | "line" | "table" | "state" | "http"
+  widgetType     String // "gauge" | "line" | "value" | "table" | "state" | "http"
   // -- HTTP checks (widgetType = "http") -----------------------------------
   // The check DEFINITION (useHttps / port / path / expectStatus / expectBody /
   // matchMode / caseSensitive / failOnMismatch / verifyTls), validated by
