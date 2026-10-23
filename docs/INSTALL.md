@@ -1194,6 +1194,37 @@ deployments update by pulling a new tag. Every commit to `main` builds and
 publishes `:latest`, the branch name, and `:sha-<short>` to GHCR via GitHub
 Actions.
 
+### IPv6 in a container
+
+Polaris handles IPv6 only when the machine it runs on has a routable IPv6
+address (Server Settings → Web Server → IPv6, on **Automatic**). In a container
+that machine is the *container*, not the host. Docker's and podman's default
+networks are IPv4-only, so on them IPv6 stays off even when the host and the LAN
+are dual-stack. Turning IPv6 on for the host later changes nothing inside the
+container.
+
+To use IPv6, give the container network an IPv6 subnet, then leave the setting on
+Automatic. Polaris turns IPv6 on by itself within a minute of the containers
+coming back up.
+
+- **Compose (`docker-compose.yml`):** uncomment the `networks:` block at the end
+  of the file. It enables IPv6 on the stack's default network with a unique-local
+  (`fd00::/8`) subnet, and outbound traffic is translated to the host's IPv6
+  address. Then run `docker compose down && docker compose up -d`. A restart is
+  not enough, because the network has to be re-created. You need Docker Engine 27
+  or later, where IPv6 NAT is on by default, or podman 4 or later.
+- **Single container (Unraid):** put the container on a custom network that has
+  IPv6, such as `br0` with IPv6 enabled under Settings → Network Settings, so the
+  container gets its own address on the LAN. The `host` network also works.
+  On the default `bridge` network IPv6 stays off.
+
+Avoid forcing **Always on** instead. Without an IPv6 network the container cannot
+send to IPv6 devices. Polaris still discovers and shows IPv6 addresses, but it
+does not poll a device that has only an IPv6 address, and the IPv6 card shows a
+warning. Check from inside a container with
+`docker compose exec web ip -6 addr show scope global`: if it prints an address,
+the container has IPv6.
+
 ### Sizing — connections multiply
 
 Each process opens its own Prisma + pg-boss pool, so the group needs roughly

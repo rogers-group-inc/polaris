@@ -376,9 +376,16 @@ server has. Link-local (fe80::) and loopback addresses are not counted.
 
 - **Automatic** (the default): on when this server has a routable IPv6
   address, off when it does not.
-- **Always on**: for a container install whose container sees no IPv6
-  even though the host and the network use it.
+- **Always on**: when detection is wrong for your setup. Devices with only an
+  IPv6 address are still polled only if this server can reach IPv6; when it
+  cannot, the card shows a warning and those devices are left unpolled.
 - **Always off**: for a network where IPv6 is present but not wanted.
+
+**In a container, "this server" is the container.** Docker's and podman's
+default networks are IPv4-only, so IPv6 stays off there even on a dual-stack
+host. Enable IPv6 on the container network and leave the setting on
+Automatic; forcing Always on does not give the container a way to reach IPv6
+devices. The install guide's *IPv6 in a container* section has the steps.
 
 While IPv6 is off, discovery reads no DHCPv6 scopes, router-advertised
 prefixes or IPv6 leases, interfaces record no IPv6 address, assets have no

@@ -19,6 +19,7 @@ underneath the app rather than the app itself.
 | restart an update that died on a TLS-intercepting network | *Recovering an install whose update already failed on TLS interception* |
 | put an existing HA cluster's Patroni REST API on TLS | *Patroni REST API over TLS* |
 | run `update-linux.sh` / `setup-rhel-ha.sh` safely | *Run the manual updater's reviewed copy* |
+| turn on IPv6 for an existing Docker / podman install | *Turning on IPv6 in an existing container install* |
 
 Each one stops the service, so each one wants a maintenance window. None of them
 is on a schedule — do them when the Platform Lifecycle card (Server Settings →
@@ -989,3 +990,25 @@ sudo bash /root/polaris-setup/deploy/update-linux.sh
 It offers to install `polaris-update-linux` on the way. Set
 `POLARIS_UPDATE_FROM_TREE=1` (or `POLARIS_HA_SETUP_FROM_TREE=1`) to run a
 tree copy you have read yourself instead of handing over.
+
+## Turning on IPv6 in an existing container install
+
+A container install created from the shipped `docker-compose.yml` runs on an
+IPv4-only network, so Polaris leaves IPv6 off however the host is configured
+([INSTALL.md → IPv6 in a container](INSTALL.md#ipv6-in-a-container)). To turn it on:
+
+```bash
+# 1. Uncomment the networks: block at the end of docker-compose.yml
+#    (pick another fd.. prefix if that one is in use on your network).
+# 2. Re-create the network. A restart keeps the old one; this is a short outage.
+docker compose down
+docker compose up -d
+# 3. Confirm the containers have IPv6.
+docker compose exec web ip -6 addr show scope global
+```
+
+Leave Server Settings → Web Server → IPv6 on **Automatic**. Within a minute it
+reads *On*, and IPv6 then fills in at its own pace: networks and leases on each
+integration's next discovery run, interface addresses on each device's next
+interfaces poll, and each asset's primary IPv6 within ten minutes of that.
+`docker compose down` without `-v` keeps the database and `./state`.

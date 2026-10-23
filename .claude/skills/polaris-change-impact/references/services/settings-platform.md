@@ -413,7 +413,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** Whether IPv6 is ON for the install (business rule 127) — the `ipv6Config` Setting `{ mode: "auto" | "on" | "off" }` and host detection. `auto` (default) = on exactly when the Polaris host has a routable IPv6 (not internal, loopback, link-local).
 
-**Public API:** `ipv6Enabled()` (sync, cached), `getIpv6Status()`, `setIpv6Mode(mode, actor)`, `routableHostIpv6(ifaces)`, `decideIpv6Enabled(mode, hosts)`, `_resetIpv6GateForTests`, `Ipv6Mode`, `Ipv6Status`
+**Public API:** `ipv6Enabled()` (sync, cached), `ipv6Dialable()` (sync, cached: on AND reachable — a routable address or `hasIpv6Route`), `hasIpv6Route()`, `decideIpv6Dialable`, `getIpv6Status()`, `setIpv6Mode(mode, actor)`, `routableHostIpv6(ifaces)`, `decideIpv6Enabled(mode, hosts)`, `_resetIpv6GateForTests`, `Ipv6Mode`, `Ipv6Status`
 
 **Cross-service deps:** `settingsStore` (`createSettingStore`, 30s TTL), `eventLogService` (`settings.ipv6.updated`), `utils/cidr.ts` (`isIpamIpv6Address`), `node:os` (`networkInterfaces`).
 
@@ -423,6 +423,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - `ipv6Enabled()` never awaits — it is read on every interface write and probe target. A stale cache answers its last value and refreshes in the background; a settings-read failure keeps the last mode rather than flipping IPv6.
 - Each process role has its own cache: a mode change reaches monitor / discovery within ~60s + the store TTL. Never assume immediate cross-process visibility.
 - Off stops new IPv6 writes; it does not purge IPAM (observed rows expire, others stay). `primaryIpv6Service` clears unpinned primaries.
+- Dialling reads `ipv6Dialable()`, never `ipv6Enabled()`: on without reach (a container on an IPv4-only network) must leave an IPv6-only asset unpolled, not polled into down. `hasIpv6Route` is a UDP `connect()` to 2000::1 — a route lookup, no packet sent.
 
 **When changing this:**
 - A new IPv6 path (a collector, a discovery read, a UI surface) must read `ipv6Enabled()` (server) or `polarisIpv6Enabled` (browser, from `/auth/me`) — or it leaks IPv6 onto an install that switched it off.

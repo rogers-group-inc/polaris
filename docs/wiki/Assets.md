@@ -487,7 +487,9 @@ back to the automatic choice straight away.
 
 A device is monitored on its IPv4 address whenever it has one. A device with
 no IPv4 address at all is monitored on its primary IPv6 address, and its
-IPv6 line says *monitored*. That covers ping, SNMP, SSH, WinRM and the
+IPv6 line says *monitored*. If this Polaris server cannot reach IPv6 (common
+for a container on an IPv4-only network), the line says *not polled* instead
+and the device is left unpolled rather than shown as down. That covers ping, SNMP, SSH, WinRM and the
 FortiOS REST API.
 
 When IPv6 is off, the IPv6 line, the IPv6 addresses in the IPs list and the

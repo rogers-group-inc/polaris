@@ -46,11 +46,29 @@ nothing — `routableHostIpv6` excludes it, and loopback, through
 rejected: discovery is the thing being gated, and a gate with an RA prefix on an
 interface nobody routes is common.
 
-`on` exists for the container case. A podman / Docker container on the default
-bridge sees no IPv6 on its own interfaces even when the host and the LAN are
-dual-stack, so `auto` would answer "off" inside the container on a network that
-uses IPv6. `off` exists for an operator who has IPv6 on the host and does not
-want the data.
+In a container "the host" is the container. A podman / Docker container on the
+default bridge sees no IPv6 on its own interfaces even when the host and the LAN
+are dual-stack, so `auto` answers "off" — and that is the right answer, because
+such a container also cannot SEND to an IPv6 device. The fix is to give the
+compose network IPv6 (`enable_ipv6` with a ULA subnet, NAT66 to the host — the
+commented block in `docker-compose.yml`, docs/INSTALL.md "IPv6 in a container");
+the container then holds a ULA address, which counts as routable, and `auto`
+turns on by itself. `on` is for detection that is wrong in some other way; `off`
+for an operator who has IPv6 and does not want the data.
+
+### On is not reachable (added 2026-10-22, the same day)
+
+The first cut documented `on` as "for a container that cannot see the host's
+IPv6". Read through, that advice produced false down alerts: forced on, the
+container still learned IPv6 from discovery (the FortiGate is read over IPv4),
+gave IPv6-only assets a primary IPv6, and the monitor then polled them over a
+network with no IPv6 route — every probe failed and the asset went down, where
+before rule 127 it had simply had no address to poll. So the gate answers two
+questions: `ipv6Enabled()` (collect and show IPv6) and `ipv6Dialable()` (dial
+it), the second requiring a routable source address or a kernel route to
+2000::/3. The route check is a UDP `connect()`, which only asks the kernel to
+choose a route — no packet is sent, nothing outside is contacted. The asset's
+IPv6 line says *not polled* in that state and the Server Settings card warns.
 
 ### Why a separate column, not `Asset.ipAddress`
 
