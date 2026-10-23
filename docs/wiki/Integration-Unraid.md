@@ -38,6 +38,15 @@ container a new id every time it is recreated or updated, so an id-keyed asset
 would be replaced, and lose its history, on every update. Containers are also
 **never matched by MAC address**.
 
+A container on a LAN network (`br0`, `eth0`, `bond0` or a VLAN of one) does get
+its **MAC address recorded**, refreshed on every sync. Docker gives such a
+container a new random MAC each time it is recreated, so this is how Polaris keeps
+FortiGate discovery pointed at the same asset after an update. If the FortiGate
+saw the new MAC first and created a separate endpoint asset for it, the next
+Unraid sync merges that duplicate into the container's asset and logs an
+`asset.duplicate_merged` event. An asset that another source vouches for (AD,
+Entra / Intune, the agent, a managed switch or AP) is never merged this way.
+
 When an existing asset that no integration links yet already has the name a new
 VM or container would take, Polaris does not merge them. It raises a pending
 [conflict](Conflict-Resolution) (Events → Conflicts) for you to decide.

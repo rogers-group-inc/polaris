@@ -15,7 +15,10 @@
  *   8. several hosts per integration (a cluster): one host asset per node,
  *      each workload placed on its own node, a migration moves the edge and
  *      logs `asset.<platform>.moved`, an offline node keeps its asset without
- *      a lastSeen bump, and a node removed from the cluster is swept.
+ *      a lastSeen bump, and a node removed from the cluster is swept;
+ *   9. a container's LAN MAC is recorded and follows a recreate, and a pure
+ *      FortiGate endpoint ghost holding it is absorbed — an asset with an
+ *      authoritative source is not.
  *
  * Skips cleanly when DATABASE_URL isn't reachable (tests/integration/_helpers).
  */
@@ -155,6 +158,58 @@ d("syncWorkloadDevices", () => {
     expect((conflicts[0].proposedAssetFields as any).sourceType).toBe("unraid");
     expect((conflicts[0].proposedAssetFields as any).workloadRole).toBe("container");
     expect(await prisma.asset.count({ where: { hostname: `${PREFIX}plex` } })).toBe(1);
+  });
+
+  it("records a container's LAN MAC and follows it to the new one after a recreate", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, result({}, [{ ...ctr("immich"), ip: "10.250.0.24", macs: ["E2:AC:39:7B:A2:00"] }]));
+    await syncWorkloadDevices(integrationId, NAME, {}, result({}, [{ ...ctr("immich"), ip: "10.250.0.24", macs: ["CE:27:1D:68:B1:C8"] }]));
+    const a = await prisma.asset.findFirst({
+      where: { hostname: `${PREFIX}immich` },
+      select: { macAddress: true, macAddressRows: { select: { mac: true, source: true } } },
+    });
+    expect(a?.macAddress).toBe("CE:27:1D:68:B1:C8");
+    expect(a?.macAddressRows.map((r) => r.mac).sort()).toEqual(["CE:27:1D:68:B1:C8", "E2:AC:39:7B:A2:00"]);
+    expect(a?.macAddressRows.every((r) => r.source === "unraid-container")).toBe(true);
+  });
+
+  it("absorbs a FortiGate endpoint ghost holding the container's current MAC", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, result({}, [{ ...ctr("immich"), ip: "10.250.0.24", macs: ["E2:AC:39:7B:A2:00"] }]));
+    // The gate saw the recreated container's new MAC first and minted an asset for it.
+    const ghost = await prisma.asset.create({
+      data: {
+        hostname: `${PREFIX}immich-ghost`, assetType: "other", status: "active", ipAddress: "10.250.0.24", macAddress: "CE:27:1D:68:B1:C8",
+        macAddressRows: { create: [{ mac: "CE:27:1D:68:B1:C8", source: "fortigate", lastSeen: new Date() }] },
+      },
+    });
+    await prisma.assetSource.create({ data: { assetId: ghost.id, sourceKind: "fortigate-endpoint", externalId: "ce:27:1d:68:b1:c8", inferred: false } });
+
+    await syncWorkloadDevices(integrationId, NAME, {}, result({}, [{ ...ctr("immich"), ip: "10.250.0.24", macs: ["CE:27:1D:68:B1:C8"] }]));
+
+    expect(await prisma.asset.findUnique({ where: { id: ghost.id } })).toBeNull();
+    const a = await prisma.asset.findFirst({
+      where: { hostname: `${PREFIX}immich` },
+      select: { id: true, macAddress: true, macAddressRows: { select: { mac: true } } },
+    });
+    expect(a?.macAddress).toBe("CE:27:1D:68:B1:C8");
+    expect(a?.macAddressRows.map((r) => r.mac)).toContain("CE:27:1D:68:B1:C8");
+    expect(await prisma.event.count({ where: { action: "asset.duplicate_merged", resourceId: a!.id } })).toBe(1);
+  });
+
+  it("does not absorb an asset with an authoritative source that shares the MAC", async () => {
+    const other = await prisma.asset.create({
+      data: {
+        hostname: `${PREFIX}ad-box`, assetType: "server", status: "active", macAddress: "CE:27:1D:68:B1:C8",
+        macAddressRows: { create: [{ mac: "CE:27:1D:68:B1:C8", source: "fortigate", lastSeen: new Date() }] },
+      },
+    });
+    await prisma.assetSource.createMany({
+      data: [
+        { assetId: other.id, sourceKind: "fortigate-endpoint", externalId: "ce:27:1d:68:b1:c8", inferred: false },
+        { assetId: other.id, sourceKind: "ad", externalId: `${PREFIX}ad-box-sid`, inferred: false },
+      ],
+    });
+    await syncWorkloadDevices(integrationId, NAME, {}, result({}, [{ ...ctr("immich"), ip: "10.250.0.24", macs: ["CE:27:1D:68:B1:C8"] }]));
+    expect(await prisma.asset.findUnique({ where: { id: other.id } })).not.toBeNull();
   });
 
   it("carries a Polaris stop's monitoring-pause flag across the sync", async () => {
