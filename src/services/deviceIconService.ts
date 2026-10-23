@@ -175,29 +175,36 @@ function validateSvg(data: Buffer): void {
   }
 }
 
-export function validateUpload(input: UploadedIcon): void {
-  if (input.scope !== "manufacturer-type" && input.scope !== "manufacturer-model") {
-    throw new AppError(400, `Invalid scope "${input.scope}" — must be "manufacturer-type" or "manufacturer-model"`);
+/** Validate what an icon is keyed to and return its canonical key. Shared by
+ *  upload and `updateIconKey`, so a re-keyed icon meets the same rules. */
+function validateIconKey(scope: IconScope, manufacturer: string, typeOrModel: string): string {
+  if (scope !== "manufacturer-type" && scope !== "manufacturer-model") {
+    throw new AppError(400, `Invalid scope "${scope}" — must be "manufacturer-type" or "manufacturer-model"`);
   }
-  if (!input.manufacturer || !input.manufacturer.trim()) {
+  if (!manufacturer || !manufacturer.trim()) {
     throw new AppError(400, "Manufacturer is required");
   }
-  if (!input.typeOrModel || !input.typeOrModel.trim()) {
-    throw new AppError(400, input.scope === "manufacturer-type" ? "Asset type is required" : "Model is required");
+  if (!typeOrModel || !typeOrModel.trim()) {
+    throw new AppError(400, scope === "manufacturer-type" ? "Asset type is required" : "Model is required");
   }
-  const key = buildKey(input.scope, input.manufacturer, input.typeOrModel);
+  const key = buildKey(scope, manufacturer, typeOrModel);
   // After canonicalization the manufacturer half may have collapsed to
   // empty (e.g. the alias map mapped to ""). The tail check above
   // already covers an empty trailing segment.
   if (key.startsWith("/")) {
     throw new AppError(400, "Manufacturer is required");
   }
-  if (input.scope === "manufacturer-type") {
+  if (scope === "manufacturer-type") {
     const typeKey = key.split("/").slice(1).join("/");
     if (!isKnownAssetType(typeKey)) {
       throw new AppError(400, `Invalid asset type "${typeKey}" — not in the asset-type registry (built-in or custom)`);
     }
   }
+  return key;
+}
+
+export function validateUpload(input: UploadedIcon): void {
+  validateIconKey(input.scope, input.manufacturer, input.typeOrModel);
   if (!ALLOWED_MIME_TYPES.has(input.mimeType)) {
     throw new AppError(400, `Unsupported image format "${input.mimeType}" — allowed: PNG, JPEG, WebP, SVG`);
   }
@@ -338,6 +345,43 @@ export async function getIconImage(id: string): Promise<{ mimeType: string; data
   });
   if (!row) return null;
   return { mimeType: row.mimeType, data: Buffer.from(row.data) };
+}
+
+/**
+ * Re-key an icon — change its manufacturer, its asset type or model, or which
+ * of the two it matches by — keeping the image. Unlike upload (which upserts,
+ * replacing whatever image held the key), a key already held by ANOTHER icon
+ * is a 409: re-keying must never silently delete a different image.
+ * Returns the updated icon and the key it had before, for the audit Event.
+ */
+export async function updateIconKey(
+  id: string,
+  input: { scope: IconScope; manufacturer: string; typeOrModel: string },
+): Promise<{ icon: DeviceIconSummary; previous: { scope: string; key: string } }> {
+  const key = validateIconKey(input.scope, input.manufacturer, input.typeOrModel);
+  const existing = await prisma.deviceIcon.findUnique({ where: { id }, select: { scope: true, key: true } });
+  if (!existing) throw new AppError(404, "Icon not found");
+  const holder = await prisma.deviceIcon.findUnique({
+    where: { scope_key: { scope: input.scope, key } },
+    select: { id: true },
+  });
+  if (holder && holder.id !== id) {
+    throw new AppError(409, `Another icon is already keyed to ${key} — delete it first`);
+  }
+  try {
+    const row = await prisma.deviceIcon.update({
+      where: { id },
+      data: { scope: input.scope, key },
+      select: { id: true, scope: true, key: true, filename: true, mimeType: true, size: true, uploadedBy: true, uploadedAt: true },
+    });
+    return { icon: summarize(row), previous: existing };
+  } catch (err) {
+    // Lost a race with a concurrent upload of the same key.
+    if ((err as { code?: string }).code === "P2002") {
+      throw new AppError(409, `Another icon is already keyed to ${key} — delete it first`);
+    }
+    throw err;
+  }
 }
 
 export async function deleteIcon(id: string): Promise<boolean> {

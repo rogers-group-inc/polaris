@@ -6722,26 +6722,40 @@ function openDeviceTypeApplyModal() {
   });
 }
 
+// Asset-type <option>s for the Device Icons upload form and its inline
+// editor: every type in the asset-type REGISTRY (the Device Types card's list,
+// custom types included) — the service validates against the same registry
+// (isKnownAssetType). The built-in ten are only the fallback for a registry
+// that failed to load. A stored type the registry no longer carries stays
+// selectable, so opening the editor can't silently re-key the icon.
+function _deviceIconTypeOptionsHTML(selected) {
+  var registryTypes = (_assetTypes || []).slice().sort(function (a, b) {
+    return (a.label || a.name || "").localeCompare(b.label || b.name || "");
+  });
+  var opts = registryTypes.length
+    ? registryTypes.map(function (t) { return { value: t.name, label: t.label || t.name }; })
+    : _deviceIconAssetTypes.map(function (t) { return { value: t, label: t }; });
+  var known = false;
+  var html = opts.map(function (o) {
+    var sel = o.value === selected;
+    if (sel) known = true;
+    return '<option value="' + escapeHtml(o.value) + '"' + (sel ? " selected" : "") + '>' + escapeHtml(o.label) + '</option>';
+  }).join("");
+  if (selected && !known) {
+    html += '<option value="' + escapeHtml(selected) + '" selected>' + escapeHtml(selected) + ' (unknown)</option>';
+  }
+  return html;
+}
+
+var _iconEditId = null; // the Device Icons row open in its inline editor
+
 function deviceIconsCardHTML() {
   var byScope = { "manufacturer-type": [], "manufacturer-model": [] };
   _deviceIcons.forEach(function (i) {
     if (byScope[i.scope]) byScope[i.scope].push(i);
   });
 
-  // Every type in the asset-type REGISTRY (the Device Types card's list,
-  // custom types included) — the service validates against the same registry
-  // (isKnownAssetType). The built-in ten are only the fallback for a registry
-  // that failed to load.
-  var registryTypes = (_assetTypes || []).slice().sort(function (a, b) {
-    return (a.label || a.name || "").localeCompare(b.label || b.name || "");
-  });
-  var typeOptionsHtml = registryTypes.length
-    ? registryTypes.map(function (t) {
-        return '<option value="' + escapeHtml(t.name) + '">' + escapeHtml(t.label || t.name) + '</option>';
-      }).join("")
-    : _deviceIconAssetTypes
-        .map(function (t) { return '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>'; })
-        .join("");
+  var typeOptionsHtml = _deviceIconTypeOptionsHTML("");
 
   var html = '<div class="settings-card">' +
     '<h4>Device Icons</h4>' +
@@ -6792,20 +6806,46 @@ function deviceIconsCardHTML() {
       return s;
     }
     s += '<table class="data-table" style="font-size:0.85rem;margin-bottom:1rem"><thead><tr>' +
-      '<th style="width:60px">Preview</th><th>Manufacturer</th><th>' + escapeHtml(tailHeader) + '</th><th>Filename</th><th style="width:100px">Size</th><th style="width:160px">Uploaded</th><th style="width:80px"></th>' +
+      // nowrap: the uppercase header's letter-spacing broke "Preview" over two
+      // lines in a 60px column.
+      '<th style="width:72px;white-space:nowrap">Preview</th><th>Manufacturer</th><th>' + escapeHtml(tailHeader) + '</th><th>Filename</th><th style="width:100px">Size</th><th style="width:160px">Uploaded</th><th style="width:150px"></th>' +
     '</tr></thead><tbody>';
     list.forEach(function (i) {
       var slash = i.key.indexOf("/");
       var mfr = slash >= 0 ? i.key.slice(0, slash) : i.key;
       var tail = slash >= 0 ? i.key.slice(slash + 1) : "";
-      s += '<tr>' +
+      var editing = i.id === _iconEditId;
+      var isModel = i.scope === "manufacturer-model";
+      s += '<tr' + (editing ? ' class="icon-edit-row" data-id="' + escapeHtml(i.id) + '"' : '') + '>' +
         '<td><img src="' + escapeHtml(i.url) + '" alt="" style="width:40px;height:40px;object-fit:contain;background:#1c2029;border:1px solid var(--color-border);border-radius:4px"></td>' +
-        '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(mfr) + '</code></td>' +
-        '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(tail) + '</code></td>' +
+        (editing
+          // Inline editor: the same manufacturer picker as the upload form,
+          // and the match-by switch, so an icon can move between the two
+          // tables without a re-upload. The image is never touched.
+          ? '<td><span class="aw-combo aw-combo-dim">' +
+              '<input type="text" id="f-icon-edit-mfr" autocomplete="off" value="' + escapeHtml(mfr) + '" style="font-size:0.82rem">' +
+              '<div class="aw-suggest" id="icon-edit-mfr-suggest"></div>' +
+            '</span></td>' +
+            '<td><div style="display:flex;gap:6px">' +
+              '<select id="f-icon-edit-scope" style="font-size:0.82rem;width:auto">' +
+                '<option value="manufacturer-type"' + (isModel ? '' : ' selected') + '>Asset type</option>' +
+                '<option value="manufacturer-model"' + (isModel ? ' selected' : '') + '>Model</option>' +
+              '</select>' +
+              '<select id="f-icon-edit-type" style="font-size:0.82rem;flex:1' + (isModel ? ';display:none' : '') + '">' +
+                _deviceIconTypeOptionsHTML(isModel ? "" : tail) + '</select>' +
+              '<input type="text" id="f-icon-edit-model" value="' + escapeHtml(isModel ? tail : "") + '" placeholder="e.g. FortiGate-60F" style="font-size:0.82rem;flex:1' + (isModel ? '' : ';display:none') + '">' +
+            '</div></td>'
+          : '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(mfr) + '</code></td>' +
+            '<td><code class="mono" style="font-size:0.78rem">' + escapeHtml(tail) + '</code></td>') +
         '<td>' + escapeHtml(i.filename) + '</td>' +
         '<td>' + escapeHtml(formatBytesShort(i.size)) + '</td>' +
         '<td style="font-size:0.78rem;color:var(--color-text-secondary)">' + escapeHtml(formatDate(i.uploadedAt)) + (i.uploadedBy ? ' by ' + escapeHtml(i.uploadedBy) : '') + '</td>' +
-        '<td><button class="btn btn-sm btn-danger icon-del" data-id="' + escapeHtml(i.id) + '" data-key="' + escapeHtml(i.scope + ':' + i.key) + '">Delete</button></td>' +
+        '<td style="white-space:nowrap">' +
+          (editing
+            ? '<button class="btn btn-sm btn-primary icon-edit-save">Save</button> <button class="btn btn-sm icon-edit-cancel">Cancel</button>'
+            : '<button class="btn btn-sm icon-edit" data-id="' + escapeHtml(i.id) + '">Edit</button> ' +
+              '<button class="btn btn-sm btn-danger icon-del" data-id="' + escapeHtml(i.id) + '" data-key="' + escapeHtml(i.scope + ':' + i.key) + '">Delete</button>') +
+        '</td>' +
       '</tr>';
     });
     s += '</tbody></table>';
@@ -6847,6 +6887,31 @@ function wireDeviceIconHandlers() {
       deleteIconUI(b.getAttribute("data-id"), b.getAttribute("data-key"));
     });
   });
+  document.querySelectorAll(".icon-edit").forEach(function (b) {
+    b.addEventListener("click", function () {
+      _iconEditId = b.getAttribute("data-id");
+      renderIdentificationTab();
+    });
+  });
+  var editRow = document.querySelector(".icon-edit-row");
+  if (editRow) {
+    _wireManufacturerCountCombo("f-icon-edit-mfr", "icon-edit-mfr-suggest", _knownManufacturerRows);
+    var editScope = document.getElementById("f-icon-edit-scope");
+    var editType = document.getElementById("f-icon-edit-type");
+    var editModel = document.getElementById("f-icon-edit-model");
+    editScope.addEventListener("change", function () {
+      var m = editScope.value === "manufacturer-model";
+      editType.style.display = m ? "none" : "";
+      editModel.style.display = m ? "" : "none";
+    });
+    editRow.querySelector(".icon-edit-save").addEventListener("click", function () {
+      saveIconKeyUI(editRow.getAttribute("data-id"), this);
+    });
+    editRow.querySelector(".icon-edit-cancel").addEventListener("click", function () {
+      _iconEditId = null;
+      renderIdentificationTab();
+    });
+  }
 
   // Toggle the third column between the asset-type dropdown and the
   // model free-text input. Label flips too so the operator always sees
@@ -6899,6 +6964,27 @@ async function uploadIconUI() {
     showToast(err.message, "error");
     if (statusEl) statusEl.innerHTML = '<span style="color:var(--color-danger)">' + escapeHtml(err.message) + '</span>';
   } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveIconKeyUI(id, btn) {
+  var scope = document.getElementById("f-icon-edit-scope").value;
+  var manufacturer = (document.getElementById("f-icon-edit-mfr").value || "").trim();
+  var typeOrModel = scope === "manufacturer-model"
+    ? (document.getElementById("f-icon-edit-model").value || "").trim()
+    : document.getElementById("f-icon-edit-type").value;
+  if (!manufacturer) { showToast("Manufacturer is required", "error"); return; }
+  if (!typeOrModel) { showToast(scope === "manufacturer-model" ? "Model is required" : "Asset type is required", "error"); return; }
+  btn.disabled = true;
+  try {
+    var updated = await api.deviceIcons.update(id, { scope: scope, manufacturer: manufacturer, typeOrModel: typeOrModel });
+    _deviceIcons = _deviceIcons.map(function (i) { return i.id === id ? updated : i; });
+    _iconEditId = null;
+    showToast("Icon now matches " + updated.key, "success");
+    renderIdentificationTab();
+  } catch (err) {
+    showToast(err.message, "error");
     btn.disabled = false;
   }
 }
