@@ -234,6 +234,9 @@
       <a href="#ipam-blocks">IPAM: IP blocks</a>
       <a href="#ipam-subnets">IPAM: Networks</a>
       <a href="#ipam-reservations">IPAM: Reservations</a>
+      <a href="#automations">Automations</a>
+      <a href="#mib-database">MIB Database</a>
+      <a href="#manufacturer-profiles">Manufacturer profiles</a>
       <a href="#events">Events (audit)</a>
     </nav>
 
@@ -1441,6 +1444,438 @@
             <code>/push-queue/count</code> returns just <code>{ count }</code>). Retry one via
             <span class="method m-post" style="font-size:0.65rem">POST</span>
             <code>/reservations/:id/retry-push</code> → <code>{ outcome, reservation }</code>.</p>
+        </div>
+      </section>
+
+      <section id="automations">
+        <h2>Automations</h2>
+        <p>
+          An <strong>automation</strong> is a rule: a <em>trigger</em> evaluated over the devices
+          its <em>scope</em> selects, a <em>severity</em>, and what happens when it fires
+          (<em>actions</em>, <em>escalation</em>, <em>repeat</em>, <em>reset</em>). Every endpoint
+          gates on <code>automationManagement</code>. Two action types need a second key when a
+          rule carrying them is <strong>saved</strong>: a <code>script</code> action needs
+          <code>automationScripts:write</code>, a <code>reboot</code> action needs
+          <code>assets:write</code> (<code>403</code> otherwise; removing one never needs it).
+          Saving, editing and deleting each write an Event.
+        </p>
+        <p>
+          The rule body is large and versioned by its own vocabulary, so build against
+          <code>GET /automations/schema</code> rather than a hardcoded list: it returns every
+          metric, state field, comparator, aggregation, change type, action type and severity
+          the server accepts, plus the names behind the ids a condition can carry (state probes,
+          path checks, custom widgets). Draft a rule with <code>POST /automations/preview</code>
+          before creating it — it reports which devices the draft would cover and how many
+          readings meet it right now, and writes nothing.
+        </p>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /automations
+            <span class="gate">automationManagement:read</span></div>
+          <p><code>{ rules: [...] }</code>. Each rule is the stored, normalized (v2) body below
+            plus its <code>id</code>, <code>createdAt</code>, <code>updatedAt</code>. An
+            <code>api_call</code> action's custom header values are secrets and come back
+            <strong>masked</strong> (<code>"••••••••"</code>).</p>
+          <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
+  "<span class="js-base-url">/api/v1</span>/automations"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /automations/schema
+            <span class="gate">automationManagement:read</span></div>
+          <p>The builder vocabulary: the enums every field takes, each metric's dimensions and
+            units, and <code>stateProbes</code>, <code>pathChecks</code>,
+            <code>customWidgets</code> (id → name, for conditions that carry an id) and
+            <code>dimensionPickers</code>. Read it once per session; it changes only when
+            Polaris is updated or a profile, path check or widget is added.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /automations
+            <span class="gate">automationManagement:write</span></div>
+          <p>Create a rule; <code>201</code> with <code>{ rule }</code>. Body (validated against
+            the same schema the UI uses; <code>400</code> names the field):</p>
+          <ul>
+            <li><code>name</code> (required, ≤200), <code>description?</code>,
+              <code>enabled?</code> (default <code>true</code>), <code>severity?</code> —
+              <code>notice | informational | warning | serious | critical</code> (default
+              <code>warning</code>).</li>
+            <li><code>trigger</code> (required), one of:
+              <code>{ type: "asset_metric", metric, operator, threshold, aggregation?, windowPolls?, forPolls?, dimensionFilter? }</code>
+              (a reading such as <code>cpuPct</code>, <code>hwSensorValue</code>,
+              <code>customStateValue</code>, <code>pathOk</code>);
+              <code>{ type: "asset_state", field, operator, value, forPolls? }</code> (a state
+              such as <code>monitorStatus</code>);
+              <code>{ type: "host_metric", … }</code> (the Polaris server itself);
+              <code>{ type: "event", actionPattern, resourceType?, minLevel?, detailsMatch? }</code>
+              (an audit Event, glob on its action);
+              <code>{ type: "change", changeType, dimensionFilter? }</code>; or
+              <code>{ type: "composite", kind: "asset" | "host", op: "and" | "or", children, forPolls? }</code>
+              (a tree of metric / state conditions). Operators are
+              <code>&gt; &gt;= &lt; &lt;= == !=</code>. A hold (<code>forPolls</code>) and a
+              window (<code>windowPolls</code>) count <em>readings</em>, not seconds.</li>
+            <li><code>scope?</code> — the device filter (<code>{}</code> = every device). Only
+              monitored devices ever alert; <code>POST /automations/preview</code> with just a
+              scope lists what it selects.</li>
+            <li><code>actions?</code> — up to 20, each one of <code>notify</code> (a delivery
+              channel id from <code>/delivery-channels</code> plus recipients),
+              <code>api_call</code>, <code>script</code>, <code>event</code>,
+              <code>reboot</code>; each may carry its own escalation tiers.
+              <code>channels?</code> defaults to <code>["in_app"]</code>, so a rule with no
+              actions still raises an in-app alert.</li>
+            <li><code>reset?</code>, <code>resetActions?</code>, <code>repeat?</code>,
+              <code>escalation?</code>, <code>severityBands?</code> (numeric metrics only),
+              <code>bandNotify?</code>, <code>cooldownSec?</code>, <code>messageTemplate?</code>,
+              <code>emailComposition?</code>, <code>groupByAsset?</code> (one alert per device
+              for per-component triggers), <code>requireAckNote?</code>,
+              <code>quietTime?</code> (<code>null</code> = the global schedules apply,
+              <code>{ ignoreGlobal: true }</code> = never held, or a policy of its own).</li>
+          </ul>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Firewall CPU high","severity":"serious",
+       "trigger":{"type":"asset_metric","metric":"cpuPct","operator":"&gt;","threshold":90,"forPolls":3},
+       "scope":{}}' \
+  "<span class="js-base-url">/api/v1</span>/automations"</code></pre>
+          <p>An <code>asset_state</code> trigger on <code>monitorStatus == down</code> is not
+            only an alert: its <code>missedPolls</code> is how down detection is defined for its
+            devices, and a device no such automation covers is never declared down. Check
+            <code>GET /automations/:id/removal-impact</code> before deleting or disabling one.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /automations/:id
+            <span class="gate">automationManagement:write</span></div>
+          <p>Replace a rule — a <strong>full body</strong>, not a patch; fields left out take
+            their defaults. Read it, change it, send it back. A masked <code>api_call</code>
+            header sent back unchanged keeps its stored value, but only while that action's
+            <code>url</code> is unchanged — a masked header on a changed URL is a
+            <code>400</code>, so a stored token never follows a new destination.
+            <code>404</code> when the rule does not exist.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /automations/:id
+            <span class="gate">automationManagement:write</span></div>
+          <p><code>204</code>. Its open alerts are cleared.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /automations/:id/removal-impact
+            <span class="gate">automationManagement:read</span></div>
+          <p>What removing this rule does to down detection:
+            <code>{ isDownDetection, governs, wouldFallBackToAnother, wouldBecomePassive, sampleHostnames }</code>
+            — <code>wouldBecomePassive</code> devices are covered by no other down-detection
+            rule and would stop being declared down.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /automations/preview
+            <span class="gate">automationManagement:write</span></div>
+          <p>Dry-run a draft. Accepts a partial draft: <code>{ scope }</code> alone lists the
+            devices it selects; <code>{ trigger, scope }</code> evaluates current readings. Returns
+            <code>{ supported, totalEvaluated, totalAssets?, unmonitoredCount?, meetsCount, matches, carveOut?, … }</code>
+            — <code>meetsCount</code> is how many readings meet the trigger now, and
+            <code>carveOut</code> says which devices a more specific rule already owns. Event and
+            change triggers have no current reading and answer <code>supported: false</code>.
+            Writes nothing.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /automations/dimension-values
+            <span class="gate">automationManagement:read</span></div>
+          <p><code>{ metric, dimension, scope, narrow? }</code> → the values the draft's devices
+            actually report for one condition dimension (sensor classes, interface names, state
+            probe rows…), so a filter names a value that exists. Companion:
+            <span class="method m-post" style="font-size:0.65rem">POST</span>
+            <code>/automations/poll-cadence</code> <code>{ metric?, scope }</code> → how often
+            those devices take the reading, to turn a hold in polls into seconds.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /automations/scope-options
+            <span class="gate">automationManagement:read</span></div>
+          <p>The values a scope filter can name: manufacturers and models in the inventory, IPAM
+            networks. <code>GET /automations/recipient-users</code> lists the users a
+            <code>notify</code> action can address.</p>
+        </div>
+
+        <p><code>POST /automations/test-delivery</code> (send one action of a draft for real, to
+          the caller only) needs a signed-in user and answers <code>401</code> to a bearer
+          token — there is no user to deliver it to.</p>
+      </section>
+
+      <section id="mib-database">
+        <h2>MIB Database</h2>
+        <p>
+          The SNMP MIB modules Polaris resolves symbol names against. Polaris bundles the
+          IETF / IEEE standard MIBs (SNMPv2-MIB, IF-MIB, HOST-RESOURCES-MIB, ENTITY-MIB,
+          ENTITY-SENSOR-MIB, LLDP-MIB, POWER-ETHERNET-MIB, BRIDGE-MIB, Q-BRIDGE-MIB, RSTP-MIB,
+          IP-MIB) and no vendor's: a vendor's objects resolve only from the module you upload,
+          under that vendor's manufacturer name. Endpoints gate on <code>mibDatabase</code>.
+        </p>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /server-settings/mibs
+            <span class="gate">mibDatabase:read</span></div>
+          <p>Uploaded modules: <code>[{ id, filename, moduleName, manufacturer, model, imports, size, notes, uploadedBy, uploadedAt }]</code>.
+            Filters: <code>scope=all|device|generic</code>, <code>manufacturer</code>,
+            <code>model</code> (case-insensitive exact). <code>manufacturer: null</code> is a
+            generic module, resolved for every device.</p>
+          <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
+  "<span class="js-base-url">/api/v1</span>/server-settings/mibs?manufacturer=APC"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /server-settings/mibs
+            <span class="gate">mibDatabase:write</span></div>
+          <p>Upload one module as <code>multipart/form-data</code>: <code>file</code> (the MIB
+            text, ≤ 6 MiB — <code>413</code> beyond), optional <code>manufacturer</code>,
+            <code>model</code> (needs a manufacturer) and <code>notes</code>. The text must parse
+            as an SMI module (<code>&lt;NAME&gt; DEFINITIONS ::= BEGIN … END</code>); binaries are
+            refused. <code>(manufacturer, model, moduleName)</code> is unique —
+            <code>409</code> on a second copy. <code>201</code> with the stored row plus
+            <code>symbolCount</code>, <code>unresolvedCount</code> and
+            <code>unresolvedRoots: [{ symbol, module }]</code>: a non-empty list names the module
+            still missing (a vendor leaf module usually IMPORTs a core module — upload both, the
+            core one first).</p>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" \
+  -F "file=@FORTINET-CORE-MIB.mib" -F "manufacturer=Fortinet" \
+  "<span class="js-base-url">/api/v1</span>/server-settings/mibs"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /server-settings/mibs/:id/structure
+            <span class="gate">mibDatabase:read</span></div>
+          <p>The module parsed: <code>symbols: [{ name, parentName, fullOid, kind, syntax, baseType, enumValues, access, status, description, isTableRow, indexNames }]</code>
+            and <code>tables: [{ name, rowSymbol, columns, indexNames }]</code>, each symbol's
+            <code>fullOid</code> resolved (or <code>null</code>), plus
+            <code>unresolvedCount</code> and <code>unresolvedRootDetails</code> naming what to
+            upload. This is the endpoint to read when choosing which symbol a profile row
+            should walk. <code>GET /server-settings/mibs/:id</code> returns the row with its
+            <code>contents</code>; <code>/:id/download</code> the raw file.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /server-settings/mibs/:id/walk
+            <span class="gate">mibDatabase:read</span></div>
+          <p>Walk one object of this module on a device: <code>{ assetId, credentialId, objectName, maxRows? }</code>
+            (<code>maxRows</code> ≤ 5000, default 500; the credential is an SNMP one). Returns the
+            values decoded against the module — enum labels such as <code>onLine(2)</code>, and
+            a table grouped into rows when the object is a table. Use it to confirm a symbol
+            answers before putting it in a profile.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /server-settings/mibs/std
+            <span class="gate">mibDatabase:read</span></div>
+          <p>The bundled standard modules by key (<code>std:system</code>,
+            <code>std:interfaces</code>, <code>std:host-resources</code>,
+            <code>std:entity-sensor</code>, …). <code>/std/:key/structure</code> and
+            <span class="method m-post" style="font-size:0.65rem">POST</span>
+            <code>/std/:key/walk</code> work like the uploaded-module pair.
+            <code>GET /server-settings/mibs/facets</code> lists the manufacturers and models in
+            the inventory with device counts — the names to upload under.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /server-settings/mibs/:id
+            <span class="gate">mibDatabase:write</span></div>
+          <p><code>204</code>. Profile rows that resolved through it read unresolved until it is
+            uploaded again.</p>
+        </div>
+      </section>
+
+      <section id="manufacturer-profiles">
+        <h2>Manufacturer profiles</h2>
+        <p>
+          A <strong>manufacturer profile</strong> says which MIB symbol carries each SNMP
+          telemetry metric for one vendor: model identity, CPU, memory, hardware sensors and
+          storage (the <code>interfaces</code>, <code>lldp</code> and
+          <code>wirelessStations</code> rows are descriptive and change nothing), with
+          device-type defaults and per-model exceptions under each, plus <strong>custom
+          widgets</strong> and <strong>state probes</strong>. A profile governs the devices whose
+          manufacturer is its name (after aliases), and — only when no profile carries a
+          device's own name — those its <code>matchPattern</code> ("also applies when")
+          matches. Its symbols resolve from MIBs uploaded under its name. Endpoints gate on
+          <code>manufacturerProfiles</code>; patterns are RE2 (no look-around or
+          back-references), case-insensitive, ≤ 512 characters. Every write writes an Event,
+          and the row-level writes return <code>warnings: []</code> naming any symbol that does
+          not resolve — a warning, never a refusal.
+        </p>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /server-settings/manufacturer-profiles
+            <span class="gate">manufacturerProfiles:read</span></div>
+          <p><code>{ profiles, transforms, combiners, metricTransforms }</code>. Each profile
+            summary carries <code>id, manufacturer, metricCount, overrideCount, widgetCount</code>
+            and its readiness: <code>ready</code> (every symbol resolves),
+            <code>partial</code>, <code>unresolvedCount</code>,
+            <code>unresolvedSymbols</code>. <code>GET …/suggestions</code> lists the manufacturer
+            names already in use (with device counts) and not yet profiled — create profiles
+            under one of these, or the profile matches no device.</p>
+          <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
+  "<span class="js-base-url">/api/v1</span>/server-settings/manufacturer-profiles"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /server-settings/manufacturer-profiles/:id
+            <span class="gate">manufacturerProfiles:read</span></div>
+          <p><code>{ profile }</code>: <code>manufacturer</code>, <code>matchPattern</code>,
+            <code>metrics</code> (eight rows, each with its <code>overrides</code>) and
+            <code>widgets</code>. Every configured row carries <code>readiness: { a, b, columns? }</code>
+            — per symbol, <code>resolved</code>, the module and layer it resolved from, or a
+            <code>hint</code> naming what to upload.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /server-settings/manufacturer-profiles
+            <span class="gate">manufacturerProfiles:write</span></div>
+          <p><code>{ manufacturer }</code> → <code>201</code> with the new profile and its eight
+            empty metric rows. <code>409</code> when the (alias-normalized) name already has one.
+            <span class="method m-put" style="font-size:0.65rem">PUT</span> <code>/:id</code>
+            <code>{ matchPattern }</code> sets or (<code>null</code>) clears "also applies
+            when", tested against <code>"&lt;manufacturer&gt; &lt;os&gt; &lt;pinned MIB module&gt;"</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /server-settings/manufacturer-profiles/:id/metrics/:metricKey
+            <span class="gate">manufacturerProfiles:write</span></div>
+          <p>Set a metric row (<code>metricKey</code>: <code>model | cpu | memory | temperature | interfaces | storage | lldp | wirelessStations</code>;
+            <code>temperature</code> is the Hardware Sensors row). Fields, all optional on a
+            partial update:</p>
+          <ul>
+            <li><code>defaultSymbol</code>, <code>defaultSymbolB</code>, <code>defaultType</code>
+              — <code>scalar</code> (a GET of <code>.0</code>), <code>double_scalar</code> (two
+              symbols, <code>defaultSymbolB</code> required) or <code>table</code>.</li>
+            <li><code>defaultTransform</code> — on <code>double_scalar</code> a combiner naming
+              what the pair is (<code>a_over_b_as_percent</code> = used / total,
+              <code>a_over_a_plus_b_as_percent</code> = used / free, …); on a scalar
+              <code>temperature</code> row only <code>tenths_to_units</code>; none on a
+              table.</li>
+            <li><code>defaultAggregate</code> — <code>none | avg | sum</code>: walk a column and
+              average or sum its rows (CPU tables, memory pools).</li>
+            <li><code>defaultLabel</code> — the storage mount path or the single sensor's
+              name.</li>
+            <li><code>defaultParsePattern</code> / <code>defaultParseTemplate</code> —
+              <code>model</code> row only: a regex with a capture group and a <code>$1</code>
+              template that turn the raw value into the device model. The model is adopted
+              only while the device's model is empty.</li>
+            <li><code>defaultSensorColumns</code> — <code>temperature</code> rows of type
+              <code>table</code> only, where <code>defaultSymbol</code> is the sensor table's
+              value column: <code>{ nameSymbol, alarmSymbol, alarmMap, sensorClass, transform }</code>
+              (<code>alarmMap</code> a state mapping such as <code>{ "mode": "nonzero" }</code>,
+              the default; <code>sensorClass</code> fixes every row's class;
+              <code>transform</code> only <code>tenths_to_units</code>). Cleared on a row that is
+              not a table, refused on any other metric.</li>
+            <li><code>defaultMibId</code> (an uploaded module) or <code>defaultMibStdKey</code>
+              (a bundled one) — which module the row's symbols come from, used to explain an
+              unresolved symbol. Not both.</li>
+          </ul>
+          <p>All three symbol fields cleared returns the row to "no opinion": the standard MIBs
+            answer for that metric. <code>{ metric, warnings }</code>.</p>
+          <pre class="curl"><code>curl -X PUT -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"defaultType":"table","defaultSymbol":"fgHwSensorEntValue",
+       "defaultSensorColumns":{"nameSymbol":"fgHwSensorEntName","alarmSymbol":"fgHwSensorEntAlarmStatus"}}' \
+  "<span class="js-base-url">/api/v1</span>/server-settings/manufacturer-profiles/$PROFILE_ID/metrics/temperature"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /server-settings/manufacturer-profiles/:id/metrics/:metricKey/overrides
+            <span class="gate">manufacturerProfiles:write</span></div>
+          <p>Add a scoped row under a metric: the same fields without the
+            <code>default</code> prefix (<code>symbol</code> required), plus its scope —
+            <code>assetType</code> (a device type), <code>modelPattern</code>, or both, never
+            neither — and <code>order</code>. A device type with no pattern is that type's
+            default; one per type per metric (<code>409</code> for a second). For each metric the
+            most specific row wins: type + model, then model, then the type's default, then the
+            metric row. A model-pattern row with no type also settles the device's family for
+            every metric of the profile, so give a family a row on every metric it needs.
+            <code>201</code> with <code>{ override, warnings }</code>.
+            <span class="method m-put" style="font-size:0.65rem">PUT</span> and
+            <span class="method m-delete" style="font-size:0.65rem">DELETE</span>
+            <code>…/overrides/:overrideId</code> edit and remove one.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /server-settings/manufacturer-profiles/:id/widgets
+            <span class="gate">manufacturerProfiles:write</span></div>
+          <p>Add a custom widget: <code>name</code>, <code>widgetType</code>
+            (<code>gauge | line | table | state | http</code>), <code>symbol</code> and
+            <code>mibId</code> (an <strong>uploaded</strong> module; both omitted on
+            <code>http</code>), <code>type</code> (<code>scalar | table</code>),
+            <code>transform?</code>, <code>displayOptions?</code>
+            (<code>min</code>, <code>max</code>, <code>unit</code>, <code>warningAt</code>,
+            <code>warningWhen: "below"</code>), <code>modelPattern?</code>. A
+            <code>state</code> widget (a state probe, alertable per row through the
+            <code>customStateValue</code> metric) needs <code>stateMap: { mode, values?, trueLabel?, falseLabel?, trueIsProblem? }</code>
+            (<code>nonzero | zero | equals | notEquals | gte | lte</code>) and takes
+            <code>labelSymbol?</code>, the sibling column naming each row. An <code>http</code>
+            widget takes <code>httpCheck: { useHttps?, port?, path?, expectStatus?, expectBody?, matchMode?, verifyTls?, … }</code>
+            and <code>credentialId?</code> (an <code>http</code> credential). A new widget polls
+            no device until it is switched on for it (below).
+            <span class="method m-put" style="font-size:0.65rem">PUT</span> and
+            <span class="method m-delete" style="font-size:0.65rem">DELETE</span>
+            <code>…/widgets/:widgetId</code> edit and remove one; an edit keeps the widget's id,
+            so automations on a state probe keep working.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /server-settings/manufacturer-profiles/:id/widgets/:widgetId/assets
+            <span class="gate">manufacturerProfiles:write + assets:write</span></div>
+          <p><code>{ enable?: [assetId], disable?: [assetId] }</code> (≤ 5000 each) — switch the
+            widget on or off per device. Switching on a device the widget does not apply to is a
+            <code>400</code>; off always succeeds. → <code>{ enabled, disabled }</code> (rows
+            changed). <span class="method m-get" style="font-size:0.65rem">GET</span> the same
+            path (<code>manufacturerProfiles:read + assets:read</code>) lists the devices it
+            applies to, each with <code>enabled</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /server-settings/manufacturer-profiles/:id/export
+            <span class="gate">manufacturerProfiles:read</span></div>
+          <p>The whole profile as a portable file,
+            <code>{ format: "polaris.manufacturer-profile", version: 1, manufacturer, matchPattern, mibs, metrics, widgets, layout }</code>
+            — MIBs as <code>{ moduleName, manufacturer, model }</code>, a widget's credential as
+            <code>{ name }</code>, no ids, no secrets, no per-device switches, no MIB text.
+            <code>GET …/:id/code</code> is the same with each override's and widget's
+            <code>id</code>, and
+            <span class="method m-put" style="font-size:0.65rem">PUT</span>
+            <code>…/:id/code</code> <code>{ file }</code> makes the profile match it — a
+            <strong>full replace</strong>: rows left out are cleared or deleted. Returns
+            <code>{ changes }</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /server-settings/manufacturer-profiles/import/preview
+            <span class="gate">manufacturerProfiles:write</span></div>
+          <p><code>{ file }</code> → <code>{ manufacturer, targetProfileId, items, mibs }</code>:
+            every importable item (<code>id, kind, label, action: "create" | "replace", missingMibs, missingCredential, blocked</code>)
+            and each MIB the file names with <code>present</code>. Writes nothing. Then
+            <span class="method m-post" style="font-size:0.65rem">POST</span>
+            <code>…/import</code> <code>{ file, items: [id] }</code> imports only the chosen
+            items into the profile for that manufacturer (created when there is none) and
+            returns <code>{ profileId, results: [{ id, ok, error? }] }</code> — one failure never
+            stops the rest. Upload the MIBs it reports missing first: a widget whose MIB is
+            missing is blocked, a metric row imports but reads unresolved.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /server-settings/manufacturer-profiles/:id
+            <span class="gate">manufacturerProfiles:write</span></div>
+          <p><code>204</code>. Its devices fall back to the standard MIBs for every metric.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /manufacturer-aliases
+            <span class="gate">manufacturerProfiles:read</span></div>
+          <p>The alias map that folds vendor spellings into one name before any profile is
+            looked up (<code>[{ id, alias, canonical }]</code>).
+            <span class="method m-post" style="font-size:0.65rem">POST</span>
+            <code>{ alias, canonical }</code>,
+            <span class="method m-put" style="font-size:0.65rem">PUT</span> and
+            <span class="method m-delete" style="font-size:0.65rem">DELETE</span>
+            <code>/:id</code> at <code>manufacturerProfiles:write</code>; a change rewrites the
+            manufacturer on existing devices and MIBs.</p>
         </div>
       </section>
 
