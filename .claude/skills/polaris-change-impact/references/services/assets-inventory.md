@@ -45,6 +45,27 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/primaryIpv6Service.ts
+
+**What it owns:** An asset's PRIMARY IPv6 (business rule 127) — `Asset.ipv6Address` / `ipv6Pinned` / `ipv6PinnedAt` / `ipv6PinnedBy`. Shown beside the IPv4; the dial address of an asset with no IPv4 (`utils/assetDialAddress.ts`). Never writes `Asset.ipAddress` (rule 126(d)).
+
+**Public API:** `pickPrimaryIpv6(candidates)` (pure), `reconcilePrimaryIpv6(now?)`, `pinPrimaryIpv6({assetId, ip, actor})`, `unpinPrimaryIpv6({assetId, actor})`, `Ipv6Candidate`
+
+**Cross-service deps:** `ipv6GateService` (`ipv6Enabled`), `addressConfidenceService` (`buildAddressConfidence`), `eventLogService` (`logEvent`, `logEventsBatch`), `utils/cidr.ts` (`canonicalIp`, `isIpamIpv6Address`, `isIpv6Address`).
+
+**Used by:** `jobs/reconcilePrimaryIpv6.ts`, `api/routes/assets.ts` (`PUT|DELETE /assets/:id/primary-ipv6`).
+
+**Invariants:**
+- The reconcile never touches a pinned value, and writes only assets whose choice changed (one `$transaction` per 200) — the steady state is one read and no writes at 2000 assets.
+- While IPv6 is off: reconcile clears every unpinned value with one `updateMany`, keeps pins; a pin is refused 409.
+- Tie-break is deterministic (score, newest `lastSeen`, smallest address) so equal candidates do not swap each run.
+
+**When changing this:**
+- The candidate source is the address list (`AssetAssociatedIp`, rule 126(c)); a new IPv6 source reaches the primary only by landing there.
+- The UI is `public/js/assets.js → _ipv6LineHTML` / `_handlePrimaryAddressClick` (`.primary-ipv6-set` / `.primary-ipv6-unpin`).
+
+---
+
 ## services/primaryAddressService.ts
 
 **What it owns:** The operator-pinned PRIMARY ADDRESS (business rule 102) — `Asset.primaryAddressMac` / `primaryAddressIp` / `primaryAddressPinnedAt` / `primaryAddressPinnedBy` / `primaryAddressContestedAt`: one (MAC, IP) pair from the asset's `AssetAssociatedIp` rows that the asset is monitored on. The pure enforcement lives in `applyPrimaryAddressPin` (`utils/assetInvariants.ts`), executed inside the `enforceOperatorOverrides` guard in `src/db.ts`; this service sets / clears the pin and audits.

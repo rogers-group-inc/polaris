@@ -368,6 +368,27 @@ Behind nginx that manifests to the remote client as a 502.
 
 See [Mobile and Dash](Mobile-and-Dash#dash-wallboard).
 
+### IPv6
+
+Whether Polaris handles IPv6 at all ([rule 127](Business-Rules#rule-127)). The
+card shows whether IPv6 is currently on and the routable IPv6 addresses this
+server has. Link-local (fe80::) and loopback addresses are not counted.
+
+- **Automatic** (the default): on when this server has a routable IPv6
+  address, off when it does not.
+- **Always on**: for a container install whose container sees no IPv6
+  even though the host and the network use it.
+- **Always off**: for a network where IPv6 is present but not wanted.
+
+While IPv6 is off, discovery reads no DHCPv6 scopes, router-advertised
+prefixes or IPv6 leases, interfaces record no IPv6 address, assets have no
+primary IPv6, and the IPv6 columns and lines are hidden. IPv6 networks and
+reservations already in IPAM stay until you remove them; *observed* ones
+expire within a day. Every device is monitored on IPv4. Saving needs
+`serverSettingsSystem` at *Read-Write*. Each Polaris process picks up a
+change within about a minute, and other open pages pick it up when they
+are reloaded. See [Primary IPv6](Assets#primary-ipv6).
+
 ### Trusted Certificate Authorities
 
 Upload `.pem` / `.crt` / `.cer` / `.der` CA certificates Polaris uses to verify

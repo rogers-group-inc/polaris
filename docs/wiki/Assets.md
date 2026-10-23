@@ -471,6 +471,30 @@ FortiGates, FortiSwitches and FortiAPs are monitored on their management IP and
 offer no pin. A device's port MACs from its interface table are collapsed into
 one *N port MACs* pill and are never a primary.
 
+#### Primary IPv6
+
+When IPv6 is on for this Polaris install ([rule 127](Business-Rules#rule-127)),
+**Address** has two lines: **IPv4**, the address described above, and
+**IPv6**, the device's primary IPv6 address. Polaris picks the primary IPv6
+from the IPv6 addresses in the asset's address list, preferring the one the
+network backs best and then the one seen most recently, and re-checks the
+choice every ten minutes. It is marked *auto*.
+
+With **Assets** set to *Write* or higher, **Set as primary IPv6** on any IPv6
+address in the IPs list pins that one instead. It is then marked *pinned*
+with an **Unpin** button, and Polaris no longer changes it. **Unpin** goes
+back to the automatic choice straight away.
+
+A device is monitored on its IPv4 address whenever it has one. A device with
+no IPv4 address at all is monitored on its primary IPv6 address, and its
+IPv6 line says *monitored*. That covers ping, SNMP, SSH, WinRM and the
+FortiOS REST API.
+
+When IPv6 is off, the IPv6 line, the IPv6 addresses in the IPs list and the
+Interfaces tab's IPv6 column are all hidden, and no new IPv6 addresses are
+recorded. A pinned primary IPv6 is kept, and is used again if IPv6 is turned
+back on.
+
 #### Address confidence
 
 Every address carries a **confidence score** from 0 to 100, shown as a small
@@ -623,12 +647,12 @@ actually contains the address. An interface with no IPv4 address looks up the
 network of its IPv6 address instead.
 
 **An interface's IPv6 address has its own column.** The **IPv6** column, beside
-**IP**, appears when at least one interface on the asset reports an IPv6
+**IP**, appears while IPv6 is on for the install and at least one interface on the asset reports an IPv6
 address, and it sorts and filters like **IP**. Each interface shows its first
 IPv6 address that is not link-local (fe80::) or loopback. **IP** shows the IPv4
 address only. Both addresses are added to the asset's address list and IP
 history under that interface and its MAC. The asset keeps its IPv4 address for
-monitoring ([rule 126](Business-Rules#rule-126)). The history panel's
+monitoring ([rule 126](Business-Rules#rule-126)); see [Primary IPv6](#primary-ipv6). The history panel's
 **Addresses** box shows the interface's current IPv4 and IPv6 addresses, and
 lists any other address it held during the selected range.
 
