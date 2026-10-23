@@ -2757,8 +2757,18 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
           orderBy: [{ sensorClass: "asc" }, { sensorName: "asc" }],
         })
       : [];
-    // VLAN id -> name for the Native / Tagged VLAN pills (vlanNameService).
-    const vlanNames = await getVlanNamesForAsset(id);
+    // VLAN id -> name for the Native / Tagged VLAN pills (vlanNameService),
+    // and the active-alert summary of every neighbor that resolved to an
+    // asset — the Interfaces table's Neighbor cell draws the same strobing
+    // dot the Assets list does, so a port facing an alarmed device says so.
+    // One query for the whole neighbor set, never one per row.
+    const neighborAssetIds = [...new Set(
+      mergedNeighbors.map((n) => n.matchedAsset?.id).filter((v): v is string => !!v),
+    )];
+    const [vlanNames, neighborAlerts] = await Promise.all([
+      getVlanNamesForAsset(id),
+      activeAlertSummaryByAsset(neighborAssetIds),
+    ]);
 
     res.json({
       monitored: asset.monitored,
@@ -2857,6 +2867,7 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
               hostname:  n.matchedAsset.hostname,
               ipAddress: n.matchedAsset.ipAddress,
               assetType: n.matchedAsset.assetType,
+              alert:     neighborAlerts.get(n.matchedAsset.id) ?? null,
             }
           : null,
       })),
