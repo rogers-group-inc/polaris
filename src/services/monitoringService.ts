@@ -70,8 +70,10 @@ import { ingestOsEventLog, getAgentEventLogConfig } from "./osEventLogService.js
 import type { WinRmConnection } from "../utils/winrm.js";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
-import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
+import { bareInterfaceIp, bareHost, interfaceIpIsUnaddressed, isIpv6Address, urlHost } from "../utils/cidr.js";
+import { assetDialAddress } from "../utils/assetDialAddress.js";
 import { pickInterfaceAddresses, splitInterfaceAddresses } from "../utils/interfaceAddress.js";
+import { ipv6Dialable, ipv6Enabled } from "./ipv6GateService.js";
 import {
   IP_ADDRESS_IF_INDEX_OID,
   IP_ADDRESS_TYPE_OID,
@@ -1776,7 +1778,7 @@ async function resolveMonitorSettingsCore(asset: AssetMonitorContext): Promise<R
     let resolved: PollingMethod | null = defaultPollingForSource(sourceKind, stream, {
       assetType: asset.assetType,
       fortiosRestUnavailable,
-      hasIp: typeof asset.ipAddress === "string" && asset.ipAddress.trim() !== "",
+      hasIp: dial(asset) !== null, // an IPv6-only asset counts (rule 128)
     });
     let tier: ProvenanceTier = "default";
     if (tierVal && ok(tierVal)) {
@@ -2302,7 +2304,7 @@ export async function probeAsset(
     // preferable when the asset has one and no IP.
     const adFallback = asset.dnsName || asset.hostname;
     const targetIp =
-      asset.ipAddress ||
+      dial(asset) ||
       ((polling === "winrm" || polling === "ssh") ? adFallback : null);
     if (!targetIp) return finish(start, false, "Asset has no IP address");
 
@@ -4228,7 +4230,7 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
     `xmlns:wsmid="http://schemas.dmtf.org/wbem/wsman/identity/1/wsmanidentity.xsd">` +
     `<s:Header/><s:Body><wsmid:Identify/></s:Body></s:Envelope>`;
 
-  const url = new URL(`${useHttps ? "https" : "http"}://${host}:${port}/wsman`);
+  const url = new URL(`${useHttps ? "https" : "http"}://${urlHost(host)}:${port}/wsman`); // IPv6 bracketed (rule 128)
   const auth = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
 
   return await new Promise<ProbeResult>((resolve) => {
@@ -4240,7 +4242,7 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
     };
     const reqFn = useHttps ? httpsRequest : httpRequest;
     const req = reqFn({
-      hostname: url.hostname,
+      hostname: bareHost(url.hostname),
       port: Number(url.port),
       path: url.pathname,
       method: "POST",
@@ -4253,7 +4255,7 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
       // the CA chain; otherwise the certificate is pinned on first use and
       // checked before the Authorization header is written (business rule 113).
       rejectUnauthorized: config.verifyTls === true,
-      ...(useHttps && config.verifyTls !== true ? { agent: pinnedAgentFor(url.hostname, Number(url.port)) } : {}),
+      ...(useHttps && config.verifyTls !== true ? { agent: pinnedAgentFor(bareHost(url.hostname), Number(url.port)) } : {}),
       timeout: timeoutMs,
     } as any, (res) => {
       // Drain the body so the socket can close cleanly.
@@ -4357,7 +4359,7 @@ async function probeRestApiCredential(config: Record<string, unknown>, start: nu
       resolve(r);
     };
     const req = reqFn({
-      hostname: url.hostname,
+      hostname: bareHost(url.hostname),
       port:     restPort,
       path:     url.pathname + (url.search || ""),
       method:   "GET",
@@ -4365,7 +4367,7 @@ async function probeRestApiCredential(config: Record<string, unknown>, start: nu
       rejectUnauthorized: !!verifyTls,
       // Rule 113(e), re-scan F6: without a CA check the bearer goes only to
       // the certificate pinned for this host:port.
-      ...(isHttps && !verifyTls ? { agent: pinnedAgentFor(url.hostname, restPort) } : {}),
+      ...(isHttps && !verifyTls ? { agent: pinnedAgentFor(bareHost(url.hostname), restPort) } : {}),
       timeout:  timeoutMs,
     } as any, (res) => {
       // Drain so the socket releases.
@@ -4723,6 +4725,15 @@ export interface TelemetrySample {
   sessionCount?:  number | null;
 }
 
+/**
+ * The address every stream dials for an asset (business rule 128): its IPv4,
+ * else — only with IPv6 on for the install — its primary IPv6. Each caller's
+ * asset read must select `ipv6Address` beside `ipAddress`.
+ */
+function dial(asset: { ipAddress?: string | null; ipv6Address?: string | null }): string | null {
+  return assetDialAddress(asset, ipv6Dialable());
+}
+
 export interface InterfaceSample {
   ifName:       string;
   adminStatus?: string | null;
@@ -5066,7 +5077,7 @@ export async function collectTelemetry(assetId: string, preloaded?: TelemetryAss
 
   // FQDN fallback for credentialed methods that resolve hostnames natively.
   const targetIp =
-    asset.ipAddress ||
+    dial(asset) ||
     ((polling === "winrm" || polling === "ssh") ? (asset.dnsName || asset.hostname) : null);
   if (!targetIp) return { supported: false, error: "Asset has no IP address" };
 
@@ -5189,7 +5200,7 @@ export async function collectHardwareSensors(assetId: string, preloaded?: Teleme
   }
 
   const targetIp =
-    asset.ipAddress ||
+    dial(asset) ||
     ((polling === "winrm" || polling === "ssh") ? (asset.dnsName || asset.hostname) : null);
   if (!targetIp) return { supported: false, error: "Asset has no IP address" };
 
@@ -5338,7 +5349,7 @@ export async function collectFastFiltered(assetId: string): Promise<CollectionRe
   }
 
   const targetIp =
-    asset.ipAddress ||
+    dial(asset) ||
     ((polling === "winrm" || polling === "ssh") ? (asset.dnsName || asset.hostname) : null);
   if (!targetIp) return { supported: false, error: "Asset has no IP address" };
 
@@ -5465,7 +5476,7 @@ export async function recordFastFilteredResult(assetId: string, result: Collecti
       speedBps:    i.speedBps != null ? BigInt(Math.round(i.speedBps)) : null,
       duplex:      i.duplex ?? null,
       // ipAddress + ipv6Address, normalised (business rule 126).
-      ...splitInterfaceAddresses(i.ipAddress, i.ipv6Address),
+      ...splitInterfaceAddresses(i.ipAddress, i.ipv6Address, ipv6Enabled()),
       macAddress:  i.macAddress ?? null,
       inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
       outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
@@ -5779,7 +5790,7 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
   }
 
   const targetIp =
-    asset.ipAddress ||
+    dial(asset) ||
     ((interfacesPolling === "winrm" || interfacesPolling === "ssh") ? (asset.dnsName || asset.hostname) : null);
   if (!targetIp) return { supported: false, error: "Asset has no IP address" };
 
@@ -7287,9 +7298,13 @@ function buildSnmpSession(host: string, config: Record<string, unknown>, timeout
   const effectiveTimeout = (typeof timeoutMs === "number" && timeoutMs > 0)
     ? timeoutMs
     : COLLECTOR_REQUEST_TIMEOUT_MS;
+  // net-snmp defaults to "udp4", which cannot reach an IPv6 target — an asset
+  // polled on its primary IPv6 (business rule 128) needs the udp6 socket.
+  const transport = isIpv6Address(host) ? "udp6" : "udp4";
   if (version === "v2c") {
     return snmp.createSession(host, String(config.community || ""), {
       port,
+      transport,
       version: snmp.Version2c,
       timeout: effectiveTimeout,
       retries: 0,
@@ -7311,6 +7326,7 @@ function buildSnmpSession(host: string, config: Record<string, unknown>, timeout
   }
   return snmp.createV3Session(host, user, {
     port,
+    transport,
     version: snmp.Version3,
     timeout: effectiveTimeout,
     retries: 0,
@@ -9912,7 +9928,7 @@ async function persistInterfaceSampleStream(
   const pinnedRows: InterfaceSampleRow[] = pinnedOnly.map((i) => {
     // Business rule 126 — the same normalisation interfaceInventoryService
     // applies to the current-state row, so the two cannot disagree.
-    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
+    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address, ipv6Enabled());
     return {
     assetId,
     timestamp: now,
@@ -10423,7 +10439,7 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
   // history fold and the model adoption.
   const pinned: SystemInfoPins = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { monitoredInterfaces: true, monitoredStorage: true, monitoredIpsecTunnels: true, ipAddress: true, model: true, hostname: true, manufacturer: true, osVersion: true, os: true, macAddress: true, assetType: true, productType: true },
+    select: { monitoredInterfaces: true, monitoredStorage: true, monitoredIpsecTunnels: true, ipAddress: true, ipv6Address: true, model: true, hostname: true, manufacturer: true, osVersion: true, os: true, macAddress: true, assetType: true, productType: true },
   });
 
   // Reconcile the collected names against the identity of record BEFORE
@@ -11867,7 +11883,7 @@ function buildMonitorAssocIpEntries(
     // the same interface and MAC. Loopback and link-local never land — the
     // agent used to report `lo` as 127.0.0.1 and an IPv6-only NIC as fe80::,
     // and this list feeds IP history, path-check hop resolution and search.
-    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address);
+    const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address, ipv6Enabled());
     for (const ip of [addr.ipAddress, addr.ipv6Address]) {
       if (!ip || seenIps.has(ip)) continue; // dedupe within a single scrape
       seenIps.add(ip);
@@ -11943,7 +11959,7 @@ export async function recordProbeResult(
       systemInfoIntervalSec: true,
       probeTimeoutMs: true,
       dependencySuppressed: true,
-      ipAddress: true,
+      ipAddress: true, ipv6Address: true,
       ipConfirmedFor: true,
       ipConfirmedSince: true,
     },
@@ -12424,7 +12440,7 @@ export async function runProbeBatchFor(items: ProbeBatchItem[], labels: WorkItem
         temperatureIntervalSec: true, systemInfoIntervalSec: true, probeTimeoutMs: true,
         dependencySuppressed: true, cpuMemoryTimeoutMs: true, temperatureTimeoutMs: true,
         systemInfoTimeoutMs: true, lastMonitorAt: true,
-        ipAddress: true, ipConfirmedFor: true, ipConfirmedSince: true,
+        ipAddress: true, ipv6Address: true, ipConfirmedFor: true, ipConfirmedSince: true,
       },
     });
     const byId = new Map(snapshots.map((a) => [a.id, a as AssetMonitorSnapshot]));
@@ -12689,8 +12705,8 @@ async function collectManufacturerWidgetSamples(assetId: string, asset: NonNulla
   // An HTTP check is the one transport happy to dial a NAME rather than an IP:
   // a TLS check against a name is the check an operator means, since the cert
   // and any vhost routing are keyed on it.
-  const host = asset.ipAddress;
-  const httpHost = asset.ipAddress || asset.dnsName || asset.hostname;
+  const host = dial(asset);
+  const httpHost = dial(asset) || asset.dnsName || asset.hostname;
   if (!host && !httpHost) return NO_WIDGET_SAMPLES;
   if (!snmpEnabled && httpWidgets.length === 0) return NO_WIDGET_SAMPLES;
 
@@ -13046,7 +13062,7 @@ export async function runLldpFor(assetId: string, labels: WorkItemLabels): Promi
       recordWorkOutcome("lldp", "success", labels);
       return "success";
     }
-    const targetIp = asset.ipAddress || ((lldpPolling === "winrm" || lldpPolling === "ssh") ? (asset.dnsName || asset.hostname) : null);
+    const targetIp = dial(asset) || ((lldpPolling === "winrm" || lldpPolling === "ssh") ? (asset.dnsName || asset.hostname) : null);
     if (!targetIp) {
       recordWorkOutcome("lldp", "failure", labels);
       return "failure";
@@ -13168,7 +13184,7 @@ export async function runStorageFor(assetId: string, labels: WorkItemLabels): Pr
       recordWorkOutcome("storage", "success", labels);
       return "success";
     }
-    const targetIp = asset.ipAddress
+    const targetIp = dial(asset)
       || ((storagePolling === "ssh" || storagePolling === "winrm") ? (asset.dnsName || asset.hostname) : null);
     if (!targetIp) {
       recordWorkOutcome("storage", "failure", labels);
@@ -13310,7 +13326,7 @@ export async function runEventLogFor(assetId: string, labels: WorkItemLabels): P
     const stampAnchor = () =>
       prisma.asset.update({ where: { id: assetId }, data: { lastEventLogAt: new Date() } }).catch(() => {});
 
-    const targetIp = asset.ipAddress || asset.dnsName || asset.hostname;
+    const targetIp = dial(asset) || asset.dnsName || asset.hostname;
     if (!targetIp) {
       await stampAnchor();
       recordWorkOutcome("eventLog", "failure", labels);
@@ -13446,12 +13462,13 @@ export async function runSdwanFor(assetId: string, labels: WorkItemLabels): Prom
     const now = new Date();
     await prisma.asset.update({ where: { id: assetId }, data: { lastSdwanAt: now } }).catch(() => {});
 
-    if (!asset.ipAddress) {
+    const sdwanHost = dial(asset);
+    if (!sdwanHost) {
       recordWorkOutcome("sdwan", "failure", labels);
       return "failure";
     }
     const fg = buildFortinetConfig(
-      asset.ipAddress,
+      sdwanHost,
       integration as any,
       pickRestApiCredential(asset.interfacesCredential, asset.monitorCredential),
     );
@@ -13534,7 +13551,7 @@ export async function runProcessesFor(assetId: string, labels: WorkItemLabels): 
       return "failure";
     };
 
-    const targetIp = asset.ipAddress;
+    const targetIp = dial(asset);
     if (!targetIp) return await fail("asset has no IP address");
 
     // Credential chain — mirrors the probe dispatch: per-stream credential →
@@ -13664,13 +13681,13 @@ export async function runLossSweepFor(assetIds: string[], labels: WorkItemLabels
       select: {
         id: true, monitored: true, status: true, dependencySuppressed: true,
         monitorStatus: true,
-        ipAddress: true, dnsName: true, hostname: true,
+        ipAddress: true, ipv6Address: true, dnsName: true, hostname: true,
       },
     });
     // Cheap re-check only (see the doc above). Passing responseTimePolling null
     // is not a claim that the stream is enabled — it says this pass is not the
     // thing resolving that, which the publisher already did.
-    const eligible = assets.filter((a) => lossSweepIncludes(a, { responseTimePolling: null }));
+    const eligible = assets.filter((a) => lossSweepIncludes(a, { responseTimePolling: null }, undefined, ipv6Dialable()));
     if (eligible.length === 0) {
       recordWorkOutcome("lossSample", "success", labels);
       return "success";
@@ -13682,7 +13699,7 @@ export async function runLossSweepFor(assetIds: string[], labels: WorkItemLabels
     // different readings of the same link.
     const byTarget = new Map<string, string[]>();
     for (const a of eligible) {
-      const t = lossSweepTarget(a);
+      const t = lossSweepTarget(a, ipv6Dialable());
       if (!t) continue;
       const list = byTarget.get(t);
       if (list) list.push(a.id);
@@ -13872,7 +13889,7 @@ export async function loadMonitorPassCandidates() {
       // host often carries only the latter, and `ping` resolves a name fine).
       // `status` is belt-and-braces: MONITOR_CANDIDATE_WHERE already excludes
       // maintenance, and the sampler predicate re-checks it anyway.
-      lastLossSampleAt: true, ipAddress: true, dnsName: true, hostname: true, status: true,
+      lastLossSampleAt: true, ipAddress: true, ipv6Address: true, dnsName: true, hostname: true, status: true,
       // The heavy streams are due off their last ATTEMPT, not their last
       // success (business rule 118) — a failing device waits a cadence.
       lastTelemetryAttemptAt: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
@@ -14123,8 +14140,9 @@ export async function computeDueWork(
       // so it leaves the per-item work array entirely — same split the pg-boss
       // publisher makes. Every other transport needs its own authenticated
       // conversation and stays one work item per asset.
-      if (eff.responseTimePolling === "icmp" && a.ipAddress) {
-        probeBatch.push({ id: a.id, target: a.ipAddress, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
+      const batchTarget = eff.responseTimePolling === "icmp" ? dial(a) : null;
+      if (batchTarget) {
+        probeBatch.push({ id: a.id, target: batchTarget, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
       } else {
         probes.push({ id: a.id, kind: "probe" });
       }
@@ -14184,7 +14202,7 @@ export async function computeDueWork(
     // dispatched per asset (see runMonitorPass), which is the whole reason a
     // fleet-wide window is affordable.
     if (enabled.has("lossSample") &&
-        lossSweepIncludes(a, eff) &&
+        lossSweepIncludes(a, eff, undefined, ipv6Dialable()) &&
         lossSweepIsDue(a.lastLossSampleAt, now, sweepIntervalSec)) {
       lossSamples.push({ id: a.id, kind: "lossSample" });
     }

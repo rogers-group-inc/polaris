@@ -26,7 +26,7 @@
  * home), as utils/fortinetDetectedDevice.ts does.
  */
 
-import type { DiscoveredSubnet } from "../services/fortimanagerService.js";
+import type { DiscoveredSubnet, DiscoveryResult } from "../services/fortimanagerService.js";
 import { canonicalIp, detectIpVersion, isIpamIpv6Address, isValidCidr, normalizeCidr } from "./cidr.js";
 import { macColonUpperOrNull } from "./mac.js";
 
@@ -110,6 +110,9 @@ export interface ParsedInterfaceIpv6 {
    */
   advertisedPrefixes: string[];
 }
+
+/** What an interface reports while IPv6 is off for the install (business rule 128). */
+export const NO_INTERFACE_IPV6: ParsedInterfaceIpv6 = Object.freeze({ addresses: [], advertisedPrefixes: [] }) as ParsedInterfaceIpv6;
 
 /**
  * Parse an interface row's `ipv6` block (absent on builds or transports that
@@ -215,4 +218,28 @@ export function clientIpv6Address(raw: unknown): string | undefined {
   if (typeof raw !== "string" || !raw) return undefined;
   const ip = canonicalIp(raw.trim());
   return ip && isIpamIpv6Address(ip) ? ip : undefined;
+}
+
+/**
+ * A discovery result with every IPv6 fact removed — what the sync writes while
+ * IPv6 is off for the install (business rule 128). IPv6 networks, the gate's
+ * IPv6 interface addresses, DHCPv6 leases, and the client IPv6 addresses the
+ * inventory / detected-device rows carry (the `observed` source) all go; the
+ * IPv4 half is returned untouched. The collectors already skip their
+ * IPv6-only reads while IPv6 is off; this is the backstop that guarantees
+ * nothing IPv6 is STORED, whichever collector (or cached result) produced the
+ * input. Pure — returns a shallow copy. A list the input does not carry
+ * stays absent: a partial result (one phase's slice) is filtered, not
+ * completed and not crashed on.
+ */
+export function withoutIpv6(result: DiscoveryResult): DiscoveryResult {
+  const v4 = (ip: string | null | undefined) => !!ip && !ip.includes(":");
+  return {
+    ...result,
+    subnets: result.subnets?.filter((s) => !s.cidr.includes(":")),
+    interfaceIps: result.interfaceIps?.filter((i) => v4(i.ipAddress)),
+    dhcpEntries: result.dhcpEntries?.filter((e) => v4(e.ipAddress)),
+    deviceInventory: result.deviceInventory?.map((d) => (d.ipv6Address ? { ...d, ipv6Address: undefined } : d)),
+    switchMacTable: result.switchMacTable?.map((r) => (r.ipv6Address ? { ...r, ipv6Address: undefined } : r)),
+  };
 }

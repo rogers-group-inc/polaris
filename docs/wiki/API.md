@@ -116,6 +116,8 @@ POST   /assets/bulk-tags                    add / remove / replace tags on many 
 DELETE /assets/:id
 PUT    /assets/:id/primary-address          pin the (MAC, IP) the device is monitored on
 DELETE /assets/:id/primary-address          release that pin
+PUT    /assets/:id/primary-ipv6             pin the device's primary IPv6 address
+DELETE /assets/:id/primary-ipv6             release that pin
 POST   /assets/:id/address-check            score an address before pinning or typing it
 GET    /credentials                         stored credentials, secrets masked
 ```
@@ -123,6 +125,13 @@ GET    /credentials                         stored credentials, secrets masked
 `azure:` tags belong to the Azure Arc integration. `POST /assets`, `PUT
 /assets/:id` and `POST /assets/bulk-tags` ignore any `azure:` tag in the body
 and always keep the ones a device already has.
+
+`PUT /assets/:id/primary-ipv6` takes `{ ip }` and sets `ipv6Address`, the
+primary IPv6 shown beside `ipAddress` and never in it; a device with no
+`ipAddress` is monitored on it. It is a `409` while IPv6 is off for the install,
+and a `400` for an address that is not IPv6 or is loopback, link-local or
+multicast. `DELETE` goes back to the automatic choice. An IPv6 address sent to
+`PUT /assets/:id/primary-address` is a `400`.
 
 `PUT /assets/:id/primary-address` takes `{ mac, ip }` — one of the device's own
 addresses, as listed in `associatedIps` on `GET /assets/:id` (each entry names

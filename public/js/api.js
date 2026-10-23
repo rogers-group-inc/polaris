@@ -790,6 +790,9 @@ const api = {
     // Business rule 102 — pin / release the (MAC, IP) pair the asset is monitored on.
     pinPrimaryAddress: (id, mac, ip) => request("PUT", `/assets/${id}/primary-address`, { mac, ip }),
     unpinPrimaryAddress: (id) => request("DELETE", `/assets/${id}/primary-address`),
+    // Business rule 128 — the primary IPv6 has its own pin.
+    pinPrimaryIpv6: (id, ip) => request("PUT", `/assets/${id}/primary-ipv6`, { ip }),
+    unpinPrimaryIpv6: (id) => request("DELETE", `/assets/${id}/primary-ipv6`),
     // Business rule 103 — score a candidate address (and optionally ping it) before applying it.
     addressCheck: (id, ip, probe) => request("POST", `/assets/${id}/address-check`, { ip, probe: !!probe }),
     getIpHistory:         (id)  => request("GET",  `/assets/${id}/ip-history`),
@@ -1500,6 +1503,9 @@ const api = {
     // Dash wallboard (unauthenticated read-only /dash surface) toggle + IP scope.
     dashGet:              ()      => request("GET",  "/server-settings/dash"),
     dashPut:              (body)  => request("PUT",  "/server-settings/dash", body),
+    // IPv6 switch (rule 128): set at install from the host, then { enabled } toggles it.
+    ipv6Get:              ()      => request("GET",  "/server-settings/ipv6"),
+    ipv6Put:              (body)  => request("PUT",  "/server-settings/ipv6", body),
     // Local login source-IP restriction (login form + password endpoints).
     // The GET also reports the caller's IP as Polaris resolves it, which is
     // what reveals a trust-proxy misconfiguration before the scope is trusted.

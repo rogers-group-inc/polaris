@@ -53,6 +53,7 @@
  */
 
 import { suggestedSweepIntervalSec } from "./burstPing.js";
+import { assetDialAddress } from "./assetDialAddress.js";
 
 /**
  * Master switch. Unlike the sampler this replaces, the sweep ships ENABLED:
@@ -102,6 +103,8 @@ export interface LossSweepAsset {
   /** Lifecycle status — `maintenance` is the one that must be tested here. */
   status?: string | null;
   ipAddress?: string | null;
+  /** Primary IPv6 — dialled only when there is no IPv4 and IPv6 is on (rule 128). */
+  ipv6Address?: string | null;
   dnsName?: string | null;
   hostname?: string | null;
 }
@@ -114,10 +117,11 @@ export interface LossSweepSettings {
 /**
  * The ICMP target for an asset, or null when there is nothing to ping.
  * Address first, then names — fping and ping both resolve a name perfectly
- * well, and directory-discovered hosts often carry only a DNS name.
+ * well, and directory-discovered hosts often carry only a DNS name. The
+ * address is the IPv4, else (IPv6 on for the install) the primary IPv6.
  */
-export function lossSweepTarget(a: LossSweepAsset): string | null {
-  return a.ipAddress || a.dnsName || a.hostname || null;
+export function lossSweepTarget(a: LossSweepAsset, allowIpv6 = false): string | null {
+  return assetDialAddress(a, allowIpv6) || a.dnsName || a.hostname || null;
 }
 
 /**
@@ -130,13 +134,14 @@ export function lossSweepIncludes(
   a: LossSweepAsset,
   eff: LossSweepSettings,
   enabled: boolean = LOSS_SWEEP_ENABLED,
+  allowIpv6 = false,
 ): boolean {
   if (!enabled) return false;
   if (a.monitored !== true) return false;
   // The one status that keeps `monitored` true while polling stops (rule 16).
   if (String(a.status ?? "") === "maintenance") return false;
   if (eff.responseTimePolling === "disabled") return false;
-  return lossSweepTarget(a) !== null;
+  return lossSweepTarget(a, allowIpv6) !== null;
 }
 
 /** Cadence half, split out so the due-set builder reuses the same arithmetic

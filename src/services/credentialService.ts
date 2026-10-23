@@ -926,7 +926,7 @@ export async function getCredentialUsage(id: string): Promise<CredentialUsage> {
 export async function getTestAssetTarget(assetId: string) {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { id: true, hostname: true, ipAddress: true, dnsName: true },
+    select: { id: true, hostname: true, ipAddress: true, ipv6Address: true, dnsName: true },
   });
   if (!asset) throw new AppError(404, "Asset not found");
   return asset;

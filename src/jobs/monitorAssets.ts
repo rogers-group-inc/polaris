@@ -62,6 +62,8 @@ import { setMonitoredAssets, setMonitorWorkers } from "../metrics.js";
 import { runInstrumentedJob } from "./_metrics.js";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
+import { assetDialAddress } from "../utils/assetDialAddress.js";
+import { ipv6Dialable } from "../services/ipv6GateService.js";
 
 const PROBE_TICK_MS = 5_000;
 const HEAVY_TICK_MS = 30_000;
@@ -149,7 +151,7 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       consecutiveFailures: true, consecutiveSuccesses: true,
       lastMonitorAt: true, monitorIntervalSec: true,
       // ICMP loss-sampler inputs — mirrors loadMonitorPassCandidates.
-      lastLossSampleAt: true, ipAddress: true, dnsName: true, hostname: true, status: true,
+      lastLossSampleAt: true, ipAddress: true, ipv6Address: true, dnsName: true, hostname: true, status: true,
       // Attempt stamps, not success stamps — business rule 118.
       lastTelemetryAttemptAt: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
       lastSystemInfoAttemptAt: true, systemInfoIntervalSec: true,
@@ -344,8 +346,11 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       // each need their own authenticated conversation with their own
       // credentials, so there is nothing to batch (snmpMultiGet batches OIDs
       // WITHIN one session; it cannot span hosts).
-      if (eff.responseTimePolling === "icmp" && a.ipAddress) {
-        probeBatchDue.push({ id: a.id, target: a.ipAddress, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
+      // Business rule 128: the IPv4, else (IPv6 on) the primary IPv6 - the same
+      // pick as computeDueWork's dial().
+      const batchTarget = eff.responseTimePolling === "icmp" ? assetDialAddress(a, ipv6Dialable()) : null;
+      if (batchTarget) {
+        probeBatchDue.push({ id: a.id, target: batchTarget, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
       } else {
         queueJob("probe", a.id, { ...labels, probeIntervalSec });
       }
@@ -421,7 +426,7 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
     // after the loop: one job per asset would put back the ~2000 process spawns
     // a minute that batching exists to remove. Keep in sync with computeDueWork.
     if (enabled.has("lossSample") &&
-        lossSweepIncludes(a, eff) &&
+        lossSweepIncludes(a, eff, undefined, ipv6Dialable()) &&
         lossSweepIsDue(a.lastLossSampleAt, now, sweepIntervalSec)) {
       sweepDue.push(a.id);
     }

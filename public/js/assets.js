@@ -8869,7 +8869,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   var showPoeCol = rows.some(function (r) { return r.poeStatus != null; });
   // And for IPv6 (business rule 126): an IPv4-only device would show a dash in
   // every row, so the column appears once any interface reports an IPv6.
-  var showIpv6Col = rows.some(function (r) { return !!r.ipv6Address; });
+  // Never while IPv6 is off for the install (business rule 128), whatever
+  // rows written before it was switched off still carry.
+  var showIpv6Col = (typeof polarisIpv6Enabled !== "undefined" && polarisIpv6Enabled === true) &&
+    rows.some(function (r) { return !!r.ipv6Address; });
   // Every interface and tunnel renders (2026-08). Traffic-less rows used to
   // ship hidden behind a "Show N inactive interfaces" expander so a 48-port
   // switch with 6 live ports wasn't a wall of zeros — but "no counters yet" is
@@ -9605,7 +9608,8 @@ function _ifaceIpForLookup(raw) {
 function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
   // IPv4 first; an IPv6-only interface looks its IPv6 network up instead
   // (business rule 126).
-  var ip = _ifaceIpForLookup(row && row.ipAddress) || _ifaceIpForLookup(row && row.ipv6Address);
+  var ip = _ifaceIpForLookup(row && row.ipAddress) ||
+    ((typeof polarisIpv6Enabled !== "undefined" && polarisIpv6Enabled === true) ? _ifaceIpForLookup(row && row.ipv6Address) : null);
   var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
   var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
   if (!ip || !canReadNetworks || !canLookup) {
@@ -16167,7 +16171,7 @@ function _ifaceAddressBlockHTML(iface) {
   }
   return '<div id="iface-addr-block" style="margin-bottom:0.75rem;padding:0.5rem 0.65rem;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px">' +
     '<div style="font-size:0.8rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:0.25rem">Addresses</div>' +
-    line("IPv4", v4) + line("IPv6", v6) +
+    line("IPv4", v4) + ((typeof polarisIpv6Enabled !== "undefined" && polarisIpv6Enabled === true) ? line("IPv6", v6) : "") +
     '<div id="iface-addr-history" style="margin-top:0.25rem;font-size:0.75rem;color:var(--color-text-secondary)"></div>' +
   '</div>';
 }
@@ -16192,7 +16196,9 @@ function _ifaceAddressesSeen(samples, current) {
 function _renderIfaceAddressHistory(samples, ifaceRow) {
   var el = document.getElementById("iface-addr-history");
   if (!el) return;
-  var others = _ifaceAddressesSeen(samples, [ifaceRow && ifaceRow.ipAddress, ifaceRow && ifaceRow.ipv6Address]);
+  var v6On = typeof polarisIpv6Enabled !== "undefined" && polarisIpv6Enabled === true;
+  var others = _ifaceAddressesSeen(samples, [ifaceRow && ifaceRow.ipAddress, ifaceRow && ifaceRow.ipv6Address])
+    .filter(function (a) { return v6On || a.indexOf(":") === -1; }); // rule 128
   el.innerHTML = others.length
     ? 'Also held in this range: <span class="mono">' + others.map(escapeHtml).join(", ") + '</span>'
     : "";
@@ -19564,14 +19570,12 @@ function ipViewRow(asset) {
     // A blank pin is a decision, not a gap: no IP Lookup offer (discovery-
     // style writes are dropped while it holds).
     if (blankPin) {
-      return '<div class="detail-row"><span class="detail-label">Address</span>' +
-        '<span class="detail-value mono">-' + blankPin + pills + '</span></div>';
+      return _addressRowHTML(asset, '-' + blankPin, pills);
     }
     var noIpInner = asset.hostname
       ? '- <button class="btn btn-sm btn-secondary" onclick="singleForwardLookup(' + jsArg(asset.id) + ')" title="Forward DNS lookup (A/AAAA record)">IP Lookup</button>'
       : '-';
-    return '<div class="detail-row"><span class="detail-label">Address</span>' +
-      '<span class="detail-value mono">' + noIpInner + pills + '</span></div>';
+    return _addressRowHTML(asset, noIpInner, pills);
   }
   // The pinned pair names its own provenance; "pinned" as a source label
   // beside the pinned marker would say it twice.
@@ -19592,8 +19596,51 @@ function ipViewRow(asset) {
     ? '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(asset.ipAddress) + '">' + escapeHtml(asset.ipAddress) + '</span>' +
       addressConfidenceChipHTML(asset, asset.ipAddress)
     : ipCellHTML(asset);
+  return _addressRowHTML(asset, ipHTML + src + pin + blankPin + primaryPin, pills);
+}
+
+// The Address row: the IPv4 (what monitoring dials) and — only while IPv6 is
+// on for the install (business rule 128) — the primary IPv6 on its own line,
+// each labelled; the IP / MAC pills underneath. With IPv6 off the row is the
+// single unlabelled IPv4 it always was.
+function _addressRowHTML(asset, v4Inner, pills) {
+  var v6On = typeof polarisIpv6Enabled !== "undefined" && polarisIpv6Enabled === true;
+  if (!v6On) {
+    return '<div class="detail-row"><span class="detail-label">Address</span>' +
+      '<span class="detail-value mono">' + v4Inner + pills + '</span></div>';
+  }
   return '<div class="detail-row"><span class="detail-label">Address</span>' +
-    '<span class="detail-value mono">' + ipHTML + src + pin + blankPin + primaryPin + pills + '</span></div>';
+    '<span class="detail-value mono">' +
+      '<span class="address-family-line"><span class="address-family-tag">IPv4</span>' + v4Inner + '</span>' +
+      '<span class="address-family-line"><span class="address-family-tag">IPv6</span>' + _ipv6LineHTML(asset) + '</span>' +
+      pills +
+    '</span></div>';
+}
+
+// The primary IPv6 (business rule 128): the address, whether an operator
+// pinned it or Polaris chose it, and the unpin control on a pin. An asset with
+// no IPv4 is polled on this address, and the line says so.
+function _ipv6LineHTML(asset) {
+  var v6 = asset.ipv6Address || '';
+  if (!v6) return '<span title="No IPv6 address is known for this asset">-</span>';
+  var html = '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(v6) + '">' + escapeHtml(v6) + '</span>';
+  if (asset.ipv6Pinned) {
+    html += '<span style="font-size:0.75rem;color:var(--color-warning,#ffc107);margin-left:8px" title="Pinned by ' +
+      escapeHtml(asset.ipv6PinnedBy || 'an operator') + ' — Polaris will not change it until the pin is removed">pinned</span>';
+    if (canManageAssets()) {
+      html += '<button type="button" class="btn btn-sm btn-secondary primary-ipv6-unpin" style="margin-left:6px" data-asset-id="' +
+        escapeHtml(asset.id) + '" title="Remove the pin; Polaris picks the primary IPv6 again">Unpin</button>';
+    }
+  } else {
+    html += '<span style="font-size:0.75rem;color:var(--color-text-tertiary);margin-left:8px" title="Chosen automatically from the addresses this asset reports — the one with the strongest evidence">auto</span>';
+  }
+  if (!asset.ipAddress) {
+    var dialable = typeof polarisIpv6Dialable !== "undefined" && polarisIpv6Dialable === true;
+    html += dialable
+      ? '<span style="font-size:0.75rem;color:var(--color-text-tertiary);margin-left:8px" title="This asset has no IPv4 address, so monitoring polls it on its IPv6">monitored</span>'
+      : '<span style="font-size:0.75rem;color:var(--color-warning,#ffc107);margin-left:8px" title="This asset has no IPv4 address, and this Polaris server cannot reach IPv6 — see Server Settings → Web Server → IPv6">not polled</span>';
+  }
+  return html;
 }
 
 // ─── Per-MAC address list + the primary-address pin (business rule 102) ─────
@@ -19605,7 +19652,13 @@ function ipViewRow(asset) {
 var _PIN_STALE_MS = 24 * 60 * 60 * 1000; // mirrors PIN_FOLLOW_STALE_MS (src/utils/assetInvariants.ts)
 
 function _assetAddressRows(asset) {
-  return Array.isArray(asset.associatedIps) ? asset.associatedIps : [];
+  var rows = Array.isArray(asset.associatedIps) ? asset.associatedIps : [];
+  // With IPv6 off for the install nothing IPv6 is shown (business rule 128),
+  // including rows recorded before it was switched off.
+  if (typeof polarisIpv6Enabled === "undefined" || polarisIpv6Enabled !== true) {
+    rows = rows.filter(function (r) { return String(r.ip || '').indexOf(':') === -1; });
+  }
+  return rows;
 }
 
 // Colon-uppercase, the MAC list's spelling. Interface-scrape rows written
@@ -19786,6 +19839,7 @@ async function _confirmAddressConfidence(assetId, ip, opts) {
 
 var _MAC_ROW_IPS_VISIBLE = 3;
 var _ADDRESS_PRIMARY_BADGE = '<span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span>';
+var _ADDRESS_PRIMARY_IPV6_BADGE = '<span class="address-primary-badge" title="The asset&#39;s primary IPv6 — polled only when the asset has no IPv4">&#9733; Primary IPv6</span>';
 
 // One address in the IPs hover: the IP, its score chip (plain — hovers can't
 // nest), the MAC it is on, provenance, and the star or "Set as primary".
@@ -19800,6 +19854,22 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
   if (r.interfaceName) bits.push(escapeHtml(r.interfaceName));
   if (r.medium) bits.push(r.medium === "wired" ? "wired" : r.medium === "wireless" ? "wireless" : escapeHtml(r.medium));
   if (r.lastSeen) bits.push(formatDate(r.lastSeen));
+  // An IPv6 row carries the primary-IPv6 marker or its own pin button
+  // (business rule 128) — never the IPv4 pin, which is what monitoring dials.
+  if (String(r.ip || '').indexOf(':') !== -1) {
+    var v6Star = r.ip === asset.ipv6Address
+      ? _ADDRESS_PRIMARY_IPV6_BADGE
+      : (canManageAssets()
+        ? '<button type="button" class="btn btn-sm btn-secondary primary-ipv6-set" ' +
+            'data-asset-id="' + escapeHtml(asset.id) + '" data-ip="' + escapeHtml(r.ip) + '" ' +
+            'title="Make ' + escapeHtml(r.ip) + ' this asset&#39;s primary IPv6">Set as primary IPv6</button>'
+        : '');
+    return '<div class="mac-tooltip-row">' +
+      '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</span>' +
+      '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + bits.join(' &middot; ') + '</span></span>' +
+      v6Star +
+    '</div>';
+  }
   var star = isPrimary
     ? _ADDRESS_PRIMARY_BADGE
     : (r.mac && pinnable
@@ -19940,6 +20010,38 @@ function addressPillsHTML(asset) {
 }
 
 async function _handlePrimaryAddressClick(e) {
+  // The primary IPv6 pin (business rule 128) — its own endpoint, no
+  // confidence pre-check: it is not the address monitoring dials unless the
+  // asset has no IPv4.
+  var v6Btn = e.target.closest('.primary-ipv6-set, .primary-ipv6-unpin');
+  if (v6Btn) {
+    e.preventDefault();
+    e.stopPropagation();
+    var v6Asset = v6Btn.getAttribute('data-asset-id');
+    if (!v6Asset) return;
+    var setting = v6Btn.classList.contains('primary-ipv6-set');
+    var v6Ip = v6Btn.getAttribute('data-ip');
+    var v6Ok = await showConfirm(setting
+      ? 'Make ' + v6Ip + ' this asset’s primary IPv6?\n\nPolaris stops choosing it automatically until you remove the pin.'
+      : 'Remove the primary IPv6 pin?\n\nPolaris picks the primary IPv6 from the addresses the asset reports.');
+    if (!v6Ok) return;
+    v6Btn.disabled = true;
+    try {
+      if (setting) {
+        await api.assets.pinPrimaryIpv6(v6Asset, v6Ip);
+        showToast('Primary IPv6 pinned to ' + v6Ip);
+      } else {
+        await api.assets.unpinPrimaryIpv6(v6Asset);
+        showToast('Primary IPv6 pin removed');
+      }
+    } catch (err) {
+      v6Btn.disabled = false;
+      showToast(err.message, 'error');
+      return;
+    }
+    if (_isCurrentAsset(v6Asset)) await openViewModal(v6Asset);
+    return;
+  }
   var setBtn = e.target.closest('.primary-address-set');
   var unpinBtn = setBtn ? null : e.target.closest('.primary-address-unpin');
   var btn = setBtn || unpinBtn;

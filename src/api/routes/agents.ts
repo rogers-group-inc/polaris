@@ -72,6 +72,7 @@ import { ingestPathCheckSamples, ingestPathCheckTraceroutes } from "../../servic
 import { logger } from "../../utils/logger.js";
 import { normalizeMacOrNull } from "../../utils/mac.js";
 import { splitInterfaceAddresses } from "../../utils/interfaceAddress.js";
+import { ipv6Enabled } from "../../services/ipv6GateService.js";
 
 // ─── /enroll (public) ─────────────────────────────────────────────────
 //
@@ -555,7 +556,7 @@ async function ingestInterfaces(assetId: string, samples: StreamSamples<"interfa
   const rows = samples.map((s) => {
     // Business rule 126: IPv4 / IPv6 split and filtered here, the way every
     // other collector's rows are.
-    const addr = splitInterfaceAddresses(s.ipAddress, s.ipv6Address);
+    const addr = splitInterfaceAddresses(s.ipAddress, s.ipv6Address, ipv6Enabled());
     return {
     assetId,
     timestamp:   sampleTs,

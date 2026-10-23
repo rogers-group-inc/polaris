@@ -660,7 +660,9 @@ describe("IPsec tunnels live on the IPsec tab, not here", () => {
 // device that reports one — filterable like IP, and an IPv6-only interface
 // looks up its network by its IPv6.
 describe("IPv6 column", () => {
-  function renderWithV6(): void {
+  function renderWithV6(ipv6On = true): void {
+    // Business rule 128: the install's IPv6 switch, from /auth/me.
+    g.polarisIpv6Enabled = ipv6On;
     const si = makeSi();
     si.interfaces[0] = { ...si.interfaces[0], ipv6Address: "2001:db8::5" };
     si.interfaces[5] = { ...si.interfaces[5], ipAddress: null, ipv6Address: "2001:db8:50::1" };
@@ -671,6 +673,12 @@ describe("IPv6 column", () => {
 
   it("is absent on a device whose interfaces carry no IPv6", () => {
     expect(doc.querySelector('th[data-sf-key="ipv6"]')).toBeNull();
+  });
+
+  it("is absent while IPv6 is off for the install, even when rows carry IPv6", () => {
+    renderWithV6(false);
+    expect(doc.querySelector('th[data-sf-key="ipv6"]')).toBeNull();
+    expect(dataRows().map((tr) => tr.textContent).join(" ")).not.toContain("2001:db8");
   });
 
   it("appears beside IP once an interface reports one, and filters by text", async () => {

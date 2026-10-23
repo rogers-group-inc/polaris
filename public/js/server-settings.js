@@ -690,6 +690,7 @@ var _certData = { trustedCAs: [], serverCerts: [] };
 var _httpsSettings = { fingerprint: null, cn: null, dnsSans: [], ipSans: [], expiresAt: null, certPath: null };
 var _proxyData = null;
 var _dashSettings = null; // { enabled, rfc1918Only } | null while loading/failed
+var _ipv6Settings = null; // { mode, hostAddresses, enabled } | null while loading/failed
 var _loginAccess = null;  // { settings, callerIp } | null while loading/failed
 
 // Render the Web Server tab (data-tab="certificates"). nginx terminates TLS — five cards
@@ -884,6 +885,51 @@ function renderCertsTab(container) {
           '</div>') +
     '</div>';
 
+  // IPv6 card — business rule 128. Off means no IPv6 is discovered, collected,
+  // stored or shown anywhere. Set once at install from whether this server had
+  // a routable IPv6 address; a plain toggle from then on. PUT is
+  // serverSettingsSystem write-gated.
+  var v6 = _ipv6Settings;
+  var v6Hosts = (v6 && Array.isArray(v6.hostAddresses)) ? v6.hostAddresses : [];
+  var v6Origin = !v6 ? '' :
+    v6.setBy === "install"
+      ? (v6.enabled
+          ? 'Switched on at install, because this server had a routable IPv6 address.'
+          : 'Switched off at install, because this server had no routable IPv6 address.')
+      : v6.setBy === "operator" ? 'Set in Server Settings.' : '';
+  var ipv6CardHtml =
+    '<div class="settings-card">' +
+      '<h4>IPv6</h4>' +
+      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+        'When IPv6 is off, Polaris discovers, collects, stores and shows no IPv6 addresses, and every device is ' +
+        'monitored on its IPv4 address. When it is on, a device with no IPv4 address is monitored on its primary IPv6 address, ' +
+        'as long as this server can reach IPv6. Polaris sets this once at install, from whether this server has a ' +
+        'routable IPv6 address; after that only this switch changes it. In a container the server is the container: ' +
+        'on Docker or podman compose, enable IPv6 on the compose network first (see the install guide).' +
+      '</p>' +
+      (v6 === null
+        ? '<p style="font-size:0.85rem;color:var(--color-text-secondary)">Unavailable — could not load the IPv6 setting.</p>'
+        : '<div class="form-group">' +
+            '<label><input type="checkbox" id="ipv6-enabled"' + (v6.enabled ? " checked" : "") + '> Enable IPv6</label>' +
+            (v6Origin ? '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-top:0.2rem">' + v6Origin + '</div>' : '') +
+          '</div>' +
+          (v6.enabled && !v6.dialable
+            ? '<p style="font-size:0.82rem;color:#f59e0b;margin-bottom:0.75rem">This server has no IPv6 address or route, so it cannot reach IPv6 devices. ' +
+                'IPv6 addresses are still discovered and shown, but a device with only an IPv6 address is not polled. ' +
+                'In a container, enable IPv6 on the compose network.</p>'
+            : '') +
+          (!v6.enabled && v6Hosts.length
+            ? '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">This server now has a routable IPv6 address. ' +
+                'Turn IPv6 on to discover and monitor IPv6 devices.</p>'
+            : '') +
+          '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">This server\'s IPv6: ' +
+            (v6Hosts.length
+              ? '<code>' + v6Hosts.map(escapeHtml).join(", ") + '</code>'
+              : 'none routable (link-local and loopback addresses are not counted)') +
+          '</p>' +
+          '<div style="margin-top:0.5rem"><button class="btn btn-sm btn-primary" id="ipv6-save-btn">Save</button></div>') +
+    '</div>';
+
   var caCardHtml =
     '<div class="settings-card" style="display:flex;flex-direction:column">' +
       '<h4>Trusted Certificate Authorities</h4>' +
@@ -953,7 +999,7 @@ function renderCertsTab(container) {
 
   container.innerHTML = bannerHtml +
     '<div class="settings-cards-flow">' +
-      certCardHtml + proxyCardHtml + dashCardHtml + loginCardHtml + caCardHtml + pinnedCardHtml +
+      certCardHtml + proxyCardHtml + dashCardHtml + ipv6CardHtml + loginCardHtml + caCardHtml + pinnedCardHtml +
     '</div>';
   if (window.PolarisPinnedTlsCerts) window.PolarisPinnedTlsCerts.mount(document.getElementById("pinned-tls-body"));
 
@@ -962,6 +1008,9 @@ function renderCertsTab(container) {
 
   var dashSaveBtn = document.getElementById("dash-save-btn");
   if (dashSaveBtn) dashSaveBtn.addEventListener("click", handleDashSave);
+
+  var ipv6SaveBtn = document.getElementById("ipv6-save-btn");
+  if (ipv6SaveBtn) ipv6SaveBtn.addEventListener("click", function () { handleIpv6Save(container); });
 
   document.querySelectorAll('input[name="dash-ip-scope"]').forEach(function (radio) {
     radio.addEventListener("change", function () {
@@ -1000,6 +1049,22 @@ function renderCertsTab(container) {
   if (applyBtn) applyBtn.addEventListener("click", handleProxyApply);
 }
 
+
+async function handleIpv6Save(container) {
+  var enabled = !!(document.getElementById("ipv6-enabled") || {}).checked;
+  if (!enabled && _ipv6Settings && _ipv6Settings.enabled &&
+      !(await showConfirm("Turn IPv6 off? Polaris stops discovering and showing IPv6 addresses, and devices that only have an IPv6 address stop being polled."))) {
+    return;
+  }
+  try {
+    var result = await api.serverSettings.ipv6Put({ enabled: enabled });
+    _ipv6Settings = (result && result.ipv6) || _ipv6Settings;
+    showToast("IPv6 " + (_ipv6Settings && _ipv6Settings.enabled ? "on" : "off") + " — other pages pick it up when reloaded");
+    renderCertsTab(container);
+  } catch (err) {
+    showToast("Failed to save the IPv6 setting: " + (err.message || err), "error");
+  }
+}
 
 async function handleDashSave() {
   var enabled = !!document.getElementById("dash-enabled").checked;
@@ -1264,6 +1329,11 @@ async function loadCertificates() {
     var dashResp = await api.serverSettings.dashGet();
     _dashSettings = (dashResp && dashResp.dash) || null;
   } catch (_) { _dashSettings = null; }
+
+  try {
+    var v6Resp = await api.serverSettings.ipv6Get();
+    _ipv6Settings = (v6Resp && v6Resp.ipv6) || null;
+  } catch (_) { _ipv6Settings = null; }
 
   try {
     var laResp = await api.serverSettings.loginAccessGet();

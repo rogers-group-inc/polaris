@@ -237,6 +237,24 @@ export function isIpv6Address(ip: string | null | undefined): boolean {
 }
 
 /**
+ * A host as it must appear inside a URL: an IPv6 literal in brackets
+ * ("[2001:db8::1]"), anything else unchanged. `new URL("https://2001:db8::1:443")`
+ * throws, and fetch rejects it — so every `${scheme}://${host}` built from an
+ * address goes through this (business rule 128). An already-bracketed host is
+ * left alone. Note `URL.hostname` KEEPS the brackets: a caller that hands the
+ * hostname on to `http.request` / a pin lookup strips them again
+ * (`bareHost`).
+ */
+export function urlHost(host: string): string {
+  return isIpv6Address(host) ? `[${host}]` : host;
+}
+
+/** A URL hostname with IPv6 brackets removed — what `http.request` and pin keys take. */
+export function bareHost(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
+/**
  * The one spelling of an address that string comparison can rely on: IPv6
  * lower-cased and compressed per RFC 5952 (the form `normalizeCidr` already
  * writes a network's base in), IPv4 returned as given. A reservation key is

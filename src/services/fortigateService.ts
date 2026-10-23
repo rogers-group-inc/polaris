@@ -25,12 +25,14 @@ import {
 } from "../utils/fortiosRequestGate.js";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
-import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
+import { parseRangeFirstIp, isValidIpv4, urlHost } from "../utils/cidr.js";
 import { readSystemStatus, readHaPeers } from "../utils/fortiosEnvelope.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
+import { ipv6Enabled } from "./ipv6GateService.js";
 import {
   advertisedPrefixSubnets,
+  NO_INTERFACE_IPV6,
   DHCP_MONITOR_FORMAT,
   parseDhcp6Servers,
   parseDhcpMonitorAddress,
@@ -267,7 +269,7 @@ async function fgRequestUnpaced<T>(
 ): Promise<T> {
   const port = config.port || 443;
   const qs = new URLSearchParams(opts.query || {});
-  const url = `https://${config.host}:${port}${path}${qs.toString() ? (path.includes("?") ? "&" : "?") + qs.toString() : ""}`;
+  const url = `https://${urlHost(config.host)}:${port}${path}${qs.toString() ? (path.includes("?") ? "&" : "?") + qs.toString() : ""}`;
 
   const controller = new AbortController();
   // Default 15s for discovery / push paths. Response-time probes pass their
@@ -683,7 +685,8 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
   // this server's. FortiOS has no DHCPv6 reservations, so there is nothing
   // else to take from the table. A failure loses only the IPv6 networks; it
   // never touches the IPv4 reads or the reservation sweep's flag above.
-  try {
+  // Not read at all while IPv6 is off for the install (business rule 128).
+  if (ipv6Enabled()) try {
     const dhcp6Data = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system.dhcp6/server", { query: queryBase, signal });
     const v6Subnets = parseDhcp6Servers(dhcp6Data, deviceName, deviceSerial);
     for (const s of v6Subnets) {
@@ -706,7 +709,7 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
             // ipv6=true makes this the COMBINED table — IPv4 rows unchanged,
             // DHCPv6 leases added (business rule 125; FortiOS 7.6.7 / 8.0.1).
             const leases = await fgRequest<any[]>(config, "GET", "/api/v2/monitor/system/dhcp", {
-      query: { ...queryBase, format: DHCP_MONITOR_FORMAT, ipv6: "true" },
+      query: { ...queryBase, format: DHCP_MONITOR_FORMAT, ...(ipv6Enabled() ? { ipv6: "true" } : {}) },
       signal,
     });
     flags.didDhcpLeasesQuery = true;
@@ -798,6 +801,7 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
     let secondaryIpCount = 0;
     let ipv6IpCount = 0;
     let raSubnetCount = 0;
+    const v6On = ipv6Enabled();
     if (Array.isArray(ifaceData)) {
       const parseVid = (v: unknown): number => {
         const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
@@ -814,7 +818,8 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         // serves (business rule 125) — the IPv6 counterpart of a DHCP scope,
         // so like a scope it answers to the DHCP include / exclude filter
         // (applied after the chains), not to the interface filter below.
-        const v6 = parseInterfaceIpv6(iface);
+        // Nothing IPv6 while it is off for the install (business rule 128).
+        const v6 = v6On ? parseInterfaceIpv6(iface) : NO_INTERFACE_IPV6;
         for (const s of advertisedPrefixSubnets(ifaceName, v6, deviceName, deviceSerial, discovered)) {
           discovered.push(s);
           dhcpInterfaceNames.push(ifaceName);
