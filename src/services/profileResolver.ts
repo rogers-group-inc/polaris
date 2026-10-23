@@ -476,6 +476,9 @@ export function pickDbProfile(
 
   const out: VendorTelemetryProfile = {
     vendor: profile.manufacturer,
+    // Where this profile's MIBs live — the collectors' second resolve scope
+    // (business rule 131).
+    profileManufacturer: profile.manufacturer,
     // The runtime never re-tests this; `findDbProfile` has already decided.
     // The profile's own "also applies when" is the honest value where there
     // is one, and a sentinel that matches nothing where there is not.

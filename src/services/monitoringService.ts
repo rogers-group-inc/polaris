@@ -152,13 +152,12 @@ import { persistApRadioInventory } from "./apRadioService.js";
 import { normalizeFortiapInterfaceName, fortiapInterfaceAliases } from "../utils/fortiapInterfaceAlias.js";
 import type { ApLldpNeighborSample } from "../utils/fortiapLldp.js";
 import { deriveRadioBand } from "../utils/fortiapRadioBand.js";
-import { resolveOidSync, ensureRegistryLoaded } from "./oidRegistry.js";
+import { resolveOidSync, ensureRegistryLoaded, type ResolveScope } from "./oidRegistry.js";
 import {
   deriveDiskBytes,
   type VendorTelemetryProfile,
 } from "./vendorTelemetryProfiles.js";
 import { pickDbProfile, type ProfileSubject } from "./profileResolver.js";
-import { getProfileFor as getDbManufacturerProfile } from "./manufacturerProfileService.js";
 import {
   startPassTimer,
   startWorkTimer,
@@ -236,7 +235,7 @@ import {
   collectTelemetryWorkload,
   probeWorkload,
 } from "./workloadMonitorService.js";
-import { enabledWidgetIdsForAsset, assetIdsWithEnabledWidgets } from "./customWidgetEnablementService.js";
+import { enabledWidgetIdsForAsset, assetIdsWithEnabledWidgets, widgetProfileForAsset } from "./customWidgetEnablementService.js";
 import {
   collectGenericApiWidgetSamples,
   collectHardwareSensorsGenericApi,
@@ -5278,7 +5277,8 @@ async function collectHardwareSensorsViaSnmpSession(
   const profile = pickDbProfile(
     await profileSubjectFor({ manufacturer, model, os, assetType, pinnedMibId: temperatureMibId }),
   );
-  const scope   = { manufacturer, model };
+  // The asset's own scope, then the governing profile's (business rule 131).
+  const scope: ResolveScope = { manufacturer, model, profileManufacturer: profile?.profileManufacturer };
   return await withSnmpSession(host, config, async (session) => {
     return await collectHardwareSensorsSnmp(session, manufacturer, profile, scope);
   }, timeoutMs);
@@ -7656,10 +7656,13 @@ async function collectTelemetrySnmp(
   const profile = pickDbProfile(
     await profileSubjectFor({ manufacturer, model, os, assetType, pinnedMibId: telemetryMibId }),
   );
-  // Scope still uses the *asset's* manufacturer/model so symbol resolution
-  // through oidRegistry continues to pick up device-specific MIB overrides
-  // for the actual asset, not the MIB pointed at by telemetryMibId.
-  const scope = { manufacturer, model };
+  // Scope still uses the *asset's* manufacturer/model first so symbol
+  // resolution through oidRegistry continues to pick up device-specific MIB
+  // overrides for the actual asset, not the MIB pointed at by telemetryMibId.
+  // The governing profile's manufacturer is the second scope (business rule
+  // 131): a profile reached through `matchPattern` or a pin has its MIBs
+  // uploaded under its own name, not the asset's.
+  const scope: ResolveScope = { manufacturer, model, profileManufacturer: profile?.profileManufacturer };
 
   return await withSnmpSession(host, config, async (session) => {
     let cpuPct: number | null = null;
@@ -7752,7 +7755,7 @@ async function collectCpuVendor(
   session: any,
   profile: VendorTelemetryProfile,
   cpu: NonNullable<VendorTelemetryProfile["cpu"]>,
-  scope: { manufacturer?: string | null; model?: string | null },
+  scope: ResolveScope,
 ): Promise<number | null> {
   const oid = resolveOidSync(cpu.symbol, scope);
   if (!oid) {
@@ -7779,7 +7782,7 @@ async function collectMemoryVendor(
   session: any,
   profile: VendorTelemetryProfile,
   mem: NonNullable<VendorTelemetryProfile["memory"]>,
-  scope: { manufacturer?: string | null; model?: string | null },
+  scope: ResolveScope,
 ): Promise<{ memUsedBytes: number | null; memTotalBytes: number | null; memPct: number | null } | null> {
   // Prefer byte-form pairs (used + free or used + total). When both are
   // missing fall back to a single percent symbol.
@@ -7962,7 +7965,7 @@ async function collectHardwareSensorsSnmp(
   session: any,
   manufacturer?: string | null,
   profile?: VendorTelemetryProfile | null,
-  scope?: { manufacturer?: string | null; model?: string | null },
+  scope?: ResolveScope,
 ): Promise<HardwareSensorSample[]> {
   const [sensors, pse] = await Promise.all([
     collectHardwareSensorsSnmpCore(session, manufacturer, profile, scope),
@@ -7975,7 +7978,7 @@ async function collectHardwareSensorsSnmpCore(
   session: any,
   manufacturer?: string | null,
   profile?: VendorTelemetryProfile | null,
-  scope?: { manufacturer?: string | null; model?: string | null },
+  scope?: ResolveScope,
 ): Promise<HardwareSensorSample[]> {
   // 1. FORTINET-FORTIGATE-MIB fgHwSensorTable is the comprehensive source on
   //    FortiGates (temperature + fan + voltage + power + disk + alarm), so
@@ -8654,7 +8657,7 @@ async function persistMacTable(assetId: string, rows: FdbEntry[]): Promise<void>
 async function collectVendorDiskFallback(
   session: any,
   vendorProfile: VendorTelemetryProfile | null,
-  vendorScope: { manufacturer: string | null | undefined; model: string | null | undefined },
+  vendorScope: ResolveScope,
 ): Promise<StorageSample | null> {
   const disk = vendorProfile?.disk;
   if (!disk) return null;
@@ -8751,7 +8754,7 @@ async function collectSystemInfoSnmp(
     model:        opts.model ?? null,
     assetType:    opts.assetType ?? null,
   });
-  const vendorScope   = { manufacturer: opts.manufacturer, model: opts.model };
+  const vendorScope: ResolveScope = { manufacturer: opts.manufacturer, model: opts.model, profileManufacturer: vendorProfile?.profileManufacturer };
 
   return await withSnmpSession(host, config, async (session) => {
     // Storage: walk hrStorage and pick rows tagged as fixed/removable disk.
@@ -12687,11 +12690,12 @@ async function collectManufacturerWidgetSamples(
   asset: NonNullable<TelemetryAssetRow>,
   enabledIds: Set<string>,
 ): Promise<WidgetSampleSet> {
-  if (!asset.manufacturer || enabledIds.size === 0) return NO_WIDGET_SAMPLES;
+  if (enabledIds.size === 0) return NO_WIDGET_SAMPLES;
 
-  // Same function as the static top-of-file import (aliased there as
-  // getDbManufacturerProfile) — no dynamic import on the telemetry hot path.
-  const profile = getDbManufacturerProfile(asset.manufacturer);
+  // The governing profile, decided exactly as for telemetry (business rule
+  // 131): keyed by the canonical manufacturer, else its "also applies when".
+  // An asset with no manufacturer can still be governed through its OS.
+  const profile = widgetProfileForAsset(asset);
   if (!profile || profile.widgets.length === 0) return NO_WIDGET_SAMPLES;
 
   // Business rule 130: only the widgets switched ON for this asset poll it,
@@ -12755,7 +12759,9 @@ async function collectManufacturerWidgetSamples(
   if (!runSnmp && httpWidgets.length === 0) return NO_WIDGET_SAMPLES;
 
   await ensureRegistryLoaded();
-  const scope = { manufacturer: asset.manufacturer, model: asset.model };
+  // The asset's own scope, then the governing profile's — where the widget's
+  // MIB was uploaded (business rule 131).
+  const scope: ResolveScope = { manufacturer: asset.manufacturer, model: asset.model, profileManufacturer: profile.manufacturer };
   const timeoutMs = asset.customWidgetTimeoutMs ?? effective.temperatureTimeoutMs;
 
   const samples: Array<{ widgetId: string; kind: "scalar" | "table"; value: any }> = [];
@@ -13848,7 +13854,7 @@ export async function collectStorageOnlySnmp(
     model:        model ?? null,
     assetType:    assetType ?? null,
   });
-  const vendorScope   = { manufacturer: manufacturer ?? null, model: model ?? null };
+  const vendorScope: ResolveScope = { manufacturer: manufacturer ?? null, model: model ?? null, profileManufacturer: vendorProfile?.profileManufacturer };
   return await withSnmpSession(host, config, async (session) => {
     const storage: StorageSample[] = [];
     try {

@@ -172,6 +172,18 @@ vendors, and where to get each MIB, are in the install guide's *"A vendor's SNMP
 CPU / memory / storage is empty"* section — and the shipped Cisco profile is a
 worked example to copy, which is half of why it ships.
 
+**Also applies when** (on a profile's header) lets one profile cover devices
+that report a different manufacturer name: for example `aruba|procurve` on an
+HP profile, for switches that say "Aruba Networks". It is a pattern, matched
+without regard to case against the device's manufacturer, its OS, and the name
+of a MIB pinned on it. It is used only for a device that has no profile under
+its own manufacturer name, so it never takes a device from another profile. A
+device it covers gets everything the profile defines: its metric rows, its
+custom widgets, and its MIBs. Upload the profile's MIBs under the profile's
+name, the same as for any other device of that profile. A MIB uploaded for the
+device's own manufacturer and model still takes priority. See
+[Business Rules](Business-Rules#rule-131).
+
 **The Symbol box filters as you type.** Once a row or widget has a MIB, click
 Symbol and type any part of the name: matches that start with your text are
 listed first, then names that contain it. The arrow keys and Enter pick one. A
@@ -202,8 +214,9 @@ items are imported, into the profile for that manufacturer (created if there
 is none).
 
 **A custom widget polls only the devices you switch it on for.** When you save
-a new widget, Polaris lists every device it applies to (the profile's
-manufacturer, narrowed by the widget's model pattern if it has one) with a
+a new widget, Polaris lists every device it applies to (every device the
+profile covers, including through **Also applies when**, narrowed by the
+widget's model pattern if it has one) with a
 checkbox each. Tick the devices to start polling it on and press **Enable**,
 or **Skip for now**. Until then the widget shows on those devices' Custom MIB
 tab but collects nothing. The widget's **Devices…** button reopens the same

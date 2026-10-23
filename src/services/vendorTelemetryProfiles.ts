@@ -115,6 +115,14 @@ export interface ModelQuery {
 
 export interface VendorTelemetryProfile {
   vendor: string;                       // human-readable label, used in logs
+  /**
+   * The governing ManufacturerProfile's canonical manufacturer, set by
+   * `pickDbProfile`. Collectors pass it as `ResolveScope.profileManufacturer`
+   * so the profile's symbols resolve where its MIBs were uploaded even when
+   * the asset reached it through `matchPattern` (business rule 131). Absent
+   * on the hardcoded constant's entries.
+   */
+  profileManufacturer?: string;
   match: Pick<RegExp, "test" | "source">;                        // case-insensitive regex tested against `${manufacturer} ${os}`
   cpu?: CpuQuery;
   memory?: MemoryQuery;

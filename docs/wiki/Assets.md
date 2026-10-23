@@ -1174,7 +1174,9 @@ automation in the wizard in place, for `automationManagement:write`.
 ### Custom MIB
 
 Shown when the asset's manufacturer profile defines **custom widgets**
-(Server Settings → Credentials → Manufacturer Profiles). One card per widget,
+(Server Settings → Credentials → Manufacturer Profiles). That is the profile
+named after the asset's manufacturer, or the one whose **Also applies when**
+matches it (see [Monitoring](Monitoring)). One card per widget,
 drawn as its type says — a gauge with its threshold ranges, a line over the
 last 60 samples, the latest value as text, a table, or a pass/fail state.
 

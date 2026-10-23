@@ -41,15 +41,32 @@ vi.mock("../../src/services/eventLogService.js", () => ({
   logEventsBatch: (...a: unknown[]) => logEventsBatch(...a),
 }));
 
+// Business rule 131: "applies" means the widget's profile GOVERNS the asset,
+// decided by profileResolver.findDbProfile over the warm profile cache. The
+// cache is stubbed with in-memory profiles; the resolver itself is real.
+const profiles = vi.hoisted(() => ({ list: [] as Array<Record<string, unknown>> }));
+vi.mock("../../src/services/manufacturerProfileService.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getProfileFor: (m: string | null | undefined) =>
+    profiles.list.find((p) => String(p.manufacturer).toLowerCase() === String(m ?? "").trim().toLowerCase()) ?? null,
+  listCachedProfiles: () => profiles.list,
+  refreshProfileCacheIfStale: async () => false,
+}));
+
+function profile(id: string, manufacturer: string, matchPattern: string | null = null) {
+  return { id, manufacturer, matchPattern, createdBy: null, createdAt: "", updatedAt: "", metrics: [], widgets: [] };
+}
+
 const svc = await import("../../src/services/customWidgetEnablementService.js");
 const { customWidgetIntervalSec } = await import("../../src/services/monitoringService.js");
 
 const WIDGET = {
   id: "w1", name: "Battery Status", modelPattern: "^Smart-UPS", profileId: "p-apc",
-  profile: { manufacturer: "APC" },
+  profile: { manufacturer: "APC", matchPattern: null },
 };
 
 beforeEach(() => {
+  profiles.list = [profile("p-apc", "APC")];
   for (const f of [widgetFindUnique, assetFindMany, assetFindUnique, enableFindMany, enableCreateMany, enableDeleteMany, enableUpsert, logEventsBatch]) f.mockReset();
   widgetFindUnique.mockResolvedValue(WIDGET);
   enableCreateMany.mockResolvedValue({ count: 0 });
@@ -135,6 +152,63 @@ describe("setWidgetEnabledForAsset", () => {
     assetFindUnique.mockResolvedValue({ id: "a2", hostname: "ups-closet", manufacturer: "APC", model: "Back-UPS 700" });
     await expect(svc.setWidgetEnabledForAsset("a2", "w1", true)).rejects.toMatchObject({ httpStatus: 400 });
     await expect(svc.setWidgetEnabledForAsset("a2", "w1", false)).resolves.toBeUndefined();
+  });
+});
+
+describe("a profile reached through its matchPattern (business rule 131)", () => {
+  // The HP profile's "also applies when" covers the Aruba spelling no alias
+  // folds in. Its widgets must reach those assets exactly as its telemetry
+  // rows do — and must never reach an asset keyed to another profile.
+  const HP_WIDGET = {
+    id: "w-hp", name: "PSU status", modelPattern: null, profileId: "p-hp",
+    profile: { manufacturer: "HP", matchPattern: "aruba|procurve" },
+  };
+  beforeEach(() => {
+    profiles.list = [profile("p-apc", "APC"), profile("p-hp", "HP", "aruba|procurve")];
+    widgetFindUnique.mockResolvedValue(HP_WIDGET);
+  });
+
+  it("widgetProfileForAsset: keyed first, then matchPattern over manufacturer + os, never stealing a keyed asset", () => {
+    expect(svc.widgetProfileForAsset({ manufacturer: "HP", model: null })?.id).toBe("p-hp");
+    expect(svc.widgetProfileForAsset({ manufacturer: "Aruba Networks", model: "2930F" })?.id).toBe("p-hp");
+    expect(svc.widgetProfileForAsset({ manufacturer: null, os: "ProCurve K.16", model: null })?.id).toBe("p-hp");
+    // APC is keyed to its own profile; an OS that happens to match HP's pattern does not move it.
+    expect(svc.widgetProfileForAsset({ manufacturer: "APC", os: "aruba-bridge", model: null })?.id).toBe("p-apc");
+    expect(svc.widgetProfileForAsset({ manufacturer: "Juniper", model: null })).toBeNull();
+  });
+
+  it("the picker reads past the manufacturer filter and keeps only governed assets", async () => {
+    assetFindMany.mockResolvedValue([
+      { id: "hp1", hostname: "sw-hp", ipAddress: null, manufacturer: "HP", os: null, model: "2530", assetType: "switch", monitored: true, monitorStatus: "up" },
+      { id: "ar1", hostname: "sw-aruba", ipAddress: null, manufacturer: "Aruba Networks", os: null, model: "2930F", assetType: "switch", monitored: true, monitorStatus: "up" },
+      { id: "apc", hostname: "ups", ipAddress: null, manufacturer: "APC", os: "aruba-bridge", model: "Smart-UPS", assetType: "other", monitored: true, monitorStatus: "up" },
+      { id: "jn1", hostname: "rtr", ipAddress: null, manufacturer: "Juniper", os: "Junos", model: "MX204", assetType: "router", monitored: true, monitorStatus: "up" },
+    ]);
+    enableFindMany.mockResolvedValue([]);
+
+    const rows = await svc.listWidgetCandidates("p-hp", "w-hp");
+    expect(rows.map((r) => r.id)).toEqual(["hp1", "ar1"]);
+    // No manufacturer clause: SQL cannot express the pattern.
+    expect(assetFindMany.mock.calls[0][0].where).toEqual({ status: { not: "decommissioned" } });
+  });
+
+  it("the switch turns on for a matchPattern-routed asset and stays refused for a keyed-elsewhere one", async () => {
+    assetFindUnique.mockResolvedValueOnce({ id: "ar1", hostname: "sw-aruba", manufacturer: "Aruba Networks", os: null, model: "2930F", assetType: "switch" });
+    await svc.setWidgetEnabledForAsset("ar1", "w-hp", true);
+    expect(enableUpsert).toHaveBeenCalledTimes(1);
+
+    assetFindUnique.mockResolvedValueOnce({ id: "apc", hostname: "ups", manufacturer: "APC", os: "aruba-bridge", model: "Smart-UPS", assetType: "other" });
+    await expect(svc.setWidgetEnabledForAsset("apc", "w-hp", true)).rejects.toMatchObject({ httpStatus: 400 });
+  });
+
+  it("a profile with no matchPattern keeps the cheap manufacturer-filtered query", async () => {
+    widgetFindUnique.mockResolvedValue(WIDGET);
+    assetFindMany.mockResolvedValue([]);
+    enableFindMany.mockResolvedValue([]);
+    await svc.listWidgetCandidates("p-apc", "w1");
+    expect(assetFindMany.mock.calls[0][0].where).toEqual({
+      manufacturer: { equals: "APC", mode: "insensitive" }, status: { not: "decommissioned" },
+    });
   });
 });
 

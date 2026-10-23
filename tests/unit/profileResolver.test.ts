@@ -163,3 +163,24 @@ describe("resolveDbMetric — today's override walk", () => {
     expect(resolveDbMetric(undefined, "anything")).toBeNull();
   });
 });
+
+describe("pickDbProfile names the governing profile (business rule 131)", () => {
+  // The collectors pass `profileManufacturer` as the second resolve scope, so
+  // it must be the PROFILE's name — not the asset's — whenever the asset got
+  // there through "also applies when".
+  const HP: ProfileFull = {
+    id: "p-hp", manufacturer: "HP", matchPattern: "aruba|procurve", createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
+    metrics: [
+      row("cpu", { defaultSymbol: "hpSwitchCpuStat" }),
+      row("memory"), row("temperature"), row("storage"), row("interfaces"), row("lldp"), row("wirelessStations"),
+    ],
+  };
+  const hpLookup = (m: string | null | undefined) => ((m ?? "").toLowerCase() === "hp" ? HP : null);
+
+  it("is the profile's manufacturer for a keyed asset and for a matchPattern-routed one", () => {
+    expect(pickDbProfile({ manufacturer: "HP", os: null, model: null, assetType: null }, hpLookup, () => [HP])?.profileManufacturer).toBe("HP");
+    const routed = pickDbProfile({ manufacturer: "Aruba Networks", os: null, model: "2930F", assetType: "switch" }, hpLookup, () => [HP]);
+    expect(routed?.cpu?.symbol).toBe("hpSwitchCpuStat");
+    expect(routed?.profileManufacturer).toBe("HP");
+  });
+});
