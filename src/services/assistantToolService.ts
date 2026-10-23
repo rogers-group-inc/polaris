@@ -140,8 +140,10 @@ const searchHelpTool: ToolDef = {
   name: "search_help",
   label: "searched the Polaris help",
   description:
-    "Search the Polaris operator documentation. Use for ANY question about how to use, configure or " +
-    "troubleshoot Polaris itself (pages, settings, integrations, permissions, automations, monitoring). " +
+    "Search the Polaris operator documentation and the Polaris REST API reference. Use for ANY question about how " +
+    "to use, configure or troubleshoot Polaris itself (pages, settings, integrations, permissions, automations, " +
+    "monitoring, manufacturer profiles) and for questions about calling its API (endpoints, request bodies, " +
+    "permissions, tokens). A hit with source \"api\" is from the API reference: quote its method and path exactly. " +
     "Cite the page and section you used.",
   parameters: {
     type: "object",
@@ -911,11 +913,315 @@ function listResult(res: { rows: Array<Record<string, unknown>>; total: number }
   };
 }
 
+// ─── Manufacturer profiles ───────────────────────────────────────────────────
+//
+// The per-vendor SNMP mapping (which symbol is CPU, which table is the sensor
+// table) and the MIBs behind it. Read-only, like everything here: the assistant
+// can explain a profile, say why a row is unresolved and PROPOSE rows from the
+// operator's own MIB, never save one. Readiness comes from the same service the
+// profile page reads, so the two cannot disagree.
+
+const ProfileArgs = z.object({
+  manufacturer: z.string().min(1).max(200).optional(),
+  id: z.string().min(1).max(64).optional(),
+}).refine((a) => a.manufacturer || a.id, { message: "give manufacturer or id" });
+
+/** One readiness side, cut to what an answer needs. */
+function readinessBrief(r: { symbol: string; resolved: boolean; fromModuleName: string | null; fromScope: string | null; hint: unknown } | null | undefined) {
+  if (!r) return null;
+  if (r.resolved) return { symbol: r.symbol, resolved: true, module: r.fromModuleName, layer: r.fromScope };
+  const h = r.hint as { kind?: string; mibModuleName?: string; roots?: Array<{ symbol: string; module: string | null }> } | null;
+  return {
+    symbol: r.symbol,
+    resolved: false,
+    why: h?.kind === "imports"
+      ? `${h.mibModuleName} is uploaded but missing ${(h.roots ?? []).map((x) => x.module ?? x.symbol).join(", ")}`
+      : "no uploaded MIB defines it",
+  };
+}
+
+const listProfilesTool: ToolDef = {
+  name: "list_manufacturer_profiles",
+  label: "looked at the manufacturer profiles",
+  description:
+    "The manufacturer profiles on this install (the per-vendor SNMP telemetry mapping): each vendor's name, how many " +
+    "metric rows, overrides and custom widgets it has, and its readiness — ready (every symbol resolves), partial, " +
+    "or the symbols that do not resolve. Use before get_manufacturer_profile when you do not know the exact name.",
+  parameters: { type: "object", properties: {} },
+  async run(_args, ctx) {
+    if (!hasPermission(ctx.req, "manufacturerProfiles", "read")) return denied("manufacturer profiles");
+    const { listProfiles } = await import("./manufacturerProfileService.js");
+    const rows = (await listProfiles()).slice(0, ctx.maxRows).map((p) => ({
+      id: p.id, manufacturer: p.manufacturer,
+      metricRows: p.metricCount, overrides: p.overrideCount, widgets: p.widgetCount, mibsUnderThisName: p.scopedMibCount,
+      ready: p.ready, partial: p.partial, unresolvedSymbols: p.unresolvedSymbols,
+    }));
+    return { ok: true, data: { total: rows.length, rows } };
+  },
+};
+
+const getProfileTool: ToolDef = {
+  name: "get_manufacturer_profile",
+  label: "looked at a manufacturer profile",
+  description:
+    "One manufacturer profile in full: its \"also applies when\" pattern; for each CONFIGURED metric row (model, cpu, " +
+    "memory, temperature = Hardware Sensors, storage; interfaces / lldp / wirelessStations are descriptive) the " +
+    "symbol(s), type, combiner / transform, aggregate, label, sensor-table columns, and whether each symbol resolves " +
+    "and from which MIB (or why not); every device-type / per-model override; every custom widget and state probe. " +
+    "Use to explain why a device's CPU, memory, sensors or storage are missing, or before proposing a change.",
+  parameters: {
+    type: "object",
+    properties: {
+      manufacturer: { type: "string", description: "The vendor name as Polaris shows it, e.g. Cisco" },
+      id: { type: "string", description: "A profile id from list_manufacturer_profiles" },
+    },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "manufacturerProfiles", "read")) return denied("manufacturer profiles");
+    const p = ProfileArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const svc = await import("./manufacturerProfileService.js");
+    let id = p.data.id;
+    if (!id && p.data.manufacturer) {
+      await svc.refreshProfileCacheIfStale();
+      id = svc.getProfileFor(p.data.manufacturer)?.id;
+    }
+    const profile = id ? await svc.getProfile(id) : null;
+    if (!profile) {
+      return { ok: false, data: { error: `No manufacturer profile for "${p.data.manufacturer ?? p.data.id}". Call list_manufacturer_profiles for the names that exist.` } };
+    }
+    const brief = (r: { a: any; b: any; columns?: any[] } | null | undefined) =>
+      r ? [readinessBrief(r.a), readinessBrief(r.b), ...(r.columns ?? []).map(readinessBrief)].filter(Boolean) : [];
+    const configured = profile.metrics.filter((m) => m.defaultSymbol || m.defaultSymbolB || m.overrides.length);
+    return {
+      ok: true,
+      data: {
+        id: profile.id,
+        manufacturer: profile.manufacturer,
+        alsoAppliesWhen: profile.matchPattern,
+        unconfiguredMetrics: profile.metrics.filter((m) => !configured.includes(m)).map((m) => m.metricKey),
+        metrics: configured.map((m) => ({
+          metric: m.metricKey,
+          symbol: m.defaultSymbol, symbolB: m.defaultSymbolB, type: m.defaultType,
+          transform: m.defaultTransform, aggregate: m.defaultAggregate, label: m.defaultLabel,
+          parse: m.defaultParsePattern ? { pattern: m.defaultParsePattern, template: m.defaultParseTemplate } : null,
+          sensorColumns: m.defaultSensorColumns,
+          readiness: brief(m.readiness),
+          overrides: m.overrides.map((o) => ({
+            deviceType: o.assetType, modelPattern: o.modelPattern,
+            symbol: o.symbol, symbolB: o.symbolB, type: o.type, transform: o.transform,
+            aggregate: o.aggregate, label: o.label, sensorColumns: o.sensorColumns,
+            readiness: brief(o.readiness),
+          })),
+        })),
+        widgets: profile.widgets.map((w) => ({
+          name: w.name, widgetType: w.widgetType, symbol: w.symbol, type: w.type, transform: w.transform,
+          modelPattern: w.modelPattern, stateMap: w.stateMap, labelSymbol: w.labelSymbol,
+          // The request a check makes, never the credential behind it.
+          httpCheck: w.httpCheck, authenticated: w.widgetType === "http" ? !!w.credentialId : undefined,
+        })),
+      },
+    };
+  },
+};
+
+// ─── MIB Database ────────────────────────────────────────────────────────────
+
+const MibListArgs = z.object({ manufacturer: z.string().min(1).max(200).optional() });
+
+const listMibsTool: ToolDef = {
+  name: "list_mibs",
+  label: "looked at the MIB Database",
+  description:
+    "The SNMP MIB modules uploaded to this install: module name, the manufacturer (and model) it is uploaded under " +
+    "— a vendor's symbols resolve only for that manufacturer — and the modules it IMPORTS. Polaris also bundles the " +
+    "standard MIBs (SNMPv2-MIB, IF-MIB, HOST-RESOURCES-MIB, ENTITY-MIB, ENTITY-SENSOR-MIB, LLDP-MIB, " +
+    "POWER-ETHERNET-MIB, BRIDGE-MIB, Q-BRIDGE-MIB, RSTP-MIB, IP-MIB), which are not listed here.",
+  parameters: {
+    type: "object",
+    properties: { manufacturer: { type: "string", description: "Only the modules uploaded under this manufacturer" } },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "mibDatabase", "read")) return denied("the MIB Database");
+    const p = MibListArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const { listMibs } = await import("./mibService.js");
+    const all = await listMibs(p.data.manufacturer ? { manufacturer: p.data.manufacturer } : {});
+    const rows = all.slice(0, ctx.maxRows).map((m) => plain({
+      id: m.id, moduleName: m.moduleName, manufacturer: m.manufacturer ?? "(generic — every device)", model: m.model,
+      imports: m.imports, sizeBytes: m.size, uploadedAt: m.uploadedAt,
+    }));
+    return { ok: true, data: { total: all.length, returned: rows.length, truncated: all.length > rows.length, rows } };
+  },
+};
+
+const MibSymbolArgs = z.object({
+  module: z.string().min(1).max(200),
+  manufacturer: z.string().min(1).max(200).optional(),
+  query: z.string().max(100).optional(),
+  tablesOnly: z.boolean().optional(),
+});
+/** Symbols returned per call: enough to choose from, small enough for a local model. */
+const MIB_SYMBOL_CAP = 40;
+
+const searchMibSymbolsTool: ToolDef = {
+  name: "search_mib_symbols",
+  label: "read a MIB",
+  description:
+    "Read an uploaded MIB module: its objects matching a word (in the name or description), each with its OID, " +
+    "SYNTAX, enum values, access, whether it is a table column, and a short description; or its tables and their " +
+    "columns (tablesOnly). Use to find which object carries CPU, memory, a temperature, a battery or PSU status " +
+    "before suggesting a manufacturer profile row or a widget — suggest only objects this returns, and name the " +
+    "module. Also reports the modules the MIB imports that are not uploaded (what to upload next).",
+  parameters: {
+    type: "object",
+    properties: {
+      module: { type: "string", description: "Module name (e.g. PowerNet-MIB) or a module id from list_mibs" },
+      manufacturer: { type: "string", description: "When the same module is uploaded under several manufacturers" },
+      query: { type: "string", description: "A word to match, e.g. cpu, temperature, battery, status" },
+      tablesOnly: { type: "boolean", description: "List the module's tables and their columns instead of objects" },
+    },
+    required: ["module"],
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "mibDatabase", "read")) return denied("the MIB Database");
+    const p = MibSymbolArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const { listMibs, getMib, parseMibStructured } = await import("./mibService.js");
+    const { resolveSymbolsForMib, missingRootsForMib } = await import("./oidRegistry.js");
+    const all = await listMibs(p.data.manufacturer ? { manufacturer: p.data.manufacturer } : {});
+    const want = p.data.module.trim().toLowerCase();
+    const matches = all.filter((m) => m.id === p.data.module || m.moduleName.toLowerCase() === want);
+    if (matches.length === 0) {
+      return { ok: false, data: { error: `No uploaded MIB "${p.data.module}". It may be a bundled standard MIB, or not uploaded — call list_mibs.` } };
+    }
+    if (matches.length > 1) {
+      return { ok: false, data: { error: "That module is uploaded more than once. Pass manufacturer.", uploadedUnder: matches.map((m) => m.manufacturer ?? "(generic)") } };
+    }
+    const row = await getMib(matches[0].id);
+    const parsed = parseMibStructured(row.contents);
+    const oids = await resolveSymbolsForMib(row.id);
+    const missingImports = [...new Set(missingRootsForMib(row.id).map((r) => r.module ?? r.symbol))];
+    const base = { module: row.moduleName, manufacturer: row.manufacturer, missingImports };
+    if (p.data.tablesOnly) {
+      const tables = parsed.tables.slice(0, MIB_SYMBOL_CAP).map((t) => ({ table: t.name, row: t.rowSymbol, index: t.indexNames, columns: t.columns }));
+      return { ok: true, data: { ...base, totalTables: parsed.tables.length, tables } };
+    }
+    const q = (p.data.query ?? "").trim().toLowerCase();
+    const hits = parsed.symbols.filter((s) =>
+      s.kind === "object-type" && (!q || s.name.toLowerCase().includes(q) || (s.description ?? "").toLowerCase().includes(q)));
+    const symbols = hits.slice(0, MIB_SYMBOL_CAP).map((s) => ({
+      name: s.name,
+      oid: oids?.get(s.name) ?? null,
+      syntax: s.syntax,
+      enum: s.enumValues?.length ? s.enumValues.slice(0, 16).map((e) => `${e.label}(${e.value})`) : undefined,
+      access: s.access,
+      column: s.parentName && parsed.tables.some((t) => t.rowSymbol === s.parentName) ? `column of ${s.parentName}` : undefined,
+      description: s.description ? (s.description.length > 240 ? s.description.slice(0, 240) + "…" : s.description) : null,
+    }));
+    return { ok: true, data: { ...base, matching: hits.length, returned: symbols.length, truncated: hits.length > symbols.length, symbols } };
+  },
+};
+
+// ─── Automations ─────────────────────────────────────────────────────────────
+
+/** One line saying what a trigger watches. */
+function triggerSummary(t: any): string {
+  if (!t || typeof t !== "object") return "unknown";
+  switch (t.type) {
+    case "asset_metric":
+    case "host_metric":
+      return `${t.type === "host_metric" ? "Polaris server " : ""}${t.metric} ${t.operator} ${t.threshold}` +
+        (t.forPolls ? ` for ${t.forPolls} readings` : t.forDurationSec ? ` for ${t.forDurationSec}s` : "");
+    case "asset_state":
+      return `${t.field} ${t.operator} ${String(t.value)}` + (t.missedPolls ? ` (down after ${t.missedPolls} missed polls)` : "");
+    case "event":
+      return `event ${t.actionPattern}${t.minLevel ? ` at ${t.minLevel}+` : ""}`;
+    case "change":
+      return `change: ${t.changeType}`;
+    case "composite":
+      return `${t.op.toUpperCase()} of ${Array.isArray(t.children) ? t.children.length : 0} conditions`;
+    default:
+      return String(t.type);
+  }
+}
+
+const listAutomationsTool: ToolDef = {
+  name: "list_automations",
+  label: "looked at the automations",
+  description:
+    "The automations (alert rules) on this install: name, enabled, severity, a one-line summary of what triggers " +
+    "it, which device-filter keys its scope uses, and its action types. Use to answer which rule alerts on " +
+    "something, or before get_automation.",
+  parameters: {
+    type: "object",
+    properties: { search: { type: "string", description: "Only rules whose name contains this" } },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "automationManagement", "read")) return denied("automations");
+    const p = z.object({ search: z.string().max(200).optional() }).safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const { listRules } = await import("./notificationRuleService.js");
+    const s = (p.data.search ?? "").trim().toLowerCase();
+    const rules = (await listRules()).filter((r: any) => !s || String(r.name).toLowerCase().includes(s));
+    const rows = rules.slice(0, ctx.maxRows).map((r: any) => ({
+      id: r.id, name: r.name, enabled: r.enabled, severity: r.severity,
+      trigger: triggerSummary(r.trigger),
+      scopeFilters: r.scope && typeof r.scope === "object" ? Object.keys(r.scope).filter((k) => (r.scope as any)[k] != null) : [],
+      actions: Array.isArray(r.actions) ? [...new Set(r.actions.map((a: any) => a?.type).filter(Boolean))] : [],
+    }));
+    return { ok: true, data: { total: rules.length, returned: rows.length, truncated: rules.length > rows.length, rows } };
+  },
+};
+
+/** The JSON a rule may cost the model before its longest optional parts are dropped. */
+const AUTOMATION_JSON_CAP = 12_000;
+
+const getAutomationTool: ToolDef = {
+  name: "get_automation",
+  label: "looked at an automation",
+  description:
+    "One automation in full (the stored rule: trigger, scope, actions, escalation, repeat, reset, quiet time, " +
+    "severity bands), for explaining exactly what it does or why it did or did not fire. Secrets in API-call " +
+    "actions are masked.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "An automation id from list_automations" },
+      name: { type: "string", description: "Or its exact name" },
+    },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "automationManagement", "read")) return denied("automations");
+    const p = z.object({ id: z.string().max(64).optional(), name: z.string().max(200).optional() })
+      .refine((a) => a.id || a.name, { message: "give id or name" })
+      .safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const { listRules } = await import("./notificationRuleService.js");
+    const { maskActionHeaders } = await import("../utils/actionHeaderMask.js");
+    const want = (p.data.name ?? "").trim().toLowerCase();
+    const rule = (await listRules()).find((r: any) => (p.data.id && r.id === p.data.id) || (want && String(r.name).toLowerCase() === want));
+    if (!rule) return { ok: false, data: { error: "No such automation. Call list_automations for the names that exist." } };
+    // api_call headers are secrets (rule 114(h)): masked exactly as every API response masks them.
+    // The structure is kept as stored (`plain` would flatten its arrays); only the
+    // dates become ISO strings. `alertGroup` is the group it delivers through.
+    const masked = maskActionHeaders(rule) as Record<string, unknown>;
+    const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : d);
+    let out: Record<string, unknown> = { ...masked, createdAt: iso(masked.createdAt), updatedAt: iso(masked.updatedAt) };
+    if (JSON.stringify(out).length > AUTOMATION_JSON_CAP) {
+      const { emailComposition: _e, messageTemplate: _m, ...smaller } = out;
+      out = { ...smaller, note: "emailComposition and messageTemplate were left out to keep this short." };
+    }
+    return { ok: true, data: out };
+  },
+};
+
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
   searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, getAssetTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
+  listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 

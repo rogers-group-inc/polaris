@@ -42,7 +42,8 @@ vi.mock("../../src/services/llmService.js", async () => ({
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
   // The real tool NAMES (the round-0 steering filters by name); the shapes do not matter here.
-  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "get_asset", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report"]
+  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "get_asset", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
+    "list_manufacturer_profiles", "get_manufacturer_profile", "list_mibs", "search_mib_symbols", "list_automations", "get_automation"]
     .map((name) => ({ type: "function", function: { name, description: "", parameters: {} } })),
   runAssistantTool: h.runAssistantTool,
   toolLabel: (n: string) => `did ${n}`,
@@ -475,6 +476,22 @@ describe("playbooks steer round 0", () => {
     expect(round0Msgs[1]).toMatchObject({ role: "system" });
     expect(round0Msgs[1].content).toMatch(/^Playbook — outage correlation/);
     expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ playbook: "correlate" }) }));
+  });
+
+  it("a MIB question gets the profile playbook's lookups on round 0, not the outage playbook's", async () => {
+    // "why are …" would match correlate; the profile playbook is listed first.
+    h.beginTurn.mockResolvedValueOnce({ question: "why are the hardware sensors unresolved on our Fortinet gates?" });
+    let round0Tools: string[] = [];
+    let round0Msgs: any[] = [];
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
+      round0Tools = tools.map((t) => t.function.name);
+      round0Msgs = [...msgs];
+      o.onText("Checking.");
+      return { content: "Checking.", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    expect(round0Tools.sort()).toEqual(["get_manufacturer_profile", "list_manufacturer_profiles", "list_mibs", "search_help", "search_mib_symbols"]);
+    expect(round0Msgs[1].content).toMatch(/^Playbook — manufacturer profile \/ MIB/);
   });
 
   it("a playbook never hides the memory tools (rule 95(i) needs `remember` reachable to refuse it)", async () => {

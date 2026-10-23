@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "correlate" | "changed" | "health" | "capacity" | "address";
+  id: "profile" | "correlate" | "changed" | "health" | "capacity" | "address";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -34,6 +34,27 @@ export interface AssistantPlaybook {
 const SEPARATE = "Keep what the data shows apart from what you infer, and say so in those words.";
 
 export const PLAYBOOKS: readonly AssistantPlaybook[] = [
+  {
+    // First, so "why is the CPU missing for our APCs" is a profile question and
+    // not an outage correlation (which matches any "why is").
+    id: "profile",
+    label: "manufacturer profile / MIB",
+    match: /\b(manufacturer profiles?|mib|mibs|oid|oids|snmp (symbol|object|walk|oid)s?|unresolved|custom (mib|widgets?)|state probes?|sensor table|hardware sensors?|which (symbol|object|oid))\b/i,
+    firstRoundTools: ["search_help", "list_manufacturer_profiles", "get_manufacturer_profile", "list_mibs", "search_mib_symbols"],
+    guidance: [
+      "Playbook — manufacturer profile / MIB. Follow these steps in order:",
+      "1. get_manufacturer_profile for the vendor (list_manufacturer_profiles if the name is unsure). Note which rows are " +
+        "configured and, for each symbol, whether it resolves and from which MIB — or why not.",
+      "2. list_mibs for that manufacturer: which modules are uploaded under its name, and what they import.",
+      "3. When something must be chosen (a CPU, memory, sensor or status object), search_mib_symbols in the vendor's " +
+        "module for it. Read the SYNTAX, enum values and description: a scalar is read as .0, a table column must be " +
+        "walked; CPU must already be a percent; an enum status is a state probe, not a gauge.",
+      "4. search_help for how the profile page works (Manufacturer Profiles) when the person needs to make the change.",
+      "5. Answer: what is wrong or what to set, row by row, naming each symbol and the module it is in. Suggest ONLY " +
+        "symbols search_mib_symbols returned — never one from memory. Say a MIB to upload by its module name. You " +
+        "cannot change the profile; say where in Polaris they make the change. " + SEPARATE,
+    ].join("\n"),
+  },
   {
     id: "correlate",
     label: "outage correlation",

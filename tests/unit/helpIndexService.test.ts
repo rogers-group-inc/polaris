@@ -97,9 +97,17 @@ describe("searchHelp", () => {
     expect(total).toBeLessThanOrEqual(2001 + r.hits.length);
   });
 
-  it("reports unavailable when the docs folder is missing", async () => {
-    _resetHelpIndexForTests(join(tmpdir(), "polaris-no-such-wiki-" + Date.now()));
+  it("reports unavailable when neither the docs folder nor the developer page is there", async () => {
+    const gone = join(tmpdir(), "polaris-no-such-wiki-" + Date.now());
+    _resetHelpIndexForTests(gone, join(gone, "api.html"));
     expect(await searchHelp("anything")).toEqual({ available: false, hits: [] });
+  });
+
+  it("still answers from the developer page when only the wiki folder is missing", async () => {
+    _resetHelpIndexForTests(join(tmpdir(), "polaris-no-such-wiki-" + Date.now()));
+    const r = await searchHelp("api create automation endpoint");
+    expect(r.available).toBe(true);
+    expect(r.hits[0]?.source).toBe("api");
   });
 
   it("indexes whatever folder it is pointed at", async () => {

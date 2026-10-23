@@ -35,6 +35,7 @@
 **Monitoring**
 - [How polling works](Monitoring)
 - [Polling methods per stream](Polling-Methods)
+- [Manufacturer profiles and MIBs](Manufacturer-Profiles)
 - [Monitor states and down detection](Monitor-States)
 - [Dependency suppression](Dependency-Suppression)
 - [Maintenance windows](Maintenance-Windows)
