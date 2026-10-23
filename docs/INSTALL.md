@@ -407,8 +407,8 @@ module still missing.
 | Cisco *(shipped)* | `cpmCPUTotal5secRev`, type **table**, walk **average rows** | `ciscoMemoryPoolUsed` + `ciscoMemoryPoolFree`, type **double scalar**, transform **a / (a+b) %**, walk **sum rows** | — |
 | Juniper | `jnxOperatingCPU`, type **table**, walk **average rows** | `jnxOperatingBuffer`, walk **average rows** | — |
 | MikroTik | — *(`hrProcessorLoad`)* | — *(`hrStorage` RAM row)* | — *(no profile needed; see the note below the table)* |
-| Fortinet (FortiGate) | `fgSysCpuUsage` | `fgSysMemUsage` | Hardware Sensors: `fgHwSensorTable`, type **table** |
-| Fortinet (FortiSwitch) | `fsSysCpuUsage` | `fsSysMemUsage` + `fsSysMemCapacity`, type **double scalar**, transform **a / b %** | Storage: `fsSysDiskUsage` + `fsSysDiskCapacity`, type **double scalar**, transform **a / b %**, label `flash`. Model identity: `fsSysVersion`, parse `^(?!v\d)(.+?)[-\s]v\d` → `FortiSwitch $1` |
+| Fortinet (FortiGate) | `fgSysCpuUsage` | `fgSysMemUsage` | Hardware Sensors: `fgHwSensorEntValue`, type **table**, name column `fgHwSensorEntName`, alarm column `fgHwSensorEntAlarmStatus` (alarm: not 0) |
+| Fortinet (FortiSwitch) | `fsSysCpuUsage` | `fsSysMemUsage` + `fsSysMemCapacity`, type **double scalar**, transform **a / b %** | Storage: `fsSysDiskUsage` + `fsSysDiskCapacity`, type **double scalar**, transform **a / b %**, label `flash`. Model identity: `fsSysVersion`, parse `^([^v\n].*?\|v\|v[^\d\n].*?)[-\s]v\d` → `FortiSwitch $1` |
 | Fortinet (FortiAP) | `fapCpuUsage` | `fapMemoryUsage` | Hardware Sensors: `fapTemperature`, label `System` |
 | HP / Aruba | `hpSwitchCpuStat` | — | — |
 | Dell | `rlCpuUtilDuringLastMinute` | — | — |
@@ -423,6 +423,15 @@ scoped rows, not as separate profiles: add them with device type *Switch* /
 *Access Point* so an asset whose model is empty still matches, and again with a
 model pattern (`FortiSwitch` / `FortiAP`) so a mis-typed asset that states its
 model still routes.
+
+**SNMP-polled FortiGates need the Hardware Sensors row for their sensor table.**
+Branch models (40F / 60F / 61F / 91G / 101F) publish hardware sensors only in
+fgHwSensorTable, and Polaris walks a sensor table only when a profile row says
+to. Without the FortiGate row above and FORTINET-FORTIGATE-MIB +
+FORTINET-CORE-MIB uploaded, those gates show no sensors over SNMP. FortiGates
+monitored through FortiManager or the FortiOS REST API read their sensors that
+way and are unaffected. Any vendor's sensor table works the same way: type
+**table**, the value column as the symbol, and the name / alarm columns beside it.
 
 Telemetry resumes on the next collection cadence once the rows show a module name
 in their MIB cell; nothing needs restarting.

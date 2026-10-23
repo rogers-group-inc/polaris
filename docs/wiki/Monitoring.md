@@ -234,6 +234,27 @@ symbols are. Custom widgets offer the full list. Polaris always stores and
 alerts in Celsius; the install's temperature-unit setting converts only what you
 see.
 
+**A Hardware Sensors row of type table reads a vendor's whole sensor table.** Use
+it when a device lists its sensors in its own MIB rather than in the standard
+ENTITY-SENSOR-MIB, which Polaris always tries first. The row's **Symbol** is the
+table's value column. Under it, fill in:
+- **Name column**: the column that names each row ("CPU Temp", "FAN 1"). Without
+  one, rows are named by their index.
+- **Alarm column** (optional), and when it means alarm: *not 0*, *is 0*, *is one
+  of* / *is not one of* a list of values, or *at least* / *at most* a number.
+- **Class** (optional): what every row measures, for a table whose row names
+  don't say (a UPS's "Probe 1" is a temperature). Left on *from row name*,
+  Polaris works it out from each name.
+- **Scale** (optional): *tenths → units* for a column that reports tenths.
+
+All the column symbols come from the same MIB, and the row's MIB cell flags any
+that don't resolve. FortiGate's table is the worked example: value
+`fgHwSensorEntValue`, name `fgHwSensorEntName`, alarm `fgHwSensorEntAlarmStatus`,
+alarm when *not 0*. Polaris reads a sensor table only for a row that names one,
+so an SNMP-polled FortiGate shows its sensors once its Fortinet profile has this
+row and FORTINET-FORTIGATE-MIB (with FORTINET-CORE-MIB) is uploaded. See
+[Business Rules](Business-Rules#rule-132).
+
 **Both shipped pieces are yours to delete.** Removing a shipped MIB leaves its
 profile's rows reading *unresolved* and names the module to re-upload; removing a
 shipped profile falls back to the generic MIBs. Either way the device keeps being

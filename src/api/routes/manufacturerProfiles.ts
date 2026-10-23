@@ -20,7 +20,7 @@ import {
   listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
   updateMetricRow, createOverride, updateOverride, deleteOverride,
   createWidget, updateWidget, deleteWidget, listManufacturerSuggestions,
-  symbolWarningsForProfile, setWidgetLayout,
+  symbolWarningsForProfile, setWidgetLayout, sensorColumnSymbols,
 } from "../../services/manufacturerProfileService.js";
 import {
   TRANSFORM_KINDS,
@@ -156,11 +156,13 @@ router.put("/:id", requirePermission("manufacturerProfiles", "write"), handle(as
 // PUT /:id/metrics/:metricKey — set the metric row's default symbol(s) +
 // mib + type + transform. Body fields: { defaultSymbol, defaultSymbolB,
 // defaultMibId, defaultMibStdKey, defaultType, defaultTransform,
-// defaultAggregate, defaultLabel, defaultParsePattern, defaultParseTemplate }.
+// defaultAggregate, defaultLabel, defaultParsePattern, defaultParseTemplate,
+// defaultSensorColumns }.
 // The service validates that the shape is internally consistent (scalar →
 // symbolB null, double_scalar → both symbols required, table → symbolB +
 // transform null, empty-row state allowed), that the aggregate is one of
-// none|avg|sum, and that the parse fields appear on the `model` row only.
+// none|avg|sum, that the parse fields appear on the `model` row only, and that
+// sensor columns appear on a Hardware Sensors `table` row only (rule 132).
 router.put("/:id/metrics/:metricKey", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
   const updated = await updateMetricRow(String(req.params.id), String(req.params.metricKey), req.body || {});
   logEvent({
@@ -175,6 +177,7 @@ router.put("/:id/metrics/:metricKey", requirePermission("manufacturerProfiles", 
   const warnings = symbolWarningsForProfile(String(req.params.id), [
     { symbol: updated.defaultSymbol,  mibId: updated.defaultMibId },
     { symbol: updated.defaultSymbolB, mibId: updated.defaultMibId },
+    ...sensorColumnSymbols(updated.defaultSensorColumns).map((symbol) => ({ symbol, mibId: updated.defaultMibId })),
   ]);
   send(res, { metric: updated, warnings });
 }));
@@ -182,7 +185,7 @@ router.put("/:id/metrics/:metricKey", requirePermission("manufacturerProfiles", 
 // POST /:id/metrics/:metricKey/overrides — add a scoped row under the
 // metric. Body fields: { assetType, modelPattern, symbol, symbolB, mibId,
 // mibStdKey, type, transform, aggregate, label, parsePattern, parseTemplate,
-// order }. Same shape validation as the metric row, plus the scope rule: a
+// sensorColumns, order }. Same shape validation as the metric row, plus the scope rule: a
 // device type, a model pattern, or both — never neither. A device type with
 // no pattern IS that type's default, and a metric may hold only one of those
 // per type (409 if one already exists).
@@ -198,6 +201,7 @@ router.post("/:id/metrics/:metricKey/overrides", requirePermission("manufacturer
   const warnings = symbolWarningsForProfile(String(req.params.id), [
     { symbol: created.symbol,  mibId: created.mibId },
     { symbol: created.symbolB, mibId: created.mibId },
+    ...sensorColumnSymbols(created.sensorColumns).map((symbol) => ({ symbol, mibId: created.mibId })),
   ]);
   send(res, { override: created, warnings }, 201);
 }));
@@ -218,6 +222,7 @@ router.put("/:id/metrics/:metricKey/overrides/:overrideId", requirePermission("m
   const warnings = symbolWarningsForProfile(String(req.params.id), [
     { symbol: updated.symbol,  mibId: updated.mibId },
     { symbol: updated.symbolB, mibId: updated.mibId },
+    ...sensorColumnSymbols(updated.sensorColumns).map((symbol) => ({ symbol, mibId: updated.mibId })),
   ]);
   send(res, { override: updated, warnings });
 }));

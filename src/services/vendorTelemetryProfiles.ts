@@ -21,6 +21,22 @@
 import { fortiswitchModelFromFsSysVersion, FORTISWITCH_MODEL_PARSE } from "../utils/fortiswitchModel.js";
 import type { ModelParse } from "../utils/modelParse.js";
 import type { TransformKind } from "../utils/symbolTransforms.js";
+import type { SensorColumns } from "../utils/hardwareSensors.js";
+import { DEFAULT_STATE_MAP } from "../utils/stateProbes.js";
+
+/**
+ * FORTINET-FORTIGATE-MIB fgHwSensorTable's sibling columns — names, not
+ * numbers (the vendor-SNMP boundary). The same values the
+ * `20261024020000_sensor_table_columns` migration writes onto an upgraded
+ * install's row; `tests/unit/sensorTableColumns.test.ts` pins that the two agree.
+ */
+export const FORTIGATE_SENSOR_COLUMNS: SensorColumns = {
+  nameSymbol:  "fgHwSensorEntName",
+  alarmSymbol: "fgHwSensorEntAlarmStatus",
+  alarmMap:    { ...DEFAULT_STATE_MAP, mode: "nonzero", values: [] },
+  sensorClass: null,
+  transform:   null,
+};
 
 export interface CpuQuery {
   symbol: string;                       // symbolic OID name (resolved via oidRegistry)
@@ -74,10 +90,12 @@ export interface DiskQuery {
 export interface TemperatureQuery {
   symbol: string;                       // symbolic OID name resolved via oidRegistry
   // "scalar" = single .0 Celsius reading (FortiAP fapTemperature).
-  // "table"  = operator pointed the Hardware Sensors metric at a sensor table
-  //            (e.g. fgHwSensorTable); the SNMP collector runs the full
-  //            hardware-table walk instead of a (broken) scalar GET.
+  // "table"  = a sensor table (business rule 132): `symbol` is its VALUE
+  //            column and `columns` names the siblings joined with it. The
+  //            collector walks exactly those — no vendor's columns are in code.
   mode: "scalar" | "table";
+  /** `table` mode only: the name / alarm columns, alarm mapping, class and scale. */
+  columns?: SensorColumns;
   /** Display label for the synthesized hardware-sensor row. Defaults to "System" when omitted. */
   sensorName?: string;
   /**
@@ -289,13 +307,11 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     // than via the FortiOS REST monitorType path.
     cpu: { symbol: "fgSysCpuUsage", mode: "scalar" },
     memory: { pctSymbol: "fgSysMemUsage" },
-    // The hardware-sensor table. This block did not exist until 2026-09: the
-    // walk was dispatched by `/fortinet/i.test(manufacturer)` inside
-    // `collectHardwareSensorsSnmp` instead, so the fact lived in the collector
-    // and the seeded `temperature` row came out EMPTY. The Phase 4 migration
-    // fills that row on an existing install; this block is what gives a FRESH
-    // one the same thing.
-    temperature: { symbol: "fgHwSensorTable", mode: "table" },
+    // The hardware-sensor table, stated as data (business rule 132): the value
+    // column, the name and alarm columns beside it, and FortiOS's 0 = ok alarm
+    // bit. Until 2026-10 this said `fgHwSensorTable` and the collector ignored
+    // it, walking three OID literals for any Fortinet device instead.
+    temperature: { symbol: "fgHwSensorEntValue", mode: "table", columns: FORTIGATE_SENSOR_COLUMNS },
   },
   {
     vendor: "HP / Aruba ProCurve",

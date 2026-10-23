@@ -164,13 +164,28 @@ describe("label — the synthesized sample row's name", () => {
 });
 
 describe("the Fortinet umbrella temperature row", () => {
-  it("names the sensor TABLE, so the walk is the profile's fact and not the collector's", () => {
+  it("names the sensor TABLE, so the walk is the profile's fact and not the collector's", async () => {
     // This block did not exist in the constant until 2026-09 — the walk was
     // dispatched by /fortinet/i inside collectHardwareSensorsSnmp, so the row
-    // seeded empty and a fresh install collected no FortiGate sensors.
+    // seeded empty and a fresh install collected no FortiGate sensors. Since
+    // business rule 132 the TABLE itself is data: the value column plus the
+    // sibling columns the collector walks, carried onto the row.
+    const { FORTIGATE_SENSOR_COLUMNS } = await import("../../src/services/vendorTelemetryProfiles.js");
     expect(metricSeed("Fortinet FortiOS (SNMP path)", "temperature")).toMatchObject({
-      symbol: "fgHwSensorTable", type: "table",
+      symbol: "fgHwSensorEntValue", type: "table", sensorColumns: FORTIGATE_SENSOR_COLUMNS,
     });
+  });
+
+  it("is the same row the rule 132 migration writes onto an upgraded install", async () => {
+    // A migration that backfills seeded rows is half a change; the seed is the
+    // other half. Read the migration's literal JSON and hold the two together.
+    const { readFileSync } = await import("node:fs");
+    const sql = readFileSync("prisma/migrations/20261024020000_sensor_table_columns/migration.sql", "utf8");
+    const literals = [...sql.matchAll(/'(\{"nameSymbol".*?\})'::jsonb/g)].map((m) => JSON.parse(m[1]));
+    expect(literals).toHaveLength(2);
+    const seed = metricSeed("Fortinet FortiOS (SNMP path)", "temperature")!;
+    for (const l of literals) expect(l).toEqual(seed.sensorColumns);
+    expect(sql).toContain(`"defaultSymbol" = '${seed.symbol}'`);
   });
 });
 

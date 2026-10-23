@@ -44,6 +44,7 @@ import { applyModelParse } from "../utils/modelParse.js";
 import { clampRegexSubject } from "../utils/regexSafety.js";
 import { normalizeAssetTypeName } from "../utils/assetTypes.js";
 import { metricRowTransforms, type TransformKind } from "../utils/symbolTransforms.js";
+import type { SensorColumns } from "../utils/hardwareSensors.js";
 
 /**
  * The unary transform the temperature collector should apply for this pick,
@@ -85,6 +86,8 @@ export interface DbMetricPick {
   /** `model` metric only — the declarative parse, see src/utils/modelParse.ts. */
   parsePattern:  string | null;
   parseTemplate: string | null;
+  /** Hardware Sensors `table` rows only — the sibling columns (business rule 132). */
+  sensorColumns: SensorColumns | null;
 }
 
 /** The pre-Phase-4 fields only; the four new ones take their "row said nothing" value. */
@@ -98,6 +101,7 @@ function pickFromRowDefaults(metric: MetricRow): DbMetricPick {
     label:         metric.defaultLabel ?? null,
     parsePattern:  metric.defaultParsePattern ?? null,
     parseTemplate: metric.defaultParseTemplate ?? null,
+    sensorColumns: metric.defaultSensorColumns ?? null,
   };
 }
 
@@ -111,6 +115,30 @@ function pickFromOverride(o: MetricOverrideRow): DbMetricPick {
     label:         o.label ?? null,
     parsePattern:  o.parsePattern ?? null,
     parseTemplate: o.parseTemplate ?? null,
+    sensorColumns: o.sensorColumns ?? null,
+  };
+}
+
+/**
+ * The runtime temperature query for a pick. A `table` pick carries its sibling
+ * columns (an empty set when the row named none, so the walk still runs on the
+ * value column alone); a scalar carries the sensor label and the allowed
+ * transform. One function so both resolvers build the same shape.
+ */
+function temperatureQueryFromPick(pick: DbMetricPick & { symbol: string }): NonNullable<VendorTelemetryProfile["temperature"]> {
+  if (pick.type === "table") {
+    return {
+      symbol:  pick.symbol,
+      mode:    "table",
+      columns: pick.sensorColumns ?? { nameSymbol: null, alarmSymbol: null, alarmMap: null, sensorClass: null, transform: null },
+    };
+  }
+  const transform = temperatureTransform(pick);
+  return {
+    symbol: pick.symbol,
+    mode:   "scalar",
+    ...(pick.label ? { sensorName: pick.label } : {}),
+    ...(transform ? { transform } : {}),
   };
 }
 
@@ -235,6 +263,8 @@ export function pickVendorProfileMerged(
       symbol: tempPick.symbol,
       mode: tempPick.type === "table" ? "table" : "scalar",
       ...(transform ? { transform } : {}),
+      // A table's columns (business rule 132), the same set the DB-only pick carries.
+      ...(tempPick.type === "table" ? { columns: temperatureQueryFromPick({ ...tempPick, symbol: tempPick.symbol }).columns } : {}),
     };
   }
   if (diskPick) {
@@ -513,13 +543,7 @@ export function pickDbProfile(
   }
 
   if (tempPick?.symbol) {
-    const transform = temperatureTransform(tempPick);
-    out.temperature = {
-      symbol: tempPick.symbol,
-      mode: tempPick.type === "table" ? "table" : "scalar",
-      ...(tempPick.label ? { sensorName: tempPick.label } : {}),
-      ...(transform ? { transform } : {}),
-    };
+    out.temperature = temperatureQueryFromPick({ ...tempPick, symbol: tempPick.symbol });
   }
 
   if (diskPick) {

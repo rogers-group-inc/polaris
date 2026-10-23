@@ -35,6 +35,7 @@ import type {
   MetricOverrideRow,
 } from "../../src/services/manufacturerProfileService.js";
 import type { VendorTelemetryProfile } from "../../src/services/vendorTelemetryProfiles.js";
+import { FORTIGATE_SENSOR_COLUMNS } from "../../src/services/vendorTelemetryProfiles.js";
 
 // ─── The seeded profiles, post-migration ──────────────────────────────────
 
@@ -93,10 +94,11 @@ const FORTINET = profile("Fortinet", "fortinet|fortigate|fortios", [
     ],
   }),
   // The umbrella temperature row seeded EMPTY (the FortiOS constant carries no
-  // temperature block); the migration fills it with the sensor-table walk the
-  // collector used to dispatch off `/fortinet/i.test(manufacturer)`.
+  // temperature block); the Phase 4 migration filled it with `fgHwSensorTable`,
+  // and the rule 132 migration rewrote that to the table stated as data — the
+  // value column plus FORTIGATE_SENSOR_COLUMNS. This is the row as it stands.
   row("temperature", {
-    defaultSymbol: "fgHwSensorTable", defaultType: "table",
+    defaultSymbol: "fgHwSensorEntValue", defaultType: "table", defaultSensorColumns: FORTIGATE_SENSOR_COLUMNS,
     overrides: [
       ov({ modelPattern: "FortiAP", symbol: "fapTemperature", label: "System" }),
       ov({ assetType: "access_point", symbol: "fapTemperature", label: "System" }),
@@ -260,7 +262,8 @@ describe("the deltas, stated as what they now do", () => {
     const p = pickDbProfile(
       { manufacturer: "Fortinet", os: "FortiOS 7.4", model: "FortiGate-100F", assetType: "firewall" }, lookup, list,
     )!;
-    expect(p.temperature).toEqual({ symbol: "fgHwSensorTable", mode: "table" });
+    // Since rule 132 the row also carries the columns the collector walks.
+    expect(p.temperature).toEqual({ symbol: "fgHwSensorEntValue", mode: "table", columns: FORTIGATE_SENSOR_COLUMNS });
   });
 });
 

@@ -14,6 +14,8 @@
  * client in scope.
  */
 
+import { evaluateStateMap, type StateMap } from "./stateProbes.js";
+
 export type HardwareSensorClass =
   | "temperature"
   | "fan"
@@ -64,6 +66,95 @@ export const SENSOR_CLASS_UNITS: Record<HardwareSensorClass, string | null> = {
 
 function cls(sensorClass: HardwareSensorClass): ClassifiedSensor {
   return { sensorClass, unit: SENSOR_CLASS_UNITS[sensorClass] };
+}
+
+export const HARDWARE_SENSOR_CLASSES = Object.keys(SENSOR_CLASS_UNITS) as HardwareSensorClass[];
+
+export function isHardwareSensorClass(v: unknown): v is HardwareSensorClass {
+  return typeof v === "string" && (HARDWARE_SENSOR_CLASSES as string[]).includes(v);
+}
+
+// ─── Declarative sensor tables (business rule 132) ─────────────────────────
+
+/**
+ * What a Hardware Sensors **table** row on a manufacturer profile names besides
+ * its value column (the row's own symbol). Every field is a MIB symbol or a
+ * declared mapping — no OID, no vendor name — so a vendor's sensor table is a
+ * profile edit, not a release. FortiGate's fgHwSensorTable is the first
+ * instance: value `fgHwSensorEntValue`, name `fgHwSensorEntName`, alarm
+ * `fgHwSensorEntAlarmStatus` with `nonzero`.
+ */
+export interface SensorColumns {
+  /** Sibling column naming each row; null → rows are named `sensor-<index>`. */
+  nameSymbol:  string | null;
+  /** Sibling column carrying a per-row alarm reading; null → no alarm status. */
+  alarmSymbol: string | null;
+  /**
+   * How an alarm reading becomes alarm / ok — the state-probe modes
+   * (utils/stateProbes.ts). Only `mode` and `values` are read; the labels are
+   * the stored "alarm" / "ok". Null exactly when `alarmSymbol` is.
+   */
+  alarmMap:    StateMap | null;
+  /** Every row's class, for a table whose row names don't say; null → classify each row by name. */
+  sensorClass: HardwareSensorClass | null;
+  /** `tenths_to_units` for a DISPLAY-HINT "d-1" value column; null → as read. */
+  transform:   "tenths_to_units" | null;
+}
+
+/** One row of a walked sensor table, before it becomes a HardwareSensorSample. */
+export interface SensorTableRow {
+  sensorName:  string;
+  sensorClass: string;
+  value:       number | null;
+  unit:        string | null;
+  alarmStatus: string | null;
+}
+
+/**
+ * Join a sensor table's walked columns on their shared index suffix. Pure: the
+ * collector walks and stringifies, this decides.
+ *
+ * With a name column the rows are the NAMED ones — a row whose name is blank is
+ * skipped, which is what the hardcoded fgHwSensorTable walk did and what keeps
+ * an unpopulated slot out of the chart. Without one, every value row is kept
+ * and named by its index.
+ *
+ * A value that is blank or not a number is NULL, never 0: an unanswered sensor
+ * charting a confident zero is the failure `snmpVbToNumber` was fixed for, and
+ * the hardcoded walk had it (`Number("")` is 0). A row with a null value is
+ * still kept, because its name and alarm status are the fault signal.
+ */
+export function sensorTableRows(input: {
+  values:  ReadonlyMap<string, string>;
+  names:   ReadonlyMap<string, string> | null;
+  alarms:  ReadonlyMap<string, string> | null;
+  columns: SensorColumns;
+}): SensorTableRow[] {
+  const { values, names, alarms, columns } = input;
+  const indexes: Array<[string, string]> = names
+    ? [...names.entries()].map(([idx, n]) => [idx, n.trim()] as [string, string]).filter(([, n]) => n !== "")
+    : [...values.keys()].map((idx) => [idx, `sensor-${idx || "0"}`] as [string, string]);
+  const out: SensorTableRow[] = [];
+  for (const [idx, name] of indexes) {
+    const { sensorClass, unit } = columns.sensorClass ? cls(columns.sensorClass) : classifyHardwareSensor(name);
+    const raw = (values.get(idx) ?? "").trim();
+    let value: number | null = raw === "" ? null : Number(raw);
+    if (value != null && !Number.isFinite(value)) value = null;
+    if (value != null && columns.transform === "tenths_to_units") value = value / 10;
+    let alarmStatus: string | null = null;
+    if (alarms && columns.alarmMap) {
+      const flag = evaluateStateMap(alarms.get(idx), columns.alarmMap);
+      alarmStatus = flag === 1 ? "alarm" : flag === 0 ? "ok" : null;
+    }
+    out.push({
+      sensorName: name,
+      sensorClass,
+      value: value != null ? Math.round(value * 1000) / 1000 : null,
+      unit,
+      alarmStatus,
+    });
+  }
+  return out;
 }
 
 /**
@@ -240,7 +331,9 @@ export function entityOperStatusToAlarm(oper: number | null | undefined): string
 /**
  * Normalize a FortiGate fgHwSensorEntAlarmStatus integer (0 = no alarm,
  * 1 = alarm) into the stored alarm string. Returns null when the device
- * didn't report a status.
+ * didn't report a status. No collector calls it since rule 132 (the profile's
+ * `nonzero` alarm map is the same rule as data); kept as the reference the
+ * sensor-table parity test holds `sensorTableRows` to.
  */
 export function normalizeFgAlarmStatus(raw: number | null | undefined): string | null {
   if (raw == null) return null;
@@ -254,12 +347,13 @@ export function normalizeFgAlarmStatus(raw: number | null | undefined): string |
 /**
  * `AssetHardwareSensorSample.alarmStatus` → the 0/1 an automation compares.
  *
- * The column is written exclusively by the two normalizers here, so its domain
- * is exactly `"ok" | "alarm" | null` — but this reads defensively because it
- * also runs over rows written before those normalizers existed.
+ * The column is written only by the normalizers here and `sensorTableRows`, so
+ * its domain is exactly `"ok" | "alarm" | null` — but this reads defensively
+ * because it also runs over rows written before those normalizers existed.
  *
  * **null means "no reading", and that is load-bearing.** Only the FortiOS REST
- * `sensor-info` and SNMP `fgHwSensorTable` collectors populate the column; the
+ * `sensor-info` collector and a profile sensor table that names an alarm column
+ * (business rule 132 — FortiGate's fgHwSensorTable is one) populate it; the
  * ENTITY-SENSOR-MIB walk and the FortiAP-controller path leave it NULL because
  * those sources publish no alarm bit. Mapping that absence to 0 would be a
  * positive claim of health: it would clear a live alert, and it would make every
