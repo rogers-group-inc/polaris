@@ -41,8 +41,37 @@ import {
   vendorFromSysDescr,
   enterpriseFromSysObjectId,
   SYS_OIDS,
+  scalarInstanceOid,
+  pickScalar,
   type SnmpIdentityRow,
 } from "../../src/utils/snmpIdentity.js";
+
+// A profile's Model identity row names a symbol, and the registry resolves it
+// to the DEFINITION oid. APC's upsBasicIdentModel answers only at `.0`, so a
+// GET of the bare oid left every UPS model blank (2026-10-23).
+describe("pickScalar", () => {
+  const MODEL = "1.3.6.1.4.1.318.1.1.1.1.1.1";
+  const text = (v: unknown) => (v == null ? "" : String(v));
+
+  it("asks for the instance, and reads it from the batch without a second GET", async () => {
+    expect(scalarInstanceOid(MODEL)).toBe(`${MODEL}.0`);
+    const getOne = async () => { throw new Error("no second GET expected"); };
+    const batch = new Map<string, unknown>([[`${MODEL}.0`, "Symmetra LX 16000 RM"]]);
+    expect(await pickScalar(batch, MODEL, getOne, text)).toBe("Symmetra LX 16000 RM");
+  });
+
+  it("falls back to the bare oid on its own GET for an agent that answers only that", async () => {
+    const asked: string[] = [];
+    const getOne = async (oid: string) => { asked.push(oid); return "S548DF-v7.2.5"; };
+    expect(await pickScalar(new Map([[`${MODEL}.0`, null]]), MODEL, getOne, text)).toBe("S548DF-v7.2.5");
+    expect(asked).toEqual([MODEL]);
+  });
+
+  it("reads empty, not an error, when neither form answers", async () => {
+    const getOne = async () => { throw new Error("timeout"); };
+    expect(await pickScalar(new Map(), MODEL, getOne, text)).toBe("");
+  });
+});
 
 /** Build a walk from a partial system group. */
 function walk(over: Partial<Record<keyof typeof SYS_OIDS, string>>): SnmpIdentityRow[] {

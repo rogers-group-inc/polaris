@@ -129,7 +129,7 @@ import { logEvent, logEventsBatch, buildConnectionChangedEvent, buildFirmwareCha
 import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { lookupOuiOverride } from "./ouiService.js";
 import { resolveAssetTypeCached } from "../utils/assetTypeMatch.js";
-import { SYS_OIDS } from "../utils/snmpIdentity.js";
+import { SYS_OIDS, scalarInstanceOid, pickScalar } from "../utils/snmpIdentity.js";
 import {
   parseVendorSysDescr,
   sameDescrObserved,
@@ -8819,14 +8819,21 @@ async function collectSystemInfoSnmp(
         await ensureRegistryLoaded();
         modelOid = resolveOidSync(vendorProfile.model.symbol, vendorScope);
       }
-      const oids = [SYS_OIDS.sysDescr, ...(modelOid ? [modelOid] : [])];
+      // The registry holds the symbol's DEFINITION oid: its `.0` instance
+      // rides this batch, and pickScalar asks for the bare oid alone only if
+      // that came back empty (utils/snmpIdentity.ts says why).
+      const oids = [SYS_OIDS.sysDescr, ...(modelOid ? [scalarInstanceOid(modelOid)] : [])];
       const vbs = await snmpMultiGet(session, oids).catch(() => new Map<string, unknown>());
 
       sysDescrText = snmpVbToString(vbs.get(SYS_OIDS.sysDescr)) || null;
       descrIdentity = parseVendorSysDescr(sysDescrText ?? undefined);
 
       if (modelOid && vendorProfile?.model) {
-        const raw = snmpVbToString(vbs.get(modelOid));
+        const raw = await pickScalar(
+          vbs, modelOid,
+          async (oid) => (await snmpMultiGet(session, [oid])).get(oid),
+          snmpVbToString,
+        );
         if (raw) detectedModel = vendorProfile.model.parse(raw);
       }
     } catch { /* best-effort — identity stays undetected */ }
@@ -10170,7 +10177,8 @@ async function adoptDetectedModel(
     resourceName: pinned.hostname || undefined,
     level: "info",
     message: `Model detected via SNMP: ${pinned.hostname || assetId} "${currentModel || "(none)"}" → "${detectedModel}"`,
-    details: { previousModel: currentModel || null, model: detectedModel, source: "snmp:fsSysVersion" },
+    // Any profile's Model identity row lands here now, not only FortiSwitch's.
+    details: { previousModel: currentModel || null, model: detectedModel, source: "snmp:model-profile" },
   });
 }
 
