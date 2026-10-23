@@ -75,6 +75,16 @@ Node line at once and which nothing major-granular could see.
   install paths (official Docker image, NodeSource, RHEL AppStream) all track upstream version
   numbers, so the version compare is sound for them. A host on a distro that renumbers would
   false-positive; that is the accepted cost of not probing per-CVE fingerprints.
+- **A vendor's "not affected" is a claim to check, not a verdict.** Red Hat's CVE data listed
+  RHEL 9 `nodejs:24` as *Not affected* by CVE-2026-111497, with no justification attached. On
+  plvcoripam1 (2026-10-23) `nodejs-24.18.0-3.module+el9.8.0` reported `brotli=1.2.0`,
+  `node_shared_brotli=false` (bundled, not the system `libbrotli`), and its `rpm -q --changelog`
+  showed no backport. So the floor's `unpatched` there was a true positive. Check those three
+  facts before suppressing a floor for a distro build. The same host showed that Polaris's
+  exposure was INBOUND, not only `fetch()`: Express 5's body parser decodes `Content-Encoding:
+  br` pre-auth, so `src/api/middleware/rejectBrotliBody.ts` refuses those bodies. Ask that
+  question first next time: does any app-wide middleware feed attacker bytes to the vulnerable
+  code?
 - **Also read by `scripts/check-node-security-floor.mjs`** — the setup scripts and
   `deploy/upgrade-node.sh` call it, so the floor has one copy. It warns and always exits 0.
 

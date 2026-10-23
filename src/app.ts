@@ -21,6 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // shipped brand art is requested with (the /img/brand mount below).
 const APP_VERSION: string = getAppVersion();
 import { errorHandler } from "./api/middleware/errorHandler.js";
+import { rejectBrotliBody } from "./api/middleware/rejectBrotliBody.js";
 import { csrfMiddleware } from "./api/middleware/csrf.js";
 import { AppError } from "./utils/errors.js";
 import { logger } from "./utils/logger.js";
@@ -352,6 +353,9 @@ app.use(helmet(buildHelmetOptions()));
 app.use(compression());
 
 // ─── Body parsing with size limits ───────────────────────────────────────────
+// Brotli bodies are refused first: the parsers below would decode them, pre-auth
+// (CVE-2026-111497 — see the middleware's header).
+app.use(rejectBrotliBody);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "1mb" })); // SAML callback posts form-encoded
 

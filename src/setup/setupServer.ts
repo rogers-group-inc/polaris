@@ -12,6 +12,7 @@ import helmet from "helmet";
 import setupRoutes from "./setupRoutes.js";
 import { loadOrCreateSetupToken } from "./setupToken.js";
 import { makeRateLimiter } from "../api/middleware/rateLimits.js";
+import { rejectBrotliBody } from "../api/middleware/rejectBrotliBody.js";
 import { buildHelmetOptions } from "../utils/securityHeaders.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -26,6 +27,8 @@ export function startSetupServer(): void {
   // <script>, so the shared `scriptSrc: 'self'` policy fits it unmodified.
   app.use(helmet(buildHelmetOptions()));
 
+  // Ahead of the parser, as on the main listener (CVE-2026-111497).
+  app.use(rejectBrotliBody);
   app.use(express.json());
 
   // The setup server is unauthenticated and single-operator — a generous
