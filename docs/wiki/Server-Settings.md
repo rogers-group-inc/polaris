@@ -370,7 +370,7 @@ See [Mobile and Dash](Mobile-and-Dash#dash-wallboard).
 
 ### IPv6
 
-Whether Polaris handles IPv6 at all ([rule 127](Business-Rules#rule-127)): one
+Whether Polaris handles IPv6 at all ([rule 128](Business-Rules#rule-128)): one
 **Enable IPv6** switch. Polaris sets it once, at install: on when the server has
 a routable IPv6 address, off when it does not (link-local fe80:: and loopback
 addresses are not counted). The decision is recorded on the Events page as

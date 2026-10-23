@@ -2644,7 +2644,7 @@ reservations inside them. An address the gate only saw in use is marked
 released a day after it was last seen. An asset keeps its IPv4 address for
 monitoring, and an IPv6 reservation is never pushed to the gate, because
 FortiOS has no DHCPv6 reservations. None of this runs while IPv6 is off for
-the install ([rule 127](#rule-127)).
+the install ([rule 128](#rule-128)).
 ([FortiManager and standalone FortiGate](Integration-Fortinet#ipv6) has the
 details.)
 
@@ -2658,9 +2658,9 @@ Addresses such as 127.0.0.1 and fe80:: are never recorded, even from an agent
 that has not been upgraded yet. Polaris never replaces a device's IPv4
 address with an IPv6 one on its own; only pinning one yourself does that. A
 device with no IPv4 address at all is monitored on its primary IPv6 address
-([rule 127](#rule-127)).
+([rule 128](#rule-128)).
 
-### Rule 127
+### Rule 128
 
 **IPv6 is on only where the Polaris server uses IPv6, and a device with no
 IPv4 address is monitored on its primary IPv6 address.** At install, Polaris

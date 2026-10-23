@@ -1935,7 +1935,7 @@ async function fmgStepDhcpConfig(ctx: FmgDeviceCtx): Promise<void> {
     // the IPv4 read above, so an offline gate still reports them. FortiOS has
     // no DHCPv6 reservations. A failure costs only the IPv6 networks; it
     // never touches the reservation sweep's flag. Not read at all while IPv6
-    // is off for the install (business rule 127).
+    // is off for the install (business rule 128).
     if (ipv6Enabled()) try {
       const dhcp6Res = await rpc(baseUrl, {
         id: 2,
@@ -2093,7 +2093,7 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
           // Router-advertised prefixes are networks the gate serves (business
           // rule 125) — the IPv6 counterpart of a DHCP scope, so they answer
           // to the DHCP include / exclude filter, not the interface filter.
-          // Nothing IPv6 while it is off for the install (business rule 127).
+          // Nothing IPv6 while it is off for the install (business rule 128).
           const v6 = v6On ? parseInterfaceIpv6(iface) : NO_INTERFACE_IPV6;
           if (ifaceName) {
             for (const s of advertisedPrefixSubnets(ifaceName, v6, deviceName, ctx.localDevice.serial || undefined, localSubnets)) {

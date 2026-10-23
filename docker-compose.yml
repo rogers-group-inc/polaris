@@ -151,7 +151,7 @@ services:
       migrate:
         condition: service_completed_successfully
 
-# IPv6 (business rule 127). The default network below is IPv4-only, so the
+# IPv6 (business rule 128). The default network below is IPv4-only, so the
 # containers see no IPv6 address and Polaris switches IPv6 off at install —
 # even on a dual-stack host. To discover, show and poll IPv6 devices, uncomment
 # this block, then `docker compose down && docker compose up -d` (a restart does

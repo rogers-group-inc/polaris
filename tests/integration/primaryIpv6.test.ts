@@ -1,7 +1,7 @@
 /**
  * tests/integration/primaryIpv6.test.ts
  *
- * Business rule 127 against a real database:
+ * Business rule 128 against a real database:
  *
  *  - **The reconcile picks the primary IPv6** from the asset's IPv6
  *    address-list rows, and clears it when the rows are gone.
@@ -113,7 +113,7 @@ beforeEach(async () => {
 const primary = async () =>
   prisma.asset.findUniqueOrThrow({ where: { id: assetId }, select: { ipv6Address: true, ipv6Pinned: true, ipv6PinnedBy: true } });
 
-d("primary IPv6 (rule 127)", () => {
+d("primary IPv6 (rule 128)", () => {
   it("the reconcile picks one of the asset's IPv6 rows and clears it when they go", async () => {
     await reconcilePrimaryIpv6();
     expect([V6_A, V6_B]).toContain((await primary()).ipv6Address);

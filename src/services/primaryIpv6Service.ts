@@ -1,5 +1,5 @@
 /**
- * src/services/primaryIpv6Service.ts — an asset's primary IPv6 (business rule 127).
+ * src/services/primaryIpv6Service.ts — an asset's primary IPv6 (business rule 128).
  *
  * `Asset.ipv6Address` is the IPv6 shown beside the IPv4 on the asset's
  * General tab, and the address an asset with NO IPv4 is polled on

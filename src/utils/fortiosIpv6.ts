@@ -111,7 +111,7 @@ export interface ParsedInterfaceIpv6 {
   advertisedPrefixes: string[];
 }
 
-/** What an interface reports while IPv6 is off for the install (business rule 127). */
+/** What an interface reports while IPv6 is off for the install (business rule 128). */
 export const NO_INTERFACE_IPV6: ParsedInterfaceIpv6 = Object.freeze({ addresses: [], advertisedPrefixes: [] }) as ParsedInterfaceIpv6;
 
 /**
@@ -222,7 +222,7 @@ export function clientIpv6Address(raw: unknown): string | undefined {
 
 /**
  * A discovery result with every IPv6 fact removed — what the sync writes while
- * IPv6 is off for the install (business rule 127). IPv6 networks, the gate's
+ * IPv6 is off for the install (business rule 128). IPv6 networks, the gate's
  * IPv6 interface addresses, DHCPv6 leases, and the client IPv6 addresses the
  * inventory / detected-device rows carry (the `observed` source) all go; the
  * IPv4 half is returned untouched. The collectors already skip their

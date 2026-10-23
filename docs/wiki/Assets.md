@@ -473,7 +473,7 @@ one *N port MACs* pill and are never a primary.
 
 #### Primary IPv6
 
-When IPv6 is on for this Polaris install ([rule 127](Business-Rules#rule-127)),
+When IPv6 is on for this Polaris install ([rule 128](Business-Rules#rule-128)),
 **Address** has two lines: **IPv4**, the address described above, and
 **IPv6**, the device's primary IPv6 address. Polaris picks the primary IPv6
 from the IPv6 addresses in the asset's address list, preferring the one the

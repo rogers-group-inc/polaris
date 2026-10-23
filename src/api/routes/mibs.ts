@@ -393,7 +393,7 @@ async function runMibWalk(opts: {
     select: { id: true, hostname: true, ipAddress: true, ipv6Address: true },
   });
   if (!asset) throw new AppError(404, "Asset not found");
-  // IPv4, else (IPv6 on) the primary IPv6 — business rule 127.
+  // IPv4, else (IPv6 on) the primary IPv6 — business rule 128.
   const walkHost = assetDialAddress(asset, ipv6Dialable());
   if (!walkHost) throw new AppError(400, "Asset has no IP address to walk");
 

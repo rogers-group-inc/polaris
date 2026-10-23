@@ -240,7 +240,7 @@ export function isIpv6Address(ip: string | null | undefined): boolean {
  * A host as it must appear inside a URL: an IPv6 literal in brackets
  * ("[2001:db8::1]"), anything else unchanged. `new URL("https://2001:db8::1:443")`
  * throws, and fetch rejects it — so every `${scheme}://${host}` built from an
- * address goes through this (business rule 127). An already-bracketed host is
+ * address goes through this (business rule 128). An already-bracketed host is
  * left alone. Note `URL.hostname` KEEPS the brackets: a caller that hands the
  * hostname on to `http.request` / a pin lookup strips them again
  * (`bareHost`).

@@ -1,4 +1,4 @@
--- An asset's primary IPv6 address and its operator pin (business rule 127).
+-- An asset's primary IPv6 address and its operator pin (business rule 128).
 -- `assets` is an ordinary table. ipv6Address starts NULL everywhere and is
 -- filled by the reconcilePrimaryIpv6 job from each asset's IPv6 address-list
 -- rows — only while IPv6 is on for the install.

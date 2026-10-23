@@ -76,7 +76,7 @@ export function splitInterfaceAddresses(
   const v6 = reportableInterfaceIp(ipv6Address);
   return {
     ipAddress: v4 && !v4.includes(":") ? v4 : null,
-    // Business rule 127: with IPv6 off for the install, no IPv6 is stored.
+    // Business rule 128: with IPv6 off for the install, no IPv6 is stored.
     ipv6Address: !allowIpv6 ? null : (v6 && v6.includes(":") ? v6 : null) ?? (v4 && v4.includes(":") ? v4 : null),
   };
 }

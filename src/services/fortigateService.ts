@@ -685,7 +685,7 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
   // this server's. FortiOS has no DHCPv6 reservations, so there is nothing
   // else to take from the table. A failure loses only the IPv6 networks; it
   // never touches the IPv4 reads or the reservation sweep's flag above.
-  // Not read at all while IPv6 is off for the install (business rule 127).
+  // Not read at all while IPv6 is off for the install (business rule 128).
   if (ipv6Enabled()) try {
     const dhcp6Data = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system.dhcp6/server", { query: queryBase, signal });
     const v6Subnets = parseDhcp6Servers(dhcp6Data, deviceName, deviceSerial);
@@ -818,7 +818,7 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         // serves (business rule 125) — the IPv6 counterpart of a DHCP scope,
         // so like a scope it answers to the DHCP include / exclude filter
         // (applied after the chains), not to the interface filter below.
-        // Nothing IPv6 while it is off for the install (business rule 127).
+        // Nothing IPv6 while it is off for the install (business rule 128).
         const v6 = v6On ? parseInterfaceIpv6(iface) : NO_INTERFACE_IPV6;
         for (const s of advertisedPrefixSubnets(ifaceName, v6, deviceName, deviceSerial, discovered)) {
           discovered.push(s);

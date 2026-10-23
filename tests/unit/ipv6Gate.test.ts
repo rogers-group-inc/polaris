@@ -1,5 +1,5 @@
 /**
- * Business rule 127 — the install-wide IPv6 switch and the primary IPv6 address.
+ * Business rule 128 — the install-wide IPv6 switch and the primary IPv6 address.
  *
  * Pins the pure halves: host detection, the install-time decision and the
  * stored toggle, reachability, the dial address

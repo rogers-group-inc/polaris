@@ -1414,7 +1414,7 @@ router.put("/dash", requirePermission("serverSettingsSystem", "write"), async (r
   }
 });
 
-// ─── IPv6 (business rule 127) ───────────────────────────────────────────────
+// ─── IPv6 (business rule 128) ───────────────────────────────────────────────
 
 // Decided once at install from the host (jobs/initIpv6Setting.ts); a plain
 // operator toggle from then on.

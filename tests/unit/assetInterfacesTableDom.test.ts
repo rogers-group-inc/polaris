@@ -661,7 +661,7 @@ describe("IPsec tunnels live on the IPsec tab, not here", () => {
 // looks up its network by its IPv6.
 describe("IPv6 column", () => {
   function renderWithV6(ipv6On = true): void {
-    // Business rule 127: the install's IPv6 switch, from /auth/me.
+    // Business rule 128: the install's IPv6 switch, from /auth/me.
     g.polarisIpv6Enabled = ipv6On;
     const si = makeSi();
     si.interfaces[0] = { ...si.interfaces[0], ipv6Address: "2001:db8::5" };

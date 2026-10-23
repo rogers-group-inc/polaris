@@ -197,7 +197,7 @@ router.post("/test", credentialTestLimiter, requireOwnership("credentials"), asy
     if (input.assetId) {
       hostSource = "asset";
       asset = await credentialService.getTestAssetTarget(input.assetId);
-      host = assetDialAddress(asset, ipv6Dialable()) || asset.dnsName || asset.hostname; // rule 127
+      host = assetDialAddress(asset, ipv6Dialable()) || asset.dnsName || asset.hostname; // rule 128
       // restapi credentials carry their own baseUrl, so a host on the asset is
       // optional — the credential is tested against its own URL. Every other
       // type still needs a routable target.

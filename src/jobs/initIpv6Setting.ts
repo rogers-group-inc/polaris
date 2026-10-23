@@ -1,7 +1,7 @@
 /**
  * src/jobs/initIpv6Setting.ts
  *
- * One-shot startup job (business rule 127): the install-time IPv6 decision.
+ * One-shot startup job (business rule 128): the install-time IPv6 decision.
  * If nobody has decided whether IPv6 is on yet, switch it on when this host
  * holds a routable IPv6 address and off otherwise, and record the decision as
  * an Event. A decision already made — by an earlier boot or an operator in

@@ -885,7 +885,7 @@ function renderCertsTab(container) {
           '</div>') +
     '</div>';
 
-  // IPv6 card — business rule 127. Off means no IPv6 is discovered, collected,
+  // IPv6 card — business rule 128. Off means no IPv6 is discovered, collected,
   // stored or shown anywhere. Set once at install from whether this server had
   // a routable IPv6 address; a plain toggle from then on. PUT is
   // serverSettingsSystem write-gated.

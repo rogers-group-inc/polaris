@@ -132,7 +132,7 @@ describe("Address row", () => {
   });
 });
 
-describe("Address row with IPv6 on (business rule 127)", () => {
+describe("Address row with IPv6 on (business rule 128)", () => {
   const withV6 = (fn: () => void) => {
     g.polarisIpv6Enabled = true;
     try { fn(); } finally { g.polarisIpv6Enabled = false; }

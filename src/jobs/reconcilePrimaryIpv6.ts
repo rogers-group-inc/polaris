@@ -1,7 +1,7 @@
 /**
  * src/jobs/reconcilePrimaryIpv6.ts
  *
- * Business rule 127: re-choose every unpinned asset's primary IPv6 from its
+ * Business rule 128: re-choose every unpinned asset's primary IPv6 from its
  * IPv6 address-list rows (services/primaryIpv6Service.ts →
  * reconcilePrimaryIpv6), and clear the automatic values while IPv6 is off for
  * the install.

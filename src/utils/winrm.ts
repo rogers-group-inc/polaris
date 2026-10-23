@@ -302,7 +302,7 @@ function addressingHeaders(
 ): string {
   const useHttps = conn.useHttps !== false;
   const port = conn.port ?? (useHttps ? 5986 : 5985);
-  const to = `${useHttps ? "https" : "http"}://${urlHost(conn.host)}:${port}/wsman`; // IPv6 bracketed (rule 127)
+  const to = `${useHttps ? "https" : "http"}://${urlHost(conn.host)}:${port}/wsman`; // IPv6 bracketed (rule 128)
   let h =
     `<a:To>${to}</a:To>` +
     `<w:ResourceURI s:mustUnderstand="true">${SHELL_RESOURCE_URI}</w:ResourceURI>` +

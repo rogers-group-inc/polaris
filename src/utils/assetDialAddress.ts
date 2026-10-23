@@ -1,6 +1,6 @@
 /**
  * src/utils/assetDialAddress.ts — the address a probe or collector dials for
- * an asset (business rule 127).
+ * an asset (business rule 128).
  *
  * IPv4 first, always: `Asset.ipAddress` when it is set. Only an asset with NO
  * IPv4 falls back to its primary IPv6 (`Asset.ipv6Address`), and only while

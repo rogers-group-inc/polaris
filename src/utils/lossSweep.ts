@@ -103,7 +103,7 @@ export interface LossSweepAsset {
   /** Lifecycle status — `maintenance` is the one that must be tested here. */
   status?: string | null;
   ipAddress?: string | null;
-  /** Primary IPv6 — dialled only when there is no IPv4 and IPv6 is on (rule 127). */
+  /** Primary IPv6 — dialled only when there is no IPv4 and IPv6 is on (rule 128). */
   ipv6Address?: string | null;
   dnsName?: string | null;
   hostname?: string | null;

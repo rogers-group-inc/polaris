@@ -346,7 +346,7 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       // each need their own authenticated conversation with their own
       // credentials, so there is nothing to batch (snmpMultiGet batches OIDs
       // WITHIN one session; it cannot span hosts).
-      // Business rule 127: the IPv4, else (IPv6 on) the primary IPv6 - the same
+      // Business rule 128: the IPv4, else (IPv6 on) the primary IPv6 - the same
       // pick as computeDueWork's dial().
       const batchTarget = eff.responseTimePolling === "icmp" ? assetDialAddress(a, ipv6Dialable()) : null;
       if (batchTarget) {

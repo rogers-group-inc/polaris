@@ -1,5 +1,5 @@
 /**
- * src/services/ipv6GateService.ts — is IPv6 ON for this install? (business rule 127)
+ * src/services/ipv6GateService.ts — is IPv6 ON for this install? (business rule 128)
  *
  * IPv6 is a whole-install switch: while it is off, Polaris collects, stores
  * and shows nothing IPv6 — no IPv6 networks or addresses from discovery (rule
@@ -212,7 +212,7 @@ export function ipv6Enabled(): boolean {
  * May a probe dial an IPv6 address? IPv6 is on AND this process can reach it.
  * Every `assetDialAddress` / loss-sweep caller reads this, not ipv6Enabled():
  * an IPv6-only asset on an install that cannot reach IPv6 is left unpolled
- * (as it was before rule 127) rather than polled into "down".
+ * (as it was before rule 128) rather than polled into "down".
  */
 export function ipv6Dialable(): boolean {
   return current().dialable;

@@ -1778,7 +1778,7 @@ async function resolveMonitorSettingsCore(asset: AssetMonitorContext): Promise<R
     let resolved: PollingMethod | null = defaultPollingForSource(sourceKind, stream, {
       assetType: asset.assetType,
       fortiosRestUnavailable,
-      hasIp: dial(asset) !== null, // an IPv6-only asset counts (rule 127)
+      hasIp: dial(asset) !== null, // an IPv6-only asset counts (rule 128)
     });
     let tier: ProvenanceTier = "default";
     if (tierVal && ok(tierVal)) {
@@ -4230,7 +4230,7 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
     `xmlns:wsmid="http://schemas.dmtf.org/wbem/wsman/identity/1/wsmanidentity.xsd">` +
     `<s:Header/><s:Body><wsmid:Identify/></s:Body></s:Envelope>`;
 
-  const url = new URL(`${useHttps ? "https" : "http"}://${urlHost(host)}:${port}/wsman`); // IPv6 bracketed (rule 127)
+  const url = new URL(`${useHttps ? "https" : "http"}://${urlHost(host)}:${port}/wsman`); // IPv6 bracketed (rule 128)
   const auth = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
 
   return await new Promise<ProbeResult>((resolve) => {
@@ -4726,7 +4726,7 @@ export interface TelemetrySample {
 }
 
 /**
- * The address every stream dials for an asset (business rule 127): its IPv4,
+ * The address every stream dials for an asset (business rule 128): its IPv4,
  * else — only with IPv6 on for the install — its primary IPv6. Each caller's
  * asset read must select `ipv6Address` beside `ipAddress`.
  */
@@ -7299,7 +7299,7 @@ function buildSnmpSession(host: string, config: Record<string, unknown>, timeout
     ? timeoutMs
     : COLLECTOR_REQUEST_TIMEOUT_MS;
   // net-snmp defaults to "udp4", which cannot reach an IPv6 target — an asset
-  // polled on its primary IPv6 (business rule 127) needs the udp6 socket.
+  // polled on its primary IPv6 (business rule 128) needs the udp6 socket.
   const transport = isIpv6Address(host) ? "udp6" : "udp4";
   if (version === "v2c") {
     return snmp.createSession(host, String(config.community || ""), {

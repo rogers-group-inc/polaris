@@ -8869,7 +8869,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   var showPoeCol = rows.some(function (r) { return r.poeStatus != null; });
   // And for IPv6 (business rule 126): an IPv4-only device would show a dash in
   // every row, so the column appears once any interface reports an IPv6.
-  // Never while IPv6 is off for the install (business rule 127), whatever
+  // Never while IPv6 is off for the install (business rule 128), whatever
   // rows written before it was switched off still carry.
   var showIpv6Col = (typeof polarisIpv6Enabled !== "undefined" && polarisIpv6Enabled === true) &&
     rows.some(function (r) { return !!r.ipv6Address; });
@@ -16198,7 +16198,7 @@ function _renderIfaceAddressHistory(samples, ifaceRow) {
   if (!el) return;
   var v6On = typeof polarisIpv6Enabled !== "undefined" && polarisIpv6Enabled === true;
   var others = _ifaceAddressesSeen(samples, [ifaceRow && ifaceRow.ipAddress, ifaceRow && ifaceRow.ipv6Address])
-    .filter(function (a) { return v6On || a.indexOf(":") === -1; }); // rule 127
+    .filter(function (a) { return v6On || a.indexOf(":") === -1; }); // rule 128
   el.innerHTML = others.length
     ? 'Also held in this range: <span class="mono">' + others.map(escapeHtml).join(", ") + '</span>'
     : "";
@@ -19600,7 +19600,7 @@ function ipViewRow(asset) {
 }
 
 // The Address row: the IPv4 (what monitoring dials) and — only while IPv6 is
-// on for the install (business rule 127) — the primary IPv6 on its own line,
+// on for the install (business rule 128) — the primary IPv6 on its own line,
 // each labelled; the IP / MAC pills underneath. With IPv6 off the row is the
 // single unlabelled IPv4 it always was.
 function _addressRowHTML(asset, v4Inner, pills) {
@@ -19617,7 +19617,7 @@ function _addressRowHTML(asset, v4Inner, pills) {
     '</span></div>';
 }
 
-// The primary IPv6 (business rule 127): the address, whether an operator
+// The primary IPv6 (business rule 128): the address, whether an operator
 // pinned it or Polaris chose it, and the unpin control on a pin. An asset with
 // no IPv4 is polled on this address, and the line says so.
 function _ipv6LineHTML(asset) {
@@ -19653,7 +19653,7 @@ var _PIN_STALE_MS = 24 * 60 * 60 * 1000; // mirrors PIN_FOLLOW_STALE_MS (src/uti
 
 function _assetAddressRows(asset) {
   var rows = Array.isArray(asset.associatedIps) ? asset.associatedIps : [];
-  // With IPv6 off for the install nothing IPv6 is shown (business rule 127),
+  // With IPv6 off for the install nothing IPv6 is shown (business rule 128),
   // including rows recorded before it was switched off.
   if (typeof polarisIpv6Enabled === "undefined" || polarisIpv6Enabled !== true) {
     rows = rows.filter(function (r) { return String(r.ip || '').indexOf(':') === -1; });
@@ -19855,7 +19855,7 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
   if (r.medium) bits.push(r.medium === "wired" ? "wired" : r.medium === "wireless" ? "wireless" : escapeHtml(r.medium));
   if (r.lastSeen) bits.push(formatDate(r.lastSeen));
   // An IPv6 row carries the primary-IPv6 marker or its own pin button
-  // (business rule 127) — never the IPv4 pin, which is what monitoring dials.
+  // (business rule 128) — never the IPv4 pin, which is what monitoring dials.
   if (String(r.ip || '').indexOf(':') !== -1) {
     var v6Star = r.ip === asset.ipv6Address
       ? _ADDRESS_PRIMARY_IPV6_BADGE
@@ -20010,7 +20010,7 @@ function addressPillsHTML(asset) {
 }
 
 async function _handlePrimaryAddressClick(e) {
-  // The primary IPv6 pin (business rule 127) — its own endpoint, no
+  // The primary IPv6 pin (business rule 128) — its own endpoint, no
   // confidence pre-check: it is not the address monitoring dials unless the
   // asset has no IPv4.
   var v6Btn = e.target.closest('.primary-ipv6-set, .primary-ipv6-unpin');

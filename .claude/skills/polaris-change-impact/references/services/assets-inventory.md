@@ -47,7 +47,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/primaryIpv6Service.ts
 
-**What it owns:** An asset's PRIMARY IPv6 (business rule 127) — `Asset.ipv6Address` / `ipv6Pinned` / `ipv6PinnedAt` / `ipv6PinnedBy`. Shown beside the IPv4; the dial address of an asset with no IPv4 (`utils/assetDialAddress.ts`). Never writes `Asset.ipAddress` (rule 126(d)).
+**What it owns:** An asset's PRIMARY IPv6 (business rule 128) — `Asset.ipv6Address` / `ipv6Pinned` / `ipv6PinnedAt` / `ipv6PinnedBy`. Shown beside the IPv4; the dial address of an asset with no IPv4 (`utils/assetDialAddress.ts`). Never writes `Asset.ipAddress` (rule 126(d)).
 
 **Public API:** `pickPrimaryIpv6(candidates)` (pure), `reconcilePrimaryIpv6(now?)`, `pinPrimaryIpv6({assetId, ip, actor})`, `unpinPrimaryIpv6({assetId, actor})`, `Ipv6Candidate`
 

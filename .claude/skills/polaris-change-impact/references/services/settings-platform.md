@@ -411,7 +411,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ## services/ipv6GateService.ts
 
-**What it owns:** Whether IPv6 is ON for the install (business rule 127) — the `ipv6Config` Setting `{ enabled: boolean | null, setBy: "install" | "operator" | null, installHostAddresses }` — decided once at install from host detection, then an operator toggle; and whether this process can REACH IPv6.
+**What it owns:** Whether IPv6 is ON for the install (business rule 128) — the `ipv6Config` Setting `{ enabled: boolean | null, setBy: "install" | "operator" | null, installHostAddresses }` — decided once at install from host detection, then an operator toggle; and whether this process can REACH IPv6.
 
 **Public API:** `ipv6Enabled()` (sync, cached), `ipv6Dialable()` (sync, cached: on AND reachable — a routable address or `hasIpv6Route`), `getIpv6Status()`, `initializeIpv6Setting()`, `setIpv6Enabled(enabled, actor)`, `parseIpv6Config`, `routableHostIpv6(ifaces)`, `decideIpv6Enabled(stored, hosts)`, `decideIpv6Dialable`, `hasIpv6Route()`, `_resetIpv6GateForTests`, `Ipv6Config`, `Ipv6Status`
 

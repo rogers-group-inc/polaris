@@ -2327,7 +2327,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // last-gate-wins. Callers that fan out over gates pass one state for the
   // whole run; a single-call path can omit it. See utils/dhcpClaimFreshness.ts.
   const claims = claimState ?? createDhcpClaimState();
-  // Business rule 127: with IPv6 off for the install, nothing IPv6 is stored.
+  // Business rule 128: with IPv6 off for the install, nothing IPv6 is stored.
   if (!ipv6Enabled()) result = withoutIpv6(result);
   const syncLog = (level: "info" | "warning" | "error", message: string) => {
     logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });

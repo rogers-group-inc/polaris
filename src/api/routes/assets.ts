@@ -264,7 +264,7 @@ const PrimaryAddressSchema = z.object({
   ip: z.string().trim().min(1).max(64),
 });
 
-// PUT /assets/:id/primary-ipv6 — the asset's primary IPv6 (business rule 127).
+// PUT /assets/:id/primary-ipv6 — the asset's primary IPv6 (business rule 128).
 const PrimaryIpv6Schema = z.object({
   ip: z.string().trim().min(1).max(64),
 });
@@ -2499,7 +2499,7 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
       select: { id: true, hostname: true, ipAddress: true, ipv6Address: true },
     });
     if (!asset) throw new AppError(404, "Asset not found");
-    // IPv4, else (IPv6 on) the primary IPv6 — business rule 127.
+    // IPv4, else (IPv6 on) the primary IPv6 — business rule 128.
     const walkHost = assetDialAddress(asset, ipv6Dialable());
     if (!walkHost) throw new AppError(400, "Asset has no IP address to walk");
 
@@ -5520,7 +5520,7 @@ router.put("/:id/primary-address", requirePermission("assets", "write"), async (
   try {
     const input = PrimaryAddressSchema.parse(req.body);
     // The IPv4 pin is the address monitoring dials; an IPv6 has its own
-    // primary and its own endpoint (business rule 127).
+    // primary and its own endpoint (business rule 128).
     if (isIpv6Address(input.ip)) throw new AppError(400, "That is an IPv6 address — set it as the primary IPv6 (PUT /assets/:id/primary-ipv6)");
     const pinTarget = await prisma.asset.findUnique({
       where: { id: req.params.id as string },
@@ -5564,7 +5564,7 @@ router.delete("/:id/primary-address", requirePermission("assets", "write"), asyn
 });
 
 // PUT /api/v1/assets/:id/primary-ipv6 — pin the asset's primary IPv6
-// (business rule 127). The automatic choice stops until the pin is removed.
+// (business rule 128). The automatic choice stops until the pin is removed.
 // assets:write, like the IPv4 pin. Refused (409) while IPv6 is off for the
 // install. An asset with no IPv4 is polled on this address, so the same
 // integration-token guard as an IPv4 change applies (rule 111).

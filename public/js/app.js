@@ -520,12 +520,12 @@ var currentUserAuthProvider = "local"; // "local" | "azure" | "oidc" | "ldap"
 // the account menu can SAY so instead of describing it abstractly. Null until
 // /auth/me lands.
 var currentServerTimezone = null;
-// Business rule 127: is IPv6 on for this install? Every IPv6 surface (the
+// Business rule 128: is IPv6 on for this install? Every IPv6 surface (the
 // primary IPv6 line, the Interfaces IPv6 column, observed rows) draws only
 // while this is true. False until /auth/me lands — a surface drawn earlier
 // simply shows no IPv6, which is the safe answer.
 var polarisIpv6Enabled = false;
-var polarisIpv6Dialable = false; // IPv6 on AND this server can reach it (rule 127)
+var polarisIpv6Dialable = false; // IPv6 on AND this server can reach it (rule 128)
 var _userReadyResolve = null;
 var userReady = new Promise(function (resolve) { _userReadyResolve = resolve; });
 

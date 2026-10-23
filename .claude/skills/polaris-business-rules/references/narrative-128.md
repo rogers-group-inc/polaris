@@ -1,15 +1,15 @@
-# Business rule 127 — full narrative
+# Business rule 128 — full narrative
 
 > Written 2026-10-22 as its own file (one file per rule from 78 on). Rule numbers are a
 > stable citation key — never renumber. 81 is a deliberate gap.
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 127](#rule-127) — IPv6 is a whole-install switch that follows the host, and an asset with no IPv4 is polled on its primary IPv6
+- [Rule 128](#rule-128) — IPv6 is a whole-install switch that follows the host, and an asset with no IPv4 is polled on its primary IPv6
 
-<a id="rule-127"></a>
+<a id="rule-128"></a>
 
-## Rule 127 — IPv6 is a whole-install switch that follows the host, and an asset with no IPv4 is polled on its primary IPv6
+## Rule 128 — IPv6 is a whole-install switch that follows the host, and an asset with no IPv4 is polled on its primary IPv6
 
 ### What was there before (2026-10-22)
 
@@ -63,7 +63,7 @@ IPv6". Read through, that advice produced false down alerts: forced on, the
 container still learned IPv6 from discovery (the FortiGate is read over IPv4),
 gave IPv6-only assets a primary IPv6, and the monitor then polled them over a
 network with no IPv6 route — every probe failed and the asset went down, where
-before rule 127 it had simply had no address to poll. So the gate answers two
+before rule 128 it had simply had no address to poll. So the gate answers two
 questions: `ipv6Enabled()` (collect and show IPv6) and `ipv6Dialable()` (dial
 it), the second requiring a routable source address or a kernel route to
 2000::/3. The route check is a UDP `connect()`, which only asks the kernel to
@@ -181,6 +181,6 @@ reservations (IPv4 by rule 11). The agent install resolves its target through
 IPv6-only device is polled; it is not yet placed under an IPAM gate or matched by
 LLDP on its IPv6.
 
-### Rule 127 — the invariant as stated in full
+### Rule 128 — the invariant as stated in full
 
-See `invariants-30-43.md` § 127.
+See `invariants-30-43.md` § 128.

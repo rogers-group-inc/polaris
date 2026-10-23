@@ -842,7 +842,7 @@ router.get("/me", async (req, res, next) => {
       // /detected — this endpoint is hit on every page load, and without the
       // echo every one of those loads would be a write.
       detectedTimezone: u.detectedTimezone ?? null,
-      // Business rule 127: every IPv6 surface (the primary IPv6 row, the
+      // Business rule 128: every IPv6 surface (the primary IPv6 row, the
       // Interfaces IPv6 column, observed rows) is drawn only while this is true.
       ipv6Enabled: ipv6Enabled(),
       // On AND reachable: only then is an IPv6-only asset polled on its IPv6.

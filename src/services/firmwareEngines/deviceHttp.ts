@@ -114,7 +114,7 @@ export class DeviceHttpClient {
   constructor(private readonly opts: DeviceHttpClientOptions) {
     const scheme = opts.scheme ?? "https";
     const port = opts.port ?? (scheme === "https" ? 443 : 80);
-    this.base = `${scheme}://${urlHost(opts.host)}:${port}`; // IPv6 bracketed (rule 127)
+    this.base = `${scheme}://${urlHost(opts.host)}:${port}`; // IPv6 bracketed (rule 128)
   }
 
   /** A header value the engine wants echoed on every request (the FortiAP CSRF token). */
