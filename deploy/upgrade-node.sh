@@ -19,7 +19,11 @@
 #   1. Preflight: root, app dir, app user, systemd units, disk space, and the
 #      currently installed Node version (already-satisfied hosts exit cleanly).
 #      A host on the right major but below its security floor
-#      (src/data/platformEol.json) gets a patch update within that major.
+#      (src/data/platformEol.json) gets a patch update within that major —
+#      only if the repository actually offers one (checked before anything
+#      is stopped), and as a plain restart: a same-major patch keeps the
+#      native-module ABI, so steps 5 and 6 are skipped unless dist/ is stale
+#      or --pull was given.
 #   2. Optional pg_dump backup, because step 6 runs migrations
 #   3. Stops polaris.target — the service stays down for the WHOLE window, not
 #      just a restart at the end: native modules are compiled against the Node
@@ -150,6 +154,25 @@ if [[ $NEED_NODE -eq 0 ]]; then
     warn "$FLOOR_MSG"
     NEED_PATCH=1
   fi
+fi
+
+# Ask the repository BEFORE anything is stopped. The first version of this
+# path went straight to stop + npm ci + build, so on plvcoripam1 (2026-10-23,
+# RHEL AppStream still at 24.18.0) it took Polaris down only for dnf to report
+# "Nothing to do". Both queries are read-only.
+patch_available() {
+  if [[ "$PKG" == "dnf" ]]; then
+    dnf -q list --upgrades nodejs 2>/dev/null | grep -q '^nodejs'
+  else
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt list --upgradable 2>/dev/null | grep -q '^nodejs/'
+  fi
+}
+if [[ $NEED_PATCH -eq 1 ]] && ! patch_available; then
+  warn "This host's package repositories offer no newer nodejs than $CURRENT_NODE, so there is nothing to install."
+  warn "Polaris has NOT been stopped. Re-run once the repository carries the fix — on RHEL that means an RHSA"
+  warn "for the nodejs module, and on a Satellite-managed host the content view that publishes it."
+  NEED_PATCH=0
 fi
 
 # Is the build already current? (dist newer than the newest source file)
@@ -299,11 +322,18 @@ fi
 
 # ─── 5. Rebuild dependencies ──────────────────────────────────────────────
 step "5/7 npm ci (rebuilds native modules against the new ABI)"
-warn "This deletes node_modules first. If it fails, the host has NO dependencies and MUST NOT be started."
-info "No timeout here — a cold npm cache can take several minutes. Let it finish."
+# A patch inside the same major keeps NODE_MODULE_VERSION, so the compiled
+# native modules stay valid and the window shrinks to a restart. Only when
+# nothing else asked for a rebuild — a stale dist/ or --pull still gets one.
+PATCH_ONLY=0
+[[ $NEED_NODE -eq 0 && $NEED_PATCH -eq 1 && $BUILD_STALE -eq 0 && $DO_PULL -eq 0 ]] && PATCH_ONLY=1
+[[ $PATCH_ONLY -eq 0 ]] && warn "This deletes node_modules first. If it fails, the host has NO dependencies and MUST NOT be started."
+[[ $PATCH_ONLY -eq 0 ]] && info "No timeout here — a cold npm cache can take several minutes. Let it finish."
 # -H sets HOME so the app user's npm cache is actually used; without it npm
 # falls back to a cold cache and downloads the whole tree every time.
-if [[ $DRY_RUN -eq 1 ]]; then
+if [[ $PATCH_ONLY -eq 1 ]]; then
+  info "Same-major patch — the native-module ABI is unchanged, so node_modules is left as it is."
+elif [[ $DRY_RUN -eq 1 ]]; then
   echo -e "         ${YELLOW}would run:${NC} sudo -u $APP_USER -H npm ci --include=dev  (in $APP_DIR)"
 elif ! sudo -u "$APP_USER" -H bash -c "cd '$APP_DIR' && npm ci --include=dev"; then
   error "npm ci FAILED."
@@ -311,13 +341,15 @@ elif ! sudo -u "$APP_USER" -H bash -c "cd '$APP_DIR' && npm ci --include=dev"; t
   error "Fix the error above, then re-run this script (it will resume from a clean state)."
   exit 1
 fi
-info "Dependencies installed."
+[[ $PATCH_ONLY -eq 0 ]] && info "Dependencies installed."
 
 # ─── 6. Build + migrate ───────────────────────────────────────────────────
 step "6/7 Build and migrate"
 # Clean dist/ so files deleted from src/ don't linger as stale compiled JS.
-run "rm -rf '$APP_DIR/dist'"
-if [[ $DRY_RUN -eq 1 ]]; then
+[[ $PATCH_ONLY -eq 0 ]] && run "rm -rf '$APP_DIR/dist'"
+if [[ $PATCH_ONLY -eq 1 ]]; then
+  info "Same-major patch with a current build and no checkout change — nothing to build or migrate."
+elif [[ $DRY_RUN -eq 1 ]]; then
   echo -e "         ${YELLOW}would run:${NC} sudo -u $APP_USER -H npm run build"
   echo -e "         ${YELLOW}would run:${NC} sudo -u $APP_USER -H npx prisma migrate deploy"
 else

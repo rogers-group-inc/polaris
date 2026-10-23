@@ -76,11 +76,17 @@ build it reports that and exits without stopping anything.
 but the patch is below the security floor Polaris records for it (for example
 Node 24 below 24.22.1, for CVE-2026-111497), the script updates Node *within*
 that major from whatever repository installed it — `dnf upgrade nodejs npm` or
-`apt-get install --only-upgrade nodejs` — then runs the same rebuild and
-restart. If that repository has not shipped the fix yet, it says so and brings
-the service back anyway; re-run it once the package is available. The Platform
-Lifecycle card shows **Security update** for as long as the host is below the
-floor.
+`apt-get install --only-upgrade nodejs`. It asks the repository first: if no
+newer `nodejs` is offered, it says so and exits **without stopping Polaris**.
+When one is, the window is a restart, not a rebuild — a patch inside the same
+major keeps the native-module ABI, so `npm ci` and the build are skipped unless
+`dist/` is stale or you passed `--pull`. The Platform Lifecycle card shows
+**Security update** for as long as the host is below the floor.
+
+On RHEL, "the repository has it" means Red Hat has published an RHSA for the
+`nodejs` module stream and, on a Satellite-managed host, that the content view
+carrying it has been published to this host. Check that with whoever runs
+Satellite before re-running.
 
 ### The manual path
 
