@@ -18,7 +18,8 @@ const credFindMany = vi.fn();
 const svc = {
   getProfile: vi.fn(), getProfileFor: vi.fn(), createProfile: vi.fn(), updateProfile: vi.fn(),
   updateMetricRow: vi.fn(), createOverride: vi.fn(), updateOverride: vi.fn(),
-  createWidget: vi.fn(), updateWidget: vi.fn(), setWidgetLayout: vi.fn(), refreshProfileCache: vi.fn(),
+  createWidget: vi.fn(), updateWidget: vi.fn(), deleteWidget: vi.fn(), deleteOverride: vi.fn(),
+  setWidgetLayout: vi.fn(), refreshProfileCache: vi.fn(),
 };
 
 vi.mock("../../src/db.js", () => ({
@@ -110,6 +111,64 @@ describe("previewProfileImport", () => {
     expect(byId["widget:w2"].blocked).toBeNull();
     expect(byId["widget:w2"].missingCredential).toBe("UPS web login");
     expect(p.mibs).toEqual([{ moduleName: "PowerNet-MIB", manufacturer: "APC", model: null, present: false }]);
+  });
+});
+
+describe("View Code (exportProfile withIds + saveProfileCode)", () => {
+  it("the code view carries row ids and no timestamp; the export carries neither id", async () => {
+    const code = await port.exportProfile("p1", { withIds: true });
+    expect(code.widgets.map((w) => w.id)).toEqual(["w-status", "w-web"]);
+    expect(code.exportedAt).toBeUndefined();
+    const file = await port.exportProfile("p1");
+    expect(file.widgets[0].id).toBeUndefined();
+    expect(file.exportedAt).toBeTruthy();
+  });
+
+  it("updates rows that keep their id, creates rows without one, deletes rows left out", async () => {
+    const code = await port.exportProfile("p1", { withIds: true });
+    code.widgets[0].name = "UPS State";                                   // edited in place
+    code.widgets.splice(1, 1);                                            // Web UI removed
+    code.widgets.push({ ...code.widgets[0], id: undefined, key: "w9", name: "New one" }); // added
+    code.metrics = [];                                                    // temperature row removed
+    svc.updateWidget.mockResolvedValue({ id: "w-status" });
+    svc.createWidget.mockResolvedValue({ id: "w-new" });
+
+    const out = await port.saveProfileCode("p1", code, "dmoore");
+
+    expect(svc.updateWidget.mock.calls[0][0]).toBe("w-status");
+    expect(svc.updateWidget.mock.calls[0][1]).toMatchObject({ name: "UPS State" });
+    expect(svc.createWidget).toHaveBeenCalledTimes(1);
+    expect(svc.deleteWidget).toHaveBeenCalledWith("w-web");
+    expect(svc.updateMetricRow).toHaveBeenCalledWith("p1", "temperature", expect.objectContaining({ defaultSymbol: null }));
+    expect(out.changes).toEqual(["cleared metric temperature", "added widget New one", "deleted widget Web UI"]);
+  });
+
+  it("refuses before writing anything: another manufacturer, a missing MIB, an unknown metric, an unknown credential", async () => {
+    const code = await port.exportProfile("p1", { withIds: true });
+    await expect(port.saveProfileCode("p1", { ...code, manufacturer: "Eaton" })).rejects.toThrow(/can't be changed here/);
+
+    const typo = JSON.parse(JSON.stringify(code));
+    typo.widgets[0].mib.moduleName = "TYPO-MIB";
+    await expect(port.saveProfileCode("p1", typo)).rejects.toThrow(/MIB not uploaded on this install: TYPO-MIB/);
+
+    const badKey = JSON.parse(JSON.stringify(code));
+    badKey.metrics[0].metricKey = "fanSpeed";
+    await expect(port.saveProfileCode("p1", badKey)).rejects.toThrow(/Unknown metric "fanSpeed"/);
+
+    const badCred = JSON.parse(JSON.stringify(code));
+    badCred.widgets[1].credential = { name: "nobody" };
+    await expect(port.saveProfileCode("p1", badCred)).rejects.toThrow(/No credential named "nobody"/);
+
+    for (const fn of [svc.updateMetricRow, svc.updateWidget, svc.createWidget, svc.deleteWidget, svc.updateProfile]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("says the earlier changes were kept when a row is refused part-way", async () => {
+    const code = await port.exportProfile("p1", { withIds: true });
+    code.matchPattern = "APC|Schneider";
+    svc.updateMetricRow.mockRejectedValue(Object.assign(new Error("Invalid regex"), { httpStatus: 400 }));
+    await expect(port.saveProfileCode("p1", code)).rejects.toThrow(/Invalid regex — the changes before this point were saved/);
   });
 });
 

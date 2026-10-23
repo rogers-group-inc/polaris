@@ -1690,6 +1690,11 @@ const api = {
     // rule 130), and the bulk switch: body { enable?: [assetId], disable?: [...] }.
     listProfileWidgetAssets:     (id, widgetId) =>
       request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}/assets`),
+    // View Code: the profile as JSON with row ids; PUT makes it match (full replace).
+    getManufacturerProfileCode:  (id) =>
+      request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/code`),
+    saveManufacturerProfileCode: (id, file) =>
+      request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/code`, { file: file }),
     // Portable profile file: export, then preview + apply on import.
     exportManufacturerProfile:   (id) =>
       request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/export`),

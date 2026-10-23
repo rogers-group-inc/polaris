@@ -36,8 +36,10 @@ import {
   updateMetricRow,
   createOverride,
   updateOverride,
+  deleteOverride,
   createWidget,
   updateWidget,
+  deleteWidget,
   setWidgetLayout,
   refreshProfileCache,
   type ProfileFull,
@@ -69,6 +71,9 @@ const RowFieldsSchema = {
 };
 
 const OverrideSchema = z.object({
+  // Present only in the View Code JSON (full fidelity); never in an export.
+  // Import ignores it; saving code uses it to update the row in place.
+  id:           z.string().max(64).optional(),
   ...RowFieldsSchema,
   symbol:       z.string().min(1).max(200),
   assetType:    z.string().max(100).nullable(),
@@ -83,6 +88,9 @@ const MetricSchema = z.object({
 });
 
 const WidgetSchema = z.object({
+  // View Code only, as on OverrideSchema: keeps a widget's per-device switches
+  // and history when it is edited rather than re-created.
+  id:             z.string().max(64).optional(),
   key:            z.string().min(1).max(64),
   name:           z.string().min(1).max(200),
   symbol:         z.string().max(200).nullable(),
@@ -136,7 +144,13 @@ export function parseProfileFile(raw: unknown): ProfileFile {
 
 const mibKey = (r: MibRef) => `${r.moduleName}|${r.manufacturer ?? ""}|${r.model ?? ""}`.toLowerCase();
 
-export async function exportProfile(profileId: string): Promise<ProfileFile> {
+/**
+ * The profile as a file. `withIds` adds each override's and widget's row id —
+ * the View Code (full-fidelity) form, which saving needs to edit rows in place;
+ * an export never carries them.
+ */
+export async function exportProfile(profileId: string, opts: { withIds?: boolean } = {}): Promise<ProfileFile> {
+  const withIds = !!opts.withIds;
   const profile = await getProfile(profileId);
   if (!profile) throw new AppError(404, "Profile not found");
 
@@ -162,7 +176,9 @@ export async function exportProfile(profileId: string): Promise<ProfileFile> {
   const file: ProfileFile = {
     format:       PROFILE_FILE_FORMAT,
     version:      PROFILE_FILE_VERSION,
-    exportedAt:   new Date().toISOString(),
+    // A timestamp belongs on a file, not in an editable view (every read would
+    // differ, and a save would look like a change).
+    ...(withIds ? {} : { exportedAt: new Date().toISOString() }),
     manufacturer: profile.manufacturer,
     matchPattern: profile.matchPattern,
     mibs:         [...new Map(mibRows.map((m) => {
@@ -185,6 +201,7 @@ export async function exportProfile(profileId: string): Promise<ProfileFile> {
         parsePattern:  m.defaultParsePattern,
         parseTemplate: m.defaultParseTemplate,
         overrides: m.overrides.map((o) => ({
+          ...(withIds ? { id: o.id } : {}),
           assetType: o.assetType, modelPattern: o.modelPattern,
           symbol: o.symbol, symbolB: o.symbolB, mib: mibOf(o.mibId), mibStdKey: o.mibStdKey,
           type: o.type, transform: o.transform, aggregate: o.aggregate, label: o.label,
@@ -192,6 +209,7 @@ export async function exportProfile(profileId: string): Promise<ProfileFile> {
         })),
       })),
     widgets: profile.widgets.map((w) => ({
+      ...(withIds ? { id: w.id } : {}),
       key:            keyById.get(w.id) as string,
       name:           w.name,
       symbol:         w.symbol,
@@ -457,4 +475,151 @@ export async function applyProfileImport(raw: unknown, selected: string[], actor
     details:      { results },
   });
   return { profileId, results };
+}
+
+// ─── View Code: save ──────────────────────────────────────────────────────
+
+/** What a metric row looks like unconfigured (the built-in seed answers). */
+const CLEARED_METRIC = {
+  defaultSymbol: null, defaultSymbolB: null, defaultMibId: null, defaultMibStdKey: null,
+  defaultTransform: null, defaultLabel: null, defaultParsePattern: null, defaultParseTemplate: null,
+};
+
+/**
+ * Make a profile match its edited View Code JSON — a full replace, like an
+ * automation's View Code save: a metric row left out is cleared back to the
+ * built-in seed, and an override or widget left out is DELETED (a deleted
+ * widget takes its per-device switches with it). Rows carrying an `id` of this
+ * profile are updated in place; rows without one are created.
+ *
+ * Everything that can be checked without writing is checked first — the
+ * manufacturer, every metric key, every MIB and credential name — so a typo
+ * fails the save before anything changes. A row the service then refuses
+ * (an invalid regex, say) stops the save there, and the error says that the
+ * changes before it were kept.
+ */
+export async function saveProfileCode(profileId: string, raw: unknown, actor?: string): Promise<{ changes: string[] }> {
+  const file = parseProfileFile(raw);
+  const profile = await getProfile(profileId);
+  if (!profile) throw new AppError(404, "Profile not found");
+  const canonical = normalizeManufacturer(file.manufacturer) ?? file.manufacturer;
+  if (canonical.toLowerCase() !== profile.manufacturer.toLowerCase()) {
+    throw new AppError(400, `This is the ${profile.manufacturer} profile — "manufacturer" can't be changed here (import the file to make a ${canonical} profile instead)`);
+  }
+
+  const resolve = await mibResolver(profile.manufacturer);
+  const metricKeys = new Set(profile.metrics.map((m) => m.metricKey as string));
+  const badKeys = file.metrics.map((m) => m.metricKey).filter((k) => !metricKeys.has(k));
+  if (badKeys.length) throw new AppError(400, `Unknown metric "${badKeys[0]}" — expected one of ${[...metricKeys].join(", ")}`);
+  const refs: Array<MibRef | null> = [
+    ...file.metrics.flatMap((m) => [m.mib, ...m.overrides.map((o) => o.mib)]),
+    ...file.widgets.filter((w) => w.widgetType !== "http").map((w) => w.mib),
+  ];
+  const missing = [...new Set(refs.filter((r): r is MibRef => !!r && !resolve(r)).map((r) => r.moduleName))];
+  if (missing.length) throw new AppError(400, `MIB not uploaded on this install: ${missing.join(", ")} — upload it or remove the reference`);
+  const nonHttpWithoutMib = file.widgets.find((w) => w.widgetType !== "http" && !w.mib);
+  if (nonHttpWithoutMib) throw new AppError(400, `Widget "${nonHttpWithoutMib.name}" needs a "mib"`);
+  const creds = await prisma.credential.findMany({ select: { id: true, name: true } });
+  const credId = (name: string) => creds.find((c) => c.name.toLowerCase() === name.toLowerCase())?.id;
+  const badCred = file.widgets.find((w) => w.credential && !credId(w.credential.name));
+  if (badCred) throw new AppError(400, `No credential named "${badCred.credential!.name}" (widget "${badCred.name}")`);
+
+  const changes: string[] = [];
+  try {
+    if ((file.matchPattern ?? null) !== (profile.matchPattern ?? null)) {
+      await updateProfile(profileId, { matchPattern: file.matchPattern });
+      changes.push("settings");
+    }
+
+    for (const row of profile.metrics) {
+      const m = file.metrics.find((x) => x.metricKey === row.metricKey);
+      if (m) {
+        await updateMetricRow(profileId, row.metricKey, {
+          defaultSymbol: m.symbol, defaultSymbolB: m.symbolB,
+          defaultMibId: resolve(m.mib), defaultMibStdKey: m.mibStdKey,
+          defaultType: m.type, defaultTransform: m.transform, defaultAggregate: m.aggregate,
+          defaultLabel: m.label, defaultParsePattern: m.parsePattern, defaultParseTemplate: m.parseTemplate,
+        });
+      } else if (row.defaultSymbol || row.defaultSymbolB) {
+        await updateMetricRow(profileId, row.metricKey, CLEARED_METRIC);
+        changes.push(`cleared metric ${row.metricKey}`);
+      }
+      const keep = new Set<string>();
+      for (const o of m?.overrides ?? []) {
+        const input = {
+          assetType: o.assetType, modelPattern: o.modelPattern, symbol: o.symbol, symbolB: o.symbolB,
+          mibId: resolve(o.mib), mibStdKey: o.mibStdKey, type: o.type, transform: o.transform,
+          aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate,
+          order: o.order,
+        };
+        const mine = o.id && row.overrides.some((x) => x.id === o.id);
+        if (mine) {
+          await updateOverride(o.id as string, input);
+          keep.add(o.id as string);
+        } else {
+          keep.add((await createOverride(profileId, row.metricKey, input)).id);
+          changes.push(`added ${row.metricKey} override`);
+        }
+      }
+      for (const old of row.overrides) {
+        if (!keep.has(old.id)) {
+          await deleteOverride(old.id);
+          changes.push(`deleted ${row.metricKey} override`);
+        }
+      }
+    }
+
+    const idByKey = new Map<string, string>();
+    const keepWidgets = new Set<string>();
+    for (const w of file.widgets) {
+      const input = {
+        name: w.name, symbol: w.symbol as string, mibId: (w.widgetType === "http" ? null : resolve(w.mib)) as string,
+        type: w.type, widgetType: w.widgetType, transform: w.transform, displayOptions: w.displayOptions,
+        order: w.order, modelPattern: w.modelPattern, stateMap: w.stateMap, labelSymbol: w.labelSymbol,
+        httpCheck: w.httpCheck, credentialId: w.credential ? (credId(w.credential.name) ?? null) : null,
+      };
+      const mine = w.id && profile.widgets.some((x) => x.id === w.id);
+      const saved = mine
+        ? await updateWidget(w.id as string, input)
+        : await createWidget(profileId, { ...input, createdBy: actor ?? null });
+      if (!mine) changes.push(`added widget ${w.name}`);
+      idByKey.set(w.key, saved.id);
+      keepWidgets.add(saved.id);
+    }
+    for (const old of profile.widgets) {
+      if (!keepWidgets.has(old.id)) {
+        await deleteWidget(old.id);
+        changes.push(`deleted widget ${old.name}`);
+      }
+    }
+
+    await setWidgetLayout(profileId, file.layout
+      ? {
+          version: 1,
+          columns: file.layout.columns.map((c) => ({
+            id: c.id,
+            width: c.width,
+            widgets: c.widgets.filter((x) => idByKey.has(x.key)).map((x) => ({ id: idByKey.get(x.key), height: x.height })),
+          })),
+        }
+      : null);
+  } catch (err) {
+    await refreshProfileCache();
+    const msg = err instanceof Error ? err.message : String(err);
+    const status = err instanceof AppError ? err.httpStatus : 500;
+    throw new AppError(status, changes.length ? `${msg} — the changes before this point were saved` : msg);
+  }
+
+  await refreshProfileCache();
+  await logEvent({
+    action:       "manufacturer_profile.code_saved",
+    resourceType: "manufacturer_profile",
+    resourceId:   profileId,
+    resourceName: profile.manufacturer,
+    actor,
+    level:        "info",
+    message:      `${profile.manufacturer} manufacturer profile saved from View Code`,
+    details:      { changes },
+  });
+  return { changes };
 }

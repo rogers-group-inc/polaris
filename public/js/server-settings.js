@@ -9566,7 +9566,7 @@ function renderProfileRow(p) {
         p.widgetCount + ' widget' + (p.widgetCount === 1 ? '' : 's') + ' · ' +
         p.scopedMibCount + ' MIB' + (p.scopedMibCount === 1 ? '' : 's') +
       '</span>' +
-      '<button class="btn btn-sm mfg-profile-export" data-id="' + escapeHtml(p.id) + '" title="Download this profile as a file another Polaris install can import">Export</button>' +
+      '<button class="btn btn-sm mfg-profile-code" data-id="' + escapeHtml(p.id) + '" title="View, edit, save or export this profile as JSON">View Code</button>' +
       '<button class="btn btn-sm btn-danger mfg-profile-del" data-id="' + escapeHtml(p.id) + '" title="Delete profile">Del</button>' +
     '</div>' +
     '<div class="mfg-profile-body" id="mfg-profile-body-' + escapeHtml(p.id) + '" style="' + (isOpen ? '' : 'display:none') + '">' +
@@ -10936,8 +10936,8 @@ function wireManufacturerProfileControls() {
 
     var delBtn = target.closest(".mfg-profile-del");
     if (delBtn) { e.stopPropagation(); return deleteManufacturerProfile(delBtn.getAttribute("data-id")); }
-    var exportBtn = target.closest(".mfg-profile-export");
-    if (exportBtn) { e.stopPropagation(); return exportManufacturerProfile(exportBtn.getAttribute("data-id")); }
+    var codeBtn = target.closest(".mfg-profile-code");
+    if (codeBtn) { e.stopPropagation(); return openProfileCodeModal(codeBtn.getAttribute("data-id")); }
 
     var header = target.closest(".mfg-profile-header");
     if (header) return toggleProfileExpand(header.parentElement.getAttribute("data-profile-id"));
@@ -11548,21 +11548,143 @@ function _wireManufacturerCountCombo(inputId, boxId, rowsFn) {
 // A widget whose MIB is missing cannot be imported and is offered disabled
 // until the MIB is uploaded.
 
-async function exportManufacturerProfile(id) {
+/** The portable form of a View Code body: the same JSON minus every row id. */
+function _profileForExport(code) {
+  var file = JSON.parse(JSON.stringify(code));
+  (file.widgets || []).forEach(function (w) { delete w.id; });
+  (file.metrics || []).forEach(function (m) { (m.overrides || []).forEach(function (o) { delete o.id; }); });
+  file.exportedAt = new Date().toISOString();
+  return file;
+}
+
+function _downloadProfileFile(file) {
+  var name = String(file.manufacturer || "profile").replace(/[^A-Za-z0-9._-]+/g, "_") + ".manufacturer-profile.json";
+  var blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  var mibs = (file.mibs || []).map(function (m) { return m.moduleName; });
+  showToast("Exported " + file.manufacturer + (mibs.length ? " — it needs " + mibs.join(", ") + " uploaded where it is imported" : ""), "success");
+}
+
+/**
+ * What a View Code save would REMOVE — deleted widgets (their per-device
+ * switches go with them), deleted per-type / per-model rows, and metric rows
+ * cleared back to the built-in seed — for the confirm before saving.
+ */
+function _profileCodeRemovals(original, edited) {
+  var out = [];
+  var keptWidgets = {};
+  (edited.widgets || []).forEach(function (w) { if (w.id) keptWidgets[w.id] = 1; });
+  (original.widgets || []).forEach(function (w) { if (!keptWidgets[w.id]) out.push("delete widget \"" + w.name + "\" (and its per-device switches)"); });
+  (original.metrics || []).forEach(function (m) {
+    var e = (edited.metrics || []).find(function (x) { return x.metricKey === m.metricKey; });
+    if (!e && (m.symbol || m.symbolB)) out.push("clear the " + m.metricKey + " row back to the built-in default");
+    var kept = {};
+    ((e && e.overrides) || []).forEach(function (o) { if (o.id) kept[o.id] = 1; });
+    (m.overrides || []).forEach(function (o) {
+      if (!kept[o.id]) out.push("delete the " + m.metricKey + " row for " + (o.assetType || "") + (o.assetType && o.modelPattern ? " / " : "") + (o.modelPattern || ""));
+    });
+  });
+  return out;
+}
+
+// View Code — the automations idiom (PolarisAutomationPortability.openCodeModal):
+// the profile as editable JSON, with Copy, Export (the portable file, ids
+// stripped) and Save changes (a FULL replace — rows left out are cleared or
+// deleted, confirmed first).
+async function openProfileCodeModal(id) {
+  var code;
   try {
-    var file = await api.serverSettings.exportManufacturerProfile(id);
-    var name = String(file.manufacturer || "profile").replace(/[^A-Za-z0-9._-]+/g, "_") + ".manufacturer-profile.json";
-    var blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
-    var mibs = (file.mibs || []).map(function (m) { return m.moduleName; });
-    showToast("Exported " + file.manufacturer + (mibs.length ? " — it needs " + mibs.join(", ") + " uploaded where it is imported" : ""), "success");
+    code = await api.serverSettings.getManufacturerProfileCode(id);
   } catch (err) {
-    showToast(err.message || "Export failed", "error");
+    showToast(err.message || "Could not load the profile", "error");
+    return;
+  }
+  var canSave = permAtLeast("manufacturerProfiles", "write");
+  var text = JSON.stringify(code, null, 2);
+  var note =
+    '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">' +
+      'This is the <b>' + escapeHtml(code.manufacturer) + '</b> profile as it is stored. ' +
+      (canSave
+        ? '<strong>Saving replaces the whole profile</strong>: a metric row you remove goes back to the built-in default, and a per-type / per-model row or widget you remove is deleted. ' +
+          'Rows keep their <code>id</code> so an edit updates them in place; a row without one is added. MIBs and credentials are named — the names must exist on this install.'
+        : 'You do not have permission to change it.') +
+    '</p>' +
+    '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">' +
+      '<strong>Copy</strong> gives you exactly what is shown; <strong>Export</strong> downloads the portable file instead (the same, minus row ids), which another install can import.' +
+    '</p>';
+  var body = note +
+    '<textarea id="pcode-text" rows="24" spellcheck="false" ' + (canSave ? "" : "readonly ") +
+      'style="width:100%;font-family:var(--font-mono);font-size:0.8rem;line-height:1.45">' + escapeHtml(text) + '</textarea>' +
+    '<div id="pcode-err" class="form-error" style="display:none;margin-top:0.5rem;white-space:pre-wrap"></div>';
+  var footer =
+    '<button class="btn btn-secondary" id="pcode-export" type="button" title="Download this profile as a portable file">Export</button>' +
+    '<button class="btn btn-secondary" id="pcode-copy" type="button">Copy</button>' +
+    '<button class="btn btn-secondary" id="pcode-cancel" type="button">' + (canSave ? "Cancel" : "Close") + '</button>' +
+    (canSave ? '<button class="btn btn-primary" id="pcode-save" type="button">Save changes</button>' : "");
+  var ov = buildOverlay(1300, code.manufacturer + " — profile code", body, footer, null, true);
+  var ta = ov.overlay.querySelector("#pcode-text");
+  var errBox = ov.overlay.querySelector("#pcode-err");
+  function showErr(msg) { errBox.textContent = msg; errBox.style.display = ""; }
+
+  /** The textarea as a profile object, or null with the error shown. Export and
+   *  Save share it, so an unparseable edit is never exported off the last good
+   *  version without saying so. */
+  function readEdited() {
+    errBox.style.display = "none";
+    var parsed;
+    try { parsed = JSON.parse(ta.value); } catch (err) {
+      showErr("Invalid JSON: " + ((err && err.message) || "could not be parsed"));
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) { showErr("The profile must be a JSON object."); return null; }
+    return parsed;
+  }
+
+  ov.overlay.querySelector("#pcode-cancel").addEventListener("click", function () { ov.close(); });
+  ov.overlay.querySelector("#pcode-export").addEventListener("click", function () {
+    var parsed = readEdited();
+    if (parsed) _downloadProfileFile(_profileForExport(parsed));
+  });
+  ov.overlay.querySelector("#pcode-copy").addEventListener("click", function () {
+    var btn = this;
+    function done(ok) { btn.textContent = ok ? "Copied" : "Copy failed"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(function () { done(true); }, function () { done(false); });
+    } else {
+      try { ta.select(); document.execCommand("copy"); done(true); } catch (_e) { done(false); }
+    }
+  });
+  if (canSave) {
+    ov.overlay.querySelector("#pcode-save").addEventListener("click", async function () {
+      var btn = this;
+      var parsed = readEdited();
+      if (!parsed) return;
+      if (JSON.stringify(parsed) === JSON.stringify(code)) { ov.close(); return; }
+      var removals = _profileCodeRemovals(code, parsed);
+      if (removals.length) {
+        var ok = await showConfirm("Save these changes? Saving will also:\n\n" + removals.map(function (r) { return "- " + r; }).join("\n"));
+        if (!ok) return;
+      }
+      btn.disabled = true;
+      try {
+        await api.serverSettings.saveManufacturerProfileCode(id, parsed);
+        ov.close();
+        showToast("Profile saved", "success");
+        var listResp = await api.serverSettings.listManufacturerProfiles();
+        _mfgProfiles = (listResp && listResp.profiles) || _mfgProfiles;
+        var detail = await api.serverSettings.getManufacturerProfile(id);
+        _mfgProfileDetail[id] = detail && detail.profile;
+        renderIdentificationTab();
+      } catch (err) {
+        btn.disabled = false;
+        showErr((err && err.message) || "Save failed");
+      }
+    });
   }
 }
 

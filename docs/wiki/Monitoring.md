@@ -179,11 +179,20 @@ name that isn't in that MIB's list for the chosen symbol type is outlined in
 red. Changing the MIB or the symbol type clears a symbol the new list doesn't
 have.
 
-**Profiles can be exported and imported.** **Export** on a profile's header
-downloads it as a file: its settings, metric rows, per-type and per-model rows,
-custom widgets and Custom MIB layout. The file names the MIBs it uses but does
-not contain them, and holds no passwords or per-device settings, so it is safe
-to share. **Import…** (beside **+ Add Manufacturer**) reads such a file and lists
+**Profiles can be edited as code, exported and imported.** **View Code** on a
+profile's header opens the whole profile as JSON: its settings, metric rows,
+per-type and per-model rows, custom widgets and Custom MIB layout.
+- **Save changes** makes the profile match the JSON. A row you remove is
+  deleted (a metric row goes back to the built-in default), and Polaris lists
+  those deletions for you to confirm first. Keep each row's `id` when editing it,
+  so a widget keeps its per-device switches and history. A row without an `id`
+  is added. MIB and credential names must exist on this install.
+- **Export** downloads the JSON as a file another install can import. The file
+  names the MIBs it uses but does not contain them, and holds no passwords or
+  per-device settings, so it is safe to share.
+- **Copy** copies exactly what is shown.
+
+**Import…** (beside **+ Add Manufacturer**) reads such a file and lists
 everything in it with a checkbox. Each item says whether it would add something
 new or **replace** what is already there. A MIB the file needs that isn't
 uploaded here is named at the top. Widgets that need it can't be imported until

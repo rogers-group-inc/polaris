@@ -31,17 +31,18 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Export of a manufacturer profile to a portable JSON file (`polaris.manufacturer-profile` v1) and the two-step import (preview, then apply only the ticked items).
 
-**Public API:** `exportProfile()`, `previewProfileImport()`, `applyProfileImport()`, `parseProfileFile()`, `ProfileFileSchema`, `PROFILE_FILE_FORMAT`, `PROFILE_FILE_VERSION`, types `ProfileFile`, `MibRef`, `ImportItem`, `ImportItemKind`, `ImportPreview`, `ImportResult`.
+**Public API:** `exportProfile(profileId, { withIds })`, `saveProfileCode()`, `previewProfileImport()`, `applyProfileImport()`, `parseProfileFile()`, `ProfileFileSchema`, `PROFILE_FILE_FORMAT`, `PROFILE_FILE_VERSION`, types `ProfileFile`, `MibRef`, `ImportItem`, `ImportItemKind`, `ImportPreview`, `ImportResult`.
 
 **Cross-service deps:** `manufacturerProfileService` (`getProfile`, `getProfileFor`, `createProfile`, `updateProfile`, `updateMetricRow`, `createOverride`, `updateOverride`, `createWidget`, `updateWidget`, `setWidgetLayout`, `refreshProfileCache`) — every write goes through the same functions the profile page uses; `prisma.mibFile` / `prisma.credential` (name resolution); `utils/manufacturerNormalize`; `eventLogService.logEvent`.
 
-**Used by:** `src/api/routes/manufacturerProfiles.ts` (`GET /:id/export`, `POST /import/preview`, `POST /import`).
+**Used by:** `src/api/routes/manufacturerProfiles.ts` (`GET /:id/export`, `GET`/`PUT /:id/code`, `POST /import/preview`, `POST /import`).
 
 **Invariants:**
 - The file carries NO install ids and NO secrets: uploaded MIBs as `{ moduleName, manufacturer, model }`, an HTTP check's credential as `{ name }`, the Custom MIB layout keyed by the file's own widget `key`. MIB files are NOT bundled. Per-asset widget switches (rule 130) are NOT exported — they name assets.
 - A MIB resolves on import by module name under the TARGET profile's manufacturer, then the file's manufacturer, then a generic upload. A widget (non-http) whose MIB does not resolve is `blocked` in the preview and refused in apply — `createWidget` requires a MIB. A metric row imports with its MIB unset and reads unresolved.
 - Matching for "replace": the profile by canonical manufacturer, a metric by `metricKey`, an override by its scope (`assetType` + `modelPattern`), a widget by NAME (case-insensitive). Everything else is created.
 - Apply runs each ticked item independently and returns per-item `{ ok, error }`; one failure never aborts the rest. One `manufacturer_profile.imported` Event (warning when anything failed).
+- **View Code save is a FULL replace, unlike import** (`saveProfileCode`, `PUT /:id/code`, the automations View Code idiom): the code view is the export plus each override's and widget's row `id` (and no `exportedAt`); a row keeping its id is updated in place (so a widget keeps its per-device switches and history), one without is created, and one LEFT OUT is deleted — a metric row left out is cleared to the built-in seed. The manufacturer, every metric key, every MIB and every credential name are checked BEFORE the first write; a row the service refuses part-way stops the save with "the changes before this point were saved" (the writers are not one transaction). One `manufacturer_profile.code_saved` Event. The client confirms the deletions it can see (`_profileCodeRemovals`) before saving, and the modal's Export strips the ids client-side (`_profileForExport`).
 
 **When changing this:**
 - A new profile / metric / override / widget field must be added to `ProfileFileSchema`, `exportProfile` AND the apply mapping, or it silently fails to travel. Bump `PROFILE_FILE_VERSION` only for an incompatible change.

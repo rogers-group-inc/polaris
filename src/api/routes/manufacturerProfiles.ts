@@ -34,7 +34,7 @@ import { logEvent } from "./events.js";
 import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { listWidgetCandidates, setWidgetAssets } from "../../services/customWidgetEnablementService.js";
-import { exportProfile, previewProfileImport, applyProfileImport } from "../../services/manufacturerProfilePortabilityService.js";
+import { exportProfile, previewProfileImport, applyProfileImport, saveProfileCode } from "../../services/manufacturerProfilePortabilityService.js";
 
 // PUT /:id/widgets/:widgetId/assets (business rule 130). Bounded so one call
 // cannot carry an unbounded id list.
@@ -290,6 +290,20 @@ router.get("/:id/export", requirePermission("manufacturerProfiles", "read"), han
   const safe = file.manufacturer.replace(/[^A-Za-z0-9._-]+/g, "_");
   res.setHeader("Content-Disposition", `attachment; filename="${safe}.manufacturer-profile.json"`);
   send(res, file);
+}));
+
+// GET /:id/code — the View Code JSON: the export format plus each override's
+// and widget's row id, so a save edits rows in place.
+router.get("/:id/code", requirePermission("manufacturerProfiles", "read"), handle(async (req, res) => {
+  send(res, await exportProfile(String(req.params.id), { withIds: true }));
+}));
+
+// PUT /:id/code — { file } → make the profile match it (a full replace: rows
+// left out are cleared / deleted). Writes manufacturer_profile.code_saved.
+router.put("/:id/code", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = ImportPreviewSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  send(res, await saveProfileCode(String(req.params.id), parsed.data.file, requestActor(req)));
 }));
 
 // POST /import/preview — { file } → every importable item, with warnings.
