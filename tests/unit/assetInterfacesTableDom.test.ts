@@ -450,18 +450,14 @@ describe("a member port belongs to its aggregate", () => {
     expect(rowFor("lag1").textContent).not.toContain("└─");
   });
 
-  // A LAG is one link as far as history goes: three checkboxes answering one
-  // question is what the member boxes were.
-  it("gives the nested member no pin checkbox", () => {
-    expect(rowFor("port9").querySelector(".asset-iface-toggle")).toBeNull();
-    expect(pollCellOf("port9").getAttribute("title")).toMatch(/Member of lag1/);
+  // The trunk answers "how busy is the link"; only the members show how the
+  // load splits across it, so each member is pinnable on its own row.
+  it("gives the nested member its own pin checkbox", () => {
+    expect(rowFor("port9").querySelector(".asset-iface-toggle")).not.toBeNull();
     expect(rowFor("lag1").querySelector(".asset-iface-toggle")).not.toBeNull();
   });
 
-  // ...unless it is already pinned. Hiding THAT box would leave the pin
-  // collecting history and feeding interface triggers with nothing in the UI
-  // saying so, and no way to switch it off.
-  it("keeps the checkbox on a member that is already pinned", () => {
+  it("checks the box on a member that is already pinned", () => {
     renderSi({
       lastSystemInfoAt: new Date().toISOString(),
       monitoredInterfaces: ["port9"], monitoredIpsecTunnels: [], lldpNeighbors: [], ipsecTunnels: [],
@@ -475,9 +471,6 @@ describe("a member port belongs to its aggregate", () => {
     expect(box.checked).toBe(true);
   });
 
-  // A member rendered at TOP level has no aggregate to be pinned through --
-  // the trunk is out of the ifTable because the link is down, which is exactly
-  // when the member port is the signal worth recording.
   it("keeps the checkbox on a member whose aggregate is absent", () => {
     renderSi({
       lastSystemInfoAt: new Date().toISOString(),
@@ -503,26 +496,23 @@ describe("a member port belongs to its aggregate", () => {
     });
     expect(rowFor("voice.fortilink").classList.contains("iface-child")).toBe(true);
     expect(rowFor("voice.fortilink").querySelector(".asset-iface-toggle")).not.toBeNull();
-    expect(rowFor("x2").querySelector(".asset-iface-toggle")).toBeNull();
+    expect(rowFor("x2").querySelector(".asset-iface-toggle")).not.toBeNull();
     sortBy("ifname");
     expect(rowFor("voice.fortilink").querySelector(".asset-iface-toggle")).not.toBeNull();
   });
 
-  // Flat mode has no row above to hang off, so the Member badge carries the
-  // relationship -- but the pin still belongs to the aggregate.
-  it("withholds the checkbox in flat (sorted) mode too", () => {
+  it("keeps the member's checkbox in flat (sorted) mode", () => {
     sortBy("ifname");
-    expect(rowFor("port9").querySelector(".asset-iface-toggle")).toBeNull();
+    expect(rowFor("port9").querySelector(".asset-iface-toggle")).not.toBeNull();
   });
 
-  // Select-all iterates the rendered boxes, so a member simply is not one of
-  // them -- it must not be swept into a pin-everything.
-  it("is not pinned by select-all", async () => {
+  // Select-all sweeps every rendered box, and a member is one of them now.
+  it("is pinned by select-all alongside its aggregate", async () => {
     const all: any = doc.getElementById("iface-poll-all");
     all.checked = true;
     change(all);
     await settle();
-    expect(putCalls[0].monitoredInterfaces).not.toContain("port9");
+    expect(putCalls[0].monitoredInterfaces).toContain("port9");
     expect(putCalls[0].monitoredInterfaces).toContain("lag1");
   });
 });

@@ -9053,23 +9053,12 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   function buildRow(iface, opts) {
     opts = opts || {};
     var isPinned = monitored.has(iface.ifName);
-    // A member port's pin lives on the aggregate it belongs to: the trunk is
-    // what an operator charts and alerts on, and offering the same control on
-    // every member turned a 2-member LAG into three boxes answering one
-    // question. The exception is a member that IS already pinned (an older
-    // pin, or one auto-monitor placed) — hiding its box would leave it
-    // collecting history and feeding interface triggers with nothing in the UI
-    // saying so, and no way to switch it off. A member rendered at TOP level
-    // (its aggregate is out of the ifTable — a downed FortiLink trunk) keeps
-    // its checkbox: during that outage the member port IS the signal.
-    // A VLAN subinterface nests under its parent too, but it is not a member:
-    // it is its own L3 segment with its own counters, so it keeps its box.
-    var isMember = iface.ifType !== "vlan" && !!(opts.isChild || (opts.flat && iface.ifParent));
+    // Every row is pinnable on its own, aggregate members included: the trunk
+    // answers "how busy is the link", but only the members show how the load
+    // splits across it, or which leg of a LAG went quiet.
     var checked  = isPinned ? " checked" : "";
     var disabled = canEdit ? "" : " disabled";
-    var checkbox = (isMember && !isPinned)
-      ? ""
-      : '<input type="checkbox" class="asset-iface-toggle" data-ifname="' + escapeHtml(iface.ifName) + '"' + checked + disabled + ' title="Poll this interface every minute for fast-cadence monitoring">';
+    var checkbox = '<input type="checkbox" class="asset-iface-toggle" data-ifname="' + escapeHtml(iface.ifName) + '"' + checked + disabled + ' title="Poll this interface every minute for fast-cadence monitoring">';
 
     var prefix = "", padStyle = "";
     if (opts.isParent) {
@@ -9112,10 +9101,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     }
     var neighborCell = '<td>' + _lldpNeighborInlineCell(lldpByIf[iface.ifName] || []) + '</td>';
 
-    // An empty cell reads as a rendering fault unless it says why it is empty.
-    var pollCell = checkbox
-      ? '<td style="text-align:center;width:1%">' + checkbox + "</td>"
-      : '<td style="text-align:center;width:1%" title="Member of ' + escapeHtml(iface.ifParent || "an aggregate") + ' — pin the aggregate to record history"></td>';
+    var pollCell = '<td style="text-align:center;width:1%">' + checkbox + "</td>";
 
     return "<tr" + rowAttrs + ">" +
       pollCell +
@@ -9331,11 +9317,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     ? '<th data-col-id="poe" data-sf-key="poe" data-sf-options="" title="Power over Ethernet: detection status and the negotiated power CLASS (a budget bracket, e.g. class3 = up to 12.95 W at the powered device). POWER-ETHERNET-MIB defines no per-port wattage, so no draw is shown. SNMP only.">PoE</th>'
     : "";
   container.innerHTML = staleBanner +
-    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">The <strong>Poll&nbsp;1m</strong> column selects interfaces for fast-cadence polling and <strong>history</strong>. Every interface below shows its current state; only selected ones record history you can chart or alert on throughput. A member port is pinned through the aggregate it belongs to.' +
+    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">The <strong>Poll&nbsp;1m</strong> column selects interfaces for fast-cadence polling and <strong>history</strong>. Every interface below shows its current state; only selected ones record history you can chart or alert on throughput.' +
       (ipsecCount > 0 ? ' ' + _ipsecTabPointerHTML(ipsecCount) : '') + '</p>' +
     '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-iface-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
       '<th title="Pin this interface for fast-cadence polling + history. Unselected interfaces still show current state here, but record no history to chart." style="width:32px" data-col-id="poll" data-col-required="true">' +
-        '<input type="checkbox" id="iface-poll-all" title="Select / de-select every listed interface for fast-cadence polling — member ports are pinned through their aggregate (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>' +
+        '<input type="checkbox" id="iface-poll-all" title="Select / de-select every listed interface for fast-cadence polling (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>' +
       '</th>' +
       '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="string">Interface</th>' +
       '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
