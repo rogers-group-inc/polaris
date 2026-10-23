@@ -45,6 +45,12 @@ interface FakeGate {
   multipartAnswer: { status: number; body: unknown } | null;
   down: boolean;
   afterReboot: { version: string; build: number };
+  /**
+   * Rule 129: the cluster this unit sees. `answerDelayMs` holds the upload's
+   * answer the way a primary does while its secondary upgrades; `rejoin` are
+   * the serials logged as rejoining after the upload (the reboot evidence).
+   */
+  cluster: { members: string[]; primary: string; inSync: boolean; history: Array<{ time: number; event: string }> | null; answerDelayMs: number; rejoin: string[] };
   calls: string[];
   uploads: Array<{ kind: "multipart" | "json"; bytes: Buffer; source: string | null; contentLength: number; csrf: string | null; auth: string | null }>;
 }
@@ -131,6 +137,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     json(res, 200, { http_status: 200, results: { mode: gate.haMode } });
     return;
   }
+  // The three HA monitors, shaped as seen on a 61F pair (7.6.7 / 7.6.8).
+  if (url === "/api/v2/monitor/system/ha-peer") {
+    json(res, 200, { results: gate.cluster.members.map((s) => ({ serial_no: s, hostname: s, priority: 128, ...(s === gate.cluster.primary ? { primary: true, master: true } : {}) })) });
+    return;
+  }
+  if (url === "/api/v2/monitor/system/ha-checksums") {
+    json(res, 200, { results: gate.cluster.members.map((s, i) => ({ serial_no: s, checksum: { all: gate.cluster.inSync || i === 0 ? "aaa" : "bbb" } })) });
+    return;
+  }
+  if (url === "/api/v2/monitor/system/ha-history") {
+    if (!gate.cluster.history) { json(res, 404, { status: "error" }); return; }
+    const h = gate.cluster.history;
+    json(res, 200, { results: { start_time: 1000, last_change: h.length ? h[0]!.time : 1000, history: h } });
+    return;
+  }
   if (url === "/api/v2/monitor/system/firmware/upgrade" && req.method === "POST") {
     const csrf = typeof req.headers["x-csrftoken"] === "string" ? req.headers["x-csrftoken"] : null;
     const auth = typeof req.headers.authorization === "string" ? req.headers.authorization : null;
@@ -142,6 +163,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } else {
       const parsed = JSON.parse(body.toString("utf8")) as { source: string; file_content: string };
       gate.uploads.push({ kind: "json", bytes: Buffer.from(parsed.file_content, "base64"), source: parsed.source, contentLength, csrf, auth });
+    }
+    // A cluster primary answers only once its secondary has upgraded and
+    // rejoined; the history then carries that rejoin (newest first).
+    if (gate.cluster.answerDelayMs > 0) await new Promise((r) => setTimeout(r, gate.cluster.answerDelayMs));
+    if (gate.cluster.history) {
+      let t = gate.cluster.history.length ? gate.cluster.history[0]!.time : 1000;
+      for (const s of gate.cluster.rejoin) gate.cluster.history.unshift({ time: ++t, event: `new member '${s}' joins the cluster` });
     }
     json(res, 200, { http_status: 200, status: "success", results: { status: "success" } });
     // Write the image, go down, come back on the new version.
@@ -179,6 +207,7 @@ beforeEach(async () => {
     version: "v7.4.4", build: 2662, serial: "FGT60FTK20001234", haMode: "standalone", password: "pw", token: "tok-abc", tokenStatus: 200,
     csrfCookie: "ccsrf_token_443_b85b43", issueCsrf: true, loginApi: true, loginVerdict: "LOGIN_SUCCESS", multipartAnswer: null, down: false,
     afterReboot: { version: "v7.6.8", build: 3500 }, calls: [], uploads: [],
+    cluster: { members: ["FGT60FTK20001234"], primary: "FGT60FTK20001234", inSync: true, history: [{ time: 1500, event: "hatalk started" }], answerDelayMs: 0, rejoin: [] },
   };
   stages = [];
   logs = [];
@@ -235,6 +264,77 @@ describe("the happy paths", () => {
     expect(j.contentLength).toBe(`{"source":"upload","file_content":"`.length + base64Length(image.length) + 2);
     expect(logs.join("\n")).toMatch(/retrying once as JSON/);
   }, 20_000);
+});
+
+describe("rule 129: an a-p cluster is upgraded through its primary", () => {
+  const SELF = "FGT60FTK20001234";
+  const PEER = "FGT60FTK20005678";
+  const clusterCtx = (over: Partial<FirmwareEngineContext> = {}) => {
+    const base = ctx(over);
+    return {
+      ...base,
+      cluster: { mode: "a-p", memberSerials: [SELF, PEER] },
+      timeouts: { ...base.timeouts, uploadAnswerMs: 6_000, clusterSettleMs: 600 },
+      ...over,
+    };
+  };
+  beforeEach(() => {
+    gate.haMode = "a-p";
+    gate.cluster = { members: [SELF, PEER], primary: SELF, inSync: true, history: [{ time: 1500, event: "hatalk started" }], answerDelayMs: 0, rejoin: [PEER] };
+  });
+
+  it("waits out an answer held past the idle cap, then verifies the whole cluster", async () => {
+    // Longer than uploadIdleMs (2 s): the old cap would have cut the request.
+    gate.cluster.answerDelayMs = 2_500;
+    const res = await upgradeFortiGate(clusterCtx());
+    expect(res).toMatchObject({ outcome: "upgraded", verifiedVersion: "v7.6.8 build3500" });
+    expect(gate.uploads).toHaveLength(1);
+    const text = logs.join("\n");
+    expect(text).toMatch(/HA cluster \(a-p\): 2 members/);
+    expect(text).toMatch(/whole and in sync/);
+    expect(text).not.toMatch(/connection dropped after the upload/);
+  }, 20_000);
+
+  it("is unverified when another member never logs a rejoin after the flash began", async () => {
+    gate.cluster.rejoin = [];
+    const res = await upgradeFortiGate(clusterCtx());
+    expect(res.outcome).toBe("unverified");
+    expect(res.error).toMatch(new RegExp(`${PEER} has not rejoined since the flash began`));
+  }, 20_000);
+
+  it("a build with no HA history is judged on membership and sync, and says so", async () => {
+    gate.cluster.history = null;
+    const res = await upgradeFortiGate(clusterCtx());
+    expect(res.outcome).toBe("upgraded");
+    expect(logs.join("\n")).toMatch(/no readable HA history/);
+  }, 20_000);
+
+  it("refuses, before the upload, a unit that is not the primary", async () => {
+    gate.cluster.primary = PEER;
+    const res = await upgradeFortiGate(clusterCtx());
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/not the cluster's primary \(the primary is FGT60FTK20005678\)/);
+    expect(gate.uploads).toHaveLength(0);
+  });
+
+  it("refuses a cluster missing a member Polaris knows, or out of sync", async () => {
+    gate.cluster.members = [SELF];
+    let res = await upgradeFortiGate(clusterCtx());
+    expect(res.error).toMatch(/FGT60FTK20005678 is not in the cluster right now/);
+    gate.cluster.members = [SELF, PEER];
+    gate.cluster.inSync = false;
+    res = await upgradeFortiGate(clusterCtx());
+    expect(res.error).toMatch(/not in sync/);
+    expect(gate.uploads).toHaveLength(0);
+  });
+
+  it("refuses a mode no cluster upgrade has been proven on", async () => {
+    gate.haMode = "a-a";
+    const res = await upgradeFortiGate(clusterCtx({}));
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/active-passive \(a-p\) clusters only/);
+    expect(gate.uploads).toHaveLength(0);
+  });
 });
 
 describe("refusals before a byte of image is sent", () => {

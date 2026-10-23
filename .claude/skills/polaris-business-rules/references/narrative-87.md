@@ -373,7 +373,7 @@ live reading.
 
 ### Groundwork (2026-10-23): what upgrading a real HA pair showed, for when Polaris does it
 
-HA members are still refused. This section records the lab run that a future HA-upgrade
+HA members were still refused when this was written; **rule 129 built cluster upgrades on it the same day** (narrative-129). This section records the lab run that a future HA-upgrade
 feature should be built from. The operator asked for it: *"write down what you learned about
 upgrading the ha pair so that we can build in ha pair firmware upgrades to polaris at some
 point"*. The vendor facts are mirrored in the fortinet-api-conventions plugin (`fortios-rest.md`,

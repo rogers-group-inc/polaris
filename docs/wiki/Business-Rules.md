@@ -2670,3 +2670,16 @@ and APs behind the gate keep their own toggles, and FortiManager integrations
 keep the FortiGate toggle. Two things still keep a gate unmonitored: turning
 monitoring off on the asset yourself (discovery keeps that choice), and the gate
 being an HA standby member.
+
+### Rule 129
+
+**An HA cluster is upgraded as one device, through its primary, and is done
+only when every member is back and in sync.** The primary's Firmware card
+offers the upgrade for the whole active-passive cluster; the standby's card
+points to the primary. Polaris checks that it is talking to the cluster's
+primary, that every member is present and that their configurations agree
+before it sends anything. FortiOS then upgrades the standby, fails over and
+reboots the primary, and Polaris waits for every member to rejoin and be back
+in sync before calling the upgrade done. Every member is held in maintenance
+throughout. No setting turns this off. Other HA modes, and HA clusters in a
+group upgrade, are not supported yet.

@@ -30,8 +30,13 @@
  *
  *   status   GET  /api/v2/monitor/system/status → envelope serial, version
  *            ("v7.6.7"), build
- *   ha       GET  /api/v2/cmdb/system/ha → mode; anything but "standalone"
- *            is refused (an HA upgrade reboots every member; not supported)
+ *   ha       GET  /api/v2/cmdb/system/ha → mode. "standalone" is a plain
+ *            gate. An a-p cluster is upgraded as one device through its
+ *            PRIMARY when the runner says so (`ctx.cluster`, rule 129): every
+ *            member present (ha-peer), configs in sync (ha-checksums), this
+ *            unit flagged primary. FortiOS then upgrades the secondary, fails
+ *            over, and reboots this unit — holding the upload's answer until
+ *            the failover (`uploadAnswerMs`). Any other mode is refused.
  *   upgrade  POST /api/v2/monitor/system/firmware/upgrade, source=upload.
  *            Sent as multipart (`file` field, streamed, no inflation); if the
  *            gate answers that with a non-auth error, sent ONCE more as JSON
@@ -41,7 +46,8 @@
  *   reboot   unauthenticated GET / until it stops answering, then until it
  *            answers again
  *   verify   status again (re-login on the login path) until the version
- *            matches the image
+ *            matches the image; a cluster then waits for every member to be
+ *            back, in sync, and (ha-history) rejoined since the flash began
  */
 
 import { basename } from "node:path";
@@ -77,6 +83,7 @@ function client(ctx: FirmwareEngineContext): DeviceHttpClient {
     scheme: ctx.scheme ?? "https",
     commandMs: ctx.timeouts.commandMs,
     uploadIdleMs: ctx.timeouts.uploadIdleMs,
+    uploadAnswerMs: ctx.timeouts.uploadAnswerMs,
     verifyTls: ctx.verifyTls === true,
   });
   if (ctx.bearerToken) c.setHeader("authorization", `Bearer ${ctx.bearerToken}`);
@@ -185,6 +192,72 @@ export async function gateHaMode(c: DeviceHttpClient, ctx: FirmwareEngineContext
   return r && typeof r === "object" ? asString((r as Record<string, unknown>).mode) : null;
 }
 
+// ─── HA clusters (business rule 129) ────────────────────────────────────────
+
+const HA_PEER_PATH = "/api/v2/monitor/system/ha-peer";
+const HA_CHECKSUMS_PATH = "/api/v2/monitor/system/ha-checksums";
+const HA_HISTORY_PATH = "/api/v2/monitor/system/ha-history";
+/** The only cluster mode an upgrade has been proven on (a 61F pair, 2026-10-23). */
+const HA_UPGRADABLE_MODES = new Set(["a-p"]);
+
+export interface ClusterState {
+  /** Every member the cluster reports right now, by serial (upper case). */
+  members: string[];
+  /** The serial ha-peer flags as primary, or null. */
+  primary: string | null;
+  /** Every member's whole-config checksum is present and identical. */
+  inSync: boolean;
+}
+
+/**
+ * The cluster as the unit we are talking to sees it: `ha-peer` (members and
+ * the primary flag; no addresses, no versions) and `ha-checksums` (config
+ * sync). Seen on 7.6.7 / 7.6.8.
+ */
+export async function gateClusterState(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<ClusterState> {
+  const peers = await c.get(HA_PEER_PATH);
+  if (peers.status === 401 || peers.status === 403) throw new AuthRejected(authMessage(ctx, peers.status, "read the HA cluster"), "preflight");
+  const pj = jsonOrNull(peers.body);
+  const rows = Array.isArray(pj?.results) ? (pj!.results as Array<Record<string, unknown>>) : [];
+  const members = rows.map((r) => asString(r.serial_no)).filter((s): s is string => !!s).map((s) => s.toUpperCase());
+  const prim = rows.find((r) => r.primary === true || r.master === true);
+  const primary = prim ? (asString(prim.serial_no)?.toUpperCase() ?? null) : null;
+
+  const sums = await c.get(HA_CHECKSUMS_PATH);
+  const sj = jsonOrNull(sums.body);
+  const sumRows = Array.isArray(sj?.results) ? (sj!.results as Array<Record<string, unknown>>) : [];
+  const alls = sumRows.map((r) => {
+    const cs = (r.checksum && typeof r.checksum === "object" ? r.checksum : {}) as Record<string, unknown>;
+    return asString(cs.all);
+  });
+  const inSync = alls.length >= 2 && alls.every((x) => !!x && x === alls[0]);
+  return { members, primary, inSync };
+}
+
+/**
+ * The cluster's own event log, in the GATE's clock: its newest event time and
+ * which serials it says joined the cluster after `since`. A member that
+ * rebooted onto the new image rejoins, so a join after the flash began is the
+ * reboot's evidence — no endpoint reports another member's version. null when
+ * the build has no such log.
+ */
+export async function gateHaHistory(c: DeviceHttpClient, since: number | null): Promise<{ newest: number; joinedSince: Set<string> } | null> {
+  const res = await c.get(HA_HISTORY_PATH).catch(() => null);
+  const j = res && res.status === 200 ? jsonOrNull(res.body) : null;
+  const r = (j?.results && typeof j.results === "object" ? j.results : null) as Record<string, unknown> | null;
+  if (!r || !Array.isArray(r.history)) return null;
+  let newest = asNumber(r.last_change) ?? 0;
+  const joinedSince = new Set<string>();
+  for (const e of r.history as Array<Record<string, unknown>>) {
+    const t = asNumber(e.time) ?? 0;
+    if (t > newest) newest = t;
+    const ev = asString(e.event) ?? "";
+    const m = /new member '([A-Za-z0-9]+)' joins the cluster/.exec(ev);
+    if (m && since !== null && t > since) joinedSince.add(m[1]!.toUpperCase());
+  }
+  return { newest, joinedSince };
+}
+
 /** What an upgrade answer says: taken, refused (with why), or not understood. */
 export function readUpgradeAnswer(res: DeviceHttpResponse): { accepted: boolean; error: string | null } {
   const j = jsonOrNull(res.body);
@@ -223,6 +296,54 @@ async function waitForReboot(c: DeviceHttpClient, ctx: FirmwareEngineContext): P
   return { wentDown: true, cameBack: false };
 }
 
+/**
+ * Rule 129: after the primary is back on the image, wait for the whole cluster.
+ * Done = every member Polaris knew is back in the cluster, their configs are
+ * in sync, and every OTHER member logged a rejoin after the flash began (in
+ * the gate's clock). FortiOS reboots the primary only after its secondaries
+ * have upgraded, so with the primary verified on the image these prove the
+ * cluster went through; no endpoint reports another member's version. A
+ * build with no HA history is judged on membership and sync alone, and says so.
+ */
+async function verifyCluster(c: DeviceHttpClient, ctx: FirmwareEngineContext, since: number | null, self: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const expected = (ctx.cluster?.memberSerials ?? []).map((s) => s.toUpperCase());
+  const others = expected.filter((s) => s !== self);
+  const deadline = Date.now() + ctx.timeouts.clusterSettleMs;
+  let last = "no answer yet";
+  ctx.onLog("info", `waiting for the cluster to settle: ${expected.join(", ")} back and in sync`);
+  let warnedNoHistory = false;
+  for (;;) {
+    try {
+      await gateLogin(c, ctx);
+      const cs = await gateClusterState(c, ctx);
+      const hist = since === null ? null : await gateHaHistory(c, since);
+      const missing = expected.filter((s) => !cs.members.includes(s));
+      const notRejoined = hist ? others.filter((s) => !hist.joinedSince.has(s)) : [];
+      if (!hist && !warnedNoHistory) {
+        warnedNoHistory = true;
+        ctx.onLog("warn", "the gate keeps no readable HA history, so the other members' reboots cannot be confirmed — judging the cluster on membership and sync");
+      }
+      if (missing.length === 0 && cs.inSync && notRejoined.length === 0) {
+        ctx.onLog("info", `the cluster is whole and in sync (${cs.members.join(", ")}; primary ${cs.primary ?? "?"})`);
+        return { ok: true };
+      }
+      last = [
+        missing.length ? `${missing.join(", ")} not in the cluster` : "",
+        !cs.inSync ? "members not in sync" : "",
+        notRejoined.length ? `${notRejoined.join(", ")} has not rejoined since the flash began` : "",
+      ].filter(Boolean).join("; ");
+      ctx.onLog("info", `cluster not settled yet: ${last}`);
+    } catch (err) {
+      // A single dropped call is normal right after a member rejoins (seen on a 61F pair).
+      last = err instanceof Error ? err.message : String(err);
+      ctx.onLog("warn", `cluster check failed (${last}) — retrying`);
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(ctx.timeouts.verifyRetryDelayMs, ctx.signal);
+  }
+  return { ok: false, error: `the primary is on ${ctx.image.versionLabel} but the cluster did not settle within ${Math.round(ctx.timeouts.clusterSettleMs / 60_000)} min (${last}) — check the other member` };
+}
+
 export async function upgradeFortiGate(ctx: FirmwareEngineContext): Promise<FirmwareEngineResult> {
   const c = client(ctx);
   let deviceSerial: string | undefined;
@@ -250,7 +371,34 @@ export async function upgradeFortiGate(ctx: FirmwareEngineContext): Promise<Firm
     }
     const haMode = await gateHaMode(c, ctx);
     if (haMode === null) throw new FirmwareEngineError("could not read the FortiGate's HA mode — refusing, since an HA upgrade reboots every cluster member", "preflight");
-    if (haMode !== "standalone") throw new FirmwareEngineError(`the FortiGate is in an HA cluster (mode ${haMode}) — upgrading HA clusters is not supported yet`, "preflight");
+    // Rule 129: a cluster is upgraded as one device, through its primary, and
+    // only when it is whole and in sync. Discovery's record can lag the gate,
+    // so the gate's own answers decide here.
+    let haSince: number | null = null;
+    if (haMode !== "standalone") {
+      if (!ctx.cluster) {
+        throw new FirmwareEngineError(`the FortiGate is in an HA cluster (mode ${haMode}) but Polaris has it recorded as a standalone gate — run discovery, then upgrade the cluster from its primary's card`, "preflight");
+      }
+      if (!HA_UPGRADABLE_MODES.has(haMode)) {
+        throw new FirmwareEngineError(`the cluster runs HA mode ${haMode} — Polaris upgrades active-passive (a-p) clusters only so far`, "preflight");
+      }
+      const cs = await gateClusterState(c, ctx);
+      const self = (before.serial ?? "").toUpperCase();
+      if (!self || cs.primary !== self) {
+        throw new FirmwareEngineError(`this member is not the cluster's primary (the primary is ${cs.primary ?? "unknown"}) — a cluster upgrade goes through its primary`, "preflight");
+      }
+      const missing = ctx.cluster.memberSerials.map((s) => s.toUpperCase()).filter((s) => !cs.members.includes(s));
+      if (missing.length > 0) {
+        throw new FirmwareEngineError(`cluster member ${missing.join(", ")} is not in the cluster right now — a cluster upgrade needs every member up`, "preflight");
+      }
+      if (!cs.inSync) throw new FirmwareEngineError("the cluster's members are not in sync (their configuration checksums differ) — fix the cluster before upgrading it", "preflight");
+      const hist = await gateHaHistory(c, null);
+      haSince = hist?.newest ?? null;
+      ctx.onLog("info", `HA cluster (${haMode}): ${cs.members.length} members (${cs.members.join(", ")}), in sync, this unit is the primary. FortiOS upgrades the secondary first, fails over to it, then reboots this unit.`);
+    } else if (ctx.cluster) {
+      ctx.onLog("warn", "Polaris has this gate recorded as an HA member, but the gate says standalone — upgrading it as a standalone gate");
+    }
+    const clusterRun = haMode !== "standalone" && !!ctx.cluster;
     const running = parseFirmwareVersion(before.version);
     if (running && compareFirmwareVersions(running, ctx.image.version) >= 0) {
       ctx.onLog("info", `already at ${formatFirmwareVersion(running)} — nothing to do`);
@@ -284,6 +432,9 @@ export async function upgradeFortiGate(ctx: FirmwareEngineContext): Promise<Firm
         throw err;
       }
     };
+    if (clusterRun) {
+      ctx.onLog("info", `the primary answers only once its secondary has upgraded and the cluster has failed over — allowing up to ${Math.round(ctx.timeouts.uploadAnswerMs / 60_000)} min`);
+    }
     let answer = await send("multipart");
     if (!answer.accepted) {
       ctx.onLog("warn", `the multipart upload was refused (${answer.error}); retrying once as JSON with the image base64-encoded`);
@@ -315,6 +466,12 @@ export async function upgradeFortiGate(ctx: FirmwareEngineContext): Promise<Firm
         const v = parseFirmwareVersion(lastSeen);
         if (v && compareFirmwareVersions(v, ctx.image.version) === 0) {
           ctx.onLog("info", `the FortiGate is back at ${lastSeen}`);
+          if (clusterRun) {
+            const settled = await verifyCluster(c, ctx, haSince, (after.serial ?? deviceSerial ?? "").toUpperCase());
+            await gateLogout(c, ctx);
+            if (!settled.ok) return { outcome: "unverified", verifiedVersion: lastSeen ?? undefined, deviceSerial: after.serial ?? deviceSerial, error: settled.error };
+            return { outcome: "upgraded", verifiedVersion: lastSeen ?? undefined, deviceSerial: after.serial ?? deviceSerial };
+          }
           await gateLogout(c, ctx);
           return { outcome: "upgraded", verifiedVersion: lastSeen ?? undefined, deviceSerial: after.serial ?? deviceSerial };
         }

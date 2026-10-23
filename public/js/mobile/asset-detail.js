@@ -2821,6 +2821,12 @@
   function fwSlotHtml(fw) {
     if (!fw || fw.error) return "";
     if (fw.state === "running" && fw.activeRun) return fwRunningHtml(fw.activeRun);
+    // An HA secondary (business rule 129): its cluster is upgraded from the primary.
+    if (fw.state === "cluster-member") {
+      var primaryName = fw.clusterPrimary && fw.clusterPrimary.hostname ? fw.clusterPrimary.hostname : "its primary";
+      return '<div class="muted" id="asset-fw-cluster" style="font-size:12px;margin-top:4px;">HA secondary — '
+        + (fw.activeRun ? "the cluster is upgrading now, from " : "upgraded with its cluster from ") + escapeHtml(primaryName) + '</div>';
+    }
     // In a pending / running GROUP upgrade (business rule 122): the group
     // flashes it, and the group is managed from the desktop Assets page.
     if (fw.group) {
@@ -2837,6 +2843,7 @@
         out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.image.versionLabel) + ' available — upgrading needs Read-Write on Assets</div>';
       } else {
         out += '<button class="btn btn-tonal" id="asset-fw-upgrade-btn" style="margin-top:6px;">Upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
+        if (fw.cluster) out += '<div class="muted" style="font-size:12px;margin-top:4px;">Upgrades the whole HA cluster — every member reboots, about 10 minutes</div>';
         if (fw.state === "blocked") out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.reason || "Not right now") + ' It can be scheduled for later.</div>';
       }
     } else if (offered && fw.state === "available" && fw.schedule && canFlashFirmware()) {

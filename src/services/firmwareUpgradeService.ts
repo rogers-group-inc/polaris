@@ -45,7 +45,7 @@ import { openMaintenanceHold, releaseMaintenanceHold } from "./maintenanceSchedu
 import { holdUntilMonitorAnswers } from "./holdRecoveryWait.js";
 import { resolveConnectionPath } from "./connectionPathService.js";
 import { engineFor, engineByKind } from "./firmwareEngines/index.js";
-import { DEFAULT_FIRMWARE_TIMEOUTS, type FirmwareEngineContext, type FirmwareEngineTimeouts, type FirmwareProgress, type FirmwareRunStage } from "./firmwareEngines/types.js";
+import { DEFAULT_FIRMWARE_TIMEOUTS, HA_CLUSTER_TIMEOUT_OVERRIDES, type FirmwareEngineContext, type FirmwareEngineTimeouts, type FirmwareProgress, type FirmwareRunStage } from "./firmwareEngines/types.js";
 import {
   findUpgradeCandidates,
   firmwareVsPrimary,
@@ -76,7 +76,15 @@ export type UpgradeAvailabilityState =
   | "pending-discovery" // last run flashed this version; the asset record has not caught up
   | "blocked"           // an image is offered but a gate refuses right now
   | "running"
+  | "cluster-member"    // an HA secondary: the cluster is upgraded from its primary (rule 129)
   | "available";
+
+/** An HA cluster as the primary's card shows it (rule 129): who the run reboots. */
+export interface ClusterInfo {
+  mode: string;
+  /** Every member, the primary first; `assetId` null for a member Polaris holds no record of. */
+  members: Array<{ serial: string; assetId: string | null; hostname: string | null; role: "primary" | "secondary" }>;
+}
 
 export interface RunSummary {
   id: string;
@@ -122,6 +130,10 @@ export interface UpgradeAvailability {
   vsPrimary: FirmwareVsPrimary | null;
   /** The primary image's version label when `vsPrimary` is set. */
   primaryVersion: string | null;
+  /** HA primary: the cluster a run upgrades as one device. Null on a standalone device. */
+  cluster?: ClusterInfo | null;
+  /** HA secondary (`cluster-member`): the primary whose card upgrades the cluster. */
+  clusterPrimary?: { assetId: string; hostname: string | null } | null;
 }
 
 export const FIRMWARE_ASSET_SELECT = {
@@ -153,19 +165,71 @@ function typeWord(assetType: string): string {
   return assetType === "access_point" ? "access points" : assetType === "firewall" ? "firewalls" : "switches";
 }
 
+/** The HA cluster modes a cluster upgrade has been proven on (rule 129). */
+const HA_UPGRADABLE_MODES = new Set(["a-p"]);
+
+interface HaMembership { mode: string | null; role: string | null; peerSerial: string | null }
+
 /**
  * A FortiGate discovery recorded as an HA cluster member (`fortinetTopology`
- * haMode / haRole). Upgrading one member reboots the whole cluster, which this
- * version does not orchestrate — refused here, and again by the engine from
- * the gate's own HA configuration.
+ * haMode / haRole / haPeerSerial), or null for a standalone device.
  */
-function haClusterOf(a: AssetRow): string | null {
+function haMemberOf(a: AssetRow): HaMembership | null {
   if (a.assetType !== "firewall") return null;
   const t = (a.fortinetTopology && typeof a.fortinetTopology === "object" ? a.fortinetTopology : {}) as Record<string, unknown>;
   const mode = typeof t.haMode === "string" ? t.haMode : null;
   const role = typeof t.haRole === "string" ? t.haRole : null;
   if (!mode && !role) return null;
-  return `the FortiGate is an HA cluster member (${[mode, role].filter(Boolean).join(", ")}) — upgrading HA clusters is not supported yet`;
+  const peerSerial = typeof t.haPeerSerial === "string" && t.haPeerSerial ? t.haPeerSerial.toUpperCase() : null;
+  return { mode, role, peerSerial };
+}
+
+/**
+ * Rule 129: why THIS member cannot start a cluster upgrade, or null when it can.
+ * A cluster is upgraded as one device from its primary; a secondary points
+ * there, and only proven modes are offered. The engine re-checks all of it
+ * against the gate's own answers.
+ */
+function haRefusal(ha: HaMembership | null): string | null {
+  if (!ha) return null;
+  if (ha.role !== "primary") return "the FortiGate is an HA cluster's secondary — the cluster is upgraded from its primary";
+  if (!ha.mode || !HA_UPGRADABLE_MODES.has(ha.mode)) return `the FortiGate's HA cluster runs mode ${ha.mode ?? "unknown"} — Polaris upgrades active-passive (a-p) clusters only so far`;
+  return null;
+}
+
+/**
+ * The other members of a primary's cluster, and a secondary's primary: every
+ * live firewall asset naming this one as its HA peer, plus the one this one
+ * names. One indexed query on serials; a cluster is two members in practice.
+ */
+async function clusterPeersOf(a: AssetRow, ha: HaMembership): Promise<Array<{ id: string; hostname: string | null; serialNumber: string | null; fortinetTopology: unknown }>> {
+  const self = (a.serialNumber ?? "").toUpperCase();
+  const rows = await prisma.asset.findMany({
+    where: {
+      assetType: "firewall",
+      status: { not: "decommissioned" },
+      id: { not: a.id },
+      OR: [
+        ...(ha.peerSerial ? [{ serialNumber: { equals: ha.peerSerial, mode: "insensitive" as const } }] : []),
+        ...(self ? [{ fortinetTopology: { path: ["haPeerSerial"], equals: self } }] : []),
+      ],
+    },
+    select: { id: true, hostname: true, serialNumber: true, fortinetTopology: true },
+  });
+  return rows;
+}
+
+function clusterInfo(a: AssetRow, ha: HaMembership, peers: Awaited<ReturnType<typeof clusterPeersOf>>): ClusterInfo {
+  const members: ClusterInfo["members"] = [{ serial: (a.serialNumber ?? "").toUpperCase(), assetId: a.id, hostname: a.hostname, role: "primary" }];
+  for (const p of peers) {
+    const serial = (p.serialNumber ?? "").toUpperCase();
+    if (!serial || members.some((m) => m.serial === serial)) continue;
+    members.push({ serial, assetId: p.id, hostname: p.hostname, role: "secondary" });
+  }
+  if (ha.peerSerial && !members.some((m) => m.serial === ha.peerSerial)) {
+    members.push({ serial: ha.peerSerial, assetId: null, hostname: null, role: "secondary" });
+  }
+  return { mode: ha.mode ?? "unknown", members };
 }
 
 function summarize(r: {
@@ -249,9 +313,24 @@ export async function getUpgradeAvailability(assetId: string): Promise<UpgradeAv
     vsPrimary: null,
     primaryVersion: null,
   };
+  // Rule 129: an HA cluster is one device to upgrade, started from its primary.
+  const ha = haMemberOf(a);
+  if (ha && ha.role === "secondary") {
+    const peers = await clusterPeersOf(a, ha);
+    const primary = peers.find((p) => (p.fortinetTopology as Record<string, unknown> | null)?.haRole === "primary") ?? null;
+    const primaryRun = primary ? await activeRunFor(primary.id) : null;
+    return {
+      ...base,
+      state: "cluster-member",
+      reason: `This FortiGate is the secondary of an HA cluster, which is upgraded as one device from its primary${primary?.hostname ? ` (${primary.hostname})` : ""}. Both members reboot, this one first.`,
+      clusterPrimary: primary ? { assetId: primary.id, hostname: primary.hostname } : null,
+      activeRun: primaryRun ? summarize(primaryRun) : null,
+    };
+  }
   if (active) return { ...base, state: "running", reason: "A firmware upgrade is running on this device." };
-  const ha = haClusterOf(a);
-  if (ha) return { ...base, state: "unsupported", reason: `${ha.charAt(0).toUpperCase()}${ha.slice(1)}.` };
+  const haWhy = haRefusal(ha);
+  if (haWhy) return { ...base, state: "unsupported", reason: `${capitalize(haWhy)}.` };
+  if (ha) base.cluster = clusterInfo(a, ha, await clusterPeersOf(a, ha));
   if (candidates.reason !== "ok") {
     const r = reasonFor(candidates, a);
     if (r.state === "up-to-date") {
@@ -351,8 +430,8 @@ export interface StartUpgradeInput {
 async function approvedImageFor(a: AssetRow, imageId: string | undefined | null): Promise<{ engine: NonNullable<ReturnType<typeof engineFor>>; platform: string; approved: FirmwareImageRow }> {
   const engine = engineFor(a.manufacturer, a.assetType, a.serialNumber);
   if (!engine) throw new AppError(400, `No upgrade engine for ${a.manufacturer ?? "this manufacturer"} ${a.assetType} devices`);
-  const ha = haClusterOf(a);
-  if (ha) throw new AppError(400, `Cannot upgrade: ${ha}`);
+  const haWhy = haRefusal(haMemberOf(a));
+  if (haWhy) throw new AppError(400, `Cannot upgrade: ${haWhy}`);
   if (!a.ipAddress && !a.dnsName) throw new AppError(400, "The asset has no IP address to reach the web UI at");
   const platform = platformFromSerial(a.serialNumber);
   if (!platform) throw new AppError(400, "The asset has no usable serial number, so no image can be matched to its platform");
@@ -403,8 +482,9 @@ export type GroupCandidateAssessment =
 export async function assessGroupCandidate(a: AssetRow): Promise<GroupCandidateAssessment> {
   const engine = engineFor(a.manufacturer, a.assetType, a.serialNumber);
   if (!engine) return { ok: false, kind: "unsupported", reason: `No upgrade engine for ${a.manufacturer ?? "this manufacturer"} ${typeWord(a.assetType)}` };
-  const ha = haClusterOf(a);
-  if (ha) return { ok: false, kind: "ha-member", reason: capitalize(ha) };
+  // Rule 129 upgrades a cluster on its own, from the primary's card; a group
+  // (rule 122) does not take one yet (operator decision, 2026-10-23).
+  if (haMemberOf(a)) return { ok: false, kind: "ha-member", reason: "The FortiGate is an HA cluster member — upgrade the cluster from its primary's Firmware card, not in a group" };
   if (!a.ipAddress && !a.dnsName) return { ok: false, kind: "no-address", reason: "The asset has no IP address to reach the web UI at" };
   const candidates = await findUpgradeCandidates(a);
   if (candidates.reason !== "ok" || !candidates.primary) {
@@ -450,6 +530,9 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
   if (!a) throw new AppError(404, "Asset not found");
 
   const { engine, platform, approved } = await approvedImageFor(a, input.imageId);
+  // Rule 129: a primary that passed approvedImageFor upgrades its whole cluster.
+  const ha = haMemberOf(a);
+  const cluster = ha ? clusterInfo(a, ha, await clusterPeersOf(a, ha)) : null;
 
   const blockers = healthBlockers(a);
   if (blockers.length > 0) throw new AppError(409, `Cannot start: ${blockers.join("; ")}`);
@@ -517,21 +600,27 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     resourceName: assetLabel(a),
     actor: input.actor,
     level: "info",
-    message: `${input.groupMemberId ? "Group firmware upgrade" : input.scheduleId ? "Scheduled firmware upgrade" : "Firmware upgrade"} started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`,
-    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role, scheduleId: input.scheduleId ?? null, groupMemberId: input.groupMemberId ?? null },
+    message: `${input.groupMemberId ? "Group firmware upgrade" : input.scheduleId ? "Scheduled firmware upgrade" : "Firmware upgrade"} started: ${a.osVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image for ${approved.model}) via ${engine.label}, signing in with "${cred.credentialName}" (${cred.scope} binding)`
+      + (cluster ? `. HA cluster (${cluster.mode}): every member reboots — ${cluster.members.map((m) => m.hostname ?? m.serial).join(", ")}` : ""),
+    details: { runId: run.id, imageId: approved.id, platform, fromVersion: a.osVersion, toVersion: approved.versionLabel, engine: engine.kind, credentialId: cred.credentialId, credentialScope: cred.scope, imageRole: approved.role, scheduleId: input.scheduleId ?? null, groupMemberId: input.groupMemberId ?? null, cluster: cluster ?? null },
   });
 
   // Best-effort, like takeAgentHold: a hold failure must never be the reason a
   // flash does not run. The window it opens suppresses everything behind a
   // switch (rule 38), which is exactly what a reboot is about to do to them.
-  try {
-    await openMaintenanceHold({ assetId: a.id, kind: HOLD_KIND, actor: input.actor });
-  } catch (err) {
-    logger.warn({ err, assetId: a.id }, "Could not hold the asset in maintenance for the firmware upgrade");
+  // A cluster upgrade reboots EVERY member (rule 129), so each one Polaris
+  // holds a record of is held for the whole run, not just the primary.
+  const heldIds = [a.id, ...(cluster?.members ?? []).map((m) => m.assetId).filter((id): id is string => !!id && id !== a.id)];
+  for (const assetId of heldIds) {
+    try {
+      await openMaintenanceHold({ assetId, kind: HOLD_KIND, actor: input.actor });
+    } catch (err) {
+      logger.warn({ err, assetId }, "Could not hold the asset in maintenance for the firmware upgrade");
+    }
   }
 
   setImmediate(() => {
-    runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides)
+    runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides, cluster)
       .catch((err) => {
         logger.error({ err, runId: run.id }, "Firmware upgrade runner crashed unexpectedly");
       })
@@ -576,8 +665,15 @@ async function runUpgrade(
   imagePath: string,
   imageSize: number,
   overrides?: StartUpgradeInput["overrides"],
+  cluster?: ClusterInfo | null,
 ): Promise<void> {
   const engine = engineByKind((await prisma.firmwareUpgradeRun.findUnique({ where: { id: runId }, select: { engine: true } }))?.engine ?? "");
+  // Rule 129: every member's hold opened at start is released with the primary's.
+  const memberIds = (cluster?.members ?? []).map((m) => m.assetId).filter((id): id is string => !!id && id !== a.id);
+  const dropHolds = async () => {
+    await dropHold(a.id);
+    for (const id of memberIds) await dropHold(id);
+  };
   const startedAt = Date.now();
   const log: Array<{ t: string; level: string; msg: string }> = [];
   let stage: FirmwareRunStage | null = null;
@@ -630,7 +726,8 @@ async function runUpgrade(
       imageSize,
       image: { platform: image.platform ?? "", versionLabel: image.versionLabel, version: image.version ?? { major: 0 } },
       expectedSerial: a.serialNumber,
-      timeouts: { ...DEFAULT_FIRMWARE_TIMEOUTS, ...(overrides?.timeouts ?? {}) },
+      ...(cluster ? { cluster: { mode: cluster.mode, memberSerials: cluster.members.map((m) => m.serial).filter(Boolean) } } : {}),
+      timeouts: { ...DEFAULT_FIRMWARE_TIMEOUTS, ...(cluster ? HA_CLUSTER_TIMEOUT_OVERRIDES : {}), ...(overrides?.timeouts ?? {}) },
       onStage: (s) => {
         stage = s;
         push("info", `stage: ${s}`);
@@ -675,7 +772,7 @@ async function runUpgrade(
 
     // Release BEFORE the terminal Event so a covering automation can see the
     // failure (the rule-80a ordering agentInstallService.failUpgrade uses).
-    await dropHold(a.id);
+    await dropHolds();
 
     if (res.outcome === "upgraded" || res.outcome === "already-current") {
       push("info", res.outcome === "upgraded" ? `upgraded; device reports ${res.verifiedVersion}` : `already current (${res.verifiedVersion})`);
@@ -725,7 +822,7 @@ async function runUpgrade(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     push("error", `runner error: ${msg}`);
-    await dropHold(a.id);
+    await dropHolds();
     await finish("failed", "failed", { error: msg });
     await logEvent({
       action: "firmware.upgrade_failed",

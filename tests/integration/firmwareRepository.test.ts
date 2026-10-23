@@ -352,11 +352,27 @@ d("firmware repository routes", () => {
     expect(fgAvail.status).toBe(200);
     expect(fgAvail.body.engine).toBe("fortigate-https");
     expect(fgAvail.body.state).toBe("up-to-date");
-    // An HA cluster member is not upgraded at all — not blocked-for-now, unsupported.
-    await prisma.asset.update({ where: { id: fg! }, data: { fortinetTopology: { role: "fortigate", deviceName: "fwrepo-fg1", haMode: "a-p", haRole: "primary" } } });
+    // Rule 129: an a-p cluster's PRIMARY is judged like any gate and names the
+    // cluster it would reboot, including a peer Polaris holds no record of.
+    await prisma.asset.update({ where: { id: fg! }, data: { fortinetTopology: { role: "fortigate", deviceName: "fwrepo-fg1", haMode: "a-p", haRole: "primary", haPeerSerial: "FGT60FTK2000PEER" } } });
     const ha = await reader.agent.get(`/api/v1/assets/${fg}/firmware-upgrade`);
-    expect(ha.body.state).toBe("unsupported");
-    expect(ha.body.reason).toMatch(/HA cluster member \(a-p, primary\)/);
+    expect(ha.body.state).toBe("up-to-date");
+    expect(ha.body.cluster.mode).toBe("a-p");
+    expect(ha.body.cluster.members.map((m: { serial: string; role: string; assetId: string | null }) => [m.role, m.assetId === null])).toEqual([["primary", false], ["secondary", true]]);
+    expect(ha.body.cluster.members[1].serial).toBe("FGT60FTK2000PEER");
+    // Only a-p has been proven; any other mode is refused outright.
+    await prisma.asset.update({ where: { id: fg! }, data: { fortinetTopology: { role: "fortigate", deviceName: "fwrepo-fg1", haMode: "a-a", haRole: "primary" } } });
+    const aa = await reader.agent.get(`/api/v1/assets/${fg}/firmware-upgrade`);
+    expect(aa.body.state).toBe("unsupported");
+    expect(aa.body.reason).toMatch(/active-passive \(a-p\) clusters only/);
+    // A SECONDARY is never started on its own: its card points at the primary.
+    await prisma.asset.update({ where: { id: fg! }, data: { fortinetTopology: { role: "fortigate", deviceName: "fwrepo-fg1", haMode: "a-p", haRole: "secondary", haPeerSerial: "FGT60FTK2000PEER" } } });
+    const sec = await reader.agent.get(`/api/v1/assets/${fg}/firmware-upgrade`);
+    expect(sec.body.state).toBe("cluster-member");
+    expect(sec.body.reason).toMatch(/secondary of an HA cluster/);
+    const secStart = await flasher.agent.post(`/api/v1/assets/${fg}/firmware-upgrade`).set("X-CSRF-Token", flasher.csrf).send({ imageId: avail.body.image.id });
+    expect(secStart.status).toBe(400);
+    expect(secStart.body.error).toMatch(/upgraded from its primary/);
     await prisma.asset.update({ where: { id: fg! }, data: { fortinetTopology: { role: "fortigate", deviceName: "fwrepo-fg1" } } });
 
     const runs = await reader.agent.get(`/api/v1/assets/${sw1}/firmware-upgrade/runs`);

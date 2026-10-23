@@ -40,6 +40,11 @@ export interface DeviceHttpClientOptions {
   commandMs: number;
   /** Idle cap on an upload — bytes must keep being accepted. */
   uploadIdleMs: number;
+  /**
+   * How long the device may take to answer once the whole body is sent.
+   * Defaults to `uploadIdleMs`; an HA cluster's primary needs minutes (rule 129).
+   */
+  uploadAnswerMs?: number;
   /** Cap on a response body. */
   maxBodyBytes?: number;
   /**
@@ -328,9 +333,12 @@ export class DeviceHttpClient {
       };
       const armIdle = () => {
         if (idleTimer) clearTimeout(idleTimer);
+        const capMs = fullySent ? (this.opts.uploadAnswerMs ?? idleMs) : idleMs;
         idleTimer = setTimeout(() => {
-          req.destroy(new Error(`upload stalled: no bytes accepted for ${Math.round(idleMs / 1000)} s (${sent} of ${total} sent)`));
-        }, idleMs);
+          req.destroy(new Error(fullySent
+            ? `no answer ${Math.round(capMs / 1000)} s after the whole image was sent`
+            : `upload stalled: no bytes accepted for ${Math.round(capMs / 1000)} s (${sent} of ${total} sent)`));
+        }, capMs);
       };
       const req = reqFn(opts, (res) => {
         this.takeCookies(res.headers);
