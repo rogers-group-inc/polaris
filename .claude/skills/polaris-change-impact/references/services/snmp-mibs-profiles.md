@@ -27,13 +27,58 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/manufacturerProfilePortabilityService.ts
+
+**What it owns:** Export of a manufacturer profile to a portable JSON file (`polaris.manufacturer-profile` v1) and the two-step import (preview, then apply only the ticked items).
+
+**Public API:** `exportProfile(profileId, { withIds })`, `saveProfileCode()`, `previewProfileImport()`, `applyProfileImport()`, `parseProfileFile()`, `ProfileFileSchema`, `PROFILE_FILE_FORMAT`, `PROFILE_FILE_VERSION`, types `ProfileFile`, `MibRef`, `ImportItem`, `ImportItemKind`, `ImportPreview`, `ImportResult`.
+
+**Cross-service deps:** `manufacturerProfileService` (`getProfile`, `getProfileFor`, `createProfile`, `updateProfile`, `updateMetricRow`, `createOverride`, `updateOverride`, `createWidget`, `updateWidget`, `setWidgetLayout`, `refreshProfileCache`) — every write goes through the same functions the profile page uses; `prisma.mibFile` / `prisma.credential` (name resolution); `utils/manufacturerNormalize`; `eventLogService.logEvent`.
+
+**Used by:** `src/api/routes/manufacturerProfiles.ts` (`GET /:id/export`, `GET`/`PUT /:id/code`, `POST /import/preview`, `POST /import`).
+
+**Invariants:**
+- The file carries NO install ids and NO secrets: uploaded MIBs as `{ moduleName, manufacturer, model }`, an HTTP check's credential as `{ name }`, the Custom MIB layout keyed by the file's own widget `key`. MIB files are NOT bundled. Per-asset widget switches (rule 130) are NOT exported — they name assets.
+- A MIB resolves on import by module name under the TARGET profile's manufacturer, then the file's manufacturer, then a generic upload. A widget (non-http) whose MIB does not resolve is `blocked` in the preview and refused in apply — `createWidget` requires a MIB. A metric row imports with its MIB unset and reads unresolved.
+- Matching for "replace": the profile by canonical manufacturer, a metric by `metricKey`, an override by its scope (`assetType` + `modelPattern`), a widget by NAME (case-insensitive). Everything else is created.
+- Apply runs each ticked item independently and returns per-item `{ ok, error }`; one failure never aborts the rest. One `manufacturer_profile.imported` Event (warning when anything failed).
+- **View Code save is a FULL replace, unlike import** (`saveProfileCode`, `PUT /:id/code`, the automations View Code idiom): the code view is the export plus each override's and widget's row `id` (and no `exportedAt`); a row keeping its id is updated in place (so a widget keeps its per-device switches and history), one without is created, and one LEFT OUT is deleted — a metric row left out is cleared to the built-in seed. The manufacturer, every metric key, every MIB and every credential name are checked BEFORE the first write; a row the service refuses part-way stops the save with "the changes before this point were saved" (the writers are not one transaction). One `manufacturer_profile.code_saved` Event. The client confirms the deletions it can see (`_profileCodeRemovals`) before saving, and the modal's Export strips the ids client-side (`_profileForExport`).
+
+**When changing this:**
+- A new profile / metric / override / widget field must be added to `ProfileFileSchema`, `exportProfile` AND the apply mapping, or it silently fails to travel. Bump `PROFILE_FILE_VERSION` only for an incompatible change.
+- Pinned by `tests/unit/manufacturerProfilePortability.test.ts`.
+
+---
+
+## services/customWidgetEnablementService.ts
+
+**What it owns:** Which manufacturer custom widgets POLL which assets (business rule 130) — the `AssetCustomWidgetEnable` rows. A widget applies to every asset whose canonical manufacturer has its profile and whose model satisfies its `modelPattern`; it polls only where switched on.
+
+**Public API:** `widgetAppliesToModel()`, `enabledWidgetIdsForAsset()`, `assetIdsWithEnabledWidgets()`, `listWidgetCandidates()`, `setWidgetAssets()`, `setWidgetEnabledForAsset()`, types `WidgetCandidate`.
+
+**Cross-service deps:** `prisma.assetCustomWidgetEnable` / `prisma.manufacturerCustomWidget` / `prisma.asset`; `utils/manufacturerNormalize.normalizeManufacturer`; `utils/safeRegex.tryCompileSafeRegex` (rule 116); `eventLogService.logEventsBatch`.
+
+**Used by:** `src/api/routes/assets.ts` (`GET /:id/custom-widgets` reports each widget's `enabled`; `PUT /:id/custom-widgets/:widgetId/enabled`), `src/api/routes/manufacturerProfiles.ts` (`GET`/`PUT /:id/widgets/:widgetId/assets`), `src/services/monitoringService.ts` (`runCustomWidgetsFor` reads the asset's enabled set; `runMonitorPass` loads `assetIdsWithEnabledWidgets` once per pass), `src/jobs/monitorAssets.ts` (`publishDueWork`, once per heavy tick).
+
+**Invariants:**
+- Switching ON is refused (400) for an asset the widget does not apply to — another manufacturer, or a model the pattern excludes. Switching OFF is always allowed, so a row stranded by a model change can be cleared.
+- Every change writes one `asset.custom_widget.enabled|disabled` Event per asset changed, batched into one `logEventsBatch` — never one awaited write per asset.
+- The scheduler asks `assetIdsWithEnabledWidgets()` ONCE per tick (one `DISTINCT assetId` read), never per asset — at 2000 assets that is the difference between one query and 2000.
+- `listWidgetCandidates` matches on the profile's canonical manufacturer case-insensitively (asset manufacturers are alias-normalized on write by `db.ts`) and then applies the model pattern; it does not consult the profile's `matchPattern`, exactly like `GET /assets/:id/custom-widgets`.
+
+**When changing this:**
+- A new place that decides whether a manufacturer widget polls must read this table — `collectManufacturerWidgetSamples` takes the enabled set as an argument and polls nothing without it.
+- Generic API widgets (rule 100(i)) are deliberately outside this table; do not add them without a switch on their card too.
+
+---
+
 ## services/manufacturerProfileService.ts
 
 **What it owns:** CRUD + cached resolver for the editable per-manufacturer telemetry profiles (metric rows, per-metric overrides, custom widgets). A synchronous `getProfileFor` / `listCachedProfiles` pair serves the hot probe path after a boot warm-up.
 
 **The cache is load-bearing since the Phase 4 resolver swap** — these rows are the ONLY source of vendor CPU / memory / temperature / storage OIDs, so a process with a cold cache collects no vendor telemetry at all. Two consequences, both wired in `app.ts → startBackgroundJobs`: the warm runs on **every role** (the seed job that used to be the only warmer is gated on `runsMigrations`, i.e. web/all, so a split-role MONITOR process — the one that walks devices — started empty), and a 30 s interval calls `refreshProfileCacheIfStale()` on every role, because the write paths refresh only the cache of the process that SERVED the write. That leaves every other process stale: the monitor consumers, and behind a load balancer or an HA pair the web replica that did not handle the request. The TTL is 60 s; a failed refresh keeps the previous copy (stale vendor OIDs collect, an empty cache collects nothing) and does not stamp the clock, so the next tick retries.
 
-**Public API:** `MetricKey`, `Aggregate`, `AGGREGATES`, `MetricRowType`, `MetricOverrideRow`, `MetricRow`, `RowReadiness`, `CustomWidgetRow`, `StateProbeSummary`, `ProfileSummary`, `ProfileFull`, `ManufacturerSuggestion`, `ManufacturerSuggestionSource`, `refreshProfileCache`, `refreshProfileCacheIfStale`, `getProfileFor`, `listCachedProfiles`, `updateProfile`, `listProfiles`, `listStateProbes`, `listManufacturerSuggestions`, `mergeManufacturerSuggestions`, `getProfile`, `createProfile`, `updateMetricRow`, `createOverride`, `updateOverride`, `deleteOverride`, `createWidget`, `updateWidget`, `deleteWidget`, `deleteProfile`, `annotateReadiness`, `readinessSummary`, `symbolWarnings`, `symbolWarningsForProfile`, `emitProfileReadinessEvents`, `STD_MIB_KEYS`, `METRIC_KEYS`
+**Public API:** `MetricKey`, `Aggregate`, `AGGREGATES`, `MetricRowType`, `MetricOverrideRow`, `MetricRow`, `RowReadiness`, `CustomWidgetRow`, `StateProbeSummary`, `ProfileSummary`, `ProfileFull`, `ManufacturerSuggestion`, `ManufacturerSuggestionSource`, `refreshProfileCache`, `refreshProfileCacheIfStale`, `getProfileFor`, `listCachedProfiles`, `updateProfile`, `listProfiles`, `listStateProbes`, `listManufacturerSuggestions`, `mergeManufacturerSuggestions`, `getProfile`, `createProfile`, `updateMetricRow`, `createOverride`, `updateOverride`, `deleteOverride`, `createWidget`, `updateWidget`, `deleteWidget`, `deleteProfile`, `setWidgetLayout`, `sanitizeWidgetLayout`, `WidgetLayout`, `LAYOUT_WIDTHS`, `LAYOUT_HEIGHTS`, `annotateReadiness`, `readinessSummary`, `symbolWarnings`, `symbolWarningsForProfile`, `emitProfileReadinessEvents`, `STD_MIB_KEYS`, `METRIC_KEYS`
 
 **Readiness (2026-09):** a profile row names a SYMBOL; whether it resolves depends on which MIBs are loaded, and until 2026-09 the page could not tell the operator either way. `getProfile()` returns rows stamped with `readiness` (via `oidRegistry.symbolReadiness` at the manufacturer's scope, using the row's pinned `mibId` only to EXPLAIN an unresolved symbol); `listProfiles()` adds `ready / partial / unresolvedCount / unresolvedSymbols` to each summary; the write routes attach `symbolWarningsForProfile()` output as `warnings[]` (warn, never block — "type the symbol, then upload the MIB" is the natural order); and `emitProfileReadinessEvents()` writes one warning-level `manufacturer_profile.unresolved` Event per affected profile after the boot cache warm (called from the seed job's IIFE), which is what makes a seed removal visible in the Events log the moment the process is up. The cached row the probe path reads is NOT annotated — the probe resolves for itself.
 

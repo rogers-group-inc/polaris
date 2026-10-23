@@ -9545,6 +9545,8 @@ function manufacturerProfilesCardHTML() {
       '<div class="aw-suggest" id="mfg-profile-add-suggest"></div>' +
     '</span>' +
     '<button class="btn btn-primary" id="btn-add-mfg-profile">+ Add Manufacturer</button>' +
+    '<button class="btn btn-secondary" id="btn-import-mfg-profile" title="Import a profile exported from Polaris, choosing which parts to bring in">Import…</button>' +
+    '<input type="file" id="f-import-mfg-profile" accept=".json,application/json" style="display:none">' +
   '</div>';
 
   html += '</div>';
@@ -9564,6 +9566,7 @@ function renderProfileRow(p) {
         p.widgetCount + ' widget' + (p.widgetCount === 1 ? '' : 's') + ' · ' +
         p.scopedMibCount + ' MIB' + (p.scopedMibCount === 1 ? '' : 's') +
       '</span>' +
+      '<button class="btn btn-sm mfg-profile-code" data-id="' + escapeHtml(p.id) + '" title="View, edit, save or export this profile as JSON">View Code</button>' +
       '<button class="btn btn-sm btn-danger mfg-profile-del" data-id="' + escapeHtml(p.id) + '" title="Delete profile">Del</button>' +
     '</div>' +
     '<div class="mfg-profile-body" id="mfg-profile-body-' + escapeHtml(p.id) + '" style="' + (isOpen ? '' : 'display:none') + '">' +
@@ -9698,10 +9701,10 @@ function renderProfileDetail(detail) {
 // Each card has a compact view mode and an inline-expanded edit mode.
 
 var WIDGET_TYPE_LABELS = {
-  gauge: "Gauge", line: "Line chart", table: "Table",
+  gauge: "Gauge", line: "Line chart", value: "Value", table: "Table",
   state: "State (0/1)", http: "HTTP check",
 };
-var WIDGET_TYPE_ORDER  = ["gauge", "line", "table", "state", "http"];
+var WIDGET_TYPE_ORDER  = ["gauge", "line", "value", "table", "state", "http"];
 
 // ─── State probes (widgetType "state") ──────────────────────────────────
 // A status-shaped OID rather than a gauge: an alarm bit, a PSU present flag, a
@@ -9765,6 +9768,9 @@ function renderWidgetCard(profileId, w, manufacturer) {
       '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
       '<span style="font-size:0.72rem;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:0.04em">' + escapeHtml(WIDGET_TYPE_LABELS[w.widgetType] || w.widgetType) + '</span>' +
       '<span style="flex:1"></span>' +
+      // Which assets poll this widget (business rule 130). Needs assets write
+      // on top of the profile key, like the server route.
+      (permAtLeast("assets", "write") ? '<button class="btn btn-sm mfg-widget-devices" title="Choose which devices poll this widget">Devices…</button> ' : '') +
       '<button class="btn btn-sm mfg-widget-edit">Edit</button>' +
       ' <button class="btn btn-sm btn-danger mfg-widget-del">Del</button>' +
     '</div>' +
@@ -10058,6 +10064,27 @@ function _widgetTypeSelectHTML(cls, current) {
 //           from the latest sample.
 // warningAt / warningWhen only paint the card (_customWidgetWarning in
 // assets.js); alerting on the value is an automation's job.
+//
+// How a single-value widget's number reads (the asset tab's _cwDisplay):
+// "" = a plain number with its unit; a duration format reads it as seconds or
+// SNMP TimeTicks (hundredths of a second) and shows "1 h 23 m".
+var WIDGET_VALUE_FORMATS = [
+  ["", "Number"],
+  ["duration_s", "Duration (from seconds)"],
+  ["duration_ticks", "Duration (from TimeTicks)"],
+];
+var WIDGET_UNIT_HINT = '<div class="hint" style="grid-column:1/-1;margin:0;font-size:0.74rem">' +
+  'Set the unit to <b>°C</b> or <b>°F</b> for a temperature: it is shown in the install\'s temperature unit, converted when they differ.' +
+'</div>';
+
+function _widgetFormatSelectHTML(current) {
+  return '<select class="mfg-widget-opt-format" style="width:100%;font-size:0.82rem">' +
+    WIDGET_VALUE_FORMATS.map(function (f) {
+      return '<option value="' + f[0] + '"' + ((current || "") === f[0] ? " selected" : "") + '>' + f[1] + '</option>';
+    }).join("") +
+  '</select>';
+}
+
 function _widgetDisplayOptionsForm(widgetType, opts) {
   var o = opts || {};
   function num(v) { return (v === null || v === undefined) ? "" : String(v); }
@@ -10070,17 +10097,29 @@ function _widgetDisplayOptionsForm(widgetType, opts) {
       '</select>');
   }
   if (widgetType === "gauge") {
-    return '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px 10px">' +
+    return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 10px">' +
       _widgetFormField("Min", '<input type="number" class="mfg-widget-opt-min" value="' + escapeHtml(num(o.min)) + '" step="any" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Max", '<input type="number" class="mfg-widget-opt-max" value="' + escapeHtml(num(o.max)) + '" step="any" style="width:100%;font-size:0.82rem">') +
-      _widgetFormField("Unit", '<input type="text"   class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. % or clients" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Unit", '<input type="text"   class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. %, °C or clients" style="width:100%;font-size:0.82rem">') +
       warnFields() +
+      _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
+      WIDGET_UNIT_HINT +
     '</div>';
   }
   if (widgetType === "line") {
-    return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 10px">' +
-      _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps or %" style="width:100%;font-size:0.82rem">') +
+    return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
+      _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps, % or °C" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
       warnFields() +
+      WIDGET_UNIT_HINT +
+    '</div>';
+  }
+  // A Value widget is the reading as text — no threshold is drawn on it.
+  if (widgetType === "value") {
+    return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
+      _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps, % or °C" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
+      WIDGET_UNIT_HINT +
     '</div>';
   }
   // table — no editable options
@@ -10096,9 +10135,13 @@ function _widgetOptionsSummary(w) {
     if (o.max != null) parts.push("max " + o.max);
     if (o.unit)        parts.push("unit " + o.unit);
     if (o.warningAt != null) parts.push("warn " + (o.warningWhen === "below" ? "≤ " : "≥ ") + o.warningAt);
-  } else if (w.widgetType === "line") {
+  } else if (w.widgetType === "line" || w.widgetType === "value") {
     if (o.unit) parts.push("unit " + o.unit);
     if (o.warningAt != null) parts.push("warn " + (o.warningWhen === "below" ? "≤ " : "≥ ") + o.warningAt);
+  }
+  if (o.format) {
+    var f = WIDGET_VALUE_FORMATS.find(function (x) { return x[0] === o.format; });
+    if (f) parts.push(f[1].toLowerCase());
   }
   return parts.length ? escapeHtml(parts.join(" · ")) : "";
 }
@@ -10136,10 +10179,14 @@ function _readWidgetDisplayOptions(scope, widgetType) {
     if (max != null)  out.max = max;
     if (unit)         out.unit = unit;
     readWarn();
-  } else if (widgetType === "line") {
+  } else if (widgetType === "line" || widgetType === "value") {
     var unitL = strOrNull(scope.querySelector(".mfg-widget-opt-unit"));
     if (unitL) out.unit = unitL;
     readWarn();
+  }
+  if (widgetType === "gauge" || widgetType === "line" || widgetType === "value") {
+    var fmt = strOrNull(scope.querySelector(".mfg-widget-opt-format"));
+    if (fmt) out.format = fmt;
   }
   return out;
 }
@@ -10896,6 +10943,14 @@ function transformLabel(kind) {
 function wireManufacturerProfileControls() {
   var addBtn = document.getElementById("btn-add-mfg-profile");
   if (addBtn) addBtn.addEventListener("click", addManufacturerProfile);
+  var importBtn = document.getElementById("btn-import-mfg-profile");
+  var importFile = document.getElementById("f-import-mfg-profile");
+  if (importBtn && importFile) {
+    importBtn.addEventListener("click", function () { importFile.value = ""; importFile.click(); });
+    importFile.addEventListener("change", function () {
+      if (importFile.files && importFile.files[0]) openProfileImportModal(importFile.files[0]);
+    });
+  }
 
   wireManufacturerSuggestCombo();
 
@@ -10910,6 +10965,8 @@ function wireManufacturerProfileControls() {
 
     var delBtn = target.closest(".mfg-profile-del");
     if (delBtn) { e.stopPropagation(); return deleteManufacturerProfile(delBtn.getAttribute("data-id")); }
+    var codeBtn = target.closest(".mfg-profile-code");
+    if (codeBtn) { e.stopPropagation(); return openProfileCodeModal(codeBtn.getAttribute("data-id")); }
 
     var header = target.closest(".mfg-profile-header");
     if (header) return toggleProfileExpand(header.parentElement.getAttribute("data-profile-id"));
@@ -10983,6 +11040,16 @@ function wireManufacturerProfileControls() {
         renderIdentificationTab();
       }
       return;
+    }
+    var widgetDevBtn = target.closest(".mfg-widget-devices");
+    if (widgetDevBtn) {
+      var cardDev = widgetDevBtn.closest(".mfg-widget-card");
+      if (!cardDev) return;
+      var pidDev = cardDev.getAttribute("data-profile-id");
+      var widDev = cardDev.getAttribute("data-widget-id");
+      var prof = (_mfgProfileDetail && _mfgProfileDetail[pidDev]) || null;
+      var wDef = prof && (prof.widgets || []).find(function (x) { return x.id === widDev; });
+      return openWidgetDevicesModal(pidDev, wDef || { id: widDev, name: "widget" }, false);
     }
     var widgetDelBtn = target.closest(".mfg-widget-del");
     if (widgetDelBtn) {
@@ -11503,6 +11570,257 @@ function _wireManufacturerCountCombo(inputId, boxId, rowsFn) {
   });
 }
 
+// ─── Export / import a profile ─────────────────────────────────────────────
+// The file names MIBs and credentials by NAME (no ids, no secrets) and carries
+// no per-asset widget switches. Import previews every item — create or
+// replace, and any MIB this install lacks — and brings in only what is ticked.
+// A widget whose MIB is missing cannot be imported and is offered disabled
+// until the MIB is uploaded.
+
+/** The portable form of a View Code body: the same JSON minus every row id. */
+function _profileForExport(code) {
+  var file = JSON.parse(JSON.stringify(code));
+  (file.widgets || []).forEach(function (w) { delete w.id; });
+  (file.metrics || []).forEach(function (m) { (m.overrides || []).forEach(function (o) { delete o.id; }); });
+  file.exportedAt = new Date().toISOString();
+  return file;
+}
+
+function _downloadProfileFile(file) {
+  var name = String(file.manufacturer || "profile").replace(/[^A-Za-z0-9._-]+/g, "_") + ".manufacturer-profile.json";
+  var blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  var mibs = (file.mibs || []).map(function (m) { return m.moduleName; });
+  showToast("Exported " + file.manufacturer + (mibs.length ? " — it needs " + mibs.join(", ") + " uploaded where it is imported" : ""), "success");
+}
+
+/**
+ * What a View Code save would REMOVE — deleted widgets (their per-device
+ * switches go with them), deleted per-type / per-model rows, and metric rows
+ * cleared back to the built-in seed — for the confirm before saving.
+ */
+function _profileCodeRemovals(original, edited) {
+  var out = [];
+  var keptWidgets = {};
+  (edited.widgets || []).forEach(function (w) { if (w.id) keptWidgets[w.id] = 1; });
+  (original.widgets || []).forEach(function (w) { if (!keptWidgets[w.id]) out.push("delete widget \"" + w.name + "\" (and its per-device switches)"); });
+  (original.metrics || []).forEach(function (m) {
+    var e = (edited.metrics || []).find(function (x) { return x.metricKey === m.metricKey; });
+    if (!e && (m.symbol || m.symbolB)) out.push("clear the " + m.metricKey + " row back to the built-in default");
+    var kept = {};
+    ((e && e.overrides) || []).forEach(function (o) { if (o.id) kept[o.id] = 1; });
+    (m.overrides || []).forEach(function (o) {
+      if (!kept[o.id]) out.push("delete the " + m.metricKey + " row for " + (o.assetType || "") + (o.assetType && o.modelPattern ? " / " : "") + (o.modelPattern || ""));
+    });
+  });
+  return out;
+}
+
+// View Code — the automations idiom (PolarisAutomationPortability.openCodeModal):
+// the profile as editable JSON, with Copy, Export (the portable file, ids
+// stripped) and Save changes (a FULL replace — rows left out are cleared or
+// deleted, confirmed first).
+async function openProfileCodeModal(id) {
+  var code;
+  try {
+    code = await api.serverSettings.getManufacturerProfileCode(id);
+  } catch (err) {
+    showToast(err.message || "Could not load the profile", "error");
+    return;
+  }
+  var canSave = permAtLeast("manufacturerProfiles", "write");
+  var text = JSON.stringify(code, null, 2);
+  var note =
+    '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">' +
+      'This is the <b>' + escapeHtml(code.manufacturer) + '</b> profile as it is stored. ' +
+      (canSave
+        ? '<strong>Saving replaces the whole profile</strong>: a metric row you remove goes back to the built-in default, and a per-type / per-model row or widget you remove is deleted. ' +
+          'Rows keep their <code>id</code> so an edit updates them in place; a row without one is added. MIBs and credentials are named — the names must exist on this install.'
+        : 'You do not have permission to change it.') +
+    '</p>' +
+    '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">' +
+      '<strong>Copy</strong> gives you exactly what is shown; <strong>Export</strong> downloads the portable file instead (the same, minus row ids), which another install can import.' +
+    '</p>';
+  var body = note +
+    '<textarea id="pcode-text" rows="24" spellcheck="false" ' + (canSave ? "" : "readonly ") +
+      'style="width:100%;font-family:var(--font-mono);font-size:0.8rem;line-height:1.45">' + escapeHtml(text) + '</textarea>' +
+    '<div id="pcode-err" class="form-error" style="display:none;margin-top:0.5rem;white-space:pre-wrap"></div>';
+  var footer =
+    '<button class="btn btn-secondary" id="pcode-export" type="button" title="Download this profile as a portable file">Export</button>' +
+    '<button class="btn btn-secondary" id="pcode-copy" type="button">Copy</button>' +
+    '<button class="btn btn-secondary" id="pcode-cancel" type="button">' + (canSave ? "Cancel" : "Close") + '</button>' +
+    (canSave ? '<button class="btn btn-primary" id="pcode-save" type="button">Save changes</button>' : "");
+  var ov = buildOverlay(1300, code.manufacturer + " — profile code", body, footer, null, true);
+  var ta = ov.overlay.querySelector("#pcode-text");
+  var errBox = ov.overlay.querySelector("#pcode-err");
+  function showErr(msg) { errBox.textContent = msg; errBox.style.display = ""; }
+
+  /** The textarea as a profile object, or null with the error shown. Export and
+   *  Save share it, so an unparseable edit is never exported off the last good
+   *  version without saying so. */
+  function readEdited() {
+    errBox.style.display = "none";
+    var parsed;
+    try { parsed = JSON.parse(ta.value); } catch (err) {
+      showErr("Invalid JSON: " + ((err && err.message) || "could not be parsed"));
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) { showErr("The profile must be a JSON object."); return null; }
+    return parsed;
+  }
+
+  ov.overlay.querySelector("#pcode-cancel").addEventListener("click", function () { ov.close(); });
+  ov.overlay.querySelector("#pcode-export").addEventListener("click", function () {
+    var parsed = readEdited();
+    if (parsed) _downloadProfileFile(_profileForExport(parsed));
+  });
+  ov.overlay.querySelector("#pcode-copy").addEventListener("click", function () {
+    var btn = this;
+    function done(ok) { btn.textContent = ok ? "Copied" : "Copy failed"; setTimeout(function () { btn.textContent = "Copy"; }, 1500); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(function () { done(true); }, function () { done(false); });
+    } else {
+      try { ta.select(); document.execCommand("copy"); done(true); } catch (_e) { done(false); }
+    }
+  });
+  if (canSave) {
+    ov.overlay.querySelector("#pcode-save").addEventListener("click", async function () {
+      var btn = this;
+      var parsed = readEdited();
+      if (!parsed) return;
+      if (JSON.stringify(parsed) === JSON.stringify(code)) { ov.close(); return; }
+      var removals = _profileCodeRemovals(code, parsed);
+      if (removals.length) {
+        var ok = await showConfirm("Save these changes? Saving will also:\n\n" + removals.map(function (r) { return "- " + r; }).join("\n"));
+        if (!ok) return;
+      }
+      btn.disabled = true;
+      try {
+        await api.serverSettings.saveManufacturerProfileCode(id, parsed);
+        ov.close();
+        showToast("Profile saved", "success");
+        var listResp = await api.serverSettings.listManufacturerProfiles();
+        _mfgProfiles = (listResp && listResp.profiles) || _mfgProfiles;
+        var detail = await api.serverSettings.getManufacturerProfile(id);
+        _mfgProfileDetail[id] = detail && detail.profile;
+        renderIdentificationTab();
+      } catch (err) {
+        btn.disabled = false;
+        showErr((err && err.message) || "Save failed");
+      }
+    });
+  }
+}
+
+var PROFILE_IMPORT_MAX_BYTES = 1024 * 1024;
+var PROFILE_IMPORT_GROUPS = [
+  ["settings", "Profile"], ["metric", "Metric rows"], ["override", "Per-type / per-model rows"],
+  ["widget", "Custom widgets"], ["layout", "Custom MIB tab"],
+];
+
+async function openProfileImportModal(fileObj) {
+  if (fileObj.size > PROFILE_IMPORT_MAX_BYTES) { showToast("That file is too large to be a manufacturer profile", "error"); return; }
+  var file;
+  try {
+    file = JSON.parse(await fileObj.text());
+  } catch (_) {
+    showToast("That file is not JSON", "error");
+    return;
+  }
+  var preview;
+  try {
+    preview = await api.serverSettings.previewManufacturerProfileImport(file);
+  } catch (err) {
+    showToast(err.message || "Could not read that profile", "error");
+    return;
+  }
+  var items = preview.items || [];
+  var missing = (preview.mibs || []).filter(function (m) { return !m.present; });
+  var mibName = function (m) { return m.moduleName + (m.manufacturer ? " (" + m.manufacturer + (m.model ? " " + m.model : "") + ")" : ""); };
+
+  var body =
+    '<p style="margin:0 0 0.6rem;font-size:0.85rem">' +
+      (preview.targetProfileId
+        ? 'Imports into the existing <b>' + escapeHtml(preview.manufacturer) + '</b> profile. Items marked <b>replaces</b> overwrite what is there.'
+        : 'Creates a new <b>' + escapeHtml(preview.manufacturer) + '</b> profile.') +
+    '</p>' +
+    (missing.length
+      ? '<div style="margin:0 0 0.6rem;padding:8px 10px;border:1px solid var(--color-warning,#d97706);border-radius:4px;font-size:0.82rem">' +
+          '<b style="color:var(--color-warning,#d97706)">Missing MIB' + (missing.length === 1 ? '' : 's') + ':</b> ' +
+          missing.map(function (m) { return '<code>' + escapeHtml(mibName(m)) + '</code>'; }).join(", ") +
+          '. Upload ' + (missing.length === 1 ? 'it' : 'them') + ' at MIB Database, then import again. ' +
+          'Widgets that need a missing MIB can\'t be imported until then; metric rows import but won\'t resolve.' +
+        '</div>'
+      : '') +
+    '<div style="display:flex;gap:10px;margin-bottom:0.4rem;font-size:0.8rem">' +
+      '<a href="#" id="pimp-all">Select all</a><a href="#" id="pimp-none">Select none</a>' +
+    '</div>' +
+    '<div style="max-height:50vh;overflow:auto;border:1px solid var(--color-border);border-radius:4px;padding:6px 10px">' +
+    PROFILE_IMPORT_GROUPS.map(function (g) {
+      var group = items.filter(function (it) { return it.kind === g[0]; });
+      if (!group.length) return "";
+      return '<div style="font-size:0.74rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--color-text-tertiary);margin:8px 0 4px">' + escapeHtml(g[1]) + '</div>' +
+        group.map(function (it) {
+          var notes = [];
+          if (it.action === "replace") notes.push('<span style="color:var(--color-warning,#d97706)">replaces existing</span>');
+          if (it.missingMibs && it.missingMibs.length) notes.push('<span style="color:var(--color-warning,#d97706)">MIB missing: ' + escapeHtml(it.missingMibs.map(function (m) { return m.moduleName; }).join(", ")) + '</span>');
+          if (it.missingCredential) notes.push('<span style="color:var(--color-warning,#d97706)">no credential named "' + escapeHtml(it.missingCredential) + '" — imports unauthenticated</span>');
+          if (it.blocked) notes.push('<span style="color:var(--color-danger)">' + escapeHtml(it.blocked) + '</span>');
+          return '<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;font-size:0.84rem' + (it.blocked ? ';opacity:0.6' : '') + '">' +
+            '<input type="checkbox" class="pimp-item" value="' + escapeHtml(it.id) + '"' + (it.blocked ? ' disabled' : ' checked') + ' style="margin-top:3px">' +
+            '<span>' + escapeHtml(it.label) + (notes.length ? '<br><span style="font-size:0.76rem">' + notes.join(" · ") + '</span>' : '') + '</span>' +
+          '</label>';
+        }).join("");
+    }).join("") +
+    '</div>';
+  openModal("Import manufacturer profile", body,
+    '<button class="btn btn-secondary" id="pimp-cancel">Cancel</button><button class="btn btn-primary" id="pimp-go">Import</button>');
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll("#modal-overlay .pimp-item"));
+  var go = document.getElementById("pimp-go");
+  function refresh() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    go.textContent = n ? "Import " + n + " item" + (n === 1 ? "" : "s") : "Import";
+    go.disabled = n === 0;
+  }
+  boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+  document.getElementById("pimp-all").addEventListener("click", function (e) { e.preventDefault(); boxes.forEach(function (b) { if (!b.disabled) b.checked = true; }); refresh(); });
+  document.getElementById("pimp-none").addEventListener("click", function (e) { e.preventDefault(); boxes.forEach(function (b) { b.checked = false; }); refresh(); });
+  document.getElementById("pimp-cancel").addEventListener("click", closeModal);
+  go.addEventListener("click", async function () {
+    var picked = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+    go.disabled = true;
+    try {
+      var res = await api.serverSettings.applyManufacturerProfileImport(file, picked);
+      var failed = (res.results || []).filter(function (r) { return !r.ok; });
+      closeModal();
+      if (failed.length) {
+        showToast((res.results.length - failed.length) + " imported, " + failed.length + " failed: " +
+          failed.map(function (r) { return r.id + " — " + r.error; }).join("; "), "error");
+      } else {
+        showToast("Imported " + res.results.length + " item" + (res.results.length === 1 ? "" : "s") + " into " + preview.manufacturer, "success");
+      }
+      // Fresh list (counts, a new profile) and no stale detail for the target.
+      var listResp = await api.serverSettings.listManufacturerProfiles();
+      _mfgProfiles = (listResp && listResp.profiles) || _mfgProfiles;
+      var detail = await api.serverSettings.getManufacturerProfile(res.profileId);
+      _mfgProfileDetail[res.profileId] = detail && detail.profile;
+      _mfgProfileExpanded[res.profileId] = true;
+      _mfgSuggestions = null;
+      renderIdentificationTab();
+    } catch (err) {
+      go.disabled = false;
+      showToast(err.message || "Import failed", "error");
+    }
+  });
+  refresh();
+}
+
 async function addManufacturerProfile() {
   var input = document.getElementById("f-mfg-profile-add-name");
   var name = input && input.value ? input.value.trim() : "";
@@ -11892,9 +12210,127 @@ async function saveNewWidget(scope) {
     showToast("Widget added");
     _mfgToastWarnings(resp);
     renderIdentificationTab();
+    // Business rule 130: a new widget polls nothing until it is switched on
+    // for an asset, so offer the devices it applies to straight away.
+    if (resp && resp.widget && permAtLeast("assets", "write")) {
+      openWidgetDevicesModal(profileId, resp.widget, true);
+    }
   } catch (err) {
     showToast(err.message || "Add widget failed", "error");
   }
+}
+
+// ─── "Enable on these devices" (business rule 130) ─────────────────────────
+// Lists the assets a widget applies to (its profile's manufacturer + optional
+// model pattern) with a checkbox each. Opened right after a widget is created
+// (nothing is checked — a new widget polls nothing until chosen here or on an
+// asset's Custom MIB tab) and from the widget card's Devices… button (current
+// state pre-checked). Saves only the difference.
+async function openWidgetDevicesModal(profileId, widget, isNew) {
+  var title = (isNew ? "Enable " : "Devices for ") + '"' + widget.name + '"';
+  openModal(title, '<p class="empty-state" style="margin:0">Loading devices…</p>',
+    '<button class="btn btn-secondary" id="wdev-cancel">' + (isNew ? "Skip for now" : "Cancel") + '</button>');
+  document.getElementById("wdev-cancel").addEventListener("click", closeModal);
+  var rows;
+  try {
+    rows = ((await api.serverSettings.listProfileWidgetAssets(profileId, widget.id)) || {}).assets || [];
+  } catch (err) {
+    var b = document.querySelector("#modal-overlay .modal-body");
+    if (b) b.innerHTML = '<p style="color:var(--color-danger);margin:0">' + escapeHtml(err.message || "Could not load devices") + '</p>';
+    return;
+  }
+  var initial = {};
+  rows.forEach(function (r) { initial[r.id] = !!r.enabled; });
+  var body = document.querySelector("#modal-overlay .modal-body");
+  var footer = document.querySelector("#modal-overlay .modal-footer");
+  if (!body || !footer) return;
+
+  if (!rows.length) {
+    body.innerHTML = '<p style="margin:0">No assets match this widget yet' +
+      (widget.modelPattern ? ' (manufacturer + model pattern <code>' + escapeHtml(widget.modelPattern) + '</code>)' : '') +
+      '. It can be switched on later from an asset\'s Custom MIB tab or this card\'s Devices… button.</p>';
+    return;
+  }
+
+  body.innerHTML =
+    '<p style="margin:0 0 0.6rem;font-size:0.85rem;color:var(--color-text-secondary)">' +
+      (isNew
+        ? 'This widget polls nothing until it is switched on for a device. Choose the devices to start polling it on now.'
+        : 'Checked devices poll this widget on their hardware-sensor interval. Unchecking one stops polling it; its collected history stays.') +
+    '</p>' +
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:0.5rem">' +
+      '<input type="search" id="wdev-filter" placeholder="Filter by name, IP or model" style="flex:1">' +
+      '<span id="wdev-count" style="font-size:0.8rem;color:var(--color-text-tertiary);white-space:nowrap"></span>' +
+    '</div>' +
+    '<div style="max-height:50vh;overflow:auto;border:1px solid var(--color-border);border-radius:4px">' +
+      '<table class="data-table" style="font-size:0.84rem;margin:0"><thead><tr>' +
+        '<th style="width:32px"><input type="checkbox" id="wdev-all" title="Select every listed device"></th>' +
+        '<th>Device</th><th>IP address</th><th>Model</th><th>Status</th>' +
+      '</tr></thead><tbody id="wdev-rows">' +
+      rows.map(function (r) {
+        var hay = [r.hostname, r.ipAddress, r.model].filter(Boolean).join(" ").toLowerCase();
+        return '<tr data-hay="' + escapeHtml(hay) + '">' +
+          '<td><input type="checkbox" class="wdev-pick" data-id="' + escapeHtml(r.id) + '"' + (r.enabled ? " checked" : "") + '></td>' +
+          '<td>' + escapeHtml(r.hostname || "—") + (r.monitored ? '' : ' <span style="font-size:0.75rem;color:var(--color-text-tertiary)">(not monitored)</span>') + '</td>' +
+          '<td class="mono">' + escapeHtml(r.ipAddress || "—") + '</td>' +
+          '<td>' + escapeHtml(r.model || "—") + '</td>' +
+          '<td>' + escapeHtml(r.monitorStatus || "—") + '</td>' +
+        '</tr>';
+      }).join("") +
+      '</tbody></table>' +
+    '</div>';
+  footer.innerHTML =
+    '<button class="btn btn-secondary" id="wdev-cancel">' + (isNew ? "Skip for now" : "Cancel") + '</button>' +
+    '<button class="btn btn-primary" id="wdev-save"></button>';
+
+  var picks = Array.prototype.slice.call(body.querySelectorAll(".wdev-pick"));
+  var allBox = document.getElementById("wdev-all");
+  var saveBtn = document.getElementById("wdev-save");
+  function visible(p) { return p.closest("tr").style.display !== "none"; }
+  function refresh() {
+    var checked = picks.filter(function (p) { return p.checked; }).length;
+    var changed = picks.filter(function (p) { return p.checked !== initial[p.getAttribute("data-id")]; }).length;
+    document.getElementById("wdev-count").textContent = checked + " of " + picks.length + " selected";
+    saveBtn.textContent = isNew ? (checked ? "Enable on " + checked + " device" + (checked === 1 ? "" : "s") : "Enable") : "Save";
+    saveBtn.disabled = changed === 0;
+    var vis = picks.filter(visible);
+    allBox.checked = vis.length > 0 && vis.every(function (p) { return p.checked; });
+  }
+  picks.forEach(function (p) { p.addEventListener("change", refresh); });
+  allBox.addEventListener("change", function () {
+    picks.filter(visible).forEach(function (p) { p.checked = allBox.checked; });
+    refresh();
+  });
+  document.getElementById("wdev-filter").addEventListener("input", function () {
+    var q = this.value.trim().toLowerCase();
+    picks.forEach(function (p) {
+      var tr = p.closest("tr");
+      tr.style.display = !q || tr.getAttribute("data-hay").indexOf(q) !== -1 ? "" : "none";
+    });
+    refresh();
+  });
+  document.getElementById("wdev-cancel").addEventListener("click", closeModal);
+  saveBtn.addEventListener("click", async function () {
+    var enable = [], disable = [];
+    picks.forEach(function (p) {
+      var id = p.getAttribute("data-id");
+      if (p.checked && !initial[id]) enable.push(id);
+      if (!p.checked && initial[id]) disable.push(id);
+    });
+    saveBtn.disabled = true;
+    try {
+      var res = await api.serverSettings.setProfileWidgetAssets(profileId, widget.id, { enable: enable, disable: disable });
+      closeModal();
+      var parts = [];
+      if (res && res.enabled)  parts.push("on for " + res.enabled);
+      if (res && res.disabled) parts.push("off for " + res.disabled);
+      showToast('"' + widget.name + '" polling ' + (parts.join(", ") || "unchanged") + " device(s)", "success");
+    } catch (err) {
+      showToast(err.message || "Could not update devices", "error");
+      saveBtn.disabled = false;
+    }
+  });
+  refresh();
 }
 
 async function saveWidgetEdit(scope) {

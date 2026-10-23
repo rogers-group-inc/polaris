@@ -236,6 +236,7 @@ import {
   collectTelemetryWorkload,
   probeWorkload,
 } from "./workloadMonitorService.js";
+import { enabledWidgetIdsForAsset, assetIdsWithEnabledWidgets } from "./customWidgetEnablementService.js";
 import {
   collectGenericApiWidgetSamples,
   collectHardwareSensorsGenericApi,
@@ -12335,6 +12336,8 @@ interface RunStats {
   sdwan:        { collected: number; failed: number };
   /** ICMP packet-loss sampler (warning/recovering assets only). */
   lossSample:   { collected: number; failed: number };
+  /** Manufacturer custom widgets switched on per asset (business rule 130). */
+  customWidget: { collected: number; failed: number };
 }
 
 /**
@@ -12344,7 +12347,17 @@ interface RunStats {
  */
 const EVENT_LOG_MAX_ENTRIES_PER_POLL = 300;
 
-export type MonitorCadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "sdwan" | "lossSample";
+export type MonitorCadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "sdwan" | "lossSample" | "customWidget";
+
+/**
+ * The manufacturer custom-widget cadence's interval (business rule 130): the
+ * asset's resolved HARDWARE-SENSOR interval, so a widget polls as often as the
+ * temperature stream is set to. One function so the pg-boss publisher
+ * (monitorAssets.publishDueWork) and computeDueWork cannot drift.
+ */
+export function customWidgetIntervalSec(eff: Pick<MonitorTierSettings, "temperatureIntervalSeconds">): number {
+  return eff.temperatureIntervalSeconds;
+}
 
 /**
  * Per-cadence outcome tally returned by the runFooFor() functions. Used by
@@ -12625,10 +12638,11 @@ export async function runTelemetryFor(assetId: string, labels: WorkItemLabels): 
       recordTelemetryResult(assetId, tr),
       recordHardwareSensorResult(assetId, temp),
     ]);
-    // Custom widgets ride the telemetry cadence (Slice 7b). Fire-and-forget
-    // so a slow walk on one widget can't drag the telemetry tick — failures
-    // log inside the helper without escalating to a cadence crash.
-    void collectAndRecordCustomWidgets(assetId, asset).catch((err) => {
+    // Generic API widgets ride the telemetry cadence. Fire-and-forget so a
+    // slow feed can't drag the telemetry tick — failures log inside the helper
+    // without escalating to a cadence crash. Manufacturer widgets have their
+    // own cadence (runCustomWidgetsFor, business rule 130).
+    void collectAndRecordGenericApiWidgets(assetId, asset).catch((err) => {
       logger.debug({ err, assetId }, "Custom widget collection failed");
     });
     // Outcome aggregates both streams. Success when each stream either
@@ -12668,17 +12682,24 @@ export async function runTelemetryFor(assetId: string, labels: WorkItemLabels): 
 /** Per-probe row cap — see the truncation warning in the state branch below. */
 const MAX_STATE_ROWS_PER_PROBE = 500;
 
-async function collectManufacturerWidgetSamples(assetId: string, asset: NonNullable<TelemetryAssetRow>): Promise<WidgetSampleSet> {
-  if (!asset.manufacturer) return NO_WIDGET_SAMPLES;
+async function collectManufacturerWidgetSamples(
+  assetId: string,
+  asset: NonNullable<TelemetryAssetRow>,
+  enabledIds: Set<string>,
+): Promise<WidgetSampleSet> {
+  if (!asset.manufacturer || enabledIds.size === 0) return NO_WIDGET_SAMPLES;
 
   // Same function as the static top-of-file import (aliased there as
   // getDbManufacturerProfile) — no dynamic import on the telemetry hot path.
   const profile = getDbManufacturerProfile(asset.manufacturer);
   if (!profile || profile.widgets.length === 0) return NO_WIDGET_SAMPLES;
 
-  // Per-model gating mirrors the read-endpoint filter.
+  // Business rule 130: only the widgets switched ON for this asset poll it,
+  // and only while they still apply (per-model gating mirrors the read
+  // endpoint) — a row left behind by a model change polls nothing.
   const modelStr = asset.model ?? "";
   const widgets = profile.widgets.filter((w) => {
+    if (!enabledIds.has(w.id)) return false;
     if (!w.modelPattern) return true;
     // RE2 (business rule 116); a pattern RE2 cannot compile matches nothing.
     return tryCompileSafeRegex(w.modelPattern, { ignoreCase: true })?.test(modelStr) ?? false;
@@ -12697,18 +12718,12 @@ async function collectManufacturerWidgetSamples(assetId: string, asset: NonNulla
     ...asset,
     discoveredByIntegrationType: asset.discoveredByIntegration?.type ?? null,
   });
-  // Custom-widget polling falls back to cpuMemoryPolling — same SNMP
-  // transport is the usual setup, and operators who flipped the asset to
-  // disabled telemetry probably don't want widget walks either. "disabled"
-  // explicit on customWidgetPolling skips the pass outright.
-  //
-  // customWidgetPolling/customWidgetTimeoutMs aren't surfaced by the
-  // resolver yet (they'd add columns to every tier); read the asset row's
-  // own override directly and fall back to cpuMemory for transport choice
-  // + timeout. The full per-tier hierarchy for these two fields can land
-  // alongside a UI for editing them.
-  const polling = (asset.customWidgetPolling ?? effective.cpuMemoryPolling) as string | null;
-  const snmpEnabled = !!polling && polling !== "disabled" && polling === "snmp";
+  // Business rule 130: the per-asset switch IS the gate. SNMP widgets no longer
+  // borrow cpuMemoryPolling — a UPS has no CPU to poll, and making its battery
+  // widgets wait on a CPU/memory stream set to SNMP was the coupling this rule
+  // removed. Only an explicit asset-level customWidgetPolling "disabled" (a
+  // legacy override with no editor) still turns the SNMP half off.
+  const snmpEnabled = asset.customWidgetPolling !== "disabled";
 
   // An HTTP check is the one transport happy to dial a NAME rather than an IP:
   // a TLS check against a name is the check an operator means, since the cert
@@ -12718,14 +12733,17 @@ async function collectManufacturerWidgetSamples(assetId: string, asset: NonNulla
   if (!host && !httpHost) return NO_WIDGET_SAMPLES;
   if (!snmpEnabled && httpWidgets.length === 0) return NO_WIDGET_SAMPLES;
 
-  // Credential resolution mirrors the telemetry path: per-stream asset
-  // credential wins, then the asset's generic monitor credential, then
-  // FMG/FortiGate integration fallback. Custom widgets MUST have an SNMP
-  // credential — there's no FortiOS REST equivalent in v1.
+  // Credential: the first SNMP credential on the asset, in order custom
+  // widget → hardware sensors → CPU/memory → generic monitor (the widgets run
+  // on the hardware-sensor cadence, so that stream's credential is the next
+  // most specific), then the FMG/FortiGate integration fallback. Custom
+  // widgets MUST have an SNMP credential — there's no FortiOS REST equivalent.
   let snmpCfg: Record<string, unknown> | null = null;
-  const direct = asset.customWidgetCredential ?? asset.cpuMemoryCredential ?? asset.monitorCredential;
-  if (direct?.type === "snmp") {
-    snmpCfg = direct.config as Record<string, unknown>;
+  const candidates = [asset.customWidgetCredential, asset.temperatureCredential, asset.cpuMemoryCredential, asset.monitorCredential];
+  const snmpCred = candidates.find((c) => c?.type === "snmp");
+  const direct = candidates.find((c) => !!c) ?? null;
+  if (snmpCred) {
+    snmpCfg = snmpCred.config as Record<string, unknown>;
   } else if (isFortinetIntegrationType(asset.discoveredByIntegration?.type)) {
     try {
       snmpCfg = await loadSnmpCredentialConfigForFortinetAsset(direct, asset.discoveredByIntegration);
@@ -12738,7 +12756,7 @@ async function collectManufacturerWidgetSamples(assetId: string, asset: NonNulla
 
   await ensureRegistryLoaded();
   const scope = { manufacturer: asset.manufacturer, model: asset.model };
-  const timeoutMs = asset.customWidgetTimeoutMs ?? effective.cpuMemoryTimeoutMs;
+  const timeoutMs = asset.customWidgetTimeoutMs ?? effective.temperatureTimeoutMs;
 
   const samples: Array<{ widgetId: string; kind: "scalar" | "table"; value: any }> = [];
   // State probes (widgetType "state") normalize to 0/1 and land in their own
@@ -12863,7 +12881,7 @@ async function collectManufacturerWidgetSamples(assetId: string, asset: NonNulla
   // a device nobody checked. The response-time gauge is written only on success
   // — a failed request has no meaningful duration to chart.
   if (httpWidgets.length > 0 && httpHost) {
-    const httpTimeoutMs = asset.customWidgetTimeoutMs ?? effective.cpuMemoryTimeoutMs;
+    const httpTimeoutMs = asset.customWidgetTimeoutMs ?? effective.temperatureTimeoutMs;
     await Promise.all(httpWidgets.map(async (w: any) => {
       try {
         const check = (w.httpCheck ?? {}) as Record<string, unknown>;
@@ -12917,26 +12935,67 @@ interface WidgetSampleSet {
 const NO_WIDGET_SAMPLES: WidgetSampleSet = { samples: [], stateRows: [] };
 
 /**
- * The custom-widget pass on the telemetry cadence: the manufacturer-profile
- * widgets (SNMP walks, HTTP checks) and the widgets a Generic API integration
- * defines for the assets it lists (rule 100(i)), read side by side and
- * written in one transaction. Either half failing costs only its own samples.
+ * The Generic API half of the custom widgets (rule 100(i)) — the widgets an
+ * integration defines for the assets it lists. Still rides the telemetry
+ * cadence: they are the integration's, not a manufacturer profile's, and carry
+ * no per-asset switch. The manufacturer half moved to its own cadence
+ * (`runCustomWidgetsFor`, business rule 130).
  */
-async function collectAndRecordCustomWidgets(assetId: string, preloaded?: TelemetryAssetRow): Promise<void> {
+async function collectAndRecordGenericApiWidgets(assetId: string, preloaded?: TelemetryAssetRow): Promise<void> {
   const asset = preloaded !== undefined ? preloaded : await loadTelemetryAsset(assetId);
   if (!asset || !asset.monitored) return;
-  const [mfr, generic] = await Promise.all([
-    collectManufacturerWidgetSamples(assetId, asset).catch((err) => {
-      logger.debug({ err, assetId }, "Manufacturer widget pass failed");
-      return NO_WIDGET_SAMPLES;
-    }),
-    collectGenericApiWidgetSamples(assetId).catch((err) => {
-      logger.debug({ err, assetId }, "Generic API widget pass failed");
-      return NO_WIDGET_SAMPLES;
-    }),
-  ]);
-  const samples = [...mfr.samples, ...generic.samples];
-  const stateRows = [...mfr.stateRows, ...generic.stateRows];
+  const generic = await collectGenericApiWidgetSamples(assetId).catch((err) => {
+    logger.debug({ err, assetId }, "Generic API widget pass failed");
+    return NO_WIDGET_SAMPLES;
+  });
+  await recordWidgetSampleSet(assetId, generic);
+}
+
+/**
+ * The manufacturer custom-widget pass (business rule 130): its own cadence,
+ * due off `lastCustomWidgetAttemptAt` at the asset's resolved hardware-sensor
+ * interval, queued only for an asset with at least one widget switched on.
+ * Polls exactly the switched-on widgets that still apply. The attempt is
+ * stamped first, whatever follows (rule 118), so a device that never answers
+ * is asked once per interval rather than on every heavy tick.
+ */
+export async function runCustomWidgetsFor(assetId: string, labels: WorkItemLabels): Promise<CadenceOutcome> {
+  const stopWork = startWorkTimer("customWidget", labels);
+  try {
+    await prisma.asset.updateMany({ where: { id: assetId }, data: { lastCustomWidgetAttemptAt: new Date() } });
+    const asset = await loadTelemetryAsset(assetId);
+    if (!asset || !asset.monitored) {
+      recordWorkOutcome("customWidget", "success", labels);
+      return "success";
+    }
+    const enabled = await enabledWidgetIdsForAsset(assetId);
+    if (enabled.size === 0) {
+      recordWorkOutcome("customWidget", "success", labels);
+      return "success";
+    }
+    const set = await collectManufacturerWidgetSamples(assetId, asset, enabled);
+    if (set.samples.length === 0 && set.stateRows.length === 0) {
+      // Widgets are switched on but nothing came back: no credential, no
+      // address, or the device did not answer.
+      recordWorkOutcome("customWidget", "failure", labels);
+      return "failure";
+    }
+    await recordWidgetSampleSet(assetId, set);
+    recordWorkOutcome("customWidget", "success", labels);
+    return "success";
+  } catch (err) {
+    logger.error({ err, assetId }, "Custom widget pass crashed");
+    recordWorkOutcome("customWidget", "crash", labels);
+    return "crash";
+  } finally {
+    stopWork();
+  }
+}
+
+/** Write one pass's widget readings and stamp `lastCustomWidgetAt` (the last
+ *  SUCCESS) in one transaction. A set with nothing in it writes nothing. */
+async function recordWidgetSampleSet(assetId: string, set: WidgetSampleSet): Promise<void> {
+  const { samples, stateRows } = set;
   if (samples.length === 0 && stateRows.length === 0) return;
   try {
     await prisma.$transaction([
@@ -13920,6 +13979,8 @@ export async function loadMonitorPassCandidates() {
       monitoredProcesses: true, mappedProcesses: true,
       // Same, for the agentless event-log cadence.
       eventLogPolling: true, lastEventLogAt: true,
+      // Manufacturer custom-widget cadence anchor (business rules 118 + 130).
+      lastCustomWidgetAttemptAt: true,
       // SD-WAN cadence anchor; its interval comes from the integration sidecar
       // (resolveSdwanIntervalSec), not a per-asset column.
       lastSdwanAt: true,
@@ -13929,7 +13990,7 @@ export async function loadMonitorPassCandidates() {
 }
 export type MonitorPassCandidate = Awaited<ReturnType<typeof loadMonitorPassCandidates>>[number];
 
-export type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "sdwan" | "lossSample";
+export type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "sdwan" | "lossSample" | "customWidget";
 export type MonitorWork = { id: string; kind: MonitorWorkKind };
 /**
  * Effective probe spacing in seconds for one asset.
@@ -13976,6 +14037,7 @@ export interface DueMonitorWork {
   eventLogWork: MonitorWork[];
   sdwanWork: MonitorWork[];
   lossSamples: MonitorWork[];
+  customWidgetWork: MonitorWork[];
   /** ICMP assets due a probe, batched rather than dispatched per item. */
   probeBatch: ProbeBatchItem[];
 }
@@ -13996,6 +14058,9 @@ export async function computeDueWork(
   candidates: MonitorPassCandidate[],
   enabled: Set<MonitorCadence>,
   now: Date,
+  // Assets with at least one manufacturer custom widget switched on (business
+  // rule 130) — loaded once per pass by the caller, never per asset here.
+  widgetAssetIds: Set<string> = new Set(),
 ): Promise<DueMonitorWork> {
   function isDue(last: Date | null, intervalSec: number): boolean {
     if (intervalSec <= 0) return false;
@@ -14011,6 +14076,7 @@ export async function computeDueWork(
   const eventLogWork: MonitorWork[] = [];
   const sdwanWork: MonitorWork[] = [];
   const lossSamples: MonitorWork[] = [];
+  const customWidgetWork: MonitorWork[] = [];
   const probeBatch: ProbeBatchItem[] = [];
   // Same cadence resolution the pg-boss publisher makes — the operator's
   // interval floored at what the installed pinger can finish for this fleet
@@ -14192,6 +14258,14 @@ export async function computeDueWork(
         isDue(a.lastEventLogAt, eff.eventLogIntervalSeconds)) {
       eventLogWork.push({ id: a.id, kind: "eventLog" });
     }
+    // Manufacturer custom widgets (business rule 130): only for an asset with a
+    // widget switched on, at the hardware-sensor interval, isUp-gated like
+    // every authenticated stream. No polling-method gate — the switch is the
+    // gate. Keep in sync with publishDueWork in monitorAssets.ts.
+    if (enabled.has("customWidget") && isUp && widgetAssetIds.has(a.id) &&
+        isDue(a.lastCustomWidgetAttemptAt, customWidgetIntervalSec(eff))) {
+      customWidgetWork.push({ id: a.id, kind: "customWidget" });
+    }
     // SD-WAN cadence (FortiOS SLA + rule selection). Rides the light loop so a
     // 60s interval lands on time; isUp gate like every authenticated stream.
     // The interval is read AFTER resolveMonitorSettings above, which is what
@@ -14232,7 +14306,7 @@ export async function computeDueWork(
     );
     lossSamples.length = LOSS_SAMPLES_MAX_PER_PASS;
   }
-  return { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, sdwanWork, lossSamples };
+  return { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, sdwanWork, lossSamples, customWidgetWork };
 }
 
 export async function runMonitorPass(opts?: { concurrency?: number; cadences?: MonitorCadence[] }): Promise<RunStats> {
@@ -14303,12 +14377,16 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
       // The loss sampler is ICMP by definition, whatever the response-time
       // stream uses — that IS the finding the label should carry.
       lossSample:   "icmp",
+      // Manufacturer widgets are SNMP walks (plus HTTP checks, a minority).
+      customWidget: "snmp",
     });
     assetTypeById.set(a.id, a.assetType ?? "unknown");
   }
 
-  const { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, sdwanWork, lossSamples } =
-    await computeDueWork(candidates, enabled, now);
+  // One query per pass, and only when this pass dispatches the cadence.
+  const widgetAssetIds = enabled.has("customWidget") ? await assetIdsWithEnabledWidgets() : new Set<string>();
+  const { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, sdwanWork, lossSamples, customWidgetWork } =
+    await computeDueWork(candidates, enabled, now, widgetAssetIds);
 
   // Order matters: probes first so a saturated worker pool drains the cheap
   // cadence ahead of the heavy walks. Fast-filtered scrapes ride the same
@@ -14327,9 +14405,10 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
   // per-host process spawn the batching exists to remove.
   // SD-WAN sits behind fastFiltered on the light loop: two small REST GETs,
   // still behind the probes that decide whether anything is down.
-  const work: MonitorWork[] = [...probes, ...fastFiltereds, ...sdwanWork, ...telemetries, ...systemInfos, ...processesWork, ...eventLogWork];
+  const work: MonitorWork[] = [...probes, ...fastFiltereds, ...sdwanWork, ...telemetries, ...customWidgetWork, ...systemInfos, ...processesWork, ...eventLogWork];
 
   setQueueDepth({
+    customWidget: customWidgetWork.length,
     probe: probes.length,
     fastFiltered: fastFiltereds.length,
     telemetry: telemetries.length,
@@ -14349,6 +14428,7 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
     eventLog:   { collected: 0, failed: 0 },
     sdwan:      { collected: 0, failed: 0 },
     lossSample: { collected: 0, failed: 0 },
+    customWidget: { collected: 0, failed: 0 },
   };
   if (work.length === 0) {
     endPassTimer();
@@ -14408,6 +14488,12 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
             const outcome = await runSdwanFor(w.id, labelFor("sdwan"));
             if (outcome === "success") stats.sdwan.collected++;
             else stats.sdwan.failed++;
+            break;
+          }
+          case "customWidget": {
+            const outcome = await runCustomWidgetsFor(w.id, labelFor("customWidget"));
+            if (outcome === "success") stats.customWidget.collected++;
+            else stats.customWidget.failed++;
             break;
           }
 

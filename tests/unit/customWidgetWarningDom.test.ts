@@ -41,13 +41,25 @@ function fnSrc(lines: string[], name: string): string {
   return lines.slice(start, end + 1).join("\n");
 }
 
+/** A top-level `var NAME = …;` declaration, up to the line that ends it. */
+function varSrc(lines: string[], name: string): string {
+  const start = lines.findIndex((l) => l.startsWith(`var ${name} `));
+  if (start < 0) throw new Error(`var ${name} not found`);
+  const end = lines.findIndex((l, i) => i >= start && /;\s*$/.test(l));
+  return lines.slice(start, end + 1).join("\n");
+}
+
 beforeAll(() => {
   g.escapeHtml = (x: unknown) => String(x ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const src = [
     ...["_customWidgetWarning", "_customWidgetWarnCaption", "_renderCustomWidgetGauge", "_renderCustomWidgetLine",
-      "_renderCustomWidgetScalarFallback", "_formatNumber"].map((n) => fnSrc(FILES.assets, n)),
-    ...["_widgetFormField", "_widgetDisplayOptionsForm", "_widgetOptionsSummary", "_readWidgetDisplayOptions"]
-      .map((n) => fnSrc(FILES.settings, n)),
+      "_renderCustomWidgetScalarFallback", "_formatNumber",
+      // The renderers draw through the widget display helper (°C/°F in the
+      // install's unit, durations) — no PolarisTempUnit here, so plain numbers.
+      "_cwDisplay", "_formatDuration", "_customWidgetWarningShown"].map((n) => fnSrc(FILES.assets, n)),
+    ...["WIDGET_VALUE_FORMATS", "WIDGET_UNIT_HINT"].map((n) => varSrc(FILES.settings, n)),
+    ...["_widgetFormField", "_widgetDisplayOptionsForm", "_widgetOptionsSummary", "_readWidgetDisplayOptions",
+      "_widgetFormatSelectHTML"].map((n) => fnSrc(FILES.settings, n)),
   ].join("\n");
   // Indirect eval: the declarations land on globalThis, where the tests call them.
   (0, eval)(src);

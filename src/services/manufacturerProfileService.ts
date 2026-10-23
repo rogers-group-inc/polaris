@@ -11,6 +11,7 @@
  */
 
 import { prisma } from "../db.js";
+import { Prisma } from "../generated/prisma/client.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import {
   isTransformKind,
@@ -176,7 +177,7 @@ export interface CustomWidgetRow {
   /** NULL on an "http" widget — there is no MIB behind a URL. */
   mibId:          string | null;
   type:           "scalar" | "table";
-  widgetType:     "gauge" | "line" | "table" | "state" | "http";
+  widgetType:     "gauge" | "line" | "value" | "table" | "state" | "http";
   transform:      TransformKind | null;
   displayOptions: Record<string, unknown>;
   order:          number;
@@ -214,11 +215,67 @@ export interface ProfileFull {
   manufacturer: string;
   /** "Also applies when" regex over `manufacturer os mibModuleName`, used only when no profile is keyed by the canonical manufacturer. */
   matchPattern: string | null;
+  /** The Custom MIB tab's arrangement of `widgets`; null = default grid. */
+  widgetLayout: WidgetLayout | null;
   createdBy:    string | null;
   createdAt:    string;
   updatedAt:    string;
   metrics:      MetricRow[];
   widgets:      CustomWidgetRow[];
+}
+
+// ─── Custom MIB tab layout ────────────────────────────────────────────────
+// The dashboard's column model (public/js/dashboard.js), per profile: an
+// ordered list of columns on a 12-wide grid, each a vertical stack of widgets.
+// Edited with the Custom MIB tab's pencil button and shared by every asset
+// under the profile.
+
+export const LAYOUT_WIDTHS = [3, 4, 6, 12] as const;
+export const LAYOUT_HEIGHTS = [1, 2, 3] as const;
+const LAYOUT_MAX_COLUMNS = 48;
+
+export interface WidgetLayout {
+  version: 1;
+  columns: Array<{
+    id: string;
+    width: (typeof LAYOUT_WIDTHS)[number];
+    widgets: Array<{ id: string; height: (typeof LAYOUT_HEIGHTS)[number] }>;
+  }>;
+}
+
+/**
+ * Coerce a stored or submitted layout into a valid one for THIS profile's
+ * widgets: unknown and repeated widget ids are dropped, an off-grid width or
+ * height falls back to the default, empty columns go, and the column count is
+ * capped. Returns null when nothing usable is left — the tab then shows its
+ * default grid. A widget the layout does not mention is not added here; the
+ * tab appends it after the laid-out ones, so a newly created widget appears
+ * without anyone re-saving the layout.
+ */
+export function sanitizeWidgetLayout(raw: unknown, widgetIds: Set<string>): WidgetLayout | null {
+  if (!raw || typeof raw !== "object") return null;
+  const cols = (raw as { columns?: unknown }).columns;
+  if (!Array.isArray(cols)) return null;
+  const seen = new Set<string>();
+  const columns: WidgetLayout["columns"] = [];
+  for (const c of cols.slice(0, LAYOUT_MAX_COLUMNS)) {
+    if (!c || typeof c !== "object") continue;
+    const col = c as { id?: unknown; width?: unknown; widgets?: unknown };
+    const width = (LAYOUT_WIDTHS as readonly number[]).includes(Number(col.width))
+      ? (Number(col.width) as WidgetLayout["columns"][number]["width"]) : 3;
+    const widgets: WidgetLayout["columns"][number]["widgets"] = [];
+    for (const w of Array.isArray(col.widgets) ? col.widgets : []) {
+      const id = w && typeof w === "object" ? String((w as { id?: unknown }).id ?? "") : "";
+      if (!id || !widgetIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      const h = Number((w as { height?: unknown }).height);
+      widgets.push({ id, height: (LAYOUT_HEIGHTS as readonly number[]).includes(h) ? (h as 1 | 2 | 3) : 1 });
+    }
+    if (widgets.length === 0) continue;
+    const colId = typeof col.id === "string" && col.id && col.id.length <= 64 ? col.id : `col-${columns.length + 1}`;
+    columns.push({ id: colId, width, widgets });
+  }
+  return columns.length ? { version: 1, columns } : null;
 }
 
 const profileCache = new Map<string, ProfileFull>();
@@ -256,9 +313,9 @@ function asMetricRowType(value: unknown): MetricRowType {
 // "state" is the 0/1 probe (see src/utils/stateProbes.ts): same walk, but the
 // reading is mapped to a boolean at scrape time and lands in AssetStateSample
 // instead of AssetCustomWidgetSample, which is what makes it alertable per row.
-function asWidgetType(value: unknown): "gauge" | "line" | "table" | "state" | "http" {
-  if (value === "gauge" || value === "line" || value === "table" || value === "state" || value === "http") return value;
-  throw new AppError(400, "Invalid widgetType — expected gauge | line | table | state | http");
+function asWidgetType(value: unknown): "gauge" | "line" | "value" | "table" | "state" | "http" {
+  if (value === "gauge" || value === "line" || value === "value" || value === "table" || value === "state" || value === "http") return value;
+  throw new AppError(400, "Invalid widgetType — expected gauge | line | value | table | state | http");
 }
 
 /**
@@ -319,7 +376,7 @@ function asWidgetSymbolType(value: unknown): "scalar" | "table" {
  * behind that a later type flip would resurrect.
  */
 function stateFieldsForWrite(
-  widgetType: "gauge" | "line" | "table" | "state" | "http",
+  widgetType: "gauge" | "line" | "value" | "table" | "state" | "http",
   stateMap: unknown,
   labelSymbol: unknown,
 ): { stateMap: StateMap | null; labelSymbol: string | null } {
@@ -536,6 +593,7 @@ function shapeProfile(row: any): ProfileFull {
     id:           row.id,
     manufacturer: row.manufacturer,
     matchPattern: row.matchPattern ?? null,
+    widgetLayout: sanitizeWidgetLayout(row.widgetLayout, new Set(widgets.map((w) => w.id))),
     createdBy:    row.createdBy ?? null,
     createdAt:    row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     updatedAt:    row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
@@ -1064,6 +1122,28 @@ export async function updateMetricRow(
  * regex consulted when no profile is keyed by an asset's canonical
  * manufacturer. Null clears it.
  */
+/**
+ * Save (or clear, with null) the Custom MIB tab's layout for a profile. The
+ * layout is sanitized against the profile's own widgets, so a stale editor
+ * can neither smuggle in another profile's widget nor keep a deleted one.
+ */
+export async function setWidgetLayout(profileId: string, layout: unknown): Promise<WidgetLayout | null> {
+  const row = await (prisma as any).manufacturerProfile.findUnique({
+    where:  { id: profileId },
+    select: { id: true, widgets: { select: { id: true } } },
+  });
+  if (!row) throw new AppError(404, "Profile not found");
+  const clean = layout === null
+    ? null
+    : sanitizeWidgetLayout(layout, new Set((row.widgets as Array<{ id: string }>).map((w) => w.id)));
+  await (prisma as any).manufacturerProfile.update({
+    where: { id: profileId },
+    data:  { widgetLayout: clean ? (clean as unknown as Prisma.InputJsonValue) : Prisma.DbNull },
+  });
+  await refreshProfileCache();
+  return clean;
+}
+
 export async function updateProfile(profileId: string, input: { matchPattern?: string | null }): Promise<ProfileFull> {
   const existing = await (prisma as any).manufacturerProfile.findUnique({ where: { id: profileId }, select: { id: true } });
   if (!existing) throw new AppError(404, "Profile not found");

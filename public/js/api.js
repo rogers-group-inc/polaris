@@ -919,6 +919,9 @@ const api = {
     },
     serviceConnections:   (id, unit) => request("GET", `/assets/${id}/process-connections?unit=` + encodeURIComponent(unit)),
     customWidgets:        (id)  => request("GET", `/assets/${id}/custom-widgets`),
+    // The Custom MIB card's switch (business rule 130).
+    setCustomWidgetEnabled: (id, widgetId, enabled) =>
+      request("PUT", `/assets/${id}/custom-widgets/${encodeURIComponent(widgetId)}/enabled`, { enabled: !!enabled }),
     telemetryHistory:     (id, opts) => {
       if (typeof opts === "string") opts = { range: opts };
       opts = opts || {};
@@ -1683,6 +1686,27 @@ const api = {
       request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}`, body),
     deleteProfileWidget:         (id, widgetId) =>
       request("DELETE", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}`),
+    // The assets a widget applies to + which have it switched on (business
+    // rule 130), and the bulk switch: body { enable?: [assetId], disable?: [...] }.
+    listProfileWidgetAssets:     (id, widgetId) =>
+      request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}/assets`),
+    // View Code: the profile as JSON with row ids; PUT makes it match (full replace).
+    getManufacturerProfileCode:  (id) =>
+      request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/code`),
+    saveManufacturerProfileCode: (id, file) =>
+      request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/code`, { file: file }),
+    // Portable profile file: export, then preview + apply on import.
+    exportManufacturerProfile:   (id) =>
+      request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/export`),
+    previewManufacturerProfileImport: (file) =>
+      request("POST", "/server-settings/manufacturer-profiles/import/preview", { file: file }),
+    applyManufacturerProfileImport:   (file, items) =>
+      request("POST", "/server-settings/manufacturer-profiles/import", { file: file, items: items }),
+    // The Custom MIB tab's widget arrangement for a profile (null = default grid).
+    setProfileWidgetLayout:      (id, layout) =>
+      request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widget-layout`, { layout: layout }),
+    setProfileWidgetAssets:      (id, widgetId, body) =>
+      request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}/assets`, body),
     getPgTuning: () => request("GET", "/server-settings/pg-tuning"),
     getQueueMode: () => request("GET", "/server-settings/queue-mode"),
     setQueueMode: (mode) => request("POST", "/server-settings/queue-mode", { mode: mode }),

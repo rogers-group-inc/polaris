@@ -1176,16 +1176,59 @@ automation in the wizard in place, for `automationManagement:write`.
 Shown when the asset's manufacturer profile defines **custom widgets**
 (Server Settings → Credentials → Manufacturer Profiles). One card per widget,
 drawn as its type says — a gauge with its threshold ranges, a line over the
-last 60 samples, a table, or a pass/fail state.
+last 60 samples, the latest value as text, a table, or a pass/fail state.
+
 A gauge or line with a **Warning at** value marks it (a tick on the gauge, a
 dashed line on the chart) and turns amber, with a *Warning* caption, once the
 reading reaches it. **Warn when** says which side is the warning: *at or
 above* (load, temperature) or *at or below* (battery capacity, runtime). The
 warning only colours the card; an automation on the widget's value — the
 *Custom widget value* metric, which offers the widget by name — is what alerts.
-Widgets are collected on their own cadence (60 seconds by default); the tab
-shows the freshest sample and says so when none has arrived yet, or when the
-asset's polling is disabled.
+
+A widget whose unit is **°C** or **°F** is shown in your install's
+temperature unit (Server Settings), converted when the two differ; its
+min, max and warning threshold convert with it. A widget set to show a
+**duration** turns seconds, or SNMP TimeTicks, into hours and minutes
+("1 h 23 m"). Both are display only: automations on a widget still compare
+the number the device reports.
+
+**A widget polls this asset only when its switch is on.** Each manufacturer
+widget's card has a switch at its top right. Off (the default for a new
+widget) means Polaris never asks the device for that widget. The card says
+so, and dims the last reading if one was collected earlier. On means Polaris
+polls it as often as the asset's **hardware-sensor** interval (60 seconds by
+default), whatever the asset's CPU/memory polling is set to. A UPS can
+poll its battery widgets without a CPU/memory stream. Turning a switch on or
+off needs `assets:write` and is recorded in the asset's Events. To switch a
+widget on for many devices at once, use the widget's **Devices…** button on
+its manufacturer profile (see [Monitoring](Monitoring)).
+
+Polling uses the first SNMP credential on the asset, in this order: the custom
+widget credential, the hardware-sensor credential, the CPU/memory credential,
+then the general monitor credential. The tab shows the freshest sample and
+says so when none has arrived yet. Widgets from a Generic API integration have
+no switch and update with the integration's telemetry.
+
+**Arranging the cards.** With the Manufacturer Profiles permission, a pencil
+button sits at the tab's top right. Click it to arrange the cards the way the
+Dashboard's **Customize Page** works:
+- Drag a card by its **⠿** grip into any column, or onto **Drop here for a
+  new column**.
+- Click a column's **3/12** button to cycle its width through 3, 4, 6 and 12
+  twelfths of the row, and **‹ ›** to move the column.
+- Click a card's **1×** button to cycle its height through 1×, 2× and 3×.
+- Change how a single-value widget is drawn with the picker on its card:
+  **Gauge**, **Line** or **Value** (just the latest reading as text, with
+  its unit). This changes the widget itself on the manufacturer profile, so
+  it applies on every asset. A widget showing **Table** for a single value
+  (it reads "No rows.") can be switched to Value here. State probes, HTTP
+  checks and real tables keep their type; change those on the profile.
+
+Click the pencil again (now a ✓) to save, **Cancel** to discard, or **Reset**
+then ✓ to go back to the default grid. The arrangement is saved on the
+**manufacturer profile**, so every asset of that manufacturer shows the same
+layout. A widget added to the profile later appears after the arranged ones
+until the layout is edited again. On a phone every column is full width.
 
 ### Wireless (access points)
 

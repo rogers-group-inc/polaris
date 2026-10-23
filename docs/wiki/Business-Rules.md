@@ -2710,3 +2710,19 @@ reboots the primary, and Polaris waits for every member to rejoin and be back
 in sync before calling the upgrade done. Every member is held in maintenance
 throughout. No setting turns this off. Other HA modes, and HA clusters in a
 group upgrade, are not supported yet.
+
+### Rule 130
+
+**A manufacturer custom widget polls only the assets it is switched on for,
+on its own schedule at the hardware-sensor interval.** A widget shows on every
+asset its manufacturer profile and model pattern match, but it polls an asset
+only after you switch it on, either with the switch at the top right of its
+card on the asset's Custom MIB tab, or in the device list Polaris opens when
+you create a widget (and from the widget's **Devices…** button). A new widget
+starts switched off everywhere. Switched-on widgets poll as often as the
+asset's hardware-sensor interval, whatever its CPU/memory polling is set to,
+using the first SNMP credential on the asset (custom widget, then hardware
+sensors, then CPU/memory, then the general monitor credential). Every switch
+is recorded in the asset's Events. Widgets from a Generic API integration have
+no switch and are unchanged. On upgrade, every widget that had collected data
+in the previous 7 days was switched on for those assets.

@@ -399,7 +399,7 @@ const fortilinkTransitionTotal = new Counter({
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-export type Cadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "sdwan" | "lossSample";
+export type Cadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "sdwan" | "lossSample" | "customWidget";
 export type WorkOutcome = "success" | "failure" | "crash";
 export type ProbeOutcome = "success" | "failure";
 
@@ -476,6 +476,7 @@ export function setQueueDepth(depths: Partial<Record<Cadence, number>>): void {
   if (depths.processes    !== undefined) monitorQueueDepth.set({ cadence: "processes" }, depths.processes);
   if (depths.sdwan        !== undefined) monitorQueueDepth.set({ cadence: "sdwan" }, depths.sdwan);
   if (depths.lossSample   !== undefined) monitorQueueDepth.set({ cadence: "lossSample" }, depths.lossSample);
+  if (depths.customWidget !== undefined) monitorQueueDepth.set({ cadence: "customWidget" }, depths.customWidget);
 }
 
 export function setPgbossQueueJobs(queue: string, state: string, count: number): void {
@@ -503,6 +504,7 @@ export function setMonitorWorkers(
   if (counts.storage      !== undefined) monitorWorkers.set({ queue: "storage" },      counts.storage);
   if (counts.processes    !== undefined) monitorWorkers.set({ queue: "processes" },    counts.processes);
   if (counts.sdwan        !== undefined) monitorWorkers.set({ queue: "sdwan" },        counts.sdwan);
+  if (counts.customWidget !== undefined) monitorWorkers.set({ queue: "customWidget" }, counts.customWidget);
   if (counts.floating     !== undefined) monitorWorkers.set({ queue: "floating" },     counts.floating);
 }
 

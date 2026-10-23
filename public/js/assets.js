@@ -10747,7 +10747,132 @@ function _renderWirelessFlatTable(container, stations, asset, filter) {
 // (default 60s); the renderer doesn't poll — it shows the freshest sample
 // the server has; it refreshes on the next collector cycle.
 
+// Tab state: the payload last rendered, and the layout editor's working copy.
+// The layout belongs to the MANUFACTURER PROFILE (every asset under it shares
+// it); the pencil at the tab's top right edits it with the dashboard's column
+// model — drag a card by its grip into any column, cycle a column's width
+// (3/4/6/12 of 12) and a card's height (1×/2×/3×) — and the second click saves.
+var _cmib = { payload: null, editing: false, working: null };
+var CMIB_WIDTHS = [3, 4, 6, 12];
+var CMIB_ROW_PX = 170;   // one height step; 2× / 3× add the gap between steps
+var CMIB_GAP_PX = 12;
+var CMIB_PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+var CMIB_CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
+function _cmibIsMfr(w) { return w.enabled !== null && w.enabled !== undefined; }
+
+/**
+ * A complete layout for these widgets: the saved one with unknown ids dropped,
+ * then every manufacturer widget it does not mention appended as its own
+ * 3-wide column (so a widget created after the layout was saved still shows).
+ * With nothing saved, every widget gets its own 3-wide column — four across,
+ * close to the default grid.
+ */
+function _cmibCompleteLayout(saved, widgets) {
+  var ids = widgets.filter(_cmibIsMfr).map(function (w) { return w.id; });
+  var seen = {};
+  var columns = [];
+  ((saved && saved.columns) || []).forEach(function (c) {
+    var ws = (c.widgets || []).filter(function (x) {
+      if (ids.indexOf(x.id) === -1 || seen[x.id]) return false;
+      seen[x.id] = 1;
+      return true;
+    }).map(function (x) { return { id: x.id, height: [1, 2, 3].indexOf(x.height) !== -1 ? x.height : 1 }; });
+    if (ws.length) columns.push({ id: c.id, width: CMIB_WIDTHS.indexOf(c.width) !== -1 ? c.width : 3, widgets: ws });
+  });
+  ids.forEach(function (id) {
+    if (!seen[id]) columns.push({ id: "col-" + id, width: 3, widgets: [{ id: id, height: 1 }] });
+  });
+  return { version: 1, columns: columns };
+}
+
+// How a single-value widget is drawn — switchable from the layout editor, and
+// saved to the widget on the manufacturer profile with the layout. Only a
+// SCALAR symbol's gauge / line / value (or a table widget mistakenly pointed
+// at a scalar, offered so it can be fixed): a state probe, an HTTP check or a
+// real table walk is a different kind of widget, changed on the profile.
+var CMIB_DISPLAY_TYPES = [["gauge", "Gauge"], ["line", "Line"], ["value", "Value"]];
+function _cmibCanSwitchType(w) {
+  return w.type === "scalar" && ["gauge", "line", "value", "table"].indexOf(w.widgetType) !== -1;
+}
+function _cmibTypePickerHTML(w) {
+  if (!_cmibCanSwitchType(w)) return "";
+  var opts = CMIB_DISPLAY_TYPES.slice();
+  if (w.widgetType === "table") opts.push(["table", "Table"]);
+  return '<select class="cmib-type" data-widget-id="' + escapeHtml(w.id) + '" title="Show this widget as" style="font-size:0.72rem;padding:1px 4px;width:auto">' +
+    opts.map(function (o) {
+      return '<option value="' + o[0] + '"' + (o[0] === w.widgetType ? " selected" : "") + '>' + o[1] + '</option>';
+    }).join("") +
+  '</select>';
+}
+/** The widget as the editor shows it: its pending display type, if changed. */
+function _cmibShown(w) {
+  var t = _cmib.typeChanges && _cmib.typeChanges[w.id];
+  return t ? Object.assign({}, w, { widgetType: t }) : w;
+}
+
+function _cmibCardHTML(w, opts) {
+  opts = opts || {};
+  var hasSwitch = _cmibIsMfr(w);
+  var off = hasSwitch && !w.enabled;
+  var toggle = !hasSwitch ? "" :
+    '<label class="toggle-switch" style="flex-shrink:0" title="' +
+      (w.enabled ? "Polling on — click to stop polling this widget on this asset" : "Polling off — click to start polling this widget on this asset") + '">' +
+      '<input type="checkbox" class="custom-widget-toggle" data-widget-id="' + escapeHtml(w.id) + '"' +
+        (w.enabled ? " checked" : "") + (canManageAssets() && !opts.editing ? "" : " disabled") + '>' +
+      '<span class="toggle-slider"></span>' +
+    '</label>';
+  var height = opts.height
+    ? ';height:' + (opts.height * CMIB_ROW_PX + (opts.height - 1) * CMIB_GAP_PX) + 'px;overflow:auto;box-sizing:border-box'
+    : '';
+  return '<div class="custom-mib-card" data-widget-id="' + escapeHtml(w.id) + '" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '" style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))' + height + '">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">' +
+      '<span style="display:flex;align-items:center;gap:4px;min-width:0">' +
+        (opts.editing ? '<span class="cmib-grip" draggable="true" data-widget-id="' + escapeHtml(w.id) + '" title="Drag to move (to any column)">⠿</span>' : '') +
+        '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
+      '</span>' +
+      '<span style="display:flex;align-items:center;gap:8px;min-width:0">' +
+        '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis">' + escapeHtml(w.symbol) + '</span>' +
+        (opts.editing ? _cmibTypePickerHTML(w) + '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : toggle) +
+      '</span>' +
+    '</div>' +
+    (off
+      ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.' +
+          (w.latest || (w.stateRows && w.stateRows.length) ? ' Showing the last reading collected.' : '') + '</p>' +
+        (w.latest || (w.stateRows && w.stateRows.length) ? '<div style="opacity:0.55">' + _renderCustomWidgetBody(w) + '</div>' : '')
+      : _renderCustomWidgetBody(w)) +
+  '</div>';
+}
+
+function _cmibLayoutHTML(layout, byId, editing) {
+  var html = '<div class="cmib-layout' + (editing ? ' editing' : '') + '">';
+  layout.columns.forEach(function (c, ci) {
+    html += '<div class="cmib-col" data-col-id="' + escapeHtml(c.id) + '" style="grid-column:span ' + c.width + '">';
+    if (editing) {
+      html += '<div class="cmib-col-bar">' +
+        '<button type="button" class="cmib-tool cmib-col-move" data-col-id="' + escapeHtml(c.id) + '" data-dir="-1" title="Move column left"' + (ci === 0 ? ' disabled' : '') + '>‹</button>' +
+        '<button type="button" class="cmib-tool cmib-col-move" data-col-id="' + escapeHtml(c.id) + '" data-dir="1" title="Move column right"' + (ci === layout.columns.length - 1 ? ' disabled' : '') + '>›</button>' +
+        '<span class="cmib-col-bar-fill"></span>' +
+        '<button type="button" class="cmib-tool cmib-width" data-col-id="' + escapeHtml(c.id) + '" title="Column width (click to cycle 3/4/6/12 of 12)">' + c.width + '/12</button>' +
+      '</div>';
+    }
+    c.widgets.forEach(function (x) {
+      var w = byId[x.id];
+      if (w) html += _cmibCardHTML(editing ? _cmibShown(w) : w, { editing: editing, height: x.height });
+    });
+    html += '</div>';
+  });
+  if (editing) html += '<div class="cmib-newcol" data-newcol="1">Drop here for a new column</div>';
+  return html + '</div>';
+}
+
 function _customMibTabHTML(payload) {
+  // A different asset (or a fresh open) never inherits an edit in progress.
+  if (!_cmib.payload || _cmib.payload.assetId !== payload.assetId) {
+    _cmib.editing = false;
+    _cmib.working = null;
+  }
+  _cmib.payload = payload;
   var feeds = [];
   var anyMfr = false;
   payload.widgets.forEach(function (w) {
@@ -10768,25 +10893,271 @@ function _customMibTabHTML(payload) {
       ' — defined on its Monitoring tab.');
   }
   var hint = parts.join(" ");
-  if (payload.polling === "disabled") {
+  // Business rule 130: a manufacturer widget polls this asset only once its
+  // card's switch is on. `enabled` is null on a Generic API widget (no switch).
+  var mfrWidgets = payload.widgets.filter(_cmibIsMfr);
+  var genericWidgets = payload.widgets.filter(function (w) { return !_cmibIsMfr(w); });
+  var anyOn = mfrWidgets.some(function (w) { return w.enabled; });
+  if (_cmib.editing) {
+    hint = '<b>Editing the layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset.</b> ' +
+      'Drag a card by ⠿ into any column, set each column\'s width and each card\'s height, and switch a single-value widget between Gauge, Line and Value, then click ✓ to save. Display changes are saved to the widget on the profile.';
+  } else if (mfrWidgets.length && !anyOn) {
+    hint += ' <span style="color:var(--color-warning)">Polling is off for every widget — ' +
+      (canManageAssets() ? 'switch a card on to start collecting.' : 'an asset editor can switch one on.') + '</span>';
+  } else if (payload.polling === "disabled") {
     hint += ' <span style="color:var(--color-warning)">Polling is disabled for this asset; data may be stale.</span>';
   } else if (!payload.lastCustomWidgetAt) {
     hint += ' <span style="color:var(--color-text-tertiary)">No sample collected yet — waiting for the next probe cycle.</span>';
   }
-  var html = '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">' + hint + '</div>';
-  html += '<div class="custom-mib-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">';
-  payload.widgets.forEach(function (w) {
-    html += '<div class="custom-mib-card" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '" style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-        '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
-        '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono)">' + escapeHtml(w.symbol) + '</span>' +
-      '</div>' +
-      _renderCustomWidgetBody(w) +
+  // The pencil: a profile write, so only for a role that can save one.
+  var canLayout = mfrWidgets.length > 0 && !!payload.profileId && permAtLeast("manufacturerProfiles", "write");
+  var tools = !canLayout ? "" : (_cmib.editing
+    ? '<button type="button" class="btn btn-sm btn-secondary cmib-reset" title="Return to the default grid when saved">Reset</button>' +
+      '<button type="button" class="btn btn-sm btn-secondary cmib-cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Done editing — save this layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset">' + CMIB_CHECK_SVG + '</button>'
+    : '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Customize this layout (shared by every ' + escapeHtml(payload.manufacturer || "") + ' asset)">' + CMIB_PENCIL_SVG + '</button>');
+
+  var html = '<div class="custom-mib-tab" data-asset-id="' + escapeHtml(payload.assetId || "") + '">' +
+    '<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:0.75rem">' +
+      '<div style="flex:1;font-size:0.82rem;color:var(--color-text-secondary)">' + hint + '</div>' +
+      (tools ? '<div style="display:flex;gap:6px;flex-shrink:0">' + tools + '</div>' : '') +
     '</div>';
-  });
-  html += '</div>';
-  return html;
+
+  var byId = {};
+  payload.widgets.forEach(function (w) { byId[w.id] = w; });
+  if (_cmib.editing) {
+    html += _cmibLayoutHTML(_cmib.working, byId, true);
+  } else if (payload.widgetLayout && mfrWidgets.length) {
+    html += _cmibLayoutHTML(_cmibCompleteLayout(payload.widgetLayout, payload.widgets), byId, false);
+  } else {
+    html += '<div class="custom-mib-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">' +
+      mfrWidgets.map(function (w) { return _cmibCardHTML(w); }).join("") + '</div>';
+  }
+  // Generic API widgets are an integration's, not the profile's: never part of
+  // the profile layout, always after it.
+  if (genericWidgets.length) {
+    html += '<div class="custom-mib-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:12px">' +
+      genericWidgets.map(function (w) { return _cmibCardHTML(w); }).join("") + '</div>';
+  }
+  return html + '</div>';
 }
+
+function _cmibRerender() {
+  var panel = document.getElementById("asset-view-tab-customMib");
+  if (panel && _cmib.payload) panel.innerHTML = _customMibTabHTML(_cmib.payload);
+}
+
+function _cmibFindCol(colId) {
+  var cols = _cmib.working ? _cmib.working.columns : [];
+  for (var i = 0; i < cols.length; i++) if (cols[i].id === colId) return i;
+  return -1;
+}
+
+/** Move a widget to column `colId` (or a new trailing column when null) at
+ *  `index`; empty columns left behind are dropped. */
+function _cmibMoveWidget(widgetId, colId, index) {
+  var cols = _cmib.working.columns;
+  var entry = null;
+  cols.forEach(function (c) {
+    var i = c.widgets.findIndex(function (x) { return x.id === widgetId; });
+    if (i !== -1) {
+      if (c.id === colId && i < index) index--;
+      entry = c.widgets.splice(i, 1)[0];
+    }
+  });
+  if (!entry) return;
+  if (colId === null) {
+    cols.push({ id: "col-" + Date.now().toString(36), width: 3, widgets: [entry] });
+  } else {
+    var target = cols[_cmibFindCol(colId)];
+    if (!target) return;
+    target.widgets.splice(Math.max(0, Math.min(index, target.widgets.length)), 0, entry);
+  }
+  _cmib.working.columns = cols.filter(function (c) { return c.widgets.length > 0; });
+}
+
+// The insertion index within a column for a pointer at clientY: before the
+// first card whose midpoint is below it.
+function _cmibDropIndex(colEl, clientY) {
+  var cards = Array.prototype.slice.call(colEl.querySelectorAll(":scope > .custom-mib-card:not(.lifted)"));
+  for (var i = 0; i < cards.length; i++) {
+    var r = cards[i].getBoundingClientRect();
+    if (clientY < r.top + r.height / 2) return { index: i, before: cards[i] };
+  }
+  return { index: cards.length, before: null };
+}
+
+function _cmibClearDropCues() {
+  document.querySelectorAll(".cmib-drop-marker").forEach(function (m) { m.remove(); });
+  document.querySelectorAll(".cmib-newcol.drag-over").forEach(function (n) { n.classList.remove("drag-over"); });
+}
+
+var _cmibDragId = null;
+
+document.addEventListener("click", async function (e) {
+  var t = e.target && e.target.closest ? e.target : null;
+  if (!t || !t.closest(".custom-mib-tab")) return;
+  var editBtn = t.closest(".cmib-edit-btn");
+  if (editBtn) {
+    if (!_cmib.editing) {
+      _cmib.working = _cmibCompleteLayout(_cmib.payload.widgetLayout, _cmib.payload.widgets);
+      _cmib.reset = false;
+      _cmib.typeChanges = {};
+      _cmib.editing = true;
+      _cmibRerender();
+      return;
+    }
+    editBtn.disabled = true;
+    try {
+      // Display-type changes are written to the WIDGETS on the profile first
+      // (each a partial update carrying only widgetType), then the layout.
+      var changed = Object.keys(_cmib.typeChanges || {});
+      for (var k = 0; k < changed.length; k++) {
+        var wid = changed[k];
+        await api.serverSettings.updateProfileWidget(_cmib.payload.profileId, wid, { widgetType: _cmib.typeChanges[wid] });
+        _cmib.payload.widgets.forEach(function (w) { if (w.id === wid) w.widgetType = _cmib.typeChanges[wid]; });
+      }
+      var resp = await api.serverSettings.setProfileWidgetLayout(_cmib.payload.profileId, _cmib.reset ? null : _cmib.working);
+      _cmib.payload.widgetLayout = resp ? resp.layout : null;
+      _cmib.editing = false;
+      _cmib.working = null;
+      _cmib.typeChanges = {};
+      showToast("Layout" + (changed.length ? " and widget display" : "") + " saved for every " + (_cmib.payload.manufacturer || "") + " asset", "success");
+      _cmibRerender();
+    } catch (err) {
+      editBtn.disabled = false;
+      showToast(err.message || "Could not save the layout", "error");
+    }
+    return;
+  }
+  if (!_cmib.editing) return;
+  if (t.closest(".cmib-cancel")) {
+    _cmib.editing = false;
+    _cmib.working = null;
+    _cmib.typeChanges = {};
+    _cmibRerender();
+    return;
+  }
+  if (t.closest(".cmib-reset")) {
+    _cmib.working = _cmibCompleteLayout(null, _cmib.payload.widgets);
+    _cmib.reset = true;
+    _cmibRerender();
+    return;
+  }
+  var widthBtn = t.closest(".cmib-width");
+  if (widthBtn) {
+    var col = _cmib.working.columns[_cmibFindCol(widthBtn.getAttribute("data-col-id"))];
+    if (col) col.width = CMIB_WIDTHS[(CMIB_WIDTHS.indexOf(col.width) + 1) % CMIB_WIDTHS.length];
+    _cmib.reset = false;
+    _cmibRerender();
+    return;
+  }
+  var heightBtn = t.closest(".cmib-height");
+  if (heightBtn) {
+    var wid = heightBtn.getAttribute("data-widget-id");
+    _cmib.working.columns.forEach(function (c) {
+      c.widgets.forEach(function (x) { if (x.id === wid) x.height = (x.height % 3) + 1; });
+    });
+    _cmib.reset = false;
+    _cmibRerender();
+    return;
+  }
+  var moveBtn = t.closest(".cmib-col-move");
+  if (moveBtn) {
+    var cols = _cmib.working.columns;
+    var i = _cmibFindCol(moveBtn.getAttribute("data-col-id"));
+    var j = i + Number(moveBtn.getAttribute("data-dir"));
+    if (i !== -1 && j >= 0 && j < cols.length) {
+      var tmp = cols[i]; cols[i] = cols[j]; cols[j] = tmp;
+    }
+    _cmib.reset = false;
+    _cmibRerender();
+  }
+});
+
+document.addEventListener("dragstart", function (e) {
+  var grip = e.target && e.target.closest ? e.target.closest(".cmib-grip") : null;
+  if (!grip || !_cmib.editing) return;
+  _cmibDragId = grip.getAttribute("data-widget-id");
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", _cmibDragId);
+  var card = grip.closest(".custom-mib-card");
+  if (card) card.classList.add("lifted");
+});
+
+document.addEventListener("dragover", function (e) {
+  if (!_cmibDragId) return;
+  var t = e.target && e.target.closest ? e.target : null;
+  var col = t && t.closest(".cmib-layout.editing .cmib-col");
+  var newCol = t && t.closest(".cmib-layout.editing .cmib-newcol");
+  if (!col && !newCol) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  _cmibClearDropCues();
+  if (newCol) { newCol.classList.add("drag-over"); return; }
+  var spot = _cmibDropIndex(col, e.clientY);
+  var marker = document.createElement("div");
+  marker.className = "cmib-drop-marker";
+  if (spot.before) col.insertBefore(marker, spot.before); else col.appendChild(marker);
+});
+
+document.addEventListener("drop", function (e) {
+  if (!_cmibDragId) return;
+  var t = e.target && e.target.closest ? e.target : null;
+  var col = t && t.closest(".cmib-layout.editing .cmib-col");
+  var newCol = t && t.closest(".cmib-layout.editing .cmib-newcol");
+  if (!col && !newCol) return;
+  e.preventDefault();
+  var id = _cmibDragId;
+  if (newCol) _cmibMoveWidget(id, null, 0);
+  else _cmibMoveWidget(id, col.getAttribute("data-col-id"), _cmibDropIndex(col, e.clientY).index);
+  _cmibDragId = null;
+  _cmib.reset = false;
+  _cmibRerender();
+});
+
+document.addEventListener("dragend", function () {
+  if (!_cmibDragId) return;
+  _cmibDragId = null;
+  _cmibClearDropCues();
+  document.querySelectorAll(".custom-mib-card.lifted").forEach(function (c) { c.classList.remove("lifted"); });
+});
+
+// The layout editor's display-type picker: staged until ✓, previewed at once.
+document.addEventListener("change", function (e) {
+  var sel = e.target;
+  if (!sel || !sel.classList || !sel.classList.contains("cmib-type") || !_cmib.editing) return;
+  var wid = sel.getAttribute("data-widget-id");
+  var original = (_cmib.payload.widgets.find(function (w) { return w.id === wid; }) || {}).widgetType;
+  _cmib.typeChanges = _cmib.typeChanges || {};
+  if (sel.value === original) delete _cmib.typeChanges[wid];
+  else _cmib.typeChanges[wid] = sel.value;
+  _cmibRerender();
+});
+
+// The Custom MIB card switch (business rule 130). Delegated at the document so
+// the panel can re-render freely; on success the panel is redrawn from a fresh
+// payload, on failure the switch snaps back and the error is toasted.
+document.addEventListener("change", async function (e) {
+  var input = e.target;
+  if (!input || !input.classList || !input.classList.contains("custom-widget-toggle")) return;
+  var tab = input.closest(".custom-mib-tab");
+  var assetId = tab && tab.getAttribute("data-asset-id");
+  if (!assetId) return;
+  var want = input.checked;
+  input.disabled = true;
+  try {
+    await api.assets.setCustomWidgetEnabled(assetId, input.getAttribute("data-widget-id"), want);
+    showToast(want ? "Widget polling on — the first reading arrives within one hardware-sensor interval" : "Widget polling off", "success");
+    var payload = await api.assets.customWidgets(assetId);
+    var panel = document.getElementById("asset-view-tab-customMib");
+    if (panel && payload) panel.innerHTML = _customMibTabHTML(payload);
+  } catch (err) {
+    input.checked = !want;
+    input.disabled = false;
+    showToast(err.message || "Could not change widget polling", "error");
+  }
+});
 
 function _renderCustomWidgetBody(w) {
   // State probes carry their readings in `stateRows`, not `latest` (their 0/1
@@ -10797,6 +11168,7 @@ function _renderCustomWidgetBody(w) {
     return '<p class="empty-state" style="padding:0.5rem 0;margin:0">No sample yet.</p>';
   }
   if (w.widgetType === "gauge") return _renderCustomWidgetGauge(w);
+  if (w.widgetType === "value") return _renderCustomWidgetScalarFallback(w);
   if (w.widgetType === "line")  return _renderCustomWidgetLine(w);
   if (w.widgetType === "table") return _renderCustomWidgetTable(w);
   return '<p class="empty-state" style="padding:0.5rem 0;margin:0">Unknown widgetType: ' + escapeHtml(w.widgetType) + '</p>';
@@ -10837,6 +11209,50 @@ function _renderCustomWidgetState(w) {
   return head + body;
 }
 
+// How a single-value widget's number is shown — display only; the stored
+// sample, and any automation on it, keep the device's own number.
+//   * A temperature unit (°C / °F on the widget) is shown in the INSTALL's unit
+//     (Server Settings temperature unit, via PolarisTempUnit), converting when
+//     they differ — a vendor reporting °F reads °C on a Celsius install.
+//   * displayOptions.format "duration_s" / "duration_ticks" reads the number as
+//     seconds / SNMP TimeTicks (hundredths of a second, e.g. APC's
+//     upsAdvBatteryRunTimeRemaining) and shows "1 h 23 m".
+// conv() maps a number into display units (gauge bounds go through it too);
+// text() is the label for one number, unit included.
+function _cwDisplay(w) {
+  var o = w.displayOptions || {};
+  var TU = window.PolarisTempUnit;
+  if (TU && TU.isTemperatureUnit && TU.isTemperatureUnit(o.unit)) {
+    var label = TU.displayUnitAny(o.unit);
+    return {
+      conv: function (n) { return TU.toDisplay(n, o.unit); },
+      text: function (n) { return _formatNumber(n) + " " + label; },
+    };
+  }
+  if (o.format === "duration_s" || o.format === "duration_ticks") {
+    var div = o.format === "duration_ticks" ? 100 : 1;
+    return {
+      conv: function (n) { return n; },
+      text: function (n) { return _formatDuration(n / div); },
+    };
+  }
+  var unit = o.unit ? " " + o.unit : "";
+  return {
+    conv: function (n) { return n; },
+    text: function (n) { return _formatNumber(n) + unit; },
+  };
+}
+
+/** Seconds as the two largest units: "2 d 3 h", "1 h 23 m", "45 m 10 s", "42 s". */
+function _formatDuration(sec) {
+  if (!Number.isFinite(sec)) return String(sec);
+  var neg = sec < 0;
+  var s = Math.round(Math.abs(sec));
+  var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  var out = d ? d + " d " + h + " h" : h ? h + " h " + m + " m" : m ? m + " m " + r + " s" : r + " s";
+  return (neg ? "-" : "") + out;
+}
+
 /**
  * A gauge / line widget's warning threshold against one reading, or null when
  * the widget sets none. `warningWhen` says which side is the warning — "above"
@@ -10851,10 +11267,22 @@ function _customWidgetWarning(n, opts) {
   return { at: at, below: below, breached: Number.isFinite(n) && (below ? n <= at : n >= at) };
 }
 
-/** The line under a gauge / line widget naming its threshold — amber once breached. */
-function _customWidgetWarnCaption(warn, unit) {
+/**
+ * The widget's warning in DISPLAY units (_cwDisplay): the threshold is entered
+ * in the widget's own unit, so a °C threshold on a Fahrenheit install converts
+ * with the value it is compared to.
+ */
+function _customWidgetWarningShown(displayValue, opts, fmt) {
+  var at = opts && opts.warningAt;
+  if (typeof at !== "number" || !Number.isFinite(at)) return null;
+  return _customWidgetWarning(displayValue, Object.assign({}, opts, { warningAt: fmt.conv(at) }));
+}
+
+/** The line under a gauge / line widget naming its threshold — amber once breached.
+ *  `text` formats one number with its unit (the widget's _cwDisplay text). */
+function _customWidgetWarnCaption(warn, text) {
   if (!warn) return "";
-  var rule = (warn.below ? "at or below " : "at or above ") + _formatNumber(warn.at) + unit;
+  var rule = (warn.below ? "at or below " : "at or above ") + text(warn.at);
   return warn.breached
     ? '<div class="custom-widget-warn is-breached" style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning — ' + escapeHtml(rule) + '</div>'
     : '<div class="custom-widget-warn" style="font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px">Warns ' + escapeHtml(rule) + '</div>';
@@ -10872,8 +11300,12 @@ function _renderCustomWidgetGauge(w) {
     return '<div style="font-size:0.85rem">' + escapeHtml(String(raw)) + '</div>';
   }
   var opts = w.displayOptions || {};
-  var min = Number.isFinite(opts.min) ? opts.min : 0;
-  var max = Number.isFinite(opts.max) ? opts.max : 100;
+  var fmt = _cwDisplay(w);
+  // Bounds and the warning threshold are entered in the widget's own unit, so
+  // they convert with the value (a °C widget on a Fahrenheit install).
+  var min = fmt.conv(Number.isFinite(opts.min) ? opts.min : 0);
+  var max = fmt.conv(Number.isFinite(opts.max) ? opts.max : 100);
+  n = fmt.conv(n);
   function frac(v) { return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0; }
   var cx = 80, cy = 70, r = 56;
   function point(f, radius) {
@@ -10881,7 +11313,7 @@ function _renderCustomWidgetGauge(w) {
     return { x: cx + radius * Math.cos(a), y: cy - radius * Math.sin(a) };
   }
   var end = point(frac(n), r);
-  var warn = _customWidgetWarning(n, opts);
+  var warn = _customWidgetWarningShown(n, opts, fmt);
   var color = warn && warn.breached ? "var(--color-sev-warning)" : "#22d3ee";
   // The large-arc flag stays 0: the value arc never sweeps more than the
   // gauge's 180°, and a 1 past the midpoint drew the long way round the circle.
@@ -10890,20 +11322,19 @@ function _renderCustomWidgetGauge(w) {
     var t0 = point(frac(warn.at), r - 9), t1 = point(frac(warn.at), r + 9);
     tick = '<line class="custom-widget-warn-tick" x1="' + t0.x.toFixed(1) + '" y1="' + t0.y.toFixed(1) + '" x2="' + t1.x.toFixed(1) + '" y2="' + t1.y.toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="2"/>';
   }
-  var unit = opts.unit ? (" " + opts.unit) : "";
   return '<div style="text-align:center">' +
     '<svg width="160" height="86" viewBox="0 0 160 86" aria-hidden="true">' +
       '<path d="M ' + (cx - r) + ' ' + cy + ' A ' + r + ' ' + r + ' 0 0 1 ' + (cx + r) + ' ' + cy + '" stroke="var(--color-border)" stroke-width="10" fill="none" stroke-linecap="round"/>' +
       '<path class="custom-widget-gauge-arc" d="M ' + (cx - r) + ' ' + cy + ' A ' + r + ' ' + r + ' 0 0 1 ' + end.x.toFixed(1) + ' ' + end.y.toFixed(1) + '" stroke="' + color + '" stroke-width="10" fill="none" stroke-linecap="round"/>' +
       tick +
       '<text x="' + cx + '" y="' + (cy - 6) + '" text-anchor="middle" font-size="20" font-weight="600" fill="' + (warn && warn.breached ? color : "currentColor") + '">' +
-        escapeHtml(_formatNumber(n)) + escapeHtml(unit) +
+        escapeHtml(fmt.text(n)) +
       '</text>' +
       '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" font-size="10" fill="var(--color-text-tertiary)">' +
-        escapeHtml(_formatNumber(min)) + ' &ndash; ' + escapeHtml(_formatNumber(max)) +
+        escapeHtml(fmt.text(min)) + ' &ndash; ' + escapeHtml(fmt.text(max)) +
       '</text>' +
     '</svg>' +
-    _customWidgetWarnCaption(warn, unit) +
+    _customWidgetWarnCaption(warn, fmt.text) +
   '</div>';
 }
 
@@ -10912,10 +11343,11 @@ function _renderCustomWidgetLine(w) {
   // returned. We don't reuse the larger System-tab chart helper (which
   // hardcodes axes specific to telemetry / RTT) — custom widgets need to
   // adapt their y-range to the actual data domain.
+  var fmt = _cwDisplay(w);
   var pts = [];
   (w.samples || []).forEach(function (s) {
     var n = typeof s.value === "number" ? s.value : Number(s.value);
-    if (Number.isFinite(n)) pts.push({ t: new Date(s.timestamp).getTime(), v: n });
+    if (Number.isFinite(n)) pts.push({ t: new Date(s.timestamp).getTime(), v: fmt.conv(n) });
   });
   if (pts.length < 2) {
     return _renderCustomWidgetScalarFallback(w);
@@ -10924,7 +11356,7 @@ function _renderCustomWidgetLine(w) {
   pts.forEach(function (p) { if (p.v < minV) minV = p.v; if (p.v > maxV) maxV = p.v; });
   var latest = pts[pts.length - 1].v;
   var opts = w.displayOptions || {};
-  var warn = _customWidgetWarning(latest, opts);
+  var warn = _customWidgetWarningShown(latest, opts, fmt);
   // The y-domain stretches to take in the threshold, so its dashed line is on
   // the chart rather than off the top; the min / max labels stay the data's.
   var lo = warn ? Math.min(minV, warn.at) : minV;
@@ -10940,17 +11372,16 @@ function _renderCustomWidgetLine(w) {
   var threshold = warn
     ? '<line class="custom-widget-warn-line" x1="' + P + '" x2="' + (W - P) + '" y1="' + yFor(warn.at).toFixed(1) + '" y2="' + yFor(warn.at).toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="1" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>'
     : "";
-  var unit = opts.unit ? (" " + opts.unit) : "";
   return '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
     threshold +
     '<polyline fill="none" stroke="#22d3ee" stroke-width="1.4" points="' + coords.join(" ") + '"/>' +
   '</svg>' +
   '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--color-text-tertiary);margin-top:2px">' +
-    '<span>min ' + escapeHtml(_formatNumber(minV)) + escapeHtml(unit) + '</span>' +
-    '<span' + (warn && warn.breached ? ' style="color:var(--color-sev-warning);font-weight:600"' : '') + '>latest ' + escapeHtml(_formatNumber(latest)) + escapeHtml(unit) + '</span>' +
-    '<span>max ' + escapeHtml(_formatNumber(maxV)) + escapeHtml(unit) + '</span>' +
+    '<span>min ' + escapeHtml(fmt.text(minV)) + '</span>' +
+    '<span' + (warn && warn.breached ? ' style="color:var(--color-sev-warning);font-weight:600"' : '') + '>latest ' + escapeHtml(fmt.text(latest)) + '</span>' +
+    '<span>max ' + escapeHtml(fmt.text(maxV)) + '</span>' +
   '</div>' +
-  _customWidgetWarnCaption(warn, unit);
+  _customWidgetWarnCaption(warn, fmt.text);
 }
 
 function _renderCustomWidgetTable(w) {
@@ -10979,10 +11410,17 @@ function _renderCustomWidgetTable(w) {
 
 function _renderCustomWidgetScalarFallback(w) {
   var v = w.latest && w.latest.value;
-  var txt = (v === null || v === undefined) ? "—" :
-            (typeof v === "object" ? JSON.stringify(v) : String(v));
-  var unit = (w.displayOptions && w.displayOptions.unit) ? (" " + w.displayOptions.unit) : "";
-  return '<div style="font-size:1.4rem;font-weight:600">' + escapeHtml(txt) + escapeHtml(unit) + '</div>';
+  var n = typeof v === "number" ? v : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+  var txt;
+  if (Number.isFinite(n)) {
+    var fmt = _cwDisplay(w);
+    txt = fmt.text(fmt.conv(n));
+  } else {
+    // Not a number (a DisplayString, a row array): shown as is, with its unit.
+    var unit = (w.displayOptions && w.displayOptions.unit) ? (" " + w.displayOptions.unit) : "";
+    txt = ((v === null || v === undefined) ? "—" : (typeof v === "object" ? JSON.stringify(v) : String(v))) + unit;
+  }
+  return '<div style="font-size:1.4rem;font-weight:600">' + escapeHtml(txt) + '</div>';
 }
 
 function _formatNumber(n) {

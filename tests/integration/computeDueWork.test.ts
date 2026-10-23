@@ -207,6 +207,32 @@ dbDescribe("computeDueWork", () => {
     expect(failing.systemInfos).toEqual([]);
   });
 
+  it("custom widgets queue only for an asset with a widget switched on, at the hardware-sensor interval (rule 130)", async () => {
+    const eff = await resolveMonitorSettings({ ...cand(), discoveredByIntegrationType: null } as never);
+    const sensorSec = eff.temperatureIntervalSeconds;
+    const withWidget = new Set(["cand-1"]);
+    const set = new Set<MonitorCadence>(["customWidget"]);
+
+    // Switched on, never attempted: due — and with NO CPU/memory polling at
+    // all, which is the UPS case the cadence was split out for.
+    const due = await computeDueWork([cand({ cpuMemoryPolling: null })], set, now, withWidget);
+    expect(due.customWidgetWork).toEqual([{ id: "cand-1", kind: "customWidget" }]);
+    // Nothing switched on: never queued.
+    const none = await computeDueWork([cand()], set, now, new Set());
+    expect(none.customWidgetWork).toEqual([]);
+    // Due off the ATTEMPT stamp at the sensor interval (rule 118).
+    const recent = await computeDueWork([cand({ lastCustomWidgetAttemptAt: ago(sensorSec - 5) } as Partial<MonitorPassCandidate>)], set, now, withWidget);
+    expect(recent.customWidgetWork).toEqual([]);
+    const elapsed = await computeDueWork([cand({ lastCustomWidgetAttemptAt: ago(sensorSec) } as Partial<MonitorPassCandidate>)], set, now, withWidget);
+    expect(elapsed.customWidgetWork).toHaveLength(1);
+    // isUp-gated like every authenticated stream.
+    const down = await computeDueWork([cand({ monitorStatus: "down", consecutiveSuccesses: 0 })], set, now, withWidget);
+    expect(down.customWidgetWork).toEqual([]);
+    // Not requested on this pass (the light tick): nothing emitted.
+    const light = await computeDueWork([cand()], new Set<MonitorCadence>(["probe"]), now, withWidget);
+    expect(light.customWidgetWork).toEqual([]);
+  });
+
   it("agentless processes dispatch only for ssh/winrm, with the pinned sub-pass path", async () => {
     const ssh = await computeDueWork([cand({ processesPolling: "ssh" })], ALL, now);
     expect(ssh.processesWork).toHaveLength(1);

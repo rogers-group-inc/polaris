@@ -20,7 +20,7 @@ import {
   listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
   updateMetricRow, createOverride, updateOverride, deleteOverride,
   createWidget, updateWidget, deleteWidget, listManufacturerSuggestions,
-  symbolWarningsForProfile,
+  symbolWarningsForProfile, setWidgetLayout,
 } from "../../services/manufacturerProfileService.js";
 import {
   TRANSFORM_KINDS,
@@ -31,6 +31,41 @@ import {
 } from "../../utils/symbolTransforms.js";
 import { requestActor } from "../middleware/auth.js";
 import { logEvent } from "./events.js";
+import { z } from "zod";
+import { AppError } from "../../utils/errors.js";
+import { listWidgetCandidates, setWidgetAssets } from "../../services/customWidgetEnablementService.js";
+import { exportProfile, previewProfileImport, applyProfileImport, saveProfileCode } from "../../services/manufacturerProfilePortabilityService.js";
+
+// PUT /:id/widgets/:widgetId/assets (business rule 130). Bounded so one call
+// cannot carry an unbounded id list.
+const WidgetAssetsSchema = z.object({
+  enable:  z.array(z.string().min(1)).max(5000).optional(),
+  disable: z.array(z.string().min(1)).max(5000).optional(),
+});
+
+// POST /import/preview and /import. The file itself is validated by the
+// service's ProfileFileSchema (one readable error); here only the envelope.
+const ImportPreviewSchema = z.object({ file: z.unknown() });
+const ImportApplySchema = z.object({
+  file:  z.unknown(),
+  items: z.array(z.string().min(1).max(200)).max(2000),
+});
+
+// PUT /:id/widget-layout. Shape-checked here, then sanitized against the
+// profile's own widgets in the service (unknown ids dropped).
+const WidgetLayoutSchema = z.object({
+  layout: z.object({
+    version: z.literal(1),
+    columns: z.array(z.object({
+      id:      z.string().min(1).max(64),
+      width:   z.union([z.literal(3), z.literal(4), z.literal(6), z.literal(12)]),
+      widgets: z.array(z.object({
+        id:     z.string().min(1).max(64),
+        height: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+      })).max(500),
+    })).max(48),
+  }).nullable(),
+});
 
 const router: Router = Router();
 
@@ -242,6 +277,97 @@ router.delete("/:id/widgets/:widgetId", requirePermission("manufacturerProfiles"
   });
   res.status(204).end();
 }));
+
+// ── Export / import ──────────────────────────────────────────────────────
+// A portable file: MIBs and credentials by NAME, no ids, no secrets, no
+// per-asset switches. Import is preview (what each item would do, what it is
+// missing) then apply (only the ticked item ids). See
+// manufacturerProfilePortabilityService.
+
+// GET /:id/export — download the profile as JSON.
+router.get("/:id/export", requirePermission("manufacturerProfiles", "read"), handle(async (req, res) => {
+  const file = await exportProfile(String(req.params.id));
+  const safe = file.manufacturer.replace(/[^A-Za-z0-9._-]+/g, "_");
+  res.setHeader("Content-Disposition", `attachment; filename="${safe}.manufacturer-profile.json"`);
+  send(res, file);
+}));
+
+// GET /:id/code — the View Code JSON: the export format plus each override's
+// and widget's row id, so a save edits rows in place.
+router.get("/:id/code", requirePermission("manufacturerProfiles", "read"), handle(async (req, res) => {
+  send(res, await exportProfile(String(req.params.id), { withIds: true }));
+}));
+
+// PUT /:id/code — { file } → make the profile match it (a full replace: rows
+// left out are cleared / deleted). Writes manufacturer_profile.code_saved.
+router.put("/:id/code", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = ImportPreviewSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  send(res, await saveProfileCode(String(req.params.id), parsed.data.file, requestActor(req)));
+}));
+
+// POST /import/preview — { file } → every importable item, with warnings.
+router.post("/import/preview", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = ImportPreviewSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  send(res, await previewProfileImport(parsed.data.file));
+}));
+
+// POST /import — { file, items: [item id] } → per-item outcome. Writes one
+// manufacturer_profile.imported Event (service).
+router.post("/import", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = ImportApplySchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  send(res, await applyProfileImport(parsed.data.file, parsed.data.items, requestActor(req)));
+}));
+
+// PUT /:id/widget-layout — the Custom MIB tab's arrangement of this profile's
+// widgets (the pencil button's save). Shared by every asset under the profile,
+// so it is a profile write. `layout: null` restores the default grid.
+router.put("/:id/widget-layout", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = WidgetLayoutSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  const layout = await setWidgetLayout(String(req.params.id), parsed.data.layout);
+  logEvent({
+    action: "manufacturer_profile.widget_layout_updated",
+    resourceType: "manufacturer_profile",
+    resourceId: String(req.params.id),
+    actor: requestActor(req),
+    message: layout
+      ? `Custom MIB widget layout saved (${layout.columns.length} column(s))`
+      : "Custom MIB widget layout reset to the default grid",
+  });
+  send(res, { layout });
+}));
+
+// GET /:id/widgets/:widgetId/assets — the assets a widget applies to, each with
+// whether it is switched on (business rule 130). Lists devices, so it needs
+// assets read on top of the profile key.
+router.get(
+  "/:id/widgets/:widgetId/assets",
+  requirePermission("manufacturerProfiles", "read"),
+  requirePermission("assets", "read"),
+  handle(async (req, res) => {
+    const assets = await listWidgetCandidates(String(req.params.id), String(req.params.widgetId));
+    send(res, { assets });
+  }),
+);
+
+// PUT /:id/widgets/:widgetId/assets — switch the widget on for some assets and
+// off for others (the "enable on these devices" picker). Changes what Polaris
+// asks each device, so it needs assets write too; the service writes one
+// asset.custom_widget.* Event per asset changed.
+router.put(
+  "/:id/widgets/:widgetId/assets",
+  requirePermission("manufacturerProfiles", "write"),
+  requirePermission("assets", "write"),
+  handle(async (req, res) => {
+    const parsed = WidgetAssetsSchema.safeParse(req.body);
+    if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+    const result = await setWidgetAssets(String(req.params.id), String(req.params.widgetId), parsed.data, requestActor(req));
+    send(res, result);
+  }),
+);
 
 // DELETE /:id — admin only.
 router.delete("/:id", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
