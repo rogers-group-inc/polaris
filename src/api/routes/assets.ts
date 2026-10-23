@@ -98,6 +98,7 @@ import { getCredential } from "../../services/credentialService.js";
 import { resolveConnectionPath } from "../../services/connectionPathService.js";
 import { resolveAssetUpstream } from "../../services/assetUpstreamService.js";
 import { resolveAssetVips } from "../../services/assetVipService.js";
+import { fillMacTableVlans, getVlanNamesForAsset } from "../../services/vlanNameService.js";
 import { shapeManagementAccessForClient } from "../../services/fortinetManagementAccessService.js";
 import { propagateAfterStatusChange, FORTINET_INFRA_ASSET_TYPES } from "../../services/dependencyTreeService.js";
 import { pickSampleTierForAsset } from "../../services/sampleQueryRouter.js";
@@ -2746,6 +2747,8 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
           orderBy: [{ sensorClass: "asc" }, { sensorName: "asc" }],
         })
       : [];
+    // VLAN id -> name for the Native / Tagged VLAN pills (vlanNameService).
+    const vlanNames = await getVlanNamesForAsset(id);
 
     res.json({
       monitored: asset.monitored,
@@ -2794,6 +2797,7 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
         poeStatus:   i.poeStatus ?? null,
         poeClass:    i.poeClass  ?? null,
       })),
+      vlanNames,
       physicalEntities: physicalEntities.map((e) => ({
         entIndex:    e.entIndex,
         entClass:    e.entClass,
@@ -2974,8 +2978,11 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
       where: { id },
       select: { lastSystemInfoAt: true },
     });
-    res.json({
-      entries: rows.map((r) => ({
+    // A FortiSwitch answers only the VLAN-less BRIDGE-MIB table, so its rows
+    // arrive with no VLAN; an access port's native VLAN fills them in
+    // (`vlanInferred` marks those). vlanNames labels the pills.
+    const [entries, vlanNames] = await Promise.all([
+      fillMacTableVlans(id, rows.map((r) => ({
         macAddress: r.macAddress,
         vlanId:     r.vlanId,
         basePort:   r.basePort,
@@ -2984,7 +2991,12 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
         firstSeen:  r.firstSeen,
         lastSeen:   r.lastSeen,
         matchedAsset: r.matchedAsset,
-      })),
+      }))),
+      getVlanNamesForAsset(id),
+    ]);
+    res.json({
+      entries,
+      vlanNames,
       portCounts,
       collectedAt,
       lastSystemInfoAt: passAsset?.lastSystemInfoAt ?? null,

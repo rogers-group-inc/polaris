@@ -191,6 +191,50 @@ export function macCountsByPort(entries: readonly FdbEntry[]): Map<string, numbe
   return out;
 }
 
+/** A port's VLAN config as the interface row stores it. */
+export interface PortVlanState {
+  nativeVlan: number | null;
+  taggedVlans: readonly number[];
+  trunksAllVlans: boolean;
+}
+
+/**
+ * Fill the VLAN of a forwarding-database row the switch reported without one,
+ * from the VLAN config of the port it was learned on.
+ *
+ * Exists because the BRIDGE-MIB table has no VLAN dimension at all, and a
+ * FortiSwitch answers only that one — so every row it reports is VLAN-less.
+ * An ACCESS port carries exactly one VLAN, its native one, so every MAC
+ * learned there is in it. A trunk carries several and the row says nothing
+ * about which, so it stays null rather than taking a guess.
+ *
+ * `tagged` reads as "access port" only when the switch demonstrably reports a
+ * tagged dimension: a switch that answered the PVID walk but none of the
+ * member bitmaps has an empty tagged set on EVERY port, its trunks included,
+ * and filling from that would put every MAC behind an uplink into the
+ * uplink's native VLAN. So no port anywhere showing a tagged VLAN (or
+ * trunk-all) means nothing is filled.
+ *
+ * Returns new rows; `vlanInferred` marks the ones this filled.
+ */
+export function fillAccessPortVlans<T extends { vlanId: number | null; ifName: string | null }>(
+  entries: readonly T[],
+  ports: ReadonlyMap<string, PortVlanState>,
+): Array<T & { vlanInferred: boolean }> {
+  let taggedDimension = false;
+  for (const p of ports.values()) {
+    if (p.trunksAllVlans || p.taggedVlans.length > 0) { taggedDimension = true; break; }
+  }
+  return entries.map((e) => {
+    if (e.vlanId != null || !e.ifName || !taggedDimension) return { ...e, vlanInferred: false };
+    const port = ports.get(e.ifName);
+    if (!port || port.nativeVlan == null || port.trunksAllVlans || port.taggedVlans.length > 0) {
+      return { ...e, vlanInferred: false };
+    }
+    return { ...e, vlanId: port.nativeVlan, vlanInferred: true };
+  });
+}
+
 /** A forwarding-database row that has been matched to an Asset. */
 export interface MatchedFdbEntry extends FdbEntry {
   matchedAssetId: string | null;
