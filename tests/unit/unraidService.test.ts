@@ -11,6 +11,7 @@ const {
   applyUnraidIfaceAddressing,
   applyUnraidStorageLayout,
   containerOwnIp,
+  containerOwnNetwork,
   parseUnraidIfaceAddressing,
   normalizeUnraidContainerUsage,
   parseDockerMemUsage,
@@ -148,6 +149,19 @@ describe("helpers", () => {
   it("gives a container on br0 / a VLAN child / bond0 its LAN address", () => {
     expect(containerOwnIp("br0.20", { Networks: { "br0.20": { IPAddress: "10.0.20.5" } } })).toBe("10.0.20.5");
     expect(containerOwnIp("bond0", { Networks: { bond0: { IPAddress: "10.0.0.7" } } })).toBe("10.0.0.7");
+  });
+  it("returns the LAN network's MAC beside its address, never a NATed bridge's", () => {
+    expect(containerOwnNetwork("br0", { Networks: { br0: { IPAddress: "10.0.0.24", MacAddress: "ce:27:1d:68:b1:c8" } } }))
+      .toEqual({ ip: "10.0.0.24", mac: "CE:27:1D:68:B1:C8" });
+    expect(containerOwnNetwork("br0", { Networks: { br0: { IPAddress: "10.0.0.24" } } })).toEqual({ ip: "10.0.0.24", mac: null });
+    expect(containerOwnNetwork("bridge", { Networks: { bridge: { IPAddress: "172.17.0.2", MacAddress: "02:42:ac:11:00:02" } } }))
+      .toEqual({ ip: null, mac: null });
+  });
+  it("carries the LAN MAC onto the parsed container", () => {
+    const fixture = structuredClone(FIXTURE);
+    (fixture.docker.containers[1].networkSettings.Networks as any).br0.MacAddress = "CE:27:1D:68:B1:C8";
+    const inv = parseUnraidInventory(fixture, { host: "10.0.0.2" }, { dockerFailed: false, vmsFailed: false });
+    expect(inv.containers.map((c) => c.macs)).toEqual([[], ["CE:27:1D:68:B1:C8"]]);
   });
   it("records each container's network mode", () => {
     const inv = parseUnraidInventory(FIXTURE, { host: "10.0.0.2" }, { dockerFailed: false, vmsFailed: false });

@@ -83,7 +83,8 @@ saves and comes back unticked reads as a bug.
 **DNS-resolved reservations.** Any asset whose primary IP falls in a known,
 non-deprecated network with no active reservation gets one auto-created. IPv4
 only, **never pushed to a gate**, and it **never raises a conflict** — it defers
-silently to anything authoritative.
+silently to anything authoritative. When two assets share one address, the
+reservation keeps describing the first and is not rewritten back and forth.
 
 ---
 

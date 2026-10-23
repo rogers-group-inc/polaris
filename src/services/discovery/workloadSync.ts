@@ -27,6 +27,12 @@
  * externalId → (VMs only) vNIC MAC → hostname collision → pending Conflict →
  * create. Containers are NEVER MAC-matched: Docker's generated `02:42:…`
  * bridge MACs repeat across hosts and across recreates.
+ *
+ * A container's LAN-attached (macvlan) MAC is still RECORDED on its asset,
+ * re-read every sync because Docker randomizes it on each recreate. After the
+ * asset is matched, a FortiGate endpoint placeholder already holding one of
+ * the workload's current MACs is absorbed into it (`absorbMacGhosts`) — the
+ * gate saw the new MAC before this sync recorded it.
  */
 
 import { lookup as systemLookup } from "node:dns/promises";
@@ -39,6 +45,7 @@ import { bumpLastSeen, clampAcquiredToLastSeen } from "../../utils/assetInvarian
 import { buildMonitoredSweep, getAddAsMonitoredFromConfig } from "../monitorOverrideService.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { reconcileMacAddresses } from "../macAddressService.js";
+import { isMergeableEndpointGhost, mergeEndpointGhostIntoAsset } from "../assetGhostMergeService.js";
 import {
   MAC_ROW_SELECT,
   buildMacRowsForCreate,
@@ -209,6 +216,11 @@ export interface WorkloadContainer {
   rawState: string | null;
   /** Its own address (macvlan / ipvlan / br0) — null when it shares the host's. */
   ip: string | null;
+  /**
+   * The MAC on that same LAN-attached network, when the platform reports it
+   * (Unraid). Absent / empty for a container on the host's or a NATed stack.
+   */
+  macs?: string[];
   /**
    * The network it is attached to, as the platform names it: Unraid's Docker
    * network mode (`host`, `bridge`, `br0`, a user network, `container:<x>`);
@@ -649,8 +661,62 @@ export async function syncWorkloadDevices(
   };
 
   /**
+   * A FortiGate endpoint placeholder can hold a MAC this workload reports: a
+   * recreated container comes back with a new random macvlan MAC, and the
+   * gate's ARP / DHCP / switch-table pass can see it before this sync records
+   * it, minting a second asset at the container's address. The platform's own
+   * report of the MAC is positive identity, so absorb the placeholder — only
+   * when it is a pure endpoint ghost (the Intune Ethernet-MAC absorb's
+   * eligibility), never a hand-made or independently discovered asset.
+   * Best-effort: a failed merge never fails the workload sync.
+   */
+  const absorbMacGhosts = async (canonical: any, macs: string[], displayName: string): Promise<void> => {
+    let absorbed = false;
+    for (const mac of macs) {
+      const key = normalizeMacKey(mac);
+      const ghost = key ? assetByMac.get(key) : undefined;
+      if (!ghost || ghost.id === canonical.id || assetIdsWithPlatformSource.has(ghost.id)) continue;
+      try {
+        if (!(await isMergeableEndpointGhost(ghost.id))) continue;
+        const res = await mergeEndpointGhostIntoAsset(canonical.id, ghost.id);
+        absorbed = true;
+        for (const [k, a] of assetByMac) if (a.id === ghost.id) assetByMac.set(k, canonical);
+        for (const [k, a] of assetByHostnameUnclaimed) if (a?.id === ghost.id) assetByHostnameUnclaimed.delete(k);
+        assetById.delete(ghost.id);
+        sourcesByAssetId.delete(ghost.id);
+        syncLog("info", `Merged duplicate endpoint asset ${ghost.hostname || ghost.id} into "${displayName}" — it held the MAC ${mac} that ${label} reports for it.`);
+        logEvent({
+          action: "asset.duplicate_merged",
+          resourceType: "asset",
+          resourceId: canonical.id,
+          resourceName: canonical.hostname ?? displayName,
+          actor,
+          level: "info",
+          message: `Discovery merged duplicate endpoint asset ${ghost.hostname || ghost.id} into ${displayName} (${label} MAC ${mac})`,
+          details: {
+            integrationId,
+            integrationName,
+            ghostId: ghost.id,
+            ghostHostname: ghost.hostname ?? null,
+            matchedMac: mac,
+            transferredMonitored: res.transferredMonitored,
+          },
+        });
+      } catch (err: any) {
+        syncLog("error", `Failed to merge duplicate endpoint asset ${ghost.hostname || ghost.id} into "${displayName}": ${err?.message || "Unknown error"}`);
+      }
+    }
+    // The merge moved the ghost's MAC rows onto the canonical; reload them so
+    // this pass's reconcileMacAddresses (a full replace) keeps them.
+    if (absorbed) {
+      const rows = await prisma.assetMacAddress.findMany({ where: { assetId: canonical.id }, select: MAC_ROW_SELECT });
+      canonical.macAddresses = shapeMacRows(rows as any);
+    }
+  };
+
+  /**
    * One workload through the cascade. Shared by all three roles; `macs` is
-   * only ever non-empty for VMs.
+   * non-empty for VMs and for LAN-attached containers.
    */
   const syncOne = async (args: {
     role: WorkloadRole;
@@ -671,7 +737,7 @@ export async function syncWorkloadDevices(
     const assetType = assetTypeForWorkloadRole(role);
     const layer = role === "host" ? 1 : 2;
     const nowIso = now.toISOString();
-    const macEntries = macs.map((mac) => ({ mac, source: `${platform}-vnic` }));
+    const macEntries = macs.map((mac) => ({ mac, source: role === "container" ? `${platform}-container` : `${platform}-vnic` }));
     const mergeMacs = (existingMacs: any[]): { primary: string | null; merged: any[] } => {
       const merged = Array.isArray(existingMacs) ? [...existingMacs] : [];
       for (const e of macEntries) {
@@ -715,6 +781,7 @@ export async function syncWorkloadDevices(
       } catch (err: any) {
         syncLog("warning", `Failed to upsert ${kind} AssetSource row for ${displayName}: ${err.message || "Unknown error"}`);
       }
+      if (macs.length > 0) await absorbMacGhosts(existing, macs, displayName);
       try {
         const { projected } = projectAssetFromSources(sourcesByAssetId.get(existing.id) ?? []);
         const before = snapshotMaterialAssetFields(existing);
@@ -842,6 +909,7 @@ export async function syncWorkloadDevices(
       assetById.set(newAsset.id, newAsset);
       assetByExternalId.set(`${kind}|${externalId}`, newAsset);
       assetIdsWithPlatformSource.add(newAsset.id);
+      if (macs.length > 0) await absorbMacGhosts(newAsset, macs, displayName);
       for (const e of macEntries) {
         const k = normalizeMacKey(e.mac);
         if (k && !assetByMac.has(k)) assetByMac.set(k, newAsset);
@@ -1006,7 +1074,7 @@ export async function syncWorkloadDevices(
         ip: c.ip,
       },
       present: c.state === "running",
-      macs: [],
+      macs: c.macs ?? [],
       staleIps: c.ip === null ? staleContainerIps(hostIp, prior ? sourcesByAssetId.get(prior.id) : undefined, kinds.container) : [],
       collisionFields: { ipAddress: c.ip, os: c.image },
     });

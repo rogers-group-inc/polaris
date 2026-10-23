@@ -30,6 +30,7 @@ import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import { normalizeMacOrNull } from "../utils/mac.js";
 import { normalizeWorkloadState, reportableWorkloadIp, workloadHostUsageKey } from "../utils/workloadSources.js";
 import type {
   WorkloadContainer,
@@ -274,17 +275,36 @@ const UNRAID_LAN_NETWORK_RE = /^(br|eth|bond|wg)\d+(\.\d+)?$/i;
  *   br0 / eth0 / bond0 / wg0 (+ .vlan)  on the LAN — its address.
  */
 export function containerOwnIp(networkMode: string | null, networkSettings: unknown, lanIpPorts: readonly string[] = []): string | null {
+  return containerOwnNetwork(networkMode, networkSettings, lanIpPorts).ip;
+}
+
+/**
+ * `containerOwnIp` plus the MAC Docker gave the container on that same
+ * network. Only a LAN-attached interface's MAC is returned — it is the one a
+ * FortiGate sees in ARP / DHCP / the switch MAC table, so recording it lets
+ * gate discovery resolve the container's asset instead of minting a new one.
+ * Docker randomizes a macvlan MAC on every recreate (an image update), which
+ * is exactly why it is re-read on every sync. A NATed bridge's MAC never
+ * reaches the wire and repeats across hosts, so it is never returned.
+ */
+export function containerOwnNetwork(
+  networkMode: string | null,
+  networkSettings: unknown,
+  lanIpPorts: readonly string[] = [],
+): { ip: string | null; mac: string | null } {
   const mode = (networkMode ?? "").toLowerCase();
-  if (mode === "host" || mode === "none" || mode.startsWith("container:")) return null;
+  if (mode === "host" || mode === "none" || mode.startsWith("container:")) return { ip: null, mac: null };
   const nets = (networkSettings as any)?.Networks ?? (networkSettings as any)?.networks;
-  if (!nets || typeof nets !== "object") return null;
+  if (!nets || typeof nets !== "object") return { ip: null, mac: null };
   const lanIps = new Set(lanIpPorts.map((p) => String(p).replace(/:\d+$/, "").replace(/^\[(.*)\]$/, "$1")));
   for (const [name, n] of Object.entries(nets as Record<string, any>)) {
     if (name === "bridge" || name === "host") continue;
     const ip = str(n?.IPAddress ?? n?.ipAddress);
-    if (ip && (UNRAID_LAN_NETWORK_RE.test(name) || lanIps.has(ip))) return ip;
+    if (ip && (UNRAID_LAN_NETWORK_RE.test(name) || lanIps.has(ip))) {
+      return { ip, mac: normalizeMacOrNull(str(n?.MacAddress ?? n?.macAddress)) };
+    }
   }
-  return null;
+  return { ip: null, mac: null };
 }
 
 function kbToBytes(v: unknown): number | null {
@@ -485,17 +505,19 @@ export function parseUnraidInventory(
 
   const containers: WorkloadContainer[] = ((data?.docker?.containers ?? []) as any[]).map((c) => {
     const name = String(((c?.names ?? []) as string[])[0] ?? "").replace(/^\//, "") || unprefixId(c?.id);
+    const own = containerOwnNetwork(
+      str(c?.hostConfig?.networkMode),
+      c?.networkSettings,
+      Array.isArray(c?.lanIpPorts) ? c.lanIpPorts.filter((p: unknown): p is string => typeof p === "string") : [],
+    );
     return {
       platformId: String(c?.id ?? ""),
       name,
       image: str(c?.image),
       state: normalizeWorkloadState(c?.state),
       rawState: str(c?.status) ?? str(c?.state),
-      ip: containerOwnIp(
-        str(c?.hostConfig?.networkMode),
-        c?.networkSettings,
-        Array.isArray(c?.lanIpPorts) ? c.lanIpPorts.filter((p: unknown): p is string => typeof p === "string") : [],
-      ),
+      ip: own.ip,
+      macs: own.mac ? [own.mac] : [],
       networkMode: str(c?.hostConfig?.networkMode),
       updateAvailable: typeof c?.isUpdateAvailable === "boolean" ? c.isUpdateAvailable : null,
       version: null,
