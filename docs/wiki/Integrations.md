@@ -208,7 +208,9 @@ Then read the run's Events, filtered to `warning` and `error`.
    before adding a second. Two integrations discovering the same devices is
    normal and correct, but it is easier to read one source's output first.
 3. **Leave `addAsMonitored` off** until you have seen what a class actually
-   contains.
+   contains. The one exception is a standalone FortiGate integration's own
+   gate, which is always monitored
+   ([rule 127](Business-Rules#rule-127)).
 4. **Leave every push toggle off** until the read side is right. A push is a
    write to your network.
 5. Then [automations](Automations), and give the seeded ones real recipients.

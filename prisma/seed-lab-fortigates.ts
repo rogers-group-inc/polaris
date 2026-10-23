@@ -167,6 +167,9 @@ function buildConfig(d: LabDevice, defaults: Partial<LabDevice>): Record<string,
     adoptDiscoveredMac: pick("adoptDiscoveredMac", false),
     syncDescriptions: pick("syncDescriptions", false),
     pullSdwan: pick("pullSdwan", false),
+    // Business rule 127 — fixed ON for a standalone FortiGate; written here so the stored
+    // config matches what the routes would have saved.
+    fortigateMonitor: { addAsMonitored: true },
   };
 }
 

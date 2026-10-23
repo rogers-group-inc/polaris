@@ -118,7 +118,34 @@ d("tlsFetch with verifySsl off pins the certificate", () => {
     expect((await call()).ok).toBe(true);
     const row = await pin();
     expect(row!.fingerprint).toBe(fpA);
-    expect(row!.repinUntil).toBeNull();
+    // The window stays open after the first re-pin (rule 113(g)).
+    expect(row!.repinUntil).not.toBeNull();
+  });
+
+  it("re-pins a SECOND change inside the same window (a gate that changes its cert twice while booting)", async () => {
+    const repinned = () => prisma.event.count({ where: { action: "tls.cert.repinned", resourceName: `127.0.0.1:${port}` } });
+    const before = await repinned();
+    // No cache reset: a cached mismatch must still reach the window check.
+    await serve(certB);
+    expect((await call()).ok).toBe(true);
+    const row = await pin();
+    expect(row!.fingerprint).toBe(fpB);
+    expect(row!.pendingFingerprint).toBeNull();
+    expect(await repinned()).toBe(before + 1);
+  });
+
+  it("refuses a change once the window has expired, and keeps the last re-pinned certificate", async () => {
+    const row = await pin();
+    await prisma.tlsCertPin.update({ where: { id: row!.id }, data: { repinUntil: new Date(Date.now() - 1000) } });
+    _resetCaches();
+    await serve(certA);
+    expect((await call()).ok).toBe(false);
+    const after = await pin();
+    expect(after!.fingerprint).toBe(fpB);
+    expect(after!.pendingFingerprint).toBe(fpA);
+    // Leave the state the route cases below start from: certificate A pinned, nothing pending.
+    await prisma.tlsCertPin.update({ where: { id: after!.id }, data: { fingerprint: fpA, pendingFingerprint: null, pendingSubject: null, pendingSeenAt: null, repinUntil: null } });
+    _resetCaches();
   });
 });
 

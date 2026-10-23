@@ -86,6 +86,14 @@ Per-class blocks — **FortiGate**, **FortiSwitch**, **FortiAP** — each carryi
 `addAsMonitored`, per-stream polling methods and credentials. The switch and AP
 blocks also carry the SNMP-direct-polling toggle.
 
+On a **standalone FortiGate** integration the FortiGate block has no toggle:
+the gate is **always monitored**
+([rule 127](Business-Rules#rule-127)), because discovery already holds a
+working API session to it. Its switches and APs keep their own toggles, and a
+FortiManager integration keeps the FortiGate toggle. To stop monitoring one
+gate, turn monitoring off on the asset itself; discovery keeps that choice. An
+HA standby member stays unmonitored as before.
+
 Plus `monitorCredentialId` (SNMP) and `sshCredentialId`, used when a stream's
 resolved method needs them.
 

@@ -137,14 +137,17 @@ export async function verifyOrPinCert(host: string, port: number, fingerprint256
 
   if (row.fingerprint !== actual) {
     // Rule 113(g): Polaris just upgraded this device's firmware, which may
-    // have regenerated its certificate — the first changed certificate inside
-    // the window is the device's new one.
+    // have regenerated its certificate. EVERY change inside the window is
+    // re-pinned, and the window stays open until it expires: a FortiGate 601E
+    // presented two new certificates within minutes of its post-upgrade boot
+    // (2026-10-22), and a window that closed on the first left the device
+    // refused by every collector until someone trusted the second by hand.
     if (row.repinUntil && row.repinUntil.getTime() > Date.now()) {
       await prisma.tlsCertPin.update({
         where: { id: row.id },
         data: {
           fingerprint: actual, subject: subject.slice(0, 500), lastSeen: new Date(),
-          pendingFingerprint: null, pendingSubject: null, pendingSeenAt: null, repinUntil: null,
+          pendingFingerprint: null, pendingSubject: null, pendingSeenAt: null,
         },
       });
       pinCache.set(ck, actual);
@@ -306,8 +309,9 @@ export async function trustPendingCert(id: string, fingerprint: string, actor: s
 
 /**
  * Rule 113(g): after Polaris completes a firmware upgrade of a device, accept
- * the first changed certificate it presents within `minutes`. Only existing
- * pins are touched (a never-pinned endpoint pins on first use anyway).
+ * every changed certificate it presents within `minutes` (the latest one
+ * stays pinned when the window expires). Only existing pins are touched (a
+ * never-pinned endpoint pins on first use anyway).
  */
 export async function allowRepin(host: string, ports: number[], minutes: number, actor: string): Promise<number> {
   if (!host || !ports.length) return 0;
@@ -321,7 +325,7 @@ export async function allowRepin(host: string, ports: number[], minutes: number,
       resourceName: host,
       actor,
       level: "info",
-      message: `A firmware upgrade finished on ${host}; its next changed TLS certificate within ${minutes} minutes will be re-pinned automatically`,
+      message: `A firmware upgrade finished on ${host}; any change to its TLS certificate within ${minutes} minutes will be re-pinned automatically`,
       details: { host, ports, until: until.toISOString() },
     }).catch(() => {});
   }

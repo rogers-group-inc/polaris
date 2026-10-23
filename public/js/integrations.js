@@ -3166,7 +3166,18 @@ function _wireAutoMonitorCard(idPrefix, klass, integrationId) {
 // always get the integration source link stamped at discovery, which drives
 // the polling-method resolver to REST API by default, so no per-class
 // credential picker is needed here.
-function _fortigateAddMonitoredHTML(idPrefix, currentAddAsMonitored) {
+//
+// `fixedOn` (standalone FortiGate, business rule 127): the gate is always
+// monitored, so there is no button — the hidden checkbox stays checked for
+// the save collector and the server stamps the flag regardless.
+function _fortigateAddMonitoredHTML(idPrefix, currentAddAsMonitored, fixedOn) {
+  if (fixedOn) {
+    return '<div style="background:color-mix(in srgb, var(--color-accent) 6%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+        '<input type="checkbox" id="' + idPrefix + 'addAsMonitored" checked style="display:none">' +
+        '<div style="font-weight:500;margin-bottom:0.4rem">Auto-Monitor FortiGate: always on</div>' +
+        '<p class="hint" style="margin:0">A standalone FortiGate integration always monitors its gate: discovery already holds a working API session to it. Switches and access points behind it keep their own toggles. To stop monitoring this gate, turn monitoring off on the asset itself; that per-asset choice is kept across discovery.</p>' +
+      '</div>';
+  }
   var enabled = currentAddAsMonitored === true;
   var btnClass = enabled ? "btn-danger" : "btn-primary";
   var btnLabel = enabled ? "Disable Auto-Monitoring" : "Enable Auto-Monitoring";
@@ -3421,13 +3432,15 @@ function monitorSettingsFormHTML(s, opts) {
       // cadence, which only makes sense when those assets are being added
       // as monitored. _wireMonitoringTabSubtabs wires a change listener on
       // the addAsMonitored checkbox to toggle this wrapper's display.
-      var fgAutoMonWrapHidden = (fwFgCfg.addAsMonitored === true) ? "" : "display:none";
+      var fgFixedOn = integrationType === "fortigate";
+      var fgAutoMonWrapHidden = (fgFixedOn || fwFgCfg.addAsMonitored === true) ? "" : "display:none";
       var autoMonitoringSection =
         '<section style="margin-bottom:1.25rem">' +
           autoMonitoringHeader() +
           _fortigateAddMonitoredHTML(
             "f-mon-fortigate-",
             fwFgCfg.addAsMonitored === true,
+            fgFixedOn,
           ) +
           '<div id="f-mon-fortigate-automon-wrap" style="' + fgAutoMonWrapHidden + '">' +
             _autoMonitorInterfacesHTML("f-mon-fortigate-amon-", "FortiGate", fwFgCfg.autoMonitorInterfaces || null, "names", hasId) +
