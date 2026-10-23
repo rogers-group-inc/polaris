@@ -8858,6 +8858,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // carries port-VLAN data (managed FortiSwitches overlaid from the parent
   // FortiGate's CMDB). On FortiGates / non-Fortinet hosts the columns would
   // otherwise render as dashes across every row, which is just noise.
+  // VLAN id -> name for the pills; kept per asset so the interface slide-over,
+  // which opens from a row of this table, labels its VLAN card the same way.
+  var vlanNames = (si && si.vlanNames) || {};
+  if (asset && asset.id) _assetVlanNames[asset.id] = vlanNames;
   var showVlanCols = rows.some(function (r) {
     return r.nativeVlan != null ||
       (Array.isArray(r.taggedVlans) && r.taggedVlans.length > 0) ||
@@ -8969,22 +8973,27 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var native = (iface.nativeVlan != null) ? iface.nativeVlan : null;
     var tagged = Array.isArray(iface.taggedVlans) ? iface.taggedVlans : [];
     var trunkAll = iface.trunksAllVlans === true;
-    var nativeCell = '<td class="mono">' + (native != null ? escapeHtml(String(native)) : "—") + '</td>';
+    var nativeCell = '<td>' + (native != null ? _vlanPillHTML(native, vlanNames) : "—") + '</td>';
+    // Each pill carries its own number on hover, so the cell-level tooltip is
+    // only for what no pill shows: the "+N more" remainder and trunk-all.
+    function pills(list) {
+      return '<span class="vlan-pills">' + list.map(function (v) { return _vlanPillHTML(v, vlanNames); }).join("") + '</span>';
+    }
     var taggedHTML, taggedTitle;
     if (trunkAll) {
-      taggedHTML = '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#0d948818;color:#0d9488;border:1px solid #0d948830">all</span>';
+      taggedHTML = '<span class="hue-pill vlan-pill">all</span>';
       taggedTitle = "allowed-vlans=all" + (tagged.length > 0 ? " (explicit: " + tagged.join(",") + ")" : "");
     } else if (tagged.length === 0) {
       taggedHTML = "—";
       taggedTitle = "";
     } else if (tagged.length <= 6) {
-      taggedHTML = escapeHtml(tagged.join(", "));
-      taggedTitle = tagged.join(",");
+      taggedHTML = pills(tagged);
+      taggedTitle = "";
     } else {
-      taggedHTML = escapeHtml(tagged.slice(0, 6).join(", ")) + ' <span style="opacity:0.7">+' + (tagged.length - 6) + ' more</span>';
-      taggedTitle = tagged.join(",");
+      taggedHTML = pills(tagged.slice(0, 6)) + ' <span style="opacity:0.7">+' + (tagged.length - 6) + ' more</span>';
+      taggedTitle = tagged.map(function (v) { return _vlanOptionLabel(v, vlanNames); }).join(", ");
     }
-    var taggedCell = '<td class="mono"' + (taggedTitle ? ' title="' + escapeHtml(taggedTitle) + '"' : "") + '>' + taggedHTML + '</td>';
+    var taggedCell = '<td' + (taggedTitle ? ' title="' + escapeHtml(taggedTitle) + '"' : "") + '>' + taggedHTML + '</td>';
     return nativeCell + taggedCell;
   }
 
@@ -9330,14 +9339,14 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     // VLAN offered under Native that no port carries untagged (or under Tagged
     // that no port trunks) is an option that can only ever match nothing.
     if (showVlanCols) {
-      sf.setColumnOptions("native-vlan", _distinctVlanOptions(entries.map(function (e) { return e["native-vlan"]; })));
+      sf.setColumnOptions("native-vlan", _distinctVlanOptions(entries.map(function (e) { return e["native-vlan"]; }), vlanNames));
       var taggedSeen = [];
       entries.forEach(function (e) {
         var t = e["tagged-vlans"];
         if (Array.isArray(t)) taggedSeen = taggedSeen.concat(t);
         else if (t) taggedSeen.push(t);
       });
-      sf.setColumnOptions("tagged-vlans", _distinctVlanOptions(taggedSeen));
+      sf.setColumnOptions("tagged-vlans", _distinctVlanOptions(taggedSeen, vlanNames));
     }
     // Restore, minus any state pointing at a column THIS device doesn't render
     // (PoE and the two VLAN columns appear only when something reports them).
@@ -9376,12 +9385,33 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
 }
 
 /**
+ * One VLAN as a pill labelled with its NAME, the number on hover. `names` is
+ * the id -> name map the system-info and mac-table responses carry
+ * (vlanNameService: the asset's own VLAN interfaces, then its controller
+ * FortiGate's). An id nothing names reads "VLAN 30" so it still reads as a
+ * VLAN. `inferred` marks a MAC-table VLAN filled from the access port.
+ */
+function _vlanPillHTML(vlanId, names, inferred) {
+  var id = String(vlanId);
+  var name = names && names[id];
+  var title = "VLAN " + id + (inferred ? " — inferred from the access port's native VLAN; the switch reported none" : "");
+  return '<span class="hue-pill vlan-pill' + (inferred ? " vlan-inferred" : "") + '" title="' + escapeHtml(title) + '">' +
+    escapeHtml(name || ("VLAN " + id)) + '</span>';
+}
+
+/** The label a VLAN filter option shows: "30 · Users_VL30", or the bare id. */
+function _vlanOptionLabel(id, names) {
+  var name = names && names[String(id)];
+  return name ? id + " · " + name : String(id);
+}
+
+/**
  * Distinct VLAN ids as multi-select options, ordered NUMERICALLY with any
  * non-numeric sentinel (the Tagged column's "all") last. _distinctSorted can't
  * be reused here: its alphabetical sort lists 100 and 1000 between 10 and 20,
  * which reads as a broken list in a column whose every value is a number.
  */
-function _distinctVlanOptions(values) {
+function _distinctVlanOptions(values, names) {
   var seen = {};
   var nums = [];
   var others = [];
@@ -9396,7 +9426,7 @@ function _distinctVlanOptions(values) {
   nums.sort(function (a, b) { return Number(a) - Number(b); });
   others.sort();
   return nums.concat(others).map(function (s) {
-    return { value: s, label: (s === "all") ? "all (trunk)" : s };
+    return { value: s, label: (s === "all") ? "all (trunk)" : _vlanOptionLabel(s, names) };
   });
 }
 
@@ -15737,7 +15767,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
           : '') +
       '</div>' +
       _ifaceAddressBlockHTML(ifaceRow) +
-      _ifaceVlanBlockHTML(ifaceRow) +
+      _ifaceVlanBlockHTML(ifaceRow, _assetVlanNames[asset.id]) +
       '<div id="iface-lldp-block" style="margin-bottom:0.75rem"></div>' +
       _ifaceUnpinnedNoticeHTML(asset, ifName) +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">' +
@@ -16204,7 +16234,7 @@ function _renderIfaceAddressHistory(samples, ifaceRow) {
     : "";
 }
 
-function _ifaceVlanBlockHTML(iface) {
+function _ifaceVlanBlockHTML(iface, names) {
   if (!iface) return "";
   var native = (iface.nativeVlan != null) ? iface.nativeVlan : null;
   var tagged = Array.isArray(iface.taggedVlans) ? iface.taggedVlans : [];
@@ -16216,19 +16246,20 @@ function _ifaceVlanBlockHTML(iface) {
   var role = trunkAll ? "Trunk (all)" : (tagged.length === 0 ? "Access" : "Trunk");
   var nativeBit = native != null
     ? '<div><span style="font-size:0.75rem;color:var(--color-text-secondary)">Native VLAN</span> ' +
-        '<span class="mono" style="margin-left:6px">' + escapeHtml(String(native)) + '</span></div>'
+        '<span style="margin-left:6px">' + _vlanPillHTML(native, names) + '</span></div>'
     : "";
   var taggedBit;
   if (trunkAll) {
     taggedBit = '<div style="margin-top:0.25rem"><span style="font-size:0.75rem;color:var(--color-text-secondary)">Allowed VLANs</span> ' +
       '<span class="mono" style="margin-left:6px">all</span>' +
       (tagged.length > 0
-        ? ' <span style="font-size:0.7rem;color:var(--color-text-secondary)">(' + tagged.length + ' explicitly listed: ' + escapeHtml(tagged.join(", ")) + ')</span>'
+        ? ' <span style="font-size:0.7rem;color:var(--color-text-secondary)">(' + tagged.length + ' explicitly listed)</span> ' +
+          '<span class="vlan-pills">' + tagged.map(function (v) { return _vlanPillHTML(v, names); }).join("") + '</span>'
         : "") +
     '</div>';
   } else if (tagged.length > 0) {
     taggedBit = '<div style="margin-top:0.25rem"><span style="font-size:0.75rem;color:var(--color-text-secondary)">Tagged VLANs</span> ' +
-      '<span class="mono" style="margin-left:6px">' + escapeHtml(tagged.join(", ")) + '</span> ' +
+      '<span class="vlan-pills" style="margin-left:6px">' + tagged.map(function (v) { return _vlanPillHTML(v, names); }).join("") + '</span> ' +
       '<span style="font-size:0.7rem;color:var(--color-text-secondary)">(' + tagged.length + ')</span>' +
     '</div>';
   } else {
@@ -26480,6 +26511,10 @@ async function bulkSetMonitoring(monitored) {
 // strip's Refresh (a full re-fetch) keeps the operator's filter.
 var _assetMacFilter = {};
 
+// VLAN id -> name per asset, from the last system-info load. The interface
+// slide-over reads it; the MAC Table brings its own copy in its response.
+var _assetVlanNames = {};
+
 function _assetMacTableTabHTML(assetId) {
   return '<div id="asset-mactable-mount-' + escapeHtml(assetId) + '">' +
     '<span class="empty-state">Loading…</span></div>';
@@ -26502,6 +26537,7 @@ async function _loadAssetMacTable(assetId) {
   try {
     var data = await api.assets.macTable(assetId);
     var entries = (data && data.entries) || [];
+    var vlanNames = (data && data.vlanNames) || {};
 
     // Cadence · freshness · Refresh, on the server's fully-walked
     // pollIntervalSec so the chip and the amber threshold are the same figure.
@@ -26592,7 +26628,8 @@ async function _loadAssetMacTable(assetId) {
       if (!filter) return true;
       var hay = [
         e.macAddress, e.ifName || ("base port " + (e.basePort != null ? e.basePort : "?")),
-        e.vlanId != null ? "vlan " + e.vlanId : "", e.status || "",
+        e.vlanId != null ? "vlan " + e.vlanId : "",
+        e.vlanId != null ? (vlanNames[String(e.vlanId)] || "") : "", e.status || "",
         e.matchedAsset ? (e.matchedAsset.hostname || "") : "",
         e.matchedAsset ? (e.matchedAsset.ipAddress || "") : "",
       ].join(" ").toLowerCase();
@@ -26698,7 +26735,7 @@ async function _loadAssetMacTable(assetId) {
           _treeElbow(isLast) +
           escapeHtml(e.macAddress) +
         '</td>' +
-        '<td class="mono">' + (e.vlanId != null ? e.vlanId : dash) + '</td>' +
+        '<td>' + (e.vlanId != null ? _vlanPillHTML(e.vlanId, vlanNames, e.vlanInferred === true) : dash) + '</td>' +
         '<td>' + escapeHtml(e.status) + '</td>' +
         '<td>' + dev + '</td>' +
       '</tr>';

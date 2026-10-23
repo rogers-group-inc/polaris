@@ -639,6 +639,14 @@ A VLAN sub-interface always has its own box: it is a separate segment with its
 own traffic, and pinning the parent does not cover it. The header checkbox
 pins or unpins every listed row that has a box, VLAN sub-interfaces included.
 
+**VLANs show by name.** On a switch that reports port VLANs, the **Native
+VLAN** and **Tagged VLANs** columns show each VLAN as a pill carrying its name;
+hover a pill for the VLAN number. The name is the VLAN interface's, read from
+the device itself and, for a FortiLink-managed FortiSwitch, from its controlling
+FortiGate. A VLAN nothing names shows as *VLAN 30*. The column filters list the
+names as well, as *30 · Users_VL30*. The interface panel's VLAN card uses the
+same pills.
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 When the interface's address sits inside a network Polaris knows, the click
@@ -1200,8 +1208,16 @@ count and a Show link**, not dropped. On a FortiSwitch these are the trunk/LAG
 pseudo-ports, which publish no port-to-interface mapping, so every address
 behind a trunk lands there unattributable and would swamp the real per-port rows.
 
-A **filter box**, like the ARP Table's, matches a MAC, interface name, VLAN,
-status or matched hostname, and the count in the heading becomes *N of M
+The **VLAN** column shows the VLAN by name, as a pill (hover for the number),
+named the same way as on the Interfaces table. A FortiSwitch's forwarding
+table reports no VLAN at all, so on an **access port** Polaris fills in the
+port's native VLAN, which is the only VLAN that port carries. Those pills
+have a **dashed** border, and their hover says the VLAN was inferred. Entries
+on a trunk port keep a dash, because the switch does not say which of the
+trunk's VLANs they were learned in.
+
+A **filter box**, like the ARP Table's, matches a MAC, interface name, VLAN
+number or name, status or matched hostname, and the count in the heading becomes *N of M
 entries*. It filters whatever is shown, so the unresolved-port entries are only
 searched once you have clicked **Show**. The filter stays put across
 **Poll**.

@@ -511,6 +511,35 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/vlanNameService.ts
+
+**What it owns:** VLAN NAMES for one asset — what lets the Interfaces table's Native / Tagged VLAN columns, the interface slide-over's VLAN card and the MAC Table show `Users_VL30` as a pill instead of `30` (the number rides the pill's hover). And the MAC Table's VLAN fill for rows the switch reported without one.
+
+**Public API:** `getVlanNamesForAsset(assetId)` → `Record<string, string>` (id as string → name; an unnamed id is absent), `fillMacTableVlans(assetId, entries)` → the entries with `vlanId` filled where it can be and `vlanInferred` on each.
+
+**Cross-service deps:** `utils/vlanNames` (`vlanNamesFromInterfaces`, `mergeVlanNames`), `utils/macForwarding` (`fillAccessPortVlans`), `utils/fortinetParentKey` (`readControllerStamp` + `parentAssetWhereOr` + `buildInfraParentIndex` + `resolveInfraParentAsset`).
+
+**Reads:** `Asset.fortinetTopology` (the controller stamp), `AssetInterface` (`ifType = "vlan"` rows of the asset and of its controller FortiGate; every row's `nativeVlan` / `taggedVlans` / `trunksAllVlans` for the fill).
+
+**Writes:** nothing — read-only, per request.
+
+**Used by:**
+- `src/api/routes/assets.ts → GET /api/v1/assets/:id/system-info` (`vlanNames`) and `GET /api/v1/assets/:id/mac-table` (`vlanNames` + the filled `entries`).
+- `public/js/assets.js → _vlanPillHTML` / `_vlanOptionLabel` (Interfaces columns + filter options, `_ifaceVlanBlockHTML`, the MAC Table cell), `public/js/mobile/asset-detail.js → loadMacSheet`.
+
+**Invariants:**
+- **A VLAN is named after the interface carrying it.** Nothing Polaris collects names a VLAN otherwise; on a FortiLink switch the VLANs ARE the controller FortiGate's VLAN interfaces, which is why a switch reads its gate's rows. The asset's OWN VLAN interfaces win per id.
+- **The gate resolves through `utils/fortinetParentKey.ts`, never by matching `controllerFortigate` against a hostname.**
+- **A tie is never guessed.** One id under several parents with different names (VLAN 30 on the FortiLink and on port5) takes the FortiLink-parented name, and otherwise stays unnamed — the UI shows "VLAN 30".
+- **The MAC fill is access-ports-only.** The BRIDGE-MIB forwarding table (the only one a FortiSwitch answers) has no VLAN at all; an access port carries exactly its native VLAN, so its rows take it, marked `vlanInferred` (dashed pill, "(inferred)" on mobile). A trunk's rows stay null. And a switch where NO port reports a tagged VLAN or trunk-all fills nothing: that is a switch whose member bitmaps were not read, where every uplink would look like an access port.
+- **Stored rows are never rewritten** — the fill is presentation-time, so `persistMacTable`'s `(asset, mac, vlan)` keying is untouched.
+
+**When changing this:** a new VLAN-name source (Q-BRIDGE `dot1qVlanStaticName` for a non-Fortinet switch, IPAM `Subnet.name` by `vlan`) is a new layer passed to `mergeVlanNames` — decide its precedence against the two here. A new surface that prints a VLAN id should take the same map and `_vlanPillHTML`, not print the number.
+
+**Tests:** `tests/unit/vlanNameService.test.ts` (own-rows-first, firewall-only gate lookup, no stamp, unknown asset, the fill skipping its query), `tests/unit/vlanNames.test.ts`, `tests/unit/macForwarding.test.ts` (`fillAccessPortVlans`), `tests/unit/assetInterfacesTableDom.test.ts` (the pills + option labels).
+
+---
+
 ## services/ipUpstreamChainService.ts
 
 **What it owns:** The IP-keyed upstream chain (business rule 45): for an asset that has an address and NO MAC, derive `lastSeenSwitch` / `lastSeenAp` by walking IP → containing subnet's owning FortiGate → THAT gate's `AssetArpEntry` → MAC → `AssetMacTableEntry` (lowest-cardinality learned port) / `AssetWirelessStation` (by MAC, or by the station's own recorded address). Every other writer of those two columns is keyed by MAC, so an asset from AD / Azure Arc / a vCenter cluster / an active scan / the operator form could never acquire them — this service reads the current-state tables those writers leave behind and joins the chain. No device I/O.

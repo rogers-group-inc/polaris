@@ -45,6 +45,8 @@ const FN_NAMES = [
   "_treeElbow",
   "_distinctSorted",
   "_distinctVlanOptions",
+  "_vlanPillHTML",
+  "_vlanOptionLabel",
   "_sizeAssetIfaceTableWrapper",
   "_renderInterfacesTable",
   "_ipsecTabPointerHTML",
@@ -118,6 +120,7 @@ function setup(): void {
   g.getComputedStyle = (el: Element) => (win as any).getComputedStyle(el);
   g.CSS = (win as any).CSS;
   g.currentUsername = "tester";
+  g._assetVlanNames = {};
   g.escapeHtml = (s: unknown) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.showToast = () => {};
@@ -219,6 +222,24 @@ describe("default (tree) view", () => {
     // is the point of _distinctVlanOptions over _distinctSorted.
     expect(opts("native-vlan")).toEqual(["10", "20", "100"]);
     expect(opts("tagged-vlans")).toEqual(["30", "40", "200", "all (trunk)"]);
+  });
+
+  it("shows VLANs as name pills with the number on hover", () => {
+    doc.body.innerHTML = '<div id="ifaces"></div>';
+    g._renderInterfacesTable(doc.getElementById("ifaces"),
+      { ...makeSi(), vlanNames: { "10": "Users_VL10", "30": "Voice_VL30" } }, ASSET);
+    const nativePill = rowFor("port1").querySelector(".vlan-pill")!;
+    expect(nativePill.textContent).toBe("Users_VL10");
+    expect(nativePill.getAttribute("title")).toBe("VLAN 10");
+    // An id nothing names still reads as a VLAN, not a bare number.
+    const port2Pills = Array.from(rowFor("port2").querySelectorAll(".vlan-pill")).map((p) => p.textContent);
+    expect(port2Pills).toEqual(["VLAN 20", "Voice_VL30", "VLAN 40"]);
+    // The picker names them too, keeping the id as the value it filters on.
+    const opts = Array.from(doc.querySelectorAll('th[data-sf-key="native-vlan"] .sf-multi-option'))
+      .map((l) => l.textContent!.trim());
+    expect(opts).toEqual(["10 · Users_VL10", "20", "100"]);
+    // The slide-over reads the same names.
+    expect(g._assetVlanNames.AST1).toEqual({ "10": "Users_VL10", "30": "Voice_VL30" });
   });
 
   it("freezes the header by height-bounding the wrapper's own scroll", () => {
