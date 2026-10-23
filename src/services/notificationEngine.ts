@@ -2082,7 +2082,7 @@ async function resolveAssetStateReadings(
       // readable version, no primary image for its platform — produces NO
       // READING, so `!= current` is true only of devices that really differ.
       //
-      // Scale: ONE findMany over the image table (≤ 2 rows per model node)
+      // Scale: ONE findMany over the image table (≤ 2 rows per platform under a model node)
       // per evaluation, then an in-memory comparison per asset — never a
       // query per asset. The anchor is the system-info pass, which is what
       // refreshes osVersion; the probe tick says nothing about firmware.

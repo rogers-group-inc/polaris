@@ -459,3 +459,34 @@ traffic, a cluster without reserved management interfaces (only the shared addre
 three or more members, a vcluster, an upgrade through FortiManager's proxy, and what FortiOS
 does when the secondary fails to come back on the new image (whether the primary still
 flashes itself).
+
+### Follow-on (2026-10-23): the pair belongs to a platform, not to a model node
+
+"Two images per model" (above) assumed one platform per model node, which held for the
+FortiManager switch and AP nodes it was designed around. It failed on the first mixed
+fleet. A standalone FortiGate integration records every gate's model as the literal
+`FortiGate` (FortiOS `modelName`), so a 61F and a 601E share one node. On 2026-10-22, uploading
+the 601E image there demoted the 61F image to backup with no warning, and a third platform's
+upload would have deleted it. Matching was already per platform (`findUpgradeCandidates`), so
+the demoted 61F image was simply never offered again. Every 61F looked up to date.
+
+The pair is now per platform under a node. The two partial unique indexes key on
+`(manufacturer, assetType, model, COALESCE(platform, ''))`, in migration `20261023000000`. An
+image with no recognised platform (never offered) shares one pair per node, as before.
+`registerUploadedImage` rotates only its platform's pair, `setPrimaryImage` swaps only with its
+platform's primary, and `deleteImage` promotes only its platform's backup. The same migration
+repairs installs the old rule already hit: a backup whose platform has no primary under its
+node is promoted. The old index allowed one backup per node, so at most one row per node moves.
+The Repository tab groups a node's rows by platform. Its upload warning names every platform that has a
+backup rather than guessing which one the file is for, because the platform is read from the
+image header on the server.
+
+Rejected: recording the real model for standalone FortiGates (FortiOS `model`, e.g. `FGT61F`),
+so each platform gets its own node. That would rename every existing standalone gate's model
+and diverge from FortiManager's naming, and it fixes nothing for an operator who files two
+platforms under one node by hand. It may still be worth doing on its own merits.
+
+Pinned by the "PLATFORM under the node" cases in `tests/unit/firmwareImageRotation.test.ts` and
+the grouping case in `tests/unit/firmwareRepositoryTreeUi.test.ts`. The migration was run
+against a database holding the 2026-10-22 broken state (61F demoted beside a 601E primary, plus
+a healthy switch pair): the 61F came back as primary and the switch pair was untouched.

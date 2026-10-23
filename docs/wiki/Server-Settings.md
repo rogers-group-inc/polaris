@@ -160,12 +160,18 @@ is what a device is actually matched on. An image whose header cannot be read
 (only the file name says `v7-build1164`) is stored but never offered to any
 device.
 
-**A model keeps two images.** Uploading a new one makes it the **primary**;
-the current primary becomes the **backup**; the previous backup is removed.
-**Make primary** swaps the two: the rows keep their order (newest version on top),
+**Each platform keeps two images.** A model can hold images for several
+platforms, such as a 61F and a 601E under a standalone FortiGate integration's
+"FortiGate" model, and the rows are grouped by platform. Uploading a new image
+makes it the **primary** for its own platform; that platform's current primary
+becomes the **backup**, and that platform's previous backup is removed. Other
+platforms under the model are not touched. The platform is read from the image
+itself, so before an upload the confirmation lists every platform that already
+has a backup.
+**Make primary** swaps a platform's two: the rows keep their order (newest version on top),
 so the Primary pill and the button jump rows, the promoted row highlights for a moment,
-and the toast names the new backup. Deleting the
-primary promotes the backup. The
+and the toast names the new backup. Deleting a
+primary promotes its platform's backup. The
 same bytes cannot be filed twice, and an image a device is flashing right now
 cannot be removed by anything.
 

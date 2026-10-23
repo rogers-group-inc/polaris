@@ -6243,9 +6243,11 @@ model MaintenanceHold {
 
 // One uploaded `.out`. The bytes live on disk under FIRMWARE_DIR (data/firmware,
 // never the public uploads dir); the row carries identity and placement.
-// A model node holds at most one `primary` and one `backup` image — the two
-// partial unique indexes in migration 20260925000000 are what enforce the
-// two-image cap, since Prisma cannot express a partial unique.
+// Each PLATFORM under a model node holds at most one `primary` and one `backup`
+// image (business rule 87; a node can hold several platforms) — the two partial
+// unique indexes on (manufacturer, assetType, model, COALESCE(platform, '')),
+// migration 20261023000000, enforce the cap, since Prisma cannot express a
+// partial unique.
 model FirmwareImage {
   id           String   @id @default(uuid())
   manufacturer String   // alias-canonicalised, the same spelling Asset.manufacturer carries

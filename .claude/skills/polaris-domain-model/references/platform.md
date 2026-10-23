@@ -548,7 +548,7 @@ FirmwareImage                   -- One uploaded switch / AP / FortiGate firmware
   uploadedAt    DateTime
   @@index([manufacturer, assetType, platform])   -- the per-asset candidate lookup
   @@index([manufacturer, assetType, model])      -- the tree
-  -- SQL only: UNIQUE (manufacturer, assetType, model) WHERE role='primary', and the same WHERE role='backup' — the two-image cap.
+  -- SQL only: UNIQUE (manufacturer, assetType, model, COALESCE(platform, '')) WHERE role='primary', and the same WHERE role='backup' — the two-image cap is PER PLATFORM under a node (rule 87, migration 20261023000000).
 
 FirmwareCredentialBinding       -- What an upgrade signs in with, at one scope: a device-admin login (an `http` Credential, authMode "form"), or on a FortiGate a FortiOS API token
   id            UUID PK

@@ -1370,7 +1370,9 @@ anything is flashed. Polaris does **not** check Fortinet's supported upgrade
 path for a FortiGate (which intermediate versions a jump must pass through);
 the approval dialog says so, and following it is the operator's job.
 
-A model keeps two images, a **primary** and a **backup**. Only the primary is
+Each platform under a model keeps two images, a **primary** and a **backup**
+(one model can hold several platforms, such as a 61F and a 601E under
+"FortiGate"; uploading for one never touches another's). Only the primary is
 offered on its own; the backup is named in the approval dialog when it is also
 newer than the device. The upgrade request carries the image you approved by
 name, and it must be one of those two — a click can never push an image nobody

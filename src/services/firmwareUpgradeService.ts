@@ -257,7 +257,7 @@ export async function getUpgradeAvailability(assetId: string): Promise<UpgradeAv
     if (r.state === "up-to-date") {
       // Nothing newer is offered — say whether that is because the device runs
       // the active image or is past it. One small read: primaries are at most
-      // one per model node.
+      // one per platform under a model node.
       const primaries = await loadPrimaryFirmwareImages();
       const vsPrimary = firmwareVsPrimary(a, primaries);
       const primary = vsPrimary ? primaryImageForAsset(a, primaries) : null;

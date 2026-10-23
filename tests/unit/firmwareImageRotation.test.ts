@@ -88,6 +88,56 @@ beforeEach(() => {
 });
 afterAll(() => rmSync(dirs.root, { recursive: true, force: true }));
 
+describe("rule 87: the pair belongs to a PLATFORM under the node, not to the node", () => {
+  // A standalone FortiGate integration files every gate under the literal model "FortiGate",
+  // so one node can hold a 61F and a 601E. Seen 2026-10-22: the 601E upload demoted the 61F.
+  const role = (id: string) => h.state.images.find((i) => i.id === id)?.role;
+
+  it("a second platform's upload leaves the first platform's primary alone", async () => {
+    const a = await upload("S108FF-7.06-FW-build1164-260709-patch08", "a");
+    const b = await upload("S124FP-7.06-FW-build1164-260709-patch08", "b");
+    expect(b.image.platform).toBe("S124FP");
+    expect(b.demoted).toBeNull();
+    expect(b.rotatedOut).toBeNull();
+    expect(role(a.image.id)).toBe("primary");
+    expect(role(b.image.id)).toBe("primary");
+  });
+
+  it("rotation stays inside the uploaded image's platform", async () => {
+    const a1 = await upload("S108FF-7.06-FW-build1164-260709-patch08", "a");
+    const b1 = await upload("S124FP-7.06-FW-build1164-260709-patch08", "b");
+    const a2 = await upload("S108FF-7.06-FW-build1200-260901-patch09", "c");
+    expect(a2.demoted).toEqual({ id: a1.image.id, versionLabel: "7.6.8 build1164" });
+    const a3 = await upload("S108FF-7.06-FW-build1250-261001-patch10", "d");
+    expect(a3.rotatedOut?.id).toBe(a1.image.id);
+    expect(role(a2.image.id)).toBe("backup");
+    expect(role(a3.image.id)).toBe("primary");
+    // The other platform was never touched by any of it.
+    expect(role(b1.image.id)).toBe("primary");
+    expect(h.state.images).toHaveLength(3);
+  });
+
+  it("make-primary swaps only with its own platform's primary", async () => {
+    const a1 = await upload("S108FF-7.06-FW-build1164-260709-patch08", "a");
+    await upload("S108FF-7.06-FW-build1200-260901-patch09", "c");
+    const b1 = await upload("S124FP-7.06-FW-build1164-260709-patch08", "b");
+    await setPrimaryImage(a1.image.id, "tester");
+    expect(role(a1.image.id)).toBe("primary");
+    expect(role(b1.image.id)).toBe("primary");
+  });
+
+  it("deleting a primary promotes its own platform's backup, never another platform's", async () => {
+    const a1 = await upload("S108FF-7.06-FW-build1164-260709-patch08", "a");
+    const a2 = await upload("S108FF-7.06-FW-build1200-260901-patch09", "c");
+    const b1 = await upload("S124FP-7.06-FW-build1164-260709-patch08", "b");
+    const b2 = await upload("S124FP-7.06-FW-build1200-260901-patch09", "e");
+    await deleteImage(b2.image.id, "tester");
+    expect(role(b1.image.id)).toBe("primary");
+    expect(role(a1.image.id)).toBe("backup");
+    expect(role(a2.image.id)).toBe("primary");
+  });
+});
+
 describe("uploading into a model node", () => {
   it("the first image is the primary, its bytes land as <id>.out and the temp file is gone", async () => {
     const r = await upload("S108FF-7.06-FW-build1164-260709-patch08", "a");
@@ -119,7 +169,7 @@ describe("uploading into a model node", () => {
     expect(h.state.images).toHaveLength(2);
     const deleted = events().filter((e) => e.action === "firmware.image_deleted");
     expect(deleted).toHaveLength(1);
-    expect(deleted[0]!.message).toMatch(/a model keeps two images/);
+    expect(deleted[0]!.message).toMatch(/each platform keeps two images/);
   });
 
   it("refuses the third while a run is flashing the backup, and NOTHING rotates", async () => {

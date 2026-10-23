@@ -164,6 +164,22 @@ describe("the tree", () => {
     expect(rows[1]!.querySelector(".fw-image-promote")).toBeNull();
   });
 
+  it("groups a mixed-platform model's images by platform, each with its own primary (rule 87)", () => {
+    sb.PolarisFirmwareTab._setState({ expanded: { [sb.PolarisFirmwareTab.nodeKey("Fortinet", "switch", "FortiSwitch S108FF")]: true } });
+    const mixed = fixture();
+    const mdl = mixed.manufacturers[0]!.assetTypes[0]!.models[0]! as { images: Array<Record<string, unknown>> };
+    mdl.images = [
+      image({ id: "s108-new", role: "primary", platform: "S108FF", versionLabel: "7.6.8 build1164", version: { major: 7, minor: 6, patch: 8, build: 1164 } }),
+      image({ id: "s124-only", role: "primary", platform: "S124FP", versionLabel: "7.6.9 build1200", version: { major: 7, minor: 6, patch: 9, build: 1200 } }),
+      image({ id: "s108-old", role: "backup", platform: "S108FF", versionLabel: "7.4.3 build0542", version: { major: 7, minor: 4, patch: 3, build: 542 } }),
+    ];
+    sb.PolarisFirmwareTab._setState({ tree: mixed });
+    const rows = Array.from(node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF").querySelectorAll(".fw-images tbody tr"));
+    // S108FF's pair together (newest first), then S124FP — not interleaved by version.
+    expect(rows.map((r) => r.getAttribute("data-image-id"))).toEqual(["s108-new", "s108-old", "s124-only"]);
+    expect(rows.map((r) => text(r.querySelector(".fw-role-pill")))).toEqual(["Primary", "Backup", "Primary"]);
+  });
+
   it("lists a model's images newest first with role pills, the warning pill, and Make primary only on the backup", () => {
     sb.PolarisFirmwareTab._setState({ expanded: { [sb.PolarisFirmwareTab.nodeKey("Fortinet", "switch", "FortiSwitch S108FF")]: true } });
     const rows = Array.from(node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF").querySelectorAll(".fw-images tbody tr"));
@@ -179,7 +195,7 @@ describe("the tree", () => {
     expect(rows[0]!.querySelector(".fw-image-promote")).toBeNull();
     expect(rows[1]!.querySelector(".fw-image-promote")).not.toBeNull();
     expect(rows[0]!.querySelector(".fw-image-del")).not.toBeNull();
-    expect(text(node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF"))).toMatch(/A model keeps two images/);
+    expect(text(node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF"))).toMatch(/Each platform keeps two images/);
   });
 
   it("says when a model has no images, and when a type has no upgrade engine", () => {
