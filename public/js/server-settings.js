@@ -10549,12 +10549,13 @@ function _renderSymCombo(input) {
   var names = _symComboNames(input);
   if (!box || !names) return;
   var q = (input.value || "").trim().toLowerCase();
-  // Prefix matches first, then interior; an exact match is dropped — there's
-  // nothing left to complete.
+  // Prefix matches first (an exact match among them, leading), then interior.
+  // The exact match stays listed so a complete, correct name reads as found
+  // rather than as "no symbol matches".
   var prefix = [], interior = [];
   names.forEach(function (n) {
     var v = n.toLowerCase();
-    if (v === q) return;
+    if (q && v === q) { prefix.unshift(n); return; }
     var at = q ? v.indexOf(q) : 0;
     if (at === 0) prefix.push(n);
     else if (at > 0) interior.push(n);
@@ -11163,22 +11164,19 @@ function _ensureMfgSuggestions() {
 function _renderMfgSuggest(input, box, rows) {
   var q = (input.value || "").trim().toLowerCase();
   // Prefix matches first, then interior — typing "ar" should offer "Aruba"
-  // before "Hikari". An exact match is dropped: nothing left to complete.
-  var matches = rows.filter(function (r) {
-    var v = r.value.toLowerCase();
-    return (!q || v.indexOf(q) !== -1) && v !== q;
-  });
-  if (q) {
-    matches.sort(function (a, b) {
-      var ap = a.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-      var bp = b.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-      return ap - bp;
-    });
-  }
+  // before "Hikari". An exact match is kept, and leads: dropping it made a
+  // correct name ("APC", carried by 8 devices) read as "No known manufacturer
+  // matches".
+  var matches = _filterSuggestRows(rows, q);
   matches = matches.slice(0, 50);
   if (!matches.length) {
+    // Suggestions leave out manufacturers that already have a profile, so a
+    // name with no match may be one of those — say so rather than invite an
+    // Add that 409s.
+    var taken = q && (_mfgProfiles || []).some(function (p) { return (p.manufacturer || "").toLowerCase() === q; });
     box.innerHTML = '<div class="aw-suggest-empty">' +
-      (q ? "No known manufacturer matches — press Add to create it anyway."
+      (taken ? "A profile for this manufacturer already exists — open it above."
+         : q ? "No known manufacturer matches — press Add to create it anyway."
          : "No suggestions yet — every known manufacturer already has a profile.") +
       '</div>';
     box.classList.add("open");
@@ -11193,6 +11191,19 @@ function _renderMfgSuggest(input, box, rows) {
     return _mfgSuggestItemHTML(r.value, hints);
   }).join("");
   box.classList.add("open");
+}
+
+/** Both manufacturer pickers' filter: rows containing `q` (lowercased), the
+ *  exact match first, then prefix matches, then interior ones. The sort is
+ *  stable, so the caller's order (device count) holds within each band. */
+function _filterSuggestRows(rows, q) {
+  var matches = rows.filter(function (r) { return !q || r.value.toLowerCase().indexOf(q) !== -1; });
+  if (!q) return matches;
+  function rank(r) {
+    var v = r.value.toLowerCase();
+    return v === q ? 0 : v.indexOf(q) === 0 ? 1 : 2;
+  }
+  return matches.sort(function (a, b) { return rank(a) - rank(b); });
 }
 
 // Shared by both manufacturer pickers so "· 8 devices" reads the same on each.
@@ -11280,20 +11291,7 @@ function _mibUploadMfrRows() {
 
 function _renderMibUploadMfrSuggest(input, box) {
   var q = (input.value || "").trim().toLowerCase();
-  var matches = _mibUploadMfrRows().filter(function (r) {
-    var v = r.value.toLowerCase();
-    return (!q || v.indexOf(q) !== -1) && v !== q;
-  });
-  if (q) {
-    // Prefix matches first; the sort is stable, so device-count order holds
-    // within each half.
-    matches.sort(function (a, b) {
-      var ap = a.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-      var bp = b.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-      return ap - bp;
-    });
-  }
-  matches = matches.slice(0, 50);
+  var matches = _filterSuggestRows(_mibUploadMfrRows(), q).slice(0, 50);
   if (!matches.length) {
     box.innerHTML = '<div class="aw-suggest-empty">' +
       (q ? "No known manufacturer matches — the name is used as typed."

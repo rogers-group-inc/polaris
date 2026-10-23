@@ -146,13 +146,15 @@ pieces have to be in place:
    an upload rather than baking it in means a vendor adding or moving an object
    is a MIB upload, not a wait for a Polaris release. A MIB file can be up to
    6 MiB, room for a vendor that ships one large module (APC / Schneider
-   Electric's PowerNet-MIB is about 3 MB). Upload it under the manufacturer
-   name exactly as your devices report it: a vendor MIB is offered to a
-   profile, and resolves for an asset, only when the names match. The upload
-   form's Manufacturer picker lists the manufacturers in your inventory first,
-   most devices first, each with its device count (for example
-   "APC by Schneider Electric · 8 devices"). Pick one of those rather than
-   typing a shorter name such as "APC".
+   Electric's PowerNet-MIB is about 3 MB). A vendor MIB is offered to a
+   profile, and resolves for an asset, only when the manufacturer names match.
+   The upload form's Manufacturer picker lists the manufacturers in your
+   inventory first, most devices first, each with its device count (for
+   example "APC · 8 devices"), so picking from it gets the name right. When
+   devices report a vendor under a long or odd name, add a **Manufacturer
+   Alias** (MAC & Vendor Identification) mapping it to the short one. Polaris
+   rewrites the name on every asset and MIB write, so the devices, the MIB and
+   the profile all end up under the same name.
 2. **A manufacturer profile**, at Server Settings → Credentials → Manufacturer
    Profiles. This says which symbol *is* the CPU, which pair *is* the memory,
    and so on.

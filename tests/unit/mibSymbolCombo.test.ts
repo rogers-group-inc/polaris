@@ -22,6 +22,7 @@ interface Sandbox {
   renderSymbolPicker: (sym: string, mibId: string, cls: string, type?: string) => string;
   _renderSymCombo: (input: HTMLInputElement) => void;
   _symComboAccepts: (input: HTMLInputElement, v: string) => boolean;
+  _filterSuggestRows: (rows: { value: string; assetCount: number }[], q: string) => { value: string }[];
   _mfgRestoreEditors: (snap: Record<string, Record<string, unknown>>) => void;
   _mfgMibSymbolsCache: Record<string, unknown>;
 }
@@ -96,10 +97,37 @@ describe("filtering", () => {
     expect(shown(input)).toEqual(["upsAdvBatteryCapacity", "xupsBatteryCapacity"]);
   });
 
+  it("keeps a fully-typed symbol listed, first, instead of reporting no match", () => {
+    const input = mount(sb.renderSymbolPicker("", "mib-ups", "mfg-widget-symbol", "scalar"));
+    input.value = "upsadvbatterycapacity";
+    sb._renderSymCombo(input);
+    expect(shown(input)).toEqual(["upsAdvBatteryCapacity"]);
+  });
+
   it("offers the table side when the symbol type is table", () => {
     const input = mount(sb.renderSymbolPicker("", "mib-ups", "mfg-widget-symbol", "table"));
     sb._renderSymCombo(input);
     expect(shown(input)).toEqual(["upsPhaseInputTable"]);
+  });
+});
+
+describe("_filterSuggestRows (both manufacturer pickers)", () => {
+  // Rows arrive in device-count order; the filter must keep that order inside
+  // each band. Reported: typing "APC" — a name 8 devices carry — got "No known
+  // manufacturer matches" because the exact match was being dropped.
+  const rows = [
+    { value: "Fortinet", assetCount: 900 },
+    { value: "APC Partner Co", assetCount: 20 },
+    { value: "APC", assetCount: 8 },
+    { value: "Napco", assetCount: 3 },
+  ];
+
+  it("keeps the exact match and puts it first, then prefix, then interior", () => {
+    expect(sb._filterSuggestRows(rows, "apc").map((r) => r.value)).toEqual(["APC", "APC Partner Co", "Napco"]);
+  });
+
+  it("returns every row, in the caller's order, for an empty query", () => {
+    expect(sb._filterSuggestRows(rows, "").map((r) => r.value)).toEqual(["Fortinet", "APC Partner Co", "APC", "Napco"]);
   });
 });
 
