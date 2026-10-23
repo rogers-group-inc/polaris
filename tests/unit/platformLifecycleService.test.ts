@@ -300,6 +300,37 @@ describe("lifecycleCapacityReasons", () => {
     expect(out[0].message).toContain("below Polaris's minimum");
   });
 
+  it("caps unpatched at warning and names the advisory and the patch to move to", () => {
+    const out = lifecycleCapacityReasons(
+      result([
+        c({
+          observedVersion: "24.14.1",
+          grade: {
+            state: "unpatched",
+            severity: "critical",
+            track: "24",
+            eolAt: "2028-04-30",
+            daysUntilEol: 900,
+            capacitySeverityCap: "warning",
+            securityFloor: {
+              version: "24.22.1",
+              advisories: ["CVE-2026-111497"],
+              source: "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+              sourceCheckedOn: "2026-10-23",
+            },
+          },
+        }),
+      ]),
+    );
+    expect(out[0].severity).toBe("warning");
+    expect(out[0].code).toBe("platform_unpatched");
+    expect(out[0].message).toContain("CVE-2026-111497");
+    expect(out[0].message).toContain("24.14.1");
+    expect(out[0].suggestion).toContain("24.22.1");
+    // A patch inside the line, never a major move.
+    expect(out[0].suggestion).not.toContain("Move to");
+  });
+
   it("puts every row in one family so the collapse pass yields one", () => {
     const out = lifecycleCapacityReasons(
       result([

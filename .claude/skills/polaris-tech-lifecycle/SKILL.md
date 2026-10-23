@@ -63,16 +63,18 @@ in-app Platform Lifecycle card reads it and never writes it; refreshing it is a 
 - **`engines.node` is advisory.** There is no `.npmrc` with `engine-strict=true`, so npm warns
   and installs anyway. The setup scripts' accept-regexes are the only real gate, and they accept
   a *range* (22 or 24) while every pin installs 24.
-- **Windows is the tightest pin and goes stale first.** The Windows setup scripts hard-pin an
-  exact Node build, an exact Go version, `PostgreSQL.PostgreSQL.<major>` and
-  `Microsoft.OpenJDK.<major>`, while the Linux scripts accept ranges. A stated "Node 24" is
-  therefore false on Windows past the pinned patch, and the day a pinned runtime goes EOL those
-  scripts keep installing it on every fresh host with nothing objecting.
-- **A winget pin can fail silently, because the MSI download is the `else` branch.** `--version`
-  must name a version that channel actually has (`OpenJS.NodeJS.LTS` lagged nodejs.org by two
-  minors on 2026-09-09), and the package id must exist at all — `--id GoLang.Go.1.22` named a
-  package winget does not publish, so on every host WITH winget the Go install failed and the
-  fallback never ran. Check the manifest list before pinning.
+- **No site pins an exact patch, and that is deliberate.** The Windows setup scripts did (an
+  exact Node build through winget) until Windows stopped being a host on 2026-09-11 (`b57d5f15`);
+  a stated "Node 24" was false there past the pinned patch, and a winget `--version` or `--id`
+  that the channel did not publish failed silently into a fallback that never ran. Every
+  surviving site names a major or a range. Do not reintroduce an exact patch pin to answer a
+  security release — that is what `securityFloor` is for.
+- **A patch-level security floor is data, not a pin.** A track's `securityFloor` in
+  `platformEol.json` (Node 24.22.1 / 22.23.4 for CVE-2026-111497) grades `unpatched` on the card
+  and is warned about by `scripts/check-node-security-floor.mjs` from the setup scripts and
+  `upgrade-node.sh`. It WARNS everywhere and never refuses an install, because distro repos
+  trail upstream security releases; and it is capped at warning for the capacity snapshot for
+  the same reason. Details: [references/eol-dataset.md](references/eol-dataset.md).
 - **The PostgreSQL unit name is a host fact and must never be in a shipped unit.** Both update
   paths overwrite `deploy/polaris-*.service` verbatim, so a major written there is re-asserted
   onto every host at every update — including hosts where that unit does not exist. It lives in

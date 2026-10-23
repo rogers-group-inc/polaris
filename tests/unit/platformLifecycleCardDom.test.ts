@@ -157,6 +157,7 @@ describe("row rendering", () => {
       below_minimum: "Below minimum",
       eol: "End of life",
       eol_extended: "EOL (extended support)",
+      unpatched: "Security update",
       approaching_eol: "Approaching EOL",
       aging: "Aging",
       behind_target: "Behind target",
@@ -271,6 +272,22 @@ describe("the upgrade playbook", () => {
 
   it("offers no action button — nothing here is one-click fixable", () => {
     expect(renderPlatformLifecycleCard(withPlaybook())).not.toContain("<button");
+  });
+
+  it("shows the patch and advisory instead of the major playbook when unpatched", () => {
+    const p = withPlaybook();
+    p.components[0].grade.state = "unpatched";
+    (p.components[0].grade as any).securityFloor = {
+      version: "24.22.1",
+      advisories: ["CVE-2026-111497", "<b>x</b>"],
+      source: "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+      sourceCheckedOn: "2026-10-23",
+    };
+    const html = renderPlatformLifecycleCard(p);
+    expect(html).toContain("24.22.1");
+    expect(html).toContain("CVE-2026-111497");
+    expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(html).not.toContain("How to upgrade");
   });
 });
 

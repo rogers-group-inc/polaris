@@ -27,6 +27,23 @@ export const trackSchema = z.object({
   lts: z.boolean().optional(),
   prerelease: z.boolean().optional(),
   note: z.string().optional(),
+  /**
+   * The lowest release on this track with no known exploitable advisory open
+   * against it. A track can be well inside its support window and still be
+   * unsafe on an old patch — CVE-2026-111497 (Brotli RCE in node:zlib) hit
+   * every supported Node line at once, and nothing major-granular could see it.
+   *
+   * Same evidence rule as the dates: a human read the vendor advisory and
+   * recorded its URL. Graded against the FULL observed version, not the track.
+   */
+  securityFloor: z
+    .object({
+      version: z.string().regex(/^\d+(?:\.\d+)*$/, "expected a dotted numeric version"),
+      advisories: z.array(z.string().min(1)).min(1),
+      source: z.string().min(1),
+      sourceCheckedOn: isoDate,
+    })
+    .optional(),
 });
 
 export const technologySchema = z.object({
@@ -74,6 +91,7 @@ export const platformEolDatasetSchema = z.object({
 export type PlatformEolDataset = z.infer<typeof platformEolDatasetSchema>;
 export type PlatformTechnology = z.infer<typeof technologySchema>;
 export type PlatformTrack = z.infer<typeof trackSchema>;
+export type PlatformSecurityFloor = NonNullable<PlatformTrack["securityFloor"]>;
 export type PlatformPlaybook = z.infer<typeof playbookSchema>;
 
 // ─── Grading ──────────────────────────────────────────────────────────
@@ -115,6 +133,11 @@ export type LifecycleState =
   | "behind_target"
   /** EOL within LIFECYCLE_WARNING_DAYS. */
   | "approaching_eol"
+  /**
+   * Supported track, but the installed patch is below the track's
+   * `securityFloor` — a published, exploitable advisory is open against it.
+   */
+  | "unpatched"
   /** Past EOL but inside a paid/volunteer extension. */
   | "eol_extended"
   /** Past EOL. No more security fixes. */
@@ -133,6 +156,8 @@ export interface LifecycleGrade {
   activeSupportEndsAt: string | null;
   extendedSupportUntil: string | null;
   daysUntilEol: number | null;
+  /** Set only on `unpatched`: the floor the installed version is below. */
+  securityFloor?: PlatformSecurityFloor;
   /**
    * Caps the severity this grade may contribute to the capacity snapshot.
    *
@@ -258,6 +283,26 @@ export function gradeComponent(
       state: "eol",
       severity: tech.securityExposed ? "critical" : "warning",
       capacitySeverityCap: "warning",
+    });
+  }
+
+  // A supported track on a patch with an open advisory. Below EOL in priority
+  // (an EOL track has no patch to move to), above every clock state.
+  //
+  // Capped at warning like EOL, even though the fix is usually one package
+  // command: distro repos (RHEL AppStream especially) trail an upstream
+  // security release by days to weeks, and an alert the operator cannot clear
+  // until their vendor ships must not hold the non-dismissible sidebar open.
+  if (
+    row.securityFloor &&
+    observedVersion &&
+    compareTracks(observedVersion, row.securityFloor.version) < 0
+  ) {
+    return withDates({
+      state: "unpatched",
+      severity: tech.securityExposed ? "critical" : "warning",
+      capacitySeverityCap: "warning",
+      securityFloor: row.securityFloor,
     });
   }
 

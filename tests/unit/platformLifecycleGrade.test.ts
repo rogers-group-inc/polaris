@@ -332,3 +332,73 @@ describe("platformEolDatasetSchema", () => {
     expect(platformEolDatasetSchema.safeParse(ok).success).toBe(true);
   });
 });
+
+describe("gradeComponent — security floor", () => {
+  const FLOOR = {
+    version: "24.22.1",
+    advisories: ["CVE-2026-111497"],
+    source: "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+    sourceCheckedOn: "2026-10-23",
+  };
+  const withFloor = (over: Partial<PlatformTechnology> = {}) =>
+    tech({
+      polarisMinimum: "22",
+      polarisTarget: "24",
+      polarisMaximumTested: "24",
+      tracks: [
+        { track: "20", eol: isoIn(-131) },
+        { track: "22", eol: isoIn(600) },
+        { track: "24", eol: isoIn(900), securityFloor: FLOOR },
+      ],
+      ...over,
+    });
+
+  it("grades a supported track below its floor as unpatched, critical, capped at warning", () => {
+    const g = gradeComponent(withFloor(), "24.14.1", NOW);
+    expect(g.state).toBe("unpatched");
+    expect(g.severity).toBe("critical");
+    expect(g.capacitySeverityCap).toBe("warning");
+    expect(g.securityFloor?.version).toBe("24.22.1");
+    expect(g.eolAt).toBe(isoIn(900));
+  });
+
+  it("compares the full version component-wise, not as a string", () => {
+    expect(gradeComponent(withFloor(), "24.9.0", NOW).state).toBe("unpatched");
+    expect(gradeComponent(withFloor(), "24.22.0", NOW).state).toBe("unpatched");
+  });
+
+  it("treats the floor itself and anything newer as patched", () => {
+    expect(gradeComponent(withFloor(), "24.22.1", NOW).state).toBe("current");
+    expect(gradeComponent(withFloor(), "24.23.0", NOW).state).toBe("current");
+    expect(gradeComponent(withFloor(), "24.22.1", NOW).securityFloor).toBeUndefined();
+  });
+
+  it("only applies a floor to its own track", () => {
+    // 22 carries no floor in this fixture: an old 22 patch is not flagged.
+    expect(gradeComponent(withFloor(), "22.12.0", NOW).state).toBe("behind_target");
+  });
+
+  it("is warning, not critical, on a component that is not network-exposed", () => {
+    expect(gradeComponent(withFloor({ securityExposed: false }), "24.14.1", NOW).severity).toBe("warning");
+  });
+
+  it("lets end of life outrank an open advisory — an EOL track has no patch to move to", () => {
+    const t = withFloor({
+      polarisMinimum: "18",
+      tracks: [{ track: "20", eol: isoIn(-131), securityFloor: { ...FLOOR, version: "20.99.0" } }],
+    });
+    expect(gradeComponent(t, "20.19.0", NOW).state).toBe("eol");
+  });
+
+  it("validates the floor's shape", () => {
+    const parses = (securityFloor: unknown) =>
+      platformEolDatasetSchema.safeParse({
+        schemaVersion: 1,
+        reviewedAt: "2026-09-08",
+        technologies: [tech({ tracks: [{ track: "24", securityFloor } as any] })],
+      }).success;
+    expect(parses(FLOOR)).toBe(true);
+    expect(parses({ ...FLOOR, version: "v24.22.1" })).toBe(false);
+    expect(parses({ ...FLOOR, advisories: [] })).toBe(false);
+  });
+});
