@@ -116,6 +116,29 @@ rows age out on their 24-hour expiry (rule 125(b)); other IPv6 reservations and
 networks already in IPAM stay until removed by hand — deleting IPAM records on a
 settings toggle was judged too destructive to do silently.
 
+### The off-hold and the automatic Events (added 2026-10-22, the same day)
+
+Asked "if the server gains IPv6 later, how does Polaris update?", the answer
+exposed the reverse case: `auto` re-reads the host's interfaces every minute, so
+a host that loses its address for two minutes — a router advertisement that
+lapsed, a DHCPv6 renewal that failed — turned IPv6 off, and the next reconcile
+cleared every automatically chosen primary IPv6 across the fleet. And none of it
+left a record: only an operator's mode change wrote an Event.
+
+So `auto` is asymmetric. It turns ON as soon as a routable address appears and
+OFF only after `AUTO_OFF_HOLD_MS` (15 minutes) without one, per process
+(`lastHostIpv6At`; a process that never saw an address starts off — boot is not
+a flap). While held, `enabled` stays true, so nothing is cleared, but `dialable`
+follows the route check, so an IPv6-only device the host can no longer reach is
+skipped rather than polled into down. Each automatic transition is an Event —
+`settings.ipv6.auto_on`, `auto_hold` (warning: the address went, with the time
+IPv6 turns off), `auto_hold_ended` (it came back), `auto_off` (warning) — chosen
+by the pure `autoChangeEvent` and written only by the scheduler role, since every
+role refreshes its own cache and one record per change is enough. The comparison
+is against the last real refresh, never the boot placeholder. An operator's mode
+change is not an automatic transition (the modes differ) and keeps its own
+`settings.ipv6.updated`.
+
 ### Known IPv4-only paths (not gated, not dialling IPv6)
 
 The address-confidence polling run, `dependencyTreeService` IPAM gate resolution,

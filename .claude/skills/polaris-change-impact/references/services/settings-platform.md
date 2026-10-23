@@ -415,7 +415,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **Public API:** `ipv6Enabled()` (sync, cached), `ipv6Dialable()` (sync, cached: on AND reachable — a routable address or `hasIpv6Route`), `hasIpv6Route()`, `decideIpv6Dialable`, `getIpv6Status()`, `setIpv6Mode(mode, actor)`, `routableHostIpv6(ifaces)`, `decideIpv6Enabled(mode, hosts)`, `_resetIpv6GateForTests`, `Ipv6Mode`, `Ipv6Status`
 
-**Cross-service deps:** `settingsStore` (`createSettingStore`, 30s TTL), `eventLogService` (`settings.ipv6.updated`), `utils/cidr.ts` (`isIpamIpv6Address`), `node:os` (`networkInterfaces`).
+**Cross-service deps:** `settingsStore` (`createSettingStore`, 30s TTL), `eventLogService` (`settings.ipv6.updated`, `settings.ipv6.auto_*`), `utils/role.ts` (`roleConfig().runsSchedulers` — the one role that records automatic transitions), `utils/cidr.ts` (`isIpamIpv6Address`), `node:os` (`networkInterfaces`).
 
 **Used by:** `api/routes/serverSettings.ts` (`GET|PUT /server-settings/ipv6`), `api/routes/auth.ts` (`/auth/me → ipv6Enabled`), `fortigateService` / `fortimanagerService` (skip the dhcp6 / RA / IPv6 lease reads, `NO_INTERFACE_IPV6`), `discovery/discoveryEngine → syncDhcpSubnets` (`withoutIpv6`), `interfaceInventoryService` / `monitoringService` / `api/routes/agents.ts` (`splitInterfaceAddresses(…, ipv6Enabled())`), `monitoringService → dial()` and `jobs/monitorAssets.ts` (`assetDialAddress`, loss sweep), `primaryIpv6Service`, `api/routes/assets.ts` / `mibs.ts` / `credentials.ts` (SNMP walk, agent-install target).
 
@@ -423,6 +423,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - `ipv6Enabled()` never awaits — it is read on every interface write and probe target. A stale cache answers its last value and refreshes in the background; a settings-read failure keeps the last mode rather than flipping IPv6.
 - Each process role has its own cache: a mode change reaches monitor / discovery within ~60s + the store TTL. Never assume immediate cross-process visibility.
 - Off stops new IPv6 writes; it does not purge IPAM (observed rows expire, others stay). `primaryIpv6Service` clears unpinned primaries.
+- `auto` turns off only after `AUTO_OFF_HOLD_MS` (15 min) without a host address (`lastHostIpv6At`, per process; `heldUntil` on the status). Automatic transitions are Events chosen by the pure `autoChangeEvent` (`settings.ipv6.auto_on` / `auto_hold` / `auto_hold_ended` / `auto_off`) and written by the scheduler role only — never from every role.
 - Dialling reads `ipv6Dialable()`, never `ipv6Enabled()`: on without reach (a container on an IPv4-only network) must leave an IPv6-only asset unpolled, not polled into down. `hasIpv6Route` is a UDP `connect()` to 2000::1 — a route lookup, no packet sent.
 
 **When changing this:**

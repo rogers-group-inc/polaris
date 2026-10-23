@@ -374,8 +374,12 @@ Whether Polaris handles IPv6 at all ([rule 127](Business-Rules#rule-127)). The
 card shows whether IPv6 is currently on and the routable IPv6 addresses this
 server has. Link-local (fe80::) and loopback addresses are not counted.
 
-- **Automatic** (the default): on when this server has a routable IPv6
-  address, off when it does not.
+- **Automatic** (the default): on as soon as this server has a routable IPv6
+  address. It turns off only after the server has had none for 15 minutes, so
+  a short outage does not clear every asset's primary IPv6. While it waits, the
+  card says until when, and devices with only an IPv6 address are not polled.
+  Each automatic change, and the start and end of each wait, is recorded on the
+  Events page.
 - **Always on**: when detection is wrong for your setup. Devices with only an
   IPv6 address are still polled only if this server can reach IPv6; when it
   cannot, the card shows a warning and those devices are left unpolled.
