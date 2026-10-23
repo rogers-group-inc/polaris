@@ -210,9 +210,15 @@ A **Custom widgets** query defines widgets, one per line:
 
 | Type | Line | Shows |
 |---|---|---|
-| `gauge` | `Battery \| gauge \| battery.pct \| % \| 0 \| 100 \| 20` (unit, min, max and warn-at optional) | the latest value on a dial |
-| `line` | `Pages \| line \| counters.pages` | its last 60 readings as a line |
+| `gauge` | `Battery \| gauge \| battery.pct \| % \| 0 \| 100 \| 20 \| below` (unit, min, max, warn-at and its direction optional) | the latest value on a dial |
+| `line` | `Pages \| line \| counters.pages` (the same optional columns; a line ignores min and max) | its last 60 readings as a line |
 | `state` | `Door \| state \| door.status \| closed, locked` | OK while the value is one of those listed, otherwise Alarm |
+
+**Warn-at** turns a gauge or line amber once the reading reaches it. It warns
+at or **above** the value unless the next column says `below`, as a battery
+or toner level does. It only changes how the widget looks: to be told, build
+an automation on the widget's value (see
+[Automation-Triggers](Automation-Triggers)).
 
 The widgets appear on the asset page's **Widgets** tab, beside any widgets the
 asset's [manufacturer profile](Server-Settings) defines. They need no polling

@@ -1177,6 +1177,12 @@ Shown when the asset's manufacturer profile defines **custom widgets**
 (Server Settings → Credentials → Manufacturer Profiles). One card per widget,
 drawn as its type says — a gauge with its threshold ranges, a line over the
 last 60 samples, a table, or a pass/fail state.
+A gauge or line with a **Warning at** value marks it (a tick on the gauge, a
+dashed line on the chart) and turns amber, with a *Warning* caption, once the
+reading reaches it. **Warn when** says which side is the warning: *at or
+above* (load, temperature) or *at or below* (battery capacity, runtime). The
+warning only colours the card; an automation on the widget's value — the
+*Custom widget value* metric, which offers the widget by name — is what alerts.
 Widgets are collected on their own cadence (60 seconds by default); the tab
 shows the freshest sample and says so when none has arrived yet, or when the
 asset's polling is disabled.

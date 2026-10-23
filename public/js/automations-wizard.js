@@ -608,9 +608,18 @@ function makeAutomationSentences(s) {
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return "«" + list[i].name + "»";
     return id + " (not found)";
   }
+  /** A custom widget's NAME for its id (a UUID or a Generic API `ga:` key),
+   *  off /schema's `customWidgets`. Same quoting as checkNameOf. */
+  function widgetNameOf(id) {
+    var list = s.customWidgets || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return "«" + list[i].name + "»";
+    return id + " (not found)";
+  }
   /** One dimension clause: the DIM_PHRASE template with its value. */
   function dimPhrase(k, value) {
-    var v = k === "checkId" && value && value !== "…" ? checkNameOf(value) : value;
+    var v = k === "checkId" && value && value !== "…" ? checkNameOf(value)
+      : k === "widgetId" && value && value !== "…" ? widgetNameOf(value)
+      : value;
     // A multi value reads as a list: "for health check Microsoft or Primary WAN".
     if (awDimIsMulti(k) && value && value !== "…") v = awDimTerms(value).join(" or ");
     // The SD-WAN member IP filter stores a comparison, not a pattern: word it.
@@ -904,6 +913,7 @@ function makeAutomationSentences(s) {
         if (p && p.name) v = p.name;
       }
       if (k === "checkId") v = checkNameOf(v).replace(/[«»]/g, "");
+      if (k === "widgetId") v = widgetNameOf(v).replace(/[«»]/g, "");
       // A comparison, already carrying its operator: memberIp != 0.0.0.0.
       if (k === "sdwanMemberIp") { parts.push("memberIp " + String(v).trim().replace(/\s+/, " ")); return; }
       parts.push((FORMULA_DIM[k] || (k + "=")) + '"' + v + '"');

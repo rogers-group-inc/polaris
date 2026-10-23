@@ -44,7 +44,7 @@ A number, compared against a threshold.
 | `ifInBps` / `ifOutBps` | bps | interface name |
 | `sdwanLatencyMs` / `sdwanJitterMs` / `sdwanPacketLoss` | ms / ms / % | health check, member |
 | `ipsecThroughputBps` | bps | tunnel name |
-| `customWidgetValue` | — | widget |
+| `customWidgetValue` — **Custom widget value** | the widget's own | widget (a gauge, line or HTTP-check widget, picked by name) |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
 
 The path check metrics are not here — they have their own trigger type,

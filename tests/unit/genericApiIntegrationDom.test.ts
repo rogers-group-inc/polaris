@@ -484,6 +484,22 @@ describe("Monitoring tab — monitor queries", () => {
     expect(scope.getGenericApiFormConfig().monitorQueries[3].widgets).toEqual([{ name: "Toner", type: "gauge", path: "toner" }]);
   });
 
+  it("reads an optional above / below after warn-at, keeps only below, and refuses anything else", () => {
+    const parsed = scope._gaParseWidgetLines(
+      "Battery | gauge | battery | % | 0 | 100 | 20 | below\nLoad | gauge | load | % | 0 | 100 | 90 | above\nTemp | line | t | C |  |  | 40\nOdd | gauge | x | % | 0 | 100 | 5 | sideways",
+    );
+    expect(parsed.widgets).toEqual([
+      { name: "Battery", type: "gauge", path: "battery", unit: "%", min: 0, max: 100, warningAt: 20, warningWhen: "below" },
+      { name: "Load", type: "gauge", path: "load", unit: "%", min: 0, max: 100, warningAt: 90 },
+      { name: "Temp", type: "line", path: "t", unit: "C", warningAt: 40 },
+    ]);
+    expect(parsed.bad).toEqual(["Odd | gauge | x | % | 0 | 100 | 5 | sideways"]);
+    // "above" is the default, so only "below" is written back out.
+    expect(scope._gaFormatWidgetLines(parsed.widgets)).toBe(
+      "Battery | gauge | battery | % | 0 | 100 | 20 | below\nLoad | gauge | load | % | 0 | 100 | 90\nTemp | line | t | C |  |  | 40",
+    );
+  });
+
   it("parses a state widget's OK values into a notEquals StateMap, and formats it back the same way", () => {
     const parsed = scope._gaParseWidgetLines("Door | state | door | closed, locked\nAlarm bit | state | alarm");
     expect(parsed.widgets).toEqual([
