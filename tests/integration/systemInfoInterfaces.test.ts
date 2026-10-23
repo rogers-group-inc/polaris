@@ -29,8 +29,14 @@ const HOSTNAME = "sysinfo-iface-endpoint-test";
 
 let assetId = "";
 
+const PEER_HOSTNAME = `${HOSTNAME}-peer`;
+
 async function wipe(): Promise<void> {
-  await prisma.asset.deleteMany({ where: { hostname: HOSTNAME } });
+  const ids = (await prisma.asset.findMany({
+    where: { hostname: { in: [HOSTNAME, PEER_HOSTNAME] } }, select: { id: true },
+  })).map((a) => a.id);
+  await prisma.notification.deleteMany({ where: { assetId: { in: ids } } });
+  await prisma.asset.deleteMany({ where: { hostname: { in: [HOSTNAME, PEER_HOSTNAME] } } });
 }
 
 beforeAll(async () => {
@@ -142,5 +148,32 @@ d("GET /assets/:id/system-info — interfaces from current state", () => {
     const res = await agent.get(`/api/v1/assets/${assetId}/system-info`);
     const names = (res.body.interfaces as Array<{ ifName: string }>).map((i) => i.ifName);
     expect(names).toEqual(["port1"]);
+  });
+
+  // The Neighbor cell's strobing alert dot reads matchedAsset.alert — the
+  // neighbor's worst uncleared alert, the same summary the Assets list carries.
+  it("stamps a matched neighbor with its active-alert summary", async () => {
+    const peer = await prisma.asset.create({
+      data: { hostname: PEER_HOSTNAME, assetType: "switch", status: "active" },
+    });
+    await prisma.assetLldpNeighbor.create({
+      data: { assetId, localIfName: "port1", source: "snmp", systemName: PEER_HOSTNAME, matchedAssetId: peer.id },
+    });
+    await prisma.notification.createMany({
+      data: [
+        { assetId: peer.id, message: "warn", severity: "warning", acknowledged: true },
+        { assetId: peer.id, message: "bad", severity: "critical" },
+        { assetId: peer.id, message: "old", severity: "critical", cleared: true },
+      ],
+    });
+
+    const { agent } = await authedAgent(app);
+    const res = await agent.get(`/api/v1/assets/${assetId}/system-info`);
+    const n = (res.body.lldpNeighbors as Array<{ matchedAsset: Record<string, unknown> | null }>)[0];
+    expect(n.matchedAsset?.alert).toEqual({ severity: "critical", count: 2, unacknowledged: 1 });
+
+    await prisma.notification.updateMany({ where: { assetId: peer.id }, data: { cleared: true } });
+    const quiet = await agent.get(`/api/v1/assets/${assetId}/system-info`);
+    expect(quiet.body.lldpNeighbors[0].matchedAsset.alert).toBeNull();
   });
 });

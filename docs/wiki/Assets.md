@@ -127,6 +127,10 @@ A device with a live alert carries a **strobing dot** to the right of its
 hostname, coloured by the worst active alert. **It stops moving once everything
 on it is acknowledged** — motion means unhandled, not "bad".
 
+The same dot appears in a device's **Interfaces** table, beside the name in the
+**Neighbor** column, when the device on the far end of that port is a Polaris
+asset with a live alert.
+
 `prefers-reduced-motion` drops it to a steady rendering, and the title text
 carries the whole message: neither colour nor motion reaches every reader.
 

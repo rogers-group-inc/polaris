@@ -667,6 +667,46 @@ describe("IPsec tunnels live on the IPsec tab, not here", () => {
   });
 });
 
+// A neighbor that resolved to an asset with an active alert carries the same
+// strobing severity dot the Assets list draws (app.js → alertSummaryDotHTML),
+// from the `alert` summary GET /assets/:id/system-info stamps on matchedAsset.
+describe("neighbor alert dot", () => {
+  const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+  function appFnSrc(name: string): string {
+    const start = appLines.findIndex((l) => l.startsWith(`function ${name}(`));
+    const end = appLines.findIndex((l, i) => i > start && l === "}");
+    return appLines.slice(start, end + 1).join("\n");
+  }
+  function renderNeighbor(matchedAsset: Record<string, any> | null): void {
+    (0, eval)(appFnSrc("assetAlertStrobeColor"));
+    (0, eval)(appFnSrc("alertSummaryDotHTML"));
+    const si = makeSi();
+    si.lldpNeighbors = [{ localIfName: "port1", systemName: "core-sw", portId: "ge-0/0/1", matchedAsset } as any];
+    doc.body.innerHTML = '<div id="ifaces"></div>';
+    g._renderInterfacesTable(doc.getElementById("ifaces"), si, ASSET);
+  }
+
+  it("strobes in the worst severity's colour while an alert is unacknowledged", () => {
+    renderNeighbor({ id: "A1", alert: { severity: "serious", count: 2, unacknowledged: 1 } });
+    const dot = rowFor("port1").querySelector(".alert-strobe-dot") as any;
+    expect(dot).not.toBeNull();
+    expect(dot.classList.contains("is-handled")).toBe(false);
+    expect(dot.getAttribute("style")).toContain("--color-sev-serious");
+  });
+
+  it("stays marked but still once every alert is acknowledged", () => {
+    renderNeighbor({ id: "A1", alert: { severity: "warning", count: 1, unacknowledged: 0 } });
+    expect(rowFor("port1").querySelector(".alert-strobe-dot")!.classList.contains("is-handled")).toBe(true);
+  });
+
+  it("draws nothing for a quiet neighbor or an unmatched one", () => {
+    renderNeighbor({ id: "A1", alert: null });
+    expect(rowFor("port1").querySelector(".alert-strobe-dot")).toBeNull();
+    renderNeighbor(null);
+    expect(rowFor("port1").querySelector(".alert-strobe-dot")).toBeNull();
+  });
+});
+
 // Business rule 126: the interface's IPv6 gets its own column — only on a
 // device that reports one — filterable like IP, and an IPv6-only interface
 // looks up its network by its IPv6.

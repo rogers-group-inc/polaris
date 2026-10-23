@@ -9692,7 +9692,10 @@ function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
 // share the local port. Returns "—" when no neighbor is on this interface.
 // Peer-inferred entries (source = "peer-inferred", derived from
 // Asset.fortinetTopology rather than a direct LLDP scrape) render in italic
-// with a tooltip explaining the inference.
+// with a tooltip explaining the inference. A matched neighbor with an active
+// alert carries the same strobing severity dot as the Assets list
+// (alertSummaryDotHTML, from matchedAsset.alert stamped by GET
+// /assets/:id/system-info).
 function _lldpNeighborInlineCell(neighbors) {
   if (!neighbors || neighbors.length === 0) return "—";
   var first = neighbors[0];
@@ -9711,11 +9714,14 @@ function _lldpNeighborInlineCell(neighbors) {
     ? '<a href="#" class="asset-lldp-link" data-asset-id="' + escapeHtml(first.matchedAsset.id) +
       '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(label) + '</a>'
     : escapeHtml(label);
+  var alertDot = first.matchedAsset && first.matchedAsset.alert
+    ? ' ' + alertSummaryDotHTML(first.matchedAsset.alert)
+    : "";
   var portStr = port ? ' <span style="opacity:0.7" class="mono">/ ' + escapeHtml(port) + '</span>' : "";
   var more = neighbors.length > 1
     ? ' <span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030">+' + (neighbors.length - 1) + '</span>'
     : "";
-  return openTag + labelHtml + portStr + more + closeTag;
+  return openTag + labelHtml + alertDot + portStr + more + closeTag;
 }
 
 // Used-% cell for the storage table: the canonical utilization bar
