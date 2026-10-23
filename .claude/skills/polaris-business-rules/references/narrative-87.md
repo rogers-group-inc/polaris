@@ -369,3 +369,93 @@ discovery to learn one string). Known gap: a FortiGate polled by ICMP / SNMP / t
 `fortimanager` method has no live reader and still waits for discovery. A live row that stops
 being refreshed (a gate moved off `rest_api`) keeps outranking discovery until the asset's next
 live reading.
+
+
+### Groundwork (2026-10-23): what upgrading a real HA pair showed, for when Polaris does it
+
+HA members are still refused. This section records the lab run that a future HA-upgrade
+feature should be built from. The operator asked for it: *"write down what you learned about
+upgrading the ha pair so that we can build in ha pair firmware upgrades to polaris at some
+point"*. The vendor facts are mirrored in the fortinet-api-conventions plugin (`fortios-rest.md`,
+Firmware upgrade).
+
+**The cluster.** The lab's HUB1 pair: two FortiGate 61F, `mode a-p`, group LAB-HA, HUB1-a
+(FGT61FTK23009069, priority 255) primary, HUB1-b (FGT61FTK24006008, priority 128),
+`override disable`, `session-pickup enable`, `upgrade-mode uninterruptible`, heartbeat on
+internal4, and `ha-mgmt-status enable` with **internal1 as the reserved management
+interface**. 172.22.128.101 is HUB1-a's own internal1 address, and 172.22.128.105 is HUB1-b's. So the
+address Polaris discovered and pins is ONE MEMBER's, not the cluster's. A failover does not move
+it, and it is unreachable whenever that member is rebooting. Polaris had no address for HUB1-b
+at all (standby IP nulled). .105 was found by a TLS sweep of the subnet and confirmed with
+the same API token (the API admin and its trusthost are synced config, so one token reaches
+both members).
+
+**The run.** 7.6.7 build3704 → 7.6.8 build3744, done outside Polaris with the same multipart
+`POST /api/v2/monitor/system/firmware/upgrade` (`source=upload`) the FortiGate engine sends,
+to the PRIMARY's address only:
+
+| time (UTC) | HUB1-a @ .101 | HUB1-b @ .105 |
+|---|---|---|
+| 00:47:10 | upload starts; primary, 7.6.7 | secondary, 7.6.7 |
+| 00:48:07 | | down (rebooting) |
+| 00:50:53 | | back, 7.6.8, secondary |
+| 00:51:12 | **upload request answers** (HTTP 200, 242 s after it began) | |
+| 00:51:17 | secondary, still 7.6.7 (failover done) | **primary**, 7.6.8 |
+| 00:51:29 | down (rebooting) | |
+| 00:54:15 | | secondary again |
+| 00:54:25 | back, 7.6.8, **primary** | |
+| 00:57:18 | one API timeout (6 s), answering again at 00:57:34; no reboot | |
+
+What follows for an implementation:
+
+- **Send the image once, to the primary.** FortiOS distributes it and runs the order itself:
+  the secondary first, then failover, then the old primary. Polaris does not sequence members.
+- **The upload request blocks until the secondary is upgraded and the cluster has failed
+  over** (242 s here, against ~8 s for a standalone 61F). The engine's upload response timeout
+  must allow several minutes per secondary member, or it will report a failure for an upgrade
+  that is going fine. An answer is not "the gate is about to reboot"; it is "half the cluster is
+  done".
+- **Two reboots, about 8 minutes end to end.** Each member was unreachable ~3 minutes on its
+  own address. Data-plane continuity through the cluster addresses was NOT measured.
+- **The primary role came back to HUB1-a without being asked**, ~3 minutes after its reboot
+  began. That was with override off and the higher priority on HUB1-a. Do not assume which
+  member is primary at the end, and do not treat a role change as a failure.
+- **Let the cluster settle before calling it done.** The primary dropped one API call ~3 minutes
+  after it came back, with no reboot. A verify loop that gives up on the first miss after
+  "both on target" would misreport this.
+- **Verify per member, by serial.** Success is both serials reporting the target version from
+  their own `monitor/system/status`. The cluster view (`monitor/system/ha-peer`, read from
+  either member) lists both serials and the primary flag, but no addresses or versions.
+- **Hold both assets, and anything behind the cluster, for the whole window** (rule 80): one
+  member is down twice over ~8 minutes. A hold on the primary alone would let the standby, or
+  the dependency tree, alert.
+- **Discovery after the run recorded both versions correctly** (`asset.firmware.changed` for
+  HUB1-a and HUB1-b), so verification can lean on a scoped re-discovery as single-gate runs do.
+
+**Certificates (rule 113).** Both members served the same CA-issued `*.rogersgroupinc.com`
+(`admin-server-cert star_rogersgroupinc_com_2026`, synced config) before, during and after.
+No pin changed, and this upgrade did not regenerate the built-in certificates either. But
+the built-ins are per member: `Fortinet_GUI_Server`, the 7.x default HTTPS certificate,
+CN "FortiGate", has a different fingerprint on each member, and `Fortinet_Factory` names each
+member's own serial (`Fortinet_SSL` is synced). So:
+
+- A cluster reached on **per-member reserved management addresses** keeps one pin per member
+  address, and a failover changes nothing. This is the lab's shape.
+- A cluster reached on a **shared address that moves with the primary**, running the
+  **default certificate**, presents the other member's certificate after every failover. Pinning
+  refuses it, and every collector loses the gate until a person trusts it, and again on fail-back.
+  An HA upgrade guarantees two such failovers. The upgrade must open the rule-113(g) window on
+  that shared address and keep it through BOTH members' reboots. Since 2026-10-22 the window
+  re-pins every change, so this works. A failover Polaris did NOT cause still needs a person,
+  unless pins learn the partner. A factory certificate names its member's serial, and discovery
+  knows the partner's serial, which makes that a plausible design (unbuilt).
+- Caution when reading the built-ins: one read through the secondary's address returned the
+  PRIMARY's `Fortinet_Factory` (HUB1-a's serial), and the same read after the upgrade returned
+  HUB1-b's own. Do not infer a member's identity from one certificate download made through its
+  address.
+
+**Still unknown, so test before building:** how long the cluster addresses actually drop
+traffic, a cluster without reserved management interfaces (only the shared address), active-active,
+three or more members, a vcluster, an upgrade through FortiManager's proxy, and what FortiOS
+does when the secondary fails to come back on the new image (whether the primary still
+flashes itself).
