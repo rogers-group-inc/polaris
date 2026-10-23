@@ -7071,6 +7071,26 @@ function _fwRunHistoryHTML(a) {
   '</div>';
 }
 
+/** "HUB1-a (primary), HUB1-b": an HA cluster's members as the card names them (rule 129). */
+function _fwClusterMembersText(cluster) {
+  return (cluster.members || []).map(function (m) {
+    return (m.hostname || m.serial) + (m.role === "primary" ? " (primary)" : "");
+  }).join(", ");
+}
+
+/** The standby of an HA cluster: the cluster is upgraded from its primary's card (rule 129). */
+function _fwClusterMemberHTML(fw) {
+  var p = fw.clusterPrimary;
+  var link = p
+    ? ' <a href="#" class="fw-open-cluster-primary" data-asset-id="' + escapeHtml(p.assetId) + '">Open ' + escapeHtml(p.hostname || "the primary") + '</a>'
+    : '';
+  var html = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + link + '</p>';
+  if (fw.activeRun) {
+    html += '<div style="font-size:0.85rem;margin-top:0.5rem">The cluster is upgrading now: ' + escapeHtml(fw.activeRun.fromVersion || "?") + ' → ' + escapeHtml(fw.activeRun.toVersion) + '</div>' + _fwProgressHTML(fw.activeRun);
+  }
+  return html;
+}
+
 function assetFirmwarePanelHTML(a, fw) {
   if (!fw || !_assetFirmwareEligible(a)) return "";
   var badge = "";
@@ -7085,6 +7105,9 @@ function assetFirmwarePanelHTML(a, fw) {
   } else if (fw.state === "running" && fw.activeRun) {
     badge = _fwBadge("Upgrading", "var(--color-warning)");
     body = '<div style="font-size:0.85rem">' + escapeHtml(fw.activeRun.fromVersion || fw.current || "?") + ' → ' + escapeHtml(fw.activeRun.toVersion) + '</div>' + _fwProgressHTML(fw.activeRun);
+  } else if (fw.state === "cluster-member") {
+    badge = fw.activeRun ? _fwBadge("Cluster upgrading", "var(--color-warning)") : _fwBadge("HA secondary", "var(--color-text-tertiary)");
+    body = _fwClusterMemberHTML(fw);
   } else if (fw.state === "unsupported") {
     badge = _fwBadge("Not supported", "var(--color-text-tertiary)");
     body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
@@ -7119,6 +7142,7 @@ function assetFirmwarePanelHTML(a, fw) {
         '<div>Login: <strong>' + escapeHtml(fw.credential ? fw.credential.credentialName : "—") + '</strong>' +
           (fw.credential ? ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(fw.credential.scope) + ' binding)</span>' : '') + '</div>' +
         (fw.backupImage ? '<div style="grid-column:1 / -1;color:var(--color-text-secondary)">Also eligible: ' + _fwImageLine(fw.backupImage) + ' (the model’s backup)</div>' : '') +
+        (fw.cluster ? '<div style="grid-column:1 / -1;color:var(--color-text-secondary)">HA cluster (' + escapeHtml(fw.cluster.mode) + '): upgrades every member — ' + escapeHtml(_fwClusterMembersText(fw.cluster)) + '</div>' : '') +
       '</div>' +
       (canFlash
         ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-primary" id="btn-fw-upgrade">Upgrade firmware to ' + escapeHtml(fw.image.versionLabel) + '…</button></div>'
@@ -7193,8 +7217,12 @@ function _fwApprovalModalHTML(a, fw, opts) {
       _fwApprovalBlockHTML(fw.image, true, withRadio) +
       (withRadio ? _fwApprovalBlockHTML(fw.backupImage, false, true) : '') +
       '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
+        (fw.cluster
+          ? '<strong>This upgrades the whole HA cluster</strong> (' + escapeHtml(_fwClusterMembersText(fw.cluster)) + '). FortiOS upgrades the secondary first, fails over to it, then reboots this primary — two reboots, about 10 minutes. ' +
+            'Traffic moves to the other member while each one reboots, but every member is held in maintenance for the whole run. '
+          : '') +
         (a.assetType === "firewall"
-          ? 'The FortiGate reboots during the upgrade and will be unreachable for several minutes — every network, tunnel and device behind it goes with it. ' +
+          ? (fw.cluster ? '' : 'The FortiGate reboots during the upgrade and will be unreachable for several minutes — every network, tunnel and device behind it goes with it. ') +
             'Follow Fortinet’s supported upgrade path: Polaris checks that the image is newer and fits this platform, not that the jump from the running version is a supported one. '
           : 'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ') +
         'Polaris holds its alerts for this device while it works on it. A flash that fails partway can leave a device unbootable; do not power-cycle it while it is writing.' +
@@ -7539,6 +7567,11 @@ function _openFirmwareGroupDetail(groupId) {
 }
 
 function _wireFirmwarePanel(a, fw) {
+  var primaryLink = document.querySelector("#asset-firmware-panel .fw-open-cluster-primary");
+  if (primaryLink) primaryLink.addEventListener("click", function (e) {
+    e.preventDefault();
+    openViewModal(primaryLink.getAttribute("data-asset-id"));
+  });
   var up = document.getElementById("btn-fw-upgrade");
   if (up) up.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw); });
   var schEdit = document.getElementById("btn-fw-schedule-edit");
@@ -7558,7 +7591,9 @@ function _wireFirmwarePanel(a, fw) {
       if (!open && !box.__loaded) { box.__loaded = true; _loadFirmwareHistory(a); }
     });
   }
-  if (fw && fw.activeRun && fw.activeRun.id) _startFirmwarePoll(a, fw.activeRun.id);
+  // An HA secondary's card shows its PRIMARY's run (rule 129): poll it through
+  // the asset that owns it, which is the only route that serves it.
+  if (fw && fw.activeRun && fw.activeRun.id) _startFirmwarePoll(a, fw.activeRun.id, fw.activeRun.assetId);
 }
 
 function _rerenderFirmwarePanel(a, fw) {
@@ -7602,14 +7637,15 @@ function _scheduleFirmwareRefresh(a, fw) {
 // bails when it is gone or shows another asset, exactly like _startAgentPoll.
 var _fwPollKey = null;
 
-function _startFirmwarePoll(a, runId) {
+function _startFirmwarePoll(a, runId, runAssetId) {
   var key = a.id + ":" + runId;
+  var runOwner = runAssetId || a.id;
   if (_fwPollKey === key) return;
   _fwPollKey = key;
   var tick = function () {
     var panel = document.getElementById("asset-firmware-panel");
     if (!panel || panel.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
-    api.assets.firmwareUpgradeRun(a.id, runId).then(function (res) {
+    api.assets.firmwareUpgradeRun(runOwner, runId).then(function (res) {
       var run = res && res.run;
       var panel2 = document.getElementById("asset-firmware-panel");
       if (!panel2 || panel2.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }

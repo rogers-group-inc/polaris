@@ -369,3 +369,124 @@ discovery to learn one string). Known gap: a FortiGate polled by ICMP / SNMP / t
 `fortimanager` method has no live reader and still waits for discovery. A live row that stops
 being refreshed (a gate moved off `rest_api`) keeps outranking discovery until the asset's next
 live reading.
+
+
+### Groundwork (2026-10-23): what upgrading a real HA pair showed, for when Polaris does it
+
+HA members were still refused when this was written; **rule 129 built cluster upgrades on it the same day** (narrative-129). This section records the lab run that a future HA-upgrade
+feature should be built from. The operator asked for it: *"write down what you learned about
+upgrading the ha pair so that we can build in ha pair firmware upgrades to polaris at some
+point"*. The vendor facts are mirrored in the fortinet-api-conventions plugin (`fortios-rest.md`,
+Firmware upgrade).
+
+**The cluster.** The lab's HUB1 pair: two FortiGate 61F, `mode a-p`, group LAB-HA, HUB1-a
+(FGT61FTK23009069, priority 255) primary, HUB1-b (FGT61FTK24006008, priority 128),
+`override disable`, `session-pickup enable`, `upgrade-mode uninterruptible`, heartbeat on
+internal4, and `ha-mgmt-status enable` with **internal1 as the reserved management
+interface**. 172.22.128.101 is HUB1-a's own internal1 address, and 172.22.128.105 is HUB1-b's. So the
+address Polaris discovered and pins is ONE MEMBER's, not the cluster's. A failover does not move
+it, and it is unreachable whenever that member is rebooting. Polaris had no address for HUB1-b
+at all (standby IP nulled). .105 was found by a TLS sweep of the subnet and confirmed with
+the same API token (the API admin and its trusthost are synced config, so one token reaches
+both members).
+
+**The run.** 7.6.7 build3704 → 7.6.8 build3744, done outside Polaris with the same multipart
+`POST /api/v2/monitor/system/firmware/upgrade` (`source=upload`) the FortiGate engine sends,
+to the PRIMARY's address only:
+
+| time (UTC) | HUB1-a @ .101 | HUB1-b @ .105 |
+|---|---|---|
+| 00:47:10 | upload starts; primary, 7.6.7 | secondary, 7.6.7 |
+| 00:48:07 | | down (rebooting) |
+| 00:50:53 | | back, 7.6.8, secondary |
+| 00:51:12 | **upload request answers** (HTTP 200, 242 s after it began) | |
+| 00:51:17 | secondary, still 7.6.7 (failover done) | **primary**, 7.6.8 |
+| 00:51:29 | down (rebooting) | |
+| 00:54:15 | | secondary again |
+| 00:54:25 | back, 7.6.8, **primary** | |
+| 00:57:18 | one API timeout (6 s), answering again at 00:57:34; no reboot | |
+
+What follows for an implementation:
+
+- **Send the image once, to the primary.** FortiOS distributes it and runs the order itself:
+  the secondary first, then failover, then the old primary. Polaris does not sequence members.
+- **The upload request blocks until the secondary is upgraded and the cluster has failed
+  over** (242 s here, against ~8 s for a standalone 61F). The engine's upload response timeout
+  must allow several minutes per secondary member, or it will report a failure for an upgrade
+  that is going fine. An answer is not "the gate is about to reboot"; it is "half the cluster is
+  done".
+- **Two reboots, about 8 minutes end to end.** Each member was unreachable ~3 minutes on its
+  own address. Data-plane continuity through the cluster addresses was NOT measured.
+- **The primary role came back to HUB1-a without being asked**, ~3 minutes after its reboot
+  began. That was with override off and the higher priority on HUB1-a. Do not assume which
+  member is primary at the end, and do not treat a role change as a failure.
+- **Let the cluster settle before calling it done.** The primary dropped one API call ~3 minutes
+  after it came back, with no reboot. A verify loop that gives up on the first miss after
+  "both on target" would misreport this.
+- **Verify per member, by serial.** Success is both serials reporting the target version from
+  their own `monitor/system/status`. The cluster view (`monitor/system/ha-peer`, read from
+  either member) lists both serials and the primary flag, but no addresses or versions.
+- **Hold both assets, and anything behind the cluster, for the whole window** (rule 80): one
+  member is down twice over ~8 minutes. A hold on the primary alone would let the standby, or
+  the dependency tree, alert.
+- **Discovery after the run recorded both versions correctly** (`asset.firmware.changed` for
+  HUB1-a and HUB1-b), so verification can lean on a scoped re-discovery as single-gate runs do.
+
+**Certificates (rule 113).** Both members served the same CA-issued `*.rogersgroupinc.com`
+(`admin-server-cert star_rogersgroupinc_com_2026`, synced config) before, during and after.
+No pin changed, and this upgrade did not regenerate the built-in certificates either. But
+the built-ins are per member: `Fortinet_GUI_Server`, the 7.x default HTTPS certificate,
+CN "FortiGate", has a different fingerprint on each member, and `Fortinet_Factory` names each
+member's own serial (`Fortinet_SSL` is synced). So:
+
+- A cluster reached on **per-member reserved management addresses** keeps one pin per member
+  address, and a failover changes nothing. This is the lab's shape.
+- A cluster reached on a **shared address that moves with the primary**, running the
+  **default certificate**, presents the other member's certificate after every failover. Pinning
+  refuses it, and every collector loses the gate until a person trusts it, and again on fail-back.
+  An HA upgrade guarantees two such failovers. The upgrade must open the rule-113(g) window on
+  that shared address and keep it through BOTH members' reboots. Since 2026-10-22 the window
+  re-pins every change, so this works. A failover Polaris did NOT cause still needs a person,
+  unless pins learn the partner. A factory certificate names its member's serial, and discovery
+  knows the partner's serial, which makes that a plausible design (unbuilt).
+- Caution when reading the built-ins: one read through the secondary's address returned the
+  PRIMARY's `Fortinet_Factory` (HUB1-a's serial), and the same read after the upgrade returned
+  HUB1-b's own. Do not infer a member's identity from one certificate download made through its
+  address.
+
+**Still unknown, so test before building:** how long the cluster addresses actually drop
+traffic, a cluster without reserved management interfaces (only the shared address), active-active,
+three or more members, a vcluster, an upgrade through FortiManager's proxy, and what FortiOS
+does when the secondary fails to come back on the new image (whether the primary still
+flashes itself).
+
+### Follow-on (2026-10-23): the pair belongs to a platform, not to a model node
+
+"Two images per model" (above) assumed one platform per model node, which held for the
+FortiManager switch and AP nodes it was designed around. It failed on the first mixed
+fleet. A standalone FortiGate integration records every gate's model as the literal
+`FortiGate` (FortiOS `modelName`), so a 61F and a 601E share one node. On 2026-10-22, uploading
+the 601E image there demoted the 61F image to backup with no warning, and a third platform's
+upload would have deleted it. Matching was already per platform (`findUpgradeCandidates`), so
+the demoted 61F image was simply never offered again. Every 61F looked up to date.
+
+The pair is now per platform under a node. The two partial unique indexes key on
+`(manufacturer, assetType, model, COALESCE(platform, ''))`, in migration `20261023000000`. An
+image with no recognised platform (never offered) shares one pair per node, as before.
+`registerUploadedImage` rotates only its platform's pair, `setPrimaryImage` swaps only with its
+platform's primary, and `deleteImage` promotes only its platform's backup. The same migration
+repairs installs the old rule already hit: a backup whose platform has no primary under its
+node is promoted. The old index allowed one backup per node, so at most one row per node moves.
+The Repository tab groups a node's rows by platform. Its upload warning names every platform that has a
+backup rather than guessing which one the file is for, because the platform is read from the
+image header on the server.
+
+Rejected: recording the real model for standalone FortiGates (FortiOS `model`, e.g. `FGT61F`),
+so each platform gets its own node. That would rename every existing standalone gate's model
+and diverge from FortiManager's naming, and it fixes nothing for an operator who files two
+platforms under one node by hand. It may still be worth doing on its own merits.
+
+Pinned by the "PLATFORM under the node" cases in `tests/unit/firmwareImageRotation.test.ts` and
+the grouping case in `tests/unit/firmwareRepositoryTreeUi.test.ts`. The migration was run
+against a database holding the 2026-10-22 broken state (61F demoted beside a 601E primary, plus
+a healthy switch pair): the 61F came back as primary and the switch pair was untouched.

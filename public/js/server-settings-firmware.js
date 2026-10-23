@@ -8,9 +8,10 @@
  *
  * What the tab shows: a three-level accordion, manufacturer › device type
  * (switch / access point) › model, built server-side from the assets that
- * exist plus every model node that holds images. Under a model: its two
- * images (primary and backup — a new upload becomes primary, the displaced
- * primary becomes backup, the old backup is removed), the upload control,
+ * exist plus every model node that holds images. Under a model: two images
+ * PER PLATFORM (primary and backup — a new upload becomes its platform's
+ * primary, the displaced primary becomes backup, that platform's old backup is
+ * removed; business rule 87), the upload control,
  * and the device-admin login bound at that node. A login may be bound at any
  * of the three levels; every node shows the EFFECTIVE login and where it is
  * inherited from — `effectiveBinding.scope` comes from the server, the
@@ -254,22 +255,33 @@
     // version strings while every pill and verb stayed put, and an operator
     // could not see the swap. With a stable order the Primary pill and the
     // button move between rows instead.
-    var images = mdl.images.slice().sort(byVersionDesc);
+    // Grouped by platform (business rule 87: each platform under a model keeps
+    // its own pair), then newest version first within a platform.
+    var images = mdl.images.slice().sort(function (a, b) {
+      var pa = a.platform || "￿", pb = b.platform || "￿";
+      return pa === pb ? byVersionDesc(a, b) : pa.localeCompare(pb);
+    });
     return '<table class="data-table fw-images"><thead><tr>' +
       '<th style="width:6rem">Role</th><th>Version</th><th style="width:7rem">Platform</th><th>File</th><th style="width:6rem">Size</th><th>Uploaded</th><th></th>' +
     '</tr></thead><tbody>' + images.map(imageRowHTML).join("") + '</tbody></table>' +
-    '<p class="fw-node-meta" style="margin:6px 0 0">A model keeps two images. Uploading a new one makes it primary and moves the current primary to backup; the old backup is removed.</p>';
+    '<p class="fw-node-meta" style="margin:6px 0 0">Each platform keeps two images. Uploading a new one makes it its platform\'s primary and moves that platform\'s current primary to backup; that platform\'s old backup is removed. Other platforms in this model are not touched.</p>';
+  }
+
+  /** "FGT61F 7.6.7, FG6H1E 7.6.6": the backups an upload could remove, by platform. */
+  function backupsByPlatform(mdl) {
+    return (mdl.images || []).filter(function (i) { return i.role === "backup"; }).map(function (i) {
+      return (i.platform || "unknown platform") + " " + i.versionLabel;
+    });
   }
 
   function uploadRowHTML(mdl, key) {
     if (!can("write")) return "";
-    var backup = (mdl.images || []).filter(function (i) { return i.role === "backup"; })[0];
-    var full = (mdl.images || []).length >= 2 && backup;
+    var backups = backupsByPlatform(mdl);
     var busy = !!_uploading[key];
     return '<div class="fw-upload-row">' +
       '<input type="file" class="fw-upload-file" accept=".out" ' + (busy ? "disabled" : "") + '>' +
       '<button type="button" class="btn btn-sm btn-primary fw-upload-btn" ' + (busy ? "disabled" : "") +
-        (full ? ' title="Uploading will remove the backup (' + esc(backup.versionLabel) + ')"' : "") + '>Upload image</button>' +
+        (backups.length ? ' title="An image for a platform that already has a backup removes that backup (' + esc(backups.join(", ")) + ')"' : "") + '>Upload image</button>' +
       '<span class="fw-upload-status"' + (busy ? "" : ' style="display:none"') + '><span class="fw-progress"><span class="fw-progress-fill"></span></span></span>' +
     '</div>';
   }
@@ -543,11 +555,20 @@
     if (!file) { toast("Choose a .out file first", "error"); return; }
     var status = node.el.querySelector(".fw-upload-status");
     var fill = status && status.querySelector(".fw-progress-fill");
-    var backupRow = node.el.querySelector('.fw-images tr[data-image-id] .fw-role-pill.is-backup');
-    if (backupRow) {
-      var backupLabel = backupRow.closest("tr").querySelector("td:nth-child(2) strong");
+    // Only the backup of the uploaded image's OWN platform is removed (rule 87).
+    // The platform is read from the image header on the server, so name every
+    // platform that has a backup rather than guess which one this file is.
+    var backups = Array.prototype.map.call(node.el.querySelectorAll('.fw-images tr[data-image-id] .fw-role-pill.is-backup'), function (pill) {
+      var tr = pill.closest("tr");
+      var ver = tr.querySelector("td:nth-child(2) strong");
+      var plat = tr.querySelector("td:nth-child(3)");
+      return (plat ? plat.textContent.trim() : "unknown platform") + " " + (ver ? ver.textContent : "");
+    });
+    if (backups.length) {
       var ok = typeof showConfirm === "function"
-        ? await showConfirm("Uploading will remove the backup image" + (backupLabel ? " (" + backupLabel.textContent + ")" : "") + " — a model keeps two. Continue?")
+        ? await showConfirm(backups.length === 1
+          ? "If this image is for " + backups[0].split(" ")[0] + ", its backup (" + backups[0] + ") is removed: each platform keeps two images. Continue?"
+          : "An image for a platform that already has a backup removes that backup (" + backups.join(", ") + "): each platform keeps two images. Continue?")
         : true;
       if (!ok) return;
     }

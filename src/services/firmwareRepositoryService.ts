@@ -537,8 +537,10 @@ export async function registerUploadedImage(input: RegisterImageInput): Promise<
       throw new AppError(409, `This exact image is already in the repository under ${dup.manufacturer} › ${dup.assetType} › ${dup.model} (${dup.versionLabel})`);
     }
 
-    // The node's current pair.
-    const existing = await prisma.firmwareImage.findMany({ where: { manufacturer, assetType: input.assetType, model } });
+    // The pair this image joins: its PLATFORM's under the node (rule 87). A node can hold several
+    // platforms — a standalone FortiGate integration files every gate under "FortiGate" — and a
+    // per-node pair let one platform's upload demote, then delete, another's primary.
+    const existing = await prisma.firmwareImage.findMany({ where: { manufacturer, assetType: input.assetType, model, platform: identity.platform } });
     const primary = existing.find((r) => r.role === "primary") ?? null;
     const backup = existing.find((r) => r.role === "backup") ?? null;
     if (backup && (await activeRunsReferencing([backup.id])) > 0) {
@@ -603,7 +605,7 @@ export async function registerUploadedImage(input: RegisterImageInput): Promise<
         resourceName: `${manufacturer} › ${input.assetType} › ${model} — ${backup.versionLabel}`,
         actor: input.actor ?? undefined,
         level: "warning",
-        message: `Firmware ${backup.versionLabel} removed from ${manufacturer} ${model} by the upload of ${versionLabel} (a model keeps two images)`,
+        message: `Firmware ${backup.versionLabel} removed from ${manufacturer} ${model} by the upload of ${versionLabel} (each platform keeps two images)`,
         details: { manufacturer, assetType: input.assetType, model, sha256: backup.sha256, rotation: true },
       });
     }
@@ -626,7 +628,7 @@ export async function setPrimaryImage(id: string, actor?: string | null): Promis
   const r = await prisma.firmwareImage.findUnique({ where: { id } });
   if (!r) throw new AppError(404, "Firmware image not found");
   if (r.role === "primary") throw new AppError(400, "That image is already the primary");
-  const current = await prisma.firmwareImage.findFirst({ where: { manufacturer: r.manufacturer, assetType: r.assetType, model: r.model, role: "primary" } });
+  const current = await prisma.firmwareImage.findFirst({ where: { manufacturer: r.manufacturer, assetType: r.assetType, model: r.model, platform: r.platform, role: "primary" } });
   await prisma.$transaction(async (tx) => {
     // Through a neutral role so the partial unique on "primary" never sees two.
     await tx.firmwareImage.update({ where: { id: r.id }, data: { role: "swapping" } });
@@ -646,13 +648,13 @@ export async function setPrimaryImage(id: string, actor?: string | null): Promis
   return getImage(r.id);
 }
 
-/** Delete one image. Deleting the primary promotes the backup so a node never has a backup alone. */
+/** Delete one image. Deleting a primary promotes its platform's backup, so no platform has a backup alone. */
 export async function deleteImage(id: string, actor?: string | null): Promise<void> {
   const r = await prisma.firmwareImage.findUnique({ where: { id } });
   if (!r) throw new AppError(404, "Firmware image not found");
   if ((await activeRunsReferencing([r.id])) > 0) throw new AppError(409, "That image is being flashed right now — wait for the run to finish");
   const backup = r.role === "primary"
-    ? await prisma.firmwareImage.findFirst({ where: { manufacturer: r.manufacturer, assetType: r.assetType, model: r.model, role: "backup" } })
+    ? await prisma.firmwareImage.findFirst({ where: { manufacturer: r.manufacturer, assetType: r.assetType, model: r.model, platform: r.platform, role: "backup" } })
     : null;
   await prisma.$transaction(async (tx) => {
     await tx.firmwareImage.delete({ where: { id: r.id } });
@@ -915,7 +917,7 @@ export type PrimaryImageLite = {
 
 /**
  * Every primary image that names a platform — ONE findMany over a table that
- * holds at most two rows per model node, for callers that compare a whole
+ * holds at most two rows per platform under a model node, for callers that compare a whole
  * fleet in memory (the `firmwareVsPrimary` automation field) rather than one
  * asset at a time.
  */

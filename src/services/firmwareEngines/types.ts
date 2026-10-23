@@ -50,6 +50,15 @@ export interface FirmwareEngineTimeouts {
   probeMs: number;
   /** Upload socket idle cap — bytes must keep moving. */
   uploadIdleMs: number;
+  /**
+   * How long the device may take to ANSWER once the whole image is sent.
+   * A standalone FortiGate answers in seconds; an HA cluster's primary holds
+   * the request until its secondary has upgraded and the cluster has failed
+   * over (242 s on a 61F pair, 2026-10-23).
+   */
+  uploadAnswerMs: number;
+  /** HA cluster: how long after the primary is back the whole cluster may take to be in sync on the new version. */
+  clusterSettleMs: number;
   /** How often the reboot-wait polls. */
   heartbeatMs: number;
 }
@@ -66,7 +75,18 @@ export const DEFAULT_FIRMWARE_TIMEOUTS: FirmwareEngineTimeouts = {
   switchUpgradeMs: 1_800_000,
   probeMs: 8_000,
   uploadIdleMs: 120_000,
+  uploadAnswerMs: 120_000,
+  clusterSettleMs: 600_000,
   heartbeatMs: 30_000,
+};
+
+/**
+ * What an HA cluster upgrade changes (business rule 129): the primary holds
+ * the upload's answer while its secondary upgrades and the cluster fails over,
+ * and both members reboot. Applied over the defaults by the runner.
+ */
+export const HA_CLUSTER_TIMEOUT_OVERRIDES: Partial<FirmwareEngineTimeouts> = {
+  uploadAnswerMs: 900_000,
 };
 
 /** Percent-style progress a FortiSwitch reports while it flashes. */
@@ -111,6 +131,13 @@ export interface FirmwareEngineContext {
   image: { platform: string; versionLabel: string; version: { major: number; minor?: number; patch?: number; build?: number } };
   /** The asset's serial; the device's own report must match or the engine aborts. */
   expectedSerial: string | null;
+  /**
+   * FortiGate only: this asset is the PRIMARY of an HA cluster and the run
+   * upgrades the whole cluster through it (rule 129). `memberSerials` are
+   * every member discovery recorded, this one included. Absent = a standalone
+   * gate, and an HA gate is refused.
+   */
+  cluster?: { mode: string; memberSerials: string[] };
   timeouts: FirmwareEngineTimeouts;
   onStage: (stage: FirmwareRunStage) => void;
   onProgress: (progress: FirmwareProgress) => void;

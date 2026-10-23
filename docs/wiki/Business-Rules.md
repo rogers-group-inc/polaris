@@ -1370,7 +1370,9 @@ anything is flashed. Polaris does **not** check Fortinet's supported upgrade
 path for a FortiGate (which intermediate versions a jump must pass through);
 the approval dialog says so, and following it is the operator's job.
 
-A model keeps two images, a **primary** and a **backup**. Only the primary is
+Each platform under a model keeps two images, a **primary** and a **backup**
+(one model can hold several platforms, such as a 61F and a 601E under
+"FortiGate"; uploading for one never touches another's). Only the primary is
 offered on its own; the backup is named in the approval dialog when it is also
 newer than the device. The upgrade request carries the image you approved by
 name, and it must be one of those two — a click can never push an image nobody
@@ -2688,3 +2690,16 @@ Polaris picks the primary IPv6 from the asset's address list, the best-evidenced
 one first, and you can pin a different one from the address list. Devices
 are always monitored on IPv4 when they have it.
 ([Assets](Assets#primary-ipv6) has the details.)
+
+### Rule 129
+
+**An HA cluster is upgraded as one device, through its primary, and is done
+only when every member is back and in sync.** The primary's Firmware card
+offers the upgrade for the whole active-passive cluster; the standby's card
+points to the primary. Polaris checks that it is talking to the cluster's
+primary, that every member is present and that their configurations agree
+before it sends anything. FortiOS then upgrades the standby, fails over and
+reboots the primary, and Polaris waits for every member to rejoin and be back
+in sync before calling the upgrade done. Every member is held in maintenance
+throughout. No setting turns this off. Other HA modes, and HA clusters in a
+group upgrade, are not supported yet.

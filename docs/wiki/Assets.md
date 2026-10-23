@@ -815,8 +815,12 @@ device. It is one of:
 
 - **Not supported** — no upgrade engine for this manufacturer (Fortinet only,
   over HTTPS straight to the device). Images can still be stored. A
-  **FortiGate in an HA cluster** also reads *Not supported*, with the cluster
-  mode and role: upgrade HA clusters outside Polaris.
+  FortiGate HA cluster in any mode but active-passive also reads *Not
+  supported*.
+- **HA secondary** — the standby member of an active-passive FortiGate
+  cluster. The cluster is upgraded as one device from its **primary's** card
+  ([rule 129](Business-Rules#rule-129)), and this card links there. While the
+  cluster is upgrading, it shows that run's progress.
 - **No image** — nothing in the repository for this device's platform, with a
   link to the Repository.
 - **Current** — nothing newer than what it runs.
@@ -830,6 +834,18 @@ device. It is one of:
 - **Upgrade available** — the running version, the image on offer (its
   version, platform and which model node it came from), the login that will be
   used and where it is inherited from.
+
+**Upgrading an HA cluster.** On the primary of an active-passive FortiGate
+cluster, the card names every member, and the upgrade covers the whole cluster
+([rule 129](Business-Rules#rule-129)). Polaris sends the image once, to the
+primary. FortiOS upgrades the secondary first, fails over to it, then reboots
+the primary: two reboots, about 10 minutes. Every member is held in
+maintenance for the whole run. Before sending anything, Polaris checks that the
+gate is the cluster's primary, that every member is present, and that their
+configurations are in sync. The run succeeds only once every member is back in
+the cluster and in sync, and each other member has rejoined since the upgrade
+began. Otherwise it is **unverified**, naming what is missing. HA clusters cannot
+be part of a [group upgrade](#group-firmware-upgrades) yet.
 
 A device that is part of a scheduled or running
 [group firmware upgrade](#group-firmware-upgrades) shows **Part of a group
