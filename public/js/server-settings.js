@@ -2074,8 +2074,10 @@ function renderPlatformLifecycleCard(lifecycle) {
 // out — so an alert beside a card that reads Healthy has an explanation on the
 // same screen. The hold itself is set on the event trigger step of a capacity
 // automation (Automations → the wizard); the card does not restate it.
+// When every check passes, the status rides on the OK row as its second
+// sentence (_capacityAllPassedHtml) instead of standing as a row of its own.
 
-function renderCapacityAlertHoldHtml(t) {
+function _capacityAlertHoldStatus(t) {
   if (!t) return "";
   var status = "";
   if (t.pending) {
@@ -2087,13 +2089,34 @@ function renderCapacityAlertHoldHtml(t) {
       escapeHtml(formatLocalTime(dueIso)) + ' if every check until then still agrees; one check back at ' +
       escapeHtml(_capacitySeverityLabel(t.recorded ? t.recorded.severity : "ok")) + ' discards it.';
   } else if (t.recorded) {
-    status = 'Alerting last recorded <strong>' + escapeHtml(_capacitySeverityLabel(t.recorded.severity)) +
-      '</strong> at ' + escapeHtml(formatLocalTime(t.recorded.recordedAt)) + '.';
+    // recordedAt moves only when a change is recorded, so it reads "since".
+    status = 'Alerting has recorded <strong>' + escapeHtml(_capacitySeverityLabel(t.recorded.severity)) +
+      '</strong> since ' + escapeHtml(formatLocalTime(t.recorded.recordedAt)) + '.';
   }
+  return status;
+}
 
+function renderCapacityAlertHoldHtml(t) {
+  var status = _capacityAlertHoldStatus(t);
   if (!status) return "";
   return '<div class="capacity-alert-hold" style="margin:0.75rem 0;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
     '<p class="hint" id="capacity-alert-hold-status" style="margin:0">' + status + '</p>' +
+  '</div>';
+}
+
+// The empty-reasons row: the live grade and the alerting side's state as one line.
+function _capacityAllPassedHtml(computedAt, t) {
+  var status = _capacityAlertHoldStatus(t);
+  return '<div class="capacity-reasons">' +
+    '<div class="capacity-reason capacity-reason-ok">' +
+      '<div class="capacity-reason-head">' +
+        '<span class="capacity-pill capacity-pill-ok capacity-pill-sm">OK</span>' +
+        '<span class="capacity-reason-msg">All capacity checks passed' +
+          (computedAt ? ' at ' + escapeHtml(formatLocalTime(computedAt)) : '') + '.' +
+          (status ? ' <span id="capacity-alert-hold-status">' + status + '</span>' : '') +
+        '</span>' +
+      '</div>' +
+    '</div>' +
   '</div>';
 }
 
@@ -2124,18 +2147,9 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
   // list is empty we still render a single subdued "all checks passed" row
   // so an operator sees evidence of work rather than a silent void.
   var reasonsHtml = "";
-  if (!capacity.reasons || capacity.reasons.length === 0) {
-    reasonsHtml =
-      '<div class="capacity-reasons">' +
-        '<div class="capacity-reason capacity-reason-ok">' +
-          '<div class="capacity-reason-head">' +
-            '<span class="capacity-pill capacity-pill-ok capacity-pill-sm">OK</span>' +
-            '<span class="capacity-reason-msg">All capacity checks passed' +
-              (capacity.computedAt ? ' at ' + escapeHtml(formatLocalTime(capacity.computedAt)) : '') +
-            '.</span>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
+  var allPassed = !capacity.reasons || capacity.reasons.length === 0;
+  if (allPassed) {
+    reasonsHtml = _capacityAllPassedHtml(capacity.computedAt, capacityTransition);
   } else if (capacity.reasons && capacity.reasons.length > 0) {
     reasonsHtml =
       '<div class="capacity-reasons">' +
@@ -2380,7 +2394,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
       '<span class="' + pillClass + '">' + _capacitySeverityLabel(severity) + '</span>' +
     '</div>' +
     reasonsHtml +
-    renderCapacityAlertHoldHtml(capacityTransition) +
+    (allPassed ? "" : renderCapacityAlertHoldHtml(capacityTransition)) +
     '<div class="capacity-grid">' + hostHtml + dbHtml + enginePoolHtml + workHtml + '</div>' +
     '<p class="hint" style="margin-top:0.75rem;font-size:0.78rem">Last computed ' + escapeHtml(formatLocalTime(capacity.computedAt)) + '</p>' +
   '</div>';

@@ -517,9 +517,13 @@ default, from **Alert on the first reading** up to 4 hours. The Event's message
 says how long the change held.
 
 The card's pill and reasons are the **live** grade, so they can differ from what
-alerting has recorded. The alert-hold line on the card says which: the grade
-alerting last recorded and when, or the change it is waiting out ("seen for 10
-of 30 min") and the time it is recorded if every check until then agrees. An
+alerting has recorded. The alert-hold status on the card says which: the grade
+alerting has recorded and since when, or the change it is waiting out ("seen for
+10 of 30 min") and the time it is recorded if every check until then agrees. The
+"since" time is when that grade was recorded, not the last check, so it can be
+days old on a healthy install. When every check passes it is the second sentence
+of the **All capacity checks passed** line; otherwise it sits below the list of
+reasons. An
 open capacity alert beside a card that reads **Healthy** is a recovery still
 inside its hold.
 
