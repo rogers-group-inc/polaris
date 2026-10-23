@@ -10492,28 +10492,142 @@ function renderSymbolPicker(currentSymbol, mibId, cls, type) {
   // picker still passes no type and gets the scalars list, matching its
   // pre-split behaviour.
   var names = (type === "table") ? (entry.tables || []) : (entry.scalars || []);
-  var html = '<select class="' + cls + '" style="width:100%;font-size:0.78rem">' +
-    '<option value="">— select —</option>';
-  // Defensive: if the current value isn't in the chosen list (e.g. operator
-  // had a table symbol selected and flipped Type to scalar) still surface it
-  // as a selected option so the form save round-trips cleanly while the
-  // operator decides whether to switch.
-  if (currentSymbol && names.indexOf(currentSymbol) === -1) {
-    html += '<option value="' + escapeHtml(currentSymbol) + '" selected>' +
-      escapeHtml(currentSymbol) + ' (not a ' + escapeHtml(type === "table" ? "table" : "scalar") + ')' +
-    '</option>';
-  }
-  names.forEach(function (name) {
-    html += '<option value="' + escapeHtml(name) + '"' +
-      (currentSymbol === name ? " selected" : "") + '>' +
-      escapeHtml(name) +
-    '</option>';
-  });
-  // (The "not a scalar"/"not a table" pre-pended option above already
-  // preserves any current value that isn't in the chosen list.)
-  html += '</select>';
-  return html;
+  // A type-to-filter combobox rather than a <select>: a vendor MIB carries
+  // hundreds to thousands of symbols (PowerNet-MIB alone is ~3 MB), too many
+  // to scroll. The list lives in _mfgMibSymbolsCache, so the markup carries
+  // only the MIB id + side; the delegated handlers below filter it. The
+  // saved symbol rides along as data-initial so a value not in the chosen
+  // list (a table symbol after flipping Type to scalar) still round-trips
+  // while the operator decides — what the old "(not a scalar)" option did.
+  var side = type === "table" ? "table" : "scalar";
+  var unknown = currentSymbol && names.indexOf(currentSymbol) === -1;
+  return '<span class="aw-combo aw-combo-dim">' +
+    '<input type="text" class="' + cls + ' mib-sym-combo" autocomplete="off" spellcheck="false"' +
+      ' data-mib-id="' + escapeHtml(mibId) + '" data-sym-side="' + side + '"' +
+      ' data-initial="' + escapeHtml(currentSymbol || "") + '"' +
+      ' value="' + escapeHtml(currentSymbol || "") + '"' +
+      ' placeholder="Type to filter ' + names.length + ' ' + side + ' symbol' + (names.length === 1 ? "" : "s") + '"' +
+      (unknown ? ' title="Not a ' + side + ' in this MIB"' : '') +
+      ' style="width:100%;font-size:0.78rem' + (unknown ? ';border-color:var(--color-danger)' : '') + '">' +
+    '<div class="aw-suggest"></div>' +
+  '</span>';
 }
+
+// ─── Symbol combobox (delegated) ───────────────────────────────────────────
+// One set of document-level handlers serves every Symbol picker the
+// Manufacturer Profiles card renders (metric rows, overrides, widgets), so the
+// card's many re-renders never need to re-wire anything.
+
+var _SYM_COMBO_LIMIT = 200;
+
+function _symComboNames(input) {
+  var entry = _mfgMibSymbolsCache[input.getAttribute("data-mib-id")];
+  if (!entry || entry.loading) return null;
+  return input.getAttribute("data-sym-side") === "table" ? (entry.tables || []) : (entry.scalars || []);
+}
+
+/** True when `value` is one this picker would accept on its own: a symbol in
+ *  its list, or the saved value it was rendered with. A restore after a MIB or
+ *  Type swap drops anything else — what a <select> did by itself. */
+function _symComboAccepts(input, value) {
+  if (!value) return true;
+  if (value === input.getAttribute("data-initial")) return true;
+  var names = _symComboNames(input);
+  return !!names && names.indexOf(value) !== -1;
+}
+
+function _symComboMarkUnknown(input) {
+  var v = (input.value || "").trim();
+  var names = _symComboNames(input);
+  var bad = !!(v && names && names.indexOf(v) === -1);
+  input.style.borderColor = bad ? "var(--color-danger)" : "";
+  input.title = bad ? "Not a " + input.getAttribute("data-sym-side") + " in this MIB" : "";
+}
+
+function _renderSymCombo(input) {
+  var box = input.nextElementSibling;
+  var names = _symComboNames(input);
+  if (!box || !names) return;
+  var q = (input.value || "").trim().toLowerCase();
+  // Prefix matches first, then interior; an exact match is dropped — there's
+  // nothing left to complete.
+  var prefix = [], interior = [];
+  names.forEach(function (n) {
+    var v = n.toLowerCase();
+    if (v === q) return;
+    var at = q ? v.indexOf(q) : 0;
+    if (at === 0) prefix.push(n);
+    else if (at > 0) interior.push(n);
+  });
+  var matches = prefix.concat(interior);
+  if (!matches.length) {
+    box.innerHTML = '<div class="aw-suggest-empty">' +
+      (q ? "No symbol in this MIB matches." : "This MIB has no symbols of this type.") + '</div>';
+  } else {
+    box.innerHTML = matches.slice(0, _SYM_COMBO_LIMIT).map(function (n) {
+      return '<div class="aw-suggest-item" data-val="' + escapeHtml(n) + '">' + escapeHtml(n) + '</div>';
+    }).join("") +
+      (matches.length > _SYM_COMBO_LIMIT
+        ? '<div class="aw-suggest-empty">' + (matches.length - _SYM_COMBO_LIMIT) + ' more — keep typing to narrow</div>'
+        : "");
+  }
+  box.classList.add("open");
+}
+
+function _pickSymCombo(input, value) {
+  input.value = value;
+  _closeMfgSuggest(input.nextElementSibling);
+  _symComboMarkUnknown(input);
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+document.addEventListener("focusin", function (e) {
+  if (e.target.classList && e.target.classList.contains("mib-sym-combo")) _renderSymCombo(e.target);
+});
+document.addEventListener("click", function (e) {
+  if (e.target.classList && e.target.classList.contains("mib-sym-combo")) _renderSymCombo(e.target);
+});
+document.addEventListener("input", function (e) {
+  if (!e.target.classList || !e.target.classList.contains("mib-sym-combo")) return;
+  _renderSymCombo(e.target);
+  _symComboMarkUnknown(e.target);
+});
+document.addEventListener("focusout", function (e) {
+  var input = e.target;
+  if (!input.classList || !input.classList.contains("mib-sym-combo")) return;
+  // Delay so a mousedown on an item (which fires before blur completes) lands.
+  setTimeout(function () { _closeMfgSuggest(input.nextElementSibling); }, 150);
+});
+document.addEventListener("mousedown", function (e) {
+  var item = e.target.closest && e.target.closest(".aw-suggest-item");
+  var input = item && item.parentElement && item.parentElement.previousElementSibling;
+  if (!input || !input.classList.contains("mib-sym-combo")) return;
+  e.preventDefault(); // keep focus on the input
+  _pickSymCombo(input, item.getAttribute("data-val"));
+});
+document.addEventListener("keydown", function (e) {
+  var input = e.target;
+  if (!input.classList || !input.classList.contains("mib-sym-combo")) return;
+  var box = input.nextElementSibling;
+  if (!box || !box.classList.contains("open")) return;
+  if (e.key === "Escape") { _closeMfgSuggest(box); e.stopPropagation(); return; }
+  var items = Array.prototype.slice.call(box.querySelectorAll(".aw-suggest-item"));
+  var idx = items.findIndex(function (i) { return i.classList.contains("active"); });
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!items.length) return;
+    e.preventDefault();
+    var next = e.key === "ArrowDown" ? Math.min(idx + 1, items.length - 1) : Math.max(idx - 1, 0);
+    items.forEach(function (i) { i.classList.remove("active"); });
+    items[next].classList.add("active");
+    if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter") {
+    // Enter never submits the row from here: a highlighted (or the only)
+    // match completes the box, and the Save button stays the one way to save.
+    e.preventDefault();
+    var pick = idx >= 0 ? items[idx] : (items.length === 1 ? items[0] : null);
+    if (pick) _pickSymCombo(input, pick.getAttribute("data-val"));
+  }
+});
 
 // Lazy-fetch + cache one MIB's symbol list, split into `tables` vs
 // `scalars` so the per-row Symbol picker can populate from whichever
@@ -10984,7 +11098,10 @@ function _mfgRestoreEditors(snap) {
         if (field.type === "checkbox" || field.type === "radio") { field.checked = !!vals[fk]; return; }
         // A <select> whose options changed drops a value the new list doesn't
         // offer — which is what should happen to a Symbol after a MIB swap.
+        // The Symbol combobox is a text box, so it is told to do the same.
+        if (field.classList.contains("mib-sym-combo") && !_symComboAccepts(field, vals[fk])) return;
         field.value = vals[fk];
+        if (field.classList.contains("mib-sym-combo")) _symComboMarkUnknown(field);
       });
     });
 }

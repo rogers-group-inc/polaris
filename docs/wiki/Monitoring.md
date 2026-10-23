@@ -170,6 +170,13 @@ vendors, and where to get each MIB, are in the install guide's *"A vendor's SNMP
 CPU / memory / storage is empty"* section — and the shipped Cisco profile is a
 worked example to copy, which is half of why it ships.
 
+**The Symbol box filters as you type.** Once a row or widget has a MIB, click
+Symbol and type any part of the name: matches that start with your text are
+listed first, then names that contain it. The arrow keys and Enter pick one. A
+name that isn't in that MIB's list for the chosen symbol type is outlined in
+red. Changing the MIB or the symbol type clears a symbol the new list doesn't
+have.
+
 **The Transform column only appears where Polaris applies it.** Today that is a
 scalar **Temperature** row, which offers **Tenths → Units** for a sensor that
 reports tenths of a degree (MikroTik's temperature objects report 315 for
