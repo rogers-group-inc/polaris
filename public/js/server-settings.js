@@ -6755,7 +6755,7 @@ function deviceIconsCardHTML() {
   // Upload form: manufacturer + scope (type|model) + type dropdown / model input + file
   html += '<div class="form-row" style="display:grid;grid-template-columns:1fr 140px 1fr 1fr auto;gap:8px;align-items:flex-end;margin-bottom:0.5rem">' +
     '<div class="form-group" style="margin:0">' +
-      '<label style="font-size:0.78rem">Manufacturer</label>' +
+      '<label style="font-size:0.78rem">Match Manufacturer</label>' +
       // The MIB upload form's combobox: inventory vendors first, with counts.
       '<span class="aw-combo aw-combo-dim">' +
         '<input type="text" id="f-icon-mfr" autocomplete="off" placeholder="Fortinet">' +
@@ -6763,7 +6763,7 @@ function deviceIconsCardHTML() {
       '</span>' +
     '</div>' +
     '<div class="form-group" style="margin:0">' +
-      '<label style="font-size:0.78rem">Match by</label>' +
+      '<label style="font-size:0.78rem">And Match by</label>' +
       '<select id="f-icon-scope">' +
         '<option value="manufacturer-type">Asset type</option>' +
         '<option value="manufacturer-model">Model</option>' +
