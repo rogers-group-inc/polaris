@@ -8,13 +8,15 @@
  *        devices report for a metric dimension — the sensor-class picker)
  *   POST /poll-cadence      automationManagement:read  (how often those devices
  *        take the reading — the wizard counts its holds in polls)
- *   POST /preview  automationManagement:fullwrite  (dry-run a draft)
+ *   POST /preview  automationManagement:write  (dry-run a draft)
  *   POST /message-example  automationManagement:write  (the In-app Alert
  *        card's example: the draft's message rendered for one of its devices)
  *   GET / PUT /capacity-alert-hold  automationManagement:read / write  (the
  *        global capacity alert hold, business rule 105 — set from the event
  *        trigger step of a capacity.* automation)
- *   POST / PUT/:id / DELETE/:id   automationManagement:fullwrite  (CRUD)
+ *   POST / PUT/:id / DELETE/:id   automationManagement:write  (CRUD)
+ *   GET  /:id/removal-impact  automationManagement:read  (down-detection impact)
+ *   POST /test-delivery  automationManagement:write, session callers only
  *
  * Validation via ruleInputSchema (notificationTypes); business logic in
  * notificationRuleService; preview/dry-run in notificationEngine.

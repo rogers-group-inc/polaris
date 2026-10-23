@@ -460,6 +460,101 @@ Behaviours to code against:
   already holds is accepted. On assets the same value is stored as no MAC
   rather than refused ([rule 97](Business-Rules#rule-97)).
 
+### Automations
+
+```
+GET    /automations                GET /automations/schema
+POST   /automations                PUT /automations/:id        DELETE /automations/:id
+GET    /automations/:id/removal-impact
+POST   /automations/preview
+POST   /automations/dimension-values      POST /automations/poll-cadence
+GET    /automations/scope-options         GET  /automations/recipient-users
+```
+
+Gated on `automationManagement`. Behaviours to code against:
+
+- **Build against `GET /automations/schema`, not a hardcoded list.** It returns
+  every metric, state field, comparator, action type and severity the server
+  accepts, plus the names behind ids a condition can carry (state probes, path
+  checks, custom widgets).
+- **Preview before you create.** `POST /automations/preview` takes a partial
+  draft (a scope alone, or a trigger and scope), reports which devices it covers
+  and how many readings meet it right now, and writes nothing.
+- **PUT is a full replace.** Fields you leave out take their defaults, so read
+  the rule, change it and send it all back.
+- **An `api_call` action's headers come back masked.** Sending the mask back
+  keeps the stored value, but only while that action's URL is unchanged. A
+  masked header on a changed URL is a 400, so a stored token never follows a new
+  destination ([rule 114](Business-Rules#rule-114)).
+- **Two action types need a second permission to save:** a `script` action needs
+  `automationScripts:write`, a `reboot` action needs `assets:write`.
+- **A `monitorStatus == down` automation defines down detection** for its
+  devices. Check `GET /automations/:id/removal-impact` before deleting or
+  disabling one: devices it reports as `wouldBecomePassive` stop being declared
+  down.
+- `POST /automations/test-delivery` needs a signed-in user and answers 401 to a
+  bearer token.
+
+### MIB Database
+
+```
+GET    /server-settings/mibs              POST /server-settings/mibs   (multipart upload)
+GET    /server-settings/mibs/:id          GET  /server-settings/mibs/:id/download
+GET    /server-settings/mibs/:id/structure      POST /server-settings/mibs/:id/walk
+GET    /server-settings/mibs/std          GET  /server-settings/mibs/std/:key/structure
+POST   /server-settings/mibs/std/:key/walk      GET  /server-settings/mibs/facets
+DELETE /server-settings/mibs/:id
+```
+
+Gated on `mibDatabase`. A vendor's objects resolve only from a module you upload
+under that vendor's manufacturer name; Polaris bundles the standard MIBs and no
+vendor's. The upload response's `unresolvedRoots` names any module the file
+imports that is still missing: upload a vendor's core module before its leaf
+modules. A module is unique per manufacturer, model and module name (a second
+copy is a 409). `/structure` lists every symbol with its resolved OID, type and
+enum values, which is what to read when choosing a profile row's symbol.
+
+### Manufacturer profiles
+
+```
+GET    /server-settings/manufacturer-profiles          POST /server-settings/manufacturer-profiles
+GET    /server-settings/manufacturer-profiles/suggestions
+GET    /server-settings/manufacturer-profiles/:id      PUT  /server-settings/manufacturer-profiles/:id
+DELETE /server-settings/manufacturer-profiles/:id
+PUT    /server-settings/manufacturer-profiles/:id/metrics/:metricKey
+POST   /server-settings/manufacturer-profiles/:id/metrics/:metricKey/overrides
+PUT    …/overrides/:overrideId                          DELETE …/overrides/:overrideId
+POST   /server-settings/manufacturer-profiles/:id/widgets
+PUT    …/widgets/:widgetId                              DELETE …/widgets/:widgetId
+GET    …/widgets/:widgetId/assets                       PUT  …/widgets/:widgetId/assets
+GET    /server-settings/manufacturer-profiles/:id/export
+GET    /server-settings/manufacturer-profiles/:id/code  PUT  /server-settings/manufacturer-profiles/:id/code
+POST   /server-settings/manufacturer-profiles/import/preview
+POST   /server-settings/manufacturer-profiles/import
+GET    /manufacturer-aliases       POST /manufacturer-aliases     PUT|DELETE /manufacturer-aliases/:id
+```
+
+Gated on `manufacturerProfiles`; the widget device list and switch also need
+`assets:read` / `assets:write`. Behaviours to code against:
+
+- **Create a profile under a name the devices already carry.**
+  `/suggestions` lists them. A profile governs devices with its manufacturer
+  name, and its "also applies when" `matchPattern` reaches others only when no
+  profile has their own name ([rule 131](Business-Rules#rule-131)).
+- **A row that saves can still collect nothing.** Every row-level write returns
+  `warnings` naming symbols that don't resolve, and `GET /:id` stamps every row
+  with `readiness`. Upload the MIB those name.
+- **A Hardware Sensors table row** names the table's value column as its symbol
+  and the other columns in `defaultSensorColumns`
+  ([rule 132](Business-Rules#rule-132)).
+- **A new custom widget polls no device** until it is switched on with
+  `PUT …/widgets/:widgetId/assets` ([rule 130](Business-Rules#rule-130)).
+- **Export and import carry no ids or secrets.** MIBs travel by module name and
+  are not included. Import is two calls: preview, then import only the items you
+  choose. `PUT /:id/code` is a full replace: rows left out of the file are
+  removed.
+- Every pattern is RE2, so look-around and back-references are a 400.
+
 ### Events
 
 ```
