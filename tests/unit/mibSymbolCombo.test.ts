@@ -23,6 +23,7 @@ interface Sandbox {
   _renderSymCombo: (input: HTMLInputElement) => void;
   _symComboAccepts: (input: HTMLInputElement, v: string) => boolean;
   _filterSuggestRows: (rows: { value: string; assetCount: number }[], q: string) => { value: string }[];
+  _manufacturerCountRows: (names: string[]) => { value: string; assetCount: number }[];
   _mfgRestoreEditors: (snap: Record<string, Record<string, unknown>>) => void;
   _mfgMibSymbolsCache: Record<string, unknown>;
 }
@@ -128,6 +129,23 @@ describe("_filterSuggestRows (both manufacturer pickers)", () => {
 
   it("returns every row, in the caller's order, for an empty query", () => {
     expect(sb._filterSuggestRows(rows, "").map((r) => r.value)).toEqual(["Fortinet", "APC Partner Co", "APC", "Napco"]);
+  });
+});
+
+describe("_manufacturerCountRows (MIB upload, Device Icons, aliases, MAC overrides)", () => {
+  it("de-duplicates case-insensitively, attaches device counts, and sorts busiest first", () => {
+    (sb as unknown as { _mibFacets: unknown })._mibFacets = {
+      manufacturers: ["APC", "Cisco", "Xytronix"],
+      modelsByManufacturer: {},
+      assetCounts: { APC: 8, Cisco: 40 },
+    };
+    const rows = sb._manufacturerCountRows(["apc", "APC", "Cisco", "Xytronix", "Axis Communications", ""]);
+    expect(rows).toEqual([
+      { value: "Cisco", assetCount: 40 },
+      { value: "apc", assetCount: 8 },
+      { value: "Axis Communications", assetCount: 0 },
+      { value: "Xytronix", assetCount: 0 },
+    ]);
   });
 });
 

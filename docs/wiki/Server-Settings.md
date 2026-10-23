@@ -43,6 +43,12 @@ Five cards about what Polaris calls things it finds:
   what was left unclassified.
 - **[Tags](#tags)** — the tag registry.
 
+The manufacturer boxes on this tab (Device Icons, both halves of a Manufacturer
+Alias, a Prefix Override) and on the MIB Database's upload form open a list on
+click: the manufacturers in your inventory come first, most devices first, each
+with its device count (for example "APC · 8 devices"), followed by names only
+an alias, MIB or icon carries. Any other name can still be typed.
+
 ---
 
 ## Credentials

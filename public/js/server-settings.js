@@ -4776,7 +4776,10 @@ function renderIdentificationTab() {
       '</div>' +
       '<div style="flex:1;min-width:160px">' +
         '<label style="font-size:0.78rem;font-weight:500">Manufacturer</label>' +
-        '<input type="text" id="f-oui-manufacturer" placeholder="e.g. Custom Switch Co.">' +
+        '<span class="aw-combo aw-combo-dim">' +
+          '<input type="text" id="f-oui-manufacturer" autocomplete="off" placeholder="e.g. Custom Switch Co.">' +
+          '<div class="aw-suggest" id="oui-mfr-suggest"></div>' +
+        '</span>' +
       '</div>' +
       '<div style="flex:1;min-width:160px">' +
         '<label style="font-size:0.78rem;font-weight:500">Device <span style="color:var(--color-text-tertiary);font-weight:400">(optional)</span></label>' +
@@ -4835,11 +4838,17 @@ function renderIdentificationTab() {
     '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">' +
       '<div style="flex:2;min-width:160px">' +
         '<label style="font-size:0.78rem;font-weight:500">Alias <span style="color:var(--color-text-tertiary);font-weight:400">(input)</span></label>' +
-        '<input type="text" id="f-alias-input" placeholder="e.g. Fortinet, Inc.">' +
+        '<span class="aw-combo aw-combo-dim">' +
+          '<input type="text" id="f-alias-input" autocomplete="off" placeholder="e.g. Fortinet, Inc.">' +
+          '<div class="aw-suggest" id="alias-input-suggest"></div>' +
+        '</span>' +
       '</div>' +
       '<div style="flex:1;min-width:120px">' +
         '<label style="font-size:0.78rem;font-weight:500">Canonical</label>' +
-        '<input type="text" id="f-alias-canonical" placeholder="e.g. Fortinet">' +
+        '<span class="aw-combo aw-combo-dim">' +
+          '<input type="text" id="f-alias-canonical" autocomplete="off" placeholder="e.g. Fortinet">' +
+          '<div class="aw-suggest" id="alias-canonical-suggest"></div>' +
+        '</span>' +
       '</div>' +
       '<button class="btn btn-primary" id="btn-add-alias">Add</button>' +
     '</div>' +
@@ -4983,6 +4992,12 @@ function renderIdentificationTab() {
 
   // OUI override events
   document.getElementById("btn-add-oui-override").addEventListener("click", addOuiOverride);
+  // The device-count manufacturer pickers (same as MIB upload / Device Icons).
+  // The alias's input side lists the inventory too: a device whose name hasn't
+  // been aliased yet shows up there under the spelling it reports.
+  _wireManufacturerCountCombo("f-oui-manufacturer", "oui-mfr-suggest", _knownManufacturerRows);
+  _wireManufacturerCountCombo("f-alias-input", "alias-input-suggest", _knownManufacturerRows);
+  _wireManufacturerCountCombo("f-alias-canonical", "alias-canonical-suggest", _knownManufacturerRows);
   container.querySelectorAll(".oui-override-del").forEach(function (btn) {
     btn.addEventListener("click", function () {
       deleteOuiOverrideUI(btn.getAttribute("data-prefix"));
@@ -6712,26 +6727,6 @@ function deviceIconsCardHTML() {
     if (byScope[i.scope]) byScope[i.scope].push(i);
   });
 
-  // Manufacturer datalist — merged from every source the operator already
-  // has on hand so the picker isn't empty on installs that haven't
-  // configured many aliases. Sources, in order: alias canonicals, MIB
-  // facets (which already includes the asset inventory), and the
-  // manufacturer half of every existing device-icon key. Free text is
-  // allowed for anything not in the list; the service alias-normalizes
-  // the value at write time.
-  var manufacturerOptions = "";
-  var seen = {};
-  function addManufacturerOption(name) {
-    var c = (name || "").trim();
-    if (c && !seen[c]) { seen[c] = 1; manufacturerOptions += '<option value="' + escapeHtml(c) + '">'; }
-  }
-  (_manufacturerAliases || []).forEach(function (a) { addManufacturerOption(a.canonical); });
-  ((_mibFacets && _mibFacets.manufacturers) || []).forEach(addManufacturerOption);
-  _deviceIcons.forEach(function (i) {
-    var slash = (i.key || "").indexOf("/");
-    if (slash > 0) addManufacturerOption(i.key.slice(0, slash));
-  });
-
   var typeOptionsHtml = _deviceIconAssetTypes
     .map(function (t) { return '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>'; })
     .join("");
@@ -6749,8 +6744,11 @@ function deviceIconsCardHTML() {
   html += '<div class="form-row" style="display:grid;grid-template-columns:1fr 140px 1fr 1fr auto;gap:8px;align-items:flex-end;margin-bottom:0.5rem">' +
     '<div class="form-group" style="margin:0">' +
       '<label style="font-size:0.78rem">Manufacturer</label>' +
-      '<input type="text" id="f-icon-mfr" list="f-icon-mfr-list" placeholder="Fortinet">' +
-      '<datalist id="f-icon-mfr-list">' + manufacturerOptions + '</datalist>' +
+      // The MIB upload form's combobox: inventory vendors first, with counts.
+      '<span class="aw-combo aw-combo-dim">' +
+        '<input type="text" id="f-icon-mfr" autocomplete="off" placeholder="Fortinet">' +
+        '<div class="aw-suggest" id="icon-mfr-suggest"></div>' +
+      '</span>' +
     '</div>' +
     '<div class="form-group" style="margin:0">' +
       '<label style="font-size:0.78rem">Match by</label>' +
@@ -6811,7 +6809,25 @@ function deviceIconsCardHTML() {
 // api.js canonical (2026-08 audit — this copy capped at MB).
 var formatBytesShort = formatBytes;
 
+// Rows for the Identification tab's manufacturer pickers (Device Icons, the
+// alias pair, the MAC override) — every name the operator already has on hand,
+// so the list isn't empty on installs with few aliases: alias canonicals, MIB
+// facets (which include the asset inventory and its device counts), static
+// MAC-override manufacturers, and the manufacturer half of every icon key.
+// Free text is still allowed; each service alias-normalizes at write time.
+function _knownManufacturerRows() {
+  var names = (_manufacturerAliases || []).map(function (a) { return a.canonical; })
+    .concat((_mibFacets && _mibFacets.manufacturers) || [])
+    .concat((_ouiOverrides || []).map(function (o) { return o.manufacturer; }))
+    .concat((_deviceIcons || []).map(function (i) {
+      var slash = (i.key || "").indexOf("/");
+      return slash > 0 ? i.key.slice(0, slash) : "";
+    }));
+  return _manufacturerCountRows(names);
+}
+
 function wireDeviceIconHandlers() {
+  _wireManufacturerCountCombo("f-icon-mfr", "icon-mfr-suggest", _knownManufacturerRows);
   var btn = document.getElementById("btn-icon-upload");
   if (btn) btn.addEventListener("click", uploadIconUI);
   document.querySelectorAll(".icon-del").forEach(function (b) {
@@ -11275,23 +11291,42 @@ function wireManufacturerSuggestCombo() {
   });
 }
 
-// ─── MIB upload Manufacturer typeahead ─────────────────────────────────────
-// A vendor MIB only resolves for assets whose manufacturer matches the name it
-// is uploaded under, so the picker leads with the manufacturers actually in
-// inventory — most devices first, each with its count — and follows with
-// names only an earlier MIB upload carries. Free text is still accepted.
-// Rows come from `_mibFacets`, already loaded with the tab; no extra fetch.
+// ─── Manufacturer-with-device-count typeahead ──────────────────────────────
+// Shared by the MIB upload form and the Device Icons card. A vendor MIB (or
+// icon) only applies to assets whose manufacturer matches the name it is saved
+// under, so the picker leads with the manufacturers actually in inventory —
+// most devices first, each with its count — and follows with names only an
+// earlier MIB / alias / icon carries. Free text is still accepted. Counts come
+// from `_mibFacets.assetCounts`, already loaded with the tab; no extra fetch.
 
-function _mibUploadMfrRows() {
+/** De-duplicated (case-insensitive, first spelling wins) rows with their
+ *  device counts, most devices first, then alphabetical. */
+function _manufacturerCountRows(names) {
   var counts = (_mibFacets && _mibFacets.assetCounts) || {};
-  return ((_mibFacets && _mibFacets.manufacturers) || [])
-    .map(function (m) { return { value: m, assetCount: counts[m] || 0 }; })
-    .sort(function (a, b) { return b.assetCount - a.assetCount || a.value.localeCompare(b.value); });
+  var byKey = {};
+  var rows = [];
+  (names || []).forEach(function (n) {
+    var v = (n || "").trim();
+    var k = v.toLowerCase();
+    if (!v || byKey[k]) return;
+    byKey[k] = { value: v, assetCount: 0 };
+    rows.push(byKey[k]);
+  });
+  // A count keyed by a different casing still lands on its row.
+  Object.keys(counts).forEach(function (m) {
+    var row = byKey[m.trim().toLowerCase()];
+    if (row) row.assetCount += counts[m];
+  });
+  return rows.sort(function (a, b) { return b.assetCount - a.assetCount || a.value.localeCompare(b.value); });
 }
 
-function _renderMibUploadMfrSuggest(input, box) {
+function _mibUploadMfrRows() {
+  return _manufacturerCountRows((_mibFacets && _mibFacets.manufacturers) || []);
+}
+
+function _renderManufacturerCountSuggest(input, box, rows) {
   var q = (input.value || "").trim().toLowerCase();
-  var matches = _filterSuggestRows(_mibUploadMfrRows(), q).slice(0, 50);
+  var matches = _filterSuggestRows(rows, q).slice(0, 50);
   if (!matches.length) {
     box.innerHTML = '<div class="aw-suggest-empty">' +
       (q ? "No known manufacturer matches — the name is used as typed."
@@ -11307,10 +11342,14 @@ function _renderMibUploadMfrSuggest(input, box) {
 }
 
 function wireMibUploadManufacturerCombo() {
-  var input = document.getElementById("f-mib-up-mfr");
-  var box = document.getElementById("mib-up-mfr-suggest");
+  _wireManufacturerCountCombo("f-mib-up-mfr", "mib-up-mfr-suggest", _mibUploadMfrRows);
+}
+
+function _wireManufacturerCountCombo(inputId, boxId, rowsFn) {
+  var input = document.getElementById(inputId);
+  var box = document.getElementById(boxId);
   if (!input || !box) return;
-  function open() { _renderMibUploadMfrSuggest(input, box); }
+  function open() { _renderManufacturerCountSuggest(input, box, rowsFn()); }
 
   input.addEventListener("focus", open);
   input.addEventListener("click", open);
