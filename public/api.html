@@ -1514,16 +1514,18 @@
               (a tree of metric / state conditions). Operators are
               <code>&gt; &gt;= &lt; &lt;= == !=</code>. A hold (<code>forPolls</code>) and a
               window (<code>windowPolls</code>) count <em>readings</em>, not seconds.</li>
-            <li><code>scope?</code> — the device filter (<code>{}</code> = every device). Only
-              monitored devices ever alert; <code>POST /automations/preview</code> with just a
-              scope lists what it selects.</li>
+            <li><code>scope?</code> — the device filter: <code>{ "allAssets": true }</code>, or
+              <code>assetTypes</code>, <code>tags</code>, <code>manufacturers</code>, …, or a
+              <code>condition</code> tree. <strong><code>{}</code> selects no devices</strong>
+              except on an <code>event</code> trigger. Only monitored devices alert;
+              <code>POST /automations/preview</code> lists what a scope selects.</li>
             <li><code>actions?</code> — up to 20, each one of <code>notify</code> (a delivery
               channel id from <code>/delivery-channels</code> plus recipients),
               <code>api_call</code>, <code>script</code>, <code>event</code>,
-              <code>reboot</code>; each may carry its own escalation tiers.
-              <code>channels?</code> defaults to <code>["in_app"]</code>, so a rule with no
-              actions still raises an in-app alert.</li>
-            <li><code>reset?</code>, <code>resetActions?</code>, <code>repeat?</code>,
+              <code>reboot</code>; each may carry its own escalation tiers.</li>
+            <li><code>reset?</code> — <strong>absent means <code>manual</code></strong> (never
+              clears by itself); <code>{ "mode": "auto" }</code> clears when the condition stops.</li>
+            <li><code>resetActions?</code>, <code>repeat?</code>,
               <code>escalation?</code>, <code>severityBands?</code> (numeric metrics only),
               <code>bandNotify?</code>, <code>cooldownSec?</code>, <code>messageTemplate?</code>,
               <code>emailComposition?</code>, <code>groupByAsset?</code> (one alert per device
@@ -1532,9 +1534,9 @@
               <code>{ ignoreGlobal: true }</code> = never held, or a policy of its own).</li>
           </ul>
           <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Firewall CPU high","severity":"serious",
+  -d '{"name":"Firewall CPU high","severity":"serious","enabled":false,
        "trigger":{"type":"asset_metric","metric":"cpuPct","operator":"&gt;","threshold":90,"forPolls":3},
-       "scope":{}}' \
+       "scope":{"assetTypes":["firewall"]},"reset":{"mode":"auto"}}' \
   "<span class="js-base-url">/api/v1</span>/automations"</code></pre>
           <p>An <code>asset_state</code> trigger on <code>monitorStatus == down</code> is not
             only an alert: its <code>missedPolls</code> is how down detection is defined for its

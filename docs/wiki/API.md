@@ -482,6 +482,13 @@ Gated on `automationManagement`. Behaviours to code against:
   and how many readings meet it right now, and writes nothing.
 - **PUT is a full replace.** Fields you leave out take their defaults, so read
   the rule, change it and send it all back.
+- **An empty scope selects no devices.** For a metric, state or composite
+  trigger, `"scope": {}` covers nothing. Every device is
+  `{"allAssets": true}`; otherwise name the filter. Only an `event` trigger reads
+  `{}` as any device.
+- **No `reset` means manual.** A rule saved without one never clears by itself;
+  send `{"mode": "auto"}` to clear when the condition stops holding. A PUT that
+  leaves `reset` out turns an auto-clearing rule into a manual one.
 - **An `api_call` action's headers come back masked.** Sending the mask back
   keeps the stored value, but only while that action's URL is unchanged. A
   masked header on a changed URL is a 400, so a stored token never follows a new
@@ -615,8 +622,12 @@ The 404 message is a **constant**. Nothing you send is reflected.
 
 ---
 
-## The client conventions plugin
+## The Polaris toolbox plugin
 
-A generated client guide to this API lives in a separate repository,
-**`polaris-api-conventions`**, produced from the in-app `/api` page. It is
-regenerated when that page changes.
+A Claude Code plugin, **`polaris-toolbox`**
+(https://github.com/rogers-group-inc/polaris-toolbox), carries a client guide
+to this API generated from the in-app `/api` page and regenerated whenever that
+page changes, plus skills for building manufacturer profiles, configuring
+automations and writing automation scripts, and scripts that apply and export
+profiles and automations over this API. It replaced the separate
+`polaris-api-conventions` and `polaris-automation` plugins.
