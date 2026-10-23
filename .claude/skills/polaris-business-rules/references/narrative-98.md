@@ -71,6 +71,26 @@ Either is UNKNOWN, and the reading is kept: the filter removes members it has ev
 about, never ones it could not read — the same posture rules 88 and 90 took for a failed
 lookup.
 
+### 98(a) — rule 126 made "not collected" and "unaddressed" the same null (2026-10-23)
+
+The paragraph above rested on one premise: a null `ipAddress` meant the scrape carried no
+address field, never that the interface had none, because an unaddressed FortiOS port was
+stored as "0.0.0.0". Rule 126 (2026-10-21) ended that. `splitInterfaceAddresses` runs on
+every interface write path and drops 0.0.0.0/8, loopback and link-local to null, so an
+unused `port1` that used to be stored as "0.0.0.0" became null. The filter read it as
+UNKNOWN and kept it. After the deploy, an operator's *FortiGate WAN is down*
+automation with *is not 0.0.0.0* started alerting on every unplugged SD-WAN member, and the
+SD-WAN tab showed "—" where it used to show 0.0.0.0.
+
+Turning every null into "0.0.0.0" was rejected. A collector that never reports addresses
+would then make *is not 0.0.0.0* drop every member, and the automation would stop alerting
+without any sign. Evidence is still the test, just one level up. If the same gate holds an
+address (either family) on any interface, its scrape reads addresses, so a null on the
+member means it has none. A gate with no address anywhere is still UNKNOWN, and its members
+are kept. A member with only an IPv6 address is addressed: it has an address, just not in
+the IPv4 column. `filterByMemberIp` makes one extra read for this, narrowed to the gates in
+play and selecting only `assetId` (distinct), and only when the filter is set.
+
 ### The trade-off the operator accepted
 
 A current-address comparison cannot tell an unused port from a DHCP WAN whose lease was

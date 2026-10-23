@@ -6,8 +6,12 @@
  * passes the comparison.
  *  - "!= 0.0.0.0" leaves an unaddressed WAN (every shape of it) out of both a
  *    packet-loss and a member-state automation, and keeps an addressed one;
- *  - a member with no interface row, or an interface that reported no
- *    address, is KEPT — the filter only removes what it has evidence about;
+ *  - a member with no interface row, or a null address on a gate that
+ *    reported no address anywhere, is KEPT — the filter only removes what it
+ *    has evidence about;
+ *  - a null address on a gate that reports addresses elsewhere is unaddressed
+ *    (rule 98(a): rule 126 stores "0.0.0.0" as null); an IPv6-only member is
+ *    addressed;
  *  - "== <address>" narrows to that one member;
  *  - a live alert on a member that stops passing is retired, not frozen.
  *
@@ -117,6 +121,25 @@ d("SD-WAN member IP address filter (business rule 98)", () => {
     const rule = await seedRule("loss", "!= 0.0.0.0");
     await evaluateAllNotificationRules();
     expect(await liveMembers(rule)).toEqual(["Overlay-1", "wan1"]);
+  });
+
+  it("treats a null address as unaddressed when the gate reports addresses elsewhere (rule 98(a))", async () => {
+    // Rule 126 stores an unaddressed interface as null, so wan2's "0.0.0.0"
+    // arrives here as null — wan1's address shows the scrape reads addresses.
+    await seedInterfaces({ wan1: "203.0.113.9", wan2: null });
+    await seedSamples([["wan1", "down", 100], ["wan2", "down", 100]]);
+    const rule = await seedRule("state", "!= 0.0.0.0");
+    await evaluateAllNotificationRules();
+    expect(await liveMembers(rule)).toEqual(["wan1"]);
+  });
+
+  it("keeps a member that holds only an IPv6 address", async () => {
+    await seedInterfaces({ wan1: "203.0.113.9", wan2: null });
+    await prisma.assetInterface.updateMany({ where: { assetId, ifName: "wan2" }, data: { ipv6Address: "2001:db8::4" } });
+    await seedSamples([["wan1", "up", 50], ["wan2", "up", 50]]);
+    const rule = await seedRule("loss", "!= 0.0.0.0");
+    await evaluateAllNotificationRules();
+    expect(await liveMembers(rule)).toEqual(["wan1", "wan2"]);
   });
 
   it("narrows to one member with ==", async () => {

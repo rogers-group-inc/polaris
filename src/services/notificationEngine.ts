@@ -1146,10 +1146,17 @@ function reduceReadings(
  * A dropped member produces NO reading, the same contract as an unpinned
  * interface: a live alert on it is retired by clearVanishedStates, and one is
  * never raised. A member whose address is unknown (no interface row, or a
- * scrape that collected no address) is KEPT, and so is every member when the
- * read fails — the filter removes members it has evidence about, never ones it
- * could not check. ONE read on AssetInterface narrowed to the gates AND member
- * names in play, none at all when the filter is unset.
+ * gate whose scrape collected no address on ANY interface) is KEPT, and so is
+ * every member when the read fails — the filter removes members it has
+ * evidence about, never ones it could not check.
+ *
+ * Rule 98(a): since rule 126 every interface write stores an unaddressed
+ * interface ("0.0.0.0", link-local) as a null address, so a null on a member
+ * row is "unaddressed" whenever the same gate's scrape carried an address on
+ * some interface — that is the evidence the collector reads addresses at all.
+ * A member holding only an IPv6 address is addressed. Two reads on
+ * AssetInterface narrowed to the gates in play (the member rows, and which
+ * gates have any address), none at all when the filter is unset.
  */
 async function filterByMemberIp(
   df: { sdwanMemberIp?: string } | undefined,
@@ -1159,17 +1166,29 @@ async function filterByMemberIp(
   if (!filter || readings.length === 0) return readings;
   const assetIds = Array.from(new Set(readings.map((r) => r.assetId)));
   const names = Array.from(new Set(readings.map(sdwanMemberOf)));
-  let rows: Array<{ assetId: string; ifName: string; ipAddress: string | null }>;
+  let rows: Array<{ assetId: string; ifName: string; ipAddress: string | null; ipv6Address: string | null }>;
+  let addressed: Array<{ assetId: string }>;
   try {
-    rows = await prisma.assetInterface.findMany({
-      where: { assetId: { in: assetIds }, ifName: { in: names } },
-      select: { assetId: true, ifName: true, ipAddress: true },
-    });
+    [rows, addressed] = await Promise.all([
+      prisma.assetInterface.findMany({
+        where: { assetId: { in: assetIds }, ifName: { in: names } },
+        select: { assetId: true, ifName: true, ipAddress: true, ipv6Address: true },
+      }),
+      prisma.assetInterface.findMany({
+        where: { assetId: { in: assetIds }, OR: [{ ipAddress: { not: null } }, { ipv6Address: { not: null } }] },
+        select: { assetId: true },
+        distinct: ["assetId"],
+      }),
+    ]);
   } catch (err) {
     logger.warn({ err: (err as Error)?.message }, "SD-WAN member IP lookup failed — keeping every member");
     return readings;
   }
-  const ipOf = new Map(rows.map((r) => [`${r.assetId}|${r.ifName}`, r.ipAddress]));
+  const readsAddresses = new Set(addressed.map((a) => a.assetId));
+  const ipOf = new Map(rows.map((r) => [
+    `${r.assetId}|${r.ifName}`,
+    r.ipAddress ?? r.ipv6Address ?? (readsAddresses.has(r.assetId) ? "0.0.0.0" : null),
+  ]));
   return readings.filter((r) => memberIpPasses(filter, ipOf.get(`${r.assetId}|${sdwanMemberOf(r)}`) ?? null) !== false);
 }
 
