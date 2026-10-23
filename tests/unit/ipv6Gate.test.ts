@@ -134,6 +134,16 @@ describe("withoutIpv6", () => {
   });
 });
 
+describe("withoutIpv6 on a partial result", () => {
+  it("filters the lists it has and leaves the missing ones absent", () => {
+    const out = withoutIpv6({ subnets: [{ cidr: "2001:db8::/64" }], deviceInventory: [{ macAddress: "aa", ipv6Address: "2001:db8::7" }] } as unknown as DiscoveryResult);
+    expect(out.subnets).toEqual([]);
+    expect(out.deviceInventory[0].ipv6Address).toBeUndefined();
+    expect(out.switchMacTable).toBeUndefined();
+    expect(out.dhcpEntries).toBeUndefined();
+  });
+});
+
 describe("splitInterfaceAddresses with IPv6 off", () => {
   it("stores no IPv6, from either field", () => {
     expect(splitInterfaceAddresses("10.0.0.1", "2001:db8::1", false)).toEqual({ ipAddress: "10.0.0.1", ipv6Address: null });

@@ -21,6 +21,7 @@ import request from "supertest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
+import { setIpv6Enabled, _resetIpv6GateForTests } from "../../src/services/ipv6GateService.js";
 import { generateRawToken, TOKEN_INDEX_PREFIX_LEN } from "../../src/utils/bearerToken.js";
 import { hashPassword } from "../../src/utils/password.js";
 
@@ -69,11 +70,16 @@ function post(body: unknown) {
 beforeAll(async () => {
   if (!dbReachable) return;
   await prisma.$connect();
+  // IPv6 is a whole-install switch (business rule 128), decided from the host,
+  // and CI runners have no IPv6: switch it on for this suite.
+  await setIpv6Enabled(true, "test");
 });
 
 afterAll(async () => {
   if (!dbReachable) return;
   try {
+    await prisma.setting.deleteMany({ where: { key: "ipv6Config" } });
+    _resetIpv6GateForTests();
     await prisma.managedAgent.deleteMany({ where: { asset: { hostname: "samples-ingest-test" } } });
     await prisma.asset.deleteMany({ where: { hostname: "samples-ingest-test" } });
     await prisma.$disconnect();

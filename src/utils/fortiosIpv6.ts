@@ -228,16 +228,18 @@ export function clientIpv6Address(raw: unknown): string | undefined {
  * IPv4 half is returned untouched. The collectors already skip their
  * IPv6-only reads while IPv6 is off; this is the backstop that guarantees
  * nothing IPv6 is STORED, whichever collector (or cached result) produced the
- * input. Pure — returns a shallow copy.
+ * input. Pure — returns a shallow copy. A list the input does not carry
+ * stays absent: a partial result (one phase's slice) is filtered, not
+ * completed and not crashed on.
  */
 export function withoutIpv6(result: DiscoveryResult): DiscoveryResult {
   const v4 = (ip: string | null | undefined) => !!ip && !ip.includes(":");
   return {
     ...result,
-    subnets: result.subnets.filter((s) => !s.cidr.includes(":")),
-    interfaceIps: result.interfaceIps.filter((i) => v4(i.ipAddress)),
-    dhcpEntries: result.dhcpEntries.filter((e) => v4(e.ipAddress)),
-    deviceInventory: result.deviceInventory.map((d) => (d.ipv6Address ? { ...d, ipv6Address: undefined } : d)),
-    switchMacTable: result.switchMacTable.map((r) => (r.ipv6Address ? { ...r, ipv6Address: undefined } : r)),
+    subnets: result.subnets?.filter((s) => !s.cidr.includes(":")),
+    interfaceIps: result.interfaceIps?.filter((i) => v4(i.ipAddress)),
+    dhcpEntries: result.dhcpEntries?.filter((e) => v4(e.ipAddress)),
+    deviceInventory: result.deviceInventory?.map((d) => (d.ipv6Address ? { ...d, ipv6Address: undefined } : d)),
+    switchMacTable: result.switchMacTable?.map((r) => (r.ipv6Address ? { ...r, ipv6Address: undefined } : r)),
   };
 }
