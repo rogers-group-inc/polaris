@@ -109,6 +109,10 @@ for them.
   not an interface-row concern while guests have no per-NIC rows; today they only pick the
   guest's own IPv4.
 
+### Amended 2026-10-22 by rule 127
+
+IPv6 is now a whole-install switch (`services/ipv6GateService.ts → ipv6Enabled()`); while it is off none of this runs. And an asset with NO IPv4 is now polled on its primary IPv6 — `Asset.ipv6Address`, a separate column chosen from the address list. `Asset.ipAddress` still never holds an IPv6 automatically. See [narrative-127.md](narrative-127.md#rule-127).
+
 ### Rule 126 — the invariant as stated in full
 
 See `invariants-30-43.md` § 126.
