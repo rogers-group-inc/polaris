@@ -1690,6 +1690,13 @@ const api = {
     // rule 130), and the bulk switch: body { enable?: [assetId], disable?: [...] }.
     listProfileWidgetAssets:     (id, widgetId) =>
       request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widgets/${encodeURIComponent(widgetId)}/assets`),
+    // Portable profile file: export, then preview + apply on import.
+    exportManufacturerProfile:   (id) =>
+      request("GET", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/export`),
+    previewManufacturerProfileImport: (file) =>
+      request("POST", "/server-settings/manufacturer-profiles/import/preview", { file: file }),
+    applyManufacturerProfileImport:   (file, items) =>
+      request("POST", "/server-settings/manufacturer-profiles/import", { file: file, items: items }),
     // The Custom MIB tab's widget arrangement for a profile (null = default grid).
     setProfileWidgetLayout:      (id, layout) =>
       request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/widget-layout`, { layout: layout }),

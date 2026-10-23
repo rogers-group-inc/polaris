@@ -27,6 +27,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/manufacturerProfilePortabilityService.ts
+
+**What it owns:** Export of a manufacturer profile to a portable JSON file (`polaris.manufacturer-profile` v1) and the two-step import (preview, then apply only the ticked items).
+
+**Public API:** `exportProfile()`, `previewProfileImport()`, `applyProfileImport()`, `parseProfileFile()`, `ProfileFileSchema`, `PROFILE_FILE_FORMAT`, `PROFILE_FILE_VERSION`, types `ProfileFile`, `MibRef`, `ImportItem`, `ImportItemKind`, `ImportPreview`, `ImportResult`.
+
+**Cross-service deps:** `manufacturerProfileService` (`getProfile`, `getProfileFor`, `createProfile`, `updateProfile`, `updateMetricRow`, `createOverride`, `updateOverride`, `createWidget`, `updateWidget`, `setWidgetLayout`, `refreshProfileCache`) — every write goes through the same functions the profile page uses; `prisma.mibFile` / `prisma.credential` (name resolution); `utils/manufacturerNormalize`; `eventLogService.logEvent`.
+
+**Used by:** `src/api/routes/manufacturerProfiles.ts` (`GET /:id/export`, `POST /import/preview`, `POST /import`).
+
+**Invariants:**
+- The file carries NO install ids and NO secrets: uploaded MIBs as `{ moduleName, manufacturer, model }`, an HTTP check's credential as `{ name }`, the Custom MIB layout keyed by the file's own widget `key`. MIB files are NOT bundled. Per-asset widget switches (rule 130) are NOT exported — they name assets.
+- A MIB resolves on import by module name under the TARGET profile's manufacturer, then the file's manufacturer, then a generic upload. A widget (non-http) whose MIB does not resolve is `blocked` in the preview and refused in apply — `createWidget` requires a MIB. A metric row imports with its MIB unset and reads unresolved.
+- Matching for "replace": the profile by canonical manufacturer, a metric by `metricKey`, an override by its scope (`assetType` + `modelPattern`), a widget by NAME (case-insensitive). Everything else is created.
+- Apply runs each ticked item independently and returns per-item `{ ok, error }`; one failure never aborts the rest. One `manufacturer_profile.imported` Event (warning when anything failed).
+
+**When changing this:**
+- A new profile / metric / override / widget field must be added to `ProfileFileSchema`, `exportProfile` AND the apply mapping, or it silently fails to travel. Bump `PROFILE_FILE_VERSION` only for an incompatible change.
+- Pinned by `tests/unit/manufacturerProfilePortability.test.ts`.
+
+---
+
 ## services/customWidgetEnablementService.ts
 
 **What it owns:** Which manufacturer custom widgets POLL which assets (business rule 130) — the `AssetCustomWidgetEnable` rows. A widget applies to every asset whose canonical manufacturer has its profile and whose model satisfies its `modelPattern`; it polls only where switched on.

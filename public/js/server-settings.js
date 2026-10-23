@@ -9545,6 +9545,8 @@ function manufacturerProfilesCardHTML() {
       '<div class="aw-suggest" id="mfg-profile-add-suggest"></div>' +
     '</span>' +
     '<button class="btn btn-primary" id="btn-add-mfg-profile">+ Add Manufacturer</button>' +
+    '<button class="btn btn-secondary" id="btn-import-mfg-profile" title="Import a profile exported from Polaris, choosing which parts to bring in">Import…</button>' +
+    '<input type="file" id="f-import-mfg-profile" accept=".json,application/json" style="display:none">' +
   '</div>';
 
   html += '</div>';
@@ -9564,6 +9566,7 @@ function renderProfileRow(p) {
         p.widgetCount + ' widget' + (p.widgetCount === 1 ? '' : 's') + ' · ' +
         p.scopedMibCount + ' MIB' + (p.scopedMibCount === 1 ? '' : 's') +
       '</span>' +
+      '<button class="btn btn-sm mfg-profile-export" data-id="' + escapeHtml(p.id) + '" title="Download this profile as a file another Polaris install can import">Export</button>' +
       '<button class="btn btn-sm btn-danger mfg-profile-del" data-id="' + escapeHtml(p.id) + '" title="Delete profile">Del</button>' +
     '</div>' +
     '<div class="mfg-profile-body" id="mfg-profile-body-' + escapeHtml(p.id) + '" style="' + (isOpen ? '' : 'display:none') + '">' +
@@ -10911,6 +10914,14 @@ function transformLabel(kind) {
 function wireManufacturerProfileControls() {
   var addBtn = document.getElementById("btn-add-mfg-profile");
   if (addBtn) addBtn.addEventListener("click", addManufacturerProfile);
+  var importBtn = document.getElementById("btn-import-mfg-profile");
+  var importFile = document.getElementById("f-import-mfg-profile");
+  if (importBtn && importFile) {
+    importBtn.addEventListener("click", function () { importFile.value = ""; importFile.click(); });
+    importFile.addEventListener("change", function () {
+      if (importFile.files && importFile.files[0]) openProfileImportModal(importFile.files[0]);
+    });
+  }
 
   wireManufacturerSuggestCombo();
 
@@ -10925,6 +10936,8 @@ function wireManufacturerProfileControls() {
 
     var delBtn = target.closest(".mfg-profile-del");
     if (delBtn) { e.stopPropagation(); return deleteManufacturerProfile(delBtn.getAttribute("data-id")); }
+    var exportBtn = target.closest(".mfg-profile-export");
+    if (exportBtn) { e.stopPropagation(); return exportManufacturerProfile(exportBtn.getAttribute("data-id")); }
 
     var header = target.closest(".mfg-profile-header");
     if (header) return toggleProfileExpand(header.parentElement.getAttribute("data-profile-id"));
@@ -11526,6 +11539,135 @@ function _wireManufacturerCountCombo(inputId, boxId, rowsFn) {
       _closeMfgSuggest(box);
     }
   });
+}
+
+// ─── Export / import a profile ─────────────────────────────────────────────
+// The file names MIBs and credentials by NAME (no ids, no secrets) and carries
+// no per-asset widget switches. Import previews every item — create or
+// replace, and any MIB this install lacks — and brings in only what is ticked.
+// A widget whose MIB is missing cannot be imported and is offered disabled
+// until the MIB is uploaded.
+
+async function exportManufacturerProfile(id) {
+  try {
+    var file = await api.serverSettings.exportManufacturerProfile(id);
+    var name = String(file.manufacturer || "profile").replace(/[^A-Za-z0-9._-]+/g, "_") + ".manufacturer-profile.json";
+    var blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    var mibs = (file.mibs || []).map(function (m) { return m.moduleName; });
+    showToast("Exported " + file.manufacturer + (mibs.length ? " — it needs " + mibs.join(", ") + " uploaded where it is imported" : ""), "success");
+  } catch (err) {
+    showToast(err.message || "Export failed", "error");
+  }
+}
+
+var PROFILE_IMPORT_MAX_BYTES = 1024 * 1024;
+var PROFILE_IMPORT_GROUPS = [
+  ["settings", "Profile"], ["metric", "Metric rows"], ["override", "Per-type / per-model rows"],
+  ["widget", "Custom widgets"], ["layout", "Custom MIB tab"],
+];
+
+async function openProfileImportModal(fileObj) {
+  if (fileObj.size > PROFILE_IMPORT_MAX_BYTES) { showToast("That file is too large to be a manufacturer profile", "error"); return; }
+  var file;
+  try {
+    file = JSON.parse(await fileObj.text());
+  } catch (_) {
+    showToast("That file is not JSON", "error");
+    return;
+  }
+  var preview;
+  try {
+    preview = await api.serverSettings.previewManufacturerProfileImport(file);
+  } catch (err) {
+    showToast(err.message || "Could not read that profile", "error");
+    return;
+  }
+  var items = preview.items || [];
+  var missing = (preview.mibs || []).filter(function (m) { return !m.present; });
+  var mibName = function (m) { return m.moduleName + (m.manufacturer ? " (" + m.manufacturer + (m.model ? " " + m.model : "") + ")" : ""); };
+
+  var body =
+    '<p style="margin:0 0 0.6rem;font-size:0.85rem">' +
+      (preview.targetProfileId
+        ? 'Imports into the existing <b>' + escapeHtml(preview.manufacturer) + '</b> profile. Items marked <b>replaces</b> overwrite what is there.'
+        : 'Creates a new <b>' + escapeHtml(preview.manufacturer) + '</b> profile.') +
+    '</p>' +
+    (missing.length
+      ? '<div style="margin:0 0 0.6rem;padding:8px 10px;border:1px solid var(--color-warning,#d97706);border-radius:4px;font-size:0.82rem">' +
+          '<b style="color:var(--color-warning,#d97706)">Missing MIB' + (missing.length === 1 ? '' : 's') + ':</b> ' +
+          missing.map(function (m) { return '<code>' + escapeHtml(mibName(m)) + '</code>'; }).join(", ") +
+          '. Upload ' + (missing.length === 1 ? 'it' : 'them') + ' at MIB Database, then import again. ' +
+          'Widgets that need a missing MIB can\'t be imported until then; metric rows import but won\'t resolve.' +
+        '</div>'
+      : '') +
+    '<div style="display:flex;gap:10px;margin-bottom:0.4rem;font-size:0.8rem">' +
+      '<a href="#" id="pimp-all">Select all</a><a href="#" id="pimp-none">Select none</a>' +
+    '</div>' +
+    '<div style="max-height:50vh;overflow:auto;border:1px solid var(--color-border);border-radius:4px;padding:6px 10px">' +
+    PROFILE_IMPORT_GROUPS.map(function (g) {
+      var group = items.filter(function (it) { return it.kind === g[0]; });
+      if (!group.length) return "";
+      return '<div style="font-size:0.74rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--color-text-tertiary);margin:8px 0 4px">' + escapeHtml(g[1]) + '</div>' +
+        group.map(function (it) {
+          var notes = [];
+          if (it.action === "replace") notes.push('<span style="color:var(--color-warning,#d97706)">replaces existing</span>');
+          if (it.missingMibs && it.missingMibs.length) notes.push('<span style="color:var(--color-warning,#d97706)">MIB missing: ' + escapeHtml(it.missingMibs.map(function (m) { return m.moduleName; }).join(", ")) + '</span>');
+          if (it.missingCredential) notes.push('<span style="color:var(--color-warning,#d97706)">no credential named "' + escapeHtml(it.missingCredential) + '" — imports unauthenticated</span>');
+          if (it.blocked) notes.push('<span style="color:var(--color-danger)">' + escapeHtml(it.blocked) + '</span>');
+          return '<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;font-size:0.84rem' + (it.blocked ? ';opacity:0.6' : '') + '">' +
+            '<input type="checkbox" class="pimp-item" value="' + escapeHtml(it.id) + '"' + (it.blocked ? ' disabled' : ' checked') + ' style="margin-top:3px">' +
+            '<span>' + escapeHtml(it.label) + (notes.length ? '<br><span style="font-size:0.76rem">' + notes.join(" · ") + '</span>' : '') + '</span>' +
+          '</label>';
+        }).join("");
+    }).join("") +
+    '</div>';
+  openModal("Import manufacturer profile", body,
+    '<button class="btn btn-secondary" id="pimp-cancel">Cancel</button><button class="btn btn-primary" id="pimp-go">Import</button>');
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll("#modal-overlay .pimp-item"));
+  var go = document.getElementById("pimp-go");
+  function refresh() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    go.textContent = n ? "Import " + n + " item" + (n === 1 ? "" : "s") : "Import";
+    go.disabled = n === 0;
+  }
+  boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+  document.getElementById("pimp-all").addEventListener("click", function (e) { e.preventDefault(); boxes.forEach(function (b) { if (!b.disabled) b.checked = true; }); refresh(); });
+  document.getElementById("pimp-none").addEventListener("click", function (e) { e.preventDefault(); boxes.forEach(function (b) { b.checked = false; }); refresh(); });
+  document.getElementById("pimp-cancel").addEventListener("click", closeModal);
+  go.addEventListener("click", async function () {
+    var picked = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+    go.disabled = true;
+    try {
+      var res = await api.serverSettings.applyManufacturerProfileImport(file, picked);
+      var failed = (res.results || []).filter(function (r) { return !r.ok; });
+      closeModal();
+      if (failed.length) {
+        showToast((res.results.length - failed.length) + " imported, " + failed.length + " failed: " +
+          failed.map(function (r) { return r.id + " — " + r.error; }).join("; "), "error");
+      } else {
+        showToast("Imported " + res.results.length + " item" + (res.results.length === 1 ? "" : "s") + " into " + preview.manufacturer, "success");
+      }
+      // Fresh list (counts, a new profile) and no stale detail for the target.
+      var listResp = await api.serverSettings.listManufacturerProfiles();
+      _mfgProfiles = (listResp && listResp.profiles) || _mfgProfiles;
+      var detail = await api.serverSettings.getManufacturerProfile(res.profileId);
+      _mfgProfileDetail[res.profileId] = detail && detail.profile;
+      _mfgProfileExpanded[res.profileId] = true;
+      _mfgSuggestions = null;
+      renderIdentificationTab();
+    } catch (err) {
+      go.disabled = false;
+      showToast(err.message || "Import failed", "error");
+    }
+  });
+  refresh();
 }
 
 async function addManufacturerProfile() {

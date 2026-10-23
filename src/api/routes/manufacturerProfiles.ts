@@ -34,12 +34,21 @@ import { logEvent } from "./events.js";
 import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { listWidgetCandidates, setWidgetAssets } from "../../services/customWidgetEnablementService.js";
+import { exportProfile, previewProfileImport, applyProfileImport } from "../../services/manufacturerProfilePortabilityService.js";
 
 // PUT /:id/widgets/:widgetId/assets (business rule 130). Bounded so one call
 // cannot carry an unbounded id list.
 const WidgetAssetsSchema = z.object({
   enable:  z.array(z.string().min(1)).max(5000).optional(),
   disable: z.array(z.string().min(1)).max(5000).optional(),
+});
+
+// POST /import/preview and /import. The file itself is validated by the
+// service's ProfileFileSchema (one readable error); here only the envelope.
+const ImportPreviewSchema = z.object({ file: z.unknown() });
+const ImportApplySchema = z.object({
+  file:  z.unknown(),
+  items: z.array(z.string().min(1).max(200)).max(2000),
 });
 
 // PUT /:id/widget-layout. Shape-checked here, then sanitized against the
@@ -267,6 +276,35 @@ router.delete("/:id/widgets/:widgetId", requirePermission("manufacturerProfiles"
     message: "Manufacturer profile custom widget deleted",
   });
   res.status(204).end();
+}));
+
+// ── Export / import ──────────────────────────────────────────────────────
+// A portable file: MIBs and credentials by NAME, no ids, no secrets, no
+// per-asset switches. Import is preview (what each item would do, what it is
+// missing) then apply (only the ticked item ids). See
+// manufacturerProfilePortabilityService.
+
+// GET /:id/export — download the profile as JSON.
+router.get("/:id/export", requirePermission("manufacturerProfiles", "read"), handle(async (req, res) => {
+  const file = await exportProfile(String(req.params.id));
+  const safe = file.manufacturer.replace(/[^A-Za-z0-9._-]+/g, "_");
+  res.setHeader("Content-Disposition", `attachment; filename="${safe}.manufacturer-profile.json"`);
+  send(res, file);
+}));
+
+// POST /import/preview — { file } → every importable item, with warnings.
+router.post("/import/preview", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = ImportPreviewSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  send(res, await previewProfileImport(parsed.data.file));
+}));
+
+// POST /import — { file, items: [item id] } → per-item outcome. Writes one
+// manufacturer_profile.imported Event (service).
+router.post("/import", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {
+  const parsed = ImportApplySchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+  send(res, await applyProfileImport(parsed.data.file, parsed.data.items, requestActor(req)));
 }));
 
 // PUT /:id/widget-layout — the Custom MIB tab's arrangement of this profile's
