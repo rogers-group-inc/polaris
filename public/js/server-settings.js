@@ -911,6 +911,11 @@ function renderCertsTab(container) {
                 'IPv6 addresses are still discovered and shown, but a device with only an IPv6 address is not polled. ' +
                 'In a container, enable IPv6 on the compose network instead of forcing this on.</p>'
             : '') +
+          (v6.heldUntil
+            ? '<p style="font-size:0.82rem;color:#f59e0b;margin-bottom:0.75rem">This server lost its IPv6 address. IPv6 stays on until ' +
+                escapeHtml(formatDateTime(v6.heldUntil)) + ' and turns off then unless the address comes back, so a short outage does not clear ' +
+                'every primary IPv6.</p>'
+            : '') +
           '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">This server\'s IPv6: ' +
             (v6Hosts.length
               ? '<code>' + v6Hosts.map(escapeHtml).join(", ") + '</code>'

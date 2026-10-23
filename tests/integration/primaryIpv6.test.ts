@@ -178,6 +178,7 @@ d("primary IPv6 (rule 127)", () => {
     expect(Array.isArray(get.body.ipv6.hostAddresses)).toBe(true);
     expect(typeof get.body.ipv6.hasRoute).toBe("boolean");
     expect(get.body.ipv6.dialable).toBe(false); // off is never dialable
+    expect(get.body.ipv6.heldUntil).toBeNull(); // only "auto" ever holds
     expect((await a.agent.put("/api/v1/server-settings/ipv6").set("X-CSRF-Token", a.csrf).send({ mode: "sometimes" })).status).toBe(400);
 
     const w = await loginAs(writeUser);

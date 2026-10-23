@@ -10,7 +10,10 @@
 
 import { describe, it, expect } from "vitest";
 import type { networkInterfaces } from "node:os";
-import { routableHostIpv6, decideIpv6Enabled, decideIpv6Dialable, hasIpv6Route } from "../../src/services/ipv6GateService.js";
+import {
+  routableHostIpv6, decideIpv6Enabled, decideIpv6Dialable, hasIpv6Route, autoChangeEvent, AUTO_OFF_HOLD_MS,
+  type Ipv6Status,
+} from "../../src/services/ipv6GateService.js";
 import { pickPrimaryIpv6 } from "../../src/services/primaryIpv6Service.js";
 import { assetDialAddress } from "../../src/utils/assetDialAddress.js";
 import { urlHost, bareHost } from "../../src/utils/cidr.js";
@@ -49,6 +52,37 @@ describe("decideIpv6Enabled", () => {
   it("on and off override the host", () => {
     expect(decideIpv6Enabled("on", [])).toBe(true);
     expect(decideIpv6Enabled("off", ["2001:db8::5"])).toBe(false);
+  });
+});
+
+describe("auto hold before switching off", () => {
+  const now = 10_000_000;
+  it("stays on inside the hold after the host loses its address", () => {
+    expect(decideIpv6Enabled("auto", [], now - 60_000, now)).toBe(true);
+    expect(decideIpv6Enabled("auto", [], now - AUTO_OFF_HOLD_MS - 1, now)).toBe(false);
+  });
+  it("a process that never saw an address starts off, and forced modes ignore the hold", () => {
+    expect(decideIpv6Enabled("auto", [], 0, now)).toBe(false);
+    expect(decideIpv6Enabled("off", [], now - 1, now)).toBe(false);
+  });
+});
+
+describe("autoChangeEvent", () => {
+  const s = (over: Partial<Ipv6Status>): Ipv6Status => ({
+    mode: "auto", hostAddresses: [], hasRoute: false, enabled: false, dialable: false, heldUntil: null, ...over,
+  });
+  const on = s({ hostAddresses: ["2001:db8::5"], enabled: true, dialable: true });
+  const held = s({ enabled: true, heldUntil: "2026-10-22T20:15:00.000Z" });
+  it("records turning on, the start of a hold, and turning off", () => {
+    expect(autoChangeEvent(s({}), on)?.action).toBe("settings.ipv6.auto_on");
+    expect(autoChangeEvent(on, held)).toMatchObject({ action: "settings.ipv6.auto_hold", level: "warning" });
+    expect(autoChangeEvent(held, s({}))).toMatchObject({ action: "settings.ipv6.auto_off", level: "warning" });
+    expect(autoChangeEvent(held, on)).toMatchObject({ action: "settings.ipv6.auto_hold_ended", level: "info" });
+  });
+  it("records nothing for a steady state, a hold that continues, or a change of mode", () => {
+    expect(autoChangeEvent(on, on)).toBeNull();
+    expect(autoChangeEvent(held, held)).toBeNull();
+    expect(autoChangeEvent(s({ mode: "off" }), on)).toBeNull();
   });
 });
 
