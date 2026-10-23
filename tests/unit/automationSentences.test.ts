@@ -81,6 +81,24 @@ describe("makeAutomationSentences", () => {
     expect(out).toContain("sustained for <strong>2 minutes</strong>");
   });
 
+  it("names a custom widget by its catalog name, never its id, in both the sentence and the formula", () => {
+    const s = make({
+      ...SCHEMA,
+      metricMeta: { ...SCHEMA.metricMeta, customWidgetValue: { label: "Custom widget value", unit: "" } },
+      customWidgets: [{ id: "7c1f-uuid", name: "Output Load", source: "APC" }],
+    } as never);
+    const tr = {
+      type: "asset_metric", metric: "customWidgetValue", operator: ">=", threshold: 90,
+      aggregation: "latest", windowSec: 0, dimensionFilter: { widgetId: "7c1f-uuid" },
+    };
+    const out = s.triggerSentence(tr);
+    expect(out).toContain("for widget «Output Load»");
+    expect(out).not.toContain("7c1f-uuid");
+    expect(s.triggerFormula(tr).lines[0]).toContain('widget="Output Load"');
+    // A widget since deleted still shows, flagged, rather than vanishing.
+    expect(s.triggerSentence({ ...tr, dimensionFilter: { widgetId: "gone" } })).toContain("for widget gone (not found)");
+  });
+
   it("resolves the hardware-sensor unit from the dimension filter's sensor class", () => {
     const s = make(SCHEMA as never);
     expect(s.leafUnit("hwSensorValue", { sensorClass: "temperature" })).toBe("°C");

@@ -185,7 +185,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns** — nothing persistent. Read-only lookup answering "what do THESE devices actually report for this metric dimension?" for the automation builder's dimensionFilter pickers.
 
-**Public API** — `listDimensionValues(metric, dimension, scope, narrow?)`, `dimensionPickerMeta()` (merged into `GET /automations/schema` as `dimensionPickers`), `foldValuePairs` (pure, unit-tested).
+**Public API** — `listDimensionValues(metric, dimension, scope, narrow?)`, `dimensionPickerMeta()` (merged into `GET /automations/schema` as `dimensionPickers`), `listCustomWidgetCatalog()` (merged in as `customWidgets` — the numeric widgets a `customWidgetValue` condition can name, `{ id, name, source }`), `foldValuePairs` (pure, unit-tested).
 
 **Readers / callers** — `api/routes/notificationRules.ts` only (`POST /automations/dimension-values` + the `/schema` merge). Client consumer: `public/js/automations-wizard.js` (`dimControlHtml` / `refreshDimOptions` / `wireDimCombo`, pure helpers on `window.PolarisAutomationDimensions` — `optionsHtml` for strict enums, `suggestHtml` + `matchCue` + `substringMatch` for the `.aw-combo-dim` combobox, `note`, `narrow`). `substringMatch` MIRRORS `notificationTypes.dimensionSubstringMatch`: if the engine's pattern matching changes, the cue starts lying about whether a filter will fire. The two SD-WAN pair dimensions (`healthCheck`, `link`) are the exception: they are **pick-several** (2026-09-29) and match through `sdwanMatch` (`awSdwanDimensionMatch`), which MIRRORS `utils/sdwanDimensions.ts → sdwanDimensionMatch` — an any-of over "|"-joined terms, each a case-insensitive substring. Their helpers on the same object are `isMulti`, `terms`, `joinTerms`, `displayValue` ("A | B" in the input) / `storedValue` (canonical "A|B"), `multiState` and `togglePick`.
 
@@ -202,6 +202,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **An empty result is a load-bearing answer**, not an error — it renders as "these devices report no <noun>, this condition would never match". Which is why the widened retry exists, and why `narrowLabel` ships with it: "no hardware sensors" must not be shown when the truth is "none of the class you picked".
 
 **When changing this**
+
+**`widgetId` (customWidgetValue)** is strict and labelled like `stateProbeId` (2026-10-23; it was a free-text box that wanted a UUID). Pairs come from `AssetCustomWidgetSample` (`kind: "scalar"`), and its async `labelOf` and the wizard's `widgetNameOf` both read `listCustomWidgetCatalog` — one source, so the picker and the sentence cannot name a widget differently. The catalog must keep both sources: a Generic API widget's samples are keyed `ga:<integrationId>:<slug>` (`genericApiService.genericApiWidgetId`), not by a profile UUID.
 
 **`checkId` (path* metrics)** is strict and labelled like `stateProbeId`, but its pairs come from MEMBERSHIP (`path_check_sources`) rather than samples, and its `labelOf` is ASYNC (one read of the check registry) — `labelOf` may return a Promise since 2026-09-23. Candidates are hosts with an active agent. A path metric's scope is narrowed by `pathMonitorScope` before resolving (the engine's pool); `narrow.includeServer` (Path Monitor with the server ticked) also reads the server's membership row (`assetId` NULL, counted as `POLARIS_SERVER_SUBJECT`) and skips the empty-scope early return.
 

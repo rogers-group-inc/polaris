@@ -36,7 +36,9 @@ import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import { poeIsFault } from "../utils/poePorts.js";
 import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
-import { listStateProbes } from "./manufacturerProfileService.js";
+import { listStateProbes, listCachedProfiles } from "./manufacturerProfileService.js";
+import { genericApiWidgetId, type GenericApiConfig } from "./genericApiService.js";
+import { GENERIC_API_TYPE } from "../utils/genericApiSource.js";
 
 /** Lookback for "currently reported". Long enough to catch any realistic
  *  telemetry cadence (minutes; an hourly cadence still lands ≥3 samples),
@@ -159,10 +161,9 @@ interface DimensionSource {
  * Keep the two in lockstep: making a dimension an enum server-side without
  * flipping this leaves the UI offering a box that now rejects free text.
  *
- * `widgetId` (customWidgetValue's numeric-widget dimension) is deliberately
- * absent: it stays a plain input. `stateProbeId` IS here despite also being an
- * opaque UUID, because it carries a `labelOf` that resolves the probe's name out
- * of the registry — the picker shows the name and stores the id.
+ * `stateProbeId` and `widgetId` are here despite being opaque ids, because each
+ * carries a `labelOf` that resolves the name out of its registry — the picker
+ * shows the name and stores the id.
  */
 const DIMENSION_SOURCES: Record<string, DimensionSource> = {
   sensorClass: {
@@ -382,6 +383,24 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
         where: { assetId: { in: ids }, timestamp: { gte: since } },
       })).map((r) => ({ value: r.probeId, assetId: r.assetId })),
   },
+  // Which numeric custom widget (customWidgetValue). Strict like stateProbeId:
+  // the engine matches the id exactly, so free text could only be a typo. The
+  // id is a profile widget's UUID or a Generic API widget's `ga:` key, and
+  // either way meaningless to read — `labelOf` names it from the catalog.
+  widgetId: {
+    noun: "custom widgets",
+    strict: true,
+    candidateWhere: { monitored: true },
+    labelOf: async () => {
+      const byId = new Map((await listCustomWidgetCatalog()).map((w) => [w.id, `${w.name} (${w.source})`]));
+      return (value: string) => byId.get(value);
+    },
+    pairs: async (ids, since) =>
+      (await prisma.assetCustomWidgetSample.groupBy({
+        by: ["widgetId", "assetId"],
+        where: { assetId: { in: ids }, timestamp: { gte: since }, kind: "scalar" },
+      })).map((r) => ({ value: r.widgetId, assetId: r.assetId })),
+  },
   // Individual rows of a state probe ("PSU 2", "CPU ON-DIE Temperature"),
   // narrowed to the probe the row already filters on — offering every probe's
   // rows would let an operator build probe+row combinations that match nothing.
@@ -492,6 +511,48 @@ function sourceFor(dimension: string, metric: string, narrow: DimensionNarrow): 
     return IF_NAME_POE_FAULT_SOURCE;
   }
   return DIMENSION_SOURCES[dimension];
+}
+
+/** One widget a `customWidgetValue` condition can name. */
+export interface CustomWidgetCatalogEntry {
+  /** The `widgetId` dimension value — what the sample rows are keyed by. */
+  id: string;
+  name: string;
+  /** The manufacturer profile or Generic API integration that defines it. */
+  source: string;
+}
+
+/**
+ * Every widget whose readings are numbers — gauge, line and HTTP-check widgets
+ * from the manufacturer profiles, gauge and line widgets from the Generic API
+ * integrations — for the automation builder, which must name a widget rather
+ * than show its id. State and table widgets are left out: neither writes a
+ * scalar sample `customWidgetValue` reads (a state widget is customStateValue).
+ * The profiles come from the in-memory cache; the Generic API widgets live in
+ * their integration's config, one small read.
+ */
+export async function listCustomWidgetCatalog(): Promise<CustomWidgetCatalogEntry[]> {
+  const out: CustomWidgetCatalogEntry[] = [];
+  for (const profile of listCachedProfiles()) {
+    for (const w of profile.widgets) {
+      if (w.widgetType === "state" || w.widgetType === "table") continue;
+      out.push({ id: w.id, name: w.name, source: profile.manufacturer });
+    }
+  }
+  const integrations = await prisma.integration.findMany({
+    where: { type: GENERIC_API_TYPE },
+    select: { id: true, name: true, config: true },
+  });
+  for (const intg of integrations) {
+    const queries = ((intg.config as GenericApiConfig | null)?.monitorQueries ?? []).filter((q) => q.stream === "widgets");
+    for (const q of queries) {
+      for (const w of q.widgets ?? []) {
+        if (w.type === "state") continue;
+        out.push({ id: genericApiWidgetId(intg.id, w.name), name: w.name, source: intg.name });
+      }
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name) || a.source.localeCompare(b.source));
 }
 
 export function dimensionPickerMeta(): Record<string, { strict: boolean; noun: string }> {
