@@ -2726,3 +2726,18 @@ sensors, then CPU/memory, then the general monitor credential). Every switch
 is recorded in the asset's Events. Widgets from a Generic API integration have
 no switch and are unchanged. On upgrade, every widget that had collected data
 in the previous 7 days was switched on for those assets.
+
+### Rule 131
+
+**One answer decides which manufacturer profile covers a device, and the
+profile's symbols are found where its MIBs were uploaded.** A device is covered
+by the profile named after its manufacturer, or, when there is none, by the
+first profile whose **Also applies when** pattern matches it. Every part of
+Polaris uses that same answer: the CPU, memory, sensor, storage and model
+readings, the Custom MIB tab, a widget's on/off switch and its device list. A
+pattern never takes a device from the profile named after its manufacturer.
+When a profile covers a device of another name, Polaris looks for each symbol
+first among the MIBs uploaded for the device's own manufacturer and model, then
+among the MIBs uploaded under the profile's name. That is also where the
+profile page checks whether a row is ready, so a row shown as ready is one the
+device can collect.

@@ -3283,15 +3283,17 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
     const asset = await prisma.asset.findUnique({
       where:  { id },
       select: {
-        id: true, monitored: true, manufacturer: true, model: true,
+        id: true, monitored: true, manufacturer: true, os: true, model: true, assetType: true,
         customWidgetPolling: true, lastCustomWidgetAt: true,
       },
     });
     if (!asset) throw new AppError(404, "Asset not found");
 
-    // The DB-backed profile cache is keyed by canonical manufacturer.
-    const { getProfileFor } = await import("../../services/manufacturerProfileService.js");
-    const profile = getProfileFor(asset.manufacturer);
+    // The governing profile — keyed by canonical manufacturer, else its "also
+    // applies when" (business rule 131) — the same answer the collector and
+    // the enable switch use.
+    const { widgetProfileForAsset } = await import("../../services/customWidgetEnablementService.js");
+    const profile = widgetProfileForAsset(asset);
 
     // Apply per-model gating. Empty modelPattern = applies to every asset
     // under the manufacturer; non-empty regex must match Asset.model.

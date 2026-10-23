@@ -39,7 +39,9 @@ specific widget on that asset" — so a widget showing on an asset does not poll
 switches it on there. Creating a widget opens "a popup to enable it on the following devices".
 
 - **Applies vs polls.** Applying stays a matter of definition (profile manufacturer + optional
-  model pattern), and the Custom MIB tab still shows every widget that applies. Polling is a
+  model pattern), and the Custom MIB tab still shows every widget that applies. Since rule 131
+  "profile manufacturer" means the profile that GOVERNS the asset, so a profile's "also
+  applies when" `matchPattern` reaches its widgets exactly as it reaches its metric rows. Polling is a
   per-(asset, widget) decision, stored as an `AssetCustomWidgetEnable` row; presence is the
   switch. A new widget starts off everywhere.
 - **Its own cadence.** `customWidget` is a cadence like `eventLog` or `sdwan`: its own pg-boss

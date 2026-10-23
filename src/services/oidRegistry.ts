@@ -611,17 +611,36 @@ export function scopeCacheStats(): { scopes: number } {
 export interface ResolveScope {
   manufacturer?: string | null;
   model?: string | null;
+  /**
+   * The manufacturer of the profile that governs the asset, when it differs
+   * from the asset's own (business rule 131): a profile reached through its
+   * `matchPattern`, or through a MIB pinned under another manufacturer. The
+   * operator uploads that profile's MIBs under the PROFILE's name — it is the
+   * scope the profile page's readiness reports — so a symbol the asset's own
+   * scope cannot resolve is looked for there second. The asset's scope stays
+   * first, so its device- and model-scoped uploads still win.
+   */
+  profileManufacturer?: string | null;
+}
+
+/** The asset's own scope, then the governing profile's (rule 131). */
+function lookupScoped(name: string, scope: ResolveScope): ResolvedSymbol | undefined {
+  const own = getScopeMap(scope.manufacturer, scope.model).get(name);
+  if (own) return own;
+  const pm = scope.profileManufacturer?.trim();
+  if (!pm || pm.toLowerCase() === (scope.manufacturer ?? "").trim().toLowerCase()) return undefined;
+  return getScopeMap(pm, scope.model).get(name);
 }
 
 /**
  * Resolve a symbolic OID name to its numeric form for a given asset scope.
  * Returns `null` when the name isn't defined in any MIB visible at this
- * scope (or any of its parent scopes back to the built-in seed).
+ * scope (or any of its parent scopes back to the built-in seed), nor at the
+ * governing profile's scope when the caller names one.
  */
 export async function resolveOid(name: string, scope: ResolveScope = {}): Promise<string | null> {
   await ensureLoaded();
-  const map = getScopeMap(scope.manufacturer, scope.model);
-  return map.get(name)?.oid ?? null;
+  return lookupScoped(name, scope)?.oid ?? null;
 }
 
 /**
@@ -633,8 +652,7 @@ export async function resolveOid(name: string, scope: ResolveScope = {}): Promis
  */
 export function resolveOidSync(name: string, scope: ResolveScope = {}): string | null {
   if (!_mibs) return null;
-  const map = getScopeMap(scope.manufacturer, scope.model);
-  return map.get(name)?.oid ?? null;
+  return lookupScoped(name, scope)?.oid ?? null;
 }
 
 export async function ensureRegistryLoaded(): Promise<void> {

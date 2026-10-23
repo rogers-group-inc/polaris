@@ -2,8 +2,11 @@
  * src/services/customWidgetEnablementService.ts — which manufacturer custom
  * widgets poll which assets (business rule 130).
  *
- * A widget APPLIES to every asset whose canonical manufacturer has the widget's
- * profile and whose model satisfies the widget's optional model pattern. It
+ * A widget APPLIES to every asset its profile GOVERNS — the profile keyed by
+ * the asset's canonical manufacturer, else the first whose "also applies when"
+ * `matchPattern` matches (business rule 131, the same `findDbProfile` the
+ * telemetry collectors use) — and whose model satisfies the widget's optional
+ * model pattern. It
  * POLLS only the assets it is switched on for: one AssetCustomWidgetEnable row
  * per (asset, widget). Applying is a matter of definition; polling is the
  * operator's decision, made per asset from the Custom MIB tab or in bulk from
@@ -16,9 +19,36 @@
 
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
-import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import { tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { logEventsBatch, type LogEventInput } from "./eventLogService.js";
+import { findDbProfile } from "./profileResolver.js";
+import { refreshProfileCacheIfStale, type ProfileFull } from "./manufacturerProfileService.js";
+
+/** What decides which profile's widgets apply to an asset. */
+export interface WidgetAssetIdentity {
+  manufacturer: string | null;
+  os?:          string | null;
+  model:        string | null;
+  assetType?:   string | null;
+}
+
+/**
+ * The profile whose custom widgets apply to this asset (business rule 131):
+ * the one `findDbProfile` picks for telemetry, so the Custom MIB tab, the
+ * enable switch and the collector can never disagree with the System tab
+ * about which profile a device is. Reads the warm profile cache — null before
+ * it loads, the same "no opinion" every other profile reader reports. No MIB
+ * pin: a pin redirects a telemetry STREAM, and widgets are not one.
+ */
+export function widgetProfileForAsset(asset: WidgetAssetIdentity): ProfileFull | null {
+  return findDbProfile({
+    manufacturer: asset.manufacturer,
+    os:           asset.os ?? null,
+    model:        asset.model,
+    assetType:    asset.assetType ?? null,
+    mibModule:    null,
+  });
+}
 
 /** True when a widget's optional model pattern admits this model. RE2
  *  (business rule 116); a pattern RE2 cannot compile matches nothing — the
@@ -53,21 +83,28 @@ interface WidgetScope {
   modelPattern: string | null;
   profileId: string;
   manufacturer: string;
+  /** The profile's "also applies when" — set means assets of other names can fall under it. */
+  matchPattern: string | null;
 }
 
 async function loadWidget(widgetId: string, profileId?: string): Promise<WidgetScope> {
   const w = await prisma.manufacturerCustomWidget.findUnique({
     where:  { id: widgetId },
-    select: { id: true, name: true, modelPattern: true, profileId: true, profile: { select: { manufacturer: true } } },
+    select: { id: true, name: true, modelPattern: true, profileId: true, profile: { select: { manufacturer: true, matchPattern: true } } },
   });
   if (!w || (profileId && w.profileId !== profileId)) throw new AppError(404, "Widget not found");
-  return { id: w.id, name: w.name, modelPattern: w.modelPattern, profileId: w.profileId, manufacturer: w.profile.manufacturer };
+  // The governing-profile test below reads the cache; on the web process it is
+  // warm and refreshed by every profile write, so this is one clock compare.
+  await refreshProfileCacheIfStale();
+  return {
+    id: w.id, name: w.name, modelPattern: w.modelPattern, profileId: w.profileId,
+    manufacturer: w.profile.manufacturer, matchPattern: w.profile.matchPattern ?? null,
+  };
 }
 
-/** Does this asset's canonical manufacturer + model fall under the widget? */
-function assetFallsUnder(widget: WidgetScope, asset: { manufacturer: string | null; model: string | null }): boolean {
-  const canonical = normalizeManufacturer(asset.manufacturer ?? null);
-  if (!canonical || canonical.toLowerCase() !== widget.manufacturer.toLowerCase()) return false;
+/** Is the widget's profile the one governing this asset, and does its model fall under the widget? */
+function assetFallsUnder(widget: WidgetScope, asset: WidgetAssetIdentity): boolean {
+  if (widgetProfileForAsset(asset)?.id !== widget.profileId) return false;
   return widgetAppliesToModel(widget.modelPattern, asset.model);
 }
 
@@ -86,14 +123,20 @@ export interface WidgetCandidate {
  * The assets a widget applies to, each with whether it is switched on — the
  * list the "enable on these devices" picker shows. Asset manufacturers are
  * alias-normalized on write (db.ts), so a case-insensitive match on the
- * profile's canonical name finds them; the model pattern is applied after.
+ * profile's canonical name finds the keyed ones in SQL. A profile with a
+ * `matchPattern` can also govern assets of other names (rule 131), which SQL
+ * cannot pre-filter — then every non-decommissioned asset is read with a
+ * narrow select and the governing test decides. This is an on-demand picker,
+ * not a ticking loop: one 2000-row read of eight columns per open.
  */
 export async function listWidgetCandidates(profileId: string, widgetId: string): Promise<WidgetCandidate[]> {
   const widget = await loadWidget(widgetId, profileId);
   const [assets, enabled] = await Promise.all([
     prisma.asset.findMany({
-      where:   { manufacturer: { equals: widget.manufacturer, mode: "insensitive" }, status: { not: "decommissioned" } },
-      select:  { id: true, hostname: true, ipAddress: true, manufacturer: true, model: true, assetType: true, monitored: true, monitorStatus: true },
+      where:   widget.matchPattern
+        ? { status: { not: "decommissioned" } }
+        : { manufacturer: { equals: widget.manufacturer, mode: "insensitive" }, status: { not: "decommissioned" } },
+      select:  { id: true, hostname: true, ipAddress: true, manufacturer: true, os: true, model: true, assetType: true, monitored: true, monitorStatus: true },
       orderBy: { hostname: "asc" },
     }),
     prisma.assetCustomWidgetEnable.findMany({ where: { widgetId }, select: { assetId: true } }),
@@ -129,7 +172,7 @@ export async function setWidgetAssets(
   if (enableIds.length) {
     const assets = await prisma.asset.findMany({
       where:  { id: { in: enableIds } },
-      select: { id: true, hostname: true, manufacturer: true, model: true },
+      select: { id: true, hostname: true, manufacturer: true, os: true, model: true, assetType: true },
     });
     const outside = enableIds.filter((id) => {
       const a = assets.find((x) => x.id === id);
@@ -167,7 +210,7 @@ export async function setWidgetEnabledForAsset(
   const widget = await loadWidget(widgetId);
   const asset = await prisma.asset.findUnique({
     where:  { id: assetId },
-    select: { id: true, hostname: true, manufacturer: true, model: true },
+    select: { id: true, hostname: true, manufacturer: true, os: true, model: true, assetType: true },
   });
   if (!asset) throw new AppError(404, "Asset not found");
   if (enabled) {
