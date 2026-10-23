@@ -64,11 +64,39 @@ const WORKLOAD_TYPES = new Set(["unraid", "truenas", "proxmox"]);
 const ARC_TYPES = new Set(["azurearc"]);
 
 /**
+ * Business rule 127: a standalone FortiGate integration always monitors its
+ * gate. Discovery already holds a working REST session to the device, so
+ * `fortigateMonitor.addAsMonitored` is fixed ON for this type whatever the
+ * stored config says — FortiManager keeps the operator's flag. Every reader
+ * of the firewall-class flag goes through here (or, in raw SQL, through the
+ * matching `i."type" = 'fortigate'` CASE arm); the HA-standby exception and
+ * a per-asset `monitorOverride` still win, as they do for any flag.
+ */
+export function integrationAlwaysMonitorsGates(integrationType: string | null | undefined): boolean {
+  return integrationType === "fortigate";
+}
+
+/**
+ * Stamp the rule-127 fixed flag into a config about to be saved, so the
+ * stored value agrees with what every reader resolves. A no-op for any other
+ * integration type. Mutates and returns `config`.
+ */
+export function applyFixedMonitorDefaults<T extends Record<string, unknown>>(integrationType: string | null | undefined, config: T): T {
+  if (!integrationAlwaysMonitorsGates(integrationType)) return config;
+  const block = config.fortigateMonitor;
+  const next = block && typeof block === "object" ? { ...(block as Record<string, unknown>) } : {};
+  next.addAsMonitored = true;
+  (config as Record<string, unknown>).fortigateMonitor = next;
+  return config;
+}
+
+/**
  * Per-class addAsMonitored is read from the integration's config blob at
  * a stable JSON path. Each path corresponds to one Asset.assetType:
  *
- *   firewall      → fortigateMonitor.addAsMonitored      (fortimanager/fortigate)
- *   switch        → fortiswitchMonitor.addAsMonitored    (fortimanager/fortigate)
+ *   firewall      → fortigateMonitor.addAsMonitored      (fortimanager; always true
+ *                                                         for fortigate — rule 127)
+ *   switch       → fortiswitchMonitor.addAsMonitored    (fortimanager/fortigate)
  *   access_point  → fortiapMonitor.addAsMonitored        (fortimanager/fortigate)
  *   workstation   → workstationMonitor.addAsMonitored    (activedirectory/entraid/windowsserver/azurearc)
  *   server        → serverMonitor.addAsMonitored         (activedirectory/entraid/windowsserver/azurearc)
@@ -99,6 +127,7 @@ export function getAddAsMonitoredFromConfig(
   switch (assetType) {
     case "firewall":
       if (!FORTINET_TYPES.has(integrationType)) return null;
+      if (integrationAlwaysMonitorsGates(integrationType)) return true;
       blockKey = "fortigateMonitor";
       break;
     case "switch":
@@ -269,7 +298,7 @@ export async function recomputeMonitorOverrideForAssets(
         CASE a."assetType"
           WHEN 'firewall'     THEN (CASE WHEN a."fortinetTopology" ->> 'haRole' = 'secondary'
                                          THEN false
-                                         ELSE (i."config" #>> '{fortigateMonitor,addAsMonitored}')::boolean END)
+                                         WHEN i."type" = 'fortigate' THEN true ELSE (i."config" #>> '{fortigateMonitor,addAsMonitored}')::boolean END)
           WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
           WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
           WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
@@ -320,7 +349,7 @@ export async function sweepMonitoredForIntegration(
       CASE a."assetType"
         WHEN 'firewall'     THEN (CASE WHEN a."fortinetTopology" ->> 'haRole' = 'secondary'
                                        THEN false
-                                       ELSE (i."config" #>> '{fortigateMonitor,addAsMonitored}')::boolean END)
+                                       WHEN i."type" = 'fortigate' THEN true ELSE (i."config" #>> '{fortigateMonitor,addAsMonitored}')::boolean END)
         WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
         WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
         WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean
@@ -343,7 +372,7 @@ export async function sweepMonitoredForIntegration(
         CASE a."assetType"
           WHEN 'firewall'     THEN (CASE WHEN a."fortinetTopology" ->> 'haRole' = 'secondary'
                                          THEN false
-                                         ELSE (i."config" #>> '{fortigateMonitor,addAsMonitored}')::boolean END)
+                                         WHEN i."type" = 'fortigate' THEN true ELSE (i."config" #>> '{fortigateMonitor,addAsMonitored}')::boolean END)
           WHEN 'switch'       THEN (i."config" #>> '{fortiswitchMonitor,addAsMonitored}')::boolean
           WHEN 'access_point' THEN (i."config" #>> '{fortiapMonitor,addAsMonitored}')::boolean
           WHEN 'workstation'  THEN (i."config" #>> '{workstationMonitor,addAsMonitored}')::boolean

@@ -28,6 +28,8 @@ import {
   snapshotAddAsMonitoredByAssetType,
   buildMonitoredSweep,
   AUTO_MONITOR_ASSET_TYPES,
+  integrationAlwaysMonitorsGates,
+  applyFixedMonitorDefaults,
   type AddAsMonitoredAssetType,
 } from "../../src/services/monitorOverrideService.js";
 
@@ -391,5 +393,58 @@ describe("buildMonitoredSweep — discovery add/remove decision", () => {
   it("override flag overrides take priority over the null short-circuit ordering", () => {
     // null wins over override: type-not-subject check comes first
     expect(buildMonitoredSweep(null, { monitored: false, monitorOverride: true })).toEqual({});
+  });
+});
+
+describe("rule 127 — a standalone FortiGate integration always monitors its gate", () => {
+  it("integrationAlwaysMonitorsGates is true for fortigate only", () => {
+    expect(integrationAlwaysMonitorsGates("fortigate")).toBe(true);
+    expect(integrationAlwaysMonitorsGates("fortimanager")).toBe(false);
+    expect(integrationAlwaysMonitorsGates("vcenter")).toBe(false);
+    expect(integrationAlwaysMonitorsGates(null)).toBe(false);
+  });
+
+  it("resolves the firewall flag ON for fortigate whatever the stored value", () => {
+    expect(getAddAsMonitoredFromConfig("fortigate", cfg("fortigateMonitor", false), "firewall")).toBe(true);
+    expect(getAddAsMonitoredFromConfig("fortigate", {}, "firewall")).toBe(true);
+  });
+
+  it("leaves FortiManager's firewall flag and the fortigate switch / AP flags to the operator", () => {
+    expect(getAddAsMonitoredFromConfig("fortimanager", cfg("fortigateMonitor", false), "firewall")).toBe(false);
+    expect(getAddAsMonitoredFromConfig("fortigate", cfg("fortiswitchMonitor", false), "switch")).toBe(false);
+    expect(getAddAsMonitoredFromConfig("fortigate", cfg("fortiapMonitor", false), "access_point")).toBe(false);
+  });
+
+  it("snapshot: firewall true on fortigate, so a save never sweeps gates off", () => {
+    const snap = snapshotAddAsMonitoredByAssetType("fortigate", { fortigateMonitor: { addAsMonitored: false } });
+    expect(snap.firewall).toBe(true);
+  });
+
+  it("discovery's sweep turns an unpinned gate on and leaves an operator's off-override alone", () => {
+    const flag = getAddAsMonitoredFromConfig("fortigate", {}, "firewall");
+    expect(buildMonitoredSweep(flag, { monitored: false, monitorOverride: false })).toEqual({ monitored: true });
+    expect(buildMonitoredSweep(flag, { monitored: false, monitorOverride: true })).toEqual({});
+  });
+
+  it("an operator turning one gate off is an override", () => {
+    const base = { assetType: "firewall", integrationType: "fortigate", integrationConfig: {} };
+    expect(resolveMonitorOverride({ ...base, monitored: false })).toBe(true);
+    expect(resolveMonitorOverride({ ...base, monitored: true })).toBe(false);
+  });
+
+  it("applyFixedMonitorDefaults stamps the flag on fortigate, keeping the rest of the block", () => {
+    const config: Record<string, unknown> = { host: "x", fortigateMonitor: { addAsMonitored: false, pullSnmpLocation: true } };
+    applyFixedMonitorDefaults("fortigate", config);
+    expect(config.fortigateMonitor).toEqual({ addAsMonitored: true, pullSnmpLocation: true });
+
+    const bare: Record<string, unknown> = {};
+    applyFixedMonitorDefaults("fortigate", bare);
+    expect(bare.fortigateMonitor).toEqual({ addAsMonitored: true });
+  });
+
+  it("applyFixedMonitorDefaults leaves every other type untouched", () => {
+    const config: Record<string, unknown> = { fortigateMonitor: { addAsMonitored: false } };
+    applyFixedMonitorDefaults("fortimanager", config);
+    expect(config.fortigateMonitor).toEqual({ addAsMonitored: false });
   });
 });

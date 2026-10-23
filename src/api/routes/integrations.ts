@@ -50,6 +50,7 @@ import * as autoMonitorStorage from "../../services/autoMonitorStorageService.js
 import {
   snapshotAddAsMonitoredByAssetType,
   sweepMonitoredForIntegration,
+  applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
 import { checkForSlowRuns, triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
 
@@ -1579,6 +1580,8 @@ router.post("/", async (req, res, next) => {
     // fall back to — surface a clear error so the operator pastes the
     // real token instead.
     const createCfg = input.config as Record<string, unknown>;
+    // Rule 127: a standalone FortiGate's gate is always monitored.
+    applyFixedMonitorDefaults(input.type, createCfg);
     // A create can only ever turn auto-deploy ON (there is no prior config).
     assertAgentDeployGrant(req, null, createCfg);
     for (const field of ["apiToken", "fortigateApiToken", "password", "clientSecret", "bindPassword"] as const) {
@@ -1921,6 +1924,8 @@ router.put("/:id", async (req, res, next) => {
       // that omits the block (the common partial save) is compared against
       // what is actually stored, not against an absent key.
       assertAgentDeployGrant(req, currentConfig, newConfig);
+      // Rule 127: a standalone FortiGate's gate is always monitored.
+      applyFixedMonitorDefaults(existing.type, newConfig);
       data.config = newConfig;
     }
 
