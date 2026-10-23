@@ -674,10 +674,16 @@ export async function deleteMib(id: string): Promise<void> {
  * dropdowns. Combines distinct values from already-uploaded MIBs with distinct
  * values from the asset inventory so the picker isn't empty before the first
  * MIB is uploaded.
+ *
+ * `assetCounts` is the device count per inventory manufacturer — counted the
+ * same way as the Manufacturer Profiles suggestions, every asset carrying the
+ * name — so the upload form can lift the vendors actually on the network to
+ * the top of its picker. MIB-only manufacturers are absent from it (0).
  */
 export async function getMibFacets(): Promise<{
   manufacturers: string[];
   modelsByManufacturer: Record<string, string[]>;
+  assetCounts: Record<string, number>;
 }> {
   const [mibRows, assetRows] = await Promise.all([
     prisma.mibFile.findMany({
@@ -685,22 +691,30 @@ export async function getMibFacets(): Promise<{
       select: { manufacturer: true, model: true },
       distinct: ["manufacturer", "model"],
     }),
-    prisma.asset.findMany({
+    prisma.asset.groupBy({
+      by: ["manufacturer", "model"],
       where: { manufacturer: { not: null } },
-      select: { manufacturer: true, model: true },
-      distinct: ["manufacturer", "model"],
+      _count: { _all: true },
     }),
   ]);
 
   const manufacturers = new Set<string>();
   const models: Record<string, Set<string>> = {};
+  const assetCounts: Record<string, number> = {};
 
-  for (const r of [...mibRows, ...assetRows]) {
-    const m = r.manufacturer?.trim();
-    if (!m) continue;
+  const addRow = (manufacturer: string | null, model: string | null): string | null => {
+    const m = manufacturer?.trim();
+    if (!m) return null;
     manufacturers.add(m);
     if (!models[m]) models[m] = new Set();
-    if (r.model && r.model.trim()) models[m].add(r.model.trim());
+    if (model && model.trim()) models[m].add(model.trim());
+    return m;
+  };
+
+  for (const r of mibRows) addRow(r.manufacturer, r.model);
+  for (const r of assetRows) {
+    const m = addRow(r.manufacturer, r.model);
+    if (m) assetCounts[m] = (assetCounts[m] ?? 0) + (r._count?._all ?? 0);
   }
 
   const modelsByManufacturer: Record<string, string[]> = {};
@@ -711,5 +725,6 @@ export async function getMibFacets(): Promise<{
   return {
     manufacturers: Array.from(manufacturers).sort(),
     modelsByManufacturer,
+    assetCounts,
   };
 }

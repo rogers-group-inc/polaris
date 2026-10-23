@@ -5324,9 +5324,7 @@ function mibCardHTML() {
     return html;
   }
 
-  var mfrListId = "mib-mfr-datalist";
   var modelListId = "mib-model-datalist";
-  var mfrOpts = (_mibFacets.manufacturers || []).map(function (m) { return '<option value="' + escapeHtml(m) + '"></option>'; }).join("");
   var modelOpts = "";
   Object.keys(_mibFacets.modelsByManufacturer || {}).forEach(function (mfr) {
     (_mibFacets.modelsByManufacturer[mfr] || []).forEach(function (md) {
@@ -5337,7 +5335,6 @@ function mibCardHTML() {
   html +=
     '<div style="border-top:1px solid var(--color-border);padding-top:1rem">' +
       '<h5 style="margin:0 0 0.75rem;font-size:0.9rem">Upload MIB</h5>' +
-      '<datalist id="' + mfrListId + '">' + mfrOpts + '</datalist>' +
       '<datalist id="' + modelListId + '">' + modelOpts + '</datalist>' +
       '<div class="form-group" style="margin-bottom:0.75rem">' +
         '<label style="font-size:0.78rem;font-weight:500;display:block;margin-bottom:0.25rem">Scope</label>' +
@@ -5357,7 +5354,13 @@ function mibCardHTML() {
       '<div id="mib-upload-vendor-fields" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:0.75rem">' +
         '<div style="flex:1;min-width:160px">' +
           '<label style="font-size:0.78rem;font-weight:500">Manufacturer *</label>' +
-          '<input type="text" id="f-mib-up-mfr" list="' + mfrListId + '" placeholder="e.g. Cisco">' +
+          // The same open-on-click combobox as "+ Add Manufacturer": vendors
+          // with devices in inventory first, each with its device count, since
+          // a vendor MIB only resolves for assets whose manufacturer matches.
+          '<span class="aw-combo aw-combo-dim">' +
+            '<input type="text" id="f-mib-up-mfr" autocomplete="off" placeholder="e.g. Cisco">' +
+            '<div class="aw-suggest" id="mib-up-mfr-suggest"></div>' +
+          '</span>' +
         '</div>' +
         '<div id="mib-upload-model-field" style="flex:1;min-width:160px;display:none">' +
           '<label style="font-size:0.78rem;font-weight:500">Model *</label>' +
@@ -5423,6 +5426,7 @@ function wireMibControls() {
 
   var btn = document.getElementById("btn-mib-upload");
   if (btn) btn.addEventListener("click", uploadMibUI);
+  wireMibUploadManufacturerCombo();
 
   document.querySelectorAll(".mib-del").forEach(function (b) {
     b.addEventListener("click", function () {
@@ -11066,15 +11070,24 @@ function _renderMfgSuggest(input, box, rows) {
   box.innerHTML = matches.map(function (r) {
     var hints = (r.sources || []).map(function (s) {
       return s === "asset" && r.assetCount
-        ? r.assetCount + " device" + (r.assetCount === 1 ? "" : "s")
+        ? _mfgDeviceCountLabel(r.assetCount)
         : (_MFG_SUGGEST_SOURCE_LABELS[s] || s);
     });
-    return '<div class="aw-suggest-item" data-val="' + escapeHtml(r.value) + '">' +
-      escapeHtml(r.value) +
-      (hints.length ? ' <span style="color:var(--color-text-tertiary)">· ' + escapeHtml(hints.join(" · ")) + '</span>' : "") +
-    '</div>';
+    return _mfgSuggestItemHTML(r.value, hints);
   }).join("");
   box.classList.add("open");
+}
+
+// Shared by both manufacturer pickers so "· 8 devices" reads the same on each.
+function _mfgDeviceCountLabel(n) {
+  return n + " device" + (n === 1 ? "" : "s");
+}
+
+function _mfgSuggestItemHTML(value, hints) {
+  return '<div class="aw-suggest-item" data-val="' + escapeHtml(value) + '">' +
+    escapeHtml(value) +
+    (hints.length ? ' <span style="color:var(--color-text-tertiary)">· ' + escapeHtml(hints.join(" · ")) + '</span>' : "") +
+  '</div>';
 }
 
 function _openMfgSuggest() {
@@ -11130,6 +11143,90 @@ function wireManufacturerSuggestCombo() {
       // whatever was typed, so a custom name never needs a mouse.
       if (idx >= 0) { input.value = items[idx].getAttribute("data-val"); _closeMfgSuggest(box); }
       else { _closeMfgSuggest(box); addManufacturerProfile(); }
+    }
+  });
+}
+
+// ─── MIB upload Manufacturer typeahead ─────────────────────────────────────
+// A vendor MIB only resolves for assets whose manufacturer matches the name it
+// is uploaded under, so the picker leads with the manufacturers actually in
+// inventory — most devices first, each with its count — and follows with
+// names only an earlier MIB upload carries. Free text is still accepted.
+// Rows come from `_mibFacets`, already loaded with the tab; no extra fetch.
+
+function _mibUploadMfrRows() {
+  var counts = (_mibFacets && _mibFacets.assetCounts) || {};
+  return ((_mibFacets && _mibFacets.manufacturers) || [])
+    .map(function (m) { return { value: m, assetCount: counts[m] || 0 }; })
+    .sort(function (a, b) { return b.assetCount - a.assetCount || a.value.localeCompare(b.value); });
+}
+
+function _renderMibUploadMfrSuggest(input, box) {
+  var q = (input.value || "").trim().toLowerCase();
+  var matches = _mibUploadMfrRows().filter(function (r) {
+    var v = r.value.toLowerCase();
+    return (!q || v.indexOf(q) !== -1) && v !== q;
+  });
+  if (q) {
+    // Prefix matches first; the sort is stable, so device-count order holds
+    // within each half.
+    matches.sort(function (a, b) {
+      var ap = a.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
+      var bp = b.value.toLowerCase().indexOf(q) === 0 ? 0 : 1;
+      return ap - bp;
+    });
+  }
+  matches = matches.slice(0, 50);
+  if (!matches.length) {
+    box.innerHTML = '<div class="aw-suggest-empty">' +
+      (q ? "No known manufacturer matches — the name is used as typed."
+         : "No manufacturers in inventory yet — type the vendor name.") +
+      '</div>';
+    box.classList.add("open");
+    return;
+  }
+  box.innerHTML = matches.map(function (r) {
+    return _mfgSuggestItemHTML(r.value, r.assetCount ? [_mfgDeviceCountLabel(r.assetCount)] : []);
+  }).join("");
+  box.classList.add("open");
+}
+
+function wireMibUploadManufacturerCombo() {
+  var input = document.getElementById("f-mib-up-mfr");
+  var box = document.getElementById("mib-up-mfr-suggest");
+  if (!input || !box) return;
+  function open() { _renderMibUploadMfrSuggest(input, box); }
+
+  input.addEventListener("focus", open);
+  input.addEventListener("click", open);
+  input.addEventListener("input", open);
+  input.addEventListener("blur", function () {
+    // Delay so a mousedown on an item (which fires before blur completes) lands.
+    setTimeout(function () { _closeMfgSuggest(box); }, 150);
+  });
+  box.addEventListener("mousedown", function (e) {
+    var item = e.target.closest && e.target.closest(".aw-suggest-item");
+    if (!item) return;
+    e.preventDefault(); // keep focus on the input
+    input.value = item.getAttribute("data-val");
+    _closeMfgSuggest(box);
+  });
+  input.addEventListener("keydown", function (e) {
+    if (!box.classList.contains("open")) return;
+    if (e.key === "Escape") { _closeMfgSuggest(box); e.stopPropagation(); return; }
+    var items = Array.prototype.slice.call(box.querySelectorAll(".aw-suggest-item"));
+    var idx = items.findIndex(function (i) { return i.classList.contains("active"); });
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!items.length) return;
+      e.preventDefault();
+      var next = e.key === "ArrowDown" ? Math.min(idx + 1, items.length - 1) : Math.max(idx - 1, 0);
+      items.forEach(function (i) { i.classList.remove("active"); });
+      items[next].classList.add("active");
+      if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && idx >= 0) {
+      e.preventDefault();
+      input.value = items[idx].getAttribute("data-val");
+      _closeMfgSuggest(box);
     }
   });
 }
