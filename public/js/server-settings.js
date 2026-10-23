@@ -6067,7 +6067,8 @@ function _wireMibWalkCopy(result) {
 //
 // Operator-uploaded images that override generic node shapes on the Device
 // Map's topology graph. Resolution at render time is most-specific-wins:
-// model-with-manufacturer → model-alone → assetType. Storage is bytes-in-DB
+// manufacturer + model → manufacturer + assetType; both need a manufacturer
+// (deviceIconService.buildResolutionCandidates). Storage is bytes-in-DB
 // behind the /api/v1/device-icons endpoints; admin-only CRUD; image-serve
 // is auth-only with HTTP cache headers so the topology modal doesn't refetch
 // on every render.
@@ -6727,9 +6728,20 @@ function deviceIconsCardHTML() {
     if (byScope[i.scope]) byScope[i.scope].push(i);
   });
 
-  var typeOptionsHtml = _deviceIconAssetTypes
-    .map(function (t) { return '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>'; })
-    .join("");
+  // Every type in the asset-type REGISTRY (the Device Types card's list,
+  // custom types included) — the service validates against the same registry
+  // (isKnownAssetType). The built-in ten are only the fallback for a registry
+  // that failed to load.
+  var registryTypes = (_assetTypes || []).slice().sort(function (a, b) {
+    return (a.label || a.name || "").localeCompare(b.label || b.name || "");
+  });
+  var typeOptionsHtml = registryTypes.length
+    ? registryTypes.map(function (t) {
+        return '<option value="' + escapeHtml(t.name) + '">' + escapeHtml(t.label || t.name) + '</option>';
+      }).join("")
+    : _deviceIconAssetTypes
+        .map(function (t) { return '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>'; })
+        .join("");
 
   var html = '<div class="settings-card">' +
     '<h4>Device Icons</h4>' +

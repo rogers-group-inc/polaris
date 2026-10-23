@@ -36,7 +36,11 @@ Five cards about what Polaris calls things it finds:
   placeholder.
 - **Device Icons** — PNG / JPEG / WebP (256 KB) or SVG (32 KB, strictly
   validated) icons overlaid on the topology graphs, keyed to a manufacturer
-  plus a type or a model. Gated `deviceIcons`.
+  plus a type or a model. Gated `deviceIcons`. An icon always needs the
+  manufacturer: a device takes its **manufacturer + model** icon when there is
+  one (the model must match exactly), otherwise its **manufacturer + asset
+  type** icon, otherwise no icon. There is no type-only or model-only icon. The
+  type list is the Device Types registry, custom types included.
 - **Device Types** — the asset-type registry and the matching rules that file a
   newly discovered device. Built-in types cannot be renamed or removed, but
   their rules are editable; **Apply rules to existing "Other" assets…** re-files
