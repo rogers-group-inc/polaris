@@ -98,7 +98,7 @@ import { resolveTagScopesForUser } from "../../services/regionScopeService.js";
 import { isBlockedOutboundHost } from "../../utils/netGuard.js";
 import { totpCodeLimiter, ssoEntryLimiter, entraProxyLoginLimiter, ssoCallbackLimiter, passwordChangeLimiter, passkeyCeremonyLimiter } from "../middleware/rateLimits.js";
 import { safeNextPath } from "../../utils/safeRedirect.js";
-import { ipv6Enabled } from "../../services/ipv6GateService.js";
+import { ipv6Dialable, ipv6Enabled } from "../../services/ipv6GateService.js";
 import {
   takeLoginTarget,
   peekLoginTarget,
@@ -845,6 +845,8 @@ router.get("/me", async (req, res, next) => {
       // Business rule 127: every IPv6 surface (the primary IPv6 row, the
       // Interfaces IPv6 column, observed rows) is drawn only while this is true.
       ipv6Enabled: ipv6Enabled(),
+      // On AND reachable: only then is an IPv6-only asset polled on its IPv6.
+      ipv6Dialable: ipv6Dialable(),
     });
   } catch (err) {
     next(err);

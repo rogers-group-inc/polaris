@@ -14,6 +14,13 @@
  *     without IPv6 networking sees no IPv6 on its own interfaces even when the
  *     host and its network are dual-stack.
  *
+ * On is not the same as REACHABLE. A container on an IPv4-only bridge forced
+ * "on" still learns IPv6 from discovery (the FortiGate is read over IPv4), but
+ * cannot send a packet to an IPv6 device — polling an IPv6-only asset there
+ * would only mark it down. So probes ask a second question, `ipv6Dialable()`:
+ * on AND this process can originate IPv6 (it holds a routable IPv6 address,
+ * or the kernel has a route to global unicast — `hasIpv6Route`).
+ *
  * Read on hot paths (every interface write, every probe target), so the
  * answer is a synchronous cached boolean — `ipv6Enabled()` — refreshed in the
  * background at most every REFRESH_MS. Each process role keeps its own cache;
@@ -21,6 +28,7 @@
  */
 
 import { networkInterfaces } from "node:os";
+import { createSocket } from "node:dgram";
 import { createSettingStore } from "./settingsStore.js";
 import { logEvent } from "./eventLogService.js";
 import { isIpamIpv6Address } from "../utils/cidr.js";
@@ -32,8 +40,12 @@ export interface Ipv6Status {
   mode: Ipv6Mode;
   /** The host's routable IPv6 addresses, as this process sees them. */
   hostAddresses: string[];
+  /** Does the kernel route global unicast IPv6 (2000::/3) from this process? */
+  hasRoute: boolean;
   /** The answer every IPv6 path reads. */
   enabled: boolean;
+  /** On AND this process can reach IPv6 — what a probe reads before dialling an IPv6 address. */
+  dialable: boolean;
 }
 
 const REFRESH_MS = 60_000;
@@ -72,6 +84,44 @@ export function decideIpv6Enabled(mode: Ipv6Mode, hostAddresses: readonly string
   return hostAddresses.length > 0;
 }
 
+/** On + able to reach IPv6 → may a probe dial an IPv6 address? Pure — exported for tests. */
+export function decideIpv6Dialable(enabled: boolean, hostAddresses: readonly string[], hasRoute: boolean): boolean {
+  return enabled && (hostAddresses.length > 0 || hasRoute);
+}
+
+/**
+ * Is there a route to global unicast IPv6? A UDP connect() only asks the
+ * kernel to pick a route and source — no packet leaves — so this answers
+ * "could I send", without contacting anything. 2000::1 is just an address
+ * inside 2000::/3 that the default route covers; nothing is sent to it.
+ */
+export function hasIpv6Route(timeoutMs = 1000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { sock.close(); } catch { /* already closed */ }
+      resolve(ok);
+    };
+    let sock: ReturnType<typeof createSocket>;
+    try {
+      sock = createSocket("udp6");
+    } catch {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    sock.once("error", () => finish(false));
+    try {
+      sock.connect(9, "2000::1", () => finish(true));
+    } catch {
+      finish(false);
+    }
+  });
+}
+
 let cached: { status: Ipv6Status; at: number } | null = null;
 let refreshing: Promise<Ipv6Status> | null = null;
 
@@ -86,7 +136,9 @@ export async function getIpv6Status(): Promise<Ipv6Status> {
     logger.warn({ err: err instanceof Error ? err.message : String(err) }, "ipv6 gate: settings read failed");
   }
   const hostAddresses = routableHostIpv6(networkInterfaces());
-  const status: Ipv6Status = { mode, hostAddresses, enabled: decideIpv6Enabled(mode, hostAddresses) };
+  const enabled = decideIpv6Enabled(mode, hostAddresses);
+  const hasRoute = await hasIpv6Route();
+  const status: Ipv6Status = { mode, hostAddresses, hasRoute, enabled, dialable: decideIpv6Dialable(enabled, hostAddresses, hasRoute) };
   cached = { status, at: Date.now() };
   return status;
 }
@@ -96,16 +148,36 @@ export async function getIpv6Status(): Promise<Ipv6Status> {
  * value and refreshes in the background. Before the first refresh lands the
  * answer is the host detection alone (mode "auto"), which is the default.
  */
-export function ipv6Enabled(): boolean {
+function current(): Ipv6Status {
   if (!cached) {
+    // Before the first refresh: host detection alone, and dialable only on a
+    // routable address (the route probe is async and lands with the refresh).
     const hostAddresses = routableHostIpv6(networkInterfaces());
-    cached = { status: { mode: "auto", hostAddresses, enabled: decideIpv6Enabled("auto", hostAddresses) }, at: 0 };
+    const enabled = decideIpv6Enabled("auto", hostAddresses);
+    cached = {
+      status: { mode: "auto", hostAddresses, hasRoute: false, enabled, dialable: decideIpv6Dialable(enabled, hostAddresses, false) },
+      at: 0,
+    };
   }
   if (Date.now() - cached.at > REFRESH_MS && !refreshing) {
     refreshing = getIpv6Status().finally(() => { refreshing = null; });
     refreshing.catch(() => {});
   }
-  return cached.status.enabled;
+  return cached.status;
+}
+
+export function ipv6Enabled(): boolean {
+  return current().enabled;
+}
+
+/**
+ * May a probe dial an IPv6 address? IPv6 is on AND this process can reach it.
+ * Every `assetDialAddress` / loss-sweep caller reads this, not ipv6Enabled():
+ * an IPv6-only asset on an install that cannot reach IPv6 is left unpolled
+ * (as it was before rule 127) rather than polled into "down".
+ */
+export function ipv6Dialable(): boolean {
+  return current().dialable;
 }
 
 /** Set the mode (Server Settings). Audited. */
@@ -122,8 +194,9 @@ export async function setIpv6Mode(mode: Ipv6Mode, actor: string): Promise<Ipv6St
     level: "info",
     message: `IPv6 mode set to "${mode}" — IPv6 is now ${after.enabled ? "ON" : "OFF"}` +
       (mode === "auto" ? ` (host ${after.hostAddresses.length ? "has" : "has no"} routable IPv6)` : "") +
+      (after.enabled && !after.dialable ? " but this server cannot reach IPv6, so devices with only an IPv6 address are not polled" : "") +
       (before.enabled !== after.enabled ? `, was ${before.enabled ? "ON" : "OFF"}` : ""),
-    details: { mode, previousMode: before.mode, enabled: after.enabled, hostAddresses: after.hostAddresses },
+    details: { mode, previousMode: before.mode, enabled: after.enabled, dialable: after.dialable, hasRoute: after.hasRoute, hostAddresses: after.hostAddresses },
   });
   return after;
 }

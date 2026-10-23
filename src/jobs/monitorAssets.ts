@@ -63,7 +63,7 @@ import { runInstrumentedJob } from "./_metrics.js";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { assetDialAddress } from "../utils/assetDialAddress.js";
-import { ipv6Enabled } from "../services/ipv6GateService.js";
+import { ipv6Dialable } from "../services/ipv6GateService.js";
 
 const PROBE_TICK_MS = 5_000;
 const HEAVY_TICK_MS = 30_000;
@@ -348,7 +348,7 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       // WITHIN one session; it cannot span hosts).
       // Business rule 127: the IPv4, else (IPv6 on) the primary IPv6 - the same
       // pick as computeDueWork's dial().
-      const batchTarget = eff.responseTimePolling === "icmp" ? assetDialAddress(a, ipv6Enabled()) : null;
+      const batchTarget = eff.responseTimePolling === "icmp" ? assetDialAddress(a, ipv6Dialable()) : null;
       if (batchTarget) {
         probeBatchDue.push({ id: a.id, target: batchTarget, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
       } else {
@@ -426,7 +426,7 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
     // after the loop: one job per asset would put back the ~2000 process spawns
     // a minute that batching exists to remove. Keep in sync with computeDueWork.
     if (enabled.has("lossSample") &&
-        lossSweepIncludes(a, eff, undefined, ipv6Enabled()) &&
+        lossSweepIncludes(a, eff, undefined, ipv6Dialable()) &&
         lossSweepIsDue(a.lastLossSampleAt, now, sweepIntervalSec)) {
       sweepDue.push(a.id);
     }

@@ -19635,7 +19635,10 @@ function _ipv6LineHTML(asset) {
     html += '<span style="font-size:0.75rem;color:var(--color-text-tertiary);margin-left:8px" title="Chosen automatically from the addresses this asset reports — the one with the strongest evidence">auto</span>';
   }
   if (!asset.ipAddress) {
-    html += '<span style="font-size:0.75rem;color:var(--color-text-tertiary);margin-left:8px" title="This asset has no IPv4 address, so monitoring polls it on its IPv6">monitored</span>';
+    var dialable = typeof polarisIpv6Dialable !== "undefined" && polarisIpv6Dialable === true;
+    html += dialable
+      ? '<span style="font-size:0.75rem;color:var(--color-text-tertiary);margin-left:8px" title="This asset has no IPv4 address, so monitoring polls it on its IPv6">monitored</span>'
+      : '<span style="font-size:0.75rem;color:var(--color-warning,#ffc107);margin-left:8px" title="This asset has no IPv4 address, and this Polaris server cannot reach IPv6 — see Server Settings → Web Server → IPv6">not polled</span>';
   }
   return html;
 }

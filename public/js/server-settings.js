@@ -896,14 +896,21 @@ function renderCertsTab(container) {
       '<h4>IPv6</h4>' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
         'When IPv6 is off, Polaris discovers, collects, stores and shows no IPv6 addresses, and every device is ' +
-        'monitored on its IPv4 address. When it is on, a device with no IPv4 address is monitored on its primary IPv6 address. ' +
-        '<strong>Automatic</strong> turns IPv6 on only when this server has a routable IPv6 address.' +
+        'monitored on its IPv4 address. When it is on, a device with no IPv4 address is monitored on its primary IPv6 address, ' +
+        'as long as this server can reach IPv6. <strong>Automatic</strong> turns IPv6 on only when this server has a routable IPv6 address. ' +
+        'In a container the server is the container: on Docker or podman compose, enable IPv6 on the compose network ' +
+        '(see the install guide) and leave this on Automatic.' +
       '</p>' +
       (v6 === null
         ? '<p style="font-size:0.85rem;color:var(--color-text-secondary)">Unavailable — could not load the IPv6 setting.</p>'
         : '<p style="font-size:0.85rem;margin-bottom:0.75rem"><strong>Current:</strong> ' +
             (v6.enabled ? '<span class="badge badge-success">On</span>' : '<span class="badge badge-neutral">Off</span>') +
           '</p>' +
+          (v6.enabled && !v6.dialable
+            ? '<p style="font-size:0.82rem;color:#f59e0b;margin-bottom:0.75rem">This server has no IPv6 address or route, so it cannot reach IPv6 devices. ' +
+                'IPv6 addresses are still discovered and shown, but a device with only an IPv6 address is not polled. ' +
+                'In a container, enable IPv6 on the compose network instead of forcing this on.</p>'
+            : '') +
           '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">This server\'s IPv6: ' +
             (v6Hosts.length
               ? '<code>' + v6Hosts.map(escapeHtml).join(", ") + '</code>'
@@ -912,7 +919,7 @@ function renderCertsTab(container) {
           '<div class="form-group">' +
             '<div style="display:flex;flex-direction:column;gap:0.3rem">' +
               '<label><input type="radio" name="ipv6-mode" value="auto"' + (v6Mode === "auto" ? " checked" : "") + '> Automatic (on when this server uses IPv6)</label>' +
-              '<label><input type="radio" name="ipv6-mode" value="on"' + (v6Mode === "on" ? " checked" : "") + '> Always on</label>' +
+              '<label><input type="radio" name="ipv6-mode" value="on"' + (v6Mode === "on" ? " checked" : "") + '> Always on (when detection is wrong; devices are polled over IPv6 only if this server can reach it)</label>' +
               '<label><input type="radio" name="ipv6-mode" value="off"' + (v6Mode === "off" ? " checked" : "") + '> Always off</label>' +
             '</div>' +
           '</div>' +

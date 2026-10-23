@@ -32,7 +32,7 @@ import { credentialTestLimiter } from "../middleware/rateLimits.js";
 import { logEvent } from "./events.js";
 import { AppError } from "../../utils/errors.js";
 import { assetDialAddress } from "../../utils/assetDialAddress.js";
-import { ipv6Enabled } from "../../services/ipv6GateService.js";
+import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { probeCredentialAgainstHost } from "../../services/monitoringService.js";
 import { isDeviceLoginCredential, type HttpAuthConfig, type HttpProbeDiagnostics } from "../../utils/httpCheck.js";
 import { normalizeProbeTarget } from "../../utils/probeTarget.js";
@@ -197,7 +197,7 @@ router.post("/test", credentialTestLimiter, requireOwnership("credentials"), asy
     if (input.assetId) {
       hostSource = "asset";
       asset = await credentialService.getTestAssetTarget(input.assetId);
-      host = assetDialAddress(asset, ipv6Enabled()) || asset.dnsName || asset.hostname; // rule 127
+      host = assetDialAddress(asset, ipv6Dialable()) || asset.dnsName || asset.hostname; // rule 127
       // restapi credentials carry their own baseUrl, so a host on the asset is
       // optional — the credential is tested against its own URL. Every other
       // type still needs a routable target.

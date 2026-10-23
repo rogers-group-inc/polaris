@@ -525,6 +525,7 @@ var currentServerTimezone = null;
 // while this is true. False until /auth/me lands — a surface drawn earlier
 // simply shows no IPv6, which is the safe answer.
 var polarisIpv6Enabled = false;
+var polarisIpv6Dialable = false; // IPv6 on AND this server can reach it (rule 127)
 var _userReadyResolve = null;
 var userReady = new Promise(function (resolve) { _userReadyResolve = resolve; });
 
@@ -542,6 +543,7 @@ async function fetchCurrentUser() {
       currentEffectiveRegions = (data.regionTags && data.regionTags.effective) || [];
       currentServerTimezone = data.serverTimezone || null;
       polarisIpv6Enabled = data.ipv6Enabled === true;
+      polarisIpv6Dialable = data.ipv6Dialable === true;
       _tzPref = data.timezone || "auto";
       // Hand the account's zone to the formatters in api.js, which read it
       // synchronously from localStorage at load — this call is what keeps that

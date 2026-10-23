@@ -10,7 +10,7 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { assetDialAddress } from "../../utils/assetDialAddress.js";
-import { ipv6Enabled } from "../../services/ipv6GateService.js";
+import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
 import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
@@ -2500,7 +2500,7 @@ router.post("/:id/snmp-walk", requirePermission("assetsProbe", "read"), async (r
     });
     if (!asset) throw new AppError(404, "Asset not found");
     // IPv4, else (IPv6 on) the primary IPv6 — business rule 127.
-    const walkHost = assetDialAddress(asset, ipv6Enabled());
+    const walkHost = assetDialAddress(asset, ipv6Dialable());
     if (!walkHost) throw new AppError(400, "Asset has no IP address to walk");
 
     // Rule 112(e): this route is read-level, so only a credential the asset
@@ -7129,7 +7129,7 @@ router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), asyn
     // against its own loopback. Refuse early when ALL the above sources
     // fail for a remote-host install.
     if (!process.env.POLARIS_PUBLIC_URL && !process.env.POLARIS_PUBLIC_HOST) {
-      const targetHost = assetDialAddress(asset, ipv6Enabled()) || asset.dnsName || asset.hostname || "";
+      const targetHost = assetDialAddress(asset, ipv6Dialable()) || asset.dnsName || asset.hostname || "";
       const isSameBox = targetHost === "127.0.0.1" || targetHost === "::1" ||
                         targetHost === "localhost" || targetHost.toLowerCase() === "localhost.localdomain";
       if (!isSameBox) {

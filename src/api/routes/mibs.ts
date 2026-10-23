@@ -18,7 +18,7 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { assetDialAddress } from "../../utils/assetDialAddress.js";
-import { ipv6Enabled } from "../../services/ipv6GateService.js";
+import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { requirePermission, credentialUseActor, hasPermission } from "../middleware/permissions.js";
 import { recordCredentialUse, type CredentialUseActor } from "../../services/credentialUseAuditService.js";
 import {
@@ -394,7 +394,7 @@ async function runMibWalk(opts: {
   });
   if (!asset) throw new AppError(404, "Asset not found");
   // IPv4, else (IPv6 on) the primary IPv6 — business rule 127.
-  const walkHost = assetDialAddress(asset, ipv6Enabled());
+  const walkHost = assetDialAddress(asset, ipv6Dialable());
   if (!walkHost) throw new AppError(400, "Asset has no IP address to walk");
 
   // Rule 112(e): both walk routes are mibDatabase:read (re-scan F60).

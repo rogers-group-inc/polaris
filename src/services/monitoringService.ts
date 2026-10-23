@@ -73,7 +73,7 @@ import { matchesWildcard } from "../utils/integrationFilter.js";
 import { bareInterfaceIp, bareHost, interfaceIpIsUnaddressed, isIpv6Address, urlHost } from "../utils/cidr.js";
 import { assetDialAddress } from "../utils/assetDialAddress.js";
 import { pickInterfaceAddresses, splitInterfaceAddresses } from "../utils/interfaceAddress.js";
-import { ipv6Enabled } from "./ipv6GateService.js";
+import { ipv6Dialable, ipv6Enabled } from "./ipv6GateService.js";
 import {
   IP_ADDRESS_IF_INDEX_OID,
   IP_ADDRESS_TYPE_OID,
@@ -4731,7 +4731,7 @@ export interface TelemetrySample {
  * asset read must select `ipv6Address` beside `ipAddress`.
  */
 function dial(asset: { ipAddress?: string | null; ipv6Address?: string | null }): string | null {
-  return assetDialAddress(asset, ipv6Enabled());
+  return assetDialAddress(asset, ipv6Dialable());
 }
 
 export interface InterfaceSample {
@@ -13687,7 +13687,7 @@ export async function runLossSweepFor(assetIds: string[], labels: WorkItemLabels
     // Cheap re-check only (see the doc above). Passing responseTimePolling null
     // is not a claim that the stream is enabled — it says this pass is not the
     // thing resolving that, which the publisher already did.
-    const eligible = assets.filter((a) => lossSweepIncludes(a, { responseTimePolling: null }, undefined, ipv6Enabled()));
+    const eligible = assets.filter((a) => lossSweepIncludes(a, { responseTimePolling: null }, undefined, ipv6Dialable()));
     if (eligible.length === 0) {
       recordWorkOutcome("lossSample", "success", labels);
       return "success";
@@ -13699,7 +13699,7 @@ export async function runLossSweepFor(assetIds: string[], labels: WorkItemLabels
     // different readings of the same link.
     const byTarget = new Map<string, string[]>();
     for (const a of eligible) {
-      const t = lossSweepTarget(a, ipv6Enabled());
+      const t = lossSweepTarget(a, ipv6Dialable());
       if (!t) continue;
       const list = byTarget.get(t);
       if (list) list.push(a.id);
@@ -14202,7 +14202,7 @@ export async function computeDueWork(
     // dispatched per asset (see runMonitorPass), which is the whole reason a
     // fleet-wide window is affordable.
     if (enabled.has("lossSample") &&
-        lossSweepIncludes(a, eff, undefined, ipv6Enabled()) &&
+        lossSweepIncludes(a, eff, undefined, ipv6Dialable()) &&
         lossSweepIsDue(a.lastLossSampleAt, now, sweepIntervalSec)) {
       lossSamples.push({ id: a.id, kind: "lossSample" });
     }

@@ -161,9 +161,18 @@ describe("Address row with IPv6 on (business rule 127)", () => {
     try { expect(render(g.ipViewRow(a)).querySelector(".primary-ipv6-unpin")).toBeNull(); } finally { canManage = true; }
   }));
 
-  it("says monitored when the asset has no IPv4", () => withV6(() => {
+  it("says monitored when the asset has no IPv4 and the server can reach IPv6", () => withV6(() => {
+    g.polarisIpv6Dialable = true;
+    try {
+      const el = render(g.ipViewRow(hmi({ ipAddress: null, associatedIps: [], ipv6Address: "2001:db8::5" })));
+      expect(el.textContent).toContain("monitored");
+    } finally { g.polarisIpv6Dialable = false; }
+  }));
+
+  it("says not polled when the server cannot reach IPv6", () => withV6(() => {
     const el = render(g.ipViewRow(hmi({ ipAddress: null, associatedIps: [], ipv6Address: "2001:db8::5" })));
-    expect(el.textContent).toContain("monitored");
+    expect(el.textContent).toContain("not polled");
+    expect(el.textContent).not.toContain("monitored");
   }));
 });
 

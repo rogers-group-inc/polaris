@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { networkInterfaces } from "node:os";
-import { routableHostIpv6, decideIpv6Enabled } from "../../src/services/ipv6GateService.js";
+import { routableHostIpv6, decideIpv6Enabled, decideIpv6Dialable, hasIpv6Route } from "../../src/services/ipv6GateService.js";
 import { pickPrimaryIpv6 } from "../../src/services/primaryIpv6Service.js";
 import { assetDialAddress } from "../../src/utils/assetDialAddress.js";
 import { urlHost, bareHost } from "../../src/utils/cidr.js";
@@ -49,6 +49,23 @@ describe("decideIpv6Enabled", () => {
   it("on and off override the host", () => {
     expect(decideIpv6Enabled("on", [])).toBe(true);
     expect(decideIpv6Enabled("off", ["2001:db8::5"])).toBe(false);
+  });
+});
+
+describe("decideIpv6Dialable", () => {
+  it("needs IPv6 on AND a way to reach it", () => {
+    expect(decideIpv6Dialable(false, ["2001:db8::5"], true)).toBe(false);
+    expect(decideIpv6Dialable(true, ["2001:db8::5"], false)).toBe(true);
+    expect(decideIpv6Dialable(true, [], true)).toBe(true);
+  });
+  it("forced on in a container with no IPv6 network is not dialable", () => {
+    expect(decideIpv6Dialable(decideIpv6Enabled("on", []), [], false)).toBe(false);
+  });
+});
+
+describe("hasIpv6Route", () => {
+  it("answers a boolean without throwing, whatever this machine has", async () => {
+    expect(typeof (await hasIpv6Route(500))).toBe("boolean");
   });
 });
 
