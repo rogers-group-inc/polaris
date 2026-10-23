@@ -1184,6 +1184,8 @@ const GenericApiWidgetSchema = z.object({
   min:       z.number().finite().optional(),
   max:       z.number().finite().optional(),
   warningAt: z.number().finite().optional(),
+  // Which side of warningAt is the warning; absent = "above".
+  warningWhen: z.enum(["above", "below"]).optional(),
   stateMap:  z.record(z.unknown()).optional(),
 });
 

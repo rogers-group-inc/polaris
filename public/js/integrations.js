@@ -5931,7 +5931,7 @@ var _GA_MONITOR_MAP_EXAMPLES = {
   widgets:      "",
 };
 
-var _GA_WIDGET_FORMAT_HINT = 'gauge / line: <code>name | type | path | unit | min | max | warn at</code> (the last four optional). state: <code>name | state | path | values that mean OK</code> — anything else shows as an alarm.';
+var _GA_WIDGET_FORMAT_HINT = 'gauge / line: <code>name | type | path | unit | min | max | warn at | above or below</code> (the last five optional; a warning is at or above its value unless the last column says below). state: <code>name | state | path | values that mean OK</code> — anything else shows as an alarm.';
 
 function _gaMonitorQueryHTML(q) {
   q = q || {};
@@ -5968,7 +5968,7 @@ function _gaMonitorQueryHTML(q) {
     '<div class="form-group ga-mon-up-wrap" style="margin-bottom:0.5rem' + (stream === "responseTime" ? "" : ";display:none") + '"><label>Values that mean up</label><input type="text" class="ga-mon-up" value="' + escapeHtml((q.upValues || []).join(", ")) + '" placeholder="Blank: true, up, online, ok, running, 1, yes, active, healthy, connected, available"></div>' +
     '<div class="form-group ga-mon-unit-wrap" style="margin-bottom:0.5rem' + (stream === "cpuMemory" || stream === "storage" ? "" : ";display:none") + '"><label>Sizes are in</label><select class="ga-mon-unit" data-ga-value="' + escapeHtml(unit) + '">' +
       ["B", "KB", "MB", "GB", "TB"].map(function (u) { return opt(u, u === "B" ? "bytes" : u + " (1024-based)", unit); }).join("") + '</select></div>' +
-    '<div class="form-group ga-mon-widgets-wrap" style="margin-bottom:0.5rem' + (stream === "widgets" ? "" : ";display:none") + '"><label>Widgets</label><textarea class="ga-mon-widgets" rows="3" placeholder="One per line: name | gauge, line or state | path | …&#10;Battery | gauge | battery.pct | % | 0 | 100 | 20&#10;Toner | line | supplies.toner&#10;Door | state | door.status | closed, locked">' + escapeHtml(_gaFormatWidgetLines(q.widgets || [])) + '</textarea>' +
+    '<div class="form-group ga-mon-widgets-wrap" style="margin-bottom:0.5rem' + (stream === "widgets" ? "" : ";display:none") + '"><label>Widgets</label><textarea class="ga-mon-widgets" rows="3" placeholder="One per line: name | gauge, line or state | path | …&#10;Battery | gauge | battery.pct | % | 0 | 100 | 20 | below&#10;Toner | line | supplies.toner&#10;Door | state | door.status | closed, locked">' + escapeHtml(_gaFormatWidgetLines(q.widgets || [])) + '</textarea>' +
       '<p class="hint ga-mon-widgets-hint">' + _GA_WIDGET_FORMAT_HINT + '</p></div>' +
     '<div class="ga-mon-default-wrap"' + (stream === "widgets" ? ' style="display:none"' : "") + '>' + _gaCheckbox("ga-mon-default", "Use for this feed’s assets — the integration’s default polling method for this stream", q.useByDefault !== false) + '</div>' +
   '</div>';
@@ -5986,7 +5986,7 @@ function _gaFormatWidgetLines(widgets) {
       var ok = (w.stateMap && w.stateMap.mode === "notEquals" && Array.isArray(w.stateMap.values)) ? w.stateMap.values : [];
       return [w.name, "state", w.path].concat(ok.length ? [ok.join(", ")] : []).join(" | ");
     }
-    var cols = [w.name, w.type, w.path, w.unit || "", w.min != null ? String(w.min) : "", w.max != null ? String(w.max) : "", w.warningAt != null ? String(w.warningAt) : ""];
+    var cols = [w.name, w.type, w.path, w.unit || "", w.min != null ? String(w.min) : "", w.max != null ? String(w.max) : "", w.warningAt != null ? String(w.warningAt) : "", w.warningAt != null && w.warningWhen === "below" ? "below" : ""];
     while (cols.length > 3 && cols[cols.length - 1] === "") cols.pop();
     return cols.join(" | ");
   }).join("\n");
@@ -6021,6 +6021,10 @@ function _gaParseWidgetLines(text) {
       if (mn !== undefined) w.min = mn;
       if (mx !== undefined) w.max = mx;
       if (wa !== undefined) w.warningAt = wa;
+      // Which side of warn-at is the warning: "above" (the default) or "below".
+      var when = (c[7] || "").toLowerCase();
+      if (when && when !== "above" && when !== "below") { bad.push(s); return; }
+      if (when === "below" && wa !== undefined) w.warningWhen = "below";
     }
     widgets.push(w);
   });
