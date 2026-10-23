@@ -2269,8 +2269,9 @@ different identity.
   password or token. A gate whose certificate changes stops being polled until
   someone looks.
 - **After a firmware upgrade Polaris runs itself**, the device's new
-  certificate is pinned automatically. Any other certificate change needs a
-  person.
+  certificate is pinned automatically for 45 minutes. That covers every change
+  in that time, because some FortiGates present more than one new certificate
+  while they boot. Any other certificate change needs a person.
 - **Event archive export** — the archive server's SSH host key is pinned on
   first use. If an export fails, events are **not** pruned that hour, so nothing
   is deleted without a copy.

@@ -635,10 +635,11 @@ async function runUpgrade(
         stage = s;
         push("info", `stage: ${s}`);
         // Rule 113(g): a firmware upgrade may regenerate the device's
-        // certificate. From the reboot on, the first changed certificate it
-        // presents — to this engine's own verification, or to the monitoring
-        // and REST polls after — is the device's new one, so its pins (the
-        // web UI port and FortiOS REST on 443) accept it once. Only Polaris's
+        // certificate. From the reboot on, every changed certificate it
+        // presents inside the window — to this engine's own verification, or
+        // to the monitoring and REST polls after — is re-pinned on its pins
+        // (the web UI port and FortiOS REST on 443); a gate may present more
+        // than one while it boots. Only Polaris's
         // own upgrade opens this window; any other certificate change still
         // needs a person.
         if (s === "rebooting") {
