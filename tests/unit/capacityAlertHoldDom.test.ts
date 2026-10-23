@@ -30,18 +30,19 @@ function fnSrc(name: string): string {
   return lines.slice(start, end + 1).join("\n");
 }
 
-const FN_NAMES = ["_capacitySeverityLabel", "renderCapacityAlertHoldHtml"];
+const FN_NAMES = ["_capacitySeverityLabel", "_capacityAlertHoldStatus", "renderCapacityAlertHoldHtml", "_capacityAllPassedHtml"];
 
 let render: (t: any) => string;
+let renderAllPassed: (computedAt: string | null, t: any) => string;
 
 beforeEach(() => {
   g.escapeHtml = (s: any) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.formatLocalTime = (s: string) => String(s);
   // eslint-disable-next-line no-eval
-  render = eval(`(function () {
+  [render, renderAllPassed] = eval(`(function () {
     ${FN_NAMES.map(fnSrc).join("\n")}
-    return renderCapacityAlertHoldHtml;
+    return [renderCapacityAlertHoldHtml, _capacityAllPassedHtml];
   })()`);
 });
 
@@ -63,7 +64,22 @@ describe("capacity alert-hold row", () => {
     expect(document.body.textContent).not.toContain("Capacity alerts fire");
     expect(document.querySelector("a")).toBeNull();
     expect(document.getElementById("capacity-alert-hold-status")!.textContent)
-      .toBe("Alerting last recorded Healthy at 2026-10-12T10:00:00Z.");
+      .toBe("Alerting has recorded Healthy since 2026-10-12T10:00:00Z.");
+  });
+
+  it("folds the alerting state into the all-checks-passed row as one line", () => {
+    document.body.innerHTML = renderAllPassed("2026-10-23T11:21:41Z", base);
+    expect(document.querySelectorAll(".capacity-reason")).toHaveLength(1);
+    expect(document.querySelector(".capacity-alert-hold")).toBeNull();
+    expect(document.querySelector(".capacity-reason-msg")!.textContent)
+      .toBe("All capacity checks passed at 2026-10-23T11:21:41Z. Alerting has recorded Healthy since 2026-10-12T10:00:00Z.");
+  });
+
+  it("leaves the all-checks-passed row alone when there is no alerting state", () => {
+    document.body.innerHTML = renderAllPassed("2026-10-23T11:21:41Z", null);
+    expect(document.querySelector(".capacity-reason-msg")!.textContent)
+      .toBe("All capacity checks passed at 2026-10-23T11:21:41Z.");
+    expect(document.getElementById("capacity-alert-hold-status")).toBeNull();
   });
 
   it("explains a pending change: what it is, how long it has held, and what discards it", () => {
