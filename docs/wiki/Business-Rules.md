@@ -2269,8 +2269,9 @@ different identity.
   password or token. A gate whose certificate changes stops being polled until
   someone looks.
 - **After a firmware upgrade Polaris runs itself**, the device's new
-  certificate is pinned automatically. Any other certificate change needs a
-  person.
+  certificate is pinned automatically for 45 minutes. That covers every change
+  in that time, because some FortiGates present more than one new certificate
+  while they boot. Any other certificate change needs a person.
 - **Event archive export** — the archive server's SSH host key is pinned on
   first use. If an export fails, events are **not** pruned that hour, so nothing
   is deleted without a copy.
@@ -2659,6 +2660,17 @@ that has not been upgraded yet. Polaris never replaces a device's IPv4
 address with an IPv6 one on its own; only pinning one yourself does that. A
 device with no IPv4 address at all is monitored on its primary IPv6 address
 ([rule 128](#rule-128)).
+
+### Rule 127
+
+**A standalone FortiGate integration always monitors its gate.** Discovery
+already talks to the gate through its API token, so the integration's
+FortiGate class has no "Auto-Monitor" toggle: every gate it discovers is
+monitored, including gates on integrations created before this rule. Switches
+and APs behind the gate keep their own toggles, and FortiManager integrations
+keep the FortiGate toggle. Two things still keep a gate unmonitored: turning
+monitoring off on the asset yourself (discovery keeps that choice), and the gate
+being an HA standby member.
 
 ### Rule 128
 

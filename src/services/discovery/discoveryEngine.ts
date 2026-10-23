@@ -136,6 +136,7 @@ import { isValidGeoCoord, coordsClose } from "../../utils/geo.js";
 import {
   getAddAsMonitoredFromConfig,
   buildMonitoredSweep,
+  integrationAlwaysMonitorsGates,
 } from "../monitorOverrideService.js";
 import {
   MAC_ROW_SELECT,
@@ -2483,7 +2484,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       addAsMonitored: ap.addAsMonitored === true,
       stampCredentialId: pickStamp(apSnmp, apSsh),
     };
-    fortigateAddAsMonitored = fg.addAsMonitored === true;
+    // Rule 127: a standalone FortiGate integration always monitors its gate.
+    fortigateAddAsMonitored = integrationAlwaysMonitorsGates(integrationType) || fg.addAsMonitored === true;
     pullSnmpLocation        = fg.pullSnmpLocation === true;
     useSnmpLocationCoords   = fg.useSnmpLocationCoords === true;
     pushGeocodedCoords      = fg.pushGeocodedCoords === true;
