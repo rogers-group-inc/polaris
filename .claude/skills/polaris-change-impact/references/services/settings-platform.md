@@ -411,23 +411,24 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ## services/ipv6GateService.ts
 
-**What it owns:** Whether IPv6 is ON for the install (business rule 127) — the `ipv6Config` Setting `{ mode: "auto" | "on" | "off" }` and host detection. `auto` (default) = on exactly when the Polaris host has a routable IPv6 (not internal, loopback, link-local).
+**What it owns:** Whether IPv6 is ON for the install (business rule 127) — the `ipv6Config` Setting `{ enabled: boolean | null, setBy: "install" | "operator" | null, installHostAddresses }` — decided once at install from host detection, then an operator toggle; and whether this process can REACH IPv6.
 
-**Public API:** `ipv6Enabled()` (sync, cached), `ipv6Dialable()` (sync, cached: on AND reachable — a routable address or `hasIpv6Route`), `hasIpv6Route()`, `decideIpv6Dialable`, `getIpv6Status()`, `setIpv6Mode(mode, actor)`, `routableHostIpv6(ifaces)`, `decideIpv6Enabled(mode, hosts)`, `_resetIpv6GateForTests`, `Ipv6Mode`, `Ipv6Status`
+**Public API:** `ipv6Enabled()` (sync, cached), `ipv6Dialable()` (sync, cached: on AND reachable — a routable address or `hasIpv6Route`), `getIpv6Status()`, `initializeIpv6Setting()`, `setIpv6Enabled(enabled, actor)`, `parseIpv6Config`, `routableHostIpv6(ifaces)`, `decideIpv6Enabled(stored, hosts)`, `decideIpv6Dialable`, `hasIpv6Route()`, `_resetIpv6GateForTests`, `Ipv6Config`, `Ipv6Status`
 
-**Cross-service deps:** `settingsStore` (`createSettingStore`, 30s TTL), `eventLogService` (`settings.ipv6.updated`, `settings.ipv6.auto_*`), `utils/role.ts` (`roleConfig().runsSchedulers` — the one role that records automatic transitions), `utils/cidr.ts` (`isIpamIpv6Address`), `node:os` (`networkInterfaces`).
+**Cross-service deps:** `settingsStore` (`createSettingStore`, 30s TTL), `eventLogService` (`settings.ipv6.initialized`, `settings.ipv6.updated`), `utils/cidr.ts` (`isIpamIpv6Address`), `node:os` (`networkInterfaces`), `node:dgram` (the route check).
 
-**Used by:** `api/routes/serverSettings.ts` (`GET|PUT /server-settings/ipv6`), `api/routes/auth.ts` (`/auth/me → ipv6Enabled`), `fortigateService` / `fortimanagerService` (skip the dhcp6 / RA / IPv6 lease reads, `NO_INTERFACE_IPV6`), `discovery/discoveryEngine → syncDhcpSubnets` (`withoutIpv6`), `interfaceInventoryService` / `monitoringService` / `api/routes/agents.ts` (`splitInterfaceAddresses(…, ipv6Enabled())`), `monitoringService → dial()` and `jobs/monitorAssets.ts` (`assetDialAddress`, loss sweep), `primaryIpv6Service`, `api/routes/assets.ts` / `mibs.ts` / `credentials.ts` (SNMP walk, agent-install target).
+**Used by:** `jobs/initIpv6Setting.ts` (the install-time decision), `api/routes/serverSettings.ts` (`GET|PUT /server-settings/ipv6`), `api/routes/auth.ts` (`/auth/me → ipv6Enabled`, `ipv6Dialable`), `fortigateService` / `fortimanagerService` (skip the dhcp6 / RA / IPv6 lease reads, `NO_INTERFACE_IPV6`), `discovery/discoveryEngine → syncDhcpSubnets` (`withoutIpv6`), `interfaceInventoryService` / `monitoringService` / `api/routes/agents.ts` (`splitInterfaceAddresses(…, ipv6Enabled())`), `monitoringService → dial()` and `jobs/monitorAssets.ts` (`assetDialAddress(…, ipv6Dialable())`, loss sweep), `primaryIpv6Service`, `api/routes/assets.ts` / `mibs.ts` / `credentials.ts` (SNMP walk, agent-install target).
 
 **Invariants:**
-- `ipv6Enabled()` never awaits — it is read on every interface write and probe target. A stale cache answers its last value and refreshes in the background; a settings-read failure keeps the last mode rather than flipping IPv6.
-- Each process role has its own cache: a mode change reaches monitor / discovery within ~60s + the store TTL. Never assume immediate cross-process visibility.
+- The switch moves only twice over an install's life: once at install (`initializeIpv6Setting`, which never overwrites a decision — the row is its marker) and whenever an operator saves the toggle. The host gaining or losing IPv6 changes nothing; the card only says so.
+- Undecided (no row yet — a monitor / discovery role booting before web) answers the same host detection the install-time decision writes.
+- `ipv6Enabled()` / `ipv6Dialable()` never await — read on every interface write and probe target. A settings-read failure keeps the last answer.
+- Each process role has its own cache: a toggle reaches monitor / discovery within ~60s + the store TTL.
 - Off stops new IPv6 writes; it does not purge IPAM (observed rows expire, others stay). `primaryIpv6Service` clears unpinned primaries.
-- `auto` turns off only after `AUTO_OFF_HOLD_MS` (15 min) without a host address (`lastHostIpv6At`, per process; `heldUntil` on the status). Automatic transitions are Events chosen by the pure `autoChangeEvent` (`settings.ipv6.auto_on` / `auto_hold` / `auto_hold_ended` / `auto_off`) and written by the scheduler role only — never from every role.
 - Dialling reads `ipv6Dialable()`, never `ipv6Enabled()`: on without reach (a container on an IPv4-only network) must leave an IPv6-only asset unpolled, not polled into down. `hasIpv6Route` is a UDP `connect()` to 2000::1 — a route lookup, no packet sent.
 
 **When changing this:**
-- A new IPv6 path (a collector, a discovery read, a UI surface) must read `ipv6Enabled()` (server) or `polarisIpv6Enabled` (browser, from `/auth/me`) — or it leaks IPv6 onto an install that switched it off.
+- A new IPv6 path (a collector, a discovery read, a UI surface) must read `ipv6Enabled()` (server) or `polarisIpv6Enabled` (browser, from `/auth/me`) — or it leaks IPv6 onto an install that switched it off. A new dial site reads `ipv6Dialable()`.
 - The Server Settings card is `public/js/server-settings.js → ipv6CardHtml` / `handleIpv6Save`.
 
 ---

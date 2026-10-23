@@ -2663,14 +2663,13 @@ device with no IPv4 address at all is monitored on its primary IPv6 address
 ### Rule 127
 
 **IPv6 is on only where the Polaris server uses IPv6, and a device with no
-IPv4 address is monitored on its primary IPv6 address.** By default Polaris
-turns IPv6 on when the server it runs on has a routable IPv6 address, and
-off once it has had none for 15 minutes, recording each change on the Events
-page; **Server Settings → Web Server → IPv6** can force it
-on or off. In a container the server is the container, so a container on an
-IPv4-only network keeps IPv6 off until its network has IPv6. A device with
-only an IPv6 address is polled only when the server can actually reach IPv6;
-forcing IPv6 on does not change that. While it is off,
+IPv4 address is monitored on its primary IPv6 address.** At install, Polaris
+switches IPv6 on if the server it runs on has a routable IPv6 address and off
+if it does not. After that it is a toggle under **Server Settings → Web Server →
+IPv6**, and the server gaining or losing IPv6 changes nothing by itself. In a
+container the server is the container, so a container on an IPv4-only network
+starts with IPv6 off. A device with only an IPv6 address is polled only when the
+server can actually reach IPv6; switching IPv6 on does not change that. While it is off,
 Polaris discovers, collects, stores and shows no IPv6 addresses. While it is
 on, an asset's General tab shows a primary IPv4 and a primary IPv6 address.
 Polaris picks the primary IPv6 from the asset's address list, the best-evidenced

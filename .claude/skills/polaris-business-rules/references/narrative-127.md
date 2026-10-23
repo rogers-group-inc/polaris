@@ -139,6 +139,39 @@ is against the last real refresh, never the boot placeholder. An operator's mode
 change is not an automatic transition (the modes differ) and keeps its own
 `settings.ipv6.updated`.
 
+### Decided at install, then a toggle (changed 2026-10-22, the same day)
+
+The operator then changed the design: "enable IPv6 on install if the server has
+IPv6. If it doesn't, then don't enable on install. Otherwise, let's make it a
+toggle in Server Settings." The `auto` / `on` / `off` mode, the 15-minute
+off-hold and the four `settings.ipv6.auto_*` Events above are gone with it — the
+sections describing them are kept as the record of what was built and why it
+was dropped.
+
+What replaced them: `ipv6Config` holds `{ enabled, setBy, installHostAddresses }`.
+`initializeIpv6Setting` runs once per boot on the migrations role
+(`jobs/initIpv6Setting.ts`, listed with the other one-shot startup jobs in
+`src/app.ts`); it does nothing when a decision exists, so the row is its own
+marker, and otherwise writes the host detection with `setBy: "install"` and an
+`settings.ipv6.initialized` Event. An existing install makes that decision on the
+first start of the version carrying it. A monitor or discovery process that
+boots before web reads the same host detection until the row lands. From then on
+only `setIpv6Enabled` (the Server Settings checkbox) changes it.
+
+Why this is simpler and loses little: every failure the off-hold existed to
+contain came from the switch moving on its own — a host's IPv6 flapping cleared
+every automatic primary IPv6 fleet-wide. A switch that only an operator moves
+cannot flap, so the hold, the per-process `lastHostIpv6At`, and the
+scheduler-role Event dedupe all fall away. The cost is that a host that gains
+IPv6 after install does not light IPv6 up by itself; the card says so ("this
+server now has a routable IPv6 address — turn IPv6 on") rather than doing it.
+The pre-release `{ mode }` row (only ever on dev databases) parses on → true,
+off → false, auto → undecided, so the install-time decision settles it.
+
+Reachability (`ipv6Dialable`) stays: an operator can switch IPv6 on in a
+container that has no IPv6 network, and the guard against polling IPv6-only
+assets into down is as needed as before.
+
 ### Known IPv4-only paths (not gated, not dialling IPv6)
 
 The address-confidence polling run, `dependencyTreeService` IPAM gate resolution,

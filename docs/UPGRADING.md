@@ -994,7 +994,7 @@ tree copy you have read yourself instead of handing over.
 ## Turning on IPv6 in an existing container install
 
 A container install created from the shipped `docker-compose.yml` runs on an
-IPv4-only network, so Polaris leaves IPv6 off however the host is configured
+IPv4-only network, so Polaris switched IPv6 off at install however the host is configured
 ([INSTALL.md → IPv6 in a container](INSTALL.md#ipv6-in-a-container)). To turn it on:
 
 ```bash
@@ -1007,8 +1007,9 @@ docker compose up -d
 docker compose exec web ip -6 addr show scope global
 ```
 
-Leave Server Settings → Web Server → IPv6 on **Automatic**. Within a minute it
-reads *On*, and IPv6 then fills in at its own pace: networks and leases on each
+Then switch IPv6 on under Server Settings → Web Server → IPv6 (Polaris decided
+it once, at install, and does not change it by itself). Every Polaris process
+picks the change up within a minute, and IPv6 then fills in at its own pace: networks and leases on each
 integration's next discovery run, interface addresses on each device's next
 interfaces poll, and each asset's primary IPv6 within ten minutes of that.
 `docker compose down` without `-v` keeps the database and `./state`.
