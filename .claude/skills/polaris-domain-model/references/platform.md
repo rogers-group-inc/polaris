@@ -502,7 +502,7 @@ ManufacturerCustomWidget        -- Powers Slice 7's Custom MIB tab. Every asset 
   type           String            -- "scalar" | "table" (auto-detected from MIB; operator may override)
   widgetType     String            -- "gauge" | "line" | "table" | "state"
   transform      String?
-  displayOptions Json              -- type-specific blob (gauge min/max + thresholds; line aggregate/range/unit; table column list / decode rules)
+  displayOptions Json              -- type-specific blob: gauge min/max/unit, line unit, and on both `warningAt` + `warningWhen` ("below", or absent = "above"; the threshold itself counts as breached) — DISPLAY ONLY, the card turns amber past it (`_customWidgetWarning` in public/js/assets.js), alerting is a customWidgetValue automation; no server-side validation of the blob
   order          Int
   modelPattern   String?           -- optional per-model gating
   stateMap       Json?             -- STATE PROBE (widgetType="state") only: the declared 0/1 mapping `{mode, values[], trueLabel, falseLabel, trueIsProblem}` — see src/utils/stateProbes.ts. Nullable, and forced to NULL on non-state widgets by stateFieldsForWrite so flipping a widget's type can't leave a stale mapping for a later flip back to resurrect. Read back through normalizeStateMap (never throws) so a row predating a mode still yields a usable mapping on the telemetry hot path.

@@ -10058,11 +10058,13 @@ function _widgetTypeSelectHTML(cls, current) {
 
 // Per-widgetType displayOptions sub-form. Fields match what the asset
 // Custom MIB tab consumes today:
-//   gauge → min, max, unit, warningAt (warningAt drives the upcoming
-//           threshold band in _renderCustomWidgetGauge)
-//   line  → unit
+//   gauge → min, max, unit, warningAt + warningWhen
+//   line  → unit, warningAt + warningWhen
 //   table → no operator-tunable options; the renderer derives columns
 //           from the latest sample.
+// warningAt / warningWhen only paint the card (_customWidgetWarning in
+// assets.js); alerting on the value is an automation's job.
+//
 // How a single-value widget's number reads (the asset tab's _cwDisplay):
 // "" = a plain number with its unit; a duration format reads it as seconds or
 // SNMP TimeTicks (hundredths of a second) and shows "1 h 23 m".
@@ -10086,17 +10088,34 @@ function _widgetFormatSelectHTML(current) {
 function _widgetDisplayOptionsForm(widgetType, opts) {
   var o = opts || {};
   function num(v) { return (v === null || v === undefined) ? "" : String(v); }
+  function warnFields() {
+    var below = o.warningWhen === "below";
+    return _widgetFormField("Warning at", '<input type="number" class="mfg-widget-opt-warning" value="' + escapeHtml(num(o.warningAt)) + '" step="any" placeholder="none" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Warn when", '<select class="mfg-widget-opt-warning-when" style="width:100%;font-size:0.82rem">' +
+        '<option value="above"' + (below ? "" : " selected") + '>at or above</option>' +
+        '<option value="below"' + (below ? " selected" : "") + '>at or below</option>' +
+      '</select>');
+  }
   if (widgetType === "gauge") {
-    return '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px 10px">' +
+    return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 10px">' +
       _widgetFormField("Min", '<input type="number" class="mfg-widget-opt-min" value="' + escapeHtml(num(o.min)) + '" step="any" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Max", '<input type="number" class="mfg-widget-opt-max" value="' + escapeHtml(num(o.max)) + '" step="any" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Unit", '<input type="text"   class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. %, °C or clients" style="width:100%;font-size:0.82rem">') +
-      _widgetFormField("Warning at", '<input type="number" class="mfg-widget-opt-warning" value="' + escapeHtml(num(o.warningAt)) + '" step="any" style="width:100%;font-size:0.82rem">') +
+      warnFields() +
       _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
       WIDGET_UNIT_HINT +
     '</div>';
   }
-  if (widgetType === "line" || widgetType === "value") {
+  if (widgetType === "line") {
+    return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
+      _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps, % or °C" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
+      warnFields() +
+      WIDGET_UNIT_HINT +
+    '</div>';
+  }
+  // A Value widget is the reading as text — no threshold is drawn on it.
+  if (widgetType === "value") {
     return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
       _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps, % or °C" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
@@ -10115,9 +10134,10 @@ function _widgetOptionsSummary(w) {
     if (o.min != null) parts.push("min " + o.min);
     if (o.max != null) parts.push("max " + o.max);
     if (o.unit)        parts.push("unit " + o.unit);
-    if (o.warningAt != null) parts.push("warn " + o.warningAt);
+    if (o.warningAt != null) parts.push("warn " + (o.warningWhen === "below" ? "≤ " : "≥ ") + o.warningAt);
   } else if (w.widgetType === "line" || w.widgetType === "value") {
     if (o.unit) parts.push("unit " + o.unit);
+    if (o.warningAt != null) parts.push("warn " + (o.warningWhen === "below" ? "≤ " : "≥ ") + o.warningAt);
   }
   if (o.format) {
     var f = WIDGET_VALUE_FORMATS.find(function (x) { return x[0] === o.format; });
@@ -10142,18 +10162,27 @@ function _readWidgetDisplayOptions(scope, widgetType) {
     return s === "" ? null : s;
   }
   var out = {};
+  // The direction is stored only beside a threshold, and only when it is the
+  // non-default "below" — absent means "above".
+  function readWarn() {
+    var warn = numOrNull(scope.querySelector(".mfg-widget-opt-warning"));
+    if (warn == null) return;
+    out.warningAt = warn;
+    var when = scope.querySelector(".mfg-widget-opt-warning-when");
+    if (when && when.value === "below") out.warningWhen = "below";
+  }
   if (widgetType === "gauge") {
     var min  = numOrNull(scope.querySelector(".mfg-widget-opt-min"));
     var max  = numOrNull(scope.querySelector(".mfg-widget-opt-max"));
     var unit = strOrNull(scope.querySelector(".mfg-widget-opt-unit"));
-    var warn = numOrNull(scope.querySelector(".mfg-widget-opt-warning"));
     if (min != null)  out.min = min;
     if (max != null)  out.max = max;
     if (unit)         out.unit = unit;
-    if (warn != null) out.warningAt = warn;
+    readWarn();
   } else if (widgetType === "line" || widgetType === "value") {
     var unitL = strOrNull(scope.querySelector(".mfg-widget-opt-unit"));
     if (unitL) out.unit = unitL;
+    readWarn();
   }
   if (widgetType === "gauge" || widgetType === "line" || widgetType === "value") {
     var fmt = strOrNull(scope.querySelector(".mfg-widget-opt-format"));

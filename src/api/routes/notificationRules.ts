@@ -30,7 +30,7 @@ import { ruleInputSchema, previewInputSchema, buildSchemaCatalog, allRuleActionR
 import { listRules, createRule, updateRule, deleteRule, listScopeOptions } from "../../services/notificationRuleService.js";
 import { previewDownDetectionRemoval } from "../../services/downDetectionService.js";
 import { previewRule, previewAlertMessage } from "../../services/notificationEngine.js";
-import { listDimensionValues, dimensionPickerMeta } from "../../services/notificationDimensionService.js";
+import { listDimensionValues, dimensionPickerMeta, listCustomWidgetCatalog } from "../../services/notificationDimensionService.js";
 import { resolveScopeCadence } from "../../services/notificationCadenceService.js";
 import { listRecipientUsers } from "../../services/notificationRecipientService.js";
 import { listStateProbes } from "../../services/manufacturerProfileService.js";
@@ -69,6 +69,8 @@ notificationRulesRouter.get("/schema", requirePermission("automationManagement",
       // Same reason as stateProbes: a path* condition's `checkId` is an id, and
       // the builder's sentences must name the check, never the id.
       pathChecks: await listCheckCatalog(),
+      // And a customWidgetValue condition's `widgetId` — a UUID or `ga:` key.
+      customWidgets: await listCustomWidgetCatalog(),
     });
   } catch (err) { next(err); }
 });

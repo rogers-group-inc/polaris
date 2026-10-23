@@ -11253,10 +11253,45 @@ function _formatDuration(sec) {
   return (neg ? "-" : "") + out;
 }
 
+/**
+ * A gauge / line widget's warning threshold against one reading, or null when
+ * the widget sets none. `warningWhen` says which side is the warning — "above"
+ * (the default: load, temperature) or "below" (battery, toner, runtime) — and
+ * the threshold itself counts as breached, so "warn at 90" warns at 90.
+ * Display only: an automation on the widget's value is what alerts.
+ */
+function _customWidgetWarning(n, opts) {
+  var at = opts && opts.warningAt;
+  if (typeof at !== "number" || !Number.isFinite(at)) return null;
+  var below = opts.warningWhen === "below";
+  return { at: at, below: below, breached: Number.isFinite(n) && (below ? n <= at : n >= at) };
+}
+
+/**
+ * The widget's warning in DISPLAY units (_cwDisplay): the threshold is entered
+ * in the widget's own unit, so a °C threshold on a Fahrenheit install converts
+ * with the value it is compared to.
+ */
+function _customWidgetWarningShown(displayValue, opts, fmt) {
+  var at = opts && opts.warningAt;
+  if (typeof at !== "number" || !Number.isFinite(at)) return null;
+  return _customWidgetWarning(displayValue, Object.assign({}, opts, { warningAt: fmt.conv(at) }));
+}
+
+/** The line under a gauge / line widget naming its threshold — amber once breached.
+ *  `text` formats one number with its unit (the widget's _cwDisplay text). */
+function _customWidgetWarnCaption(warn, text) {
+  if (!warn) return "";
+  var rule = (warn.below ? "at or below " : "at or above ") + text(warn.at);
+  return warn.breached
+    ? '<div class="custom-widget-warn is-breached" style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning — ' + escapeHtml(rule) + '</div>'
+    : '<div class="custom-widget-warn" style="font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px">Warns ' + escapeHtml(rule) + '</div>';
+}
+
 function _renderCustomWidgetGauge(w) {
-  // Compact radial-arc — 180° sweep from min to max with one threshold
-  // band drawn at displayOptions.warningAt if set, and the current value
-  // labeled. Falls through to a numeric readout when the sample isn't a
+  // Compact radial-arc — 180° sweep from min to max, a tick at the warning
+  // threshold when one is set (the arc turns amber past it), and the current
+  // value labeled. Falls through to a numeric readout when the sample isn't a
   // scalar (e.g. an operator picked widgetType=gauge on a table-typed
   // widget; the editor doesn't yet narrow widgetType by kind).
   var raw = (w.latest && w.latest.value);
@@ -11266,28 +11301,40 @@ function _renderCustomWidgetGauge(w) {
   }
   var opts = w.displayOptions || {};
   var fmt = _cwDisplay(w);
-  // Bounds are entered in the widget's own unit, so they convert with the value.
+  // Bounds and the warning threshold are entered in the widget's own unit, so
+  // they convert with the value (a °C widget on a Fahrenheit install).
   var min = fmt.conv(Number.isFinite(opts.min) ? opts.min : 0);
   var max = fmt.conv(Number.isFinite(opts.max) ? opts.max : 100);
   n = fmt.conv(n);
-  var pct = max > min ? Math.max(0, Math.min(1, (n - min) / (max - min))) : 0;
-  var theta = Math.PI * (1 - pct);  // 180° -> 0°
+  function frac(v) { return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0; }
   var cx = 80, cy = 70, r = 56;
-  var startX = cx - r, startY = cy;
-  var endX = cx + r * Math.cos(theta);
-  var endY = cy - r * Math.sin(theta);
-  var largeArc = pct > 0.5 ? 1 : 0;
+  function point(f, radius) {
+    var a = Math.PI * (1 - f);  // 180° -> 0°
+    return { x: cx + radius * Math.cos(a), y: cy - radius * Math.sin(a) };
+  }
+  var end = point(frac(n), r);
+  var warn = _customWidgetWarningShown(n, opts, fmt);
+  var color = warn && warn.breached ? "var(--color-sev-warning)" : "#22d3ee";
+  // The large-arc flag stays 0: the value arc never sweeps more than the
+  // gauge's 180°, and a 1 past the midpoint drew the long way round the circle.
+  var tick = "";
+  if (warn && warn.at >= min && warn.at <= max) {
+    var t0 = point(frac(warn.at), r - 9), t1 = point(frac(warn.at), r + 9);
+    tick = '<line class="custom-widget-warn-tick" x1="' + t0.x.toFixed(1) + '" y1="' + t0.y.toFixed(1) + '" x2="' + t1.x.toFixed(1) + '" y2="' + t1.y.toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="2"/>';
+  }
   return '<div style="text-align:center">' +
     '<svg width="160" height="86" viewBox="0 0 160 86" aria-hidden="true">' +
       '<path d="M ' + (cx - r) + ' ' + cy + ' A ' + r + ' ' + r + ' 0 0 1 ' + (cx + r) + ' ' + cy + '" stroke="var(--color-border)" stroke-width="10" fill="none" stroke-linecap="round"/>' +
-      '<path d="M ' + startX + ' ' + startY + ' A ' + r + ' ' + r + ' 0 ' + largeArc + ' 1 ' + endX + ' ' + endY + '" stroke="#22d3ee" stroke-width="10" fill="none" stroke-linecap="round"/>' +
-      '<text x="' + cx + '" y="' + (cy - 6) + '" text-anchor="middle" font-size="20" font-weight="600" fill="currentColor">' +
+      '<path class="custom-widget-gauge-arc" d="M ' + (cx - r) + ' ' + cy + ' A ' + r + ' ' + r + ' 0 0 1 ' + end.x.toFixed(1) + ' ' + end.y.toFixed(1) + '" stroke="' + color + '" stroke-width="10" fill="none" stroke-linecap="round"/>' +
+      tick +
+      '<text x="' + cx + '" y="' + (cy - 6) + '" text-anchor="middle" font-size="20" font-weight="600" fill="' + (warn && warn.breached ? color : "currentColor") + '">' +
         escapeHtml(fmt.text(n)) +
       '</text>' +
       '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" font-size="10" fill="var(--color-text-tertiary)">' +
         escapeHtml(fmt.text(min)) + ' &ndash; ' + escapeHtml(fmt.text(max)) +
       '</text>' +
     '</svg>' +
+    _customWidgetWarnCaption(warn, fmt.text) +
   '</div>';
 }
 
@@ -11307,22 +11354,34 @@ function _renderCustomWidgetLine(w) {
   }
   var minV = pts[0].v, maxV = pts[0].v;
   pts.forEach(function (p) { if (p.v < minV) minV = p.v; if (p.v > maxV) maxV = p.v; });
-  if (maxV === minV) { maxV = minV + 1; }
+  var latest = pts[pts.length - 1].v;
+  var opts = w.displayOptions || {};
+  var warn = _customWidgetWarningShown(latest, opts, fmt);
+  // The y-domain stretches to take in the threshold, so its dashed line is on
+  // the chart rather than off the top; the min / max labels stay the data's.
+  var lo = warn ? Math.min(minV, warn.at) : minV;
+  var hi = warn ? Math.max(maxV, warn.at) : maxV;
+  if (hi === lo) { hi = lo + 1; }
   var minT = pts[0].t, maxT = pts[pts.length - 1].t;
   var W = 280, H = 90, P = 4;
+  function yFor(v) { return (H - P) - (H - 2 * P) * ((v - lo) / (hi - lo)); }
   var coords = pts.map(function (p) {
     var x = P + (W - 2 * P) * ((p.t - minT) / Math.max(1, maxT - minT));
-    var y = (H - P) - (H - 2 * P) * ((p.v - minV) / (maxV - minV));
-    return x.toFixed(1) + "," + y.toFixed(1);
+    return x.toFixed(1) + "," + yFor(p.v).toFixed(1);
   });
+  var threshold = warn
+    ? '<line class="custom-widget-warn-line" x1="' + P + '" x2="' + (W - P) + '" y1="' + yFor(warn.at).toFixed(1) + '" y2="' + yFor(warn.at).toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="1" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>'
+    : "";
   return '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
+    threshold +
     '<polyline fill="none" stroke="#22d3ee" stroke-width="1.4" points="' + coords.join(" ") + '"/>' +
   '</svg>' +
   '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--color-text-tertiary);margin-top:2px">' +
     '<span>min ' + escapeHtml(fmt.text(minV)) + '</span>' +
-    '<span>latest ' + escapeHtml(fmt.text(pts[pts.length - 1].v)) + '</span>' +
+    '<span' + (warn && warn.breached ? ' style="color:var(--color-sev-warning);font-weight:600"' : '') + '>latest ' + escapeHtml(fmt.text(latest)) + '</span>' +
     '<span>max ' + escapeHtml(fmt.text(maxV)) + '</span>' +
-  '</div>';
+  '</div>' +
+  _customWidgetWarnCaption(warn, fmt.text);
 }
 
 function _renderCustomWidgetTable(w) {

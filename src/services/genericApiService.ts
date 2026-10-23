@@ -182,6 +182,8 @@ export interface GenericApiWidgetDef {
   min?: number;
   max?: number;
   warningAt?: number;
+  /** Which side of warningAt paints the card as a warning; absent = "above". */
+  warningWhen?: "above" | "below";
   /** state only — utils/stateProbes.ts StateMap (mode, values, labels, polarity). */
   stateMap?: unknown;
 }

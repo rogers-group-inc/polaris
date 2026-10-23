@@ -50,6 +50,32 @@ export const SYS_OIDS = {
   sysLocation: "1.3.6.1.2.1.1.6.0",
 } as const;
 
+/**
+ * Read one vendor scalar by its MIB DEFINITION oid — what the oid registry
+ * resolves a symbol to — through a multi-GET that already carries other oids.
+ *
+ * A GET of a scalar needs its `.0` instance, and an agent answers the bare
+ * definition oid with noSuchInstance (APC PowerNet's upsBasicIdentModel does),
+ * so the caller batches `scalarInstanceOid(oid)` and `pickScalar` falls
+ * back to a GET of the bare oid ON ITS OWN, only when the instance came back
+ * empty. Never batched: on SNMPv1 one bad varbind fails the whole PDU, which
+ * would cost the batch's other oids on every v1 device.
+ */
+export function scalarInstanceOid(definitionOid: string): string {
+  return `${definitionOid}.0`;
+}
+
+export async function pickScalar(
+  batch: Map<string, unknown>,
+  definitionOid: string,
+  getOne: (oid: string) => Promise<unknown>,
+  toText: (v: unknown) => string,
+): Promise<string> {
+  const instance = toText(batch.get(scalarInstanceOid(definitionOid)));
+  if (instance) return instance;
+  return toText(await getOne(definitionOid).catch(() => null));
+}
+
 /** Shape of one `snmpWalkRaw` row (kept local — no import back into services). */
 export interface SnmpIdentityRow {
   oid: string;
