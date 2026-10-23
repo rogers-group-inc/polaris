@@ -24,6 +24,7 @@
 import { request as httpsRequest, type RequestOptions } from "node:https";
 import { request as httpRequest } from "node:http";
 import { createReadStream } from "node:fs";
+import { bareHost, urlHost } from "../../utils/cidr.js";
 import { Transform, type Readable, type TransformCallback } from "node:stream";
 import { constants as cryptoConstants } from "node:crypto";
 import { gunzipSync } from "node:zlib";
@@ -113,7 +114,7 @@ export class DeviceHttpClient {
   constructor(private readonly opts: DeviceHttpClientOptions) {
     const scheme = opts.scheme ?? "https";
     const port = opts.port ?? (scheme === "https" ? 443 : 80);
-    this.base = `${scheme}://${opts.host}:${port}`;
+    this.base = `${scheme}://${urlHost(opts.host)}:${port}`; // IPv6 bracketed (rule 127)
   }
 
   /** A header value the engine wants echoed on every request (the FortiAP CSRF token). */
@@ -226,7 +227,7 @@ export class DeviceHttpClient {
     for (const [k, v] of this.extraHeaders) h[k] = v;
     const o: RequestOptions & { protocol: string } = {
       protocol: url.protocol,
-      hostname: url.hostname,
+      hostname: bareHost(url.hostname),
       port: url.port,
       path: url.pathname + url.search,
       method,
@@ -237,7 +238,7 @@ export class DeviceHttpClient {
       // unverified HTTPS request gets a fresh pinning agent (no keep-alive
       // either) that checks the certificate before the request is written.
       agent: url.protocol === "https:" && this.opts.verifyTls !== true
-        ? pinnedAgentFor(url.hostname, Number(url.port) || 443, { precheck: (cert) => fortinetSerialPrecheck(this.opts.expectedSerial, cert) })
+        ? pinnedAgentFor(bareHost(url.hostname), Number(url.port) || 443, { precheck: (cert) => fortinetSerialPrecheck(this.opts.expectedSerial, cert) })
         : false,
     };
     if (this.legacyTls) o.secureOptions = cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT;

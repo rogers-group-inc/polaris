@@ -98,6 +98,7 @@ import { resolveTagScopesForUser } from "../../services/regionScopeService.js";
 import { isBlockedOutboundHost } from "../../utils/netGuard.js";
 import { totpCodeLimiter, ssoEntryLimiter, entraProxyLoginLimiter, ssoCallbackLimiter, passwordChangeLimiter, passkeyCeremonyLimiter } from "../middleware/rateLimits.js";
 import { safeNextPath } from "../../utils/safeRedirect.js";
+import { ipv6Enabled } from "../../services/ipv6GateService.js";
 import {
   takeLoginTarget,
   peekLoginTarget,
@@ -841,6 +842,9 @@ router.get("/me", async (req, res, next) => {
       // /detected — this endpoint is hit on every page load, and without the
       // echo every one of those loads would be a write.
       detectedTimezone: u.detectedTimezone ?? null,
+      // Business rule 127: every IPv6 surface (the primary IPv6 row, the
+      // Interfaces IPv6 column, observed rows) is drawn only while this is true.
+      ipv6Enabled: ipv6Enabled(),
     });
   } catch (err) {
     next(err);

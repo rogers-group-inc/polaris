@@ -70,11 +70,13 @@ export function pickInterfaceAddresses(candidates: ReadonlyArray<string | null |
 export function splitInterfaceAddresses(
   ipAddress: string | null | undefined,
   ipv6Address?: string | null | undefined,
+  allowIpv6 = true,
 ): InterfaceAddresses {
   const v4 = reportableInterfaceIp(ipAddress);
   const v6 = reportableInterfaceIp(ipv6Address);
   return {
     ipAddress: v4 && !v4.includes(":") ? v4 : null,
-    ipv6Address: (v6 && v6.includes(":") ? v6 : null) ?? (v4 && v4.includes(":") ? v4 : null),
+    // Business rule 127: with IPv6 off for the install, no IPv6 is stored.
+    ipv6Address: !allowIpv6 ? null : (v6 && v6.includes(":") ? v6 : null) ?? (v4 && v4.includes(":") ? v4 : null),
   };
 }

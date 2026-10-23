@@ -411,6 +411,7 @@ export async function listAssetOverrides(
       id:                       true,
       hostname:                 true,
       ipAddress:                true,
+      ipv6Address:              true, // business rule 127 — an IPv6-only asset is dialled on it
       assetType:                true,
       monitorIntervalSec:       true,
       cpuMemoryIntervalSec:     true,

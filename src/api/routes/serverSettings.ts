@@ -24,6 +24,7 @@ import type { DnsSettings } from "../../services/dnsService.js";
 import { getOuiStatus, refreshOuiDatabase, getOuiOverrides, setOuiOverride, deleteOuiOverride, lookupOuiDetailed } from "../../services/ouiService.js";
 import { getReservationMacSettings, saveReservationMacSettings } from "../../services/reservationMacService.js";
 import { getDashSettings, saveDashSettings } from "../../services/dashSettingsService.js";
+import { getIpv6Status, setIpv6Mode } from "../../services/ipv6GateService.js";
 import {
   getLoginAccessSettings,
   saveLoginAccessSettings,
@@ -1408,6 +1409,27 @@ router.put("/dash", requirePermission("serverSettingsSystem", "write"), async (r
       details: { before: before as any, after: updated as any },
     });
     res.json({ dash: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── IPv6 (business rule 127) ───────────────────────────────────────────────
+
+const Ipv6ModeSchema = z.object({ mode: z.enum(["auto", "on", "off"]) });
+
+router.get("/ipv6", async (_req, res, next) => {
+  try {
+    res.json({ ipv6: await getIpv6Status() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/ipv6", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+  try {
+    const { mode } = Ipv6ModeSchema.parse(req.body ?? {});
+    res.json({ ipv6: await setIpv6Mode(mode, req.session?.username ?? "unknown") });
   } catch (err) {
     next(err);
   }

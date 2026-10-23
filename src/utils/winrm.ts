@@ -31,6 +31,7 @@
 import { request as httpsRequest, RequestOptions as HttpsRequestOptions } from "node:https";
 import { request as httpRequest } from "node:http";
 import { randomUUID } from "node:crypto";
+import { urlHost } from "./cidr.js";
 import { sleep } from "./sleep.js";
 import { pinnedAgentFor } from "./pinnedTlsAgent.js";
 
@@ -301,7 +302,7 @@ function addressingHeaders(
 ): string {
   const useHttps = conn.useHttps !== false;
   const port = conn.port ?? (useHttps ? 5986 : 5985);
-  const to = `${useHttps ? "https" : "http"}://${conn.host}:${port}/wsman`;
+  const to = `${useHttps ? "https" : "http"}://${urlHost(conn.host)}:${port}/wsman`; // IPv6 bracketed (rule 127)
   let h =
     `<a:To>${to}</a:To>` +
     `<w:ResourceURI s:mustUnderstand="true">${SHELL_RESOURCE_URI}</w:ResourceURI>` +

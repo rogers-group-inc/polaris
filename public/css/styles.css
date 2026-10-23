@@ -5453,7 +5453,27 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
-.mac-tooltip-row .primary-address-set { padding: 0 6px; font-size: 0.68rem; white-space: nowrap; }
+.mac-tooltip-row .primary-address-set,
+.mac-tooltip-row .primary-ipv6-set { padding: 0 6px; font-size: 0.68rem; white-space: nowrap; }
+/* With IPv6 on for the install (business rule 127) the Address row is two
+ * labelled lines — IPv4, then the primary IPv6 — right-aligned like every
+ * detail value, the pills underneath. */
+.address-family-line {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 2px;
+}
+.address-family-line + .address-family-line { margin-top: 2px; }
+.address-family-tag {
+  font-family: var(--font-sans, inherit);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  margin-right: 8px;
+}
+.address-family-line .primary-ipv6-unpin { padding: 0 6px; font-size: 0.68rem; }
 
 /* ─── Address confidence chip (business rule 103) ───────────────────────────
  * The score, 0–100, coloured by band from the status tokens. Red is kept for

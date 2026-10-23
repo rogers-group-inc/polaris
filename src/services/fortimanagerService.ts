@@ -11,8 +11,10 @@ import { tlsFetch } from "../utils/tlsDispatcher.js";
 import { logger } from "../utils/logger.js";
 import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
 import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
+import { ipv6Enabled } from "./ipv6GateService.js";
 import {
   advertisedPrefixSubnets,
+  NO_INTERFACE_IPV6,
   DHCP_MONITOR_FORMAT,
   parseDhcp6Servers,
   parseDhcpMonitorAddress,
@@ -1932,8 +1934,9 @@ async function fmgStepDhcpConfig(ctx: FmgDeviceCtx): Promise<void> {
     // DHCPv6 server scopes → networks (business rule 125). Native CMDB like
     // the IPv4 read above, so an offline gate still reports them. FortiOS has
     // no DHCPv6 reservations. A failure costs only the IPv6 networks; it
-    // never touches the reservation sweep's flag.
-    try {
+    // never touches the reservation sweep's flag. Not read at all while IPv6
+    // is off for the install (business rule 127).
+    if (ipv6Enabled()) try {
       const dhcp6Res = await rpc(baseUrl, {
         id: 2,
         method: "get",
@@ -1966,7 +1969,7 @@ async function fmgStepDhcpMonitor(ctx: FmgDeviceCtx): Promise<void> {
             action: "get",
             // ipv6=true: the combined table, DHCPv6 leases beside the IPv4
             // rows (business rule 125).
-            resource: `/api/v2/monitor/system/dhcp?format=${DHCP_MONITOR_FORMAT}&ipv6=true`,
+            resource: `/api/v2/monitor/system/dhcp?format=${DHCP_MONITOR_FORMAT}${ipv6Enabled() ? "&ipv6=true" : ""}`,
           },
         }],
       };
@@ -2077,6 +2080,7 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
       let secondaryIpCount = 0;
       let ipv6IpCount = 0;
       let raSubnetCount = 0;
+      const v6On = ipv6Enabled();
       if (Array.isArray(ifaceData)) {
         for (const iface of ifaceData) {
           const ifaceName = iface.name || "";
@@ -2089,7 +2093,8 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
           // Router-advertised prefixes are networks the gate serves (business
           // rule 125) — the IPv6 counterpart of a DHCP scope, so they answer
           // to the DHCP include / exclude filter, not the interface filter.
-          const v6 = parseInterfaceIpv6(iface);
+          // Nothing IPv6 while it is off for the install (business rule 127).
+          const v6 = v6On ? parseInterfaceIpv6(iface) : NO_INTERFACE_IPV6;
           if (ifaceName) {
             for (const s of advertisedPrefixSubnets(ifaceName, v6, deviceName, ctx.localDevice.serial || undefined, localSubnets)) {
               localSubnets.push(s);

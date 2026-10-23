@@ -520,6 +520,11 @@ var currentUserAuthProvider = "local"; // "local" | "azure" | "oidc" | "ldap"
 // the account menu can SAY so instead of describing it abstractly. Null until
 // /auth/me lands.
 var currentServerTimezone = null;
+// Business rule 127: is IPv6 on for this install? Every IPv6 surface (the
+// primary IPv6 line, the Interfaces IPv6 column, observed rows) draws only
+// while this is true. False until /auth/me lands — a surface drawn earlier
+// simply shows no IPv6, which is the safe answer.
+var polarisIpv6Enabled = false;
 var _userReadyResolve = null;
 var userReady = new Promise(function (resolve) { _userReadyResolve = resolve; });
 
@@ -536,6 +541,7 @@ async function fetchCurrentUser() {
       currentRoleRegions = (data.regionTags && data.regionTags.role) || [];
       currentEffectiveRegions = (data.regionTags && data.regionTags.effective) || [];
       currentServerTimezone = data.serverTimezone || null;
+      polarisIpv6Enabled = data.ipv6Enabled === true;
       _tzPref = data.timezone || "auto";
       // Hand the account's zone to the formatters in api.js, which read it
       // synchronously from localStorage at load — this call is what keeps that

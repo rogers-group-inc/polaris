@@ -690,6 +690,7 @@ var _certData = { trustedCAs: [], serverCerts: [] };
 var _httpsSettings = { fingerprint: null, cn: null, dnsSans: [], ipSans: [], expiresAt: null, certPath: null };
 var _proxyData = null;
 var _dashSettings = null; // { enabled, rfc1918Only } | null while loading/failed
+var _ipv6Settings = null; // { mode, hostAddresses, enabled } | null while loading/failed
 var _loginAccess = null;  // { settings, callerIp } | null while loading/failed
 
 // Render the Web Server tab (data-tab="certificates"). nginx terminates TLS — five cards
@@ -884,6 +885,40 @@ function renderCertsTab(container) {
           '</div>') +
     '</div>';
 
+  // IPv6 card — business rule 127. Off means no IPv6 is discovered, collected,
+  // stored or shown anywhere; "auto" turns it on only when this server itself
+  // holds a routable IPv6 address. PUT is serverSettingsSystem write-gated.
+  var v6 = _ipv6Settings;
+  var v6Mode = (v6 && v6.mode) || "auto";
+  var v6Hosts = (v6 && Array.isArray(v6.hostAddresses)) ? v6.hostAddresses : [];
+  var ipv6CardHtml =
+    '<div class="settings-card">' +
+      '<h4>IPv6</h4>' +
+      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+        'When IPv6 is off, Polaris discovers, collects, stores and shows no IPv6 addresses, and every device is ' +
+        'monitored on its IPv4 address. When it is on, a device with no IPv4 address is monitored on its primary IPv6 address. ' +
+        '<strong>Automatic</strong> turns IPv6 on only when this server has a routable IPv6 address.' +
+      '</p>' +
+      (v6 === null
+        ? '<p style="font-size:0.85rem;color:var(--color-text-secondary)">Unavailable — could not load the IPv6 setting.</p>'
+        : '<p style="font-size:0.85rem;margin-bottom:0.75rem"><strong>Current:</strong> ' +
+            (v6.enabled ? '<span class="badge badge-success">On</span>' : '<span class="badge badge-neutral">Off</span>') +
+          '</p>' +
+          '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">This server\'s IPv6: ' +
+            (v6Hosts.length
+              ? '<code>' + v6Hosts.map(escapeHtml).join(", ") + '</code>'
+              : 'none routable (link-local and loopback addresses are not counted)') +
+          '</p>' +
+          '<div class="form-group">' +
+            '<div style="display:flex;flex-direction:column;gap:0.3rem">' +
+              '<label><input type="radio" name="ipv6-mode" value="auto"' + (v6Mode === "auto" ? " checked" : "") + '> Automatic (on when this server uses IPv6)</label>' +
+              '<label><input type="radio" name="ipv6-mode" value="on"' + (v6Mode === "on" ? " checked" : "") + '> Always on</label>' +
+              '<label><input type="radio" name="ipv6-mode" value="off"' + (v6Mode === "off" ? " checked" : "") + '> Always off</label>' +
+            '</div>' +
+          '</div>' +
+          '<div style="margin-top:0.5rem"><button class="btn btn-sm btn-primary" id="ipv6-save-btn">Save</button></div>') +
+    '</div>';
+
   var caCardHtml =
     '<div class="settings-card" style="display:flex;flex-direction:column">' +
       '<h4>Trusted Certificate Authorities</h4>' +
@@ -953,7 +988,7 @@ function renderCertsTab(container) {
 
   container.innerHTML = bannerHtml +
     '<div class="settings-cards-flow">' +
-      certCardHtml + proxyCardHtml + dashCardHtml + loginCardHtml + caCardHtml + pinnedCardHtml +
+      certCardHtml + proxyCardHtml + dashCardHtml + ipv6CardHtml + loginCardHtml + caCardHtml + pinnedCardHtml +
     '</div>';
   if (window.PolarisPinnedTlsCerts) window.PolarisPinnedTlsCerts.mount(document.getElementById("pinned-tls-body"));
 
@@ -962,6 +997,9 @@ function renderCertsTab(container) {
 
   var dashSaveBtn = document.getElementById("dash-save-btn");
   if (dashSaveBtn) dashSaveBtn.addEventListener("click", handleDashSave);
+
+  var ipv6SaveBtn = document.getElementById("ipv6-save-btn");
+  if (ipv6SaveBtn) ipv6SaveBtn.addEventListener("click", function () { handleIpv6Save(container); });
 
   document.querySelectorAll('input[name="dash-ip-scope"]').forEach(function (radio) {
     radio.addEventListener("change", function () {
@@ -1000,6 +1038,23 @@ function renderCertsTab(container) {
   if (applyBtn) applyBtn.addEventListener("click", handleProxyApply);
 }
 
+
+async function handleIpv6Save(container) {
+  var modeEl = document.querySelector('input[name="ipv6-mode"]:checked');
+  var mode = modeEl ? modeEl.value : "auto";
+  if (mode === "off" && _ipv6Settings && _ipv6Settings.enabled &&
+      !(await showConfirm("Turn IPv6 off? Polaris stops discovering and showing IPv6 addresses, and devices that only have an IPv6 address stop being polled."))) {
+    return;
+  }
+  try {
+    var result = await api.serverSettings.ipv6Put({ mode: mode });
+    _ipv6Settings = (result && result.ipv6) || _ipv6Settings;
+    showToast("IPv6 " + (_ipv6Settings && _ipv6Settings.enabled ? "on" : "off") + " — other pages pick it up when reloaded");
+    renderCertsTab(container);
+  } catch (err) {
+    showToast("Failed to save the IPv6 setting: " + (err.message || err), "error");
+  }
+}
 
 async function handleDashSave() {
   var enabled = !!document.getElementById("dash-enabled").checked;
@@ -1264,6 +1319,11 @@ async function loadCertificates() {
     var dashResp = await api.serverSettings.dashGet();
     _dashSettings = (dashResp && dashResp.dash) || null;
   } catch (_) { _dashSettings = null; }
+
+  try {
+    var v6Resp = await api.serverSettings.ipv6Get();
+    _ipv6Settings = (v6Resp && v6Resp.ipv6) || null;
+  } catch (_) { _ipv6Settings = null; }
 
   try {
     var laResp = await api.serverSettings.loginAccessGet();
