@@ -333,6 +333,11 @@ with a source-IP scope: `rfc1918` (the default), `all`, or custom CIDRs.
 > response — rather than 403'd, so a scanner cannot confirm the surface exists.
 > Behind nginx that manifests to the remote client as a 502.
 
+The wallboard has no sidebar, so its **theme band** is a ribbon across the
+bottom-left corner. Click it to move through the day (morning → noon →
+nightfall), the same way the sidebar's band works. The choice is kept in that
+browser.
+
 ## What it can show
 
 The wallboard answers as the built-in **`readonly`** role. Widgets that role
