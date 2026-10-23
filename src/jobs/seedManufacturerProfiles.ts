@@ -32,6 +32,8 @@
  */
 
 import { prisma } from "../db.js";
+import { Prisma } from "../generated/prisma/client.js";
+import type { SensorColumns } from "../utils/hardwareSensors.js";
 import { logger } from "../utils/logger.js";
 import { runInstrumentedJob } from "./_metrics.js";
 import { hasRunMarker, stampRunMarker } from "./_runOnce.js";
@@ -135,10 +137,17 @@ interface MetricSeed {
   /** `model` only: the row-shaped identity parse. */
   parsePattern:  string | null;
   parseTemplate: string | null;
+  /** `temperature` `table` only: the sensor table's sibling columns (business rule 132). */
+  sensorColumns: SensorColumns | null;
 }
 
 /** Everything below "none" is derived from the hardcoded shape, never typed twice. */
-const NO_EXTRAS = { aggregate: "none", label: null, parsePattern: null, parseTemplate: null } as const;
+const NO_EXTRAS = { aggregate: "none", label: null, parsePattern: null, parseTemplate: null, sensorColumns: null } as const;
+
+/** A seed's columns as the Json column takes them — Prisma wants DbNull, not null. */
+function columnsForDb(c: SensorColumns | null | undefined): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  return c ? (c as unknown as Prisma.InputJsonValue) : Prisma.DbNull;
+}
 
 export function profileToMetricSeeds(p: VendorTelemetryProfile): MetricSeed[] {
   const out: MetricSeed[] = [];
@@ -225,14 +234,16 @@ export function profileToMetricSeeds(p: VendorTelemetryProfile): MetricSeed[] {
       metricKey: "temperature",
       symbol:    p.temperature.symbol,
       symbolB:   null,
-      // "table" makes the collector walk the named sensor table
-      // (fgHwSensorTable) instead of doing a scalar GET of it. Hardcoding
-      // "scalar" here is what left the Fortinet row unable to say so.
+      // "table" makes the collector walk the named sensor table — its value
+      // column plus the sibling columns below (business rule 132) — instead
+      // of doing a scalar GET. Hardcoding "scalar" here is what left the
+      // Fortinet row unable to say so.
       type:      p.temperature.mode === "table" ? "table" : "scalar",
       // Carried, not dropped: MikroTik's sensor is in tenths of a degree, and
       // a row seeded without its transform charts 315 instead of 31.5.
       transform: p.temperature.transform ?? null,
       label:     p.temperature.sensorName ?? null,
+      sensorColumns: p.temperature.mode === "table" ? (p.temperature.columns ?? null) : null,
     });
   }
   return out;
@@ -302,6 +313,7 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
             defaultLabel:         seed?.label ?? null,
             defaultParsePattern:  seed?.parsePattern ?? null,
             defaultParseTemplate: seed?.parseTemplate ?? null,
+            defaultSensorColumns: columnsForDb(seed?.sensorColumns),
           },
         }),
       );
@@ -359,6 +371,7 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
         label:         s.label,
         parsePattern:  s.parsePattern,
         parseTemplate: s.parseTemplate,
+        sensorColumns: columnsForDb(s.sensorColumns),
         order:         0,
       };
       // TWO rows per sub-family metric, the same pair the Phase 4 migration

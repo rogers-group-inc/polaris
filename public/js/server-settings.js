@@ -9626,7 +9626,7 @@ function renderProfileDetail(detail) {
         '<td>' + renderMibSelect(editMibId, "mfg-edit-mib", detail.manufacturer) + '</td>' +
         '<td>' + renderTypeSelect(editType, "mfg-edit-type") + '</td>' +
         '<td>' + _symbolCellEditHTML(editType, editMibId, m.defaultSymbol, m.defaultSymbolB, "mfg-edit-sym") +
-          _mfgExtraEditHTML(m.metricKey, "mfg-edit", { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate }) + '</td>' +
+          _mfgExtraEditHTML(m.metricKey, "mfg-edit", { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate, sensorColumns: m.defaultSensorColumns }) + '</td>' +
         '<td>' + renderTransformSelect(m.defaultTransform, "mfg-edit-transform", editType, m.metricKey) + '</td>' +
         '<td><button class="btn btn-sm btn-primary mfg-metric-save">Save</button> ' +
           '<button class="btn btn-sm mfg-metric-cancel">Cancel</button></td>';
@@ -9641,7 +9641,7 @@ function renderProfileDetail(detail) {
       html +=
         '<td>' + mibDisplay + '</td>' +
         '<td><span style="font-size:0.78rem">' + escapeHtml(typeLabel) + '</span></td>' +
-        '<td>' + defaultDisplay + _mfgExtraViewHTML(m.metricKey, { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate }) + '</td>' +
+        '<td>' + defaultDisplay + _mfgExtraViewHTML(m.metricKey, { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate, sensorColumns: m.defaultSensorColumns }) + '</td>' +
         '<td><span style="font-size:0.78rem;color:var(--color-text-secondary)">' + (m.defaultTransform ? escapeHtml(transformLabel(m.defaultTransform)) : "—") + '</span></td>' +
         '<td><button class="btn btn-sm mfg-metric-edit">Edit</button></td>';
     }
@@ -10223,7 +10223,7 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
       '<td>' + renderMibSelect(oMibId, "mfg-edit-override-mib", manufacturer) + '</td>' +
       '<td>' + renderTypeSelect(oEditType, "mfg-edit-override-type") + '</td>' +
       '<td>' + _symbolCellEditHTML(oEditType, oMibId, o.symbol, o.symbolB, "mfg-edit-override-sym") +
-        _mfgExtraEditHTML(metricKey, "mfg-edit-override", { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate }) + '</td>' +
+        _mfgExtraEditHTML(metricKey, "mfg-edit-override", { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate, sensorColumns: o.sensorColumns }) + '</td>' +
       '<td>' + renderTransformSelect(o.transform, "mfg-edit-override-transform", oEditType, metricKey) + '</td>' +
       '<td><button class="btn btn-sm btn-primary mfg-override-save">Save</button> ' +
         '<button class="btn btn-sm mfg-override-cancel">Cancel</button></td>' +
@@ -10253,7 +10253,7 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
     '<td><span style="font-size:0.78rem">' + mibLabel + '</span></td>' +
     '<td><span style="font-size:0.78rem">' + escapeHtml(typeLabelO) + '</span></td>' +
     '<td>' + _symbolCellViewHTML(o.type, o.symbol, o.symbolB) +
-      _mfgExtraViewHTML(metricKey, { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate }) + '</td>' +
+      _mfgExtraViewHTML(metricKey, { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate, sensorColumns: o.sensorColumns }) + '</td>' +
     '<td><span style="font-size:0.78rem;color:var(--color-text-secondary)">' + (o.transform ? escapeHtml(transformLabel(o.transform)) : "—") + '</span></td>' +
     '<td><button class="btn btn-sm mfg-override-edit">Edit</button> ' +
       '<button class="btn btn-sm btn-danger mfg-override-del">Del</button></td>' +
@@ -10428,11 +10428,68 @@ function _mfgDeviceTypeSelect(selected, cls) {
 
 var _MFG_AGGREGATE_LABELS = { none: "as read", avg: "average rows", sum: "sum rows" };
 
+// Hardware Sensors (temperature) carries the label for a scalar row AND, for a
+// `table` row, the sensor table's sibling columns (business rule 132): the row's
+// Symbol is the VALUE column; these name the row-name column, an alarm column
+// and how its reading maps to alarm / ok, an optional fixed class and a scale.
+// The server keeps the columns on a table row only and clears them otherwise.
+var _MFG_SENSOR_CLASSES = ["temperature", "fan", "voltage", "current", "optical", "poe", "power", "disk", "other"];
+var _MFG_ALARM_MODES = { nonzero: "not 0", zero: "is 0", equals: "is one of", notEquals: "is not one of", gte: "at least", lte: "at most" };
+
 function _mfgExtrasFor(metricKey) {
   if (metricKey === "cpu" || metricKey === "memory") return "aggregate";
-  if (metricKey === "storage" || metricKey === "temperature") return "label";
+  if (metricKey === "storage") return "label";
+  if (metricKey === "temperature") return "sensor";
   if (metricKey === "model") return "parse";
   return null;
+}
+
+function _mfgSensorColumnsEditHTML(prefix, cols, small) {
+  cols = cols || {};
+  var map = cols.alarmMap || {};
+  var mode = map.mode || "nonzero";
+  var html = '<div style="margin-top:4px;font-size:0.7rem;color:var(--color-text-secondary)" title="Used when Type is table: the Symbol above is the value column">Table columns (Type = table):</div>' +
+    '<input type="text" class="' + prefix + '-sensorname" value="' + escapeHtml(cols.nameSymbol || "") + '" placeholder="Name column (e.g. fgHwSensorEntName)" ' + small + '>' +
+    '<input type="text" class="' + prefix + '-sensoralarm" value="' + escapeHtml(cols.alarmSymbol || "") + '" placeholder="Alarm column (optional)" ' + small + '>' +
+    '<div style="display:flex;gap:4px">' +
+      '<select class="' + prefix + '-sensoralarmmode" ' + small + ' title="Alarm when the alarm column\'s value…">';
+  Object.keys(_MFG_ALARM_MODES).forEach(function (k) {
+    html += '<option value="' + k + '"' + (mode === k ? ' selected' : '') + '>alarm: ' + _MFG_ALARM_MODES[k] + '</option>';
+  });
+  html += '</select>' +
+      '<input type="text" class="' + prefix + '-sensoralarmvalues" value="' + escapeHtml((map.values || []).join(", ")) + '" placeholder="values, e.g. 2, 3" ' + small + '>' +
+    '</div>' +
+    '<div style="display:flex;gap:4px">' +
+      '<select class="' + prefix + '-sensorclass" ' + small + ' title="Every row\'s class, for a table whose row names don\'t say">' +
+        '<option value="">class: from row name</option>';
+  _MFG_SENSOR_CLASSES.forEach(function (c) {
+    html += '<option value="' + c + '"' + (cols.sensorClass === c ? ' selected' : '') + '>class: ' + c + '</option>';
+  });
+  html += '</select>' +
+      '<select class="' + prefix + '-sensorscale" ' + small + '>' +
+        '<option value="">scale: as read</option>' +
+        '<option value="tenths_to_units"' + (cols.transform === "tenths_to_units" ? ' selected' : '') + '>scale: tenths → units</option>' +
+      '</select>' +
+    '</div>';
+  return html;
+}
+
+// The columns a row's controls describe, or null when none are set.
+function _mfgReadSensorColumns(tr, prefix) {
+  var val = function (suffix) { var el = tr.querySelector("." + prefix + "-" + suffix); return el ? (el.value || "").trim() : ""; };
+  var nameSymbol  = val("sensorname");
+  var alarmSymbol = val("sensoralarm");
+  var sensorClass = val("sensorclass");
+  var transform   = val("sensorscale");
+  if (!nameSymbol && !alarmSymbol && !sensorClass && !transform) return null;
+  var values = val("sensoralarmvalues").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  return {
+    nameSymbol:  nameSymbol || null,
+    alarmSymbol: alarmSymbol || null,
+    alarmMap:    alarmSymbol ? { mode: val("sensoralarmmode") || "nonzero", values: values } : null,
+    sensorClass: sensorClass || null,
+    transform:   transform || null,
+  };
 }
 
 function _mfgExtraEditHTML(metricKey, prefix, vals) {
@@ -10450,8 +10507,12 @@ function _mfgExtraEditHTML(metricKey, prefix, vals) {
   if (kind === "label") {
     return '<input type="text" class="' + prefix + '-label" value="' + escapeHtml(vals.label || "") + '" placeholder="Row label (e.g. flash, System)" ' + small + '>';
   }
+  if (kind === "sensor") {
+    return '<input type="text" class="' + prefix + '-label" value="' + escapeHtml(vals.label || "") + '" placeholder="Row label for a scalar (e.g. System)" ' + small + '>' +
+      _mfgSensorColumnsEditHTML(prefix, vals.sensorColumns, small);
+  }
   if (kind === "parse") {
-    return '<input type="text" class="' + prefix + '-parsepattern" value="' + escapeHtml(vals.parsePattern || "") + '" placeholder="Parse regex with (capture), e.g. ^(?!v\\d)(.+?)[-\\s]v\\d" ' + small + '>' +
+    return '<input type="text" class="' + prefix + '-parsepattern" value="' + escapeHtml(vals.parsePattern || "") + '" placeholder="Parse regex with (capture), e.g. ^(\\S+?)-v\\d" ' + small + '>' +
       '<input type="text" class="' + prefix + '-parsetemplate" value="' + escapeHtml(vals.parseTemplate || "") + '" placeholder="Template with $1, e.g. FortiSwitch $1" ' + small + '>';
   }
   return "";
@@ -10466,6 +10527,22 @@ function _mfgExtraViewHTML(metricKey, vals) {
   }
   if (kind === "label" && vals.label) {
     return '<div ' + chip + '>label: ' + escapeHtml(vals.label) + '</div>';
+  }
+  if (kind === "sensor") {
+    var c = vals.sensorColumns;
+    if (c) {
+      var parts = [];
+      if (c.nameSymbol) parts.push("name " + c.nameSymbol);
+      if (c.alarmSymbol) {
+        var m = c.alarmMap || {};
+        parts.push("alarm " + c.alarmSymbol + " " + (_MFG_ALARM_MODES[m.mode] || m.mode || "not 0") +
+          (m.values && m.values.length ? " " + m.values.join(", ") : ""));
+      }
+      if (c.sensorClass) parts.push("class " + c.sensorClass);
+      if (c.transform === "tenths_to_units") parts.push("tenths → units");
+      return '<div ' + chip + '>columns: ' + escapeHtml(parts.join(" · ")) + '</div>';
+    }
+    if (vals.label) return '<div ' + chip + '>label: ' + escapeHtml(vals.label) + '</div>';
   }
   if (kind === "parse" && (vals.parsePattern || vals.parseTemplate)) {
     return '<div ' + chip + '>parse: <code>' + escapeHtml(vals.parsePattern || "") + '</code>' +
@@ -10482,9 +10559,10 @@ function _mfgReadExtras(tr, prefix, metricKey) {
   var val = function (suffix) { var el = tr.querySelector("." + prefix + "-" + suffix); return el ? (el.value || "").trim() : ""; };
   return {
     aggregate:     kind === "aggregate" ? (val("aggregate") || "none") : "none",
-    label:         kind === "label"     ? (val("label") || null) : null,
+    label:         (kind === "label" || kind === "sensor") ? (val("label") || null) : null,
     parsePattern:  kind === "parse"     ? (val("parsepattern") || null) : null,
     parseTemplate: kind === "parse"     ? (val("parsetemplate") || null) : null,
+    sensorColumns: kind === "sensor"    ? _mfgReadSensorColumns(tr, prefix) : null,
   };
 }
 
@@ -11935,6 +12013,7 @@ async function saveMetricEdit(tr) {
     defaultLabel:         extras.label,
     defaultParsePattern:  extras.parsePattern,
     defaultParseTemplate: extras.parseTemplate,
+    defaultSensorColumns: extras.sensorColumns,
   };
   try {
     var resp = await api.serverSettings.updateProfileMetric(profileId, metricKey, payload);
@@ -11986,6 +12065,7 @@ async function addOverride(tr) {
     label:         extras.label,
     parsePattern:  extras.parsePattern,
     parseTemplate: extras.parseTemplate,
+    sensorColumns: extras.sensorColumns,
   };
   try {
     var resp = await api.serverSettings.createProfileMetricOverride(profileId, metricKey, payload);
@@ -12050,6 +12130,7 @@ async function saveOverrideEdit(tr) {
     label:         extras.label,
     parsePattern:  extras.parsePattern,
     parseTemplate: extras.parseTemplate,
+    sensorColumns: extras.sensorColumns,
   };
   try {
     var resp = await api.serverSettings.updateProfileMetricOverride(profileId, metricKey, overrideId, payload);

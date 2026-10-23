@@ -4507,6 +4507,11 @@ model ManufacturerProfileMetric {
   // parse FUNCTION the hardcoded FortiSwitch profile carried.
   defaultParsePattern  String?
   defaultParseTemplate String?
+  // `temperature` metric, `table` type only (business rule 132): the sensor
+  // table's sibling columns beside the value column `defaultSymbol` names —
+  // `{ nameSymbol, alarmSymbol, alarmMap, sensorClass, transform }`
+  // (utils/hardwareSensors.ts → SensorColumns). Null on every other row.
+  defaultSensorColumns Json?
   defaultMibId     String?
   defaultMib       MibFile?            @relation("ManufacturerProfileMetricDefaultMib", fields: [defaultMibId], references: [id], onDelete: SetNull)
   // Operator-pinned standard MIB key (e.g. "std:lldp", "std:host-resources").
@@ -4571,11 +4576,12 @@ model ManufacturerProfileMetricOverride {
   modelPattern String? // regex tested against Asset.model (+ the pinned MIB's module name)
   symbol       String
   // Mirrors of the metric row's defaultAggregate / defaultLabel /
-  // defaultParse* — see ManufacturerProfileMetric.
+  // defaultParse* / defaultSensorColumns — see ManufacturerProfileMetric.
   aggregate     String  @default("none")
   label         String?
   parsePattern  String?
   parseTemplate String?
+  sensorColumns Json?
   mibId        String?
   mib          MibFile?                  @relation("ManufacturerProfileMetricOverrideMib", fields: [mibId], references: [id], onDelete: SetNull)
   // Same display-only standard-MIB hint as the parent metric row. See

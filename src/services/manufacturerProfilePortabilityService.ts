@@ -28,6 +28,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import { logEvent } from "./eventLogService.js";
+import { FORTIGATE_SENSOR_COLUMNS } from "./vendorTelemetryProfiles.js";
 import {
   getProfile,
   getProfileFor,
@@ -68,7 +69,32 @@ const RowFieldsSchema = {
   label:         z.string().max(200).nullable(),
   parsePattern:  z.string().max(1000).nullable(),
   parseTemplate: z.string().max(1000).nullable(),
+  // A Hardware Sensors table row's sibling columns (business rule 132).
+  // Optional so a file exported before the rule still parses; the service
+  // validates the contents.
+  sensorColumns: z.object({
+    nameSymbol:  z.string().max(200).nullable().optional(),
+    alarmSymbol: z.string().max(200).nullable().optional(),
+    alarmMap:    z.unknown().optional(),
+    sensorClass: z.string().max(32).nullable().optional(),
+    transform:   z.string().max(32).nullable().optional(),
+  }).nullable().optional(),
 };
+
+/**
+ * A file exported before business rule 132 says `fgHwSensorTable` on a
+ * Hardware Sensors table row and names no columns: the collector used to walk
+ * FortiGate's columns from code whatever the row said. Read it the way the
+ * `20261024020000_sensor_table_columns` migration rewrote stored rows, so an
+ * old export imports into a row that still collects.
+ */
+function upgradeLegacySensorTable<T extends { symbol: string | null; type: string; sensorColumns?: unknown }>(
+  metricKey: string, row: T,
+): T {
+  if (metricKey !== "temperature" || row.type !== "table" || row.sensorColumns) return row;
+  if ((row.symbol ?? "").toLowerCase() !== "fghwsensortable") return row;
+  return { ...row, symbol: "fgHwSensorEntValue", sensorColumns: FORTIGATE_SENSOR_COLUMNS };
+}
 
 const OverrideSchema = z.object({
   // Present only in the View Code JSON (full fidelity); never in an export.
@@ -200,12 +226,14 @@ export async function exportProfile(profileId: string, opts: { withIds?: boolean
         label:         m.defaultLabel,
         parsePattern:  m.defaultParsePattern,
         parseTemplate: m.defaultParseTemplate,
+        sensorColumns: m.defaultSensorColumns,
         overrides: m.overrides.map((o) => ({
           ...(withIds ? { id: o.id } : {}),
           assetType: o.assetType, modelPattern: o.modelPattern,
           symbol: o.symbol, symbolB: o.symbolB, mib: mibOf(o.mibId), mibStdKey: o.mibStdKey,
           type: o.type, transform: o.transform, aggregate: o.aggregate, label: o.label,
-          parsePattern: o.parsePattern, parseTemplate: o.parseTemplate, order: o.order,
+          parsePattern: o.parsePattern, parseTemplate: o.parseTemplate, sensorColumns: o.sensorColumns,
+          order: o.order,
         })),
       })),
     widgets: profile.widgets.map((w) => ({
@@ -403,21 +431,23 @@ export async function applyProfileImport(raw: unknown, selected: string[], actor
   await attempt("settings", () => updateProfile(profileId, { matchPattern: file.matchPattern }));
 
   const current = await getProfile(profileId);
-  for (const m of file.metrics) {
+  for (const fileMetric of file.metrics) {
+    const m = upgradeLegacySensorTable(fileMetric.metricKey, fileMetric);
     await attempt(`metric:${m.metricKey}`, () => updateMetricRow(profileId, m.metricKey, {
       defaultSymbol: m.symbol, defaultSymbolB: m.symbolB,
       defaultMibId: resolve(m.mib), defaultMibStdKey: m.mibStdKey,
       defaultType: m.type, defaultTransform: m.transform, defaultAggregate: m.aggregate,
       defaultLabel: m.label, defaultParsePattern: m.parsePattern, defaultParseTemplate: m.parseTemplate,
+      defaultSensorColumns: m.sensorColumns ?? null,
     }));
     const row = current?.metrics.find((x) => x.metricKey === m.metricKey);
     for (let i = 0; i < m.overrides.length; i++) {
-      const o = m.overrides[i];
+      const o = upgradeLegacySensorTable(m.metricKey, m.overrides[i]);
       const input = {
         assetType: o.assetType, modelPattern: o.modelPattern, symbol: o.symbol, symbolB: o.symbolB,
         mibId: resolve(o.mib), mibStdKey: o.mibStdKey, type: o.type, transform: o.transform,
         aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate,
-        order: o.order,
+        sensorColumns: o.sensorColumns ?? null, order: o.order,
       };
       const clash = row?.overrides.find((x) => overrideScopeKey(x) === overrideScopeKey(o));
       await attempt(`override:${m.metricKey}:${i}`, () =>
@@ -483,6 +513,7 @@ export async function applyProfileImport(raw: unknown, selected: string[], actor
 const CLEARED_METRIC = {
   defaultSymbol: null, defaultSymbolB: null, defaultMibId: null, defaultMibStdKey: null,
   defaultTransform: null, defaultLabel: null, defaultParsePattern: null, defaultParseTemplate: null,
+  defaultSensorColumns: null,
 };
 
 /**
@@ -539,6 +570,7 @@ export async function saveProfileCode(profileId: string, raw: unknown, actor?: s
           defaultMibId: resolve(m.mib), defaultMibStdKey: m.mibStdKey,
           defaultType: m.type, defaultTransform: m.transform, defaultAggregate: m.aggregate,
           defaultLabel: m.label, defaultParsePattern: m.parsePattern, defaultParseTemplate: m.parseTemplate,
+          defaultSensorColumns: m.sensorColumns ?? null,
         });
       } else if (row.defaultSymbol || row.defaultSymbolB) {
         await updateMetricRow(profileId, row.metricKey, CLEARED_METRIC);
@@ -550,7 +582,7 @@ export async function saveProfileCode(profileId: string, raw: unknown, actor?: s
           assetType: o.assetType, modelPattern: o.modelPattern, symbol: o.symbol, symbolB: o.symbolB,
           mibId: resolve(o.mib), mibStdKey: o.mibStdKey, type: o.type, transform: o.transform,
           aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate,
-          order: o.order,
+          sensorColumns: o.sensorColumns ?? null, order: o.order,
         };
         const mine = o.id && row.overrides.some((x) => x.id === o.id);
         if (mine) {

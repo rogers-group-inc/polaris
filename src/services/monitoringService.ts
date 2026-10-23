@@ -184,8 +184,8 @@ import {
 } from "./sampleWriteBuffer.js";
 import {
   classifyHardwareSensor,
-  normalizeFgAlarmStatus,
   normalizeRestAlarmStatus,
+  sensorTableRows,
   classifyEntitySensor,
   entityOperStatusToAlarm,
   entityTypeColumnTrusted,
@@ -5280,7 +5280,7 @@ async function collectHardwareSensorsViaSnmpSession(
   // The asset's own scope, then the governing profile's (business rule 131).
   const scope: ResolveScope = { manufacturer, model, profileManufacturer: profile?.profileManufacturer };
   return await withSnmpSession(host, config, async (session) => {
-    return await collectHardwareSensorsSnmp(session, manufacturer, profile, scope);
+    return await collectHardwareSensorsSnmp(session, profile, scope);
   }, timeoutMs);
 }
 
@@ -7241,16 +7241,12 @@ const OID = {
   // Textual unit label. RFC 3433's type enum has no dBm member, so this is the
   // only place a device can declare that a reading is optical power.
   entPhySensorUnitsDisplay: "1.3.6.1.2.1.99.1.1.1.6",
-  // FORTINET-FORTIGATE-MIB::fgHwSensorTable. Branch-class FortiGates
-  // (40F/60F/61F/91G/101F) don't populate ENTITY-SENSOR-MIB and 404 the
-  // FortiOS REST sensor-info endpoint, but they do publish hardware sensors
-  // here. The table mixes temperature, fan, voltage, and power sensors —
-  // there is no type column, so callers classify by name. fgHwSensorEntValue
-  // is a DisplayString carrying a decimal value (e.g. "44.5"); EntAlarmStatus
-  // is an INTEGER (0 = no alarm, 1 = alarm).
-  fgHwSensorEntName:        "1.3.6.1.4.1.12356.101.4.3.2.1.2",
-  fgHwSensorEntValue:       "1.3.6.1.4.1.12356.101.4.3.2.1.3",
-  fgHwSensorEntAlarmStatus: "1.3.6.1.4.1.12356.101.4.3.2.1.4",
+  // FORTINET-FORTIGATE-MIB::fgHwSensorTable left this map in 2026-10 (business
+  // rule 132): it is the Fortinet profile's sensor-table row now, three symbol
+  // NAMES resolved from the uploaded MIB (vendorTelemetryProfiles →
+  // FORTIGATE_SENSOR_COLUMNS). Branch-class FortiGates (40F/60F/61F/91G/101F)
+  // still depend on it — they implement neither ENTITY-SENSOR-MIB nor the
+  // FortiOS REST sensor-info endpoint.
   // LLDP-MIB (RFC 4957). lldpLocPortTable maps localPortNum → ifName/alias so
   // we can stitch lldpRemTable rows back to a real interface. lldpRemTable is
   // indexed by (timeMark, localPortNum, remIndex); we only care about the
@@ -7957,18 +7953,17 @@ async function collectPoePseSnmp(session: any): Promise<HardwareSensorSample[]> 
  * Hardware sensors, plus unit-level PoE appended for any device that has a PSE.
  *
  * The append lives in a wrapper because the core collector has three separate
- * return paths (Fortinet table / ENTITY-SENSOR / vendor scalar) and PoE is
- * orthogonal to which of them produced the sensor rows - a FortiSwitch takes
+ * return paths (profile sensor table / ENTITY-SENSOR / vendor scalar) and PoE
+ * is orthogonal to which of them produced the sensor rows - a FortiSwitch takes
  * the ENTITY-SENSOR path and still has a PSE.
  */
 async function collectHardwareSensorsSnmp(
   session: any,
-  manufacturer?: string | null,
   profile?: VendorTelemetryProfile | null,
   scope?: ResolveScope,
 ): Promise<HardwareSensorSample[]> {
   const [sensors, pse] = await Promise.all([
-    collectHardwareSensorsSnmpCore(session, manufacturer, profile, scope),
+    collectHardwareSensorsSnmpCore(session, profile, scope),
     collectPoePseSnmp(session).catch(() => [] as HardwareSensorSample[]),
   ]);
   return pse.length > 0 ? [...sensors, ...pse] : sensors;
@@ -7976,21 +7971,18 @@ async function collectHardwareSensorsSnmp(
 
 async function collectHardwareSensorsSnmpCore(
   session: any,
-  manufacturer?: string | null,
   profile?: VendorTelemetryProfile | null,
   scope?: ResolveScope,
 ): Promise<HardwareSensorSample[]> {
-  // 1. FORTINET-FORTIGATE-MIB fgHwSensorTable is the comprehensive source on
-  //    FortiGates (temperature + fan + voltage + power + disk + alarm), so
-  //    prefer it for Fortinet devices, or when the operator explicitly pointed
-  //    the Hardware Sensors metric at a table (mode="table"). FortiSwitches /
-  //    FortiAPs don't populate it → empty → fall through to the paths below.
-  const wantTable =
-    (!!manufacturer && /fortinet/i.test(manufacturer)) ||
-    profile?.temperature?.mode === "table";
-  if (wantTable) {
-    const fgRows = await collectHardwareSensorsFortinetSnmp(session);
-    if (fgRows.length > 0) return fgRows;
+  // 1. The profile's sensor table, when its Hardware Sensors row is a `table`
+  //    (business rule 132): the columns the row names, walked and joined. On a
+  //    FortiGate that is fgHwSensorTable (temperature + fan + voltage + power +
+  //    disk + alarm), the comprehensive source there. An empty walk — a
+  //    FortiSwitch or FortiAP that inherited the Fortinet row, or a symbol
+  //    whose MIB isn't uploaded — falls through to the standard paths below.
+  if (profile?.temperature?.mode === "table") {
+    const tableRows = await collectSensorTableSnmp(session, profile, profile.temperature, scope ?? {});
+    if (tableRows.length > 0) return tableRows;
   }
 
   // 2. ENTITY-SENSOR-MIB (RFC 3433). Standard table on non-Fortinet gear (and
@@ -8081,33 +8073,44 @@ async function collectHardwareSensorsSnmpCore(
   return out;
 }
 
-// FORTINET-FORTIGATE-MIB::fgHwSensorTable walk. The full hardware-sensor table:
-// temperature, fan, voltage, power/PSU, disk. No type column, so each row is
-// classified by name (classifyHardwareSensor); the value is a DisplayString
-// decimal and the alarm column is 0/1. Branch FortiGates that don't implement
-// ENTITY-SENSOR-MIB publish hardware sensors only here.
-async function collectHardwareSensorsFortinetSnmp(session: any): Promise<HardwareSensorSample[]> {
-  const [names, values, alarms] = await Promise.all([
-    snmpWalk(session, OID.fgHwSensorEntName).catch(() => new Map()),
-    snmpWalk(session, OID.fgHwSensorEntValue).catch(() => new Map()),
-    snmpWalk(session, OID.fgHwSensorEntAlarmStatus).catch(() => new Map()),
-  ]);
-  const out: HardwareSensorSample[] = [];
-  for (const [idx, nameRaw] of names.entries()) {
-    const name = snmpVbToString(nameRaw).trim();
-    if (!name) continue;
-    const { sensorClass, unit } = classifyHardwareSensor(name);
-    const valStr = snmpVbToString(values.get(idx)).trim();
-    const n = Number(valStr);
-    out.push({
-      sensorName:  name,
-      sensorClass,
-      value:       Number.isFinite(n) ? Math.round(n * 1000) / 1000 : null,
-      unit,
-      alarmStatus: normalizeFgAlarmStatus(snmpVbToNumber(alarms.get(idx))),
-    });
+// A profile's declarative sensor table (business rule 132). The row's symbol is
+// the VALUE column; `columns` names the siblings — a name column, an alarm
+// column with its mapping, an optional fixed class and scale. Each column is a
+// symbol resolved at the asset's scope then the profile's (rule 131), walked
+// once, stringified, and joined on the shared index by `sensorTableRows`. A
+// value column that does not resolve walks nothing: the MIB is not uploaded,
+// and the profile page says so. An optional column that does not resolve
+// costs only its own facts (unnamed rows, no alarm status).
+async function collectSensorTableSnmp(
+  session: any,
+  profile: VendorTelemetryProfile,
+  query: NonNullable<VendorTelemetryProfile["temperature"]>,
+  scope: ResolveScope,
+): Promise<HardwareSensorSample[]> {
+  const columns = query.columns ?? { nameSymbol: null, alarmSymbol: null, alarmMap: null, sensorClass: null, transform: null };
+  const valueOid = resolveOidSync(query.symbol, scope);
+  if (!valueOid) {
+    logger.debug({ vendor: profile.vendor, symbol: query.symbol, scope }, "sensor table value column unresolved — upload its MIB to enable");
+    return [];
   }
-  return out;
+  const nameOid  = columns.nameSymbol  ? resolveOidSync(columns.nameSymbol,  scope) : null;
+  const alarmOid = columns.alarmSymbol ? resolveOidSync(columns.alarmSymbol, scope) : null;
+  const asStrings = (m: Map<string, unknown>): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const [k, v] of m.entries()) out.set(k, snmpVbToString(v));
+    return out;
+  };
+  const [values, names, alarms] = await Promise.all([
+    snmpWalk(session, valueOid).catch(() => new Map()),
+    nameOid  ? snmpWalk(session, nameOid).catch(() => new Map())  : Promise.resolve(null),
+    alarmOid ? snmpWalk(session, alarmOid).catch(() => new Map()) : Promise.resolve(null),
+  ]);
+  return sensorTableRows({
+    values:  asStrings(values),
+    names:   names ? asStrings(names) : null,
+    alarms:  alarms ? asStrings(alarms) : null,
+    columns,
+  });
 }
 
 // ─── PoE (POWER-ETHERNET-MIB) ──────────────────────────────────────────────

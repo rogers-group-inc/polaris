@@ -2741,3 +2741,19 @@ first among the MIBs uploaded for the device's own manufacturer and model, then
 among the MIBs uploaded under the profile's name. That is also where the
 profile page checks whether a row is ready, so a row shown as ready is one the
 device can collect.
+
+### Rule 132
+
+**A Hardware Sensors table is whatever its manufacturer profile row says.** A
+Hardware Sensors row of type *table* names the table's value column as its
+symbol, and beside it a name column, an optional alarm column with when it means
+alarm, an optional class for every row, and an optional tenths scale. Polaris
+walks exactly those columns and joins them row by row. It reads a vendor sensor
+table only for a row that names one: no vendor's table is built in, FortiGate's
+included. A sensor whose value is blank is shown with no value, not as 0. On
+upgrade, every row that named FortiGate's `fgHwSensorTable` was rewritten to its
+three columns, so it keeps reading the same sensors as long as
+FORTINET-FORTIGATE-MIB is uploaded. An SNMP-polled FortiGate without that row or
+that MIB falls back to the standard ENTITY-SENSOR-MIB, which branch models don't
+implement. FortiGates read through FortiManager or the FortiOS REST API are
+unaffected.

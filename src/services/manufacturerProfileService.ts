@@ -29,6 +29,7 @@ import { safeRegexProblem } from "../utils/safeRegex.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
 import { isDeviceLoginCredential, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { logger } from "../utils/logger.js";
+import { isHardwareSensorClass, type SensorColumns } from "../utils/hardwareSensors.js";
 import {
   normalizeStateMap,
   validateStateMap,
@@ -117,6 +118,8 @@ export type MetricRowType = "scalar" | "double_scalar" | "table";
 export interface RowReadiness {
   a: SymbolReadiness;
   b: SymbolReadiness | null;
+  /** A sensor table row's name / alarm columns (business rule 132); absent on every other row. */
+  columns?: SymbolReadiness[];
 }
 
 export interface MetricOverrideRow {
@@ -147,6 +150,8 @@ export interface MetricOverrideRow {
   /** `model` metric only — see src/utils/modelParse.ts. */
   parsePattern:  string | null;
   parseTemplate: string | null;
+  /** Hardware Sensors `table` rows only — the sibling columns (business rule 132). */
+  sensorColumns: SensorColumns | null;
   order:        number;
   readiness?:   RowReadiness;
 }
@@ -164,6 +169,8 @@ export interface MetricRow {
   defaultLabel:     string | null;
   defaultParsePattern:  string | null;
   defaultParseTemplate: string | null;
+  /** Hardware Sensors `table` rows only — the sibling columns (business rule 132). */
+  defaultSensorColumns: SensorColumns | null;
   overrides:        MetricOverrideRow[];
   /** Null when the row is unconfigured (built-in seed answers); see RowReadiness. */
   readiness?:       RowReadiness | null;
@@ -490,6 +497,84 @@ function assertParseFieldsFor(metricKey: MetricKey, symbol: string | null, parse
   if (err) throw new AppError(400, err);
 }
 
+// ─── Sensor table columns (business rule 132) ──────────────────────────────
+//
+// A Hardware Sensors `table` row's own symbol is the table's VALUE column; the
+// siblings it is joined with live in one JSON field. The two functions below are
+// the read and write halves, and they mirror the state-probe pair: the read side
+// never throws (a hand-edited or pre-rule row must still yield a usable shape on
+// the probe path), the write side refuses an authoring mistake with a 400.
+
+const SENSOR_COLUMN_SYMBOL_MAX = 200;
+
+function columnSymbol(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t.slice(0, SENSOR_COLUMN_SYMBOL_MAX) : null;
+}
+
+/** Stored → shaped. Never throws; returns null when nothing usable is there. */
+export function readSensorColumns(raw: unknown): SensorColumns | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const nameSymbol  = columnSymbol(o.nameSymbol);
+  const alarmSymbol = columnSymbol(o.alarmSymbol);
+  const sensorClass = isHardwareSensorClass(o.sensorClass) ? o.sensorClass : null;
+  const transform   = o.transform === "tenths_to_units" ? "tenths_to_units" : null;
+  if (!nameSymbol && !alarmSymbol && !sensorClass && !transform) return null;
+  return {
+    nameSymbol,
+    alarmSymbol,
+    alarmMap: alarmSymbol ? normalizeStateMap(o.alarmMap ?? {}) : null,
+    sensorClass,
+    transform,
+  };
+}
+
+/**
+ * Posted → stored, for a row whose EFFECTIVE metric and type are known.
+ *
+ * Columns belong to a `temperature` row of type `table` only. On any other
+ * metric they are a typo the resolver would ignore, so they are refused, as a
+ * parse on a non-model row is. On a temperature row whose type is not (or no
+ * longer) `table` they are CLEARED rather than refused, following the state
+ * probe precedent: flipping a row to scalar must not leave columns behind for
+ * a later flip back to resurrect.
+ *
+ * An alarm column with no mapping takes the default `nonzero` (0 = ok, any
+ * other value = alarm), the commonest alarm-bit meaning and Fortinet's.
+ */
+export function sensorColumnsForWrite(metricKey: MetricKey, type: MetricRowType, raw: unknown): SensorColumns | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new AppError(400, "sensorColumns must be an object");
+  }
+  const o = raw as Record<string, unknown>;
+  // Value checks come before the emptiness test, so a bad class or transform
+  // posted on its own is refused rather than read as "nothing set".
+  if (o.sensorClass != null && o.sensorClass !== "" && !isHardwareSensorClass(o.sensorClass)) {
+    throw new AppError(400, `Unknown sensor class: ${String(o.sensorClass)}`);
+  }
+  if (o.transform != null && o.transform !== "" && o.transform !== "tenths_to_units") {
+    throw new AppError(400, `Transform ${String(o.transform)} is not applied to a sensor table — only tenths_to_units`);
+  }
+  for (const k of ["nameSymbol", "alarmSymbol"] as const) {
+    if (typeof o[k] === "string" && (o[k] as string).trim().length > SENSOR_COLUMN_SYMBOL_MAX) {
+      throw new AppError(400, `${k} is too long (max ${SENSOR_COLUMN_SYMBOL_MAX} characters)`);
+    }
+  }
+  if (readSensorColumns(raw) === null) return null;
+  if (metricKey !== "temperature") {
+    throw new AppError(400, "sensorColumns apply to the Hardware Sensors (temperature) metric only");
+  }
+  if (type !== "table") return null;
+  if (columnSymbol(o.alarmSymbol) && o.alarmMap != null) {
+    const reason = validateStateMap(o.alarmMap);
+    if (reason) throw new AppError(400, `alarmMap: ${reason}`);
+  }
+  return readSensorColumns(raw);
+}
+
 function asTypeNameOrNull(value: unknown): string | null {
   const t = trimOrNull(value);
   return t ? normalizeAssetTypeName(t) : null;
@@ -556,6 +641,7 @@ function shapeOverride(o: any): MetricOverrideRow {
     label:         o.label ?? null,
     parsePattern:  o.parsePattern ?? null,
     parseTemplate: o.parseTemplate ?? null,
+    sensorColumns: readSensorColumns(o.sensorColumns),
     order:         o.order,
   };
 }
@@ -574,6 +660,7 @@ function shapeMetricRow(m: any): MetricRow {
     defaultLabel:         m.defaultLabel ?? null,
     defaultParsePattern:  m.defaultParsePattern ?? null,
     defaultParseTemplate: m.defaultParseTemplate ?? null,
+    defaultSensorColumns: readSensorColumns(m.defaultSensorColumns),
     overrides:            (m.overrides || []).map(shapeOverride),
   };
 }
@@ -890,12 +977,31 @@ export async function getProfile(id: string): Promise<ProfileFull | null> {
 // the registry (synchronously, after the boot warm-up) and stamp each
 // configured symbol with where it came from or what to upload.
 
-function rowReadiness(manufacturer: string, symbol: string | null, symbolB: string | null, mibId: string | null): RowReadiness | null {
+/** A sensor table's name / alarm column symbols, in that order. */
+export function sensorColumnSymbols(cols: SensorColumns | null | undefined): string[] {
+  return [cols?.nameSymbol, cols?.alarmSymbol].filter((s): s is string => !!s);
+}
+
+function rowReadiness(
+  manufacturer: string,
+  symbol: string | null,
+  symbolB: string | null,
+  mibId: string | null,
+  cols?: SensorColumns | null,
+): RowReadiness | null {
   if (!symbol && !symbolB) return null;
+  const extra = sensorColumnSymbols(cols);
   return {
     a: symbolReadiness(manufacturer, symbol ?? "", mibId),
     b: symbolB ? symbolReadiness(manufacturer, symbolB, mibId) : null,
+    ...(extra.length ? { columns: extra.map((s) => symbolReadiness(manufacturer, s, mibId)) } : {}),
   };
+}
+
+/** Every symbol readiness a row carries — a, b and a sensor table's columns. */
+function readinessParts(r: RowReadiness | null | undefined): SymbolReadiness[] {
+  if (!r) return [];
+  return [r.a, ...(r.b ? [r.b] : []), ...(r.columns ?? [])];
 }
 
 /** Return a copy of `profile` with `readiness` filled on every configured metric row and override. */
@@ -904,10 +1010,10 @@ export function annotateReadiness(profile: ProfileFull): ProfileFull {
     ...profile,
     metrics: profile.metrics.map((m) => ({
       ...m,
-      readiness: rowReadiness(profile.manufacturer, m.defaultSymbol, m.defaultSymbolB, m.defaultMibId),
+      readiness: rowReadiness(profile.manufacturer, m.defaultSymbol, m.defaultSymbolB, m.defaultMibId, m.defaultSensorColumns),
       overrides: m.overrides.map((o) => ({
         ...o,
-        readiness: rowReadiness(profile.manufacturer, o.symbol, o.symbolB, o.mibId) ?? undefined,
+        readiness: rowReadiness(profile.manufacturer, o.symbol, o.symbolB, o.mibId, o.sensorColumns) ?? undefined,
       })),
     })),
   };
@@ -918,10 +1024,8 @@ export function readinessSummary(profile: ProfileFull): Pick<ProfileSummary, "re
   const annotated = annotateReadiness(profile);
   const all: SymbolReadiness[] = [];
   for (const m of annotated.metrics) {
-    if (m.readiness) { all.push(m.readiness.a); if (m.readiness.b) all.push(m.readiness.b); }
-    for (const o of m.overrides) {
-      if (o.readiness) { all.push(o.readiness.a); if (o.readiness.b) all.push(o.readiness.b); }
-    }
+    all.push(...readinessParts(m.readiness));
+    for (const o of m.overrides) all.push(...readinessParts(o.readiness));
   }
   const unresolved = all.filter((r) => !r.resolved);
   const unresolvedSymbols = [...new Set(unresolved.map((r) => r.symbol))].sort();
@@ -975,7 +1079,7 @@ export async function emitProfileReadinessEvents(): Promise<number> {
     const annotated = annotateReadiness(profile);
     const reasons = new Map<string, string>();
     for (const m of annotated.metrics) {
-      for (const r of [m.readiness?.a, m.readiness?.b, ...m.overrides.flatMap((o) => [o.readiness?.a, o.readiness?.b])]) {
+      for (const r of [...readinessParts(m.readiness), ...m.overrides.flatMap((o) => readinessParts(o.readiness))]) {
         if (r && !r.resolved && !reasons.has(r.symbol)) reasons.set(r.symbol, describeUnresolved(profile.manufacturer, r));
       }
     }
@@ -1048,6 +1152,7 @@ export async function updateMetricRow(
     defaultLabel?:     string | null;
     defaultParsePattern?:  string | null;
     defaultParseTemplate?: string | null;
+    defaultSensorColumns?: unknown;
   },
 ): Promise<MetricRow> {
   const mk = asMetricKey(metricKey);
@@ -1092,6 +1197,11 @@ export async function updateMetricRow(
     label:     "metric",
   });
   assertParseFieldsFor(mk, nextSymbol, nextParsePattern, nextParseTemplate);
+  // Decided from the EFFECTIVE type every time, so a row flipped away from
+  // `table` loses its columns even when the edit did not mention them.
+  const nextColumns = sensorColumnsForWrite(
+    mk, nextType, input.defaultSensorColumns === undefined ? row.defaultSensorColumns : input.defaultSensorColumns,
+  );
 
   const updated = await (prisma as any).manufacturerProfileMetric.update({
     where: { id: row.id },
@@ -1109,6 +1219,7 @@ export async function updateMetricRow(
       defaultLabel:         input.defaultLabel         === undefined ? undefined : nextLabel,
       defaultParsePattern:  input.defaultParsePattern  === undefined ? undefined : nextParsePattern,
       defaultParseTemplate: input.defaultParseTemplate === undefined ? undefined : nextParseTemplate,
+      defaultSensorColumns: nextColumns ? (nextColumns as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
     },
     include: { overrides: { orderBy: { order: "asc" } } },
   });
@@ -1174,6 +1285,7 @@ export async function createOverride(
     label?:         string | null;
     parsePattern?:  string | null;
     parseTemplate?: string | null;
+    sensorColumns?: unknown;
     order?:         number;
   },
 ): Promise<MetricOverrideRow> {
@@ -1200,6 +1312,7 @@ export async function createOverride(
   const parseTemplate = trimOrNull(input.parseTemplate);
   validateMetricRowShape({ type, symbol, symbolB, transform, label: "override" });
   assertParseFieldsFor(mk, symbol, parsePattern, parseTemplate);
+  const sensorColumns = sensorColumnsForWrite(mk, type, input.sensorColumns);
 
   const created = await (prisma as any).manufacturerProfileMetricOverride.create({
     data: {
@@ -1216,6 +1329,7 @@ export async function createOverride(
       label,
       parsePattern,
       parseTemplate,
+      sensorColumns: sensorColumns ? (sensorColumns as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
       order:        Number.isFinite(input.order) ? Number(input.order) : 0,
     },
   }).catch((err: any) => {
@@ -1248,6 +1362,7 @@ export async function updateOverride(
     label?:         string | null;
     parsePattern?:  string | null;
     parseTemplate?: string | null;
+    sensorColumns?: unknown;
     order?:         number;
   },
 ): Promise<MetricOverrideRow> {
@@ -1294,6 +1409,10 @@ export async function updateOverride(
     label:     "override",
   });
   assertParseFieldsFor(mk, nextSymbol, nextParsePattern, nextParseTemplate);
+  // From the EFFECTIVE type, as on the metric row.
+  const nextColumns = sensorColumnsForWrite(
+    mk, nextType, input.sensorColumns === undefined ? existing.sensorColumns : input.sensorColumns,
+  );
 
   const updated = await (prisma as any).manufacturerProfileMetricOverride.update({
     where: { id: overrideId },
@@ -1310,6 +1429,7 @@ export async function updateOverride(
       label:         input.label         === undefined ? undefined : nextLabel,
       parsePattern:  input.parsePattern  === undefined ? undefined : nextParsePattern,
       parseTemplate: input.parseTemplate === undefined ? undefined : nextParseTemplate,
+      sensorColumns: nextColumns ? (nextColumns as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
       order:         input.order         === undefined ? undefined : Number(input.order),
     },
   }).catch((err: any) => {
