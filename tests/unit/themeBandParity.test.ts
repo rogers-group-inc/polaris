@@ -259,6 +259,30 @@ describe("the band and the strip read the same clock", () => {
     expect(MOBILE_APP_JS).toContain("while (forward <= 0) forward += 1;");
   });
 
+  it("runs the Dash wallboard's corner band on the same clock as the sidebar's", () => {
+    // dash.html loads dash-boot.js INSTEAD of app.js, so its corner ribbon
+    // carries a third copy of the engine. Same positions, same leg lengths,
+    // same forward-only travel and seam, or the wallboard shows a different
+    // hour for the same theme than the sidebar does.
+    const dash = readFileSync(join(process.cwd(), "public", "js", "dash-boot.js"), "utf-8");
+    expect(positions(dash, "THEME_BAND_POS")).toEqual(DESKTOP);
+    for (const decl of [
+      "var THEME_FADE_MS = 800;",
+      "var THEME_LEG_MS = { morning: 1600 };",
+      "var GLOW_MS = 2000;",
+      'root.setAttribute("data-glow-turn", fromId + "-" + toId);',
+      "while (forward <= 0) forward += 1;",
+      "_bandPos -= 1;",
+      // Layout widths, not getBoundingClientRect: the ribbon is rotated 45°.
+      "_layoutWidth(win) / 2 - (_bandPos + 1) * stripW",
+    ]) {
+      expect(dash, decl).toContain(decl);
+    }
+    const html = readFileSync(join(process.cwd(), "public", "dash.html"), "utf-8");
+    expect(html).toContain('class="theme-band theme-band-corner"');
+    expect(html.match(/time-strip-desktop\.webp" width="1676" height="64"/g)?.length).toBe(3);
+  });
+
   it("gives every theme on the strip its own mobile palette", () => {
     // A theme with no block in mobile.css falls back to :root's neutral
     // Material greys and still "works", which is how nightfall shipped grey

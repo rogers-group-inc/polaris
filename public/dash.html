@@ -61,6 +61,21 @@
     </main>
   </div>
 
+  <!-- The sidebar's theme band, as a ribbon across the bottom-left corner
+       (styles.css .theme-band-corner). There is no sidebar here, so this is
+       the wallboard's only theme control. Driven by the band engine in
+       dash-boot.js (a mirror of app.js's): the click is delegated there and
+       the track is seated on DOMContentLoaded — never position it here. -->
+  <button type="button" class="theme-band theme-band-corner" aria-label="Time of day. Move through the day.">
+    <span class="theme-band-window">
+      <span class="theme-band-track">
+        <img src="/img/brand/time-strip-desktop.webp" width="1676" height="64" decoding="sync" alt="" draggable="false">
+        <img src="/img/brand/time-strip-desktop.webp" width="1676" height="64" decoding="sync" alt="" draggable="false">
+        <img src="/img/brand/time-strip-desktop.webp" width="1676" height="64" decoding="sync" alt="" draggable="false">
+      </span>
+    </span>
+  </button>
+
   <!-- Add-Widgets picker: same markup as index.html. -->
   <!-- A standard slide-over (.slideover-overlay / .slideover /
        .slideover-header-top), so it takes the slide-overs' glass theme, the

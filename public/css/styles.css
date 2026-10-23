@@ -515,6 +515,22 @@
    slice of artwork that was not being painted at all. Measure what is on
    screen before filtering this. */
 .theme-band:hover { background: var(--color-bg-elevated); }
+/* The Dash wallboard's band (dash.html): no sidebar, so the band is a ribbon
+   cut across the bottom-left corner at 45°. Its centre sits 64px in from both
+   edges, so the visible diagonal is 128·√2 ≈ 181px — the 184px width puts the
+   window's edge fades right where the ribbon leaves the screen, and the strip
+   reads as running on past the corner. Fixed under the modal overlay (1000)
+   and the slide-overs (1075). The rotation is why dash-boot.js measures this
+   band with layout widths rather than getBoundingClientRect. */
+.theme-band.theme-band-corner {
+  position: fixed;
+  left: 64px;
+  bottom: 64px;
+  width: 184px;
+  transform: translate(-50%, 50%) rotate(45deg);
+  z-index: 900;
+}
+.theme-band.theme-band-corner:hover { background: none; filter: brightness(1.08); }
 .theme-band:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) {
   .theme-band-track { transition: none; }
