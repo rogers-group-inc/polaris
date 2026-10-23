@@ -135,6 +135,18 @@ async function findSystemRowAt(subnetId: string, ipAddress: string): Promise<Exi
   });
 }
 
+// True when another eligible asset at the same IP is exactly what the row
+// already records (its hostname and MAC) — the row is that asset's, not stale.
+async function rowHeldByAnotherAsset(row: ExistingSystemAtTarget, assetId: string, ipAddress: string): Promise<boolean> {
+  const others = await prisma.asset.findMany({
+    where: { id: { not: assetId }, ipAddress, status: { in: [...ELIGIBLE_STATUSES] as any } },
+    select: { id: true, ipAddress: true, hostname: true, dnsName: true, macAddress: true, status: true },
+  });
+  return others.some(
+    (o) => resolvedHostname(o) === (row.hostname ?? null) && (o.macAddress ?? null) === (row.macAddress ?? null),
+  );
+}
+
 async function releaseRows(ids: string[], reason: string, assetId: string): Promise<number> {
   if (ids.length === 0) return 0;
   // Hard-delete instead of flipping to status="released". dns_resolved rows
@@ -242,7 +254,12 @@ export async function reconcileDnsResolvedForAsset(assetId: string): Promise<Rec
       const needsUpdate =
         (existingAtTarget.hostname ?? null) !== desiredHostname ||
         (existingAtTarget.macAddress ?? null) !== desiredMac;
-      if (needsUpdate) {
+      if (needsUpdate && (await rowHeldByAnotherAsset(existingAtTarget, assetId, ip).catch(() => false))) {
+        // Two eligible assets share this IP (a duplicate, or a real address
+        // conflict). The row already describes the other one — leave it, or
+        // the two reconciles rewrite it on every pass and log an event each
+        // time. It frees up when that asset leaves the IP.
+      } else if (needsUpdate) {
         await prisma.reservation.update({
           where: { id: existingAtTarget.id },
           data: { hostname: desiredHostname, macAddress: desiredMac },

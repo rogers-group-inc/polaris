@@ -188,6 +188,35 @@ d("reconcileDnsResolvedForAsset: auto-create", () => {
     expect((await dnsRows()).length).toBe(1);
   });
 
+  it("two assets sharing one IP stop overwriting each other's row", async () => {
+    await makeBlockAndSubnet();
+    const a = await makeAsset({ hostname: "immich", macAddress: "E2:AC:39:7B:A2:00" });
+    expect(await reconcileAndCountDnsRows(a.id)).toBe(1);
+    const b = await makeAsset({ hostname: "immich", macAddress: "CE:27:1D:68:B1:C8" });
+    await settle();
+    const before = await prisma.event.count({ where: { action: "reservation.dns_resolved.updated" } });
+
+    for (let i = 0; i < 3; i++) {
+      await reconcileDnsResolvedForAsset(a.id);
+      await reconcileDnsResolvedForAsset(b.id);
+    }
+
+    expect(await prisma.event.count({ where: { action: "reservation.dns_resolved.updated" } })).toBe(before);
+    const rows = await dnsRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].macAddress).toBe("E2:AC:39:7B:A2:00");
+  });
+
+  it("still follows the owning asset's own MAC change", async () => {
+    await makeBlockAndSubnet();
+    const a = await makeAsset({ hostname: "solo", macAddress: "AA:BB:CC:DD:EE:20" });
+    expect(await reconcileAndCountDnsRows(a.id)).toBe(1);
+    await prisma.asset.update({ where: { id: a.id }, data: { macAddress: "AA:BB:CC:DD:EE:21" } });
+    await reconcileDnsResolvedForAsset(a.id);
+    await settle();
+    expect((await dnsRows())[0].macAddress).toBe("AA:BB:CC:DD:EE:21");
+  });
+
   it("creates rows for every eligible status (active/maintenance/storage/quarantined)", async () => {
     const statuses = ["active", "maintenance", "storage", "quarantined"] as const;
     for (const status of statuses) {
