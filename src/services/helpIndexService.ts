@@ -15,6 +15,14 @@
  * the Docker image COPYs docs/wiki. When it is missing anyway (a stripped
  * image) the search answers `available: false` and the assistant says help is
  * not available on this install rather than inventing an answer.
+ *
+ * The in-app developer page (public/api.html, served at /api) is a second
+ * corpus in the same index: one section per endpoint block plus each section's
+ * intro, linked to `/api#<section>` (a same-origin path, which the answer link
+ * filter allows). So "how do I create an automation over the API" is answered
+ * from the documented contract. Endpoint sections are weighted DOWN unless the
+ * question reads as an API question (`asksAboutApi`), so an ordinary how-to
+ * still lands on the operator page that describes the screen.
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -27,13 +35,20 @@ export const WIKI_BASE_URL = "https://github.com/rogers-group-inc/polaris/wiki";
 // src/services → ../../docs/wiki, and dist/services → ../../docs/wiki: the
 // same relative hop from both the dev tree and the built image.
 const DEFAULT_WIKI_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "wiki");
+// The developer page, by the same hop: public/ sits beside docs/ and dist/.
+const DEFAULT_API_PAGE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "public", "api.html");
+
+/** The `page` every developer-page section carries; never a wiki page name. */
+export const API_PAGE = "api";
 
 export interface HelpSection {
-  page: string;     // "Integrations" (file name without .md, hyphens kept)
+  page: string;     // "Integrations" (file name without .md, hyphens kept), or API_PAGE
   title: string;    // the page's H1, or the page name
   heading: string;  // the section heading ("" for the page intro)
-  anchor: string;   // GitHub wiki anchor for the heading ("" for the intro)
+  anchor: string;   // GitHub wiki anchor for the heading ("" for the intro); the section id on API_PAGE
   text: string;     // the section body, Markdown
+  /** Which corpus: the operator wiki or the developer page. */
+  source?: "wiki" | "api";
 }
 
 export interface HelpHit {
@@ -43,6 +58,7 @@ export interface HelpHit {
   url: string;
   text: string;
   score: number;
+  source: "wiki" | "api";
 }
 
 export interface HelpSearchResult {
@@ -157,25 +173,103 @@ function indexSections(sections: HelpSection[]): HelpIndex {
   return { sections: indexed, docFreq, avgLength: indexed.length ? totalLength / indexed.length : 0 };
 }
 
-/** Build an index from already-loaded pages. Exported for tests. */
-export function buildHelpIndex(pages: Array<{ page: string; markdown: string }>): HelpIndex {
+/** Build an index from already-loaded pages (and, optionally, the developer page's sections). Exported for tests. */
+export function buildHelpIndex(pages: Array<{ page: string; markdown: string }>, apiSections: HelpSection[] = []): HelpIndex {
   const sections: HelpSection[] = [];
   for (const p of pages) {
     if (SKIP_PAGES.has(p.page)) continue;
-    sections.push(...splitWikiPage(p.page, p.markdown));
+    sections.push(...splitWikiPage(p.page, p.markdown).map((s) => ({ ...s, source: "wiki" as const })));
   }
+  sections.push(...apiSections);
   return indexSections(sections);
+}
+
+// ─── The developer page (public/api.html) ──────────────────────────────────
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", rarr: "→", larr: "←", le: "≤", ge: "≥", middot: "·", hellip: "…", mdash: "—", ndash: "–" };
+
+/** HTML → readable Markdown-ish text: code kept as `code`, lists as "- ", tags dropped. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_m, c: string) => "\n```\n" + c.replace(/<[^>]+>/g, "") + "\n```\n")
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, c: string) => "`" + c.replace(/<[^>]+>/g, "") + "`")
+    .replace(/<li[^>]*>/gi, "\n- ")
+    .replace(/<\/li>/gi, "")
+    .replace(/<\/(p|div|ul|ol|h\d)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&(#\d+|[a-z]+);/gi, (m, e: string) => {
+      if (e.startsWith("#")) return String.fromCodePoint(Number(e.slice(1)));
+      return ENTITIES[e.toLowerCase()] ?? m;
+    })
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Split the developer page into searchable sections: each `<section id>`'s
+ * intro (the prose before its first endpoint) and each endpoint block, headed
+ * "METHOD /path" with its permission gate. Tolerant: a page that does not have
+ * that shape yields no sections rather than throwing. Exported for tests.
+ */
+export function splitApiPage(html: string): HelpSection[] {
+  const out: HelpSection[] = [];
+  for (const m of html.matchAll(/<section id="([^"]+)">([\s\S]*?)<\/section>/g)) {
+    const id = m[1];
+    const body = m[2];
+    const h2 = /<h2>([\s\S]*?)<\/h2>/.exec(body)?.[1] ?? id;
+    const sectionTitle = htmlToText(h2);
+    const firstEndpoint = body.indexOf('<div class="endpoint">');
+    const intro = htmlToText((firstEndpoint >= 0 ? body.slice(0, firstEndpoint) : body).replace(/<h2>[\s\S]*?<\/h2>/, ""));
+    if (intro) out.push({ page: API_PAGE, title: "Polaris API reference", heading: `${sectionTitle} (API)`, anchor: id, text: intro, source: "api" });
+    const blocks = firstEndpoint >= 0 ? body.slice(firstEndpoint).split('<div class="endpoint">').slice(1) : [];
+    for (const raw of blocks) {
+      const head = /<div class="endpoint-head">([\s\S]*?)<\/div>/.exec(raw);
+      if (!head) continue;
+      const method = /class="method[^"]*">([A-Z]+)</.exec(head[1])?.[1] ?? "";
+      const gate = /class="gate">([\s\S]*?)</.exec(head[1])?.[1]?.trim() ?? "";
+      const path = htmlToText(head[1].replace(/<span class="(method|gate)[^"]*">[\s\S]*?<\/span>/g, "")).trim();
+      const text = htmlToText(raw.slice(raw.indexOf(head[0]) + head[0].length));
+      out.push({
+        page: API_PAGE,
+        title: "Polaris API reference",
+        heading: `${method} /api/v1${path.startsWith("/") ? "" : "/"}${path}`.replace(/\s+/g, " "),
+        anchor: id,
+        text: `${sectionTitle}. Permission: ${gate || "see the page"}.\n${text}`,
+        source: "api",
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Does this question read as one about the REST API rather than the screens?
+ * When it does, developer-page sections compete at full weight; otherwise they
+ * are down-weighted so the operator wiki answers. Exported for tests.
+ */
+export function asksAboutApi(query: string): boolean {
+  // Strong signals only. "delete", "get" and "request" appear in ordinary
+  // how-to questions ("how do I delete a network") and must not pull endpoint
+  // sections over the page describing the screen; an HTTP verb counts only
+  // when it is followed by a path.
+  return /\b(api|apis|endpoints?|rest|curl|bearer|json|payloads?|programmatic(ally)?|sdk)\b/i.test(query) ||
+    /\b(get|post|put|patch|delete)\s+\/\S/i.test(query);
 }
 
 const K1 = 1.2;
 const B = 0.75;
 const HEADING_BOOST = 2.5;
+/** How much a developer-page section counts on a question that is not about the API. */
+const API_OFFTOPIC_WEIGHT = 0.35;
 
 /** Rank sections against a free-text query. Exported for tests. */
 export function rankHelp(index: HelpIndex, query: string, limit: number): Array<{ section: IndexedSection; score: number }> {
   const qTerms = Array.from(new Set(tokenize(query)));
   if (qTerms.length === 0 || index.sections.length === 0) return [];
   const n = index.sections.length;
+  const apiWeight = asksAboutApi(query) ? 1 : API_OFFTOPIC_WEIGHT;
   const scored: Array<{ section: IndexedSection; score: number }> = [];
   for (const s of index.sections) {
     let score = 0;
@@ -188,6 +282,7 @@ export function rankHelp(index: HelpIndex, query: string, limit: number): Array<
       const norm = tf * (K1 + 1) / (tf + K1 * (1 - B + B * (s.length / (index.avgLength || 1))));
       score += idf * norm + (inHead ? idf * HEADING_BOOST : 0);
     }
+    if (s.source === "api") score *= apiWeight;
     if (score > 0) scored.push({ section: s, score });
   }
   scored.sort((a, b) => b.score - a.score);
@@ -196,38 +291,44 @@ export function rankHelp(index: HelpIndex, query: string, limit: number): Array<
 
 let indexPromise: Promise<HelpIndex | null> | null = null;
 let wikiDir = DEFAULT_WIKI_DIR;
+let apiPagePath = DEFAULT_API_PAGE;
 
 async function loadIndex(): Promise<HelpIndex | null> {
   let names: string[];
   try {
     names = (await readdir(wikiDir)).filter((n) => n.endsWith(".md"));
   } catch {
-    return null;
+    names = [];
   }
-  if (names.length === 0) return null;
   const pages = await Promise.all(
     names.map(async (name) => ({
       page: name.slice(0, -3),
       markdown: await readFile(join(wikiDir, name), "utf8"),
     })),
   );
-  return buildHelpIndex(pages);
+  // The developer page is optional: an install without it still has the wiki.
+  const apiSections = await readFile(apiPagePath, "utf8").then(splitApiPage).catch(() => [] as HelpSection[]);
+  if (pages.length === 0 && apiSections.length === 0) return null;
+  return buildHelpIndex(pages, apiSections);
 }
 
 /**
  * The wiki page names this install ships ("IPAM", "Integrations", …), so the
  * assistant can refuse a link to a help page that does not exist — a model
- * invents plausible ones. Empty when the docs folder is missing.
+ * invents plausible ones. Developer-page sections are not wiki pages (they link
+ * to `/api`, a same-origin path) and are left out. Empty when the docs folder
+ * is missing.
  */
 export async function wikiPageNames(): Promise<Set<string>> {
   if (!indexPromise) indexPromise = loadIndex();
   const index = await indexPromise;
-  return new Set(index ? index.sections.map((s) => s.page) : []);
+  return new Set(index ? index.sections.filter((s) => s.source !== "api").map((s) => s.page) : []);
 }
 
-/** Test hook: point the index at another folder and drop the cached one. */
-export function _resetHelpIndexForTests(dir?: string): void {
+/** Test hook: point the index at another folder (and developer page) and drop the cached one. */
+export function _resetHelpIndexForTests(dir?: string, apiPage?: string): void {
   wikiDir = dir ?? DEFAULT_WIKI_DIR;
+  apiPagePath = apiPage ?? DEFAULT_API_PAGE;
   indexPromise = null;
 }
 
@@ -252,13 +353,17 @@ export async function searchHelp(
     if (remaining < 200) break;
     const text = section.text.length > remaining ? section.text.slice(0, remaining) + "…" : section.text;
     used += text.length;
+    const api = section.source === "api";
     hits.push({
       page: section.page,
       title: section.title,
       heading: section.heading,
-      url: `${WIKI_BASE_URL}/${section.page}${section.anchor ? `#${section.anchor}` : ""}`,
+      url: api
+        ? `/api${section.anchor ? `#${section.anchor}` : ""}`
+        : `${WIKI_BASE_URL}/${section.page}${section.anchor ? `#${section.anchor}` : ""}`,
       text,
       score: Math.round(score * 100) / 100,
+      source: api ? "api" : "wiki",
     });
   }
   return { available: true, hits };

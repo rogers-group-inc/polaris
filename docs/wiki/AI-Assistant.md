@@ -139,16 +139,32 @@ context. Some things to try:
 - *Build a report of every FortiSwitch with its serial and firmware.*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
+- *Why are the hardware sensors unresolved on our Fortinet profile?*
+- *Which object in PowerNet-MIB carries the battery temperature?*
+- *Which automation alerts when a firewall's CPU is high?*
+- *What API endpoint creates an automation, and what permission does the token need?*
 
-Four kinds of question follow a set procedure, so the answer is built the same way
+A few kinds of question follow a set procedure, so the answer is built the same way
 every time: **why did a device go down** (the device, then alerts and events around
 the time it changed, then the device it hangs off), **what changed** since a time,
-**is a device healthy**, **which networks are filling up**, and **who has an address**
+**is a device healthy**, **which networks are filling up**, **who has an address**
 (*look up 153.66.102.165*) — which also finds a device that held the address on
 another interface or in the past, and says when, and a firewall whose IPsec
-tunnel or VPN peer is at that address. Each answer keeps what the data
-shows apart from what the assistant infers. A device named in an answer is a link:
-click it to open its details.
+tunnel or VPN peer is at that address — and **manufacturer profiles and MIBs**
+(the vendor's profile and whether each row resolves, the MIBs uploaded under its
+name, then the vendor's own module to find the right object). Each answer keeps
+what the data shows apart from what the assistant infers. A device named in an
+answer is a link: click it to open its details.
+
+It can also read **manufacturer profiles** (each row's symbol and whether it
+resolves, and why not), the **MIB Database** (the modules uploaded under each
+manufacturer, and the objects inside one: OID, type, enum values, which table a
+column belongs to), and **automations** (what each one watches, its scope and its
+actions; secret headers on API-call actions stay masked). Each needs the matching
+permission on your role (Manufacturer Profiles, MIB Database, Automation
+Management). When it suggests a profile row or a widget, it names only objects it
+found in your uploaded MIB, and it never makes the change: it tells you where to.
+See [Manufacturer Profiles](Manufacturer-Profiles).
 
 It knows **your role and access**, and the **regions and tags assigned to you**
 (from your role, your account and your sign-in groups) — so "my region" means
@@ -172,9 +188,12 @@ reopening it later downloads the same figures you saw then.
 
 Questions about using or configuring Polaris are answered from this wiki — the
 assistant searches it first and links the page it used. If the help has nothing
-on it, the assistant says so. Links in an answer can only point to a real page of
-this wiki or to a page inside Polaris; any other link the model writes is shown
-as plain text.
+on it, the assistant says so. Questions about Polaris's REST API (endpoints,
+request bodies, the permission a token needs) are answered from the in-app API
+reference at `/api`, and link to the endpoint there. An ordinary how-to question
+still gets the wiki page for the screen. Links in an answer can only point to a
+real page of this wiki or to a page inside Polaris; any other link the model
+writes is shown as plain text.
 
 ---
 

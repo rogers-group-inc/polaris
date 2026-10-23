@@ -170,7 +170,8 @@ its MIB.
 For anything else you create the profile once. The symbol names for the common
 vendors, and where to get each MIB, are in the install guide's *"A vendor's SNMP
 CPU / memory / storage is empty"* section — and the shipped Cisco profile is a
-worked example to copy, which is half of why it ships.
+worked example to copy, which is half of why it ships. The step-by-step guide to
+building one, row by row, is [Manufacturer Profiles](Manufacturer-Profiles).
 
 **Also applies when** (on a profile's header) lets one profile cover devices
 that report a different manufacturer name: for example `aruba|procurve` on an
