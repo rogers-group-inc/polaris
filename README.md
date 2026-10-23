@@ -78,7 +78,7 @@ Polaris is FOSS and makes no assumptions about how you run it.
 | [docs/UPGRADING.md](docs/UPGRADING.md) | **Existing installs**: moving to PostgreSQL 17, upgrading Node or the signing JDK, migrating to the nginx front end, and recovering an update that failed on TLS interception |
 | [docs/HA.md](docs/HA.md) | The optional active/standby pair, phase by phase |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | The local dev stack |
-| `<polaris-url>/api` | Developer docs for the REST API, served by the install itself (no login; private networks only). Also packaged as the [`polaris-api-conventions`](https://github.com/rogers-group-inc/polaris-api-conventions) Claude Code plugin |
+| `<polaris-url>/api` | Developer docs for the REST API, served by the install itself (no login; private networks only). Also packaged in the [`polaris-toolbox`](https://github.com/rogers-group-inc/polaris-toolbox) Claude Code plugin, beside skills for manufacturer profiles and automations |
 
 ## System requirements
 

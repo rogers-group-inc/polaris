@@ -32,7 +32,7 @@
 //                              every SKILL.md index row has an invariant and a narrative heading, and
 //                              every narrative heading has an invariant.
 //   util-tests (warn)          src/utils files with exports lacking tests/unit/<name>.test.ts.
-//   api-plugin-fresh (warn)    public/api.html changed since the polaris-api-conventions plugin
+//   api-plugin-fresh (warn)    public/api.html changed since the polaris-toolbox plugin's polaris-api skill
 //                              was generated from it (skipped when that clone isn't present).
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
@@ -334,7 +334,8 @@ if (utilTestWarnings.length) {
   );
 }
 
-// === api-plugin-fresh (WARN-only): the polaris-api-conventions plugin vs public/api.html ===
+// === api-plugin-fresh (WARN-only): the polaris-toolbox plugin's polaris-api skill vs public/api.html ===
+// (polaris-toolbox replaced the separate polaris-api-conventions plugin on 2026-10-23.)
 // That plugin is generated from public/api.html and lives in its OWN repo, cloned beside this
 // one. Its import script stamps the source file's sha256 into plugin.json, which is the only
 // mechanical signal that the published client guide has fallen behind this repo's API page.
@@ -342,13 +343,13 @@ if (utilTestWarnings.length) {
 // so CI, a fresh clone and anyone who has not cloned it must not be failed by its absence.
 const API_HTML = "public/api.html";
 // The clone sits BESIDE the main checkout, but this script also runs from a worktree under
-// .claude/worktrees/<slug>, where "../polaris-api-conventions" resolves inside the worktrees
+// .claude/worktrees/<slug>, where "../polaris-toolbox" resolves inside the worktrees
 // folder and finds nothing. Walking up instead finds the clone from either place — otherwise
 // the check would silently pass in exactly the trees where the work happens.
 function findApiPluginManifest() {
   let dir = ROOT;
   for (;;) {
-    const candidate = join(dir, "polaris-api-conventions", ".claude-plugin", "plugin.json");
+    const candidate = join(dir, "polaris-toolbox", ".claude-plugin", "plugin.json");
     if (existsSync(candidate)) return candidate;
     const parent = dirname(dir);
     if (parent === dir) return null;
@@ -373,14 +374,14 @@ if (exists(API_HTML) && apiPluginManifest) {
   const current = new Set([sha(rawBytes), sha(asLf), sha(asCrlf)]);
   if (!recorded) {
     console.warn(
-      `\n⚠ check-docs (warn): polaris-api-conventions/.claude-plugin/plugin.json has no sourceApiHtmlSha256, so nothing can tell whether the` +
-        `\n    polaris-api-conventions plugin still matches ${API_HTML}. Re-run its import script to stamp one.\n`,
+      `\n⚠ check-docs (warn): polaris-toolbox/.claude-plugin/plugin.json has no sourceApiHtmlSha256, so nothing can tell whether the` +
+        `\n    toolbox's polaris-api skill still matches ${API_HTML}. Re-run its import script to stamp one.\n`,
     );
   } else if (!current.has(recorded)) {
     console.warn(
-      `\n⚠ check-docs (warn): the polaris-api-conventions plugin was generated from a different ${API_HTML}` +
+      `\n⚠ check-docs (warn): the polaris-toolbox polaris-api skill was generated from a different ${API_HTML}` +
         `\n    (plugin ${recorded.slice(0, 12)}… vs this checkout ${sha(rawBytes).slice(0, 12)}…).` +
-        `\n    From the folder holding both clones:  node polaris-api-conventions/scripts/import-api-html.mjs polaris/${API_HTML}` +
+        `\n    From the folder holding both clones:  node polaris-toolbox/scripts/import-api-html.mjs polaris/${API_HTML}` +
         `\n    then bump plugin.json version, commit and push IN THAT REPO (it is a separate git repo).\n`,
     );
   }
