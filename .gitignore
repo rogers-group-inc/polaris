@@ -68,6 +68,11 @@ state/
 # (0600, unlinked after the run; a killed run can leave one behind).
 data/automation-scripts-tmp/
 
+# The firmware repository's uploaded images (FIRMWARE_DIR, data/firmware in dev).
+# Vendor binaries of 100+ MB each; a dev stack that uploaded two left ~190 MB
+# untracked beside the source (2026-10-22).
+data/firmware/
+
 # Local audit / review output — never commit (embeds local paths + findings)
 findings.json
 
