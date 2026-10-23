@@ -20,6 +20,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 - **MibFile** — admin-uploaded SNMP MIBs used by `oidRegistry` + `vendorTelemetryProfiles`.
 
 - **ManufacturerProfile** / **ManufacturerProfileMetric** / **ManufacturerProfileMetricOverride** / **ManufacturerCustomWidget** — operator-editable per-manufacturer telemetry profile + custom widget definitions. `widgetType` ∈ `gauge | line | table | state | http`; `state` is a state probe (see `AssetStateSample`) and `http` is an HTTP check (business rule 33). Every widget type is gated by `modelPattern` — blank means every asset of that manufacturer.
+- **AssetCustomWidgetEnable** — which widgets POLL which assets (business rule 130): `modelPattern` decides where a widget applies, a row here decides where it polls. Composite PK `(assetId, widgetId)`, both FKs cascade. `Asset.lastCustomWidgetAttemptAt` is the `customWidget` cadence's due anchor (rule 118); `lastCustomWidgetAt` stays the last success.
 
 - **ManufacturerAlias** — vendor-name canonicalization map.
 
@@ -507,6 +508,12 @@ ManufacturerCustomWidget        -- Powers Slice 7's Custom MIB tab. Every asset 
   labelSymbol    String?           -- STATE PROBE only: optional sibling symbol supplying each TABLE row's name, joined to the value walk on the shared OID index suffix (fgHwSensorEntName beside fgHwSensorEntAlarm). Without it rows are only nameable by bare index, which differs per model — so an alert would read "row .14 is in Alarm". Ignored on scalar probes.
   -- Widget definitions are configured under their parent ManufacturerProfile. The Slice 7 collector + asset details tab consume these rows; Slice 6a only owns persistence and the admin CRUD surface.
   -- A widgetType="state" row is a STATE PROBE rather than a rendered widget: the same walk, but each reading is mapped to a boolean at scrape time and written to AssetStateSample, which makes it alertable per row via the `customStateValue` automation metric. It still renders on the Custom MIB tab (as a per-row OK/Alarm list). `listStateProbes()` flattens every profile's probes for the automation builder, which needs each probe's NAME (its dimension value is this UUID) and its two state LABELS.
+
+AssetCustomWidgetEnable         -- Business rule 130: which manufacturer custom widgets POLL which assets. A widget APPLIES to every asset its profile + modelPattern match; it polls only those with a row here (presence = on). Written by the Custom MIB card switch and the profile card's "enable on these devices" picker (customWidgetEnablementService). New widgets start off; migration 20261024000000 switched on pairs with a sample in the prior 7 days.
+  assetId        UUID FK → Asset (cascade)        -- composite PK (assetId, widgetId)
+  widgetId       UUID FK → ManufacturerCustomWidget (cascade)
+  enabledAt      DateTime
+  enabledBy      String?           -- username, or "upgrade" for the migration seed
 
 ManufacturerAlias               -- Vendor name normalization map; collapses IEEE legal forms into a single canonical brand
   id            UUID PK

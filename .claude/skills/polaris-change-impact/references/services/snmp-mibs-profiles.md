@@ -27,6 +27,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/customWidgetEnablementService.ts
+
+**What it owns:** Which manufacturer custom widgets POLL which assets (business rule 130) — the `AssetCustomWidgetEnable` rows. A widget applies to every asset whose canonical manufacturer has its profile and whose model satisfies its `modelPattern`; it polls only where switched on.
+
+**Public API:** `widgetAppliesToModel()`, `enabledWidgetIdsForAsset()`, `assetIdsWithEnabledWidgets()`, `listWidgetCandidates()`, `setWidgetAssets()`, `setWidgetEnabledForAsset()`, types `WidgetCandidate`.
+
+**Cross-service deps:** `prisma.assetCustomWidgetEnable` / `prisma.manufacturerCustomWidget` / `prisma.asset`; `utils/manufacturerNormalize.normalizeManufacturer`; `utils/safeRegex.tryCompileSafeRegex` (rule 116); `eventLogService.logEventsBatch`.
+
+**Used by:** `src/api/routes/assets.ts` (`GET /:id/custom-widgets` reports each widget's `enabled`; `PUT /:id/custom-widgets/:widgetId/enabled`), `src/api/routes/manufacturerProfiles.ts` (`GET`/`PUT /:id/widgets/:widgetId/assets`), `src/services/monitoringService.ts` (`runCustomWidgetsFor` reads the asset's enabled set; `runMonitorPass` loads `assetIdsWithEnabledWidgets` once per pass), `src/jobs/monitorAssets.ts` (`publishDueWork`, once per heavy tick).
+
+**Invariants:**
+- Switching ON is refused (400) for an asset the widget does not apply to — another manufacturer, or a model the pattern excludes. Switching OFF is always allowed, so a row stranded by a model change can be cleared.
+- Every change writes one `asset.custom_widget.enabled|disabled` Event per asset changed, batched into one `logEventsBatch` — never one awaited write per asset.
+- The scheduler asks `assetIdsWithEnabledWidgets()` ONCE per tick (one `DISTINCT assetId` read), never per asset — at 2000 assets that is the difference between one query and 2000.
+- `listWidgetCandidates` matches on the profile's canonical manufacturer case-insensitively (asset manufacturers are alias-normalized on write by `db.ts`) and then applies the model pattern; it does not consult the profile's `matchPattern`, exactly like `GET /assets/:id/custom-widgets`.
+
+**When changing this:**
+- A new place that decides whether a manufacturer widget polls must read this table — `collectManufacturerWidgetSamples` takes the enabled set as an argument and polls nothing without it.
+- Generic API widgets (rule 100(i)) are deliberately outside this table; do not add them without a switch on their card too.
+
+---
+
 ## services/manufacturerProfileService.ts
 
 **What it owns:** CRUD + cached resolver for the editable per-manufacturer telemetry profiles (metric rows, per-metric overrides, custom widgets). A synchronous `getProfileFor` / `listCachedProfiles` pair serves the hot probe path after a boot warm-up.

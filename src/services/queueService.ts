@@ -53,6 +53,7 @@ import {
   runStorageFor,
   runProcessesFor,
   runEventLogFor,
+  runCustomWidgetsFor,
   runSdwanFor,
   runLossSweepFor,
   type MonitorCadence,
@@ -176,6 +177,11 @@ export const QUEUE_NAMES: Record<MonitorCadence, string> = {
   // SLA stream runs on its own (default 60s) interval; two small REST GETs per
   // gate, published on the light tick.
   sdwan:        "polaris-monitor-sdwan",
+  // Manufacturer custom widgets (business rule 130). Split off the telemetry
+  // pass 2026-10 so a widget polls whether or not the asset's CPU/memory
+  // stream is SNMP (a UPS has no CPU); only assets with a widget switched on
+  // publish here, at the hardware-sensor interval.
+  customWidget: "polaris-monitor-customwidget",
   // ICMP packet-loss sampler: a 10s side-probe for assets in warning /
   // recovering, feeding probeLossPct resolution only. Its own queue + pool so a
   // site-wide outage (hundreds of assets entering warning at once) drains
@@ -316,6 +322,7 @@ let slotPools: {
   eventLog:     WorkerSlotPool;
   sdwan:        WorkerSlotPool;
   lossSample:   WorkerSlotPool;
+  customWidget: WorkerSlotPool;
   floating:     WorkerSlotPool;
 } | null = null;
 
@@ -388,7 +395,9 @@ let floatingLoopRunning = false;
 // below probe/fastFiltered so probes (the cheapest cadence) never starve.
 // sdwan sits with fastFiltered: a per-minute stream whose value is timeliness,
 // and cheaper than any of the walks below it.
-const FLOAT_PRIORITY: MonitorCadence[] = ["probe", "fastFiltered", "sdwan", "lldp", "storage", "processes", "eventLog", "telemetry", "systemInfo"];
+// customWidget sits with telemetry: the same family of SNMP walks at the same
+// per-minute default, operator-chosen objects rather than a fleet-wide stream.
+const FLOAT_PRIORITY: MonitorCadence[] = ["probe", "fastFiltered", "sdwan", "lldp", "storage", "processes", "eventLog", "customWidget", "telemetry", "systemInfo"];
 
 
 // ─── Stalled-worker watchdog ─────────────────────────────────────────────────
@@ -687,6 +696,9 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
     // a sample that has not landed within 15s is worthless (the next one is
     // already due at 10s), so failing fast is better than holding a slot.
     lossSample:   15,
+    // A session of per-widget walks / HTTP checks, each bounded by the
+    // hardware-sensor timeout — telemetry's family, so telemetry's cap.
+    customWidget: 180,
   };
   // createQueue is idempotent on name but does NOT re-apply config to an
   // existing queue — the stored `expire_seconds` / `retry_limit` / etc on
@@ -865,6 +877,10 @@ export async function startPgbossWorkers(): Promise<void> {
   // fleet-wide during a site outage. A generous default is safe (a ping holds
   // its slot for ≤5s) and the cap is what stops it competing with real probes.
   const lossSampleWorkers = resolveEnvInt("POLARIS_MONITOR_LOSS_SAMPLE_WORKERS", 24);
+  // Manufacturer custom widgets (business rule 130): only assets with a widget
+  // switched on produce work, so sized like eventLog; the floating pool absorbs
+  // a burst (e.g. the first tick after a bulk enable).
+  const customWidgetWorkers = resolveEnvInt("POLARIS_MONITOR_CUSTOMWIDGET_WORKERS", 8);
   const floatingWorkers = resolveEnvInt("POLARIS_MONITOR_FLOATING_WORKERS", 32);
   setMonitorWorkers({
     probe:        probeWorkers,
@@ -877,11 +893,12 @@ export async function startPgbossWorkers(): Promise<void> {
     eventLog:     eventLogWorkers,
     sdwan:        sdwanWorkers,
     lossSample:   lossSampleWorkers,
+    customWidget: customWidgetWorkers,
     floating:     floatingWorkers,
   });
   logger.info(
     {
-      probeWorkers, fastWorkers, heavyWorkers, lldpWorkers, storageWorkers, processesWorkers, eventLogWorkers, sdwanWorkers, lossSampleWorkers, floatingWorkers, cores: cpus().length,
+      probeWorkers, fastWorkers, heavyWorkers, lldpWorkers, storageWorkers, processesWorkers, eventLogWorkers, sdwanWorkers, lossSampleWorkers, customWidgetWorkers, floatingWorkers, cores: cpus().length,
     },
     "pg-boss workers configured",
   );
@@ -901,6 +918,7 @@ export async function startPgbossWorkers(): Promise<void> {
     eventLog:     createWorkerSlotPool("eventlog",  eventLogWorkers),
     sdwan:        createWorkerSlotPool("sdwan",     sdwanWorkers),
     lossSample:   createWorkerSlotPool("losssample", lossSampleWorkers),
+    customWidget: createWorkerSlotPool("customwidget", customWidgetWorkers),
     floating:     createWorkerSlotPool("floating",  floatingWorkers),
   };
 
@@ -973,6 +991,14 @@ export async function startPgbossWorkers(): Promise<void> {
   }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("eventLog", jobs[0], (assetId, labels) =>
       runEventLogFor(assetId, labels),
+    );
+  });
+
+  await boss.work<MonitorJobPayload>(QUEUE_NAMES.customWidget, {
+    localConcurrency: customWidgetWorkers, batchSize: 1, pollingIntervalSeconds: 5,
+  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+    await runDedicatedWorker("customWidget", jobs[0], (assetId, labels) =>
+      runCustomWidgetsFor(assetId, labels),
     );
   });
 
@@ -1109,6 +1135,7 @@ async function dispatchFloatingJob(
       case "processes":    await runProcessesFor(assetId, labels);    break;
       case "eventLog":     await runEventLogFor(assetId, labels);     break;
       case "sdwan":        await runSdwanFor(assetId, labels);        break;
+      case "customWidget": await runCustomWidgetsFor(assetId, labels); break;
       // The sweep is the one chunked cadence, so it reads the whole array off
       // the payload rather than the single assetId the others take. (It is not
       // in the floating pool's priority list today — if its own budget is

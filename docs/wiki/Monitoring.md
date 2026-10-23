@@ -179,6 +179,17 @@ name that isn't in that MIB's list for the chosen symbol type is outlined in
 red. Changing the MIB or the symbol type clears a symbol the new list doesn't
 have.
 
+**A custom widget polls only the devices you switch it on for.** When you save
+a new widget, Polaris lists every device it applies to (the profile's
+manufacturer, narrowed by the widget's model pattern if it has one) with a
+checkbox each. Tick the devices to start polling it on and press **Enable**,
+or **Skip for now**. Until then the widget shows on those devices' Custom MIB
+tab but collects nothing. The widget's **Devices…** button reopens the same
+list later, with the current choices ticked; unticking a device stops polling
+it and keeps what was already collected. Both need `assets:write` as well as
+the Manufacturer Profiles permission. A switched-on widget polls on each
+device's hardware-sensor interval.
+
 **The Transform column only appears where Polaris applies it.** Today that is a
 scalar **Temperature** row, which offers **Tenths → Units** for a sensor that
 reports tenths of a degree (MikroTik's temperature objects report 315 for

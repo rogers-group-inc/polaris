@@ -1177,9 +1177,23 @@ Shown when the asset's manufacturer profile defines **custom widgets**
 (Server Settings → Credentials → Manufacturer Profiles). One card per widget,
 drawn as its type says — a gauge with its threshold ranges, a line over the
 last 60 samples, a table, or a pass/fail state.
-Widgets are collected on their own cadence (60 seconds by default); the tab
-shows the freshest sample and says so when none has arrived yet, or when the
-asset's polling is disabled.
+
+**A widget polls this asset only when its switch is on.** Each manufacturer
+widget's card has a switch at its top right. Off (the default for a new
+widget) means Polaris never asks the device for that widget. The card says
+so, and dims the last reading if one was collected earlier. On means Polaris
+polls it as often as the asset's **hardware-sensor** interval (60 seconds by
+default), whatever the asset's CPU/memory polling is set to. A UPS can
+poll its battery widgets without a CPU/memory stream. Turning a switch on or
+off needs `assets:write` and is recorded in the asset's Events. To switch a
+widget on for many devices at once, use the widget's **Devices…** button on
+its manufacturer profile (see [Monitoring](Monitoring)).
+
+Polling uses the first SNMP credential on the asset, in this order: the custom
+widget credential, the hardware-sensor credential, the CPU/memory credential,
+then the general monitor credential. The tab shows the freshest sample and
+says so when none has arrived yet. Widgets from a Generic API integration have
+no switch and update with the integration's telemetry.
 
 ### Wireless (access points)
 

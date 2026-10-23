@@ -31,6 +31,16 @@ import {
 } from "../../utils/symbolTransforms.js";
 import { requestActor } from "../middleware/auth.js";
 import { logEvent } from "./events.js";
+import { z } from "zod";
+import { AppError } from "../../utils/errors.js";
+import { listWidgetCandidates, setWidgetAssets } from "../../services/customWidgetEnablementService.js";
+
+// PUT /:id/widgets/:widgetId/assets (business rule 130). Bounded so one call
+// cannot carry an unbounded id list.
+const WidgetAssetsSchema = z.object({
+  enable:  z.array(z.string().min(1)).max(5000).optional(),
+  disable: z.array(z.string().min(1)).max(5000).optional(),
+});
 
 const router: Router = Router();
 
@@ -242,6 +252,35 @@ router.delete("/:id/widgets/:widgetId", requirePermission("manufacturerProfiles"
   });
   res.status(204).end();
 }));
+
+// GET /:id/widgets/:widgetId/assets — the assets a widget applies to, each with
+// whether it is switched on (business rule 130). Lists devices, so it needs
+// assets read on top of the profile key.
+router.get(
+  "/:id/widgets/:widgetId/assets",
+  requirePermission("manufacturerProfiles", "read"),
+  requirePermission("assets", "read"),
+  handle(async (req, res) => {
+    const assets = await listWidgetCandidates(String(req.params.id), String(req.params.widgetId));
+    send(res, { assets });
+  }),
+);
+
+// PUT /:id/widgets/:widgetId/assets — switch the widget on for some assets and
+// off for others (the "enable on these devices" picker). Changes what Polaris
+// asks each device, so it needs assets write too; the service writes one
+// asset.custom_widget.* Event per asset changed.
+router.put(
+  "/:id/widgets/:widgetId/assets",
+  requirePermission("manufacturerProfiles", "write"),
+  requirePermission("assets", "write"),
+  handle(async (req, res) => {
+    const parsed = WidgetAssetsSchema.safeParse(req.body);
+    if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+    const result = await setWidgetAssets(String(req.params.id), String(req.params.widgetId), parsed.data, requestActor(req));
+    send(res, result);
+  }),
+);
 
 // DELETE /:id — admin only.
 router.delete("/:id", requirePermission("manufacturerProfiles", "write"), handle(async (req, res) => {

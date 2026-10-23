@@ -260,6 +260,9 @@ const macRegex = /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/;
 
 // PUT /assets/:id/primary-address — one (MAC, IP) pair from the asset's
 // address list (business rule 102).
+// PUT /assets/:id/custom-widgets/:widgetId/enabled (business rule 130).
+const CustomWidgetEnabledSchema = z.object({ enabled: z.boolean() });
+
 const PrimaryAddressSchema = z.object({
   mac: z.string().trim().min(1).max(64),
   ip: z.string().trim().min(1).max(64),
@@ -3307,6 +3310,7 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
 
     if (applicableWidgets.length === 0) {
       return res.json({
+        assetId:         asset.id,
         manufacturer:    asset.manufacturer,
         profileId:       profile?.id ?? null,
         polling:         asset.customWidgetPolling ?? null,
@@ -3319,6 +3323,8 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
     // gauges + tables grab the freshest. One query covering every applicable
     // widget id, then partition client-side.
     const ids = applicableWidgets.map((w) => w.id);
+    const { enabledWidgetIdsForAsset } = await import("../../services/customWidgetEnablementService.js");
+    const enabledIds = await enabledWidgetIdsForAsset(id);
     const samples = await prisma.assetCustomWidgetSample.findMany({
       where: { assetId: id, widgetId: { in: ids } },
       orderBy: { timestamp: "desc" },
@@ -3369,6 +3375,7 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
     }
 
     return res.json({
+      assetId:         asset.id,
       manufacturer:    asset.manufacturer,
       profileId:       profile?.id ?? null,
       polling:         asset.customWidgetPolling ?? null,
@@ -3395,9 +3402,29 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
           labelSymbol:    w.labelSymbol,
           stateRows:      w.widgetType === "state" ? (latestState.get(w.id) ?? []) : undefined,
           source:         "source" in w ? w.source : { kind: "manufacturer" },
+          // Business rule 130: a manufacturer widget polls this asset only when
+          // switched on here. Generic API widgets carry no switch (null).
+          enabled:        "source" in w ? null : enabledIds.has(w.id),
         };
       }),
     });
+  } catch (err) { next(err); }
+});
+
+// PUT /assets/:id/custom-widgets/:widgetId/enabled — the per-card switch on the
+// Custom MIB tab (business rule 130). Writes an asset.custom_widget.* Event.
+router.put("/:id/custom-widgets/:widgetId/enabled", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const parsed = CustomWidgetEnabledSchema.safeParse(req.body);
+    if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
+    const { setWidgetEnabledForAsset } = await import("../../services/customWidgetEnablementService.js");
+    await setWidgetEnabledForAsset(
+      req.params.id as string,
+      req.params.widgetId as string,
+      parsed.data.enabled,
+      (req as any).session?.username,
+    );
+    res.json({ enabled: parsed.data.enabled });
   } catch (err) { next(err); }
 });
 

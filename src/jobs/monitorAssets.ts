@@ -44,9 +44,11 @@ import {
   resolveProbeIntervalSec,
   resolveSdwanIntervalSec,
   sdwanShouldQueue,
+  customWidgetIntervalSec,
   MONITOR_CANDIDATE_WHERE,
   type MonitorCadence,
 } from "../services/monitoringService.js";
+import { assetIdsWithEnabledWidgets } from "../services/customWidgetEnablementService.js";
 import { getBootTimeMode, publishMonitorJobsBulk, publishMonitorSweepJob, publishProbeBatchJob } from "../services/queueService.js";
 import {
   lossSweepIncludes,
@@ -133,7 +135,7 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
   // per asset row, 2000× per tick. One integration read per tick resolves the
   // flag instead; `type` stays joined below (a scalar, and the identical
   // select the cursor twin uses in loadMonitorPassCandidates).
-  const [integrations, candidates] = await Promise.all([
+  const [integrations, candidates, widgetAssetIds] = await Promise.all([
     prisma.integration.findMany({ select: { id: true, config: true } }),
     prisma.asset.findMany({
     // Shared with runMonitorPass — excludes assets in maintenance mode so
@@ -178,8 +180,13 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       monitoredStorage: true,
       monitoredIpsecTunnels: true,
       dependencySuppressed: true,
+      // Manufacturer custom-widget cadence anchor (business rules 118 + 130).
+      lastCustomWidgetAttemptAt: true,
     },
     }),
+    // Assets with a custom widget switched on (business rule 130) — one query
+    // per tick, and only on the tick that publishes the cadence.
+    enabled.has("customWidget") ? assetIdsWithEnabledWidgets() : Promise.resolve(new Set<string>()),
   ]);
 
   // verboseDebug per integration, resolved once per tick: `verboseLogging`
@@ -380,6 +387,14 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       const storageTransport = eff.storagePolling || "unknown";
       queueJob("storage", a.id, { transport: storageTransport, assetType, verboseDebug });
     }
+    // Manufacturer custom widgets (business rule 130): only for an asset with a
+    // widget switched on, at the hardware-sensor interval, isUp-gated. No
+    // polling-method gate — the per-asset switch is the gate. Keep in lockstep
+    // with monitoringService.computeDueWork.
+    if (isUp && enabled.has("customWidget") && widgetAssetIds.has(a.id) &&
+        isDue(a.lastCustomWidgetAttemptAt, customWidgetIntervalSec(eff))) {
+      queueJob("customWidget", a.id, { transport: "snmp", assetType, verboseDebug });
+    }
     // Agentless processes cadence — ssh/winrm only (agent-mode assets
     // self-collect; SNMP hrSWRunTable stays declared-but-unimplemented). Due
     // when the inventory interval elapsed OR pins/mapped names arm the 60s
@@ -502,10 +517,12 @@ async function heavyTick(): Promise<void> {
         // effects on cursor installs. The agentless "processes" and "eventLog"
         // cadences have NO side effect to ride, so they dispatch explicitly in
         // BOTH modes.
-        await publishDueWork(["telemetry", "systemInfo", "lldp", "storage", "processes", "eventLog"]);
+        // Manufacturer custom widgets (business rule 130) have no side effect to
+        // ride either, so they dispatch in BOTH modes too.
+        await publishDueWork(["telemetry", "systemInfo", "lldp", "storage", "processes", "eventLog", "customWidget"]);
       } else {
         const stats = await runMonitorPass({
-          cadences: ["telemetry", "systemInfo", "processes", "eventLog"],
+          cadences: ["telemetry", "systemInfo", "processes", "eventLog", "customWidget"],
           concurrency: HEAVY_CONCURRENCY,
         });
         if (stats.telemetry.collected > 0 || stats.systemInfo.collected > 0 || stats.processes.collected > 0) {

@@ -9765,6 +9765,9 @@ function renderWidgetCard(profileId, w, manufacturer) {
       '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
       '<span style="font-size:0.72rem;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:0.04em">' + escapeHtml(WIDGET_TYPE_LABELS[w.widgetType] || w.widgetType) + '</span>' +
       '<span style="flex:1"></span>' +
+      // Which assets poll this widget (business rule 130). Needs assets write
+      // on top of the profile key, like the server route.
+      (permAtLeast("assets", "write") ? '<button class="btn btn-sm mfg-widget-devices" title="Choose which devices poll this widget">Devices…</button> ' : '') +
       '<button class="btn btn-sm mfg-widget-edit">Edit</button>' +
       ' <button class="btn btn-sm btn-danger mfg-widget-del">Del</button>' +
     '</div>' +
@@ -10964,6 +10967,16 @@ function wireManufacturerProfileControls() {
       }
       return;
     }
+    var widgetDevBtn = target.closest(".mfg-widget-devices");
+    if (widgetDevBtn) {
+      var cardDev = widgetDevBtn.closest(".mfg-widget-card");
+      if (!cardDev) return;
+      var pidDev = cardDev.getAttribute("data-profile-id");
+      var widDev = cardDev.getAttribute("data-widget-id");
+      var prof = (_mfgProfileDetail && _mfgProfileDetail[pidDev]) || null;
+      var wDef = prof && (prof.widgets || []).find(function (x) { return x.id === widDev; });
+      return openWidgetDevicesModal(pidDev, wDef || { id: widDev, name: "widget" }, false);
+    }
     var widgetDelBtn = target.closest(".mfg-widget-del");
     if (widgetDelBtn) {
       var cardDel = widgetDelBtn.closest(".mfg-widget-card");
@@ -11872,9 +11885,127 @@ async function saveNewWidget(scope) {
     showToast("Widget added");
     _mfgToastWarnings(resp);
     renderIdentificationTab();
+    // Business rule 130: a new widget polls nothing until it is switched on
+    // for an asset, so offer the devices it applies to straight away.
+    if (resp && resp.widget && permAtLeast("assets", "write")) {
+      openWidgetDevicesModal(profileId, resp.widget, true);
+    }
   } catch (err) {
     showToast(err.message || "Add widget failed", "error");
   }
+}
+
+// ─── "Enable on these devices" (business rule 130) ─────────────────────────
+// Lists the assets a widget applies to (its profile's manufacturer + optional
+// model pattern) with a checkbox each. Opened right after a widget is created
+// (nothing is checked — a new widget polls nothing until chosen here or on an
+// asset's Custom MIB tab) and from the widget card's Devices… button (current
+// state pre-checked). Saves only the difference.
+async function openWidgetDevicesModal(profileId, widget, isNew) {
+  var title = (isNew ? "Enable " : "Devices for ") + '"' + widget.name + '"';
+  openModal(title, '<p class="empty-state" style="margin:0">Loading devices…</p>',
+    '<button class="btn btn-secondary" id="wdev-cancel">' + (isNew ? "Skip for now" : "Cancel") + '</button>');
+  document.getElementById("wdev-cancel").addEventListener("click", closeModal);
+  var rows;
+  try {
+    rows = ((await api.serverSettings.listProfileWidgetAssets(profileId, widget.id)) || {}).assets || [];
+  } catch (err) {
+    var b = document.querySelector("#modal-overlay .modal-body");
+    if (b) b.innerHTML = '<p style="color:var(--color-danger);margin:0">' + escapeHtml(err.message || "Could not load devices") + '</p>';
+    return;
+  }
+  var initial = {};
+  rows.forEach(function (r) { initial[r.id] = !!r.enabled; });
+  var body = document.querySelector("#modal-overlay .modal-body");
+  var footer = document.querySelector("#modal-overlay .modal-footer");
+  if (!body || !footer) return;
+
+  if (!rows.length) {
+    body.innerHTML = '<p style="margin:0">No assets match this widget yet' +
+      (widget.modelPattern ? ' (manufacturer + model pattern <code>' + escapeHtml(widget.modelPattern) + '</code>)' : '') +
+      '. It can be switched on later from an asset\'s Custom MIB tab or this card\'s Devices… button.</p>';
+    return;
+  }
+
+  body.innerHTML =
+    '<p style="margin:0 0 0.6rem;font-size:0.85rem;color:var(--color-text-secondary)">' +
+      (isNew
+        ? 'This widget polls nothing until it is switched on for a device. Choose the devices to start polling it on now.'
+        : 'Checked devices poll this widget on their hardware-sensor interval. Unchecking one stops polling it; its collected history stays.') +
+    '</p>' +
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:0.5rem">' +
+      '<input type="search" id="wdev-filter" placeholder="Filter by name, IP or model" style="flex:1">' +
+      '<span id="wdev-count" style="font-size:0.8rem;color:var(--color-text-tertiary);white-space:nowrap"></span>' +
+    '</div>' +
+    '<div style="max-height:50vh;overflow:auto;border:1px solid var(--color-border);border-radius:4px">' +
+      '<table class="data-table" style="font-size:0.84rem;margin:0"><thead><tr>' +
+        '<th style="width:32px"><input type="checkbox" id="wdev-all" title="Select every listed device"></th>' +
+        '<th>Device</th><th>IP address</th><th>Model</th><th>Status</th>' +
+      '</tr></thead><tbody id="wdev-rows">' +
+      rows.map(function (r) {
+        var hay = [r.hostname, r.ipAddress, r.model].filter(Boolean).join(" ").toLowerCase();
+        return '<tr data-hay="' + escapeHtml(hay) + '">' +
+          '<td><input type="checkbox" class="wdev-pick" data-id="' + escapeHtml(r.id) + '"' + (r.enabled ? " checked" : "") + '></td>' +
+          '<td>' + escapeHtml(r.hostname || "—") + (r.monitored ? '' : ' <span style="font-size:0.75rem;color:var(--color-text-tertiary)">(not monitored)</span>') + '</td>' +
+          '<td class="mono">' + escapeHtml(r.ipAddress || "—") + '</td>' +
+          '<td>' + escapeHtml(r.model || "—") + '</td>' +
+          '<td>' + escapeHtml(r.monitorStatus || "—") + '</td>' +
+        '</tr>';
+      }).join("") +
+      '</tbody></table>' +
+    '</div>';
+  footer.innerHTML =
+    '<button class="btn btn-secondary" id="wdev-cancel">' + (isNew ? "Skip for now" : "Cancel") + '</button>' +
+    '<button class="btn btn-primary" id="wdev-save"></button>';
+
+  var picks = Array.prototype.slice.call(body.querySelectorAll(".wdev-pick"));
+  var allBox = document.getElementById("wdev-all");
+  var saveBtn = document.getElementById("wdev-save");
+  function visible(p) { return p.closest("tr").style.display !== "none"; }
+  function refresh() {
+    var checked = picks.filter(function (p) { return p.checked; }).length;
+    var changed = picks.filter(function (p) { return p.checked !== initial[p.getAttribute("data-id")]; }).length;
+    document.getElementById("wdev-count").textContent = checked + " of " + picks.length + " selected";
+    saveBtn.textContent = isNew ? (checked ? "Enable on " + checked + " device" + (checked === 1 ? "" : "s") : "Enable") : "Save";
+    saveBtn.disabled = changed === 0;
+    var vis = picks.filter(visible);
+    allBox.checked = vis.length > 0 && vis.every(function (p) { return p.checked; });
+  }
+  picks.forEach(function (p) { p.addEventListener("change", refresh); });
+  allBox.addEventListener("change", function () {
+    picks.filter(visible).forEach(function (p) { p.checked = allBox.checked; });
+    refresh();
+  });
+  document.getElementById("wdev-filter").addEventListener("input", function () {
+    var q = this.value.trim().toLowerCase();
+    picks.forEach(function (p) {
+      var tr = p.closest("tr");
+      tr.style.display = !q || tr.getAttribute("data-hay").indexOf(q) !== -1 ? "" : "none";
+    });
+    refresh();
+  });
+  document.getElementById("wdev-cancel").addEventListener("click", closeModal);
+  saveBtn.addEventListener("click", async function () {
+    var enable = [], disable = [];
+    picks.forEach(function (p) {
+      var id = p.getAttribute("data-id");
+      if (p.checked && !initial[id]) enable.push(id);
+      if (!p.checked && initial[id]) disable.push(id);
+    });
+    saveBtn.disabled = true;
+    try {
+      var res = await api.serverSettings.setProfileWidgetAssets(profileId, widget.id, { enable: enable, disable: disable });
+      closeModal();
+      var parts = [];
+      if (res && res.enabled)  parts.push("on for " + res.enabled);
+      if (res && res.disabled) parts.push("off for " + res.disabled);
+      showToast('"' + widget.name + '" polling ' + (parts.join(", ") || "unchanged") + " device(s)", "success");
+    } catch (err) {
+      showToast(err.message || "Could not update devices", "error");
+      saveBtn.disabled = false;
+    }
+  });
+  refresh();
 }
 
 async function saveWidgetEdit(scope) {

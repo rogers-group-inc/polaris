@@ -915,6 +915,8 @@ model Asset {
   lldpCredential           Credential? @relation("AssetLldpCred", fields: [lldpCredentialId], references: [id], onDelete: SetNull)
   customWidgetCredentialId String?
   customWidgetCredential   Credential? @relation("AssetCustomWidgetCred", fields: [customWidgetCredentialId], references: [id], onDelete: SetNull)
+  // Manufacturer custom widgets switched on for this asset (business rule 130).
+  customWidgetEnables      AssetCustomWidgetEnable[]
   processesCredentialId    String?
   processesCredential      Credential? @relation("AssetProcessesCred", fields: [processesCredentialId], references: [id], onDelete: SetNull)
   eventLogCredentialId     String?
@@ -1180,6 +1182,10 @@ model Asset {
   lastSdwanAt             DateTime?
   // Bumped after every successful collectCustomWidgets pass.
   lastCustomWidgetAt      DateTime?
+  // Every custom-widget pass, success or not — the scheduler's due anchor for
+  // the dedicated customWidget cadence (business rules 118 + 130). The pass is
+  // timed by the resolved temperatureIntervalSeconds (hardware sensors).
+  lastCustomWidgetAttemptAt DateTime?
 
   // ifNames the operator pinned for fast-cadence polling. Each name in this
   // array is also scraped on the response-time interval (default 60s) so that
@@ -4646,10 +4652,31 @@ model ManufacturerCustomWidget {
   createdBy      String?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
+  assetEnables   AssetCustomWidgetEnable[]
 
   @@index([profileId, order])
   @@index([mibId])
   @@map("manufacturer_custom_widgets")
+}
+
+// Which manufacturer custom widgets are switched ON for which assets (business
+// rule 130). A widget APPLIES to every asset its profile + model pattern
+// match, but it POLLS only the assets with a row here — presence is the
+// switch. Rows come from the toggle on the asset's Custom MIB tab card and from
+// the "enable on these devices" picker on the Manufacturer Profiles card.
+// Both FKs cascade: deleting the widget or the asset leaves nothing to poll.
+// (AssetCustomWidgetSample keeps no FK — history outlives the switch.)
+model AssetCustomWidgetEnable {
+  assetId   String
+  asset     Asset                    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  widgetId  String
+  widget    ManufacturerCustomWidget @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+  enabledAt DateTime                 @default(now())
+  enabledBy String?
+
+  @@id([assetId, widgetId])
+  @@index([widgetId])
+  @@map("asset_custom_widget_enables")
 }
 
 model Conflict {

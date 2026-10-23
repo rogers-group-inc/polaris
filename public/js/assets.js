@@ -10768,25 +10768,72 @@ function _customMibTabHTML(payload) {
       ' — defined on its Monitoring tab.');
   }
   var hint = parts.join(" ");
-  if (payload.polling === "disabled") {
+  // Business rule 130: a manufacturer widget polls this asset only once its
+  // card's switch is on. `enabled` is null on a Generic API widget (no switch).
+  var mfrWidgets = payload.widgets.filter(function (w) { return w.enabled !== null && w.enabled !== undefined; });
+  var anyOn = mfrWidgets.some(function (w) { return w.enabled; });
+  if (mfrWidgets.length && !anyOn) {
+    hint += ' <span style="color:var(--color-warning)">Polling is off for every widget — ' +
+      (canManageAssets() ? 'switch a card on to start collecting.' : 'an asset editor can switch one on.') + '</span>';
+  } else if (payload.polling === "disabled") {
     hint += ' <span style="color:var(--color-warning)">Polling is disabled for this asset; data may be stale.</span>';
   } else if (!payload.lastCustomWidgetAt) {
     hint += ' <span style="color:var(--color-text-tertiary)">No sample collected yet — waiting for the next probe cycle.</span>';
   }
   var html = '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">' + hint + '</div>';
-  html += '<div class="custom-mib-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">';
+  html += '<div class="custom-mib-grid" data-asset-id="' + escapeHtml(payload.assetId || "") + '" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">';
   payload.widgets.forEach(function (w) {
+    var hasSwitch = w.enabled !== null && w.enabled !== undefined;
+    var off = hasSwitch && !w.enabled;
+    var toggle = !hasSwitch ? "" :
+      '<label class="toggle-switch" style="flex-shrink:0" title="' +
+        (w.enabled ? "Polling on — click to stop polling this widget on this asset" : "Polling off — click to start polling this widget on this asset") + '">' +
+        '<input type="checkbox" class="custom-widget-toggle" data-widget-id="' + escapeHtml(w.id) + '"' +
+          (w.enabled ? " checked" : "") + (canManageAssets() ? "" : " disabled") + '>' +
+        '<span class="toggle-slider"></span>' +
+      '</label>';
     html += '<div class="custom-mib-card" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '" style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">' +
         '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
-        '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono)">' + escapeHtml(w.symbol) + '</span>' +
+        '<span style="display:flex;align-items:center;gap:8px;min-width:0">' +
+          '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis">' + escapeHtml(w.symbol) + '</span>' +
+          toggle +
+        '</span>' +
       '</div>' +
-      _renderCustomWidgetBody(w) +
+      (off
+        ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.' +
+            (w.latest || (w.stateRows && w.stateRows.length) ? ' Showing the last reading collected.' : '') + '</p>' +
+          (w.latest || (w.stateRows && w.stateRows.length) ? '<div style="opacity:0.55">' + _renderCustomWidgetBody(w) + '</div>' : '')
+        : _renderCustomWidgetBody(w)) +
     '</div>';
   });
   html += '</div>';
   return html;
 }
+
+// The Custom MIB card switch (business rule 130). Delegated at the document so
+// the panel can re-render freely; on success the panel is redrawn from a fresh
+// payload, on failure the switch snaps back and the error is toasted.
+document.addEventListener("change", async function (e) {
+  var input = e.target;
+  if (!input || !input.classList || !input.classList.contains("custom-widget-toggle")) return;
+  var grid = input.closest(".custom-mib-grid");
+  var assetId = grid && grid.getAttribute("data-asset-id");
+  if (!assetId) return;
+  var want = input.checked;
+  input.disabled = true;
+  try {
+    await api.assets.setCustomWidgetEnabled(assetId, input.getAttribute("data-widget-id"), want);
+    showToast(want ? "Widget polling on — the first reading arrives within one hardware-sensor interval" : "Widget polling off", "success");
+    var payload = await api.assets.customWidgets(assetId);
+    var panel = document.getElementById("asset-view-tab-customMib");
+    if (panel && payload) panel.innerHTML = _customMibTabHTML(payload);
+  } catch (err) {
+    input.checked = !want;
+    input.disabled = false;
+    showToast(err.message || "Could not change widget polling", "error");
+  }
+});
 
 function _renderCustomWidgetBody(w) {
   // State probes carry their readings in `stateRows`, not `latest` (their 0/1
