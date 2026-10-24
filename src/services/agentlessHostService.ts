@@ -16,8 +16,8 @@
  * over `sshExec` / `winrmRunPowershell`.
  *
  * **Commands are constants, not operator-editable.** Arbitrary remote commands
- * are RCE-equivalent and would belong behind the `automationScripts` fullwrite
- * gate with sha256 change auditing. Operators needing something bespoke have the
+ * are RCE-equivalent and would belong behind the `automationScripts` write
+ * gate (its top level) with sha256 change auditing. Operators needing something bespoke have the
  * AutomationScript registry, which already has that machinery. Nothing here
  * interpolates caller input into a command line, so there is no shell-injection
  * surface to guard — if that ever changes, copy

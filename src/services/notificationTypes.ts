@@ -2323,15 +2323,13 @@ export const escalationV2Schema = z
  * unacknowledged holiday weekend doesn't require an emergency edit to a live
  * automation.
  *
- * `quiet` is the recurring stretches during which a DUE reminder is held
- * rather than sent (business rule 44) — server-local wall clock, the same
- * recurrence shapes the Maintenance scheduler uses (utils/quietTime.ts). It
- * lives INSIDE the repeat config, not beside it, because it is the reminder
- * clock it modifies and nothing else: the first alert always sends, and
- * escalation tiers keep running through a quiet window on purpose (a tier
- * exists to chase a specific person harder, and silencing it would quietly
- * weaken an escalation the operator configured somewhere they weren't
- * looking).
+ * `quiet` is LEGACY. Quiet time is now the automation's own policy (rule-level
+ * `quietTime`, business rule 92); the reminder sweep never reads
+ * `repeat.quiet`. It stays accepted so an older export file or API client
+ * still validates: `legacyQuietTimeOf` promotes its windows into `quietTime`
+ * when a body is normalized, the `migrateRepeatQuietToQuietTime` job did the
+ * same for stored rows, and the policy description falls back to it only
+ * when a rule has no `quietTime`.
  */
 export const repeatConfigSchema = z
   .object({

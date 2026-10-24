@@ -9,10 +9,10 @@
  *   GET  /runs          automationScripts:read       (run history, filterable)
  *   GET  /runs/:id      automationScripts:read       (single run — test-run polling)
  *   GET  /:id           automationScripts:read
- *   POST /              automationScripts:fullwrite  (create — warning Event)
- *   PUT  /:id           automationScripts:fullwrite  (update — warning Event on body change)
- *   DELETE /:id         automationScripts:fullwrite  (409 when referenced by an automation)
- *   POST /:id/test-run  automationScripts:fullwrite  (server-target only; enqueues a run
+ *   POST /              automationScripts:write      (create — warning Event)
+ *   PUT  /:id           automationScripts:write      (update — warning Event on body change)
+ *   DELETE /:id         automationScripts:write      (409 when referenced by an automation)
+ *   POST /:id/test-run  automationScripts:write      (server-target only; enqueues a run
  *                                                     and returns runId — poll /runs/:id)
  *
  * The `automationScripts` key is RCE-equivalent (see permissions.ts) — every
