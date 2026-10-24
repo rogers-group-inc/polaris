@@ -687,7 +687,8 @@ its own accent-coloured block.
 |---|---|
 | Severities | must **strictly increase**; thresholds need not be monotonic — the most-severe *met* tier wins |
 | Shared | metric, aggregation, window, dimension filter — greyed on a tier |
-| Editable per tier | operator and value, plus its own "Sustained for" |
+| Editable per tier | operator and value |
+| Hold | one — the trigger's **"Sustained for"** governs every tier |
 | Max | 4 tiers |
 | Actions | tiers can share the base actions, or have their own — see [Actions](Automation-Actions) |
 
@@ -695,8 +696,13 @@ One alert **climbs and eases in place** rather than firing several.
 De-escalation is immediate, and the hysteresis dead band eases to the base
 severity.
 
-A new tier defaults one rank above the previous and inherits the base's current
-hold, so adding one changes nothing until you edit it.
+A new tier defaults one rank above the previous, so adding one changes nothing
+until you edit its value.
+
+Through the API a tier may still carry its own hold (`forDurationSec` on the
+band, in seconds), and the engine honours it. The wizard shows only the one
+hold, so **saving the automation from the wizard removes per-tier holds** and
+every tier then follows "Sustained for".
 
 ---
 

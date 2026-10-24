@@ -1468,6 +1468,14 @@
           before creating it — it reports which devices the draft would cover and how many
           readings meet it right now, and writes nothing.
         </p>
+        <p>
+          An <code>asset_state</code> trigger on <code>monitorStatus == down</code> is not
+          only an alert: its <code>missedPolls</code> is how down detection is defined for its
+          devices, and a device no such automation covers is never declared down.
+          <code>alertWhenDependencyDown: true</code> also alerts when a device is silenced
+          because its parent is down. Check
+          <code>GET /automations/:id/removal-impact</code> before deleting or disabling one.
+        </p>
 
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /automations
@@ -1501,19 +1509,21 @@
               <code>notice | informational | warning | serious | critical</code> (default
               <code>warning</code>).</li>
             <li><code>trigger</code> (required), one of:
-              <code>{ type: "asset_metric", metric, operator, threshold, aggregation?, windowPolls?, forPolls?, dimensionFilter? }</code>
+              <code>{ type: "asset_metric", metric, operator, threshold, aggregation?, windowSec?, windowPolls?, forPolls?, dimensionFilter? }</code>
               (a reading such as <code>cpuPct</code>, <code>hwSensorValue</code>,
               <code>customStateValue</code>, <code>pathOk</code>);
-              <code>{ type: "asset_state", field, operator, value, forPolls? }</code> (a state
-              such as <code>monitorStatus</code>);
+              <code>{ type: "asset_state", field, operator, value, forPolls?, missedPolls?, alertWhenDependencyDown? }</code>
+              (a state such as <code>monitorStatus</code>; the last two only on
+              <code>monitorStatus == down</code>);
               <code>{ type: "host_metric", … }</code> (the Polaris server itself);
               <code>{ type: "event", actionPattern, resourceType?, minLevel?, detailsMatch? }</code>
               (an audit Event, glob on its action);
               <code>{ type: "change", changeType, dimensionFilter? }</code>; or
               <code>{ type: "composite", kind: "asset" | "host", op: "and" | "or", children, forPolls? }</code>
               (a tree of metric / state conditions). Operators are
-              <code>&gt; &gt;= &lt; &lt;= == !=</code>. A hold (<code>forPolls</code>) and a
-              window (<code>windowPolls</code>) count <em>readings</em>, not seconds.</li>
+              <code>&gt; &gt;= &lt; &lt;= == !=</code>. A hold (<code>forPolls</code>) counts
+              readings. A window is <code>windowSec</code> (seconds of samples) or
+              <code>windowPolls</code> (the last N readings; wins when set).</li>
             <li><code>scope?</code> — the device filter: <code>{ "allAssets": true }</code>, or
               <code>assetTypes</code>, <code>tags</code>, <code>manufacturers</code>, …, or a
               <code>condition</code> tree. <strong><code>{}</code> selects no devices</strong>
@@ -1538,10 +1548,6 @@
        "trigger":{"type":"asset_metric","metric":"cpuPct","operator":"&gt;","threshold":90,"forPolls":3},
        "scope":{"assetTypes":["firewall"]},"reset":{"mode":"auto"}}' \
   "<span class="js-base-url">/api/v1</span>/automations"</code></pre>
-          <p>An <code>asset_state</code> trigger on <code>monitorStatus == down</code> is not
-            only an alert: its <code>missedPolls</code> is how down detection is defined for its
-            devices, and a device no such automation covers is never declared down. Check
-            <code>GET /automations/:id/removal-impact</code> before deleting or disabling one.</p>
         </div>
 
         <div class="endpoint">
