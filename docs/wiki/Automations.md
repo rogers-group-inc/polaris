@@ -8,8 +8,8 @@ Polaris a monitoring tool rather than an inventory.
 
 | Gate | Grants |
 |---|---|
-| `automationManagement:read` | see the page, preview, export, view code |
-| `automationManagement:write` | create, edit, clone, delete, run test deliveries |
+| `automationManagement:read` | see the page, export, view code |
+| `automationManagement:write` | create, edit, clone, delete, preview a draft against current data, run test deliveries |
 | `automationScripts:read` / `:write` | the Scripts tab; attaching a script action needs **write** |
 | `contacts:read` | the Address Book tab |
 | `alerts:read` / `:write` / `:fullwrite` | see alerts / acknowledge / clear |
