@@ -195,6 +195,9 @@ function _renderPanelHeader(data) {
         '<button data-fmt="csv">Export as CSV</button>' +
       '</div>' +
     '</div>' +
+    // Re-reads this page of addresses from Polaris — no device is queried,
+    // so it shows for every reader, unlike Discover beside it.
+    '<button type="button" class="btn btn-glyph btn-glyph-refresh btn-sm btn-secondary" id="ip-panel-reload-btn" title="Reload this network\'s addresses">Refresh</button>' +
     (s.refreshEligible && canReserveIps() ? '<button class="btn btn-sm btn-primary" id="ip-panel-refresh-btn" title="Query the FortiGate and update Polaris">Discover</button>' : '') +
     (canReserveIps() && !data.ipv6 ? '<button class="btn btn-sm btn-secondary" id="ip-panel-auto-alloc-btn">Auto-Allocate Next</button>' : '') +
     (canReserveIps() ? '<button class="btn btn-sm btn-primary" id="ip-panel-reserve-btn">+ Reserve IP</button>' : '') +
@@ -213,6 +216,16 @@ function _renderPanelHeader(data) {
   if (btn) {
     btn.addEventListener("click", function () {
       _openReserveModal(_ipPanelSubnetId, null);
+    });
+  }
+  var reloadBtn = document.getElementById("ip-panel-reload-btn");
+  if (reloadBtn) {
+    // A successful fetch re-renders the header (and this button); a failed
+    // one leaves it, so re-enable it here.
+    reloadBtn.addEventListener("click", async function () {
+      reloadBtn.disabled = true;
+      await _fetchIpPage();
+      reloadBtn.disabled = false;
     });
   }
   var refreshBtn = document.getElementById("ip-panel-refresh-btn");

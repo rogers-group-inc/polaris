@@ -200,6 +200,11 @@ edit.
 Open a network to get the **address panel**: every address in the range, what
 is on it, and what you can do about it.
 
+The header's **Refresh** button re-reads the open page of addresses from
+Polaris — a reservation someone else just made, a discovery that finished in
+the background. It asks no device anything, so every user who can open the
+panel has it.
+
 ### Discovering a network on demand
 
 Where the network came from a FortiManager or FortiGate integration, the panel
