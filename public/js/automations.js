@@ -822,7 +822,7 @@ var _rulesPage = 1;
   /** The leading separator belongs to these items, so a page without the
    *  portability module renders one rule before Delete rather than two.
    *  Export / View code re-serialize a row the caller can already read, so they
-   *  are offered at read level; the code editor gates its own Save on fullwrite. */
+   *  are offered at read level; the code editor gates its own Save on write. */
   function portabilityMenuItems(r) {
     var P = window.PolarisAutomationPortability;
     if (!P) return [];
@@ -1334,7 +1334,7 @@ function openChannelModal(existing, presetType) {
 
 // ═══════════════════════════════ Scripts tab ═══════════════════════════════
 // AutomationScript registry — the scripts `script` actions reference. Gated
-// automationScripts (read = view; fullwrite = CUD + test-run). RCE-equivalent
+// automationScripts (read = view; write = CUD + test-run). RCE-equivalent
 // surface: every card + modal carries the human-review reminder, and the
 // server audits creation/body changes with sha256 checksums.
 

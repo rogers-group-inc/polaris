@@ -469,7 +469,7 @@ export async function isChangeActionSubscribed(action: string): Promise<boolean>
  *     save beats a silent fire-time failure),
  *   - script.scriptId must resolve to an ENABLED registry script whose
  *     runTarget is compatible with the action's runOn.
- * (The automationScripts=fullwrite gate on rules carrying script actions is
+ * (The automationScripts=write gate on rules carrying script actions is
  * enforced at the route layer — permissions are not a service concern.)
  */
 // Exported for the alert-group writers (business rule 114(a)): a group's

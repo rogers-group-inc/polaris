@@ -29,7 +29,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **PushSubscription** — a browser/PWA Web Push subscription owned by a User. **Enrollment is no longer a decision of its own** — it is the consequence of `User.notificationPreference`, which every client reconciles this row against at boot (business rule 39). Carries **`surface`** (`desktop` | `mobile`) recorded at subscribe time — the only moment it is knowable, since on Android the installed PWA and the browser share one subscription — which selects the push deep link. A 410/404 prunes the row; endpoint rotation retires the old row scoped to the caller's own `userId`.
 
-- **AutomationScript** — operator-authored script registry for Automation `script` actions. **RCE-equivalent surface**: CRUD and attaching script actions are gated by `automationScripts`, seeded fullwrite only for admin-equivalent roles; creation and body changes stamp warning Events with old/new sha256.
+- **AutomationScript** — operator-authored script registry for Automation `script` actions. **RCE-equivalent surface**: CRUD and attaching script actions are gated by `automationScripts` at `write` (its top level), granted by default only to admin-equivalent roles; creation and body changes stamp warning Events with old/new sha256.
 
 - **AutomationScriptRun** — one execution of a registry script. Server runs are claimed by the `runAutomationScripts` job and executed via `automationScriptRunner` (0600 temp file + execFile, SIGKILL on timeout) — **never inline in the engine or drain**. Three hardening properties: the interpreter resolves to a known absolute path; the `cmd` interpreter's command line is escaped by `buildCmdCommandLine` because `cmd /c` re-parses it (and `args` is a rendered template of alert context, so it can carry a device hostname); and the child environment is `process.env` **stripped of secret-shaped keys** (stdout is stored on the row and rendered in the UI, so a one-line `env` used to copy `DATABASE_URL` into a displayed column). Agent runs ride the AgentCommand queue.
 
@@ -148,7 +148,7 @@ AgentCommand                    -- The agent command queue (plain table agent_co
 
 #### AutomationScript
 
-**AutomationScript** — operator-authored script registry for Automation `script` actions (name unique, interpreter bash|sh|powershell|cmd|python3, body ≤64KB, runTarget server|agent|either, timeoutSec ≤600, sha256 recomputed every save, enabled). **RCE-equivalent surface**: CRUD + attaching script actions gated by the `automationScripts` key (seeded fullwrite only for admin-equivalent roles); creation + body changes stamp warning Events with old/new sha256. Owned by `automationScriptService`; routes at `/automations/scripts` (mounted before `/automations`).
+**AutomationScript** — operator-authored script registry for Automation `script` actions (name unique, interpreter bash|sh|powershell|cmd|python3, body ≤64KB, runTarget server|agent|either, timeoutSec ≤600, sha256 recomputed every save, enabled). **RCE-equivalent surface**: CRUD + attaching script actions gated by the `automationScripts` key at `write` (its top level; granted by default only to admin-equivalent roles); creation + body changes stamp warning Events with old/new sha256. Owned by `automationScriptService`; routes at `/automations/scripts` (mounted before `/automations`).
 
 #### AutomationScriptRun
 
