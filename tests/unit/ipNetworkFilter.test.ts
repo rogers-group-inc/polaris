@@ -22,7 +22,8 @@ const g = globalThis as Record<string, any>;
 function serverMatches(term: string, ip: string): boolean {
   const m = ipv4TermToMatchPrefixes(term);
   if (!m) throw new Error("invalid term " + term);
-  return m.equals.includes(ip) || m.startsWith.some((p) => ip.startsWith(p));
+  return m.equals.includes(ip) || m.startsWith.some((p) => ip.startsWith(p)) ||
+    (m.endsWith ?? []).some((s) => ip.endsWith(s));
 }
 
 describe("ipv4TermToMatchPrefixes", () => {
@@ -57,9 +58,20 @@ describe("ipv4TermToMatchPrefixes", () => {
     expect(ipv4TermToMatchPrefixes("0.0.0.0/0")!.startsWith).toHaveLength(256);
   });
 
+  it("reads a leading dot as the last 1-3 octets, never matching a longer octet", () => {
+    expect(ipv4TermToMatchPrefixes(".50")).toEqual({ equals: [], startsWith: [], endsWith: [".50"] });
+    expect(ipv4TermToMatchPrefixes(" .1.50 ")).toEqual({ equals: [], startsWith: [], endsWith: [".1.50"] });
+    expect(ipv4TermToMatchPrefixes(".050")!.endsWith).toEqual([".50"]);
+    expect(serverMatches(".50", "10.1.2.50")).toBe(true);
+    expect(serverMatches(".50", "10.1.2.150")).toBe(false);
+    expect(serverMatches(".1.50", "10.11.1.50")).toBe(true);
+    expect(serverMatches(".1.50", "10.1.21.50")).toBe(false);
+  });
+
   it("rejects anything that is not an IPv4 term", () => {
     for (const bad of ["", "  ", "abc", "10.1.300", "10.1.2.3.4", "10..1", "10.1/16", "10.1.2.0/33",
-      "10.1.2.0/", "10.1.2.0/x", "fe80::1", "10.1.2.0/24/1", "-1", "10.%"]) {
+      "10.1.2.0/", "10.1.2.0/x", "fe80::1", "10.1.2.0/24/1", "-1", "10.%",
+      ".", ".1.2.3.4", ".300", ".1.", ".1.2.0/24", "..1"]) {
       expect(ipv4TermToMatchPrefixes(bad), bad).toBeNull();
     }
   });
@@ -104,13 +116,15 @@ describe("TableSF.parseIpNetTerm parity with ipv4TermToMatchPrefixes", () => {
   beforeEach(() => { setup(); });
 
   const TERMS = ["10", "10.", "10.1", "10.1.2", "10.1.2.3", "10.1.0.0/16", "10.1.16.0/20", "10.1.2.128/25",
-    "10.1.2.7/31", "172.16.0.0/12", "0.0.0.0/0", "192.168.1.1/32", "010.1"];
+    "10.1.2.7/31", "172.16.0.0/12", "0.0.0.0/0", "192.168.1.1/32", "010.1",
+    ".1", ".7", ".2.3", ".1.1", ".2.6", ".16.0.1", ".050"];
   const IPS = ["10.0.0.1", "10.1.0.0", "10.1.2.3", "10.1.2.6", "10.1.2.7", "10.1.2.200", "10.1.17.4",
     "10.1.32.1", "10.10.1.1", "172.15.255.255", "172.16.0.1", "172.31.255.255", "172.32.0.0",
-    "192.168.1.1", "8.8.8.8"];
+    "192.168.1.1", "8.8.8.8", "10.1.2.50", "10.1.2.150", "10.1.12.3", "10.1.2.11"];
 
   it("agrees on which terms are valid", () => {
-    for (const t of TERMS.concat(["abc", "10.1.300", "10.1/16", "10.1.2.0/33", "fe80::1"])) {
+    for (const t of TERMS.concat(["abc", "10.1.300", "10.1/16", "10.1.2.0/33", "fe80::1",
+      ".", ".1.2.3.4", ".300", ".1.", ".1.2.0/24"])) {
       expect(!!g.TableSF.parseIpNetTerm(t), t).toBe(!!ipv4TermToMatchPrefixes(t));
     }
   });
@@ -163,6 +177,12 @@ describe("ipnet header filter", () => {
     sf._filters.ipAddress = { op: "in-networks", terms: ["10.1", "192.168.5.0/24"] };
     const rows = ["10.1.2.3", "10.10.2.3", "192.168.5.9", "192.168.6.1", "", "not-an-ip"].map((ip) => ({ ipAddress: ip }));
     expect(sf.apply(rows).map((r: any) => r.ipAddress)).toEqual(["10.1.2.3", "192.168.5.9"]);
+  });
+
+  it("apply() matches a suffix term on the last octets, and a suffix-shaped row value matches nothing", () => {
+    sf._filters.ipAddress = { op: "in-networks", terms: [".50"] };
+    const rows = ["10.1.2.50", "10.1.2.150", "172.16.9.50", ".50", "50"].map((ip) => ({ ipAddress: ip }));
+    expect(sf.apply(rows).map((r: any) => r.ipAddress)).toEqual(["10.1.2.50", "172.16.9.50"]);
   });
 
   it("restores saved terms into boxes, and reads a legacy contains string as one term", () => {

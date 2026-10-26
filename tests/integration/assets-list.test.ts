@@ -464,6 +464,14 @@ d("GET /api/v1/assets — IP network filter", () => {
     expect(hostnames(resp.body)).toEqual(["alpha-srv", "gamma-fw"]);
   });
 
+  it("a leading-dot suffix matches the last octets, never a longer octet, and mixes with prefixes", async () => {
+    await seedIps();
+    expect(hostnames((await get("ipAddress=.2.3")).body)).toEqual(["alpha-srv", "beta-sw"]);
+    expect(hostnames((await get("ipAddress=.200")).body)).toEqual(["delta-srv"]);
+    expect(hostnames((await get("ipAddress=.00")).body)).toEqual([]);
+    expect(hostnames((await get("ipAddress=" + encodeURIComponent(".9,10.10"))).body)).toEqual(["beta-sw", "gamma-fw"]);
+  });
+
   it("a CIDR off an octet boundary selects exactly its range", async () => {
     await seedIps();
     expect(hostnames((await get("ipAddress=" + encodeURIComponent("10.1.16.0/20"))).body)).toEqual(["gamma-fw"]);

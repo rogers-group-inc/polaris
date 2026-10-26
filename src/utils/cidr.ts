@@ -456,11 +456,14 @@ export function buildCidrMatcher(cidrs: string[]): (ip: string) => string | null
 /**
  * One IPv4 "network" term from a list filter, reduced to what a string column
  * can be matched against: exact addresses and dotted prefixes (each prefix
- * ends in "." so "10.1." never matches 10.10.x.x).
+ * ends in "." so "10.1." never matches 10.10.x.x). `endsWith` is set only for a
+ * suffix term (".50"), and each suffix starts with "." so ".50" never matches
+ * x.x.x.150.
  */
 export interface Ipv4MatchPrefixes {
   equals: string[];
   startsWith: string[];
+  endsWith?: string[];
 }
 
 /**
@@ -475,10 +478,25 @@ export interface Ipv4MatchPrefixes {
  * spans (a /20 → 16 three-octet prefixes, a /25 → 128 exact addresses), so the
  * answer never exceeds 256 entries and never needs a SQL inet cast — which a
  * single malformed Asset.ipAddress string would make throw for the whole query.
+ *
+ * A leading "." reads the term from the other end: ".50" is every address whose
+ * last octet is 50, ".1.50" every address ending in 1.50 (1-3 octets, no CIDR).
  */
 export function ipv4TermToMatchPrefixes(raw: string): Ipv4MatchPrefixes | null {
   const term = (raw || "").trim();
   if (!term) return null;
+  if (term.startsWith(".")) {
+    const parts = term.slice(1).split(".");
+    if (parts.length > 3) return null;
+    const octets: number[] = [];
+    for (const p of parts) {
+      if (!/^\d{1,3}$/.test(p)) return null;
+      const n = parseInt(p, 10);
+      if (n > 255) return null;
+      octets.push(n);
+    }
+    return { equals: [], startsWith: [], endsWith: ["." + octets.join(".")] };
+  }
   let addrPart = term;
   let len: number | null = null;
   const slash = term.indexOf("/");

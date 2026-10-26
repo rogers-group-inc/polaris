@@ -371,7 +371,8 @@
             <li><code>ipAddress</code> also takes <code>ipAddressOp=in_networks</code>: a
                 comma-separated list of IPv4 networks, matched when the primary IP falls in
                 <em>any</em> of them. Each entry is a partial address (<code>10.1</code> =
-                10.1.0.0/16), a full address (exact) or a CIDR (<code>10.1.16.0/20</code>); at
+                10.1.0.0/16), a suffix with a leading dot (<code>.50</code> = last octet 50,
+                <code>.1.50</code>), a full address (exact) or a CIDR (<code>10.1.16.0/20</code>); at
                 most 50, and an invalid entry is a <code>400</code>.</li>
             <li><code>department</code> (contains match), <code>lastSeenFrom</code> /
                 <code>lastSeenTo</code> (<code>YYYY-MM-DD</code>).</li>
