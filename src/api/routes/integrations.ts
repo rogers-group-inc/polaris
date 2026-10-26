@@ -1127,6 +1127,9 @@ const LlmConfigSchema = z.preprocess(normalizeLlmProviderInput, z.object({
   // Blank = the API shape's own audience (llmService.azureScope).
   azureScope:       z.string().trim().max(300).optional().default(""),
   omitTemperature:  z.boolean().optional().default(false),
+  // Rule 95(l): may the chat window send pasted screenshots? No default —
+  // unset means llmService.acceptsImages's per-provider answer.
+  acceptsImages:    z.boolean().optional(),
 }).superRefine((cfg, ctx) => {
   if (cfg.host && isBlockedLlmHost(cfg.host, cfg.allowLoopback)) {
     ctx.addIssue({

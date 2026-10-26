@@ -281,7 +281,7 @@ export async function persistInterfaceRows(
 
   const existing = await prisma.assetInterface.findMany({
     where: { assetId },
-    select: { ifName: true, firstSeen: true },
+    select: { ifName: true, firstSeen: true, nativeVlan: true },
   });
   const priorFirstSeen = new Map(existing.map((e) => [e.ifName, e.firstSeen]));
 
@@ -336,6 +336,33 @@ export async function persistInterfaceRows(
   }
   // The identity map is derived from exactly these rows.
   invalidateInterfaceIdentity(assetId);
+
+  // A port moved VLAN: a tag filter asking "Native VLAN" may now match this
+  // asset differently, and its port tags certainly do (business rule 133).
+  // Edge-triggered on the port→VLAN map, so a steady switch costs one compare
+  // per scrape and no query; fire-and-forget, the periodic reconcile is the
+  // safety net. A preserved trunk keeps its stored row, so it counts on both
+  // sides — otherwise a down trunk with a VLAN would re-fire on every scrape.
+  const preservedSet = new Set(preserved);
+  const after = [...rows, ...existing.filter((e) => preservedSet.has(e.ifName))];
+  if (nativeVlanSignature(existing) !== nativeVlanSignature(after)) {
+    import("./tagAssignmentService.js")
+      .then((m) => m.reconcileTagsForAsset(assetId))
+      .catch((err) => logger.debug({ err: err?.message ?? String(err), assetId }, "native VLAN change: tag reconcile failed (non-fatal)"));
+  }
+}
+
+/**
+ * The port→native-VLAN map of an interface set as one comparable string —
+ * ports without a native VLAN omitted, so a scrape that only adds VLAN-less
+ * ports (or a first scrape of a router) reads as unchanged.
+ */
+export function nativeVlanSignature(rows: { ifName: string; nativeVlan?: number | null }[]): string {
+  return rows
+    .filter((r) => r.nativeVlan != null)
+    .map((r) => r.ifName + "=" + r.nativeVlan)
+    .sort()
+    .join("|");
 }
 
 // ─── Interface identity (name-vs-label reconciliation) ──────────────────────

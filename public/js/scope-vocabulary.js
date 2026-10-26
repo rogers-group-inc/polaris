@@ -116,6 +116,7 @@
         case "models":         return (opts.models || []).map(function (m) { return { value: m, label: m }; });
         case "interfaceNames": return (opts.interfaceNames || []).map(function (n) { return { value: n, label: n }; });
         case "ssids":          return (opts.ssids || []).map(function (n) { return { value: n, label: n }; });
+        case "nativeVlans":    return (opts.nativeVlans || []).slice(); // already { value, label }
         case "tags": {
           // Tags already on assets, plus the registry (Priority, etc.) — a
           // registry tag no asset carries yet is still a valid thing to match.

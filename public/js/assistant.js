@@ -133,7 +133,8 @@
     integrationId: null,    // chosen llm integration
     convId: null,
     title: "",
-    messages: [],           // { role, content, toolsUsed, stopped, reports, error?, local? }
+    messages: [],           // { role, content, toolsUsed, stopped, reports, images?, error?, local? }
+    pendingImages: [],      // screenshots in the tray: { blob, url } (rule 95(l))
     busy: false,
     abort: null,
     slashIndex: 0,
@@ -220,11 +221,13 @@
       '</div>' +
       '<footer class="asst-foot">' +
         '<div class="asst-slash" data-r="slash" role="listbox" hidden></div>' +
+        // Pasted / dropped screenshots waiting to be sent (rule 95(l)).
+        '<div class="asst-attach" data-r="attach" hidden></div>' +
         '<div class="asst-input-row">' +
           '<textarea class="asst-input" data-r="input" rows="1" placeholder="Ask about devices, alerts, networks… or type / for commands" aria-label="Message the assistant"></textarea>' +
           '<button type="button" class="btn btn-primary asst-send" data-a="send" aria-label="Send">Send</button>' +
         '</div>' +
-        '<div class="asst-hint">Enter to send · Shift+Enter for a new line</div>' +
+        '<div class="asst-hint" data-r="hint">Enter to send · Shift+Enter for a new line</div>' +
       '</footer>';
 
     document.body.appendChild(fab);
@@ -235,7 +238,7 @@
     S.els = {
       fab: fab, panel: panel, head: panel.querySelector(".asst-head"),
       title: q("title"), sub: q("sub"), body: q("body"), history: q("history"),
-      historyList: q("historyList"), slash: q("slash"), input: q("input"),
+      historyList: q("historyList"), slash: q("slash"), input: q("input"), attach: q("attach"), hint: q("hint"),
       send: panel.querySelector('[data-a="send"]'),
       advisor: q("advisor"),
       memory: q("memory"), memoryList: q("memoryList"), memoryOn: q("memoryOn"), memoryInput: q("memoryInput"),
@@ -267,6 +270,7 @@
       else if (e.key === "Escape" && !S.els.history.hidden) { e.preventDefault(); hideHistory(); }
     });
     wireInput();
+    wireImages();
     wireDrag();
     wireResize();
     window.addEventListener("resize", function () { clampIntoView(); });
@@ -316,6 +320,7 @@
     S.els.sub.textContent = S.title && S.title !== "New conversation"
       ? S.title
       : (intg ? (intg.name + (intg.model ? " · " + intg.model : "")) : "");
+    S.els.hint.textContent = "Enter to send · Shift+Enter for a new line" + (imagesAccepted() ? " · Paste a screenshot to attach it" : "");
   }
 
   /**
@@ -642,7 +647,13 @@
       return '<div class="asst-msg assistant"><div class="asst-bubble" style="border-style:dashed">' + md(m.content) + '</div></div>';
     }
     if (m.role === "user") {
-      return '<div class="asst-msg user" data-idx="' + idx + '"><div class="asst-bubble">' + esc(m.content) + '</div></div>';
+      return '<div class="asst-msg user" data-idx="' + idx + '">' +
+        (m.images && m.images.length ? '<div class="asst-shots">' + m.images.map(function (img) {
+          var src = imageSrc(img);
+          return src ? '<a href="' + esc(src) + '" target="_blank" rel="noopener" class="asst-shot" title="Open full size"><img src="' + esc(src) + '" alt="Screenshot"></a>' : "";
+        }).join("") + '</div>' : "") +
+        (m.content ? '<div class="asst-bubble">' + esc(m.content) + '</div>' : "") +
+        '</div>';
     }
     var body = m.content ? md(m.content)
       : m.waiting ? '<span class="asst-thinking">Still answering your last question…</span>'
@@ -748,6 +759,8 @@
         stopped: !!m.stopped,
         preface: m.preface || null,
         signOff: m.signOff || null,
+        // Stored ids only: a local preview's blob URL dies with this page.
+        images: (m.images || []).filter(function (i) { return i.id; }).map(function (i) { return { id: i.id }; }),
         reports: (m.reports || []).map(function (r) {
           var rows = r.rows || [];
           return Object.assign({}, r, { rows: rows.slice(0, SNAP_REPORT_ROWS), partial: !!r.partial || rows.length > SNAP_REPORT_ROWS });
@@ -763,7 +776,7 @@
 
   function fromServer(c) {
     return (c.messages || []).map(function (m) {
-      return { role: m.role, content: m.content, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, reports: m.reports || [] };
+      return { role: m.role, content: m.content, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, images: m.images || [], reports: m.reports || [] };
     });
   }
 
@@ -1033,6 +1046,141 @@
     else addLocalNote("That conversation is no longer available — it may have been deleted or pruned.");
   }
 
+  // ─── Screenshots (rule 95(l)) ───────────────────────────────────────────────
+  //
+  // Paste (Ctrl+V) or drop an image on the panel and it waits in a tray above
+  // the input until the next Send. Only when the answering integration says
+  // its model reads images (status `images`). Each is downsized to 1568 px on
+  // its long edge — past that a vision model scales it down anyway, and pays
+  // for the upload — and re-encoded as PNG, or JPEG when the PNG stays large.
+
+  var MAX_IMAGES = 4;
+  var MAX_EDGE = 1568;
+  var MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+
+  function imagesAccepted() {
+    var i = currentIntegration();
+    return !!(i && i.images);
+  }
+
+  /** Where a message's image is drawn from: the local preview, else the stored copy. */
+  function imageSrc(img) {
+    if (img.url) return img.url;
+    if (img.id && S.convId) return "/api/v1/assistant/conversations/" + encodeURIComponent(S.convId) + "/images/" + encodeURIComponent(img.id);
+    return null;
+  }
+
+  /** The size to draw a w×h image at so neither edge passes `max`. Exported for tests. */
+  function fitWithin(w, h, max) {
+    var s = Math.min(1, max / Math.max(w, h, 1));
+    return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
+  }
+
+  function canvasBlob(canvas, type, quality) {
+    return new Promise(function (resolve) { canvas.toBlob(resolve, type, quality); });
+  }
+
+  async function prepareImage(file) {
+    var bmp = await createImageBitmap(file);
+    var size = fitWithin(bmp.width, bmp.height, MAX_EDGE);
+    // Already small enough in a type every model reads: send it as it is.
+    if (size.w === bmp.width && size.h === bmp.height && file.size <= MAX_IMAGE_BYTES && /^image\/(png|jpeg)$/.test(file.type)) {
+      if (bmp.close) bmp.close();
+      return file;
+    }
+    var canvas = document.createElement("canvas");
+    canvas.width = size.w;
+    canvas.height = size.h;
+    canvas.getContext("2d").drawImage(bmp, 0, 0, size.w, size.h);
+    if (bmp.close) bmp.close();
+    var blob = await canvasBlob(canvas, "image/png");
+    if (!blob || blob.size > MAX_IMAGE_BYTES) blob = await canvasBlob(canvas, "image/jpeg", 0.85);
+    if (!blob || blob.size > MAX_IMAGE_BYTES) throw new Error("That image is too large to send");
+    return blob;
+  }
+
+  async function addImages(files) {
+    if (!files.length) return;
+    if (!imagesAccepted()) {
+      toast("This model is not set to read images — an administrator can turn on “Accepts images” on the AI Assistant integration", "warning");
+      return;
+    }
+    for (var i = 0; i < files.length; i++) {
+      if (S.pendingImages.length >= MAX_IMAGES) { toast("At most " + MAX_IMAGES + " screenshots per message", "warning"); break; }
+      try {
+        var blob = await prepareImage(files[i]);
+        S.pendingImages.push({ blob: blob, url: URL.createObjectURL(blob) });
+      } catch (err) {
+        toast((err && err.message) || "Could not read that image", "error");
+      }
+    }
+    renderAttach();
+  }
+
+  function renderAttach() {
+    var box = S.els.attach;
+    box.hidden = !S.pendingImages.length;
+    box.innerHTML = S.pendingImages.map(function (p, i) {
+      return '<div class="asst-attach-item"><img src="' + esc(p.url) + '" alt="Screenshot ' + (i + 1) + '">' +
+        '<button type="button" class="asst-attach-remove" data-unattach="' + i + '" title="Remove" aria-label="Remove screenshot ' + (i + 1) + '">×</button></div>';
+    }).join("");
+  }
+
+  function clearAttach(revoke) {
+    if (revoke) S.pendingImages.forEach(function (p) { URL.revokeObjectURL(p.url); });
+    S.pendingImages = [];
+    renderAttach();
+  }
+
+  /** The image files on a clipboard or drop — none when it also carries text (a spreadsheet copy is both). Exported for tests. */
+  function imageFilesFrom(dt) {
+    if (!dt) return [];
+    // Excel / Word copies carry a picture of the cells AND their text; the text is what was meant.
+    if (Array.prototype.indexOf.call(dt.types || [], "text/plain") !== -1) return [];
+    var out = [];
+    Array.prototype.forEach.call(dt.items || [], function (it) {
+      if (it.kind === "file" && /^image\//.test(it.type)) { var f = it.getAsFile(); if (f) out.push(f); }
+    });
+    if (!out.length && dt.files) {
+      Array.prototype.forEach.call(dt.files, function (f) { if (/^image\//.test(f.type)) out.push(f); });
+    }
+    return out;
+  }
+
+  function wireImages() {
+    S.els.input.addEventListener("paste", function (e) {
+      var files = imageFilesFrom(e.clipboardData);
+      if (!files.length) return;
+      e.preventDefault();
+      addImages(files);
+    });
+    S.els.panel.addEventListener("dragover", function (e) {
+      if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") !== -1) {
+        e.preventDefault();
+        S.els.panel.classList.add("is-drop");
+      }
+    });
+    S.els.panel.addEventListener("dragleave", function (e) {
+      if (!S.els.panel.contains(e.relatedTarget)) S.els.panel.classList.remove("is-drop");
+    });
+    S.els.panel.addEventListener("drop", function (e) {
+      S.els.panel.classList.remove("is-drop");
+      var files = imageFilesFrom(e.dataTransfer);
+      if (!files.length) return;
+      e.preventDefault();
+      addImages(files);
+    });
+    S.els.attach.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-unattach]");
+      if (!b) return;
+      var i = +b.getAttribute("data-unattach");
+      var gone = S.pendingImages.splice(i, 1)[0];
+      if (gone) URL.revokeObjectURL(gone.url);
+      renderAttach();
+      S.els.input.focus();
+    });
+  }
+
   // ─── Input + slash popup ────────────────────────────────────────────────────
 
   function autoGrow() {
@@ -1116,14 +1264,17 @@
 
   function submit() {
     var text = S.els.input.value.trim();
-    if (!text) return;
-    var slash = parseSlash(text);
+    if (!text && !S.pendingImages.length) return;
+    var slash = text ? parseSlash(text) : null;
     S.els.input.value = "";
     lsSet(LS.draft, null);
     autoGrow();
     hideSlash();
+    // A command leaves the tray alone; the screenshots go with the next question.
     if (slash) { runCommand(slash); return; }
-    ask({ content: text });
+    var images = S.pendingImages;
+    clearAttach(false); // the previews live on in the transcript
+    ask({ content: text, images: images });
   }
 
   // ─── Commands ───────────────────────────────────────────────────────────────
@@ -1372,7 +1523,12 @@
     try {
       var convId = await ensureConversation();
       markActive();
-      if (!regenerate) S.messages.push({ role: "user", content: opts.display || opts.content });
+      var images = (!regenerate && opts.images) || [];
+      var userMsg = null;
+      if (!regenerate) {
+        userMsg = { role: "user", content: opts.display || opts.content || "", images: images.map(function (p) { return { url: p.url }; }) };
+        S.messages.push(userMsg);
+      }
       S.messages.push({ role: "assistant", content: "", tools: [], reports: [], live: true, startedAt: Date.now(), thinkingChars: 0 });
       liveIdx = S.messages.length - 1;
       renderAll();
@@ -1385,19 +1541,34 @@
       }, 1000);
 
       S.abort = new AbortController();
+      // Screenshots go as multipart (the browser sets the boundary); a plain
+      // question stays JSON.
+      var headers = { Accept: "text/event-stream" };
+      var reqBody;
+      if (images.length) {
+        reqBody = new FormData();
+        reqBody.append("content", opts.content || "");
+        if (S.integrationId) reqBody.append("integrationId", S.integrationId);
+        images.forEach(function (p, i) { reqBody.append("images", p.blob, "screenshot-" + (i + 1) + (p.blob.type === "image/jpeg" ? ".jpg" : ".png")); });
+      } else {
+        headers["Content-Type"] = "application/json";
+        reqBody = JSON.stringify(regenerate
+          ? { regenerate: true, integrationId: S.integrationId || undefined }
+          : { content: opts.content, integrationId: S.integrationId || undefined });
+      }
       var res = await fetch("/api/v1/assistant/conversations/" + encodeURIComponent(convId) + "/messages", {
         method: "POST",
         credentials: "same-origin",
-        headers: _csrfHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
-        body: JSON.stringify(regenerate
-          ? { regenerate: true, integrationId: S.integrationId || undefined }
-          : { content: opts.content, integrationId: S.integrationId || undefined }),
+        headers: _csrfHeaders(headers),
+        body: reqBody,
         signal: S.abort.signal,
       });
       if (res.status === 401) { window.location.href = "/login.html"; return; }
       if (!res.ok || !res.body) {
         var msg = "The assistant could not answer (HTTP " + res.status + ")";
         try { var j = await res.json(); msg = j.error || j.message || msg; } catch (_) { /* not JSON */ }
+        // Refused before anything was stored: hand the screenshots back to the tray.
+        if (images.length && !S.pendingImages.length) { S.pendingImages = images; renderAttach(); }
         throw new Error(msg);
       }
 
@@ -1408,7 +1579,14 @@
 
       var memoryChanges = [];
       await readEventStream(res.body, function (ev, data) {
-        if (ev === "token") { m.content += data.text || ""; schedule(); }
+        // The stored screenshot ids: kept beside the local previews, so the
+        // snapshot and the next page can draw them from the server.
+        if (ev === "start") {
+          if (userMsg && data.images && data.images.length) {
+            userMsg.images = data.images.map(function (s, i) { return { id: s.id, url: userMsg.images[i] ? userMsg.images[i].url : null }; });
+          }
+        }
+        else if (ev === "token") { m.content += data.text || ""; schedule(); }
         // The model wrote a tool call as text; the server ran it instead, so
         // that round's text is withdrawn from the bubble.
         else if (ev === "retract") { m.content = m.content.slice(0, Math.max(0, data.from | 0)); schedule(); }
@@ -1552,13 +1730,15 @@
   }
 
   async function exportConversation(kind) {
-    var turns = S.messages.filter(function (m) { return !m.local && (m.content || (m.reports && m.reports.length)); });
+    var turns = S.messages.filter(function (m) { return !m.local && (m.content || (m.reports && m.reports.length) || (m.images && m.images.length)); });
     if (!turns.length) { addLocalNote("Nothing to export yet."); return; }
     var title = S.title && S.title !== "New conversation" ? S.title : "Polaris assistant conversation";
     if (kind === "md") {
       var out = "# " + title + "\n\n_Exported " + new Date().toLocaleString() + "_\n\n";
       turns.forEach(function (m) {
-        out += (m.role === "user" ? "**You:** " : "**" + botName() + ":**\n\n") + (m.content || "") + "\n\n";
+        var shots = (m.images || []).length;
+        out += (m.role === "user" ? "**You:** " : "**" + botName() + ":**\n\n") + (m.content || "") +
+          (shots ? (m.content ? " " : "") + "_[" + shots + " screenshot" + (shots === 1 ? "" : "s") + "]_" : "") + "\n\n";
         (m.reports || []).forEach(function (r) { out += reportToMarkdown(r) + "\n"; });
       });
       downloadText(out, fileStem(title) + ".md");
@@ -1583,6 +1763,8 @@
         doc.setFont(undefined, "normal");
         // Plain text: strip the light Markdown markers the model uses.
         var plain = String(m.content || "").replace(/\*\*|__|`/g, "").replace(/^#{1,6}\s+/gm, "");
+        var nShots = (m.images || []).length;
+        if (nShots) plain += (plain ? " " : "") + "[" + nShots + " screenshot" + (nShots === 1 ? "" : "s") + "]";
         doc.splitTextToSize(plain, width).forEach(function (line) {
           if (y > pageH - 48) { doc.addPage(); y = 48; }
           doc.text(line, 40, y);
@@ -1713,6 +1895,8 @@
     _csvSafe: csvSafe,
     _reportToMarkdown: reportToMarkdown,
     _messageHTML: messageHTML,
+    _fitWithin: fitWithin,
+    _imageFilesFrom: imageFilesFrom,
     _LOADING_LINES: LOADING_LINES,
     _ADVISOR_GREETINGS: ADVISOR_GREETINGS,
     _ADVISOR_FAREWELLS: ADVISOR_FAREWELLS,

@@ -5,6 +5,7 @@ import {
   SCOPE_FIELD_OPS,
   deviceFilterConditionSchema,
   evaluateScopeCondition,
+  positiveNativeVlans,
   scopeConditionMeta,
   scopeConditionSchema,
   scopeRank,
@@ -39,9 +40,9 @@ describe("the two condition vocabularies", () => {
     }
   });
 
-  it("adds exactly the four fields the flat criteria builder had", () => {
+  it("adds the four fields the flat criteria builder had, plus Native VLAN (rule 133)", () => {
     expect(DEVICE_FILTER_ONLY_FIELDS.sort()).toEqual(
-      ["department", "fortigate", "location", "osVersion"],
+      ["department", "fortigate", "location", "nativeVlan", "osVersion"],
     );
   });
 
@@ -176,6 +177,82 @@ describe("evaluateScopeCondition — device-filter fields", () => {
       } as never);
       expect(byTypeAndIf).toBe(byType);
       expect(scopeRank({ condition: one("interfaceName", "equals", "port9") } as never)).toBe(0);
+    });
+  });
+
+  // Business rule 133: a switch matches when ANY of its ports carries the VLAN
+  // untagged — trunks included — compared by number.
+  describe("nativeVlan — one rule against every port's native VLAN", () => {
+    const SWITCH: ScopeConditionAsset = {
+      ...ASSET,
+      interfaces: [
+        { ifName: "port1", nativeVlan: 30 },
+        { ifName: "port2", nativeVlan: 30 },
+        { ifName: "port48", nativeVlan: 1 }, // the trunk's native VLAN counts too
+        { ifName: "fortilink", nativeVlan: null },
+      ],
+    };
+
+    it("is satisfied by ANY port on the VLAN, a trunk included", () => {
+      expect(evaluateScopeCondition(one("nativeVlan", "equals", "30"), SWITCH)).toBe(true);
+      expect(evaluateScopeCondition(one("nativeVlan", "equals", "1"), SWITCH)).toBe(true);
+      expect(evaluateScopeCondition(one("nativeVlan", "equals", "40"), SWITCH)).toBe(false);
+    });
+
+    it("compares by number, so a zero-padded value is the same VLAN", () => {
+      expect(evaluateScopeCondition(one("nativeVlan", "equals", "030"), SWITCH)).toBe(true);
+    });
+
+    it("requires notEquals to hold for EVERY port", () => {
+      expect(evaluateScopeCondition(one("nativeVlan", "notEquals", "30"), SWITCH)).toBe(false);
+      expect(evaluateScopeCondition(one("nativeVlan", "notEquals", "40"), SWITCH)).toBe(true);
+    });
+
+    it("reads a device with no port VLANs as absence", () => {
+      expect(evaluateScopeCondition(one("nativeVlan", "equals", "30"), { id: "r1" })).toBe(false);
+      expect(evaluateScopeCondition(one("nativeVlan", "notEquals", "30"), { id: "r1" })).toBe(true);
+    });
+
+    it("prefers a prefetched verdict over the joined relation", () => {
+      const pre = { ...SWITCH, relationLeafHits: new Map([["nativeVlan|equals\u000030", false]]) };
+      expect(evaluateScopeCondition(one("nativeVlan", "equals", "30"), pre)).toBe(false);
+      expect(evaluateScopeCondition(one("nativeVlan", "notEquals", "30"), pre)).toBe(true);
+    });
+
+    it("is device-filter only, and refuses a value that is not a VLAN id", () => {
+      expect(SCOPE_FIELD_OPS.nativeVlan).toBeUndefined();
+      expect(() => scopeConditionSchema.parse(one("nativeVlan", "equals", "30"))).toThrow();
+      expect(deviceFilterConditionSchema.safeParse(one("nativeVlan", "equals", "30")).success).toBe(true);
+      for (const bad of ["0", "4095", "ten", "30.5", "-1"]) {
+        expect(deviceFilterConditionSchema.safeParse(one("nativeVlan", "equals", bad)).success).toBe(false);
+      }
+      expect(deviceFilterConditionSchema.safeParse(one("nativeVlan", "contains", "3")).success).toBe(false);
+    });
+
+    it("is published as Native VLAN with the nativeVlans picker", () => {
+      const meta = scopeConditionMeta(DEVICE_FILTER_FIELD_OPS).fields.find((f) => f.field === "nativeVlan");
+      expect(meta?.label).toBe("Native VLAN");
+      expect(meta?.optionsFrom).toBe("nativeVlans");
+    });
+  });
+
+  describe("positiveNativeVlans — the VLANs whose PORTS a tag tags", () => {
+    const leaf = (operator: string, value: string) => ({ field: "nativeVlan", operator, value });
+    it("takes equals leaves, deduped and sorted", () => {
+      expect(positiveNativeVlans(and(leaf("equals", "30"), leaf("equals", "10"), leaf("equals", "030")))).toEqual([10, 30]);
+    });
+    it("takes no VLAN from a leaf asserting absence", () => {
+      expect(positiveNativeVlans(one("nativeVlan", "notEquals", "30"))).toEqual([]);
+    });
+    it("flips under a negating group, and flips back under two", () => {
+      const none = (...c: unknown[]) => ({ op: "none", children: c }) as ScopeConditionGroup;
+      expect(positiveNativeVlans(none(leaf("equals", "30")))).toEqual([]);
+      expect(positiveNativeVlans(none(leaf("notEquals", "30")))).toEqual([30]);
+      expect(positiveNativeVlans(none(none(leaf("equals", "30"))))).toEqual([30]);
+    });
+    it("is empty for a tree with no nativeVlan leaf, or none at all", () => {
+      expect(positiveNativeVlans(one("hostname", "contains", "sw"))).toEqual([]);
+      expect(positiveNativeVlans(null)).toEqual([]);
     });
   });
 

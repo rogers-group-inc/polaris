@@ -5160,6 +5160,20 @@ function llmFormHTML(defaults) {
       '</div>' +
       '<p class="hint">If a deployment refuses <code>temperature</code>, Polaris retries once without it anyway — tick this to skip that first attempt.</p>' +
     '</div>' +
+    // Rule 95(l). Never saved yet (d.acceptsImages undefined) the box follows
+    // the provider — on for a Claude deployment — until it is clicked
+    // (_applyLlmProvider reads data-auto); once saved, it is what was saved.
+    '<div class="form-group">' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<input type="checkbox" id="f-acceptsImages"' +
+          (typeof d.acceptsImages === "boolean"
+            ? (d.acceptsImages ? " checked" : "")
+            : ' data-auto="1"' + (azure && d.azureApiShape === "anthropic" ? " checked" : "")) +
+          ' style="width:auto">' +
+        '<label for="f-acceptsImages" style="margin:0">Accepts images (people can paste screenshots into the chat)</label>' +
+      '</div>' +
+      '<p class="hint">Tick only for a model that can read images — every Claude model, GPT-4o and later, or a vision model such as <code>qwen2.5vl</code> or <code>llama3.2-vision</code> on Ollama. A text-only model refuses them.</p>' +
+    '</div>' +
     // Not checkboxRow(): the note must sit inside the same .form-group,
     // because `.hint` is only styled there (`.form-group .hint`).
     '<div class="form-group llm-openai-only">' +
@@ -5226,6 +5240,7 @@ function getLlmFormConfig() {
     clientSecret: val("f-clientSecret"),
     azureScope: val("f-azureScope"),
     omitTemperature: document.getElementById("f-omitTemperature").checked,
+    acceptsImages: document.getElementById("f-acceptsImages").checked,
     temperature: num("f-temperature", 0.2),
     maxToolRounds: Math.round(num("f-maxToolRounds", 6)),
     maxRowsPerTool: Math.round(num("f-maxRowsPerTool", 200)),
@@ -5275,6 +5290,9 @@ function _applyLlmProvider(id) {
   show(document.getElementById("f-azureApiVersion-group"), azure && val("f-azureApiShape") === "deployments");
   // Claude never gets `temperature` (llmService.anthropicRound), so the box only applies to GPT shapes.
   show(document.getElementById("f-omitTemperature-group"), azure && val("f-azureApiShape") !== "anthropic");
+  // An untouched, never-saved Accepts images box follows the provider (llmService.acceptsImages).
+  var imgBox = document.getElementById("f-acceptsImages");
+  if (imgBox && imgBox.getAttribute("data-auto") === "1") imgBox.checked = azure && val("f-azureApiShape") === "anthropic";
   show(document.getElementById("f-apiToken-group"), !(azure && entra));
   var set = function (elId, text) { var el = document.getElementById(elId); if (el) el.textContent = text; };
   set("f-host-label", azure ? "Endpoint *" : "Host / IP *");
@@ -7236,6 +7254,9 @@ function _wireLlmForm(id) {
     var el = document.getElementById(elId);
     if (el) el.addEventListener("change", function () { _applyLlmProvider(id); });
   });
+  // A click on Accepts images is the operator's answer: stop following the provider.
+  var imgBox = document.getElementById("f-acceptsImages");
+  if (imgBox) imgBox.addEventListener("change", function () { imgBox.removeAttribute("data-auto"); });
   _applyLlmProvider(id);
   // Editing a configured integration: show its server's models straight away
   // (an OpenAI-compatible server only — Azure Foundry has no model list).
@@ -7646,6 +7667,7 @@ function _intgEditFormSpec(intg, config) {
         clientSecretPlaceholder: config.clientSecret ? "Leave blank to keep the current secret" : "The app registration's client secret",
         azureScope: config.azureScope,
         omitTemperature: config.omitTemperature === true,
+        acceptsImages: typeof config.acceptsImages === "boolean" ? config.acceptsImages : undefined,
         temperature: config.temperature,
         maxToolRounds: config.maxToolRounds,
         maxRowsPerTool: config.maxRowsPerTool,

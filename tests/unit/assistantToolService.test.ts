@@ -347,4 +347,16 @@ describe("an address a device HELD is a hit, and says so (seen live 2026-10-09)"
     expect((r.data as any).ipHistory).toEqual([{ ip: "153.66.102.165", source: "monitor-system-info", firstSeen: "2026-06-10T00:00:00.000Z", lastSeen: "2026-09-04T00:00:00.000Z" }]);
     expect(h.prisma.asset.findFirst.mock.calls[0][0].select.ipHistory).toMatchObject({ orderBy: { lastSeen: "desc" }, take: 30 });
   });
+
+  it("get_asset returns the acquired date, warranty expiry and purchase order", async () => {
+    h.prisma.asset.findFirst.mockResolvedValueOnce({
+      id: "a1", hostname: "GRAYCOURT-61F-1", tags: [], discoveredByIntegration: null, ipHistory: [],
+      acquiredAt: new Date("2022-11-15T00:00:00Z"), warrantyExpiry: null, purchaseOrder: null,
+    });
+    h.listNotifications.mockResolvedValueOnce({ notifications: [], total: 0 });
+    const r = await runAssistantTool("get_asset", '{"hostname":"GRAYCOURT-61F-1"}', { req, maxRows: 25 });
+    const select = h.prisma.asset.findFirst.mock.calls[0][0].select;
+    expect(select).toMatchObject({ acquiredAt: true, warrantyExpiry: true, purchaseOrder: true });
+    expect((r.data as any).acquiredAt).toBe("2022-11-15T00:00:00.000Z");
+  });
 });

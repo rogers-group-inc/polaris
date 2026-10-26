@@ -62,6 +62,8 @@ export interface LlmConfig {
   azureScope?: string;
   /** Never send `temperature` — reasoning deployments (o-series, gpt-5) refuse it. */
   omitTemperature?: boolean;
+  /** The model can read images (rule 95(l)); absent = yes for a Claude deployment, no otherwise. See acceptsImages. */
+  acceptsImages?: boolean;
   host: string;
   port?: number;
   useHttps?: boolean;
@@ -114,8 +116,16 @@ export interface ChatToolCall {
   function: { name: string; arguments: string };
 }
 
+/** A screenshot on a user turn (rule 95(l)): sniffed type + base64 bytes. */
+export interface ChatImage {
+  mimeType: string;
+  base64: string;
+}
+
 export type ChatMessage =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  /** `images` ride as content parts after the text — see toOpenAiMessages / toAnthropicRequest. */
+  | { role: "user"; content: string; images?: ChatImage[] }
   /**
    * `raw`: the provider's own content for this turn (CompletionRound.raw), replayed VERBATIM
    * to the same provider. Claude needs its thinking blocks sent back unchanged with the
@@ -151,6 +161,36 @@ export const AZURE_API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(-preview)?$/;
 
 export function isAzureProvider(config: Pick<LlmConfig, "provider">): boolean {
   return config.provider === "azure";
+}
+
+/**
+ * May screenshots be sent to this model (rule 95(l))? The operator's switch
+ * when set. Unset, only a Claude deployment says yes: every current Claude
+ * model reads images, while a text-only local model answers an image part
+ * with a 400 (or ignores it and answers as if nothing were attached).
+ */
+export function acceptsImages(config: Pick<LlmConfig, "provider" | "azureApiShape" | "acceptsImages">): boolean {
+  if (typeof config.acceptsImages === "boolean") return config.acceptsImages;
+  return config.provider === "azure" && config.azureApiShape === "anthropic";
+}
+
+/**
+ * The chat-completions form of the history: a user turn with images becomes
+ * content parts (text, then one `image_url` data URL per image) — the shape
+ * Azure OpenAI, Ollama, LM Studio and vLLM vision models all read. Every other
+ * message passes through unchanged. Exported for tests.
+ */
+export function toOpenAiMessages(messages: ChatMessage[]): unknown[] {
+  return messages.map((m) => {
+    if (m.role !== "user" || !m.images?.length) return m;
+    return {
+      role: "user",
+      content: [
+        { type: "text", text: m.content },
+        ...m.images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.base64}` } })),
+      ],
+    };
+  });
 }
 
 /** Normalize the operator-entered path prefix: leading slash, no trailing slash. */
@@ -914,6 +954,10 @@ export function toAnthropicRequest(messages: ChatMessage[], tools: ChatToolDef[]
     }
     started = true;
     if (m.role === "user") {
+      // Images before the text — Anthropic's guidance for the best reading of them.
+      for (const img of m.images ?? []) {
+        userBlocks().push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.base64 } });
+      }
       userBlocks().push({ type: "text", text: m.content });
     } else if (m.role === "tool") {
       userBlocks().push({ type: "tool_result", tool_use_id: m.tool_call_id, content: m.content });
@@ -1063,7 +1107,7 @@ export async function chatCompletionRound(
   const azure = isAzureProvider(config);
   const body: Record<string, unknown> = {
     model: config.model,
-    messages,
+    messages: toOpenAiMessages(messages),
     stream: true,
   };
   if (!(azure && (config.omitTemperature || refusesTemperature.has(temperatureKey(config))))) {
