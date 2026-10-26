@@ -37,6 +37,10 @@ import {
   isAssetShadowed,
   triggerSignature,
   scopeRank,
+  forecastLevelsSourceId,
+  isForecastLevelSource,
+  linkForecastLevels,
+  type SeverityBand,
 } from "./notificationTypes.js";
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { listRegions, REGION_TAG_CATEGORY } from "./mapRegionService.js";
@@ -616,10 +620,41 @@ export async function getRule(id: string) {
   return withV2(rule);
 }
 
+/**
+ * A forecast that takes its levels from another automation
+ * (`trigger.levelsFromRuleId`): refuse a source that cannot lend them, and
+ * store the source's levels on the forecast now (`linkForecastLevels`). The
+ * engine re-reads the source at every evaluation, so the stored copy only
+ * matters if the source is later deleted — the forecast then keeps the levels
+ * it last had rather than losing its threshold. Mutates `input`.
+ */
+async function applyForecastLevelLink(input: RuleInput, selfId: string | null): Promise<void> {
+  const sourceId = forecastLevelsSourceId(input.trigger);
+  if (!sourceId) return;
+  if (sourceId === selfId) throw new AppError(400, "A forecast cannot take its levels from itself");
+  const source = await prisma.notificationRule.findUnique({
+    where: { id: sourceId },
+    select: { trigger: true, severity: true, severityBands: true },
+  });
+  if (!source) throw new AppError(400, "The automation this forecast takes its levels from no longer exists");
+  const metric = (input.trigger as { metric: string }).metric;
+  if (!isForecastLevelSource(source.trigger, metric)) {
+    throw new AppError(400, "A forecast can only take its levels from a single Memory utilization condition compared with > or >=");
+  }
+  const linked = linkForecastLevels(
+    { trigger: input.trigger, severity: input.severity, severityBands: input.severityBands as SeverityBand[] | null | undefined },
+    { trigger: source.trigger, severity: source.severity, severityBands: source.severityBands as unknown as SeverityBand[] | null },
+  );
+  input.trigger = linked.trigger as Trigger;
+  input.severity = linked.severity as Severity;
+  input.severityBands = linked.severityBands as RuleInput["severityBands"];
+}
+
 export async function createRule(input: RuleInput, actor?: string) {
   // A masked api_call header on a create has nothing to restore from (rule 114(h)).
   restoreMaskedActionHeaders(input, null);
   await assertActionRefs(input);
+  await applyForecastLevelLink(input, null);
   const mirror = legacyMirrorOfV2(input.reset, input.actions);
   const rule = await prisma.notificationRule.create({
     data: {
@@ -690,6 +725,7 @@ export async function updateRule(id: string, input: RuleInput, actor?: string) {
   // (same url + header name only — rule 114(h)).
   restoreMaskedActionHeaders(input, existing);
   await assertActionRefs(input);
+  await applyForecastLevelLink(input, id);
   const identityChanged =
     triggerIdentityOf(existing.trigger as unknown as Trigger) !== triggerIdentityOf(input.trigger);
   // GROUPED ALERTS (business rule 75). Turning the per-device fold on or off

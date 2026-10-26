@@ -88,6 +88,15 @@ beforeAll(() => {
       // merged in at the route, not by buildSchemaCatalog, and without it every
       // dimension control falls back to a plain text box.
       schema: async () => ({ ...buildSchemaCatalog(), dimensionPickers: dimensionPickerMeta() }),
+      // The memory forecast's level sources: one memory-utilization automation
+      // with two levels, and a CPU one the picker must not offer.
+      list: async () => ([
+        { id: "r-mem-levels", name: "High memory", severity: "serious",
+          trigger: { type: "asset_metric", metric: "memPct", operator: ">=", threshold: 85 },
+          severityBands: [{ threshold: 90, severity: "critical", actions: [] }] },
+        { id: "r-cpu", name: "High CPU", severity: "warning",
+          trigger: { type: "asset_metric", metric: "cpuPct", operator: ">=", threshold: 90 }, severityBands: null },
+      ]),
       // pushDevices is what the push branch's warning line and the address-book
       // picker's device column read; "op" has one browser enrolled, "quiet" none.
       recipientUsers: async () => ({ users: [
@@ -3105,6 +3114,42 @@ describe("automation wizard DOM render", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
     expect((savedPayloads[0]! as Record<string, any>).trigger.forecastDays).toBeUndefined();
+  });
+
+  it("takes a memory forecast's levels from a memory utilization automation, and hands it the severity controls", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-mem-linked", name: "Memory forecast",
+      reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await pickMetric("memForecastPct");
+    await new Promise((r) => setTimeout(r, 30)); // the level-source list arrives
+    const win = g.window as InstanceType<typeof Window>;
+    const pick = doc.querySelector("#aw-trig-root .tgl-levels-from") as unknown as { value: string; dispatchEvent: (e: unknown) => void; querySelectorAll: (q: string) => ArrayLike<{ value: string }> };
+    // Only the memory-utilization automation is offered, beside "its own levels".
+    expect(Array.from(pick.querySelectorAll("option")).map((o) => o.value)).toEqual(["", "r-mem-levels"]);
+    pick.value = "r-mem-levels";
+    pick.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    // Its own threshold is hidden, the note lists the linked levels, and the
+    // severity controls are handed over.
+    expect((doc.querySelector("#aw-trig-root .tgl-threshold") as unknown as { style: { display: string } }).style.display).toBe("none");
+    expect((doc.querySelector("#aw-trig-root .tgl-levels-note") as unknown as { textContent: string }).textContent)
+      .toContain("Serious ≥ 85 %, Critical ≥ 90 %");
+    expect((doc.querySelector("#aw-multi-sev") as unknown as { disabled: boolean }).disabled).toBe(true);
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.levelsFromRuleId).toBe("r-mem-levels");
+    expect(saved.trigger.threshold).toBe(85);
+    expect(saved.trigger.operator).toBe(">=");
   });
 
   it("opens a stored path automation under Path Monitor, keeping its server choice", async () => {

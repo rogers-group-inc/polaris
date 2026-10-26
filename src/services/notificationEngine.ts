@@ -113,6 +113,11 @@ import {
   probeLossWindowSec,
   readingAtOrAboveCeiling,
   forecastDaysOf,
+  forecastLevelsSourceId,
+  linkForecastLevels,
+  forecastLevelsOf,
+  FORECAST_HORIZON_METRICS,
+  type ForecastLevel,
   DEVICE_FILTER_DIMENSIONS,
   deviceFilterMatch,
   type DeviceFilterAsset,
@@ -148,7 +153,7 @@ import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
 import { computeStorageForecast } from "./storageForecastService.js";
-import { computeMemoryForecast, computeMemoryProjection } from "./memoryForecastService.js";
+import { computeMemoryForecast, computeMemoryProjection, forecastLevelReading } from "./memoryForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
@@ -429,6 +434,10 @@ interface Reading {
    */
   dependencyDown?: boolean;
   ownMonitorStatus?: string | null;
+  /** A forecast reading's trend (memForecastPct): the newest day's memory in
+   *  use and the fitted growth per day — what the message turns into "Days
+   *  until Serious: 6" once the alert's severity names the level. */
+  forecast?: { usedPct: number; slopePerDay: number };
 }
 
 // ─── Comparators ────────────────────────────────────────────────────────────
@@ -1417,6 +1426,10 @@ async function resolveAssetMetricReadings(
   saturated?: Set<string>,
   /** Business rule 90 out-param — see yieldToSdwanParents. */
   sdwanYielded?: Map<string, string>,
+  /** memForecastPct only: the rule's levels (base + bands, `forecastLevelsOf`).
+   *  Absent — a forecast leaf inside a multi-condition tree — means the
+   *  trigger's own threshold is the one level. */
+  forecastLevels?: ForecastLevel[],
 ): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
   // The device-identifier dimensions narrow the ASSET set before any sample
@@ -1460,16 +1473,23 @@ async function resolveAssetMetricReadings(
     }
     case "memForecastPct": {
       // Forecast metric over the trigger's horizon (FORECAST_HORIZON_METRICS):
-      // the memory in use the same 30-day trend reaches `forecastDays` out, so
-      // the base threshold and every severity band are TARGET LEVELS sharing
-      // one horizon — "reaches 80% within 14 days" warning, "reaches 95%"
-      // critical — on the ordinary tier ladder. A host that is not growing
-      // reads null (recovered, so a live alert ends when the growth stops); one
-      // with <7 daily points reads nothing. One reading per device.
-      const proj = await computeMemoryProjection(ids, forecastDaysOf(trigger));
+      // the base threshold and every severity band are LEVELS, and the alert
+      // counts down to the next one the host has not reached — "Days until
+      // Serious", then past serious "Days until Critical" — within
+      // `forecastDays`. `forecastLevelReading` places the value so the ordinary
+      // tier ladder lands on that level. Null (recovered — a live alert ends)
+      // when memory is not growing, every level is passed, or the next is out
+      // of reach; a host with <7 daily points reads nothing. One per device.
+      const horizon = forecastDaysOf(trigger);
+      const levels = forecastLevels ?? forecastLevelsOf(trigger, "warning", null);
+      const proj = await computeMemoryProjection(ids, horizon);
       return proj.map((r) => {
         const a = index.get(r.assetId)!;
-        return { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: r.projectedPct };
+        return {
+          assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "",
+          value: forecastLevelReading(r.usedPct, r.slopePctPerDay, horizon, levels),
+          forecast: { usedPct: r.usedPct, slopePerDay: r.slopePctPerDay },
+        };
       });
     }
     case "cpuCorePct": {
@@ -2495,6 +2515,12 @@ function readingContextParts(
   return {
     ...base, metric: String(metric), value: valueStr, threshold,
     metricLabel: readable.metricLabel, valueDisplay: readable.valueDisplay, thresholdDisplay: readable.thresholdDisplay,
+    // A memory forecast counts down to a LEVEL; which one depends on the
+    // severity the caller sets next, so the trend and the levels ride along
+    // and buildTemplateContext resolves "Days until Serious: 6".
+    ...(reading.forecast && trigger.type === "asset_metric"
+      ? { forecast: { ...reading.forecast, levels: forecastLevelsOf(trigger, rule.severity, rule.severityBands) } }
+      : {}),
   };
 }
 
@@ -2582,6 +2608,12 @@ function renderMessage(
   // with its own reading, so "cpuCorePct = 6.6" would repeat one of them.
   if (reading.dimLabel && rule.trigger.type === "asset_metric" && rule.trigger.metric === "cpuCorePct") {
     return `${rule.name}: ${ctx["asset"]}${dim} (threshold ${ctx["threshold"]})`;
+  }
+  // A memory forecast says what it is counting down to: the device, then the
+  // days until its next level — "COWAN-61F-1 — Days until Serious: 6". The
+  // projected percentage behind it is an engine detail, not the news.
+  if (ctx["forecast.level"] && ctx["forecast.days"]) {
+    return `${ctx["asset"]} — Days until ${ctx["forecast.level"]}: ${ctx["forecast.days"]}`;
   }
   return `${rule.name}: ${ctx["asset"]}${dim} — ${ctx["metric"]} = ${ctx["value"]} (threshold ${ctx["threshold"]})`;
 }
@@ -2909,7 +2941,7 @@ async function evaluateThresholdRule(
     }
     activeAssets = coreSupersededIds.size ? active.filter((a) => !coreSupersededIds.has(a.id)) : active;
     readings = trigger.type === "asset_metric"
-      ? await resolveAssetMetricReadings(trigger, activeAssets, saturatedIds, sdwanYielded)
+      ? await resolveAssetMetricReadings(trigger, activeAssets, saturatedIds, sdwanYielded, forecastLevelsOf(trigger, rule.severity, rule.severityBands))
       : await resolveAssetStateReadings(trigger, activeAssets, { dependencyDownReadsDown: speaksForSuppressed, sdwanYielded });
     if (trigger.type === "asset_metric" && pathTriggerIncludesServer(trigger)) {
       serverReadings = await serverPathReadings(trigger);
@@ -2940,7 +2972,7 @@ async function evaluateThresholdRule(
     const candidates = suppressedAssets.filter((a) => firingFrozen.has(a.id) && (!needsAnswering || assetIsAnsweringProbes(a)));
     if (candidates.length > 0) {
       const raw = trigger.type === "asset_metric"
-        ? await resolveAssetMetricReadings(trigger, candidates, new Set(), new Map())
+        ? await resolveAssetMetricReadings(trigger, candidates, new Set(), new Map(), forecastLevelsOf(trigger, rule.severity, rule.severityBands))
         : await resolveAssetStateReadings(trigger, candidates, { dependencyDownReadsDown: speaksForSuppressed, sdwanYielded: new Map() });
       // Judged per READING, not per asset: one dimension refreshed during the
       // window says nothing about another that stopped reporting before it.
@@ -6518,6 +6550,39 @@ async function primeAssetDetailCache(assetIds: Iterable<string>): Promise<void> 
   for (const a of rows) _assetDetailCache.set(a.id, { ...a, status: String(a.status) });
 }
 
+/**
+ * A forecast that takes its levels from another automation
+ * (`trigger.levelsFromRuleId`) evaluates with that automation's CURRENT
+ * threshold, base severity and bands (`linkForecastLevels`), so editing the
+ * memory-utilization automation's percentages moves the forecast with it.
+ * Swapped in here, where the tick loads its rules, so every path downstream
+ * (the tier ladder, recovery, the band severity) sees an ordinary banded rule.
+ * The source is read whether or not it is enabled — a paused memory alert
+ * still states the levels. ONE query, and none on an install with no linked
+ * forecast. Mutates `rules` in place.
+ */
+async function applyLinkedForecastLevels(rules: Array<Pick<DbRule, "trigger" | "severity" | "severityBands">>): Promise<void> {
+  const ids = [...new Set(rules.map((r) => forecastLevelsSourceId(r.trigger)).filter((x): x is string => !!x))];
+  if (ids.length === 0) return;
+  const sources = await prisma.notificationRule.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, trigger: true, severity: true, severityBands: true },
+  });
+  const byId = new Map(sources.map((s) => [s.id, s]));
+  for (const rule of rules) {
+    const id = forecastLevelsSourceId(rule.trigger);
+    const src = id ? byId.get(id) : undefined;
+    if (!src) continue;
+    const linked = linkForecastLevels(
+      { trigger: rule.trigger, severity: rule.severity, severityBands: rule.severityBands },
+      { trigger: src.trigger, severity: src.severity, severityBands: src.severityBands as unknown as SeverityBand[] | null },
+    );
+    rule.trigger = linked.trigger as Trigger;
+    rule.severity = linked.severity;
+    rule.severityBands = linked.severityBands ?? null;
+  }
+}
+
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 export async function evaluateAllNotificationRules(): Promise<void> {
@@ -6552,6 +6617,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       alertGroupFoldBy: r.alertGroup?.foldBy ?? null,
     };
   });
+  await applyLinkedForecastLevels(rules);
 
   clearAssetDetailCache();
   // Arm the per-tick scope memo for the duration of this pass only. The
@@ -6833,6 +6899,15 @@ export function applyCarveOutToMatches(
   return { evaluated: keep.length, assets: new Set(keep.map((m) => m.assetId).filter(Boolean)).size };
 }
 
+/** A preview input with a linked forecast's levels swapped in, as the tick
+ *  would evaluate it — a copy, the caller's input is untouched. */
+async function previewInputWithLinkedLevels(input: PreviewRuleInput): Promise<PreviewRuleInput> {
+  if (!input.trigger || !forecastLevelsSourceId(input.trigger)) return input;
+  const copy = { ...input, severityBands: input.severityBands ?? null } as PreviewRuleInput & { severityBands: SeverityBand[] | null };
+  await applyLinkedForecastLevels([copy as unknown as Pick<DbRule, "trigger" | "severity" | "severityBands">]);
+  return copy;
+}
+
 /** Dry-run a draft rule against current data with NO writes. A draft without
  *  a trigger is a SCOPE-ONLY preview: list the devices the scope matches
  *  (the wizard's asset-filtering step). */
@@ -6877,7 +6952,8 @@ async function renderPreviewEmail(
   return { subject: composed.subject, text: composed.text, html: composed.html };
 }
 
-export async function previewRule(input: PreviewRuleInput): Promise<PreviewResult> {
+export async function previewRule(rawInput: PreviewRuleInput): Promise<PreviewResult> {
+  const input = await previewInputWithLinkedLevels(rawInput);
   const trigger = input.trigger;
   let readings: Reading[] = [];
 
@@ -6915,7 +6991,7 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
     readings = r ? [r] : [];
   } else if (trigger.type === "asset_metric") {
     scopeAssets = await loadScopeAssets(scopeForTrigger(input.scope, trigger), { monitoredOnly: true });
-    readings = await resolveAssetMetricReadings(trigger, scopeAssets);
+    readings = await resolveAssetMetricReadings(trigger, scopeAssets, undefined, undefined, forecastLevelsOf(trigger, input.severity, input.severityBands));
     if (pathTriggerIncludesServer(trigger)) readings = [...readings, ...(await serverPathReadings(trigger))];
   } else if (trigger.type === "asset_state") {
     scopeAssets = await loadScopeAssets(input.scope, { monitoredOnly: true });
@@ -7102,6 +7178,7 @@ export function applicableTemplateTokens(trigger: Trigger | null | undefined): s
     processes: !isHost && !!metricKey && processRankingForMetric(metricKey) !== null,
     dependency: !!t && ruleAlertsWhenDependencyDown(t as Trigger),
     path: !!metricKey && PATH_GRAPH_METRICS.has(metricKey),
+    forecast: !!metricKey && (FORECAST_HORIZON_METRICS as readonly string[]).includes(metricKey),
   };
   return TEMPLATE_VARIABLES
     .filter((v) => {
@@ -7141,7 +7218,8 @@ export interface MessageExampleResult {
  * first one that meets the trigger, else the first at all); an event/change
  * trigger has no reading to take, so its `{value}` is a stand-in that says so.
  */
-export async function previewAlertMessage(input: PreviewRuleInput, assetId?: string | null): Promise<MessageExampleResult> {
+export async function previewAlertMessage(rawInput: PreviewRuleInput, assetId?: string | null): Promise<MessageExampleResult> {
+  const input = await previewInputWithLinkedLevels(rawInput);
   const trigger = input.trigger;
   const isHost = !!trigger && (trigger.type === "host_metric" || (trigger.type === "composite" && trigger.kind === "host"));
   const scopeAssets = isHost ? [] : await loadScopeAssets(scopeForTrigger(input.scope, trigger), { monitoredOnly: true });
@@ -7169,7 +7247,7 @@ export async function previewAlertMessage(input: PreviewRuleInput, assetId?: str
     if (r) reading = r; else noReading = true;
   } else if (picked && trigger && (trigger.type === "asset_metric" || trigger.type === "asset_state")) {
     const rs = trigger.type === "asset_metric"
-      ? await resolveAssetMetricReadings(trigger, [picked])
+      ? await resolveAssetMetricReadings(trigger, [picked], undefined, undefined, forecastLevelsOf(trigger, input.severity, input.severityBands))
       : await resolveAssetStateReadings(trigger, [picked]);
     const r = rs.find((x) => readingMeets(trigger, x.value)) ?? rs[0];
     if (r) reading = r; else noReading = true;

@@ -33,7 +33,9 @@ import { coreVector } from "../utils/cpuCores.js";
 import { getBranding } from "./brandingService.js";
 import { SAMPLE_SDWAN_HEALTH_CHECK, SAMPLE_SDWAN_LINK } from "../utils/sampleAlertDevice.js";
 import { forecastFromDailyPoints, loadStorageForecastSeries, type StorageForecastSeries } from "./storageForecastService.js";
+import { loadMemoryForecastSeries, memoryForecastFromDailyPoints, type MemoryForecastSeries } from "./memoryForecastService.js";
 import type { TrendPoint } from "../utils/linearTrend.js";
+import { forecastLevelsOf, forecastDaysOf, type SeverityBand } from "./notificationTypes.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
 /**
@@ -216,6 +218,36 @@ export function isStorageScopedAlert(metric: string | null | undefined): boolean
  * leaves the alert "is" is not recoverable from the notification, and a line
  * (or a horizon) from the wrong leaf is worse than none.
  */
+/**
+ * What a memory forecast alert's chart counts down to, from its rule (with any
+ * linked levels already applied — `linkForecastLevels`) and the severity the
+ * alert is at. Pure.
+ *   memForecastPct:   the level at that severity (else the lowest), drawn over
+ *                     the trigger's `forecastDays`.
+ *   memDaysUntilFull: 100 %, over the trigger's threshold in days.
+ * Null when the rule is not a plain memory forecast condition.
+ */
+export function memoryForecastTargetFromRule(
+  rule: { trigger: unknown; severity: string; severityBands: SeverityBand[] | null | undefined },
+  severity: string,
+): MemoryForecastTarget | null {
+  const t = rule.trigger as { type?: unknown; metric?: unknown; threshold?: unknown } | null;
+  if (!t || t.type !== "asset_metric") return null;
+  if (t.metric === "memDaysUntilFull") {
+    const days = typeof t.threshold === "number" && t.threshold > 0 ? t.threshold : 14;
+    return { targetPct: 100, levelName: null, horizonDays: days };
+  }
+  if (t.metric !== "memForecastPct") return null;
+  const levels = forecastLevelsOf(t, rule.severity, rule.severityBands);
+  const level = levels.find((l) => l.severity === severity) ?? levels[0];
+  if (!level) return null;
+  return {
+    targetPct: level.threshold,
+    levelName: level.severity.charAt(0).toUpperCase() + level.severity.slice(1),
+    horizonDays: forecastDaysOf(t),
+  };
+}
+
 export function storageThresholdFromTrigger(trigger: unknown): number | null {
   if (!trigger || typeof trigger !== "object") return null;
   const t = trigger as { type?: unknown; metric?: unknown; threshold?: unknown };
@@ -243,6 +275,19 @@ export function isResourceScopedAlert(metric: string | null | undefined): boolea
 
 /** The only charts a resource alert draws. */
 const RESOURCE_CHART_TOKENS: readonly ChartToken[] = ["chart.cpu", "chart.memory"];
+
+/**
+ * The memory FORECASTS. A trend over 30 days is not a load spike, so the last
+ * hour of CPU says nothing about it: these alerts draw `{chart.memory}` alone,
+ * and draw it as the forecast — the daily points the trend was fitted on, then
+ * the trend carried forward to the level it is counting down to
+ * (`memoryForecastChartSpec`).
+ */
+const MEMORY_FORECAST_METRICS: ReadonlySet<string> = new Set(["memForecastPct", "memDaysUntilFull"]);
+
+export function isMemoryForecastAlert(metric: string | null | undefined): boolean {
+  return !!metric && MEMORY_FORECAST_METRICS.has(metric);
+}
 
 /** The SD-WAN health-check charts. The default body asks for all three, so a
  *  failover email shows every side of the SLA rather than whichever one the
@@ -320,6 +365,9 @@ export function chartTokensForAlert(
   if (isResourceScopedAlert(metric)) {
     for (const t of Array.from(wanted)) if (!RESOURCE_CHART_TOKENS.includes(t)) wanted.delete(t);
   }
+  // A memory forecast draws the forecast and nothing else (see
+  // MEMORY_FORECAST_METRICS) — its CPU chart comes out too.
+  if (isMemoryForecastAlert(metric)) wanted.delete("chart.cpu");
   return wanted;
 }
 
@@ -1448,6 +1496,8 @@ export interface StorageChartSpec {
   now: number | null;
   /** Replaces the now/avg/peak caption (forecast only). */
   caption: string | null;
+  /** The dashed line's legend entry, when it is not the plain "Threshold". */
+  thresholdLegend?: string;
   /** The plain-text line — the img alt text and the text body. */
   summary: string;
 }
@@ -1568,6 +1618,81 @@ export function storageForecastSpec(
   };
 }
 
+/** What a memory forecast chart counts down to: the level (its name and %)
+ *  and how far forward to draw. Resolved per alert by the delivery service. */
+export interface MemoryForecastTarget {
+  /** The level's memory threshold (0–100); 100 for days-until-full. */
+  targetPct: number;
+  /** "Serious" — null for days-until-full, where the line is just "Full". */
+  levelName: string | null;
+  /** How far past now the axis runs. */
+  horizonDays: number;
+}
+
+/**
+ * The forecast chart for a memory forecast alert. Pure. The memory twin of
+ * `storageForecastSpec`: the fitted daily points (memory in use, %), then the
+ * trend from NOW at the newest day's figure, carried to the horizon (capped at
+ * 100 %), with the level it counts down to as the dashed line. The caption
+ * leads with the change per day — the number the reader acts on — then the
+ * countdown: "now 79 % · +0.44 %/day · Serious (85 %) in 14 d".
+ */
+export function memoryForecastChartSpec(
+  series: MemoryForecastSeries,
+  target: MemoryForecastTarget,
+  now: number,
+): StorageChartSpec {
+  const label = "Memory forecast";
+  const pts = series.points;
+  const first = pts.length ? pts[0]!.t : now - 30 * DAY_MS;
+  const from = Math.min(first, now - DAY_MS);
+  const horizonDays = Math.min(365, Math.max(1, target.horizonDays));
+  const to = now + horizonDays * DAY_MS;
+  const histWin = timeAxisLabel(now - from);
+  const aheadWin = timeAxisLabel(to - now);
+  const points = pts.map((p) => ({ t: p.t, v: p.v }));
+  const lastPct = points.length ? points[points.length - 1]!.v : null;
+  const levelLabel = target.levelName ? `${target.levelName} (${formatReading(target.targetPct, "%")})` : "full";
+  const base = {
+    label, points, unit: "%", percent: true, threshold: target.targetPct, ceiling: 100,
+    from, to, now, thresholdLegend: target.levelName ? `${target.levelName} level` : "Full",
+  };
+  const slope = series.slopePerDay;
+  if (slope == null || lastPct == null || slope <= 0) {
+    const why = slope == null ? "not enough history" : "no longer growing";
+    return {
+      ...base, projection: [],
+      caption: lastPct != null ? `now ${formatReading(lastPct, "%")} · ${why}` : "no data",
+      summary: lastPct != null
+        ? `${label} (last ${histWin}): now ${formatReading(lastPct, "%")}, ${why}`
+        : `${label} (last ${histWin}): no data`,
+    };
+  }
+  const end = Math.min(100, lastPct + slope * horizonDays);
+  const projection = [{ t: now, v: lastPct }, { t: to, v: end }];
+  const days = lastPct >= target.targetPct ? 0 : (target.targetPct - lastPct) / slope;
+  const growth = `+${formatReading(slope, "%")}/day`;
+  const when = days <= 0 ? `${levelLabel} now` : `${levelLabel} in ${formatReading(days)} d`;
+  return {
+    ...base, projection,
+    caption: `now ${formatReading(lastPct, "%")} · ${growth} · ${when}`,
+    summary: `${label} (last ${histWin}, next ${aheadWin}): now ${formatReading(lastPct, "%")}, growing ${formatReading(slope, "%")}/day, ` +
+      (days <= 0 ? `at ${levelLabel} now` : `reaches ${levelLabel} in ${formatReading(days)} days`),
+  };
+}
+
+/** Invented memory forecast for a TEST alert (business rule 65): a month of
+ *  steady growth heading for the level. */
+function sampleMemoryForecastSpec(target: MemoryForecastTarget, now: number): StorageChartSpec {
+  const points: TrendPoint[] = [];
+  const today = Math.floor(now / DAY_MS) * DAY_MS;
+  for (let d = 29; d >= 0; d--) {
+    const i = 29 - d;
+    points.push({ t: today - d * DAY_MS, v: 62 + i * 0.5 + 0.6 * Math.sin(i * 1.7) });
+  }
+  return memoryForecastChartSpec(memoryForecastFromDailyPoints(points), target, now);
+}
+
 /** The last-hour read for a usage chart: one mount, one indexed range read on
  *  `(assetId, mountPath, timestamp)`. */
 async function loadStorageUsage(assetId: string, mountPath: string, since: Date) {
@@ -1601,14 +1726,16 @@ function sampleStorageSpec(metric: string, mountPath: string, threshold: number 
   return storageUsageSpec(rows, { metric, mountPath, threshold, now });
 }
 
-/** Render one storage spec into the chart entry the email embeds. */
-async function renderStorageChart(spec: StorageChartSpec, color: string): Promise<RenderedChart> {
+/** Render one storage spec into the chart entry the email embeds — or, with
+ *  `token: "chart.memory"`, a memory forecast spec (the same shape). */
+async function renderStorageChart(spec: StorageChartSpec, color: string, token: ChartToken = "chart.storage"): Promise<RenderedChart> {
   const svg = sparklineSvg(spec.points, {
     label: spec.label,
     unit: spec.unit,
     color,
     ...(spec.percent ? { yMin: 0, yMax: 100 } : {}),
     threshold: spec.threshold,
+    ...(spec.thresholdLegend ? { thresholdLegend: spec.thresholdLegend } : {}),
     ceiling: spec.ceiling,
     projection: spec.projection,
     from: spec.from,
@@ -1617,13 +1744,13 @@ async function renderStorageChart(spec: StorageChartSpec, color: string): Promis
     ...(spec.caption ? { caption: spec.caption } : {}),
   });
   const png = spec.points.length > 0 ? await rasterize(svg) : null;
-  const cid = "polaris-chart-storage@polaris";
+  const cid = `polaris-${token.replace(".", "-")}@polaris`;
   return {
-    token: "chart.storage",
+    token,
     cid,
     hasData: spec.points.length > 0,
     summary: spec.summary,
-    attachment: png ? { cid, filename: "chart-storage.png", contentType: "image/png", content: png } : null,
+    attachment: png ? { cid, filename: `${token.replace(".", "-")}.png`, contentType: "image/png", content: png } : null,
   };
 }
 
@@ -1848,6 +1975,13 @@ export async function buildAlertCharts(
      * without one) draws no line and picks a horizon from the forecast itself.
      */
     ruleThreshold?: number | null;
+    /**
+     * A memory forecast alert's countdown (`isMemoryForecastAlert`): the level
+     * and horizon `{chart.memory}` draws its forecast toward, resolved per
+     * alert by notificationDeliveryService. Absent on such an alert (a deleted
+     * rule) draws toward 100 % over two weeks.
+     */
+    memoryForecast?: MemoryForecastTarget | null;
   },
 ): Promise<Map<ChartToken, RenderedChart>> {
   // Resolve the alias up front: from here on it's an ordinary token request,
@@ -1897,6 +2031,23 @@ export async function buildAlertCharts(
     }
   }
 
+  // A memory forecast's chart is a forecast, built on its own like storage's:
+  // a month of daily points plus the horizon, not the last hour.
+  let memForecast: StorageChartSpec | null = null;
+  const memForecastAlert = isMemoryForecastAlert(opts?.metric) && wanted.has("chart.memory");
+  if (memForecastAlert) {
+    const target = opts?.memoryForecast ?? { targetPct: 100, levelName: null, horizonDays: 14 };
+    if (opts?.sampleData) {
+      memForecast = sampleMemoryForecastSpec(target, now.getTime());
+    } else if (assetId) {
+      try {
+        memForecast = memoryForecastChartSpec(await loadMemoryForecastSeries(assetId), target, now.getTime());
+      } catch (err) {
+        logger.warn({ err: (err as Error)?.message, assetId }, "alert memory forecast chart load failed — sending without it");
+      }
+    }
+  }
+
   let cpu: SparkPoint[] = [];
   let mem: MemorySeries = EMPTY_MEMORY;
   let rt: SparkPoint[] = [];
@@ -1926,7 +2077,7 @@ export async function buildAlertCharts(
     return out;
   } else {
     try {
-      const needTelemetry = wanted.has("chart.cpu") || wanted.has("chart.memory");
+      const needTelemetry = wanted.has("chart.cpu") || (wanted.has("chart.memory") && !memForecastAlert);
       const needFailSpans = [...wanted].some((t) => FAIL_SPAN_TOKENS.has(t) || t === "chart.probeLoss");
       // The loss chart colours its line from the same replay, over ITS window —
       // the automation's History, which may be longer than the hour. Only then
@@ -2016,6 +2167,10 @@ export async function buildAlertCharts(
     // read renders away rather than drawing an empty box.
     if (token === "chart.storage") {
       if (storage) out.set(token, await renderStorageChart(storage, META[token].color));
+      continue;
+    }
+    if (token === "chart.memory" && memForecastAlert) {
+      if (memForecast) out.set(token, await renderStorageChart(memForecast, META[token].color, token));
       continue;
     }
     const meta = META[token];

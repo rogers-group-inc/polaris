@@ -16,8 +16,9 @@ import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { authedAgent, dbDescribe, ensureTestUser } from "./_helpers.js";
 import { computeMemoryForecast, computeMemoryProjection, loadMemoryForecastSeries, projectMemoryPct } from "../../src/services/memoryForecastService.js";
-import { previewRule } from "../../src/services/notificationEngine.js";
-import { previewInputSchema } from "../../src/services/notificationTypes.js";
+import { previewRule, previewAlertMessage } from "../../src/services/notificationEngine.js";
+import { previewInputSchema, ruleInputSchema } from "../../src/services/notificationTypes.js";
+import { createRule } from "../../src/services/notificationRuleService.js";
 
 const GROWING = "it-mem-forecast-growing";
 const PCT_ONLY = "it-mem-forecast-pct-only";
@@ -142,6 +143,52 @@ dbDescribe("memory forecast series for the Memory chart", () => {
     expect(within14.map((m) => m.assetId)).toEqual([GROWING]);
     expect(within14[0]!.value).toBeCloseTo(grow.projectedPct!, 0);
     expect(await preview(3)).toEqual([]);
+  });
+
+  it("links a forecast to a memory-utilization automation's levels, and says 'Days until <level>'", async () => {
+    const created: string[] = [];
+    try {
+      const source = await createRule(ruleInputSchema.parse({
+        name: "it-mem-forecast high memory",
+        severity: "serious",
+        trigger: { type: "asset_metric", metric: "memPct", aggregation: "latest", operator: ">=", threshold: 85 },
+        severityBands: [{ threshold: 90, severity: "critical", actions: [] }],
+        scope: { assetIds: IDS },
+        actions: [],
+      }) as never);
+      created.push(source.id);
+      const forecast = await createRule(ruleInputSchema.parse({
+        name: "it-mem-forecast linked",
+        severity: "warning",
+        trigger: { type: "asset_metric", metric: "memForecastPct", aggregation: "latest", operator: ">=", threshold: 50, forecastDays: 14, levelsFromRuleId: source.id },
+        scope: { assetIds: IDS },
+        actions: [],
+      }) as never);
+      created.push(forecast.id);
+      // The source's levels are stored on the forecast at save.
+      expect(forecast.severity).toBe("serious");
+      expect((forecast.trigger as { threshold: number }).threshold).toBe(85);
+      expect((forecast.severityBands as Array<{ threshold: number; severity: string }>).map((b) => [b.threshold, b.severity])).toEqual([[90, "critical"]]);
+
+      // ~68% growing ~2 points/day reaches 85% in ~8-9 days: the example
+      // message counts down to Serious, not to the 96% the trend reaches.
+      const ex = await previewAlertMessage(previewInputSchema.parse({
+        name: "it-mem-forecast linked",
+        severity: "warning",
+        trigger: { type: "asset_metric", metric: "memForecastPct", aggregation: "latest", operator: ">=", threshold: 50, forDurationSec: 0, forecastDays: 14, levelsFromRuleId: source.id },
+        scope: { assetIds: IDS },
+      }) as never, GROWING);
+      expect(ex.message).toMatch(/^it-mem-forecast-growing — Days until Serious: \d+$/);
+
+      // A source that cannot lend levels is refused.
+      await expect(createRule(ruleInputSchema.parse({
+        name: "it-mem-forecast self", severity: "warning",
+        trigger: { type: "asset_metric", metric: "memForecastPct", aggregation: "latest", operator: ">=", threshold: 80, levelsFromRuleId: forecast.id },
+        scope: { assetIds: IDS }, actions: [],
+      }) as never)).rejects.toThrow(/Memory utilization/);
+    } finally {
+      await prisma.notificationRule.deleteMany({ where: { id: { in: created } } });
+    }
   });
 
   it("serves the chart's series over GET /assets/:id/memory-forecast", async () => {

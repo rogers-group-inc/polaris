@@ -22,7 +22,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logger } from "../utils/logger.js";
 import { notificationsPageUrl, pushDeepLinkUrl, ackUrlForEmail, ackUrlForPush, assetUrlForPush } from "../utils/notificationTemplate.js";
-import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, storageThresholdFromTrigger, type ChartToken, type RenderedChart } from "./alertChartService.js";
+import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, storageThresholdFromTrigger, isMemoryForecastAlert, memoryForecastTargetFromRule, type ChartToken, type RenderedChart, type MemoryForecastTarget } from "./alertChartService.js";
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
 import { buildTopProcessBlocks, processTokensIn, substituteProcessTokens } from "./alertProcessService.js";
 import { buildDependencyPathBlocks, dependencyPathTokensIn, substituteDependencyPathTokens } from "./alertDependencyPathService.js";
@@ -39,7 +39,7 @@ import {
 } from "./alertPushRecipientsService.js";
 import { markEmailAsTest, pruneEmptyChartSection, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
 import { logEvent, logEventsBatch, type LogEventInput } from "./eventLogService.js";
-import { type ChannelType, probeLossWindowSecFromTrigger, ALERT_EMAIL_SENT_ACTION } from "./notificationTypes.js";
+import { type ChannelType, probeLossWindowSecFromTrigger, ALERT_EMAIL_SENT_ACTION, forecastLevelsSourceId, linkForecastLevels, type SeverityBand } from "./notificationTypes.js";
 import { sendSmtpEmail, sendM365Email, type EmailMessage } from "./notificationChannels/emailChannel.js";
 import { sendWebhook } from "./notificationChannels/webhookChannel.js";
 import { sendPushbullet } from "./notificationChannels/pushbulletChannel.js";
@@ -143,6 +143,8 @@ interface RenderMemo {
   lossWindow: Map<string, Promise<number | null>>;
   /** Per rule: the storage chart's threshold / forecast horizon. */
   storageThreshold: Map<string, Promise<number | null>>;
+  /** Per (rule, severity): the level a memory forecast chart counts down to. */
+  memoryForecast: Map<string, Promise<MemoryForecastTarget | null>>;
   /** Keyed by notification AND dispatch: the recipient lines describe one
    *  fan-out, so the two email rows of a single fire share an entry while a
    *  reminder drained in the same pass gets its own. Both transports resolve
@@ -157,7 +159,7 @@ interface RenderMemo {
 }
 
 function newRenderMemo(): RenderMemo {
-  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map(), processes: new Map(), dependencyPath: new Map(), pathGraph: new Map() };
+  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), memoryForecast: new Map(), recipients: new Map(), processes: new Map(), dependencyPath: new Map(), pathGraph: new Map() };
 }
 
 /** Memoized read-through: one build per (alert, exact chart set) per drain. */
@@ -204,6 +206,32 @@ async function storageChartThreshold(ruleId: string | null): Promise<number | nu
     return rule ? storageThresholdFromTrigger(rule.trigger) : null;
   } catch (err) {
     logger.debug({ err: (err as Error)?.message, ruleId }, "storage chart threshold lookup failed — drawing without it");
+    return null;
+  }
+}
+
+/**
+ * What a memory forecast alert's chart counts down to — the level at the
+ * alert's severity and the horizon (`memoryForecastTargetFromRule`), with a
+ * linked forecast's levels re-read from the automation it follows, as the
+ * engine evaluated them. One or two indexed reads per drain per (rule,
+ * severity), and only for an alert that draws the memory chart; null on any
+ * failure, which draws toward 100 %.
+ */
+async function memoryForecastChartTarget(ruleId: string | null, severity: string): Promise<MemoryForecastTarget | null> {
+  if (!ruleId) return null;
+  try {
+    const rule = await prisma.notificationRule.findUnique({ where: { id: ruleId }, select: { trigger: true, severity: true, severityBands: true } });
+    if (!rule) return null;
+    let levels = { trigger: rule.trigger as unknown, severity: rule.severity, severityBands: rule.severityBands as unknown as SeverityBand[] | null };
+    const sourceId = forecastLevelsSourceId(rule.trigger);
+    if (sourceId) {
+      const src = await prisma.notificationRule.findUnique({ where: { id: sourceId }, select: { trigger: true, severity: true, severityBands: true } });
+      if (src) levels = linkForecastLevels(levels, { trigger: src.trigger, severity: src.severity, severityBands: src.severityBands as unknown as SeverityBand[] | null });
+    }
+    return memoryForecastTargetFromRule(levels, severity);
+  } catch (err) {
+    logger.debug({ err: (err as Error)?.message, ruleId }, "memory forecast chart target lookup failed — drawing toward 100 %");
     return null;
   }
 }
@@ -263,6 +291,12 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       const ruleThreshold = isStorageScopedAlert(d.notification.metric) && (wanted.has("chart.storage") || wanted.has("chart.trigger"))
         ? await memoize(memo.storageThreshold, d.notification.ruleId ?? "", () => storageChartThreshold(d.notification.ruleId))
         : null;
+      // A memory forecast draws toward the level the alert is counting down to
+      // — which one depends on the alert's severity, so it is part of the key.
+      const memoryForecast = isMemoryForecastAlert(d.notification.metric) && (wanted.has("chart.memory") || wanted.has("chart.trigger"))
+        ? await memoize(memo.memoryForecast, `${d.notification.ruleId ?? ""}|${d.notification.severity}`,
+            () => memoryForecastChartTarget(d.notification.ruleId, d.notification.severity))
+        : null;
       // A test alert has no asset and no telemetry — it is about an invented
       // device — so its charts are GENERATED. Same memo key shape, same
       // pruning afterwards: the operator is testing what the email looks like,
@@ -279,6 +313,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
                 metric: d.notification.metric,
                 lossWindowMs: null,
                 ruleThreshold,
+                memoryForecast,
               }),
           )
         : assetId
@@ -299,6 +334,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
                 dimension: d.notification.dimension,
                 metric: d.notification.metric,
                 ruleThreshold,
+                memoryForecast,
                 // The loss chart follows the automation's own History window; only
                 // resolved when the body embeds one, and only meaningful there.
                 lossWindowMs: wanted.has("chart.probeLoss") || wanted.has("chart.trigger")

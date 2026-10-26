@@ -751,11 +751,19 @@ of the combined CPU & Memory chart (prefixed *Memory —* there).
   Processes band, so page cache never reads as a leak.
 - It needs **7 days** of history before it says anything; until then the
   headline reads *Forecast needs 7 days of history — N so far*.
+- When a **Memory utilization** automation covers the device, the headline
+  counts down to that automation's **next level** instead of to full, in that
+  level's severity colour. For example, *Days until Serious: 12 · trend:
+  +0.42%/day* while memory is below serious, then *Days until Critical: N* once
+  it is past it, and *Above Critical (90 %)* past every level. Hover it to see
+  the level and the automation it comes from. With no memory automation (or
+  only a Memory forecast automation's own levels) it counts down to that
+  automation's levels, or to full.
 - A host whose memory is **shrinking** or **not measurably growing** says so,
-  and a fill date more than a year out reads *> 1 year*.
-- The number is the same one a **Days until memory full** automation
-  compares ([triggers](Automation-Triggers)), so the chart and an alert never
-  disagree. The dashed line is drawn as wide again as the selected range — an
+  and a date more than a year out reads *> 1 year*.
+- The trend is the same one a **Days until memory full** or **Memory
+  forecast** automation compares ([triggers](Automation-Triggers)), so the
+  chart and an alert never disagree. The dashed line is drawn as wide again as the selected range — an
   hour of forecast beside an hour of history, a week beside a week.
 
 The **Forecast** button beside the headline hides or shows the line for that
