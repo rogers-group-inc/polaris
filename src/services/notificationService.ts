@@ -585,6 +585,24 @@ async function cascadeRootCauseAcks(
   return count;
 }
 
+/**
+ * What a NotificationRuleState row becomes when the alert behind it is ended
+ * from outside the engine (an operator clear, the suppression sweep). Every
+ * timer AND the poll-counted runs: a stale `metRun` would let the next
+ * qualifying reading fire at once, skipping the hold the condition is meant to
+ * re-earn (the engine's own CLEARED_RUNS, same reason).
+ */
+const RELEASED_RULE_STATE = {
+  state: "clear",
+  conditionMetSince: null,
+  recoveredSince: null,
+  notificationId: null,
+  bandMetSince: Prisma.DbNull,
+  metRun: 0,
+  clearRun: 0,
+  lastReadingAt: null,
+} satisfies Prisma.NotificationRuleStateUpdateManyMutationInput;
+
 /** Soft-clear a batch (cleared=true → filtered from the default list). */
 export async function clearNotifications(ids: string[], actor: string): Promise<number> {
   if (!Array.isArray(ids) || ids.length === 0) {
@@ -596,10 +614,23 @@ export async function clearNotifications(ids: string[], actor: string): Promise<
   // and before the write, so the actions' deliveries attach to a live
   // notification; a failure here must never block the clear.
   await runResetActionsForCleared(ids, actor).catch(() => {});
-  const res = await prisma.notification.updateMany({
-    where: { id: { in: ids }, cleared: false },
-    data: { cleared: true, clearedBy: actor, clearedAt: new Date() },
-  });
+  // The state machine lets go too, the same handoff clearSuppressedAlerts
+  // makes. Left `firing` behind a cleared alert, the key reads "already
+  // raised" on every tick the condition still holds — a device cleared by hand
+  // while still down would never alert again until it came back up. Released,
+  // a still-bad condition re-earns its debounce and raises a NEW alert.
+  // Unconditional on the ids (not just the ones this call flips), so clearing
+  // an already-cleared alert also frees a row left stranded before this fix.
+  const [res] = await prisma.$transaction([
+    prisma.notification.updateMany({
+      where: { id: { in: ids }, cleared: false },
+      data: { cleared: true, clearedBy: actor, clearedAt: new Date() },
+    }),
+    prisma.notificationRuleState.updateMany({
+      where: { notificationId: { in: ids } },
+      data: RELEASED_RULE_STATE,
+    }),
+  ]);
   await logEvent({
     action: "notification.cleared",
     resourceType: "notification",
@@ -765,13 +796,7 @@ export async function clearSuppressedAlerts(): Promise<number> {
     // sits `firing` with a dangling notificationId and can never fire again.
     prisma.notificationRuleState.updateMany({
       where: { notificationId: { in: cleared } },
-      data: {
-        state: "clear",
-        conditionMetSince: null,
-        recoveredSince: null,
-        notificationId: null,
-        bandMetSince: Prisma.DbNull,
-      },
+      data: RELEASED_RULE_STATE,
     }),
   ]);
   await logEventsBatch(events);
