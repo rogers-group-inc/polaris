@@ -2866,9 +2866,30 @@
     btn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
+      hideEdgeTooltip();
       onClick(btn);
     });
+    // Hover tip: the map's own styled tooltip (the one links and location
+    // boxes use) — name in bold, what it does underneath. Read at hover time
+    // from _setCornerTip's data attributes, so a toggle's tip follows its
+    // state. Not a native `title`: that would stack a second tooltip.
+    btn.addEventListener("mouseenter", function (e) {
+      var name = btn.getAttribute("data-tip-name");
+      if (!name) return;
+      var body = btn.getAttribute("data-tip-body");
+      showEdgeTooltip("<strong>" + escapeHtml(name) + "</strong>" +
+        (body ? '<div style="margin-top:2px;opacity:0.85">' + escapeHtml(body) + "</div>" : ""), e.clientX, e.clientY);
+    });
+    btn.addEventListener("mousemove", function (e) { moveEdgeTooltip(e.clientX, e.clientY); });
+    btn.addEventListener("mouseleave", function () { hideEdgeTooltip(); });
     return btn;
+  }
+  // A corner tool's hover tip and accessible name.
+  function _setCornerTip(btn, name, body) {
+    btn.setAttribute("data-tip-name", name);
+    btn.setAttribute("data-tip-body", body || "");
+    btn.setAttribute("aria-label", name);
+    btn.removeAttribute("title");
   }
   // An on/off tool: icon, the word as its accessible name (aria-label),
   // aria-pressed, `is-on` when lit. `onToggle(next)` runs after the pref is
@@ -2883,10 +2904,9 @@
     function paint() {
       var on = _readPref(key);
       btn.innerHTML = icon;
-      btn.setAttribute("aria-label", word);
       btn.classList.toggle("is-on", on);
       btn.setAttribute("aria-pressed", on ? "true" : "false");
-      btn.title = on ? titleOn : titleOff;
+      _setCornerTip(btn, word + (on ? " — on" : " — off"), on ? titleOn : titleOff);
     }
     paint();
     return btn;
@@ -2903,7 +2923,7 @@
     var advanced = _toggleTool("topology-advanced-lines", ADVANCED_LINES_STORAGE_KEY, ADVANCED_ICON,
       "Advanced line editing",
       "Advanced line editing is on — drag a point's wings to curve the line (Alt moves one wing alone)",
-      "Advanced line editing — curve lines with Photoshop-style wings on each point",
+      "Curve lines with Photoshop-style wings on each point",
       function () { if (edgeEditor) edgeEditor.refresh(); });
     var snapPoints = _toggleTool("topology-snap-points", SNAP_POINTS_STORAGE_KEY, SNAP_POINTS_ICON,
       "Snap line points",
@@ -2927,8 +2947,7 @@
         ],
       });
     });
-    exportBtn.title = "Export: screenshot, PDF or Visio";
-    exportBtn.setAttribute("aria-label", "Export");
+    _setCornerTip(exportBtn, "Export", "Copy a screenshot, or save the view as a PDF or a Visio drawing");
     exportBtn.setAttribute("aria-haspopup", "menu");
     exportBtn.innerHTML = _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
 
@@ -3006,10 +3025,12 @@
     if (edgeEditor) edgeEditor.refresh();
     var btn = document.getElementById("topology-edit");
     if (btn) {
-      // Icon + hidden word, as the dashboard's buttons: the word is the
-      // accessible name, the title the tooltip.
+      // Icon + hidden word, as the dashboard's buttons; the hover tip says
+      // what pressing it does now.
       btn.innerHTML = (on ? DONE_ICON + "Done Editing" : EDIT_ICON + "Edit Map");
-      btn.title = on ? "Done editing" : "Edit map layout";
+      _setCornerTip(btn, on ? "Done editing" : "Edit map",
+        on ? "Stop editing — the map goes back to view-only"
+           : "Move devices and boxes, draw and curve lines, snap to the grid");
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
     ["topology-save-layout", "topology-reset-layout",
