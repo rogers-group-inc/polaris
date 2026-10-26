@@ -57,6 +57,7 @@ describe("permission gate", () => {
     ["fleet_summary", "{}"],
     ["telemetry_summary", "{}"],
     ["list_services", "{}"],
+    ["find_endpoint", JSON.stringify({ mac: "0A:11:22:33:44:55" })],
     ["get_dependencies", "{\"hostname\":\"fw1\"}"],
   ])("%s refuses a role without the key and queries nothing", async (name, args) => {
     const r = await runAssistantTool(name, args, { req: none, maxRows: 50 });

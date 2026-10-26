@@ -35,6 +35,8 @@ import { getRetentionSettings } from "./eventArchiveService.js";
 import { searchHelp } from "./helpIndexService.js";
 import { pickSampleTierForAsset, type SampleTier } from "./sampleQueryRouter.js";
 import { resolveDependencyBlame, BLAME_MAX_HOPS } from "./dependencyTreeService.js";
+import { lookupOui } from "./ouiService.js";
+import { macColonUpperOrNull } from "../utils/mac.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
 import type { ChatToolDef } from "./llmService.js";
 
@@ -721,6 +723,193 @@ const listServicesTool: ListToolDef = {
   },
   async run(args, ctx) {
     return listResult(await this.rows(args, ctx, ctx.maxRows));
+  },
+};
+
+// ─── find_endpoint ───────────────────────────────────────────────────────────
+//
+// Where an endpoint is on the network, from what the infrastructure learned:
+// gateways' ARP tables (IP ↔ MAC, which interface), switches' MAC tables
+// (which port, which VLAN) and APs' wireless clients (which AP, SSID, band,
+// signal). A lookup, never a dump: it needs a MAC, an IP, or a device plus a
+// port or VLAN. A MAC is learned on every switch's UPLINK as well as on its
+// real access port, so each MAC-table hit carries how many MACs that port
+// holds and hits are ordered fewest-first — the access port leads.
+//
+// Scale: each table read is one indexed query (macAddress / apAssetId /
+// assetId) or one filtered scan for an IP, plus one groupBy for the port
+// counts — independent of fleet size.
+
+const ENDPOINT_ROW_CAP = 50;
+
+const EndpointArgs = z.object({
+  mac: z.string().max(40).optional(),
+  ip: z.string().max(60).optional(),
+  device: z.string().max(255).optional(),
+  port: z.string().max(100).optional(),
+  vlan: z.number().int().min(0).max(4095).optional(),
+}).refine((a) => a.mac || a.ip || (a.device && (a.port || a.vlan !== undefined)),
+  "Give a mac, an ip, or a device with a port or vlan");
+
+const HIT_ASSET_SELECT = { id: true, hostname: true, ipAddress: true, assetType: true } as const;
+
+/** A full MAC → equals; 3–5 octets → prefix (an OUI search). Null when unusable. */
+function macPredicate(raw: string): { equals: string } | { startsWith: string } | null {
+  const full = macColonUpperOrNull(raw);
+  if (full) return { equals: full };
+  const hex = raw.toUpperCase().replace(/[^0-9A-F]/g, "");
+  if (hex.length >= 6 && hex.length < 12 && hex.length % 2 === 0) return { startsWith: hex.match(/.{2}/g)!.join(":") };
+  return null;
+}
+
+const findEndpointTool: ToolDef = {
+  name: "find_endpoint",
+  label: "traced an endpoint",
+  description:
+    "Find where a client or device is on the network from what switches, gateways and access points learned: " +
+    "the switch port and VLAN it is on (MAC tables — the hit with the fewest MACs on its port is the access " +
+    "port; ports holding many MACs are uplinks), the IP / MAC pairing and the gateway interface (ARP tables), " +
+    "and the access point, SSID, band and signal for a wireless client. Give mac (full, or the first 3–5 octets " +
+    "for a vendor prefix) or ip. Or give device (a switch's hostname or IP) with port and / or vlan to see " +
+    "what is connected there. lastSeen says how fresh each sighting is. Use when someone asks where a device " +
+    "or address is plugged in, which AP a laptop is on, or what is on a switch port.",
+  parameters: {
+    type: "object",
+    properties: {
+      mac: { type: "string", description: "MAC in any format, or a 3–5 octet prefix" },
+      ip: { type: "string", description: "IPv4 address" },
+      device: { type: "string", description: "Hostname or IP of the switch / AP / gateway to look inside (with port or vlan)" },
+      port: { type: "string", description: "Port / interface name contains this, e.g. \"port12\" or \"1/0/12\"" },
+      vlan: { type: "number" },
+    },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = EndpointArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const cap = Math.min(ctx.maxRows, ENDPOINT_ROW_CAP);
+
+    let macWhere: { equals: string } | { startsWith: string } | null = null;
+    if (a.mac) {
+      macWhere = macPredicate(a.mac);
+      if (!macWhere) return { ok: false, data: { error: `"${a.mac}" is not a MAC address or a prefix of at least 3 octets` } };
+    }
+    if (a.ip && !isValidIpAddress(a.ip)) return { ok: false, data: { error: `"${a.ip}" is not a valid IP address` } };
+
+    let inside: { id: string; hostname: string | null } | null = null;
+    if (a.device) {
+      inside = await prisma.asset.findFirst({
+        where: { OR: [{ hostname: { equals: a.device, mode: "insensitive" } }, { ipAddress: a.device }, { id: a.device }] },
+        select: { id: true, hostname: true },
+      });
+      if (!inside) return { ok: true, data: { found: false, note: `No device named "${a.device}"` } };
+    }
+
+    // ARP: by MAC, by IP, or a device's own table narrowed by port.
+    const arpWhere: Record<string, unknown>[] = [];
+    if (macWhere) arpWhere.push({ macAddress: macWhere });
+    if (a.ip) arpWhere.push({ ipAddress: a.ip });
+    if (inside) arpWhere.push({ assetId: inside.id, ...(a.port ? { ifName: { contains: a.port, mode: "insensitive" } } : {}) });
+    // MAC tables: by MAC (and the MACs the ARP tables pair with the IP), or a device's port / VLAN.
+    // A device + VLAN alone is a MAC-table question; its whole ARP table is not wanted.
+    const wantArp = Boolean(macWhere || a.ip || (inside && a.port));
+    const [arp, wirelessByIp] = await Promise.all([
+      !wantArp ? Promise.resolve([] as never[]) : prisma.assetArpEntry.findMany({
+        where: { AND: arpWhere },
+        orderBy: { lastSeen: "desc" },
+        take: cap,
+        select: { ipAddress: true, macAddress: true, ifName: true, lastSeen: true, asset: { select: HIT_ASSET_SELECT }, matchedAsset: { select: HIT_ASSET_SELECT } },
+      }),
+      a.ip && !a.mac
+        ? prisma.assetWirelessStation.findMany({ where: { staIpAddr: a.ip }, select: { staMacAddr: true }, take: 5 })
+        : Promise.resolve([] as Array<{ staMacAddr: string }>),
+    ]);
+    const macsForIp = a.ip && !a.mac
+      ? Array.from(new Set([...arp.map((r) => r.macAddress), ...wirelessByIp.map((w) => w.staMacAddr)]))
+      : [];
+    const macFilter = macWhere ?? (macsForIp.length ? { in: macsForIp } : null);
+
+    const macTableWhere: Record<string, unknown>[] = [];
+    if (macFilter) macTableWhere.push({ macAddress: macFilter });
+    if (inside) {
+      macTableWhere.push({ assetId: inside.id });
+      if (a.port) macTableWhere.push({ ifName: { contains: a.port, mode: "insensitive" } });
+      if (a.vlan !== undefined) macTableWhere.push({ vlanId: a.vlan });
+    }
+    const wantMacTable = macFilter != null || inside != null;
+    const wantWireless = macFilter != null || inside != null;
+    const [macHits, wireless] = await Promise.all([
+      wantMacTable
+        ? prisma.assetMacTableEntry.findMany({
+          where: { AND: macTableWhere },
+          orderBy: { lastSeen: "desc" },
+          take: cap * 4,
+          select: { assetId: true, macAddress: true, vlanId: true, ifName: true, status: true, lastSeen: true, asset: { select: HIT_ASSET_SELECT }, matchedAsset: { select: HIT_ASSET_SELECT } },
+        })
+        : Promise.resolve([]),
+      wantWireless
+        ? prisma.assetWirelessStation.findMany({
+          where: {
+            AND: [
+              ...(macFilter ? [{ staMacAddr: macFilter }] : []),
+              ...(inside ? [{ apAssetId: inside.id }] : []),
+              ...(inside && a.vlan !== undefined ? [{ vlanId: a.vlan }] : []),
+            ],
+          },
+          orderBy: { lastSeen: "desc" },
+          take: cap,
+          select: {
+            staMacAddr: true, staIpAddr: true, ssid: true, band: true, vlanId: true, signalStrength: true, lastSeen: true,
+            apAsset: { select: HIT_ASSET_SELECT }, matchedAsset: { select: HIT_ASSET_SELECT },
+          },
+        })
+        : Promise.resolve([]),
+    ]);
+
+    // How many MACs each hit's port holds — the access port is the quiet one.
+    const portKeys = Array.from(new Set(macHits.filter((h) => h.ifName).map((h) => `${h.assetId}\u0000${h.ifName}`)));
+    const portCounts = new Map<string, number>();
+    if (portKeys.length) {
+      const groups = await prisma.assetMacTableEntry.groupBy({
+        by: ["assetId", "ifName"],
+        where: { OR: portKeys.map((k) => { const [assetId, ifName] = k.split("\u0000"); return { assetId, ifName }; }) },
+        _count: { _all: true },
+      });
+      for (const g of groups) portCounts.set(`${g.assetId}\u0000${g.ifName}`, g._count._all);
+    }
+    const macRows = macHits
+      .map((h) => ({ h, macsOnPort: h.ifName ? portCounts.get(`${h.assetId}\u0000${h.ifName}`) ?? null : null }))
+      .sort((x, y) => (x.macsOnPort ?? Infinity) - (y.macsOnPort ?? Infinity) || y.h.lastSeen.getTime() - x.h.lastSeen.getTime())
+      .slice(0, cap)
+      .map(({ h, macsOnPort }) => plain({
+        mac: h.macAddress, switch: h.asset?.hostname ?? null, switchId: h.assetId, port: h.ifName, vlan: h.vlanId,
+        macsOnPort, likelyAccessPort: macsOnPort != null && macsOnPort <= 3, status: h.status, lastSeen: h.lastSeen,
+        knownAs: h.matchedAsset?.hostname ?? null, knownAsId: h.matchedAsset?.id ?? null,
+      }));
+
+    const anyMac = macFilter && "equals" in macFilter ? macFilter.equals : macsForIp[0];
+    const vendor = anyMac ? await lookupOui(anyMac).catch(() => null) : null;
+    return {
+      ok: true,
+      data: {
+        query: { mac: a.mac, ip: a.ip, device: inside?.hostname ?? undefined, port: a.port, vlan: a.vlan },
+        vendor: vendor ?? undefined,
+        switchPorts: macRows,
+        arp: arp.map((r) => plain({
+          ip: r.ipAddress, mac: r.macAddress, seenBy: r.asset?.hostname ?? null, seenById: r.asset?.id ?? null,
+          interface: r.ifName || null, lastSeen: r.lastSeen, knownAs: r.matchedAsset?.hostname ?? null, knownAsId: r.matchedAsset?.id ?? null,
+        })),
+        wireless: wireless.map((w) => plain({
+          mac: w.staMacAddr, ip: w.staIpAddr, accessPoint: w.apAsset?.hostname ?? null, accessPointId: w.apAsset?.id ?? null,
+          ssid: w.ssid, band: w.band, vlan: w.vlanId, signalDbm: w.signalStrength, lastSeen: w.lastSeen,
+          knownAs: w.matchedAsset?.hostname ?? null, knownAsId: w.matchedAsset?.id ?? null,
+        })),
+        note: macRows.length + arp.length + wireless.length === 0
+          ? "No switch, gateway or access point has learned this endpoint. It may be offline, behind a device Polaris does not collect tables from, or outside the retention window."
+          : undefined,
+      },
+    };
   },
 };
 
@@ -1691,7 +1880,7 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool, findEndpointTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];

@@ -141,6 +141,7 @@ context. Some things to try:
 - *Which servers in my region peaked above 90% CPU yesterday?*
 - *What goes down if core-sw-01 goes down?*
 - *Which automatic services are stopped on the SQL servers?*
+- *Which switch port is 0a:11:22:33:44:55 plugged into?*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
 - *Why are the hardware sensors unresolved on our Fortinet profile?*
@@ -186,6 +187,14 @@ It can list **services** on devices running the [Polaris Agent](Polaris-Agent)
 (systemd units and Windows services): their state, startup type, CPU and memory.
 Ask for the ones that *should be running but aren't*: a failed systemd unit, or a
 Windows service set to start automatically that is stopped.
+
+It can **find an endpoint** by MAC or IP from what your switches, gateways and
+access points have learned: the switch port and VLAN it is plugged into, the
+gateway that pairs its IP and MAC, or the access point, SSID and signal of a
+wireless client, each with how long ago it was seen. A MAC is learned on every
+uplink between it and the core as well as on the port it is really plugged into,
+so the assistant leads with the port that holds the fewest MACs. Ask *what is on
+port 12 of sw-nsh-02* to see what is connected to a port.
 
 It can walk the **dependency tree** around a device: what it hangs off, hop by
 hop to the top, and what sits behind it, with how many of those are down or

@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "profile" | "telemetry" | "correlate" | "dependencies" | "changed" | "health" | "capacity" | "address";
+  id: "profile" | "telemetry" | "correlate" | "dependencies" | "changed" | "health" | "capacity" | "address" | "endpoint";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -168,7 +168,7 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
     // An IPv4 literal plus a lookup verb. Last, so "why is 10.1.1.5 down" and
     // "is 10.1.1.5 ok" keep their own playbooks.
     match: /(?=.*\b(?:\d{1,3}\.){3}\d{1,3}\b)(?=.*\b(look ?up|whose|who (has|owns|uses|is using)|where is|which (device|asset|host)|what (is|device|asset|has)|find|identify|belongs?|anything (on|about|for))\b)/i,
-    firstRoundTools: ["search", "get_asset", "list_reservations"],
+    firstRoundTools: ["search", "get_asset", "list_reservations", "find_endpoint"],
     guidance: [
       "Playbook — address lookup. Follow these steps in order:",
       "1. search the exact address. Read matchedOn on each asset hit: \"ipAddress\" means it is the device's " +
@@ -179,8 +179,29 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
       "2. get_asset on each hit (by id) for its ipHistory and current state, so you can say when the address " +
         "was first and last seen on it and what the device's primary IP is now.",
       "3. list_reservations with search set to the address, for a reservation or lease that names it.",
-      "4. Answer: which device holds the address now (if any), which held it before and when, and any " +
-        "reservation — each device linked to its details. If nothing holds it, say what you checked. " + SEPARATE,
+      "4. find_endpoint with the ip: the MAC the gateways pair it with, the switch port it is on (the hit with " +
+        "likelyAccessPort), or the access point for a wireless client.",
+      "5. Answer: which device holds the address now (if any), which held it before and when, any " +
+        "reservation, and where it is plugged in — each device linked to its details. If nothing holds it, say " +
+        "what you checked. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    id: "endpoint",
+    label: "endpoint location",
+    // A MAC literal (colon, dash or Cisco dotted; four octets or more, so a
+    // time like 10:30:45 is not one), or where-is-it-plugged-in wording.
+    // Last, after address.
+    match: /\b([0-9a-f]{2}([:-])[0-9a-f]{2}(\2[0-9a-f]{2}){2,4}|[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\b|\b(which|what) (switch )?port\b|\bplugged in(to)?\b|\b(which|what) (ap|access point)\b|\bconnected to (port|interface)\b|\bon (port|interface) \S+/i,
+    firstRoundTools: ["find_endpoint", "search"],
+    guidance: [
+      "Playbook — endpoint location. Follow these steps in order:",
+      "1. find_endpoint with the MAC or IP the person gave — or, for \"what is on port X of switch Y\", device and port.",
+      "2. If they named a device rather than an address, search for it first and use its MAC or IP.",
+      "3. Answer with the access port first (likelyAccessPort: switch, port, VLAN), then the gateway that " +
+        "pairs the IP and MAC, then the access point, SSID and signal for a wireless client — each with how long " +
+        "ago it was seen. A port that holds many MACs is an uplink, not where the device is plugged in; say so " +
+        "if it is the only sighting. " + SEPARATE,
     ].join("\n"),
   },
 ];

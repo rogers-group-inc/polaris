@@ -42,7 +42,7 @@ vi.mock("../../src/services/llmService.js", async () => ({
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
   // The real tool NAMES (the round-0 steering filters by name); the shapes do not matter here.
-  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "telemetry_summary", "get_asset", "get_dependencies", "list_services", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
+  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "telemetry_summary", "get_asset", "get_dependencies", "list_services", "find_endpoint", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
     "list_manufacturer_profiles", "get_manufacturer_profile", "list_mibs", "search_mib_symbols", "list_automations", "get_automation"]
     .map((name) => ({ type: "function", function: { name, description: "", parameters: {} } })),
   runAssistantTool: h.runAssistantTool,

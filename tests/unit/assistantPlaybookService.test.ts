@@ -39,6 +39,12 @@ describe("pickPlaybook", () => {
     ["what goes down if core-1 goes down", "dependencies"],
     ["what's behind fw-nsh-01", "dependencies"],
     ["why did ap-12 go down? check upstream", "correlate"],
+    ["where is 0a:11:22:33:44:55", "endpoint"],
+    ["which port is aabb.ccdd.eeff on", "endpoint"],
+    ["what access point is the CEO's laptop on", "endpoint"],
+    ["what is plugged into port 12 on sw-nsh-02", "endpoint"],
+    ["what is 10.10.3.178 plugged into", "address"],
+    ["list the switches that rebooted at 10:30:45", null],
   ])("%s → %s", (q, id) => {
     expect(pickPlaybook(q)?.id ?? null).toBe(id);
   });
