@@ -169,8 +169,9 @@ router.get("/push-queue", requirePermission("reservations", "read"), async (_req
 
 router.get("/push-queue/count", requirePermission("reservations", "read"), async (_req, res, next) => {
   try {
-    const count = await reservationService.countPushQueue();
-    res.json({ count });
+    // `failed` is the subset needing an operator — the Events alert dot and
+    // the Alerts badge turn red on it.
+    res.json(await reservationService.countPushQueueByState());
   } catch (err) { next(err); }
 });
 

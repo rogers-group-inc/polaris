@@ -1412,11 +1412,12 @@ function renderNav() {
         }
         let dot = "";
         if (item.href === "/events.html") {
-          // Single sidebar alert dot. Lives only on Events — the page that
-          // hosts both the Conflicts and Alerts panels. Combines discovery
-          // conflicts (danger/red) with stale-reservation alerts + queued
-          // pushes (warning/yellow); red takes precedence (see
-          // refreshConflictDot). There is intentionally no second dot.
+          // Single sidebar alert dot. Lives only on Events — the page whose
+          // Alerts panel holds conflicts, the push queue and stale
+          // reservations. Red for a pending conflict or a failed push, yellow
+          // for stale reservations or pushes still retrying; red takes
+          // precedence (see refreshConflictDot). There is intentionally no
+          // second dot.
           dot = '<span class="nav-conflict-dot" id="nav-conflict-dot" style="display:none"></span>';
         }
         return `<li><a href="${item.href}" class="${isActive ? "active" : ""}">${ICONS[item.icon]}<span>${item.label}</span>${dot}</a></li>`;
@@ -1685,11 +1686,10 @@ function renderNav() {
 
   // Single Events-page sidebar dot — poll every 30 s; exposed on window so
   // events.js can refresh it after operator actions. Combines every
-  // Events-page alert signal: discovery conflicts (danger) + the reservation
-  // push queue + stale-reservation alerts (both warning). The dot shows red
-  // when there are conflicts and yellow otherwise — red precedence, so a
-  // danger signal is never masked by a warning one. There is no separate
-  // IPAM dot; the legacy window.refreshAlertsDot was folded into this.
+  // Events-page alert signal — everything the Alerts panel shows: discovery
+  // conflicts and permanently failed pushes (danger), pushes still retrying
+  // and stale-reservation alerts (warning). Red precedence, so a danger
+  // signal is never masked by a warning one. There is no separate IPAM dot.
   async function refreshConflictDot() {
     var dot = document.getElementById("nav-conflict-dot");
     if (!dot) return;
@@ -1698,26 +1698,26 @@ function renderNav() {
         canReviewConflicts()
           ? api.conflicts.count().catch(function () { return { count: 0 }; })
           : Promise.resolve({ count: 0 }),
-        api.reservations.pushQueueCount().catch(function () { return { count: 0 }; }),
+        api.reservations.pushQueueCount().catch(function () { return { count: 0, failed: 0 }; }),
         api.reservations.alertsCount().catch(function () { return { count: 0 }; }),
       ]);
       var conflictCount = (counts[0] && counts[0].count) || 0;
       var queueCount = (counts[1] && counts[1].count) || 0;
+      var failedCount = (counts[1] && counts[1].failed) || 0;
       var alertCount = (counts[2] && counts[2].count) || 0;
-      var warningCount = queueCount + alertCount;
-      dot.style.display = (conflictCount + warningCount) > 0 ? "inline-block" : "none";
-      // Red (danger) wins over yellow (warning): only flip to the warning
-      // colour when there are no conflicts but there are stale alerts / pushes.
-      dot.classList.toggle("nav-conflict-dot--warning", conflictCount === 0 && warningCount > 0);
+      // A push that failed for good is drawn red in the push queue, so it is
+      // danger here too — only stale alerts and pushes still retrying are a
+      // warning. Same rule as the Alerts button's badge (events.js).
+      var dangerCount = conflictCount + failedCount;
+      var total = conflictCount + queueCount + alertCount;
+      dot.style.display = total > 0 ? "inline-block" : "none";
+      // Red (danger) wins over yellow (warning).
+      dot.classList.toggle("nav-conflict-dot--warning", dangerCount === 0 && total > 0);
     } catch (_) {}
   }
   refreshConflictDot();
   pollVisible(refreshConflictDot, 30000);
   window.refreshConflictDot = refreshConflictDot;
-  // Back-compat alias: events.js still calls window.refreshAlertsDot() after
-  // Alerts-panel actions. With the dots consolidated, both point at the one
-  // refresher so callers don't need to know which signal changed.
-  window.refreshAlertsDot = refreshConflictDot;
 
   // Re-apply branding when it already loaded — the brand block above renders
   // visibility:hidden until applyBranding clears it, and on pages that re-run
@@ -5374,18 +5374,61 @@ function initSlideoverResize(panelEl, storageKey) {
   var handle = panelEl.querySelector(".slideover-resize-handle");
   if (!handle) return;
 
-  var stored = parseInt(localStorage.getItem(storageKey) || "0", 10);
+  var stored = 0;
+  try { stored = parseInt(localStorage.getItem(storageKey) || "0", 10); } catch (_) {}
   if (stored >= 380) panelEl.style.width = stored + "px";
+
+  var minW = 380;
+  function maxW() { return Math.round(window.innerWidth * 0.9); }
+
+  // The grip: a chip centred on the bar, the slide-over's twin of the Device
+  // Map topology pane's edge arrow. Dragging it resizes like the bar; a click
+  // without a drag toggles the panel between its own width and the widest it
+  // goes, and back. The expanded width is not saved — the stored width stays
+  // the operator's dragged one.
+  var grip = handle.querySelector(".slideover-resize-grip");
+  if (!grip) {
+    grip = document.createElement("button");
+    grip.type = "button";
+    grip.className = "slideover-resize-grip";
+    grip.innerHTML = '<span class="slideover-resize-grip-arrow" aria-hidden="true"></span>';
+    handle.appendChild(grip);
+  }
+  function syncGrip() {
+    var expanded = panelEl.classList.contains("slideover-expanded");
+    grip.title = expanded ? "Restore width (drag to resize)" : "Widen (drag to resize)";
+    grip.setAttribute("aria-label", expanded ? "Restore panel width" : "Widen panel");
+    grip.setAttribute("aria-pressed", expanded ? "true" : "false");
+  }
+  syncGrip();
+
+  var moved = false;
+  grip.addEventListener("click", function (e) {
+    e.stopPropagation();
+    if (moved) return;   // the end of a drag, not a click
+    if (panelEl.classList.contains("slideover-expanded")) {
+      panelEl.classList.remove("slideover-expanded");
+      panelEl.style.width = panelEl.dataset.widthBeforeExpand || "";
+    } else {
+      panelEl.dataset.widthBeforeExpand = panelEl.style.width || "";
+      panelEl.classList.add("slideover-expanded");
+      panelEl.style.width = maxW() + "px";
+    }
+    syncGrip();
+  });
 
   handle.addEventListener("mousedown", function (e) {
     e.preventDefault();
     handle.classList.add("dragging");
     var panelRight = panelEl.getBoundingClientRect().right;
-    var minW = 380;
-    var maxW = Math.round(window.innerWidth * 0.9);
+    var startX = e.clientX;
+    var limit = maxW();
+    moved = false;
 
     function onMove(e) {
-      var w = Math.max(minW, Math.min(maxW, Math.round(panelRight - e.clientX)));
+      if (Math.abs(e.clientX - startX) > 3) moved = true;
+      if (!moved) return;
+      var w = Math.max(minW, Math.min(limit, Math.round(panelRight - e.clientX)));
       panelEl.style.width = w + "px";
     }
 
@@ -5393,8 +5436,27 @@ function initSlideoverResize(panelEl, storageKey) {
       handle.classList.remove("dragging");
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      var w = Math.max(minW, Math.min(maxW, Math.round(panelRight - e.clientX)));
-      localStorage.setItem(storageKey, w);
+      if (!moved) return;
+      // A drag ends the expanded state: the panel is now the width dragged to.
+      panelEl.classList.remove("slideover-expanded");
+      syncGrip();
+      var w = Math.max(minW, Math.min(limit, Math.round(panelRight - e.clientX)));
+      try { localStorage.setItem(storageKey, w); } catch (_) {}
+      // Grace period. A fast drag outruns the repaint, so the button often
+      // comes up over the dimmed backdrop rather than the bar. The browser
+      // then sends a click to the nearest element under both the press and the
+      // release — the overlay — and every slide-over closes on an overlay
+      // click. Swallow clicks for a moment after a drag so letting go never
+      // closes the panel.
+      var until = Date.now() + 400;
+      function swallow(ev) {
+        if (Date.now() > until) { window.removeEventListener("click", swallow, true); return; }
+        ev.stopPropagation();
+        ev.preventDefault();
+        window.removeEventListener("click", swallow, true);
+      }
+      window.addEventListener("click", swallow, true);
+      setTimeout(function () { window.removeEventListener("click", swallow, true); }, 450);
     }
 
     document.addEventListener("mousemove", onMove);

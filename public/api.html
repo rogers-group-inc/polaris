@@ -1441,7 +1441,8 @@
           <div class="endpoint-head"><span class="method m-get">GET</span> /reservations/push-queue
             <span class="gate">reservations:read</span></div>
           <p>Reservations awaiting a FortiGate DHCP push (<code>{ reservations, count }</code>;
-            <code>/push-queue/count</code> returns just <code>{ count }</code>). Retry one via
+            <code>/push-queue/count</code> returns just <code>{ count, failed }</code>, <code>failed</code> being the
+            rows that hit a permanent error and need an operator). Retry one via
             <span class="method m-post" style="font-size:0.65rem">POST</span>
             <code>/reservations/:id/retry-push</code> → <code>{ outcome, reservation }</code>.</p>
         </div>

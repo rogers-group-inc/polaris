@@ -8,9 +8,9 @@ existing manual record create a conflict rather than overwriting**
 ([rule 7](Business-Rules#rule-7)). An automatic merge that silently loses an
 operator's decision is worse than a queue nobody has cleared.
 
-Reached from the **Conflicts** button on the **Events** page, the **Conflict
-Queue** dashboard widget, and the conflict slide-over. Everyone who can see the
-queue sees every flavour.
+Reached from the **Alerts** button on the **Events** page (its **Conflicts**
+views; it opens on pending conflicts whenever there are any) and the **Conflict
+Queue** dashboard widget. Everyone who can see the queue sees every flavour.
 
 | Gate | |
 |---|---|

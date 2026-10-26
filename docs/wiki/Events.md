@@ -26,7 +26,7 @@ Gated by `events`. The page has two tabs: **Events** (the log, below) and
 
 Sortable, inline-filterable, resizable, with saved layouts like every other list
 page. **Export** downloads PDF or CSV of the current page, all filtered results,
-or the entire event log; **Export** (download icon), **Conflicts**, **Alerts**, **Settings** (gear icon), **Refresh** (circular-arrows icon), **Clear** and the page size (**15 / page** …)
+or the entire event log; **Export** (download icon), **Alerts**, **Settings** (gear icon), **Refresh** (circular-arrows icon), **Clear** and the page size (**15 / page** …)
 sit on the tab row, and the page buttons are below the page card. The **Calendar**
 tab's month and week views fill the card. In a CSV, a cell that begins with `=`, `+`, `-` or `@` (a hostname or
 message that a device chose) is written with a leading apostrophe so a spreadsheet
@@ -149,16 +149,32 @@ omitted."**; step to a shorter view (Week or Day) to see the rest.
 
 ---
 
-## Conflicts
+## Alerts: conflicts, push queue and stale reservations
 
-The **Conflicts** button opens the resolution queue in a slide-over, with a
-count badge. See [Conflict resolution](Conflict-Resolution).
+The **Alerts** button opens one slide-over holding everything that needs an
+operator on this page. A selector at its top picks the view, and each entry
+shows how many items it holds, for example *Push queue (2)*:
+
+| View | Holds |
+|---|---|
+| **Conflicts** | the discovery conflict queue; its count is the pending conflicts. A second selector beside it switches between **Pending**, **Accepted**, **Rejected** and **All**. See [Conflict resolution](Conflict-Resolution). Offered only to a role holding `discoveryConflicts` at Read |
+| **Push queue** | reservations Polaris still owes a FortiGate: ones being retried, and ones that failed for good (shown red, with the gate's error, **Retry** and **Free**) |
+| **Stale reservations** / **Ignored stale** | DHCP reservations whose client has not been seen in the configured number of days |
+
+**The panel opens on the view that has something in it**, most urgent first:
+pending conflicts, then failed pushes, then stale reservations, then pushes
+still being retried. When all of them are empty it opens on the view you used
+last.
+
+The button's count badge adds up all of them. It is **red** when there is a
+pending conflict or a failed push, the two things drawn red inside the panel,
+and **yellow** when there are only stale reservations or pushes being retried.
+The sidebar's Events dot follows the same rule.
 
 The panel is **drag-resizable from its left edge** and remembers the width per
-browser, like the other detail panels. The duplicate-IP card is the widest one
-in the queue — six columns, two of them holding the new-address field and the
-merge button — so widen the panel if the card is scrolling sideways. The
-**Alerts** button's panel beside it resizes the same way.
+browser, like the other detail panels. The duplicate-IP conflict card is the
+widest thing in it — six columns, two of them holding the new-address field and
+the merge button — so widen the panel if that card scrolls sideways.
 
 The **Conflict Queue** dashboard widget shows the same thing — every pending
 conflict, to anyone whose role holds `discoveryConflicts` at Read, and nothing to

@@ -57,7 +57,7 @@ d("GET /reservations/push-queue + /push-queue/count", () => {
     expect(list.body.reservations).toEqual([]);
     const count = await agent.get("/api/v1/reservations/push-queue/count");
     expect(count.status).toBe(200);
-    expect(count.body.count).toBe(0);
+    expect(count.body).toEqual({ count: 0, failed: 0 });
   });
 
   it("surfaces pending and failed_permanent rows; ignores synced + released", async () => {
@@ -127,6 +127,9 @@ d("GET /reservations/push-queue + /push-queue/count", () => {
 
     const count = await agent.get("/api/v1/reservations/push-queue/count");
     expect(count.body.count).toBe(2);
+    // Only the failed_permanent row needs an operator — the Events dot and the
+    // Alerts badge turn red on this figure, not on the total.
+    expect(count.body.failed).toBe(1);
   });
 });
 

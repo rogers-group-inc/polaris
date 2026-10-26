@@ -27,9 +27,18 @@ role lacks bounces rather than loading an empty list.
 
 Below Server Settings sits the **theme band** and the version line.
 
-The **Events** entry carries the sidebar's one alert dot: red for pending
-discovery conflicts, yellow for stale-reservation alerts or queued pushes, red
-winning when both apply.
+Slide-over panels (an asset, a network, the Events page's Alerts, and the
+rest) open from the right and can be **resized by dragging their left edge**.
+The width is remembered per panel. A small grip with a left and a right arrow
+sits in the middle of that edge. Drag it to resize, or click it to widen the
+panel to almost the full window and click again to go back. Letting go of a
+drag over the dimmed page behind the panel does not close it.
+
+The **Events** entry carries the sidebar's one alert dot. It is red for a
+pending discovery conflict or a reservation push that failed for good, and
+yellow for stale-reservation alerts or pushes still being retried. Red wins
+when both apply. Everything behind the dot is in the Events page's **Alerts**
+panel, which opens on whichever of those has something in it.
 
 Above Server Settings, panels appear only while there is something to say:
 
