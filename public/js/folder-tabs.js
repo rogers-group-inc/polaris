@@ -243,21 +243,45 @@ function _clampFirst(st) {
   if (st.first < 0) st.first = 0;
 }
 
-// Measure, lay out, and — when the active tab changed — bring it into the run.
+function _bringIntoRun(st, i) {
+  if (i < st.first) st.first = i;
+  else while (st.first < i && _runLast(st, st.first) < i) st.first++;
+  _clampFirst(st);
+}
+
+// Measure, lay out, and bring the active tab into the run when it changed OR
+// when the room or the tabs' widths did: the row's other controls render
+// after the strip on page load and take room from it, which dropped an active
+// tab brought in a moment earlier back out of the run. A pass that changes
+// neither leaves the run where the operator stepped it. A HELD tab
+// (PolarisFolderTabs.hold: one being dragged to a new place) is kept in the
+// run on every pass, so moving it past the run's end shifts the run with it.
 function _refreshStrip(strip) {
   var st = _measureStrip(strip);
   _clampFirst(st);
-  var ai = -1;
-  st.items.forEach(function (it, k) { if (ai < 0 && it.el.classList.contains("active")) ai = k; });
+  var ai = -1, hi = -1;
+  st.items.forEach(function (it, k) {
+    if (ai < 0 && it.el.classList.contains("active")) ai = k;
+    if (it.el === st.held) hi = k;
+  });
   var act = ai >= 0 ? st.items[ai].el : null;
-  if (act && act !== st.active) {
-    if (ai < st.first) st.first = ai;
-    else while (st.first < ai && _runLast(st, st.first) < ai) st.first++;
-    _clampFirst(st);
-  }
+  var sig = Math.round(st.room) + ":" + st.items.map(function (it) { return Math.round(it.w); }).join(",");
+  if (hi >= 0) _bringIntoRun(st, hi);
+  else if (act && (act !== st.active || sig !== st.sig)) _bringIntoRun(st, ai);
   st.active = act;
+  st.sig = sig;
   _layoutStrip(strip);
 }
+
+// The seam a page's own tab script uses (assets-tabs.js, dragging a tab):
+// hold(strip, tab) keeps `tab` in the run until hold(strip, null).
+window.PolarisFolderTabs = {
+  hold: function (strip, el) {
+    if (!strip) return;
+    var st = strip.__tabWin || (strip.__tabWin = { first: 0, maxFirst: 0, items: [], gap: 0, room: 0, active: null, anim: null, wheel: 0 });
+    st.held = el || null;
+  },
+};
 
 // One step: `first` moves by one tab, the leaving tab shrinking and the
 // arriving one growing. A step that lands mid-glide finishes that glide first.

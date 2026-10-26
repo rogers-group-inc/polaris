@@ -144,7 +144,9 @@ the page's buttons (**Import / Export**, **Maintenance**, the settings gear,
 circular-arrows icon) and the page size (**25 / page** …) (the page buttons are below the
 page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
-or F2 renames, ✕ closes (never the last one), + adds.
+or F2 renames, ✕ closes (never the last one), + adds. Drag a tab sideways to
+move it; the new order is saved with the rest. Hold it against the end of the
+strip to carry it past the tabs out of view.
 
 When there are more tabs than fit beside the buttons, the strip never crowds
 them: it shows as many whole tabs as fit, and **‹ ›** buttons appear at its

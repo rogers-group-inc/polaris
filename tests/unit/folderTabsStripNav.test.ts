@@ -171,6 +171,37 @@ describe("tab strip window", () => {
     expect(b.drawn()[3]).toBe(100);
   });
 
+  it("keeps the active tab in the run when the room shrinks after it was brought in", async () => {
+    // Page load: the row's controls render after the strip and take room.
+    let width = 400;
+    const b = await boot(5, 3, 400);
+    Object.defineProperty(b.strip, "clientWidth", { get: () => width, configurable: true });
+    width = 250;
+    b.tabs()[0].setAttribute("data-x", "1");   // any watched change re-measures
+    b.strip.classList.add("resized");
+    await b.settle();
+    expect(b.drawn()[3]).toBe(100);
+  });
+
+  it("leaves a run the operator stepped alone when nothing about the tabs changed", async () => {
+    const b = await boot(5);                // active = tab 0
+    b.next().click(); b.next().click();
+    await b.settle();
+    b.tabs()[2].classList.add("hover-ish");   // a class write that changes no width
+    await b.settle();
+    expect(b.first()).toBe(2);
+  });
+
+  it("keeps a HELD tab (one being dragged) in the run on every pass", async () => {
+    const b = await boot(5);
+    const w = b.win as unknown as { PolarisFolderTabs: { hold: (s: unknown, e: unknown) => void } };
+    w.PolarisFolderTabs.hold(b.strip, b.tabs()[4]);
+    b.tabs()[4].classList.add("is-dragging");
+    await b.settle();
+    expect(b.drawn()[4]).toBe(50);
+    w.PolarisFolderTabs.hold(b.strip, null);
+  });
+
   it("squeezes a single tab wider than the whole room rather than drawing nothing", async () => {
     const b = await boot(5, 0, 150);   // room 120 < tab 1's 140
     b.next().click();

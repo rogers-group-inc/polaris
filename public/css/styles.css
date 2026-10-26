@@ -2888,6 +2888,19 @@ html[data-page-top-curtain]::after {
 }
 .table-head-row.folder-head-card > .table-tabs-nav { margin-left: var(--folder-shadow-room); }
 .table-head-row > .table-tabs-nav.is-idle { display: none; }
+/* Dragging a view tab to a new place (assets-tabs.js → wireDrag). The lifted
+   tab follows the pointer on `translate`, which composes with the inactive
+   tabs' translateY drop instead of replacing it; it rides above its
+   neighbours and does not ease, or it would lag the pointer. A press never
+   selects tab text. */
+.table-head-row .table-tabs-list .table-tab { user-select: none; }
+.table-head-row .table-tabs-list.is-reordering,
+.table-head-row .table-tabs-list.is-reordering .table-tab { cursor: grabbing; }
+.table-head-row .table-tabs-list .table-tab.is-dragging {
+  z-index: 4;
+  opacity: 0.92;
+  transition: none;
+}
 /* Automations: on the Automations tab, Refresh is the list row's own (right of
    Clear); the header-cluster Refresh — which reloads whichever tab is open —
    serves the other tabs. */
