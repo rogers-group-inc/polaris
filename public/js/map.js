@@ -24,7 +24,11 @@
   // "Base") or an area / building / floor view key from computeFloorViews.
   // Not persisted — the modal always opens on Base. floorViews caches the current payload's
   // view list for the switcher chips.
-  var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false };
+  // `editing`: the map is view-only until the Edit button (top-right of the
+  // graph, the dashboard's pencil) is pressed; never persisted — every open
+  // starts view-only, and it survives re-renders (refresh, view switches)
+  // until Done or close.
+  var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false, editing: false };
   var topoSearchDebounce = null;
   var topoSuggestState  = { open: false, items: [], index: -1 };
   var POSITION_STORAGE_PREFIX = "polaris.topology.positions:";
@@ -1390,6 +1394,7 @@
     topoState.data = null;
     topoState.activeView = "flat";
     topoState.floorViews = [];
+    topoState.editing = false;
 
     try {
       var data = await api.map.topology(id);
@@ -1898,12 +1903,13 @@
       ["Click", "Select just that device, link or location box"],
       ["Shift + click", "Add to the selection"],
       ["Shift + drag", "Box-select multiple devices"],
-      ["Drag a selected device", "Move the selected devices together"],
       ["Ctrl + drag", "Pan from anywhere (even over devices)"],
-      ["Drag a connection line", "Add a bend point there and move it"],
-      ["Click a connection line", "Show its points — drag an end point around a device to attach the line there"],
-      ["Delete", "Remove the selected bend point (an end point goes back to automatic)"],
-      ["Snap chip", "Snap drags to the layout grid"],
+      ["Edit (pencil, top right)", "Turn on layout editing — the rows below; the check mark ends it"],
+      ["Drag a selected device", "Edit mode: move the selected devices together"],
+      ["Drag a connection line", "Edit mode: add a bend point there and move it"],
+      ["Click a connection line", "Edit mode: show its points — drag an end point around a device to attach the line there"],
+      ["Delete", "Edit mode: remove the selected bend point (an end point goes back to automatic)"],
+      ["Snap chip", "Edit mode: snap drags to the layout grid"],
       ["Double-click a device", "Open its asset details"],
       ["Right-click a device", "Edit its description / grouping codes"],
     ].forEach(function (c) { parts.push(row("", c[0], c[1])); });
@@ -2348,6 +2354,7 @@
     topoState.hostname = null;
     topoState.data = null;
     topoState.pathOverlay = null;
+    topoState.editing = false;
     var showFullBtn = document.getElementById("topology-show-full");
     if (showFullBtn) showFullBtn.hidden = true;
     // Exit native fullscreen first — otherwise the browser stays in
@@ -2716,6 +2723,7 @@
       edgeEditor = window.PolarisTopologyEdgeEditor.attach(cyInstance, {
         positions: savedPositions,
         isSuspended: function () { return !!topoState.pathOverlay; },
+        isEditable: function () { return !!topoState.editing; },
         onChange: function () {
           if (!topoState.siteId || topoState.pathOverlay) return;
           _markLayoutDirty();
@@ -2815,12 +2823,67 @@
     // (openTopology wipes #topology-graph's innerHTML and cytoscape re-mounts,
     // so it's re-added here on every render rather than living in static HTML.)
     _ensureTopologyExportButton();
+    _ensureTopologyEditButton();
     _renderTopologyTypeToggles(roleCounts, hiddenRoles);
     _renderTopologyFloorViews();
     _wireCtrlPan();
     // Save/Reset affordances are per VIEW — re-state them whenever the
     // graph is rebuilt (open, refresh, view switch, reset).
     _refreshLayoutToolbar();
+    // View-only unless Edit is on: the fresh graph takes the current mode.
+    _applyTopologyEditMode();
+  }
+
+  // ── Edit mode ────────────────────────────────────────────────────────────
+  // The map opens view-only: devices and location boxes don't drag, lines
+  // take no bends or end-point moves, and the layout verbs (Save, Reset,
+  // Snap) are hidden. Clicking, selecting, panning, zooming, the location
+  // views, search and Export all work either way. The Edit button — the
+  // dashboard's pencil, a check mark while editing (Customize Page / Done
+  // Editing, index.html) — turns editing on for this modal session.
+  var EDIT_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+  var DONE_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+  function _ensureTopologyEditButton() {
+    var graph = document.getElementById("topology-graph");
+    if (!graph || document.getElementById("topology-edit")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "topology-edit";
+    btn.className = "btn btn-primary btn-icon-only topology-map-edit";
+    // Same container trap as Export: a press must not read as a background
+    // tap and clear the selection.
+    ["mousedown", "pointerdown", "touchstart"].forEach(function (type) {
+      btn.addEventListener(type, function (e) { e.stopPropagation(); });
+    });
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      _setTopologyEditing(!topoState.editing);
+    });
+    graph.appendChild(btn);
+  }
+  function _setTopologyEditing(on) {
+    topoState.editing = !!on;
+    _applyTopologyEditMode();
+  }
+  function _applyTopologyEditMode() {
+    var on = !!topoState.editing;
+    if (cyInstance) cyInstance.autoungrabify(!on);
+    if (edgeEditor) edgeEditor.refresh();
+    var btn = document.getElementById("topology-edit");
+    if (btn) {
+      // Icon + hidden word, as the dashboard's buttons: the word is the
+      // accessible name, the title the tooltip.
+      btn.innerHTML = (on ? DONE_ICON + "Done Editing" : EDIT_ICON + "Edit Map");
+      btn.title = on ? "Done editing" : "Edit map layout";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    ["topology-save-layout", "topology-reset-layout", "topology-snap-chip"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.hidden = !on;
+    });
   }
 
   // Ctrl + left-drag pans the viewport from ANYWHERE on the graph —
@@ -3111,6 +3174,8 @@
     snapChip.setAttribute("aria-pressed", snapOn ? "true" : "false");
     snapChip.title = (snapOn ? "Disable" : "Enable") + " snap to grid (saved per user)";
     snapChip.textContent = "Snap";
+    snapChip.id = "topology-snap-chip";
+    snapChip.hidden = !topoState.editing; // a layout verb — edit mode only
     snapChip.addEventListener("click", function () {
       var next = !_readSnapToGrid();
       _writeSnapToGrid(next);

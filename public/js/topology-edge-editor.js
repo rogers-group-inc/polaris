@@ -224,6 +224,10 @@
   //                layout dirty and saves
   //   onGeometryReset (edges) → a line went back to automatic; the host
   //                re-runs its router so the line gets its routed shape back
+  //   isEditable   () → false while the map is view-only (map.js edit mode
+  //                off): drawn paths still DRAW, but no bend is created, no
+  //                handle shows and Delete removes nothing. Omitted = editable.
+  //                Call refresh() after it flips so the handles follow.
   function attach(cy, opts) {
     opts = opts || {};
     var paths = parsePaths(opts.positions);
@@ -247,6 +251,9 @@
 
     function isSuspended() {
       return suspended || (typeof opts.isSuspended === "function" && opts.isSuspended());
+    }
+    function isEditable() {
+      return typeof opts.isEditable !== "function" || !!opts.isEditable();
     }
     function changed() {
       if (typeof opts.onChange === "function") opts.onChange();
@@ -354,7 +361,7 @@
     // missing, drop the stale, move the rest. Never a full rebuild — that
     // would unselect (and un-grab) the handle the operator is holding.
     function syncHandles() {
-      var want = isSuspended() ? {} : activeKeys();
+      var want = isSuspended() || !isEditable() ? {} : activeKeys();
       syncing = true;
       try {
         cy.batch(function () {
@@ -427,7 +434,7 @@
 
     // Press on a line: maybe the start of a new bend.
     cy.on("tapstart", "edge", function (evt) {
-      if (isSuspended()) return;
+      if (isSuspended() || !isEditable()) return;
       var oe = evt.originalEvent;
       if (oe && (oe.ctrlKey || oe.shiftKey || (typeof oe.button === "number" && oe.button !== 0))) return;
       var key = evt.target.data("pathKey");
@@ -599,7 +606,7 @@
       // automatic. True when anything was removed (the caller then swallows
       // the key press).
       deleteSelected: function () {
-        if (isSuspended()) return false;
+        if (isSuspended() || !isEditable()) return false;
         var sel = cy.nodes("[isEdgeHandle]:selected");
         if (sel.length === 0) return false;
         var drop = {};
@@ -631,6 +638,8 @@
         syncHandles();
       },
       hasCustomPath: function (key) { return !isEmptyPath(paths[key]); },
+      // Re-state the handles after the host's isEditable() answer changed.
+      refresh: function () { syncHandles(); },
     };
   }
 

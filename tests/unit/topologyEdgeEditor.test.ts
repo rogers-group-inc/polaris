@@ -166,7 +166,7 @@ describe("editor on a headless graph", () => {
   let cy: any;
   afterEach(() => { if (cy && !cy.destroyed()) cy.destroy(); });
 
-  function graph(blob: Record<string, Pt>, onChange?: () => void) {
+  function graph(blob: Record<string, Pt>, onChange?: () => void, extra: Record<string, unknown> = {}) {
     cy = sb.make(JSON.stringify({
       headless: true,
       styleEnabled: true,
@@ -180,7 +180,7 @@ describe("editor on a headless graph", () => {
       ],
       style: [{ selector: "node", style: { width: 20, height: 20, shape: "ellipse" } }],
     }));
-    const ed = api.attach(cy, { positions: sb.J(JSON.stringify(blob)), onChange });
+    const ed = api.attach(cy, { positions: sb.J(JSON.stringify(blob)), onChange, ...extra });
     return { ed, edge: cy.getElementById("e0") };
   }
   const blobOf = (ed: any) => JSON.parse(JSON.stringify(ed.serialize()));
@@ -256,6 +256,23 @@ describe("editor on a headless graph", () => {
     other.select();
     await tick();
     expect(cy.nodes("[isEdgeHandle]").map((n: any) => n.data("pathKey"))).toEqual(["e|b|c", "e|b|c"]);
+  });
+
+  it("view-only (isEditable false): drawn paths still draw, but no handles and Delete removes nothing", async () => {
+    let editable = false;
+    const { ed, edge } = graph({ "edgepath:e|a|b:b0": { x: 50, y: 40 } }, undefined, { isEditable: () => editable });
+    expect(edge.style("curve-style")).toBe("segments"); // still drawn
+    edge.select();
+    await tick();
+    expect(cy.nodes("[isEdgeHandle]").length).toBe(0);
+    expect(ed.deleteSelected()).toBe(false);
+    editable = true;
+    ed.refresh(); // the host flips edit mode on
+    expect(cy.nodes("[isEdgeHandle]").length).toBe(3);
+    editable = false;
+    ed.refresh();
+    expect(cy.nodes("[isEdgeHandle]").length).toBe(0);
+    expect(blobOf(ed)["edgepath:e|a|b:b0"]).toEqual({ x: 50, y: 40 });
   });
 
   it("suspends custom geometry while the connection-path overlay is up", () => {

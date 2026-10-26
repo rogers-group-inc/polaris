@@ -218,7 +218,14 @@ that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
-**Drawing your own connection lines.** Drag any part of a line and a bend
+**Editing the layout.** The topology opens **view-only**: you can click,
+select, pan, zoom, switch location views and export, but nothing moves. Press
+**Edit** (the pencil at the map's top right, as on the dashboard) to move
+devices and location boxes, draw lines, and use **Save layout**, **Reset
+layout** and **Snap**, which only show while editing. The check mark ends
+editing; closing the topology ends it too.
+
+**Drawing your own connection lines** (while editing). Drag any part of a line and a bend
 point appears where you pressed, selected and following the pointer. Click a
 line to show its points: a dot for each bend and a ring where it meets each
 device. Drag a ring around the device's edge to attach the line at that spot;
@@ -237,9 +244,10 @@ view keeps its own.
 | **Search** | find a node |
 | **Show full** | the whole graph rather than the narrowed view |
 | **Refresh** | re-read |
-| **Save layout** | `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
-| **Reset layout** | a menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
-| **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
+| **Edit** | top right of the map, left of Export: the pencil turns layout editing on, the check mark turns it off |
+| **Save layout** | while editing. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
+| **Reset layout** | while editing. A menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
+| **Snap to grid** | while editing; per user; lands drags on the solver's lattice and re-snaps everything on enable |
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |

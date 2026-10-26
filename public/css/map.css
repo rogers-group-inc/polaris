@@ -654,12 +654,28 @@
 }
 .topology-map-export:hover { opacity: 1; color: var(--color-accent); border-color: var(--color-accent); }
 
+/* Edit / Done Editing (the dashboard's Customize Page pencil and Done check,
+   index.html), top-right of the graph just left of Export. The map is
+   view-only until it is pressed (map.js _applyTopologyEditMode). Sized to
+   the dashboard's card-corner variant (0.3rem around a 16px icon). */
+.topology-map-edit {
+  position: absolute;
+  top: 10px;
+  right: 46px;
+  z-index: 6;
+}
+.topology-map-edit.btn.btn-icon-only { padding: 0.3rem !important; }
+/* Layout verbs hidden outside edit mode: .btn-icon / the chips set a display
+   of their own, which beats the user-agent [hidden] rule. */
+#topology-overlay .btn-icon[hidden],
+.topology-type-chip[hidden] { display: none; }
+
 /* Floating device-type show/hide chips, top-right of the graph area just
-   left of the Export button. .is-off = type currently hidden. */
+   left of the Edit button. .is-off = type currently hidden. */
 .topology-type-toggles {
   position: absolute;
   top: 10px;
-  right: 44px;
+  right: 82px;
   z-index: 6;
   display: flex;
   gap: 6px;
