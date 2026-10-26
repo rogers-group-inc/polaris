@@ -152,11 +152,12 @@ omitted."**; step to a shorter view (Week or Day) to see the rest.
 ## Alerts: conflicts, push queue and stale reservations
 
 The **Alerts** button opens one slide-over holding everything that needs an
-operator on this page. A selector at its top picks the view:
+operator on this page. A selector at its top picks the view, and each entry
+shows how many items it holds, for example *Push queue (2)*:
 
 | View | Holds |
 |---|---|
-| **Conflicts — pending / accepted / rejected / all** | the discovery conflict queue. See [Conflict resolution](Conflict-Resolution). Offered only to a role holding `discoveryConflicts` at Read |
+| **Conflicts** | the discovery conflict queue; its count is the pending conflicts. A second selector beside it switches between **Pending**, **Accepted**, **Rejected** and **All**. See [Conflict resolution](Conflict-Resolution). Offered only to a role holding `discoveryConflicts` at Read |
 | **Push queue** | reservations Polaris still owes a FortiGate: ones being retried, and ones that failed for good (shown red, with the gate's error, **Retry** and **Free**) |
 | **Stale reservations** / **Ignored stale** | DHCP reservations whose client has not been seen in the configured number of days |
 

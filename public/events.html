@@ -128,18 +128,20 @@
         <div class="slideover-meta">
           <span id="alerts-panel-count" style="color:var(--color-text-tertiary);font-size:0.78rem"></span>
           <span style="flex:1"></span>
-          <select id="alerts-panel-filter" style="width:auto;font-size:0.78rem;padding:2px 6px">
-            <optgroup label="Conflicts" id="alerts-filter-conflicts">
-              <option value="conflicts:pending">Conflicts — pending</option>
-              <option value="conflicts:accepted">Conflicts — accepted</option>
-              <option value="conflicts:rejected">Conflicts — rejected</option>
-              <option value="conflicts:all">Conflicts — all</option>
-            </optgroup>
-            <optgroup label="Reservations">
-              <option value="push-queue">Push queue</option>
-              <option value="active">Stale reservations</option>
-              <option value="ignored">Ignored stale</option>
-            </optgroup>
+          <!-- Which conflicts: shown only on the Conflicts view. -->
+          <select id="alerts-conflict-status" aria-label="Conflict status" style="display:none;width:auto;font-size:0.78rem;padding:2px 6px">
+            <option value="pending">Pending</option>
+            <option value="accepted">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="all">All</option>
+          </select>
+          <!-- Each option's text gains its count, e.g. "Push queue (2)" — events.js
+               keeps the bare label in data-label. -->
+          <select id="alerts-panel-filter" aria-label="Alerts view" style="width:auto;font-size:0.78rem;padding:2px 6px">
+            <option value="conflicts" data-label="Conflicts" id="alerts-filter-conflicts">Conflicts</option>
+            <option value="push-queue" data-label="Push queue">Push queue</option>
+            <option value="active" data-label="Stale reservations">Stale reservations</option>
+            <option value="ignored" data-label="Ignored stale">Ignored stale</option>
           </select>
         </div>
       </div>

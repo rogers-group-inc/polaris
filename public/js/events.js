@@ -1999,9 +1999,10 @@ function getAlertsFormData() {
   var countEl = document.getElementById("alerts-panel-count");
   var badge = document.getElementById("alerts-badge");
   var btn = document.getElementById("btn-alerts");
+  var statusSel = document.getElementById("alerts-conflict-status");
   if (!btn || !overlay) return;
 
-  // The conflict views need the conflicts gate; without it the Alerts panel is
+  // The Conflicts view needs the conflicts gate; without it the Alerts panel is
   // the reservation views only. Removed rather than hidden: a hidden <option>
   // is still selectable from the keyboard in some browsers.
   var reviewConflicts = typeof canReviewConflicts !== "function" || canReviewConflicts();
@@ -2009,7 +2010,18 @@ function getAlertsFormData() {
   if (!reviewConflicts && conflictGroup) conflictGroup.remove();
 
   // Latest figures behind the badge — also what decides which view opens.
-  var counts = { conflicts: 0, failed: 0, queued: 0, stale: 0 };
+  var counts = { conflicts: 0, failed: 0, queued: 0, stale: 0, ignored: 0 };
+
+  // "Push queue (2)": every view says how many it holds before it is opened.
+  // Conflicts counts the pending ones — the ones the badge counts.
+  function labelViews() {
+    if (!filterSel) return;
+    var byView = { conflicts: counts.conflicts, "push-queue": counts.queued, active: counts.stale, ignored: counts.ignored };
+    Array.prototype.forEach.call(filterSel.options, function (opt) {
+      var label = opt.getAttribute("data-label") || opt.textContent;
+      opt.textContent = label + " (" + (byView[opt.value] || 0) + ")";
+    });
+  }
 
   // One badge for every view in the panel. Red when anything needs an operator
   // (a pending conflict or a push that failed for good, both drawn red in their
@@ -2022,11 +2034,16 @@ function getAlertsFormData() {
           : Promise.resolve({ count: 0 }),
         api.reservations.pushQueueCount().catch(function () { return { count: 0, failed: 0 }; }),
         api.reservations.alertsCount().catch(function () { return { count: 0 }; }),
+        // Ignored rows have no count route and never drive the badge; the list
+        // is short (an operator put each one there) and only read here.
+        api.reservations.listAlerts("ignored").catch(function () { return { alerts: [] }; }),
       ]);
       counts.conflicts = (r[0] && r[0].count) || 0;
       counts.queued = (r[1] && r[1].count) || 0;
       counts.failed = (r[1] && r[1].failed) || 0;
       counts.stale = (r[2] && r[2].count) || 0;
+      counts.ignored = (r[3] && r[3].alerts && r[3].alerts.length) || 0;
+      labelViews();
       var n = counts.conflicts + counts.queued + counts.stale;
       if (n > 0) {
         var danger = counts.conflicts > 0 || counts.failed > 0;
@@ -2048,7 +2065,7 @@ function getAlertsFormData() {
   // The view the panel opens on: the first one holding something, most urgent
   // first. With nothing anywhere it stays on whatever the operator last chose.
   function pickView() {
-    if (counts.conflicts > 0) return "conflicts:pending";
+    if (counts.conflicts > 0) return "conflicts";
     if (counts.failed > 0) return "push-queue";
     if (counts.stale > 0) return "active";
     if (counts.queued > 0) return "push-queue";
@@ -2062,6 +2079,8 @@ function getAlertsFormData() {
     await refreshBadge();
     var view = pickView();
     if (view && filterSel) filterSel.value = view;
+    // Opening on Conflicts because something is pending means the pending ones.
+    if (view === "conflicts" && statusSel) statusSel.value = "pending";
     loadAlerts();
   }
   function closePanel() {
@@ -2074,6 +2093,7 @@ function getAlertsFormData() {
   closeBtn.addEventListener("click", closePanel);
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closePanel(); });
   if (filterSel) filterSel.addEventListener("change", loadAlerts);
+  if (statusSel) statusSel.addEventListener("change", loadAlerts);
 
   // Drag-resizable like every other slide-over; the width persists per user.
   // It keeps the old Conflict Review panel's key: the duplicate-IP conflict
@@ -2085,9 +2105,9 @@ function getAlertsFormData() {
 
   async function loadAlerts() {
     var filterVal = filterSel && filterSel.value;
-    if (filterVal && filterVal.indexOf("conflicts:") === 0 && window.PolarisEventsConflicts) {
-      return window.PolarisEventsConflicts.load(filterVal.slice("conflicts:".length));
-    }
+    var onConflicts = filterVal === "conflicts" && !!window.PolarisEventsConflicts;
+    if (statusSel) statusSel.style.display = onConflicts ? "" : "none";
+    if (onConflicts) return window.PolarisEventsConflicts.load(statusSel ? statusSel.value : "pending");
     if (window.PolarisEventsConflicts) window.PolarisEventsConflicts.deactivate();
     body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
     var show = filterVal === "ignored" ? "ignored"

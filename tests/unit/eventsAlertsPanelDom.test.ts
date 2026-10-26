@@ -102,14 +102,41 @@ describe("Events Alerts panel", () => {
     await openAlerts(win);
     expect(view(win)).toBe("push-queue");
     expect(calls).toContain("listPushQueue");
-    expect(calls.some((c) => c.startsWith("listAlerts"))).toBe(false);
+    expect(calls).not.toContain("listAlerts:active");
   });
 
   it("opens on pending conflicts first, when there are any", async () => {
     const { win, calls } = await boot({ conflicts: 2, queued: 1, failed: 1, stale: 3 });
     await openAlerts(win);
-    expect(view(win)).toBe("conflicts:pending");
+    expect(view(win)).toBe("conflicts");
     expect(calls).toContain("conflicts.list:pending");
+  });
+
+  it("puts each view's count in the selector, Conflicts counting the pending ones", async () => {
+    const { win } = await boot({ conflicts: 2, queued: 3, failed: 1, stale: 4 });
+    win.api.reservations.listAlerts = async (show: string) => ({ alerts: show === "ignored" ? [{}, {}] : [] });
+    await openAlerts(win);
+    const sel = win.document.getElementById("alerts-panel-filter") as unknown as HTMLSelectElement;
+    const labels = Array.from(sel.options).map((o) => o.textContent);
+    expect(labels).toEqual(["Conflicts (2)", "Push queue (3)", "Stale reservations (4)", "Ignored stale (2)"]);
+  });
+
+  it("switches conflict status with its own selector, shown only on the Conflicts view", async () => {
+    const { win, calls } = await boot({ conflicts: 1, queued: 1, failed: 0, stale: 0 });
+    await openAlerts(win);
+    const status = win.document.getElementById("alerts-conflict-status") as unknown as HTMLSelectElement;
+    expect(status.style.display).toBe("");
+    expect(status.value).toBe("pending");
+    status.value = "all";
+    status.dispatchEvent(new win.Event("change") as unknown as Event);
+    await settle();
+    expect(calls).toContain("conflicts.list:all");
+
+    const sel = win.document.getElementById("alerts-panel-filter") as unknown as HTMLSelectElement;
+    sel.value = "push-queue";
+    sel.dispatchEvent(new win.Event("change") as unknown as Event);
+    await settle();
+    expect(status.style.display).toBe("none");
   });
 
   it("opens on stale reservations ahead of pushes that are only retrying", async () => {
