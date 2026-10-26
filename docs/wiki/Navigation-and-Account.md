@@ -48,6 +48,7 @@ Above Server Settings, panels appear only while there is something to say:
 | **Integration(s) not reachable** | an integration's latest connection test failed — click through to Integrations |
 | **Consider bypassing the FortiManager proxy** | the fleet behind a FortiManager has grown past what proxy mode serves well; dismissable, and returns as the fleet grows |
 | **Agent code signing failed** | the last agent build shipped unsigned Windows binaries; dismissable per failure |
+| **Security update(s) available** | anyone who can change server settings — an installed component (Node.js, PostgreSQL, the OS…) has an open security advisory; names each one, its CVE count and worst rating, and the release to move to. Red, amber or blue to match its row on Server Settings → Maintenance → Platform Lifecycle, where it clicks through. Dismissable; it returns only when a **new** advisory opens — patching one component, or upgrading while the same CVEs stay open, does not bring it back |
 | **Applying update / Update — restarting** | an in-app update is running — it names the current step and clicks through to Server Settings → Maintenance |
 | **Capacity — Immediate Attention** | a critical capacity reason (disk near full, autovacuum stalled, database far larger than RAM); **cannot be dismissed** |
 

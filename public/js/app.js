@@ -1428,6 +1428,7 @@ function renderNav() {
       <div id="integration-failed-status" class="query-status integration-failed-status" style="display:none"></div>
       <div id="fmg-proxy-advice" class="query-status fmg-proxy-advice" style="display:none"></div>
       <div id="signing-failure-alert" class="query-status signing-failure-alert" style="display:none"></div>
+      <div id="platform-advisory-alert" class="query-status platform-advisory-alert" style="display:none"></div>
       <div id="update-status" class="query-status update-status" style="display:none"></div>
       <div id="query-status" class="query-status" style="display:none"></div>
       <div id="capacity-critical-alert" class="capacity-critical-alert" style="display:none"></div>
@@ -1610,6 +1611,33 @@ function renderNav() {
   }
   window._pollSigningAlert = pollSigningAlert;
   window._getSigningFailure = function () { return _signingFailure; };
+
+  // ─── Open security advisories on this host's platform ─────────────────
+  // Dismissable sidebar alert naming every installed component below its
+  // track's securityFloor (Platform Lifecycle grade `unpatched`). Shown to
+  // roles that can change server settings — the people who act on it.
+  // Reads the same memoised payload as the Maintenance card (6 h server-side
+  // memo), so a slow poll costs nothing; the data only moves when a package
+  // is upgraded or Polaris updates its dataset, and both restart the app.
+  var _platformAdvisories = [];
+  async function pollPlatformAdvisories() {
+    if (!permAtLeast("serverSettingsSystem", "write")) return;
+    try {
+      var result = await api.serverSettings.getPlatformLifecycle();
+      _platformAdvisories = ((result && result.components) || []).filter(function (c) {
+        return c.grade && c.grade.state === "unpatched" && c.grade.securityFloor;
+      });
+    } catch (_) {
+      _platformAdvisories = [];
+    }
+    renderPlatformAdvisoryAlert();
+  }
+  if (permAtLeast("serverSettingsSystem", "write")) {
+    pollPlatformAdvisories();
+    pollVisible(pollPlatformAdvisories, 600000);
+  }
+  window._pollPlatformAdvisories = pollPlatformAdvisories;
+  window._getPlatformAdvisories = function () { return _platformAdvisories; };
 
   // ─── In-app update progress ───────────────────────────────────────────
   // Sidebar panel that mirrors the discovery indicator while an in-app
@@ -3108,6 +3136,112 @@ function renderSigningFailureAlert() {
   container.onclick = function (e) {
     if (e.target && e.target.tagName === "BUTTON") return;
     window.location.href = "/integrations.html";
+  };
+}
+
+// ─── Open security advisories (platform) ────────────────────────────────────
+// Renders the dismissable sidebar alert for installed components with an open
+// security advisory. Reads the closure-scoped _platformAdvisories populated by
+// pollPlatformAdvisories.
+//
+// Dismissal is per-user and per-ADVISORY: localStorage holds the
+// "<component>:<CVE>" pairs on screen when it was dismissed, and the alert
+// returns only when a pair outside that set opens. Patching one component
+// therefore never re-raises the others, and upgrading within a line while
+// the same CVEs stay open is not news either. An exact-match signature (the
+// FortiManager advice's shape) would get both wrong.
+//
+// Coloured by the worst row's grade, which already folds in the vendor
+// rating and network exposure (unpatchedSeverity on the server).
+
+var _ADVISORY_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
+
+function _platformAdvisoryDismissKey() {
+  return "polaris.platform-advisories.dismissed." + (currentUsername || "anon");
+}
+
+function _platformAdvisoryPairs(components) {
+  var pairs = [];
+  components.forEach(function (c) {
+    (c.grade.securityFloor.advisories || []).forEach(function (a) {
+      pairs.push(c.id + ":" + a.id);
+    });
+  });
+  return pairs;
+}
+
+function _worstAdvisoryRating(advisories) {
+  var worst = null;
+  (advisories || []).forEach(function (a) {
+    if (worst === null || (_ADVISORY_RANK[a.severity] ?? -1) > (_ADVISORY_RANK[worst] ?? -1)) worst = a.severity;
+  });
+  return worst;
+}
+
+function renderPlatformAdvisoryAlert() {
+  var container = document.getElementById("platform-advisory-alert");
+  if (!container) return;
+  var components = (window._getPlatformAdvisories && window._getPlatformAdvisories()) || [];
+  var pairs = _platformAdvisoryPairs(components);
+
+  var dismissed = [];
+  try { dismissed = JSON.parse(localStorage.getItem(_platformAdvisoryDismissKey()) || "[]"); } catch (_) {}
+  if (!Array.isArray(dismissed)) dismissed = [];
+  var hasNew = pairs.some(function (p) { return dismissed.indexOf(p) === -1; });
+
+  if (!components.length || !hasNew) {
+    container.style.display = "none";
+    container.innerHTML = "";
+    container.onclick = null;
+    return;
+  }
+
+  var sevOrder = { critical: 2, warning: 1, watch: 0 };
+  var worst = components.reduce(function (w, c) {
+    return (sevOrder[c.grade.severity] ?? 0) > (sevOrder[w] ?? 0) ? c.grade.severity : w;
+  }, "watch");
+  container.className = "query-status platform-advisory-alert platform-advisory-" +
+    (worst === "critical" ? "red" : worst === "warning" ? "amber" : "watch");
+
+  container.style.display = "block";
+  container.innerHTML =
+    '<div class="query-status-header platform-advisory-header">' +
+      '<span class="platform-advisory-icon" aria-hidden="true">&#9888;</span>' +
+      '<span class="query-status-label">Security update' + (components.length === 1 ? "" : "s") + ' available</span>' +
+      '<button class="query-abort-btn platform-advisory-dismiss" title="Dismiss (re-appears when a new advisory opens)">&#x2715;</button>' +
+    '</div>' +
+    '<ul class="query-status-list">' +
+      components.map(function (c) {
+        var sf = c.grade.securityFloor;
+        var n = (sf.advisories || []).length;
+        var rating = _worstAdvisoryRating(sf.advisories);
+        var ids = (sf.advisories || []).map(function (a) { return a.id + " (" + a.severity + ")"; }).join(", ");
+        return '<li><div style="min-width:0;flex:1">' +
+          '<span class="query-status-name" title="' + escapeHtml(ids) + '">' +
+            escapeHtml(c.label) + " " + escapeHtml(c.observedVersion || "") +
+          '</span>' +
+          '<span class="query-status-progress">' +
+            n + " CVE" + (n === 1 ? "" : "s") + (rating ? " · " + escapeHtml(rating) : "") +
+            " · update to " + escapeHtml(sf.version) +
+          '</span>' +
+          '</div></li>';
+      }).join("") +
+    '</ul>';
+
+  var dismissBtn = container.querySelector(".platform-advisory-dismiss");
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      try { localStorage.setItem(_platformAdvisoryDismissKey(), JSON.stringify(pairs)); } catch (_) {}
+      renderPlatformAdvisoryAlert();
+    });
+  }
+
+  // Click-through to the Platform Lifecycle card on the Maintenance tab.
+  container.style.cursor = "pointer";
+  container.onclick = function (e) {
+    if (e.target && e.target.tagName === "BUTTON") return;
+    window.location.href = "/server-settings.html?tab=maintenance";
   };
 }
 
