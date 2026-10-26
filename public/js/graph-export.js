@@ -304,6 +304,7 @@
 
     cy.nodes().forEach(function (n) {
       if (!n.visible() || psStr(n, "display", "element") === "none") return;
+      if (typeof n.data === "function" && n.data("noExport")) return; // editing chrome (connection-path handles)
       var op = n.effectiveOpacity ? n.effectiveOpacity() : 1;
       if (op <= 0.01) return;
       var bb = n.boundingBox({ includeLabels: false, includeOverlays: false });
@@ -1409,10 +1410,16 @@
   var ICON_SHAPES = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4a2 2 0 0 1 2 2V14"/></svg>';
 
   // The Export menu. `getCtx` is called per choice so the export reflects the
-  // graph at the moment of the click, not when the menu opened.
+  // graph at the moment of the click, not when the menu opened. A surface
+  // with ONE screenshot passes `screenshot` (+ `screenshotLabel`); one with
+  // several (the Device Map topology: the map alone, or map + details)
+  // passes `screenshots: [{ label, run }]`, listed first in that order.
   function openMenu(anchor, getCtx, opts) {
     opts = opts || {};
     var items = [];
+    (opts.screenshots || []).forEach(function (s) {
+      items.push({ label: s.label, icon: ICON_CAMERA, onSelect: s.run });
+    });
     if (opts.screenshot) items.push({ label: opts.screenshotLabel || "Copy screenshot", icon: ICON_CAMERA, onSelect: opts.screenshot });
     items.push({ label: "Export PDF…", icon: ICON_DOC, onSelect: function () { openPdfDialog(getCtx()); } });
     items.push({ label: "Export to Visio (.vsdx)", icon: ICON_SHAPES, onSelect: function () { exportVisio(getCtx()); } });

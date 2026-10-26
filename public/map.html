@@ -71,19 +71,8 @@
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
           </button>
-          <button type="button" class="btn-icon" id="topology-save-layout" aria-label="Save layout" title="Save this layout as a restore point" style="line-height:0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-              <polyline points="17 21 17 13 7 13 7 21"/>
-              <polyline points="7 3 7 8 15 8"/>
-            </svg>
-          </button>
-          <button type="button" class="btn-icon" id="topology-reset-layout" aria-haspopup="menu" aria-expanded="false" aria-label="Reset layout" title="Reset layout" style="line-height:0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="1 4 1 10 7 10"/>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-            </svg>
-          </button>
+          <!-- Save layout / Reset layout are not here: in edit mode they sit
+               under the map's Edit button (map.js → _ensureTopologyCornerTools). -->
           <button type="button" class="btn-icon" id="topology-fullscreen" aria-label="Toggle full screen" title="Toggle full screen (Esc to exit)" style="line-height:0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
@@ -92,16 +81,8 @@
               <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
             </svg>
           </button>
-          <!-- Export menu (graph-export.js): screenshot of the whole view,
-               PDF, Visio. Replaced the header camera, whose screenshot is
-               now the menu's first item. -->
-          <button type="button" class="btn-icon" id="topology-export" aria-label="Export" aria-haspopup="menu" title="Export: screenshot, PDF or Visio" style="line-height:0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-          </button>
+          <!-- Export (screenshots, PDF, Visio) is not here: it floats in the
+               map's top-right corner (map.js → _ensureTopologyExportButton). -->
           <button type="button" class="btn-icon modal-close" id="topology-close" aria-label="Close">&times;</button>
         </div>
       </div>
@@ -184,6 +165,7 @@
   <script src="/js/quiet-time-editor.js"></script>
   <script src="/js/assets-maintenance.js"></script>
   <script src="/js/topology-render.js"></script>
+  <script src="/js/topology-edge-editor.js"></script>
   <script src="/js/graph-export.js"></script>
   <script src="/js/map-fullscreen.js"></script>
   <script src="/js/map.js"></script>

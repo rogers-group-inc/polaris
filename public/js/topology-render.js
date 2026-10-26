@@ -783,6 +783,48 @@
           "overlay-padding": 3,
         },
       },
+      // Connection-path handles (topology-edge-editor.js): a filled dot per
+      // bend point, a ring per end point riding the device outline — every
+      // handle the same size, selected or not, so only fill and border
+      // colour tell them apart. Drawn above everything so a handle on top of
+      // a device stays grabbable.
+      {
+        selector: "node[isEdgeHandle]",
+        style: {
+          shape: "ellipse",
+          width: 12,
+          height: 12,
+          label: "",
+          "background-color": "#22d3ee",
+          "background-opacity": 1,
+          "background-image": "none",
+          "border-width": 3,
+          "border-color": isDark ? "#0d0d1a" : "#ffffff",
+          "border-opacity": 1,
+          "overlay-padding": 4,
+          // Default (auto) compare: nodes already sit above edges, and among
+          // nodes this z wins. "manual" sorted the handles UNDER the devices,
+          // so pressing an end point grabbed its device instead.
+          "z-index": 9999,
+        },
+      },
+      {
+        selector: 'node[isEdgeHandle][handleKind != "bend"]',
+        style: {
+          "background-color": isDark ? "#0d0d1a" : "#ffffff",
+          "border-color": "#22d3ee",
+        },
+      },
+      {
+        selector: "node[isEdgeHandle]:selected",
+        style: {
+          // Same size as an unselected handle; border-width restated so
+          // the generic node:selected rule's 5px border can't fatten it.
+          "border-width": 3,
+          "border-color": "#f59e0b",
+          "overlay-opacity": 0,
+        },
+      },
       {
         selector: 'core',
         style: {
@@ -1230,6 +1272,8 @@
       return coord + k * 9;
     }
     cy.edges("[isInterGroup]").forEach(function (e) {
+      // An operator-drawn path (topology-edge-editor.js) owns its geometry.
+      if (e.data("customPath")) return;
       var sN = e.source();
       var tN = e.target();
       var sHull = hullIdForNode(sN);
@@ -1704,7 +1748,9 @@
   // the midpoint (Cytoscape adds the margin BEFORE rotating, about the shifted
   // point) and text-rotation lays it along its leg (autorotate would follow
   // the midpoint's leg); the second copy is a target-label offset along the
-  // path back from the target, autorotated. A hidden label is `label: ""`.
+  // path back from the target, given its own leg's angle the same way (an
+  // end label's autorotate ALSO follows the midpoint's leg, not its own). A
+  // hidden label is `label: ""`.
   // The PDF / Visio export reads the shifted main label (it applies
   // text-margin) and prints it horizontally; it does not draw target-label
   // copies.
@@ -1891,10 +1937,15 @@
           for (var j = copy.li + 1; j < legs.length; j++) back += legs[j].len;
           style["target-label"] = text;
           style["target-text-offset"] = back;
-          style["target-text-rotation"] = "autorotate";
+          // An explicit angle, never "autorotate": Cytoscape resolves an end
+          // label's autorotate to the MAIN label's auto angle (the leg at the
+          // path midpoint — calculateLabelAngle returns labelAutoAngle for
+          // any prefix), so on a bent line the copy was drawn turned to some
+          // other leg instead of lying along its own.
+          style["target-text-rotation"] = _readableAngle(legs[copy.li].dx, legs[copy.li].dy);
         }
         var sig = [text, style["text-margin-x"], style["text-margin-y"], style["text-rotation"],
-          style["target-label"], style["target-text-offset"]]
+          style["target-label"], style["target-text-offset"], style["target-text-rotation"]]
           .map(function (v) { return typeof v === "number" ? v.toFixed(1) : String(v); }).join("|");
         if (e.data("_bentLabel") === sig) return;
         e.style(style);

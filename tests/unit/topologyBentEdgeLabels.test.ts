@@ -117,7 +117,17 @@ describe("refreshBentEdgeLabels", () => {
     expect(e.bypass["text-rotation"]).toBeCloseTo(0);
     expect(e.bypass["target-label"]).toBe("port8 ↔ port7");
     expect(e.bypass["target-text-offset"]).toBeCloseTo(40);
-    expect(e.bypass["target-text-rotation"]).toBe("autorotate");
+    expect(e.bypass["target-text-rotation"]).toBeCloseTo(0);
+  });
+
+  it("the copy is turned to ITS OWN leg, not autorotated (Cytoscape autorotates an end label to the midpoint's leg)", () => {
+    // Right, down, then a 45° diagonal into the target — an operator-drawn path.
+    const e = fakeEdge("segments", [
+      { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 200 }, { x: 200, y: 300 },
+    ]);
+    refresh(fakeCy([e]));
+    expect(e.bypass["text-rotation"]).toBeCloseTo(0);                       // first leg, horizontal
+    expect(e.bypass["target-text-rotation"]).toBeCloseTo(Math.PI / 4);      // last leg, diagonal
   });
 
   it("a zero-length leg or a collinear bend is no bend at all", () => {

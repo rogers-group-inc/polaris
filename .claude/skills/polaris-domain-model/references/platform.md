@@ -352,6 +352,9 @@ TopologyLayout                  -- SHARED Device Map topology node positions (th
   positions     Json            -- { [nodeId]: { x, y } } pixel model coords — the exact shape map.js
                                 -- saves/loads (and previously kept only in localStorage). Full-replace per
                                 -- save; stale nodeIds are ignored at render and dropped on the next save.
+                                -- Also carries operator-drawn connection paths as `edgepath:<pathKey>:b<n>`
+                                -- (a bend, {x,y}) / `:s` / `:t` (an end point's unit direction) entries —
+                                -- public/js/topology-edge-editor.js; the server treats them as ordinary ids.
                                 -- Last-write-wins between concurrent editors (updatedBy/updatedAt enable a
                                 -- future conditional write). Validated by topologyLayoutService
                                 -- (sanitizePositions: finite coords, ≤3000 nodes) on top of the route Zod.

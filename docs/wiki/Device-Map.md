@@ -205,7 +205,7 @@ On the light themes (morning and noon) the links and location boxes are drawn
 in darker shades of the same colours, so they stay readable on the pale
 background; the legend matches the theme you are using.
 
-With **Locations** on, the details pane lists the switches and APs in the same
+When devices carry location codes, the details pane lists the switches and APs in the same
 nesting as the location boxes (area › building › floor › room › junction box),
 under a heading per group, with devices that have no location last.
 
@@ -218,17 +218,61 @@ that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
+**Editing the layout.** The topology opens **view-only**: you can click,
+select, pan, zoom, switch location views and export, but nothing moves. Press
+**Edit** (the pencil at the map's top right, as on the dashboard) to move
+devices and location boxes, draw lines, and use **Save layout**, **Reset
+layout** and the editing tools, which only show while editing. The check mark
+ends editing; closing the topology ends it too.
+
+The tools sit in a row at the map's top right. From the right: **Edit**,
+**Export**, then, while editing, **Grid**, **Snap devices** and **Snap line
+points**. Each one remembers its setting in this browser; the grid only ever shows while you are editing, and comes back
+the next time you edit if you left it on.
+
+- **Grid** draws two weights of line behind the map. The thick lines are
+  where devices sit in the automatic layout; the thin lines split each cell
+  in four.
+- **Snap devices** lands a dragged device on the thick lines, and lines up
+  every device on the map when you turn it on.
+- **Snap line points** lands a dragged bend point on any line, thick or thin.
+
+**Drawing your own connection lines** (while editing). Drag any part of a line and a bend
+point appears where you pressed, selected and following the pointer. Click a
+line to show its points: a dot for each bend and a ring where it meets each
+device. Drag a ring around the device's edge to attach the line at that spot;
+it stays on the device's outline, so the line never comes loose. A bend stays
+where you put it when you move one of the line's devices, and moves with the
+line when you move both devices together. Select a point and press
+**Delete** to remove a bend, or to put an end back on automatic. A line with
+no points left goes back to its automatic shape. A click selects just the
+device, line or location box you clicked; hold **Shift** to add to the
+selection, or Shift-drag to box-select. Drawn lines are part of the
+layout: **Save layout** and **Reset layout** cover them, and each location
+view keeps its own. Lines are always straight between their points.
+
+**Undo and redo** (while editing). **Ctrl+Z** undoes the last layout
+change: a device or box moved, a bend added, moved or deleted, an end point
+moved, or everything snapped. **Ctrl+Shift+Z** (or **Ctrl+Y**) redoes it.
+The undo and redo arrows under the Edit button do the same and grey out when
+there is nothing to step to. History lasts until you press the check mark,
+and an undone change is saved like any other edit.
+
 | Control | |
 |---|---|
 | **Search** | find a node |
 | **Show full** | the whole graph rather than the narrowed view |
 | **Refresh** | re-read |
-| **Save layout** | `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
-| **Reset layout** | a menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
-| **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
+| **Edit** | top right of the map, left of Export: the pencil turns layout editing on, the check mark turns it off |
+| **Save layout** | while editing, under the Edit button. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
+| **Undo / Redo** | while editing, under Reset; also Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y) |
+| **Reset layout** | while editing, under Save. A menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
+| **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
+| **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
+| **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
-| **Export** | screenshot, PDF or Visio — see below |
+| **Export** | top right of the map: screenshots, PDF or Visio — see below |
 
 The **legend** sits at the graph's bottom left as a small button; click it to
 open the legend, and its **×** folds it back. The edge between the graph and
@@ -243,7 +287,7 @@ server has not stored.
 
 ### Exporting the topology
 
-The **Export** button at the top right of the topology header opens a menu.
+The **Export** button in the top-right corner of the map opens a menu.
 Each choice exports **only what is in the viewer**: the part of the graph on
 screen at your current zoom and position, in its current layout, including a
 narrowed endpoint-search view. Zoom in, and whatever leaves the view leaves the
@@ -251,9 +295,11 @@ export too; a device cut by the edge of the view is cut at the same place on
 the PDF, and the device and link count above it counts only what is in view.
 To export the whole site, zoom out until all of it is in view first.
 
+- **Copy map as image**: the graph in view alone.
 - **Copy screenshot (map + details)**: the graph and the right-hand details
-  panel as one image. Clipboard first, download as fallback. The small camera
-  inside the graph area copies the graph in view alone.
+  panel as one image. Clipboard first, download as fallback.
+
+  Neither screenshot shows a selected line's drag points.
 - **Export PDF…**: the graph drawn as vectors on white paper whatever theme you
   are using, so it prints sharp and its text is searchable. Choose the paper
   size, orientation and **minimum text size** (7 pt by default): **nothing on

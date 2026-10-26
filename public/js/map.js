@@ -13,6 +13,9 @@
   var markerCluster = null;
   var markersById = Object.create(null); // id → L.Marker
   var cyInstance = null;
+  // Operator-drawn connection paths on the current graph
+  // (PolarisTopologyEdgeEditor.attach) — rebuilt with every render.
+  var edgeEditor = null;
   var siteCache = [];                    // last /map/sites payload
   // Currently-open topology modal state. siteId drives Refresh + position
   // persistence; data is the latest /topology payload (used for endpoint
@@ -21,10 +24,17 @@
   // "Base") or an area / building / floor view key from computeFloorViews.
   // Not persisted — the modal always opens on Base. floorViews caches the current payload's
   // view list for the switcher chips.
-  var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false };
+  // `editing`: the map is view-only until the Edit button (top-right of the
+  // graph, the dashboard's pencil) is pressed; never persisted — every open
+  // starts view-only, and it survives re-renders (refresh, view switches)
+  // until Done or close.
+  var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false, editing: false };
   var topoSearchDebounce = null;
   var topoSuggestState  = { open: false, items: [], index: -1 };
   var POSITION_STORAGE_PREFIX = "polaris.topology.positions:";
+  // Entries per saved layout blob — MAX_LAYOUT_NODES in
+  // src/services/topologyLayoutService.ts, which rejects a bigger blob.
+  var TOPO_LAYOUT_MAX_ENTRIES = 3000;
   // Per-browser restore points — the local half of Save, and the only half a
   // non-writer gets. Keyed like the positions store (bare key = flat view).
   var CHECKPOINT_STORAGE_PREFIX = "polaris.topology.saved:";
@@ -40,32 +50,23 @@
   // operator's last spot. Drag offsets are clamped on render to keep the
   // panel inside the graph if the modal was resized between sessions.
   var LEGEND_STORAGE_KEY = "polaris.topology.legend";
-  // Device-type visibility toggles (floating chips at the top-right of the
-  // graph area): per-user singleton like the legend — hidden types persist
-  // across sites/sessions. Stored as an array of role strings. The fortigate
-  // root is intentionally NOT toggleable: it anchors the column solver, and
-  // hiding it would drop the whole layout back to dagre.
-  var TYPE_FILTER_STORAGE_KEY = "polaris.topology.hiddenRoles";
-  // Location grouping hulls (building / floor / room / jb shapes from
-  // a:/b:/f:/r:/jb: codes in device descriptions): per-user singleton toggle,
-  // default ON. The chip only renders when the site actually carries codes,
-  // so untagged fleets see zero UI change.
-  var SHOW_LOCATIONS_STORAGE_KEY = "polaris.topology.showLocations";
-  // Snap-to-grid: per-user singleton toggle, default OFF. When on, node /
-  // hull drags snap to the layout grid (TOPO_COL_SPACING × TOPO_ROW_SPACING)
-  // on release, and enabling the chip re-snaps every current position. The
-  // pref itself is a per-browser editing aid; the snapped POSITIONS persist
-  // through the normal layout-save pipeline (server for writers).
-  var SNAP_STORAGE_KEY = "polaris.topology.snapToGrid";
-  // Toggleable roles, in chip display order. Only roles that buildTopologyElements
-  // actually renders as nodes belong here (wireless clients / LLDP ghosts are
-  // never drawn, and wired endpoints only appear as synthetic search-overlay
-  // nodes, which bypass the filter by design).
-  var TOPO_TYPE_TOGGLES = [
-    { role: "fortiswitch",  label: "Switches" },
-    { role: "fortiap",      label: "APs" },
-    { role: "remote-asset", label: "Remote" },
-  ];
+  // The map's corner tools (top right of the graph, right → left: Edit,
+  // Export, then — edit mode only — Grid, Snap devices, Snap line points).
+  // Every toggle is a per-user, per-browser pref; what they produce
+  // (snapped positions, drawn lines) persists through the normal layout
+  // save.
+  //
+  // The GRID has two weights. The thick (major) lines are the column
+  // solver's lattice, TOPO_COL_SPACING × TOPO_ROW_SPACING — where devices
+  // land. The thin (minor) lines split each major cell TOPO_GRID_DIV ways;
+  // thin AND thick lines together are the lattice line points snap to.
+  var TOPO_GRID_DIV = 4;
+  var GRID_STORAGE_KEY = "polaris.topology.grid";                 // default off
+  // Snap devices: drags land on the MAJOR lattice on release, and turning it
+  // on re-snaps every current position. Same key as the old single "Snap"
+  // chip, so an operator who had snapping on keeps it.
+  var SNAP_STORAGE_KEY = "polaris.topology.snapToGrid";           // default off
+  var SNAP_POINTS_STORAGE_KEY = "polaris.topology.snapLinePoints"; // default off
 
   // Register cytoscape-dagre once. Both globals are populated by the UMD builds
   // loaded in map.html. Guarded so hot-reload doesn't throw.
@@ -930,31 +931,17 @@
   function wireModal() {
     var overlay = document.getElementById("topology-overlay");
     var closeBtn = document.getElementById("topology-close");
-    var exportBtn = document.getElementById("topology-export");
     var fullscreenBtn = document.getElementById("topology-fullscreen");
     var refreshBtn = document.getElementById("topology-refresh");
-    var saveBtn = document.getElementById("topology-save-layout");
-    var resetBtn = document.getElementById("topology-reset-layout");
     var legendCloseBtn = document.getElementById("topology-legend-close");
     var showFullBtn = document.getElementById("topology-show-full");
     var searchInput = document.getElementById("topology-search-input");
     closeBtn.addEventListener("click", closeTopology);
-    // Header Export = the shared menu (graph-export.js): the whole-modal
-    // (map + details) screenshot, PDF, Visio. The map-only screenshot stays
-    // on the floating button inside the map area.
-    if (exportBtn) {
-      exportBtn.addEventListener("click", function () {
-        if (!window.PolarisGraphExport) return;
-        window.PolarisGraphExport.openMenu(exportBtn, topologyExportContext, {
-          screenshot: screenshotTopologyModal,
-          screenshotLabel: "Copy screenshot (map + details)",
-        });
-      });
-    }
+    // Export, and in edit mode Save / Reset layout, live on the map itself
+    // (top-right corner) — see _ensureTopologyCornerTools, re-added with
+    // every render.
     if (fullscreenBtn) fullscreenBtn.addEventListener("click", toggleFullscreenTopology);
     if (refreshBtn) refreshBtn.addEventListener("click", refreshTopology);
-    if (saveBtn) saveBtn.addEventListener("click", saveTopologyLayoutCheckpoint);
-    if (resetBtn) resetBtn.addEventListener("click", function () { openResetLayoutMenu(resetBtn); });
     // The legend sits in the graph's bottom-left corner and collapses into
     // its own button there (legend-toggle.js), its header × collapsing it
     // again — the Device Map / Application Map / Status Map pattern. The
@@ -1025,6 +1012,22 @@
     });
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && overlay.classList.contains("open")) closeTopology();
+      // Delete / Backspace removes the selected connection-path handles (a
+      // bend goes; an end point returns to automatic). Never while typing.
+      if ((e.key === "Delete" || e.key === "Backspace") && overlay.classList.contains("open") && edgeEditor) {
+        var t = e.target;
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+        if (edgeEditor.deleteSelected()) e.preventDefault();
+      }
+      // Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo (⌘ on a Mac) — edit mode
+      // only, never while typing.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && overlay.classList.contains("open") && topoState.editing) {
+        var tt = e.target;
+        if (tt && (tt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tt.tagName))) return;
+        var k = (e.key || "").toLowerCase();
+        if (k === "z" && !e.shiftKey) { e.preventDefault(); _layoutUndo(); }
+        else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); _layoutRedo(); }
+      }
     });
     // When the browser exits fullscreen via Esc / OS gesture, drop the
     // fullscreen class so the modal styling reverts cleanly.
@@ -1087,6 +1090,15 @@
   // full:false — the viewport, not the whole graph: whatever the operator has
   // zoomed or panned out of view stays out of the picture (as every topology
   // and Application Map export does).
+  // cy.png with the connection-path editing handles left out: they are
+  // chrome for the operator dragging a line, not part of the drawing (the
+  // PDF / Visio export skips them through their noExport flag).
+  function _topologyPng(opts) {
+    var handles = cyInstance.nodes("[isEdgeHandle]");
+    handles.style("display", "none");
+    try { return cyInstance.png(opts); }
+    finally { handles.removeStyle("display"); }
+  }
   function screenshotTopology() {
     if (!cyInstance) {
       if (typeof showToast === "function") showToast("Topology not loaded", "error");
@@ -1095,7 +1107,7 @@
     var rootCs = getComputedStyle(document.documentElement);
     var bg = rootCs.getPropertyValue("--color-bg-primary").trim() ||
              rootCs.getPropertyValue("--color-surface").trim() || "#ffffff";
-    var blob = cyInstance.png({ output: "blob", scale: 2, full: false, bg: bg });
+    var blob = _topologyPng({ output: "blob", scale: 2, full: false, bg: bg });
     if (!blob) {
       if (typeof showToast === "function") showToast("Screenshot failed", "error");
       return;
@@ -1132,7 +1144,7 @@
       var b = ele.boundingBox({ includeLabels: false });
       return b.x2 >= ext.x1 && b.x1 <= ext.x2 && b.y2 >= ext.y1 && b.y1 <= ext.y2;
     };
-    var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal") && inView(n); }).length : 0;
+    var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal") && !n.data("isEdgeHandle") && inView(n); }).length : 0;
     var links = cyInstance ? cyInstance.edges(":visible").filter(inView).length : 0;
     meta.push(nodes + " device" + (nodes === 1 ? "" : "s") + " · " + links + " link" + (links === 1 ? "" : "s"));
     var showFull = document.getElementById("topology-show-full");
@@ -1163,7 +1175,7 @@
     var pick = function (n, f) { var v = rootCs.getPropertyValue(n).trim(); return v || f; };
     var bg = pick("--color-bg-primary", pick("--color-surface", "#ffffff"));
     // The viewport only, as screenshotTopology.
-    var uri = cyInstance.png({ output: "base64uri", scale: 2, full: false, bg: bg });
+    var uri = _topologyPng({ output: "base64uri", scale: 2, full: false, bg: bg });
     var mapImg = new Image();
     mapImg.onload = function () { _composeTopologyModalCanvas(mapImg, pick); };
     mapImg.onerror = function () {
@@ -1379,6 +1391,7 @@
     topoState.data = null;
     topoState.activeView = "flat";
     topoState.floorViews = [];
+    topoState.editing = false;
 
     try {
       var data = await api.map.topology(id);
@@ -1469,18 +1482,32 @@
     } catch (e) { /* quota / private mode — the server copy (if any) still stands */ }
   }
   // Current on-canvas positions of the real nodes. Synthetic overlays (hulls,
-  // floor portals) are derived every render, so persisting them would pin
-  // stale geometry onto ids the next render rebuilds.
+  // floor portals, path handles) are derived every render, so persisting
+  // them would pin stale geometry onto ids the next render rebuilds.
+  // Operator-drawn connection paths ride the same blob as `edgepath:` entries
+  // (topology-edge-editor.js), which is how Save / Reset cover them too.
   function _currentNodePositions() {
     if (!cyInstance) return null;
     var out = {};
+    var count = 0;
     cyInstance.nodes().forEach(function (n) {
-      if (n.data("isLocGroup") || n.data("isPortal")) return;
+      if (n.data("isLocGroup") || n.data("isPortal") || n.data("isEdgeHandle")) return;
       var p = n.position();
       if (p && typeof p.x === "number" && typeof p.y === "number") {
         out[n.id()] = { x: p.x, y: p.y };
+        count++;
       }
     });
+    if (edgeEditor) {
+      // The server refuses a blob over its node cap outright, so path
+      // entries past it are left out rather than losing the whole save.
+      var paths = edgeEditor.serialize();
+      Object.keys(paths).forEach(function (k) {
+        if (count >= TOPO_LAYOUT_MAX_ENTRIES) return;
+        out[k] = paths[k];
+        count++;
+      });
+    }
     return out;
   }
   // A connection-path overlay parks the graph in a temporary tight chain the
@@ -1513,14 +1540,14 @@
     var cp = topoState.siteId ? _readCheckpoint(topoState.siteId) : null;
     if (saveBtn) {
       saveBtn.disabled = !topoState.siteId || !cyInstance;
-      saveBtn.title = _canWriteServerLayout()
-        ? "Save this layout as a restore point (shared)"
-        : "Save this layout as a restore point (this browser only)";
+      _setCornerTip(saveBtn, "Save layout", _canWriteServerLayout()
+        ? "Save this layout as a restore point (shared with everyone)"
+        : "Save this layout as a restore point (this browser only)");
     }
     if (resetBtn) {
-      resetBtn.title = cp
-        ? "Reset layout — back to the last save (" + _checkpointLabel(cp) + ") or to the baseline"
-        : "Reset layout to the baseline";
+      _setCornerTip(resetBtn, "Reset layout", cp
+        ? "Back to the last save (" + _checkpointLabel(cp) + ") or to the automatic layout"
+        : "Back to the automatic layout");
     }
   }
 
@@ -1870,10 +1897,18 @@
     parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Mouse controls</div>');
     [
       ["Drag empty space", "Pan the view (scroll wheel zooms)"],
+      ["Click", "Select just that device, link or location box"],
+      ["Shift + click", "Add to the selection"],
       ["Shift + drag", "Box-select multiple devices"],
-      ["Drag a selected device", "Move the selected devices together"],
       ["Ctrl + drag", "Pan from anywhere (even over devices)"],
-      ["Snap chip", "Snap drags to the layout grid"],
+      ["Edit (pencil, top right)", "Turn on layout editing — the rows below; the check mark ends it"],
+      ["Drag a selected device", "Edit mode: move the selected devices together"],
+      ["Drag a connection line", "Edit mode: add a bend point there and move it"],
+      ["Click a connection line", "Edit mode: show its points — drag an end point around a device to attach the line there"],
+      ["Delete", "Edit mode: remove the selected bend point (an end point goes back to automatic)"],
+      ["Ctrl + Z / Ctrl + Shift + Z", "Edit mode: undo / redo a layout change (also the arrows under Edit)"],
+      ["Grid (top right)", "Edit mode: show the grid — thick lines where devices snap, thin lines in between"],
+      ["Snap devices / Snap line points", "Edit mode: devices land on the thick lines; line points on any line"],
       ["Double-click a device", "Open its asset details"],
       ["Right-click a device", "Edit its description / grouping codes"],
     ].forEach(function (c) { parts.push(row("", c[0], c[1])); });
@@ -2223,6 +2258,9 @@
       edgeId: syntheticEdgeId,
       savedPositions: savedPositions,
     };
+    // Drawn paths are anchored to the full-site layout; the temporary chain
+    // would stretch them across the canvas, so they step aside until cleared.
+    if (edgeEditor) edgeEditor.setSuspended(true);
 
     var btn = document.getElementById("topology-show-full");
     if (btn) btn.hidden = false;
@@ -2261,6 +2299,7 @@
         try { cyInstance.remove(ep); } catch (e) {}
       }
       topoState.pathOverlay = null;
+      if (edgeEditor) edgeEditor.setSuspended(false);
     }
     var btn = document.getElementById("topology-show-full");
     if (btn) btn.hidden = true;
@@ -2314,6 +2353,7 @@
     topoState.hostname = null;
     topoState.data = null;
     topoState.pathOverlay = null;
+    topoState.editing = false;
     var showFullBtn = document.getElementById("topology-show-full");
     if (showFullBtn) showFullBtn.hidden = true;
     // Exit native fullscreen first — otherwise the browser stays in
@@ -2334,6 +2374,7 @@
       cyInstance.destroy();
       cyInstance = null;
     }
+    edgeEditor = null;
   }
 
   // Delegates to PolarisTopologyRender so desktop and mobile share one
@@ -2358,9 +2399,8 @@
     // off-path elements and adds a synthetic round-rectangle endpoint node.
     var elements = window.PolarisTopologyRender.buildTopologyElements(data);
 
-    // Does ANY device on this site carry a location code? Checked against the
-    // unfiltered element set so the Locations chip stays available even when
-    // every coded device's type is currently hidden.
+    // Does ANY device on this site carry a location code? (Location boxes
+    // are always drawn when one does — the Locations chip is gone.)
     topoState.hasLocationCodes = elements.some(function (el) {
       var d = el && el.data;
       return !!(d && !d.source && (d.locA || d.locB || d.locF || d.locR || d.locJb));
@@ -2376,32 +2416,25 @@
       isFloorView = false;
     }
 
-    // Device-type visibility filter: drop nodes of hidden roles (and edges
-    // touching them) BEFORE the column solver runs, so the layout recomputes
-    // compactly for what's actually shown instead of leaving holes where the
-    // hidden devices' rows were. Counts come from the UNFILTERED set so a
-    // hidden type's chip stays available to re-show it. Two passes because
-    // mesh edges can precede their target AP node in the element order.
-    var hiddenRoles = _readHiddenRoles();
-    var roleCounts = {};
-    var visibleIds = {};
+    // Every device type is drawn (the Switches / APs show-hide chips are
+    // gone). Edges still need both ends present — a dangling reference
+    // throws in Cytoscape and kills the whole render. Two passes because mesh
+    // edges can precede their target AP node in the element order.
+    var nodeIds = {};
     elements.forEach(function (el) {
       var d = el && el.data;
-      if (!d || !d.id || d.source) return; // edges handled below
-      roleCounts[d.role] = (roleCounts[d.role] || 0) + 1;
-      if (!hiddenRoles[d.role]) visibleIds[d.id] = true;
+      if (d && d.id && !d.source) nodeIds[d.id] = true;
     });
     elements = elements.filter(function (el) {
       var d = el && el.data;
       if (!d) return false;
-      if (d.source && d.target) return !!(visibleIds[d.source] && visibleIds[d.target]);
-      return !!visibleIds[d.id];
+      if (d.source && d.target) return !!(nodeIds[d.source] && nodeIds[d.target]);
+      return true;
     });
 
     // Floor view: partition down to the active (building, floor) pair — its
     // tagged devices + the FortiGate root + portal stubs where an edge
-    // crosses to another floor. Runs after the type filter so a hidden
-    // device type stays hidden in floor views too.
+    // crosses to another floor.
     if (isFloorView) {
       elements = window.PolarisTopologyRender.partitionElementsForFloor(elements, topoState.activeView);
     }
@@ -2423,6 +2456,7 @@
       try { cyInstance.destroy(); } catch (e) {}
       cyInstance = null;
     }
+    edgeEditor = null;
 
     // Restore manually-dragged node positions from localStorage if any
     // are saved for this site. We use the dagre layout as the base
@@ -2441,8 +2475,14 @@
       // selected nodes can be dragged together to rearrange. Multi-node
       // selection is also addable via shift-click on individual nodes.
       // Pan stays as plain drag on background (Cytoscape default).
+      // "single": a PLAIN click replaces the selection — a link, a group box
+      // or a device becomes the only thing selected (it used to be
+      // "additive", so clicking a second link or a box after a box-select
+      // kept everything before it selected). Shift-click and shift-drag
+      // still add: Cytoscape treats a held shift as additive in either mode.
+      // Dragging an already-selected device still moves the whole set.
       boxSelectionEnabled: true,
-      selectionType: "additive",
+      selectionType: "single",
       // Damp scroll-wheel zoom hard — the default felt jumpy on typical
       // mouse wheels (one notch was 25–30% zoom step), and even the earlier
       // 0.5 stepped too far on large site graphs. 0.2 ≈ one notch nudges
@@ -2533,12 +2573,13 @@
         var toSnap = cyInstance.collection(evt.target).union(cyInstance.nodes(":selected"));
         cyInstance.batch(function () {
           toSnap.forEach(function (n) {
-            if (n.data("isLocGroup") || n.data("isPortal")) return;
+            if (n.data("isLocGroup") || n.data("isPortal") || n.data("isEdgeHandle")) return;
             n.position(_snapPos(n.position()));
           });
         });
       }
       _markLayoutDirty();
+      _layoutHistoryRecordSoon(); // a finished drag is one undo step
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
         saveNodePositions(topoState.siteId);
@@ -2554,6 +2595,7 @@
     function _assetIdForNode(node) {
       if (node.data("isPortal")) return null; // floor portal — tap navigation, not an asset
       if (node.data("isLocGroup")) return null; // location hull — hover surface only
+      if (node.data("isEdgeHandle")) return null; // connection-path handle
       var role = node.data("role");
       if (role === "lldp") return null; // ghost neighbor — no Polaris asset
       if (role === "wireless-station" || role === "remote-asset") {
@@ -2657,7 +2699,7 @@
     // matter how many nodes a batch reposition touches. In building/floor
     // views the enclosing tiers are suppressed — the view itself IS that
     // scope, so only the deeper shapes stay useful.
-    if (topoState.hasLocationCodes && _readShowLocations()) {
+    if (topoState.hasLocationCodes) {
       var supKinds = _locSuppressKinds();
       window.PolarisTopologyRender.renderLocationGroups(
         cyInstance,
@@ -2666,11 +2708,47 @@
       // Route cross-group links through the gutters between boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     }
+    // Operator-drawn connection paths — after the router, so a customised
+    // line's first edit can keep the routed shape it was drawn with. Edits
+    // persist through the same dirty-flag + debounced save as a node drag.
+    if (window.PolarisTopologyEdgeEditor) {
+      edgeEditor = window.PolarisTopologyEdgeEditor.attach(cyInstance, {
+        positions: savedPositions,
+        isSuspended: function () { return !!topoState.pathOverlay; },
+        isEditable: function () { return !!topoState.editing; },
+        snapPoint: function (p) { return _readPref(SNAP_POINTS_STORAGE_KEY) ? _snapFine(p) : p; },
+        onChange: function () {
+          if (!topoState.siteId || topoState.pathOverlay) return;
+          _markLayoutDirty();
+          saveNodePositions(topoState.siteId);
+          _layoutHistoryRecordSoon(); // a new bend / a Delete is one undo step
+        },
+        onGeometryReset: function () {
+          // A line back on automatic takes its routed shape again.
+          if (cyInstance && cyInstance.nodes("[isLocGroup]").length > 0) {
+            window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
+          } else if (cyInstance) {
+            window.PolarisTopologyRender.refreshBentEdgeLabels(cyInstance);
+          }
+        },
+      });
+    }
     // Dragging a group box moves its member devices with it; nested boxes
     // re-fit around the moved members. The RAF drag-follow refresh is
     // suppressed for the drag's duration (the handlers keep everything
     // consistent themselves), then a full re-fit + re-route runs on release.
     var hullDrag = null;
+    // A box becomes the whole selection when it is clicked OR dragged:
+    // leaving a box-selected set of devices lit while their box moves reads
+    // as though the drag were acting on them. On the first real MOVE, not on
+    // the press — a Shift-drag box-select that starts inside a box presses
+    // (grabs) the box too, and must not select it or drop the devices.
+    function _selectOnlyHull(hull) {
+      if (topoState.pathOverlay) return;
+      cyInstance.elements(":selected").not(hull).unselect();
+      hull.selectify();
+      hull.select();
+    }
     cyInstance.on("grab", "node[isLocGroup]", function (evt) {
       var h = evt.target;
       var p = h.position();
@@ -2688,6 +2766,10 @@
       var p = evt.target.position();
       var dx = p.x - hullDrag.startX;
       var dy = p.y - hullDrag.startY;
+      if (!hullDrag.selected && (dx || dy)) {
+        hullDrag.selected = true;
+        _selectOnlyHull(evt.target);
+      }
       cyInstance.batch(function () {
         hullDrag.members.forEach(function (m) {
           m.node.position({ x: m.x + dx, y: m.y + dy });
@@ -2711,8 +2793,16 @@
       window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     });
+    // Clicking a group box selects it, and only it — whatever was selected
+    // (a box-selected set of devices, a link) lets go. Boxes are created
+    // unselectable so a shift-drag box-select never sweeps one in (a
+    // selected box would ride along on the next device drag, and its own
+    // drag handler would then move its members a second time), so a box is
+    // made selectable for exactly as long as a click keeps it selected.
+    cyInstance.on("tap", "node[isLocGroup]", function (evt) { _selectOnlyHull(evt.target); });
+    cyInstance.on("unselect", "node[isLocGroup]", function (evt) { evt.target.unselectify(); });
     var locRefreshPending = false;
-    cyInstance.on("position", "node[!isLocGroup]", function () {
+    cyInstance.on("position", "node[!isLocGroup][!isEdgeHandle]", function () {
       if (hullDrag || locRefreshPending) return;
       locRefreshPending = true;
       window.requestAnimationFrame(function () {
@@ -2723,16 +2813,370 @@
       });
     });
 
-    // Map-only screenshot button, overlaid at the top-right of the graph area.
+    // Corner tools, overlaid at the top-right of the graph area.
     // (openTopology wipes #topology-graph's innerHTML and cytoscape re-mounts,
-    // so it's re-added here on every render rather than living in static HTML.)
-    _ensureTopologyMapShotButton();
-    _renderTopologyTypeToggles(roleCounts, hiddenRoles);
+    // so they're re-added here on every render rather than living in static
+    // HTML.) The grid follows this graph's pan and zoom.
+    _ensureTopologyCornerTools();
+    _wireTopologyGrid();
     _renderTopologyFloorViews();
     _wireCtrlPan();
     // Save/Reset affordances are per VIEW — re-state them whenever the
     // graph is rebuilt (open, refresh, view switch, reset).
     _refreshLayoutToolbar();
+    // View-only unless Edit is on: the fresh graph takes the current mode.
+    _applyTopologyEditMode();
+  }
+
+  // ── Corner tools + edit mode ─────────────────────────────────────────────
+  // One row at the top right of the graph, right → left:
+  //   Edit       the dashboard's pencil, a check mark while editing
+  //              (Customize Page / Done Editing, index.html)
+  //   Export     screenshots, PDF, Visio (graph-export.js)
+  //   — edit mode only —
+  //   Grid       show / hide the two-weight grid (an editing aid: never
+  //              drawn outside edit mode; the on/off pref is kept for the
+  //              next edit)
+  //   Snap devices · Snap line points
+  // The map opens view-only: devices and location boxes don't drag, lines
+  // take no bends or end-point moves, and the layout verbs (Save, Reset and
+  // the three edit-only toggles) are hidden, the grid with them. Clicking,
+  // selecting, panning, zooming, the location views, search and Export work
+  // either way.
+  function _svg(inner, strokeWidth) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (strokeWidth || 2) +
+      '" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">' + inner + "</svg>";
+  }
+  var EDIT_ICON = _svg('<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>');
+  var DONE_ICON = _svg('<polyline points="20 6 9 17 4 12"/>', 2.5);
+  var GRID_ICON = _svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>');
+  var SNAP_DEVICES_ICON = _svg('<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/>');
+  var SNAP_POINTS_ICON = _svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>');
+
+  function _readPref(key) {
+    try { return localStorage.getItem(key) === "on"; } catch (e) { return false; }
+  }
+  function _writePref(key, on) {
+    try { localStorage.setItem(key, on ? "on" : "off"); }
+    catch (e) { /* quota / private mode — the toggle still applies this session */ }
+  }
+
+  // A button inside the Cytoscape container: a press on it must not read as
+  // a background tap and clear the selection.
+  function _cornerButton(id, className, onClick) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = id;
+    btn.className = className;
+    ["mousedown", "pointerdown", "touchstart"].forEach(function (type) {
+      btn.addEventListener(type, function (e) { e.stopPropagation(); });
+    });
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      hideEdgeTooltip();
+      onClick(btn);
+    });
+    // Hover tip: the map's own styled tooltip (the one links and location
+    // boxes use) — name in bold, what it does underneath. Read at hover time
+    // from _setCornerTip's data attributes, so a toggle's tip follows its
+    // state. Not a native `title`: that would stack a second tooltip.
+    btn.addEventListener("mouseenter", function (e) {
+      var name = btn.getAttribute("data-tip-name");
+      if (!name) return;
+      var body = btn.getAttribute("data-tip-body");
+      showEdgeTooltip("<strong>" + escapeHtml(name) + "</strong>" +
+        (body ? '<div style="margin-top:2px;opacity:0.85">' + escapeHtml(body) + "</div>" : ""), e.clientX, e.clientY);
+    });
+    btn.addEventListener("mousemove", function (e) { moveEdgeTooltip(e.clientX, e.clientY); });
+    btn.addEventListener("mouseleave", function () { hideEdgeTooltip(); });
+    return btn;
+  }
+  // A corner tool's hover tip and accessible name.
+  function _setCornerTip(btn, name, body) {
+    btn.setAttribute("data-tip-name", name);
+    btn.setAttribute("data-tip-body", body || "");
+    btn.setAttribute("aria-label", name);
+    btn.removeAttribute("title");
+  }
+  // An on/off tool: icon, the word as its accessible name (aria-label),
+  // aria-pressed, `is-on` when lit. `onToggle(next)` runs after the pref is
+  // written.
+  function _toggleTool(id, key, icon, word, titleOn, titleOff, onToggle) {
+    var btn = _cornerButton(id, "btn-icon topology-tool", function () {
+      var next = !_readPref(key);
+      _writePref(key, next);
+      paint();
+      if (onToggle) onToggle(next);
+    });
+    function paint() {
+      var on = _readPref(key);
+      btn.innerHTML = icon;
+      btn.classList.toggle("is-on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      _setCornerTip(btn, word + (on ? " — on" : " — off"), on ? titleOn : titleOff);
+    }
+    paint();
+    return btn;
+  }
+
+  function _ensureTopologyCornerTools() {
+    var graph = document.getElementById("topology-graph");
+    if (!graph || document.getElementById("topology-corner-tools")) return;
+    if (!graph.style.position) graph.style.position = "relative";
+    var row = document.createElement("div");
+    row.id = "topology-corner-tools";
+    row.className = "topology-corner-tools";
+
+    var snapPoints = _toggleTool("topology-snap-points", SNAP_POINTS_STORAGE_KEY, SNAP_POINTS_ICON,
+      "Snap line points",
+      "Line points snap to the grid (thin and thick lines) — click to stop",
+      "Snap line points to the grid (thin and thick lines)");
+    var snapDevices = _toggleTool("topology-snap-devices", SNAP_STORAGE_KEY, SNAP_DEVICES_ICON,
+      "Snap devices",
+      "Devices snap to the grid's thick lines — click to stop",
+      "Snap devices to the grid's thick lines (re-snaps them now)",
+      function (on) { if (on) _snapAllPositions(); });
+    var grid = _toggleTool("topology-grid", GRID_STORAGE_KEY, GRID_ICON,
+      "Grid", "Hide the grid", "Show the grid",
+      function () { _paintTopologyGrid(); });
+
+    var exportBtn = _cornerButton("topology-export", "btn-icon topology-tool", function (btn) {
+      if (!window.PolarisGraphExport) return;
+      window.PolarisGraphExport.openMenu(btn, topologyExportContext, {
+        screenshots: [
+          { label: "Copy map as image", run: screenshotTopology },
+          { label: "Copy screenshot (map + details)", run: screenshotTopologyModal },
+        ],
+      });
+    });
+    _setCornerTip(exportBtn, "Export", "Copy a screenshot, or save the view as a PDF or a Visio drawing");
+    exportBtn.setAttribute("aria-haspopup", "menu");
+    exportBtn.innerHTML = _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+
+    var editBtn = _cornerButton("topology-edit", "btn btn-primary btn-icon-only topology-map-edit", function () {
+      _setTopologyEditing(!topoState.editing);
+    });
+
+    [snapPoints, snapDevices, grid, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
+    graph.appendChild(row);
+
+    // Save / Reset layout: a column under the Edit button, edit mode only
+    // (they were header buttons). Their tips — where a save lands, whether a
+    // restore point exists — are kept current by _refreshLayoutToolbar.
+    var stack = document.createElement("div");
+    stack.id = "topology-corner-stack";
+    stack.className = "topology-corner-stack";
+    var saveBtn = _cornerButton("topology-save-layout", "btn-icon topology-tool", function () {
+      saveTopologyLayoutCheckpoint();
+    });
+    saveBtn.innerHTML = _svg('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>');
+    _setCornerTip(saveBtn, "Save layout", "Save this layout as a restore point");
+    var resetBtn = _cornerButton("topology-reset-layout", "btn-icon topology-tool", function (b) {
+      openResetLayoutMenu(b);
+    });
+    resetBtn.innerHTML = _svg('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>');
+    resetBtn.setAttribute("aria-haspopup", "menu");
+    _setCornerTip(resetBtn, "Reset layout", "Back to the last save or to the automatic layout");
+    // Undo / Redo (Ctrl+Z / Ctrl+Shift+Z) — greyed out with nothing to step
+    // to; _paintUndoRedo keeps their state and tips current.
+    var undoBtn = _cornerButton("topology-undo", "btn-icon topology-tool", function () { _layoutUndo(); });
+    undoBtn.innerHTML = _svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11"/>');
+    var redoBtn = _cornerButton("topology-redo", "btn-icon topology-tool", function () { _layoutRedo(); });
+    redoBtn.innerHTML = _svg('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5 5.5 5.5 0 0 0 9.5 20H13"/>');
+    [saveBtn, resetBtn, undoBtn, redoBtn].forEach(function (b) { stack.appendChild(b); });
+    graph.appendChild(stack);
+    _paintUndoRedo();
+  }
+
+  // ── Grid ───────────────────────────────────────────────────────────────────
+  // Edit mode only (hidden the moment editing ends). Painted as CSS
+  // gradients on the graph container, under Cytoscape's
+  // transparent canvas, re-positioned on every pan / zoom: thick lines on
+  // the device lattice, thin ones on its TOPO_GRID_DIV subdivisions. Lines
+  // too dense to read at the current zoom are left out (thin below 6 px
+  // apart, all of it below 8 px).
+  function _paintTopologyGrid() {
+    var graph = document.getElementById("topology-graph");
+    if (!graph) return;
+    if (!cyInstance || !topoState.editing || !_readPref(GRID_STORAGE_KEY)) {
+      graph.style.backgroundImage = "";
+      graph.style.backgroundSize = "";
+      graph.style.backgroundPosition = "";
+      return;
+    }
+    var z = cyInstance.zoom();
+    var pan = cyInstance.pan();
+    var w = TOPO_COL_SPACING * z, h = TOPO_ROW_SPACING * z;
+    var mw = w / TOPO_GRID_DIV, mh = h / TOPO_GRID_DIV;
+    if (Math.min(w, h) < 8) {
+      graph.style.backgroundImage = "";
+      return;
+    }
+    var major = "rgba(148, 163, 184, 0.34)";
+    var minor = "rgba(148, 163, 184, 0.14)";
+    var layers = [
+      "linear-gradient(to right, " + major + " 1.5px, transparent 1.5px)",
+      "linear-gradient(to bottom, " + major + " 1.5px, transparent 1.5px)",
+    ];
+    var sizes = [w + "px " + h + "px", w + "px " + h + "px"];
+    if (Math.min(mw, mh) >= 6) {
+      layers.push("linear-gradient(to right, " + minor + " 1px, transparent 1px)");
+      layers.push("linear-gradient(to bottom, " + minor + " 1px, transparent 1px)");
+      sizes.push(mw + "px " + mh + "px", mw + "px " + mh + "px");
+    }
+    var pos = pan.x + "px " + pan.y + "px";
+    graph.style.backgroundImage = layers.join(", ");
+    graph.style.backgroundSize = sizes.join(", ");
+    graph.style.backgroundPosition = layers.map(function () { return pos; }).join(", ");
+  }
+  function _wireTopologyGrid() {
+    if (!cyInstance) return;
+    var pending = false;
+    cyInstance.on("viewport resize", function () {
+      if (pending) return;
+      pending = true;
+      window.requestAnimationFrame(function () { pending = false; _paintTopologyGrid(); });
+    });
+    _paintTopologyGrid();
+  }
+  // The point a line's bend lands on with "Snap line points" on: the nearest
+  // intersection of the thin + thick lines.
+  function _snapFine(p) {
+    var sx = TOPO_COL_SPACING / TOPO_GRID_DIV, sy = TOPO_ROW_SPACING / TOPO_GRID_DIV;
+    return { x: Math.round(p.x / sx) * sx, y: Math.round(p.y / sy) * sy };
+  }
+  function _setTopologyEditing(on) {
+    topoState.editing = !!on;
+    _applyTopologyEditMode();
+  }
+  function _applyTopologyEditMode() {
+    var on = !!topoState.editing;
+    if (cyInstance) cyInstance.autoungrabify(!on);
+    if (edgeEditor) edgeEditor.refresh();
+    _paintTopologyGrid(); // the grid is an editing aid: drawn only while editing
+    var btn = document.getElementById("topology-edit");
+    if (btn) {
+      // Icon + hidden word, as the dashboard's buttons; the hover tip says
+      // what pressing it does now.
+      btn.innerHTML = (on ? DONE_ICON + "Done Editing" : EDIT_ICON + "Edit Map");
+      _setCornerTip(btn, on ? "Done editing" : "Edit map",
+        on ? "Stop editing — the map goes back to view-only"
+           : "Move devices and boxes, draw lines, snap to the grid");
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    ["topology-save-layout", "topology-reset-layout", "topology-undo", "topology-redo",
+     "topology-snap-devices", "topology-snap-points", "topology-grid"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.hidden = !on;
+    });
+    // Undo history belongs to one edit session in one view: started when
+    // editing starts (or the view changes under it), dropped on Done. A
+    // re-render while editing (Refresh, Reset, restore) records its result
+    // as the next step instead of starting over.
+    if (!on) {
+      layoutHistory = null;
+    } else if (!layoutHistory || layoutHistory.view !== _activeViewKey() || layoutHistory.siteId !== topoState.siteId) {
+      _layoutHistoryStart();
+    } else {
+      _layoutHistoryRecordSoon();
+    }
+    _paintUndoRedo();
+  }
+
+  // ── Undo / redo (edit mode) ──────────────────────────────────────────────
+  // A history of whole-layout snapshots — the same blob a save writes
+  // (_currentNodePositions: device positions + drawn-line `edgepath:`
+  // entries), so one entry restores everything a step changed. A step is
+  // recorded when an edit settles: a device / box / point drag ends
+  // (dragfree), a bend is created or Deleted (the editor's onChange), snap-
+  // all runs, or a Reset / restore re-renders. Identical consecutive
+  // snapshots collapse, so a multi-node drag (one dragfree per node) is one
+  // step. Undo / redo put a snapshot back and save it like any edit; they
+  // are not themselves recorded. Capped at LAYOUT_HISTORY_MAX steps.
+  var LAYOUT_HISTORY_MAX = 100;
+  var layoutHistory = null; // { siteId, view, entries: [json], index }
+  var _historyTimer = null;
+  function _layoutSnapshot() {
+    var blob = _currentNodePositions();
+    return blob ? JSON.stringify(blob) : null;
+  }
+  function _layoutHistoryStart() {
+    var snap = _layoutSnapshot();
+    layoutHistory = snap
+      ? { siteId: topoState.siteId, view: _activeViewKey(), entries: [snap], index: 0 }
+      : null;
+  }
+  function _layoutHistoryRecord() {
+    if (!topoState.editing || !cyInstance || topoState.pathOverlay) return;
+    if (!layoutHistory || layoutHistory.view !== _activeViewKey() || layoutHistory.siteId !== topoState.siteId) {
+      _layoutHistoryStart();
+      _paintUndoRedo();
+      return;
+    }
+    var snap = _layoutSnapshot();
+    if (!snap || snap === layoutHistory.entries[layoutHistory.index]) return;
+    var entries = layoutHistory.entries.slice(0, layoutHistory.index + 1);
+    entries.push(snap);
+    if (entries.length > LAYOUT_HISTORY_MAX) entries.shift();
+    layoutHistory.entries = entries;
+    layoutHistory.index = entries.length - 1;
+    _paintUndoRedo();
+  }
+  // After the current task: several handlers can fire for one gesture (a
+  // box drag's free + dragfree, grid snapping on release) — record once,
+  // after all of them have moved what they move.
+  function _layoutHistoryRecordSoon() {
+    if (_historyTimer) clearTimeout(_historyTimer);
+    _historyTimer = setTimeout(function () { _historyTimer = null; _layoutHistoryRecord(); }, 0);
+  }
+  function _layoutHistoryApply(json) {
+    if (!cyInstance || !topoState.siteId) return;
+    var blob;
+    try { blob = JSON.parse(json); } catch (e) { return; }
+    cyInstance.batch(function () {
+      cyInstance.nodes().forEach(function (n) {
+        if (n.data("isLocGroup") || n.data("isPortal") || n.data("isEdgeHandle")) return;
+        var p = blob[n.id()];
+        if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
+      });
+    });
+    if (edgeEditor) edgeEditor.setPaths(blob);
+    if (topoState.hasLocationCodes) {
+      window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
+      window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
+    }
+    _markLayoutDirty();
+    saveNodePositions(topoState.siteId);
+  }
+  function _layoutUndo() {
+    if (!topoState.editing || !layoutHistory || layoutHistory.index <= 0) return;
+    if (_historyTimer) { clearTimeout(_historyTimer); _historyTimer = null; _layoutHistoryRecord(); }
+    if (layoutHistory.index <= 0) return;
+    layoutHistory.index--;
+    _layoutHistoryApply(layoutHistory.entries[layoutHistory.index]);
+    _paintUndoRedo();
+  }
+  function _layoutRedo() {
+    if (!topoState.editing || !layoutHistory || layoutHistory.index >= layoutHistory.entries.length - 1) return;
+    layoutHistory.index++;
+    _layoutHistoryApply(layoutHistory.entries[layoutHistory.index]);
+    _paintUndoRedo();
+  }
+  function _paintUndoRedo() {
+    var undo = document.getElementById("topology-undo");
+    var redo = document.getElementById("topology-redo");
+    var h = layoutHistory;
+    var canUndo = !!(h && h.index > 0);
+    var canRedo = !!(h && h.index < h.entries.length - 1);
+    if (undo) {
+      undo.disabled = !canUndo;
+      _setCornerTip(undo, "Undo (Ctrl+Z)", canUndo ? "Undo the last layout change" : "Nothing to undo");
+    }
+    if (redo) {
+      redo.disabled = !canRedo;
+      _setCornerTip(redo, "Redo (Ctrl+Shift+Z)", canRedo ? "Redo the change you undid" : "Nothing to redo");
+    }
   }
 
   // Ctrl + left-drag pans the viewport from ANYWHERE on the graph —
@@ -2836,25 +3280,9 @@
     wrap.hidden = false;
   }
 
-  // ── Location-hull visibility toggle ─────────────────────────────────────
-  function _readShowLocations() {
-    try { return localStorage.getItem(SHOW_LOCATIONS_STORAGE_KEY) !== "off"; }
-    catch (e) { return true; }
-  }
-  function _writeShowLocations(on) {
-    try { localStorage.setItem(SHOW_LOCATIONS_STORAGE_KEY, on ? "on" : "off"); }
-    catch (e) { /* quota / private mode — toggle still applies this session */ }
-  }
+  // ── Snap devices ─────────────────────────────────────────────────────────
+  function _readSnapToGrid() { return _readPref(SNAP_STORAGE_KEY); }
 
-  // ── Snap-to-grid toggle ──────────────────────────────────────────────────
-  function _readSnapToGrid() {
-    try { return localStorage.getItem(SNAP_STORAGE_KEY) === "on"; }
-    catch (e) { return false; }
-  }
-  function _writeSnapToGrid(on) {
-    try { localStorage.setItem(SNAP_STORAGE_KEY, on ? "on" : "off"); }
-    catch (e) { /* quota / private mode — toggle still applies this session */ }
-  }
   // Nearest grid cell for a pixel model position. The grid IS the column
   // solver's lattice (TOPO_COL_SPACING × TOPO_ROW_SPACING), so snapped nodes
   // line up exactly with auto-laid-out ones.
@@ -2876,7 +3304,7 @@
     var moved = false;
     cyInstance.batch(function () {
       cyInstance.nodes().forEach(function (n) {
-        if (n.data("isLocGroup") || n.data("isPortal")) return;
+        if (n.data("isLocGroup") || n.data("isPortal") || n.data("isEdgeHandle")) return;
         var p = n.position();
         var s = _snapPos(p);
         if (s.x !== p.x || s.y !== p.y) {
@@ -2886,12 +3314,13 @@
       });
     });
     if (moved) {
-      if (topoState.hasLocationCodes && _readShowLocations()) {
+      if (topoState.hasLocationCodes) {
         window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
         window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
       }
       _markLayoutDirty();
       saveNodePositions(topoState.siteId);
+      _layoutHistoryRecordSoon(); // snapping everything is one undo step
     }
     // Snap the OTHER views' server blobs (the active view was just handled
     // live above). Local-only view layouts stay as-is until visited.
@@ -2919,145 +3348,6 @@
     }
   }
 
-  // ── Device-type visibility toggles ─────────────────────────────────────────
-  function _readHiddenRoles() {
-    try {
-      var raw = JSON.parse(localStorage.getItem(TYPE_FILTER_STORAGE_KEY) || "[]");
-      if (Array.isArray(raw)) {
-        var map = {};
-        raw.forEach(function (r) { if (typeof r === "string") map[r] = true; });
-        return map;
-      }
-    } catch (e) { /* corrupt / private mode — treat as nothing hidden */ }
-    return {};
-  }
-  function _writeHiddenRoles(map) {
-    try { localStorage.setItem(TYPE_FILTER_STORAGE_KEY, JSON.stringify(Object.keys(map))); }
-    catch (e) { /* quota / private mode — toggle still applies this session */ }
-  }
-
-  // Floating show/hide chips for device types, top-right of the graph area
-  // (left of the map-only camera button). One chip per toggleable role present
-  // on THIS site; clicking re-renders the graph through the normal pipeline so
-  // the column/row solver lays the visible subset out compactly. Rebuilt on
-  // every render — openTopology wipes #topology-graph's innerHTML, and the
-  // per-site role counts change anyway.
-  function _renderTopologyTypeToggles(roleCounts, hiddenRoles) {
-    var graph = document.getElementById("topology-graph");
-    if (!graph) return;
-    if (!graph.style.position) graph.style.position = "relative";
-    var wrap = document.getElementById("topology-type-toggles");
-    if (!wrap) {
-      wrap = document.createElement("div");
-      wrap.id = "topology-type-toggles";
-      wrap.className = "topology-type-toggles";
-      graph.appendChild(wrap);
-    }
-    wrap.innerHTML = "";
-    TOPO_TYPE_TOGGLES.forEach(function (t) {
-      var count = roleCounts[t.role] || 0;
-      if (count === 0) return; // nothing of this type on this site
-      var hidden = !!hiddenRoles[t.role];
-      var chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "topology-type-chip" + (hidden ? " is-off" : "");
-      chip.setAttribute("aria-pressed", hidden ? "false" : "true");
-      chip.title = (hidden ? "Show " : "Hide ") + t.label.toLowerCase() + " (saved per user)";
-      chip.textContent = t.label + " (" + count + ")";
-      chip.addEventListener("click", function () {
-        var next = _readHiddenRoles();
-        if (next[t.role]) delete next[t.role];
-        else next[t.role] = true;
-        _writeHiddenRoles(next);
-        if (topoState.data) renderTopologyGraph(topoState.data);
-      });
-      wrap.appendChild(chip);
-    });
-    // Locations chip — toggles the building/floor/room/jb grouping hulls.
-    // Only offered when this site's devices actually carry location codes.
-    if (topoState.hasLocationCodes) {
-      var locOn = _readShowLocations();
-      var locChip = document.createElement("button");
-      locChip.type = "button";
-      locChip.className = "topology-type-chip" + (locOn ? "" : " is-off");
-      locChip.setAttribute("aria-pressed", locOn ? "true" : "false");
-      locChip.title = (locOn ? "Hide" : "Show") + " location groups (saved per user)";
-      locChip.textContent = "Locations";
-      locChip.addEventListener("click", function () {
-        var next = !_readShowLocations();
-        _writeShowLocations(next);
-        if (cyInstance) {
-          if (next) {
-            var supKinds = _locSuppressKinds();
-            window.PolarisTopologyRender.renderLocationGroups(
-              cyInstance,
-              supKinds ? { suppressKinds: supKinds } : undefined
-            );
-            window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
-          } else {
-            window.PolarisTopologyRender.removeLocationGroups(cyInstance);
-            // Routed segments reference the removed boxes — fall back to the
-            // taxi rule by clearing the per-edge style bypass.
-            cyInstance.edges("[isInterGroup]").forEach(function (e) {
-              e.removeStyle("curve-style segment-weights segment-distances edge-distances");
-            });
-            window.PolarisTopologyRender.refreshBentEdgeLabels(cyInstance);
-          }
-        }
-        // The side panel's switch / AP lists follow the boxes' grouping.
-        if (topoState.data) renderTopologyInfo(topoState.data);
-        locChip.className = "topology-type-chip" + (next ? "" : " is-off");
-        locChip.setAttribute("aria-pressed", next ? "true" : "false");
-        locChip.title = (next ? "Hide" : "Show") + " location groups (saved per user)";
-      });
-      wrap.appendChild(locChip);
-    }
-    // Snap-to-grid chip — always offered (grid = the column solver's
-    // 130×95 lattice, present on every layout). Enabling it re-snaps every
-    // current position; while on, drags land on the grid on release.
-    var snapOn = _readSnapToGrid();
-    var snapChip = document.createElement("button");
-    snapChip.type = "button";
-    snapChip.className = "topology-type-chip" + (snapOn ? "" : " is-off");
-    snapChip.setAttribute("aria-pressed", snapOn ? "true" : "false");
-    snapChip.title = (snapOn ? "Disable" : "Enable") + " snap to grid (saved per user)";
-    snapChip.textContent = "Snap";
-    snapChip.addEventListener("click", function () {
-      var next = !_readSnapToGrid();
-      _writeSnapToGrid(next);
-      if (next) _snapAllPositions();
-      snapChip.className = "topology-type-chip" + (next ? "" : " is-off");
-      snapChip.setAttribute("aria-pressed", next ? "true" : "false");
-      snapChip.title = (next ? "Disable" : "Enable") + " snap to grid (saved per user)";
-    });
-    wrap.appendChild(snapChip);
-    wrap.hidden = wrap.children.length === 0;
-  }
-
-  // Adds the floating "copy map as image" camera button into #topology-graph.
-  // Guarded so refresh (which keeps the button) doesn't stack duplicates.
-  function _ensureTopologyMapShotButton() {
-    var graph = document.getElementById("topology-graph");
-    if (!graph || document.getElementById("topology-map-screenshot")) return;
-    if (!graph.style.position) graph.style.position = "relative";
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.id = "topology-map-screenshot";
-    btn.className = "btn-icon topology-map-shot";
-    btn.title = "Copy map as image";
-    btn.setAttribute("aria-label", "Copy map as image");
-    btn.innerHTML =
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-        '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>' +
-        '<circle cx="12" cy="13" r="4"/>' +
-      '</svg>';
-    btn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      screenshotTopology();
-    });
-    graph.appendChild(btn);
-  }
 
   // Humanize an interface speed in bits/sec → "1 Gbps" / "100 Mbps" etc.
   function _humanizeSpeedBps(bps) {
@@ -3186,7 +3476,7 @@
     // With the location boxes on, the switch and AP lists follow the boxes'
     // nesting — area › building › floor › room › junction box — under one
     // heading row per group, so the list reads in the same order as the graph.
-    var byLocation = topoState.hasLocationCodes && _readShowLocations();
+    var byLocation = topoState.hasLocationCodes;
     var groupHeadingAt = byLocation ? _topologyLocationHeadings : function () { return null; };
 
     if ((data.switches || []).length > 0) {
