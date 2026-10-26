@@ -52,7 +52,7 @@ import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/director
 import { scoreAddressClaim, claimBeats, claimMedium, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
 import { reconcileDiscoveredAddresses, type AddressSighting } from "../assetAddressService.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
-import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
+import { readFirewallDeviceName, readControllerStamp, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { isUsableSerial } from "../../utils/serialNumber.js";
 import { hostnameCollisionRefusal, type HostnameCollisionSide } from "../../utils/hostnameCollisionGuard.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
@@ -2316,6 +2316,76 @@ export function isVouchedManagedDevice(
   return !!(asset.hostname && sightings.seenHostnamesByController.get(ctlKey)?.has(asset.hostname));
 }
 
+/**
+ * Pure Phase 2b guard for an ORPHAN (see resolveSweepController): is this
+ * switch/AP still evidenced anywhere this run? Deliberately fleet-wide, the
+ * opposite of isVouchedManagedDevice's per-controller scope — the asset's own
+ * controller no longer exists, so any gate that reports it live, or still has
+ * it in its CMDB, is the gate it now sits under and will re-stamp it.
+ */
+export function isSightedAnywhere(
+  asset: { serialNumber: string | null; hostname: string | null },
+  sightings: ManagedDeviceSightings,
+): boolean {
+  if (asset.serialNumber) {
+    if (sightings.seenSerials.has(asset.serialNumber)) return true;
+    for (const set of sightings.cmdbSerialsByController.values()) if (set.has(asset.serialNumber)) return true;
+    return false;
+  }
+  if (!asset.hostname) return false;
+  for (const set of sightings.seenHostnamesByController.values()) if (set.has(asset.hostname)) return true;
+  return false;
+}
+
+/** What Phase 2b knows about controllers this run, for resolveSweepController. */
+export interface SweepControllerContext {
+  /** Controller device names whose switch (or AP) inventory query succeeded. */
+  inventoried: Set<string>;
+  /** UPPER serial (a gate's own, and each HA member's) → its device name THIS run. */
+  currentNameBySerial: Map<string, string>;
+  /** True only when the run read the whole roster (Phase 2a's gate). */
+  rosterJudgeable: boolean;
+  rosterNamesLc: Set<string>;
+  rosterSerialsUc: Set<string>;
+}
+
+export type SweepControllerVerdict =
+  | { kind: "judge"; controller: string; renamedFrom: string | null }
+  | { kind: "orphan"; controller: string }
+  | { kind: "skip" };
+
+/**
+ * Pure Phase 2b decision (business rule 41(b)): which controller does this
+ * switch/AP answer to this run, if any?
+ *
+ * The chassis, not the name, says which gate (rule 41). A gate renamed in
+ * FortiManager keeps its serial, so the stamped `controllerSerial` resolves to
+ * the gate's CURRENT name and the asset is judged under it. Matching the
+ * stamped name alone stranded every switch/AP a renamed gate no longer had:
+ * the ones still connected were re-stamped with the new name, the ones left
+ * behind kept the old name, which was never in the inventoried set again — so
+ * they sat `active` forever (prod 2026-10: a gate renamed for a site move).
+ *
+ * `orphan` = the controller exists in the roster under NEITHER its stamped name
+ * NOR its serial — it was renamed (a pre-serial stamp) or removed. Only on a
+ * run that read the whole roster; the caller still spares an orphan any gate
+ * reports (isSightedAnywhere). `skip` = no fresh answer either way.
+ */
+export function resolveSweepController(topology: unknown, ctx: SweepControllerContext): SweepControllerVerdict {
+  const stamp = readControllerStamp(topology);
+  const name = (stamp.name || "").trim();
+  const serial = normalizeSerialKey(stamp.serial);
+  const current = serial ? ctx.currentNameBySerial.get(serial) : undefined;
+  const controller = current || name;
+  if (controller && ctx.inventoried.has(controller)) {
+    return { kind: "judge", controller, renamedFrom: current && name && current !== name ? name : null };
+  }
+  if (!ctx.rosterJudgeable || (!name && !serial)) return { kind: "skip" };
+  if (serial && ctx.rosterSerialsUc.has(serial)) return { kind: "skip" };
+  if (name && ctx.rosterNamesLc.has(normalizeNameKey(name))) return { kind: "skip" };
+  return { kind: "orphan", controller: name || serial };
+}
+
 // Exported for tests: Phase 7's device-inventory pass defers its asset writes
 // to a flush at the end of the phase while keeping every in-memory effect
 // inline, and the hazard that shape has to survive — two sightings of ONE
@@ -3477,33 +3547,66 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       },
       select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true, status: true },
     });
+    // Business rule 41(b): the controller is resolved by chassis first, so a
+    // gate renamed in FortiManager still judges the switches/APs it left
+    // behind (their stamp keeps the old name). The serial → current-name map
+    // comes from the gates processed this run; the roster half is only
+    // trusted on a run that read the whole roster — Phase 2a's own gate,
+    // never "finalize-scoped".
+    const currentNameBySerial = new Map<string, string>();
+    for (const dev of result.devices) {
+      const devName = dev.name || dev.hostname;
+      if (!devName) continue;
+      if (dev.serial) currentNameBySerial.set(normalizeSerialKey(dev.serial), devName);
+      for (const m of dev.haMembers ?? []) if (m.serial) currentNameBySerial.set(normalizeSerialKey(m.serial), devName);
+    }
+    const rosterJudgeable = sweepPhaseEnabled(mode, "2a") && knownDeviceNames.size > 0;
     const staleIds: string[] = [];
     for (const a of candidates) {
-      const topo = (a.fortinetTopology as Record<string, unknown> | null) || null;
-      const controller = (topo?.controllerFortigate as string | undefined) || "";
-      const inventoriedSet = a.assetType === "switch" ? switchInventoriedDevices : apInventoriedDevices;
+      const isSwitch = a.assetType === "switch";
+      const sightings: ManagedDeviceSightings = isSwitch
+        ? { seenSerials: seenSwitchSerials, seenHostnamesByController: seenSwitchHostnamesByController, cmdbSerialsByController: cmdbSwitchSerialsByDevice }
+        : { seenSerials: seenApSerials,     seenHostnamesByController: seenApHostnamesByController,     cmdbSerialsByController: cmdbApSerialsByDevice };
+      const verdict = resolveSweepController(a.fortinetTopology, {
+        inventoried: isSwitch ? switchInventoriedDevices : apInventoriedDevices,
+        currentNameBySerial,
+        rosterJudgeable,
+        rosterNamesLc: knownDeviceNamesLc,
+        rosterSerialsUc: knownFirewallSerials,
+      });
       // Skip when this asset's controller wasn't reachable this run — we
       // didn't get a fresh answer either way.
-      if (!controller || !inventoriedSet.has(controller)) continue;
-      // Serial-authoritative sighting check (pure, unit-tested): serial on
-      // file must reappear (live monitor or this controller's CMDB roster);
-      // hostname vouches only for serial-less assets, and only on the same
-      // controller. See isVouchedManagedDevice for the replaced-unit rationale.
-      const vouched = isVouchedManagedDevice(a, controller, a.assetType === "switch"
-        ? { seenSerials: seenSwitchSerials, seenHostnamesByController: seenSwitchHostnamesByController, cmdbSerialsByController: cmdbSwitchSerialsByDevice }
-        : { seenSerials: seenApSerials,     seenHostnamesByController: seenApHostnamesByController,     cmdbSerialsByController: cmdbApSerialsByDevice });
-      if (vouched) continue;
+      if (verdict.kind === "skip") continue;
+      const controller = verdict.controller;
+      let message: string;
+      let details: Record<string, unknown>;
+      if (verdict.kind === "judge") {
+        // Serial-authoritative sighting check (pure, unit-tested): serial on
+        // file must reappear (live monitor or this controller's CMDB roster);
+        // hostname vouches only for serial-less assets, and only on the same
+        // controller. See isVouchedManagedDevice for the replaced-unit rationale.
+        if (isVouchedManagedDevice(a, controller, sightings)) continue;
+        const formerly = verdict.renamedFrom ? ` (formerly "${verdict.renamedFrom}")` : "";
+        message = `controller "${controller}"${formerly} no longer reports it`;
+        details = { reason: "missing-from-controller", controllerFortigate: controller, ...(verdict.renamedFrom ? { renamedFrom: verdict.renamedFrom } : {}), integrationId, integrationName };
+      } else {
+        // Orphan: its controller is gone from the roster under every identity.
+        // Any gate that still reports it (live or CMDB) now owns it.
+        if (isSightedAnywhere(a, sightings)) continue;
+        message = `its controller "${controller}" is no longer in "${integrationName}"`;
+        details = { reason: "controller-not-in-roster", controllerFortigate: controller, integrationId, integrationName };
+      }
       staleIds.push(a.id);
-      if (a.assetType === "switch")        decommissionedSwitches.push(a.hostname || a.serialNumber || a.id);
+      if (isSwitch)                            decommissionedSwitches.push(a.hostname || a.serialNumber || a.id);
       else if (a.assetType === "access_point") decommissionedAps.push(a.hostname || a.serialNumber || a.id);
       logEvent({
-        action: a.assetType === "switch" ? "asset.fortiswitch.decommissioned" : "asset.fortiap.decommissioned",
+        action: isSwitch ? "asset.fortiswitch.decommissioned" : "asset.fortiap.decommissioned",
         resourceType: "asset",
         resourceId: a.id,
         resourceName: a.hostname || a.serialNumber || a.id,
         actor,
-        message: `${a.assetType === "switch" ? "FortiSwitch" : "FortiAP"} "${a.hostname || a.serialNumber}" decommissioned — controller "${controller}" no longer reports it`,
-        details: { reason: "missing-from-controller", controllerFortigate: controller, integrationId, integrationName },
+        message: `${isSwitch ? "FortiSwitch" : "FortiAP"} "${a.hostname || a.serialNumber}" decommissioned — ${message}`,
+        details,
       });
     }
     if (staleIds.length > 0) {

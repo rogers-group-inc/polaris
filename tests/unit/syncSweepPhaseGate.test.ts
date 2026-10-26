@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sweepPhaseEnabled, assetOnlyPostSyncPassesEnabled, vcenterPassEnabled, cascadeControllerOf, isVouchedManagedDevice, type SyncMode, type ManagedDeviceSightings } from "../../src/services/discovery/discoveryEngine.js";
+import { sweepPhaseEnabled, assetOnlyPostSyncPassesEnabled, vcenterPassEnabled, cascadeControllerOf, isVouchedManagedDevice, isSightedAnywhere, resolveSweepController, type SyncMode, type ManagedDeviceSightings, type SweepControllerContext } from "../../src/services/discovery/discoveryEngine.js";
 import { vcenterSweepBlockedReason } from "../../src/services/vcenterService.js";
 
 // The mode→sweep-phase matrix behind syncDhcpSubnets' destructive phases.
@@ -195,5 +195,78 @@ describe("assetOnlyPostSyncPassesEnabled", () => {
         expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: false, scoped, aborted })).toBe(false);
       }
     }
+  });
+});
+
+// Business rule 41(b): Phase 2b resolves a switch/AP's controller by chassis.
+// A gate renamed in FortiManager (prod 2026-10: moved to a new site) re-stamped
+// only the children it still had; the ones left behind kept the OLD name, which
+// was never in the inventoried set again, so they sat "active" forever.
+describe("resolveSweepController — Phase 2b controller resolution (rule 41(b))", () => {
+  const ctx = (over: Partial<SweepControllerContext> = {}): SweepControllerContext => ({
+    inventoried: new Set(["SITE-B-FW"]),
+    currentNameBySerial: new Map([["FG100FTK20000001", "SITE-B-FW"]]),
+    rosterJudgeable: true,
+    rosterNamesLc: new Set(["site-b-fw"]),
+    rosterSerialsUc: new Set(["FG100FTK20000001"]),
+    ...over,
+  });
+
+  it("judges under the stamped name when that controller was inventoried (pre-rule behavior)", () => {
+    expect(resolveSweepController({ controllerFortigate: "SITE-B-FW" }, ctx()))
+      .toEqual({ kind: "judge", controller: "SITE-B-FW", renamedFrom: null });
+  });
+
+  it("follows the controller serial to the gate's CURRENT name after a rename", () => {
+    const topo = { controllerFortigate: "SITE-A-FW", controllerSerial: "fg100ftk20000001" };
+    expect(resolveSweepController(topo, ctx()))
+      .toEqual({ kind: "judge", controller: "SITE-B-FW", renamedFrom: "SITE-A-FW" });
+  });
+
+  it("calls a pre-serial stamp whose name left the roster an orphan", () => {
+    expect(resolveSweepController({ controllerFortigate: "SITE-A-FW" }, ctx()))
+      .toEqual({ kind: "orphan", controller: "SITE-A-FW" });
+  });
+
+  it("skips a controller still in the roster that was not inventoried (offline / failed read)", () => {
+    const c = ctx({ inventoried: new Set(), rosterNamesLc: new Set(["site-b-fw", "site-c-fw"]) });
+    expect(resolveSweepController({ controllerFortigate: "Site-C-FW" }, c)).toEqual({ kind: "skip" });
+    // Roster knows the serial even though the gate processed nothing this run.
+    const bySerial = ctx({ inventoried: new Set(), currentNameBySerial: new Map() });
+    expect(resolveSweepController({ controllerFortigate: "OLD", controllerSerial: "FG100FTK20000001" }, bySerial)).toEqual({ kind: "skip" });
+  });
+
+  it("never calls an orphan when the roster was not read whole (finalize-scoped)", () => {
+    expect(resolveSweepController({ controllerFortigate: "SITE-A-FW" }, ctx({ rosterJudgeable: false }))).toEqual({ kind: "skip" });
+  });
+
+  it("skips an asset with no controller stamp at all", () => {
+    expect(resolveSweepController(null, ctx())).toEqual({ kind: "skip" });
+    expect(resolveSweepController({}, ctx())).toEqual({ kind: "skip" });
+  });
+});
+
+describe("isSightedAnywhere — orphan guard (rule 41(b))", () => {
+  const sightings = (over: Partial<ManagedDeviceSightings> = {}): ManagedDeviceSightings => ({
+    seenSerials: new Set(),
+    seenHostnamesByController: new Map(),
+    cmdbSerialsByController: new Map(),
+    ...over,
+  });
+
+  it("spares a serial any gate reports live, or still has in ANY CMDB roster", () => {
+    expect(isSightedAnywhere({ serialNumber: "S1", hostname: null }, sightings({ seenSerials: new Set(["S1"]) }))).toBe(true);
+    expect(isSightedAnywhere({ serialNumber: "S1", hostname: null }, sightings({ cmdbSerialsByController: new Map([["other-fw", new Set(["S1"])]]) }))).toBe(true);
+  });
+
+  it("does not let a same-hostname sighting spare an asset that has a serial", () => {
+    const s = sightings({ seenHostnamesByController: new Map([["other-fw", new Set(["IDF-1"])]]) });
+    expect(isSightedAnywhere({ serialNumber: "S1", hostname: "IDF-1" }, s)).toBe(false);
+    expect(isSightedAnywhere({ serialNumber: null, hostname: "IDF-1" }, s)).toBe(true);
+  });
+
+  it("decommissions an orphan nothing reports", () => {
+    expect(isSightedAnywhere({ serialNumber: "S1", hostname: "IDF-1" }, sightings())).toBe(false);
+    expect(isSightedAnywhere({ serialNumber: null, hostname: null }, sightings())).toBe(false);
   });
 });

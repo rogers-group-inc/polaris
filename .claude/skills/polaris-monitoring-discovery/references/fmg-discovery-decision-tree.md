@@ -129,14 +129,21 @@ FMG Integration Discovery
 │   │       Authorization badge on asset details; "Unauthorized" also lands
 │   │       new switches with status = "storage"
 │   │
-│   └─ Decommission sweep:
-│         controllerFortigate ∈ inventoriedDevices
+│   └─ Decommission sweep (resolveSweepController, rule 41(b)):
+│         controller = gate whose serial is controllerSerial (its CURRENT
+│           name — a renamed gate still judges the children it left behind),
+│           else the stamped controllerFortigate
+│         controller ∈ inventoriedDevices
 │         AND serial ∉ live managed-switch/status table
 │         AND serial ∉ CMDB roster OF THAT CONTROLLER (per-controller scope —
 │             an offline/staged gate's cached roster only protects devices it
 │             owns, never another controller's fleet)
 │           → status = "decommissioned"
 │         (controllers whose inventory query FAILED: switches under them are LEFT alone)
+│         ORPHAN (whole-roster runs only, never a scoped run): controller in
+│           the roster under neither name nor serial (renamed with a pre-serial
+│           stamp, or removed) AND no gate reports it live or in its CMDB
+│           → status = "decommissioned", reason "controller-not-in-roster"
 │
 ├─ FortiAP class (Phase 3b — same pattern via fortiapMonitor)
 │   │   identical 4-row stamp table as FortiSwitch
