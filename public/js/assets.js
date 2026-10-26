@@ -337,15 +337,6 @@ var _CHART_MISS_COLOR = "#ffc107";
 // either one read the other.
 var _CHART_RECOVER_COLOR = "#0288d1";
 
-// The packet-loss line the response-time chart overlays on its right-hand
-// 0–100 % axis. Every other hue on that chart is spoken for — up green, miss
-// amber, recovering blue, the severity ladder's reds and oranges, dependency
-// grey, maintenance lavender — so it takes a saturated magenta-purple, drawn
-// DASHED so it cannot be read as the reachability series it shares a plot with
-// even where the two cross. Never red: a 100 % loss bucket is a reading, and
-// red on this chart is the verdict.
-var _CHART_LOSS_COLOR = "#ab47bc";
-
 /**
  * "#rrggbb" + alpha → "rgba(r,g,b,a)". Exists because the Last-30-min strip
  * paints its cells at a fixed translucency while the colour ITSELF is now a
@@ -15320,6 +15311,8 @@ function assetMonitoringViewHTML(a) {
     '<div id="asset-monitor-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
       'Loading samples…' +
     '</div>' +
+    // Filled by _renderMonitorChart with a key for the colours it drew.
+    '<div class="chart-state-legend"></div>' +
     '</div>'
   );
 }
@@ -15739,8 +15732,28 @@ function _toLocalDatetimeInput(d) {
     "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
 
+// The key under a chart — one entry per colour the chart actually DREW, never
+// the whole vocabulary: a key naming a colour the reader cannot find is noise.
+// `entries` are { label, color, style } with style "line" | "dash" | "band";
+// the alert email draws the same key into its PNG (legendSvg in
+// utils/sparklineSvg.ts), with the same names.
+function _chartStateLegendHTML(entries) {
+  if (!entries || !entries.length) return "";
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:0.72rem;color:var(--color-text-secondary);margin-top:4px">' +
+    entries.map(function (e) {
+      var swatch = e.style === "band"
+        ? '<span style="width:12px;height:9px;flex:0 0 auto;background:' + e.color + ';border:1px dashed ' + (e.border || e.color) + '"></span>'
+        : '<span style="width:14px;height:0;flex:0 0 auto;border-top:2px ' + (e.style === "dash" ? "dashed" : "solid") + ' ' + e.color + '"></span>';
+      return '<span style="display:inline-flex;align-items:center;gap:5px">' + swatch + escapeHtml(e.label) + '</span>';
+    }).join("") +
+  '</div>';
+}
+
 function _renderMonitorChart(container, data, transitions) {
   var samples = (data && data.samples) || [];
+  var legendSlot = container.nextElementSibling && container.nextElementSibling.classList.contains("chart-state-legend")
+    ? container.nextElementSibling : null;
+  if (legendSlot) legendSlot.innerHTML = "";
   if (samples.length === 0) {
     container.textContent = "No samples in this range yet.";
     return;
@@ -15921,33 +15934,95 @@ function _renderMonitorChart(container, data, transitions) {
     // The loss axis shares the gridlines — quarters of 0–lossCeil land on the
     // same five rows as the ms quarters — so it adds labels, never lines.
     if (hasLoss) {
-      ticks += '<text x="' + (W - padR + 4) + '" y="' + (y + 3) + '" text-anchor="start" font-size="10" fill="' + _CHART_LOSS_COLOR + '">' + (lossCeil * i / 4) + '%</text>';
+      ticks += '<text x="' + (W - padR + 4) + '" y="' + (y + 3) + '" text-anchor="start" font-size="10" fill="currentColor">' + (lossCeil * i / 4) + '%</text>';
     }
   }
+
+  // Up here rather than beside the SVG: the loss layer's gradients need it too.
+  var clipId = _chartClipId("monitor");
 
   // The packet-loss layer: a dashed polyline per contiguous run of buckets,
   // broken where buckets are missing (a gap in probing is not 0 % loss), plus a
   // hover target per point. Drawn OVER the response series and its hit targets
   // so a cursor landing on a loss point reads the loss.
+  //
+  // Each bucket is coloured by the device's VERDICT over it, from the same
+  // replay the response line runs: grey while the parent was dark, blue on the
+  // climb back, amber/the severity colour for misses, the Up green otherwise —
+  // the vocabulary the alert email's loss chart speaks too. The dash is what
+  // keeps it apart from the response line where the two cross. A bucket with no
+  // primary poll inside it (a long ICMP-only stretch) carries the state the
+  // last poll before it left.
+  var LOSS_RANK = { up: 0, rec: 1, dep: 2, missed: 3, down: 4 };
+  var sampleState = samples.map(function (s, i) {
+    if (ptIsFailure(s)) {
+      if (ptIsDependency(s)) return "dep";
+      return (!thresholdKnown || statusAt(i) === "down") ? "down" : "missed";
+    }
+    return statusAt(i) === "recovering" ? "rec" : "up";
+  });
+  var sampleMs = samples.map(function (s) { return new Date(s.timestamp).getTime(); });
+  function lossStateColor(st) {
+    return st === "rec" ? _CHART_RECOVER_COLOR
+      : st === "dep" ? _CHART_DEP_COLOR
+      : st === "missed" ? _CHART_MISS_COLOR
+      : st === "down" ? downColor
+      : _CHART_UP_COLOR;
+  }
+  var lossStatesDrawn = {};
+  var lossDefs = "";
   var lossLayer = "";
   var lossHits = "";
   if (hasLoss) {
     var yLoss = _chartYScale(padT, innerH, 0, lossCeil);
     var lossBucketMs = Number(lossSeries.bucketMs) || 0;
+    var si = 0;
+    var carried = "up";
+    var lossPts = lossPoints.map(function (p) {
+      var end = p.t + (lossBucketMs || 1);
+      while (si < sampleMs.length && sampleMs[si] < p.t) { carried = sampleState[si]; si++; }
+      var best = null;
+      for (var k = si; k < sampleMs.length && sampleMs[k] < end; k++) {
+        if (best === null || LOSS_RANK[sampleState[k]] > LOSS_RANK[best]) best = sampleState[k];
+      }
+      var st = best || carried;
+      lossStatesDrawn[st] = true;
+      return { t: p.t, v: p.v, color: lossStateColor(st) };
+    });
     var runs = [];
     var cur = [];
-    lossPoints.forEach(function (p, i) {
-      var prev = i > 0 ? lossPoints[i - 1] : null;
+    lossPts.forEach(function (p, i) {
+      var prev = i > 0 ? lossPts[i - 1] : null;
       if (prev && lossBucketMs > 0 && (p.t - prev.t) > lossBucketMs * 2.5) { runs.push(cur); cur = []; }
       cur.push(p);
     });
     if (cur.length) runs.push(cur);
-    lossLayer = runs.map(function (run) {
+    lossLayer = runs.map(function (run, ri) {
       if (run.length === 1) {
-        return '<circle cx="' + xFor(run[0].t) + '" cy="' + yLoss(run[0].v) + '" r="2" fill="' + _CHART_LOSS_COLOR + '"/>';
+        return '<circle cx="' + xFor(run[0].t) + '" cy="' + yLoss(run[0].v) + '" r="2" fill="' + run[0].color + '"/>';
       }
-      return '<polyline fill="none" stroke="' + _CHART_LOSS_COLOR + '" stroke-width="1.5" stroke-dasharray="4,3" stroke-linejoin="round" points="' +
-        run.map(function (p) { return xFor(p.t) + ',' + yLoss(p.v); }).join(" ") + '"/>';
+      // One dashed polyline per same-colour stretch, and a fading segment
+      // where the state changes — the response line's own treatment.
+      var out = "";
+      var start = 0;
+      for (var j = 1; j <= run.length; j++) {
+        if (j < run.length && run[j].color === run[start].color) continue;
+        if (j - start > 1) {
+          out += '<polyline fill="none" stroke="' + run[start].color + '" stroke-width="1.5" stroke-dasharray="4,3" stroke-linejoin="round" points="' +
+            run.slice(start, j).map(function (p) { return xFor(p.t) + ',' + yLoss(p.v); }).join(" ") + '"/>';
+        }
+        if (j < run.length) {
+          var a = run[j - 1], b = run[j];
+          var gid = clipId + "-loss-" + ri + "-" + j;
+          lossDefs += '<linearGradient id="' + gid + '" gradientUnits="userSpaceOnUse"' +
+            ' x1="' + xFor(a.t) + '" y1="' + yLoss(a.v) + '" x2="' + xFor(b.t) + '" y2="' + yLoss(b.v) + '">' +
+            '<stop offset="0%" stop-color="' + a.color + '"/><stop offset="100%" stop-color="' + b.color + '"/></linearGradient>';
+          out += '<line x1="' + xFor(a.t) + '" y1="' + yLoss(a.v) + '" x2="' + xFor(b.t) + '" y2="' + yLoss(b.v) +
+            '" stroke="url(#' + gid + ')" stroke-width="1.5" stroke-dasharray="4,3"/>';
+        }
+        start = j;
+      }
+      return out;
     }).join("");
     lossHits = lossPoints.map(function (p) {
       return '<circle class="monitor-loss-hit" cx="' + xFor(p.t) + '" cy="' + yLoss(p.v) + '" r="6" fill="transparent" style="cursor:crosshair"' +
@@ -15967,7 +16042,7 @@ function _renderMonitorChart(container, data, transitions) {
   var yTitle = '<text class="chart-axis-title" x="' + yTitleX + '" y="' + yTitleY + '" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85" transform="rotate(-90 ' + yTitleX + ' ' + yTitleY + ')">Response time (ms)</text>';
   if (hasLoss) {
     var y2TitleX = W - 8;
-    yTitle += '<text class="chart-axis-title" x="' + y2TitleX + '" y="' + yTitleY + '" text-anchor="middle" font-size="11" fill="' + _CHART_LOSS_COLOR + '" transform="rotate(90 ' + y2TitleX + ' ' + yTitleY + ')">Packet loss (%)</text>';
+    yTitle += '<text class="chart-axis-title" x="' + y2TitleX + '" y="' + yTitleY + '" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85" transform="rotate(90 ' + y2TitleX + ' ' + yTitleY + ')">Packet loss (%)</text>';
   }
   var xTitle = '<text class="chart-axis-title" x="' + (padL + innerW / 2) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.85">Time</text>';
 
@@ -15988,16 +16063,16 @@ function _renderMonitorChart(container, data, transitions) {
           ' data-ts="' + escapeHtml(String(m.raw)) + '" data-label="' + escapeHtml(m.label) + '"/>';
     }).join("");
 
-  var clipId = _chartClipId("monitor");
   var line = _failureAwareSeriesSVG(linePts, _CHART_UP_COLOR, clipId);
+  var maintLayer = _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH);
   var svg =
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
-      '<defs>' + line.defs + '</defs>' +
+      '<defs>' + line.defs + lossDefs + '</defs>' +
       ticks +
       xTicks +
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
-      _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
+      maintLayer +
       transitionLayer +
       yTitle +
       xTitle +
@@ -16021,6 +16096,27 @@ function _renderMonitorChart(container, data, transitions) {
   container.style.justifyContent = "flex-start";
   container.style.position = "relative";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
+
+  // The key: the states the response line and the loss line actually drew, in
+  // the Status pill's order, then the marks that are not states. A chart that
+  // drew nothing but Up gets no key — the title already says what it is.
+  if (legendSlot) {
+    var drawn = {};
+    for (var st in lossStatesDrawn) drawn[st] = true;
+    linePts.forEach(function (p) {
+      if (p.ok) drawn[p.rec ? "rec" : "up"] = true;
+      else drawn[p.dep ? "dep" : p.down === false ? "missed" : "down"] = true;
+    });
+    var keyEntries = [];
+    [["up", "Up"], ["missed", "Missed poll"], ["down", "Down"], ["rec", "Recovering"], ["dep", "Parent down"]].forEach(function (e) {
+      if (drawn[e[0]]) keyEntries.push({ label: e[1], color: lossStateColor(e[0]), style: "line" });
+    });
+    if (hasLoss) keyEntries.push({ label: "Packet loss (right axis)", color: "var(--color-text-secondary)", style: "dash" });
+    if (maintLayer) keyEntries.push({ label: "Maintenance", color: "rgba(149,117,205,0.14)", border: "rgba(149,117,205,0.45)", style: "band" });
+    if (transitionLayer) keyEntries.push({ label: "Polling change", color: "rgba(255,193,7,0.9)", style: "dash" });
+    var onlyUp = keyEntries.length === 1 && keyEntries[0].label === "Up";
+    legendSlot.innerHTML = onlyUp ? "" : _chartStateLegendHTML(keyEntries);
+  }
 
   var tip = container.querySelector(".monitor-tooltip");
   var svgEl = container.querySelector("svg");
@@ -16098,7 +16194,7 @@ function _renderMonitorChart(container, data, transitions) {
       : bMs > 0 ? Math.round(bMs / 60000) + "-min" : "";
     tip.innerHTML =
       '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
-      '<div>Packet loss: <span style="color:' + _CHART_LOSS_COLOR + ';font-weight:600">' + v.toFixed(1) + '%</span></div>' +
+      '<div>Packet loss: <span style="font-weight:600">' + v.toFixed(1) + '%</span></div>' +
       (span ? '<div style="color:var(--color-text-secondary)">' + span + ' bucket, all probes</div>' : '');
     tip.style.display = "block";
     positionTip(evt);

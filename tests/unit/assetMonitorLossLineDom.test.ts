@@ -5,9 +5,11 @@
  *
  * Pins what is only observable in the rendered SVG:
  *  - the loss series draws on its own right-hand percentage axis, scaled to
- *    the worst bucket in the window (whole-percent quarters), in a colour
- *    that is none of the reserved chart hues (red = missed poll / Down, grey =
- *    dependency-down — a data line in either reads as an outage marker);
+ *    the worst bucket in the window (whole-percent quarters), DASHED and
+ *    coloured by the device's verdict over each bucket — the response line's
+ *    own vocabulary (Up green, grey while the parent was dark, red Down, blue
+ *    recovering), so the two lines never disagree about the same minutes;
+ *  - the key under the chart names only the colours drawn;
  *  - a gap in the buckets breaks the line rather than being bridged, because
  *    a gap in probing is not a stretch of 0 % loss;
  *  - an older payload with no `loss` keeps the single-axis chart unchanged.
@@ -39,12 +41,14 @@ function constSrc(name: string): string {
 
 const SRC = [
   constSrc("_CHART_FAIL_COLOR"), constSrc("_CHART_DEP_COLOR"), constSrc("_CHART_UP_COLOR"),
-  constSrc("_CHART_MISS_COLOR"), constSrc("_CHART_RECOVER_COLOR"), constSrc("_CHART_LOSS_COLOR"),
+  constSrc("_CHART_MISS_COLOR"), constSrc("_CHART_RECOVER_COLOR"),
+  fnSrc("function _chartStateLegendHTML("),
   fnSrc("function _renderMonitorChart("),
   "globalThis._renderMonitorChart = _renderMonitorChart;",
-  "globalThis._CHART_LOSS_COLOR = _CHART_LOSS_COLOR;",
+  "globalThis._CHART_UP_COLOR = _CHART_UP_COLOR;",
   "globalThis._CHART_FAIL_COLOR = _CHART_FAIL_COLOR;",
   "globalThis._CHART_DEP_COLOR = _CHART_DEP_COLOR;",
+  "globalThis._CHART_RECOVER_COLOR = _CHART_RECOVER_COLOR;",
 ].join("\n");
 
 function installStubs() {
@@ -62,7 +66,9 @@ function installStubs() {
   g._chartClipId = (p: string) => `clip-${p}`;
   g._chartClipDefs = () => "";
   g._chartClipAttr = (id: string) => `clip-path="url(#${id})"`;
-  g._intermittencyStates = (s: any[]) => s.map(() => ({ status: "up", missed: 0 }));
+  // A test sets g.__statuses to script the replay; default all up.
+  g._intermittencyStates = (s: any[]) => s.map((_x, i) => ({ status: g.__statuses?.[i] ?? "up", missed: 0 }));
+  g.__statuses = undefined;
   g._failureAwareSeriesSVG = () => ({ defs: "", segments: "" });
   g._chartPointColor = (_p: unknown, c: string) => c;
   g._failureDotsSVG = () => "";
@@ -87,9 +93,15 @@ function render(data: unknown): HTMLElement {
   const el = document.createElement("div");
   Object.defineProperty(el, "clientWidth", { value: 600 });
   document.body.appendChild(el);
+  // The key's slot, as the asset panel lays it out: the chart's next sibling.
+  const key = document.createElement("div");
+  key.className = "chart-state-legend";
+  document.body.appendChild(key);
   g._renderMonitorChart(el, data, []);
   return el;
 }
+const keyLabels = (): string[] =>
+  Array.from(document.querySelectorAll(".chart-state-legend > div > span")).map((s) => s.textContent ?? "");
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -107,7 +119,9 @@ describe("response-time chart — packet-loss line", () => {
     }));
     const line = el.querySelectorAll("polyline");
     expect(line).toHaveLength(1);
-    expect(line[0]!.getAttribute("stroke")).toBe(g._CHART_LOSS_COLOR);
+    // Every poll answered, so every bucket is Up — a lossy bucket on an Up
+    // device is a reading, not a verdict, and draws in the Up green.
+    expect(line[0]!.getAttribute("stroke")).toBe(g._CHART_UP_COLOR);
     expect(line[0]!.getAttribute("stroke-dasharray")).toBeTruthy();
     const titles = Array.from(el.querySelectorAll(".chart-axis-title")).map((t) => t.textContent);
     expect(titles).toContain("Packet loss (%)");
@@ -159,12 +173,49 @@ describe("response-time chart — packet-loss line", () => {
     expect(titles).not.toContain("Packet loss (%)");
   });
 
-  it("takes none of the reserved outage hues", () => {
-    const c = String(g._CHART_LOSS_COLOR).toLowerCase();
-    expect(c).not.toBe(String(g._CHART_FAIL_COLOR).toLowerCase());
-    expect(c).not.toBe(String(g._CHART_DEP_COLOR).toLowerCase());
-    // Not red-dominant: a hue away from 0°.
-    const [r, gr, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
-    expect(Math.max(gr!, b!)).toBeGreaterThan(r! * 0.6);
+  it("colours each bucket by the verdict over it: grey while the parent was dark, blue climbing back, green after", () => {
+    // The 2026-10-26 report: a device behind a dark parent drew its 100 % loss
+    // in alarm red right through the explained stretch, and red again at 0 %.
+    const B = 2 * 60_000;
+    const samples = Array.from({ length: 30 }, (_, i) => (
+      i < 20
+        ? { timestamp: iso(i * 2), success: false, dependencyDown: true }
+        : { timestamp: iso(i * 2), success: true, responseTimeMs: 20 }
+    ));
+    g.__statuses = samples.map((_s, i) => (i < 20 ? "down" : i < 24 ? "recovering" : "up"));
+    const el = document.body.appendChild(document.createElement("div"));
+    Object.defineProperty(el, "clientWidth", { value: 600 });
+    const key = document.body.appendChild(document.createElement("div"));
+    key.className = "chart-state-legend";
+    g._renderMonitorChart(el, {
+      since: iso(0), until: iso(60), samples,
+      loss: { bucketMs: B, points: samples.map((_s, i) => ({ t: T0 + i * B, v: i < 20 ? 100 : 0 })), ratioPct: 66 },
+    }, []);
+    const strokes = Array.from(el.querySelectorAll("polyline")).map((p) => p.getAttribute("stroke"));
+    expect(strokes).toEqual([g._CHART_DEP_COLOR, g._CHART_RECOVER_COLOR, g._CHART_UP_COLOR]);
+    // Never the Down red: every miss was explained.
+    expect(strokes).not.toContain(g._CHART_FAIL_COLOR);
+    // The state changes fade rather than jump, dashed like the rest.
+    const fades = Array.from(el.querySelectorAll("line")).filter((l) => /^url\(#/.test(l.getAttribute("stroke") ?? ""));
+    expect(fades.length).toBe(2);
+    expect(fades.every((l) => l.getAttribute("stroke-dasharray"))).toBe(true);
+    expect(keyLabels()).toEqual(["Up", "Recovering", "Parent down", "Packet loss (right axis)"]);
+  });
+
+  it("draws an unexplained outage's loss in the Down colour", () => {
+    const B = 2 * 60_000;
+    const samples = Array.from({ length: 4 }, (_, i) => ({ timestamp: iso(i * 2), success: false }));
+    g.__statuses = samples.map(() => "down");
+    const el = render({
+      since: iso(0), until: iso(8), samples,
+      loss: { bucketMs: B, points: samples.map((_s, i) => ({ t: T0 + i * B, v: 100 })), ratioPct: 100 },
+    });
+    expect(el.querySelector("polyline")!.getAttribute("stroke")).toBe(g._CHART_FAIL_COLOR);
+    expect(keyLabels()).toContain("Down");
+  });
+
+  it("draws no key when the chart drew nothing but Up", () => {
+    render(payload(undefined));
+    expect(keyLabels()).toEqual([]);
   });
 });
