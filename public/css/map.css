@@ -637,8 +637,9 @@
   border-right: 1px solid var(--color-border);
 }
 
-/* Floating map-only screenshot button, top-right of the graph area. */
-.topology-map-shot {
+/* Floating Export button (screenshots, PDF, Visio), top-right of the graph
+   area. */
+.topology-map-export {
   position: absolute;
   top: 10px;
   right: 10px;
@@ -651,10 +652,10 @@
   opacity: 0.85;
   line-height: 0;
 }
-.topology-map-shot:hover { opacity: 1; color: var(--color-accent); border-color: var(--color-accent); }
+.topology-map-export:hover { opacity: 1; color: var(--color-accent); border-color: var(--color-accent); }
 
 /* Floating device-type show/hide chips, top-right of the graph area just
-   left of the camera button. .is-off = type currently hidden. */
+   left of the Export button. .is-off = type currently hidden. */
 .topology-type-toggles {
   position: absolute;
   top: 10px;

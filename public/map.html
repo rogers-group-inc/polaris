@@ -92,16 +92,8 @@
               <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
             </svg>
           </button>
-          <!-- Export menu (graph-export.js): screenshot of the whole view,
-               PDF, Visio. Replaced the header camera, whose screenshot is
-               now the menu's first item. -->
-          <button type="button" class="btn-icon" id="topology-export" aria-label="Export" aria-haspopup="menu" title="Export: screenshot, PDF or Visio" style="line-height:0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-          </button>
+          <!-- Export (screenshots, PDF, Visio) is not here: it floats in the
+               map's top-right corner (map.js → _ensureTopologyExportButton). -->
           <button type="button" class="btn-icon modal-close" id="topology-close" aria-label="Close">&times;</button>
         </div>
       </div>

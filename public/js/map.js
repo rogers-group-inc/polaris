@@ -936,7 +936,6 @@
   function wireModal() {
     var overlay = document.getElementById("topology-overlay");
     var closeBtn = document.getElementById("topology-close");
-    var exportBtn = document.getElementById("topology-export");
     var fullscreenBtn = document.getElementById("topology-fullscreen");
     var refreshBtn = document.getElementById("topology-refresh");
     var saveBtn = document.getElementById("topology-save-layout");
@@ -945,18 +944,8 @@
     var showFullBtn = document.getElementById("topology-show-full");
     var searchInput = document.getElementById("topology-search-input");
     closeBtn.addEventListener("click", closeTopology);
-    // Header Export = the shared menu (graph-export.js): the whole-modal
-    // (map + details) screenshot, PDF, Visio. The map-only screenshot stays
-    // on the floating button inside the map area.
-    if (exportBtn) {
-      exportBtn.addEventListener("click", function () {
-        if (!window.PolarisGraphExport) return;
-        window.PolarisGraphExport.openMenu(exportBtn, topologyExportContext, {
-          screenshot: screenshotTopologyModal,
-          screenshotLabel: "Copy screenshot (map + details)",
-        });
-      });
-    }
+    // Export lives on the map itself (top-right corner) — see
+    // _ensureTopologyExportButton, re-added with every render.
     if (fullscreenBtn) fullscreenBtn.addEventListener("click", toggleFullscreenTopology);
     if (refreshBtn) refreshBtn.addEventListener("click", refreshTopology);
     if (saveBtn) saveBtn.addEventListener("click", saveTopologyLayoutCheckpoint);
@@ -1100,6 +1089,15 @@
   // full:false — the viewport, not the whole graph: whatever the operator has
   // zoomed or panned out of view stays out of the picture (as every topology
   // and Application Map export does).
+  // cy.png with the connection-path editing handles left out: they are
+  // chrome for the operator dragging a line, not part of the drawing (the
+  // PDF / Visio export skips them through their noExport flag).
+  function _topologyPng(opts) {
+    var handles = cyInstance.nodes("[isEdgeHandle]");
+    handles.style("display", "none");
+    try { return cyInstance.png(opts); }
+    finally { handles.removeStyle("display"); }
+  }
   function screenshotTopology() {
     if (!cyInstance) {
       if (typeof showToast === "function") showToast("Topology not loaded", "error");
@@ -1108,7 +1106,7 @@
     var rootCs = getComputedStyle(document.documentElement);
     var bg = rootCs.getPropertyValue("--color-bg-primary").trim() ||
              rootCs.getPropertyValue("--color-surface").trim() || "#ffffff";
-    var blob = cyInstance.png({ output: "blob", scale: 2, full: false, bg: bg });
+    var blob = _topologyPng({ output: "blob", scale: 2, full: false, bg: bg });
     if (!blob) {
       if (typeof showToast === "function") showToast("Screenshot failed", "error");
       return;
@@ -1176,7 +1174,7 @@
     var pick = function (n, f) { var v = rootCs.getPropertyValue(n).trim(); return v || f; };
     var bg = pick("--color-bg-primary", pick("--color-surface", "#ffffff"));
     // The viewport only, as screenshotTopology.
-    var uri = cyInstance.png({ output: "base64uri", scale: 2, full: false, bg: bg });
+    var uri = _topologyPng({ output: "base64uri", scale: 2, full: false, bg: bg });
     var mapImg = new Image();
     mapImg.onload = function () { _composeTopologyModalCanvas(mapImg, pick); };
     mapImg.onerror = function () {
@@ -2813,10 +2811,10 @@
       });
     });
 
-    // Map-only screenshot button, overlaid at the top-right of the graph area.
+    // Export button, overlaid at the top-right of the graph area.
     // (openTopology wipes #topology-graph's innerHTML and cytoscape re-mounts,
     // so it's re-added here on every render rather than living in static HTML.)
-    _ensureTopologyMapShotButton();
+    _ensureTopologyExportButton();
     _renderTopologyTypeToggles(roleCounts, hiddenRoles);
     _renderTopologyFloorViews();
     _wireCtrlPan();
@@ -3027,7 +3025,7 @@
   }
 
   // Floating show/hide chips for device types, top-right of the graph area
-  // (left of the map-only camera button). One chip per toggleable role present
+  // (left of the Export button). One chip per toggleable role present
   // on THIS site; clicking re-renders the graph through the normal pipeline so
   // the column/row solver lays the visible subset out compactly. Rebuilt on
   // every render — openTopology wipes #topology-graph's innerHTML, and the
@@ -3125,27 +3123,44 @@
     wrap.hidden = wrap.children.length === 0;
   }
 
-  // Adds the floating "copy map as image" camera button into #topology-graph.
-  // Guarded so refresh (which keeps the button) doesn't stack duplicates.
-  function _ensureTopologyMapShotButton() {
+  // The map's Export button, floating in the top-right corner of
+  // #topology-graph: one menu (graph-export.js) holding both screenshots —
+  // the map alone and the map + details panel — then PDF and Visio. It
+  // replaced the header Export button and the separate camera button that
+  // sat in this corner. Guarded so a refresh doesn't stack duplicates.
+  function _ensureTopologyExportButton() {
     var graph = document.getElementById("topology-graph");
-    if (!graph || document.getElementById("topology-map-screenshot")) return;
+    if (!graph || document.getElementById("topology-export")) return;
     if (!graph.style.position) graph.style.position = "relative";
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.id = "topology-map-screenshot";
-    btn.className = "btn-icon topology-map-shot";
-    btn.title = "Copy map as image";
-    btn.setAttribute("aria-label", "Copy map as image");
+    btn.id = "topology-export";
+    btn.className = "btn-icon topology-map-export";
+    btn.title = "Export: screenshot, PDF or Visio";
+    btn.setAttribute("aria-label", "Export");
+    btn.setAttribute("aria-haspopup", "menu");
     btn.innerHTML =
       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-        '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>' +
-        '<circle cx="12" cy="13" r="4"/>' +
+        '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+        '<polyline points="7 10 12 15 17 10"/>' +
+        '<line x1="12" y1="15" x2="12" y2="3"/>' +
       '</svg>';
+    // The button sits inside the Cytoscape container, which would read a
+    // press on it as a background tap and clear the selection — exporting
+    // must not change what is selected.
+    ["mousedown", "pointerdown", "touchstart"].forEach(function (type) {
+      btn.addEventListener(type, function (e) { e.stopPropagation(); });
+    });
     btn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      screenshotTopology();
+      if (!window.PolarisGraphExport) return;
+      window.PolarisGraphExport.openMenu(btn, topologyExportContext, {
+        screenshots: [
+          { label: "Copy map as image", run: screenshotTopology },
+          { label: "Copy screenshot (map + details)", run: screenshotTopologyModal },
+        ],
+      });
     });
     graph.appendChild(btn);
   }

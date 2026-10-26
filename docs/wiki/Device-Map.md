@@ -242,7 +242,7 @@ view keeps its own.
 | **Snap to grid** | per user; lands drags on the solver's lattice and re-snaps everything on enable |
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
-| **Export** | screenshot, PDF or Visio — see below |
+| **Export** | top right of the map: screenshots, PDF or Visio — see below |
 
 The **legend** sits at the graph's bottom left as a small button; click it to
 open the legend, and its **×** folds it back. The edge between the graph and
@@ -257,7 +257,7 @@ server has not stored.
 
 ### Exporting the topology
 
-The **Export** button at the top right of the topology header opens a menu.
+The **Export** button in the top-right corner of the map opens a menu.
 Each choice exports **only what is in the viewer**: the part of the graph on
 screen at your current zoom and position, in its current layout, including a
 narrowed endpoint-search view. Zoom in, and whatever leaves the view leaves the
@@ -265,9 +265,11 @@ export too; a device cut by the edge of the view is cut at the same place on
 the PDF, and the device and link count above it counts only what is in view.
 To export the whole site, zoom out until all of it is in view first.
 
+- **Copy map as image**: the graph in view alone.
 - **Copy screenshot (map + details)**: the graph and the right-hand details
-  panel as one image. Clipboard first, download as fallback. The small camera
-  inside the graph area copies the graph in view alone.
+  panel as one image. Clipboard first, download as fallback.
+
+  Neither screenshot shows a selected line's drag points.
 - **Export PDF…**: the graph drawn as vectors on white paper whatever theme you
   are using, so it prints sharp and its text is searchable. Choose the paper
   size, orientation and **minimum text size** (7 pt by default): **nothing on
