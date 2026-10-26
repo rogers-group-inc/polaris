@@ -2363,7 +2363,12 @@ button, .list-item, .chip { touch-action: manipulation; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 12px 8px;
+  /* Landscape puts the notch at a SIDE — the only screen in the app held that
+     way, so the only one that pays the left/right insets. */
+  padding: calc(12px + env(safe-area-inset-top, 0px))
+           calc(12px + env(safe-area-inset-right, 0px))
+           8px
+           calc(12px + env(safe-area-inset-left, 0px));
   background: linear-gradient(to bottom, var(--md-surface) 0%, var(--md-surface) 70%, transparent 100%);
 }
 .topo-bar .icon-btn {
@@ -2486,19 +2491,25 @@ button, .list-item, .chip { touch-action: manipulation; }
   font-size: 12px;
 }
 
-/* ─── Landscape orientation lockout ──────────────────────────────────────
-   Phone-class viewport rotated to landscape: replace the entire UI with
-   a "rotate back" prompt. iOS Safari ignores screen.orientation.lock()
-   outside of an installed PWA, so this CSS-only fallback is the actual
-   lockout for that ~half of the install base. The max-height gate
-   scopes the rule to phones — tablets in landscape are unaffected. */
+/* ─── Orientation lockouts ───────────────────────────────────────────────
+   The app is portrait and the topology screen is landscape; `html[data-orient]`
+   (mobile/app.js → setWantedOrientation, set from the route) says which one
+   the current screen wants. screen.orientation.lock() only takes in the
+   installed Android app — iOS Safari and every browser tab ignore it — so
+   these prompts are the actual lockout for most of the install base.
+
+   Both are scoped to PHONES by the short side: ≤ 480 CSS px, the bound
+   mobile/app.js's PHONE_SHORT_SIDE uses for the lock. A tablet or an unfolded
+   foldable (short side ~600–900 px) never matches either rule, so it works in
+   any orientation and its topology stays the way the device is held.
+
+   Wrong-way on the app: replace the entire UI with a "rotate back" prompt. */
 @media (orientation: landscape) and (max-height: 480px) {
-  .app,
-  .scrim,
-  .sheet,
-  .topo-screen,
-  .snackbar { display: none !important; }
-  body::before {
+  html:not([data-orient="landscape"]) .app,
+  html:not([data-orient="landscape"]) .scrim,
+  html:not([data-orient="landscape"]) .sheet,
+  html:not([data-orient="landscape"]) .snackbar { display: none !important; }
+  html:not([data-orient="landscape"]) body::before {
     content: "Rotate your device to portrait to use Polaris.";
     position: fixed;
     inset: 0;
@@ -2512,6 +2523,37 @@ button, .list-item, .chip { touch-action: manipulation; }
     color: var(--md-on-surface, #e2e8f0);
     font: 500 16px/1.4 "Inter", "Roboto", system-ui, sans-serif;
     letter-spacing: 0.25px;
+  }
+}
+
+/* Wrong-way on the topology: the screen draws the desktop's left-to-right
+   map, which a portrait phone cannot show at a readable size. Unlike the app
+   prompt this one is a real element (topology-tab.js renders it inside
+   .topo-screen) because it carries a Back button — an operator who opened
+   the map by mistake must not have to rotate just to leave. Above the node
+   sheet (.sheet, 1000) so a sheet left open does not cover it. */
+.topo-rotate { display: none; }
+@media (orientation: portrait) and (max-width: 480px) {
+  html[data-orient="landscape"] .topo-rotate {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px));
+    text-align: center;
+    background: var(--md-surface, #0f172a);
+    color: var(--md-on-surface, #e2e8f0);
+    font: 500 16px/1.4 "Inter", "Roboto", system-ui, sans-serif;
+    letter-spacing: 0.25px;
+  }
+  html[data-orient="landscape"] .topo-rotate svg {
+    width: 56px;
+    height: 56px;
+    fill: var(--md-on-surface-variant, #9aa2b1);
   }
 }
 

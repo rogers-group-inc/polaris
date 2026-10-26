@@ -147,3 +147,19 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 - **Every daylight theme block sets its own `--md-secondary-container` / `--md-tertiary-container` pairs** (selected chip, active nav pill, avatar). The daylight base inherited Material's stock periwinkle `#dae2f9` and pink `#fbd7fc`, which clashed with parchment and terracotta; nightfall had always set its own. The asset-type icon circles (`.ico-*`) derive from `--md-primary` / `--md-tertiary` through `color-mix`, not hard-coded Material blue or lilac, so they follow the theme too.
 
 ---
+
+## Orientation (portrait app, landscape topology)
+
+**What it is:** the phone app is held portrait everywhere except the per-site topology screen, which is held landscape because it draws the desktop's left-to-right map (same solver, same spacing, the shared saved layout and its drawn connection lines). Added 2026-10-26.
+
+**Canonical implementation:** `setWantedOrientation` / `applyOrientationLock` / `isPhoneScreen` in [public/js/mobile/app.js](public/js/mobile/app.js) (called from `routeChanged`: `"landscape"` on the `topology` route, `"portrait"` on every other route and on the 401 → login path); the two `@media` blocks under "Orientation lockouts" in [public/css/mobile.css](public/css/mobile.css); the `.topo-rotate` element `render()` writes in [public/js/mobile/topology-tab.js](public/js/mobile/topology-tab.js).
+
+**Key conventions:**
+- **The wanted orientation comes from the ROUTE, never from a screen module.** The router has no teardown hook, so a back gesture out of a screen that set it itself would leave the app asking for the wrong way. `html[data-orient]` is the one switch mobile.css reads.
+- **Phone-class only, by the short side ≤ 480 CSS px**: `PHONE_SHORT_SIDE` in app.js and both media queries (`landscape and max-height: 480px`, `portrait and max-width: 480px`). A tablet or an unfolded foldable never matches, so it is never prompted and the lock is released (`unlock()`, back to the manifest default) — its topology stays the way the device is held. `tests/unit/mobileOrientation.test.ts` holds the three numbers equal.
+- **The lock is best-effort; the prompts are the lockout.** `screen.orientation.lock()` takes only in the installed Android app (the manifest declares `portrait`); iOS Safari and every browser tab refuse it.
+- **A rotate prompt that a user might hit by mistake carries a way out.** The app's portrait prompt is a `body::before` (nothing to tap); the topology's is a real element with a "Back to map" button, above the node sheet (z 1100 > `.sheet` 1000).
+- **The topology loads while still upright**, behind its prompt, so its resize handler re-fits the graph after the turn — until the operator touches the graph or picks a search hit (`_viewTouched`), after which a resize only reflows.
+- **Landscape puts the notch at a side**: `.topo-bar` pads `env(safe-area-inset-left/right)`. Any new landscape surface must too; the portrait screens never needed it.
+
+**When adding a new instance:** a new landscape route is one more name in the `routeChanged` ternary plus a prompt element in its own markup keyed on `html[data-orient="landscape"]`; do not add a second lock call.

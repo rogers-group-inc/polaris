@@ -50,6 +50,15 @@ role and, under them, the regions and tags your account is scoped to — the one
 from your role, your user and your sign-in groups together, regions first. An
 account with no tag scope shows no tags there.
 
+The app is used **upright (portrait)**; turning a phone sideways covers it with a
+"rotate" message. The one exception is a site's **topology**: it is the same map
+the desktop draws, left to right, with the saved layout and any connection lines
+drawn on the desktop, so it is used **sideways (landscape)**. Holding the phone
+upright on it shows "Turn your phone sideways", with a **Back to map** button.
+Only on a phone: on a tablet or an unfolded foldable, everything, the topology
+included, works whichever way you hold it. The installed Android app turns the
+screen by itself; in a browser, and on iPhone, you turn the phone.
+
 ## Alerts
 
 Every active alert you can see, newest first. Across the top, a **severity
