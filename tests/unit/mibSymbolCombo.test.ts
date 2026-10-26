@@ -112,6 +112,33 @@ describe("filtering", () => {
   });
 });
 
+describe("_ensureMibSymbols", () => {
+  it("lists a table's columns on the table side, so a sensor value column is not flagged", async () => {
+    const s = sb as unknown as {
+      _ensureMibSymbols: (id: string) => void;
+      _mfgRerenderPreservingAll: () => void;
+      api: Record<string, unknown>;
+    };
+    s._mfgRerenderPreservingAll = () => {};
+    s.api = {
+      serverSettings: {
+        getMibStructure: async () => ({
+          symbols: [{ name: "fgSysCpuUsage" }, { name: "fgHwSensorEntValue" }],
+          tables: [{ name: "fgHwSensorTable", rowSymbol: "fgHwSensorEntry", columns: ["fgHwSensorEntName", "fgHwSensorEntValue"] }],
+        }),
+      },
+    };
+    sb._mfgMibSymbolsCache = {};
+    s._ensureMibSymbols("mib-fgt");
+    await new Promise((r) => setTimeout(r, 0));
+    const entry = sb._mfgMibSymbolsCache["mib-fgt"] as { tables: string[]; scalars: string[] };
+    expect(entry.tables).toEqual(["fgHwSensorEntName", "fgHwSensorEntValue", "fgHwSensorTable"]);
+    expect(entry.scalars).toEqual(["fgSysCpuUsage"]);
+    const input = mount(sb.renderSymbolPicker("fgHwSensorEntValue", "mib-fgt", "mfg-widget-symbol", "table"));
+    expect(input.getAttribute("title")).toBeNull();
+  });
+});
+
 describe("_filterSuggestRows (both manufacturer pickers)", () => {
   // Rows arrive in device-count order; the filter must keep that order inside
   // each band. Reported: typing "APC" — a name 8 devices carry — got "No known

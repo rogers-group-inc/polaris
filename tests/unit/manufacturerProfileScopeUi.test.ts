@@ -31,6 +31,7 @@ interface Sandbox {
   _mfgEditContainerKey: (el: unknown) => string;
   _mfgEditContainerOf: (el: unknown) => unknown;
   _mfgSnapshotFields: (el: unknown) => Record<string, unknown>;
+  _mfgOverrideAddOpen: Record<string, boolean>;
   _assetTypes: Array<{ name: string; label: string }>;
   _mibsData: unknown[];
   METRIC_KEY_LABELS: Record<string, string>;
@@ -176,11 +177,24 @@ describe("renderProfileDetail — the three tiers", () => {
     expect(html).toContain("201G");
   });
 
-  it("gives the add row both halves of a scope", () => {
+  it("hides the add row until the metric row's Add button opens it", () => {
     const html = sb.renderProfileDetail(detail([{ metricKey: "cpu" }]));
-    expect(html).toContain("mfg-new-override-assettype");
-    expect(html).toContain("mfg-new-override-pattern");
-    expect(html).toContain("Model regex (optional)");
+    expect(html).toContain("mfg-override-add-open");
+    expect(html).not.toContain("mfg-add-override-row");
+    expect(html).not.toContain("mfg-new-override-pattern");
+  });
+
+  it("gives the opened add row both halves of a scope", () => {
+    sb._mfgOverrideAddOpen["p1:cpu"] = true;
+    try {
+      const html = sb.renderProfileDetail(detail([{ metricKey: "cpu" }]));
+      expect(html).toContain("mfg-new-override-assettype");
+      expect(html).toContain("mfg-new-override-pattern");
+      expect(html).toContain("Model regex (optional)");
+      expect(html).toContain("mfg-override-add-cancel");
+    } finally {
+      delete sb._mfgOverrideAddOpen["p1:cpu"];
+    }
   });
 });
 
@@ -235,9 +249,14 @@ describe("the Transform select offers only what a collector applies", () => {
     (sb as unknown as { renderTransformSelect: (...x: unknown[]) => string }).renderTransformSelect(...a);
 
   it("renders no select on a metric with nothing applicable", () => {
-    const html = sb.renderProfileDetail(detail([{ metricKey: "cpu" }]));
-    expect(html).not.toContain('<select class="mfg-new-override-transform"');
-    expect(html).toContain("mfg-new-override-transform-none");
+    sb._mfgOverrideAddOpen["p1:cpu"] = true;
+    try {
+      const html = sb.renderProfileDetail(detail([{ metricKey: "cpu" }]));
+      expect(html).not.toContain('<select class="mfg-new-override-transform"');
+      expect(html).toContain("mfg-new-override-transform-none");
+    } finally {
+      delete sb._mfgOverrideAddOpen["p1:cpu"];
+    }
   });
 
   it("offers only tenths_to_units on a scalar temperature row", () => {
