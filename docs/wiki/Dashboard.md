@@ -113,6 +113,20 @@ imported tab is not linked to anything: it is yours to change.
 | **Recent Reboots** | devices that rebooted recently, detected from SNMP `sysUpTime` drops |
 | **Down Interfaces** | pinned interfaces admin-up but operationally down, plus fully-down IPsec tunnels, grouped by the gate they are on |
 
+### SD-WAN
+
+These read the SD-WAN data your FortiGates report, managed through FortiManager or standalone, once SD-WAN collection is switched on for the integration (see [Fortinet integrations](Integration-Fortinet)). With no SD-WAN collection they stay empty. Each one filters by region and by FortiGate from the gear; there is no asset-type filter, since every row is a FortiGate. A click on a row in the two list widgets opens that gate on its **SD-WAN** tab.
+
+| Widget | Shows |
+|---|---|
+| **SD-WAN Rules Off Preferred Link** | service rules carrying traffic on a member other than the one they prefer, so steering has already reacted even if nothing is down yet. Rules with **no usable member** are listed too, marked **down**. Only lowest-cost (SLA) and manual rules can be off their preferred link. Best-quality and load-balance rules move between members by design, so they are not listed. A zone-based rule prefers every member of its first zone. The gear can hide either kind. Rule history is not kept, so the widget cannot say how long a rule has been failed over |
+| **SD-WAN Sites on One Link** | gates built with two or more WAN paths that are down to one, or to none: still online, but one failure away from offline. Members are counted by the physical port they ride, so two overlay tunnels over the same ISP count as **one** path. A member counts as down when any health check says so. Sites built with a single path are never listed. The pill reads live paths out of total |
+| **SD-WAN SLA Headroom** | live members ranked by how close they run to their health check's SLA target, over the last 15 minutes, on whichever of latency, jitter or loss is closest. **100 % is the target**, and anything past it is already out of SLA. Use it to spot a link before it breaches. Health checks without an SLA target are not ranked |
+| **SD-WAN Flapping Links** | members ranked by how many times they went down in the last hour or the last 24 hours (gear **Window**). A link that keeps bouncing never stays down long enough to show on a down list. Each member appears once, with the count from its worst health check |
+| **SD-WAN SLA Compliance** | how much of the last hour or 24 hours each health check and member spent within SLA, worst first. A reading counts as out of SLA when the member was dead or any reading was over its target. Links that never left SLA are not listed. A health check with no SLA target is judged on whether the member was alive, and says so |
+
+The flapping and compliance figures are worked out together about every two minutes, so they can trail the live state by that much.
+
 ### Storage
 
 | Widget | Shows |

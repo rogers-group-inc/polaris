@@ -1622,6 +1622,443 @@ export async function getFilterOptions(): Promise<FilterOptions> {
   };
 }
 
+// ─── SD-WAN feeds ────────────────────────────────────────────────────────────
+// Five widgets over the two SD-WAN stores, both FortiOS-only and written by the
+// SD-WAN cadence (monitoringService.runSdwanFor) for FortiManager-managed and
+// standalone FortiGates alike: asset_perf_sla_samples (per health check ×
+// member, a hypertable) and asset_sdwan_rules (current state, delete-replaced
+// per pass). Every row is hydrated through hydrateDownFeedOwners, so a gate
+// that is unmonitored, dependency-suppressed or in maintenance drops out —
+// its samples stop, and what lingers would describe a gate nobody is polling.
+
+// "Now" for the current-state SD-WAN feeds. Fifteen SD-WAN passes at the 60s
+// default; a slower cadence still lands at least one pass inside it.
+const SDWAN_CURRENT_WINDOW_MINUTES = 15;
+// asset_sdwan_rules has no history, so a gate whose SD-WAN reads stopped keeps
+// its last table forever. Rows older than this are stale, not failed over.
+const SDWAN_RULE_MAX_AGE_MINUTES = 120;
+// How far back the flapping and SLA-compliance feeds read the detail tier
+// (default detail retention is 7 days, so 24h is always there).
+const SDWAN_HISTORY_WINDOW_HOURS = 24;
+// The 24h pass is the heaviest read here (one row per member × health check ×
+// scrape), and a day's figure barely moves in two minutes, so it gets its own
+// longer cache under the 10s per-feed one.
+const SDWAN_HISTORY_CACHE_TTL_MS = 120_000;
+const SDWAN_PARENT_HOPS = 4;
+const SDWAN_PARENT_LOOKBACK_HOURS = 48;
+
+// Rule modes where member ORDER is the preference: "sla" (lowest cost) and
+// "manual" take the first acceptable member in order, so traffic on a later
+// one has moved off the preferred link. "priority"/"auto" pick by measured
+// quality and "load-balance" spreads, so any member is normal there.
+const SDWAN_ORDERED_RULE_MODES = ["sla", "manual"];
+
+function sdwanIdClause(assetIds: string[] | null, param: number, alias = ""): string {
+  return assetIds ? ` AND ${alias}"assetId" = ANY($${param}::text[])` : "";
+}
+
+/** `${assetId}|${member}` → the interface it rides: an overlay's phase-1
+ *  interface, or a VLAN sub-interface's physical port. Same sources as the
+ *  engine's rule-90 parent walk (notificationEngine → loadSdwanParents). */
+async function loadSdwanMemberParents(assetIds: string[], names: string[]): Promise<Map<string, string>> {
+  if (assetIds.length === 0) return new Map();
+  const [tunnels, vlans] = await Promise.all([
+    prisma.$queryRawUnsafe<Array<{ assetId: string; tunnelName: string; parentInterface: string }>>(
+      `SELECT DISTINCT ON ("assetId", "tunnelName") "assetId", "tunnelName", "parentInterface"
+         FROM "asset_ipsec_tunnel_samples"
+        WHERE "assetId" = ANY($1::text[]) AND "tunnelName" = ANY($2::text[])
+          AND "parentInterface" IS NOT NULL
+          AND "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(hours => $3::int)
+        ORDER BY "assetId", "tunnelName", "timestamp" DESC`,
+      assetIds, names, SDWAN_PARENT_LOOKBACK_HOURS,
+    ),
+    prisma.assetInterface.findMany({
+      where: { assetId: { in: assetIds }, ifType: "vlan", ifParent: { not: null } },
+      select: { assetId: true, ifName: true, ifParent: true },
+    }),
+  ]);
+  const out = new Map<string, string>();
+  for (const v of vlans) if (v.ifParent) out.set(`${v.assetId}|${v.ifName}`, v.ifParent);
+  for (const t of tunnels) out.set(`${t.assetId}|${t.tunnelName}`, t.parentInterface);
+  return out;
+}
+
+/** The physical path a member rides: its parent chain walked to the top. */
+export function sdwanPathOf(assetId: string, member: string, parentOf: Map<string, string>): string {
+  let name = member;
+  const seen = new Set([name]);
+  for (let hop = 0; hop < SDWAN_PARENT_HOPS; hop++) {
+    const parent = parentOf.get(`${assetId}|${name}`);
+    if (!parent || seen.has(parent)) break;
+    seen.add(parent);
+    name = parent;
+  }
+  return name;
+}
+
+export interface SdwanRuleRow {
+  assetId: string;
+  hostname: string | null;
+  ipAddress: string | null;
+  site: string;
+  ruleName: string;
+  mode: string | null;
+  /** "down" = no usable member; "failedOver" = carrying traffic on a member
+   *  that is not the rule's preferred one. */
+  state: "down" | "failedOver";
+  selectedMember: string | null;
+  preferredMembers: string[];
+  updatedAt: Date;
+  alertSeverity?: string;
+  alertRank?: number;
+}
+
+/** Which members a rule prefers: the members of its first priority zone when
+ *  it selects by zone (zone membership from the perf-SLA samples), else its
+ *  first configured member. */
+export function sdwanPreferredMembers(
+  rule: { availableMembers: string[]; priorityZones: string[] },
+  zoneOf: (member: string) => string | null | undefined,
+): string[] {
+  const first = rule.priorityZones[0];
+  if (first) {
+    const inZone = rule.availableMembers.filter((m) => zoneOf(m) === first);
+    if (inZone.length) return inZone;
+  }
+  return rule.availableMembers.length ? [rule.availableMembers[0]] : [];
+}
+
+/**
+ * SD-WAN feed 1 — enabled service rules that are down, or are carrying traffic
+ * on a member other than the one they prefer (traffic has failed over even
+ * though nothing may be down yet). Rules updated within
+ * SDWAN_RULE_MAX_AGE_MINUTES only. The candidate set is narrowed in SQL (down,
+ * or selected ≠ first member on an order-preferring mode), then zone-based
+ * rules are re-judged against their first zone's members.
+ */
+export async function getSdwanRuleFailovers(limit: number | null = 100, assetIds: string[] | null = null): Promise<SdwanRuleRow[]> {
+  const params: unknown[] = [SDWAN_RULE_MAX_AGE_MINUTES, SDWAN_ORDERED_RULE_MODES];
+  if (assetIds) params.push(assetIds);
+  const rules = await prisma.$queryRawUnsafe<Array<{
+    assetId: string; ruleName: string; mode: string | null; status: string;
+    selectedMember: string | null; availableMembers: string[]; priorityZones: string[]; updatedAt: Date;
+  }>>(
+    `SELECT "assetId", "ruleName", "mode", "status", "selectedMember", "availableMembers", "priorityZones", "updatedAt"
+       FROM "asset_sdwan_rules"
+      WHERE "updatedAt" > (now() AT TIME ZONE 'UTC') - make_interval(mins => $1::int)
+        AND ("enabled" IS NULL OR "enabled")
+        AND ("status" = 'down'
+             OR ("selectedMember" IS NOT NULL AND cardinality("availableMembers") > 1
+                 AND "selectedMember" <> "availableMembers"[1]
+                 AND ("mode" IS NULL OR "mode" = ANY($2::text[]))))${sdwanIdClause(assetIds, 3)}
+      ORDER BY "assetId", "ruleName"`,
+    ...params,
+  );
+  if (rules.length === 0) return [];
+  // Zone membership only matters for zone-preferring rules; skip the read otherwise.
+  const zoneGates = Array.from(new Set(rules.filter((r) => r.status !== "down" && r.priorityZones.length).map((r) => r.assetId)));
+  const zones = new Map<string, string | null>();
+  if (zoneGates.length) {
+    const z = await prisma.$queryRawUnsafe<Array<{ assetId: string; link: string; zone: string | null }>>(
+      `SELECT DISTINCT ON ("assetId", "link") "assetId", "link", "zone"
+         FROM "asset_perf_sla_samples"
+        WHERE "assetId" = ANY($1::text[])
+          AND "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(mins => $2::int)
+        ORDER BY "assetId", "link", "timestamp" DESC`,
+      zoneGates, SDWAN_RULE_MAX_AGE_MINUTES,
+    );
+    for (const r of z) zones.set(`${r.assetId}|${r.link}`, r.zone);
+  }
+  const byId = await hydrateDownFeedOwners(Array.from(new Set(rules.map((r) => r.assetId))));
+  const out: SdwanRuleRow[] = [];
+  for (const r of rules) {
+    const a = byId.get(r.assetId);
+    if (!a) continue;
+    const preferred = sdwanPreferredMembers(r, (m) => zones.get(`${r.assetId}|${m}`));
+    const down = r.status === "down";
+    if (!down && (!r.selectedMember || preferred.includes(r.selectedMember))) continue;
+    out.push({
+      assetId: a.id, hostname: a.hostname, ipAddress: a.ipAddress, site: siteOf(a),
+      ruleName: r.ruleName, mode: r.mode, state: down ? "down" : "failedOver",
+      selectedMember: r.selectedMember, preferredMembers: preferred, updatedAt: r.updatedAt,
+    });
+  }
+  // Down rules lead (no usable member beats a working detour), then gate, rule.
+  out.sort((x, y) => (x.state === y.state ? 0 : x.state === "down" ? -1 : 1));
+  const capped = limit != null ? out.slice(0, limit) : out;
+  return severityFirst(await attachAlertSeverity(capped, (r) => r.assetId, stateRel("sdwanSelectedMember", "sdwanRuleStatus")));
+}
+
+export interface SdwanRedundancyRow {
+  assetId: string;
+  hostname: string | null;
+  ipAddress: string | null;
+  site: string;
+  alivePaths: number;
+  totalPaths: number;
+  /** The physical paths still carrying a live member. */
+  alive: string[];
+  /** The members that are down (dead in at least one health check). */
+  downMembers: string[];
+  lastSampleAt: Date;
+  alertSeverity?: string;
+  alertRank?: number;
+}
+
+/** Fold one gate's latest readings into paths. A member is alive when every
+ *  health check probing it calls it up (the SD-WAN Members table's verdict);
+ *  a path is alive when any member riding it is. */
+export function foldSdwanPaths(
+  assetId: string,
+  readings: Array<{ link: string; state: string }>,
+  parentOf: Map<string, string>,
+): { paths: Map<string, boolean>; downMembers: string[] } {
+  const memberUp = new Map<string, boolean>();
+  for (const r of readings) memberUp.set(r.link, (memberUp.get(r.link) ?? true) && r.state === "up");
+  const paths = new Map<string, boolean>();
+  const downMembers: string[] = [];
+  for (const [member, up] of memberUp) {
+    const path = sdwanPathOf(assetId, member, parentOf);
+    paths.set(path, (paths.get(path) ?? false) || up);
+    if (!up) downMembers.push(member);
+  }
+  downMembers.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return { paths, downMembers };
+}
+
+/**
+ * SD-WAN feed 2 — gates down to one WAN path (or none). Members are folded onto
+ * the physical path they ride (an overlay tunnel counts as its underlay port,
+ * a VLAN sub-interface as its port), so two overlays over one ISP are one path,
+ * not redundancy. Only gates with at least two paths are judged: a single-path
+ * site never had redundancy to lose. Worst first (fewest alive paths).
+ */
+export async function getSdwanSingleLinkSites(limit: number | null = 100, assetIds: string[] | null = null): Promise<SdwanRedundancyRow[]> {
+  const params: unknown[] = [SDWAN_CURRENT_WINDOW_MINUTES];
+  if (assetIds) params.push(assetIds);
+  const latest = await prisma.$queryRawUnsafe<Array<{ assetId: string; link: string; healthCheck: string; state: string; timestamp: Date }>>(
+    `SELECT DISTINCT ON ("assetId", "link", "healthCheck") "assetId", "link", "healthCheck", "state", "timestamp"
+       FROM "asset_perf_sla_samples"
+      WHERE "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(mins => $1::int)${sdwanIdClause(assetIds, 2)}
+      ORDER BY "assetId", "link", "healthCheck", "timestamp" DESC`,
+    ...params,
+  );
+  if (latest.length === 0) return [];
+  const byGate = new Map<string, typeof latest>();
+  for (const r of latest) {
+    const list = byGate.get(r.assetId);
+    if (list) list.push(r); else byGate.set(r.assetId, [r]);
+  }
+  const gateIds = Array.from(byGate.keys());
+  const [parentOf, owners] = await Promise.all([
+    loadSdwanMemberParents(gateIds, Array.from(new Set(latest.map((r) => r.link)))),
+    hydrateDownFeedOwners(gateIds),
+  ]);
+  const out: SdwanRedundancyRow[] = [];
+  for (const [assetId, readings] of byGate) {
+    const a = owners.get(assetId);
+    if (!a) continue;
+    const { paths, downMembers } = foldSdwanPaths(assetId, readings, parentOf);
+    const alive = Array.from(paths).filter(([, up]) => up).map(([p]) => p).sort();
+    if (paths.size < 2 || alive.length > 1) continue;
+    let lastSampleAt = readings[0].timestamp;
+    for (const r of readings) if (r.timestamp > lastSampleAt) lastSampleAt = r.timestamp;
+    out.push({
+      assetId, hostname: a.hostname, ipAddress: a.ipAddress, site: siteOf(a),
+      alivePaths: alive.length, totalPaths: paths.size, alive, downMembers, lastSampleAt,
+    });
+  }
+  out.sort((x, y) => x.alivePaths - y.alivePaths || y.totalPaths - x.totalPaths);
+  const capped = limit != null ? out.slice(0, limit) : out;
+  return severityFirst(await attachAlertSeverity(capped, (r) => r.assetId, stateRel("sdwanMemberState")));
+}
+
+/** TopN hydrate for the SD-WAN rankings: several rows per gate (one per member
+ *  or health check), each with its own detail, owners filtered like the down
+ *  feeds. Order preserved. */
+async function hydrateSdwanTopN(ordered: Array<{ assetId: string; value: number; detail: string }>): Promise<TopNRow[]> {
+  if (ordered.length === 0) return [];
+  const byId = await hydrateDownFeedOwners(Array.from(new Set(ordered.map((r) => r.assetId))));
+  const out: TopNRow[] = [];
+  for (const r of ordered) {
+    const a = byId.get(r.assetId);
+    if (a) out.push({ id: a.id, hostname: a.hostname, ipAddress: a.ipAddress, value: r.value, detail: r.detail, site: siteOf(a) });
+  }
+  return out;
+}
+
+const SDWAN_METRIC_RELEVANCE = metricRel("sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss");
+
+function fmtSlaValue(v: number, unit: string): string {
+  return unit === "%" ? `${Math.round(v * 100) / 100}%` : `${Math.round(v * 10) / 10} ${unit}`;
+}
+
+/** How much of its SLA target a reading uses, as a percentage, on the metric
+ *  closest to (or furthest over) its target. Null when no metric has both a
+ *  reading and a positive target. */
+export function sdwanSlaUsage(r: {
+  latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
+  latencyThresholdMs: number | null; jitterThresholdMs: number | null; packetLossThreshold: number | null;
+}): { pct: number; label: string } | null {
+  const metrics: Array<[string, string, number | null, number | null]> = [
+    ["latency", "ms", r.latencyMs, r.latencyThresholdMs],
+    ["jitter", "ms", r.jitterMs, r.jitterThresholdMs],
+    ["loss", "%", r.packetLoss, r.packetLossThreshold],
+  ];
+  let best: { pct: number; label: string } | null = null;
+  for (const [name, unit, v, t] of metrics) {
+    if (v == null || t == null || !(t > 0) || !Number.isFinite(v)) continue;
+    const pct = (v / t) * 100;
+    if (!best || pct > best.pct) best = { pct, label: `${name} ${fmtSlaValue(v, unit)} of ${fmtSlaValue(t, unit)}` };
+  }
+  return best && { pct: Math.round(best.pct * 10) / 10, label: best.label };
+}
+
+/**
+ * SD-WAN feed 3 — SLA headroom: each live (health check, member) pair ranked by
+ * how much of its SLA target its readings use, averaged over the last
+ * SDWAN_CURRENT_WINDOW_MINUTES (one spiky scrape does not top the list). Value
+ * = % of target on the worst metric, so 100 is the line and past it is out of
+ * SLA. Pairs whose health check sets no target, and members currently dead
+ * (the failures widget's business), are left out.
+ */
+export async function getSdwanSlaHeadroom(limit: number | null = 100, assetIds: string[] | null = null): Promise<TopNRow[]> {
+  const params: unknown[] = [SDWAN_CURRENT_WINDOW_MINUTES];
+  if (assetIds) params.push(assetIds);
+  const rows = await prisma.$queryRawUnsafe<Array<{
+    assetId: string; healthCheck: string; link: string; state: string;
+    latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
+    latencyThresholdMs: number | null; jitterThresholdMs: number | null; packetLossThreshold: number | null;
+  }>>(
+    `SELECT "assetId", "healthCheck", "link",
+            (array_agg("state" ORDER BY "timestamp" DESC))[1] AS "state",
+            avg("latencyMs") FILTER (WHERE "state" = 'up') AS "latencyMs",
+            avg("jitterMs") FILTER (WHERE "state" = 'up') AS "jitterMs",
+            avg("packetLoss") FILTER (WHERE "state" = 'up') AS "packetLoss",
+            max("latencyThresholdMs") AS "latencyThresholdMs",
+            max("jitterThresholdMs") AS "jitterThresholdMs",
+            max("packetLossThreshold") AS "packetLossThreshold"
+       FROM "asset_perf_sla_samples"
+      WHERE "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(mins => $1::int)${sdwanIdClause(assetIds, 2)}
+      GROUP BY "assetId", "healthCheck", "link"`,
+    ...params,
+  );
+  const ranked: Array<{ assetId: string; value: number; detail: string }> = [];
+  for (const r of rows) {
+    if (r.state !== "up") continue;
+    const u = sdwanSlaUsage(r);
+    if (u) ranked.push({ assetId: r.assetId, value: u.pct, detail: `${r.healthCheck} · ${r.link} · ${u.label}` });
+  }
+  ranked.sort((a, b) => b.value - a.value);
+  const capped = limit != null ? ranked.slice(0, limit) : ranked;
+  return topNWithSeverity(await hydrateSdwanTopN(capped), SDWAN_METRIC_RELEVANCE);
+}
+
+export interface SdwanPairStats {
+  assetId: string; link: string; healthCheck: string;
+  drops1h: number; drops24h: number;
+  n1h: number; in1h: number; n24h: number; in24h: number;
+  hasSla: boolean;
+}
+
+const sdwanHistoryCache = createTtlCache<SdwanPairStats[]>({ ttlMs: SDWAN_HISTORY_CACHE_TTL_MS, maxEntries: 64 });
+
+/** Test hook — drop the 24h SD-WAN pass cache. */
+export function clearSdwanHistoryCache(): void {
+  sdwanHistoryCache.invalidate();
+}
+
+/**
+ * The one 24h pass the flapping and compliance feeds share: per (gate, member,
+ * health check), how many times the member went up → down, and how many
+ * scrapes were in SLA (alive and no reading over its target — FortiOS fails
+ * the SLA when a value is ABOVE the threshold, sdwanSegmentVerdict's rule),
+ * each for the last hour and the last day. One scan of the detail tier,
+ * cached SDWAN_HISTORY_CACHE_TTL_MS. The scan is always fleet-wide and the
+ * widget's asset filter is applied to its output (one row per gate × member ×
+ * health check, a few thousand at most): keyed per filter, every region-scoped
+ * wallboard would run its own 24h scan.
+ */
+async function readSdwanPairStats(assetIds: string[] | null): Promise<SdwanPairStats[]> {
+  const all = await sdwanHistoryCache.getOrCompute("all", async () =>
+    prisma.$queryRawUnsafe<SdwanPairStats[]>(
+      `WITH s AS (
+         SELECT "assetId", "link", "healthCheck", "timestamp", "state",
+                "latencyThresholdMs", "jitterThresholdMs", "packetLossThreshold",
+                ("state" = 'up'
+                  AND NOT COALESCE("latencyMs" > "latencyThresholdMs", false)
+                  AND NOT COALESCE("jitterMs" > "jitterThresholdMs", false)
+                  AND NOT COALESCE("packetLoss" > "packetLossThreshold", false)) AS "inSla",
+                -- Partitioned in the (assetId, healthCheck, link, timestamp) index's order.
+                lag("state") OVER (PARTITION BY "assetId", "healthCheck", "link" ORDER BY "timestamp") AS "prev",
+                "timestamp" > (now() AT TIME ZONE 'UTC') - interval '1 hour' AS "lastHour"
+           FROM "asset_perf_sla_samples"
+          WHERE "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(hours => $1::int)
+       )
+       SELECT "assetId", "link", "healthCheck",
+              count(*) FILTER (WHERE "prev" = 'up' AND "state" <> 'up' AND "lastHour")::int AS "drops1h",
+              count(*) FILTER (WHERE "prev" = 'up' AND "state" <> 'up')::int AS "drops24h",
+              count(*) FILTER (WHERE "lastHour")::int AS "n1h",
+              count(*) FILTER (WHERE "lastHour" AND "inSla")::int AS "in1h",
+              count(*)::int AS "n24h",
+              count(*) FILTER (WHERE "inSla")::int AS "in24h",
+              bool_or("latencyThresholdMs" IS NOT NULL OR "jitterThresholdMs" IS NOT NULL OR "packetLossThreshold" IS NOT NULL) AS "hasSla"
+         FROM s
+        GROUP BY "assetId", "healthCheck", "link"`,
+      SDWAN_HISTORY_WINDOW_HOURS,
+    ));
+  if (!assetIds) return all;
+  const keep = new Set(assetIds);
+  return all.filter((s) => keep.has(s.assetId));
+}
+
+/** Up → down drops per (gate, member): the WORST health check's count, since a
+ *  member that flaps shows in every health check probing it and summing them
+ *  would count one bounce several times. */
+export function foldSdwanFlaps(stats: SdwanPairStats[], window: "1h" | "24h"): Array<{ assetId: string; value: number; detail: string }> {
+  const byMember = new Map<string, { assetId: string; link: string; drops: number; hc: string }>();
+  for (const s of stats) {
+    const drops = window === "1h" ? s.drops1h : s.drops24h;
+    if (drops <= 0) continue;
+    const k = `${s.assetId}|${s.link}`;
+    const cur = byMember.get(k);
+    if (!cur || drops > cur.drops) byMember.set(k, { assetId: s.assetId, link: s.link, drops, hc: s.healthCheck });
+  }
+  return Array.from(byMember.values())
+    .map((m) => ({ assetId: m.assetId, value: m.drops, detail: `${m.link} · ${m.hc}` }))
+    .sort((a, b) => b.value - a.value);
+}
+
+/** Time out of SLA per (gate, health check, member), % of scrapes, worst
+ *  first; pairs that never left SLA are dropped. */
+export function foldSdwanCompliance(stats: SdwanPairStats[], window: "1h" | "24h"): Array<{ assetId: string; value: number; detail: string }> {
+  const out: Array<{ assetId: string; value: number; detail: string }> = [];
+  for (const s of stats) {
+    const n = window === "1h" ? s.n1h : s.n24h;
+    const inSla = window === "1h" ? s.in1h : s.in24h;
+    if (n <= 0 || inSla >= n) continue;
+    const outPct = Math.round(((n - inSla) / n) * 10000) / 100;
+    out.push({ assetId: s.assetId, value: outPct, detail: `${s.healthCheck} · ${s.link}${s.hasSla ? "" : " · no SLA target (alive time)"}` });
+  }
+  return out.sort((a, b) => b.value - a.value);
+}
+
+/** SD-WAN feed 4 — flapping members: up → down drops in the window. */
+export async function getSdwanFlappingLinks(window: "1h" | "24h", limit: number | null = 100, assetIds: string[] | null = null): Promise<TopNRow[]> {
+  const ranked = foldSdwanFlaps(await readSdwanPairStats(assetIds), window);
+  const capped = limit != null ? ranked.slice(0, limit) : ranked;
+  return topNWithSeverity(await hydrateSdwanTopN(capped), stateRel("sdwanMemberState"));
+}
+
+/** SD-WAN feed 5 — SLA compliance: % of the window each (health check, member)
+ *  spent out of SLA. Value is the time OUT of SLA so a bigger bar is worse,
+ *  like every other ranking; the widget labels it as compliance. */
+export async function getSdwanSlaCompliance(window: "1h" | "24h", limit: number | null = 100, assetIds: string[] | null = null): Promise<TopNRow[]> {
+  const ranked = foldSdwanCompliance(await readSdwanPairStats(assetIds), window);
+  const capped = limit != null ? ranked.slice(0, limit) : ranked;
+  return topNWithSeverity(await hydrateSdwanTopN(capped), SDWAN_METRIC_RELEVANCE);
+}
+
 // ─── Per-feed payload assembly + short-TTL cache ─────────────────────────────
 
 export const NOC_FEED_NAMES = [
@@ -1629,6 +2066,8 @@ export const NOC_FEED_NAMES = [
   "topCpu", "topMemory", "slowestResponse", "packetLoss", "diskUsage", "temperature",
   "storageForecast", "stalePolls", "sitesWithIssues", "recentReboots", "activeAlerts",
   "maintenanceSchedules",
+  "sdwanRuleFailovers", "sdwanSingleLink", "sdwanSlaHeadroom",
+  "sdwanFlaps1h", "sdwanFlaps24h", "sdwanCompliance1h", "sdwanCompliance24h",
 ] as const;
 export type NocFeedName = (typeof NOC_FEED_NAMES)[number];
 
@@ -1704,6 +2143,15 @@ const NOC_FEEDS: Record<NocFeedName, {
   stalePolls:       { gate: "assets", empty: [], run: (L, ids) => getStalePolls(3, L(50), ids) },
   sitesWithIssues:  { gate: "assets", empty: [], run: (L, ids) => getSitesWithIssues(L(25), ids) },
   recentReboots:    { gate: "events", empty: [], run: (L, ids) => getRecentReboots(72, L(20), ids) },
+  // SD-WAN (FortiOS only; empty on an install without SD-WAN gates). The four
+  // windowed rankings share one cached 24h pass (readSdwanPairStats).
+  sdwanRuleFailovers: { gate: "assets", empty: [], run: (L, ids) => getSdwanRuleFailovers(L(100), ids) },
+  sdwanSingleLink:    { gate: "assets", empty: [], run: (L, ids) => getSdwanSingleLinkSites(L(100), ids) },
+  sdwanSlaHeadroom:   { gate: "assets", empty: [], run: (L, ids) => getSdwanSlaHeadroom(L(100), ids) },
+  sdwanFlaps1h:       { gate: "assets", empty: [], run: (L, ids) => getSdwanFlappingLinks("1h", L(100), ids) },
+  sdwanFlaps24h:      { gate: "assets", empty: [], run: (L, ids) => getSdwanFlappingLinks("24h", L(100), ids) },
+  sdwanCompliance1h:  { gate: "assets", empty: [], run: (L, ids) => getSdwanSlaCompliance("1h", L(100), ids) },
+  sdwanCompliance24h: { gate: "assets", empty: [], run: (L, ids) => getSdwanSlaCompliance("24h", L(100), ids) },
   // The one maintenance-sourced feed. Its data is the maintenance SCHEDULE
   // (names, windows, target counts), which `assets:read` has no claim on, so
   // it gates on maintenanceManagement — see the `allowed` map below, which is
