@@ -816,11 +816,21 @@ Before rebooting a FortiGate directly, Polaris checks that the device answering
 reports the asset's serial number and is not in an HA cluster, and refuses
 otherwise.
 
+**Reason.** The dialog has a **Reason** field — say why the device is being
+rebooted (one line, up to 500 characters). It is recorded on the asset's
+Events, shown beside the last reboot in the dialog and in a run's log, on the
+[Events](Events) calendar, and in the results email of a scheduled reboot. It
+is optional unless your install has turned on **Require a reason for every
+reboot** ([Server Settings](Server-Settings#reboots)); then the field is marked
+with a red asterisk and the reboot or booking cannot be sent without it — the
+same applies on the phone and over the API ([rule 115](Business-Rules#rule-115)).
+A reboot an automation books gives the automation's name as its reason.
+
 **Scheduling a reboot.** Tick **Schedule for later** in the same dialog and give
 a time (your browser's time zone) and who gets the results email, exactly as for
 a [scheduled firmware upgrade](#firmware). While it waits, a **Reboot scheduled
-…** chip sits beside the button; click it to change the time or recipients, or
-to **Cancel scheduled reboot**. When the time comes every check is taken again;
+…** chip sits beside the button; click it to change the time, recipients or
+reason, or to **Cancel scheduled reboot**. When the time comes every check is taken again;
 a reboot first reached more than 15 minutes late is not sent, and the recipients
 hear the outcome either way. A device that cannot be rebooted right now — an
 agent host that is offline, say — can still be booked: the dialog opens with

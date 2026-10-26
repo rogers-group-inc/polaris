@@ -4209,12 +4209,21 @@ var _brandingLoaded = false;
 var DEFAULT_LOGO_URLS = ["/img/brand/polaris-symbol-dark.png", "/logo.png"];
 var _brandingData = { appName: "Polaris", subtitle: "Network Management Tool", logoUrl: "/img/brand/polaris-symbol-dark.png" };
 
+var _rebootSettingsData = null;
+
 async function loadCustomizationTab() {
   var container = document.getElementById("tab-customization");
   container.innerHTML = '<div class="settings-card"><p class="empty-state">Loading...</p></div>';
 
   try {
-    _brandingData = await api.serverSettings.getBranding();
+    // The Reboots card's setting rides along; a failed read renders the card
+    // as an error rather than failing the whole tab.
+    var both = await Promise.all([
+      api.serverSettings.getBranding(),
+      api.serverSettings.rebootGet().then(function (r) { return r.reboot; }, function () { return null; }),
+    ]);
+    _brandingData = both[0];
+    _rebootSettingsData = both[1];
     _brandingLoaded = true;
     renderCustomizationTab();
   } catch (err) {
@@ -4336,6 +4345,7 @@ function renderCustomizationTab() {
       '</div>' +
       '<button class="btn btn-primary" id="btn-tempunit-save">Save</button>' +
     '</div>' +
+    _rebootSettingsCardHtml(_rebootSettingsData) +
     '</div>';
 
   // Wire save buttons — every card PUTs the whole branding payload, so any one
@@ -4346,6 +4356,8 @@ function renderCustomizationTab() {
   // Re-render after this one: the preview swaps to (or away from) the
   // server-composited accent version.
   if (placementBtn) placementBtn.addEventListener("click", function () { saveBranding(true); });
+  var rebootBtn = document.getElementById("btn-reboot-settings-save");
+  if (rebootBtn) rebootBtn.addEventListener("click", saveRebootSettings);
 
   // Wire logo upload
   wireUploadArea("logo-upload-area", "logo-file-input", uploadLogo);
@@ -4354,6 +4366,49 @@ function renderCustomizationTab() {
   var resetBtn = document.getElementById("btn-logo-reset");
   if (resetBtn) {
     resetBtn.addEventListener("click", resetLogo);
+  }
+}
+
+/**
+ * The Reboots card (business rule 115(d)): whether every reboot — now or
+ * booked, from the desktop, the phone or the API — must say why. Pure.
+ */
+function _rebootSettingsCardHtml(s) {
+  if (!s) {
+    return '<div class="settings-card"><h4>Reboots</h4><p class="empty-state">Could not load the reboot settings.</p></div>';
+  }
+  return '<div class="settings-card">' +
+    '<h4>Reboots</h4>' +
+    '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+      'The Reboot dialog always offers a <strong>Reason</strong> field. It is recorded on the device’s Events, ' +
+      'shown in its reboot history, and printed in the results email of a scheduled reboot.' +
+    '</p>' +
+    '<label style="display:flex;align-items:flex-start;gap:0.5rem">' +
+      '<input type="checkbox" id="f-reboot-require-note"' + (s.requireNote ? ' checked' : '') + ' style="margin-top:0.2rem">' +
+      '<span><strong>Require a reason for every reboot</strong>' +
+        '<span style="display:block;font-size:0.78rem;color:var(--color-text-tertiary)">' +
+          'A reboot or a scheduled reboot without one is refused — in the dialog, on the phone and over the API. ' +
+          'Reboots an automation books give the automation’s name as their reason. Bookings made before this was turned on still run.' +
+        '</span>' +
+      '</span>' +
+    '</label>' +
+    '<button class="btn btn-primary" id="btn-reboot-settings-save" style="margin-top:0.9rem">Save</button>' +
+  '</div>';
+}
+
+async function saveRebootSettings() {
+  var btn = document.getElementById("btn-reboot-settings-save");
+  var box = document.getElementById("f-reboot-require-note");
+  if (!btn || !box) return;
+  btn.disabled = true;
+  try {
+    var res = await api.serverSettings.rebootPut({ requireNote: box.checked });
+    _rebootSettingsData = res.reboot;
+    showToast(res.reboot.requireNote ? "A reason is now required for every reboot" : "The reboot reason is now optional");
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    btn.disabled = false;
   }
 }
 

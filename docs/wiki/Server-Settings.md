@@ -11,7 +11,7 @@ only to an administrator.
 | **Identification** | `serverSettingsSystem` | DNS, MAC & vendor identification, device icons, device types, tags |
 | **Credentials** | `credentials` | stored SNMP / SSH / WinRM / REST / HTTP secrets, plus the MIB Database (`mibDatabase`) and Manufacturer Profiles (`manufacturerProfiles`) cards |
 | **Repository** | `firmware` | firmware images for switches, access points and FortiGates, and the device logins or API tokens that apply them |
-| **Customization** | `serverSettingsSystem` | application name and subtitle, logo, display units |
+| **Customization** | `serverSettingsSystem` | application name and subtitle, logo, display units, reboots |
 | **Time & NTP** | `serverSettingsSystem` | NTP servers and the timezone override |
 | **Web Server** | `serverSettingsSystem` | HTTPS certificate, nginx, Dash wallboard, trusted CAs |
 | **Maintenance** | `serverSettingsSystem` to look; `serverSettingsData` for backup, restore, download, updates and restart | database and capacity, updates, lifecycle, backups |
@@ -306,12 +306,26 @@ real devices. A flash that fails partway can leave a device unbootable.
 
 ## Customization
 
-Three cards: **Application Name** (name and subtitle — the name shows in browser
+Four cards: **Application Name** (name and subtitle — the name shows in browser
 tabs and PDF exports), **Logo** (upload, where it appears — `logoOnLogin` /
-`logoOnSidebar` — and an optional Polaris-star accent on its corner), and
+`logoOnSidebar` — and an optional Polaris-star accent on its corner),
 **Display Units** (Celsius or Fahrenheit for hardware-sensor temperatures;
-display only — samples and automation thresholds stay in °C). The unit rides
-the branding payload and applies to every operator and the wallboard.
+display only — samples and automation thresholds stay in °C), and **Reboots**.
+The unit rides the branding payload and applies to every operator and the
+wallboard.
+
+### Reboots
+
+The [Reboot](Assets#reboot) dialog always has a **Reason** field. Tick
+**Require a reason for every reboot** to make it mandatory: a reboot or a
+scheduled reboot without a reason is then refused — in the dialog, on the phone
+and over the API (`POST /assets/:id/reboot` and its `/schedules` answer 400).
+Off by default. Reboots booked before you turned it on still run as booked, and
+a reboot an automation books always gives the automation's name as its reason,
+so the switch never stops an automation. Turning it on or off is recorded as an
+Event. Saving needs **Read-Write** on `serverSettingsSystem`; the people who
+reboot devices only need **Read-Write on Assets** to see whether the field is
+required ([rule 115](Business-Rules#rule-115)).
 
 **The logo is picked by theme *family*, never by id** ([rule 27](Business-Rules#rule-27)).
 The shipped art is theme-paired, so painting the wrong variant makes the logo

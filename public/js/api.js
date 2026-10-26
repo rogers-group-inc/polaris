@@ -1064,7 +1064,7 @@ const api = {
     // its pending booking, `schedule`), reboot now (assets:write), the run
     // history, bookings, and an agent host's opt-in (assets:fullwrite).
     reboot:                 (id)            => request("GET",    `/assets/${id}/reboot`),
-    startReboot:            (id)            => _bookingWrite(request("POST",   `/assets/${id}/reboot`)),
+    startReboot:            (id, body)      => _bookingWrite(request("POST",   `/assets/${id}/reboot`, body || {})),
     rebootRuns:             (id)            => request("GET",    `/assets/${id}/reboot/runs`),
     rebootRun:              (id, runId)     => request("GET",    `/assets/${id}/reboot/runs/${encodeURIComponent(runId)}`),
     rebootScheduleDefaults: (id)            => request("GET",    `/assets/${id}/reboot/schedules/defaults`),
@@ -1514,6 +1514,9 @@ const api = {
     // IPv6 switch (rule 128): set at install from the host, then { enabled } toggles it.
     ipv6Get:              ()      => request("GET",  "/server-settings/ipv6"),
     ipv6Put:              (body)  => request("PUT",  "/server-settings/ipv6", body),
+    // Whether every reboot must say why (business rule 115(d)).
+    rebootGet:            ()      => request("GET",  "/server-settings/reboot"),
+    rebootPut:            (body)  => request("PUT",  "/server-settings/reboot", body),
     // Local login source-IP restriction (login form + password endpoints).
     // The GET also reports the caller's IP as Polaris resolves it, which is
     // what reveals a trust-proxy misconfiguration before the scope is trusted.

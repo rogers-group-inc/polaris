@@ -13,7 +13,8 @@
  *     but can be booked gets "Schedule reboot…" and the reason; the confirm is
  *     a stacked sheet that refuses to proceed until "I understand this device
  *     will go down" is ticked; reboot now POSTs, a booking sends the time and
- *     recipients.
+ *     recipients. The Reason field (rule 115(d)) rides both, and holds the
+ *     button while the install requires it and it is blank.
  *
  *   • NO EMPTY ROW — a device that reports no uptime and that Polaris cannot
  *     reboot shows no Uptime row at all.
@@ -155,7 +156,7 @@ describe("rebooting from the phone", () => {
     expect(ok.disabled).toBe(false);
     ok.click();
     await flush();
-    expect(startReboot).toHaveBeenCalledWith("gate");
+    expect(startReboot).toHaveBeenCalledWith("gate", {});
     expect(sheet()).toBeNull();
     expect(text(document.getElementById("asset-reboot-slot"))).toContain("Sending the reboot");
     await vi.advanceTimersByTimeAsync(5000);
@@ -189,8 +190,28 @@ describe("rebooting from the phone", () => {
     expect((document.getElementById("rb-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
     ok.click();
     await flush();
-    expect(scheduleReboot).toHaveBeenCalledWith("gate", expect.objectContaining({ notifyEmails: ["me@example.com"], scheduledFor: expect.stringMatching(/Z$/) }));
+    expect(scheduleReboot).toHaveBeenCalledWith("gate", expect.objectContaining({ notifyEmails: ["me@example.com"], scheduledFor: expect.stringMatching(/Z$/), note: null }));
     expect(startReboot).not.toHaveBeenCalled();
+  });
+
+  it("sends the reason with a reboot-now, and holds the button blank while one is required (rule 115(d))", async () => {
+    reboot = { ...reboot, noteRequired: true };
+    await openAsset("gate");
+    btn()!.click();
+    await flush();
+    const ok = document.getElementById("rb-confirm-ok") as HTMLButtonElement;
+    const ack = document.getElementById("rb-confirm-ack") as HTMLInputElement;
+    ack.checked = true;
+    ack.dispatchEvent(new Event("change"));
+    expect(ok.disabled).toBe(true);
+    const note = document.getElementById("rb-note") as HTMLInputElement;
+    expect(text(note.previousElementSibling)).toContain("*");
+    note.value = "  Stuck IPsec SAs  ";
+    note.dispatchEvent(new Event("input"));
+    expect(ok.disabled).toBe(false);
+    ok.click();
+    await flush();
+    expect(startReboot).toHaveBeenCalledWith("gate", { note: "Stuck IPsec SAs" });
   });
 });
 

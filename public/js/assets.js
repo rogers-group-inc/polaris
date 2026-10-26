@@ -7510,6 +7510,7 @@ async function _openRebootRunLogModal(assetId, runId) {
     var lines = (run.log || []).map(function (l) { return "[" + l.t + "] " + (l.level || "info").toUpperCase() + " " + l.msg; }).join("\n");
     openModal("Reboot — " + (run.authority || run.method || ""),
       '<p style="margin-bottom:0.5rem"><strong>' + escapeHtml(run.status) + '</strong>' + (run.error ? ' — ' + escapeHtml(run.error) : '') + '</p>' +
+      (run.note ? '<p style="margin-bottom:0.5rem;font-size:0.85rem"><span style="color:var(--color-text-secondary)">Reason:</span> ' + escapeHtml(run.note) + '</p>' : '') +
       '<pre style="max-height:60vh;overflow:auto;font-size:0.76rem;white-space:pre-wrap">' + escapeHtml(lines || "(no log lines)") + '</pre>',
       '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
   } catch (err) {
@@ -15102,6 +15103,7 @@ function _rebootControlHTML(a, rb) {
     parts.push('<button type="button" class="badge" id="btn-asset-reboot-scheduled" style="cursor:' + (canAct ? "pointer" : "default") +
       ';border:1px solid var(--color-border);background:transparent;color:var(--color-text-secondary)" title="' +
       escapeHtml("Results emailed to " + (rb.schedule.notifyEmails || []).join(", ") + " · booked by " + (rb.schedule.createdBy || "—") +
+        (rb.schedule.note ? " · reason: " + rb.schedule.note : "") +
         (rb.schedule.error ? " · waiting: " + rb.schedule.error : "") + (canAct ? " — click to change or cancel" : "")) + '">' +
       'Reboot scheduled ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + '</button>');
   }
@@ -15147,6 +15149,21 @@ function _rebootScheduleFieldsHTML(existing, defaults, warn) {
 }
 
 /**
+ * Why the device is being rebooted (business rule 115(d)). Required while the
+ * install's rebootConfig.requireNote is on — `rb.noteRequired`, read from
+ * GET /assets/:id/reboot so an assets:write user sees it without Server
+ * Settings access; the server refuses a blank one either way. Pure.
+ */
+function _rebootNoteFieldHTML(rb, value) {
+  var required = !!(rb && rb.noteRequired);
+  return '<div class="form-group" style="margin:0.75rem 0 0">' +
+      '<label for="rb-note">Reason' + (required ? ' <span style="color:var(--color-danger)">*</span>' : ' <span style="color:var(--color-text-tertiary);font-weight:normal">(optional)</span>') + '</label>' +
+      '<input type="text" id="rb-note" maxlength="500" placeholder="Why is this device being rebooted?" value="' + escapeHtml(value || "") + '">' +
+      '<p class="hint" style="margin:0.25rem 0 0">Recorded on the device’s Events and, for a scheduled reboot, in its results email.' + (required ? ' This install requires a reason for every reboot.' : '') + '</p>' +
+    '</div>';
+}
+
+/**
  * The reboot dialog's body. Pure. `opts.mode`:
  *   "choose"        — reboot now, or tick the box to schedule.
  *   "schedule-only" — the device cannot reboot right now (blocked / agent offline); the box is ticked and locked.
@@ -15165,7 +15182,8 @@ function _rebootModalHTML(a, rb, opts) {
         ? "The FortiSwitch restarts — every port on it, and everything connected through it, drops for a few minutes."
         : "The FortiAP restarts — its wireless clients disconnect for a few minutes.";
   var last = rb.lastRun
-    ? '<dt>Last reboot</dt><dd>' + escapeHtml(rb.lastRun.status) + ' · ' + escapeHtml(timeAgo(rb.lastRun.startedAt)) + ' by ' + escapeHtml(rb.lastRun.startedBy) + '</dd>'
+    ? '<dt>Last reboot</dt><dd>' + escapeHtml(rb.lastRun.status) + ' · ' + escapeHtml(timeAgo(rb.lastRun.startedAt)) + ' by ' + escapeHtml(rb.lastRun.startedBy) +
+        (rb.lastRun.note ? ' — ' + escapeHtml(rb.lastRun.note) : '') + '</dd>'
     : '';
   var device =
     '<div class="fw-approve-block"><strong>Device</strong><dl>' +
@@ -15176,7 +15194,8 @@ function _rebootModalHTML(a, rb, opts) {
       last +
     '</dl></div>';
   if (mode === "change") {
-    return device + '<div id="rb-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _rebootScheduleFieldsHTML(existing, opts.defaults, null) + '</div>';
+    return device + _rebootNoteFieldHTML(rb, existing && existing.note) +
+      '<div id="rb-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _rebootScheduleFieldsHTML(existing, opts.defaults, null) + '</div>';
   }
   var warnBox =
     '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
@@ -15198,7 +15217,7 @@ function _rebootModalHTML(a, rb, opts) {
         '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null) + '</div>' +
       '</div>';
   }
-  return device + warnBox + schedulePart;
+  return device + warnBox + _rebootNoteFieldHTML(rb, "") + schedulePart;
 }
 
 async function _openRebootModal(a, rb, existing) {
@@ -15220,11 +15239,13 @@ async function _openRebootModal(a, rb, existing) {
   var fields = document.getElementById("rb-sched-fields");
   var whenEl = document.getElementById("rb-sched-when");
   var emailsEl = document.getElementById("rb-sched-emails");
+  var noteEl = document.getElementById("rb-note");
   var btn = document.getElementById("btn-rb-go");
   function scheduling() { return mode === "change" || !!(later && later.checked); }
+  function noteValue() { return noteEl ? noteEl.value.trim() : ""; }
   function sync() {
     if (fields && later) fields.style.display = later.checked ? "" : "none";
-    var acked = mode === "change" || !!(ack && ack.checked);
+    var acked = (mode === "change" || !!(ack && ack.checked)) && (!rb.noteRequired || noteValue() !== "");
     if (scheduling()) {
       btn.textContent = existing ? "Save changes" : "Schedule reboot";
       btn.disabled = !(acked && whenEl && whenEl.value && emailsEl && _fwParseEmails(emailsEl.value).length > 0);
@@ -15234,7 +15255,7 @@ async function _openRebootModal(a, rb, existing) {
     }
   }
   [ack, later].forEach(function (el) { if (el) el.addEventListener("change", sync); });
-  [whenEl, emailsEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
+  [whenEl, emailsEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
 
   var cancelBooking = document.getElementById("btn-rb-cancel-booking");
   if (cancelBooking) {
@@ -15257,11 +15278,11 @@ async function _openRebootModal(a, rb, existing) {
     if (scheduling()) {
       var when = new Date(whenEl.value); // datetime-local parses as the browser's local time
       if (isNaN(when.getTime())) { showToast("Pick a date and time", "error"); return; }
-      var body = { scheduledFor: when.toISOString(), notifyEmails: _fwParseEmails(emailsEl.value) };
+      var body = { scheduledFor: when.toISOString(), notifyEmails: _fwParseEmails(emailsEl.value), note: noteValue() || null };
       call = existing ? api.assets.updateRebootSchedule(a.id, existing.id, body) : api.assets.scheduleReboot(a.id, body);
       done = existing ? "Scheduled reboot changed" : "Reboot scheduled for " + when.toLocaleString();
     } else {
-      call = api.assets.startReboot(a.id);
+      call = api.assets.startReboot(a.id, noteValue() ? { note: noteValue() } : {});
       done = "Reboot sent — Polaris is watching for the device to come back";
     }
     btn.disabled = true;

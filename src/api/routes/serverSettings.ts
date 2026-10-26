@@ -25,6 +25,7 @@ import { getOuiStatus, refreshOuiDatabase, getOuiOverrides, setOuiOverride, dele
 import { getReservationMacSettings, saveReservationMacSettings } from "../../services/reservationMacService.js";
 import { getDashSettings, saveDashSettings } from "../../services/dashSettingsService.js";
 import { getIpv6Status, setIpv6Enabled } from "../../services/ipv6GateService.js";
+import { getRebootSettings, saveRebootSettings } from "../../services/rebootSettingsService.js";
 import {
   getLoginAccessSettings,
   saveLoginAccessSettings,
@@ -1432,6 +1433,31 @@ router.put("/ipv6", requirePermission("serverSettingsSystem", "write"), async (r
   try {
     const { enabled } = Ipv6ToggleSchema.parse(req.body ?? {});
     res.json({ ipv6: await setIpv6Enabled(enabled, req.session?.username ?? "unknown") });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Reboots (business rule 115(d)) ─────────────────────────────────────────
+
+// Whether every reboot must say why. The reboot dialog reads the same answer
+// from GET /assets/:id/reboot (`noteRequired`), so an assets:write user who
+// cannot open Server Settings still sees the field marked required.
+const RebootSettingsSchema = z.object({ requireNote: z.boolean() }).strict();
+
+router.get("/reboot", async (_req, res, next) => {
+  try {
+    res.json({ reboot: await getRebootSettings() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/reboot", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+  try {
+    const body = RebootSettingsSchema.safeParse(req.body ?? {});
+    if (!body.success) throw new AppError(400, body.error.issues[0]?.message ?? "Invalid request");
+    res.json({ reboot: await saveRebootSettings(body.data, req.session?.username ?? "unknown") });
   } catch (err) {
     next(err);
   }

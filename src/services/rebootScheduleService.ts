@@ -29,6 +29,7 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { checkSchedulableReboot, startReboot, RebootRunConflictError, recordRebootCredentialUse } from "./rebootService.js";
+import { resolveRebootNote } from "./rebootSettingsService.js";
 import { normalizeRecipients, assertSchedulableTime, LATE_GRACE_MS, CONFLICT_WAIT_MS, MIN_LEAD_MS, MAX_RECIPIENTS, AUTOMATION_MAX_RECIPIENTS } from "./firmwareScheduleService.js";
 import { applyBrandLetterhead, sendEmailThroughChannel } from "./notificationDeliveryService.js";
 import { resolveSummaryChannel } from "./quietTimeSummaryService.js";
@@ -46,6 +47,8 @@ export interface RebootScheduleSummary {
   /** Cc / Bcc of the results email — set only by an automation's booking. */
   notifyCc: string[];
   notifyBcc: string[];
+  /** Why (rule 115(d)); carried onto the run when the booking fires. */
+  note: string | null;
   status: string;
   runId: string | null;
   error: string | null;
@@ -64,7 +67,7 @@ type Row = RebootScheduleSummary;
 
 function summarize(r: Row): RebootScheduleSummary {
   return {
-    id: r.id, assetId: r.assetId, scheduledFor: r.scheduledFor, notifyEmails: r.notifyEmails, notifyCc: r.notifyCc, notifyBcc: r.notifyBcc, status: r.status, runId: r.runId,
+    id: r.id, assetId: r.assetId, scheduledFor: r.scheduledFor, notifyEmails: r.notifyEmails, notifyCc: r.notifyCc, notifyBcc: r.notifyBcc, note: r.note, status: r.status, runId: r.runId,
     error: r.error, createdBy: r.createdBy, createdAt: r.createdAt, updatedBy: r.updatedBy, updatedAt: r.updatedAt,
     cancelledBy: r.cancelledBy, cancelledAt: r.cancelledAt, firedAt: r.firedAt, notifiedAt: r.notifiedAt, notifyError: r.notifyError,
   };
@@ -93,6 +96,8 @@ async function getOwn(assetId: string, scheduleId: string): Promise<Row> {
 
 export async function createRebootSchedule(input: {
   assetId: string; scheduledFor: Date; notifyEmails: string[]; actor: string; now?: Date; context?: Record<string, unknown>;
+  /** Why (rule 115(d)); refused blank while the install requires a note. */
+  note?: string | null;
   /** Cc / Bcc of the results email; an automation's booking only. */
   notifyCc?: string[]; notifyBcc?: string[];
   /** Widens each list's cap — an automation's lists are resolved, not typed. */
@@ -103,13 +108,14 @@ export async function createRebootSchedule(input: {
   const recipients = normalizeRecipients(input.notifyEmails, { max });
   const cc = normalizeRecipients(input.notifyCc ?? [], { max, allowEmpty: true });
   const bcc = normalizeRecipients(input.notifyBcc ?? [], { max, allowEmpty: true });
+  const note = await resolveRebootNote(input.note);
   const { plan, warnings } = await checkSchedulableReboot(input.assetId);
   if (await prisma.rebootSchedule.findFirst({ where: { assetId: input.assetId, status: "pending" }, select: { id: true } })) {
     throw new AppError(409, "A reboot is already scheduled for this device — change or cancel it");
   }
   let row: Row;
   try {
-    row = await prisma.rebootSchedule.create({ data: { assetId: input.assetId, scheduledFor: input.scheduledFor, notifyEmails: recipients, notifyCc: cc, notifyBcc: bcc, createdBy: input.actor } });
+    row = await prisma.rebootSchedule.create({ data: { assetId: input.assetId, scheduledFor: input.scheduledFor, notifyEmails: recipients, notifyCc: cc, notifyBcc: bcc, note, createdBy: input.actor } });
   } catch (err: any) {
     if (err?.code === "P2002") throw new AppError(409, "A reboot is already scheduled for this device — change or cancel it");
     throw err;
@@ -117,9 +123,9 @@ export async function createRebootSchedule(input: {
   await logEvent({
     action: "asset.reboot_scheduled", resourceType: "asset", resourceId: input.assetId, resourceName: await assetName(input.assetId), actor: input.actor, level: "info",
     message: `Reboot scheduled for ${input.scheduledFor.toISOString()} (signed by "${plan.authority}"); results to ${recipients.join(", ")}` +
-      (cc.length ? `, cc ${cc.join(", ")}` : "") + (bcc.length ? `, bcc ${bcc.join(", ")}` : ""),
+      (cc.length ? `, cc ${cc.join(", ")}` : "") + (bcc.length ? `, bcc ${bcc.join(", ")}` : "") + (note ? ` — reason: ${note}` : ""),
     details: {
-      scheduleId: row.id, scheduledFor: input.scheduledFor.toISOString(), notifyEmails: recipients,
+      scheduleId: row.id, scheduledFor: input.scheduledFor.toISOString(), notifyEmails: recipients, note,
       ...(cc.length ? { notifyCc: cc } : {}), ...(bcc.length ? { notifyBcc: bcc } : {}),
       method: plan.method, authority: plan.authority, warnings, ...(input.context ?? {}),
     },
@@ -127,10 +133,16 @@ export async function createRebootSchedule(input: {
   return { ...summarize(row), warnings };
 }
 
-export async function updateRebootSchedule(input: { assetId: string; scheduleId: string; scheduledFor?: Date; notifyEmails?: string[]; actor: string; now?: Date }): Promise<RebootScheduleSummary> {
+export async function updateRebootSchedule(input: {
+  assetId: string; scheduleId: string; scheduledFor?: Date; notifyEmails?: string[];
+  /** Absent = keep the booking's note; present is judged like a new booking's (rule 115(d)). */
+  note?: string | null;
+  actor: string; now?: Date;
+}): Promise<RebootScheduleSummary> {
   const current = await getOwn(input.assetId, input.scheduleId);
   if (current.status !== "pending") throw new AppError(409, `This reboot is already ${current.status} and can no longer be changed`);
-  const data: { scheduledFor?: Date; notifyEmails?: string[]; updatedBy: string } = { updatedBy: input.actor };
+  const data: { scheduledFor?: Date; notifyEmails?: string[]; note?: string | null; updatedBy: string } = { updatedBy: input.actor };
+  if (input.note !== undefined) data.note = await resolveRebootNote(input.note);
   if (input.scheduledFor) {
     assertSchedulableTime(input.scheduledFor, input.now);
     data.scheduledFor = input.scheduledFor;
@@ -144,10 +156,11 @@ export async function updateRebootSchedule(input: { assetId: string; scheduleId:
   const changes: string[] = [];
   if (data.scheduledFor && data.scheduledFor.getTime() !== current.scheduledFor.getTime()) changes.push(`time ${current.scheduledFor.toISOString()} → ${data.scheduledFor.toISOString()}`);
   if (data.notifyEmails && data.notifyEmails.join(",") !== current.notifyEmails.join(",")) changes.push(`recipients ${data.notifyEmails.join(", ")}`);
+  if (data.note !== undefined && data.note !== current.note) changes.push(data.note ? `reason "${data.note}"` : "reason removed");
   await logEvent({
     action: "asset.reboot_rescheduled", resourceType: "asset", resourceId: input.assetId, resourceName: await assetName(input.assetId), actor: input.actor, level: "info",
     message: `Scheduled reboot changed${changes.length ? `: ${changes.join("; ")}` : " (no differences)"}`,
-    details: { scheduleId: row.id, before: { scheduledFor: current.scheduledFor.toISOString(), notifyEmails: current.notifyEmails }, after: { scheduledFor: row.scheduledFor.toISOString(), notifyEmails: row.notifyEmails } },
+    details: { scheduleId: row.id, before: { scheduledFor: current.scheduledFor.toISOString(), notifyEmails: current.notifyEmails, note: current.note }, after: { scheduledFor: row.scheduledFor.toISOString(), notifyEmails: row.notifyEmails, note: row.note } },
   });
   return summarize(row);
 }
@@ -242,6 +255,9 @@ export async function bookRebootFromAutomation(input: AutomationRebootInput): Pr
     booked = await createRebootSchedule({
       assetId: input.assetId, scheduledFor, notifyEmails: input.notifyEmails, notifyCc: input.notifyCc, notifyBcc: input.notifyBcc,
       maxRecipients: AUTOMATION_MAX_RECIPIENTS, actor, now, context: ctx,
+      // Rule 115(d): an automation always says why — its own name — so a
+      // required note never fails the action.
+      note: `Automation "${input.ruleName ?? input.ruleId ?? "unknown"}"`,
     });
   } catch (err) {
     // Lost a race with another booking: the reboot is handled.
@@ -264,7 +280,7 @@ export async function runDueRebootSchedules(now: Date = new Date()): Promise<Due
     where: { status: "pending", scheduledFor: { lte: now } },
     orderBy: { scheduledFor: "asc" },
     take: DUE_BATCH,
-    select: { id: true, assetId: true, scheduledFor: true, createdBy: true, error: true },
+    select: { id: true, assetId: true, scheduledFor: true, createdBy: true, error: true, note: true },
   });
   const out: DueRebootResult = { started: 0, refused: 0, missed: 0, waiting: 0 };
   for (const s of due) {
@@ -283,7 +299,7 @@ export async function runDueRebootSchedules(now: Date = new Date()): Promise<Due
     const claimed = await prisma.rebootSchedule.updateMany({ where: { id: s.id, status: "pending" }, data: { status: "started", firedAt: now } });
     if (claimed.count === 0) continue;
     try {
-      await startReboot({ assetId: s.assetId, actor: s.createdBy, scheduleId: s.id });
+      await startReboot({ assetId: s.assetId, actor: s.createdBy, scheduleId: s.id, note: s.note });
       await prisma.rebootSchedule.update({ where: { id: s.id }, data: { error: null } }).catch(() => undefined);
       out.started++;
     } catch (err) {
@@ -358,7 +374,7 @@ async function sendResults(s: Row, facts: Facts): Promise<void> {
     outcome: facts.outcome, assetId: s.assetId, deviceName, model: asset?.model ?? null,
     method: facts.method ? METHOD_LABEL[facts.method] ?? facts.method : null, authority: facts.authority,
     error: facts.error, scheduledFor: s.scheduledFor, startedAt: facts.startedAt, finishedAt: facts.finishedAt,
-    scheduledBy: s.createdBy, log: facts.log, zone,
+    scheduledBy: s.createdBy, note: s.note, log: facts.log, zone,
   });
   const failures: string[] = [];
   const cc = s.notifyCc ?? [];

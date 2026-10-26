@@ -256,3 +256,41 @@ describe("asset panel header verbs (Discover Now, Reboot)", () => {
     expect(assetsSrc).not.toContain("Simulate Down…");
   });
 });
+
+describe("the reboot dialog's Reason field (rule 115(d))", () => {
+  const DIALOG_FNS = ["_rebootNoteFieldHTML", "_rebootMethodText", "_rebootScheduleFieldsHTML", "_rebootModalHTML"];
+
+  function loadDialog() {
+    g.escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+    g.timeAgo = () => "2 days ago";
+    g._fwWhenText = () => "soon";
+    g._fwLocalInputValue = () => "2026-10-26T13:00";
+    g._fwBrowserZone = () => "UTC";
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(DIALOG_FNS.map(fnSrc).join("\n") + "\n" + DIALOG_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"))();
+  }
+
+  const GATE = { id: "a1", hostname: "GATE-1", assetType: "firewall" };
+  const RB = { state: "available", available: true, kind: "fortinet", method: "fortigate-rest", authority: "Lab FG", lastRun: null, schedule: null };
+
+  it("offers an optional Reason on a reboot, marked required only when the install requires it", () => {
+    loadDialog();
+    const opt = document.createElement("div");
+    opt.innerHTML = g._rebootModalHTML(GATE, RB, { mode: "choose" });
+    expect(opt.querySelector("#rb-note")).not.toBeNull();
+    expect(opt.querySelector('label[for="rb-note"]')!.textContent).toContain("(optional)");
+    const req = document.createElement("div");
+    req.innerHTML = g._rebootModalHTML(GATE, { ...RB, noteRequired: true }, { mode: "choose" });
+    expect(req.querySelector('label[for="rb-note"]')!.textContent).toContain("*");
+    expect(req.textContent).toContain("requires a reason for every reboot");
+  });
+
+  it("pre-fills a booking's reason when changing it, and shows the last reboot's reason", () => {
+    loadDialog();
+    const wrap = document.createElement("div");
+    wrap.innerHTML = g._rebootModalHTML(GATE, { ...RB, lastRun: { status: "succeeded", startedAt: "x", startedBy: "alice", note: "Leak <7.4.3>" } },
+      { mode: "change", existing: { scheduledFor: "2026-10-27T02:00:00Z", notifyEmails: ["noc@example.com"], note: "Patch night" } });
+    expect((wrap.querySelector("#rb-note") as HTMLInputElement).value).toBe("Patch night");
+    expect(wrap.textContent).toContain("— Leak <7.4.3>");
+  });
+});

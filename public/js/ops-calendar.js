@@ -181,7 +181,7 @@
       attrs: ' data-kind="' + o.kind + '" data-asset-id="' + escapeHtml(o.assetId) + '"',
       tip: name + "\n" + (o.booked ? "Booked for " : "Started ") + fmtLocal(o.start) +
         (isRun && o.end ? " → " + fmtLocal(o.end) : "") + "\n" + stLabel.charAt(0).toUpperCase() + stLabel.slice(1) +
-        (by ? " · " + (o.booked ? "booked by " : "by ") + by : "") + (o.error ? "\n" + o.error : ""),
+        (by ? " · " + (o.booked ? "booked by " : "by ") + by : "") + (o.note ? "\nReason: " + o.note : "") + (o.error ? "\n" + o.error : ""),
       meta: stLabel + (by ? " · " + by : ""),
       raw: o,
     };
