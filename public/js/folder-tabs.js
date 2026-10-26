@@ -65,19 +65,19 @@ function syncFolderTabs(row) {
 
 // The fixed area the strip window slides its tabs in, as a {left, right}
 // screen span — the list box less the shadow padding _maskArea puts round it
-// — or null while the window is off. `opaque`: less the fade at each edge
-// that is fading, too — the span where tabs are drawn solid.
-function _windowArea(row, opaque) {
+// — or null while the window is off. fadeL / fadeR: whether that edge is
+// fading (more of the row past it).
+function _windowArea(row) {
   var strip = row.querySelector(":scope > :is(.page-tabs, .table-tabs, .dashboard-tabs)");
   var win = strip && strip.__tabWin;
   if (!win || !(win.max > 0.5) || !win.box || win.box === strip) return null;
   var r = win.box.getBoundingClientRect();
-  var area = { left: r.left + STRIP_SHADOW_PX, right: r.right - STRIP_SHADOW_PX };
-  if (opaque) {
-    if (win.pos > 0.5) area.left += STRIP_FADE_PX;
-    if (win.pos < win.max - 0.5) area.right -= STRIP_FADE_PX;
-  }
-  return area;
+  return {
+    left: r.left + STRIP_SHADOW_PX,
+    right: r.right - STRIP_SHADOW_PX,
+    fadeL: win.pos > 0.5,
+    fadeR: win.pos < win.max - 0.5,
+  };
 }
 
 // A tab's span clipped to that area (unchanged while the window is off);
@@ -126,10 +126,7 @@ function _writeFolderStrip(row, body) {
     // is a tab over the card. Counting the whole box ran the cut-out on past
     // the visible tabs, under the controls, and the card lost its top cast
     // there.
-    // Only the SOLID span: across a fading edge the card keeps its cast, so
-    // the fading tabs read as passing behind the card's shadow (operator
-    // request 2026-10-26).
-    var area = _windowArea(row, true);
+    var area = _windowArea(row);
     strip.querySelectorAll(".page-tab, .table-tab, .dashboard-tab, .table-tab-add").forEach(function (t) {
       var rc = t.getBoundingClientRect();
       if (!rc.width || t.style.visibility === "hidden") return;   // hidden by the window
@@ -158,6 +155,38 @@ function _writeFolderStrip(row, body) {
   if (body.style.getPropertyValue("--folder-strip-r") !== r) {
     if (r) body.style.setProperty("--folder-strip-r", r); else body.style.removeProperty("--folder-strip-r");
   }
+  _writeFadeCast(body, strip ? _windowArea(row) : null);
+}
+
+// The card's cast fading IN where the tabs fade OUT (operator request
+// 2026-10-26). The cut-out above keeps the card's cast off the whole tab
+// area; across each FADING edge this band (.folder-cast-fade, styles.css)
+// lays the same cast back over the tabs, masked so it is full at the area's
+// edge and gone STRIP_FADE_PX in — the same span and direction as the tabs'
+// own fade, so a tab dissolves into the card's shadow instead of meeting a
+// hard line. A clip-path cut-out cannot be graded, hence a layer of its own.
+function _writeFadeCast(body, area) {
+  var band = body.querySelector(":scope > .folder-cast-fade");
+  if (!area || !(area.fadeL || area.fadeR)) {
+    if (band && !band.hidden) band.hidden = true;
+    return;
+  }
+  if (!band) {
+    band = document.createElement("div");
+    band.className = "folder-cast-fade";
+    band.setAttribute("aria-hidden", "true");
+    body.appendChild(band);
+  }
+  var er = body.getBoundingClientRect();
+  var W = area.right - area.left, F = STRIP_FADE_PX;
+  var stops = (area.fadeL ? ["#000 0px", "transparent " + F + "px"] : ["transparent 0px"])
+    .concat(area.fadeR ? ["transparent " + (W - F).toFixed(1) + "px", "#000 " + W.toFixed(1) + "px"] : ["transparent 100%"]);
+  var mask = "linear-gradient(to right, " + stops.join(", ") + ")";
+  if (band.hidden) band.hidden = false;
+  _setStyle(band, "left", (area.left - er.left).toFixed(1) + "px");
+  _setStyle(band, "width", W.toFixed(1) + "px");
+  _setStyle(band, "maskImage", mask);
+  _setStyle(band, "webkitMaskImage", mask);
 }
 
 // ─── Strip window (the wheel) ──────────────────────────────────────

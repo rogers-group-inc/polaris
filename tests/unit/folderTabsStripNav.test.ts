@@ -250,6 +250,44 @@ describe("tab strip window", () => {
   });
 });
 
+describe("the card's cast fading in over the tab fades", () => {
+  // The row as a folder CARD's head, with its card after it: the band lives in
+  // the card (folder-tabs.js → _writeFadeCast).
+  async function bootCard(n: number) {
+    const b = await boot(n);
+    const doc = b.win.document;
+    const row = doc.querySelector(".table-head-row")!;
+    row.classList.add("folder-head-card");
+    const card = doc.createElement("div");
+    card.className = "folder-card folder-body";
+    doc.body.appendChild(card);
+    Object.defineProperty(card, "getClientRects", { value: () => [{}], configurable: true });
+    b.tabs()[0].classList.add("nudge");          // any watched change: re-sync with the card present
+    await b.settle();
+    const band = () => card.querySelector(":scope > .folder-cast-fade") as unknown as HTMLElement | null;
+    const mask = () => {
+      const s = band()!.style as unknown as Record<string, string>;
+      return s.maskImage || s.webkitMaskImage || "";
+    };
+    return { ...b, band, mask };
+  }
+
+  it("lays the cast back over only the edge that is fading", async () => {
+    const b = await bootCard(5);
+    expect(b.band()).not.toBeNull();
+    expect(b.band()!.hidden).toBe(false);
+    expect(b.mask().startsWith("linear-gradient(to right, transparent")).toBe(true);   // nothing past the left edge yet
+    b.step(1); b.step(1); b.step(1);
+    await b.settle();
+    expect(b.mask().endsWith("transparent 100%)")).toBe(true);                         // the end: nothing past the right edge
+  });
+
+  it("has no band while the tabs fit", async () => {
+    const b = await bootCard(2);
+    expect(!b.band() || b.band()!.hidden).toBe(true);
+  });
+});
+
 describe("tab strip wheel", () => {
   function wheel(b: Boot, init: Record<string, number>) {
     const e = new b.win.WheelEvent("wheel", { bubbles: true, cancelable: true, ...init });
