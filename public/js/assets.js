@@ -17819,7 +17819,7 @@ function _sdwanMembersTableHTML(members) {
       '<th data-col-id="hcstatus">Health Check Status</th>' +
       '<th data-col-id="checks">Health Checks</th>' +
       '<th data-col-id="bytes">Bytes (Sent/Received)</th>' +
-      '<th data-col-id="link">Link</th>' +
+      '<th data-col-id="link" style="width:110px">Link</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
@@ -17958,7 +17958,7 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
           '<th data-col-id="members" data-col-required="true">Members</th>' +
           '<th data-col-id="criteria">Criteria</th>' +
           '<th data-col-id="perfsla">Performance SLA</th>' +
-          '<th data-col-id="status">Status</th>' +
+          '<th data-col-id="status" style="width:100px">Status</th>' +
         '</tr></thead><tbody>' + ruleRows + '</tbody></table></div>' +
       '</section>' +
       '</div>';

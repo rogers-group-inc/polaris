@@ -1842,23 +1842,21 @@ function setupColumnLayout(tableEl, options) {
       others += bw;
     });
     var target = Math.floor(availW - fixedSum - others);
-    if (target < MIN_COL_W) {
-      // Crushed: no leftover to fill. Use the column's saved/measured width
-      // (MIN_COL_W floor) instead of letting it collapse.
-      var savedW = widths[colIds[lastIdx]];
-      target = Math.max(MIN_COL_W, (typeof savedW === "number" && savedW > 0) ? savedW : 0);
-    }
-    // Never starve the auto-fill column: it absorbs every deficit, and once it
-    // is narrower than its label's min-content the header wraps a letter per
-    // line and stretches the whole thead. A width declared on the th is an
-    // explicit statement of how much the column needs, so it wins; otherwise
-    // fall back to AUTOFILL_MIN_W. Overflow goes to the wrapper's horizontal
-    // scroll, which is recoverable — a 124px-tall header is not.
-    //
-    // LAST, after the crushed-table fallback above and not before it: floored
-    // first, `target` can never be below MIN_COL_W, so that branch would be
-    // dead code and an over-committed table would hand the auto-fill column
-    // 36px instead of the saved width it is supposed to keep.
+    // Over-committed means the auto-fill column's leftover is narrower than its
+    // own saved/measured width — and there it KEEPS that width, like every
+    // other column in this branch, so the row overflows into the wrapper's
+    // horizontal scroll. Taking only the leftover squeezed it to the floor
+    // with the table exactly filling the wrapper: its cells cut to "▲…" and,
+    // the table not overflowing, no scrollbar to reach them with (the SD-WAN
+    // Members Link column).
+    var savedW = widths[colIds[lastIdx]];
+    if (typeof savedW === "number" && savedW > target) target = savedW;
+    // Never starve the auto-fill column: once it is narrower than its label's
+    // min-content the header wraps a letter per line and stretches the whole
+    // thead. A width declared on the th is an explicit statement of how much
+    // the column needs, so it wins; otherwise fall back to AUTOFILL_MIN_W
+    // (which also covers a saved sliver). Overflow goes to the wrapper's
+    // horizontal scroll, which is recoverable — a 124px-tall header is not.
     var declaredLast = parseFloat(ths[lastIdx].style.width) || 0;
     target = Math.max(target, AUTOFILL_MIN_W, declaredLast);
     setColWidth(lastIdx, target);
