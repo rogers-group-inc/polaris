@@ -42,10 +42,7 @@ function syncFolderTabs(row) {
   // report 2026-10-26). `tab` itself still names the active tab for the
   // data-head-for clusters below, in view or not.
   var gapTab = tab && tab.style.visibility !== "hidden" ? tab : null;
-  // And, like the cast cut-out, only while it sits wholly inside the solid
-  // span: an active tab reaching into a fade goes under the card's cast
-  // whole, with no opening.
-  var tr = gapTab ? _solidRect(row, gapTab.getBoundingClientRect()) : null;
+  var tr = gapTab ? _clipToArea(row, gapTab.getBoundingClientRect()) : null;
   // The same gap is written twice: on the row (whose rule it opens) and on
   // the visible .folder-body after it, measured from the BODY's left edge —
   // a folder card draws its own top edge and ring cast and opens both there.
@@ -83,12 +80,13 @@ function _windowArea(row, opaque) {
   return area;
 }
 
-// A tab's rect if it lies wholly inside the solid span (always, while the
-// window is off); null once any of it reaches into a fade or past an edge.
-function _solidRect(row, rc) {
-  var area = _windowArea(row, true);
+// A tab's span clipped to that area (unchanged while the window is off);
+// null when nothing of it is inside.
+function _clipToArea(row, rc) {
+  var area = _windowArea(row);
   if (!area) return rc;
-  return rc.left >= area.left - 0.5 && rc.right <= area.right + 0.5 ? rc : null;
+  var left = Math.max(rc.left, area.left), right = Math.min(rc.right, area.right);
+  return right > left ? { left: left, right: right } : null;
 }
 
 // --folder-gap-l/-r on `el`: the active tab's span plus the fillet radius each
@@ -135,14 +133,14 @@ function _writeFolderStrip(row, body) {
     strip.querySelectorAll(".page-tab, .table-tab, .dashboard-tab, .table-tab-add").forEach(function (t) {
       var rc = t.getBoundingClientRect();
       if (!rc.width || t.style.visibility === "hidden") return;   // hidden by the window
-      // A tab that reaches into a fade at all is left wholly UNDER the card's
-      // cast, never cut part-way across (operator request 2026-10-26: the cast
-      // stopping mid-tab read as a notch). Only tabs wholly inside the solid
-      // span open it.
-      if (area && !t.classList.contains("table-tab-add") &&
-          (rc.left < area.left - 0.5 || rc.right > area.right + 0.5)) return;
-      if (rc.left < lo) lo = rc.left;
-      if (rc.right > hi) hi = rc.right;
+      var left = rc.left, right = rc.right;
+      if (area && !t.classList.contains("table-tab-add")) {
+        left = Math.max(left, area.left);
+        right = Math.min(right, area.right);
+        if (right <= left) return;
+      }
+      if (left < lo) lo = left;
+      if (right > hi) hi = right;
     });
     if (hi > lo) {
       var sr = strip.getBoundingClientRect();
