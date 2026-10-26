@@ -695,6 +695,18 @@ export interface ExpandDeliveriesOptions {
    */
   noAck?: boolean;
   /**
+   * This send announces the alert is OVER, in this sentence ("Resolved: …
+   * recovered") — set by the caller beside `noAck` for an all-clear.
+   *
+   * Email needs none of it: its body was composed from a context whose
+   * severity is already "resolved". Push and chat have no composed body — the
+   * drain builds their title and text from the NOTIFICATION row, which still
+   * holds the fire's severity and message — so without this an all-clear push
+   * read "[CRITICAL] switch-1 / Port 7 is down", word for word the alert it
+   * was meant to close. Stamped on those rows as `allClear` + `message`.
+   */
+  allClearMessage?: string;
+  /**
    * Which SEND these rows belong to — one `executeActions` fan-out, minted by
    * that function and shared by every `expandDeliveries` call inside it.
    *
@@ -760,7 +772,10 @@ export async function expandDeliveries(
   targets: DeliveryTarget[] | undefined,
   opts: ExpandDeliveriesOptions = {},
 ): Promise<number> {
-  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck, dispatchId, hold, excludeRecipients, stats } = opts;
+  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck, allClearMessage, dispatchId, hold, excludeRecipients, stats } = opts;
+  // What a push or chat row says on an all-clear (see allClearMessage). Not
+  // email's: its composed body already reads "resolved".
+  const allClearMeta = allClearMessage !== undefined ? { allClear: true, message: allClearMessage } : {};
   // Who this hold holds — everyone, unless the policy carries recipient
   // exceptions (business rule 120). No hold = nobody.
   const heldFor = (address: string | null): boolean => (hold ? (hold.isHeldFor ? hold.isHeldFor(address) : true) : false);
@@ -1091,6 +1106,7 @@ export async function expandDeliveries(
           // opens a page saying there is nothing to do.
           ...(noAck || cannotAck.has(s.userId) ? { noAck: true } : {}),
           ...(followUp ? { followUp } : {}),
+          ...allClearMeta,
         }, heldFor(byUserEmail.get(s.userId) ?? null));
       }
       if (subs.length === 0) {
@@ -1109,7 +1125,7 @@ export async function expandDeliveries(
       // webhook (slack/teams) + pushbullet: one row, fixed destination on the channel.
       // No address, so it follows the policy (rule 120).
       if (excludeRecipients?.chat) continue;
-      add(channel.id, transport, "", undefined, heldFor(null));
+      add(channel.id, transport, "", allClearMessage !== undefined ? allClearMeta : undefined, heldFor(null));
     }
   }
 

@@ -91,6 +91,10 @@ self.addEventListener("push", function (event) {
   var options = {
     body: data.body || "",
     tag: data.notificationId || undefined,
+    // One tray entry per alert, so a reminder or the all-clear REPLACES the
+    // one already there — and without renotify a replacement lands silently
+    // (no sound, no vibration, no heads-up), so "resolved" went unnoticed.
+    renotify: !!data.notificationId,
     data: {
       // This alert's acknowledge page. The same URL for every recipient — the
       // page decides who may act, so the button below is safe to show to

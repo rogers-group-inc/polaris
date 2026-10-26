@@ -84,6 +84,14 @@ Recipients are chosen per notify action, not here. Enrollment is per browser and
 driven by each user's own [notification preference](Navigation-and-Account#notification-preference)
 ([rule 39](Business-Rules#rule-39)).
 
+**A push is one tray entry per alert.** A reminder or the all-clear replaces the
+notification already there rather than stacking beside it, and still sounds and
+vibrates when it does. The all-clear is titled **[RESOLVED]** with the recovery
+sentence ("Resolved: Port down — switch-1 recovered"), carries no Acknowledge
+action, and does not stay pinned on screen the way a `serious` or `critical`
+alert does. Slack, Teams and Pushbullet get the same **[RESOLVED]** title and
+sentence, in green.
+
 ## Slack / Microsoft Teams
 
 One field each: the **incoming webhook URL**, stored as a secret.

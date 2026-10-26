@@ -227,6 +227,29 @@ describe("expandDeliveries — an all-clear carries no acknowledge button", () =
     expect(rows.every((r) => metaOf(r).noAck === true)).toBe(true);
   });
 
+  it("tells every push row it is an all-clear, with the sentence to say", async () => {
+    // The drain builds a push from the notification row, which still holds the
+    // fire's severity and message — without this the "resolved" push repeated
+    // the alert word for word.
+    await expandDeliveries(
+      "n-1",
+      [{ channelId: "c-push", recipientRegions: ["Atlanta"] }] as never,
+      { noAck: true, allClearMessage: "Resolved: Port down — switch-1 recovered" },
+    );
+    const rows = createdRows.filter((r) => r.transport === "web_push");
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(metaOf(r).allClear).toBe(true);
+      expect(metaOf(r).message).toBe("Resolved: Port down — switch-1 recovered");
+    }
+  });
+
+  it("does not mark a FIRING push as an all-clear", async () => {
+    await expandDeliveries("n-1", [{ channelId: "c-push", recipientRegions: ["Atlanta"] }] as never, {});
+    const rows = createdRows.filter((r) => r.transport === "web_push");
+    expect(rows.every((r) => metaOf(r).allClear === undefined && metaOf(r).message === undefined)).toBe(true);
+  });
+
   it("leaves a FIRING send with its button", async () => {
     // The option defaults off: one row either way, and this one keeps the link.
     await expandDeliveries(
