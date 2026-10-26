@@ -7,6 +7,8 @@
  *   - manual assets (no integration) fall through asset -> class only
  *   - distinct-count dedup when one asset hits a credential via many streams
  *   - the delete guard trips on effective usage AND on config-only references
+ *   - operations: a Firmware Repository login binding and a Polaris Agent's
+ *     install credential (or the Polaris-managed SSH fallback) count too
  *
  * Prisma is mocked so the resolution math is exercised without a live DB.
  */
@@ -19,9 +21,15 @@ vi.mock("../../src/db.js", () => ({
     asset: { findMany: vi.fn() },
     monitorClassOverride: { findMany: vi.fn() },
     integration: { findMany: vi.fn() },
+    managedAgent: { findMany: vi.fn(async () => []) },
+    firmwareCredentialBinding: { findMany: vi.fn(async () => []) },
     // Path checks that authenticate with a credential (business rule 85).
     pathCheck: { findMany: vi.fn(async () => []) },
   },
+}));
+
+vi.mock("../../src/services/windowsSshOnboardingService.js", () => ({
+  getOnboardingState: vi.fn(async () => ({ credentialIds: { windows: null, linux: null } })),
 }));
 
 import {
@@ -30,6 +38,7 @@ import {
   deleteCredential,
 } from "../../src/services/credentialService.js";
 import { prisma } from "../../src/db.js";
+import { getOnboardingState } from "../../src/services/windowsSshOnboardingService.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const credFindUnique = prisma.credential.findUnique as unknown as Mock;
@@ -37,6 +46,9 @@ const credDelete = prisma.credential.delete as unknown as Mock;
 const assetFindMany = prisma.asset.findMany as unknown as Mock;
 const classFindMany = prisma.monitorClassOverride.findMany as unknown as Mock;
 const intFindMany = prisma.integration.findMany as unknown as Mock;
+const agentFindMany = prisma.managedAgent.findMany as unknown as Mock;
+const bindingFindMany = prisma.firmwareCredentialBinding.findMany as unknown as Mock;
+const onboardingState = getOnboardingState as unknown as Mock;
 
 const CRED_A = "11111111-1111-1111-1111-111111111111"; // asset/stream-level
 const CRED_B = "22222222-2222-2222-2222-222222222222"; // class-level
@@ -95,6 +107,9 @@ function seed(assets = [A1, A2, A3, A4], overrides = [CLASS_FW_INT1, CLASS_SW_MA
 
 beforeEach(() => {
   vi.clearAllMocks();
+  agentFindMany.mockResolvedValue([]);
+  bindingFindMany.mockResolvedValue([]);
+  onboardingState.mockResolvedValue({ credentialIds: { windows: null, linux: null } });
   seed();
 });
 
@@ -188,5 +203,83 @@ describe("deleteCredential guard", () => {
     credDelete.mockResolvedValue({ id: CRED_E });
     await expect(deleteCredential(CRED_E)).resolves.toBeUndefined();
     expect(credDelete).toHaveBeenCalledWith({ where: { id: CRED_E } });
+  });
+});
+
+describe("operations usage (firmware binding, agent install)", () => {
+  const HTTP_LOGIN = "66666666-6666-6666-6666-666666666666";
+  const SSH_GATE = "77777777-7777-7777-7777-777777777777";
+  const WIN_MANAGED = "88888888-8888-8888-8888-888888888888";
+  const LINUX_MANAGED = "99999999-9999-9999-9999-999999999999";
+  const SW1 = asset({ id: "sw1", hostname: "sw1", assetType: "switch", manufacturer: "Fortinet", model: "FS-148F" });
+  const SW2 = asset({ id: "sw2", hostname: "sw2", assetType: "switch", manufacturer: "Fortinet", model: "FS-424E" });
+  const FW9 = asset({ id: "fw9", hostname: "fw9", assetType: "firewall", manufacturer: "Fortinet", model: "FGT-60F" });
+  const WIN = asset({ id: "win", hostname: "win", assetType: "server" });
+  const LNX = asset({ id: "lnx", hostname: "lnx", assetType: "server" });
+  const binding = (over: Record<string, unknown>) => ({
+    id: "b", manufacturer: "Fortinet", assetType: null, model: null, source: "credential", credentialId: null, credential: null, ...over,
+  });
+
+  beforeEach(() => {
+    seed([SW1, SW2, FW9, WIN, LNX], [], []);
+  });
+
+  it("counts every asset a Repository login binding resolves to, model tier first", async () => {
+    bindingFindMany.mockResolvedValue([
+      binding({ id: "b1", assetType: "switch", credentialId: HTTP_LOGIN, credential: { id: HTTP_LOGIN, name: "Switch login", type: "http" } }),
+      binding({ id: "b2", assetType: "switch", model: "FS-424E", credentialId: SSH_GATE, credential: { id: SSH_GATE, name: "Gate SSH", type: "ssh" } }),
+      binding({ id: "b3", assetType: "firewall", source: "integration-token" }),
+    ]);
+    const counts = await getCredentialUsageCounts();
+    expect(counts[HTTP_LOGIN]).toBe(1); // sw1 — sw2's model binding outranks it
+    expect(counts[SSH_GATE]).toBe(1); // sw2
+    const u = await getCredentialUsage(HTTP_LOGIN);
+    expect(u.total).toBe(1);
+    expect(u.monitoringTotal).toBe(0);
+    expect(u.operationLevel).toEqual([
+      expect.objectContaining({ kind: "firmware", assets: [expect.objectContaining({ assetId: "sw1", streams: ["Firmware upgrades", "Reboots"] })] }),
+    ]);
+  });
+
+  it("skips a binding whose credential was deleted and a REST token on a non-firewall", async () => {
+    bindingFindMany.mockResolvedValue([
+      binding({ id: "b1", assetType: "switch", model: "FS-148F", credentialId: HTTP_LOGIN, credential: null }),
+      binding({ id: "b2", credentialId: SSH_GATE, credential: { id: SSH_GATE, name: "Token", type: "restapi" } }),
+    ]);
+    const counts = await getCredentialUsageCounts();
+    expect(counts[HTTP_LOGIN]).toBeUndefined();
+    expect(counts[SSH_GATE]).toBe(1); // fw9 only — the restapi token fits firewalls alone
+  });
+
+  it("counts agents by install credential, falling back to the Polaris-managed one per platform", async () => {
+    onboardingState.mockResolvedValue({ credentialIds: { windows: WIN_MANAGED, linux: LINUX_MANAGED } });
+    agentFindMany.mockResolvedValue([
+      { assetId: "win", osPlatform: "windows", installCredentialId: null },
+      { assetId: "lnx", osPlatform: "linux", installCredentialId: null },
+      { assetId: "fw9", osPlatform: "linux", installCredentialId: SSH_GATE },
+    ]);
+    const counts = await getCredentialUsageCounts();
+    expect(counts[WIN_MANAGED]).toBe(1);
+    expect(counts[LINUX_MANAGED]).toBe(1);
+    expect(counts[SSH_GATE]).toBe(1);
+    const u = await getCredentialUsage(LINUX_MANAGED);
+    expect(u.operationLevel[0]).toMatchObject({ kind: "agent", assets: [expect.objectContaining({ assetId: "lnx" })] });
+  });
+
+  it("counts an asset once when it uses the credential for monitoring and operations", async () => {
+    seed([asset({ id: "sw1", hostname: "sw1", assetType: "switch", manufacturer: "Fortinet", model: "FS-148F", monitorCredentialId: SSH_GATE })], [], []);
+    bindingFindMany.mockResolvedValue([binding({ credentialId: SSH_GATE, credential: { id: SSH_GATE, name: "Gate SSH", type: "ssh" } })]);
+    expect((await getCredentialUsageCounts())[SSH_GATE]).toBe(1);
+    const u = await getCredentialUsage(SSH_GATE);
+    expect(u.total).toBe(1);
+    expect(u.assetLevel).toHaveLength(1);
+    expect(u.operationLevel[0].assets).toHaveLength(1);
+  });
+
+  it("does not block deletion over operations alone (both FKs are SET NULL)", async () => {
+    onboardingState.mockResolvedValue({ credentialIds: { windows: null, linux: LINUX_MANAGED } });
+    agentFindMany.mockResolvedValue([{ assetId: "lnx", osPlatform: "linux", installCredentialId: null }]);
+    credDelete.mockResolvedValue({ id: LINUX_MANAGED });
+    await expect(deleteCredential(LINUX_MANAGED)).resolves.toBeUndefined();
   });
 });

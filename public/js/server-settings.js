@@ -8044,7 +8044,7 @@ async function openCredUsagePanel(credId, credName) {
       bodyEl.innerHTML =
         '<div style="padding:1rem 1.25rem">' +
           '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin:0 0 0.75rem">' +
-            'This shows where the credential is configured across the monitor-settings tiers — not a live probe trace.' +
+            'This shows where the credential is configured across the monitor-settings tiers, the Firmware Repository and Polaris Agent installs — not a live probe trace.' +
           '</p>' +
           '<p class="empty-state" style="padding:1rem 0">No assets use this credential, and it is not referenced by any class or integration setting.</p>' +
         '</div>';
@@ -8084,6 +8084,19 @@ async function openCredUsagePanel(credId, credName) {
       html += u.integrationLevel.map(function (g) {
         return '<div style="margin:0.25rem 0 0.6rem">' +
           '<div style="font-size:0.82rem;font-weight:500;margin-bottom:0.3rem">' + escapeHtml(g.integrationName) + '</div>' +
+          g.assets.map(_credUsageAssetRow).join("") +
+          '</div>';
+      }).join("");
+    }
+
+    // Operations — firmware flashes / reboots through a Repository login
+    // binding, and Polaris Agent install / upgrade / reboot opt-in.
+    if (u.operationLevel && u.operationLevel.length) {
+      var opCount = u.operationLevel.reduce(function (n, g) { return n + g.assets.length; }, 0);
+      html += _credUsageSectionHeader("Operations", opCount, "Used to act on the asset rather than poll it — firmware upgrades, reboots and Polaris Agent installs. An asset can also appear under a monitoring tier above.");
+      html += u.operationLevel.map(function (g) {
+        return '<div style="margin:0.25rem 0 0.6rem">' +
+          '<div style="font-size:0.82rem;font-weight:500;margin-bottom:0.3rem">' + escapeHtml(g.label) + '</div>' +
           g.assets.map(_credUsageAssetRow).join("") +
           '</div>';
       }).join("");

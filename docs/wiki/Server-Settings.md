@@ -71,6 +71,19 @@ Stored secrets used by monitoring probes, agent deployment and integrations.
 | `restapi` | FortiOS REST, per-asset or per-stream |
 | `http` | manufacturer HTTP-check widgets |
 
+The **Assets** column counts every asset a credential is used on, once each:
+assets that poll with it (set on the asset, inherited from a class override or
+from the integration's default), assets whose
+[firmware login binding](#repository) resolves to it — the login a firmware
+upgrade signs in with and a reboot tries first — and assets whose Polaris Agent
+installs and upgrades with it. An agent with no install credential of its own
+counts against the *Linux SSH (Polaris-managed)* or *Windows SSH
+(Polaris-managed)* credential it falls back to. Click the count to see the
+assets, grouped by where the credential comes from; the last group,
+**Operations**, holds the firmware and agent uses. Only the polling uses block
+a delete. Deleting a credential that is used only for operations unbinds the
+firmware login, and an agent falls back to the Polaris-managed credential.
+
 **Ownership applies** ([rule 43c](Business-Rules#rule-43)): at `write` you reach
 only rows you created; `fullwrite` reaches any. A row with no creator is
 **unowned and `fullwrite`-only**.
