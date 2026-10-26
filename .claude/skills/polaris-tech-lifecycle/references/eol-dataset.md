@@ -58,10 +58,11 @@ Each technology:
 `eol: null` means "still supported, no announced date" — different from a missing `eol`, and
 different from `policy: "none"`.
 
-**`securityFloor`** — `{ version, advisories[], source, sourceCheckedOn }` on a *track*: the
+**`securityFloor`** — `{ version, advisories[{ id, severity }], source, sourceCheckedOn }` on a *track*: the
 lowest release on that track with no known exploitable advisory open against it. Graded against
 the FULL observed version (component-wise, so `24.9` < `24.22`), and an installed version below it
-grades `unpatched`: critical when `securityExposed`, capped at warning for the capacity snapshot
+grades `unpatched`, coloured by the worst advisory `severity` (low → watch, medium → warning,
+high/critical → critical; one step higher when `securityExposed`), capped at warning for the capacity snapshot
 like EOL, because a distro repo can trail an upstream security release by days or weeks and the
 operator cannot clear it until the vendor ships. EOL outranks it (an EOL track has no patch to move
 to). Added 2026-10-23 for CVE-2026-111497 (Brotli RCE in `node:zlib`), which hit every supported
@@ -70,6 +71,10 @@ Node line at once and which nothing major-granular could see.
 - **Record one only from the vendor's own security advisory**, never an aggregator, and list the
   advisories that justify it — the card shows them. Raise it when a newer advisory lands; never
   lower it.
+- **Record each advisory with the vendor's own rating** (`critical` / `high` / `medium` / `low`;
+  Red Hat's Important → `high`, Moderate → `medium`). The schema refuses a bare ID. Node's
+  security-release posts rate every CVE in parentheses. Added 2026-10-26: before it, every open
+  advisory on an exposed component was red whatever its rating.
 - **A distro build can carry a backported fix under an older version string** — Node's own fix
   for CVE-2026-111497 was a cherry-pick that left `process.versions.brotli` at `1.2.0`. Polaris's
   install paths (official Docker image, NodeSource, RHEL AppStream) all track upstream version

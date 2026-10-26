@@ -167,7 +167,7 @@ describe("row rendering", () => {
               ...comp().grade,
               state: "unpatched",
               severity: "warning",
-              securityFloor: { version: "20.20.1", advisories: ["CVE-2026-1"], source: null },
+              securityFloor: { version: "20.20.1", advisories: [{ id: "CVE-2026-1", severity: "medium" }], source: null },
             },
           }),
         ],
@@ -319,14 +319,15 @@ describe("the upgrade playbook", () => {
     p.components[0].grade.state = "unpatched";
     (p.components[0].grade as any).securityFloor = {
       version: "24.22.1",
-      advisories: ["CVE-2026-111497", "<b>x</b>"],
+      advisories: [{ id: "CVE-2026-111497", severity: "high" }, { id: "<b>x</b>", severity: "<i>y</i>" }],
       source: "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
       sourceCheckedOn: "2026-10-23",
     };
     const html = renderPlatformLifecycleCard(p);
     expect(html).toContain("24.22.1");
-    expect(html).toContain("CVE-2026-111497");
+    expect(html).toContain('CVE-2026-111497 <span class="hint">(high)</span>');
     expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(html).toContain("&lt;i&gt;y&lt;/i&gt;");
     expect(html).not.toContain("How to upgrade");
   });
 });

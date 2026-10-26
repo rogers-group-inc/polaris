@@ -1965,7 +1965,10 @@ function _lifecycleRowHtml(c) {
     detail =
       '<tr class="lifecycle-detail-row"><td colspan="5" style="padding:0 8px 8px;font-size:0.8rem">' +
         "Update to <strong>" + escapeHtml(sf.version) + "</strong> or later on this line — " +
-        escapeHtml((sf.advisories || []).join(", ")) +
+        // Each CVE carries the vendor's rating; the worst one set the row colour.
+        (sf.advisories || []).map(function (a) {
+          return escapeHtml(a.id) + ' <span class="hint">(' + escapeHtml(a.severity) + ")</span>";
+        }).join(", ") +
         (sf.source ? ' <span class="hint">(' + escapeHtml(sf.source) + ")</span>" : "") +
       "</td></tr>";
   } else if (interesting && c.playbook) {

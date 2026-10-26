@@ -37,7 +37,7 @@ try {
   const floor = node?.tracks.find((t) => t.track === track)?.securityFloor;
   if (floor && compare(running, floor.version) < 0) {
     console.log(
-      `Node.js ${running} has open security advisories (${floor.advisories.join(", ")}). ` +
+      `Node.js ${running} has open security advisories (${floor.advisories.map((a) => `${a.id} ${a.severity}`).join(", ")}). ` +
         `Update to ${floor.version} or later as soon as this host's package repository carries it: ${floor.source}`,
     );
   }

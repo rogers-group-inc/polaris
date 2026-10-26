@@ -143,7 +143,7 @@ against committed end-of-life dates, and links the upgrade steps.
 |---|---|
 | **below the minimum** | flagged **critical** |
 | **past upstream EOL** | flagged and emailed, but deliberately **does not hold a permanent banner open** — it clears only in a maintenance window |
-| **security update** | the line is supported but this patch has an open security advisory; flagged and emailed the same way, naming the advisories and the release to move to |
+| **security update** | the line is supported but this patch has an open security advisory; coloured by the vendor's worst rating (low → watch, medium → amber, high/critical → red, one step higher on a network-facing component). Amber and red are flagged and emailed the same way, naming the advisories and the release to move to; a low-rated advisory shows on the card only |
 
 **Upgrading the *platform* is a separate procedure from updating Polaris**, and
 every one of those runbooks lives in

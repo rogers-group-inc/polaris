@@ -314,7 +314,7 @@ describe("lifecycleCapacityReasons", () => {
             capacitySeverityCap: "warning",
             securityFloor: {
               version: "24.22.1",
-              advisories: ["CVE-2026-111497"],
+              advisories: [{ id: "CVE-2026-111497", severity: "high" }],
               source: "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
               sourceCheckedOn: "2026-10-23",
             },
@@ -324,7 +324,7 @@ describe("lifecycleCapacityReasons", () => {
     );
     expect(out[0].severity).toBe("warning");
     expect(out[0].code).toBe("platform_unpatched");
-    expect(out[0].message).toContain("CVE-2026-111497");
+    expect(out[0].message).toContain("CVE-2026-111497 high");
     expect(out[0].message).toContain("24.14.1");
     expect(out[0].suggestion).toContain("24.22.1");
     // A patch inside the line, never a major move.

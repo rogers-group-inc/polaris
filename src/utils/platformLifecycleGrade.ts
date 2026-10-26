@@ -15,6 +15,18 @@ import { compareTracks, deriveTrack, type TrackGranularity } from "./platformVer
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
 
+/**
+ * The vendor's own rating of one advisory, recorded with it. Red Hat's words
+ * map onto these: Important → high, Moderate → medium.
+ */
+export const ADVISORY_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+export type AdvisorySeverity = (typeof ADVISORY_SEVERITIES)[number];
+
+export const advisorySchema = z.object({
+  id: z.string().min(1),
+  severity: z.enum(ADVISORY_SEVERITIES),
+});
+
 export const trackSchema = z.object({
   track: z.string().min(1),
   released: isoDate.optional(),
@@ -35,11 +47,12 @@ export const trackSchema = z.object({
    *
    * Same evidence rule as the dates: a human read the vendor advisory and
    * recorded its URL. Graded against the FULL observed version, not the track.
+   * Each advisory carries the vendor's rating; the worst one sets the colour.
    */
   securityFloor: z
     .object({
       version: z.string().regex(/^\d+(?:\.\d+)*$/, "expected a dotted numeric version"),
-      advisories: z.array(z.string().min(1)).min(1),
+      advisories: z.array(advisorySchema).min(1),
       source: z.string().min(1),
       sourceCheckedOn: isoDate,
     })
@@ -92,6 +105,7 @@ export type PlatformEolDataset = z.infer<typeof platformEolDatasetSchema>;
 export type PlatformTechnology = z.infer<typeof technologySchema>;
 export type PlatformTrack = z.infer<typeof trackSchema>;
 export type PlatformSecurityFloor = NonNullable<PlatformTrack["securityFloor"]>;
+export type PlatformAdvisory = z.infer<typeof advisorySchema>;
 export type PlatformPlaybook = z.infer<typeof playbookSchema>;
 
 // ─── Grading ──────────────────────────────────────────────────────────
@@ -173,6 +187,33 @@ export interface LifecycleGrade {
 }
 
 const DAY_MS = 86_400_000;
+
+const ADVISORY_RANK: Record<AdvisorySeverity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
+
+/** The worst vendor rating among a floor's advisories. */
+export function worstAdvisorySeverity(advisories: readonly PlatformAdvisory[]): AdvisorySeverity {
+  let worst: AdvisorySeverity = "low";
+  for (const a of advisories) {
+    if (ADVISORY_RANK[a.severity] > ADVISORY_RANK[worst]) worst = a.severity;
+  }
+  return worst;
+}
+
+/**
+ * The colour an open advisory earns: the vendor's worst rating, one step
+ * higher on a network-reachable component (`securityExposed`), because there
+ * the attacker does not need to be on the host first.
+ *
+ *   low → watch, medium → warning, high / critical → critical
+ */
+export function unpatchedSeverity(
+  advisories: readonly PlatformAdvisory[],
+  securityExposed: boolean,
+): LifecycleSeverity {
+  const ladder: LifecycleSeverity[] = ["watch", "warning", "critical"];
+  const base = Math.min(ADVISORY_RANK[worstAdvisorySeverity(advisories)], 2);
+  return ladder[Math.min(base + (securityExposed ? 1 : 0), 2)];
+}
 
 /**
  * Whole days from `now` to a date-only ISO string.
@@ -300,7 +341,7 @@ export function gradeComponent(
   ) {
     return withDates({
       state: "unpatched",
-      severity: tech.securityExposed ? "critical" : "warning",
+      severity: unpatchedSeverity(row.securityFloor.advisories, tech.securityExposed),
       capacitySeverityCap: "warning",
       securityFloor: row.securityFloor,
     });

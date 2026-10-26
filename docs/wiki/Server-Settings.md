@@ -600,8 +600,11 @@ open, since it clears only in a maintenance window.
 
 **Security update** means the version line is supported but the installed
 patch has a published security advisory open against it — the row names the
-advisories and the release to move to. It is flagged and emailed like an
-end-of-life, and for the same reason does not hold the banner open: the fix
+advisories, each with the vendor's severity rating, and the release to move to.
+The row's colour follows the worst rating: low is blue (watch), medium amber,
+high or critical red, one step higher for a network-facing component such as
+Node. Amber and red rows are flagged and emailed like an end-of-life; a blue
+one shows on the card only. None holds the banner open: the fix
 often waits on your OS vendor's package repository catching up. On a systemd
 install, `deploy/upgrade-node.sh` applies a Node patch in place; on Docker,
 pull the current image.
