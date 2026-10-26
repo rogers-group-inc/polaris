@@ -118,7 +118,7 @@
     // A div, not a link: the row's verbs are a menu (review / disable), and
     // there is no URL that opens one schedule.
     return '<div class="recent-item' + (window.POLARIS_DASH_LOCAL ? "" : " recent-item-link") + '"' +
-      ' data-schedule-id="' + escapeHtml(r.id || "") + '">' +
+      ' data-row-menu data-schedule-id="' + escapeHtml(r.id || "") + '">' +
       '<div style="min-width:0">' +
         '<div class="recent-item-title">' + kindPill + "<span>" + escapeHtml(r.name || "(unnamed)") + "</span></div>" +
         '<div class="recent-item-meta">' + meta + "</div>" +
@@ -220,6 +220,7 @@
     if (typeof window.openMaintenanceModal === "function") {
       items.push({
         label: "Open schedule…",
+        primary: true,
         title: "Review this maintenance schedule — its filter, targets and window",
         onSelect: function () { window.openMaintenanceModal({ scheduleId: row.id }); },
       });

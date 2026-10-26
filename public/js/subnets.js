@@ -61,7 +61,7 @@ async function _initSubnetsPage() {
     var id = trigger.getAttribute("data-subnet-id");
     var s = (_subnetsData || []).find(function (x) { return x.id === id; });
     if (!s) return;
-    var items = [{ label: "Open", onSelect: function () { openSubnetFromRow(trigger, id); } }];
+    var items = [{ label: "Open", primary: true, onSelect: function () { openSubnetFromRow(trigger, id); } }];
     if (canEditSubnet(s)) {
       items.push({ label: "Edit", onSelect: function () { openSubnetEditModal(id); } });
       items.push({ label: "Move to block…", onSelect: function () { openSubnetMoveModal(id, s); } });

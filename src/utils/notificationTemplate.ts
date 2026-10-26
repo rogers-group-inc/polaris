@@ -17,6 +17,42 @@
 
 import { severityCss } from "./severityStyle.js";
 import { assetOpenPath } from "./assetOpenLink.js";
+import { daysUntilFull } from "./linearTrend.js";
+import type { ForecastLevel } from "../services/notificationTypes.js";
+
+/** A severity as a level's name — "serious" → "Serious". */
+function levelName(severity: string): string {
+  return severity ? severity.charAt(0).toUpperCase() + severity.slice(1) : "";
+}
+
+/**
+ * The level a memory forecast alert counts down to and how far off it is: the
+ * level at the alert's own severity (the engine placed the reading so that IS
+ * the next unreached level), else the lowest unreached one. Days are whole,
+ * "<1" when under a day. Null without a growing trend or a level to name.
+ */
+export function forecastCountdown(
+  f: { usedPct: number; slopePerDay: number; levels: ForecastLevel[] },
+  severity: string,
+): { level: string; days: string; target: string; summary: string } | null {
+  const sorted = [...f.levels].sort((a, b) => a.threshold - b.threshold);
+  const level = sorted.find((l) => l.severity === severity)
+    ?? sorted.find((l) => (l.strict ? !(f.usedPct > l.threshold) : !(f.usedPct >= l.threshold)));
+  if (!level) return null;
+  const d = daysUntilFull({ slopePerDay: f.slopePerDay, currentUsed: f.usedPct, totalBytes: level.threshold });
+  if (d == null) return null;
+  const whole = Math.round(d);
+  const days = whole < 1 && d > 0 ? "<1" : String(whole);
+  const name = levelName(level.severity);
+  const target = `${level.threshold} %`;
+  const slope = Math.round(f.slopePerDay * 100) / 100;
+  return {
+    level: name,
+    days,
+    target,
+    summary: `Days until ${name}: ${days} — memory is ${Math.round(f.usedPct * 10) / 10} % and growing ${slope} %/day toward ${name} at ${target}`,
+  };
+}
 
 /**
  * Where the automation wizard's variable list files a token, in the order the
@@ -50,10 +86,11 @@ export type TemplateVariableSection = (typeof TEMPLATE_VARIABLE_SECTIONS)[number
  *   interface   the trigger is about an interface
  *   processes   a CPU or memory trigger
  *   dependency  a down automation that alerts while dependency-down (rule 78)
+ *   forecast    a forecast that counts down to a level (memory forecast)
  */
 export type TemplateVariableScope =
   | "device" | "metric" | "threshold" | "component" | "composite"
-  | "event" | "chart" | "interface" | "processes" | "dependency" | "path";
+  | "event" | "chart" | "interface" | "processes" | "dependency" | "path" | "forecast";
 
 /**
  * When a token is filled. Absent = at fire time, so the wizard's example can
@@ -90,6 +127,9 @@ const PLACEMENT: Record<string, Placement> = {
   "{value}": { section: "alert" },
   "{threshold}": { section: "alert", appliesTo: "threshold" },
   "{conditions}": { section: "alert", appliesTo: "composite" },
+  "{forecast.level}": { section: "alert", appliesTo: "forecast" },
+  "{forecast.days}": { section: "alert", appliesTo: "forecast" },
+  "{forecast.target}": { section: "alert", appliesTo: "forecast" },
   "{severity}": { section: "alert" },
   "{severity.upper}": { section: "alert" },
   "{severity.color}": { section: "alert" },
@@ -196,6 +236,9 @@ const RAW_TEMPLATE_VARIABLES: Array<Omit<TemplateVariable, keyof Placement>> = [
   { token: "{dimension.count}", label: "Component count", description: "How many components this alert names (1 when it is about a single one)", group: "notification" },
   { token: "{dimension.first}", label: "Leading component", description: "The one component the alert leads with — the worst, and the one its charts are about", group: "notification" },
   { token: "{dimension.list}", label: "Component list", description: "Every affected component, uncapped — for a body rather than a subject line", group: "notification" },
+  { token: "{forecast.level}", label: "Forecast level", description: "The severity level a memory forecast counts down to — the next one the device has not reached (\"Serious\", then \"Critical\" once it is past serious)", group: "notification" },
+  { token: "{forecast.days}", label: "Days until level", description: "Whole days until memory reaches that level on the 30-day trend (\"<1\" when it is less than a day away)", group: "notification" },
+  { token: "{forecast.target}", label: "Level threshold", description: "That level's memory threshold, with its unit (\"85 %\")", group: "notification" },
   { token: "{conditions}", label: "Conditions", description: "Multi-condition summary, e.g. \"2 of 3 conditions met\" (composite triggers; empty otherwise)", group: "notification" },
   { token: "{message}", label: "Message", description: "The rendered in-app notification message", group: "notification" },
   { token: "{severity}", label: "Severity", description: "Rule severity (e.g. warning)", group: "notification" },
@@ -458,6 +501,14 @@ export interface TemplateContextParts {
   /** "Response time (median over 5 minutes) is 760 ms" — utils/triggerSummary. */
   triggerSummary?: string;
   /**
+   * A memory forecast's trend and the automation's levels. The level the alert
+   * counts down to is the one matching `severity` (the band-resolved severity
+   * the caller sets after building the parts), so it is resolved here, where
+   * the final severity is known: `{forecast.*}` and the trigger summary
+   * "Days until Serious: 6".
+   */
+  forecast?: { usedPct: number; slopePerDay: number; levels: ForecastLevel[] };
+  /**
    * What happens if nobody acts — the two sentences from
    * notificationTypes.followUpPolicy, resolved for the severity this alert
    * FIRED at. Supplied only on a fire (and a band change); deliberately absent
@@ -644,7 +695,11 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
   const a = parts.assetDetail;
   const severity = str(parts.severity);
   const time = parts.time instanceof Date ? parts.time.toISOString() : str(parts.time);
+  const countdown = parts.forecast ? forecastCountdown(parts.forecast, severity) : null;
   return {
+    "forecast.level": countdown?.level ?? "",
+    "forecast.days": countdown?.days ?? "",
+    "forecast.target": countdown?.target ?? "",
     "asset": str(parts.asset),
     "metric": str(parts.metric),
     "value": str(parts.value),
@@ -682,7 +737,9 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "link": str(parts.link),
     "rule": str(parts.ruleName),
     "rule.description": str(parts.ruleDescription),
-    "trigger.summary": str(parts.triggerSummary),
+    // A memory forecast's headline is its countdown — the level and the days,
+    // which the generic "Memory forecast (14 days out) is 85 %" cannot say.
+    "trigger.summary": countdown?.summary ?? str(parts.triggerSummary),
     "event.action": str(parts.event?.action),
     "event.level": str(parts.event?.level),
     "event.resource": str(parts.event?.resourceName),

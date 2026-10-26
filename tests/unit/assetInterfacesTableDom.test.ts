@@ -135,6 +135,8 @@ function setup(): void {
   g.openViewModal = () => {};
   g.permAtLeast = (key: string) => key === "subnets" ? canReadNetworks : true;
   g.showRowMenu = (anchor: Element, items: any[], opts: any) => { menuCalls.push({ anchor, items, opts }); };
+  // app.js's "is this click a right click?" — set by rightClick() below.
+  g.rowMenuGesture = () => gesture;
   g.PolarisPanels = { openNetwork: vi.fn(async () => true) };
   g.api = {
     assets: {
@@ -168,6 +170,12 @@ const sectionLabels = () =>
     .map((tr) => tr.textContent!.replace(/\s+/g, " ").trim());
 
 const click = (el: any) => el.dispatchEvent(new (win as any).Event("click", { bubbles: true, cancelable: true }));
+/** A right click as app.js replays it: the click, with rowMenuGesture() answering a point. */
+let gesture: { x: number | null; y: number | null } | null = null;
+const rightClick = (el: any) => {
+  gesture = { x: 40, y: 50 };
+  try { click(el); } finally { gesture = null; }
+};
 const change = (el: any) => el.dispatchEvent(new (win as any).Event("change", { bubbles: true }));
 const settle = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 const sortBy = (key: string) => click(doc.querySelector(`th[data-sf-key="${key}"] .sf-header`));
@@ -569,12 +577,27 @@ describe("a member port belongs to its aggregate", () => {
 });
 
 // An interface name is a link to its history panel — and, when its address
-// sits in a Polaris network, a fork between the interface and that network's
-// slide-over. The network is looked up on click (one ip-context request), so
-// the fork appears only when there is somewhere to go.
+// sits in a Polaris network, a RIGHT click forks between the interface and
+// that network's slide-over. The network is looked up on the right click (one
+// ip-context request), so a plain click costs nothing and the fork appears
+// only when there is somewhere to go.
 describe("interface name → interface or network", () => {
   const SUBNET = { id: "S1", cidr: "10.0.0.0/24", name: "Servers" };
-  const clickName = (name: string) => click(rowFor(name).querySelector(".asset-iface-link"));
+  const clickName = (name: string) => rightClick(rowFor(name).querySelector(".asset-iface-link"));
+
+  it("a plain click opens the interface without a lookup", async () => {
+    canReadNetworks = true;
+    ipContextResult = { ip: "10.0.0.5", subnet: SUBNET };
+    click(rowFor("port1").querySelector(".asset-iface-link"));
+    await settle();
+    expect(g.api.assets.ipContext).not.toHaveBeenCalled();
+    expect(openedIface).toBe("port1");
+    expect(menuCalls).toHaveLength(0);
+  });
+
+  it("marks the name for the right-click listener", () => {
+    expect(rowFor("port1").querySelector(".asset-iface-link")!.hasAttribute("data-row-menu")).toBe(true);
+  });
   const menuLabels = () => menuCalls[0].items.map((i) => i.label);
   const pick = (label: string) => menuCalls[0].items.find((i) => i.label === label)!.onSelect();
 
@@ -601,19 +624,20 @@ describe("interface name → interface or network", () => {
     expect(openedIface).toBeNull();                       // a menu, not the panel
     expect(menuLabels()).toEqual(["Open interface", "Open network"]);
     expect(menuCalls[0].anchor).toBe(rowFor("port1").querySelector(".asset-iface-link"));
+    // Opened where the pointer was, not under the name.
+    expect(menuCalls[0].opts.menuAt).toEqual({ x: 40, y: 50 });
     pick("Open network");
     expect(g.PolarisPanels.openNetwork).toHaveBeenCalledWith("S1", { focusIp: "10.0.0.5", subnetCidr: "10.0.0.0/24" });
     pick("Open interface");
     expect(openedIface).toBe("port1");
   });
 
-  it("opens the interface straight away when the address is in no network", async () => {
+  it("offers only Open interface when the address is in no network", async () => {
     canReadNetworks = true;
     ipContextResult = { ip: "10.0.0.5", subnet: null };
     clickName("port1");
     await settle();
-    expect(openedIface).toBe("port1");
-    expect(menuCalls).toHaveLength(0);
+    expect(menuLabels()).toEqual(["Open interface"]);
   });
 
   it("never looks up an interface with no address", async () => {
@@ -622,7 +646,7 @@ describe("interface name → interface or network", () => {
     clickName("port2");
     await settle();
     expect(g.api.assets.ipContext).not.toHaveBeenCalled();
-    expect(openedIface).toBe("port2");
+    expect(menuLabels()).toEqual(["Open interface"]);
   });
 
   it("never looks up for a viewer who cannot read networks", async () => {
@@ -631,7 +655,7 @@ describe("interface name → interface or network", () => {
     clickName("port1");
     await settle();
     expect(g.api.assets.ipContext).not.toHaveBeenCalled();
-    expect(openedIface).toBe("port1");
+    expect(menuLabels()).toEqual(["Open interface"]);
   });
 
   it("opens the interface when the lookup fails, or lands after the table re-rendered", async () => {
@@ -796,7 +820,7 @@ describe("IPv6 column", () => {
     renderWithV6();
     canReadNetworks = true;
     ipContextResult = { ip: "2001:db8:50::1", subnet: { id: "S6", cidr: "2001:db8:50::/64", name: "v6" } };
-    click(rowFor("vlan50").querySelector(".asset-iface-link"));
+    rightClick(rowFor("vlan50").querySelector(".asset-iface-link"));
     await settle();
     expect(g.api.assets.ipContext).toHaveBeenCalledWith("2001:db8:50::1");
   });

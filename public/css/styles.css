@@ -2748,7 +2748,10 @@ html[data-page-top-curtain]::after {
   z-index: 900;
   min-width: 160px;
 }
-/* The row-name trigger: reads as the name, not as a control, until hovered. */
+/* The row-name trigger: reads as the name, not as a control, until hovered.
+   No ▾ caret: a left click OPENS the row (the menu's primary verb) and the
+   menu is the right click's, so a dropdown caret would promise the wrong
+   thing (polaris-ui-canon → Row context menu). */
 .row-menu-trigger {
   background: none;
   border: none;
@@ -2763,11 +2766,6 @@ html[data-page-top-curtain]::after {
   white-space: nowrap;
 }
 .row-menu-trigger:hover { text-decoration: underline; }
-.row-menu-trigger::after {
-  content: " \25BE";
-  color: var(--color-text-tertiary);
-  font-size: 0.75em;
-}
 .row-menu-trigger:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
@@ -6768,8 +6766,10 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 /* The grip chip centred on the bar — the slide-over's twin of the Device Map
    topology pane's edge arrow (map.css .topology-edge-arrow). It overhangs the
-   6px bar on both sides and carries a left and a right chevron. Dim at rest
-   so it is findable, full on hover / drag. */
+   6px bar on both sides and carries a left and a right chevron. Frosted on
+   the slide-over's own terms (--panel-glass-bg + blur) and fully opaque at
+   rest, so the chip reads as a piece of the panel rather than a faded ghost
+   of the page behind it. */
 .slideover-resize-grip {
   position: absolute;
   top: 50%;
@@ -6780,10 +6780,11 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   transform: translate(-50%, -50%);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-accent);
-  background: var(--color-bg-primary);
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   box-shadow: var(--shadow-lift);
   cursor: col-resize;
-  opacity: 0.55;
   transition: opacity 0.15s ease;
 }
 .slideover-resize-handle:hover .slideover-resize-grip,

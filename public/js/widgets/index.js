@@ -1073,13 +1073,13 @@
   // ── Clicking a row that carries an ALERT ──────────────────────────────────
   //
   // A row on an outage widget is a prompt to do one of two things — put your
-  // name on the alert, or go look at the device — so the click ASKS instead of
-  // assuming the second. It only asks when asking is meaningful: an alert
-  // nobody has yet, on a surface that can show a dialog, for an operator whose
-  // role may actually acknowledge. Everything else goes straight to the device,
-  // which is what the click did before this existed.
+  // name on the alert, or go look at the device. A plain click goes to the
+  // device ("Open device" is the menu's primary item, which showRowMenu runs
+  // on a left click); a RIGHT click is the menu, with Acknowledge on it when
+  // acknowledging is meaningful: an alert nobody has yet, on a surface that
+  // can show a dialog, for an operator whose role may actually acknowledge.
   //
-  // Six ways it resolves to a plain open, and each is deliberate:
+  // Ways the Acknowledge verb is left off, and each is deliberate:
   //   • no live alert on the row      — a down device with no automation
   //                                     covering it (business rule 36's
   //                                     `passive`) has nothing to acknowledge
@@ -1100,14 +1100,14 @@
     opts = opts || {};
     var openDevice = function () { window.PolarisWidgets.openAssetDetail(opts.assetId); };
     var canAck = typeof window.permAtLeast !== "function" || window.permAtLeast("alerts", "write");
-    if (!opts.alertId || opts.alertAcknowledged || !canAck
-        || typeof window.showRowMenu !== "function"
-        || !window.PolarisAlertAckModal || !window.openModal) {
+    if (typeof window.showRowMenu !== "function") {
       openDevice();
       return false;
     }
-    window.showRowMenu(anchor, [
-      {
+    var items = [{ label: "Open device", primary: true, onSelect: openDevice }];
+    if (opts.alertId && !opts.alertAcknowledged && canAck
+        && window.PolarisAlertAckModal && window.openModal) {
+      items.push({
         label: "Acknowledge alert…",
         title: "Put your name on this alert without leaving the dashboard",
         onSelect: function () {
@@ -1116,9 +1116,9 @@
             onOpenDevice: openDevice,
           });
         },
-      },
-      { label: "Open device", onSelect: openDevice },
-    ], { label: "Alert actions" });
+      });
+    }
+    window.showRowMenu(anchor, items, { label: "Alert actions" });
     return true;
   };
 
@@ -1141,7 +1141,12 @@
   //                    runs the automation's reset actions and stops
   //                    escalation — the same sentence the asset tab confirms
   //                    with, because it is the same act)
-  //   • Open device  — only when the alert names one
+  //   • Open device  — only when the alert names one; first, and the PRIMARY
+  //                    item, so a plain click opens the device and the right
+  //                    click is the menu. A device-less grouped alert makes
+  //                    its group list primary instead; a device-less alert
+  //                    with neither has nothing to open, so its menu shows on
+  //                    either button.
   // With no verb left to offer the click falls back to the device (today's
   // behaviour for a read-only role), and an alert with neither verb nor device
   // does nothing rather than opening an empty menu. The /dash wallboard loads
@@ -1162,13 +1167,16 @@
       if (typeof opts.onChanged === "function") opts.onChanged(kind, opts.alertId, fresh);
     };
     var items = [];
+    if (opts.assetId) items.push({ label: "Open device", primary: true, onSelect: openDevice });
     // A GROUPED alert (business rule 75) is one row naming many problems; this
-    // opens the list of them. First, because on a grouped row it is the
-    // question the click is usually asking. Reads GET /alerts/:id — the same
-    // read, and the same alerts:read gate, as the acknowledge dialog.
+    // opens the list of them. Right after Open device, because on a grouped
+    // row it is the question the click is usually asking. Reads GET
+    // /alerts/:id — the same read, and the same alerts:read gate, as the
+    // acknowledge dialog.
     if (dialogs && opts.alertId && opts.grouped && at("read") && typeof window.openAlertMembers === "function") {
       items.push({
         label: "Show alerts in this group…",
+        primary: !opts.assetId,
         title: "List the components this alert is made of — which are still affected and which have recovered",
         onSelect: function () {
           window.openAlertMembers(opts.alertId, { onOpenDevice: opts.assetId ? openDevice : undefined });
@@ -1194,9 +1202,8 @@
         onSelect: function () { clearAlertFromRow(opts.alertId, changed); },
       });
     }
-    if (opts.assetId) items.push({ label: "Open device", onSelect: openDevice });
     if (!items.length) return false;
-    if (items.length === 1 && items[0].label === "Open device") { openDevice(); return false; }
+    if (typeof window.showRowMenu !== "function") { openDevice(); return false; }
     window.showRowMenu(anchor, items, { label: "Alert actions" });
     return true;
   };

@@ -2418,7 +2418,7 @@ function _managementAccessMenuItems(a) {
 }
 
 function _assetMenuItems(a) {
-  var items = [{ label: "Open", onSelect: function () { openViewModal(a.id); } }];
+  var items = [{ label: "Open", primary: true, onSelect: function () { openViewModal(a.id); } }];
   if (canManageAssets()) {
     items.push({ label: "Edit…", onSelect: function () { openEditModal(a.id); } });
   }
@@ -9108,7 +9108,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var badgeAsChild = opts.isChild || (opts.flat && !!iface.ifParent);
     var nameCell =
       '<td class="mono" style="' + padStyle + '" title="' + escapeHtml(iface.ifName) + '">' + prefix +
-      '<a href="#" class="asset-iface-link" data-ifname="' + escapeHtml(iface.ifName) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(label) + '</a>' +
+      '<a href="#" class="asset-iface-link" data-row-menu data-ifname="' + escapeHtml(iface.ifName) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(label) + '</a>' +
       typeBadge(iface, badgeAsChild) +
       subtitle +
       '</td>';
@@ -9713,11 +9713,18 @@ function _ifaceIpForLookup(raw) {
 // resolved on click through GET /assets/ip-context — one small request, only
 // for an interface that has an address, only for a viewer who can read
 // networks — so a table of 48 ports costs nothing to render, and an address in
-// no network opens the interface straight away, as before. The row menu
-// anchors on the name the operator clicked (showRowMenu, app.js); a lookup
-// that fails, or lands after the table re-rendered under it, opens the
-// interface rather than nothing.
+// no network opens the interface straight away, as before. A plain click
+// always opens the interface; the fork is the RIGHT click's menu (rowMenuGesture,
+// app.js), so the lookup is paid only when the operator asks for the menu. The
+// menu anchors at the pointer; a lookup that fails, or lands after the table
+// re-rendered under it, opens the interface rather than nothing.
 function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
+  var at = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
+  if (!at) {
+    openInterfaceDetailPanel(asset, ifName, row);
+    return;
+  }
+  var openIface = { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } };
   // IPv4 first; an IPv6-only interface looks its IPv6 network up instead
   // (business rule 126).
   var ip = _ifaceIpForLookup(row && row.ipAddress) ||
@@ -9725,22 +9732,23 @@ function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
   var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
   var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
   if (!ip || !canReadNetworks || !canLookup) {
-    openInterfaceDetailPanel(asset, ifName, row);
+    showRowMenu(anchor, [openIface], { label: ifName, menuAt: at });
     return;
   }
   api.assets.ipContext(ip).then(function (ctx) {
     var subnet = ctx && ctx.subnet;
-    if (!subnet || !subnet.id || !anchor || !document.body.contains(anchor)) {
+    if (!anchor || !document.body.contains(anchor)) {
       openInterfaceDetailPanel(asset, ifName, row);
       return;
     }
-    var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
-    showRowMenu(anchor, [
-      { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } },
-      { label: "Open network", title: ip + " is in " + where, onSelect: function () {
+    var items = [openIface];
+    if (subnet && subnet.id) {
+      var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
+      items.push({ label: "Open network", title: ip + " is in " + where, onSelect: function () {
         PolarisPanels.openNetwork(subnet.id, { focusIp: ip, subnetCidr: subnet.cidr });
-      } },
-    ], { label: ifName });
+      } });
+    }
+    showRowMenu(anchor, items, { label: ifName, menuAt: at });
   }, function () {
     openInterfaceDetailPanel(asset, ifName, row);
   });
@@ -13961,7 +13969,18 @@ async function _loadMemoryForecastFor(assetId, force) {
   var c = _memForecastCache;
   if (!force && c && c.assetId === assetId && (Date.now() - c.at) < _MEM_FORECAST_TTL_MS) return c.data;
   try {
-    var data = await api.assets.memoryForecast(assetId);
+    // The levels the headline counts down to ride along: the memory
+    // utilization automations that cover this device (the engine's own tier
+    // ladder, GET /metric-thresholds), else a memory forecast automation's own
+    // levels. Best-effort — no levels means "Days until full", as before.
+    var both = await Promise.all([
+      api.assets.memoryForecast(assetId),
+      _loadMetricSeverityTiers(assetId, "memPct").then(function (t) {
+        return t.length ? t : _loadMetricSeverityTiers(assetId, "memForecastPct");
+      }),
+    ]);
+    var data = both[0];
+    if (data) data.levels = both[1] || [];
     _memForecastCache = { assetId: assetId, data: data, at: Date.now() };
     return data;
   } catch (_) {
@@ -13994,6 +14013,31 @@ function _fmtPctPerDay(v) {
   return a.toFixed(a < 1 ? 2 : 1) + "%/day";
 }
 
+/**
+ * The memory level the headline counts down to: the lowest upward level of
+ * the device's memory automations that memory has not reached yet — the same
+ * "next level" a memory forecast alert names (memoryForecastService
+ * .nextForecastLevel). `{ level, past }`: `past` is the highest level already
+ * passed when there is no next one. Pure over `fc.levels` + the newest point.
+ */
+function _memForecastNextLevel(fc) {
+  var levels = ((fc && fc.levels) || []).filter(function (t) {
+    return (t.operator === ">" || t.operator === ">=") && typeof t.threshold === "number";
+  }).sort(function (a, b) { return a.threshold - b.threshold; });
+  if (!levels.length || !fc.points || !fc.points.length) return null;
+  var used = fc.points[fc.points.length - 1].v;
+  var reached = function (t) { return t.operator === ">" ? used > t.threshold : used >= t.threshold; };
+  for (var i = 0; i < levels.length; i++) {
+    if (!reached(levels[i])) return { level: levels[i], past: null, used: used };
+  }
+  return { level: null, past: levels[levels.length - 1], used: used };
+}
+
+function _sevName(sev) {
+  var s = String(sev || "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function _memForecastHeadlineHTML(fc) {
   var muted = "var(--color-text-secondary)";
   var signal = _memForecastSignal(fc);
@@ -14002,6 +14046,32 @@ function _memForecastHeadlineHTML(fc) {
     var have = fc && fc.points ? fc.points.length : 0;
     var need = (fc && fc.minPoints) || 7;
     return '<span style="color:' + muted + '">Forecast needs ' + need + ' days of history — ' + have + ' so far</span>';
+  }
+  // A memory automation watches this device: count down to its next level,
+  // in that level's severity colour — "Days until Serious: 12", the number a
+  // memory forecast alert would quote — instead of the distance to 100 %.
+  var next = _memForecastNextLevel(fc);
+  if (next) {
+    var trend = fc.slopePerDay > 0
+      ? ' <span style="color:' + muted + '">· trend: +' + _fmtPctPerDay(fc.slopePerDay) + '</span>'
+      : fc.slopePerDay < 0 ? ' <span style="color:' + muted + '">· trend: −' + _fmtPctPerDay(fc.slopePerDay) + '</span>' : '';
+    var lv = next.level || next.past;
+    var title = _sevName(lv.severity) + " at " + lv.threshold + " % — from «" + lv.ruleName + "». Fitted on " +
+      fc.points.length + " daily averages over the last " + (fc.lookbackDays || 30) + " days, the same figure a Memory forecast automation compares";
+    var lvColor = "var(--color-sev-" + lv.severity + ", " + muted + ")";
+    if (next.level) {
+      var d = fc.slopePerDay > 0 ? (next.level.threshold - next.used) / fc.slopePerDay : null;
+      var dText = d == null ? null : d > 365 ? "&gt; 1 year" : d < 1 ? "&lt;1" : String(Math.round(d));
+      text = dText == null
+        ? "Below " + _sevName(next.level.severity) + " (" + next.level.threshold + " %)" + (signal === "shrinking" ? " · shrinking" : " · not growing")
+        : "Days until " + _sevName(next.level.severity) + ": <strong>" + dText + "</strong>" + trend;
+      // The level's own colour while it is due; muted while it is not coming.
+      color = d == null || d > 365 ? muted : lvColor;
+    } else {
+      text = "Above " + _sevName(next.past.severity) + " (" + next.past.threshold + " %)" + trend;
+      color = lvColor;
+    }
+    return '<span style="color:' + color + '" title="' + escapeHtml(title) + '">' + text + '</span>';
   }
   if (signal === "growing") {
     var days = fc.daysUntilFull;
@@ -21353,6 +21423,7 @@ function _upstreamMenuItems(ref) {
   if (!ref || !ref.id) return [];
   var items = [{
     label: "Open asset",
+    primary: true,
     title: "Open this device's details",
     onSelect: function () { openViewModal(ref.id); },
   }];
@@ -25329,6 +25400,7 @@ function _loadAssetNotificationsTab(assetId) {
           if (!row) return;
           showRowMenu(btn, [{
             label: "Show alerts in this group…",
+            primary: true,
             title: "List the components this alert is made of — which are still affected and which have recovered",
             onSelect: function () { openAlertMembers(row); },
           }], { label: "Alert actions" });

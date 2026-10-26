@@ -164,6 +164,16 @@ someone else's needs `assets:fullwrite`.
 
 ### The row menu
 
+**Click a hostname to open the asset; right-click it for the row menu.** The
+same rule holds for every name in Polaris that has a menu behind it (assets,
+networks, blocks, automations, roles, path checks, saved discoveries, and the
+dashboard's alert, outage and maintenance rows): a left click does the menu's
+first verb, and a right click (or the keyboard's Menu key, or Shift+F10 on the
+focused name) shows the whole menu at the pointer. A name with nothing to open,
+such as a user on the Users page, shows its menu on either click.
+Shift+right-click still gives the browser's own menu, and Ctrl/middle-click on a
+dashboard row still opens the Assets page in a new tab.
+
 Each row's menu carries **Open** and, with `assets:write`, **Edit…**; then
 **Open HTTPS**, **Open RDP** and **Open SSH** where the device has that
 management surface (the same verbs as the slide-over header — a Fortinet device
@@ -672,8 +682,8 @@ same pills.
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
-When the interface's address sits inside a network Polaris knows, the click
-offers **Open interface** or **Open network** instead; *Open network* slides
+Right-click it for **Open interface** and, when the interface's address sits
+inside a network Polaris knows, **Open network**; *Open network* slides
 that network's address table in over the asset, scrolled to the address. The
 choice appears only for roles that can read networks, and only when a network
 actually contains the address. An interface with no IPv4 address looks up the
@@ -762,11 +772,19 @@ of the combined CPU & Memory chart (prefixed *Memory —* there).
   Processes band, so page cache never reads as a leak.
 - It needs **7 days** of history before it says anything; until then the
   headline reads *Forecast needs 7 days of history — N so far*.
+- When a **Memory utilization** automation covers the device, the headline
+  counts down to that automation's **next level** instead of to full, in that
+  level's severity colour. For example, *Days until Serious: 12 · trend:
+  +0.42%/day* while memory is below serious, then *Days until Critical: N* once
+  it is past it, and *Above Critical (90 %)* past every level. Hover it to see
+  the level and the automation it comes from. With no memory automation (or
+  only a Memory forecast automation's own levels) it counts down to that
+  automation's levels, or to full.
 - A host whose memory is **shrinking** or **not measurably growing** says so,
-  and a fill date more than a year out reads *> 1 year*.
-- The number is the same one a **Days until memory full** automation
-  compares ([triggers](Automation-Triggers)), so the chart and an alert never
-  disagree. The dashed line is drawn as wide again as the selected range — an
+  and a date more than a year out reads *> 1 year*.
+- The trend is the same one a **Days until memory full** or **Memory
+  forecast** automation compares ([triggers](Automation-Triggers)), so the
+  chart and an alert never disagree. The dashed line is drawn as wide again as the selected range — an
   hour of forecast beside an hour of history, a week beside a week.
 
 The **Forecast** button beside the headline hides or shows the line for that

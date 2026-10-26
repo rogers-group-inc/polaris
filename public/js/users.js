@@ -94,7 +94,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       var m = _groupMappingsById[id];
       if (!m) return;
       showRowMenu(trigger, [
-        { label: "Edit…", onSelect: function () { openGroupMappingSlideover(id); } },
+        { label: "Edit…", primary: true, onSelect: function () { openGroupMappingSlideover(id); } },
         { separator: true },
         { label: "Delete", danger: true, onSelect: function () { confirmDeleteGroupMapping(id); } },
       ], { label: "Actions for " + (m.groupLabel || m.groupKey) });
@@ -1464,7 +1464,7 @@ function _roleMenuItems(r) {
     : r.userCount > 0 ? "Reassign users first"
     : null;
   var items = [
-    { label: "Edit…", onSelect: function () { openRoleSlideover(r.id); } },
+    { label: "Edit…", primary: true, onSelect: function () { openRoleSlideover(r.id); } },
   ];
   if (r.grantReviewNeeded) {
     items.push({ label: "Mark reviewed", onSelect: function () { markRoleReviewed(r.id); } });

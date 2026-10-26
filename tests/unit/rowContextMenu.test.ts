@@ -34,6 +34,7 @@ interface MenuItem {
   separator?: boolean;
   heading?: string;
   icon?: string;
+  primary?: boolean;
 }
 
 let win: InstanceType<typeof Window>;
@@ -354,5 +355,103 @@ describe("showRowMenu — stacking layer", () => {
     const btn = anchorInside(["10"]);
     showRowMenu(btn, [{ label: "Open", onSelect: () => {} }]);
     expect((menu() as unknown as HTMLElement).style.zIndex).toBe("");
+  });
+});
+
+// Left click opens, right click shows the menu. An item marked `primary` is
+// what a plain click does; a right click (the `contextmenu` listener in app.js)
+// replays the click with the menu forced, so every call site's click handler
+// builds its items unchanged.
+describe("left click opens, right click shows the menu", () => {
+  function contextmenu(target: Element, init: Record<string, unknown> = { clientX: 120, clientY: 80 }) {
+    const ev = new (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, ...init,
+    });
+    target.dispatchEvent(ev);
+    return ev;
+  }
+
+  it("runs the primary item on a plain call instead of drawing the menu", () => {
+    const opened: string[] = [];
+    showRowMenu(anchor, [
+      { label: "Open", primary: true, onSelect: () => opened.push("open") },
+      { label: "Delete", onSelect: () => opened.push("delete") },
+    ]);
+    expect(menu()).toBeNull();
+    expect(opened).toEqual(["open"]);
+  });
+
+  it("still draws the menu when no item is primary (nothing to open)", () => {
+    showRowMenu(anchor, [{ label: "Change Role", onSelect: () => {} }]);
+    expect(itemLabels()).toEqual(["Change Role"]);
+  });
+
+  it("skips a disabled primary and draws the menu", () => {
+    showRowMenu(anchor, [{ label: "Open", primary: true, disabled: true, onSelect: () => {} }]);
+    expect(menu()).toBeTruthy();
+  });
+
+  it("draws the menu when the caller passes menuAt (an async right click)", () => {
+    const opened: string[] = [];
+    showRowMenu(anchor, [{ label: "Open", primary: true, onSelect: () => opened.push("open") }],
+      { menuAt: { x: 10, y: 20 } });
+    expect(itemLabels()).toEqual(["Open"]);
+    expect(opened).toEqual([]);
+  });
+
+  it("a right click on a row-menu trigger replays the click and opens the menu", () => {
+    anchor.className = "row-menu-trigger";
+    const opened: string[] = [];
+    anchor.addEventListener("click", () => {
+      showRowMenu(anchor, [
+        { label: "Open", primary: true, onSelect: () => opened.push("open") },
+        { label: "Edit", onSelect: () => {} },
+      ]);
+    });
+    const ev = contextmenu(anchor);
+    expect(ev.defaultPrevented).toBe(true); // the browser's own menu is suppressed
+    expect(itemLabels()).toEqual(["Open", "Edit"]);
+    expect(opened).toEqual([]);
+    // …and the forced state ends with that click: the next plain click opens.
+    closeRowMenu({ silent: true });
+    anchor.dispatchEvent(new (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent("click", { bubbles: true }));
+    expect(opened).toEqual(["open"]);
+  });
+
+  it("answers rowMenuGesture() with the pointer during the replayed click only", () => {
+    const seen: unknown[] = [];
+    const gesture = (win as unknown as { rowMenuGesture: () => unknown }).rowMenuGesture;
+    anchor.setAttribute("data-row-menu", "");
+    anchor.addEventListener("click", () => { seen.push(gesture()); });
+    contextmenu(anchor, { clientX: 120, clientY: 80 });
+    expect(seen).toEqual([{ x: 120, y: 80 }]);
+    expect(gesture()).toBeNull();
+  });
+
+  it("a keyboard Menu key (no pointer position) anchors under the trigger", () => {
+    const seen: unknown[] = [];
+    const gesture = (win as unknown as { rowMenuGesture: () => unknown }).rowMenuGesture;
+    anchor.className = "row-menu-trigger";
+    anchor.addEventListener("click", () => { seen.push(gesture()); });
+    contextmenu(anchor, { clientX: 0, clientY: 0 });
+    expect(seen).toEqual([{ x: null, y: null }]);
+  });
+
+  it("leaves the browser menu alone off a trigger, and on Shift+right-click", () => {
+    const other = doc.createElement("span");
+    doc.body.appendChild(other);
+    expect(contextmenu(other as unknown as Element).defaultPrevented).toBe(false);
+    anchor.className = "row-menu-trigger";
+    expect(contextmenu(anchor, { clientX: 5, clientY: 5, shiftKey: true }).defaultPrevented).toBe(false);
+  });
+
+  it("a second right click re-opens rather than toggling closed", () => {
+    anchor.className = "row-menu-trigger";
+    anchor.addEventListener("click", () => {
+      showRowMenu(anchor, [{ label: "Open", primary: true, onSelect: () => {} }]);
+    });
+    contextmenu(anchor);
+    contextmenu(anchor, { clientX: 200, clientY: 90 });
+    expect(doc.querySelectorAll(".row-context-menu")).toHaveLength(1);
   });
 });

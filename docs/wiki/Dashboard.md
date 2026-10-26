@@ -247,6 +247,15 @@ problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).
 
 ## Acting from the dashboard
 
+**Click a row to open it; right-click it for its verbs.** On Active Alerts and
+Down Assets a left click opens the device (an alert with no device opens its
+group, or shows its verbs when it has no group either); on Maintenance
+Schedules it opens the schedule. A right click shows the row's menu — **Open
+device**, **Acknowledge alert…**, **Clear alert**, **Show alerts in this
+group…**, **Disable schedule** — whichever apply. Ctrl/middle-click still opens
+the Assets page in a new tab. The Dash wallboard has no menus: a click there
+opens the device.
+
 The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
 
 - **Acknowledge** (`alerts:write`) — puts your name on the alert without

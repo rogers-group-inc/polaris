@@ -167,7 +167,7 @@
 
   /** Row verbs, pure (tested): Results first — it is the one a reader has. */
   function menuItems(check, perms) {
-    var items = [{ label: "Results", onSelect: function () { openResults(check); } }];
+    var items = [{ label: "Results", primary: true, onSelect: function () { openResults(check); } }];
     if (perms && perms.canEdit) {
       items.push({ separator: true });
       items.push({ label: "Edit", onSelect: function () { openCheckModal(check); } });
@@ -184,8 +184,8 @@
 
   /** Results row verbs, pure (tested): the server has no asset to open. */
   function resultRowMenu(isServer, handlers) {
-    if (isServer) return [{ label: "Show charts and path", onSelect: handlers.openServer }];
-    return [{ label: "Open asset — Paths tab", onSelect: handlers.openAsset }];
+    if (isServer) return [{ label: "Show charts and path", primary: true, onSelect: handlers.openServer }];
+    return [{ label: "Open asset — Paths tab", primary: true, onSelect: handlers.openAsset }];
   }
 
   // The list-controls row: page numbers below the card, and — on the tab row

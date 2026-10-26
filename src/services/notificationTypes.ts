@@ -902,6 +902,12 @@ const assetMetricTrigger = z.object({
    *  severity tier's threshold is the level it is about. Inert on every other
    *  metric; absent = FORECAST_DAYS_DEFAULT. */
   forecastDays: z.number().int().min(1).max(365).optional(),
+  /** LINKED LEVELS — a forecast metric's levels taken from another
+   *  automation (see FORECAST_LEVEL_SOURCE_METRICS): its threshold, operator,
+   *  base severity and severity bands, re-read at every evaluation so an edit
+   *  there moves the forecast too (`linkForecastLevels`). Inert on every other
+   *  metric. */
+  levelsFromRuleId: z.string().min(1).max(64).optional(),
 });
 
 const assetStateTrigger = z.object({
@@ -4264,6 +4270,97 @@ export function forecastDaysOf(trigger: unknown): number {
 }
 
 /**
+ * The automations a forecast may take its levels from, by metric: a memory
+ * forecast follows a memory-utilization automation's percentages. Exposed on
+ * /automations/schema as `forecastLevelSources`.
+ */
+export const FORECAST_LEVEL_SOURCE_METRICS: Record<string, string> = { memForecastPct: "memPct" };
+
+/** One level a forecast counts down to: a tier's threshold, its severity, and
+ *  whether its comparison is strict (`>`) or not (`>=`). */
+export interface ForecastLevel {
+  threshold: number;
+  severity: string;
+  strict: boolean;
+}
+
+/**
+ * A forecast rule's levels, lowest first: the base tier (trigger threshold at
+ * the rule's severity) and every band, each with its own comparison (falling
+ * back to the trigger's). Only upward comparisons count — a forecast projects
+ * growth. Pure.
+ */
+export function forecastLevelsOf(trigger: unknown, severity: string, severityBands: SeverityBand[] | null | undefined): ForecastLevel[] {
+  const t = trigger as { operator?: string; threshold?: unknown } | null;
+  if (!t) return [];
+  const out: ForecastLevel[] = [];
+  const push = (threshold: unknown, sev: string, op: string | undefined) => {
+    if (typeof threshold !== "number" || !Number.isFinite(threshold)) return;
+    if (op !== ">" && op !== ">=") return;
+    out.push({ threshold, severity: sev, strict: op === ">" });
+  };
+  push(t.threshold, severity, t.operator);
+  for (const b of severityBands ?? []) push(b.threshold, b.severity, b.operator ?? t.operator);
+  return out.sort((a, b) => a.threshold - b.threshold);
+}
+
+/** The levels part of a rule — what `linkForecastLevels` reads and writes. */
+export interface LevelsPart {
+  trigger: unknown;
+  severity: string;
+  severityBands: SeverityBand[] | null | undefined;
+}
+
+/** The linked automation id a forecast trigger names, when it may name one. */
+export function forecastLevelsSourceId(trigger: unknown): string | null {
+  const t = trigger as { type?: unknown; metric?: unknown; levelsFromRuleId?: unknown } | null;
+  if (!t || t.type !== "asset_metric" || typeof t.metric !== "string") return null;
+  if (!FORECAST_LEVEL_SOURCE_METRICS[t.metric]) return null;
+  return typeof t.levelsFromRuleId === "string" && t.levelsFromRuleId ? t.levelsFromRuleId : null;
+}
+
+/** Can this trigger lend its levels to a forecast on `forecastMetric`? A
+ *  single condition on the source metric, compared upward. */
+export function isForecastLevelSource(trigger: unknown, forecastMetric: string): boolean {
+  const t = trigger as { type?: unknown; metric?: unknown; operator?: unknown; threshold?: unknown } | null;
+  return !!t && t.type === "asset_metric" && t.metric === FORECAST_LEVEL_SOURCE_METRICS[forecastMetric] &&
+    (t.operator === ">" || t.operator === ">=") && typeof t.threshold === "number";
+}
+
+/**
+ * A forecast's levels, taken from the automation it links to: the linked
+ * trigger's operator + threshold and its base severity become the forecast's
+ * base tier, and each linked band becomes a forecast band at the same
+ * threshold + severity. What stays the FORECAST's own is everything that is
+ * not a level — its actions, escalation and follow-up — so a forecast band
+ * keeps the actions it already had for that severity (none = the forecast's
+ * base actions). The linked band's own hold is dropped: the forecast has one
+ * hold, its own. Pure; returns `forecast` unchanged when `linked` cannot lend
+ * levels, so a deleted or retargeted source falls back to the levels stored
+ * on the forecast (the last ones copied).
+ */
+export function linkForecastLevels<T extends LevelsPart>(forecast: T, linked: LevelsPart | null | undefined): T {
+  const ft = forecast.trigger as { metric?: string } & Record<string, unknown>;
+  if (!linked || !ft || typeof ft.metric !== "string" || !isForecastLevelSource(linked.trigger, ft.metric)) return forecast;
+  const lt = linked.trigger as { operator: string; threshold: number };
+  const own = new Map((forecast.severityBands ?? []).map((b) => [b.severity, b]));
+  const bands: SeverityBand[] = (linked.severityBands ?? []).map((b) => {
+    const mine = own.get(b.severity);
+    const band: SeverityBand = { threshold: b.threshold, severity: b.severity, actions: mine?.actions ?? [] };
+    if (b.operator) band.operator = b.operator;
+    if (mine?.escalation) band.escalation = mine.escalation;
+    if (mine?.followUp) band.followUp = mine.followUp;
+    return band;
+  });
+  return {
+    ...forecast,
+    trigger: { ...ft, operator: lt.operator, threshold: lt.threshold },
+    severity: linked.severity,
+    severityBands: bands.length ? bands : null,
+  };
+}
+
+/**
  * The probe-loss measurement window, resolved exactly the way the engine
  * measures it: the configured `windowSec` floored at the 5-minute minimum (a
  * ratio always needs a few probes behind it), defaulted to 15 minutes when the
@@ -5640,6 +5737,9 @@ export function buildSchemaCatalog() {
     // forecast), so the builder gives the condition a "within N days" box
     // instead of an aggregation, prefilled with the server's default.
     forecastHorizonMetrics: FORECAST_HORIZON_METRICS,
+    // ...and which metric's automations a forecast may take its levels from
+    // (a memory forecast follows a memory-utilization automation).
+    forecastLevelSources: FORECAST_LEVEL_SOURCE_METRICS,
     forecastDaysDefault: FORECAST_DAYS_DEFAULT,
     // Per-metric state names, so a boolean metric with no probe behind it still
     // renders "is Alarm" rather than "is true".

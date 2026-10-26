@@ -68,35 +68,48 @@ Alert on it with **≤**, e.g. *Days until memory full ≤ 14*. It is one readin
 per device, and only for a host whose memory is growing with at least 7 days
 of history — a flat, shrinking or new host has no reading, so the automation
 stays silent for it. Like `storageDaysUntilFull` it moves about once a day:
-aggregation and a hold count add nothing to it. The alert email charts the
-host's CPU and memory like a memory-utilization alert, and on a host that
-reports its processes lists the programs holding the most memory.
+aggregation and a hold count add nothing to it. The alert email draws the
+memory forecast chart (below) instead of the CPU and memory charts, and on a
+host that reports its processes lists the programs holding the most memory.
 
 **Memory forecast** (`memForecastPct`) asks the same trend a different
-question: *how soon will memory reach a level you care about?* The condition
-row has a **projected to be reached within N days** box in place of the
-aggregation (14 by default, 1–365). The value you type, and the value of
-every severity level, is a **memory level in %**. The condition is met when
-the trend says memory reaches that level inside the window, so one
-automation can carry the same levels as your memory-utilization automation:
+question: *how many days until memory reaches the next severity level?* The
+condition row has a **projected to be reached within N days** box in place of
+the aggregation (14 by default, 1–365). The levels it counts down to come
+from one of two places, picked in the **using** list beside the days:
 
-*Memory forecast ≥ 80 % within 14 days* — warning; severity level
-*critical ≥ 95 %*.
+- **its own levels**: the condition's value and each severity level's value
+  are memory percentages, set here.
+- **the levels of «a memory utilization automation»**: the forecast uses that
+  automation's percentages and severities, for example *serious ≥ 85 %,
+  critical ≥ 90 %*. The row hides its own value, lists the levels it will use,
+  and the severity controls are handed over. Change a percentage on that
+  automation and the forecast follows it at once. Only an automation with a
+  single **Memory utilization** condition compared with **>** or **≥** is
+  offered. If it is later deleted, the forecast keeps the levels it last
+  copied.
 
-A host at 70 % and growing 1 point a day reaches 80 % in 10 days, so it raises
-a warning. If it is growing 2 points a day it reaches 95 % in under 14 days,
-and the alert climbs to critical. The alert reads *Memory is projected to reach
-86 % within 14 days*: the level the trend reaches at the end of the window. The
-severity says which of your levels that crosses. The window is shared by
-every severity level. Changing the days in the condition moves all of them.
+The alert always counts down to the **next level the device has not reached
+yet**, and fires at that level's severity when it is due inside the window.
+With serious at 85 % and critical at 90 %, a host at 80 % growing half a point
+a day raises a **serious** alert reading *COWAN-61F-1 — Days until Serious:
+10*. Once it passes 85 % the same alert moves to **critical** and reads
+*Days until Critical: N*. Once it is past every level the forecast goes quiet,
+because the memory utilization automation already says so. A level due later
+than the window says nothing yet.
+
+The alert email leads with *Days until Serious: 10 — memory is 80 % and
+growing 0.5 %/day toward Serious at 85 %*. In place of the CPU and memory
+charts it draws the **memory forecast**: the 30 daily averages the trend was
+fitted on, the trend carried forward as a dashed line, and the level it is
+counting down to as a red dashed line, captioned with the change per day. A
+custom message or email can use `{forecast.level}`, `{forecast.days}` and
+`{forecast.target}`.
 
 Like **Days until memory full**, it needs at least 7 days of history, and a
-host with less has no reading. A host whose memory is flat or shrinking reads
-as no projection. That never fires, and it ends a forecast alert that is already
-up, so the alert clears once the growth stops. A host already above a level
-and still growing fires at that level. A host sitting flat above it is the
-memory-utilization automation's alert, not a forecast. The alert email
-charts and lists processes the same way as Days until memory full.
+host with less has no reading. A host whose memory is flat or shrinking has no
+countdown. That never fires, and it ends a forecast alert that is already up,
+so the alert clears once the growth stops.
 
 Changing a condition to a metric measured in a different unit (percent to
 days, percent to a size) empties the severity levels' values and the clear
