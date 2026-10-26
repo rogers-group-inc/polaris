@@ -73,7 +73,8 @@ describe("clearSuppressedAlerts", () => {
     expect(h.prisma.notificationRuleState.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { notificationId: { in: ["n1"] } },
-        data: expect.objectContaining({ state: "clear", notificationId: null }),
+        // Runs zeroed too: a stale metRun would skip the re-earned debounce.
+        data: expect.objectContaining({ state: "clear", notificationId: null, metRun: 0, clearRun: 0, lastReadingAt: null }),
       }),
     );
     const events = h.logEventsBatch.mock.calls[0][0] as any[];

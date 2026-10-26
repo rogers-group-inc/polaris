@@ -937,6 +937,12 @@ Two caveats are spelled out because you cannot read them off the clause:
   raised it, so a reading on the line can re-alert. The dead-band control is on
   the same step.
 
+**Clearing an alert by hand ends it but does not mute the condition.** If the
+condition still holds (a device you cleared is still down, say), the
+automation raises a *new* alert once the condition has held again for its
+**sustained for** time. To keep a known problem quiet without ending it,
+**acknowledge** the alert instead.
+
 ### Custom reset conditions
 
 Unticking the box reveals **Custom conditions** first, then timed, then manual.
