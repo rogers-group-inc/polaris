@@ -11,7 +11,9 @@
  *   DELETE /conversations/:id               delete
  *   DELETE /conversations/:id/messages      /clear — empty it, keep the thread
  *   POST   /conversations/:id/stop          Stop the running turn (a page change does not)
- *   POST   /conversations/:id/messages      ask; answers as a text/event-stream
+ *   POST   /conversations/:id/messages      ask; answers as a text/event-stream (JSON, or multipart
+ *                                            with up to 4 `images` — pasted screenshots, rule 95(l))
+ *   GET    /conversations/:id/images/:imageId   one stored screenshot's bytes
  *   PUT    /settings                        conversation retention (serverSettingsSystem write)
  *   PUT    /preferences                     the caller's own Efficiency Advisor checkbox (rule 95(h)) and
  *                                            "Remember things" switch (rule 95(i))
@@ -27,6 +29,7 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
+import multer from "multer";
 import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { requirePermission } from "../middleware/permissions.js";
@@ -42,7 +45,10 @@ import {
   updateAssistantSettings,
   getEfficiencyAdvisor,
   setEfficiencyAdvisor,
+  getConversationImage,
+  IMAGE_LIMITS,
 } from "../../services/assistantConversationService.js";
+import { acceptsImages } from "../../services/llmService.js";
 import {
   listAssistantIntegrations,
   resolveAssistantIntegration,
@@ -72,11 +78,35 @@ const RenameSchema = z.object({
   title: z.string().min(1).max(120),
 });
 
+// JSON, or multipart/form-data when screenshots ride along (rule 95(l)) —
+// where every field arrives as a string, hence the "true"/"false" preprocess.
+// "Message is empty" is judged in the handler, once the images are known.
 const AskSchema = z.object({
   content: z.string().max(8000).optional(),
   integrationId: z.string().uuid().optional(),
-  regenerate: z.boolean().optional(),
-}).refine((b) => b.regenerate || (b.content && b.content.trim().length > 0), "Message is empty");
+  regenerate: z.preprocess((v) => (v === "true" ? true : v === "false" ? false : v), z.boolean().optional()),
+});
+
+// Screenshots for one ask, in memory: at most IMAGE_LIMITS.perMessage files
+// of IMAGE_LIMITS.maxBytes each. Parsed here — after the session gate the
+// router is mounted behind and after askLimiter — never by the app-wide 1 MB
+// JSON parser, which stays the pre-auth ceiling.
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: IMAGE_LIMITS.maxBytes, files: IMAGE_LIMITS.perMessage, fields: 10, fieldSize: 64 * 1024 },
+});
+
+function uploadImages(req: Request, res: Response, next: NextFunction) {
+  imageUpload.array("images", IMAGE_LIMITS.perMessage)(req, res, (err: unknown) => {
+    if (!err) return next();
+    const code = (err as { code?: string }).code;
+    if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, "Each screenshot must be 3.5 MB or smaller"));
+    if (code === "LIMIT_FILE_COUNT" || code === "LIMIT_UNEXPECTED_FILE") {
+      return next(new AppError(400, `At most ${IMAGE_LIMITS.perMessage} images per message, in the "images" field`));
+    }
+    next(err);
+  });
+}
 
 const SettingsSchema = z.object({
   retentionDays: z.number().int().min(1).max(3650),
@@ -209,6 +239,23 @@ router.get("/conversations/:id", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /conversations/:id/images/:imageId — one pasted screenshot (rule 95(l)),
+// owner-only like the conversation. The type was sniffed from the bytes on
+// upload; nosniff + a sandboxing CSP keep the browser from reading it as more.
+router.get("/conversations/:id/images/:imageId", async (req, res, next) => {
+  try {
+    const { userId } = sessionUser(req);
+    const imageId = IdParam.safeParse(req.params.imageId);
+    if (!imageId.success) throw new AppError(404, "Image not found");
+    const img = await getConversationImage(userId, convId(req), imageId.data);
+    res.setHeader("Content-Type", img.mimeType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.send(img.bytes);
+  } catch (err) { next(err); }
+});
+
 router.patch("/conversations/:id", async (req, res, next) => {
   try {
     const { userId } = sessionUser(req);
@@ -257,7 +304,7 @@ router.delete("/conversations/:id", async (req, res, next) => {
 // stream into one late chunk. `X-Accel-Buffering: no` does the same for the
 // shipped nginx front. A proxy that buffers anyway (a corporate load balancer)
 // degrades this to "the whole answer arrives at once", never to a failure.
-router.post("/conversations/:id/messages", askLimiter, async (req: Request, res: Response, next: NextFunction) => {
+router.post("/conversations/:id/messages", askLimiter, uploadImages, async (req: Request, res: Response, next: NextFunction) => {
   let streaming = false;
   let controller: AbortController | null = null;
   let claimedId: string | null = null;
@@ -265,8 +312,13 @@ router.post("/conversations/:id/messages", askLimiter, async (req: Request, res:
     const { userId, username } = sessionUser(req);
     const id = convId(req);
     const body = AskSchema.parse(req.body ?? {});
+    const images = ((req.files as Express.Multer.File[] | undefined) ?? []).map((f) => f.buffer);
+    if (!body.regenerate && !(body.content && body.content.trim()) && !images.length) throw new AppError(400, "Message is empty");
     const integration = await resolveAssistantIntegration(body.integrationId);
     if (!integration) throw new AppError(409, "No AI Assistant integration is enabled. Add one under Integrations.");
+    if (images.length && !acceptsImages(integration.config)) {
+      throw new AppError(409, `The "${integration.name}" model is not set to accept images — an administrator can turn on "Accepts images" on the integration if the model can read them`);
+    }
 
     // One turn per conversation at a time. A client disconnect (the user
     // changed page) does NOT abort it — see registerTurn; Stop is explicit.
@@ -307,6 +359,7 @@ router.post("/conversations/:id/messages", askLimiter, async (req: Request, res:
         integration,
         content: body.content,
         regenerate: body.regenerate,
+        images: body.regenerate ? undefined : images,
         signal: turn.signal,
         emit: (event, data) => {
           open();

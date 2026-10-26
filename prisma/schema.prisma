@@ -6817,9 +6817,29 @@ model AssistantMessage {
   signOff        String?
   createdAt      DateTime              @default(now())
   reports        AssistantReport[]
+  images         AssistantMessageImage[]
 
   @@index([conversationId, createdAt])
   @@map("assistant_messages")
+}
+
+// A screenshot pasted into a user turn (business rule 95(l)). Stored so the
+// transcript shows it on reopen and a follow-up question can still refer to
+// it; owner-only through its message's conversation, and gone with it (Cascade
+// — retention and /clear need nothing extra). mimeType is sniffed from the
+// bytes on upload, never taken from the client. At most 4 per message.
+model AssistantMessageImage {
+  id        String           @id @default(uuid())
+  messageId String
+  message   AssistantMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  mimeType  String // image/png | image/jpeg | image/webp | image/gif
+  bytes     Bytes
+  sizeBytes Int
+  position  Int              @default(0)
+  createdAt DateTime         @default(now())
+
+  @@index([messageId])
+  @@map("assistant_message_images")
 }
 
 // One line of a user's assistant memory (business rule 95(i)): a short

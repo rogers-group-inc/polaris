@@ -394,7 +394,8 @@ d("the assistant (rule 95(a), (c), (d))", () => {
     expect(r.body.enabled).toBe(true);
     const mine = r.body.integrations.find((i: any) => i.id === integrationId);
     // Names only — never config. No Assistant name was set, so the default.
-    expect(mine).toEqual({ id: integrationId, name: NAME, model: "fake-model", displayName: "Assistant", idleResetMinutes: 30 });
+    // images: an OpenAI-compatible server with the switch unset does not take screenshots (rule 95(l)).
+    expect(mine).toEqual({ id: integrationId, name: NAME, model: "fake-model", displayName: "Assistant", idleResetMinutes: 30, images: false });
   });
 
   it("streams a turn: tool as the caller, text, a DB-sourced report, all stored", async () => {
@@ -442,6 +443,55 @@ d("the assistant (rule 95(a), (c), (d))", () => {
     expect((await agent.delete(`/api/v1/assistant/conversations/${convId}/messages`).set("X-CSRF-Token", csrf)).status).toBe(204);
     const g = await agent.get(`/api/v1/assistant/conversations/${convId}`);
     expect(g.body.messages).toEqual([]);
+  });
+
+  it("screenshots (95(l)): refused for a model not set to read them; stored, sent as image parts and served back when it is", async () => {
+    const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    const { agent, csrf } = await authedAgent(app);
+    const c = await agent.post("/api/v1/assistant/conversations").set("X-CSRF-Token", csrf).send({ title: "IT-llm screenshot" });
+    const ask = () => agent.post(`/api/v1/assistant/conversations/${c.body.id}/messages`).set("X-CSRF-Token", csrf);
+
+    const refused = await ask().field("content", "what is this?").field("integrationId", integrationId).attach("images", PNG, "shot.png");
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/Accepts images/);
+    expect(await prisma.assistantMessage.count({ where: { conversationId: c.body.id } })).toBe(0);
+
+    const before = (await prisma.integration.findUnique({ where: { id: integrationId } }))!.config as any;
+    await prisma.integration.update({ where: { id: integrationId }, data: { config: { ...before, acceptsImages: true } } });
+    try {
+      // Not an image, whatever its name says: refused before anything is stored.
+      const fake = await ask().field("content", "x").field("integrationId", integrationId).attach("images", Buffer.from("<svg/>"), "shot.png");
+      expect(fake.status).toBe(400);
+      expect(fake.body.error).toMatch(/not a PNG, JPEG, WebP or GIF/);
+
+      // A screenshot with no question is a message on its own.
+      const r = await ask().field("integrationId", integrationId).attach("images", PNG, { filename: "shot.png", contentType: "text/plain" });
+      expect(r.status).toBe(200);
+      expect(r.text).toMatch(/event: start\ndata: \{"question":"","images":\[\{"id":"[0-9a-f-]{36}","mimeType":"image\/png"\}\]\}/);
+      const user = lastChat.messages.find((m: any) => m.role === "user");
+      expect(user.content[0]).toMatchObject({ type: "text", text: expect.stringMatching(/Screenshot sent without a question/) });
+      expect(user.content[1]).toEqual({ type: "image_url", image_url: { url: `data:image/png;base64,${PNG.toString("base64")}` } });
+
+      const g = await agent.get(`/api/v1/assistant/conversations/${c.body.id}`);
+      expect(g.body.title).toBe("IT-llm screenshot");
+      const img = g.body.messages[0].images[0];
+      expect(img).toEqual({ id: expect.any(String), mimeType: "image/png" });
+      const served = await agent.get(`/api/v1/assistant/conversations/${c.body.id}/images/${img.id}`).buffer(true);
+      expect(served.status).toBe(200);
+      expect(served.headers["content-type"]).toBe("image/png");
+      expect(served.headers["x-content-type-options"]).toBe("nosniff");
+      expect(Buffer.compare(served.body, PNG)).toBe(0);
+      // Owner-scoped through the conversation: the right image under another conversation id is a 404.
+      expect((await agent.get(`/api/v1/assistant/conversations/${convId}/images/${img.id}`)).status).toBe(404);
+
+      // Five is one too many.
+      const many = ask().field("integrationId", integrationId);
+      for (let i = 0; i < 5; i++) many.attach("images", PNG, `s${i}.png`);
+      expect((await many).status).toBe(400);
+    } finally {
+      await prisma.integration.update({ where: { id: integrationId }, data: { config: before } });
+      await agent.delete(`/api/v1/assistant/conversations/${c.body.id}`).set("X-CSRF-Token", csrf);
+    }
   });
 
   it("Efficiency Advisor: saved per user, signs off a plain turn, the line stored apart from the answer (95(h))", async () => {

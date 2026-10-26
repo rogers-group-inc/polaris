@@ -39,6 +39,7 @@ import {
   resolveChatModel,
   recoverTextToolCalls,
   estimateTokens,
+  acceptsImages,
   LLM_DEFAULTS,
   type ChatMessage,
   type LlmConfig,
@@ -55,6 +56,7 @@ import {
   beginTurn,
   finishTurn,
   recentTurns,
+  loadTurnImages,
   getEfficiencyAdvisor,
   recentAdvisorLines,
   type ToolUseRecord,
@@ -116,7 +118,7 @@ export async function resolveAssistantIntegration(requestedId?: string): Promise
 /** Default minutes a conversation may sit idle before the chat window sets it aside (0 = never). */
 export const DEFAULT_IDLE_RESET_MINUTES = 30;
 
-export async function listAssistantIntegrations(): Promise<Array<{ id: string; name: string; model: string; displayName: string; idleResetMinutes: number }>> {
+export async function listAssistantIntegrations(): Promise<Array<{ id: string; name: string; model: string; displayName: string; idleResetMinutes: number; images: boolean }>> {
   const rows = await prisma.integration.findMany({
     where: { type: "llm", enabled: true },
     orderBy: { createdAt: "asc" },
@@ -134,6 +136,8 @@ export async function listAssistantIntegrations(): Promise<Array<{ id: string; n
       // aside and starting fresh (the widget and the phone read it; 0 = never).
       idleResetMinutes: typeof c.idleResetMinutes === "number" && c.idleResetMinutes >= 0
         ? c.idleResetMinutes : DEFAULT_IDLE_RESET_MINUTES,
+      // Whether the chat window takes a pasted screenshot for this model (rule 95(l)).
+      images: acceptsImages(c as Pick<LlmConfig, "provider" | "azureApiShape" | "acceptsImages">),
     };
   });
 }
@@ -453,17 +457,17 @@ export function contextBudget(contextWindow: number | undefined): ContextBudget 
  * (instructions + tool definitions). The latest turn — the question being
  * answered — is always kept, cut down if it alone is too long. Exported for tests.
  */
-export function fitHistory(
+export function fitHistory<T extends { role: "user" | "assistant"; content: string; extraTokens?: number }>(
   fixedTokens: number,
-  turns: Array<{ role: "user" | "assistant"; content: string }>,
+  turns: T[],
   budgetTokens: number,
-): Array<{ role: "user" | "assistant"; content: string }> {
+): T[] {
   if (!turns.length) return turns;
   let room = Math.max(budgetTokens - fixedTokens, 0);
-  const kept: typeof turns = [];
+  const kept: T[] = [];
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
-    const cost = estimateTokens(t.content) + 4;
+    const cost = estimateTokens(t.content) + 4 + (t.extraTokens ?? 0);
     if (i === turns.length - 1) {
       // Never drop the question itself; trim it to what is left if it must be.
       const maxChars = Math.max(Math.floor(room * 3.5), 200);
@@ -478,6 +482,53 @@ export function fitHistory(
   // A thread must not open on an assistant turn whose question was dropped.
   while (kept.length > 1 && kept[0].role === "assistant") kept.shift();
   return kept;
+}
+
+// ─── Screenshots (rule 95(l)) ────────────────────────────────────────────────
+//
+// Every image in the history would ride in every round, and each costs
+// ~1,600 tokens on Claude at the widget's 1568 px — so only the newest
+// MAX_RESENT_IMAGES are sent. An older one leaves a one-line note on its turn,
+// so the model knows something was shown there. A model that cannot read
+// images (llmService.acceptsImages) gets the note for every image.
+
+export const MAX_RESENT_IMAGES = 4;
+
+/**
+ * Rides as a leading system message on a turn that carries images. A
+ * screenshot is the person's view at some moment, possibly stale or of
+ * another system — so it says what to look at, never what is true now.
+ */
+export const SCREENSHOT_GUIDANCE =
+  "The person has attached one or more screenshots, usually of a Polaris screen. Read them to understand what they " +
+  "are looking at and asking about (a hostname, a field, an error, a chart). A screenshot shows one moment and may be " +
+  "out of date: any fact about this install that your answer depends on must still come from a lookup, and when a " +
+  "lookup disagrees with the screenshot, say so and trust the lookup. Never repeat passwords, keys or tokens visible in a screenshot.";
+/** Budgeting estimate for one image — Claude's cost for a 1568 px long edge. */
+export const IMAGE_TOKENS = 1_600;
+
+/** The ids of the newest `max` images in the history, newest turn first. Exported for tests. */
+export function pickResentImages(turns: Array<{ imageIds?: string[] }>, max: number = MAX_RESENT_IMAGES): Set<string> {
+  const out = new Set<string>();
+  for (let i = turns.length - 1; i >= 0 && out.size < max; i--) {
+    for (const id of turns[i].imageIds ?? []) {
+      if (out.size >= max) break;
+      out.add(id);
+    }
+  }
+  return out;
+}
+
+/** The text a user turn carries to the model: its words, or a stand-in, plus a note for images not resent. Exported for tests. */
+export function userTurnText(content: string, imageCount: number, resentCount: number, canRead: boolean): string {
+  const lines = [content.trim() || (imageCount ? "(Screenshot sent without a question — say what it shows.)" : "")];
+  const notSent = imageCount - resentCount;
+  if (notSent > 0) {
+    lines.push(canRead
+      ? `[${notSent} earlier screenshot${notSent === 1 ? "" : "s"} attached here, not resent to save space]`
+      : `[${notSent} screenshot${notSent === 1 ? "" : "s"} attached here — this model cannot read images]`);
+  }
+  return lines.filter(Boolean).join("\n");
 }
 
 /** The share of the prompt budget every tool definition together may take before the optional ones are held back. */
@@ -531,6 +582,8 @@ export async function streamAssistantTurn(input: {
   integration: AssistantIntegrationRef;
   content?: string;
   regenerate?: boolean;
+  /** Pasted screenshots (rule 95(l)); the route has already checked the model accepts them. */
+  images?: Buffer[];
   emit: AssistantEmit;
   signal: AbortSignal;
 }): Promise<void> {
@@ -540,14 +593,16 @@ export async function streamAssistantTurn(input: {
   // server that cannot be listed fails here, before the question is stored.
   const config: LlmConfig = { ...integration.config, model: await resolveChatModel(integration.id, integration.config) };
 
-  const { question } = await beginTurn(input.userId, input.conversationId, {
+  const { question, images: storedImages } = await beginTurn(input.userId, input.conversationId, {
     content: input.content,
     regenerate: input.regenerate,
     integrationId: integration.id,
+    images: input.images,
   });
   // Ownership passed and the question is stored: the route opens the stream
-  // on this event, so its keep-alive covers a slow first token.
-  emit("start", { question });
+  // on this event, so its keep-alive covers a slow first token. `images` are
+  // the stored ids, so the widget can swap its local previews for them.
+  emit("start", { question, images: storedImages });
 
   const [allTurns, advisor, memoryOn, scope] = await Promise.all([
     recentTurns(input.conversationId, config.contextMessages ?? LLM_DEFAULTS.contextMessages),
@@ -603,11 +658,28 @@ export async function streamAssistantTurn(input: {
   // keeps priority (they steer round 0 themselves, below).
   const playbook = !asksForReport(question) && !asksHowTo(question) ? pickPlaybook(question) : null;
   const tools = toolsForWindow(allTools, budget.promptTokens, new Set(playbook?.firstRoundTools ?? []));
+  // Rule 95(l): the newest screenshots ride along, costed into the history budget.
+  const canReadImages = acceptsImages(config);
+  const resent = canReadImages ? pickResentImages(allTurns) : new Set<string>();
   const turns = fitHistory(
     estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)) + (playbook ? estimateTokens(playbook.guidance) : 0),
-    allTurns,
+    allTurns.map((t) => ({ ...t, extraTokens: (t.imageIds ?? []).filter((id) => resent.has(id)).length * IMAGE_TOKENS })),
     budget.promptTokens,
   );
+  const imageBytes = await loadTurnImages(turns.flatMap((t) => (t.imageIds ?? []).filter((id) => resent.has(id))));
+  const historyMessages: ChatMessage[] = turns.map((t): ChatMessage => {
+    if (t.role === "assistant") return { role: "assistant", content: t.content };
+    const ids = t.imageIds ?? [];
+    const images = ids.flatMap((id) => {
+      const img = imageBytes.get(id);
+      return img ? [img] : [];
+    });
+    return {
+      role: "user",
+      content: userTurnText(t.content, ids.length, images.length, canReadImages),
+      ...(images.length ? { images } : {}),
+    };
+  });
   const recentLines = voice === "canned" ? await recentAdvisorLines(input.conversationId) : null;
   // One canned line per turn, leading (at the first lookup) or closing (under
   // the answer) — a coin flip, so neither becomes a formula. A turn that runs
@@ -619,7 +691,8 @@ export async function streamAssistantTurn(input: {
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
     ...(playbook ? [{ role: "system" as const, content: playbook.guidance }] : []),
-    ...turns,
+    ...(imageBytes.size ? [{ role: "system" as const, content: SCREENSHOT_GUIDANCE }] : []),
+    ...historyMessages,
   ];
   // A playbook narrows round 0 to its lookups, but never hides the memory tools: a user who says
   // "remember X, and what is the status of Y?" is still asking for a write, and the grounding

@@ -28,6 +28,7 @@ something in Polaris works.
 | API key | only if the server requires one; stored encrypted |
 | Model | pick from the server's own list — **Load models** (or Test Connection) fills it. Each model is marked **✓ tool calling**, **✗ no tool calling** or **tool calling unverified**. Leave it on **Auto** to use the server's first tool-calling model |
 | Allow loopback | tick only when the model server runs **on the Polaris host itself** (`localhost`). In a container, use the host's LAN address instead |
+| Accepts images | tick when the model can read images, so people can [paste screenshots](#screenshots) into the chat — a vision model such as `qwen2.5vl` or `llama3.2-vision` on Ollama, GPT-4o or later, or any Claude model. A text-only model refuses them. Ticked by default for a Claude deployment |
 
 3. **Test Connection**, then **Create**.
 
@@ -273,6 +274,36 @@ move, **Tab** or **Enter** to pick, **Esc** to close.
 
 ---
 
+## Screenshots
+
+When the model can read images (**Accepts images** on the integration), you can
+show it what you are looking at:
+
+- **Paste** a screenshot into the message box (**Ctrl+V** after Print Screen or
+  the Snipping Tool), or **drag** an image file onto the chat window. It waits
+  as a thumbnail above the box; **×** removes it. Up to **4** per message.
+- Add a question, or send the screenshot on its own, and the assistant says
+  what it shows. Example: paste an asset's **General** tab and ask *"why does
+  it say there is no acquired date?"*.
+- Large screenshots are shrunk to 1568 pixels on the long side before they are
+  sent. PNG, JPEG, WebP and GIF are accepted.
+- **A screenshot shows the assistant where to look. It does not tell it what is
+  true.** The assistant still looks the facts up with your permissions. If its
+  lookup disagrees with the screenshot (an older screen, say), it tells you so
+  and goes with the lookup.
+- Screenshots are **saved with the conversation**: you see them when you reopen
+  it, and follow-up questions can refer to them. They are private to you and
+  deleted with the conversation. Only the four most recent are sent with each
+  new question.
+- **Mind what is on screen.** A screenshot goes to the model server like
+  everything else you type. On a hosted model (Azure AI Foundry) it leaves your
+  network. Crop out passwords, keys and personal data first.
+- A copy from Excel or Word pastes as **text**, not a picture.
+- With a text-only model nothing is attached. A note says the model is not set
+  to read images.
+
+See [rule 95](Business-Rules#rule-95).
+
 ## Conversations
 
 - Conversations are **saved** and reopen where you left off. The history button
@@ -365,5 +396,7 @@ See [rule 95](Business-Rules#rule-95).
 | Azure: "Deployment … was not found (HTTP 404)" | **Deployment name** holds the model name instead of the deployment's name, or the resource does not support the chosen API shape — try **Deployments** |
 | Azure: "Unsupported parameter: 'temperature'" | a reasoning model; tick **Omit temperature** |
 | Azure Claude: refused or not found right after the deployment was created | check **API shape** is **Claude (Anthropic Messages API)** and Deployment name matches the deployment exactly |
+| "This model is not set to read images" when pasting | **Accepts images** is off on the integration. Turn it on only if the model really reads images |
+| An error naming images or `image_url` after sending a screenshot | **Accepts images** is on for a model that cannot read them. Turn it off, or switch to a vision model |
 
 Rule: [95](Business-Rules#rule-95).

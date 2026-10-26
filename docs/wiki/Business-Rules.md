@@ -1665,6 +1665,13 @@ read-only, and a report's rows still come from the database. It is optional and
 off unless an administrator adds it. Its API key or Entra ID client secret is
 stored encrypted, and is never shown again or written to a log.
 
+**Screenshots (95(l)).** When the integration is set to accept images, you can
+paste up to four screenshots into a message. They are kept with the
+conversation, so they are visible only to you and deleted with it. Polaris
+checks each file is really a PNG, JPEG, WebP or GIF, whatever its name says. A
+screenshot tells the assistant what you are asking about. Facts still come from
+a lookup run as you, and when the two disagree the lookup wins.
+
 See [AI Assistant](AI-Assistant).
 
 ### Rule 96

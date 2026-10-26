@@ -251,3 +251,36 @@ describe("Efficiency Advisor lines (rule 95(h))", () => {
     }
   });
 });
+
+// Rule 95(l): pasted screenshots.
+describe("screenshots", () => {
+  const item = (type: string) => ({ kind: "file", type, getAsFile: () => ({ type, name: "x" }) });
+
+  it("fitWithin caps the long edge and keeps the aspect ratio", () => {
+    expect({ ...A._fitWithin(3136, 1764, 1568) }).toEqual({ w: 1568, h: 882 });
+    expect({ ...A._fitWithin(1764, 3136, 1568) }).toEqual({ w: 882, h: 1568 });
+    expect({ ...A._fitWithin(800, 600, 1568) }).toEqual({ w: 800, h: 600 });
+  });
+
+  it("imageFilesFrom takes a pasted screenshot's image", () => {
+    const files = A._imageFilesFrom({ types: ["Files"], items: [item("image/png")] });
+    expect(files.length).toBe(1);
+    expect(files[0].type).toBe("image/png");
+  });
+
+  it("imageFilesFrom attaches nothing when the clipboard also carries text (an Excel or Word copy)", () => {
+    expect(A._imageFilesFrom({ types: ["text/plain", "text/html", "Files"], items: [item("image/png")] }).length).toBe(0);
+  });
+
+  it("imageFilesFrom ignores files that are not images", () => {
+    expect(A._imageFilesFrom({ types: ["Files"], items: [item("application/pdf")] }).length).toBe(0);
+  });
+
+  it("a user message draws its screenshots above the text, and an image-only message has no empty bubble", () => {
+    const withText = A._messageHTML({ role: "user", content: "why?", images: [{ url: "blob:abc" }] }, 0, false);
+    expect(withText).toContain('<img src="blob:abc" alt="Screenshot">');
+    expect(withText.indexOf("asst-shots")).toBeLessThan(withText.indexOf("asst-bubble"));
+    const only = A._messageHTML({ role: "user", content: "", images: [{ url: "blob:abc" }] }, 0, false);
+    expect(only).not.toContain("asst-bubble");
+  });
+});
