@@ -27,6 +27,8 @@ import { safeRegexProblem } from "../utils/safeRegex.js";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
+import { firmwareBindingCredentialIds } from "./firmwareRepositoryService.js";
+import { getOnboardingState } from "./windowsSshOnboardingService.js";
 import {
   type HttpCheckConfig,
   normalizeHttpPath,
@@ -654,12 +656,28 @@ export interface CredentialUsageIntegrationGroup {
   assets: CredentialUsageAsset[];
 }
 
+/**
+ * Assets the credential acts on outside the monitor-settings tiers: the
+ * Repository's login binding (firmware flashes, and the first thing a reboot
+ * tries) and a Polaris Agent's install credential (upgrade, uninstall, the
+ * reboot opt-in) — including the Polaris-managed SSH deployment credential an
+ * agent with no install credential of its own falls back to.
+ */
+export interface CredentialUsageOperationGroup {
+  kind: "firmware" | "agent";
+  label: string;
+  assets: CredentialUsageAsset[];
+}
+
 export interface CredentialUsage {
   credentialId: string;
-  total: number; // distinct assets effectively using the credential
+  total: number; // distinct assets effectively using the credential, monitoring + operations
+  /** Distinct assets resolving to it through the monitor-settings tiers only. */
+  monitoringTotal: number;
   assetLevel: CredentialUsageAsset[];
   classLevel: CredentialUsageClassGroup[];
   integrationLevel: CredentialUsageIntegrationGroup[];
+  operationLevel: CredentialUsageOperationGroup[];
   /** Class overrides referencing the credential (regardless of matching assets). */
   classRefCount: number;
   /** Integrations whose default monitor credential is this credential. */
@@ -683,11 +701,16 @@ interface UsageInputs {
    */
   intCredSets: Map<string, Set<string>>;
   intName: Map<string, string>;
+  /** assetId → the credential its Repository login binding resolves to. */
+  firmwareCred: Map<string, string>;
+  /** assetId → the credential its Polaris Agent installs / upgrades with. */
+  agentCred: Map<string, string>;
 }
 
 const ASSET_USAGE_SELECT = {
   id: true, hostname: true, ipAddress: true, assetType: true,
   monitored: true, status: true, discoveredByIntegrationId: true,
+  manufacturer: true, model: true,
   monitorCredentialId: true,
   responseTimeCredentialId: true, cpuMemoryCredentialId: true,
   temperatureCredentialId: true, interfacesCredentialId: true,
@@ -704,10 +727,14 @@ const CLASS_USAGE_SELECT = {
 } as const;
 
 async function loadUsageInputs(): Promise<UsageInputs> {
-  const [assets, classRows, integrations] = await Promise.all([
+  const [assets, classRows, integrations, agents, managed] = await Promise.all([
     prisma.asset.findMany({ select: ASSET_USAGE_SELECT }) as unknown as Promise<CredRow[]>,
     prisma.monitorClassOverride.findMany({ select: CLASS_USAGE_SELECT }) as unknown as Promise<CredRow[]>,
     prisma.integration.findMany({ select: { id: true, name: true, config: true } }),
+    prisma.managedAgent.findMany({ select: { assetId: true, osPlatform: true, installCredentialId: true } }),
+    getOnboardingState()
+      .then((st) => st.credentialIds)
+      .catch((): Record<"windows" | "linux", string | null> => ({ windows: null, linux: null })),
   ]);
   const classByKey = new Map<string, CredRow>();
   for (const ov of classRows) {
@@ -725,7 +752,23 @@ async function loadUsageInputs(): Promise<UsageInputs> {
     intCredSets.set(it.id, set);
     intName.set(it.id, it.name);
   }
-  return { assets, classByKey, classRows, intDefaultCred, intCredSets, intName };
+  const firmwareCred = await firmwareBindingCredentialIds(
+    assets.map((a) => ({
+      id: a.id as string,
+      manufacturer: (a.manufacturer as string | null) ?? null,
+      assetType: a.assetType as string,
+      model: (a.model as string | null) ?? null,
+    })),
+  );
+  // An agent with no install credential of its own upgrades with the
+  // Polaris-managed SSH deployment credential for its platform
+  // (agentInstallService.resolveUpgradeCredential).
+  const agentCred = new Map<string, string>();
+  for (const m of agents) {
+    const cid = m.installCredentialId ?? managed[m.osPlatform === "windows" ? "windows" : "linux"];
+    if (cid) agentCred.set(m.assetId, cid);
+  }
+  return { assets, classByKey, classRows, intDefaultCred, intCredSets, intName, firmwareCred, agentCred };
 }
 
 /**
@@ -795,6 +838,10 @@ export async function getCredentialUsageCounts(): Promise<Record<string, number>
   for (const a of inputs.assets) {
     const classOv = inputs.classByKey.get(classKeyForAsset(a)) ?? null;
     const credIds = effectiveCredentialIds(a, classOv, intDefaultForAsset(a, inputs));
+    const fw = inputs.firmwareCred.get(a.id as string);
+    if (fw) credIds.add(fw);
+    const ag = inputs.agentCred.get(a.id as string);
+    if (ag) credIds.add(ag);
     for (const cid of credIds) counts[cid] = (counts[cid] ?? 0) + 1;
   }
   return counts;
@@ -911,12 +958,36 @@ export async function getCredentialUsage(id: string): Promise<CredentialUsage> {
   const integrationLevel = [...intGroups.values()].sort((a, b) => a.integrationName.localeCompare(b.integrationName));
   for (const g of integrationLevel) g.assets.sort(byHostname);
 
-  const total =
+  const monitoringTotal =
     assetLevel.length +
     classLevel.reduce((n, g) => n + g.assets.length, 0) +
     integrationLevel.reduce((n, g) => n + g.assets.length, 0);
 
-  return { credentialId: id, total, assetLevel, classLevel, integrationLevel, classRefCount, integrationRefCount };
+  // Operations: an asset may also sit in a monitoring bucket above, so the
+  // total is a distinct union, not a sum.
+  const seen = new Set<string>([
+    ...assetLevel.map((x) => x.assetId),
+    ...classLevel.flatMap((g) => g.assets.map((x) => x.assetId)),
+    ...integrationLevel.flatMap((g) => g.assets.map((x) => x.assetId)),
+  ]);
+  const firmwareAssets: CredentialUsageAsset[] = [];
+  const agentAssets: CredentialUsageAsset[] = [];
+  for (const a of inputs.assets) {
+    const aid = a.id as string;
+    const fw = inputs.firmwareCred.get(aid) === id;
+    const ag = inputs.agentCred.get(aid) === id;
+    if (fw) firmwareAssets.push(toUsageAsset(a, ["Firmware upgrades", "Reboots"]));
+    if (ag) agentAssets.push(toUsageAsset(a, ["Agent install / upgrade", "Reboot opt-in"]));
+    if (fw || ag) seen.add(aid);
+  }
+  const operationLevel: CredentialUsageOperationGroup[] = [];
+  if (firmwareAssets.length) operationLevel.push({ kind: "firmware", label: "Firmware Repository login binding", assets: firmwareAssets.sort(byHostname) });
+  if (agentAssets.length) operationLevel.push({ kind: "agent", label: "Polaris Agent install credential", assets: agentAssets.sort(byHostname) });
+
+  return {
+    credentialId: id, total: seen.size, monitoringTotal,
+    assetLevel, classLevel, integrationLevel, operationLevel, classRefCount, integrationRefCount,
+  };
 }
 
 /**
@@ -939,7 +1010,9 @@ export async function deleteCredential(id: string): Promise<void> {
   if (checks.length) {
     throw new AppError(409, `Credential is used by path check${checks.length === 1 ? "" : "s"} ${checks.map((c) => `"${c.name}"`).join(", ")}${checks.length === 5 ? " and possibly more" : ""}; change their authentication first`);
   }
-  if (usage.total > 0) {
+  // Firmware bindings and agent install credentials don't block a delete:
+  // both FKs are SET NULL, and an agent falls back to the managed credential.
+  if (usage.monitoringTotal > 0) {
     const parts: string[] = [];
     if (usage.assetLevel.length) parts.push(`${usage.assetLevel.length} directly`);
     const viaClass = usage.classLevel.reduce((n, g) => n + g.assets.length, 0);
@@ -948,7 +1021,7 @@ export async function deleteCredential(id: string): Promise<void> {
     if (viaInt) parts.push(`${viaInt} via integration defaults`);
     throw new AppError(
       409,
-      `Credential is in use by ${usage.total} asset${usage.total === 1 ? "" : "s"} (${parts.join(", ")}); clear monitoring there first`,
+      `Credential is in use by ${usage.monitoringTotal} asset${usage.monitoringTotal === 1 ? "" : "s"} (${parts.join(", ")}); clear monitoring there first`,
     );
   }
   // No assets resolve to it, but a class override or integration default may

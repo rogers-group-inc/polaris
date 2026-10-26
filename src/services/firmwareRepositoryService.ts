@@ -884,6 +884,37 @@ export async function resolveFirmwareCredential(asset: FirmwareCredentialAsset, 
   return null;
 }
 
+/**
+ * The stored credential the Repository's login binding hands each asset, for
+ * the Stored Credentials usage count: one bindings read, folded in memory with
+ * the same tier order and liveness / type-fit tests as resolveFirmwareCredential.
+ * The binding is what a firmware flash signs with, and what a reboot tries
+ * first. A winning integration-token binding names no stored credential, so
+ * that asset maps to nothing; its rare fall-through (the token does not open)
+ * is not followed here — it needs a secret read per asset.
+ */
+export async function firmwareBindingCredentialIds(
+  assets: Array<FirmwareCredentialAsset & { id: string }>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const eligible = assets.filter((a) => a.manufacturer && (FIRMWARE_ASSET_TYPES as readonly string[]).includes(a.assetType));
+  if (eligible.length === 0) return out;
+  const rows = (await prisma.firmwareCredentialBinding.findMany({
+    include: { credential: { select: { id: true, name: true, type: true } } },
+  })) as BindingRecord[];
+  if (rows.length === 0) return out;
+  for (const a of eligible) {
+    const manufacturer = normalizeManufacturer(a.manufacturer!);
+    const live = rows.filter((b) => b.manufacturer === manufacturer && bindingIsLive(b) && bindingFitsType(b, a.assetType));
+    const b =
+      live.find((r) => r.assetType === a.assetType && r.model !== null && r.model === (a.model ?? "")) ??
+      live.find((r) => r.assetType === a.assetType && r.model === null) ??
+      live.find((r) => r.assetType === null);
+    if (b && sourceOf(b) === "credential" && b.credentialId) out.set(a.id, b.credentialId);
+  }
+  return out;
+}
+
 // ─── Candidates ───────────────────────────────────────────────────────────────
 
 export type CandidateReason = "ok" | "no-engine" | "no-serial" | "no-version" | "no-images" | "current" | "platform-unmatched";
