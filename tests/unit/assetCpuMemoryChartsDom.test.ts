@@ -1012,6 +1012,40 @@ describe("Memory forecast overlay", () => {
     expect(bar.style.display).toBe("none");
   });
 
+  it("counts down to the next memory automation level instead of to full", () => {
+    const bar = document.createElement("div");
+    bar.id = "asset-mem-forecast";
+    document.body.appendChild(bar);
+    const levels = [
+      { severity: "serious", operator: ">=", threshold: 85, ruleId: "r1", ruleName: "High memory" },
+      { severity: "critical", operator: ">=", threshold: 90, ruleId: "r1", ruleName: "High memory" },
+    ];
+    // Newest daily point is 50 %, growing 0.5/day: 70 days to serious (85 %).
+    setForecast(0.5, 100);
+    g._memForecastCache.data.levels = levels;
+    g._renderMemForecastBar(ASSET.id, true);
+    expect(bar.textContent).toContain("Memory — Days until Serious: 70");
+    expect(bar.textContent).not.toContain("Days until full");
+    const span = bar.querySelector("span[title]") as HTMLElement;
+    expect(span.getAttribute("style")).toContain("--color-sev-serious");
+    expect(span.getAttribute("title")).toContain("«High memory»");
+
+    // Past serious: counts down to critical.
+    g._memForecastCache.data.points = g._memForecastCache.data.points.map((p: { t: number }) => ({ t: p.t, v: 87 }));
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(bar.textContent).toContain("Days until Critical: 6");
+
+    // Past every level: says so, in the top level's colour.
+    g._memForecastCache.data.points = g._memForecastCache.data.points.map((p: { t: number }) => ({ t: p.t, v: 93 }));
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(bar.textContent).toContain("Above Critical (90 %)");
+
+    // No automation watches memory: the old days-until-full headline.
+    g._memForecastCache.data.levels = [];
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(bar.textContent).toContain("Days until full");
+  });
+
   it("toggles per asset and re-renders the memory chart in place", () => {
     const bar = document.createElement("div");
     bar.id = "asset-mem-forecast";
