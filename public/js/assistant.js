@@ -128,6 +128,7 @@
   // ─── State ──────────────────────────────────────────────────────────────────
 
   var S = {
+    pos: null,              // a moved panel's place: {right, bottom} from the column's edge (panelPlacement); null = its corner
     status: null,           // GET /assistant/status
     integrationId: null,    // chosen llm integration
     convId: null,
@@ -382,12 +383,55 @@
     return (r && r.height > 0 && r.top < window.innerHeight / 2) ? Math.max(8, Math.round(r.bottom) + 8) : 8;
   }
 
+  // The layout column's horizontal extent — the 16:9 / 16:10 / Auto
+  // preference caps the shell to a centred column, and the panel belongs to
+  // that column the way the button, the toasts and the slide-overs do
+  // (--layout-edge in styles.css). The whole window on a page without one.
+  function columnBounds() {
+    var el = document.querySelector(".layout");
+    var r = el && el.getBoundingClientRect();
+    if (r && r.width > 0) return { left: Math.max(0, r.left), right: Math.min(window.innerWidth, r.right) };
+    return { left: 0, right: window.innerWidth };
+  }
+
+  // Where a moved panel goes. The saved position is an offset from the
+  // COLUMN's right edge and the window's bottom ({right, bottom}), so a moved
+  // panel follows the column when the layout or the window changes instead of
+  // staying put in window pixels. A position saved before that ({left, top},
+  // window pixels) is read once and converted. Either way the result is kept
+  // inside the column and below the sticky bar. Pure — exported for tests.
+  function panelPlacement(saved, size, col, minTop, innerHeight) {
+    var left = typeof saved.left === "number" ? saved.left : col.right - saved.right - size.width;
+    var top = typeof saved.top === "number" ? saved.top : innerHeight - saved.bottom - size.height;
+    left = Math.min(Math.max(col.left + 8, left), Math.max(col.left + 8, col.right - size.width - 8));
+    top = Math.min(Math.max(minTop, top), Math.max(minTop, innerHeight - size.height - 8));
+    return {
+      left: Math.round(left),
+      top: Math.round(top),
+      saved: { right: Math.round(col.right - left - size.width), bottom: Math.round(innerHeight - top - size.height) },
+    };
+  }
+
+  /** The moved panel's position as it is now, saved column-relative. */
+  function savePos() {
+    var r = S.els.panel.getBoundingClientRect();
+    var col = columnBounds();
+    S.pos = { right: Math.round(col.right - r.right), bottom: Math.round(window.innerHeight - r.bottom) };
+    lsSet(LS.pos, JSON.stringify(S.pos));
+  }
+
   function clampIntoView() {
     var p = S.els.panel;
     if (p.hidden) return;
     if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) return;
     var minTop = topLimit();
+    var col = columnBounds();
     var r = p.getBoundingClientRect();
+    // Wider than the column (a saved size, a narrower layout): narrow it.
+    if (r.width > col.right - col.left - 16 && p.style.width !== "") {
+      p.style.width = Math.round(Math.max(MIN_W, col.right - col.left - 16)) + "px";
+      r = p.getBoundingClientRect();
+    }
     // Too tall for the room under the bar (a saved size, a smaller window, a
     // docked panel grown upward): shorten it so its top clears the bar.
     if (r.top < minTop && p.style.height !== "") {
@@ -395,10 +439,11 @@
       p.style.height = Math.round(h) + "px";
       r = p.getBoundingClientRect();
     }
-    if (p.style.left === "") return;
-    var left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - r.width - 8));
-    var top = Math.min(Math.max(minTop, r.top), Math.max(minTop, window.innerHeight - r.height - 8));
-    applyPos(left, top);
+    // Never moved: it sits in the column's corner by CSS alone.
+    if (!S.pos) return;
+    var place = panelPlacement(S.pos, r, col, minTop, window.innerHeight);
+    applyPos(place.left, place.top);
+    if (typeof S.pos.left === "number") { S.pos = place.saved; lsSet(LS.pos, JSON.stringify(S.pos)); }
   }
 
   function wireDrag() {
@@ -408,23 +453,23 @@
       if (e.button !== 0 || e.target.closest("button, label, input")) return;
       if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) return;
       var r = S.els.panel.getBoundingClientRect();
-      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, minTop: topLimit(), id: e.pointerId };
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, minTop: topLimit(), col: columnBounds(), id: e.pointerId };
       head.setPointerCapture(e.pointerId);
       S.els.panel.classList.add("is-dragging");
       e.preventDefault();
     });
     head.addEventListener("pointermove", function (e) {
       if (!drag || e.pointerId !== drag.id) return;
-      var left = Math.min(Math.max(8, e.clientX - drag.dx), window.innerWidth - drag.w - 8);
+      // Inside the layout column, not merely the window.
+      var left = Math.min(Math.max(drag.col.left + 8, e.clientX - drag.dx), drag.col.right - drag.w - 8);
       var top = Math.min(Math.max(drag.minTop, e.clientY - drag.dy), window.innerHeight - drag.h - 8);
-      applyPos(Math.max(8, left), Math.max(drag.minTop, top));
+      applyPos(Math.max(drag.col.left + 8, left), Math.max(drag.minTop, top));
     });
     function end(e) {
       if (!drag || (e && e.pointerId !== drag.id)) return;
       drag = null;
       S.els.panel.classList.remove("is-dragging");
-      var r = S.els.panel.getBoundingClientRect();
-      lsSet(LS.pos, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }));
+      savePos();
     }
     head.addEventListener("pointerup", end);
     head.addEventListener("pointercancel", end);
@@ -433,11 +478,26 @@
       if (e.target.closest("button")) return;
       var p = S.els.panel;
       p.style.left = p.style.top = p.style.right = p.style.bottom = "";
+      S.pos = null;
       lsSet(LS.pos, null);
     });
+    // Placed on open (clampIntoView), when the panel has a size to place.
+    S.pos = readSavedPos();
+    // The layout preference can change with the panel open; follow it.
+    if (window.MutationObserver) {
+      new MutationObserver(function () { clampIntoView(); })
+        .observe(document.documentElement, { attributes: true, attributeFilter: ["data-layout"] });
+    }
+  }
+
+  /** The saved position: {right, bottom} column offsets, or a pre-column {left, top}; null when never moved. */
+  function readSavedPos() {
     var saved = null;
     try { saved = JSON.parse(lsGet(LS.pos) || "null"); } catch (_) { saved = null; }
-    if (saved && typeof saved.left === "number" && typeof saved.top === "number") applyPos(saved.left, saved.top);
+    if (!saved) return null;
+    if (typeof saved.right === "number" && typeof saved.bottom === "number") return { right: saved.right, bottom: saved.bottom };
+    if (typeof saved.left === "number" && typeof saved.top === "number") return { left: saved.left, top: saved.top };
+    return null;
   }
 
   // ─── Resizing from the TOP-LEFT corner ───────────────────────────────────────
@@ -462,7 +522,7 @@
       if (e.button !== 0) return;
       if (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) return;
       var r = S.els.panel.getBoundingClientRect();
-      rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, right: r.right, bottom: r.bottom, minTop: topLimit(), id: e.pointerId };
+      rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, right: r.right, bottom: r.bottom, minTop: topLimit(), colLeft: columnBounds().left, id: e.pointerId };
       grip.setPointerCapture(e.pointerId);
       S.els.panel.classList.add("is-dragging");
       e.preventDefault();
@@ -470,9 +530,10 @@
     });
     grip.addEventListener("pointermove", function (e) {
       if (!rs || e.pointerId !== rs.id) return;
-      // Bounded by the space up and to the left of the held corner — up only
-      // as far as the sticky top bar, so the grip stays where it can be grabbed.
-      var w = Math.min(Math.max(MIN_W, rs.w + (rs.x - e.clientX)), rs.right - 8);
+      // Bounded by the space up and to the left of the held corner — left only
+      // as far as the layout column's edge, up only as far as the sticky top
+      // bar, so the grip stays where it can be grabbed.
+      var w = Math.min(Math.max(MIN_W, rs.w + (rs.x - e.clientX)), rs.right - rs.colLeft - 8);
       var h = Math.min(Math.max(MIN_H, rs.h + (rs.y - e.clientY)), rs.bottom - rs.minTop);
       applySize(w, h);
       if (S.els.panel.style.left !== "") applyPos(rs.right - w, rs.bottom - h);
@@ -483,7 +544,7 @@
       S.els.panel.classList.remove("is-dragging");
       var r = S.els.panel.getBoundingClientRect();
       lsSet(LS.size, JSON.stringify({ w: Math.round(r.width), h: Math.round(r.height) }));
-      if (S.els.panel.style.left !== "") lsSet(LS.pos, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }));
+      if (S.pos) savePos();
     }
     grip.addEventListener("pointerup", end);
     grip.addEventListener("pointercancel", end);
@@ -496,7 +557,8 @@
     var saved = null;
     try { saved = JSON.parse(lsGet(LS.size) || "null"); } catch (_) { saved = null; }
     if (saved && saved.w > 0 && saved.h > 0) {
-      applySize(Math.min(Math.max(MIN_W, saved.w), window.innerWidth - 16), Math.min(Math.max(MIN_H, saved.h), window.innerHeight - 16));
+      var col = columnBounds();
+      applySize(Math.min(Math.max(MIN_W, saved.w), col.right - col.left - 16), Math.min(Math.max(MIN_H, saved.h), window.innerHeight - 16));
     }
   }
 
@@ -1644,6 +1706,7 @@
     _IDLE_RESET_MS: IDLE_RESET_MS,
     _idleWindowText: idleWindowText,
     _topLimit: topLimit,
+    _panelPlacement: panelPlacement,
     parseSlash: parseSlash,
     matchCommands: matchCommands,
     readEventStream: readEventStream,
