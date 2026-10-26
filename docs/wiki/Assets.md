@@ -150,7 +150,7 @@ strip to carry it past the tabs out of view.
 
 When there are more tabs than fit beside the buttons, the tabs sit in an area of
 fixed width and never crowd them: the tabs keep their size and slide inside it,
-fading into its edges and passing behind the page card's shadow. Each notch of
+a tab cut by an edge dimming as a whole the further out it is. Each notch of
 the mouse wheel over the tabs slides them by one tab, however long its name.
 With fewer tabs than fit, none of this applies: the tabs simply sit in a row. The same holds for the tab rows on Automations, Events,
 IPAM and the Dashboard.

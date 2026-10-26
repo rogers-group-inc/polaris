@@ -65,19 +65,13 @@ function syncFolderTabs(row) {
 
 // The fixed area the strip window slides its tabs in, as a {left, right}
 // screen span — the list box less the shadow padding _maskArea puts round it
-// — or null while the window is off. fadeL / fadeR: whether that edge is
-// fading (more of the row past it).
+// — or null while the window is off.
 function _windowArea(row) {
   var strip = row.querySelector(":scope > :is(.page-tabs, .table-tabs, .dashboard-tabs)");
   var win = strip && strip.__tabWin;
   if (!win || !(win.max > 0.5) || !win.box || win.box === strip) return null;
   var r = win.box.getBoundingClientRect();
-  return {
-    left: r.left + (win.padL || STRIP_SHADOW_PX),
-    right: r.right - STRIP_SHADOW_PX,
-    fadeL: win.pos > 0.5,
-    fadeR: win.pos < win.max - 0.5,
-  };
+  return { left: r.left + STRIP_SHADOW_PX, right: r.right - STRIP_SHADOW_PX };
 }
 
 // A tab's span clipped to that area (unchanged while the window is off);
@@ -155,40 +149,6 @@ function _writeFolderStrip(row, body) {
   if (body.style.getPropertyValue("--folder-strip-r") !== r) {
     if (r) body.style.setProperty("--folder-strip-r", r); else body.style.removeProperty("--folder-strip-r");
   }
-  _writeFadeCast(body, strip ? _windowArea(row) : null);
-}
-
-// The card's cast fading IN where the tabs fade OUT (operator request
-// 2026-10-26). The cut-out above keeps the card's cast off the whole tab
-// area; across each FADING edge this band (.folder-cast-fade, styles.css)
-// lays the same cast back over the tabs, masked so it is full at the area's
-// edge and gone STRIP_FADE_PX in — the same span and direction as the tabs'
-// own fade, so a tab dissolves into the card's shadow instead of meeting a
-// hard line. A clip-path cut-out cannot be graded, hence a layer of its own.
-function _writeFadeCast(body, area) {
-  var band = body.querySelector(":scope > .folder-cast-fade");
-  if (!area || !(area.fadeL || area.fadeR)) {
-    if (band && !band.hidden) band.hidden = true;
-    return;
-  }
-  if (!band) {
-    band = document.createElement("div");
-    band.className = "folder-cast-fade";
-    band.setAttribute("aria-hidden", "true");
-    body.appendChild(band);
-  }
-  var er = body.getBoundingClientRect();
-  // The band starts F px before the area: the left fade lies outside it
-  // (_maskArea), and the cast fades in across that same span.
-  var F = STRIP_FADE_PX, W = area.right - area.left + F;
-  var stops = (area.fadeL ? ["#000 0px", "transparent " + F + "px"] : ["transparent 0px"])
-    .concat(area.fadeR ? ["transparent " + (W - F).toFixed(1) + "px", "#000 " + W.toFixed(1) + "px"] : ["transparent 100%"]);
-  var mask = "linear-gradient(to right, " + stops.join(", ") + ")";
-  if (band.hidden) band.hidden = false;
-  _setStyle(band, "left", (area.left - F - er.left).toFixed(1) + "px");
-  _setStyle(band, "width", W.toFixed(1) + "px");
-  _setStyle(band, "maskImage", mask);
-  _setStyle(band, "webkitMaskImage", mask);
 }
 
 // ─── Strip window (the wheel) ──────────────────────────────────────
@@ -199,22 +159,20 @@ function _writeFadeCast(body, area) {
 // the + after it and the controls after the strip hold still — and the row of
 // tabs, every one at its natural width, SLIDES inside it: `pos` px of the row
 // are past the area's left edge (a `translate` on each tab). A tab crossing
-// either edge fades into it (the area's mask, STRIP_FADE_PX wide — see
-// _maskArea); one wholly outside is `visibility: hidden`, neither drawn nor hit.
-// An edge fades only while there is more of the row past it. Tabs never
-// squeeze or grow (operator request 2026-10-26; a squeezing window was tried
-// first and rejected).
+// an edge is cut there and FADES AS A WHOLE, its opacity the share of it
+// still inside (operator request 2026-10-26, after straight, slanted and
+// card-anchored gradient fades were each tried and dropped); one wholly
+// outside is `visibility: hidden`, neither drawn nor hit. Tabs never squeeze
+// or grow (a squeezing window was tried first and rejected).
 //
-// One step — a wheel notch — slides by one tab, whatever its
-// length: › brings the row's next tab start to just inside the left fade, ‹
-// the previous one, clamped so the last tab ends flush with the right edge
-// (`max`, where nothing fades).
+// One step — a wheel notch — slides by one tab, whatever its length: to the
+// row's next or previous tab start on the area's left edge, clamped so the
+// last tab ends flush with the right edge (`max`).
 // Switching to a tab partly or wholly outside slides it fully in. State is
 // `strip.__tabWin`: the measured tabs ({el, s, w}: start and natural width,
 // gaps included in s), the gap, the room, `pos`, `max`, the list box.
 var TAB_SEL = ".table-tab, .page-tab, .dashboard-tab";
 var STRIP_GLIDE_MS = 180;
-var STRIP_FADE_PX = 12;   // a quick fade (operator requests 2026-10-26: 28 read as a smear, 6 too abrupt)
 var STRIP_WHEEL_NOTCH = 50;   // px of pixel-mode wheel delta that make one step
 
 function _setStyle(el, prop, val) {
@@ -239,16 +197,6 @@ function _measureStrip(strip) {
   var box = tabs.length ? tabs[0].parentElement : strip;
   st.strip = strip;
   st.box = box;
-  // The folder card the tabs open into, if any: the slanted left fade starts
-  // at its left edge (_maskArea).
-  st.card = null;
-  var row = strip.parentElement;
-  if (row && row.classList.contains("folder-head-card")) {
-    document.querySelectorAll(".folder-body").forEach(function (b) {
-      if (!st.card && b.getClientRects().length &&
-          (row.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) st.card = b;
-    });
-  }
   st.gap = parseFloat(getComputedStyle(box).columnGap) || 0;
   st.items = [];
   var x = 0;
@@ -264,10 +212,6 @@ function _measureStrip(strip) {
   // The room: the strip's content box, less everything in it that is not
   // the tab box (the + button) and their gaps.
   var scs = getComputedStyle(strip);
-  // The mask's room LEFT of the area: the strip's own left padding (its
-  // overflow clips at that padding box), at least STRIP_SHADOW_PX, at most
-  // 64. The slanted left fade needs the fade width plus a tab's height.
-  st.padL = Math.max(STRIP_SHADOW_PX, Math.min(64, parseFloat(scs.paddingLeft) || 0));
   var room = strip.clientWidth - (parseFloat(scs.paddingLeft) || 0) - (parseFloat(scs.paddingRight) || 0);
   var sgap = parseFloat(scs.columnGap) || 0;
   if (box !== strip) {
@@ -286,62 +230,32 @@ function _clampPos(st) {
   if (st.pos < 0) st.pos = 0;
 }
 
-// Draw the window at st.pos: pin the box, shift every tab, fade or hide the
-// ones at the edges.
-// The fade is ONE mask on the tab area, not one per tab: a mask clips
-// everything outside its box, and a per-tab mask cut each edge tab's own
-// drop shadow off square (operator report 2026-10-26). The area's mask box
-// is pushed out by STRIP_SHADOW_PX on every side (padding, cancelled by an
-// equal negative margin, so nothing moves) to take in the tabs' shadows,
-// the active tab's neck and its card-cast ring; across it the gradient is
-// opaque except where an edge fades, from the area's edge in.
+// Draw the window at st.pos: pin the box, shift every tab, and cut, fade or
+// hide the ones at the edges.
+//
+// The CUT is one mask on the tab box, a solid block, never a gradient: a
+// mask clips everything outside its box, and a per-tab mask cut each tab's
+// drop shadow off square. The box is padded out by STRIP_SHADOW_PX on every
+// side (cancelled by an equal negative margin, so nothing moves) to take in
+// the tabs' shadows, the active neck and its card-cast ring, and the block
+// covers it top to bottom; sideways it stops at the area's edge on a side
+// with more of the row past it, and runs out to the padding's edge on a
+// side without, so the end tab keeps its shadow.
 var STRIP_SHADOW_PX = 32;
 
-function _maskArea(box, on, fadeL, fadeR, R, EL, card) {
-  var E = STRIP_SHADOW_PX, F = STRIP_FADE_PX;
+function _maskArea(box, on, cutL, cutR, R) {
+  var E = STRIP_SHADOW_PX;
   // content-box: the pinned width is the AREA; the padding sits outside it.
   _setStyle(box, "boxSizing", on ? "content-box" : "");
-  _setStyle(box, "padding", on ? E + "px " + E + "px " + E + "px " + EL + "px" : "");
-  _setStyle(box, "margin", on ? -E + "px " + -E + "px " + -E + "px " + -EL + "px" : "");
-  // Two mask layers, side by side, unioned. The LEFT one (the box's first
-  // SPLIT px) fades along a 45° line running bottom-left to top-right
-  // (operator requests 2026-10-26; the other slant first, rejected): a
-  // leaving tab's top fades out first and its foot last, and at the tabs'
-  // top line — the line's innermost point — the fade lies OUTSIDE the area,
-  // in the F px before its edge, so a tab parked at the edge is whole. That slant spans
-  // the fade plus a tab's height, hence the wider left room EL. For a
-  // 135deg gradient a point's position along it is s·(x + y), s = √2/2; on
-  // the tabs' top line (y = E, the top padding) the stops are
-  // s·(EL − F + E) and s·(EL + E) — the box height drops out. The RIGHT layer is the rest of the box, its
-  // fade straight and INSIDE the area: the row's controls sit right after
-  // it, and a slanted fade there would lay tab tops under them.
+  _setStyle(box, "padding", on ? E + "px" : "");
+  _setStyle(box, "margin", on ? -E + "px" : "");
   var img = "", size = "", posn = "", rep = "";
-  if (on && (fadeL || fadeR)) {
-    // The slant's anchor (x0, y0), in the box's px: where the fade is fully
-    // clear. With a folder card it is the card's top-left corner — the fade's
-    // foot starts at the card's edge (operator request 2026-10-26) — else the
-    // tabs' top line, F px before the area's edge. Position along a 135deg
-    // gradient is s·(x + y), s = √2/2, so the stops are s·(x0 + y0) and
-    // s·(x0 + y0) + s·F.
-    var x0 = EL - F, y0 = E;
-    if (card) {
-      var br = box.getBoundingClientRect(), cr = card.getBoundingClientRect();
-      x0 = cr.left - br.left;
-      y0 = cr.top - br.top;
-    }
-    var s = Math.SQRT1_2, pt = s * (x0 + y0), po = pt + s * F;
-    var W = R + E + EL, SPLIT = Math.max(4, Math.min(W, Math.ceil(po / s) + 4));
-    var solid = "linear-gradient(#000, #000)";
-    var left = fadeL
-      ? "linear-gradient(135deg, transparent 0px, transparent " + pt.toFixed(1) + "px, #000 " + po.toFixed(1) + "px)"
-      : solid;
-    var right = fadeR
-      ? "linear-gradient(to right, #000 0px, #000 " + (EL + R - F - SPLIT).toFixed(1) + "px, transparent " + (EL + R - SPLIT).toFixed(1) + "px)"
-      : solid;
-    img = left + ", " + right;
-    size = SPLIT + "px 100%, " + (W - SPLIT).toFixed(1) + "px 100%";
-    posn = "0px 0px, " + SPLIT + "px 0px";
-    rep = "no-repeat, no-repeat";
+  if (on && (cutL || cutR)) {
+    var x0 = cutL ? E : 0, x1 = cutR ? E + R : R + 2 * E;
+    img = "linear-gradient(#000, #000)";
+    size = (x1 - x0).toFixed(1) + "px 100%";
+    posn = x0 + "px 0px";
+    rep = "no-repeat";
   }
   _setStyle(box, "maskImage", img);
   _setStyle(box, "webkitMaskImage", img);
@@ -362,33 +276,32 @@ function _layoutStrip(strip) {
   if (box && box !== strip) {
     _setStyle(box, "width", on ? R.toFixed(1) + "px" : "");
     _setStyle(box, "flexShrink", on ? "0" : "");
-    _maskArea(box, on, on && st.pos > 0.5, on && st.pos < st.max - 0.5, R, st.padL || STRIP_SHADOW_PX, st.card);
+    _maskArea(box, on, on && st.pos > 0.5, on && st.pos < st.max - 0.5, R);
   }
   st.items.forEach(function (it) {
     var el = it.el;
     if (!on) {
       _setStyle(el, "translate", "");
       _setStyle(el, "visibility", "");
+      _setStyle(el, "opacity", "");
       return;
     }
     // A tab being dragged carries its own translate (_wireTabDrag).
     if (!el.classList.contains("is-dragging")) _setStyle(el, "translate", (-st.pos).toFixed(1) + "px 0");
     var left = it.s - st.pos, right = left + it.w;
-    // On the left a tab shows until it is past the mask box (the slanted fade
-    // reaches further out at a tab's top than at its foot).
-    _setStyle(el, "visibility", right <= -(st.padL || STRIP_SHADOW_PX) + 0.5 || left >= R - 0.5 ? "hidden" : "");
+    var inside = Math.min(right, R) - Math.max(left, 0);
+    _setStyle(el, "visibility", inside <= 0.5 ? "hidden" : "");
+    // A tab the edge cuts fades as a whole: its opacity is the share of it
+    // still inside, so it dims as it leaves and brightens as it arrives.
+    _setStyle(el, "opacity", inside > 0.5 && inside < it.w - 0.5 ? (inside / it.w).toFixed(3) : "");
   });
 }
 
-// Fully in view means clear of the fade too: a tab parked against an edge
-// would sit in the fade zone and read as half gone. At either end of the row
-// there is no fade, which the clamp gives for free.
 function _bringIntoView(st, i) {
   var it = st.items[i];
   if (!it) return;
-  var F = STRIP_FADE_PX;
   if (it.s < st.pos) st.pos = it.s;
-  else if (it.s + it.w > st.pos + st.room - F) st.pos = it.s + it.w - st.room + F;
+  else if (it.s + it.w > st.pos + st.room) st.pos = it.s + it.w - st.room;
   _clampPos(st);
 }
 

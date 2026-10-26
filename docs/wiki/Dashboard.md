@@ -39,7 +39,8 @@ switch; drag a tab sideways to move it, customizing or not (the new order is
 saved); while customizing, click the active tab's name to put the cursor in it
 and type over it to rename it, or **×** to delete it. When there are more
 dashboards than fit, the tabs keep their size and slide in a fixed area,
-fading into its edges; the mouse wheel over them slides one tab per notch.
+a tab cut by an edge dimming as a whole; the mouse wheel over them slides one
+tab per notch.
 The same holds on the wallboard (/dash).
 
 Your personal layout — every tab — saves automatically to your account

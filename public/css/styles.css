@@ -3271,31 +3271,6 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
    inside the strip, where the neighbouring tab overlaps the fillet and the
    cast in it showed through that tab as a small dark block). Unmeasured, the
    strip collapses onto the active tab's span and neither fillet is cast. */
-/* The card's cast laid back over the tab strip's FADING edges
-   (folder-tabs.js → _writeFadeCast, which sets left / width and a horizontal
-   mask: full at the area's edge, gone STRIP_FADE_PX in), so a tab sliding
-   out dissolves into the card's shadow instead of meeting the cut-out's hard
-   line. The band is the strip of air above the card's top edge; its ::before
-   is a box lying along that edge (ends run past the band, so the cast is
-   even along it) carrying the card's own --shadow-lift, and the band clips
-   it to the part above the edge. */
-.folder-cast-fade {
-  position: absolute;
-  top: -40px;
-  height: 40px;
-  overflow: hidden;
-  pointer-events: none;
-}
-.folder-cast-fade[hidden] { display: none; }
-.folder-cast-fade::before {
-  content: "";
-  position: absolute;
-  left: -40px;
-  right: -40px;
-  top: 39px;            /* the card's ::before sits at inset: -1px */
-  height: 100px;
-  box-shadow: var(--shadow-lift);
-}
 .folder-card::before {
   --gl: var(--folder-gap-l, 0px);
   --gr: var(--folder-gap-r, 0px);
