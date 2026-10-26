@@ -2416,8 +2416,8 @@ html[data-page-top-curtain]::after {
 .appmap-toolbar-actions .btn:not(.btn-icon):not(:disabled),
 .appmap-toolbar-top .btn:not(.btn-icon):not(:disabled),
 .table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift-control); }
-/* A page's own action buttons on a row of their own (Assets: between the
-   selection bar and the tab row), right aligned. */
+/* A page's own action buttons on a row of their own (Users), right aligned.
+   Assets used it too until its actions joined the tab row (2026-10-26). */
 .page-actions-row {
   display: flex;
   align-items: center;
@@ -2639,6 +2639,10 @@ html[data-page-top-curtain]::after {
 .btn-glyph-download {
   --btn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='7 10 12 15 17 10'/%3E%3Cline x1='12' y1='15' x2='12' y2='3'/%3E%3C/svg%3E");
 }
+/* Export's twin for Import (Assets): the same tray, the arrow leaving it. */
+.btn-glyph-upload {
+  --btn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='17 8 12 3 7 8'/%3E%3Cline x1='12' y1='3' x2='12' y2='15'/%3E%3C/svg%3E");
+}
 .btn-icon {
   padding: 0.35rem;
   border: none;
@@ -2748,7 +2752,10 @@ html[data-page-top-curtain]::after {
   z-index: 900;
   min-width: 160px;
 }
-/* The row-name trigger: reads as the name, not as a control, until hovered. */
+/* The row-name trigger: reads as the name, not as a control, until hovered.
+   No ▾ caret: a left click OPENS the row (the menu's primary verb) and the
+   menu is the right click's, so a dropdown caret would promise the wrong
+   thing (polaris-ui-canon → Row context menu). */
 .row-menu-trigger {
   background: none;
   border: none;
@@ -2763,11 +2770,6 @@ html[data-page-top-curtain]::after {
   white-space: nowrap;
 }
 .row-menu-trigger:hover { text-decoration: underline; }
-.row-menu-trigger::after {
-  content: " \25BE";
-  color: var(--color-text-tertiary);
-  font-size: 0.75em;
-}
 .row-menu-trigger:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
@@ -2846,9 +2848,11 @@ html[data-page-top-curtain]::after {
   /* Left padding = the fillet radius, so the first tab's left fillet lands on
      the table's left edge rather than being clipped by the scrolling strip. */
   padding: 6px 6px 1px var(--folder-r);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  /* Never scrolled natively, never a scrollbar: a strip with more tabs than
+     room is a window that squeezes its edge tabs (folder-tabs.js →
+     _layoutStrip), so the tabs always sum to its width. Hidden only clips the
+     moment between a re-render and that layout. */
+  overflow: hidden;
 }
 .table-head-row .table-tabs-list { gap: 4px; }
 .table-head-row .table-head-controls {
@@ -2872,12 +2876,37 @@ html[data-page-top-curtain]::after {
 /* Dashboard: the strip is hidden (not absent) on an empty layout or a
    published view, so :first-child never matches; pin the cluster right. */
 .table-head-row > .dashboard-tabs + .table-head-controls { margin-left: auto; }
+/* The strip window slides tabs past the end of their fixed area (masked
+   transparent there, but a positioned tab is still hit-tested): the + after
+   the area rides above them, so a click on it is never a tab's. */
+.table-head-row .table-tab-add { position: relative; z-index: 3; }
+/* Assets: a view tab's ✕ shows only in edit mode (assets.js →
+   setAssetsEditing stamps body.assets-editing), as its + does. */
+body:not(.assets-editing) #assets-tabs-list .table-tab-close { display: none; }
+/* Dragging a tab to a new place (folder-tabs.js → _wireTabDrag: the Assets
+   views and the dashboards). The lifted tab follows the pointer on
+   `translate`, which composes with the inactive tabs' translateY drop instead
+   of replacing it; it rides above its neighbours and does not ease, or it
+   would lag the pointer. A press never selects tab text (the dashboard's
+   rename input keeps its own selection: user-select does not reach into a
+   form field). */
+.table-head-row :is(.table-tabs-list .table-tab, .dashboard-tabs .dashboard-tab) { user-select: none; }
+.table-head-row .is-reordering,
+.table-head-row .is-reordering :is(.table-tab, .dashboard-tab) { cursor: grabbing; }
+.table-head-row :is(.table-tab, .dashboard-tab).is-dragging {
+  z-index: 4;
+  opacity: 0.92;
+  transition: none;
+}
 /* Automations: on the Automations tab, Refresh is the list row's own (right of
    Clear); the header-cluster Refresh — which reloads whichever tab is open —
    serves the other tabs. */
 .main:has(#auto-tab-manage.active) #btn-refresh { display: none; }
 /* !important: renderPageControls stamps an inline display on its -top row. */
 .table-head-row .head-off { display: none !important; }
+/* A cluster a page hides outright (Assets' Filters ▾ outside edit mode):
+   the cluster's own display: flex beats the UA's [hidden] rule. */
+.table-head-row .table-head-controls[hidden] { display: none; }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab) {
   position: relative;
   flex: 0 0 auto;
@@ -2890,10 +2919,11 @@ html[data-page-top-curtain]::after {
      backgrounds; the active tab still reads above its peers through the
      accent edge and the card's glass. The fill is a highlight that starts
      at the tab's top edge and fades out toward the rule, not one flat wash
-     over the whole chip. */
+     over the whole chip. 9% (14% read as too dark a wash, 2026-10-26); the
+     + tab below keeps the same proportion. */
   color: var(--color-text-secondary);
   background: linear-gradient(to bottom,
-    color-mix(in srgb, var(--color-text-primary) 14%, transparent),
+    color-mix(in srgb, var(--color-text-primary) 9%, transparent),
     transparent 85%);
   border: 1px solid var(--color-border);
   border-bottom: 0;
@@ -2909,7 +2939,7 @@ html[data-page-top-curtain]::after {
   transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease,
     opacity 0.2s ease, box-shadow 0.2s ease;
 }
-.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: linear-gradient(to bottom, color-mix(in srgb, var(--color-text-primary) 22%, transparent), transparent 85%); }
+.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: linear-gradient(to bottom, color-mix(in srgb, var(--color-text-primary) 15%, transparent), transparent 85%); }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab).active {
   z-index: 2;
   color: var(--color-accent);
@@ -3426,11 +3456,11 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   border-radius: 50%;
   background: var(--color-primary);
 }
+/* Base-filter marker: shown INSTEAD of the dot when the tab carries a base
+   filter (assets-tabs.js render), in the accent so it reads as more than
+   "filtered" — this view has somewhere to go back to. */
 .table-tab-base {
   flex: 0 0 auto;
-  /* Accent rather than the dot's primary: the dot says "this view is filtered",
-     the star says "this view has somewhere to go back to" — two facts, so they
-     must not read as one repeated marker. */
   color: var(--color-accent);
   font-size: 0.72rem;
   line-height: 1;
@@ -3490,13 +3520,13 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   line-height: 1.2;
   /* The inactive tabs' solid-chip look (their rule above). */
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
   border: 1px solid var(--color-border);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   box-shadow: var(--shadow-tab-idle);
 }
-.table-head-row.folder-head-card .table-tab-add:hover { color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 12%, transparent); }
+.table-head-row.folder-head-card .table-tab-add:hover { color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); }
 
 /* ─── Named-preset menu (Assets → Filters ▾, Dashboard → Dashboards ▾) ─────
    A dropdown whose list rows carry a trailing delete button, so each row is a
@@ -7444,14 +7474,6 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
 }
-/* Edit-mode drag handle on each tab — the tab itself isn't draggable (the
-   active tab is mostly the rename input), so the grip is the grab target. */
-.dashboard-tab-grip {
-  cursor: grab; user-select: none; color: var(--color-text-tertiary);
-  font-size: 0.9rem; line-height: 1; padding: 2px 3px; border-radius: 4px; flex-shrink: 0;
-}
-.dashboard-tab-grip:hover { color: var(--color-text-primary); background: var(--color-hover-tint); }
-.dashboard-tab-grip:active { cursor: grabbing; }
 .dashboard-tab-remove {
   background: transparent;
   border: 0;
@@ -7463,34 +7485,28 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   cursor: pointer;
 }
 .dashboard-tab-remove:hover { color: var(--color-danger); background: var(--color-hover-tint); }
-/* Inline rename input on the active tab (edit mode) — the same field as the
-   global search (.global-search input): --color-bg-primary ground, hairline,
-   control shadow, accent ring on focus. Scoped under .dashboard-tab because
-   the bare class loses to the global input[type="text"] rule, which painted
-   it --color-bg-secondary — a near-black void on nightfall. */
-.dashboard-tab .dashboard-tab-name-input {
+/* Inline rename input on the active tab (edit mode): BARE TEXT, not a field.
+   No ground, border, radius or shadow — it reads as the tab's own label; a
+   click puts the text cursor in it and the text can be selected and typed
+   over (operator request 2026-10-26: the bubble around the name was
+   rejected). Scoped under .dashboard-tab because the bare class loses to the
+   global input[type="text"] rule (0,1,1), which would paint a box back on;
+   the :focus rule likewise beats the global input:focus ring. Zero padding
+   and margin keep the tab exactly the height and width it has as a label. */
+.dashboard-tab .dashboard-tab-name-input,
+.dashboard-tab .dashboard-tab-name-input:focus {
   width: auto;
-  padding: 0.2rem 0.5rem;
-  /* Its padding + border pulled back out of the tab's height, so the active
-     tab — and with it the whole tab row, the edit buttons and the page card
-     — does not drop 7-8px when Customize turns the name into this field. */
-  margin-block: calc(-0.2rem - 1px);
+  padding: 0;
+  margin: 0;
   font: inherit;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-control);
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   outline: none;
   cursor: text;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-/* box-shadow REPLACES, so the ring re-states the drop shadow — the same
-   reason the .global-search focus rule does. */
-.dashboard-tab .dashboard-tab-name-input:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-control);
+  caret-color: currentColor;
 }
 
 /* Column canvas. The dashboard is a 12-col grid of COLUMNS; each column is a

@@ -4146,8 +4146,51 @@ function closeModal() {
 // than the remaining rows. Fixed + body-mounted escapes the clip; the cost is
 // that the menu must close on scroll, since it can no longer follow its anchor.
 //
-// items: [{ label, onSelect, danger?, disabled?, title? } | { separator: true }]
+// items: [{ label, onSelect, danger?, disabled?, title?, primary? } | { separator: true }]
+//
+// Left click OPENS, right click shows the menu. An item marked `primary: true`
+// is what a plain click (or Enter on the focused trigger) does: showRowMenu
+// runs it straight away instead of drawing the menu. A right click — or the
+// keyboard's Menu key / Shift+F10, which fire the same `contextmenu` event — on
+// a `.row-menu-trigger` or `[data-row-menu]` element replays the click with the
+// menu forced (_rowMenuForced), so every call site's own click handler builds
+// the items exactly as before and the menu opens at the pointer. A menu with no
+// primary item (the account menu, Export, a user row — nothing to "open") shows
+// on either button. A caller that builds its items asynchronously reads
+// rowMenuGesture() synchronously in its click handler and passes the result as
+// `opts.menuAt`, because the forced flag only lives for the replayed click.
 var _rowMenuTeardown = null;
+var _rowMenuForced = null;
+
+/**
+ * Is the click being handled right now a request for the MENU (a right click
+ * replayed by the contextmenu listener)? Returns the pointer position to open
+ * it at ({ x, y }, or { x: null } for a keyboard Menu key), else null.
+ */
+function rowMenuGesture() {
+  return _rowMenuForced;
+}
+
+if (typeof document !== "undefined" && document.addEventListener) {
+  document.addEventListener("contextmenu", function (e) {
+    if (e.defaultPrevented || e.shiftKey) return; // Shift+right-click keeps the browser's own menu
+    var t = e.target;
+    var trigger = t && typeof t.closest === "function" ? t.closest(".row-menu-trigger, [data-row-menu]") : null;
+    if (!trigger) return;
+    e.preventDefault();
+    // A keyboard-raised contextmenu reports (0, 0); anchor under the trigger then.
+    var fromPointer = e.clientX || e.clientY;
+    _rowMenuForced = fromPointer ? { x: e.clientX, y: e.clientY } : { x: null, y: null };
+    try {
+      t.dispatchEvent(new window.MouseEvent("click", {
+        bubbles: true, cancelable: true, view: window,
+        clientX: e.clientX, clientY: e.clientY,
+      }));
+    } finally {
+      _rowMenuForced = null;
+    }
+  });
+}
 
 /** Close whatever row menu is open. Safe to call when none is. */
 function closeRowMenu(opts) {
@@ -4192,8 +4235,19 @@ function _rowMenuLayer(anchor) {
 
 function showRowMenu(anchor, items, opts) {
   if (!anchor || !items || !items.length) return;
-  // A second click on the same anchor toggles rather than stacking menus.
-  var reopening = _rowMenuTeardown && _rowMenuTeardown.anchor === anchor;
+  var at = (opts && opts.menuAt) || _rowMenuForced;
+  // A plain click runs the primary verb instead of showing the menu.
+  if (!at) {
+    var primary = items.find(function (it) { return it && it.primary && !it.disabled && typeof it.onSelect === "function"; });
+    if (primary) {
+      closeRowMenu({ silent: true });
+      try { primary.onSelect(); } catch (err) { if (typeof showToast === "function") showToast((err && err.message) || "Action failed", "error"); }
+      return;
+    }
+  }
+  // A second click on the same anchor toggles rather than stacking menus — a
+  // left click only; a second right click re-opens the menu at the new point.
+  var reopening = !at && _rowMenuTeardown && _rowMenuTeardown.anchor === anchor;
   closeRowMenu({ silent: true });
   if (reopening) return;
 
@@ -4267,6 +4321,8 @@ function showRowMenu(anchor, items, opts) {
   var mw = menu.offsetWidth;
   var mh = menu.offsetHeight;
   var pad = 6;
+  // Opened by a right click: at the pointer, as a context menu sits.
+  if (at && at.x != null) r = { top: at.y, bottom: at.y, left: at.x, right: at.x };
   var top = r.bottom + 4;
   if (top + mh > window.innerHeight - pad) {
     var above = r.top - 4 - mh;
@@ -4348,6 +4404,7 @@ function showRowMenu(anchor, items, opts) {
 if (typeof window !== "undefined") {
   window.showRowMenu = showRowMenu;
   window.closeRowMenu = closeRowMenu;
+  window.rowMenuGesture = rowMenuGesture;
 }
 
 // ─── Stacked Overlay (a dialog above an open modal) ───────────────────────────

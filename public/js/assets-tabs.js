@@ -355,15 +355,15 @@
       el.className = "table-tab" + (active ? " active" : "");
       el.setAttribute("aria-selected", active ? "true" : "false");
       el.setAttribute("title", tabTitle(t));
-      var dot = filterCount(t.state) ? '<span class="table-tab-dot" aria-hidden="true"></span>' : "";
-      // The base marker does not replace the dot: "has filters" and "has a base
-      // to get back to" are two different facts, and the operator acts on both.
-      var base = t.defaultState
+      // ONE marker: a ★ when the tab carries a base filter, else a dot when it
+      // has filters applied, else nothing (operator request 2026-10-26 — the
+      // star replaces the dot; it used to sit beside it).
+      var mark = t.defaultState
         ? '<span class="table-tab-base" title="Base filter: ' +
           escapeHtml(t.defaultFilterName || "saved filter") + '">&#9733;</span>'
-        : "";
+        : filterCount(t.state) ? '<span class="table-tab-dot" aria-hidden="true"></span>' : "";
       el.innerHTML =
-        base + dot +
+        mark +
         '<span class="table-tab-name">' + escapeHtml(t.name) + "</span>" +
         (closable
           ? '<button type="button" class="table-tab-close" data-tab-close="' + escapeHtml(t.id) +
@@ -789,6 +789,25 @@
         beginRename(tabEl);
       }
     });
+
+    // Drag a tab to a new place (folder-tabs.js, shared with the dashboard
+    // tabs). The drop writes the new order into _tabs and saves it.
+    if (window.PolarisFolderTabs && window.PolarisFolderTabs.wireDrag) {
+      window.PolarisFolderTabs.wireDrag(strip, list, {
+        tabSel: ".table-tab",
+        idAttr: "data-tab-id",
+        canStart: function (el) { return !el.querySelector("input"); },
+        onDrop: function (ids, moved) {
+          var byId = {};
+          _tabs.forEach(function (t) { byId[t.id] = t; });
+          var next = ids.map(function (id) { return byId[id]; }).filter(Boolean);
+          if (next.length !== _tabs.length) { render(); return; }
+          _tabs = next;
+          render();
+          if (moved) scheduleSave();
+        },
+      });
+    }
 
     // A debounced layout save can still be in flight when the operator leaves.
     window.addEventListener("beforeunload", function () {

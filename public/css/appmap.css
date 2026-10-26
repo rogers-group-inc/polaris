@@ -321,6 +321,16 @@
   backdrop-filter: var(--panel-glass-blur);
 }
 
+/* Everything ON the graph — Full screen / Refresh / Export, the legend and its
+   collapsed button, the Ports key — takes the Device Map's tight map-button
+   cast (map.css --map-btn-shadow, same value) instead of the page-level lift,
+   which reads as a halo over the canvas. One value for every theme. */
+.appmap-graph {
+  --map-btn-shadow: 0 2px 4px rgba(0,0,0,.3), 0 1px 1px rgba(0,0,0,.25);
+}
+.appmap-graph .map-view-tools .btn,
+.appmap-graph .legend-collapsible > .legend-toggle-open { box-shadow: var(--map-btn-shadow); }
+
 /* Cytoscape draws into this; it fills the card, overlays sit above it. */
 .appmap-cy {
   position: absolute;
@@ -428,7 +438,7 @@
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--map-btn-shadow);
   font-size: 12px;
 }
 
@@ -488,7 +498,7 @@
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--map-btn-shadow);
   font-size: 12px;
 }
 

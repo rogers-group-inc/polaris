@@ -897,12 +897,12 @@ document.addEventListener("DOMContentLoaded", async function () {
     if (!items.length) return;
     showRowMenu(addBtn, items, { label: "Add asset menu", align: "end" });
   });
-  // ── Import items in the merged Import / Export dropdown ──
-  // The dropdown's toggle / outside-close / stopPropagation wiring lives with
+  // ── Import items (the Import icon's menu) ──
+  // The menus' toggle / outside-close / stopPropagation wiring lives with
   // the export items (module-level IIFE below); this block only wires the
   // two import entries to their hidden file inputs.
   (function () {
-    var menu = document.getElementById("import-export-menu");
+    var menu = document.getElementById("import-menu");
     var csvBtn   = document.getElementById("btn-import-csv");
     var csvInput = document.getElementById("import-csv-input");
     var pdfBtn   = document.getElementById("btn-import-pdf");
@@ -2418,7 +2418,7 @@ function _managementAccessMenuItems(a) {
 }
 
 function _assetMenuItems(a) {
-  var items = [{ label: "Open", onSelect: function () { openViewModal(a.id); } }];
+  var items = [{ label: "Open", primary: true, onSelect: function () { openViewModal(a.id); } }];
   if (canManageAssets()) {
     items.push({ label: "Edit…", onSelect: function () { openEditModal(a.id); } });
   }
@@ -6828,7 +6828,7 @@ function assetAgentSubpanelHTML(a, agent) {
         : '');
   }
 
-  return '<div id="asset-agent-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-card)">' +
+  return '<div id="asset-agent-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-bg-primary);box-shadow:var(--shadow-card)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
       '<h4 style="margin:0;display:flex;align-items:baseline;gap:0.5rem">Polaris Agent ' + headerBadge + '</h4>' +
     '</div>' +
@@ -7162,7 +7162,7 @@ function assetFirmwarePanelHTML(a, fw) {
   if (!fw.error && fw.schedule) body += _fwScheduleHTML(fw.schedule, canFlash);
   if (!fw.error && fw.group) body += _fwGroupNoteHTML(fw.group);
   if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
-  return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-card)">' +
+  return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-bg-primary);box-shadow:var(--shadow-card)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
       '<h4 style="margin:0;display:flex;align-items:baseline;gap:0.5rem">Firmware ' + badge + '</h4>' +
     '</div>' +
@@ -9111,7 +9111,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var badgeAsChild = opts.isChild || (opts.flat && !!iface.ifParent);
     var nameCell =
       '<td class="mono" style="' + padStyle + '" title="' + escapeHtml(iface.ifName) + '">' + prefix +
-      '<a href="#" class="asset-iface-link" data-ifname="' + escapeHtml(iface.ifName) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(label) + '</a>' +
+      '<a href="#" class="asset-iface-link" data-row-menu data-ifname="' + escapeHtml(iface.ifName) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(label) + '</a>' +
       typeBadge(iface, badgeAsChild) +
       subtitle +
       '</td>';
@@ -9794,11 +9794,18 @@ function _ifaceIpForLookup(raw) {
 // resolved on click through GET /assets/ip-context — one small request, only
 // for an interface that has an address, only for a viewer who can read
 // networks — so a table of 48 ports costs nothing to render, and an address in
-// no network opens the interface straight away, as before. The row menu
-// anchors on the name the operator clicked (showRowMenu, app.js); a lookup
-// that fails, or lands after the table re-rendered under it, opens the
-// interface rather than nothing.
+// no network opens the interface straight away, as before. A plain click
+// always opens the interface; the fork is the RIGHT click's menu (rowMenuGesture,
+// app.js), so the lookup is paid only when the operator asks for the menu. The
+// menu anchors at the pointer; a lookup that fails, or lands after the table
+// re-rendered under it, opens the interface rather than nothing.
 function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
+  var at = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
+  if (!at) {
+    openInterfaceDetailPanel(asset, ifName, row);
+    return;
+  }
+  var openIface = { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } };
   // IPv4 first; an IPv6-only interface looks its IPv6 network up instead
   // (business rule 126).
   var ip = _ifaceIpForLookup(row && row.ipAddress) ||
@@ -9806,22 +9813,23 @@ function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
   var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
   var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
   if (!ip || !canReadNetworks || !canLookup) {
-    openInterfaceDetailPanel(asset, ifName, row);
+    showRowMenu(anchor, [openIface], { label: ifName, menuAt: at });
     return;
   }
   api.assets.ipContext(ip).then(function (ctx) {
     var subnet = ctx && ctx.subnet;
-    if (!subnet || !subnet.id || !anchor || !document.body.contains(anchor)) {
+    if (!anchor || !document.body.contains(anchor)) {
       openInterfaceDetailPanel(asset, ifName, row);
       return;
     }
-    var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
-    showRowMenu(anchor, [
-      { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } },
-      { label: "Open network", title: ip + " is in " + where, onSelect: function () {
+    var items = [openIface];
+    if (subnet && subnet.id) {
+      var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
+      items.push({ label: "Open network", title: ip + " is in " + where, onSelect: function () {
         PolarisPanels.openNetwork(subnet.id, { focusIp: ip, subnetCidr: subnet.cidr });
-      } },
-    ], { label: ifName });
+      } });
+    }
+    showRowMenu(anchor, items, { label: ifName, menuAt: at });
   }, function () {
     openInterfaceDetailPanel(asset, ifName, row);
   });
@@ -21516,6 +21524,7 @@ function _upstreamMenuItems(ref) {
   if (!ref || !ref.id) return [];
   var items = [{
     label: "Open asset",
+    primary: true,
     title: "Open this device's details",
     onSelect: function () { openViewModal(ref.id); },
   }];
@@ -22088,20 +22097,28 @@ async function singleOuiLookup(id, mac) {
 /* ─── Export (PDF / CSV) ──────────────────────────────────────────────────── */
 
 (function () {
-  // Merged Import / Export dropdown — this IIFE owns the toggle + outside-
-  // close + stopPropagation for the whole menu; the import items are wired
-  // separately in the DOMContentLoaded init.
-  var menu = document.getElementById("import-export-menu");
-  var btn  = document.getElementById("btn-import-export");
-  if (!btn || !menu) return;
-
-  btn.addEventListener("click", function (e) {
-    e.stopPropagation();
-    menu.classList.toggle("open");
+  // The Import and Export icons (the icon pair the other list pages carry),
+  // each with its own menu. This IIFE owns both menus' toggle + outside-
+  // close + stopPropagation; opening one closes the other. The import items
+  // are wired separately in the DOMContentLoaded init.
+  var pairs = [
+    [document.getElementById("btn-import"), document.getElementById("import-menu")],
+    [document.getElementById("btn-export"), document.getElementById("export-menu")],
+  ].filter(function (p) { return p[0] && p[1]; });
+  pairs.forEach(function (p) {
+    p[0].addEventListener("click", function (e) {
+      e.stopPropagation();
+      pairs.forEach(function (q) { if (q !== p) q[1].classList.remove("open"); });
+      p[1].classList.toggle("open");
+    });
+    p[1].addEventListener("click", function (e) { e.stopPropagation(); });
+  });
+  document.addEventListener("click", function () {
+    pairs.forEach(function (p) { p[1].classList.remove("open"); });
   });
 
-  document.addEventListener("click", function () { menu.classList.remove("open"); });
-  menu.addEventListener("click", function (e) { e.stopPropagation(); });
+  var menu = document.getElementById("export-menu");
+  if (!menu) return;
 
   menu.querySelectorAll("button[data-export]").forEach(function (item) {
     item.addEventListener("click", async function () {
@@ -22111,6 +22128,33 @@ async function singleOuiLookup(id, mac) {
       await handleAssetExport(mode, fmt);
     });
   });
+})();
+
+/* ─── Edit mode (the pencil / Done tick at the tab row's right end) ───────── */
+// The dashboard's Customize / Done pair, on the Assets tab row. Edit mode
+// shows the Filters ▾ menu (saved filter presets) and the + that adds a view
+// tab, as the dashboard's + shows only while customizing; outside it both
+// are gone. Per page view, not saved: every visit opens out of edit mode.
+(function () {
+  var editBtn = document.getElementById("assets-edit");
+  var doneBtn = document.getElementById("assets-done");
+  var filters = document.getElementById("assets-filters-cluster");
+  var addTab  = document.getElementById("assets-tab-add");
+  if (!editBtn || !doneBtn) return;
+  function setAssetsEditing(on) {
+    editBtn.hidden = on;
+    doneBtn.hidden = !on;
+    if (filters) {
+      filters.hidden = !on;
+      var menu = filters.querySelector(".btn-dropdown-menu");
+      if (!on && menu) menu.classList.remove("open");
+    }
+    if (addTab) addTab.hidden = !on;
+    document.body.classList.toggle("assets-editing", on);
+  }
+  editBtn.addEventListener("click", function () { setAssetsEditing(true); });
+  doneBtn.addEventListener("click", function () { setAssetsEditing(false); });
+  setAssetsEditing(false);
 })();
 
 // Page through GET /assets in 10k-row chunks (the route's max limit) up to a
@@ -25492,6 +25536,7 @@ function _loadAssetNotificationsTab(assetId) {
           if (!row) return;
           showRowMenu(btn, [{
             label: "Show alerts in this group…",
+            primary: true,
             title: "List the components this alert is made of — which are still affected and which have recovered",
             onSelect: function () { openAlertMembers(row); },
           }], { label: "Alert actions" });

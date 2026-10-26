@@ -66,22 +66,57 @@
         <button class="btn btn-sm btn-danger" id="assets-bulk-delete-btn" data-manage-assets>Delete selected</button>
       </div>
 
-      <!-- The page's action buttons, moved from the header to a row of
-           their own above the tab row, right aligned. -->
-      <div class="page-actions-row">
+      <!-- Table head row: the view tabs sit on the table's top-left edge,
+           and every control shares their line to the right — the page's own
+           actions, then Filters ▾, then Refresh / Clear Filters / Show N
+           (#pagination-top renders WITHOUT page navigation here — topNav:false
+           in _renderAssetsPageControls; the page buttons live below the table).
+           A strip too long for what the controls leave holds its tabs in a
+           fixed area they slide in, fading at its edges (folder-tabs.js; the
+           mouse wheel slides them), instead of pushing them. -->
+      <div class="table-head-row folder-head-card">
+        <!-- Per-user view tabs (assets-tabs.js). Each tab holds its own filter +
+             sort state, its own base filter, and its own favorites; the set is
+             persisted per user at /me/table-tabs. Rendered client-side — the strip
+             is empty until init() resolves. -->
+        <div class="table-tabs" id="assets-tabs">
+          <div class="table-tabs-list" id="assets-tabs-list" role="tablist" aria-label="Asset views"></div>
+          <!-- Shown only in edit mode (assets.js → setAssetsEditing), as the
+               dashboard's + is. -->
+          <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab" hidden>+</button>
+        </div>
+        <!-- Filters ▾ (saved filter presets, assets-filters.js): right after
+             the tabs. The menu body is rendered from the server list on every
+             open. Shown only in edit mode (the pencil at the row's end;
+             assets.js → setAssetsEditing). -->
+        <div class="table-head-controls" id="assets-filters-cluster" hidden>
+          <div class="btn-dropdown-wrap">
+            <button class="btn btn-secondary" id="btn-saved-filters" title="Save, load and manage table filter presets">Filters &#9662;</button>
+            <div class="btn-dropdown-menu sfl-menu" id="saved-filters-menu"></div>
+          </div>
+        </div>
+        <!-- The page's action buttons (once the page header's), first on the
+             row as on every list page. Import and Export are the icon pair the
+             other list pages carry (.btn-glyph-upload / -download), each with
+             its own menu. -->
+        <div class="table-head-controls">
+        <div class="btn-dropdown-wrap" data-manage-assets>
+          <button class="btn btn-glyph btn-glyph-upload btn-secondary" id="btn-import" title="Import" aria-haspopup="menu">Import</button>
+          <div class="btn-dropdown-menu" id="import-menu">
+            <div class="dropdown-heading">Import</div>
+            <button id="btn-import-csv">From CSV</button>
+            <button id="btn-import-pdf">From PDF Invoice</button>
+          </div>
+        </div>
         <div class="btn-dropdown-wrap">
-          <button class="btn btn-secondary" id="btn-import-export">Import / Export &#9662;</button>
-          <div class="btn-dropdown-menu" id="import-export-menu">
-            <div class="dropdown-heading" data-manage-assets>Import</div>
-            <button id="btn-import-csv" data-manage-assets>From CSV</button>
-            <button id="btn-import-pdf" data-manage-assets>From PDF Invoice</button>
-            <div class="dropdown-divider" data-manage-assets></div>
-            <div class="dropdown-heading">Export &mdash; PDF</div>
+          <button class="btn btn-glyph btn-glyph-download btn-secondary" id="btn-export" title="Export" aria-haspopup="menu">Export</button>
+          <div class="btn-dropdown-menu" id="export-menu">
+            <div class="dropdown-heading">PDF</div>
             <button data-export="page" data-fmt="pdf">Current page</button>
             <button data-export="filtered" data-fmt="pdf">All filtered results</button>
             <button data-export="all" data-fmt="pdf">Entire asset list</button>
             <div class="dropdown-divider"></div>
-            <div class="dropdown-heading">Export &mdash; CSV</div>
+            <div class="dropdown-heading">CSV</div>
             <button data-export="page" data-fmt="csv">Current page</button>
             <button data-export="filtered" data-fmt="csv">All filtered results</button>
             <button data-export="all" data-fmt="csv">Entire asset list</button>
@@ -94,31 +129,14 @@
         <button class="btn btn-primary" id="btn-add-asset" aria-haspopup="menu"
                 data-perm-any="assets:write,networkScan:read"
                 title="Add one asset by hand, or run a network Discovery">+ Add Asset(s)</button>
-      </div>
-
-      <!-- Table head row: the view tabs sit on the table's top-left edge,
-           with Refresh / Clear Filters / Show N on the same row to the right
-           (#pagination-top renders WITHOUT page navigation here — topNav:false
-           in _renderAssetsPageControls; the page buttons live below the table). -->
-      <div class="table-head-row folder-head-card">
-        <!-- Per-user view tabs (assets-tabs.js). Each tab holds its own filter +
-             sort state, its own base filter, and its own favorites; the set is
-             persisted per user at /me/table-tabs. Rendered client-side — the strip
-             is empty until init() resolves. -->
-        <div class="table-tabs" id="assets-tabs">
-          <div class="table-tabs-list" id="assets-tabs-list" role="tablist" aria-label="Asset views"></div>
-          <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab">+</button>
-        </div>
-        <!-- Filters ▾ (saved filter presets, assets-filters.js), left of
-             Refresh / Clear / Show N. The menu body is rendered from the
-             server list on every open. -->
-        <div class="table-head-controls">
-          <div class="btn-dropdown-wrap">
-            <button class="btn btn-secondary" id="btn-saved-filters" title="Save, load and manage table filter presets">Filters &#9662;</button>
-            <div class="btn-dropdown-menu sfl-menu" id="saved-filters-menu"></div>
-          </div>
         </div>
         <div id="pagination-top" class="table-head-controls"></div>
+        <!-- Edit / Done Editing: the dashboard's Customize pencil and Done
+             tick (index.html), at the row's right end. -->
+        <div class="table-head-controls">
+          <button type="button" id="assets-edit" class="btn btn-primary btn-icon-only" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>Edit</button>
+          <button type="button" id="assets-done" class="btn btn-primary btn-icon-only" hidden title="Done editing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Done Editing</button>
+        </div>
       </div>
 
       <!-- Folder card (styles.css "Folder CARD"): the table fills it down to

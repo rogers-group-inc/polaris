@@ -27,6 +27,9 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, unknown>;
 const SRC = readFileSync(resolve(__dirname, "../../public/js/assets-tabs.js"), "utf8");
+// Tab dragging lives in folder-tabs.js (shared with the dashboard), which
+// assets.html loads before assets-tabs.js.
+const FT_SRC = readFileSync(resolve(__dirname, "../../public/js/folder-tabs.js"), "utf8");
 const FAV_SRC = readFileSync(resolve(__dirname, "../../public/js/favorites.js"), "utf8");
 
 const STRIP_HTML =
@@ -110,6 +113,7 @@ async function boot(opts?: { hashSeeded?: boolean }) {
   }
   (0, eval)(FAV_SRC);
 
+  (0, eval)(FT_SRC);
   (0, eval)(SRC);
   await tabsApi().init(opts || {});
 }
@@ -634,6 +638,9 @@ describe("base (default) filter", () => {
     expect(repaints).toBe(1);                             // the Clear→Reset relabel
     expect(tabEls()[0]!.querySelector(".table-tab-base")).toBeTruthy();
     expect(tabEls()[1]!.querySelector(".table-tab-base")).toBeFalsy();
+    // ONE marker: the star replaces the filters dot — the tab IS filtered
+    // (the base was applied) and still shows no dot.
+    expect(tabEls()[0]!.querySelector(".table-tab-dot")).toBeFalsy();
 
     const base = tabsApi().activeDefault()!;
     expect(base.id).toBe("f7");
@@ -740,5 +747,93 @@ describe("base (default) filter", () => {
     fire(doc.querySelector('[data-tab-close="t1"]'), "click");
     await new Promise((r) => setTimeout(r, 0));
     expect(tabEls()).toHaveLength(1);
+  });
+});
+
+describe("drag to reorder", () => {
+  beforeEach(() => {
+    getResponse = {
+      version: 1,
+      activeId: "t2",
+      tabs: [
+        { id: "t1", name: "One", state: { sfFilters: {}, sortKey: null, sortDir: null } },
+        { id: "t2", name: "Two", state: { sfFilters: {}, sortKey: null, sortDir: null } },
+        { id: "t3", name: "Three", state: { sfFilters: {}, sortKey: null, sortDir: null } },
+      ],
+    };
+  });
+
+  // happy-dom lays nothing out: each tab is 100px wide at 100 × its DOM index,
+  // plus whatever `translate` the drag has put on it.
+  function stubLayout() {
+    const list = doc.getElementById("assets-tabs-list")!;
+    tabEls().forEach((t) => {
+      const el = t as unknown as HTMLElement;
+      Object.defineProperty(el, "getClientRects", { value: () => [{}], configurable: true });
+      Object.defineProperty(el, "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          const i = Array.prototype.indexOf.call(list.querySelectorAll(":scope > .table-tab"), el);
+          const dx = parseFloat(el.style.translate || "0") || 0;
+          return { left: i * 100 + dx, right: i * 100 + dx + 100, width: 100, top: 0, bottom: 20, height: 20 };
+        },
+      });
+    });
+  }
+  function pointer(target: unknown, type: string, x: number) {
+    const E = (win as unknown as { PointerEvent?: typeof MouseEvent }).PointerEvent || win.MouseEvent;
+    (target as { dispatchEvent: (e: unknown) => void })
+      .dispatchEvent(new E(type, { bubbles: true, cancelable: true, clientX: x, button: 0 } as never));
+  }
+  const order = () => tabEls().map((t) => t.getAttribute("data-tab-id"));
+  const activeId = () => tabsApi()._debugState().activeId;
+
+  it("moves a tab dragged past its neighbours' centres, saves the new order, and does not select it", async () => {
+    await boot();
+    stubLayout();
+    pointer(tabEls()[0]!.querySelector(".table-tab-name"), "pointerdown", 50);
+    pointer(doc, "pointermove", 58);       // past the slop: lifted
+    expect(tabEls()[0]!.classList.contains("is-dragging")).toBe(true);
+    pointer(doc, "pointermove", 260);      // its centre crosses Two's and Three's
+    expect(order()).toEqual(["t2", "t3", "t1"]);
+    pointer(doc, "pointerup", 260);
+    fire(tabEls()[2], "click");            // the click that ends a drag
+    expect(activeId()).toBe("t2");
+    expect(doc.querySelector(".is-dragging")).toBeFalsy();
+    expect((tabEls()[2] as unknown as HTMLElement).style.translate).toBe("");
+    await flushSave();
+    const last = saved[saved.length - 1] as { tabs: { id: string }[] };
+    expect(last.tabs.map((t) => t.id)).toEqual(["t2", "t3", "t1"]);
+  });
+
+  it("moves a tab left past one neighbour", async () => {
+    await boot();
+    stubLayout();
+    pointer(tabEls()[2], "pointerdown", 250);
+    pointer(doc, "pointermove", 240);
+    pointer(doc, "pointermove", 140);      // centre 140: left of Two's 150, right of One's 50
+    expect(order()).toEqual(["t1", "t3", "t2"]);
+    pointer(doc, "pointerup", 140);
+  });
+
+  it("a press that moves less than the slop is still a click", async () => {
+    await boot();
+    stubLayout();
+    pointer(tabEls()[0], "pointerdown", 50);
+    pointer(doc, "pointermove", 53);
+    pointer(doc, "pointerup", 53);
+    expect(doc.querySelector(".is-dragging")).toBeFalsy();
+    fire(tabEls()[0], "click");
+    expect(activeId()).toBe("t1");
+    expect(order()).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("never starts a drag from the close button", async () => {
+    await boot();
+    stubLayout();
+    pointer(doc.querySelector('[data-tab-close="t1"]'), "pointerdown", 90);
+    pointer(doc, "pointermove", 260);
+    expect(order()).toEqual(["t1", "t2", "t3"]);
+    pointer(doc, "pointerup", 260);
   });
 });

@@ -35,8 +35,13 @@ customizing.
 **Several dashboards, as tabs.** Each dashboard is a tab above the canvas —
 the tab shows even when you have only one. While customizing, the **+** after
 the last tab adds another dashboard and opens it in edit mode; click a tab to
-switch; while customizing, type over the active tab's name to rename it, drag
-a tab's grip to reorder, or **×** to delete it.
+switch; drag a tab sideways to move it, customizing or not (the new order is
+saved); while customizing, click the active tab's name to put the cursor in it
+and type over it to rename it, or **×** to delete it. When there are more
+dashboards than fit, the tabs keep their size and slide in a fixed area,
+a tab cut by an edge dimming as a whole; the mouse wheel over them slides one
+tab per notch.
+The same holds on the wallboard (/dash).
 
 Your personal layout — every tab — saves automatically to your account
 (`/me/dashboard`), so it follows you to another browser.
@@ -260,6 +265,15 @@ problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).
 ---
 
 ## Acting from the dashboard
+
+**Click a row to open it; right-click it for its verbs.** On Active Alerts and
+Down Assets a left click opens the device (an alert with no device opens its
+group, or shows its verbs when it has no group either); on Maintenance
+Schedules it opens the schedule. A right click shows the row's menu — **Open
+device**, **Acknowledge alert…**, **Clear alert**, **Show alerts in this
+group…**, **Disable schedule** — whichever apply. Ctrl/middle-click still opens
+the Assets page in a new tab. The Dash wallboard has no menus: a click there
+opens the device.
 
 The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
 

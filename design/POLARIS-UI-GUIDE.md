@@ -372,12 +372,17 @@ Per-row verbs (Open / Edit / Clone / Delete) hang off the row's **name cell**,
 never a column of buttons: one affordance, no column competing with the data,
 and a verb can be added without re-cutting the layout.
 
-- Trigger: `rowMenuTriggerHTML(name)` → `.row-menu-trigger` — accent text with
-  a small ▾ appended, underlined on hover, so it reads as the name until
-  touched. Keep it as the first cell's only content.
-- Open with `showRowMenu(anchor, items, {align, label})`; items are
-  `{label, onSelect, icon?, danger?, disabled?, title?}`, `{separator:true}`,
-  or `{heading:"…"}`. Destructive verbs get `danger: true` and go last.
+- Trigger: `rowMenuTriggerHTML(name)` → `.row-menu-trigger` — accent text,
+  underlined on hover, so it reads as the name until touched. Keep it as the
+  first cell's only content.
+- **Left click opens, right click is the menu.** Open with
+  `showRowMenu(anchor, items, {align, label, menuAt})`; items are
+  `{label, onSelect, icon?, danger?, disabled?, title?, primary?}`,
+  `{separator:true}`, or `{heading:"…"}`. The `primary` item (the row's Open,
+  listed first) is what a plain click does; a right click, the Menu key or
+  Shift+F10 on a `.row-menu-trigger` / `[data-row-menu]` shows the whole menu
+  at the pointer. A menu with no primary shows on either click. Destructive
+  verbs get `danger: true`, go last, and are never primary.
 - The menu is `.row-context-menu` — `position: fixed`, body-mounted, z-index
   900. That's deliberate: list tables scroll inside `.table-wrapper-sticky`,
   which clips an absolutely positioned menu. It flips above the anchor near the

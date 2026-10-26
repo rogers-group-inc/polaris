@@ -107,7 +107,7 @@
         escapeHtml(PolarisWidgets.ackPillTitle(n.alertAcknowledgedBy, n.alertAcknowledgeNote)) + '">' +
         escapeHtml(n.alertAcknowledgedBy ? "ack " + n.alertAcknowledgedBy : "ack") + '</span>'
       : "";
-    return '<a class="dash-alert-item' + (acked ? " dash-alert-item-acked" : "") + '" href="' + href + '" data-asset-id="' + escapeHtml(n.id) + '"' + alertAttrs + ' style="text-decoration:none">' +
+    return '<a class="dash-alert-item' + (acked ? " dash-alert-item-acked" : "") + '" data-row-menu href="' + href + '" data-asset-id="' + escapeHtml(n.id) + '"' + alertAttrs + ' style="text-decoration:none">' +
       '<div class="dash-alert-row" style="width:100%">' +
         '<div class="dash-alert-body">' +
           '<div class="dash-alert-title"><span' + fadeAttr + '>' + (PolarisWidgets.alertSeverityPill ? PolarisWidgets.alertSeverityPill(n.alertSeverity) : "") + escapeHtml(name) + '</span>' + ack + '</div>' +

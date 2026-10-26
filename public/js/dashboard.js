@@ -81,8 +81,6 @@
   var _dragStashId = null;
   var _dragStashType = null;
   var _placeholder = null;
-  // Tab-reorder drag stash (edit mode): the dashboard id being dragged.
-  var _dragTabId = null;
 
   document.addEventListener("DOMContentLoaded", function () {
     canvasEl     = document.getElementById("dashboard-canvas");
@@ -387,24 +385,21 @@
     // is the folder tab the page card opens from. Only an empty layout hides it.
     if (!dashes.length) { tabsEl.hidden = true; tabsEl.innerHTML = ""; return; }
     tabsEl.hidden = false;
-    tabsEl.innerHTML = dashes.map(function (d) {
+    // The tabs sit in a list wrapper, the + after it: the wrapper is the
+    // fixed area the strip window (folder-tabs.js) slides them in, so the +
+    // holds still.
+    tabsEl.innerHTML = '<div class="table-tabs-list dashboard-tabs-list">' + dashes.map(function (d) {
       var active = d.id === state.layout.activeId;
       // In edit mode the ACTIVE tab's name is an inline text input — click it
       // and type to rename. Other tabs show a plain name (click to switch).
       var nameHtml = (state.editing && active)
         ? '<input type="text" class="dashboard-tab-name-input" data-name="' + escapeHtml(d.id) + '" value="' + escapeHtml(d.name || "") + '" maxlength="60" size="' + Math.max((d.name || "").length, 8) + '" aria-label="Dashboard name">'
         : '<span class="dashboard-tab-name">' + escapeHtml(d.name || "Untitled") + '</span>';
-      // In edit mode a dedicated grip is the drag handle for reordering —
-      // the tab itself can't be draggable because the active tab is mostly
-      // the rename input (dragging would fight text selection, and there'd
-      // be no obvious place to grab).
-      var grip = state.editing ? '<span class="dashboard-tab-grip" draggable="true" title="Drag to reorder">⠿</span>' : "";
       return '<div class="dashboard-tab' + (active ? " active" : "") + '" data-dash="' + escapeHtml(d.id) + '" role="button" tabindex="0">' +
-        grip +
         nameHtml +
         (state.editing && dashes.length > 1 ? '<button type="button" class="dashboard-tab-remove" data-remove="' + escapeHtml(d.id) + '" title="Delete dashboard">&times;</button>' : '') +
       '</div>';
-    }).join("") +
+    }).join("") + "</div>" +
       // Edit mode: a + after the last tab adds a dashboard (it replaced the
       // header's Create New Dashboard button).
       (state.editing
@@ -417,43 +412,30 @@
       tab.addEventListener("click", function (e) {
         if (e.target.closest("[data-remove]")) { e.stopPropagation(); deleteDashboard(id); return; }
         if (e.target.closest(".dashboard-tab-name-input")) return; // editing the active name, don't switch
-        if (e.target.closest(".dashboard-tab-grip")) return; // grip is for dragging, not switching
         switchDashboard(id);
       });
     });
-    // Edit mode: wire drag-to-reorder. Drags start from the grip only; the
-    // whole tab is the drop target, slotting before/after depending on which
-    // half of it the drop lands in.
-    if (state.editing) {
-      tabsEl.querySelectorAll(".dashboard-tab").forEach(function (tab) {
-        var id = tab.getAttribute("data-dash");
-        var gripEl = tab.querySelector(".dashboard-tab-grip");
-        gripEl.addEventListener("dragstart", function (e) {
-          _dragTabId = id;
-          if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", id); } catch (_e) {} }
-          tab.style.opacity = "0.5";
-        });
-        gripEl.addEventListener("dragend", function () { _dragTabId = null; tab.style.opacity = ""; clearTabDropCues(); });
-        tab.addEventListener("dragover", function (e) {
-          if (!_dragTabId || _dragTabId === id) return;
-          e.preventDefault();
-          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-          var rect = tab.getBoundingClientRect();
-          tab._dropBefore = (e.clientX - rect.left) < rect.width / 2;
-          clearTabDropCues();
-          tab.style.boxShadow = tab._dropBefore ? "inset 3px 0 0 #4fc3f7" : "inset -3px 0 0 #4fc3f7";
-        });
-        tab.addEventListener("dragleave", function () { tab.style.boxShadow = ""; });
-        tab.addEventListener("drop", function (e) {
-          if (!_dragTabId || _dragTabId === id) { clearTabDropCues(); return; }
-          e.preventDefault();
-          reorderDashboards(_dragTabId, id, tab._dropBefore !== false);
-        });
+    // Drag a tab to a new place, in and out of edit mode (folder-tabs.js,
+    // shared with the Assets view tabs). The whole tab is the handle; a press
+    // on the rename input or the × never starts one. Wired once on the strip,
+    // by delegation, so it survives this innerHTML re-render. Not on a
+    // published dashboard, which is someone else's layout.
+    if (window.PolarisFolderTabs && window.PolarisFolderTabs.wireDrag) {
+      window.PolarisFolderTabs.wireDrag(tabsEl, tabsEl.querySelector(".dashboard-tabs-list"), {
+        tabSel: ".dashboard-tab",
+        idAttr: "data-dash",
+        canStart: function () { return !state.external; },
+        onDrop: function (ids, moved) { setDashboardOrder(ids, moved); },
       });
     }
     // Inline rename on the active tab's input: Enter or blur commits, Esc cancels.
     var input = tabsEl.querySelector(".dashboard-tab-name-input");
     if (input) {
+      // The field is bare text (styles.css), so it is sized to its text —
+      // the `size` attribute counts average-width characters and left a gap
+      // after the name. Re-fitted on every keystroke.
+      fitNameInput(input);
+      input.addEventListener("input", function () { fitNameInput(input); });
       input.addEventListener("click", function (e) { e.stopPropagation(); });
       input.addEventListener("keydown", function (e) {
         if (e.key === "Enter") { e.preventDefault(); input.blur(); }
@@ -461,6 +443,30 @@
       });
       input.addEventListener("blur", function () { commitTabName(input.getAttribute("data-name"), input.value); });
     }
+  }
+
+  // Width of the input's text in its own font, measured on a hidden span; an
+  // empty name keeps 2ch so there is still something to click. Cosmetic, so
+  // it can never break the tab row: a measuring failure leaves the `size`
+  // attribute's width in place. A width of 0 (nothing laid out) is ignored.
+  function fitNameInput(input) {
+    try {
+      var probe = document.getElementById("dashboard-tab-name-probe");
+      if (!probe) {
+        probe = document.createElement("span");
+        probe.id = "dashboard-tab-name-probe";
+        probe.setAttribute("aria-hidden", "true");
+        probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;left:-9999px;top:0";
+        document.body.appendChild(probe);
+      }
+      var cs = window.getComputedStyle(input);
+      probe.style.font = cs.font;
+      probe.style.letterSpacing = cs.letterSpacing;
+      probe.textContent = input.value;
+      var w = probe.getBoundingClientRect().width;
+      if (!input.value) input.style.width = "2ch";
+      else if (w > 0) input.style.width = Math.ceil(w) + 2 + "px";
+    } catch (_) { /* keep the size-attribute width */ }
   }
 
   function nameOf(id) {
@@ -490,24 +496,17 @@
     queueSave();
   }
 
-  function clearTabDropCues() {
-    if (!tabsEl) return;
-    tabsEl.querySelectorAll(".dashboard-tab").forEach(function (t) { t.style.boxShadow = ""; });
-  }
-
-  // Move dashboard `fromId` to just before/after `toId` in the tab order, then
-  // persist + re-render. Splice-out first so the target index is computed
-  // against the array minus the moved item (indices stay correct).
-  function reorderDashboards(fromId, toId, before) {
+  // The strip's DOM order after a drag, written back into the layout. A
+  // drop that left a tab where it was saves nothing.
+  function setDashboardOrder(ids, moved) {
     var arr = state.layout.dashboards;
-    var fromIdx = arr.findIndex(function (d) { return d.id === fromId; });
-    if (fromIdx < 0) return;
-    var moved = arr.splice(fromIdx, 1)[0];
-    var toIdx = arr.findIndex(function (d) { return d.id === toId; });
-    if (toIdx < 0) { arr.splice(fromIdx, 0, moved); return; } // target vanished — restore
-    arr.splice(before ? toIdx : toIdx + 1, 0, moved);
-    clearTabDropCues();
-    queueSave();
+    var byId = {};
+    arr.forEach(function (d) { byId[d.id] = d; });
+    var next = ids.map(function (id) { return byId[id]; }).filter(Boolean);
+    if (next.length === arr.length) {
+      state.layout.dashboards = next;
+      if (moved) queueSave();
+    }
     renderTabs();
   }
 
@@ -991,8 +990,6 @@
   function clearDragState() {
     _dragStashId = null;
     _dragStashType = null;
-    _dragTabId = null;
-    clearTabDropCues();
     clearPlaceholder();
     canvasEl.classList.remove("is-dragging");
     canvasEl.querySelectorAll(".dashboard-widget.lifted").forEach(function (e) { e.classList.remove("lifted"); });
@@ -1093,6 +1090,11 @@
   // menu closes. The attribute is spelled out below rather than read from
   // app.js: the /dash wallboard runs this file WITHOUT app.js (and so never
   // stamps anything). Keep it in step with ROW_MENU_OPEN_ATTR in app.js.
+  //
+  // The operator can scroll the body by hand while it holds (wheel, scrollbar,
+  // touch). When the hold ends the creep resumes from THERE: `offset` is re-read
+  // from scrollTop, or the next tick would snap the list back to where the
+  // creep had left it.
   function startAutoScroll(scrollEl, hoverEl) {
     var STEP_MS = 80;                              // tick cadence (NOC metric-box speed)
     var TOP_PAUSE_TICKS = Math.ceil(3000 / STEP_MS); // ~3s dwell at the top
@@ -1120,7 +1122,11 @@
         held = true;
         return;
       }
-      if (held) { held = false; pause = Math.max(pause, RESUME_TICKS); }
+      if (held) {
+        held = false;
+        offset = Math.min(scrollEl.scrollTop, maxScroll);
+        pause = Math.max(pause, RESUME_TICKS);
+      }
       if (pause > 0) { pause--; return; }
       offset += 1;
       if (offset > maxScroll + BOTTOM_DWELL) {       // past bottom + dwell → glide home, re-pause

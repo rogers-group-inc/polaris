@@ -181,6 +181,28 @@ describe("NOC auto-scroll", () => {
     expect(b.scrollTop()).toBeGreaterThan(creeping);
   });
 
+  it("resumes from where the operator scrolled to during a hover, not where the creep had been", async () => {
+    const b = await boot();
+    await vi.advanceTimersByTimeAsync(TOP_PAUSE_MS + STEP_MS * 120);
+    const creeping = b.scrollTop();
+    expect(creeping).toBeGreaterThan(60);
+
+    // Hover, wheel back up, stop, move off the widget.
+    const card = b.body.closest("article") as unknown as HTMLElement;
+    expect(card, "no widget article — the harness, not the scroller").toBeTruthy();
+    card.dispatchEvent(new b.win.Event("mouseenter") as never);
+    b.body.scrollTop = 20;
+    await vi.advanceTimersByTimeAsync(1000);
+    card.dispatchEvent(new b.win.Event("mouseleave") as never);
+
+    // The settle, then the creep — from 20, never a jump back to `creeping`.
+    await vi.advanceTimersByTimeAsync(STEP_MS * 2);
+    expect(b.scrollTop(), "snapped back to the creep's old position").toBe(20);
+    await vi.advanceTimersByTimeAsync(1000 + STEP_MS * 5);
+    expect(b.scrollTop()).toBeGreaterThan(20);
+    expect(b.scrollTop()).toBeLessThan(creeping);
+  });
+
   it("is not held by a stamp in a DIFFERENT widget", async () => {
     // The hold is scoped to the body that holds the anchor: a menu opened on
     // one widget must not freeze the wall.

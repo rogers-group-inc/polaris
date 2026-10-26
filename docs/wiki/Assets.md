@@ -139,10 +139,28 @@ carries the whole message: neither colour nor motion reaches every reader.
 ### View tabs and saved filters
 
 A strip on the table's top-left edge, below the bulk bar, sharing its row with
-**Filters**, **Refresh** (the circular-arrows icon), **Clear** and the page size (**25 / page** …) (the page buttons are below the
-page card). Each tab holds its own filter and sort state, saved
+**Filters** (in edit mode only, right after the tabs), the page's buttons (the **Import** and **Export**
+icons, **Maintenance**, the settings gear, **+ Add Asset(s)**), then **Clear**,
+**Refresh** (the circular-arrows icon), the page size (**25 / page** …) and, at
+the right end, the **Edit** pencil (the page buttons are below the page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
-or F2 renames, ✕ closes (never the last one), + adds.
+or F2 renames; in edit mode ✕ closes one (never the last) and + adds one. A
+**dot** on a tab means it has filters applied; a **★** means it has a base filter
+(the view it resets to), and replaces the dot. Drag a tab sideways to
+move it; the new order is saved with the rest. Hold it against the end of the
+strip to carry it past the tabs out of view.
+
+When there are more tabs than fit beside the buttons, the tabs sit in an area of
+fixed width and never crowd them: the tabs keep their size and slide inside it,
+a tab cut by an edge dimming as a whole the further out it is. Each notch of
+the mouse wheel over the tabs slides them by one tab, however long its name.
+With fewer tabs than fit, none of this applies: the tabs simply sit in a row. The same holds for the tab rows on Automations, Events,
+IPAM and the Dashboard.
+
+**Edit** (the pencil, like the Dashboard's Customize) puts the row in edit
+mode and turns into a ✓ that leaves it; **Filters ▾**, the **+** that adds a
+tab and each tab's **✕** show only in edit mode.
+Every visit opens out of edit mode.
 
 **Filters ▾** saves the current column filters + sort as a named preset, loads
 one back into the current tab or a new one, and deletes them. Presets are
@@ -152,6 +170,16 @@ someone else's needs `assets:fullwrite`.
 ---
 
 ### The row menu
+
+**Click a hostname to open the asset; right-click it for the row menu.** The
+same rule holds for every name in Polaris that has a menu behind it (assets,
+networks, blocks, automations, roles, path checks, saved discoveries, and the
+dashboard's alert, outage and maintenance rows): a left click does the menu's
+first verb, and a right click (or the keyboard's Menu key, or Shift+F10 on the
+focused name) shows the whole menu at the pointer. A name with nothing to open,
+such as a user on the Users page, shows its menu on either click.
+Shift+right-click still gives the browser's own menu, and Ctrl/middle-click on a
+dashboard row still opens the Assets page in a new tab.
 
 Each row's menu carries **Open** and, with `assets:write`, **Edit…**; then
 **Open HTTPS**, **Open RDP** and **Open SSH** where the device has that
@@ -675,8 +703,8 @@ port. See [rule 133](Business-Rules#rule-133).
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
-When the interface's address sits inside a network Polaris knows, the click
-offers **Open interface** or **Open network** instead; *Open network* slides
+Right-click it for **Open interface** and, when the interface's address sits
+inside a network Polaris knows, **Open network**; *Open network* slides
 that network's address table in over the asset, scrolled to the address. The
 choice appears only for roles that can read networks, and only when a network
 actually contains the address. An interface with no IPv4 address looks up the
@@ -1741,5 +1769,7 @@ produced no readings at all.
 
 ## Import and export
 
-One **Import / Export ▾** dropdown. Exports run to PDF and CSV at page,
-filtered, or whole-list scope. Import entries are gated on `assets:write`.
+Two icons on the tab row, as on the other list pages: **Import** (the tray with
+the arrow leaving it — From CSV, From PDF Invoice; shown with `assets:write`)
+and **Export** (the download arrow). Exports run to PDF and CSV at page,
+filtered, or whole-list scope.
