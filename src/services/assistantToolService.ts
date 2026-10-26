@@ -33,6 +33,11 @@ import { REGION_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { queryEventsPage } from "./eventLogService.js";
 import { getRetentionSettings } from "./eventArchiveService.js";
 import { searchHelp } from "./helpIndexService.js";
+import { pickSampleTierForAsset, type SampleTier } from "./sampleQueryRouter.js";
+import { resolveDependencyBlame, BLAME_MAX_HOPS } from "./dependencyTreeService.js";
+import { lookupOui } from "./ouiService.js";
+import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestService.js";
+import { macColonUpperOrNull } from "../utils/mac.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
 import type { ChatToolDef } from "./llmService.js";
 
@@ -77,7 +82,14 @@ interface ToolDef {
 /** A list tool also exposes its rows + column set to create_report. */
 interface ListToolDef extends ToolDef {
   columns: ReportColumn[];
-  rows(args: unknown, ctx: ToolContext, cap: number): Promise<{ rows: Array<Record<string, unknown>>; total: number } | ToolResult>;
+  rows(args: unknown, ctx: ToolContext, cap: number): Promise<ListRows | ToolResult>;
+}
+
+interface ListRows {
+  rows: Array<Record<string, unknown>>;
+  total: number;
+  /** Facts about the whole result the model should hear (not report columns). */
+  extra?: Record<string, unknown>;
 }
 
 const denied = (what: string): ToolResult => ({
@@ -249,7 +261,8 @@ function oneOrMany<T extends z.ZodTypeAny>(item: T) {
   }, z.array(item).max(20).optional());
 }
 
-const AssetArgs = z.object({
+/** The asset filters list_assets and telemetry_summary share. */
+const ASSET_FILTER_ARGS = {
   search: z.string().max(200).optional(),
   assetType: oneOrMany(z.string().max(60)),
   status: oneOrMany(z.enum(ASSET_STATUSES)),
@@ -265,6 +278,11 @@ const AssetArgs = z.object({
   network: z.string().max(60).optional(),
   subnet: z.string().max(60).optional(), // older spelling of `network`, still accepted
   notSeenForHours: z.number().positive().max(24 * 3650).optional(),
+};
+const AssetFilterArgs = z.object(ASSET_FILTER_ARGS);
+
+const AssetArgs = z.object({
+  ...ASSET_FILTER_ARGS,
   sortBy: z.enum(["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress"]).optional(),
   limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
 });
@@ -296,6 +314,104 @@ export async function regionTagVariants(names: string[]): Promise<string[]> {
   return Array.from(new Set([...wanted, ...registered.map((t) => t.name)]));
 }
 
+const ASSET_FILTER_PROPS = {
+  search: { type: "string", description: "Matches hostname, DNS name, IP, MAC, asset tag or assigned-to" },
+  assetType: { type: "array", items: { type: "string" }, description: "One or more types, e.g. [\"switch\", \"firewall\"] for switches AND firewalls" },
+  status: { type: "array", items: { type: "string", enum: [...ASSET_STATUSES] } },
+  monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
+  monitored: { type: "boolean" },
+  tag: { type: "string", description: "Exact tag, e.g. a site tag" },
+  region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Middle Tennessee\"] — assets in ANY of them. Any case, with or without \"region:\". Use this, not location or search, for a region" },
+  myRegions: { type: "boolean", description: "Only assets in the regions assigned to the person asking — use for \"my region\" / \"my sites\"" },
+  location: { type: "string", description: "Location contains this text" },
+  manufacturer: { type: "string" },
+  model: { type: "string", description: "Model contains this text, e.g. \"61F\" for every FortiGate-61F" },
+  os: { type: "string" },
+  network: { type: "string", description: "A network CIDR, e.g. 10.20.0.0/16" },
+  notSeenForHours: { type: "number", description: "Only assets not seen on the network for at least this many hours" },
+} as const;
+
+/**
+ * The device filters the measurement tools ADVERTISE — the ones a question
+ * about figures names. Their Zod schemas still accept every list_assets
+ * filter; the schema sent to the model is kept short because every tool
+ * definition rides in every round of a small local model's window.
+ */
+const DEVICE_FILTER_PROPS = {
+  search: { type: "string", description: "Hostname, IP or name contains" },
+  assetType: ASSET_FILTER_PROPS.assetType,
+  region: { type: "array", items: { type: "string" }, description: "Region names" },
+  myRegions: { type: "boolean", description: "The asker's own regions" },
+  location: { type: "string" },
+  manufacturer: { type: "string" },
+  model: { type: "string", description: "Model contains, e.g. \"61F\"" },
+  os: { type: "string" },
+} as const;
+
+/**
+ * The Prisma `where` for the shared asset filters, plus the CIDR to match in
+ * memory (containment is not a Prisma predicate). A ToolResult when the
+ * filters cannot be applied (no region assigned, a bad CIDR).
+ */
+async function assetFilterWhere(
+  a: z.infer<typeof AssetFilterArgs>,
+  req: Request,
+): Promise<{ where: Record<string, unknown>; subnet?: string } | ToolResult> {
+  const and: Record<string, unknown>[] = [];
+  if (a.search) {
+    and.push({
+      OR: ["hostname", "dnsName", "ipAddress", "macAddress", "assetTag", "assignedTo"].map((f) => ({
+        [f]: { contains: a.search, mode: "insensitive" },
+      })),
+    });
+  }
+  if (a.assetType) and.push({ assetType: { in: a.assetType } });
+  // Decommissioned assets are history, not inventory: left out unless the
+  // status filter asks for them (owner's call, 2026-10-09).
+  if (a.status) and.push({ status: { in: a.status } });
+  else and.push({ status: { not: "decommissioned" } });
+  if (a.monitorStatus) and.push({ monitorStatus: { in: a.monitorStatus }, monitored: true });
+  if (typeof a.monitored === "boolean") and.push({ monitored: a.monitored });
+  if (a.tag) and.push({ tags: { has: a.tag } });
+  // Regions ride assets as `region:<name>` tags — the same tags alert
+  // scoping snapshots (notificationEngine regionSnapshot), matched the same
+  // exact way. "My regions" are the person's ASSIGNED regions, admins
+  // included (an admin sees everything, but still has regions of their own).
+  let regionNames = a.region ?? [];
+  if (a.myRegions) {
+    const mine = req.session?.userId ? (await getEffectiveTagScopes(req.session.userId)).regions : [];
+    if (!mine.length) {
+      return { ok: false, data: { error: "No region is assigned to this person, so there is no \"my region\" to narrow to — ask which region they mean." } };
+    }
+    regionNames = [...regionNames, ...mine];
+  }
+  if (regionNames.length) and.push({ tags: { hasSome: await regionTagVariants(regionNames) } });
+  if (a.location) {
+    and.push({ OR: [
+      { location: { contains: a.location, mode: "insensitive" } },
+      { learnedLocation: { contains: a.location, mode: "insensitive" } },
+    ] });
+  }
+  if (a.manufacturer) and.push({ manufacturer: { contains: a.manufacturer, mode: "insensitive" } });
+  if (a.model) and.push({ model: { contains: a.model, mode: "insensitive" } });
+  if (a.os) and.push({ OR: [{ os: { contains: a.os, mode: "insensitive" } }, { osVersion: { contains: a.os, mode: "insensitive" } }] });
+  if (a.notSeenForHours) and.push({ lastSeen: { lt: new Date(Date.now() - a.notSeenForHours * 3_600_000) } });
+  let subnet: string | undefined;
+  const cidrArg = a.network ?? a.subnet;
+  if (cidrArg) {
+    if (!isValidCidr(cidrArg)) return { ok: false, data: { error: `"${cidrArg}" is not a valid CIDR` } };
+    subnet = cidrArg;
+    and.push({ ipAddress: { not: null } });
+  }
+  return { where: and.length ? { AND: and } : {}, subnet };
+}
+
+/** Keep the rows whose IP is inside `subnet` (utils/cidr — the only place IP math may live). */
+function inSubnet<T extends { ipAddress: string | null }>(rows: T[], subnet: string | undefined): T[] {
+  if (!subnet) return rows;
+  return rows.filter((r) => r.ipAddress && isValidIpAddress(r.ipAddress) && ipInCidr(r.ipAddress, subnet));
+}
+
 const listAssetsTool: ListToolDef = {
   name: "list_assets",
   label: "looked up assets",
@@ -303,24 +419,12 @@ const listAssetsTool: ListToolDef = {
     "List assets (devices) with filters. monitorStatus 'down' finds devices that are currently down. " +
     "assetType values include firewall, switch, access_point, server, workstation, printer, other. " +
     "network filters to assets whose IP is inside a network CIDR. Decommissioned assets are left out unless " +
-    "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets.",
+    "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets. " +
+    "Carries no CPU or memory figures — use telemetry_summary for those.",
   parameters: {
     type: "object",
     properties: {
-      search: { type: "string", description: "Matches hostname, DNS name, IP, MAC, asset tag or assigned-to" },
-      assetType: { type: "array", items: { type: "string" }, description: "One or more types, e.g. [\"switch\", \"firewall\"] for switches AND firewalls" },
-      status: { type: "array", items: { type: "string", enum: [...ASSET_STATUSES] } },
-      monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
-      monitored: { type: "boolean" },
-      tag: { type: "string", description: "Exact tag, e.g. a site tag" },
-      region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Middle Tennessee\"] — assets in ANY of them. Any case, with or without \"region:\". Use this, not location or search, for a region" },
-      myRegions: { type: "boolean", description: "Only assets in the regions assigned to the person asking — use for \"my region\" / \"my sites\"" },
-      location: { type: "string", description: "Location contains this text" },
-      manufacturer: { type: "string" },
-      model: { type: "string" },
-      os: { type: "string" },
-      network: { type: "string", description: "A network CIDR, e.g. 10.20.0.0/16" },
-      notSeenForHours: { type: "number", description: "Only assets not seen on the network for at least this many hours" },
+      ...ASSET_FILTER_PROPS,
       sortBy: { type: "string", enum: ["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress"] },
       limit: { type: "number" },
     },
@@ -337,60 +441,15 @@ const listAssetsTool: ListToolDef = {
     const p = AssetArgs.safeParse(args ?? {});
     if (!p.success) return invalid(p.error);
     const a = p.data;
-    const and: Record<string, unknown>[] = [];
-    if (a.search) {
-      and.push({
-        OR: ["hostname", "dnsName", "ipAddress", "macAddress", "assetTag", "assignedTo"].map((f) => ({
-          [f]: { contains: a.search, mode: "insensitive" },
-        })),
-      });
-    }
-    if (a.assetType) and.push({ assetType: { in: a.assetType } });
-    // Decommissioned assets are history, not inventory: left out unless the
-    // status filter asks for them (owner's call, 2026-10-09).
-    if (a.status) and.push({ status: { in: a.status } });
-    else and.push({ status: { not: "decommissioned" } });
-    if (a.monitorStatus) and.push({ monitorStatus: { in: a.monitorStatus }, monitored: true });
-    if (typeof a.monitored === "boolean") and.push({ monitored: a.monitored });
-    if (a.tag) and.push({ tags: { has: a.tag } });
-    // Regions ride assets as `region:<name>` tags — the same tags alert
-    // scoping snapshots (notificationEngine regionSnapshot), matched the same
-    // exact way. "My regions" are the person's ASSIGNED regions, admins
-    // included (an admin sees everything, but still has regions of their own).
-    let regionNames = a.region ?? [];
-    if (a.myRegions) {
-      const mine = ctx.req.session?.userId ? (await getEffectiveTagScopes(ctx.req.session.userId)).regions : [];
-      if (!mine.length) {
-        return { ok: false, data: { error: "No region is assigned to this person, so there is no \"my region\" to narrow to — ask which region they mean." } };
-      }
-      regionNames = [...regionNames, ...mine];
-    }
-    if (regionNames.length) and.push({ tags: { hasSome: await regionTagVariants(regionNames) } });
-    if (a.location) {
-      and.push({ OR: [
-        { location: { contains: a.location, mode: "insensitive" } },
-        { learnedLocation: { contains: a.location, mode: "insensitive" } },
-      ] });
-    }
-    if (a.manufacturer) and.push({ manufacturer: { contains: a.manufacturer, mode: "insensitive" } });
-    if (a.model) and.push({ model: { contains: a.model, mode: "insensitive" } });
-    if (a.os) and.push({ OR: [{ os: { contains: a.os, mode: "insensitive" } }, { osVersion: { contains: a.os, mode: "insensitive" } }] });
-    if (a.notSeenForHours) and.push({ lastSeen: { lt: new Date(Date.now() - a.notSeenForHours * 3_600_000) } });
-    let subnet: string | undefined;
-    const cidrArg = a.network ?? a.subnet;
-    if (cidrArg) {
-      if (!isValidCidr(cidrArg)) return { ok: false, data: { error: `"${cidrArg}" is not a valid CIDR` } };
-      subnet = cidrArg;
-      and.push({ ipAddress: { not: null } });
-    }
-    const where = and.length ? { AND: and } : {};
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const { where, subnet } = filter;
     const orderBy = a.sortBy ? { [a.sortBy]: a.sortBy === "hostname" || a.sortBy === "ipAddress" ? "asc" : "desc" } : { hostname: "asc" };
     const take = Math.min(a.limit ?? cap, cap);
     if (subnet) {
       // CIDR containment is not a Prisma predicate: narrow in SQL first, then
-      // match in memory via utils/cidr (the only place IP math may live).
-      const candidates = await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT });
-      const hits = candidates.filter((r) => r.ipAddress && isValidIpAddress(r.ipAddress) && ipInCidr(r.ipAddress, subnet!));
+      // match in memory.
+      const hits = inSubnet(await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT }), subnet);
       return { rows: hits.slice(0, take).map(plain), total: hits.length };
     }
     const [rows, total] = await Promise.all([
@@ -401,6 +460,1007 @@ const listAssetsTool: ListToolDef = {
   },
   async run(args, ctx) {
     return listResult(await this.rows(args, ctx, ctx.maxRows));
+  },
+};
+
+// ─── telemetry_summary ───────────────────────────────────────────────────────
+//
+// CPU and memory over a window, one row per asset, aggregated in the database
+// (rule 95(c): the model never averages a series itself, and a fleet's raw
+// samples would never fit a small model's context anyway). The tier is the one
+// the asset's CPU / memory chart would read for the same window
+// (pickSampleTierForAsset "cpuMem"), so the figures agree with the charts:
+// raw samples while detail retention covers the window, else the hourly or
+// daily rollups with each bucket's average weighted by its sample count.
+// Memory is memPct where the source reports a percentage (FortiOS), else
+// used / total bytes — the same preference as the charts and the NOC widget.
+//
+// Scale: one asset findMany (tight select) + ONE grouped aggregate over
+// `assetId = ANY(ids)` inside the window — flat from 100 to 2000 assets.
+
+const TELEMETRY_DEFAULT_HOURS = 24;
+
+const TelemetryArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  ...WindowArgs,
+  metric: z.enum(["memory", "cpu"]).optional(),
+  sortBy: z.enum(["avg", "max"]).optional(),
+  order: z.enum(["highest", "lowest"]).optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+interface TelemetryAgg {
+  assetId: string;
+  samples: number;
+  avgCpu: number | null;
+  maxCpu: number | null;
+  avgMem: number | null;
+  maxMem: number | null;
+}
+
+const MEM_PCT_DETAIL = `COALESCE("memPct", "memUsedBytes"::float / NULLIF("memTotalBytes", 0) * 100)`;
+
+/** Per-asset CPU / memory aggregates for `ids` over [from, to). Exported for tests. */
+export async function telemetryAggregates(ids: string[], from: Date, to: Date, tier: SampleTier): Promise<TelemetryAgg[]> {
+  if (!ids.length) return [];
+  if (tier === "detail") {
+    return prisma.$queryRawUnsafe<TelemetryAgg[]>(
+      `SELECT "assetId", count(*)::int AS samples,
+              avg("cpuPct")::float AS "avgCpu", max("cpuPct")::float AS "maxCpu",
+              avg(${MEM_PCT_DETAIL})::float AS "avgMem", max(${MEM_PCT_DETAIL})::float AS "maxMem"
+         FROM "asset_telemetry_samples"
+        WHERE "assetId" = ANY($1::text[]) AND "timestamp" >= $2 AND "timestamp" < $3
+        GROUP BY "assetId"`,
+      ids, from, to,
+    );
+  }
+  const table = tier === "hourly" ? "asset_telemetry_samples_hourly" : "asset_telemetry_samples_daily";
+  // A bucket's average counts as many times as it has samples; a bucket that
+  // did not carry the metric adds nothing to either side of the division.
+  return prisma.$queryRawUnsafe<TelemetryAgg[]>(
+    `WITH b AS (
+       SELECT "assetId", "sampleCount" AS n, "avgCpuPct" AS ac, "maxCpuPct" AS xc,
+              COALESCE("avgMemPct", "avgMemUsedBytes"::float / NULLIF("lastMemTotalBytes", 0) * 100) AS am,
+              COALESCE("maxMemPct", "maxMemUsedBytes"::float / NULLIF("lastMemTotalBytes", 0) * 100) AS xm
+         FROM "${table}"
+        WHERE "assetId" = ANY($1::text[]) AND "bucketStart" >= $2 AND "bucketStart" < $3
+     )
+     SELECT "assetId", sum(n)::int AS samples,
+            (sum(ac * n) / NULLIF(sum(CASE WHEN ac IS NOT NULL THEN n END), 0))::float AS "avgCpu",
+            max(xc)::float AS "maxCpu",
+            (sum(am * n) / NULLIF(sum(CASE WHEN am IS NOT NULL THEN n END), 0))::float AS "avgMem",
+            max(xm)::float AS "maxMem"
+       FROM b GROUP BY "assetId"`,
+    ids, from, to,
+  );
+}
+
+const round1 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 10) / 10);
+
+const telemetrySummaryTool: ListToolDef = {
+  name: "telemetry_summary",
+  label: "checked CPU and memory",
+  description:
+    "CPU and memory utilization (percent) per device over a time window: average and peak, computed by Polaris " +
+    "from the stored samples. Use for \"highest / lowest / busiest / average CPU or memory\", \"which firewalls run " +
+    "hot\", or a device's CPU / memory over a period. Takes the same device filters as list_assets (model \"61F\", " +
+    `manufacturer, assetType, region…). metric picks what to rank by (memory or cpu); window defaults to the last ` +
+    `${TELEMETRY_DEFAULT_HOURS} hours. Devices that report no CPU / memory in the window are counted in noData, ` +
+    "not listed. For a downloadable table use create_report with source telemetry_summary.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...DEVICE_FILTER_PROPS,
+      ...windowSchemaProps,
+      metric: { type: "string", enum: ["memory", "cpu"], description: "What to rank by. Default memory" },
+      sortBy: { type: "string", enum: ["avg", "max"], description: "Rank by the window's average (default) or its peak" },
+      order: { type: "string", enum: ["highest", "lowest"], description: "Default highest" },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "hostname", label: "Hostname" }, { key: "ipAddress", label: "IP" }, { key: "model", label: "Model" },
+    { key: "location", label: "Location" }, { key: "avgMemPct", label: "Avg memory %" }, { key: "maxMemPct", label: "Peak memory %" },
+    { key: "avgCpuPct", label: "Avg CPU %" }, { key: "maxCpuPct", label: "Peak CPU %" }, { key: "samples", label: "Samples" },
+    { key: "window", label: "Window" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = TelemetryArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const win = timeWindow(a);
+    const to = win.to ?? new Date();
+    const from = win.from ?? new Date(to.getTime() - TELEMETRY_DEFAULT_HOURS * 3_600_000);
+    if (!(from < to)) return { ok: false, data: { error: "The window's start must be before its end" } };
+
+    const assets = inSubnet(await prisma.asset.findMany({
+      where: filter.where,
+      select: { id: true, hostname: true, ipAddress: true, model: true, location: true },
+    }), filter.subnet);
+    const { tier } = await pickSampleTierForAsset("", "cpuMem", from);
+    const aggs = await telemetryAggregates(assets.map((x) => x.id), from, to, tier);
+
+    const metric = a.metric ?? "memory";
+    const key = (a.sortBy ?? "avg") === "avg" ? (metric === "memory" ? "avgMem" : "avgCpu") : (metric === "memory" ? "maxMem" : "maxCpu");
+    const dir = a.order === "lowest" ? 1 : -1;
+    const byId = new Map(assets.map((x) => [x.id, x]));
+    const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
+    const ranked = aggs
+      .filter((g) => g[key] != null && byId.has(g.assetId))
+      .sort((x, y) => dir * ((x[key] as number) - (y[key] as number)))
+      .map((g) => {
+        const asset = byId.get(g.assetId)!;
+        return {
+          id: asset.id, hostname: asset.hostname, ipAddress: asset.ipAddress, model: asset.model, location: asset.location,
+          avgMemPct: round1(g.avgMem), maxMemPct: round1(g.maxMem), avgCpuPct: round1(g.avgCpu), maxCpuPct: round1(g.maxCpu),
+          samples: g.samples, window,
+        };
+      });
+    const take = Math.min(a.limit ?? cap, cap);
+    return {
+      rows: ranked.slice(0, take),
+      total: ranked.length,
+      extra: { window, matchedDevices: assets.length, noData: assets.length - ranked.length, rankedBy: `${a.sortBy ?? "avg"} ${metric}` },
+    };
+  },
+  async run(args, ctx) {
+    // The window rides once in `extra`, not on every row the model reads.
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    return listResult({ ...res, rows: res.rows.map(({ window: _w, ...r }) => r) });
+  },
+};
+
+// ─── list_services ───────────────────────────────────────────────────────────
+//
+// The systemd units / Windows services the Polaris Agent reports (AssetService,
+// current state, agent-only). The two platforms speak different vocabularies,
+// so the model asks in plain words — running / stopped / failed, automatic /
+// manual / disabled — and they are mapped here. `problems` is the question an
+// operator actually asks: a systemd unit in `failed`, or a Windows service set
+// to start automatically that is not running. An enabled-but-inactive systemd
+// unit is NOT a problem (timer- and socket-started units sit there normally).
+//
+// Scale: one asset findMany (id + names) and one service findMany / count
+// filtered in SQL, capped — never a per-device read.
+
+const SERVICE_STATES = ["running", "stopped", "failed"] as const;
+const SERVICE_STARTUPS = ["automatic", "manual", "disabled"] as const;
+const ACTIVE_FOR: Record<(typeof SERVICE_STATES)[number], string[]> = {
+  running: ["active", "running"],
+  stopped: ["inactive", "stopped"],
+  failed: ["failed"],
+};
+const WIN_AUTO = ["auto", "auto-delayed", "boot", "system"];
+const ENABLED_FOR: Record<(typeof SERVICE_STARTUPS)[number], string[]> = {
+  automatic: ["enabled", ...WIN_AUTO],
+  manual: ["manual", "static"],
+  disabled: ["disabled", "masked"],
+};
+
+const ServiceArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  service: z.string().max(200).optional(),
+  state: oneOrMany(z.enum(SERVICE_STATES)),
+  startup: oneOrMany(z.enum(SERVICE_STARTUPS)),
+  problems: z.boolean().optional(),
+  watchedOnly: z.boolean().optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+const listServicesTool: ListToolDef = {
+  name: "list_services",
+  label: "checked services",
+  description:
+    "Services on servers and workstations running the Polaris Agent (systemd units on Linux, Windows services): " +
+    "state (running / stopped / failed), startup type (automatic / manual / disabled), CPU and memory. Takes the " +
+    "same device filters as list_assets. service matches the unit / service name or display name (\"sql\", " +
+    "\"nginx\"). problems: true finds what should be running but is not — a failed systemd unit, or a Windows " +
+    "service set to start automatically that is stopped. watchedOnly: the services pinned for monitoring on " +
+    "each device. Devices without the agent report no services.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...DEVICE_FILTER_PROPS,
+      service: { type: "string", description: "Service / unit name or display name contains this text" },
+      state: { type: "array", items: { type: "string", enum: [...SERVICE_STATES] } },
+      startup: { type: "array", items: { type: "string", enum: [...SERVICE_STARTUPS] } },
+      problems: { type: "boolean", description: "Only services that should be running but are not" },
+      watchedOnly: { type: "boolean", description: "Only services pinned for monitoring on their device" },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "hostname", label: "Hostname" }, { key: "ipAddress", label: "IP" }, { key: "service", label: "Service" },
+    { key: "displayName", label: "Display name" }, { key: "platform", label: "Platform" }, { key: "state", label: "State" },
+    { key: "startup", label: "Startup" }, { key: "cpuPct", label: "CPU %" }, { key: "memMB", label: "Memory MB" },
+    { key: "watched", label: "Watched" }, { key: "updatedAt", label: "Reported" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = ServiceArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const assets = inSubnet(await prisma.asset.findMany({
+      where: filter.where,
+      select: { id: true, hostname: true, ipAddress: true, monitoredServices: true },
+    }), filter.subnet);
+    if (!assets.length) return { rows: [], total: 0, extra: { matchedDevices: 0 } };
+
+    const and: Record<string, unknown>[] = [{ assetId: { in: assets.map((x) => x.id) } }];
+    if (a.service) {
+      and.push({ OR: [
+        { unit: { contains: a.service, mode: "insensitive" } },
+        { displayName: { contains: a.service, mode: "insensitive" } },
+      ] });
+    }
+    if (a.state) and.push({ activeState: { in: a.state.flatMap((s) => ACTIVE_FOR[s]), mode: "insensitive" } });
+    if (a.startup) and.push({ enabledState: { in: a.startup.flatMap((s) => ENABLED_FOR[s]), mode: "insensitive" } });
+    if (a.problems) {
+      and.push({ OR: [
+        { activeState: { equals: "failed", mode: "insensitive" } },
+        { platform: "windows", enabledState: { in: WIN_AUTO, mode: "insensitive" }, NOT: { activeState: { equals: "running", mode: "insensitive" } } },
+      ] });
+    }
+    if (a.watchedOnly) {
+      // Pins are per device; OR of (device, its pinned units), devices with none dropped.
+      const pinned = assets.filter((x) => x.monitoredServices.length);
+      if (!pinned.length) return { rows: [], total: 0, extra: { matchedDevices: assets.length, note: "No matching device has a watched service." } };
+      and.push({ OR: pinned.map((x) => ({ assetId: x.id, unit: { in: x.monitoredServices } })) });
+    }
+    const where = { AND: and };
+    const take = Math.min(a.limit ?? cap, cap);
+    const [rows, total, devicesWithServices] = await Promise.all([
+      prisma.assetService.findMany({
+        where, take, orderBy: [{ assetId: "asc" }, { unit: "asc" }],
+        select: { assetId: true, unit: true, displayName: true, platform: true, activeState: true, subState: true, enabledState: true, cpuPct: true, memBytes: true, updatedAt: true },
+      }),
+      prisma.assetService.count({ where }),
+      prisma.assetService.groupBy({ by: ["assetId"], where: { assetId: { in: assets.map((x) => x.id) } } }).then((g) => g.length),
+    ]);
+    const byId = new Map(assets.map((x) => [x.id, x]));
+    return {
+      rows: rows.map((s) => {
+        const dev = byId.get(s.assetId);
+        const state = [s.activeState, s.subState && s.subState !== s.activeState ? s.subState : null].filter(Boolean).join(" / ");
+        return plain({
+          id: s.assetId, hostname: dev?.hostname ?? null, ipAddress: dev?.ipAddress ?? null,
+          service: s.unit, displayName: s.displayName, platform: s.platform, state: state || null, startup: s.enabledState || null,
+          cpuPct: round1(s.cpuPct), memMB: s.memBytes == null ? null : Math.round(Number(s.memBytes) / 1_048_576),
+          watched: Boolean(dev?.monitoredServices.includes(s.unit)), updatedAt: s.updatedAt,
+        });
+      }),
+      total,
+      extra: { matchedDevices: assets.length, devicesReportingServices: devicesWithServices },
+    };
+  },
+  async run(args, ctx) {
+    return listResult(await this.rows(args, ctx, ctx.maxRows));
+  },
+};
+
+// ─── find_endpoint ───────────────────────────────────────────────────────────
+//
+// Where an endpoint is on the network, from what the infrastructure learned:
+// gateways' ARP tables (IP ↔ MAC, which interface), switches' MAC tables
+// (which port, which VLAN) and APs' wireless clients (which AP, SSID, band,
+// signal). A lookup, never a dump: it needs a MAC, an IP, or a device plus a
+// port or VLAN. A MAC is learned on every switch's UPLINK as well as on its
+// real access port, so each MAC-table hit carries how many MACs that port
+// holds and hits are ordered fewest-first — the access port leads.
+//
+// Scale: each table read is one indexed query (macAddress / apAssetId /
+// assetId) or one filtered scan for an IP, plus one groupBy for the port
+// counts — independent of fleet size.
+
+const ENDPOINT_ROW_CAP = 50;
+
+const EndpointArgs = z.object({
+  mac: z.string().max(40).optional(),
+  ip: z.string().max(60).optional(),
+  device: z.string().max(255).optional(),
+  port: z.string().max(100).optional(),
+  vlan: z.number().int().min(0).max(4095).optional(),
+}).refine((a) => a.mac || a.ip || (a.device && (a.port || a.vlan !== undefined)),
+  "Give a mac, an ip, or a device with a port or vlan");
+
+const HIT_ASSET_SELECT = { id: true, hostname: true, ipAddress: true, assetType: true } as const;
+
+/** A full MAC → equals; 3–5 octets → prefix (an OUI search). Null when unusable. */
+function macPredicate(raw: string): { equals: string } | { startsWith: string } | null {
+  const full = macColonUpperOrNull(raw);
+  if (full) return { equals: full };
+  const hex = raw.toUpperCase().replace(/[^0-9A-F]/g, "");
+  if (hex.length >= 6 && hex.length < 12 && hex.length % 2 === 0) return { startsWith: hex.match(/.{2}/g)!.join(":") };
+  return null;
+}
+
+const findEndpointTool: ToolDef = {
+  name: "find_endpoint",
+  label: "traced an endpoint",
+  description:
+    "Find where a client or device is on the network from what switches, gateways and access points learned: " +
+    "the switch port and VLAN it is on (MAC tables — the hit with the fewest MACs on its port is the access " +
+    "port; ports holding many MACs are uplinks), the IP / MAC pairing and the gateway interface (ARP tables), " +
+    "and the access point, SSID, band and signal for a wireless client. Give mac (full, or the first 3–5 octets " +
+    "for a vendor prefix) or ip. Or give device (a switch's hostname or IP) with port and / or vlan to see " +
+    "what is connected there. lastSeen says how fresh each sighting is. Use when someone asks where a device " +
+    "or address is plugged in, which AP a laptop is on, or what is on a switch port.",
+  parameters: {
+    type: "object",
+    properties: {
+      mac: { type: "string", description: "MAC in any format, or a 3–5 octet prefix" },
+      ip: { type: "string", description: "IPv4 address" },
+      device: { type: "string", description: "Hostname or IP of the switch / AP / gateway to look inside (with port or vlan)" },
+      port: { type: "string", description: "Port / interface name contains this, e.g. \"port12\" or \"1/0/12\"" },
+      vlan: { type: "number" },
+    },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = EndpointArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const cap = Math.min(ctx.maxRows, ENDPOINT_ROW_CAP);
+
+    let macWhere: { equals: string } | { startsWith: string } | null = null;
+    if (a.mac) {
+      macWhere = macPredicate(a.mac);
+      if (!macWhere) return { ok: false, data: { error: `"${a.mac}" is not a MAC address or a prefix of at least 3 octets` } };
+    }
+    if (a.ip && !isValidIpAddress(a.ip)) return { ok: false, data: { error: `"${a.ip}" is not a valid IP address` } };
+
+    let inside: { id: string; hostname: string | null } | null = null;
+    if (a.device) {
+      inside = await prisma.asset.findFirst({
+        where: { OR: [{ hostname: { equals: a.device, mode: "insensitive" } }, { ipAddress: a.device }, { id: a.device }] },
+        select: { id: true, hostname: true },
+      });
+      if (!inside) return { ok: true, data: { found: false, note: `No device named "${a.device}"` } };
+    }
+
+    // ARP: by MAC, by IP, or a device's own table narrowed by port.
+    const arpWhere: Record<string, unknown>[] = [];
+    if (macWhere) arpWhere.push({ macAddress: macWhere });
+    if (a.ip) arpWhere.push({ ipAddress: a.ip });
+    if (inside) arpWhere.push({ assetId: inside.id, ...(a.port ? { ifName: { contains: a.port, mode: "insensitive" } } : {}) });
+    // MAC tables: by MAC (and the MACs the ARP tables pair with the IP), or a device's port / VLAN.
+    // A device + VLAN alone is a MAC-table question; its whole ARP table is not wanted.
+    const wantArp = Boolean(macWhere || a.ip || (inside && a.port));
+    const [arp, wirelessByIp] = await Promise.all([
+      !wantArp ? Promise.resolve([] as never[]) : prisma.assetArpEntry.findMany({
+        where: { AND: arpWhere },
+        orderBy: { lastSeen: "desc" },
+        take: cap,
+        select: { ipAddress: true, macAddress: true, ifName: true, lastSeen: true, asset: { select: HIT_ASSET_SELECT }, matchedAsset: { select: HIT_ASSET_SELECT } },
+      }),
+      a.ip && !a.mac
+        ? prisma.assetWirelessStation.findMany({ where: { staIpAddr: a.ip }, select: { staMacAddr: true }, take: 5 })
+        : Promise.resolve([] as Array<{ staMacAddr: string }>),
+    ]);
+    const macsForIp = a.ip && !a.mac
+      ? Array.from(new Set([...arp.map((r) => r.macAddress), ...wirelessByIp.map((w) => w.staMacAddr)]))
+      : [];
+    const macFilter = macWhere ?? (macsForIp.length ? { in: macsForIp } : null);
+
+    const macTableWhere: Record<string, unknown>[] = [];
+    if (macFilter) macTableWhere.push({ macAddress: macFilter });
+    if (inside) {
+      macTableWhere.push({ assetId: inside.id });
+      if (a.port) macTableWhere.push({ ifName: { contains: a.port, mode: "insensitive" } });
+      if (a.vlan !== undefined) macTableWhere.push({ vlanId: a.vlan });
+    }
+    const wantMacTable = macFilter != null || inside != null;
+    const wantWireless = macFilter != null || inside != null;
+    const [macHits, wireless] = await Promise.all([
+      wantMacTable
+        ? prisma.assetMacTableEntry.findMany({
+          where: { AND: macTableWhere },
+          orderBy: { lastSeen: "desc" },
+          take: cap * 4,
+          select: { assetId: true, macAddress: true, vlanId: true, ifName: true, status: true, lastSeen: true, asset: { select: HIT_ASSET_SELECT }, matchedAsset: { select: HIT_ASSET_SELECT } },
+        })
+        : Promise.resolve([]),
+      wantWireless
+        ? prisma.assetWirelessStation.findMany({
+          where: {
+            AND: [
+              ...(macFilter ? [{ staMacAddr: macFilter }] : []),
+              ...(inside ? [{ apAssetId: inside.id }] : []),
+              ...(inside && a.vlan !== undefined ? [{ vlanId: a.vlan }] : []),
+            ],
+          },
+          orderBy: { lastSeen: "desc" },
+          take: cap,
+          select: {
+            staMacAddr: true, staIpAddr: true, ssid: true, band: true, vlanId: true, signalStrength: true, lastSeen: true,
+            apAsset: { select: HIT_ASSET_SELECT }, matchedAsset: { select: HIT_ASSET_SELECT },
+          },
+        })
+        : Promise.resolve([]),
+    ]);
+
+    // How many MACs each hit's port holds — the access port is the quiet one.
+    const portKeys = Array.from(new Set(macHits.filter((h) => h.ifName).map((h) => `${h.assetId}\u0000${h.ifName}`)));
+    const portCounts = new Map<string, number>();
+    if (portKeys.length) {
+      const groups = await prisma.assetMacTableEntry.groupBy({
+        by: ["assetId", "ifName"],
+        where: { OR: portKeys.map((k) => { const [assetId, ifName] = k.split("\u0000"); return { assetId, ifName }; }) },
+        _count: { _all: true },
+      });
+      for (const g of groups) portCounts.set(`${g.assetId}\u0000${g.ifName}`, g._count._all);
+    }
+    const macRows = macHits
+      .map((h) => ({ h, macsOnPort: h.ifName ? portCounts.get(`${h.assetId}\u0000${h.ifName}`) ?? null : null }))
+      .sort((x, y) => (x.macsOnPort ?? Infinity) - (y.macsOnPort ?? Infinity) || y.h.lastSeen.getTime() - x.h.lastSeen.getTime())
+      .slice(0, cap)
+      .map(({ h, macsOnPort }) => plain({
+        mac: h.macAddress, switch: h.asset?.hostname ?? null, switchId: h.assetId, port: h.ifName, vlan: h.vlanId,
+        macsOnPort, likelyAccessPort: macsOnPort != null && macsOnPort <= 3, status: h.status, lastSeen: h.lastSeen,
+        knownAs: h.matchedAsset?.hostname ?? null, knownAsId: h.matchedAsset?.id ?? null,
+      }));
+
+    const anyMac = macFilter && "equals" in macFilter ? macFilter.equals : macsForIp[0];
+    const vendor = anyMac ? await lookupOui(anyMac).catch(() => null) : null;
+    return {
+      ok: true,
+      data: {
+        query: { mac: a.mac, ip: a.ip, device: inside?.hostname ?? undefined, port: a.port, vlan: a.vlan },
+        vendor: vendor ?? undefined,
+        switchPorts: macRows,
+        arp: arp.map((r) => plain({
+          ip: r.ipAddress, mac: r.macAddress, seenBy: r.asset?.hostname ?? null, seenById: r.asset?.id ?? null,
+          interface: r.ifName || null, lastSeen: r.lastSeen, knownAs: r.matchedAsset?.hostname ?? null, knownAsId: r.matchedAsset?.id ?? null,
+        })),
+        wireless: wireless.map((w) => plain({
+          mac: w.staMacAddr, ip: w.staIpAddr, accessPoint: w.apAsset?.hostname ?? null, accessPointId: w.apAsset?.id ?? null,
+          ssid: w.ssid, band: w.band, vlan: w.vlanId, signalDbm: w.signalStrength, lastSeen: w.lastSeen,
+          knownAs: w.matchedAsset?.hostname ?? null, knownAsId: w.matchedAsset?.id ?? null,
+        })),
+        note: macRows.length + arp.length + wireless.length === 0
+          ? "No switch, gateway or access point has learned this endpoint. It may be offline, behind a device Polaris does not collect tables from, or outside the retention window."
+          : undefined,
+      },
+    };
+  },
+};
+
+// ─── path_check_summary ──────────────────────────────────────────────────────
+//
+// Path Monitor results: one row per check × source (an agent host, or the
+// Polaris server itself) over a window — availability, average and peak
+// latency — plus the source row's live facts (last result, last error, last
+// failure). Gated on `pathChecks` read, like every Path Monitor route. The
+// aggregates are SQL on the tier the check's chart reads for the same window
+// (pickSampleTierForAsset "pathCheck"); server-run samples are keyed by
+// POLARIS_SERVER_SUBJECT, not by an asset.
+//
+// Scale: one check findMany, one source findMany, one grouped aggregate over
+// (assetId, checkId) = ANY(...) inside the window.
+
+const PATH_DEFAULT_HOURS = 24;
+
+const PathArgs = z.object({
+  ...WindowArgs,
+  check: z.string().max(200).optional(),
+  source: z.string().max(255).optional(),
+  failingOnly: z.boolean().optional(),
+  sortBy: z.enum(["availability", "latency"]).optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+interface PathAgg {
+  assetId: string;
+  checkId: string;
+  samples: number;
+  okCount: number;
+  avgLatency: number | null;
+  maxLatency: number | null;
+}
+
+/** Per (source, check) availability and latency over [from, to). Exported for tests. */
+export async function pathCheckAggregates(subjects: string[], checkIds: string[], from: Date, to: Date, tier: SampleTier): Promise<PathAgg[]> {
+  if (!subjects.length || !checkIds.length) return [];
+  if (tier === "detail") {
+    return prisma.$queryRawUnsafe<PathAgg[]>(
+      `SELECT "assetId", "checkId", count(*)::int AS samples, count(*) FILTER (WHERE ok)::int AS "okCount",
+              avg("latencyMs")::float AS "avgLatency", max("latencyMs")::float AS "maxLatency"
+         FROM "asset_path_check_samples"
+        WHERE "checkId" = ANY($1::text[]) AND "assetId" = ANY($2::text[]) AND "timestamp" >= $3 AND "timestamp" < $4
+        GROUP BY "assetId", "checkId"`,
+      checkIds, subjects, from, to,
+    );
+  }
+  const table = tier === "hourly" ? "asset_path_check_samples_hourly" : "asset_path_check_samples_daily";
+  // Latency is averaged over the SUCCESSFUL samples a bucket carries (a failed
+  // run has no latency), so it weights by okCount, not sampleCount.
+  return prisma.$queryRawUnsafe<PathAgg[]>(
+    `SELECT "assetId", "checkId", sum("sampleCount")::int AS samples, sum("okCount")::int AS "okCount",
+            (sum("avgLatencyMs" * "okCount") / NULLIF(sum(CASE WHEN "avgLatencyMs" IS NOT NULL THEN "okCount" END), 0))::float AS "avgLatency",
+            max("maxLatencyMs")::float AS "maxLatency"
+       FROM "${table}"
+      WHERE "checkId" = ANY($1::text[]) AND "assetId" = ANY($2::text[]) AND "bucketStart" >= $3 AND "bucketStart" < $4
+      GROUP BY "assetId", "checkId"`,
+    checkIds, subjects, from, to,
+  );
+}
+
+const pathCheckSummaryTool: ListToolDef = {
+  name: "path_check_summary",
+  label: "checked Path Monitor",
+  description:
+    "Path Monitor results (HTTP / HTTPS / TCP / ICMP checks run from agent hosts and from the Polaris server): " +
+    "for each check and each place it runs from, availability % and average / peak latency over a window, the " +
+    "last result and error, and when it last failed. check matches the check name or target (\"m365\", " +
+    "\"erp.example.com\"); source matches the hostname it runs from (\"server\" for the Polaris server). " +
+    "failingOnly: only check/source pairs whose latest result failed. Worst availability first, or sortBy " +
+    `latency. The window defaults to the last ${PATH_DEFAULT_HOURS} hours.`,
+  parameters: {
+    type: "object",
+    properties: {
+      ...windowSchemaProps,
+      check: { type: "string", description: "Check name or target contains this text" },
+      source: { type: "string", description: "Hostname the check runs from contains this; \"server\" for the Polaris server" },
+      failingOnly: { type: "boolean" },
+      sortBy: { type: "string", enum: ["availability", "latency"] },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "check", label: "Check" }, { key: "kind", label: "Kind" }, { key: "target", label: "Target" },
+    { key: "source", label: "Runs from" }, { key: "availabilityPct", label: "Availability %" },
+    { key: "avgLatencyMs", label: "Avg latency ms" }, { key: "maxLatencyMs", label: "Peak latency ms" },
+    { key: "samples", label: "Runs" }, { key: "lastOk", label: "Last OK" }, { key: "lastError", label: "Last error" },
+    { key: "lastFailAt", label: "Last failed" }, { key: "lastSampleAt", label: "Last run" }, { key: "window", label: "Window" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "pathChecks", "read")) return denied("Path Monitor");
+    const p = PathArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const win = timeWindow(a);
+    const to = win.to ?? new Date();
+    const from = win.from ?? new Date(to.getTime() - PATH_DEFAULT_HOURS * 3_600_000);
+    if (!(from < to)) return { ok: false, data: { error: "The window's start must be before its end" } };
+
+    const checks = await prisma.pathCheck.findMany({
+      where: a.check
+        ? { OR: [{ name: { contains: a.check, mode: "insensitive" } }, { target: { contains: a.check, mode: "insensitive" } }] }
+        : {},
+      select: { id: true, name: true, kind: true, target: true, enabled: true },
+    });
+    if (!checks.length) return { rows: [], total: 0, extra: { matchedChecks: 0 } };
+
+    const serverSource = a.source != null && /\b(server|polaris)\b/i.test(a.source);
+    const sourceWhere: Record<string, unknown> = { checkId: { in: checks.map((c) => c.id) } };
+    if (a.source && !serverSource) sourceWhere.asset = { hostname: { contains: a.source, mode: "insensitive" } };
+    if (serverSource) sourceWhere.assetId = null;
+    if (a.failingOnly) sourceWhere.lastOk = false;
+    const sources = await prisma.pathCheckSource.findMany({
+      where: sourceWhere,
+      select: {
+        checkId: true, assetId: true, lastOk: true, lastError: true, lastSampleAt: true, lastFailAt: true, lastLatencyMs: true,
+        asset: { select: { hostname: true } },
+      },
+    });
+
+    const { tier } = await pickSampleTierForAsset(POLARIS_SERVER_SUBJECT, "pathCheck", from);
+    const subjects = Array.from(new Set(sources.map((s) => s.assetId ?? POLARIS_SERVER_SUBJECT)));
+    const aggs = await pathCheckAggregates(subjects, Array.from(new Set(sources.map((s) => s.checkId))), from, to, tier);
+    const aggBy = new Map(aggs.map((g) => [`${g.assetId}\u0000${g.checkId}`, g]));
+    const checkBy = new Map(checks.map((c) => [c.id, c]));
+    const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
+
+    const rows = sources.map((s) => {
+      const c = checkBy.get(s.checkId)!;
+      const g = aggBy.get(`${s.assetId ?? POLARIS_SERVER_SUBJECT}\u0000${s.checkId}`);
+      return {
+        checkId: c.id, check: c.name, kind: c.kind, target: c.target, enabled: c.enabled,
+        source: s.assetId ? s.asset?.hostname ?? null : POLARIS_SERVER_LABEL, assetId: s.assetId ?? undefined,
+        samples: g?.samples ?? 0,
+        availabilityPct: g && g.samples ? round1((g.okCount / g.samples) * 100) : null,
+        avgLatencyMs: round1(g?.avgLatency), maxLatencyMs: round1(g?.maxLatency),
+        lastOk: s.lastOk, lastError: s.lastError, lastFailAt: s.lastFailAt, lastSampleAt: s.lastSampleAt, window,
+      };
+    });
+    const byLatency = a.sortBy === "latency";
+    rows.sort((x, y) => byLatency
+      ? (y.avgLatencyMs ?? -1) - (x.avgLatencyMs ?? -1)
+      : (x.availabilityPct ?? 101) - (y.availabilityPct ?? 101) || (y.avgLatencyMs ?? -1) - (x.avgLatencyMs ?? -1));
+    const take = Math.min(a.limit ?? cap, cap);
+    return {
+      rows: rows.slice(0, take).map(plain),
+      total: rows.length,
+      extra: { window, matchedChecks: checks.length, failingNow: sources.filter((s) => s.lastOk === false).length },
+    };
+  },
+  async run(args, ctx) {
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    return listResult({ ...res, rows: res.rows.map(({ window: _w, ...r }) => r) });
+  },
+};
+
+// ─── interface_summary ───────────────────────────────────────────────────────
+//
+// Interfaces / ports on the devices the list_assets filters match. Current
+// state for EVERY interface comes from AssetInterface (status, speed, VLAN,
+// PoE). Traffic, utilization and error counts over a window exist only for the
+// interfaces selected for monitoring (Asset.monitoredInterfaces) — since the
+// pinned-only cutover no other interface writes samples — so an unpinned row
+// says `history: false` rather than reading as idle.
+//
+// Rates are counter deltas computed in SQL on the tier the interface chart
+// reads (pickSampleTierForAsset "interfaces"), with the chart's reset rule: a
+// negative delta is a counter reset and is skipped, never counted as traffic
+// (sampleHistoryService rate()). Average = bytes moved / seconds covered;
+// peak = the fastest single interval (detail) or bucket (rollup).
+// "down" means operationally down while administratively up — a port someone
+// shut on purpose is "disabled", not a fault.
+//
+// Scale: asset findMany + interface count / findMany (refused past
+// INTERFACE_SCAN_MAX until narrowed) + ONE grouped aggregate over the pinned
+// set's (assetId, ifName) = ANY(...) inside the window.
+
+const IFACE_DEFAULT_HOURS = 24;
+const INTERFACE_SCAN_MAX = 20_000;
+
+const IFACE_STATES = ["up", "down", "disabled"] as const;
+const IFACE_SORTS = ["utilization", "peak", "traffic", "errors", "name"] as const;
+
+const InterfaceArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  ...WindowArgs,
+  interface: z.string().max(200).optional(),
+  state: oneOrMany(z.enum(IFACE_STATES)),
+  poe: z.enum(["fault", "delivering"]).optional(),
+  withErrors: z.boolean().optional(),
+  monitoredOnly: z.boolean().optional(),
+  sortBy: z.enum(IFACE_SORTS).optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+interface IfaceAgg {
+  assetId: string;
+  ifName: string;
+  avgIn: number | null;
+  avgOut: number | null;
+  peakIn: number | null;
+  peakOut: number | null;
+  inErrors: number | null;
+  outErrors: number | null;
+}
+
+/**
+ * Per (asset, interface) byte rates and error counts over [from, to) for the
+ * interfaces named. Rates are bytes / second. Exported for tests.
+ */
+export async function interfaceAggregates(assetIds: string[], ifNames: string[], from: Date, to: Date, tier: SampleTier): Promise<IfaceAgg[]> {
+  if (!assetIds.length || !ifNames.length) return [];
+  const agg = `SELECT "assetId", "ifName",
+                 (sum(di) / NULLIF(sum(dt) FILTER (WHERE di IS NOT NULL), 0))::float AS "avgIn",
+                 (sum(dout) / NULLIF(sum(dt) FILTER (WHERE dout IS NOT NULL), 0))::float AS "avgOut",
+                 max(di / dt)::float AS "peakIn", max(dout / dt)::float AS "peakOut",
+                 sum(die)::float AS "inErrors", sum(doe)::float AS "outErrors"
+            FROM d WHERE dt > 0 GROUP BY "assetId", "ifName"`;
+  if (tier === "detail") {
+    return prisma.$queryRawUnsafe<IfaceAgg[]>(
+      `WITH s AS (
+         SELECT "assetId", "ifName", "timestamp" AS t, "inOctets" AS i, "outOctets" AS o, "inErrors" AS ie, "outErrors" AS oe,
+                lag("timestamp") OVER w AS pt, lag("inOctets") OVER w AS pi, lag("outOctets") OVER w AS po,
+                lag("inErrors") OVER w AS pie, lag("outErrors") OVER w AS poe
+           FROM "asset_interface_samples"
+          WHERE "assetId" = ANY($1::text[]) AND "ifName" = ANY($2::text[]) AND "timestamp" >= $3 AND "timestamp" < $4
+          WINDOW w AS (PARTITION BY "assetId", "ifName" ORDER BY "timestamp")
+       ), d AS (
+         SELECT "assetId", "ifName", extract(epoch FROM t - pt)::float AS dt,
+                CASE WHEN i >= pi THEN (i - pi)::float END AS di, CASE WHEN o >= po THEN (o - po)::float END AS dout,
+                CASE WHEN ie >= pie THEN (ie - pie)::float END AS die, CASE WHEN oe >= poe THEN (oe - poe)::float END AS doe
+           FROM s WHERE pt IS NOT NULL
+       ) ${agg}`,
+      assetIds, ifNames, from, to,
+    );
+  }
+  const table = tier === "hourly" ? "asset_interface_samples_hourly" : "asset_interface_samples_daily";
+  return prisma.$queryRawUnsafe<IfaceAgg[]>(
+    `WITH d AS (
+       SELECT "assetId", "ifName", extract(epoch FROM "lastBucketSampleAt" - "bucketStart")::float AS dt,
+              CASE WHEN "lastInOctets" >= "firstInOctets" THEN ("lastInOctets" - "firstInOctets")::float END AS di,
+              CASE WHEN "lastOutOctets" >= "firstOutOctets" THEN ("lastOutOctets" - "firstOutOctets")::float END AS dout,
+              CASE WHEN "lastInErrors" >= "firstInErrors" THEN ("lastInErrors" - "firstInErrors")::float END AS die,
+              CASE WHEN "lastOutErrors" >= "firstOutErrors" THEN ("lastOutErrors" - "firstOutErrors")::float END AS doe
+         FROM "${table}"
+        WHERE "assetId" = ANY($1::text[]) AND "ifName" = ANY($2::text[]) AND "bucketStart" >= $3 AND "bucketStart" < $4
+     ) ${agg}`,
+    assetIds, ifNames, from, to,
+  );
+}
+
+const mbps = (bytesPerSec: number | null | undefined) => (bytesPerSec == null ? null : Math.round((bytesPerSec * 8) / 10_000) / 100);
+const utilPct = (bytesPerSec: number | null | undefined, speedBps: number | null) =>
+  bytesPerSec == null || !speedBps ? null : round1(((bytesPerSec * 8) / speedBps) * 100);
+
+const interfaceSummaryTool: ListToolDef = {
+  name: "interface_summary",
+  label: "checked interfaces",
+  description:
+    "Interfaces and switch ports on the devices the list_assets filters match: status, speed, VLAN, PoE, and — for " +
+    "interfaces selected for monitoring — average and peak traffic (Mbps), utilization % of link speed and error " +
+    "counts over a window (default the last 24 hours). Rows without history (history: false) are interfaces not " +
+    "selected for monitoring: current state only. interface matches the name, alias or description (\"wan\", " +
+    "\"port12\"). state: up, down (link down although enabled), disabled (shut by an operator). poe: fault or " +
+    "delivering. withErrors: only interfaces that logged errors in the window. sortBy utilization (default), " +
+    "peak, traffic, errors or name. Use for busiest links, WAN utilization, ports down, ports with errors, PoE faults.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...DEVICE_FILTER_PROPS,
+      ...windowSchemaProps,
+      interface: { type: "string", description: "Interface name, alias or description contains this text" },
+      state: { type: "array", items: { type: "string", enum: [...IFACE_STATES] } },
+      poe: { type: "string", enum: ["fault", "delivering"] },
+      withErrors: { type: "boolean" },
+      monitoredOnly: { type: "boolean", description: "Only interfaces selected for monitoring (the ones with traffic history)" },
+      sortBy: { type: "string", enum: [...IFACE_SORTS] },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "hostname", label: "Device" }, { key: "interface", label: "Interface" }, { key: "description", label: "Description" },
+    { key: "state", label: "State" }, { key: "speedMbps", label: "Speed Mbps" }, { key: "vlan", label: "VLAN" },
+    { key: "poe", label: "PoE" }, { key: "avgInMbps", label: "Avg in Mbps" }, { key: "avgOutMbps", label: "Avg out Mbps" },
+    { key: "peakInMbps", label: "Peak in Mbps" }, { key: "peakOutMbps", label: "Peak out Mbps" },
+    { key: "avgUtilPct", label: "Avg util %" }, { key: "peakUtilPct", label: "Peak util %" },
+    { key: "inErrors", label: "In errors" }, { key: "outErrors", label: "Out errors" }, { key: "history", label: "History" },
+    { key: "window", label: "Window" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = InterfaceArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const win = timeWindow(a);
+    const to = win.to ?? new Date();
+    const from = win.from ?? new Date(to.getTime() - IFACE_DEFAULT_HOURS * 3_600_000);
+    if (!(from < to)) return { ok: false, data: { error: "The window's start must be before its end" } };
+
+    const assets = inSubnet(await prisma.asset.findMany({
+      where: filter.where,
+      select: { id: true, hostname: true, ipAddress: true, monitoredInterfaces: true },
+    }), filter.subnet);
+    if (!assets.length) return { rows: [], total: 0, extra: { matchedDevices: 0 } };
+
+    const and: Record<string, unknown>[] = [{ assetId: { in: assets.map((x) => x.id) } }];
+    if (a.interface) {
+      and.push({ OR: ["ifName", "alias", "description"].map((f) => ({ [f]: { contains: a.interface, mode: "insensitive" } })) });
+    }
+    if (a.state) {
+      and.push({ OR: a.state.map((s) => s === "up" ? { operStatus: { equals: "up", mode: "insensitive" } }
+        : s === "down" ? { NOT: { operStatus: { equals: "up", mode: "insensitive" } }, adminStatus: { equals: "up", mode: "insensitive" } }
+        : { adminStatus: { equals: "down", mode: "insensitive" } }) });
+    }
+    if (a.poe === "fault") and.push({ poeStatus: { in: ["fault", "other-fault"] } });
+    if (a.poe === "delivering") and.push({ poeStatus: "delivering" });
+    if (a.monitoredOnly || a.withErrors) {
+      const pinned = assets.filter((x) => x.monitoredInterfaces.length);
+      if (!pinned.length) return { rows: [], total: 0, extra: { matchedDevices: assets.length, note: "No matching device has an interface selected for monitoring, so there is no traffic or error history." } };
+      and.push({ OR: pinned.map((x) => ({ assetId: x.id, ifName: { in: x.monitoredInterfaces } })) });
+    }
+    const where = { AND: and };
+    const count = await prisma.assetInterface.count({ where });
+    if (count > INTERFACE_SCAN_MAX) {
+      return { ok: false, data: { error: `${count} interfaces match — narrow by device (model, type, region, search) or interface name first.` } };
+    }
+    const ifaces = await prisma.assetInterface.findMany({
+      where,
+      select: { assetId: true, ifName: true, alias: true, description: true, operStatus: true, adminStatus: true, speedBps: true, vlanId: true, poeStatus: true, poeClass: true },
+    });
+
+    const byAsset = new Map(assets.map((x) => [x.id, x]));
+    const pinnedRows = ifaces.filter((i) => byAsset.get(i.assetId)?.monitoredInterfaces.includes(i.ifName));
+    const { tier } = await pickSampleTierForAsset("", "interfaces", from);
+    const aggs = await interfaceAggregates(
+      Array.from(new Set(pinnedRows.map((i) => i.assetId))), Array.from(new Set(pinnedRows.map((i) => i.ifName))), from, to, tier,
+    );
+    const aggBy = new Map(aggs.map((g) => [`${g.assetId}\u0000${g.ifName}`, g]));
+    const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
+
+    let rows = ifaces.map((i) => {
+      const dev = byAsset.get(i.assetId)!;
+      const history = dev.monitoredInterfaces.includes(i.ifName);
+      const g = history ? aggBy.get(`${i.assetId}\u0000${i.ifName}`) : undefined;
+      const speed = i.speedBps == null ? null : Number(i.speedBps);
+      const admin = (i.adminStatus ?? "").toLowerCase();
+      const oper = (i.operStatus ?? "").toLowerCase();
+      return {
+        id: i.assetId, hostname: dev.hostname, interface: i.ifName,
+        description: i.alias || i.description || null,
+        state: admin === "down" ? "disabled" : oper === "up" ? "up" : oper === "down" ? "down" : oper ? `down (${oper})` : null,
+        speedMbps: speed == null ? null : Math.round(speed / 1e6), vlan: i.vlanId,
+        poe: i.poeStatus ? [i.poeStatus, i.poeClass].filter(Boolean).join(" / ") : null,
+        avgInMbps: mbps(g?.avgIn), avgOutMbps: mbps(g?.avgOut), peakInMbps: mbps(g?.peakIn), peakOutMbps: mbps(g?.peakOut),
+        avgUtilPct: utilPct(Math.max(g?.avgIn ?? -1, g?.avgOut ?? -1) < 0 ? null : Math.max(g?.avgIn ?? 0, g?.avgOut ?? 0), speed),
+        peakUtilPct: utilPct(Math.max(g?.peakIn ?? -1, g?.peakOut ?? -1) < 0 ? null : Math.max(g?.peakIn ?? 0, g?.peakOut ?? 0), speed),
+        inErrors: g?.inErrors == null ? null : Math.round(g.inErrors), outErrors: g?.outErrors == null ? null : Math.round(g.outErrors),
+        history, window,
+      };
+    });
+    if (a.withErrors) rows = rows.filter((r) => (r.inErrors ?? 0) + (r.outErrors ?? 0) > 0);
+    const sort = a.sortBy ?? (a.withErrors ? "errors" : "utilization");
+    const key = (r: (typeof rows)[number]): number | null =>
+      sort === "utilization" ? r.avgUtilPct
+      : sort === "peak" ? r.peakUtilPct
+      : sort === "traffic" ? (r.avgInMbps == null && r.avgOutMbps == null ? null : (r.avgInMbps ?? 0) + (r.avgOutMbps ?? 0))
+      : sort === "errors" ? (r.inErrors == null && r.outErrors == null ? null : (r.inErrors ?? 0) + (r.outErrors ?? 0))
+      : null;
+    rows.sort((x, y) => sort === "name"
+      ? `${x.hostname}\u0000${x.interface}`.localeCompare(`${y.hostname}\u0000${y.interface}`, undefined, { numeric: true })
+      : (key(y) ?? -1) - (key(x) ?? -1) || `${x.hostname}${x.interface}`.localeCompare(`${y.hostname}${y.interface}`, undefined, { numeric: true }));
+    const take = Math.min(a.limit ?? cap, cap);
+    return {
+      rows: rows.slice(0, take).map(plain),
+      total: rows.length,
+      extra: { window, matchedDevices: assets.length, interfacesWithHistory: pinnedRows.length, sortedBy: sort },
+    };
+  },
+  async run(args, ctx) {
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    return listResult({ ...res, rows: res.rows.map(({ window: _w, ...r }) => r) });
+  },
+};
+
+// ─── get_dependencies ────────────────────────────────────────────────────────
+//
+// The dependency tree around ONE device: what it hangs off, hop by hop up to
+// the top, and what hangs off it. Edges are AssetDependencyParent rows with the
+// precedence the suppression walk uses (dependencyTreeService loadBlameLayer):
+// a device's `override` parents REPLACE its computed / vcenter ones. When the
+// device is down or suppressed, the root cause comes from resolveDependencyBlame
+// itself, so the assistant names the same culprit the alert does.
+//
+// Scale: one edge read per hop up (bounded by BLAME_MAX_HOPS) and one per layer
+// down (bounded by DEPENDENCY_DOWN_MAX nodes) — never a per-node await.
+
+const DEPENDENCY_DOWN_MAX = 2000;
+
+const DependencyArgs = z.object({
+  id: z.string().max(60).optional(),
+  hostname: z.string().max(255).optional(),
+  ip: z.string().max(60).optional(),
+}).refine((a) => a.id || a.hostname || a.ip, "Give id, hostname or ip");
+
+const DEP_NODE_SELECT = {
+  id: true, hostname: true, ipAddress: true, assetType: true, status: true,
+  monitored: true, monitorStatus: true, dependencySuppressed: true,
+} as const;
+
+/** Effective parents per asset: overrides when it has any, else every other source. */
+async function effectiveParents(ids: string[]): Promise<Map<string, Array<{ parentAssetId: string; detectedVia: string }>>> {
+  const rows = await prisma.assetDependencyParent.findMany({
+    where: { assetId: { in: ids } },
+    select: { assetId: true, parentAssetId: true, source: true, detectedVia: true },
+  });
+  const overrides = new Map<string, Array<{ parentAssetId: string; detectedVia: string }>>();
+  const others = new Map<string, Array<{ parentAssetId: string; detectedVia: string }>>();
+  for (const r of rows) {
+    const target = r.source === "override" ? overrides : others;
+    const list = target.get(r.assetId) ?? [];
+    if (!list.some((p) => p.parentAssetId === r.parentAssetId)) list.push({ parentAssetId: r.parentAssetId, detectedVia: r.detectedVia });
+    target.set(r.assetId, list);
+  }
+  return new Map(ids.map((id) => [id, overrides.get(id) ?? others.get(id) ?? []]));
+}
+
+const getDependenciesTool: ToolDef = {
+  name: "get_dependencies",
+  label: "traced the dependency tree",
+  description:
+    "The dependency tree around ONE device (by id, exact hostname or IP): upstream — the device it hangs off, " +
+    "then that device's parent, hop by hop to the top (how each link was learned: controller, interface, lldp, " +
+    "manual, hypervisor) — and downstream — the devices that hang off it, with how many of them are down or " +
+    "suppressed. When the device is down or suppressed, rootCause names the device whose outage explains it. " +
+    "Use for \"what does X depend on\", \"what is behind X\", \"what goes down if X goes down\".",
+  parameters: {
+    type: "object",
+    properties: { id: { type: "string" }, hostname: { type: "string" }, ip: { type: "string" } },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = DependencyArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const where = a.id ? { id: a.id }
+      : a.hostname ? { hostname: { equals: a.hostname, mode: "insensitive" as const } }
+      : { ipAddress: a.ip };
+    const asset = await prisma.asset.findFirst({ where, select: DEP_NODE_SELECT });
+    if (!asset) return { ok: true, data: { found: false } };
+
+    // Upstream, layer by layer. A node seen before is not walked again (a
+    // cycle in hand-made overrides must not loop).
+    const upstream: Array<Record<string, unknown>> = [];
+    const seen = new Set([asset.id]);
+    let frontier = [asset.id];
+    let upTruncated = false;
+    for (let hop = 1; frontier.length > 0; hop++) {
+      if (hop > BLAME_MAX_HOPS) { upTruncated = true; break; }
+      const parents = await effectiveParents(frontier);
+      const next: Array<{ child: string; parentAssetId: string; detectedVia: string }> = [];
+      for (const [child, list] of parents) {
+        for (const pr of list) if (!seen.has(pr.parentAssetId)) { seen.add(pr.parentAssetId); next.push({ child, ...pr }); }
+      }
+      if (!next.length) break;
+      const nodes = await prisma.asset.findMany({ where: { id: { in: next.map((n) => n.parentAssetId) } }, select: DEP_NODE_SELECT });
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      for (const n of next) {
+        const node = byId.get(n.parentAssetId);
+        if (node) upstream.push({ hop, ...plain(node), parentOf: n.child, detectedVia: n.detectedVia });
+      }
+      frontier = next.map((n) => n.parentAssetId);
+    }
+
+    // Downstream: every device whose EFFECTIVE parents include a node already
+    // reached. Candidate edges are read by parent, then each candidate's own
+    // effective parents decide (an override elsewhere removes the edge).
+    const down = new Set<string>();
+    let layer = [asset.id];
+    let downTruncated = false;
+    const direct: string[] = [];
+    while (layer.length > 0) {
+      const cand = await prisma.assetDependencyParent.findMany({
+        where: { parentAssetId: { in: layer } },
+        select: { assetId: true },
+      });
+      const ids = Array.from(new Set(cand.map((c) => c.assetId))).filter((id) => id !== asset.id && !down.has(id));
+      if (!ids.length) break;
+      const eff = await effectiveParents(ids);
+      const layerSet = new Set(layer);
+      const nextLayer = ids.filter((id) => (eff.get(id) ?? []).some((pr) => layerSet.has(pr.parentAssetId)));
+      if (layer.length === 1 && layer[0] === asset.id) direct.push(...nextLayer);
+      for (const id of nextLayer) down.add(id);
+      if (down.size >= DEPENDENCY_DOWN_MAX) { downTruncated = true; break; }
+      layer = nextLayer;
+    }
+    const downIds = Array.from(down);
+    const [downNodes, blame] = await Promise.all([
+      downIds.length
+        ? prisma.asset.findMany({ where: { id: { in: downIds } }, select: { id: true, monitorStatus: true, dependencySuppressed: true } })
+        : Promise.resolve([] as Array<{ id: string; monitorStatus: string | null; dependencySuppressed: boolean | null }>),
+      asset.monitorStatus === "down" || asset.dependencySuppressed ? resolveDependencyBlame(asset.id) : Promise.resolve(null),
+    ]);
+    const directCap = Math.min(ctx.maxRows, 50);
+    const directNodes = direct.length
+      ? await prisma.asset.findMany({ where: { id: { in: direct.slice(0, directCap) } }, select: DEP_NODE_SELECT, orderBy: { hostname: "asc" } })
+      : [];
+    return {
+      ok: true,
+      data: {
+        found: true,
+        device: plain(asset),
+        upstream,
+        upstreamTruncated: upTruncated,
+        topOfTree: upstream.length === 0 ? "This device has no upstream device recorded." : undefined,
+        downstream: {
+          directChildren: directNodes.map(plain),
+          directChildCount: direct.length,
+          totalDevicesBehind: downIds.length,
+          downBehind: downNodes.filter((n) => n.monitorStatus === "down" && !n.dependencySuppressed).length,
+          suppressedBehind: downNodes.filter((n) => n.dependencySuppressed).length,
+          truncated: downTruncated || direct.length > directCap,
+        },
+        rootCause: blame
+          ? { device: blame.rootCause.hostname, id: blame.rootCause.id, reason: blame.rootCause.reason, hops: blame.hops, chain: blame.chain.map((c) => c.hostname) }
+          : undefined,
+      },
+    };
   },
 };
 
@@ -830,12 +1890,15 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
+
+/** The list tools a report can be built from (create_report's `source`). */
+export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
-  source: z.enum(["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations"]),
+  source: z.enum(REPORT_SOURCE_NAMES),
   args: z.record(z.unknown()).optional(),
   columns: z.array(z.string().max(60)).max(30).optional(),
 });
@@ -855,7 +1918,11 @@ const createReportTool: ToolDef = {
       args: { type: "object", description: "The same filter arguments the source tool accepts" },
       columns: {
         type: "array", items: { type: "string" },
-        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt",
+        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt. " +
+          "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window. " +
+          "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt. " +
+          "path_check_summary: check, kind, target, source, availabilityPct, avgLatencyMs, maxLatencyMs, samples, lastOk, lastError, lastFailAt, lastSampleAt, window. " +
+          "interface_summary: hostname, interface, description, state, speedMbps, vlan, poe, avgInMbps, avgOutMbps, peakInMbps, peakOutMbps, avgUtilPct, peakUtilPct, inErrors, outErrors, history, window",
       },
     },
     required: ["title", "source"],
@@ -900,11 +1967,12 @@ const createReportTool: ToolDef = {
   },
 };
 
-function listResult(res: { rows: Array<Record<string, unknown>>; total: number } | ToolResult): ToolResult {
+function listResult(res: ListRows | ToolResult): ToolResult {
   if ("ok" in res) return res;
   return {
     ok: true,
     data: {
+      ...res.extra,
       total: res.total,
       returned: res.rows.length,
       truncated: res.total > res.rows.length,
@@ -1219,11 +2287,21 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, getAssetTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+
+/**
+ * Tools a turn offers only when the model's window has room for every
+ * definition, or when the turn's playbook names them (assistantChatService
+ * toolsForWindow). On a small local window the full list would crowd out the
+ * system prompt; every tool that predates these stays offered as before.
+ */
+export const WINDOW_OPTIONAL_TOOLS: ReadonlySet<string> = new Set([
+  "telemetry_summary", "get_dependencies", "list_services", "find_endpoint", "path_check_summary", "interface_summary",
+]);
 
 /** The OpenAI-style tool definitions sent to the model. */
 export function assistantToolDefs(): ChatToolDef[] {

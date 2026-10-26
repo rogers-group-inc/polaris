@@ -62,6 +62,23 @@ with spreadsheet formulas neutralized —, PDF or Markdown) is therefore a datab
 a title the model chose, and the stored copy is a snapshot, so reopening a conversation
 downloads the figures the user saw at the time.
 
+2026-10-26. The owner asked for "a report of the highest average memory utilizations of the 61F
+fortigate firewalls" and the assistant said, correctly, that it could not: no tool carried a CPU
+or memory figure, so the only way to answer would have been a model averaging numbers it did
+not have. `telemetry_summary` closes the gap the same way `create_report` closed the first one.
+The averages and peaks are computed in SQL over the matched devices, on the tier the device's
+CPU / memory chart reads for the same window (raw samples while they are kept, else the hourly
+or daily rollups weighted by sample count), so the assistant and the chart cannot disagree. A
+small model never sees a series it would have to summarize. The same day the owner asked for
+interface statistics, Path Monitor, services, ARP tables and the dependency tree too, and the
+same rule carried over: interface traffic, utilization and error counts are counter deltas in
+SQL (a reset is skipped, never read as traffic), Path Monitor availability and latency are
+aggregated per check and source, and endpoint data (ARP, MAC tables, wireless clients) is a
+LOOKUP by MAC, IP or device-and-port, never a table dump. The owner was asked whether endpoint
+data, which names end-user devices, should be held back from hosted model providers by a
+per-integration switch and chose not to: the role check is its only gate, as for any other
+`assets` data.
+
 ### (d) Conversations belong to one person
 
 A conversation contains whatever its owner could see, so it is that owner's data: every query
