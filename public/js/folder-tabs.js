@@ -348,7 +348,8 @@ function _bringIntoView(st, i) {
 // on every pass, so carrying it past an edge slides the row with it.
 function _refreshStrip(strip) {
   var st = _measureStrip(strip);
-  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; }
+  // A re-measure mid-glide lands the glide where it was going, not part-way.
+  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; st.pos = st.animTo; }
   _clampPos(st);
   var ai = -1, hi = -1;
   st.items.forEach(function (it, k) {
@@ -533,7 +534,10 @@ function _stepTarget(st, dir) {
 function _stepStrip(strip, dir, done) {
   var st = strip.__tabWin;
   if (!st) return;
-  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; st.pos = st.animTo; }
+  // A step that lands mid-glide first FINISHES that glide — draws its end —
+  // or a notch at the row's end (nothing further to glide to) left the
+  // tabs frozen part-way, the end tab still cut and its edge still fading.
+  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; st.pos = st.animTo; _layoutStrip(strip); }
   var to = _stepTarget(st, dir);
   if (Math.abs(to - st.pos) < 0.5) return;
   var from = st.pos;

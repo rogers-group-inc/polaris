@@ -250,6 +250,28 @@ describe("tab strip window", () => {
   });
 });
 
+describe("fast wheeling (glides cut short)", () => {
+  afterEach(() => {
+    delete g.requestAnimationFrame;
+    delete g.cancelAnimationFrame;
+  });
+
+  it("finishes a cut-short glide at the row's end: the last tab whole, its edge not fading", async () => {
+    const b = await boot(5);
+    // A frame clock that never ticks on its own: every step after the first
+    // lands mid-glide, as a fast wheel does.
+    const frames: Array<(t: number) => void> = [];
+    g.requestAnimationFrame = (cb: (t: number) => void) => { frames.push(cb); return frames.length; };
+    g.cancelAnimationFrame = () => {};
+    b.step(1); b.step(1); b.step(1);       // each cuts the last short; the third heads for the end
+    b.step(1);                             // a notch AT the end: nothing further to glide to
+    expect(b.pos()).toBe(210);
+    expect(b.shown()).toEqual([false, false, true, true, true]);
+    expect(b.fades()).toEqual({ l: true, r: false });
+    expect(b.shift(4)).toBe(-210);         // drawn at the end, not frozen part-way
+  });
+});
+
 describe("the card's cast fading in over the tab fades", () => {
   // The row as a folder CARD's head, with its card after it: the band lives in
   // the card (folder-tabs.js → _writeFadeCast).
