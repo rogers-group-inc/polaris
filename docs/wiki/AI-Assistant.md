@@ -137,6 +137,8 @@ context. Some things to try:
 - *What else alerted within an hour of fw-nsh-01 going down last night?*
 - *Which networks are more than 80% full?*
 - *Build a report of every FortiSwitch with its serial and firmware.*
+- *Report the highest average memory of the FortiGate-61F firewalls over the last week.*
+- *Which servers in my region peaked above 90% CPU yesterday?*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
 - *Why are the hardware sensors unresolved on our Fortinet profile?*
@@ -147,7 +149,9 @@ context. Some things to try:
 A few kinds of question follow a set procedure, so the answer is built the same way
 every time: **why did a device go down** (the device, then alerts and events around
 the time it changed, then the device it hangs off), **what changed** since a time,
-**is a device healthy**, **which networks are filling up**, **who has an address**
+**is a device healthy**, **which networks are filling up**, **CPU and memory**
+(the ranking for the devices you named, the period it covers, and how many had
+no data), **who has an address**
 (*look up 153.66.102.165*) — which also finds a device that held the address on
 another interface or in the past, and says when, and a firewall whose IPsec
 tunnel or VPN peer is at that address — and **manufacturer profiles and MIBs**
@@ -165,6 +169,16 @@ permission on your role (Manufacturer Profiles, MIB Database, Automation
 Management). When it suggests a profile row or a widget, it names only objects it
 found in your uploaded MIB, and it never makes the change: it tells you where to.
 See [Manufacturer Profiles](Manufacturer-Profiles).
+
+It can also rank devices by **CPU and memory** — average and peak, over any
+period you name (the last 24 hours if you name none), for any set of devices you
+can describe the way you would filter the Assets page (a model such as "61F", a
+manufacturer, a type, a region). Polaris computes the figures from the same
+stored samples the device's CPU / memory chart draws, so the two agree: the raw
+samples while they are still kept, the hourly or daily averages for an older
+period. A device that reports no CPU or memory (one monitored by ping or SSH
+only) is counted, not listed. Ask for a report to get the whole ranking as a
+download. This needs **Assets** read.
 
 It knows **your role and access**, and the **regions and tags assigned to you**
 (from your role, your account and your sign-in groups) — so "my region" means

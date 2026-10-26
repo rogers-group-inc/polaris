@@ -42,11 +42,12 @@ vi.mock("../../src/services/llmService.js", async () => ({
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
   // The real tool NAMES (the round-0 steering filters by name); the shapes do not matter here.
-  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "get_asset", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
+  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "telemetry_summary", "get_asset", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
     "list_manufacturer_profiles", "get_manufacturer_profile", "list_mibs", "search_mib_symbols", "list_automations", "get_automation"]
     .map((name) => ({ type: "function", function: { name, description: "", parameters: {} } })),
   runAssistantTool: h.runAssistantTool,
   toolLabel: (n: string) => `did ${n}`,
+  REPORT_SOURCE_NAMES: ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary"],
 }));
 vi.mock("../../src/services/assistantMemoryService.js", async () => {
   const real = await vi.importActual<typeof import("../../src/services/assistantMemoryService.js")>("../../src/services/assistantMemoryService.js");
@@ -450,6 +451,9 @@ describe("report intent", () => {
     expect(asksForReport("export every firewall to csv")).toBe(true);
     expect(asksForReport("how do I export a report?")).toBe(false);
     expect(asksForReport("what's down right now?")).toBe(false);
+    // A mistyped "report" after a making-verb (seen live 2026-10-26), but not a past-tense status.
+    expect(asksForReport("create a reported of the highest average memory utilizations of the 61f fortigate firewalls")).toBe(true);
+    expect(asksForReport("which devices reported errors today")).toBe(false);
   });
 
   it("titles a report from the question", () => {

@@ -62,6 +62,17 @@ with spreadsheet formulas neutralized —, PDF or Markdown) is therefore a datab
 a title the model chose, and the stored copy is a snapshot, so reopening a conversation
 downloads the figures the user saw at the time.
 
+2026-10-26. The owner asked for "a report of the highest average memory utilizations of the 61F
+fortigate firewalls" and the assistant said, correctly, that it could not: no tool carried a CPU
+or memory figure, so the only way to answer would have been a model averaging numbers it did
+not have. `telemetry_summary` closes the gap the same way `create_report` closed the first one.
+The averages and peaks are computed in SQL over the matched devices, on the tier the device's
+CPU / memory chart reads for the same window (raw samples while they are kept, else the hourly
+or daily rollups weighted by sample count), so the assistant and the chart cannot disagree. A
+small model never sees a series it would have to summarize. Raw samples, MAC / ARP tables and
+wireless stations were deliberately left for later: they need a lookup shape (find one MAC),
+not a dump, and they name end-user devices, which matters on a hosted provider.
+
 ### (d) Conversations belong to one person
 
 A conversation contains whatever its owner could see, so it is that owner's data: every query

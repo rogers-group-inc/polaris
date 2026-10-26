@@ -47,6 +47,7 @@ import {
   assistantToolDefs,
   runAssistantTool,
   toolLabel,
+  REPORT_SOURCE_NAMES,
   type AssistantReportPayload,
 } from "./assistantToolService.js";
 import {
@@ -277,6 +278,9 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
       "right source and filters. The user sees the finished table with download buttons; you do not see its rows, " +
       "so never type a table or rows for it — reply with one sentence naming what it holds.",
+    "- CPU and memory figures (highest, lowest, average, peak, over a period) come from telemetry_summary, which " +
+      "takes the same device filters as list_assets; a report of them is create_report with source " +
+      "telemetry_summary. Never estimate a percentage yourself.",
     (opts.memory
       ? "- Apart from your memory of the user, you can only look things up. "
       : "- You can only look things up. ") +
@@ -350,7 +354,7 @@ export function sanitizeAnswerLinks(text: string, wikiPages: ReadonlySet<string>
 }
 
 /** The list tools a report can be built from (create_report's `source`). */
-const REPORT_SOURCES: ReadonlySet<string> = new Set(["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations"]);
+const REPORT_SOURCES: ReadonlySet<string> = new Set(REPORT_SOURCE_NAMES);
 
 /**
  * Does this message plainly ask for a downloadable report? Deliberately
@@ -361,7 +365,10 @@ export function asksForReport(text: string): boolean {
   const t = text.trim();
   // "How do I export…", "where is the report…" are help questions, not requests.
   if (/^(how|where|why|when|what is|what's|what are|can i|could i|is there|does|do you)\b/i.test(t)) return false;
-  return /\b(report|reports|export|download|downloadable|spreadsheet|csv|pdf|excel|xlsx)\b/i.test(t);
+  if (/\b(report|reports|export|download|downloadable|spreadsheet|csv|pdf|excel|xlsx)\b/i.test(t)) return true;
+  // A making-verb before a mistyped "report" ("create a reported of…", seen
+  // live 2026-10-26) — the verb keeps "which devices reported errors" out.
+  return /\b(create|make|build|generate|run|pull|produce|give me)\b.{0,20}\breport\w*/i.test(t);
 }
 
 /** A report title from the question that asked for it. Exported for tests. */

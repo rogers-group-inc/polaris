@@ -33,6 +33,7 @@ import { REGION_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { queryEventsPage } from "./eventLogService.js";
 import { getRetentionSettings } from "./eventArchiveService.js";
 import { searchHelp } from "./helpIndexService.js";
+import { pickSampleTierForAsset, type SampleTier } from "./sampleQueryRouter.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
 import type { ChatToolDef } from "./llmService.js";
 
@@ -77,7 +78,14 @@ interface ToolDef {
 /** A list tool also exposes its rows + column set to create_report. */
 interface ListToolDef extends ToolDef {
   columns: ReportColumn[];
-  rows(args: unknown, ctx: ToolContext, cap: number): Promise<{ rows: Array<Record<string, unknown>>; total: number } | ToolResult>;
+  rows(args: unknown, ctx: ToolContext, cap: number): Promise<ListRows | ToolResult>;
+}
+
+interface ListRows {
+  rows: Array<Record<string, unknown>>;
+  total: number;
+  /** Facts about the whole result the model should hear (not report columns). */
+  extra?: Record<string, unknown>;
 }
 
 const denied = (what: string): ToolResult => ({
@@ -249,7 +257,8 @@ function oneOrMany<T extends z.ZodTypeAny>(item: T) {
   }, z.array(item).max(20).optional());
 }
 
-const AssetArgs = z.object({
+/** The asset filters list_assets and telemetry_summary share. */
+const ASSET_FILTER_ARGS = {
   search: z.string().max(200).optional(),
   assetType: oneOrMany(z.string().max(60)),
   status: oneOrMany(z.enum(ASSET_STATUSES)),
@@ -265,6 +274,11 @@ const AssetArgs = z.object({
   network: z.string().max(60).optional(),
   subnet: z.string().max(60).optional(), // older spelling of `network`, still accepted
   notSeenForHours: z.number().positive().max(24 * 3650).optional(),
+};
+const AssetFilterArgs = z.object(ASSET_FILTER_ARGS);
+
+const AssetArgs = z.object({
+  ...ASSET_FILTER_ARGS,
   sortBy: z.enum(["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress"]).optional(),
   limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
 });
@@ -296,6 +310,87 @@ export async function regionTagVariants(names: string[]): Promise<string[]> {
   return Array.from(new Set([...wanted, ...registered.map((t) => t.name)]));
 }
 
+const ASSET_FILTER_PROPS = {
+  search: { type: "string", description: "Matches hostname, DNS name, IP, MAC, asset tag or assigned-to" },
+  assetType: { type: "array", items: { type: "string" }, description: "One or more types, e.g. [\"switch\", \"firewall\"] for switches AND firewalls" },
+  status: { type: "array", items: { type: "string", enum: [...ASSET_STATUSES] } },
+  monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
+  monitored: { type: "boolean" },
+  tag: { type: "string", description: "Exact tag, e.g. a site tag" },
+  region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Middle Tennessee\"] — assets in ANY of them. Any case, with or without \"region:\". Use this, not location or search, for a region" },
+  myRegions: { type: "boolean", description: "Only assets in the regions assigned to the person asking — use for \"my region\" / \"my sites\"" },
+  location: { type: "string", description: "Location contains this text" },
+  manufacturer: { type: "string" },
+  model: { type: "string", description: "Model contains this text, e.g. \"61F\" for every FortiGate-61F" },
+  os: { type: "string" },
+  network: { type: "string", description: "A network CIDR, e.g. 10.20.0.0/16" },
+  notSeenForHours: { type: "number", description: "Only assets not seen on the network for at least this many hours" },
+} as const;
+
+/**
+ * The Prisma `where` for the shared asset filters, plus the CIDR to match in
+ * memory (containment is not a Prisma predicate). A ToolResult when the
+ * filters cannot be applied (no region assigned, a bad CIDR).
+ */
+async function assetFilterWhere(
+  a: z.infer<typeof AssetFilterArgs>,
+  req: Request,
+): Promise<{ where: Record<string, unknown>; subnet?: string } | ToolResult> {
+  const and: Record<string, unknown>[] = [];
+  if (a.search) {
+    and.push({
+      OR: ["hostname", "dnsName", "ipAddress", "macAddress", "assetTag", "assignedTo"].map((f) => ({
+        [f]: { contains: a.search, mode: "insensitive" },
+      })),
+    });
+  }
+  if (a.assetType) and.push({ assetType: { in: a.assetType } });
+  // Decommissioned assets are history, not inventory: left out unless the
+  // status filter asks for them (owner's call, 2026-10-09).
+  if (a.status) and.push({ status: { in: a.status } });
+  else and.push({ status: { not: "decommissioned" } });
+  if (a.monitorStatus) and.push({ monitorStatus: { in: a.monitorStatus }, monitored: true });
+  if (typeof a.monitored === "boolean") and.push({ monitored: a.monitored });
+  if (a.tag) and.push({ tags: { has: a.tag } });
+  // Regions ride assets as `region:<name>` tags — the same tags alert
+  // scoping snapshots (notificationEngine regionSnapshot), matched the same
+  // exact way. "My regions" are the person's ASSIGNED regions, admins
+  // included (an admin sees everything, but still has regions of their own).
+  let regionNames = a.region ?? [];
+  if (a.myRegions) {
+    const mine = req.session?.userId ? (await getEffectiveTagScopes(req.session.userId)).regions : [];
+    if (!mine.length) {
+      return { ok: false, data: { error: "No region is assigned to this person, so there is no \"my region\" to narrow to — ask which region they mean." } };
+    }
+    regionNames = [...regionNames, ...mine];
+  }
+  if (regionNames.length) and.push({ tags: { hasSome: await regionTagVariants(regionNames) } });
+  if (a.location) {
+    and.push({ OR: [
+      { location: { contains: a.location, mode: "insensitive" } },
+      { learnedLocation: { contains: a.location, mode: "insensitive" } },
+    ] });
+  }
+  if (a.manufacturer) and.push({ manufacturer: { contains: a.manufacturer, mode: "insensitive" } });
+  if (a.model) and.push({ model: { contains: a.model, mode: "insensitive" } });
+  if (a.os) and.push({ OR: [{ os: { contains: a.os, mode: "insensitive" } }, { osVersion: { contains: a.os, mode: "insensitive" } }] });
+  if (a.notSeenForHours) and.push({ lastSeen: { lt: new Date(Date.now() - a.notSeenForHours * 3_600_000) } });
+  let subnet: string | undefined;
+  const cidrArg = a.network ?? a.subnet;
+  if (cidrArg) {
+    if (!isValidCidr(cidrArg)) return { ok: false, data: { error: `"${cidrArg}" is not a valid CIDR` } };
+    subnet = cidrArg;
+    and.push({ ipAddress: { not: null } });
+  }
+  return { where: and.length ? { AND: and } : {}, subnet };
+}
+
+/** Keep the rows whose IP is inside `subnet` (utils/cidr — the only place IP math may live). */
+function inSubnet<T extends { ipAddress: string | null }>(rows: T[], subnet: string | undefined): T[] {
+  if (!subnet) return rows;
+  return rows.filter((r) => r.ipAddress && isValidIpAddress(r.ipAddress) && ipInCidr(r.ipAddress, subnet));
+}
+
 const listAssetsTool: ListToolDef = {
   name: "list_assets",
   label: "looked up assets",
@@ -303,24 +398,12 @@ const listAssetsTool: ListToolDef = {
     "List assets (devices) with filters. monitorStatus 'down' finds devices that are currently down. " +
     "assetType values include firewall, switch, access_point, server, workstation, printer, other. " +
     "network filters to assets whose IP is inside a network CIDR. Decommissioned assets are left out unless " +
-    "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets.",
+    "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets. " +
+    "Carries no CPU or memory figures — use telemetry_summary for those.",
   parameters: {
     type: "object",
     properties: {
-      search: { type: "string", description: "Matches hostname, DNS name, IP, MAC, asset tag or assigned-to" },
-      assetType: { type: "array", items: { type: "string" }, description: "One or more types, e.g. [\"switch\", \"firewall\"] for switches AND firewalls" },
-      status: { type: "array", items: { type: "string", enum: [...ASSET_STATUSES] } },
-      monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
-      monitored: { type: "boolean" },
-      tag: { type: "string", description: "Exact tag, e.g. a site tag" },
-      region: { type: "array", items: { type: "string" }, description: "Region names, e.g. [\"Middle Tennessee\"] — assets in ANY of them. Any case, with or without \"region:\". Use this, not location or search, for a region" },
-      myRegions: { type: "boolean", description: "Only assets in the regions assigned to the person asking — use for \"my region\" / \"my sites\"" },
-      location: { type: "string", description: "Location contains this text" },
-      manufacturer: { type: "string" },
-      model: { type: "string" },
-      os: { type: "string" },
-      network: { type: "string", description: "A network CIDR, e.g. 10.20.0.0/16" },
-      notSeenForHours: { type: "number", description: "Only assets not seen on the network for at least this many hours" },
+      ...ASSET_FILTER_PROPS,
       sortBy: { type: "string", enum: ["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress"] },
       limit: { type: "number" },
     },
@@ -337,60 +420,15 @@ const listAssetsTool: ListToolDef = {
     const p = AssetArgs.safeParse(args ?? {});
     if (!p.success) return invalid(p.error);
     const a = p.data;
-    const and: Record<string, unknown>[] = [];
-    if (a.search) {
-      and.push({
-        OR: ["hostname", "dnsName", "ipAddress", "macAddress", "assetTag", "assignedTo"].map((f) => ({
-          [f]: { contains: a.search, mode: "insensitive" },
-        })),
-      });
-    }
-    if (a.assetType) and.push({ assetType: { in: a.assetType } });
-    // Decommissioned assets are history, not inventory: left out unless the
-    // status filter asks for them (owner's call, 2026-10-09).
-    if (a.status) and.push({ status: { in: a.status } });
-    else and.push({ status: { not: "decommissioned" } });
-    if (a.monitorStatus) and.push({ monitorStatus: { in: a.monitorStatus }, monitored: true });
-    if (typeof a.monitored === "boolean") and.push({ monitored: a.monitored });
-    if (a.tag) and.push({ tags: { has: a.tag } });
-    // Regions ride assets as `region:<name>` tags — the same tags alert
-    // scoping snapshots (notificationEngine regionSnapshot), matched the same
-    // exact way. "My regions" are the person's ASSIGNED regions, admins
-    // included (an admin sees everything, but still has regions of their own).
-    let regionNames = a.region ?? [];
-    if (a.myRegions) {
-      const mine = ctx.req.session?.userId ? (await getEffectiveTagScopes(ctx.req.session.userId)).regions : [];
-      if (!mine.length) {
-        return { ok: false, data: { error: "No region is assigned to this person, so there is no \"my region\" to narrow to — ask which region they mean." } };
-      }
-      regionNames = [...regionNames, ...mine];
-    }
-    if (regionNames.length) and.push({ tags: { hasSome: await regionTagVariants(regionNames) } });
-    if (a.location) {
-      and.push({ OR: [
-        { location: { contains: a.location, mode: "insensitive" } },
-        { learnedLocation: { contains: a.location, mode: "insensitive" } },
-      ] });
-    }
-    if (a.manufacturer) and.push({ manufacturer: { contains: a.manufacturer, mode: "insensitive" } });
-    if (a.model) and.push({ model: { contains: a.model, mode: "insensitive" } });
-    if (a.os) and.push({ OR: [{ os: { contains: a.os, mode: "insensitive" } }, { osVersion: { contains: a.os, mode: "insensitive" } }] });
-    if (a.notSeenForHours) and.push({ lastSeen: { lt: new Date(Date.now() - a.notSeenForHours * 3_600_000) } });
-    let subnet: string | undefined;
-    const cidrArg = a.network ?? a.subnet;
-    if (cidrArg) {
-      if (!isValidCidr(cidrArg)) return { ok: false, data: { error: `"${cidrArg}" is not a valid CIDR` } };
-      subnet = cidrArg;
-      and.push({ ipAddress: { not: null } });
-    }
-    const where = and.length ? { AND: and } : {};
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const { where, subnet } = filter;
     const orderBy = a.sortBy ? { [a.sortBy]: a.sortBy === "hostname" || a.sortBy === "ipAddress" ? "asc" : "desc" } : { hostname: "asc" };
     const take = Math.min(a.limit ?? cap, cap);
     if (subnet) {
       // CIDR containment is not a Prisma predicate: narrow in SQL first, then
-      // match in memory via utils/cidr (the only place IP math may live).
-      const candidates = await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT });
-      const hits = candidates.filter((r) => r.ipAddress && isValidIpAddress(r.ipAddress) && ipInCidr(r.ipAddress, subnet!));
+      // match in memory.
+      const hits = inSubnet(await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT }), subnet);
       return { rows: hits.slice(0, take).map(plain), total: hits.length };
     }
     const [rows, total] = await Promise.all([
@@ -401,6 +439,157 @@ const listAssetsTool: ListToolDef = {
   },
   async run(args, ctx) {
     return listResult(await this.rows(args, ctx, ctx.maxRows));
+  },
+};
+
+// ─── telemetry_summary ───────────────────────────────────────────────────────
+//
+// CPU and memory over a window, one row per asset, aggregated in the database
+// (rule 95(c): the model never averages a series itself, and a fleet's raw
+// samples would never fit a small model's context anyway). The tier is the one
+// the asset's CPU / memory chart would read for the same window
+// (pickSampleTierForAsset "cpuMem"), so the figures agree with the charts:
+// raw samples while detail retention covers the window, else the hourly or
+// daily rollups with each bucket's average weighted by its sample count.
+// Memory is memPct where the source reports a percentage (FortiOS), else
+// used / total bytes — the same preference as the charts and the NOC widget.
+//
+// Scale: one asset findMany (tight select) + ONE grouped aggregate over
+// `assetId = ANY(ids)` inside the window — flat from 100 to 2000 assets.
+
+const TELEMETRY_DEFAULT_HOURS = 24;
+
+const TelemetryArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  ...WindowArgs,
+  metric: z.enum(["memory", "cpu"]).optional(),
+  sortBy: z.enum(["avg", "max"]).optional(),
+  order: z.enum(["highest", "lowest"]).optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+interface TelemetryAgg {
+  assetId: string;
+  samples: number;
+  avgCpu: number | null;
+  maxCpu: number | null;
+  avgMem: number | null;
+  maxMem: number | null;
+}
+
+const MEM_PCT_DETAIL = `COALESCE("memPct", "memUsedBytes"::float / NULLIF("memTotalBytes", 0) * 100)`;
+
+/** Per-asset CPU / memory aggregates for `ids` over [from, to). Exported for tests. */
+export async function telemetryAggregates(ids: string[], from: Date, to: Date, tier: SampleTier): Promise<TelemetryAgg[]> {
+  if (!ids.length) return [];
+  if (tier === "detail") {
+    return prisma.$queryRawUnsafe<TelemetryAgg[]>(
+      `SELECT "assetId", count(*)::int AS samples,
+              avg("cpuPct")::float AS "avgCpu", max("cpuPct")::float AS "maxCpu",
+              avg(${MEM_PCT_DETAIL})::float AS "avgMem", max(${MEM_PCT_DETAIL})::float AS "maxMem"
+         FROM "asset_telemetry_samples"
+        WHERE "assetId" = ANY($1::text[]) AND "timestamp" >= $2 AND "timestamp" < $3
+        GROUP BY "assetId"`,
+      ids, from, to,
+    );
+  }
+  const table = tier === "hourly" ? "asset_telemetry_samples_hourly" : "asset_telemetry_samples_daily";
+  // A bucket's average counts as many times as it has samples; a bucket that
+  // did not carry the metric adds nothing to either side of the division.
+  return prisma.$queryRawUnsafe<TelemetryAgg[]>(
+    `WITH b AS (
+       SELECT "assetId", "sampleCount" AS n, "avgCpuPct" AS ac, "maxCpuPct" AS xc,
+              COALESCE("avgMemPct", "avgMemUsedBytes"::float / NULLIF("lastMemTotalBytes", 0) * 100) AS am,
+              COALESCE("maxMemPct", "maxMemUsedBytes"::float / NULLIF("lastMemTotalBytes", 0) * 100) AS xm
+         FROM "${table}"
+        WHERE "assetId" = ANY($1::text[]) AND "bucketStart" >= $2 AND "bucketStart" < $3
+     )
+     SELECT "assetId", sum(n)::int AS samples,
+            (sum(ac * n) / NULLIF(sum(CASE WHEN ac IS NOT NULL THEN n END), 0))::float AS "avgCpu",
+            max(xc)::float AS "maxCpu",
+            (sum(am * n) / NULLIF(sum(CASE WHEN am IS NOT NULL THEN n END), 0))::float AS "avgMem",
+            max(xm)::float AS "maxMem"
+       FROM b GROUP BY "assetId"`,
+    ids, from, to,
+  );
+}
+
+const round1 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 10) / 10);
+
+const telemetrySummaryTool: ListToolDef = {
+  name: "telemetry_summary",
+  label: "checked CPU and memory",
+  description:
+    "CPU and memory utilization (percent) per device over a time window: average and peak, computed by Polaris " +
+    "from the stored samples. Use for \"highest / lowest / busiest / average CPU or memory\", \"which firewalls run " +
+    "hot\", or a device's CPU / memory over a period. Takes the same device filters as list_assets (model \"61F\", " +
+    `manufacturer, assetType, region…). metric picks what to rank by (memory or cpu); window defaults to the last ` +
+    `${TELEMETRY_DEFAULT_HOURS} hours. Devices that report no CPU / memory in the window are counted in noData, ` +
+    "not listed. For a downloadable table use create_report with source telemetry_summary.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...ASSET_FILTER_PROPS,
+      ...windowSchemaProps,
+      metric: { type: "string", enum: ["memory", "cpu"], description: "What to rank by. Default memory" },
+      sortBy: { type: "string", enum: ["avg", "max"], description: "Rank by the window's average (default) or its peak" },
+      order: { type: "string", enum: ["highest", "lowest"], description: "Default highest" },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "hostname", label: "Hostname" }, { key: "ipAddress", label: "IP" }, { key: "model", label: "Model" },
+    { key: "location", label: "Location" }, { key: "avgMemPct", label: "Avg memory %" }, { key: "maxMemPct", label: "Peak memory %" },
+    { key: "avgCpuPct", label: "Avg CPU %" }, { key: "maxCpuPct", label: "Peak CPU %" }, { key: "samples", label: "Samples" },
+    { key: "window", label: "Window" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = TelemetryArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const win = timeWindow(a);
+    const to = win.to ?? new Date();
+    const from = win.from ?? new Date(to.getTime() - TELEMETRY_DEFAULT_HOURS * 3_600_000);
+    if (!(from < to)) return { ok: false, data: { error: "The window's start must be before its end" } };
+
+    const assets = inSubnet(await prisma.asset.findMany({
+      where: filter.where,
+      select: { id: true, hostname: true, ipAddress: true, model: true, location: true },
+    }), filter.subnet);
+    const { tier } = await pickSampleTierForAsset("", "cpuMem", from);
+    const aggs = await telemetryAggregates(assets.map((x) => x.id), from, to, tier);
+
+    const metric = a.metric ?? "memory";
+    const key = (a.sortBy ?? "avg") === "avg" ? (metric === "memory" ? "avgMem" : "avgCpu") : (metric === "memory" ? "maxMem" : "maxCpu");
+    const dir = a.order === "lowest" ? 1 : -1;
+    const byId = new Map(assets.map((x) => [x.id, x]));
+    const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
+    const ranked = aggs
+      .filter((g) => g[key] != null && byId.has(g.assetId))
+      .sort((x, y) => dir * ((x[key] as number) - (y[key] as number)))
+      .map((g) => {
+        const asset = byId.get(g.assetId)!;
+        return {
+          id: asset.id, hostname: asset.hostname, ipAddress: asset.ipAddress, model: asset.model, location: asset.location,
+          avgMemPct: round1(g.avgMem), maxMemPct: round1(g.maxMem), avgCpuPct: round1(g.avgCpu), maxCpuPct: round1(g.maxCpu),
+          samples: g.samples, window,
+        };
+      });
+    const take = Math.min(a.limit ?? cap, cap);
+    return {
+      rows: ranked.slice(0, take),
+      total: ranked.length,
+      extra: { window, matchedDevices: assets.length, noData: assets.length - ranked.length, rankedBy: `${a.sortBy ?? "avg"} ${metric}` },
+    };
+  },
+  async run(args, ctx) {
+    // The window rides once in `extra`, not on every row the model reads.
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    return listResult({ ...res, rows: res.rows.map(({ window: _w, ...r }) => r) });
   },
 };
 
@@ -830,12 +1019,15 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
+
+/** The list tools a report can be built from (create_report's `source`). */
+export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
-  source: z.enum(["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations"]),
+  source: z.enum(REPORT_SOURCE_NAMES),
   args: z.record(z.unknown()).optional(),
   columns: z.array(z.string().max(60)).max(30).optional(),
 });
@@ -855,7 +1047,8 @@ const createReportTool: ToolDef = {
       args: { type: "object", description: "The same filter arguments the source tool accepts" },
       columns: {
         type: "array", items: { type: "string" },
-        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt",
+        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt. " +
+          "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window",
       },
     },
     required: ["title", "source"],
@@ -900,11 +1093,12 @@ const createReportTool: ToolDef = {
   },
 };
 
-function listResult(res: { rows: Array<Record<string, unknown>>; total: number } | ToolResult): ToolResult {
+function listResult(res: ListRows | ToolResult): ToolResult {
   if ("ok" in res) return res;
   return {
     ok: true,
     data: {
+      ...res.extra,
       total: res.total,
       returned: res.rows.length,
       truncated: res.total > res.rows.length,
@@ -1219,7 +1413,7 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, getAssetTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];

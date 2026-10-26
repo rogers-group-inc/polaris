@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "profile" | "correlate" | "changed" | "health" | "capacity" | "address";
+  id: "profile" | "telemetry" | "correlate" | "changed" | "health" | "capacity" | "address";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -53,6 +53,28 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
       "5. Answer: what is wrong or what to set, row by row, naming each symbol and the module it is in. Suggest ONLY " +
         "symbols search_mib_symbols returned — never one from memory. Say a MIB to upload by its module name. You " +
         "cannot change the profile; say where in Polaris they make the change. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // Before correlate and capacity: "highest memory utilization of the 61F
+    // firewalls" matched capacity's "utilization" and was steered to networks
+    // (seen live 2026-10-26), and "why is fw1's CPU high" is a figures question
+    // before it is an outage one.
+    id: "telemetry",
+    label: "CPU / memory",
+    // "your memory" / "my memory" is the assistant's memory of the person (rule 95(i)).
+    match: /^(?!.*\b(your|my) memory\b).*\b(cpu|processor|memory|ram|mem)\b/is,
+    firstRoundTools: ["telemetry_summary", "search", "get_asset"],
+    guidance: [
+      "Playbook — CPU / memory. Follow these steps in order:",
+      "1. telemetry_summary with the devices the person named as filters — model (e.g. \"61F\"), manufacturer, " +
+        "assetType, region, or search for one hostname — metric \"memory\" or \"cpu\", sortBy \"max\" when they ask " +
+        "about peaks or spikes, order \"lowest\" for the least loaded, and hours or since/until for the period " +
+        "(the last 24 hours if they gave none).",
+      "2. If one device is in question and it looks high, get_asset for its state, alerts and upstream device.",
+      "3. Answer with the ranking from the lookup, the window it covers, and how many matching devices had no " +
+        "CPU / memory data (noData). Every figure comes from the lookup — never estimate one. More than about 15 " +
+        "rows → offer a report. " + SEPARATE,
     ].join("\n"),
   },
   {
