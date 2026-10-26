@@ -17,9 +17,9 @@
  * natural width by hand (translate, mask and visibility do not change a
  * width). The tabs are 60 / 140 / 80 / 100 / 50 px — a 430px row, starts
  * 0 / 60 / 200 / 280 / 380. The strip is 250px with a 30px + button, so the
- * room is 220px and the row slides at most 210px. Resting places leave the
- * 28px fade to the tab before (a step lands a tab start 28px in), so steps
- * land on 32 / 172 / 210. No CSS is loaded, so padding and gaps are 0. No
+ * room is 220px and the row slides at most 210px. A step lands a tab's start
+ * ON the area's left edge (the left fade lies OUTSIDE the area, in the 28px
+ * before it), so steps land on 60 / 200 / 210. No CSS is loaded, so padding and gaps are 0. No
  * requestAnimationFrame in Node, so every step lands at once.
  */
 
@@ -160,17 +160,17 @@ describe("tab strip window", () => {
     const b = await boot(5);
     b.step(1);
     await b.settle();
-    expect(b.pos()).toBe(32);                // tab 1's start 28px in, past the fade
-    expect(b.shift(1)).toBe(-32);
-    expect(b.shown()).toEqual([true, true, true, false, false]);
-    expect(b.fades()).toEqual({ l: true, r: true });    // tab 0's tail fades into the left edge
+    expect(b.pos()).toBe(60);                // tab 1's start on the area's left edge
+    expect(b.shift(1)).toBe(-60);
+    expect(b.shown()).toEqual([true, true, true, false, false]);   // tab 0 fading out past the edge
+    expect(b.fades()).toEqual({ l: true, r: true });
     b.step(1);
     await b.settle();
-    expect(b.pos()).toBe(172);               // tab 2's start, 28px in
+    expect(b.pos()).toBe(200);               // tab 2's start
     b.step(1);
     await b.settle();
     expect(b.pos()).toBe(210);               // the end: the last tab flush right
-    expect(b.shown()).toEqual([false, false, true, true, true]);
+    expect(b.shown()).toEqual([false, true, true, true, true]);   // tab 1's last 10px still fading out left
     expect(b.fades()).toEqual({ l: true, r: false });   // nothing past the right edge
     b.step(1);
     await b.settle();
@@ -183,10 +183,10 @@ describe("tab strip window", () => {
     await b.settle();
     b.step(-1);
     await b.settle();
-    expect(b.pos()).toBe(172);
+    expect(b.pos()).toBe(200);
     b.step(-1);
     await b.settle();
-    expect(b.pos()).toBe(32);
+    expect(b.pos()).toBe(60);
     b.step(-1);
     await b.settle();
     expect(b.pos()).toBe(0);
@@ -224,7 +224,7 @@ describe("tab strip window", () => {
     await b.settle();
     b.tabs()[2].classList.add("hover-ish");
     await b.settle();
-    expect(b.pos()).toBe(172);
+    expect(b.pos()).toBe(200);
   });
 
   it("keeps a HELD tab (one being dragged) in view on every pass", async () => {
@@ -266,7 +266,7 @@ describe("fast wheeling (glides cut short)", () => {
     b.step(1); b.step(1); b.step(1);       // each cuts the last short; the third heads for the end
     b.step(1);                             // a notch AT the end: nothing further to glide to
     expect(b.pos()).toBe(210);
-    expect(b.shown()).toEqual([false, false, true, true, true]);
+    expect(b.shown()).toEqual([false, true, true, true, true]);
     expect(b.fades()).toEqual({ l: true, r: false });
     expect(b.shift(4)).toBe(-210);         // drawn at the end, not frozen part-way
   });
@@ -328,13 +328,13 @@ describe("tab strip wheel", () => {
     wheel(b, { deltaX: 20 });
     expect(b.pos()).toBe(0);
     wheel(b, { deltaX: 20 });
-    expect(b.pos()).toBe(32);
+    expect(b.pos()).toBe(60);
   });
 
   it("treats a line-mode event (Firefox) as one notch", async () => {
     const b = await boot(5);
     wheel(b, { deltaY: 3, deltaMode: 1 });
-    expect(b.pos()).toBe(32);
+    expect(b.pos()).toBe(60);
   });
 
   it("does nothing while the tabs fit", async () => {

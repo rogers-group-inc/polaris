@@ -178,12 +178,14 @@ function _writeFadeCast(body, area) {
     body.appendChild(band);
   }
   var er = body.getBoundingClientRect();
-  var W = area.right - area.left, F = STRIP_FADE_PX;
+  // The band starts F px before the area: the left fade lies outside it
+  // (_maskArea), and the cast fades in across that same span.
+  var F = STRIP_FADE_PX, W = area.right - area.left + F;
   var stops = (area.fadeL ? ["#000 0px", "transparent " + F + "px"] : ["transparent 0px"])
     .concat(area.fadeR ? ["transparent " + (W - F).toFixed(1) + "px", "#000 " + W.toFixed(1) + "px"] : ["transparent 100%"]);
   var mask = "linear-gradient(to right, " + stops.join(", ") + ")";
   if (band.hidden) band.hidden = false;
-  _setStyle(band, "left", (area.left - er.left).toFixed(1) + "px");
+  _setStyle(band, "left", (area.left - F - er.left).toFixed(1) + "px");
   _setStyle(band, "width", W.toFixed(1) + "px");
   _setStyle(band, "maskImage", mask);
   _setStyle(band, "webkitMaskImage", mask);
@@ -290,8 +292,13 @@ function _maskArea(box, on, fadeL, fadeR, R) {
   _setStyle(box, "margin", on ? neg : "");
   var mask = "";
   if (on && (fadeL || fadeR)) {
+    // The LEFT fade lies OUTSIDE the area, in the F px before its edge (the
+    // mask padding E holds it: E >= F), so a tab parked at the edge is whole
+    // and the one leaving fades out past it (operator request 2026-10-26: one
+    // notch faded the tab space itself). The right fade stays inside: the
+    // row's controls sit right after the area.
     var stops = fadeL
-      ? ["transparent 0px", "transparent " + E + "px", "#000 " + (E + F) + "px"]
+      ? ["transparent 0px", "transparent " + (E - F) + "px", "#000 " + E + "px"]
       : ["#000 0px"];
     stops = stops.concat(fadeR
       ? ["#000 " + (E + R - F).toFixed(1) + "px", "transparent " + (E + R).toFixed(1) + "px", "transparent 100%"]
@@ -323,7 +330,7 @@ function _layoutStrip(strip) {
     // A tab being dragged carries its own translate (_wireTabDrag).
     if (!el.classList.contains("is-dragging")) _setStyle(el, "translate", (-st.pos).toFixed(1) + "px 0");
     var left = it.s - st.pos, right = left + it.w;
-    _setStyle(el, "visibility", right <= 0.5 || left >= R - 0.5 ? "hidden" : "");
+    _setStyle(el, "visibility", right <= -STRIP_FADE_PX + 0.5 || left >= R - 0.5 ? "hidden" : "");
   });
 }
 
@@ -334,7 +341,7 @@ function _bringIntoView(st, i) {
   var it = st.items[i];
   if (!it) return;
   var F = STRIP_FADE_PX;
-  if (it.s < st.pos + F) st.pos = it.s - F;
+  if (it.s < st.pos) st.pos = it.s;
   else if (it.s + it.w > st.pos + st.room - F) st.pos = it.s + it.w - st.room + F;
   _clampPos(st);
 }
@@ -510,25 +517,24 @@ window.PolarisFolderTabs = {
 };
 
 // One step: the row slides by one tab, whatever its length. Resting places
-// line a tab's start up just inside the left fade (STRIP_FADE_PX in), so the
-// tab before it shows as a tail fading into the edge and the first whole tab
-// is fully opaque; clamped to [0, max]. › moves to the next tab start, ‹ to
+// put a tab's start ON the area's left edge — where the first tab sits —
+// and the tab before it fades out in the F px past that edge; clamped to
+// [0, max]. › moves to the next tab start, ‹ to
 // the previous one. Eased over STRIP_GLIDE_MS; a step that lands mid-glide
 // starts from where the glide was headed.
 function _stepTarget(st, dir) {
-  var F = STRIP_FADE_PX;
   var cur = 0;
-  st.items.forEach(function (it, k) { if (it.s <= st.pos + F + 0.5) cur = k; });
+  st.items.forEach(function (it, k) { if (it.s <= st.pos + 0.5) cur = k; });
   if (dir > 0) {
     if (st.pos >= st.max - 0.5) return st.pos;
     var n = st.items[cur + 1];
-    return n ? Math.min(st.max, Math.max(0, n.s - F)) : st.max;
+    return n ? Math.min(st.max, n.s) : st.max;
   }
   if (st.pos <= 0.5) return 0;
   var c = st.items[cur];
-  if (c && st.pos + F > c.s + 0.5) return Math.max(0, c.s - F);
+  if (c && st.pos > c.s + 0.5) return c.s;
   var p = st.items[cur - 1];
-  return p ? Math.max(0, p.s - F) : 0;
+  return p ? p.s : 0;
 }
 
 function _stepStrip(strip, dir, done) {
