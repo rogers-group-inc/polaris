@@ -550,10 +550,12 @@
 .topology-layout {
   --topology-info-w: 320px;
   /* One cast for every button on the graph — the edge chevron, the corner
-     tools, Edit, the location chips and the collapsed legend: the Device
-     Map's tight --map-btn-shadow, so they sit close to the canvas instead of
-     floating in the page-level --shadow-lift halo. One value for every theme. */
-  --topology-btn-shadow: 0 1px 2px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.25);
+     tools, Edit, the location chips and the collapsed legend: a short, tight
+     drop (2px down, 4px blur) plus a 1px contact edge, so they sit close to
+     the canvas instead of floating in the page-level --shadow-lift halo, yet
+     still read on the light themes, where the Device Map's fainter
+     --map-btn-shadow all but vanished. One value for every theme. */
+  --topology-btn-shadow: 0 2px 4px rgba(0,0,0,.3), 0 1px 1px rgba(0,0,0,.25);
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--topology-info-w);
