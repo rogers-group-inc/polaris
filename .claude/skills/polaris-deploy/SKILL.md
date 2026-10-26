@@ -1,6 +1,6 @@
 ---
 name: polaris-deploy
-description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges THIS worktree's branch to main and pushes — no other worktree is listed or merged — and invoking it is the go-ahead for that merge and push. It ends by publishing docs/wiki/ to the GitHub wiki (npm run wiki:publish -- --apply --push) only when the live wiki differs from origin/main's docs/wiki/ — invoking it is the go-ahead for that publish too. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
+description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges THIS worktree's branch to main and pushes — no other worktree is listed or merged — and invoking it is the go-ahead for that merge and push. It ends by publishing docs/wiki/ to the GitHub wiki (npm run wiki:publish -- --apply --push) only when the live wiki differs from origin/main's docs/wiki/, then re-publishes the Polaris UI / Polaris Mobile design-system artifacts when the push changed the app CSS, design/ or the alert email template — invoking it is the go-ahead for both publishes too. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
 disable-model-invocation: true
 ---
 
@@ -33,8 +33,9 @@ manual restart unless asked.
 ## The release pipeline — what `/polaris-deploy` does, in order
 
 Invoking this skill on a finished worktree is the user's go-ahead for everything below,
-**including the merge, the push and — when the live wiki is out of date — the wiki publish**.
-Do not ask for the docs-sync review, the merge, the push or the wiki publish separately; the
+**including the merge, the push and — when the live wiki or a design system is out of date —
+the wiki and design-system publishes**.
+Do not ask for the docs-sync review, the merge, the push or either publish separately; the
 only things that stop the pipeline are a failing check, a merge conflict, or `main` behind
 `origin/main`.
 
@@ -94,9 +95,18 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
    ask "Publish N wiki pages? (y/n)". The script's header lists what it guards against: `master`
    not `main`, CRLF, mirrored deletes, README skipped, `check:wiki` over the ref. Never hand-copy
    pages instead.
-8. **Report**: the pushed range, the worktree and branch removed, skill entries changed, the
-   wiki publish (its `polaris@<sha>` marker, or pending / current), and anything skipped with
-   the reason.
+8. **Publish the design systems — do not ask.** When the pushed range touched anything in
+   `.design-sync/NOTES.md`'s trigger table (`public/css/styles.css` or `mobile.css`,
+   `design/**`, the alert email template, `.design-sync/**`), run `node .design-sync/build.mjs`
+   from the main checkout and publish the affected system(s) — Polaris UI and/or Polaris
+   Mobile — by NOTES.md's procedure, index last with `"via": "Polaris repo @<sha>"`. The user
+   decided (2026-10-26) that design changes sync to the artifacts automatically, so invoking
+   `/polaris-deploy` approves this publish too. Nothing in the trigger table moved → nothing to
+   publish; say so. A build failure here means the merged UI broke a design page: report it,
+   do not publish a partial system.
+9. **Report**: the pushed range, the worktree and branch removed, skill entries changed, the
+   wiki publish (its `polaris@<sha>` marker, or pending / current), the design-system publish
+   (which system, which version, or nothing to publish), and anything skipped with the reason.
 
 ## The deployment-surface audit (pipeline step 2; also what a bare "push" runs)
 

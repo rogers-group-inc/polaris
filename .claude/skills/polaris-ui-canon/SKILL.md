@@ -7,11 +7,21 @@ description: "Polaris frontend (vanilla JS, no build step, public/): which file 
 
 When there are several ways to build the same thing (chart, modal, slide-over, sortable
 table, wizard, row menu), this skill names the reference implementation new work must
-match. **Read `design/POLARIS-UI-GUIDE.md` first** for the portable contract (tokens,
-themes, shell, tables, modals, badges, z-index, the phone SPA, the alert email) — that
-file is a drop-in snapshot of the external kit and is never edited to chase `public/`.
-Read the canon files here for *which file in THIS repo* to copy. Inside this repo
-`public/` is the living source; `design/js|css|email/` are snapshots.
+match. **Read `design/POLARIS-UI-GUIDE.md` first** for the long-form contract (tokens,
+themes, shell, tables, modals, badges, z-index, the phone SPA, the alert email), then the
+canon files here for *which file in THIS repo* to copy. `public/` is the living source.
+
+**Design systems.** `design/desktop/` and `design/mobile/` are the sources of the two
+design systems published as claude.ai artifacts — Polaris UI (desktop, plus the alert email
+page) and Polaris Mobile (the phone) — built with the app's own `public/css/styles.css` /
+`mobile.css` as their stylesheet and published read-only (`.design-sync/NOTES.md`).
+**Design first:** a NEW chart, slide-over, modal, widget or phone sheet starts as a design
+canvas built on the matching system (`Artifact quickstart`, intent `design`) for the user to
+review and approve before any code is written; build it to match the approved canvas, add
+the pattern as a page under `design/<system>/components/` in the same branch (the build
+fails on a class the app stylesheet does not define), and re-sync. A change to an EXISTING
+pattern skips the canvas unless its look changes. A UI commit that touches
+`public/css/styles.css` or `mobile.css` is a re-sync trigger even with no page changed.
 
 ## Which file
 

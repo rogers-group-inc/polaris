@@ -1,0 +1,161 @@
+<!-- @dsCard group="Overlays" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Modal</title>
+<style>
+  body { padding: 24px; }
+  /* The overlay is fixed and transparent until .open is added. Here each one is
+     pinned open and placed in the page flow so four dialogs can sit side by
+     side; openModal() does the real thing at runtime. */
+  .demo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 18px; }
+  .demo-stage { position: relative; inset: auto; z-index: auto; padding: 24px; border-radius: 12px; min-height: 380px; }
+  .demo-caption { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Modal</h2></div>
+  <p class="hint">
+    Modals are for forms and confirmations. For an entity detail view that should coexist with the page,
+    use a slide-over instead. Four shapes cover every dialog in the app: a form, a tabbed dialog, a
+    wizard, and a confirmation stacked over another dialog.
+  </p>
+
+  <div class="demo-grid">
+    <div>
+      <p class="hint demo-caption">Form: a header with its title and close, a body of form groups, then Cancel and the primary action on the right.</p>
+      <div class="modal-overlay open demo-stage" role="dialog" aria-modal="true" aria-labelledby="m1">
+        <div class="modal">
+          <div class="modal-header">
+            <h3 id="m1">Add Thing</h3>
+            <button class="btn-icon modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>Name</label>
+              <input type="text" placeholder="core-switch-02">
+              <div class="hint">Must be unique across the site.</div>
+            </div>
+            <div class="form-group">
+              <label>Address</label>
+              <input type="text" placeholder="192.0.2.12">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary">Cancel</button>
+            <button class="btn btn-primary">Create</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <p class="hint demo-caption">Tabbed: a <code>.page-tabs</code> strip pinned to the top of the body. Every integration dialog has this shape, with General first and Test Connection at the left of the footer.</p>
+      <div class="modal-overlay open demo-stage" role="dialog" aria-modal="true" aria-labelledby="m2">
+        <div class="modal modal-wide">
+          <div class="modal-header">
+            <h3 id="m2">Edit FortiGate Integration</h3>
+            <button class="btn-icon modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="page-tabs">
+              <button type="button" class="page-tab active">General</button>
+              <button type="button" class="page-tab">Filters</button>
+              <button type="button" class="page-tab">Monitoring</button>
+              <button type="button" class="page-tab">DHCP Push</button>
+              <button type="button" class="page-tab">SD-WAN</button>
+            </div>
+            <div class="page-tab-panel active">
+              <div class="form-group">
+                <label>Host</label>
+                <input type="text" placeholder="fgt.example.net">
+              </div>
+              <div class="form-group">
+                <label>API token</label>
+                <input type="password" placeholder="Stored. Leave blank to keep it.">
+                <div class="hint">A stored secret renders blank on edit and is never sent back.</div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" style="margin-right:auto">Test Connection</button>
+            <button class="btn btn-secondary">Cancel</button>
+            <button class="btn btn-primary">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <p class="hint demo-caption">Wizard: a <code>.stepper</code> above one visible <code>.step-panel</code>. Visited steps stay clickable. Enter and &rarr; mean Next until the last step.</p>
+      <div class="modal-overlay open demo-stage" role="dialog" aria-modal="true" aria-labelledby="m3">
+        <div class="modal modal-wide">
+          <div class="modal-header">
+            <h3 id="m3">New Automation</h3>
+            <button class="btn-icon modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="stepper">
+              <div class="stepper-step done clickable"><span class="stepper-num">1</span><span>Name</span></div>
+              <div class="stepper-line done"></div>
+              <div class="stepper-step done clickable"><span class="stepper-num">2</span><span>Devices</span></div>
+              <div class="stepper-line done"></div>
+              <div class="stepper-step active"><span class="stepper-num">3</span><span>Trigger</span></div>
+              <div class="stepper-line"></div>
+              <div class="stepper-step"><span class="stepper-num">4</span><span>Actions</span></div>
+              <div class="stepper-line"></div>
+              <div class="stepper-step"><span class="stepper-num">5</span><span>Review</span></div>
+            </div>
+            <div class="step-panel visible">
+              <div class="form-group">
+                <label>When</label>
+                <select><option>SD-WAN member state is down</option><option>Packet loss is above</option></select>
+                <div class="hint">Down after 3 missed polls, up after 2 received.</div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" style="margin-right:auto">Back</button>
+            <button class="btn btn-secondary">Cancel</button>
+            <button class="btn btn-primary">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <p class="hint demo-caption">Confirm: a small dialog on its own overlay at z-index 1300, over the dialog that asked. It never reuses the shared modal overlay, which would destroy the form underneath.</p>
+      <div class="modal-overlay open demo-stage" role="alertdialog" aria-modal="true" aria-labelledby="m4">
+        <div class="modal">
+          <div class="modal-header">
+            <h3 id="m4">Delete 3 reservations?</h3>
+            <button class="btn-icon modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p style="margin:0;font-size:0.9rem;color:var(--color-text-secondary)">
+              The addresses go back to the pool and any pushed DHCP reservation is removed from the FortiGate.
+              This cannot be undone.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary">Cancel</button>
+            <button class="btn btn-danger">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <div class="card-title">Rules</div>
+    <ul style="margin:0;padding-left:1.1rem;font-size:0.85rem;color:var(--color-text-secondary);line-height:1.7">
+      <li>Widths: <code>.modal</code> 480 px for a short form, <code>.modal-wide</code> 672 px for tabs and wizards, <code>.modal-large</code> for a form with a table, <code>.modal-xl</code> for a full-bleed editor.</li>
+      <li>Title: "&lt;Action&gt; &lt;Thing&gt;" in title case: Add Thing, Edit FortiGate Integration, New Automation.</li>
+      <li>Footer: the primary action is at the far right, Cancel to its left. A third action sits at the far left (Test Connection, Back). A destructive confirm uses <code>.btn-danger</code> in place of primary.</li>
+      <li>Test Connection names any missing required field in a toast rather than sitting disabled. Saving is never blocked on a passing test.</li>
+      <li>Every dialog gets the panel-lock button beside its &times;, restores focus on close and traps Tab, including a stacked one built on its own overlay.</li>
+    </ul>
+  </div>
+</body>
+</html>

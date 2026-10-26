@@ -1,0 +1,53 @@
+<!-- @dsCard group="Shell" page height=720 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>App shell</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="pv-stage" style="height:680px">
+<div class="app" data-tab="assets">
+  <header class="m3-topbar">
+    <div class="leading"><button class="icon-btn" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg></button></div>
+    <div class="title">Assets</div>
+    <div class="trailing"><button class="icon-btn" aria-label="More"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3z"/></svg></button></div>
+  </header>
+  <div class="app-body">
+    <div class="m3-searchbar"><button class="icon-btn" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10 4a6 6 0 1 1 0 12a6 6 0 1 1 0-12zm0 2a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM15.3 13.9l5 5-1.4 1.4-5-5z"/></svg></button><input class="input" placeholder="Search assets"></div>
+    <div class="section-head">Switches <span class="count">3 devices</span></div>
+    <div class="list-item two-line"><div class="leading tonal"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">core-sw-01</div><div class="supporting"><span class="mono">192.0.2.11</span></div></div><div class="trailing"><span class="dot up"></span></div></div>
+    <div class="list-divider"></div>
+    <div class="list-item two-line"><div class="leading tonal"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">core-sw-02</div><div class="supporting"><span class="mono">192.0.2.12</span></div></div><div class="trailing"><span class="dot warn"></span></div></div>
+    <div class="list-divider"></div>
+    <div class="list-item two-line"><div class="leading tonal"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">dist-sw-07</div><div class="supporting"><span class="mono">198.51.100.7</span></div></div><div class="trailing"><span class="dot down"></span></div></div>
+  </div>
+  <nav class="m3-navbar">
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 4l8 7h-2v8h-5v-5h-2v5H6v-8H4z"/></svg></span><span class="nav-label">Home</span></button>
+    <button class="nav-item active"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></span><span class="nav-label">Assets</span></button>
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 4.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5z"/></svg></span><span class="nav-label">Map</span></button>
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 3a6 6 0 0 0-6 6v5l-2 2v1h16v-1l-2-2V9a6 6 0 0 0-6-6zm-2 16a2 2 0 0 0 4 0z"/></svg></span><span class="nav-label">Alerts</span><span class="nav-badge">3</span></button>
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3z"/></svg></span><span class="nav-label">More</span></button>
+  </nav>
+</div>
+</div>
+</body>
+</html>

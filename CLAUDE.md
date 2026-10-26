@@ -35,9 +35,11 @@ In-place references the skills point at: `.env.example` (runtime variables, with
 `docs/INSTALL.md` (fresh installs + disk sizing), `docs/UPGRADING.md` (every existing-install
 runbook: a runtime major, PostgreSQL 15 → 17, AppStream → PGDG, the legacy single-process
 layout, the nginx cutover), `DEVELOPMENT.md` (local dev stack),
-`design/POLARIS-UI-GUIDE.md` (the portable UI contract — a drop-in zone, never edited here),
-`.design-sync/NOTES.md` (shipping the UI kit to Claude Design — triggers, procedure, auth
-gate; `/design-sync` reads it), `docs/wiki/` (the OPERATOR documentation — source for the
+`design/` (the sources of the two design systems published as claude.ai artifacts — Polaris
+UI for desktop + the alert email, Polaris Mobile for the phone — and the long-form
+`POLARIS-UI-GUIDE.md`), `.design-sync/NOTES.md` (how they are built from `design/` + the app
+CSS and published, read-only, after every UI change; `/design-sync` reads it),
+`docs/wiki/` (the OPERATOR documentation — source for the
 GitHub wiki the account menu's Help entry opens; `/polaris-docs-sync` routes operator-visible
 changes to it), `agent/README.md`, `CONTRIBUTING.md`.
 
@@ -177,6 +179,7 @@ ship the one that is correct for all of them, and cover each shape with a test.
 - **Production is updated through the in-app updater** (Server Settings → Maintenance), which also syncs the shipped systemd units and nginx config. Do not suggest `git pull` or manual restart steps unless asked.
 - **Version is automatic** — never edit the patch in `package.json`. See the version policy above.
 - **FortiManager ↔ standalone FortiGate parity.** Treat the FortiManager and standalone FortiGate integrations as paired surfaces. Whenever you add or change a FortiManager-side feature — new tab, config field, toggle, push pathway, monitoring stream, filter, etc. — evaluate whether the same change applies to the standalone FortiGate path and, if so, ship both in the same change. The two integrations talk to the same FortiOS device fleet via different transports (FMG proxy/direct vs. direct REST), so most user-visible features make sense on both. Only skip parity when the feature is structurally FMG-only (multi-FortiGate device filter, ADOM scoping, FMG-proxy concurrency tuning). UI: the Add/Edit modal tab layouts (`General` / `Filters` / `Monitoring` / `DHCP Push` / `Quarantine Push` / `Description Sync` / `SD-WAN` / `Geographic Location`) should look identical between the two types — diverge only on the tab content where the integrations genuinely differ. Backend: prefer `buildTransportForIntegration()`-style helpers that dispatch on integration type so push/quarantine/lease-release pathways stay generic instead of hardcoding `type === "fortimanager"` checks.
+- **Design first, then build.** A new chart, slide-over, modal, widget or phone sheet starts as a design canvas built on the matching design system (Polaris UI for desktop, Polaris Mobile for the phone) for the user to review; the code follows the approved canvas, the pattern gets a page under `design/<system>/components/`, and the system is re-synced. Procedure: `.design-sync/NOTES.md`.
 - **Scale-check every change at 100 and 2000 monitored assets.** Before shipping any code that touches background jobs, discovery phases, monitor passes, or per-asset DB queries, explicitly reason through its behaviour at both ends of the fleet-size range. At 100 assets, correctness matters most; at 2000, sequential-await-per-row loops, large IN clauses, repeated findMany calls inside ticking jobs, and DB connection churn become the dominant failure modes. The specific anti-patterns to flag: `for...of rows { await prisma...update() }` (should be `$transaction([...])` or batched `Promise.all`), `for...of items { await someDbCall() }` in a reconciler or job tick (parallelize with `Promise.all` when order doesn't matter), and queries that load all monitored assets without a tight `select` (every extra column at 2000 assets adds memory and serialization cost on the hot 5s/30s ticking loops).
 
 ---

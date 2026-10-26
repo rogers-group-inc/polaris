@@ -1,0 +1,44 @@
+<!-- @dsCard group="Screens" page height=580 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Map</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="pv-stage" style="height:540px">
+<div class="map-screen">
+  <div id="map-container">
+    <div style="position:absolute;left:44px;top:70px"><div class="fg-marker monitor-up">SW</div></div>
+    <div style="position:absolute;left:150px;top:120px"><div class="fg-marker monitor-degraded">AP</div></div>
+    <div style="position:absolute;left:250px;top:60px"><div class="fg-marker monitor-down">FW</div></div>
+    <div style="position:absolute;left:90px;top:220px"><div class="fg-marker monitor-maintenance">RT</div></div>
+    <div style="position:absolute;left:290px;top:200px"><div class="fg-marker monitor-unknown">PR</div></div>
+    <div style="position:absolute;left:200px;top:300px"><div class="fg-marker monitor-unmonitored">UP</div></div>
+    <div style="position:absolute;left:60px;top:360px"><div class="fg-cluster monitor-up">12</div></div>
+    <div style="position:absolute;left:170px;top:410px"><div class="fg-cluster monitor-degraded">4</div></div>
+    <div style="position:absolute;left:300px;top:330px"><div class="fg-cluster monitor-down">2</div></div>
+  </div>
+  <div class="map-fab-pos"><button class="fab" aria-label="My location"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 4.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5z"/></svg></button></div>
+</div>
+</div>
+</body>
+</html>

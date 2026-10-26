@@ -1,0 +1,60 @@
+<!-- @dsCard group="Assets" page height=760 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Asset sheet</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="pv-stage" style="height:720px">
+<div class="app" data-tab="assets">
+  <div class="app-body"><div class="asset-list">
+    <button class="asset-card"><div class="top"><div class="ico ico-sw"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">core-sw-01</div><span class="dot up"></span></div><div class="meta"><span class="mono">192.0.2.11</span><span>Switch</span></div></button>
+  </div></div>
+  <nav class="m3-navbar">
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 4l8 7h-2v8h-5v-5h-2v5H6v-8H4z"/></svg></span><span class="nav-label">Home</span></button>
+    <button class="nav-item active"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></span><span class="nav-label">Assets</span></button>
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 4.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5z"/></svg></span><span class="nav-label">Map</span></button>
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 3a6 6 0 0 0-6 6v5l-2 2v1h16v-1l-2-2V9a6 6 0 0 0-6-6zm-2 16a2 2 0 0 0 4 0z"/></svg></span><span class="nav-label">Alerts</span><span class="nav-badge">3</span></button>
+    <button class="nav-item"><span class="nav-icon-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3z"/></svg></span><span class="nav-label">More</span></button>
+  </nav>
+</div>
+<div class="scrim asset-scrim"></div>
+<div class="sheet asset-sheet">
+  <div class="sheet-handle"></div>
+  <div class="asset-sheet-header"><span class="dot up"></span><span class="asset-sheet-name">core-sw-01</span><button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button></div>
+  <div class="asset-hero">
+    <div class="hero-name"><span class="dot up"></span>core-sw-01</div>
+    <div class="hero-sub">Switch · <span class="mono">192.0.2.11</span></div>
+  </div>
+  <button class="asset-sect-header"><div><div class="sect-title">Details</div><div class="sect-sub">Model, serial, location</div></div></button>
+  <div class="sect-body">
+    <div class="kv-row"><span class="k">Model</span><span class="v">48-port access switch</span></div>
+    <div class="kv-row"><span class="k">Serial</span><span class="v mono">FOC2143X0AB</span></div>
+    <div class="kv-row"><span class="k">Location</span><span class="v">North quarry, scale house</span></div>
+    <div class="kv-row"><span class="k">Last seen</span><span class="v">2 min ago</span></div>
+  </div>
+  <button class="asset-sect-header"><div><div class="sect-title">Traffic</div><div class="sect-sub">Last 24 hours</div></div></button>
+  <div class="sect-body"><div class="chart-wrap" style="height:120px"><div class="chart-empty">No samples yet</div></div></div>
+</div>
+</div>
+</body>
+</html>

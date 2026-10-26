@@ -1,0 +1,188 @@
+<!-- @dsCard group="Dashboard" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard widget</title>
+<style>
+  body { padding: 24px; }
+  .demo-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .demo-col-4 { grid-column: span 4; }
+  .demo-col-6 { grid-column: span 6; }
+  .demo-col-12 { grid-column: span 12; }
+  .demo-h1 { height: 280px; }
+  .demo-caption { margin: 18px 0 8px; }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Dashboard widget</h2></div>
+  <p class="hint">
+    Every widget is one <code>article.dashboard-widget</code>: a one-line header, then a body that
+    scrolls. Widgets sit in columns 3, 4, 6 or 12 of a 12-column canvas and are 1×, 2× or 3× tall
+    (280 / 576 / 872 px). Two body shapes cover the catalogue: a <strong>ranking</strong> (name, bar,
+    value) and a <strong>list</strong> (title, sub-line, right-hand age or state, grouped by gate or site).
+  </p>
+
+  <p class="hint demo-caption">Ranking: a top-N bar list. Severity pills lead the title and count only the rows on screen.</p>
+  <div class="demo-grid">
+    <article class="dashboard-widget demo-col-4 demo-h1">
+      <div class="dashboard-widget-header">
+        <div class="dashboard-widget-title" title="Highest Avg CPU">
+          <span class="widget-pill widget-pill-red" style="margin-right:4px">1</span>
+          <span class="widget-pill widget-pill-orange" style="margin-right:6px">1</span>Highest Avg CPU
+        </div>
+        <button type="button" class="dashboard-widget-action" aria-label="Export rows">&#8615;</button>
+      </div>
+      <div class="dashboard-widget-body">
+        <a class="recent-item recent-item-link" href="#" style="display:grid;grid-template-columns:1fr 90px 48px;align-items:center;gap:8px;text-decoration:none">
+          <span class="recent-item-title" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="widget-pill widget-pill-red" style="margin-right:4px">critical</span>fgt-plant-a</span>
+          <div class="util-bar-track"><div class="util-bar-fill" style="width:97%;background:var(--color-danger)"></div></div>
+          <span style="font-size:0.82rem;text-align:right;color:var(--color-text-secondary)">97%</span>
+        </a>
+        <a class="recent-item recent-item-link" href="#" style="display:grid;grid-template-columns:1fr 90px 48px;align-items:center;gap:8px;text-decoration:none">
+          <span class="recent-item-title" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="widget-pill widget-pill-orange" style="margin-right:4px">serious</span>sql-prod-02</span>
+          <div class="util-bar-track"><div class="util-bar-fill" style="width:81%;background:var(--color-sev-serious)"></div></div>
+          <span style="font-size:0.82rem;text-align:right;color:var(--color-text-secondary)">81%</span>
+        </a>
+        <a class="recent-item recent-item-link" href="#" style="display:grid;grid-template-columns:1fr 90px 48px;align-items:center;gap:8px;text-decoration:none">
+          <span class="recent-item-title" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">web-03 <span style="color:var(--color-text-tertiary);font-size:0.8rem">/var</span></span>
+          <div class="util-bar-track"><div class="util-bar-fill" style="width:64%;background:var(--color-warning)"></div></div>
+          <span style="font-size:0.82rem;text-align:right;color:var(--color-text-secondary)">64%</span>
+        </a>
+        <a class="recent-item recent-item-link" href="#" style="display:grid;grid-template-columns:1fr 90px 48px;align-items:center;gap:8px;text-decoration:none">
+          <span class="recent-item-title" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">fs-aisle-3</span>
+          <div class="util-bar-track"><div class="util-bar-fill" style="width:22%;background:var(--color-accent)"></div></div>
+          <span style="font-size:0.82rem;text-align:right;color:var(--color-text-secondary)">22%</span>
+        </a>
+      </div>
+    </article>
+
+    <article class="dashboard-widget demo-col-4 demo-h1">
+      <div class="dashboard-widget-header">
+        <div class="dashboard-widget-title" title="SD-WAN SLA Compliance">SD-WAN SLA Compliance</div>
+        <button type="button" class="dashboard-widget-action" aria-label="Export rows">&#8615;</button>
+      </div>
+      <div class="dashboard-widget-body">
+        <a class="recent-item recent-item-link" href="#" style="display:grid;grid-template-columns:1fr 90px 76px;align-items:center;gap:8px;text-decoration:none">
+          <span class="recent-item-title" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">fgt-branch-22 <span style="color:var(--color-text-tertiary);font-size:0.8rem">Default_DNS · wan2</span></span>
+          <div class="util-bar-track"><div class="util-bar-fill" style="width:100%;background:var(--color-danger)"></div></div>
+          <span style="font-size:0.82rem;text-align:right;color:var(--color-text-secondary)">87.5% in SLA</span>
+        </a>
+        <a class="recent-item recent-item-link" href="#" style="display:grid;grid-template-columns:1fr 90px 76px;align-items:center;gap:8px;text-decoration:none">
+          <span class="recent-item-title" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">fgt-plant-a <span style="color:var(--color-text-tertiary);font-size:0.8rem">HQ_SLA · Overlay-1</span></span>
+          <div class="util-bar-track"><div class="util-bar-fill" style="width:17%;background:var(--color-warning)"></div></div>
+          <span style="font-size:0.82rem;text-align:right;color:var(--color-text-secondary)">97.9% in SLA</span>
+        </a>
+      </div>
+      <p class="hint" style="margin-top:auto">
+        A figure where less is worse is ranked on its inverse (time OUT of SLA) and relabelled, so a longer
+        bar always means worse.
+      </p>
+    </article>
+
+    <article class="dashboard-widget demo-col-4 demo-h1">
+      <div class="dashboard-widget-header">
+        <div class="dashboard-widget-title" title="Packet Loss">Packet Loss</div>
+      </div>
+      <div class="dashboard-widget-body">
+        <p class="empty-state">No packet loss</p>
+      </div>
+      <p class="hint" style="margin-top:auto">
+        The empty state says what an empty list <em>means</em>, never "No data". Emptied by the severity
+        filter it says that instead: "No rows at or above serious severity".
+      </p>
+    </article>
+  </div>
+
+  <p class="hint demo-caption">List: grouped rows with a count pill per group, coloured to the group's worst row.</p>
+  <div class="demo-grid">
+    <article class="dashboard-widget demo-col-6 demo-h1">
+      <div class="dashboard-widget-header">
+        <div class="dashboard-widget-title" title="Down Interfaces">
+          <span class="widget-pill widget-pill-orange" style="margin-right:4px">1</span>
+          <span class="widget-pill widget-pill-neutral" style="margin-right:6px">2</span>Down Interfaces
+        </div>
+        <button type="button" class="dashboard-widget-action" aria-label="Export rows">&#8615;</button>
+      </div>
+      <div class="dashboard-widget-body">
+        <div class="dash-alert-group-header" style="display:flex;align-items:center;gap:8px;margin:6px 0 4px;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--color-text-secondary)">
+          <span>fgt-dc-west</span><span class="widget-pill widget-pill-orange">2</span>
+        </div>
+        <a class="dash-alert-item" href="#" style="text-decoration:none">
+          <div class="dash-alert-row" style="width:100%">
+            <div class="dash-alert-body">
+              <div class="dash-alert-title"><span class="widget-pill widget-pill-orange" style="margin-right:4px">serious</span>wan2 <span class="dash-alert-ip">Backup ISP</span></div>
+              <div class="dash-alert-sub">fgt-dc-west · Firewall</div>
+            </div>
+            <div class="dash-alert-time" title="Down since last seen up">3h 4m</div>
+          </div>
+        </a>
+        <a class="dash-alert-item" href="#" style="text-decoration:none">
+          <div class="dash-alert-row" style="width:100%">
+            <div class="dash-alert-body">
+              <div class="dash-alert-title">vpn-hq</div>
+              <div class="dash-alert-sub"><span class="widget-pill">IPsec tunnel</span> · via wan1 · &rarr; 203.0.113.7</div>
+            </div>
+            <div class="dash-alert-time" title="Down since last seen up">47m</div>
+          </div>
+        </a>
+        <div class="dash-alert-group-header" style="display:flex;align-items:center;gap:8px;margin:6px 0 4px;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--color-text-secondary)">
+          <span>fgt-plant-a</span><span class="widget-pill widget-pill-red">1</span>
+        </div>
+        <a class="dash-alert-item" href="#" style="text-decoration:none">
+          <div class="dash-alert-row" style="width:100%">
+            <div class="dash-alert-body">
+              <div class="dash-alert-title">port12 <span class="dash-alert-ip">AP uplink</span></div>
+              <div class="dash-alert-sub">fs-aisle-3 · Switch</div>
+            </div>
+            <div class="dash-alert-time" title="Down since last seen up">9m</div>
+          </div>
+        </a>
+      </div>
+    </article>
+
+    <article class="dashboard-widget demo-col-6 demo-h1">
+      <div class="dashboard-widget-header">
+        <div class="dashboard-widget-title" title="SD-WAN Rules Off Preferred Link">SD-WAN Rules Off Preferred Link</div>
+        <button type="button" class="dashboard-widget-action" aria-label="Export rows">&#8615;</button>
+      </div>
+      <div class="dashboard-widget-body">
+        <a class="dash-alert-item" href="#" style="text-decoration:none">
+          <div class="dash-alert-row" style="width:100%">
+            <div class="dash-alert-body">
+              <div class="dash-alert-title">To-HQ</div>
+              <div class="dash-alert-sub">no usable member · prefers Overlay-1 · fgt-plant-a</div>
+            </div>
+            <div class="dash-alert-time"><span class="widget-pill widget-pill-red">down</span></div>
+          </div>
+        </a>
+        <a class="dash-alert-item" href="#" style="text-decoration:none">
+          <div class="dash-alert-row" style="width:100%">
+            <div class="dash-alert-body">
+              <div class="dash-alert-title">VoIP</div>
+              <div class="dash-alert-sub">on wan2 · prefers wan1 · fgt-branch-22</div>
+            </div>
+            <div class="dash-alert-time"><span class="widget-pill widget-pill-amber">failed over</span></div>
+          </div>
+        </a>
+      </div>
+      <p class="hint" style="margin-top:auto">
+        With no "since" to show, the right-hand slot carries the row's state as a pill. Every state
+        is a word, never colour alone.
+      </p>
+    </article>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <div class="card-title">Rules</div>
+    <ul style="margin:0;padding-left:1.1rem;font-size:0.85rem;color:var(--color-text-secondary);line-height:1.7">
+      <li>Header: the title is one ellipsized line. Count pills sit at its <em>head</em>, one per active-alert severity among the rendered rows. View mode shows the export (&#8615;); edit mode shows sort, height, gear and remove, all in one 28 px box.</li>
+      <li>Row colour: a value bar runs accent &rarr; <code>color-warning</code> &rarr; <code>color-danger</code> on the widget's thresholds. A row whose device carries an active alert takes that severity's colour instead, so the bar can never disagree with its pill.</li>
+      <li>Severity pills: notice <code>widget-pill-neutral</code>, warning <code>widget-pill-amber</code>, serious <code>widget-pill-orange</code>, critical <code>widget-pill-red</code>, informational <code>widget-pill-watch</code>. An acknowledged row dims its own parts to 0.6 and adds an "ack &lt;owner&gt;" neutral pill at full strength.</li>
+      <li>Identifiers (IPs, ports, tunnels, mount paths) go in the muted detail beside the name, and the full name rides the cell's <code>title</code>.</li>
+      <li>Clicking a row opens the device's slide-over in place, on the tab the row is about. Ctrl, meta and middle clicks keep the link.</li>
+      <li>Settings live in the gear popover: widget controls first, then Minimum severity, then the Regions / FortiGates / Asset types filter fields. A change applies at once; there is no Save.</li>
+    </ul>
+  </div>
+</body>
+</html>

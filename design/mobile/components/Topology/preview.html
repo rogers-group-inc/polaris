@@ -1,0 +1,53 @@
+<!-- @dsCard group="Screens" page height=760 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Topology</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="pv-stage" style="height:520px">
+<div class="topo-screen">
+  <div class="topo-bar">
+    <button class="icon-btn" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg></button>
+    <div class="topo-search-wrap">
+      <input class="topo-search" value="core">
+      <ul class="topo-search-results">
+        <li><span>core-sw-01</span><span class="meta">Switch · 192.0.2.11</span></li>
+        <li><span>core-sw-02</span><span class="meta">Switch · 192.0.2.12</span></li>
+        <li class="empty">No more matches</li>
+      </ul>
+    </div>
+  </div>
+  <div class="topo-graph"></div>
+  <div class="topo-status">Pick a device to draw its links.</div>
+</div>
+</div>
+<p class="pv-cap">Node detail section</p>
+<div class="topo-section">
+  <div class="topo-section-title">Connected endpoints</div>
+  <ul class="topo-endpoints">
+    <li><button class="topo-endpoint-row"><span>wks-dispatch-07</span><span class="meta">Port 14 · 198.51.100.40</span></button></li>
+    <li><button class="topo-endpoint-row"><span>prn-office-2</span><span class="meta">Port 22 · 198.51.100.22</span></button></li>
+  </ul>
+</div>
+</body>
+</html>

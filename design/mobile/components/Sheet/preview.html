@@ -1,0 +1,43 @@
+<!-- @dsCard group="Containers" page height=520 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bottom sheet</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="pv-stage" style="height:480px">
+  <div style="padding:16px">
+    <div class="list-item two-line"><div class="leading tonal"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">core-sw-01</div><div class="supporting"><span class="mono">192.0.2.11</span></div></div></div>
+    <div class="list-item two-line"><div class="leading tonal"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">core-sw-02</div><div class="supporting"><span class="mono">192.0.2.12</span></div></div></div>
+  </div>
+  <div class="scrim"></div>
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h3 class="sheet-title">Filter assets</h3>
+    <div class="kv-row"><span class="k">Site</span><span class="v">North quarry</span></div>
+    <div class="kv-row"><span class="k">Type</span><span class="v">Switch</span></div>
+    <div class="kv-row"><span class="k">Status</span><span class="v">Any</span></div>
+    <div style="margin-top:16px"><button class="btn btn-filled btn-block">Apply</button></div>
+  </div>
+</div>
+</body>
+</html>

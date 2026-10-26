@@ -57,10 +57,10 @@ const KNOWN_FRONTMATTER_KEYS = new Set(["name", "description", "user-invocable",
 const failures = [];
 const fail = (check, msg) => failures.push({ check, msg });
 
-// design/POLARIS-UI-GUIDE.md is deliberately NOT policed here: it is a drop-in snapshot of
-// the external UI kit, so its paths describe a NEW app's layout, and editing it to satisfy a
-// check here would just be clobbered by the next kit re-sync. The Polaris-only half lives in
-// polaris-ui-canon, which IS policed.
+// design/ is deliberately NOT policed here: POLARIS-UI-GUIDE.md and the design-system pages
+// under design/desktop + design/mobile describe a PORTABLE layout (paths a new app would
+// have), and `node .design-sync/build.mjs` validates the pages against the app stylesheet.
+// The Polaris-only half lives in polaris-ui-canon, which IS policed.
 
 // --- collect the doc set: CLAUDE.md + every .md under .claude/skills/** ---
 function walk(dir, out = []) {
