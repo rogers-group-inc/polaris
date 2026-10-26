@@ -137,6 +137,46 @@ describe("a broken dataset", () => {
 });
 
 describe("row rendering", () => {
+  it("puts Polaris target before Installed and carries no Track column", () => {
+    const html = renderPlatformLifecycleCard(payload());
+    const headers = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+    expect(headers).toEqual(["Component", "Polaris target", "Installed", "Supported until", "Status"]);
+    // The body row must line up with the header: target cell, then installed.
+    const cells = [...html.matchAll(/<td>(.*?)<\/td>/g)].map((m) => m[1]);
+    expect(cells[1]).toContain("24");
+    expect(cells[1]).toContain("to 2028-04-30");
+    expect(cells[2]).toBe("20.19.0");
+  });
+
+  it("spans a detail row across every column", () => {
+    const html = renderPlatformLifecycleCard(
+      payload({
+        components: [
+          comp({
+            grade: { ...comp().grade, state: "unpatched", severity: "warning" },
+          }),
+        ],
+      }),
+    );
+    // Without a securityFloor no detail row is drawn; give it one.
+    const withFloor = renderPlatformLifecycleCard(
+      payload({
+        components: [
+          comp({
+            grade: {
+              ...comp().grade,
+              state: "unpatched",
+              severity: "warning",
+              securityFloor: { version: "20.20.1", advisories: ["CVE-2026-1"], source: null },
+            },
+          }),
+        ],
+      }),
+    );
+    expect(html).not.toContain("lifecycle-detail-row");
+    expect(withFloor).toContain('<tr class="lifecycle-detail-row"><td colspan="5"');
+  });
+
   it("maps severity to the capacity CSS vocabulary", () => {
     const cases: Array<[string, string]> = [
       ["critical", "capacity-reason-red"],
