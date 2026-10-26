@@ -139,8 +139,7 @@ carries the whole message: neither colour nor motion reaches every reader.
 ### View tabs and saved filters
 
 A strip on the table's top-left edge, below the bulk bar, sharing its row with
-**Filters** (in edit mode only, right after the tabs), the **‹ ›** buttons
-when the tabs overflow, the page's buttons (the **Import** and **Export**
+**Filters** (in edit mode only, right after the tabs), the page's buttons (the **Import** and **Export**
 icons, **Maintenance**, the settings gear, **+ Add Asset(s)**), then **Clear**,
 **Refresh** (the circular-arrows icon), the page size (**25 / page** …) and, at
 the right end, the **Edit** pencil (the page buttons are below the page card). Each tab holds its own filter and sort state, saved
@@ -151,9 +150,9 @@ strip to carry it past the tabs out of view.
 
 When there are more tabs than fit beside the buttons, the tabs sit in an area of
 fixed width and never crowd them: the tabs keep their size and slide inside it,
-fading into its edges, and **‹ ›** buttons appear at its right end. Each click
-slides one tab, however long its name; each notch of the mouse wheel over the
-tabs does the same. The same holds for the tab rows on Automations, Events,
+fading into its edges and passing behind the page card's shadow. Each notch of
+the mouse wheel over the tabs slides them by one tab, however long its name.
+With fewer tabs than fit, none of this applies: the tabs simply sit in a row. The same holds for the tab rows on Automations, Events,
 IPAM and the Dashboard.
 
 **Edit** (the pencil, like the Dashboard's Customize) puts the row in edit

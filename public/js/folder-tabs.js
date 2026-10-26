@@ -35,6 +35,14 @@ function syncFolderTabs(row) {
   row.querySelectorAll(".table-tab.active, .page-tab.active, .dashboard-tab.active").forEach(function (t) {
     if (!tab && t.getClientRects().length) tab = t;
   });
+  // The gap opens only under an active tab the strip window actually draws,
+  // and only across the part inside its area: a tab slid out of view is
+  // `visibility: hidden` but keeps its box, out past the area under the
+  // controls, and the card opened its edge and cut its cast there (operator
+  // report 2026-10-26). `tab` itself still names the active tab for the
+  // data-head-for clusters below, in view or not.
+  var gapTab = tab && tab.style.visibility !== "hidden" ? tab : null;
+  var tr = gapTab ? _clipToArea(row, gapTab.getBoundingClientRect()) : null;
   // The same gap is written twice: on the row (whose rule it opens) and on
   // the visible .folder-body after it, measured from the BODY's left edge —
   // a folder card draws its own top edge and ring cast and opens both there.
@@ -43,8 +51,7 @@ function syncFolderTabs(row) {
     if (!body && b.getClientRects().length &&
         (row.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) body = b;
   });
-  var tr = tab ? tab.getBoundingClientRect() : null;
-  var fr = tab ? (parseFloat(getComputedStyle(row).getPropertyValue("--folder-r")) || 0) : 0;
+  var fr = tr ? (parseFloat(getComputedStyle(row).getPropertyValue("--folder-r")) || 0) : 0;
   _writeFolderGap(row, tr, fr);
   if (body) {
     _writeFolderGap(body, tr, fr);
@@ -54,6 +61,32 @@ function syncFolderTabs(row) {
   row.querySelectorAll("[data-head-for]").forEach(function (el) {
     el.classList.toggle("head-off", el.getAttribute("data-head-for") !== activeName);
   });
+}
+
+// The fixed area the strip window slides its tabs in, as a {left, right}
+// screen span — the list box less the shadow padding _maskArea puts round it
+// — or null while the window is off. `opaque`: less the fade at each edge
+// that is fading, too — the span where tabs are drawn solid.
+function _windowArea(row, opaque) {
+  var strip = row.querySelector(":scope > :is(.page-tabs, .table-tabs, .dashboard-tabs)");
+  var win = strip && strip.__tabWin;
+  if (!win || !(win.max > 0.5) || !win.box || win.box === strip) return null;
+  var r = win.box.getBoundingClientRect();
+  var area = { left: r.left + STRIP_SHADOW_PX, right: r.right - STRIP_SHADOW_PX };
+  if (opaque) {
+    if (win.pos > 0.5) area.left += STRIP_FADE_PX;
+    if (win.pos < win.max - 0.5) area.right -= STRIP_FADE_PX;
+  }
+  return area;
+}
+
+// A tab's span clipped to that area (unchanged while the window is off);
+// null when nothing of it is inside.
+function _clipToArea(row, rc) {
+  var area = _windowArea(row);
+  if (!area) return rc;
+  var left = Math.max(rc.left, area.left), right = Math.min(rc.right, area.right);
+  return right > left ? { left: left, right: right } : null;
 }
 
 // --folder-gap-l/-r on `el`: the active tab's span plus the fillet radius each
@@ -93,11 +126,10 @@ function _writeFolderStrip(row, body) {
     // is a tab over the card. Counting the whole box ran the cut-out on past
     // the visible tabs, under the controls, and the card lost its top cast
     // there.
-    var win = strip.__tabWin;
-    var area = win && win.max > 0.5 && win.box && win.box !== strip ? win.box.getBoundingClientRect() : null;
-    // The box is padded out by STRIP_SHADOW_PX for its mask (_maskArea);
-    // the area itself is its content box.
-    if (area) area = { left: area.left + STRIP_SHADOW_PX, right: area.right - STRIP_SHADOW_PX };
+    // Only the SOLID span: across a fading edge the card keeps its cast, so
+    // the fading tabs read as passing behind the card's shadow (operator
+    // request 2026-10-26).
+    var area = _windowArea(row, true);
     strip.querySelectorAll(".page-tab, .table-tab, .dashboard-tab, .table-tab-add").forEach(function (t) {
       var rc = t.getBoundingClientRect();
       if (!rc.width || t.style.visibility === "hidden") return;   // hidden by the window
@@ -128,12 +160,12 @@ function _writeFolderStrip(row, body) {
   }
 }
 
-// ─── Strip window (‹ › and the wheel) ──────────────────────────────────────
+// ─── Strip window (the wheel) ──────────────────────────────────────
 // A strip longer than the room the row's controls leave it never pushes them
 // and never scrolls natively (that showed tabs in the strip's shadow padding,
 // past the card's edges, under a scrollbar). While the tabs overflow, the box
 // holding them (the list wrapper) is pinned to the ROOM — a fixed area, so
-// the + after it and the ‹ › pair after the strip hold still — and the row of
+// the + after it and the controls after the strip hold still — and the row of
 // tabs, every one at its natural width, SLIDES inside it: `pos` px of the row
 // are past the area's left edge (a `translate` on each tab). A tab crossing
 // either edge fades into it (the area's mask, STRIP_FADE_PX wide — see
@@ -142,7 +174,7 @@ function _writeFolderStrip(row, body) {
 // squeeze or grow (operator request 2026-10-26; a squeezing window was tried
 // first and rejected).
 //
-// One step — a ‹ › click, a wheel notch — slides by one tab, whatever its
+// One step — a wheel notch — slides by one tab, whatever its
 // length: › brings the row's next tab start to just inside the left fade, ‹
 // the previous one, clamped so the last tab ends flush with the right edge
 // (`max`, where nothing fades).
@@ -497,45 +529,6 @@ function _stepStrip(strip, dir, done) {
   st.anim = requestAnimationFrame(frame);
 }
 
-function _ensureStripNav(row, strip) {
-  var nav = row.querySelector(":scope > .table-tabs-nav");
-  if (nav) return nav;
-  nav = document.createElement("div");
-  nav.className = "table-head-controls table-tabs-nav is-idle";
-  nav.innerHTML =
-    '<button type="button" class="btn btn-secondary btn-sm btn-icon-only" data-dir="-1" aria-label="Scroll tabs left" title="Scroll tabs left">' +
-      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>' +
-    '<button type="button" class="btn btn-secondary btn-sm btn-icon-only" data-dir="1" aria-label="Scroll tabs right" title="Scroll tabs right">' +
-      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>';
-  nav.addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest("button[data-dir]");
-    if (!b || b.disabled) return;
-    _stepStrip(strip, Number(b.getAttribute("data-dir")), function () { _syncStripNav(row, strip); });
-  });
-  // Right after the strip, unless the page names a cluster that must sit
-  // between the tabs and the pair (Assets' Filters ▾: data-tabs-nav-after).
-  var after = row.querySelector(":scope > [data-tabs-nav-after]") || strip;
-  after.insertAdjacentElement("afterend", nav);
-  return nav;
-}
-
-// Show / hide the pair and set each end's disabled state. A class flip that
-// changes nothing writes nothing, and `disabled` is outside the row
-// observer's attribute filter, so this cannot re-trigger the sync that runs it.
-function _syncStripNav(row, strip) {
-  var nav = row.querySelector(":scope > .table-tabs-nav");
-  var st = strip.__tabWin;
-  if (!nav || !st) return;
-  var overflowing = st.max > 0.5 && strip.getClientRects().length > 0;
-  if (nav.classList.contains("is-idle") === overflowing) nav.classList.toggle("is-idle", !overflowing);
-  var prev = nav.querySelector('[data-dir="-1"]');
-  var next = nav.querySelector('[data-dir="1"]');
-  var atStart = st.pos <= 0.5;
-  var atEnd = st.pos >= st.max - 0.5;
-  if (prev.disabled !== atStart) prev.disabled = atStart;
-  if (next.disabled !== atEnd) next.disabled = atEnd;
-}
-
 // A wheel over the strip steps it one tab per notch, by its larger delta (a
 // mouse wheel's vertical one, or a trackpad's sideways swipe). A line-mode
 // event (Firefox) is a notch by itself; pixel-mode deltas accumulate, so a
@@ -559,7 +552,7 @@ function _wireStripWheel(row, strip) {
         st.wheel = 0;
       }
     }
-    if (dir) _stepStrip(strip, dir, function () { _syncStripNav(row, strip); });
+    if (dir) _stepStrip(strip, dir);
   }, { passive: false });
 }
 
@@ -581,6 +574,11 @@ function _wireStripWindow(row, strip, after) {
     else setTimeout(run, 0);
   };
   _wireStripWheel(row, strip);
+  // The strip clips (overflow: hidden) but is never scrolled: the window
+  // translates its tabs instead. A browser can still scroll a clipped box —
+  // to show a focused tab — which would shift every tab under the window's
+  // feet; put it straight back.
+  strip.addEventListener("scroll", function () { if (strip.scrollLeft) strip.scrollLeft = 0; }, { passive: true });
   if (typeof MutationObserver === "function") {
     new MutationObserver(schedule).observe(strip, {
       subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden"],
@@ -597,14 +595,8 @@ function wireFolderTabs() {
     if (row.__polarisFolderWired) return;
     row.__polarisFolderWired = true;
     var strip = row.querySelector(".table-tabs, .page-tabs, .dashboard-tabs");
-    var sync = function () {
-      syncFolderTabs(row);
-      if (strip) _syncStripNav(row, strip);
-    };
-    if (strip) {
-      _ensureStripNav(row, strip);
-      _wireStripWindow(row, strip, sync);
-    }
+    var sync = function () { syncFolderTabs(row); };
+    if (strip) _wireStripWindow(row, strip, sync);
     window.addEventListener("resize", sync);
     if (typeof ResizeObserver === "function") {
       var ro = new ResizeObserver(sync);

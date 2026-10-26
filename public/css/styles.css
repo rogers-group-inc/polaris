@@ -2874,26 +2874,8 @@ html[data-page-top-curtain]::after {
 /* A head row with no tab strip (Path Monitor) keeps its controls on the right. */
 .table-head-row > .table-head-controls:first-child { margin-left: auto; }
 /* Dashboard: the strip is hidden (not absent) on an empty layout or a
-   published view, so :first-child never matches; pin the cluster right. The
-   strip's ‹ › pair (below) sits between them on every row that has a strip. */
-.table-head-row > .dashboard-tabs + .table-head-controls,
-.table-head-row > .dashboard-tabs + .table-tabs-nav + .table-head-controls { margin-left: auto; }
-/* The strip's ‹ › pair (folder-tabs.js → _ensureStripNav): right after the
-   strip, shown only while the tabs overflow it. A folder card's strip reaches
-   under its right neighbour by its shadow room (negative margin-right), and a
-   scrolled strip shows its tabs in that padding too — so the pair steps back
-   out by the same room, or the tab scrolled to the end sits half under it. */
-.table-head-row > .table-tabs-nav {
-  position: relative;
-  z-index: 3;
-  gap: 2px;
-}
-/* …and so does a cluster a page puts between the tabs and the pair
-   (data-tabs-nav-after: Assets' Filters ▾, edit mode only), whichever of the
-   two comes first after the strip. */
-.table-head-row.folder-head-card > :is(.page-tabs, .table-tabs, .dashboard-tabs) + :is(.table-tabs-nav, [data-tabs-nav-after]:not([hidden])),
-.table-head-row.folder-head-card > :is(.page-tabs, .table-tabs, .dashboard-tabs) + [data-tabs-nav-after][hidden] + .table-tabs-nav { margin-left: var(--folder-shadow-room); }
-.table-head-row > .table-tabs-nav.is-idle { display: none; }
+   published view, so :first-child never matches; pin the cluster right. */
+.table-head-row > .dashboard-tabs + .table-head-controls { margin-left: auto; }
 /* The strip window slides tabs past the end of their fixed area (masked
    transparent there, but a positioned tab is still hit-tested): the + after
    the area rides above them, so a click on it is never a tab's. */

@@ -71,9 +71,9 @@
            actions, then Filters ▾, then Refresh / Clear Filters / Show N
            (#pagination-top renders WITHOUT page navigation here — topNav:false
            in _renderAssetsPageControls; the page buttons live below the table).
-           A strip too long for what the controls leave shows a run of whole
-           tabs and steps it (folder-tabs.js: the ‹ › pair and the wheel)
-           instead of pushing them. -->
+           A strip too long for what the controls leave holds its tabs in a
+           fixed area they slide in, fading at its edges (folder-tabs.js; the
+           mouse wheel slides them), instead of pushing them. -->
       <div class="table-head-row folder-head-card">
         <!-- Per-user view tabs (assets-tabs.js). Each tab holds its own filter +
              sort state, its own base filter, and its own favorites; the set is
@@ -86,11 +86,10 @@
           <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab" hidden>+</button>
         </div>
         <!-- Filters ▾ (saved filter presets, assets-filters.js): right after
-             the tabs, LEFT of the strip's ‹ › pair (data-tabs-nav-after:
-             folder-tabs.js puts the pair after this cluster). The menu body is
-             rendered from the server list on every open. Shown only in edit
-             mode (the pencil at the row's end; assets.js → setAssetsEditing). -->
-        <div class="table-head-controls" id="assets-filters-cluster" data-tabs-nav-after hidden>
+             the tabs. The menu body is rendered from the server list on every
+             open. Shown only in edit mode (the pencil at the row's end;
+             assets.js → setAssetsEditing). -->
+        <div class="table-head-controls" id="assets-filters-cluster" hidden>
           <div class="btn-dropdown-wrap">
             <button class="btn btn-secondary" id="btn-saved-filters" title="Save, load and manage table filter presets">Filters &#9662;</button>
             <div class="btn-dropdown-menu sfl-menu" id="saved-filters-menu"></div>
