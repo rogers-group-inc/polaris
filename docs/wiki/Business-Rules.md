@@ -2413,6 +2413,17 @@ go to To, Cc and Bcc recipients chosen like a notify action's — including
 automation fires. If To works out to nobody, nothing is booked and the action
 is recorded as failed.
 
+**(d) A reboot says why.** The Reboot dialog, on the desktop and the phone,
+has a **Reason** field. It is optional unless **Require a reason for every
+reboot** is turned on ([Server Settings](Server-Settings), Customization →
+Reboots); then a reboot or a scheduled reboot without one is refused — in the
+dialog, on the phone and over the API alike. The reason is recorded on the
+device's Events, shown in its reboot history and on the Events calendar, and
+printed in the results email of a scheduled reboot. A scheduled reboot keeps
+the reason it was booked with: turning the requirement on later does not stop
+a booking that has none. A reboot an automation books gives the automation's
+name as its reason.
+
 ### Rule 116
 
 **No pattern can make Polaris hang.**

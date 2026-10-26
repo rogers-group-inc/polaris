@@ -66,6 +66,8 @@ export interface CalendarDeviceItem {
   by: string;
   /** Firmware only: the version it moves to. */
   toVersion: string | null;
+  /** Reboot only: why (rule 115(d)) — the run's, else its booking's. */
+  note?: string | null;
   error: string | null;
   /** Firmware only: a GROUP upgrade booking (rule 122), drawn on its FortiGate. */
   groupId?: string | null;
@@ -83,12 +85,12 @@ export interface CalendarResult {
 
 interface BookingRow {
   id: string; assetId: string; scheduledFor: Date; status: string; runId: string | null;
-  createdBy: string; error: string | null; toVersion?: string | null;
+  createdBy: string; error: string | null; toVersion?: string | null; note?: string | null;
   asset: { hostname: string | null; ipAddress: string | null } | null;
 }
 interface RunRow {
   id: string; assetId: string; status: string; startedBy: string; startedAt: Date; finishedAt: Date | null;
-  error: string | null; toVersion?: string | null;
+  error: string | null; toVersion?: string | null; note?: string | null;
   asset: { hostname: string | null; ipAddress: string | null } | null;
 }
 
@@ -133,6 +135,7 @@ export function mergeDeviceItems(
       status: run ? run.status : b.status,
       by: b.createdBy,
       toVersion: b.toVersion ?? null,
+      ...(kind === "reboot" ? { note: run?.note ?? b.note ?? null } : {}),
       error: run ? run.error : b.error,
     });
   }
@@ -151,6 +154,7 @@ export function mergeDeviceItems(
       status: r.status,
       by: r.startedBy,
       toVersion: r.toVersion ?? null,
+      ...(kind === "reboot" ? { note: r.note ?? null } : {}),
       error: r.error,
     });
   }
@@ -180,17 +184,17 @@ async function rebootItems(start: Date, end: Date, now: Date): Promise<{ items: 
       where: { scheduledFor: { gte: start, lt: end } },
       orderBy: { scheduledFor: "asc" },
       take: MAX_DEVICE_ITEMS + 1,
-      select: { id: true, assetId: true, scheduledFor: true, status: true, runId: true, createdBy: true, error: true, asset: ASSET_NAME },
+      select: { id: true, assetId: true, scheduledFor: true, status: true, runId: true, createdBy: true, error: true, note: true, asset: ASSET_NAME },
     }),
     prisma.rebootRun.findMany({
       where: { startedAt: { gte: start, lt: end } },
       orderBy: { startedAt: "asc" },
       take: MAX_DEVICE_ITEMS + 1,
-      select: { id: true, assetId: true, status: true, startedBy: true, startedAt: true, finishedAt: true, error: true, asset: ASSET_NAME },
+      select: { id: true, assetId: true, status: true, startedBy: true, startedAt: true, finishedAt: true, error: true, note: true, asset: ASSET_NAME },
     }),
   ]);
   return finish("reboot", bookings, runs, now,
-    (ids) => prisma.rebootRun.findMany({ where: { id: { in: ids } }, select: { id: true, assetId: true, status: true, startedBy: true, startedAt: true, finishedAt: true, error: true, asset: ASSET_NAME } }),
+    (ids) => prisma.rebootRun.findMany({ where: { id: { in: ids } }, select: { id: true, assetId: true, status: true, startedBy: true, startedAt: true, finishedAt: true, error: true, note: true, asset: ASSET_NAME } }),
     (ids) => prisma.rebootSchedule.findMany({ where: { runId: { in: ids } }, select: { runId: true } }));
 }
 

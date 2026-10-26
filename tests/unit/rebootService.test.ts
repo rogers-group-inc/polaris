@@ -32,6 +32,7 @@ const h = vi.hoisted(() => {
     agentRow: { bootTime: null as Date | null, wsConnectedAt: null as Date | null, wsDisconnectedAt: null as Date | null },
     lastRebootAt: null as Date | null,
     order: [] as string[],
+    requireNote: false,
   };
   return {
     state,
@@ -80,6 +81,8 @@ vi.mock("../../src/db.js", () => ({
       updateMany: vi.fn(async () => { h.state.withdrawn++; return { count: h.state.agentCmdStatus === "pending" ? 1 : 0 }; }),
     },
     managedAgent: { findUnique: vi.fn(async () => h.state.agentRow) },
+    // rebootConfig (rule 115(d)): read through rebootSettingsService.
+    setting: { findUnique: vi.fn(async () => ({ value: { requireNote: h.state.requireNote } })) },
   },
 }));
 
@@ -113,6 +116,7 @@ vi.mock("../../src/services/rebootTransports.js", async (orig) => {
 });
 
 import { getRebootAvailability, startReboot, recordRebootCredentialUse } from "../../src/services/rebootService.js";
+import { invalidateRebootSettingsCache } from "../../src/services/rebootSettingsService.js";
 import { RebootSendError } from "../../src/services/rebootTransports.js";
 
 const FAST = { overrides: { timeouts: { agentAckMs: 60, downWaitMs: 60, upWaitMs: 200, pollMs: 2, recoveryWaitMs: 1, recoveryPollMs: 1 } } };
@@ -148,10 +152,11 @@ function fakeGate(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  invalidateRebootSettingsCache();
   Object.assign(h.state, {
     asset: fullAsset(), gates: [], credentials: [], binding: null, flashRunning: false, activeRun: null,
     integration: { id: "int-1", name: "lab-spoke2", type: "fortigate", config: { host: "172.22.128.104", apiToken: "tok", allowReboot: true } },
-    runUpdates: [], created: null, agentCmd: null, agentCmdStatus: "pending", withdrawn: 0, lastRebootAt: null, order: [],
+    runUpdates: [], created: null, agentCmd: null, agentCmdStatus: "pending", withdrawn: 0, lastRebootAt: null, order: [], requireNote: false,
     agentRow: { bootTime: null, wsConnectedAt: null, wsDisconnectedAt: null },
   });
 });
@@ -249,6 +254,36 @@ describe("the credential a reboot signs with is recorded (rule 112)", () => {
   it("records nothing for the integration's own token", async () => {
     await recordRebootCredentialUse("asset-1", actor);
     expect(recordCredentialUse).not.toHaveBeenCalled();
+  });
+});
+
+describe("the reboot note (rule 115(d))", () => {
+  it("stores the note on the run and says it in the started Event", async () => {
+    fakeGate({ bootTime: vi.fn(async () => new Date()) });
+    await startReboot({ assetId: "asset-1", actor: "alice", note: "  Memory leak in\nfirmware 7.4.3  ", ...FAST });
+    await settled();
+    expect(h.state.created).toMatchObject({ note: "Memory leak in firmware 7.4.3" });
+    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "asset.reboot_started",
+      message: expect.stringContaining("reason: Memory leak in firmware 7.4.3"),
+      details: expect.objectContaining({ note: "Memory leak in firmware 7.4.3" }),
+    }));
+  });
+
+  it("refuses a reboot-now without a note while the install requires one, before anything is sent", async () => {
+    h.state.requireNote = true;
+    const g = fakeGate();
+    await expect(startReboot({ assetId: "asset-1", actor: "alice", note: "   ", ...FAST })).rejects.toMatchObject({ httpStatus: 400 });
+    expect(h.state.created).toBeNull();
+    expect(g.calls).toEqual([]);
+  });
+
+  it("fires a booking that has no note even after the requirement was switched on — it was judged when booked", async () => {
+    h.state.requireNote = true;
+    fakeGate({ bootTime: vi.fn(async () => new Date()) });
+    await startReboot({ assetId: "asset-1", actor: "alice", scheduleId: "sched-1", note: null, ...FAST });
+    await settled();
+    expect(h.state.created).toMatchObject({ note: null, startedBy: "alice" });
   });
 });
 

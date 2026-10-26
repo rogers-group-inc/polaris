@@ -6526,6 +6526,10 @@ model RebootRun {
   // The device's uptime / boot time read just before the reboot was sent,
   // when it could be — what "it really rebooted" is compared against.
   bootTimeBefore DateTime?
+  // Why the device is being rebooted (business rule 115(d)): typed by the
+  // operator, copied from the booking a scheduled run fires, or written by an
+  // automation's booking. Required only while `rebootConfig.requireNote` is on.
+  note           String?         @db.Text
   startedBy      String
   startedAt      DateTime        @default(now())
   heartbeatAt    DateTime?
@@ -6553,6 +6557,8 @@ model RebootSchedule {
   // turns the per-recipient fan-out into ONE message to the whole To line.
   notifyCc     String[]   @default([])
   notifyBcc    String[]   @default([])
+  // Why (business rule 115(d)); carried onto the run when the booking fires.
+  note         String?    @db.Text
   status       String     @default("pending") // pending | started | cancelled | refused | missed
   runId        String?    @unique
   run          RebootRun? @relation(fields: [runId], references: [id], onDelete: SetNull)

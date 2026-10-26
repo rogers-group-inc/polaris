@@ -36,6 +36,8 @@ export interface RebootResultEmailInput {
   startedAt: Date | string | null;
   finishedAt: Date | string | null;
   scheduledBy: string;
+  /** Why the reboot was booked (business rule 115(d)); omitted when nobody said. */
+  note?: string | null;
   log: Array<{ t: string; level: string; msg: string }>;
   zone: string;
 }
@@ -85,6 +87,7 @@ export function renderRebootResultEmail(input: RebootResultEmailInput): { subjec
   if (input.finishedAt) facts.push(["Finished", fmt(input.finishedAt)]);
   if (duration) facts.push(["Duration", duration]);
   facts.push(["Scheduled by", input.scheduledBy]);
+  if (input.note) facts.push(["Reason", input.note]);
 
   const text: string[] = ["{brand.header}", "", head.label.toUpperCase(), summary, ""];
   for (const [k, v] of facts) text.push(`${k}: ${v}`);

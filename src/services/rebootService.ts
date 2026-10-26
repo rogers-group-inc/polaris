@@ -67,6 +67,7 @@ import { recordCredentialUse, type CredentialUseActor } from "./credentialUseAud
 import { resolveFirmwareCredential } from "./firmwareRepositoryService.js";
 import { buildTransportForIntegration } from "./reservationPushService.js";
 import { publishCommandWake } from "./agentCommandWake.js";
+import { normalizeRebootNote, resolveRebootNote } from "./rebootSettingsService.js";
 import { _rebootTransportSeams, RebootSendError, type GateLink, type GateOps, type SendResult } from "./rebootTransports.js";
 import type { FortiManagerConfig } from "./fortimanagerService.js";
 
@@ -134,6 +135,8 @@ export interface RebootRunSummary {
   status: string;
   stage: string | null;
   error: string | null;
+  /** Why the device is being rebooted (rule 115(d)); null when nobody said. */
+  note: string | null;
   startedBy: string;
   startedAt: Date;
   finishedAt: Date | null;
@@ -391,11 +394,11 @@ async function stateBlockers(a: AssetRow): Promise<string[]> {
 
 function summarize(r: {
   id: string; assetId: string; method: string; viaAssetId: string | null; credentialId: string | null; authority: string;
-  status: string; stage: string | null; error: string | null; startedBy: string; startedAt: Date; finishedAt: Date | null; heartbeatAt: Date | null;
+  status: string; stage: string | null; error: string | null; note: string | null; startedBy: string; startedAt: Date; finishedAt: Date | null; heartbeatAt: Date | null;
 }): RebootRunSummary {
   return {
     id: r.id, assetId: r.assetId, method: r.method, viaAssetId: r.viaAssetId, credentialId: r.credentialId, authority: r.authority,
-    status: r.status, stage: r.stage, error: r.error, startedBy: r.startedBy, startedAt: r.startedAt, finishedAt: r.finishedAt, heartbeatAt: r.heartbeatAt,
+    status: r.status, stage: r.stage, error: r.error, note: r.note, startedBy: r.startedBy, startedAt: r.startedAt, finishedAt: r.finishedAt, heartbeatAt: r.heartbeatAt,
   };
 }
 
@@ -492,6 +495,12 @@ export interface StartRebootInput {
   actor: string;
   /** The booking this start fires; linked to the run, and emailed when it ends. */
   scheduleId?: string;
+  /**
+   * Why (rule 115(d)). An operator's reboot-now is held to the install's
+   * `requireNote`; a booking's note was judged when it was booked and is
+   * carried as it stands.
+   */
+  note?: string | null;
   /** Tests: short clocks. */
   overrides?: { timeouts?: Partial<RebootTimeouts> };
 }
@@ -516,13 +525,14 @@ export async function startReboot(input: StartRebootInput): Promise<RebootRunSum
   const blockers = await stateBlockers(a);
   if (blockers.length > 0) throw new AppError(409, `Cannot reboot: ${blockers.join("; ")}`);
   if (await activeRunFor(a.id)) throw new RebootRunConflictError("A reboot is already in progress on this device");
+  const note = input.scheduleId ? normalizeRebootNote(input.note) : await resolveRebootNote(input.note);
 
   let run;
   try {
     run = await prisma.rebootRun.create({
       data: {
         assetId: a.id, method: plan.method, viaAssetId: plan.via?.assetId ?? null, credentialId: plan.credentialId,
-        authority: plan.authority, status: "queued", startedBy: input.actor, heartbeatAt: new Date(),
+        authority: plan.authority, status: "queued", note, startedBy: input.actor, heartbeatAt: new Date(),
         bootTimeBefore: plan.kind === "agent" ? a.managedAgent?.bootTime ?? null : null,
       },
     });
@@ -542,8 +552,8 @@ export async function startReboot(input: StartRebootInput): Promise<RebootRunSum
     resourceName: assetLabel(a),
     actor: input.actor,
     level: "info",
-    message: `${input.scheduleId ? "Scheduled reboot" : "Reboot"} started ${methodPhrase(plan)}, signed by "${plan.authority}"`,
-    details: { runId: run.id, method: plan.method, authority: plan.authority, credentialId: plan.credentialId, viaAssetId: plan.via?.assetId ?? null, via: plan.via?.label ?? null, scheduleId: input.scheduleId ?? null },
+    message: `${input.scheduleId ? "Scheduled reboot" : "Reboot"} started ${methodPhrase(plan)}, signed by "${plan.authority}"` + (note ? ` — reason: ${note}` : ""),
+    details: { runId: run.id, method: plan.method, authority: plan.authority, credentialId: plan.credentialId, viaAssetId: plan.via?.assetId ?? null, via: plan.via?.label ?? null, scheduleId: input.scheduleId ?? null, note },
   });
 
   // Best-effort, like the firmware hold: a hold failure must never be the

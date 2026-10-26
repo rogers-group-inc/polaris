@@ -67,8 +67,19 @@ describe("mergeDeviceItems", () => {
     ], [], new Map(), new Set(), NOW);
     expect(items).toEqual([{
       kind: "reboot", id: "booking:b1", assetId: "a1", assetName: "FGT-01", start: "2026-08-14T02:00", end: "2026-08-14T02:15",
-      booked: true, scheduleId: "b1", runId: null, status: "pending", by: "automation:Mem", toVersion: null, error: null,
+      booked: true, scheduleId: "b1", runId: null, status: "pending", by: "automation:Mem", toVersion: null, note: null, error: null,
     }]);
+  });
+
+  it("a reboot carries its reason — the run's once it ran, else the booking's (rule 115(d))", () => {
+    const run = { id: "r1", assetId: "a1", status: "succeeded", startedBy: "alice", startedAt: local(2026, 8, 10, 2, 0), finishedAt: local(2026, 8, 10, 2, 10), error: null, note: "Leak", asset };
+    const items = mergeDeviceItems("reboot", [
+      { id: "b1", assetId: "a1", scheduledFor: local(2026, 8, 10, 2, 0), status: "started", runId: "r1", createdBy: "alice", error: null, note: "Leak", asset },
+      { id: "b2", assetId: "a1", scheduledFor: local(2026, 8, 11, 2, 0), status: "pending", runId: null, createdBy: "alice", error: null, note: "Patch night", asset },
+    ], [run], new Map([["r1", run]]), new Set(["r1"]), NOW);
+    expect(items.map((i) => i.note)).toEqual(["Leak", "Patch night"]);
+    const fw = mergeDeviceItems("firmware", [], [{ ...run, toVersion: "7.6.7" }], new Map(), new Set(), NOW);
+    expect(fw[0]).not.toHaveProperty("note");
   });
 
   it("a booking that ran carries its run's outcome and end, and the run is not drawn twice", () => {

@@ -30,21 +30,29 @@ import {
 } from "../../services/rebootScheduleService.js";
 import { defaultRecipientsFor, MAX_RECIPIENTS } from "../../services/firmwareScheduleService.js";
 import { setAgentRebootEnabled } from "../../services/agentRebootPermissionService.js";
+import { getRebootSettings } from "../../services/rebootSettingsService.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const ScheduledForSchema = z.string().datetime({ offset: true, message: "scheduledFor must be an ISO date-time with a zone offset" });
 const RecipientsSchema = z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS);
+// Why (rule 115(d)). A raw-size guard only — rebootSettingsService trims it,
+// caps it at REBOOT_NOTE_MAX and decides whether a blank one is refused.
+const NoteSchema = z.string().max(2000, "The reboot note is too long").nullable();
+
+const RebootNowSchema = z.object({ note: NoteSchema.optional() }).strict();
 
 const CreateScheduleSchema = z.object({
   scheduledFor: ScheduledForSchema,
   notifyEmails: RecipientsSchema,
+  note: NoteSchema.optional(),
 }).strict();
 
 const UpdateScheduleSchema = z.object({
   scheduledFor: ScheduledForSchema.optional(),
   notifyEmails: RecipientsSchema.optional(),
-}).strict().refine((v) => v.scheduledFor || v.notifyEmails, { message: "Nothing to change" });
+  note: NoteSchema.optional(),
+}).strict().refine((v) => v.scheduledFor || v.notifyEmails || v.note !== undefined, { message: "Nothing to change" });
 
 const ListQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).optional() });
 
@@ -64,14 +72,15 @@ export const rebootAssetRouter: Router = Router({ mergeParams: true });
 
 rebootAssetRouter.get("/", requirePermission("assets", "read"), handle(async (req, res) => {
   const assetId = String(req.params.id);
-  const [availability, schedule] = await Promise.all([getRebootAvailability(assetId), getPendingRebootSchedule(assetId)]);
-  res.json({ ...availability, schedule });
+  const [availability, schedule, settings] = await Promise.all([getRebootAvailability(assetId), getPendingRebootSchedule(assetId), getRebootSettings()]);
+  res.json({ ...availability, schedule, noteRequired: settings.requireNote });
 }));
 
 // Reboot now. 202 — the run is watched, not awaited.
 rebootAssetRouter.post("/", requirePermission("assets", "write"), handle(async (req, res) => {
-  if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) throw new AppError(400, "A reboot takes no options");
-  const run = await startReboot({ assetId: String(req.params.id), actor: requestActor(req) ?? "unknown" });
+  const body = RebootNowSchema.safeParse(req.body ?? {});
+  if (!body.success) throw new AppError(400, body.error.issues[0]?.code === "unrecognized_keys" ? "A reboot takes only a note" : firstIssue(body.error));
+  const run = await startReboot({ assetId: String(req.params.id), actor: requestActor(req) ?? "unknown", note: body.data.note });
   // Rule 112: the stored credential this reboot signs with, aimed at the gate.
   await recordRebootCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
@@ -106,6 +115,7 @@ rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), handl
     assetId: String(req.params.id),
     scheduledFor: new Date(body.data.scheduledFor),
     notifyEmails: body.data.notifyEmails,
+    note: body.data.note,
     actor: requestActor(req) ?? "unknown",
   });
   // Rule 112: recorded when BOOKED, by the person who booked it (the flash precedent).
@@ -121,6 +131,7 @@ rebootAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "w
     scheduleId: String(req.params.scheduleId),
     scheduledFor: body.data.scheduledFor ? new Date(body.data.scheduledFor) : undefined,
     notifyEmails: body.data.notifyEmails,
+    note: body.data.note,
     actor: requestActor(req) ?? "unknown",
   });
   res.json({ schedule });

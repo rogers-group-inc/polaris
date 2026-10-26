@@ -3320,7 +3320,7 @@
       if (!choice || _openId !== asset.id) return;
       btn.disabled = true;
       if (choice.schedule) {
-        var body = { scheduledFor: choice.schedule.scheduledFor, notifyEmails: choice.schedule.notifyEmails };
+        var body = { scheduledFor: choice.schedule.scheduledFor, notifyEmails: choice.schedule.notifyEmails, note: choice.note || null };
         var call = existing ? api.assets.updateRebootSchedule(asset.id, existing.id, body) : api.assets.scheduleReboot(asset.id, body);
         call.then(function () {
           if (_openId !== asset.id) return;
@@ -3332,7 +3332,7 @@
         });
         return;
       }
-      api.assets.startReboot(asset.id).then(function (res) {
+      api.assets.startReboot(asset.id, choice.note ? { note: choice.note } : {}).then(function (res) {
         if (_openId !== asset.id) return;
         PolarisTabs.showSnackbar("Reboot sent — Polaris is watching for the device to come back");
         var slot = document.getElementById("asset-reboot-slot");
@@ -3406,6 +3406,10 @@
     }
     var ack = mode === "change" ? '' : '<label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;">'
       + '<input type="checkbox" id="rb-confirm-ack"> I understand this device will go down</label>';
+    // Why (business rule 115(d)); required while rb.noteRequired.
+    var note = '<label style="display:block;font-size:13px;margin:12px 0 4px;" for="rb-note">Reason'
+      + (rb.noteRequired ? ' <span style="color:var(--md-error);">*</span>' : ' <span style="color:var(--md-on-surface-variant);">(optional)</span>') + '</label>'
+      + '<input type="text" id="rb-note" class="input" style="width:100%;" maxlength="500" placeholder="Why is this device being rebooted?" value="' + escapeHtml((existing && existing.note) || "") + '">';
     return ''
       + '<div class="sheet-handle"></div>'
       + '<h3 class="sheet-title" style="margin:0 0 8px;">' + (existing ? "Change scheduled reboot" : "Reboot device?") + '</h3>'
@@ -3415,6 +3419,7 @@
       + line("Signed by", escapeHtml(rb.authority || "—"))
       + (mode === "change" ? '' : '<p style="margin:12px 0 0;color:var(--md-on-surface-variant);font-size:14px;line-height:20px;">' + escapeHtml(warning)
         + ' Polaris holds its alerts while it reboots and records the reboot on its Events.</p>')
+      + note
       + ack
       + schedule
       + '<div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">'
@@ -3424,7 +3429,7 @@
   }
 
   // A stacked .sheet at 1010/1011 — the firmware confirm's shape. Resolves
-  // { now: true }, { schedule: { scheduledFor, notifyEmails } }, or false.
+  // { now: true, note }, { schedule: { scheduledFor, notifyEmails }, note }, or false.
   var _rbConfirmResolve = null;
   function confirmReboot(asset, rb, opts) {
     closeRebootConfirm(false);
@@ -3448,22 +3453,24 @@
       var ok = sheet.querySelector("#rb-confirm-ok");
       var whenEl = sheet.querySelector("#rb-sched-when");
       var emailsEl = sheet.querySelector("#rb-sched-emails");
+      var noteEl = sheet.querySelector("#rb-note");
+      function noteValue() { return noteEl ? noteEl.value.trim() : ""; }
       function scheduling() { return opts.mode === "change" || !!(later && later.checked); }
       function sync() {
         if (later && fields) fields.style.display = later.checked ? "" : "none";
         if (!opts.existing) ok.textContent = scheduling() ? "Schedule" : "Reboot";
-        var acked = !ack || ack.checked;
+        var acked = (!ack || ack.checked) && (!rb.noteRequired || noteValue() !== "");
         ok.disabled = !acked || (scheduling() && !(whenEl && whenEl.value && emailsEl && fwParseEmails(emailsEl.value).length > 0));
       }
       [later, ack].forEach(function (el) { if (el) el.addEventListener("change", sync); });
-      [whenEl, emailsEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
+      [whenEl, emailsEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
       scrim.addEventListener("click", function () { closeRebootConfirm(false); });
       sheet.querySelector("#rb-confirm-cancel").addEventListener("click", function () { closeRebootConfirm(false); });
       ok.addEventListener("click", function () {
-        if (!scheduling()) { closeRebootConfirm({ now: true }); return; }
+        if (!scheduling()) { closeRebootConfirm({ now: true, note: noteValue() }); return; }
         var when = new Date(whenEl.value);
         if (isNaN(when.getTime())) { PolarisTabs.showSnackbar("Pick a date and time", { error: true }); return; }
-        closeRebootConfirm({ schedule: { scheduledFor: when.toISOString(), notifyEmails: fwParseEmails(emailsEl.value) } });
+        closeRebootConfirm({ schedule: { scheduledFor: when.toISOString(), notifyEmails: fwParseEmails(emailsEl.value) }, note: noteValue() });
       });
       PolarisTabs.attachSwipeToDismiss(sheet, function () { closeRebootConfirm(false); });
       sync();
