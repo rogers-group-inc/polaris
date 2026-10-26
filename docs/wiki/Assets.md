@@ -145,7 +145,7 @@ settings gear, **+ Add Asset(s)**), then **Filters** (in edit mode only),
 and, at the right end, the **Edit** pencil (the page buttons are below the
 page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
-or F2 renames, ✕ closes (never the last one), + adds. Drag a tab sideways to
+or F2 renames, ✕ closes (never the last one), and in edit mode + adds one. Drag a tab sideways to
 move it; the new order is saved with the rest. Hold it against the end of the
 strip to carry it past the tabs out of view.
 
@@ -157,7 +157,8 @@ the tabs does the same. The same holds for the tab rows on Automations, Events,
 IPAM and the Dashboard.
 
 **Edit** (the pencil, like the Dashboard's Customize) puts the row in edit
-mode and turns into a ✓ that leaves it; **Filters ▾** shows only in edit mode.
+mode and turns into a ✓ that leaves it; **Filters ▾** and the **+** that adds a
+tab show only in edit mode.
 Every visit opens out of edit mode.
 
 **Filters ▾** saves the current column filters + sort as a named preset, loads

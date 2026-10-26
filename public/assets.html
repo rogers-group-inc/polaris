@@ -81,7 +81,9 @@
              is empty until init() resolves. -->
         <div class="table-tabs" id="assets-tabs">
           <div class="table-tabs-list" id="assets-tabs-list" role="tablist" aria-label="Asset views"></div>
-          <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab">+</button>
+          <!-- Shown only in edit mode (assets.js → setAssetsEditing), as the
+               dashboard's + is. -->
+          <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab" hidden>+</button>
         </div>
         <!-- The page's action buttons (once the page header's), first on the
              row as on every list page. Import and Export are the icon pair the

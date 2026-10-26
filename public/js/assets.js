@@ -22132,12 +22132,14 @@ async function singleOuiLookup(id, mac) {
 
 /* ─── Edit mode (the pencil / Done tick at the tab row's right end) ───────── */
 // The dashboard's Customize / Done pair, on the Assets tab row. Edit mode
-// shows the Filters ▾ menu (saved filter presets); outside it Filters is
-// gone. Per page view, not saved: every visit opens out of edit mode.
+// shows the Filters ▾ menu (saved filter presets) and the + that adds a view
+// tab, as the dashboard's + shows only while customizing; outside it both
+// are gone. Per page view, not saved: every visit opens out of edit mode.
 (function () {
   var editBtn = document.getElementById("assets-edit");
   var doneBtn = document.getElementById("assets-done");
   var filters = document.getElementById("assets-filters-cluster");
+  var addTab  = document.getElementById("assets-tab-add");
   if (!editBtn || !doneBtn) return;
   function setAssetsEditing(on) {
     editBtn.hidden = on;
@@ -22147,6 +22149,7 @@ async function singleOuiLookup(id, mac) {
       var menu = filters.querySelector(".btn-dropdown-menu");
       if (!on && menu) menu.classList.remove("open");
     }
+    if (addTab) addTab.hidden = !on;
     document.body.classList.toggle("assets-editing", on);
   }
   editBtn.addEventListener("click", function () { setAssetsEditing(true); });
