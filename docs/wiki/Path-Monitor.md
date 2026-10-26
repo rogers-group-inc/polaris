@@ -183,8 +183,10 @@ The host's **Paths** tab shows:
   chips above the chart to add the DNS, Connect, TLS and TTFB lines. If an
   automation sets a latency SLA on this check, its threshold is shaded on the
   chart;
-- **Availability** — the share of runs that passed. A gap means the agent did
-  not report (for example, the host was off), not that the check failed;
+- **Availability** — the share of runs that passed. A bar is green when every
+  run passed, orange when some failed, and a short red stub on the baseline
+  when none passed. A gap means the agent did not report (for example, the
+  host was off), not that the check failed;
 - **HTTP status** — one cell per run, green for a pass and red for a failure;
 - **Latest result** — including the body fingerprint and size, the TLS issuer
   and how many days are left on the certificate, and the error text;

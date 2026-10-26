@@ -28334,7 +28334,6 @@ function _renderPathCharts(check, data) {
     { label: "Availability", value: count ? (Math.round((okCount / count) * 1000) / 10) + " %" : null },
     { label: "Failed runs", value: String(count - okCount) },
   ]);
-  void ok;
 }
 
 /** Pure: bucket detail samples into n availability ratios over [t0, t1]. */
@@ -28352,6 +28351,13 @@ function _pathAvailabilityBuckets(samples, t0, t1, n) {
     out[idx].ok += ok;
   });
   return out;
+}
+
+/** Pure: an availability bucket's colour — the status strip's verdict scheme
+ *  (all passed / some failed / none passed), so a short bar no longer reads green. */
+function _pathAvailabilityColor(b) {
+  if (b.ok >= b.total) return _CHART_UP_COLOR;
+  return b.ok > 0 ? MONITOR_STATE_COLORS.warning : MONITOR_STATE_COLORS.down;
 }
 
 function _pathChartFrame(container, H) {
@@ -28459,9 +28465,11 @@ function _renderPathAvailabilityChart(container, samples, opts) {
   var bars = buckets.map(function (b, i) {
     if (!b.total) return ""; // no run in this slot (agent offline) — a gap, not a failure
     var pct = (b.ok / b.total) * 100;
-    var y = yFor(pct);
+    // A 0 % bar has no height — keep a red stub on the baseline so an outage
+    // stays visible and distinct from an empty (no-run) slot.
+    var y = Math.min(yFor(pct), g.padT + innerH - 3);
     return '<rect class="chart-hit" x="' + (g.padL + i * bw + 0.5) + '" y="' + y + '" width="' + Math.max(1, bw - 1) + '" height="' + (g.padT + innerH - y) +
-      '" fill="' + _CHART_UP_COLOR + '" opacity="0.8" data-ts="' + new Date(b.t).toISOString() + '" data-v="' + (Math.round(pct * 10) / 10) + '" data-n="' + b.total + '"/>';
+      '" fill="' + _pathAvailabilityColor(b) + '" opacity="0.8" data-ts="' + new Date(b.t).toISOString() + '" data-v="' + (Math.round(pct * 10) / 10) + '" data-n="' + b.total + '"/>';
   }).join("");
   var ticks = [0, 50, 100].map(function (v) {
     var y = yFor(v);
