@@ -562,9 +562,11 @@
 .topology-layout.info-collapsed > .topology-info { overflow: hidden; padding: 0; border: 0; visibility: hidden; }
 .topology-layout.info-collapsed > .topology-graph { border-right: 0; }
 /* The graph / details edge. A transparent full-height strip centred on the
-   boundary: hovering it lights the edge and shows the arrow chip at its
-   middle — pointing right (hide) — and while the pane is hidden the chip
-   stays visible at the right edge, pointing left (show). */
+   boundary: hovering it tints a band down the edge and shows the arrow chip
+   at its middle — pointing right (hide) — and while the pane is hidden only
+   the chip remains, at the right edge, pointing left (show). The band is the
+   slide-over's resize bar (styles.css .slideover-resize-handle): 6px wide, a
+   35% accent tint — not a solid accent line. */
 .topology-edge {
   position: absolute;
   top: 0;
@@ -583,9 +585,9 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 6px;
-  width: 2px;
-  background: var(--color-accent);
+  left: 4px;
+  width: 6px;
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
   opacity: 0;
   transition: opacity 0.15s ease;
 }
@@ -620,8 +622,18 @@
 .topology-edge:hover .topology-edge-arrow,
 .topology-edge:focus-visible .topology-edge-arrow { opacity: 1; }
 .topology-edge:focus-visible { outline: none; }
-/* Clear of the modal's right edge: the 22px chip overhangs the 14px strip. */
-.topology-layout.info-collapsed > .topology-edge { right: 10px; }
+/* Pane hidden: the toggle is ONLY the chevron chip, clear of the modal's
+   right edge — no full-height strip, so no band and no hover target down
+   the side of the map. */
+.topology-layout.info-collapsed > .topology-edge {
+  right: 10px;
+  top: 50%;
+  bottom: auto;
+  width: 22px;
+  height: 40px;
+  transform: translateY(-50%);
+}
+.topology-layout.info-collapsed > .topology-edge::before { display: none; }
 .topology-layout.info-collapsed > .topology-edge .topology-edge-arrow { opacity: 1; }
 .topology-layout.info-collapsed > .topology-edge .topology-edge-arrow::before {
   transform: translate(-35%, -50%) rotate(-135deg);
