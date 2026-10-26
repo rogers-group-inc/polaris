@@ -8199,10 +8199,18 @@ async function openCredentialModal(id, initialState) {
     var selectedType = document.getElementById("f-cred-type").value;
     var config = readCredentialForm(selectedType);
     try {
-      if (isNew) await api.credentials.create({ name: name, type: selectedType, config: config });
-      else await api.credentials.update(id, { name: name, config: config });
+      var saved = isNew
+        ? await api.credentials.create({ name: name, type: selectedType, config: config })
+        : await api.credentials.update(id, { name: name, config: config });
       closeModal();
       showToast("Credential saved");
+      // Other tabs that hold a credential picker (the Firmware repository's
+      // device-login select) refresh on this rather than a page reload.
+      try {
+        window.dispatchEvent(new CustomEvent("polaris:credentials-changed", {
+          detail: { id: (saved && saved.id) || id || null, created: isNew },
+        }));
+      } catch (e) { /* no listener is fine */ }
       await loadCredentialsTab();
     } catch (err) {
       showToast(err.message, "error");
