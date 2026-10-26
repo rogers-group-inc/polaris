@@ -1779,6 +1779,7 @@ const api = {
     saveDiscovery:     (rules) => request("PUT",  "/application-map/discovery", { rules: rules }),
     // Scope-driven lookups for the wizard: which assets match, and what those
     // assets actually report (so the item picker isn't the whole fleet).
+    discoveryFilterSchema: () => request("GET", "/application-map/discovery/filter-schema"),
     discoveryScope:     (scope, assetIds) => request("POST", "/application-map/discovery/scope-preview", { scope: scope, assetIds: assetIds || [] }),
     discoveryInventory: (scope) => request("POST", "/application-map/discovery/inventory", { scope: scope }),
     previewDiscovery:   (rule)  => request("POST", "/application-map/discovery/preview", { rule: rule }),

@@ -103,10 +103,43 @@ describe("normalizeRule", () => {
     expect(normalizeRule(RULE({ scope: { version: 1, match: "all", rules: [] } })).scope).toBeNull();
   });
 
-  it("normalizes a usable scope tree", () => {
+  // The flat builder's criteria fold forward into the shared condition tree, so
+  // a rule written before the cutover opens in the new builder intact.
+  it("folds legacy flat criteria forward into a condition tree", () => {
     const r = normalizeRule(RULE({ scope: SCOPE }));
-    expect(r.scope).not.toBeNull();
-    expect(r.scope!.rules.length).toBe(1);
+    expect(r.scope).toEqual({ op: "and", children: [{ field: "assetType", operator: "equals", value: "server" }] });
+  });
+
+  it("keeps flat criteria the tree can't express (an integration rule) as they are", () => {
+    const flat = { version: 1, match: "all", rules: [{ field: "integration", op: "exact", values: ["int-1"] }] };
+    const r = normalizeRule(RULE({ scope: flat }));
+    expect(r.scope).toEqual(flat);
+  });
+
+  it("accepts a condition tree over the device-filter vocabulary, tag included", () => {
+    const tree = {
+      op: "and",
+      children: [
+        { field: "tag", operator: "has", value: "prod" },
+        { op: "or", children: [
+          { field: "location", operator: "contains", value: "Ashfield" },
+          { field: "subnet", operator: "inSubnetNamed", value: "Plant-*" },
+        ] },
+      ],
+    };
+    expect(normalizeRule(RULE({ scope: tree })).scope).toEqual(tree);
+  });
+
+  it("collapses an empty condition tree to no scope, never and([])", () => {
+    // and([]) is true for every asset — storing it would be an all-assets rule
+    // the operator never asked for.
+    expect(normalizeRule(RULE({ scope: { op: "and", children: [] } })).scope).toBeNull();
+  });
+
+  it("rejects a tree field outside the device-filter vocabulary", () => {
+    expect(() => normalizeRule(RULE({
+      scope: { op: "and", children: [{ field: "bogus", operator: "equals", value: "x" }] },
+    }))).toThrow(/Device filter is invalid/);
   });
 
   it("defaults mode to map (pre-mode rules were map rules) and honours monitor", () => {
