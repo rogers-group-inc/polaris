@@ -355,7 +355,13 @@ const META: Record<ChartToken, { label: string; unit: string; color: string; per
   // Flat hex (a mail client has no theme to read) picked from the daylight
   // themes' --color-success, because the email card is white.
   "chart.responseTime": { label: "Response time", unit: " ms", color: "#2e7d32", percent: false },
-  "chart.probeLoss": { label: "Packet loss", unit: "%", color: "#dc2626", percent: true },
+  // The same Up green, for the same reason: the loss line is coloured by the
+  // device's verdict over each bucket (stateSpans) — grey while the parent was
+  // dark, blue on the climb back, the severity colour while Down — so a quiet
+  // 0 % reads Up. It was a fixed red until 2026-10-26, which drew an explained
+  // outage as an alarm and a healthy 0 % as Down, directly under a response-time
+  // chart saying otherwise about the same minutes.
+  "chart.probeLoss": { label: "Packet loss", unit: "%", color: "#2e7d32", percent: true },
   // The SD-WAN trio. Three colours nothing else in an email uses, so a reader
   // scanning a failover email can tell the three SLA gauges apart at a glance;
   // the health check and member ride in each label (see sdwanChartLabel).
@@ -1895,6 +1901,8 @@ export async function buildAlertCharts(
   let loss: ProbeLossSeries = { points: [], ratioPct: null, engineRatioPct: null };
   let sensor: SensorSeries = { points: [], alarmSpans: [], unit: "", sensorClass: null };
   let fail: FailSpanSeries = { spans: [], recoverySpans: [], failedCount: 0 };
+  // The same verdicts over the loss chart's window (see lossNeedsOwnSpans).
+  let lossFail: FailSpanSeries = fail;
   let sdwan: SdwanSeries | null = null;
   // A per-core alert (rule 89) draws every core under the all-cores line; every
   // other alert keeps the all-cores line alone. Null = draw the plain chart,
@@ -1917,14 +1925,18 @@ export async function buildAlertCharts(
   } else {
     try {
       const needTelemetry = wanted.has("chart.cpu") || wanted.has("chart.memory");
-      const needFailSpans = [...wanted].some((t) => FAIL_SPAN_TOKENS.has(t));
+      const needFailSpans = [...wanted].some((t) => FAIL_SPAN_TOKENS.has(t) || t === "chart.probeLoss");
+      // The loss chart colours its line from the same replay, over ITS window —
+      // the automation's History, which may be longer than the hour. Only then
+      // is a second read needed; the hour's spans cover it otherwise.
+      const lossNeedsOwnSpans = wanted.has("chart.probeLoss") && lossSince.getTime() < since.getTime();
       const needSdwan = SDWAN_CHART_TOKENS.some((t) => wanted.has(t));
       // The display unit is install-wide branding, not per-user: an alert email
       // has no session behind it. Read once, only when a sensor is charted.
       const displayUnit = wanted.has("chart.sensor")
         ? await getBranding().then((b) => b.temperatureUnit).catch(() => "c" as const)
         : ("c" as const);
-      const [tel, rtRows, sensorRows, lossRows, failRows, sdwanRows] = await Promise.all([
+      const [tel, rtRows, sensorRows, lossRows, failRows, sdwanRows, lossFailRows] = await Promise.all([
         needTelemetry ? loadTelemetry(assetId, since, perCore) : Promise.resolve({ cpu: [], mem: EMPTY_MEMORY, cores: null }),
         wanted.has("chart.responseTime") ? loadResponseTimes(assetId, since) : Promise.resolve([]),
         wanted.has("chart.sensor")
@@ -1944,6 +1956,7 @@ export async function buildAlertCharts(
             : resolveSdwanTarget(assetId, opts?.metric, opts?.dimension ?? opts?.sensorName ?? null)
                 .then((target) => (target ? loadSdwanSeries(assetId, target, since) : null))
           : Promise.resolve(null),
+        lossNeedsOwnSpans ? loadFailSpans(assetId, lossSince, now) : Promise.resolve(null),
       ]);
       cpu = tel.cpu;
       mem = tel.mem;
@@ -1952,6 +1965,7 @@ export async function buildAlertCharts(
       sensor = sensorRows;
       loss = lossRows;
       fail = failRows;
+      lossFail = lossFailRows ?? failRows;
       sdwan = sdwanRows;
     } catch (err) {
       logger.warn({ err: (err as Error)?.message, assetId }, "alert chart sample load failed — sending without charts");
@@ -2045,12 +2059,14 @@ export async function buildAlertCharts(
       unit,
       color: coreLines ? CPU_ALL_CORES_COLOR : meta.color,
       ...(coreLines ? {
+        seriesLegend: "All cores",
         backgroundSeries: coreLines.map((p, i) => ({
           points: p,
           // The busiest core takes the DARKER of the arc's two lightness steps,
           // so it holds up as the emphasised line whichever core it is.
           color: cpuCoreColor(i, coreLines.length, i === hotCore?.index),
           strong: i === hotCore?.index,
+          legend: i === hotCore?.index ? "Busiest core" : "Other cores",
         })),
         ...(hotCore ? { caption: perCoreCaption(hotCore, points) } : {}),
       } : {}),
@@ -2065,6 +2081,24 @@ export async function buildAlertCharts(
       // about a reading, not Polaris's, and on a failover email it is usually
       // the answer — the member the rule left was declared dead here.
       ...(isSdwan && sdwanDownSpans.length ? { alarmSpans: sdwanDownSpans } : {}),
+      // The legend names the SD-WAN marks for what they are: the band is the
+      // health check's verdict and the dashed rule is its SLA, not anything an
+      // automation of ours set.
+      ...(isSdwan ? { alarmLegend: "Member down", thresholdLegend: "SLA target" } : {}),
+      // Response time and packet loss draw the Up green; every other chart's
+      // series colour is just that metric, named by the title.
+      ...(token === "chart.responseTime" || isLoss ? { seriesLegend: "Up" } : {}),
+      // The loss line coloured by the device's verdict over each bucket — the
+      // same spans, the same replay, the response-time chart dives and climbs
+      // on, so both charts say one thing about the same minutes.
+      ...(isLoss && (lossFail.spans.length || lossFail.recoverySpans.length) ? {
+        stateSpans: [
+          ...lossFail.spans,
+          ...lossFail.recoverySpans.map((s) => ({ ...s, kind: "recovering" as const })),
+        ],
+        pointSpanMs: lossBucketMs(lossWindowMs),
+        ...(lossFail.downColor ? { downColor: lossFail.downColor } : {}),
+      } : {}),
       // FortiOS reports no latency / jitter / loss for a member it has declared
       // dead, so an outage older than the window leaves the line empty — the
       // band is drawn anyway, with this in the middle of it.

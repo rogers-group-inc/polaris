@@ -118,6 +118,33 @@ export interface SparklineOptions {
    */
   recoverSpans?: Array<{ from: number; to: number }>;
   /**
+   * Verdict spans that recolour the plotted POINTS rather than diving the line —
+   * for a chart whose line is a reading taken over the same probes the verdict
+   * was taken on. The packet-loss chart is the one caller: its 100 % stretch
+   * while the parent was dark is grey, its climb back down is blue, and its
+   * healthy 0 % is the Up green, exactly as the response-time chart above it
+   * says about the same minutes. Before this the whole line was one fixed red,
+   * so an explained outage read as an alarm and a clean 0 % read as Down.
+   *
+   * A point takes a span that overlaps any of `pointSpanMs` from its own
+   * timestamp (a loss point is a bucket, not an instant). Where several
+   * overlap, the strongest claim wins: outage, then missed, then dependency,
+   * then recovering. "outage" uses `downColor` like a dive does.
+   */
+  stateSpans?: Array<{ from: number; to: number; kind: "outage" | "dependency" | "missed" | "recovering" }>;
+  /** How much time each plotted point covers, for `stateSpans`. Omitted = an instant. */
+  pointSpanMs?: number;
+  /**
+   * The legend's name for the series colour. Defaults to `label`. A chart whose
+   * series colour IS a state — response time and packet loss draw the Up green —
+   * passes "Up", so the legend reads as the same vocabulary on both.
+   */
+  seriesLegend?: string;
+  /** The legend's name for an `alarmSpans` band. Defaults to "Device alarm". */
+  alarmLegend?: string;
+  /** The legend's name for the dashed `threshold` rule. Defaults to "Threshold". */
+  thresholdLegend?: string;
+  /**
    * The colour an "outage" span is drawn in — the covering down automation's
    * SEVERITY colour (business rule 36), resolved by the caller through
    * `downSeverityCss` in utils/severityStyle.ts.
@@ -170,7 +197,49 @@ export interface SparklineOptions {
    * otherwise. A `strong` entry (the busiest core) is drawn last, heavier and
    * fully opaque, so the line the caption names is the one the eye finds.
    */
-  backgroundSeries?: Array<{ points: SparkPoint[]; color: string; strong?: boolean }>;
+  backgroundSeries?: Array<{ points: SparkPoint[]; color: string; strong?: boolean; legend?: string }>;
+}
+
+/** One legend key: a swatch drawn the way the mark it names is drawn. */
+interface LegendEntry {
+  label: string;
+  color: string;
+  style: "line" | "dash" | "band";
+}
+
+const LEGEND_ROW_H = 14;
+/** Helvetica at 10px averages ~5.5px a character; resvg measures nothing, so
+ *  the estimate errs wide and an entry can never run into the next. */
+const LEGEND_CHAR_W = 5.8;
+
+/**
+ * The key under a chart, drawn INTO the image so it survives a forward, a
+ * screenshot and a client that strips HTML around the <img>. Lists only what the
+ * chart actually drew — a key naming a colour the reader cannot find is noise.
+ * Wraps onto as many rows as it needs; returns the rows' height so the caller
+ * can grow the canvas.
+ */
+function legendSvg(entries: LegendEntry[], top: number, width: number): { svg: string; height: number } {
+  if (entries.length === 0) return { svg: "", height: 0 };
+  const parts: string[] = [];
+  let lx = PAD_L;
+  let row = 0;
+  for (const e of entries) {
+    const w = 16 + e.label.length * LEGEND_CHAR_W + 12;
+    if (lx > PAD_L && lx + w > width - PAD_R) {
+      row += 1;
+      lx = PAD_L;
+    }
+    const cy = top + row * LEGEND_ROW_H + 7;
+    parts.push(
+      e.style === "band"
+        ? `<rect x="${lx.toFixed(1)}" y="${(cy - 4).toFixed(1)}" width="12" height="8" fill="${e.color}" fill-opacity="0.3"/>`
+        : `<line x1="${lx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${(lx + 12).toFixed(1)}" y2="${cy.toFixed(1)}" stroke="${e.color}" stroke-width="2"${e.style === "dash" ? ` stroke-dasharray="4 2"` : ""}/>`,
+      `<text x="${(lx + 16).toFixed(1)}" y="${(cy + 3.5).toFixed(1)}" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#4b5563">${esc(e.label)}</text>`,
+    );
+    lx += w;
+  }
+  return { svg: parts.join(""), height: (row + 1) * LEGEND_ROW_H + 4 };
 }
 
 /** The missed-poll red. Shared with the in-app charts' _CHART_FAIL_COLOR so
@@ -291,9 +360,14 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
   const plotW = width - PAD_L - PAD_R;
   const plotH = height - PAD_T - PAD_B;
 
-  const head = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-    `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>` +
+  // The canvas is `height` tall plus whatever the legend needs, which is only
+  // known once the plot has been drawn — so the head is built last.
+  const headFor = (h: number) =>
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}">` +
+    `<rect x="0" y="0" width="${width}" height="${h}" fill="#ffffff"/>` +
     `<text x="4" y="14" font-family="Helvetica,Arial,sans-serif" font-size="12" font-weight="bold" fill="#1f2430">${esc(opts.label)}</text>`;
+  const head = headFor(height);
+  const alarmEntry: LegendEntry = { label: opts.alarmLegend ?? "Device alarm", color: "#dc2626", style: "band" };
 
   const stats = seriesStats(points);
   // Nothing measured, but the device SAID something about the window: draw the
@@ -314,9 +388,12 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
         return `<rect x="${x1.toFixed(1)}" y="${PAD_T}" width="${Math.max(2, x2 - x1).toFixed(1)}" height="${plotH}" fill="#dc2626" fill-opacity="0.13"/>`;
       })
       .join("");
+    // The band is the whole picture here, so the key names it.
+    const key = legendSvg([alarmEntry], height, width);
     return (
-      head +
+      headFor(height + key.height) +
       bands +
+      key.svg +
       `<line x1="${PAD_L}" y1="${baseY}" x2="${width - PAD_R}" y2="${baseY}" stroke="#e5e7eb" stroke-width="1"/>` +
       `<text x="${PAD_L + plotW / 2}" y="${PAD_T + plotH / 2 + 4}" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#6b7280">${esc(opts.emptyNote ?? "no readings in this window")}</text>` +
       `</svg>`
@@ -435,21 +512,40 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
   const recoverSpans = (opts.recoverSpans ?? []).filter((s) => s.to >= from && s.from <= to);
   const recovering = (t: number): boolean => recoverSpans.some((s) => t >= s.from && t <= s.to);
 
-  type PlotPoint = { t: number; py: number; ok: boolean; kind?: "outage" | "dependency" | "missed"; rec?: boolean };
+  // A reading's own verdict (stateSpans) — the strongest claim overlapping the
+  // stretch the point covers.
+  type PointState = "outage" | "dependency" | "missed" | "recovering";
+  const STATE_RANK: Record<PointState, number> = { outage: 4, missed: 3, dependency: 2, recovering: 1 };
+  const stateSpans = (opts.stateSpans ?? []).filter((s) => s.to >= from && s.from <= to);
+  const pointSpan = Math.max(0, opts.pointSpanMs ?? 0);
+  const stateAt = (t: number): PointState | undefined => {
+    let best: PointState | undefined;
+    for (const s of stateSpans) {
+      // A bucket is [t, t + span): a span opening exactly as the next bucket
+      // does belongs to that one.
+      if ((pointSpan > 0 ? s.from >= t + pointSpan : s.from > t) || s.to < t) continue;
+      if (!best || STATE_RANK[s.kind] > STATE_RANK[best]) best = s.kind;
+    }
+    return best;
+  };
+
+  type PlotPoint = { t: number; py: number; ok: boolean; kind?: "outage" | "dependency" | "missed"; st?: PointState };
   const plot: PlotPoint[] = [
-    ...points.map((p) => ({ t: p.t, py: y(p.v), ok: true, rec: recovering(p.t) })),
+    ...points.map((p) => ({ t: p.t, py: y(p.v), ok: true, st: stateAt(p.t) ?? (recovering(p.t) ? "recovering" as const : undefined) })),
     ...failTimes.map((f) => ({ t: f.t, py: baseY, ok: false, kind: f.kind })),
   ].sort((a, b) => a.t - b.t);
   // One colour rule for every stroke, fill, dot and gradient stop below, so a
   // dive can never come out half amber and half red, and the climb back out can
   // never come out half purple and half green.
   const downColor = opts.downColor || FAIL_COLOR;
-  const colorOf = (p: PlotPoint): string =>
-    p.ok
-      ? p.rec ? RECOVER_COLOR : color
-      : p.kind === "dependency" ? DEP_COLOR
-      : p.kind === "missed" ? MISS_COLOR
-      : downColor;
+  const stateOf = (p: PlotPoint): PointState | "series" => (p.ok ? p.st ?? "series" : p.kind ?? "outage");
+  const STATE_COLOR = (s: PointState | "series"): string =>
+    s === "series" ? color
+    : s === "recovering" ? RECOVER_COLOR
+    : s === "dependency" ? DEP_COLOR
+    : s === "missed" ? MISS_COLOR
+    : downColor;
+  const colorOf = (p: PlotPoint): string => STATE_COLOR(stateOf(p));
 
   const defs: string[] = [];
   // Gradients are local defs, not external references — resvg resolves them
@@ -591,7 +687,37 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
       `<line x1="${x(nowAt).toFixed(1)}" y1="${PAD_T}" x2="${x(nowAt).toFixed(1)}" y2="${PAD_T + plotH}" stroke="#d1d5db" stroke-width="1" stroke-dasharray="2 2"/>`
     : label(PAD_L, "start", `-${timeAxisLabel(tSpan)}`) + label(width - PAD_R, "end", "now");
 
-  return head + defsBlock + alarmBands + grid + area + background + line + dot + projectionSvg + ceilingLine + thresholdLine + axis + xLabels + caption + `</svg>`;
+  // The key: built from what was DRAWN, not from what was asked for — a fail
+  // span the series has data inside never dives, and a threshold off the axis is
+  // never ruled, so neither may be named.
+  const drawnStates = new Set(plot.map(stateOf));
+  const STATE_LABEL: Record<PointState, string> = {
+    missed: "Missed poll",
+    outage: "Down",
+    recovering: "Recovering",
+    dependency: "Parent down",
+  };
+  const entries: LegendEntry[] = [];
+  if (drawnStates.has("series")) entries.push({ label: opts.seriesLegend ?? opts.label, color, style: "line" });
+  // The Status pill's order: missed, down, recovering — then the explained grey.
+  for (const s of ["missed", "outage", "recovering", "dependency"] as const) {
+    if (drawnStates.has(s)) entries.push({ label: STATE_LABEL[s], color: STATE_COLOR(s), style: "line" });
+  }
+  // Background lines keyed by name: 64 cores are one "Other cores" entry,
+  // swatched in the first core's hue.
+  for (const s of bg) {
+    if (s.legend && !entries.some((e) => e.label === s.legend)) entries.push({ label: s.legend, color: s.color, style: "line" });
+  }
+  if (projectionSvg) entries.push({ label: "Forecast", color, style: "dash" });
+  if (thresholdLine) entries.push({ label: opts.thresholdLegend ?? "Threshold", color: "#dc2626", style: "dash" });
+  if ((opts.alarmSpans ?? []).some((s) => s.to >= from && s.from <= to)) entries.push(alarmEntry);
+  // One entry is just the series, which the title already names: a key under a
+  // plain CPU line would only repeat "CPU".
+  const key = entries.length > 1 || (entries.length === 1 && !drawnStates.has("series"))
+    ? legendSvg(entries, height, width)
+    : { svg: "", height: 0 };
+
+  return headFor(height + key.height) + defsBlock + alarmBands + grid + area + background + line + dot + projectionSvg + ceilingLine + thresholdLine + axis + xLabels + caption + key.svg + `</svg>`;
 }
 
 /** Split a secondary series wherever its samples stop arriving — a gap over
