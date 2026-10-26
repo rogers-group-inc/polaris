@@ -73,7 +73,7 @@ function _windowArea(row) {
   if (!win || !(win.max > 0.5) || !win.box || win.box === strip) return null;
   var r = win.box.getBoundingClientRect();
   return {
-    left: r.left + STRIP_SHADOW_PX,
+    left: r.left + (win.padL || STRIP_SHADOW_PX),
     right: r.right - STRIP_SHADOW_PX,
     fadeL: win.pos > 0.5,
     fadeR: win.pos < win.max - 0.5,
@@ -254,6 +254,10 @@ function _measureStrip(strip) {
   // The room: the strip's content box, less everything in it that is not
   // the tab box (the + button) and their gaps.
   var scs = getComputedStyle(strip);
+  // The mask's room LEFT of the area: the strip's own left padding (its
+  // overflow clips at that padding box), at least STRIP_SHADOW_PX, at most
+  // 64. The slanted left fade needs the fade width plus a tab's height.
+  st.padL = Math.max(STRIP_SHADOW_PX, Math.min(64, parseFloat(scs.paddingLeft) || 0));
   var room = strip.clientWidth - (parseFloat(scs.paddingLeft) || 0) - (parseFloat(scs.paddingRight) || 0);
   var sgap = parseFloat(scs.columnGap) || 0;
   if (box !== strip) {
@@ -283,30 +287,47 @@ function _clampPos(st) {
 // opaque except where an edge fades, from the area's edge in.
 var STRIP_SHADOW_PX = 32;
 
-function _maskArea(box, on, fadeL, fadeR, R) {
+function _maskArea(box, on, fadeL, fadeR, R, EL) {
   var E = STRIP_SHADOW_PX, F = STRIP_FADE_PX;
-  var pad = on ? E + "px" : "", neg = on ? -E + "px" : "";
   // content-box: the pinned width is the AREA; the padding sits outside it.
   _setStyle(box, "boxSizing", on ? "content-box" : "");
-  _setStyle(box, "padding", pad);
-  _setStyle(box, "margin", on ? neg : "");
-  var mask = "";
+  _setStyle(box, "padding", on ? E + "px " + E + "px " + E + "px " + EL + "px" : "");
+  _setStyle(box, "margin", on ? -E + "px " + -E + "px " + -E + "px " + -EL + "px" : "");
+  // Two mask layers, side by side, unioned. The LEFT one (the box's first
+  // SPLIT px) fades along a 45° line running bottom-left to top-right
+  // (operator requests 2026-10-26; the other slant first, rejected): a
+  // leaving tab's top fades out first and its foot last, and at the tabs'
+  // top line — the line's innermost point — the fade lies OUTSIDE the area,
+  // in the F px before its edge, so a tab parked at the edge is whole. That slant spans
+  // the fade plus a tab's height, hence the wider left room EL. For a
+  // 135deg gradient a point's position along it is s·(x + y), s = √2/2; on
+  // the tabs' top line (y = E, the top padding) the stops are
+  // s·(EL − F + E) and s·(EL + E) — the box height drops out. The RIGHT layer is the rest of the box, its
+  // fade straight and INSIDE the area: the row's controls sit right after
+  // it, and a slanted fade there would lay tab tops under them.
+  var img = "", size = "", posn = "", rep = "";
   if (on && (fadeL || fadeR)) {
-    // The LEFT fade lies OUTSIDE the area, in the F px before its edge (the
-    // mask padding E holds it: E >= F), so a tab parked at the edge is whole
-    // and the one leaving fades out past it (operator request 2026-10-26: one
-    // notch faded the tab space itself). The right fade stays inside: the
-    // row's controls sit right after the area.
-    var stops = fadeL
-      ? ["transparent 0px", "transparent " + (E - F) + "px", "#000 " + E + "px"]
-      : ["#000 0px"];
-    stops = stops.concat(fadeR
-      ? ["#000 " + (E + R - F).toFixed(1) + "px", "transparent " + (E + R).toFixed(1) + "px", "transparent 100%"]
-      : ["#000 100%"]);
-    mask = "linear-gradient(to right, " + stops.join(", ") + ")";
+    var W = R + E + EL, SPLIT = Math.min(W, EL + E + 4), s = Math.SQRT1_2;
+    var solid = "linear-gradient(#000, #000)";
+    var left = fadeL
+      ? "linear-gradient(135deg, transparent 0px, transparent " + (s * (EL - F + E)).toFixed(1) + "px, #000 " + (s * (EL + E)).toFixed(1) + "px)"
+      : solid;
+    var right = fadeR
+      ? "linear-gradient(to right, #000 0px, #000 " + (EL + R - F - SPLIT).toFixed(1) + "px, transparent " + (EL + R - SPLIT).toFixed(1) + "px)"
+      : solid;
+    img = left + ", " + right;
+    size = SPLIT + "px 100%, " + (W - SPLIT).toFixed(1) + "px 100%";
+    posn = "0px 0px, " + SPLIT + "px 0px";
+    rep = "no-repeat, no-repeat";
   }
-  _setStyle(box, "maskImage", mask);
-  _setStyle(box, "webkitMaskImage", mask);
+  _setStyle(box, "maskImage", img);
+  _setStyle(box, "webkitMaskImage", img);
+  _setStyle(box, "maskSize", size);
+  _setStyle(box, "webkitMaskSize", size);
+  _setStyle(box, "maskPosition", posn);
+  _setStyle(box, "webkitMaskPosition", posn);
+  _setStyle(box, "maskRepeat", rep);
+  _setStyle(box, "webkitMaskRepeat", rep);
 }
 
 function _layoutStrip(strip) {
@@ -318,7 +339,7 @@ function _layoutStrip(strip) {
   if (box && box !== strip) {
     _setStyle(box, "width", on ? R.toFixed(1) + "px" : "");
     _setStyle(box, "flexShrink", on ? "0" : "");
-    _maskArea(box, on, on && st.pos > 0.5, on && st.pos < st.max - 0.5, R);
+    _maskArea(box, on, on && st.pos > 0.5, on && st.pos < st.max - 0.5, R, st.padL || STRIP_SHADOW_PX);
   }
   st.items.forEach(function (it) {
     var el = it.el;
@@ -330,7 +351,9 @@ function _layoutStrip(strip) {
     // A tab being dragged carries its own translate (_wireTabDrag).
     if (!el.classList.contains("is-dragging")) _setStyle(el, "translate", (-st.pos).toFixed(1) + "px 0");
     var left = it.s - st.pos, right = left + it.w;
-    _setStyle(el, "visibility", right <= -STRIP_FADE_PX + 0.5 || left >= R - 0.5 ? "hidden" : "");
+    // On the left a tab shows until it is past the mask box (the slanted fade
+    // reaches further out at a tab's top than at its foot).
+    _setStyle(el, "visibility", right <= -(st.padL || STRIP_SHADOW_PX) + 0.5 || left >= R - 0.5 ? "hidden" : "");
   });
 }
 

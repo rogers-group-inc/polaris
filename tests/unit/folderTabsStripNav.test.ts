@@ -114,7 +114,8 @@ async function boot(n: number, active = 0, stripWidth = 250): Promise<Boot> {
     fades: () => {
       const s = list.style as unknown as Record<string, string>;
       const m = s.maskImage || s.webkitMaskImage || "";
-      return { l: m.startsWith("linear-gradient(to right, transparent"), r: m.endsWith("transparent 100%)") };
+      // Two layers: the left one fades on a 45° line (bottom-left to top-right), the right one straight.
+      return { l: m.includes("135deg"), r: m.includes("to right") };
     },
     settle,
   };
