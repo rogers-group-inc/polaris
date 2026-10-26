@@ -214,7 +214,7 @@ function _writeFadeCast(body, area) {
 // gaps included in s), the gap, the room, `pos`, `max`, the list box.
 var TAB_SEL = ".table-tab, .page-tab, .dashboard-tab";
 var STRIP_GLIDE_MS = 180;
-var STRIP_FADE_PX = 6;    // a quick fade: about 5px from clear to solid (operator request 2026-10-26; 28 read as a smear)
+var STRIP_FADE_PX = 12;   // a quick fade (operator requests 2026-10-26: 28 read as a smear, 6 too abrupt)
 var STRIP_WHEEL_NOTCH = 50;   // px of pixel-mode wheel delta that make one step
 
 function _setStyle(el, prop, val) {
