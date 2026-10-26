@@ -1135,10 +1135,17 @@ code {
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
 /* How wide the shell may grow — the account menu's Layout row sets
    data-layout on <html> (app.js, per browser). 16:9 is the default and what
-   a page without app.js (Dash) always gets. .layout and .slideover both read
-   this one token, so the slide-over stays on the column's right edge in every
-   layout and on the window edge in Auto. */
-:root { --layout-max-width: calc(100vh * 16 / 9); }
+   a page without app.js (Dash) always gets. .layout reads the width;
+   --layout-edge is the gap between the column's right edge and the window's,
+   and everything pinned to the right of the window offsets by it — the
+   slide-over, the toasts, the assistant's button and panel — so each stays
+   on the column's edge in every layout and on the window edge in Auto. A
+   surface pinned there with a bare `right:` sits out in the margin on a wide
+   screen. */
+:root {
+  --layout-max-width: calc(100vh * 16 / 9);
+  --layout-edge: max(0px, calc((100vw - var(--layout-max-width)) / 2));
+}
 :root[data-layout="16x10"] { --layout-max-width: calc(100vh * 16 / 10); }
 :root[data-layout="auto"] { --layout-max-width: 100vw; }
 
@@ -4940,7 +4947,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .toast-container {
   position: fixed;
   bottom: 1.5rem;
-  right: 1.5rem;
+  right: calc(var(--layout-edge, 0px) + 1.5rem);
   z-index: 2000;
   display: flex;
   flex-direction: column;
@@ -6466,7 +6473,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 .slideover {
   position: fixed;
-  right: max(0px, calc((100vw - var(--layout-max-width)) / 2));
+  right: var(--layout-edge);
   top: 0;
   height: 100vh;
   width: clamp(520px, 42vw, 1100px);

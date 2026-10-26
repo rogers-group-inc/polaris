@@ -364,6 +364,10 @@ customizing or while a published dashboard is on screen — offers:
 - **"My layout — this browser"**, kept in that browser's storage;
 - every **public** [saved dashboard](Dashboard#saved-dashboards).
 
+The **Refresh** button left of the pencil reloads every widget's data at once,
+as it does on the [Dashboard](Dashboard#working-with-the-canvas) — on the
+wallboard's own layout and on a published one alike.
+
 A session-less caller gets **public rows only**, and **every write verb 405s
 app-wide** — so a wallboard viewer can build a local layout or show a published
 one, and can never save either to the server.

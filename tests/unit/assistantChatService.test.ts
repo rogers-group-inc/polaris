@@ -42,11 +42,13 @@ vi.mock("../../src/services/llmService.js", async () => ({
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
   // The real tool NAMES (the round-0 steering filters by name); the shapes do not matter here.
-  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "get_asset", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
+  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "telemetry_summary", "get_asset", "get_dependencies", "list_services", "find_endpoint", "path_check_summary", "interface_summary", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
     "list_manufacturer_profiles", "get_manufacturer_profile", "list_mibs", "search_mib_symbols", "list_automations", "get_automation"]
     .map((name) => ({ type: "function", function: { name, description: "", parameters: {} } })),
   runAssistantTool: h.runAssistantTool,
   toolLabel: (n: string) => `did ${n}`,
+  WINDOW_OPTIONAL_TOOLS: new Set(["telemetry_summary", "get_dependencies", "list_services", "find_endpoint", "path_check_summary", "interface_summary"]),
+  REPORT_SOURCE_NAMES: ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary"],
 }));
 vi.mock("../../src/services/assistantMemoryService.js", async () => {
   const real = await vi.importActual<typeof import("../../src/services/assistantMemoryService.js")>("../../src/services/assistantMemoryService.js");
@@ -71,7 +73,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
-  contextBudget, fitHistory, compactToolResults, permissionsPromptBlock, scopePromptBlock,
+  contextBudget, fitHistory, compactToolResults, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
 } from "../../src/services/assistantChatService.js";
 
 const integration = { id: "i1", name: "Ollama", config: { host: "10.0.0.5", model: "qwen", maxToolRounds: 2 } as any };
@@ -400,6 +402,21 @@ describe("streamAssistantTurn", () => {
   });
 });
 
+describe("toolsForWindow — tool definitions must not crowd out a small window", () => {
+  const def = (name: string, size = 100) => ({ type: "function", function: { name, description: "x".repeat(size), parameters: {} } });
+  const tools = [def("search"), def("list_assets"), def("telemetry_summary"), def("interface_summary"), def("find_endpoint")];
+
+  it("offers every tool when they all fit", () => {
+    expect(toolsForWindow(tools, 100_000, new Set())).toHaveLength(5);
+  });
+
+  it("holds the optional tools back on a small window, unless the playbook names them", () => {
+    expect(toolsForWindow(tools, 200, new Set()).map((t) => t.function.name)).toEqual(["search", "list_assets"]);
+    expect(toolsForWindow(tools, 200, new Set(["telemetry_summary"])).map((t) => t.function.name))
+      .toEqual(["search", "list_assets", "telemetry_summary"]);
+  });
+});
+
 describe("context budget", () => {
   it("sizes the prompt and lookup results to the window, within bounds", () => {
     expect(contextBudget(8192)).toEqual({ window: 8192, promptTokens: 4915, toolResultChars: 7168 });
@@ -450,6 +467,9 @@ describe("report intent", () => {
     expect(asksForReport("export every firewall to csv")).toBe(true);
     expect(asksForReport("how do I export a report?")).toBe(false);
     expect(asksForReport("what's down right now?")).toBe(false);
+    // A mistyped "report" after a making-verb (seen live 2026-10-26), but not a past-tense status.
+    expect(asksForReport("create a reported of the highest average memory utilizations of the 61f fortigate firewalls")).toBe(true);
+    expect(asksForReport("which devices reported errors today")).toBe(false);
   });
 
   it("titles a report from the question", () => {
@@ -471,7 +491,7 @@ describe("playbooks steer round 0", () => {
       return { content: "Checking.", toolCalls: [], finishReason: "stop" };
     });
     await run().p;
-    expect(round0Tools.sort()).toEqual(["get_asset", "list_alerts", "search"]);
+    expect(round0Tools.sort()).toEqual(["get_asset", "get_dependencies", "list_alerts", "search"]);
     expect(round0Msgs[0].role).toBe("system");
     expect(round0Msgs[1]).toMatchObject({ role: "system" });
     expect(round0Msgs[1].content).toMatch(/^Playbook — outage correlation/);
