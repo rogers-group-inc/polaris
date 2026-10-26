@@ -1467,6 +1467,12 @@ export async function readSdwanMembers(
   // failed advances lastSystemInfoAt while this table stands still. Reading the
   // pass stamp would report that stale table as current, which is the exact
   // misreading the strip exists to prevent.
+  //
+  // Only the NEWEST scrape counts: one SD-WAN pass stamps every row it writes
+  // with the same `now`, so the rows at max(timestamp) are exactly the gate's
+  // current member × health-check set. The old "latest row per pair over all
+  // history" kept a member the operator had removed from the SD-WAN zone on the
+  // table, frozen at its last reading, until retention aged its samples out.
   const latest = await prisma.$queryRawUnsafe<Array<{
     link: string; healthCheck: string; zone: string | null; state: string;
     latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
@@ -1474,7 +1480,9 @@ export async function readSdwanMembers(
   }>>(
     `SELECT DISTINCT ON ("link", "healthCheck")
             "link", "healthCheck", "zone", "state", "latencyMs", "jitterMs", "packetLoss", "timestamp"
-     FROM "asset_perf_sla_samples" WHERE "assetId" = $1
+     FROM "asset_perf_sla_samples"
+     WHERE "assetId" = $1
+       AND "timestamp" = (SELECT max("timestamp") FROM "asset_perf_sla_samples" WHERE "assetId" = $1)
      ORDER BY "link", "healthCheck", "timestamp" DESC`,
     assetId,
   );

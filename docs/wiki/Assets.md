@@ -1405,6 +1405,13 @@ health check). One member legend above the Performance SLA charts drives all
 three: click a member to hide or show it, double-click to show only that
 member, and **Show all** brings everything back.
 
+The members table lists what the gate reported on its **most recent** SD-WAN
+poll. When you remove an interface from an SD-WAN zone (or delete a health
+check) on the FortiGate, it drops off the table at the next poll. The
+Performance SLA charts and their legend keep it while its detail samples are
+retained (7 days by default), so you can still see how it behaved before the
+change.
+
 Each member's **Health Check Status** strip covers the **last 30 minutes**, one
 segment per SD-WAN poll. Each segment is one colour:
 
