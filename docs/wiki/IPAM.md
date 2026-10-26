@@ -354,6 +354,12 @@ real `reserved-address` entry on the FortiGate at create time.
 - The push is **verified by reading the entry back**. Any failure aborts the
   create entirely — **no row is persisted**. You do not end up with a Polaris
   reservation the gate has never heard of.
+- A FortiGate holds one reservation per address and one per MAC in a DHCP
+  scope, so a push whose IP or MAC is already reserved is refused. The error
+  names the entry in the way, including the address a MAC is already
+  reserved on, and says whether **Polaris wrote it**. If it did, that
+  reservation is in Polaris at that address: release it there. If it did not,
+  run discovery to bring it into Polaris, or remove it on the FortiGate.
 - Releasing a reservation expires the gate's lease.
 - **IPv6 reservations are never pushed.** FortiOS has no DHCPv6 reservations,
   so a reservation in an IPv6 network stays in Polaris only, and releasing an

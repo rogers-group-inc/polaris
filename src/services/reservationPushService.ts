@@ -356,6 +356,39 @@ export async function findScopeIdForCidr(
 
 export type { FortiOsReservedAddress };
 
+/**
+ * The refusal a push gets when the gate already reserves the IP or the MAC.
+ *
+ * It names the entry's own ADDRESS, because a MAC collision is almost always
+ * the same device reserved somewhere else — and the operator's question is
+ * where. And it says whether Polaris wrote the entry (every Polaris-written
+ * description starts "Polaris/<user>: " or "Polaris: ", see composeDescription).
+ * The old text told the operator to run discovery "if this entry is not in
+ * Polaris" even when Polaris had written it, sending them to look for a
+ * missing row when the row was sitting at the other address.
+ */
+export function reservedAddressCollisionMessage(
+  r: FortiOsReservedAddress,
+  wanted: { ip: string } | { mac: string },
+): string {
+  const what = "ip" in wanted ? wanted.ip : `MAC ${wanted.mac}`;
+  const freeing = "ip" in wanted ? "the IP" : "the MAC";
+  const where = r.ip && !("ip" in wanted) ? ` at ${r.ip}` : "";
+  const parts: string[] = [`entry id ${r.id}`];
+  if (r.mac) parts.push(`MAC ${r.mac}`);
+  if (r.description) parts.push(`description "${r.description}"`);
+  const head = `FortiGate already has a reservation for ${what} on this scope${where} (${parts.join(", ")}). `;
+  const byPolaris = /^Polaris[/:]/.test(r.description || "");
+  if (byPolaris) {
+    return head + (r.ip
+      ? `Polaris wrote that entry, so it is the reservation for ${r.ip} in Polaris: release it there to free ${freeing}.`
+      : `Polaris wrote that entry: release its reservation in Polaris to free ${freeing}.`);
+  }
+  return head +
+    `Polaris did not write that entry. If it belongs in Polaris, run discovery for the FortiManager/FortiGate ` +
+    `integration to ingest it; otherwise remove it from the FortiGate to free ${freeing}.`;
+}
+
 export async function listReservedAddresses(
   t: Transport,
   scopeId: number,
@@ -434,33 +467,15 @@ export async function pushReservation(
 
   // Pre-check for collision so we can fail with a clearer message than the
   // FortiOS error envelope would give us. FortiOS rejects duplicate MAC and
-  // duplicate IP within a scope. Errors include the existing entry's MAC and
-  // description so the operator can find/remove it on the FortiGate if
-  // Polaris doesn't already know about it (e.g. pushed by a previous tool,
-  // added directly on the device, or pending discovery ingest).
+  // duplicate IP within a scope. See reservedAddressCollisionMessage for what
+  // the message tells the operator.
   const existing = await listReservedAddresses(t, scopeId);
-  const describeEntry = (r: FortiOsReservedAddress): string => {
-    const parts: string[] = [`entry id ${r.id}`];
-    if (r.mac) parts.push(`MAC ${r.mac}`);
-    if (r.description) parts.push(`description "${r.description}"`);
-    return parts.join(", ");
-  };
   for (const r of existing) {
     if (r.ip && r.ip === params.ip) {
-      throw new AppError(
-        409,
-        `FortiGate already has a reservation for ${params.ip} on this scope (${describeEntry(r)}). ` +
-          `If this entry is not in Polaris, run discovery for the FortiManager/FortiGate integration to ingest it, ` +
-          `or remove it from the FortiGate to free the IP.`,
-      );
+      throw new AppError(409, reservedAddressCollisionMessage(r, { ip: params.ip }));
     }
     if (r.mac && normalizeMac(r.mac) === mac) {
-      throw new AppError(
-        409,
-        `FortiGate already has a reservation for MAC ${mac} on this scope (${describeEntry(r)}). ` +
-          `If this entry is not in Polaris, run discovery for the FortiManager/FortiGate integration to ingest it, ` +
-          `or remove it from the FortiGate to free the MAC.`,
-      );
+      throw new AppError(409, reservedAddressCollisionMessage(r, { mac }));
     }
   }
 
