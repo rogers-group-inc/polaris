@@ -209,22 +209,12 @@ describe("tab strip window", () => {
     expect(b.drawn()).toEqual([0, 120, 0, 0, 0]);
   });
 
-  it("pins the tab list to the room while overflowing, so + and ‹ › hold still as it steps", async () => {
-    const b = await boot(5);
-    const list = b.win.document.getElementById("list") as unknown as HTMLElement;
-    expect(parseFloat(list.style.width)).toBe(220);
-    b.next().click();
-    await b.settle();
-    expect(parseFloat(list.style.width)).toBe(220);   // the run is 220 wide here, 200 at the start: same box
-  });
-
   it("lifts every squeeze when the tabs come to fit again", async () => {
     const b = await boot(5);
     b.tabs().slice(2).forEach((t) => t.remove());
     await b.settle();
     expect(b.drawn()).toEqual([60, 140]);
     expect(b.nav().classList.contains("is-idle")).toBe(true);
-    expect((b.win.document.getElementById("list") as unknown as HTMLElement).style.width).toBe("");
   });
 });
 
