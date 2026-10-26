@@ -113,7 +113,10 @@ Click the round button in the bottom-right corner. The chat window opens:
   corner. **Double-click** the title bar to send it back to the corner, or the
   top-left corner to restore the default size. Its top edge stops just below
   the page's top bar, so the title bar and the corner are always in reach; a
-  window too tall for the space is shortened to fit.
+  window too tall for the space is shortened to fit. Like the rest of the page
+  it stays inside the [Layout](Navigation-and-Account#layout) column (16:9, 16:10 or
+  Auto), and a window you moved keeps its place relative to that column, so it
+  follows when you change the layout.
 - It stays put when you change page, and an answer that is still being written
   carries on — the next page shows *Still answering…* and then the answer.
   **Stop** is the only thing that stops it.
