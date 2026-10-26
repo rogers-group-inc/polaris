@@ -9,6 +9,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 - **ApiToken** — bearer tokens for external callers (e.g. SIEM quarantine, NOC kiosk); each token is bound to a Role and acts with that role's permission matrix.
 
 - **AssistantConversation** / **AssistantMessage** / **AssistantReport** — the floating AI assistant's saved chats (business rule 95). A conversation belongs to exactly ONE user (`userId`, cascade) and is **owner-only** — every read and write is scoped to the session user, admins included, and someone else's id answers 404. Only `user` / `assistant` turns are stored (CHECK); **tool calls and their results never are**, so a stored thread cannot replay data its owner has since lost access to. A report is a **snapshot** of rows the `create_report` tool read from the database (never model text), capped at 5000. `integrationId` (SetNull) names the `llm` integration that answered last. Pruned after `Setting assistant.retentionDays` (default 90) of inactivity by the hourly `pruneEvents` job; capped at 200 per user. An answer's `preface` / `signOff` are the Efficiency Advisor's canned lines (rule 95(h)) — chosen by Polaris, kept OUT of `content` so they are never resent to the model.
+- **AssistantMessageImage** — a screenshot pasted into a user turn (rule 95(l)): ≤ 4 per message, ≤ 3.5 MiB each, type sniffed from the bytes. Cascades with its message, so it follows the conversation's owner-only scope, retention and `/clear`. Stored so a reopened conversation shows it and a follow-up can refer to it; only the newest 4 across a thread are resent to the model. A user message may have empty `content` when it carries images.
 - **AssistantMemoryEntry** — one short sentence about a PERSON (their team, the sites they look after, how they like answers) that the assistant is given at the start of every turn that person starts (business rule 95(i)). Owner-only like a conversation; `userId` cascades. `source` is `assistant` (the model's `remember` tool, which may only store what the user typed that turn) or `user` (typed in the Memory drawer or with `/remember`). `text` is `VARCHAR(200)`; `assistantMemoryService` refuses addresses, links, credential-shaped and prompt-override text on every write path and caps a user at 25 entries / 2000 characters. Read only when `User.assistantMemory` is on.
 
 - **SshHostKey** — trust-on-first-use pins for SSH **server** host keys, one row per dialed `(host, port)` — no Asset FK, since a host is often onboarded before it exists as an Asset. A changed key **refuses** the connection. Gated per credential by `SshConfig.verifyHostKey`. See business rule 21.
@@ -114,6 +115,16 @@ AssistantReport                 -- A downloadable table the create_report tool b
   truncated   Boolean           -- more rows matched than the cap
   generatedAt DateTime
   @@index([messageId]); @@map("assistant_reports")
+
+AssistantMessageImage           -- A screenshot pasted into a user turn (rule 95(l)). Owner-only through its conversation.
+  id          UUID PK
+  messageId   String FK->AssistantMessage (Cascade) -- gone with the message: retention, /clear and delete need nothing extra
+  mimeType    String            -- image/png | image/jpeg | image/webp | image/gif, SNIFFED from the bytes, never the upload's claim
+  bytes       Bytes             -- ≤ 3.5 MiB; read only one at a time (the image GET) or for the ≤4 being resent, never on a list
+  sizeBytes   Int
+  position    Int @default(0)   -- order within the message (≤ 4 per message)
+  createdAt   DateTime
+  @@index([messageId]); @@map("assistant_message_images")
 
 AssistantMemoryEntry            -- One line of a user's assistant memory (rule 95(i)). Owner-only.
   id        String   PK uuid

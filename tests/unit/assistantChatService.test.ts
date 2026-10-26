@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   getMemoryEnabled: vi.fn(async () => false),
   listMemory: vi.fn(async () => [] as any[]),
   runMemoryTool: vi.fn(),
+  loadTurnImages: vi.fn(async (_ids: string[]) => new Map<string, { mimeType: string; base64: string }>()),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
@@ -38,6 +39,7 @@ vi.mock("../../src/services/llmService.js", async () => ({
   resolveChatModel: async (_id: string, c: any) => c.model || "picked-default",
   recoverTextToolCalls: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).recoverTextToolCalls,
   estimateTokens: (t: string) => Math.ceil((t ?? "").length / 3.5),
+  acceptsImages: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).acceptsImages,
   LLM_DEFAULTS: { maxToolRounds: 6, maxRowsPerTool: 200, contextMessages: 20, contextWindow: 8192 },
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
@@ -66,6 +68,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
   beginTurn: h.beginTurn,
   finishTurn: h.finishTurn,
   recentTurns: h.recentTurns,
+  loadTurnImages: h.loadTurnImages,
   getEfficiencyAdvisor: h.getEfficiencyAdvisor,
   recentAdvisorLines: h.recentAdvisorLines,
 }));
@@ -74,6 +77,7 @@ import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlac
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
+  pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS,
 } from "../../src/services/assistantChatService.js";
 
 const integration = { id: "i1", name: "Ollama", config: { host: "10.0.0.5", model: "qwen", maxToolRounds: 2 } as any };
@@ -894,5 +898,56 @@ describe("asset links in an answer", () => {
     ] } });
     await run().p;
     expect(h.finishTurn.mock.calls[0][1].content).toBe(answer);
+  });
+});
+
+describe("screenshots (rule 95(l))", () => {
+  it("pickResentImages keeps the newest images, newest turn first", () => {
+    const turns = [{ imageIds: ["a", "b", "c"] }, {}, { imageIds: ["d", "e"] }];
+    expect([...pickResentImages(turns, 3)]).toEqual(["d", "e", "a"]);
+    expect([...pickResentImages(turns, 10)]).toEqual(["d", "e", "a", "b", "c"]);
+  });
+
+  it("userTurnText stands in for an empty question and notes images not resent", () => {
+    expect(userTurnText("what is this?", 0, 0, true)).toBe("what is this?");
+    expect(userTurnText("", 1, 1, true)).toMatch(/Screenshot sent without a question/);
+    expect(userTurnText("look", 3, 1, true)).toBe("look\n[2 earlier screenshots attached here, not resent to save space]");
+    expect(userTurnText("look", 1, 0, false)).toBe("look\n[1 screenshot attached here — this model cannot read images]");
+  });
+
+  it("fitHistory counts a turn's image tokens against the budget", () => {
+    const turns = [
+      { role: "user" as const, content: "old", extraTokens: IMAGE_TOKENS },
+      { role: "assistant" as const, content: "ok" },
+      { role: "user" as const, content: "new" },
+    ];
+    expect(fitHistory(0, turns, 100).map((t) => t.content)).toEqual(["new"]);
+    expect(fitHistory(0, turns, IMAGE_TOKENS + 100).map((t) => t.content)).toEqual(["old", "ok", "new"]);
+  });
+
+  it("sends the stored images with their turn, plus the screenshot guidance, to a model that reads them", async () => {
+    h.recentTurns.mockResolvedValueOnce([{ role: "user", content: "why no acquired date?", imageIds: ["img1"] }] as any);
+    h.loadTurnImages.mockResolvedValueOnce(new Map([["img1", { mimeType: "image/png", base64: "iVBOR" }]]));
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[]) => {
+      expect(msgs.some((m: any) => m.role === "system" && m.content === SCREENSHOT_GUIDANCE)).toBe(true);
+      const user = msgs.find((m: any) => m.role === "user");
+      expect(user.images).toEqual([{ mimeType: "image/png", base64: "iVBOR" }]);
+      return { content: "ok", toolCalls: [], finishReason: "stop" };
+    });
+    await run({ integration: { ...integration, config: { ...integration.config, acceptsImages: true } } }).p;
+    expect(h.loadTurnImages).toHaveBeenCalledWith(["img1"]);
+  });
+
+  it("never loads or sends images to a model that cannot read them — the turn carries a note instead", async () => {
+    h.recentTurns.mockResolvedValueOnce([{ role: "user", content: "look", imageIds: ["img1"] }] as any);
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[]) => {
+      const user = msgs.find((m: any) => m.role === "user");
+      expect(user.images).toBeUndefined();
+      expect(user.content).toContain("this model cannot read images");
+      expect(msgs.some((m: any) => m.content === SCREENSHOT_GUIDANCE)).toBe(false);
+      return { content: "ok", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    expect(h.loadTurnImages).toHaveBeenCalledWith([]);
   });
 });

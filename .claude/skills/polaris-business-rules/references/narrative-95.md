@@ -363,6 +363,40 @@ the model's, under the system prompt, whether or not the regex matches, so it is
 false positives ("disable SSH access", "an unrestricted VLAN", "policies that bypass the proxy"),
 not for recall.
 
+### (l) A screenshot shows what to look at, not what is true
+
+2026-10-26. The owner asked to paste screenshots into the chat. The first one pasted was an
+Asset Details General tab, with the question "why does it say there is no acquired date?". The
+screen showed an Acquired date. The answer had said there was none because `get_asset` never
+selected `acquiredAt` (fixed the same day). That is the case this section is written for. The
+screenshot told the model WHERE to look. Only a lookup could tell it what was true.
+
+- **Storage.** Images are stored (`AssistantMessageImage`), not dropped after the turn, so the
+  transcript shows them on reopen and a follow-up can still refer to one. They hang off the
+  user message and cascade with it, so retention (e), `/clear` and delete need nothing extra.
+  Owner-only like the conversation: the GET is scoped through it, and another conversation's id
+  gives 404. Served with `nosniff` and a sandboxing CSP.
+- **Upload.** Multipart, parsed by multer on the ask route. That runs after the session gate
+  and the ask limiter. The app-wide JSON parser stays at 1 MB and stays the only pre-auth
+  ceiling. Four per message, 3.5 MiB each, which keeps one image under Anthropic's 5 MB base64
+  limit. The type is sniffed from the bytes (PNG / JPEG / WebP / GIF). The upload's own
+  content type is ignored, so an SVG or HTML file named `.png` gets a 400.
+- **Which models get them.** A text-only local model either refuses an image part with a 400
+  or ignores it and answers as if nothing had been attached. The second is worse. So the
+  integration has an "Accepts images" switch. Left unset, `acceptsImages` says yes only for a
+  Claude deployment (every current Claude model reads images). The route refuses images with
+  409 before anything is stored. A conversation that later moves to a non-vision model sends
+  each earlier image as a one-line note on its turn.
+- **Cost.** Every image in the history rides in every round, about 1,600 tokens each on
+  Claude at the widget's 1568 px. So only the newest four are resent, counted into the
+  `fitHistory` budget (`IMAGE_TOKENS`). Older ones leave a note.
+- **Grounding.** A turn that carries images also gets `SCREENSHOT_GUIDANCE`. It says to read
+  the screenshot for what is being asked, that facts still come from a lookup, that the lookup
+  wins when the two disagree, and never to repeat a password, key or token visible in a
+  screenshot. The clipboard rule on the client side: a paste that also carries plain text
+  attaches nothing. An Excel or Word copy carries both a picture and the text, and the text is
+  what was meant.
+
 ### What is deliberately not here
 
 The assistant is not on the Dash wallboard (the phone app gained a Chat tab on 2026-10-09, shown only where the assistant is usable), takes no action
