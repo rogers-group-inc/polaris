@@ -463,6 +463,16 @@ alert, the storage chart on a storage alert)
 `{chart.sdwanLoss}` `{processes.top}` `{interface.ip}` `{interface.lldp}`
 `{path.graph}` (a Path Monitor alert's traceroute graph — up to four on a
 grouped alert)
+
+Every email chart carries a **key** under it, drawn into the image so it
+survives a forward. It names only what that chart drew: the device states
+(**Up**, **Missed poll**, **Down**, **Recovering**, **Parent down**) and marks
+like **Threshold**, **SLA target**, **Device alarm**, **Member down** or
+**Forecast**. A chart with nothing but its own line has no key. The response
+time and packet loss charts use the same state colours, so a stretch where the
+parent was down is grey on both, and a healthy 0 % loss is green, not red
+([Monitor states](Monitor-States)).
+
 `{brand.header}` (the install's logo, name and subtitle — the default email's
 letterhead)
 

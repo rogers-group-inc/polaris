@@ -440,3 +440,123 @@ describe("the retired measuredFrom marker", () => {
     expect(svg).not.toContain("NaN");
   });
 });
+
+describe("state spans — a reading coloured by the verdict over it", () => {
+  // The packet-loss chart: 100 % while the parent was dark, then the climb back
+  // down, then a quiet 0 %. It was one fixed red, so the explained stretch read
+  // as an alarm and the 0 % read as Down.
+  const B = 120_000;
+  const loss = [100, 100, 100, 40, 0, 0].map((v, i) => ({ t: T0 + i * B, v }));
+  const opts = {
+    label: "Packet loss", unit: "%", color: "#2e7d32", yMin: 0, yMax: 100,
+    from: T0, to: T0 + 6 * B, pointSpanMs: B, seriesLegend: "Up",
+    stateSpans: [
+      { from: T0, to: T0 + 3 * B - 1, kind: "dependency" as const },
+      { from: T0 + 3 * B, to: T0 + 4 * B + 30_000, kind: "recovering" as const },
+    ],
+  };
+
+  it("draws each stretch in its state's colour and the quiet tail in the series colour", () => {
+    const svg = sparklineSvg(loss, opts);
+    expect(svg).toContain('stroke="#9aa0a6"');
+    expect(svg).toContain('stroke="#0288d1"');
+    expect(svg).toMatch(/stroke="#2e7d32"|fill="#2e7d32"/);
+  });
+
+  it("gives a span opening exactly at a bucket boundary to the later bucket only", () => {
+    // [T0+2B, T0+3B) ends where the recovery span opens: it stays grey.
+    const svg = sparklineSvg(loss.slice(0, 3), { ...opts, to: T0 + 3 * B });
+    expect(svg).not.toContain("#0288d1");
+  });
+
+  it("lets the strongest claim win where spans overlap", () => {
+    const svg = sparklineSvg(series([50, 50]), {
+      label: "Packet loss", color: "#2e7d32", pointSpanMs: 60_000,
+      stateSpans: [
+        { from: T0, to: T0 + 120_000, kind: "recovering" },
+        { from: T0, to: T0 + 120_000, kind: "outage" },
+      ],
+      downColor: "#123456",
+    });
+    expect(svg).toContain('stroke="#123456"');
+    expect(svg).not.toContain("#0288d1");
+  });
+});
+
+describe("legend", () => {
+  const svgHeight = (svg: string): number => Number(svg.match(/<svg [^>]*height="(\d+)"/)![1]);
+
+  it("names only the colours drawn, under the plot, and grows the canvas for them", () => {
+    const B = 120_000;
+    const svg = sparklineSvg([100, 0].map((v, i) => ({ t: T0 + i * B, v })), {
+      label: "Packet loss", color: "#2e7d32", yMin: 0, yMax: 100, pointSpanMs: B, seriesLegend: "Up",
+      stateSpans: [{ from: T0, to: T0 + B - 1, kind: "dependency" }],
+    });
+    expect(svg).toContain(">Up<");
+    expect(svg).toContain(">Parent down<");
+    expect(svg).not.toContain(">Recovering<");
+    expect(svg).not.toContain(">Down<");
+    expect(svgHeight(svg)).toBeGreaterThan(120);
+  });
+
+  it("draws no key under a plain single-series chart — the title already names it", () => {
+    const svg = sparklineSvg(series([10, 20, 30]), { label: "CPU", color: "#2563eb" });
+    expect(svgHeight(svg)).toBe(120);
+  });
+
+  it("names the threshold only when it is ruled inside the axis", () => {
+    const on = sparklineSvg(series([10, 20]), { label: "CPU", yMin: 0, yMax: 100, threshold: 90 });
+    expect(on).toContain(">Threshold<");
+    const off = sparklineSvg(series([10, 20]), { label: "CPU", yMin: 0, yMax: 100, threshold: 150 });
+    expect(off).not.toContain(">Threshold<");
+  });
+
+  it("names a dive that was drawn, and not one the series had data inside", () => {
+    const pts = series([10, 20, 30, 40]);
+    const drawn = sparklineSvg(pts, {
+      label: "Response time", seriesLegend: "Up", from: T0, to: T0 + 10 * 60_000,
+      failSpans: [{ from: T0 + 6 * 60_000, to: T0 + 9 * 60_000, kind: "missed" }],
+    });
+    expect(drawn).toContain(">Missed poll<");
+    const skipped = sparklineSvg(pts, {
+      label: "Response time", seriesLegend: "Up",
+      failSpans: [{ from: T0 + 60_000, to: T0 + 2 * 60_000, kind: "outage" }],
+    });
+    expect(skipped).not.toContain(">Down<");
+  });
+
+  it("keys a dead SD-WAN member's band-only chart with the band's own name", () => {
+    const svg = sparklineSvg([], {
+      label: "SD-WAN latency", from: T0, to: T0 + 3_600_000, alarmLegend: "Member down",
+      alarmSpans: [{ from: T0, to: T0 + 3_600_000 }],
+    });
+    expect(svg).toContain(">Member down<");
+  });
+
+  it("keys per-core lines once each, however many cores there are", () => {
+    const svg = sparklineSvg(series([10, 20]), {
+      label: "CPU per core", seriesLegend: "All cores",
+      backgroundSeries: [
+        { points: series([5, 6]), color: "#111111", legend: "Other cores" },
+        { points: series([7, 8]), color: "#222222", legend: "Other cores" },
+        { points: series([30, 40]), color: "#333333", strong: true, legend: "Busiest core" },
+      ],
+    });
+    expect(svg.match(/>Other cores</g)).toHaveLength(1);
+    expect(svg).toContain(">Busiest core<");
+    expect(svg).toContain(">All cores<");
+  });
+
+  it("wraps a long key onto a second row instead of running off the image", () => {
+    const svg = sparklineSvg(series([10, 20]), {
+      label: "x", seriesLegend: "Up", yMin: 0, yMax: 100, threshold: 50,
+      backgroundSeries: Array.from({ length: 6 }, (_, i) => ({
+        points: series([i, i + 1]), color: "#111111", legend: `A rather long series name ${i}`,
+      })),
+    });
+    expect(svgHeight(svg)).toBeGreaterThan(120 + 20);
+    for (const m of svg.matchAll(/<text x="([\d.]+)"[^>]*font-size="10" fill="#4b5563">([^<]*)</g)) {
+      expect(Number(m[1]) + m[2]!.length * 5.8).toBeLessThanOrEqual(520);
+    }
+  });
+});

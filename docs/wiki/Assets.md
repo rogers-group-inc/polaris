@@ -605,8 +605,12 @@ succeeded shows *No successful poll yet* with the error straight away. To be
 told about it, alert on *CPU & memory polls failing (minutes)* or *Interface
 polls failing (minutes)* ([Automation triggers](Automation-Triggers#telemetryfailingminutes--systeminfofailingminutes--a-stream-that-stopped-answering)).
 
-**The Response time chart also draws packet loss.** A dashed purple line reads
-against a second axis on the right. That axis tops out at the worst loss in
+**The Response time chart also draws packet loss.** A dashed line reads
+against a second axis on the right. It takes the same colours as the response
+line, so both say the same thing about the same minutes: green while the
+device is up, grey while its parent was down, blue while it climbs back, amber
+or the outage colour while polls are being missed. A key under the chart names
+the colours it actually drew. That axis tops out at the worst loss in
 the window (4 %, 8 %, 12 %, 20 %, 40 %, 60 %, 80 % or 100 %), so small loss
 stays readable instead of hugging the bottom. Check the scale before comparing
 two charts. It counts packets from every probe

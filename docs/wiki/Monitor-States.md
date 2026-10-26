@@ -214,7 +214,12 @@ the state outright.
 | blue | `recovering` |
 | **grey** | a failure the upstream explains — [dependency suppression](Dependency-Suppression) |
 | translucent labelled band | a [maintenance window](Maintenance-Windows) |
-| dashed purple line, right-hand axis | packet loss, from every probe Polaris sends the device; the axis tops out at the worst loss in the window ([Assets → System](Assets#system)) |
+| dashed line, right-hand axis | packet loss, from every probe Polaris sends the device, coloured by the same states as the response line; the axis tops out at the worst loss in the window ([Assets → System](Assets#system)) |
+
+The key under the chart (desktop, phone and alert email alike) lists only the
+marks that chart drew, with these names: **Up**, **Missed poll**, **Down**,
+**Recovering**, **Parent down**. A chart showing nothing but a healthy line has
+no key.
 | line/dot fading through warning → serious → critical | the reading has entered a tier of an automation watching this metric on this asset |
 
 Severity shading is computed **server-side from the engine's own resolver**, so

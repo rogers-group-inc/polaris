@@ -1013,6 +1013,9 @@
           height: 120,
           yUnit: "ms",
           ariaLabel: "Response time over " + st.range,
+          // The key for the colours drawn — the same names the desktop chart
+          // and the alert email use.
+          legend: { series: "Up" },
         });
       }
       if (sub) {

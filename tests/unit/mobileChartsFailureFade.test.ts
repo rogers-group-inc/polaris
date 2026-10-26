@@ -387,3 +387,38 @@ describe("the verdict palette — the response-time chart's five colours", () =>
     expect(svg).not.toContain(RECOVER);
   });
 });
+
+describe("legend", () => {
+  const keyOf = (html: string): string[] => {
+    const host = (globalThis as unknown as { document: Document }).document.createElement("div");
+    host.innerHTML = html;
+    return Array.from(host.querySelectorAll(".chart-state-legend > span")).map((s) => s.textContent ?? "");
+  };
+
+  it("names only the states the line drew, in the Status pill's order", () => {
+    const ts = minutes(6);
+    const html = charts.lineChart({
+      legend: { series: "Up" },
+      series: [{ values: [
+        { ts: ts[0]!, v: null, ok: false, dep: true },
+        { ts: ts[1]!, v: null, ok: false, dep: true },
+        { ts: ts[2]!, v: 10, rec: true },
+        { ts: ts[3]!, v: 10 },
+        { ts: ts[4]!, v: 10 },
+      ], color: "var(--md-success)" }],
+    });
+    expect(keyOf(html)).toEqual(["Up", "Recovering", "Parent down"]);
+  });
+
+  it("draws no key when the chart drew only its series", () => {
+    const html = charts.lineChart({ legend: { series: "Up" }, series: [okSeries(minutes(5))] });
+    expect(keyOf(html)).toEqual([]);
+  });
+
+  it("draws no key on a chart that did not ask for one", () => {
+    const html = charts.lineChart({ series: [{ values: [
+      { ts: 1, v: 10 }, { ts: 2, v: null, ok: false },
+    ] }] });
+    expect(html).not.toContain("chart-state-legend");
+  });
+});

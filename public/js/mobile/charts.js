@@ -461,6 +461,42 @@
       +   svgParts.join("")
       +   (maintLabels ? '<div class="chart-maint-labels">' + maintLabels + '</div>' : '')
       +   xLabels
+      + '</div>'
+      + (opts.legend ? stateLegend(prepared, edge, bands.length > 0, opts.legend) : '');
+  }
+
+  // The key under a chart that opts in with `legend: { series: "Up" }` — one
+  // entry per colour the chart actually DREW, in the Status pill's order, with
+  // the same names as the desktop key and the alert email's (legendSvg in
+  // src/utils/sparklineSvg.ts). A chart that drew only its series gets no key:
+  // the card's title already names it.
+  function stateLegend(prepared, edge, hasMaint, legendOpts) {
+    var drawn = {};
+    var downColor = null;
+    prepared.forEach(function (e) {
+      e.pts.forEach(function (p) {
+        if (p.ts < edge) return;
+        if (p.ok) { drawn[p.rec ? "rec" : "up"] = e.s.color || "var(--md-primary)"; return; }
+        var k = p.dep ? "dep" : p.down === false ? "missed" : "down";
+        drawn[k] = true;
+        if (k === "down" && p.downColor) downColor = p.downColor;
+      });
+    });
+    var entries = [];
+    if (drawn.up) entries.push({ label: legendOpts.series || "Series", color: drawn.up });
+    if (drawn.missed) entries.push({ label: "Missed poll", color: MISS_COLOR });
+    if (drawn.down) entries.push({ label: "Down", color: downColor || FAIL_COLOR });
+    if (drawn.rec) entries.push({ label: "Recovering", color: RECOVER_COLOR });
+    if (drawn.dep) entries.push({ label: "Parent down", color: DEP_COLOR });
+    if (hasMaint) entries.push({ label: "Maintenance", color: MAINT_FILL, border: MAINT_STROKE, band: true });
+    if (entries.length < 2 && drawn.up) return "";
+    return '<div class="chart-state-legend" style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--md-on-surface-variant);margin-top:4px;">'
+      + entries.map(function (e) {
+        var swatch = e.band
+          ? '<span style="width:12px;height:9px;flex:0 0 auto;background:' + e.color + ';border:1px dashed ' + e.border + ';"></span>'
+          : '<span style="width:14px;height:0;flex:0 0 auto;border-top:2px solid ' + e.color + ';"></span>';
+        return '<span style="display:inline-flex;align-items:center;gap:5px;">' + swatch + escapeAttr(e.label) + '</span>';
+      }).join("")
       + '</div>';
   }
 
