@@ -11,4 +11,5 @@ five `.nav-item`s — each an `.nav-icon-pill` glyph and a one-word `.nav-label`
 - `data-tab` on `.app` is required: an empty value hides the navigation bar, and
   `__fullbleed` hides both bars and the body padding for a full-screen view (the map).
 - The bar heights are `topbar-h` and `navbar-h`; don't set heights by hand.
-- The shell is portrait only — the sheet hides it in a short landscape viewport.
+- The shell prefers portrait but must work sideways (about 390px tall): there is no
+  landscape lockout, and `.app` pads the side safe-area insets.

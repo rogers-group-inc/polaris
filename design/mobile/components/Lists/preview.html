@@ -6,11 +6,9 @@
 <title>Lists</title>
 <style>
   /* Preview frame only, not part of the component. The phone sheet locks html/body to the
-     viewport and, in any landscape viewport under 480px tall (which a preview card is),
-     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     viewport; that is undone here; .pv-stage contains the
      fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
      plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
-  body::before { content: none !important; display: none !important; }
   html, body { height: auto !important; overflow: visible !important; }
   body { padding: 16px; }
   .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }

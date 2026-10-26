@@ -798,16 +798,19 @@ must leave it alone.
   24px side padding, `.list-item` min-height 56.
 - `touch-action: manipulation` on every interactive element (already applied to
   `button`, `.list-item`, `.chip`) to kill the double-tap zoom delay.
-- Phones are **portrait-only**. `@media (orientation: landscape) and
-  (max-height: 480px)` replaces the whole UI with a rotate-back prompt; iOS
-  Safari ignores `screen.orientation.lock()` outside an installed PWA, so this
-  CSS fallback is the actual lockout for half the install base. Tablets
-  (taller than 480px in landscape) are unaffected.
+- Phones **prefer portrait but rotate freely**. Only the installed Android app
+  honours `screen.orientation.lock()`; iOS never does, so a landscape lockout
+  made the app unusable on an iPhone while turned, and it was removed
+  (2026-10-26). Every screen must work sideways (about 390px tall), and fixed
+  full-width surfaces pad `env(safe-area-inset-left/right)` for the side
+  notch. The one landscape screen is the topology: on a phone held upright it
+  shows `.topo-rotate` with a Back to map button. Tablets and unfolded
+  foldables (short side over 480px) are never prompted.
 - Honour `prefers-reduced-motion` on anything that loops.
 
 ### How it scales across phone sizes
 
-**There are no width breakpoints.** The stylesheet has exactly three media\nqueries and none of them is a width: `display-mode: standalone` (safe-area\ninsets), `prefers-reduced-motion`, and the landscape lockout. Don't add one —\nif something breaks at a size, the fix is almost always fluid, not a\nbreakpoint.
+**There are no width breakpoints.** The stylesheet has exactly three media\nqueries and none of them is a layout breakpoint: `display-mode: standalone` (safe-area\ninsets), `prefers-reduced-motion`, and the topology's rotate prompt\n(`portrait and max-width: 480px`, which only decides whether the device is a\nphone). Don't add one —\nif something breaks at a size, the fix is almost always fluid, not a\nbreakpoint.
 
 Everything adapts by being fluid instead:
 
