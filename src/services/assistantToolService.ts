@@ -1476,7 +1476,8 @@ const getAssetTool: ToolDef = {
   name: "get_asset",
   label: "opened an asset",
   description:
-    "Full detail for ONE asset by id, exact hostname or IP: identity, monitoring state, the upstream device " +
+    "Full detail for ONE asset by id, exact hostname or IP: identity, monitoring state, acquired date, warranty " +
+      "expiry and purchase order, the upstream device " +
     "it hangs off, its active alerts, its most recent monitor status changes, and ipHistory — every address it " +
     "has held (primary, secondary, WAN) with first/last seen. Use to investigate a device.",
   parameters: {
@@ -1500,6 +1501,9 @@ const getAssetTool: ToolDef = {
       select: {
         ...ASSET_TOOL_SELECT,
         dnsName: true, description: true, assetTag: true, createdAt: true,
+        // The General tab's lifecycle rows — without them the model reads a
+        // device with an Acquired date as having none.
+        acquiredAt: true, warrantyExpiry: true, purchaseOrder: true,
         lastMonitorAt: true, dependencySuppressed: true, maintenanceReturnStatus: true,
         discoveredByIntegration: { select: { name: true, type: true } },
         // Every address the device has held (primary, secondary, WAN) — the
