@@ -15,7 +15,10 @@ two people on the same install legitimately see different dashboards.
 
 The canvas is read-only until you press the pencil (**Customize Page**) just above the page card's top right corner, level with the dashboard tabs; the tick (**Done Editing**) in its place
 saves and leaves edit mode. The layout is a row of **columns**, each a stack of
-widgets.
+widgets. The circular arrows (**Refresh**) to the left of the pencil reload every
+widget's data now, without waiting for its own refresh interval; they are there
+on the Dash wallboard and on a published dashboard too, and hidden while you are
+customizing.
 
 | Action | How |
 |---|---|
