@@ -772,7 +772,9 @@
 }
 
 /* Bottom-left of the graph, like every map legend; it collapses into its own
-   button there (legend-toggle.js) and is no longer dragged. */
+   button there (legend-toggle.js) and is no longer dragged. Open, it wears
+   the graph's button cast, as the Device Map's status legend wears its
+   map's (.map-legend). */
 .topology-legend {
   position: absolute;
   bottom: 12px;
@@ -785,7 +787,7 @@
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--topology-btn-shadow);
   font-size: 0.82rem;
   color: var(--color-text-primary);
   user-select: none;
