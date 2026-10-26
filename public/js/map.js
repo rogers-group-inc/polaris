@@ -934,18 +934,15 @@
     var closeBtn = document.getElementById("topology-close");
     var fullscreenBtn = document.getElementById("topology-fullscreen");
     var refreshBtn = document.getElementById("topology-refresh");
-    var saveBtn = document.getElementById("topology-save-layout");
-    var resetBtn = document.getElementById("topology-reset-layout");
     var legendCloseBtn = document.getElementById("topology-legend-close");
     var showFullBtn = document.getElementById("topology-show-full");
     var searchInput = document.getElementById("topology-search-input");
     closeBtn.addEventListener("click", closeTopology);
-    // Export lives on the map itself (top-right corner) — see
-    // _ensureTopologyCornerTools, re-added with every render.
+    // Export, and in edit mode Save / Reset layout, live on the map itself
+    // (top-right corner) — see _ensureTopologyCornerTools, re-added with
+    // every render.
     if (fullscreenBtn) fullscreenBtn.addEventListener("click", toggleFullscreenTopology);
     if (refreshBtn) refreshBtn.addEventListener("click", refreshTopology);
-    if (saveBtn) saveBtn.addEventListener("click", saveTopologyLayoutCheckpoint);
-    if (resetBtn) resetBtn.addEventListener("click", function () { openResetLayoutMenu(resetBtn); });
     // The legend sits in the graph's bottom-left corner and collapses into
     // its own button there (legend-toggle.js), its header × collapsing it
     // again — the Device Map / Application Map / Status Map pattern. The
@@ -1535,14 +1532,14 @@
     var cp = topoState.siteId ? _readCheckpoint(topoState.siteId) : null;
     if (saveBtn) {
       saveBtn.disabled = !topoState.siteId || !cyInstance;
-      saveBtn.title = _canWriteServerLayout()
-        ? "Save this layout as a restore point (shared)"
-        : "Save this layout as a restore point (this browser only)";
+      _setCornerTip(saveBtn, "Save layout", _canWriteServerLayout()
+        ? "Save this layout as a restore point (shared with everyone)"
+        : "Save this layout as a restore point (this browser only)");
     }
     if (resetBtn) {
-      resetBtn.title = cp
-        ? "Reset layout — back to the last save (" + _checkpointLabel(cp) + ") or to the baseline"
-        : "Reset layout to the baseline";
+      _setCornerTip(resetBtn, "Reset layout", cp
+        ? "Back to the last save (" + _checkpointLabel(cp) + ") or to the automatic layout"
+        : "Back to the automatic layout");
     }
   }
 
@@ -1901,7 +1898,7 @@
       ["Drag a connection line", "Edit mode: add a bend point there and move it"],
       ["Click a connection line", "Edit mode: show its points — drag an end point around a device to attach the line there"],
       ["Delete", "Edit mode: remove the selected point (an end point goes back to automatic; a wing makes its point a sharp corner)"],
-      ["Grid (top right)", "Show the grid: thick lines where devices snap, thin lines in between"],
+      ["Grid (top right)", "Edit mode: show the grid — thick lines where devices snap, thin lines in between"],
       ["Snap devices / Snap line points", "Edit mode: devices land on the thick lines; line points on any line"],
       ["Advanced line editing (pen)", "Edit mode: each point grows Photoshop-style wings — drag one to curve the line, Alt + drag to move it alone"],
       ["Double-click a device", "Open its asset details"],
@@ -2827,13 +2824,16 @@
   //   Edit       the dashboard's pencil, a check mark while editing
   //              (Customize Page / Done Editing, index.html)
   //   Export     screenshots, PDF, Visio (graph-export.js)
-  //   Grid       show / hide the two-weight grid (any mode)
   //   — edit mode only —
+  //   Grid       show / hide the two-weight grid (an editing aid: never
+  //              drawn outside edit mode; the on/off pref is kept for the
+  //              next edit)
   //   Snap devices · Snap line points · Advanced line editing
   // The map opens view-only: devices and location boxes don't drag, lines
   // take no bends or end-point moves, and the layout verbs (Save, Reset and
-  // the three edit-only toggles) are hidden. Clicking, selecting, panning,
-  // zooming, the location views, search, Grid and Export work either way.
+  // the four edit-only toggles) are hidden, the grid with them. Clicking,
+  // selecting, panning, zooming, the location views, search and Export work
+  // either way.
   function _svg(inner, strokeWidth) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (strokeWidth || 2) +
       '" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">' + inner + "</svg>";
@@ -2957,10 +2957,32 @@
 
     [advanced, snapPoints, snapDevices, grid, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
     graph.appendChild(row);
+
+    // Save / Reset layout: a column under the Edit button, edit mode only
+    // (they were header buttons). Their tips — where a save lands, whether a
+    // restore point exists — are kept current by _refreshLayoutToolbar.
+    var stack = document.createElement("div");
+    stack.id = "topology-corner-stack";
+    stack.className = "topology-corner-stack";
+    var saveBtn = _cornerButton("topology-save-layout", "btn-icon topology-tool", function () {
+      saveTopologyLayoutCheckpoint();
+    });
+    saveBtn.innerHTML = _svg('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>');
+    _setCornerTip(saveBtn, "Save layout", "Save this layout as a restore point");
+    var resetBtn = _cornerButton("topology-reset-layout", "btn-icon topology-tool", function (b) {
+      openResetLayoutMenu(b);
+    });
+    resetBtn.innerHTML = _svg('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>');
+    resetBtn.setAttribute("aria-haspopup", "menu");
+    _setCornerTip(resetBtn, "Reset layout", "Back to the last save or to the automatic layout");
+    stack.appendChild(saveBtn);
+    stack.appendChild(resetBtn);
+    graph.appendChild(stack);
   }
 
   // ── Grid ───────────────────────────────────────────────────────────────────
-  // Painted as CSS gradients on the graph container, under Cytoscape's
+  // Edit mode only (hidden the moment editing ends). Painted as CSS
+  // gradients on the graph container, under Cytoscape's
   // transparent canvas, re-positioned on every pan / zoom: thick lines on
   // the device lattice, thin ones on its TOPO_GRID_DIV subdivisions. Lines
   // too dense to read at the current zoom are left out (thin below 6 px
@@ -2968,7 +2990,7 @@
   function _paintTopologyGrid() {
     var graph = document.getElementById("topology-graph");
     if (!graph) return;
-    if (!cyInstance || !_readPref(GRID_STORAGE_KEY)) {
+    if (!cyInstance || !topoState.editing || !_readPref(GRID_STORAGE_KEY)) {
       graph.style.backgroundImage = "";
       graph.style.backgroundSize = "";
       graph.style.backgroundPosition = "";
@@ -3023,6 +3045,7 @@
     var on = !!topoState.editing;
     if (cyInstance) cyInstance.autoungrabify(!on);
     if (edgeEditor) edgeEditor.refresh();
+    _paintTopologyGrid(); // the grid is an editing aid: drawn only while editing
     var btn = document.getElementById("topology-edit");
     if (btn) {
       // Icon + hidden word, as the dashboard's buttons; the hover tip says
@@ -3034,7 +3057,7 @@
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
     ["topology-save-layout", "topology-reset-layout",
-     "topology-snap-devices", "topology-snap-points", "topology-advanced-lines"].forEach(function (id) {
+     "topology-snap-devices", "topology-snap-points", "topology-advanced-lines", "topology-grid"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.hidden = !on;
     });

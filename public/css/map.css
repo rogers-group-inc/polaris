@@ -668,6 +668,21 @@
   border-color: var(--color-accent);
   background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-primary));
 }
+/* Save / Reset layout, edit mode only: a column directly under the Edit
+   button at the row's right end, centred on it. */
+.topology-corner-stack {
+  position: absolute;
+  top: 44px;
+  right: 10px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+/* Square, the Edit button's width (16px icon + 2 × 4px + border), so the
+   column lines up under it. */
+.topology-corner-stack .topology-tool { padding: 4px; }
 /* Edit / Done Editing (the dashboard's Customize Page pencil and Done check,
    index.html). The map is view-only until it is pressed
    (map.js _applyTopologyEditMode). Sized to the dashboard's card-corner

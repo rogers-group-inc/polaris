@@ -226,9 +226,10 @@ layout** and the editing tools, which only show while editing. The check mark
 ends editing; closing the topology ends it too.
 
 The tools sit in a row at the map's top right. From the right: **Edit**,
-**Export**, **Grid** (any time), then, while editing, **Snap devices**,
-**Snap line points** and **Advanced line editing**. Each one remembers its
-setting in this browser.
+**Export**, then, while editing, **Grid**, **Snap devices**, **Snap line
+points** and **Advanced line editing**. Each one remembers its setting in
+this browser; the grid only ever shows while you are editing, and comes back
+the next time you edit if you left it on.
 
 - **Grid** draws two weights of line behind the map. The thick lines are
   where devices sit in the automatic layout; the thin lines split each cell
@@ -266,9 +267,9 @@ drawn when Advanced line editing is off; only the wings hide.
 | **Show full** | the whole graph rather than the narrowed view |
 | **Refresh** | re-read |
 | **Edit** | top right of the map, left of Export: the pencil turns layout editing on, the check mark turns it off |
-| **Save layout** | while editing. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
-| **Reset layout** | while editing. A menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
-| **Grid** | top right, any time: show or hide the two-weight grid |
+| **Save layout** | while editing, under the Edit button. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
+| **Reset layout** | while editing, under Save. A menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
+| **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
 | **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
 | **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
 | **Advanced line editing** | while editing; per user; adds curve wings to every point of a line |
