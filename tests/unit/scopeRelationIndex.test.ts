@@ -292,3 +292,53 @@ describe("ssid: prefetched verdict vs. joined relation", () => {
     expect(evaluateScopeCondition(oneSsid("notEquals", "OTHER"), asset)).toBe(true);
   });
 });
+
+// Business rule 133: "Native VLAN" reads the same relation as interfaceName,
+// but an INTEGER column matched by number.
+const vlanLeaf = (operator: string, value: string) => ({ field: "nativeVlan", operator, value });
+const oneVlan = (operator: string, value: string) => and(vlanLeaf(operator, value));
+
+describe("nativeVlan (Native VLAN)", () => {
+  it("queries the interface inventory by NUMBER, one GROUP BY for both halves of the pair", async () => {
+    groupBy.mockResolvedValue([{ assetId: "sw1" }]);
+    const rows: Asset[] = [{ id: "sw1" }, { id: "sw2" }];
+    await decorateRelationLeafHits(rows, [and(vlanLeaf("equals", "30"), vlanLeaf("notEquals", "30"))]);
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    const arg = groupBy.mock.calls[0]![0];
+    expect(arg.where.nativeVlan).toBe(30);
+    expect(arg.where.assetId).toEqual({ in: ["sw1", "sw2"] });
+    expect(arg.where.ifName).toBeUndefined();
+  });
+
+  it("does not let an interface NAME leaf answer a VLAN leaf of the same value", async () => {
+    groupBy.mockImplementation(async (a: { where: { ifName?: unknown } }) => (a.where.ifName ? [{ assetId: "sw1" }] : []));
+    const rows: Asset[] = [{ id: "sw1" }];
+    await decorateRelationLeafHits(rows, [and(leaf("equals", "30"), vlanLeaf("equals", "30"))]);
+    expect(rows[0]!.relationLeafHits!.get(relationLeafKey(leaf("equals", "30")))).toBe(true);
+    expect(rows[0]!.relationLeafHits!.get(relationLeafKey(vlanLeaf("equals", "30")))).toBe(false);
+  });
+
+  const CASES: [string, string, (number | null)[], boolean][] = [
+    // operator, value, the native VLANs the switch's ports carry, expected
+    ["equals", "30", [1, 30], true],
+    ["equals", "030", [1, 30], true],
+    ["equals", "30", [1, 40], false],
+    ["notEquals", "30", [1, 30], false],
+    ["notEquals", "30", [1, 40], true],
+    ["equals", "30", [], false],
+    ["notEquals", "30", [], true],
+    ["equals", "30", [null], false],
+  ];
+  for (const [operator, value, vlans, expected] of CASES) {
+    it(`${operator} ${value} against [${vlans.join(", ")}] is ${expected} both ways`, async () => {
+      const tree = oneVlan(operator, value);
+      const joined: Asset = { id: "sw1", interfaces: vlans.map((v, i) => ({ ifName: "port" + i, nativeVlan: v })) };
+      expect(evaluateScopeCondition(tree, joined)).toBe(expected);
+
+      groupBy.mockResolvedValue(vlans.includes(Number(value)) ? [{ assetId: "sw1" }] : []);
+      const decorated: Asset = { id: "sw1" };
+      await decorateRelationLeafHits([decorated], [tree]);
+      expect(evaluateScopeCondition(tree, decorated)).toBe(expected);
+    });
+  }
+});

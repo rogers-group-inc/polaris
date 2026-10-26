@@ -951,7 +951,11 @@ const api = {
     },
     setInterfaceComment:  (id, ifName, description) =>
       request("PUT", `/assets/${id}/interfaces/${encodeURIComponent(ifName)}/comment`, { description: description }),
-    storageHistory:       (id, mountPath, opts) => {
+    // The HAND-APPLIED tags on one interface (business rule 133); the response
+    // lists every tag on the port, filter-applied ones flagged `auto`.
+    setInterfaceTags:     (id, ifName, tags) =>
+      request("PUT", `/assets/${id}/interfaces/${encodeURIComponent(ifName)}/tags`, { tags: tags }),
+    storageHistory:      (id, mountPath, opts) => {
       if (typeof opts === "string") opts = { range: opts };
       opts = opts || {};
       var qs = ["mountPath=" + encodeURIComponent(mountPath)];

@@ -1,7 +1,8 @@
 /**
  * src/services/scopeRelationIndex.ts — the SQL half of the condition tree's
- * RELATION-backed fields: `interfaceName` ("Device interface", AssetInterface)
- * and `ssid` ("Broadcast SSID", AssetApVap).
+ * RELATION-backed fields: `interfaceName` ("Device interface", AssetInterface),
+ * `nativeVlan` ("Native VLAN", AssetInterface.nativeVlan), `ssid` ("Broadcast
+ * SSID", AssetApVap) and `agentInstalled` (ManagedAgent).
  *
  * The device-filter condition tree is evaluated in memory (an OR / NONE /
  * notAll group makes any narrowing WHERE unsound, so there is no safe superset
@@ -45,6 +46,7 @@ import {
   isSubnetNameLeaf,
   subnetNameLeafKey,
   positiveStringOp,
+  parseVlanId,
   type ScopeConditionGroup,
   type ScopeConditionRule,
 } from "./notificationTypes.js";
@@ -119,6 +121,16 @@ async function assetIdsForLeaf(rule: ScopeConditionRule, assetIds: string[]): Pr
       where: { ...scope, installStatus: "active" },
       select: { assetId: true },
     });
+    return new Set(rows.map((r) => r.assetId));
+  }
+
+  // nativeVlan: an integer column, matched by number. The positive form is
+  // "has a port on this VLAN" for both operators (positiveStringOp maps
+  // notEquals to equals), so one GROUP BY answers the pair.
+  if (spec.column === "nativeVlan") {
+    const vlan = parseVlanId(rule.value);
+    if (vlan == null) return new Set();
+    const rows = await prisma.assetInterface.groupBy({ by: ["assetId"], where: { ...scope, nativeVlan: vlan } });
     return new Set(rows.map((r) => r.assetId));
   }
   const where = valueWhere(rule);

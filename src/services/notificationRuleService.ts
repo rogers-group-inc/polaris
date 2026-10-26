@@ -264,6 +264,46 @@ function collectCompositeMetricLeaves(trigger: Extract<Trigger, { type: "composi
  *  either way, so the cap bounds the payload and never the filter. */
 const INTERFACE_NAME_OPTION_CAP = 500;
 
+/** How many distinct VLAN-interface names one option label lists. */
+const VLAN_OPTION_NAME_CAP = 3;
+
+/**
+ * The "Native VLAN" picker's options: every native VLAN a port of a matching
+ * asset carries, numerically ordered, labelled with the names the fleet's VLAN
+ * interfaces give that id. Different gates may name one id differently, so a
+ * label lists up to VLAN_OPTION_NAME_CAP of them. Two grouped reads: the ids,
+ * then the names for just those ids.
+ */
+async function listNativeVlanOptions(
+  assetWhere: Prisma.AssetWhereInput,
+): Promise<{ value: string; label: string }[]> {
+  const idRows = await prisma.assetInterface.groupBy({
+    by: ["nativeVlan"],
+    where: { asset: assetWhere, nativeVlan: { not: null } },
+  });
+  const ids = idRows
+    .map((r) => r.nativeVlan)
+    .filter((n): n is number => n != null)
+    .sort((a, b) => a - b);
+  if (ids.length === 0) return [];
+  const nameRows = await prisma.assetInterface.groupBy({
+    by: ["vlanId", "ifName"],
+    where: { ifType: "vlan", vlanId: { in: ids } },
+    orderBy: [{ vlanId: "asc" }, { ifName: "asc" }],
+  });
+  const names = new Map<number, string[]>();
+  for (const r of nameRows) {
+    if (r.vlanId == null || !r.ifName) continue;
+    const list = names.get(r.vlanId) ?? [];
+    if (list.length < VLAN_OPTION_NAME_CAP) list.push(r.ifName);
+    names.set(r.vlanId, list);
+  }
+  return ids.map((id) => {
+    const named = names.get(id);
+    return { value: String(id), label: named && named.length ? `${id} · ${named.join(" / ")}` : String(id) };
+  });
+}
+
 /**
  * Option lists for the wizard's device-filtering pickers: distinct
  * manufacturers/models present in the inventory, the interface names the
@@ -280,6 +320,10 @@ export async function listScopeOptions(): Promise<{
    *  "Broadcast SSID" picker. Same monitored-only rule: an SSID only
    *  unmonitored APs carry is a choice that cannot produce an alert. */
   ssids: string[];
+  /** Distinct native VLANs the monitored fleet's ports carry, for the "Native
+   *  VLAN" picker, each labelled with the names VLAN interfaces give it
+   *  ("30 · Users_VL30"). A VLAN with no named interface reads as the bare id. */
+  nativeVlans: { value: string; label: string }[];
   subnets: { id: string; name: string; cidr: string }[];
   /** The IPAM blocks, for the condition builder's "IP block" picker. Unfiltered
    *  by monitoring for the same reason `subnets` is — this is the address plan,
@@ -315,7 +359,7 @@ export async function listScopeOptions(): Promise<{
   // event and change triggers fire on them. The subnet list is IPAM, not
   // inventory, so it is unfiltered by the same reasoning.
   const monitoredOnly = { monitored: true } as const;
-  const [mfrRows, modelRows, ifNameRows, ssidRows, subnets, ipBlocks, regions, regionLevelsOut, roles, tagRows] = await Promise.all([
+  const [mfrRows, modelRows, ifNameRows, ssidRows, nativeVlans, subnets, ipBlocks, regions, regionLevelsOut, roles, tagRows] = await Promise.all([
     prisma.asset.findMany({
       select: { manufacturer: true },
       distinct: ["manufacturer"],
@@ -351,6 +395,9 @@ export async function listScopeOptions(): Promise<{
       orderBy: { ssid: "asc" },
       take: INTERFACE_NAME_OPTION_CAP,
     }).catch(() => [] as { ssid: string | null }[]),
+    // The native VLANs for the "Native VLAN" condition field — at most 4094
+    // ids, grouped in the database like the two lists above.
+    listNativeVlanOptions(monitoredOnly).catch(() => [] as { value: string; label: string }[]),
     prisma.subnet.findMany({
       select: { id: true, name: true, cidr: true },
       where: { status: { not: "deprecated" } },
@@ -404,6 +451,7 @@ export async function listScopeOptions(): Promise<{
     models: modelRows.map((r) => r.model).filter((m): m is string => !!m && m.trim() !== ""),
     interfaceNames: ifNameRows.map((r) => r.ifName).filter((n) => !!n && n.trim() !== ""),
     ssids: ssidRows.map((r) => r.ssid).filter((n): n is string => !!n && n.trim() !== ""),
+    nativeVlans,
     subnets,
     ipBlocks,
     // Bare names — how User/Role/GroupMapping.regionTags store them. The

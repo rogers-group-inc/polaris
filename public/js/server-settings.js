@@ -5092,7 +5092,7 @@ function renderIdentificationTab() {
           // cutover still auto-assigns through the folded-forward flat blob.
           var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
           var autoMark = managed
-            ? '<span title="Auto-assigned by device filter" style="margin-right:4px">&#9881;</span>'
+            ? '<span title="Auto-assigned by filter" style="margin-right:4px">&#9881;</span>'
             : '';
           html += '<span class="tag-chip' + (hueStyle ? ' hue-pill hue-strong' : '') + '"' + colorStyle + '>' +
             autoMark +
@@ -7194,6 +7194,7 @@ function _tagValueOptions(schema) {
       case "models":         return plain(o.models);
       case "interfaceNames": return plain(o.interfaceNames);
       case "ssids":          return plain(o.ssids);
+      case "nativeVlans":    return (o.nativeVlans || []).slice(); // already { value, label }
       case "tags":           return plain(o.tags);
       case "subnets":
         return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr, name: sn.name }; });
@@ -7247,11 +7248,13 @@ function _tagFilterSectionHTML(tag, builder, schema) {
   return '<div class="form-group" style="border-top:1px solid var(--color-border);padding-top:12px;margin-top:4px">' +
     '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
       '<input type="checkbox" id="f-tag-auto-toggle"' + (on ? ' checked' : '') + ' style="width:auto">' +
-      '<span>Auto-assign by device filter</span>' +
+      '<span>Auto-assign by filter</span>' +
     '</label>' +
     '<p class="hint">When on, this tag is automatically applied to every device matching the filter below, and removed when a ' +
       'device no longer matches. Tags you add by hand are never removed. Decommissioned devices are skipped unless the filter ' +
       'mentions status.</p>' +
+    '<p class="hint">A <strong>Native VLAN</strong> condition also tags the <strong>interfaces</strong>: every port on that VLAN, ' +
+      'on each device the filter matches, carries the tag too &mdash; so a switch with a port on the VLAN gets the tag along with the port.</p>' +
     '<div id="f-tag-filter-body" style="' + (on ? '' : 'display:none;') + '">' +
       (stuck.length
         ? '<p class="hint" style="color:var(--color-warning);margin:0 0 8px">This tag&rsquo;s filter uses ' +
@@ -7303,7 +7306,7 @@ function _validateTagFilter(builder, stuck) {
     // An unrenderable legacy filter is allowed to stay untouched (see
     // _collectTagFilter); anything else needs a condition or the toggle off.
     if (stuck && stuck.length) return null;
-    return 'Add a condition, or switch "Auto-assign by device filter" off.';
+    return 'Add a condition, or switch "Auto-assign by filter" off.';
   }
   return builder.validate(tree);
 }
@@ -7323,6 +7326,7 @@ function _refreshTagFilterPreview(tagId, builder) {
       if (tagId) payload.tagId = tagId;
       var res = await api.serverSettings.previewTagCriteria(payload);
       var msg = res.matchCount + " device" + (res.matchCount === 1 ? "" : "s") + " match";
+      if (res.portCount) msg += " · " + res.portCount + " interface" + (res.portCount === 1 ? "" : "s") + " on the VLAN";
       if (res.diff) msg += " · this save: +" + res.diff.add + " / −" + res.diff.remove;
       el.textContent = msg;
     } catch (err) {
@@ -7978,7 +7982,7 @@ function _tagRegistryChipHTML(t, canOpenTagAssets) {
   // cutover still auto-assigns through the folded-forward flat blob.
   var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
   var autoMark = managed
-    ? '<span title="Auto-assigned by device filter" style="margin-right:4px">&#9881;</span>'
+    ? '<span title="Auto-assigned by filter" style="margin-right:4px">&#9881;</span>'
     : '';
   // An `azure:` row is the Arc sync's: read-only here (the server
   // refuses PUT / DELETE), and removed automatically once no asset

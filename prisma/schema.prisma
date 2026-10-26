@@ -1333,7 +1333,10 @@ model Asset {
   // full system-info scrape. The pinned-only time-series lives in
   // AssetInterfaceSample.
   interfaces             AssetInterface[]         @relation("AssetInterfaces")
-  macTableEntries        AssetMacTableEntry[]     @relation("AssetMacTableEntries")
+  // Tags on individual interfaces (business rule 133) — keyed by ifName, not
+  // by an AssetInterface row, because that table is delete-replaced per scrape.
+  interfaceTags          AssetInterfaceTag[]
+  macTableEntries       AssetMacTableEntry[]     @relation("AssetMacTableEntries")
   macTableMatches        AssetMacTableEntry[]     @relation("AssetMacTableMatch")
   // Layer-3 neighbour cache (when this asset is a FortiGate firewall) and the
   // back-link for the endpoint each ARP row's MAC resolved to.
@@ -1738,6 +1741,40 @@ model AssetInterface {
   @@unique([assetId, ifName])
   @@index([assetId])
   @@map("asset_interfaces")
+}
+
+// Tags applied to one interface of an asset (business rule 133). Keyed by
+// (assetId, ifName, tag) rather than hung off AssetInterface: that table is
+// delete-replaced on every full scrape, so a row id there lasts one poll, and a
+// port briefly missing from a scrape must not cost the operator its tags — the
+// AssetInterfaceOverride (Interface Comments) precedent.
+//
+// Two writers, told apart by `source`:
+//   - "manual": PUT /assets/:id/interfaces/:ifName/tags (interfaceTagService).
+//     Never removed by the engine.
+//   - "auto": tagAssignmentService, for a tag whose auto-assign filter carries a
+//     positive `nativeVlan` leaf — the matching device's ports on that VLAN.
+//     `tagId` is the provenance; the engine adds and removes only these rows.
+// A manual row wins a collision: the engine's insert skips an existing row, and
+// a manual save of a name the engine applied converts it to manual.
+//
+// `tag` is the registry NAME (Asset.tags' denormalized design); a rename rewrites
+// it, a registry delete strips the auto rows and leaves manual ones.
+model AssetInterfaceTag {
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  ifName    String
+  tag       String
+  // "manual" | "auto"
+  source    String   @default("manual")
+  // The Tag whose filter applied an "auto" row; null on a manual row.
+  tagId     String?
+  createdAt DateTime @default(now())
+
+  @@id([assetId, ifName, tag])
+  @@index([tag])
+  @@index([tagId])
+  @@map("asset_interface_tags")
 }
 
 // Per-asset additional IPs ("interface IPs", "secondary IPs", manually-tagged

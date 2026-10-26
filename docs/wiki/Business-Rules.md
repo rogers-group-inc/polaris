@@ -2771,3 +2771,20 @@ FORTINET-FORTIGATE-MIB is uploaded. An SNMP-polled FortiGate without that row or
 that MIB falls back to the standard ENTITY-SENSOR-MIB, which branch models don't
 implement. FortiGates read through FortiManager or the FortiOS REST API are
 unaffected.
+
+### Rule 133
+
+**A tag can sit on an interface, and a tag filter that names a native VLAN tags
+the ports on it and the switch they belong to.** An interface's tags are kept by
+the device and the interface's name, so they survive the port briefly
+disappearing from a scrape. You add or remove a port's tags by hand in its
+interface panel. A tag whose auto-assign filter has a **Native VLAN** condition
+(*is equal to 30*) also goes on every port whose native VLAN is 30, trunk ports
+included, on each device the filter matches. The device matches because one of
+its ports is on the VLAN, so the switch carries the tag too. Polaris removes
+those automatic copies when the port leaves the VLAN or the filter changes, and
+never touches a tag you put on a port by hand. Ticking an automatic tag in the
+port's editor makes it yours. Renaming a tag renames it on ports, and deleting
+it removes only the automatic copies. `region:` and `azure:` tags are
+device-only and are refused on a port. A port moving VLAN is picked up on its
+next full poll.

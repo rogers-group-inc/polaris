@@ -8949,7 +8949,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // descending for the busy ports, filter Status for what's up, filter Native
   // VLAN for a segment. The nesting + collapse tree stays as the DEFAULT view;
   // the table flattens the moment a sort or a filter is active (renderBody).
-  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0);
+  // And for interface tags (business rule 133): the column appears once any
+  // port carries one. A port gets its first tag from the interface slide-over.
+  var showTagsCol = rows.some(function (r) { return Array.isArray(r.tags) && r.tags.length > 0; });
+  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0);
   // Per-user, per-asset collapsed parents. Read HERE rather than in the wiring
   // phase because every row build has to bake the current state into its own
   // markup: a sort/filter re-render replaces the whole tbody, so a post-hoc
@@ -9143,6 +9146,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       "<td>" + (iface.outOctets != null ? _fmtBytes(iface.outOctets) : "—") + "</td>" +
       '<td title="In errors / Out errors (cumulative)">' + errs + "</td>" +
       neighborCell +
+      (showTagsCol ? '<td>' + (_ifaceTagPillsHTML(iface.tags) || "—") + '</td>' : "") +
     "</tr>";
   }
 
@@ -9267,6 +9271,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       out: iface.outOctets != null ? Number(iface.outOctets) : null,
       errors: (iface.inErrors != null || iface.outErrors != null) ? (errIn + errOut) : null,
       neighbor: neighborText(iface.ifName),
+      // An ARRAY, like tagged-vlans: a multi-select of one tag matches every
+      // port carrying it among others.
+      tags: (Array.isArray(iface.tags) ? iface.tags : []).map(function (t) { return t.name; }),
     };
   }
   // Top-level: no ifParent set, or a parent that isn't in this list (see the
@@ -9396,6 +9403,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<th data-col-id="out" data-sf-key="out" data-sf-type="number" data-sf-nofilter>Out</th>' +
       '<th data-col-id="errors" data-sf-key="errors" data-sf-type="number" data-sf-nofilter>Errors (in/out)</th>' +
       '<th title="LLDP neighbor seen on this interface" data-col-id="neighbor" data-sf-key="neighbor" data-sf-type="string">Neighbor</th>' +
+      (showTagsCol ? '<th data-col-id="tags" data-sf-key="tags" data-sf-options="" title="Tags on this interface — added by hand in the interface panel, or (&#9881;) by a tag whose auto-assign filter names the port&#39;s native VLAN">Tags</th>' : "") +
     '</tr></thead><tbody id="asset-iface-tbody"></tbody></table></div>';
 
   // Sort + filter state is per user AND per device class (a switch's filters
@@ -9413,6 +9421,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     // sets are device-dependent (a tunnel reports "dynamic", a FortiSwitch port
     // reports "searching") and a checkbox that can never match is noise.
     sf.setColumnOptions("status", _distinctSorted(entries.map(function (e) { return e.status; })));
+    if (showTagsCol) {
+      sf.setColumnOptions("tags", _distinctSorted([].concat.apply([], entries.map(function (e) { return e.tags; }))));
+    }
     if (showPoeCol) {
       sf.setColumnOptions("poe", _distinctSorted(entries.map(function (e) { return e.poe; }))
         .map(function (v) { return { value: v, label: POE_LABELS[v] || v }; }));
@@ -9479,6 +9490,76 @@ function _vlanPillHTML(vlanId, names, inferred) {
   var title = "VLAN " + id + (inferred ? " — inferred from the access port's native VLAN; the switch reported none" : "");
   return '<span class="hue-pill vlan-pill' + (inferred ? " vlan-inferred" : "") + '" title="' + escapeHtml(title) + '">' +
     escapeHtml(name || ("VLAN " + id)) + '</span>';
+}
+
+/**
+ * An interface's tags as pills (business rule 133). `tags` is the system-info
+ * row's `[{ name, color, auto }]`. Rides the .vlan-pill shape (the other pill
+ * these cells carry) with the tag's own registry colour as `--hue`; a name with
+ * no registry colour keeps the class default. A tag a filter applied carries
+ * the ⚙ the Tags registry uses for auto-assigned.
+ */
+function _ifaceTagPillsHTML(tags) {
+  var list = Array.isArray(tags) ? tags : [];
+  if (list.length === 0) return "";
+  return '<span class="vlan-pills">' + list.map(function (t) {
+    var hue = tagHueStyle(t.color || "");
+    var title = t.auto ? "Applied by this tag's auto-assign filter (Native VLAN)" : "Added by hand";
+    return '<span class="hue-pill vlan-pill"' + (hue ? ' style="' + hue + '"' : "") + ' title="' + escapeHtml(title) + '">' +
+      (t.auto ? '&#9881; ' : '') + escapeHtml(t.name) + '</span>';
+  }).join("") + '</span>';
+}
+
+/** The interface slide-over's Tags block: the pills plus, for an editor, the
+ *  button that opens _openInterfaceTagsModal. Re-rendered in place on save. */
+function _ifaceTagsBlockHTML(row, canEdit) {
+  var pills = _ifaceTagPillsHTML(row && row.tags);
+  return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:0.5rem;margin-bottom:0.25rem">' +
+      '<span style="font-size:0.8rem;font-weight:600;color:var(--color-text-secondary)">Tags</span>' +
+      (canEdit ? '<button class="btn btn-sm btn-secondary" id="btn-iface-tags-edit">Edit tags</button>' : '') +
+    '</div>' +
+    (pills || '<span style="font-size:0.8rem;color:var(--color-text-tertiary)">No tags</span>');
+}
+
+/**
+ * Edit the HAND-APPLIED tags on one interface, in the shared tag picker. Tags a
+ * filter applied are listed above it read-only: they belong to the tag's
+ * filter, and the server leaves them alone unless one is ticked here, which
+ * keeps it on the port by hand. `onSaved(tags)` gets the port's full list.
+ */
+async function _openInterfaceTagsModal(asset, ifName, row, onSaved) {
+  await _ensureTagCache();
+  var tags = (row && Array.isArray(row.tags)) ? row.tags : [];
+  var manual = tags.filter(function (t) { return !t.auto; }).map(function (t) { return t.name; });
+  var auto = tags.filter(function (t) { return t.auto; });
+  var body =
+    (auto.length
+      ? '<div class="form-group"><label>Applied by a tag filter</label>' +
+          '<div>' + _ifaceTagPillsHTML(auto) + '</div>' +
+          '<p class="hint">Applied because this port is on a VLAN the tag&rsquo;s auto-assign filter names. Change the filter under ' +
+            'Server Settings &rarr; Tags to remove one; ticking it below keeps it on this port by hand.</p>' +
+        '</div>'
+      : '') +
+    tagFieldHTML(manual);
+  var footer =
+    '<button class="btn btn-secondary" id="iface-tags-cancel">Cancel</button>' +
+    '<button class="btn btn-primary" id="iface-tags-save">Save</button>';
+  openModal("Interface tags — " + ifName, body, footer);
+  wireTagPicker();
+  document.getElementById("iface-tags-cancel").onclick = closeModal;
+  document.getElementById("iface-tags-save").onclick = async function () {
+    var btn = document.getElementById("iface-tags-save");
+    btn.disabled = true;
+    try {
+      var r = await api.assets.setInterfaceTags(asset.id, ifName, getTagFieldValue());
+      closeModal();
+      showToast("Interface tags saved");
+      if (typeof onSaved === "function") onSaved(r.tags || []);
+    } catch (e) {
+      showToast((e && e.message) || "Saving interface tags failed", "error");
+      btn.disabled = false;
+    }
+  };
 }
 
 /** The label a VLAN filter option shows: "30 · Users_VL30", or the bare id. */
@@ -16653,6 +16734,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
             '</div>'
           : '') +
       '</div>' +
+      '<div id="iface-tags-block" style="margin-bottom:0.75rem">' + _ifaceTagsBlockHTML(ifaceRow, canEditComment) + '</div>' +
       _ifaceAddressBlockHTML(ifaceRow) +
       _ifaceVlanBlockHTML(ifaceRow, _assetVlanNames[asset.id]) +
       '<div id="iface-lldp-block" style="margin-bottom:0.75rem"></div>' +
@@ -16681,6 +16763,25 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
     el.style.color = "var(--color-text-secondary)";
     el.style.fontSize = "0.85rem";
   });
+
+  // Interface tags (business rule 133). The saved list is written back onto
+  // the row object the Interfaces table rendered from, so the table shows it
+  // on its next rebuild without another fetch.
+  function wireIfaceTagsEdit() {
+    var btn = document.getElementById("btn-iface-tags-edit");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var row = _ifacePanelRow || { ifName: ifName, tags: [] };
+      _openInterfaceTagsModal(asset, ifName, row, function (tags) {
+        row.tags = tags;
+        _ifacePanelRow = row;
+        var block = document.getElementById("iface-tags-block");
+        if (block) block.innerHTML = _ifaceTagsBlockHTML(row, canEditComment);
+        wireIfaceTagsEdit();
+      });
+    });
+  }
+  wireIfaceTagsEdit();
 
   await _loadInterfaceHistoryFor(asset.id, ifName, _getChartRangePref("assetInterface", "1h"));
   // Async overwrite the badge with the authoritative resolved polling method.

@@ -62,7 +62,7 @@ import {
   type ScopeConditionAsset,
   type ScopeConditionGroup,
 } from "./notificationTypes.js";
-import { resolveDeviceFilterAssetIds } from "./deviceFilterService.js";
+import { resolveDeviceFilterAssetIds, INTERFACE_CONDITION_SELECT } from "./deviceFilterService.js";
 import { decorateSubnetNameHits } from "./scopeRelationIndex.js";
 import { criteriaToCondition } from "../utils/criteriaToCondition.js";
 import { listRecipientUsers } from "./notificationRecipientService.js";
@@ -869,7 +869,7 @@ export async function resolveContactsForAsset(assetId: string): Promise<ContactR
     select: {
       ...SINGLE_ASSET_CANDIDATE_SELECT,
       tags: true,
-      ...(needsInterfaces ? { interfaces: { select: { ifName: true } } } : {}),
+      ...(needsInterfaces ? { interfaces: { select: INTERFACE_CONDITION_SELECT } } : {}),
       ...(needsApVaps ? { apVaps: { select: { ssid: true } } } : {}),
       ...(needsAgent ? MANAGED_AGENT_CONDITION_SELECT : {}),
     },
