@@ -18,7 +18,7 @@
  * width). The tabs are 60 / 140 / 80 / 100 / 50 px — a 430px row, starts
  * 0 / 60 / 200 / 280 / 380. The strip is 250px with a 30px + button, so the
  * room is 220px and the row slides at most 210px. A step lands a tab's start
- * ON the area's left edge (the left fade lies OUTSIDE the area, in the 28px
+ * ON the area's left edge (the left fade lies OUTSIDE the area, in the 6px
  * before it), so steps land on 60 / 200 / 210. No CSS is loaded, so padding and gaps are 0. No
  * requestAnimationFrame in Node, so every step lands at once.
  */
@@ -170,7 +170,7 @@ describe("tab strip window", () => {
     b.step(1);
     await b.settle();
     expect(b.pos()).toBe(210);               // the end: the last tab flush right
-    expect(b.shown()).toEqual([false, true, true, true, true]);   // tab 1's last 10px still fading out left
+    expect(b.shown()).toEqual([false, false, true, true, true]);   // tab 1 ends 10px left of the edge: past the 6px fade
     expect(b.fades()).toEqual({ l: true, r: false });   // nothing past the right edge
     b.step(1);
     await b.settle();
@@ -205,7 +205,7 @@ describe("tab strip window", () => {
 
   it("opens on the active tab when it starts out of view", async () => {
     const b = await boot(5, 3);
-    expect(b.pos()).toBe(188);               // 280 + 100 − 220 + the 28px fade: clear of it
+    expect(b.pos()).toBe(166);               // 280 + 100 − 220 + the 6px fade: clear of it
   });
 
   it("keeps the active tab in view when the room shrinks after it was brought in", async () => {
@@ -215,7 +215,7 @@ describe("tab strip window", () => {
     width = 250;
     b.strip.classList.add("resized");
     await b.settle();
-    expect(b.pos()).toBe(188);
+    expect(b.pos()).toBe(166);
   });
 
   it("leaves the window where the operator moved it when nothing about the tabs changed", async () => {
@@ -266,7 +266,7 @@ describe("fast wheeling (glides cut short)", () => {
     b.step(1); b.step(1); b.step(1);       // each cuts the last short; the third heads for the end
     b.step(1);                             // a notch AT the end: nothing further to glide to
     expect(b.pos()).toBe(210);
-    expect(b.shown()).toEqual([false, true, true, true, true]);
+    expect(b.shown()).toEqual([false, false, true, true, true]);
     expect(b.fades()).toEqual({ l: true, r: false });
     expect(b.shift(4)).toBe(-210);         // drawn at the end, not frozen part-way
   });
