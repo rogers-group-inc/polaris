@@ -662,6 +662,14 @@
   line-height: 0;
 }
 .topology-tool:hover { opacity: 1; color: var(--color-accent); border-color: var(--color-accent); }
+/* Nothing to undo / redo (or Save before the graph is up): dimmed, inert. */
+.topology-tool:disabled,
+.topology-tool:disabled:hover {
+  opacity: 0.35;
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+  cursor: default;
+}
 .topology-tool.is-on {
   opacity: 1;
   color: var(--color-accent);

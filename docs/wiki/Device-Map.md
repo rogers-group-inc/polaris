@@ -251,6 +251,13 @@ selection, or Shift-drag to box-select. Drawn lines are part of the
 layout: **Save layout** and **Reset layout** cover them, and each location
 view keeps its own. Lines are always straight between their points.
 
+**Undo and redo** (while editing). **Ctrl+Z** undoes the last layout
+change: a device or box moved, a bend added, moved or deleted, an end point
+moved, or everything snapped. **Ctrl+Shift+Z** (or **Ctrl+Y**) redoes it.
+The undo and redo arrows under the Edit button do the same and grey out when
+there is nothing to step to. History lasts until you press the check mark,
+and an undone change is saved like any other edit.
+
 | Control | |
 |---|---|
 | **Search** | find a node |
@@ -258,6 +265,7 @@ view keeps its own. Lines are always straight between their points.
 | **Refresh** | re-read |
 | **Edit** | top right of the map, left of Export: the pencil turns layout editing on, the check mark turns it off |
 | **Save layout** | while editing, under the Edit button. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
+| **Undo / Redo** | while editing, under Reset; also Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y) |
 | **Reset layout** | while editing, under Save. A menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
 | **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
 | **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |

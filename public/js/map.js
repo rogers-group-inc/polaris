@@ -1019,6 +1019,15 @@
         if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
         if (edgeEditor.deleteSelected()) e.preventDefault();
       }
+      // Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo (⌘ on a Mac) — edit mode
+      // only, never while typing.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && overlay.classList.contains("open") && topoState.editing) {
+        var tt = e.target;
+        if (tt && (tt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tt.tagName))) return;
+        var k = (e.key || "").toLowerCase();
+        if (k === "z" && !e.shiftKey) { e.preventDefault(); _layoutUndo(); }
+        else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); _layoutRedo(); }
+      }
     });
     // When the browser exits fullscreen via Esc / OS gesture, drop the
     // fullscreen class so the modal styling reverts cleanly.
@@ -1897,6 +1906,7 @@
       ["Drag a connection line", "Edit mode: add a bend point there and move it"],
       ["Click a connection line", "Edit mode: show its points — drag an end point around a device to attach the line there"],
       ["Delete", "Edit mode: remove the selected bend point (an end point goes back to automatic)"],
+      ["Ctrl + Z / Ctrl + Shift + Z", "Edit mode: undo / redo a layout change (also the arrows under Edit)"],
       ["Grid (top right)", "Edit mode: show the grid — thick lines where devices snap, thin lines in between"],
       ["Snap devices / Snap line points", "Edit mode: devices land on the thick lines; line points on any line"],
       ["Double-click a device", "Open its asset details"],
@@ -2569,6 +2579,7 @@
         });
       }
       _markLayoutDirty();
+      _layoutHistoryRecordSoon(); // a finished drag is one undo step
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
         saveNodePositions(topoState.siteId);
@@ -2710,6 +2721,7 @@
           if (!topoState.siteId || topoState.pathOverlay) return;
           _markLayoutDirty();
           saveNodePositions(topoState.siteId);
+          _layoutHistoryRecordSoon(); // a new bend / a Delete is one undo step
         },
         onGeometryReset: function () {
           // A line back on automatic takes its routed shape again.
@@ -2966,9 +2978,15 @@
     resetBtn.innerHTML = _svg('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>');
     resetBtn.setAttribute("aria-haspopup", "menu");
     _setCornerTip(resetBtn, "Reset layout", "Back to the last save or to the automatic layout");
-    stack.appendChild(saveBtn);
-    stack.appendChild(resetBtn);
+    // Undo / Redo (Ctrl+Z / Ctrl+Shift+Z) — greyed out with nothing to step
+    // to; _paintUndoRedo keeps their state and tips current.
+    var undoBtn = _cornerButton("topology-undo", "btn-icon topology-tool", function () { _layoutUndo(); });
+    undoBtn.innerHTML = _svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11"/>');
+    var redoBtn = _cornerButton("topology-redo", "btn-icon topology-tool", function () { _layoutRedo(); });
+    redoBtn.innerHTML = _svg('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5 5.5 5.5 0 0 0 9.5 20H13"/>');
+    [saveBtn, resetBtn, undoBtn, redoBtn].forEach(function (b) { stack.appendChild(b); });
     graph.appendChild(stack);
+    _paintUndoRedo();
   }
 
   // ── Grid ───────────────────────────────────────────────────────────────────
@@ -3047,11 +3065,118 @@
            : "Move devices and boxes, draw lines, snap to the grid");
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
-    ["topology-save-layout", "topology-reset-layout",
+    ["topology-save-layout", "topology-reset-layout", "topology-undo", "topology-redo",
      "topology-snap-devices", "topology-snap-points", "topology-grid"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.hidden = !on;
     });
+    // Undo history belongs to one edit session in one view: started when
+    // editing starts (or the view changes under it), dropped on Done. A
+    // re-render while editing (Refresh, Reset, restore) records its result
+    // as the next step instead of starting over.
+    if (!on) {
+      layoutHistory = null;
+    } else if (!layoutHistory || layoutHistory.view !== _activeViewKey() || layoutHistory.siteId !== topoState.siteId) {
+      _layoutHistoryStart();
+    } else {
+      _layoutHistoryRecordSoon();
+    }
+    _paintUndoRedo();
+  }
+
+  // ── Undo / redo (edit mode) ──────────────────────────────────────────────
+  // A history of whole-layout snapshots — the same blob a save writes
+  // (_currentNodePositions: device positions + drawn-line `edgepath:`
+  // entries), so one entry restores everything a step changed. A step is
+  // recorded when an edit settles: a device / box / point drag ends
+  // (dragfree), a bend is created or Deleted (the editor's onChange), snap-
+  // all runs, or a Reset / restore re-renders. Identical consecutive
+  // snapshots collapse, so a multi-node drag (one dragfree per node) is one
+  // step. Undo / redo put a snapshot back and save it like any edit; they
+  // are not themselves recorded. Capped at LAYOUT_HISTORY_MAX steps.
+  var LAYOUT_HISTORY_MAX = 100;
+  var layoutHistory = null; // { siteId, view, entries: [json], index }
+  var _historyTimer = null;
+  function _layoutSnapshot() {
+    var blob = _currentNodePositions();
+    return blob ? JSON.stringify(blob) : null;
+  }
+  function _layoutHistoryStart() {
+    var snap = _layoutSnapshot();
+    layoutHistory = snap
+      ? { siteId: topoState.siteId, view: _activeViewKey(), entries: [snap], index: 0 }
+      : null;
+  }
+  function _layoutHistoryRecord() {
+    if (!topoState.editing || !cyInstance || topoState.pathOverlay) return;
+    if (!layoutHistory || layoutHistory.view !== _activeViewKey() || layoutHistory.siteId !== topoState.siteId) {
+      _layoutHistoryStart();
+      _paintUndoRedo();
+      return;
+    }
+    var snap = _layoutSnapshot();
+    if (!snap || snap === layoutHistory.entries[layoutHistory.index]) return;
+    var entries = layoutHistory.entries.slice(0, layoutHistory.index + 1);
+    entries.push(snap);
+    if (entries.length > LAYOUT_HISTORY_MAX) entries.shift();
+    layoutHistory.entries = entries;
+    layoutHistory.index = entries.length - 1;
+    _paintUndoRedo();
+  }
+  // After the current task: several handlers can fire for one gesture (a
+  // box drag's free + dragfree, grid snapping on release) — record once,
+  // after all of them have moved what they move.
+  function _layoutHistoryRecordSoon() {
+    if (_historyTimer) clearTimeout(_historyTimer);
+    _historyTimer = setTimeout(function () { _historyTimer = null; _layoutHistoryRecord(); }, 0);
+  }
+  function _layoutHistoryApply(json) {
+    if (!cyInstance || !topoState.siteId) return;
+    var blob;
+    try { blob = JSON.parse(json); } catch (e) { return; }
+    cyInstance.batch(function () {
+      cyInstance.nodes().forEach(function (n) {
+        if (n.data("isLocGroup") || n.data("isPortal") || n.data("isEdgeHandle")) return;
+        var p = blob[n.id()];
+        if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
+      });
+    });
+    if (edgeEditor) edgeEditor.setPaths(blob);
+    if (topoState.hasLocationCodes) {
+      window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
+      window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
+    }
+    _markLayoutDirty();
+    saveNodePositions(topoState.siteId);
+  }
+  function _layoutUndo() {
+    if (!topoState.editing || !layoutHistory || layoutHistory.index <= 0) return;
+    if (_historyTimer) { clearTimeout(_historyTimer); _historyTimer = null; _layoutHistoryRecord(); }
+    if (layoutHistory.index <= 0) return;
+    layoutHistory.index--;
+    _layoutHistoryApply(layoutHistory.entries[layoutHistory.index]);
+    _paintUndoRedo();
+  }
+  function _layoutRedo() {
+    if (!topoState.editing || !layoutHistory || layoutHistory.index >= layoutHistory.entries.length - 1) return;
+    layoutHistory.index++;
+    _layoutHistoryApply(layoutHistory.entries[layoutHistory.index]);
+    _paintUndoRedo();
+  }
+  function _paintUndoRedo() {
+    var undo = document.getElementById("topology-undo");
+    var redo = document.getElementById("topology-redo");
+    var h = layoutHistory;
+    var canUndo = !!(h && h.index > 0);
+    var canRedo = !!(h && h.index < h.entries.length - 1);
+    if (undo) {
+      undo.disabled = !canUndo;
+      _setCornerTip(undo, "Undo (Ctrl+Z)", canUndo ? "Undo the last layout change" : "Nothing to undo");
+    }
+    if (redo) {
+      redo.disabled = !canRedo;
+      _setCornerTip(redo, "Redo (Ctrl+Shift+Z)", canRedo ? "Redo the change you undid" : "Nothing to redo");
+    }
   }
 
   // Ctrl + left-drag pans the viewport from ANYWHERE on the graph —
@@ -3195,6 +3320,7 @@
       }
       _markLayoutDirty();
       saveNodePositions(topoState.siteId);
+      _layoutHistoryRecordSoon(); // snapping everything is one undo step
     }
     // Snap the OTHER views' server blobs (the active view was just handled
     // live above). Local-only view layouts stay as-is until visited.
