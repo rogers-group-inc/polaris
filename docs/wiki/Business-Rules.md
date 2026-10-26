@@ -2795,3 +2795,15 @@ port's editor makes it yours. Renaming a tag renames it on ports, and deleting
 it removes only the automatic copies. `region:` and `azure:` tags are
 device-only and are refused on a port. A port moving VLAN is picked up on its
 next full poll.
+
+### Rule 134
+
+**An open alert follows its device's rename; a cleared alert keeps the name it
+fired under.** An alert records its device's name when it fires, in its subject,
+its message ("GATE-1 is down") and the reminders and escalations sent after it.
+When the device is renamed, whether by discovery (a rename in FortiManager, on the
+device itself, in vCenter or a directory), by accepting a hostname conflict, or by
+editing the asset, its alerts that are still open switch to the new name. Alerts
+that have already cleared are history and keep the old name. A grouped alert that
+names a subnet or an automation instead of one device keeps its own subject.
+Only whole names are changed: renaming `GATE-1` leaves `GATE-10` alone.
