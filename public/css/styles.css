@@ -2846,9 +2846,11 @@ html[data-page-top-curtain]::after {
   /* Left padding = the fillet radius, so the first tab's left fillet lands on
      the table's left edge rather than being clipped by the scrolling strip. */
   padding: 6px 6px 1px var(--folder-r);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  /* Never scrolled natively, never a scrollbar: a strip with more tabs than
+     room is a window that squeezes its edge tabs (folder-tabs.js →
+     _layoutStrip), so the tabs always sum to its width. Hidden only clips the
+     moment between a re-render and that layout. */
+  overflow: hidden;
 }
 .table-head-row .table-tabs-list { gap: 4px; }
 .table-head-row .table-head-controls {

@@ -146,10 +146,12 @@ page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
 or F2 renames, ✕ closes (never the last one), + adds.
 
-When there are more tabs than fit beside the buttons, the strip scrolls rather
-than crowding them: **‹ ›** buttons appear at its right end, and the mouse wheel
-over the tabs scrolls them sideways. The same holds for the tab rows on
-Automations, Events, IPAM and the Dashboard.
+When there are more tabs than fit beside the buttons, the strip never crowds
+them: the tabs at its ends narrow to make room, and **‹ ›** buttons appear at
+its right end. Each click brings one more tab fully into view, the tab at the
+far end shrinking away as it does; the mouse wheel over the tabs slides them the
+same way. The same holds for the tab rows on Automations, Events, IPAM and the
+Dashboard.
 
 **Filters ▾** saves the current column filters + sort as a named preset, loads
 one back into the current tab or a new one, and deletes them. Presets are
