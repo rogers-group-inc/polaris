@@ -173,14 +173,33 @@ describe("computeFloorViews", () => {
 describe("partitionElementsForFloor", () => {
   const ids = (els: El[]) => els.filter((e) => !e.data.source).map((e) => e.data.id).sort();
 
-  it("floor view: keeps only that floor's tagged devices plus the FortiGate root", () => {
+  it("floor view: keeps only that floor's tagged devices plus the FortiGate's root portal", () => {
     const parts = partitionElementsForFloor(site(), "f||shop|1");
-    expect(ids(parts)).toEqual(["ap1", "fg", "portal:s2", "s1"]);
+    expect(ids(parts)).toEqual(["ap1", "portal:fg", "portal:s2", "s1"]);
   });
 
   it("building view: keeps ALL of the building's devices regardless of floor", () => {
     const parts = partitionElementsForFloor(site(), "b||shop");
-    expect(ids(parts)).toEqual(["ap1", "fg", "s1", "s2"]);
+    expect(ids(parts)).toEqual(["ap1", "portal:fg", "s1", "s2"]);
+  });
+
+  it("an untagged FortiGate is drawn only in Base: other views get a root portal jumping to Base", () => {
+    const parts = partitionElementsForFloor(site(), "b||shop");
+    expect(parts.some((e) => e.data.role === "fortigate")).toBe(false);
+    const root = parts.find((e) => e.data.id === "portal:fg")!;
+    expect(root.data).toMatchObject({ isPortal: 1, isRootPortal: 1, targetView: "flat", label: "→ Base: FG", remoteAssetId: "fg" });
+    // fg↔s1 lands on the root portal; fg↔o1 / fg↔plain have no member end — gone.
+    const edges = parts.filter((e) => e.data.source).map((e) => `${e.data.source}>${e.data.target}`);
+    expect(edges).toContain("portal:fg>s1");
+    expect(edges.some((t) => t.includes(">o1") || t.includes(">plain"))).toBe(false);
+  });
+
+  it("a FortiGate tagged into a view is drawn there as itself, without portal spray", () => {
+    const els = site();
+    els[0] = node("fg", "fortigate", { b: "Shop" });
+    const parts = partitionElementsForFloor(els, "b||shop");
+    expect(parts.find((e) => e.data.id === "fg")!.data.role).toBe("fortigate");
+    expect(ids(parts)).toEqual(["ap1", "fg", "s1", "s2"]); // no portal:o1 from fg's controller link
   });
 
   it("building view: a member's edge to another building becomes a portal to that building's view", () => {
@@ -207,21 +226,28 @@ describe("partitionElementsForFloor", () => {
     ];
     const parts = partitionElementsForFloor(els, "a|pugmill");
     // e1 has no area: its edge is dropped, not stubbed.
-    expect(ids(parts)).toEqual(["fg", "p1", "p2", "portal:m1"]);
+    expect(ids(parts)).toEqual(["p1", "p2", "portal:fg", "portal:m1"]);
     expect(parts.find((e) => e.data.id === "portal:m1")!.data).toMatchObject({ targetView: "a|mine", label: "→ Mine: M1" });
   });
 
-  it("always includes the FortiGate even when it carries a different floor tag", () => {
+  it("a FortiGate tagged to another floor becomes a root portal jumping to that floor", () => {
     const els = site();
     els[0] = node("fg", "fortigate", { b: "Shop", f: "2" });
     const parts = partitionElementsForFloor(els, "f||shop|1");
-    expect(ids(parts)).toContain("fg");
+    expect(ids(parts)).not.toContain("fg");
+    expect(parts.find((e) => e.data.id === "portal:fg")!.data).toMatchObject({
+      isRootPortal: 1,
+      targetView: "f||shop|2",
+      label: "→ Shop — 2: FG",
+    });
+    // ...and on its own floor it is the real node.
+    expect(ids(partitionElementsForFloor(els, "f||shop|2"))).toContain("fg");
   });
 
   it("excludes untagged devices and drops their edges without a stub", () => {
     const parts = partitionElementsForFloor(site(), "f||shop|2");
     // s2's edge to the untagged "plain" switch vanishes entirely.
-    expect(ids(parts)).toEqual(["fg", "portal:s1", "s2"]);
+    expect(ids(parts)).toEqual(["portal:fg", "portal:s1", "s2"]);
     const edgeTargets = parts.filter((e) => e.data.source).map((e) => `${e.data.source}>${e.data.target}`);
     expect(edgeTargets.some((t) => t.includes("plain"))).toBe(false);
   });
@@ -263,10 +289,10 @@ describe("partitionElementsForFloor", () => {
     expect(els).toEqual(snapshot);
   });
 
-  it("produces a subgraph the column solver can lay out (FG-rooted, portals as leaves)", () => {
+  it("produces a subgraph the column solver can lay out (rooted on the FG portal, portals as leaves)", () => {
     const cols = computeTopologyColumns(partitionElementsForFloor(site(), "f||shop|1"))!;
     expect(cols).toBeTruthy();
-    expect(cols.fg.depth).toBe(0);
+    expect(cols["portal:fg"].depth).toBe(0);
     expect(cols.s1.depth).toBe(2);
     // Portal (no role → leaf weight) hangs in the odd column right of s1.
     expect(cols["portal:s2"].depth).toBe(3);

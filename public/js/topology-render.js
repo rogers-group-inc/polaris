@@ -1548,9 +1548,11 @@
   // Partition a built element set down to one view — a floor view
   // ("f|a|b|f": that floor's tagged devices), a building view ("b|a|b":
   // ALL of that building's tagged devices, any floor) or an area view
-  // ("a|a": every device tagged with that area, any building) — plus the FortiGate
-  // root ALWAYS (keeps the subgraph rooted for the column solver even when
-  // the FG is tagged elsewhere). Untagged devices appear only in the Flat
+  // ("a|a": every device tagged with that area, any building). The FortiGate
+  // is drawn only in Base and in the views its own codes put it in; in every
+  // other view it is a dashed ROOT portal ("→ Base: FG", isRootPortal) that
+  // keeps the subgraph rooted for the column solver and jumps to where the
+  // FortiGate really lives. Untagged devices appear only in the Flat
   // view. Edges with both ends in view are kept as-is (loop flags preserved
   // — a physical ring is still a ring even when the view splits it); an edge
   // whose far end carries the same-level code for ANOTHER view is rewired to
@@ -1564,11 +1566,10 @@
     var kind = lead === "a" ? "area" : lead === "b" ? "building" : "floor";
     var nodeById = {};
     var inView = {};
-    // True members (as opposed to the always-included FG root). Only a
-    // member's cross-view edge earns a portal — the FG appears in every
-    // view, so stubbing its controller links to every other view would just
-    // spray "→ elsewhere" noise.
+    // True members (as opposed to a FortiGate standing in as a root portal).
     var trueMember = {};
+    // FortiGates tagged outside this view → their root portal id.
+    var rootPortalFor = {};
     (elements || []).forEach(function (el) {
       var d = el && el.data;
       if (!d || !d.id || d.source) return;
@@ -1579,13 +1580,29 @@
         trueMember[d.id] = true;
       } else if (d.role === "fortigate") {
         inView[d.id] = true;
+        rootPortalFor[d.id] = "portal:" + d.id;
       }
     });
     var out = [];
     (elements || []).forEach(function (el) {
       var d = el && el.data;
       if (!d || !d.id || d.source) return;
-      if (inView[d.id]) out.push({ data: Object.assign({}, d) });
+      if (!inView[d.id]) return;
+      if (rootPortalFor[d.id]) {
+        var home = _nodeViewRef(d, kind);
+        out.push({
+          data: {
+            id: rootPortalFor[d.id],
+            isPortal: 1,
+            isRootPortal: 1,
+            label: "→ " + (home ? home.label : "Base") + ": " + (d.label || d.id),
+            targetView: home ? home.key : "flat",
+            remoteAssetId: d.id,
+          },
+        });
+        return;
+      }
+      out.push({ data: Object.assign({}, d) });
     });
     var portalAdded = {};
     (elements || []).forEach(function (el) {
@@ -1594,9 +1611,26 @@
       var srcIn = !!inView[d.source];
       var tgtIn = !!inView[d.target];
       if (!srcIn && !tgtIn) return;
-      if (srcIn && tgtIn) { out.push({ data: Object.assign({}, d) }); return; }
+      if (srcIn && tgtIn) {
+        var srcRoot = rootPortalFor[d.source];
+        var tgtRoot = rootPortalFor[d.target];
+        // A member's link to an out-of-view FortiGate lands on its root
+        // portal; FortiGate-to-FortiGate links have no member end — dropped.
+        if (srcRoot && tgtRoot) return;
+        var kept = Object.assign({}, d);
+        if (srcRoot || tgtRoot) {
+          kept.id = "portal-" + kept.id;
+          if (srcRoot) kept.source = srcRoot;
+          else kept.target = tgtRoot;
+        }
+        out.push({ data: kept });
+        return;
+      }
       var localId = srcIn ? d.source : d.target;
-      if (!trueMember[localId]) return; // root-included FG — no portal spray
+      if (!trueMember[localId]) return; // root portal — links only to members
+      // The FortiGate's controller links reach every view, so stubbing them
+      // from the FortiGate's own view would just spray "→ elsewhere" noise.
+      if (nodeById[localId].role === "fortigate") return;
       var remoteId = srcIn ? d.target : d.source;
       var remote = nodeById[remoteId];
       var remoteRef = remote ? _nodeViewRef(remote, kind) : null;
@@ -2028,6 +2062,7 @@
     var nodeIds = [];
     var adj = {}; // undirected adjacency: id -> [neighborId, ...]
     var rootId = null;
+    var rootPortalId = null;
     // Location-code grouping keys (stamped by buildTopologyElements from the
     // payload's a:/b:/f:/r:/jb: codes) — drive the sibling-row clustering in
     // pass 5a and the leaf-block ordering in pass 5b. All five tiers are read
@@ -2044,7 +2079,8 @@
       var d = el && el.data;
       if (!d || !d.id) return;
       if (d.source && d.target) return; // edge — handled below
-      roleById[d.id] = d.role || null;
+      // A root portal stands in for the FortiGate, so it is placed as one.
+      roleById[d.id] = d.isRootPortal ? "fortigate" : d.role || null;
       nodeIds.push(d.id);
       adj[d.id] = adj[d.id] || [];
       if (d.locA) locAById[d.id] = d.locA;
@@ -2053,7 +2089,10 @@
       if (d.locR) locRById[d.id] = d.locR;
       if (d.locJb) locJbById[d.id] = d.locJb;
       if (d.role === "fortigate" && !rootId) rootId = d.id;
+      // A location view whose FortiGate lives elsewhere roots on its stub.
+      if (d.isRootPortal && !rootPortalId) rootPortalId = d.id;
     });
+    if (!rootId) rootId = rootPortalId;
     if (!rootId) return null; // no firewall — let the caller keep dagre
 
     // Mesh pre-pass: a mesh edge (root AP → leaf AP) makes the leaf a mesh
