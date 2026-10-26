@@ -5,10 +5,10 @@
  * of the "which devices?" question, extracted so every surface that asks it
  * resolves it identically.
  *
- * Three surfaces store the same tree over the same vocabulary
+ * Four surfaces store the same tree over the same vocabulary
  * (DEVICE_FILTER_FIELD_OPS): an automation's `scope.condition`, a contact's
- * `assetCondition`, and — since the tag-criteria cutover — a tag's
- * `assetCondition`. Automations resolve theirs inside the engine, where the
+ * `assetCondition`, — since the tag-criteria cutover — a tag's
+ * `assetCondition`, and a service & process discovery rule's `scope`. Automations resolve theirs inside the engine, where the
  * tree rides a scope that also carries flat dimensions and the read is shaped
  * by the tick's own select. The other two want the plain answer: the SET of
  * asset ids this tree currently covers. That answer lived privately in
