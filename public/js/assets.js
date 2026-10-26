@@ -9132,8 +9132,23 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   //
   // IPsec tunnels and their interface twins were taken out by the caller
   // (_renderInterfacesTable): they are the IPsec tab's.
-  var treeRows = rows;
-  var ifaceNameSet = new Set(treeRows.map(function (r) { return r.ifName; }));
+  //
+  // A dotted sub-interface ("br0.10" on a FortiAP, "eth0.20" on a Linux host)
+  // reaches us with no ifParent — IF-MIB has no parent column and neither
+  // source back-fills one — so when the base name is itself in the list the
+  // row is nested under it as that VLAN. A copy, not the record: only this
+  // table's tree reads the inferred parent.
+  var ifaceNameSet = new Set(rows.map(function (r) { return r.ifName; }));
+  var treeRows = rows.map(function (r) {
+    if (r.ifParent && ifaceNameSet.has(r.ifParent)) return r;
+    var m = /^(.+)\.(\d+)$/.exec(String(r.ifName || ""));
+    if (!m || !ifaceNameSet.has(m[1])) return r;
+    return Object.assign({}, r, {
+      ifParent: m[1],
+      ifType: "vlan",
+      vlanId: r.vlanId != null ? r.vlanId : Number(m[2]),
+    });
+  });
   var childMap = {};
   treeRows.forEach(function (r) {
     if (r.ifParent && ifaceNameSet.has(r.ifParent)) {
@@ -9254,12 +9269,32 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   otherGroup.forEach(function (iface) { pushCluster(entries, "other", iface); });
 
   // ── render ─────────────────────────────────────────────────────────────────
-  // Two modes. Default: the nested tree with its section headers, exactly as
-  // before. Sorted or filtered: flat — no section headers, no indentation, no
-  // expand toggles, because a row's position no longer says anything about its
-  // parentage and half a tree (a matching member port whose aggregate filtered
-  // out) is worse than an honest list. Only the tbody is rewritten, so TableSF's
-  // rebuilt header row and applyTableLayout's widths/handles survive.
+  // Two modes. Unfiltered (sorted or not): the nested tree with its section
+  // headers — a sort reorders the clusters within each section and the
+  // children within each cluster, so a member port stays under its aggregate
+  // with its elbow and the aggregate keeps its expand toggle. Filtered: flat —
+  // no section headers, no indentation, no expand toggles, because half a tree
+  // (a matching member port whose aggregate filtered out) is worse than an
+  // honest list. Only the tbody is rewritten, so TableSF's rebuilt header row
+  // and applyTableLayout's widths/handles survive.
+  function sortedTree(list) {
+    var clusters = [], kidsOf = {};
+    list.forEach(function (e) {
+      if (e.tree.isChild) (kidsOf[e.tree.parentName] = kidsOf[e.tree.parentName] || []).push(e);
+      else clusters.push(e);
+    });
+    var out = [];
+    ["iface", "other"].forEach(function (g) {
+      sf.apply(clusters.filter(function (e) { return e.group === g; })).forEach(function (p) {
+        var kids = sf.apply(kidsOf[p.raw.ifName] || []);
+        out.push(p);
+        kids.forEach(function (k, i) {
+          out.push(Object.assign({}, k, { tree: Object.assign({}, k.tree, { lastChild: i === kids.length - 1 }) }));
+        });
+      });
+    });
+    return out;
+  }
   function renderTreeBody(list) {
     var out = "";
     var lastGroup = null;
@@ -9281,10 +9316,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var tbody = container.querySelector("#asset-iface-tbody");
     if (!tbody) return;
     var st = sf ? sf.getPrefs() : null;
-    var active = !!(st && (st.sortKey || Object.keys(st.sfFilters || {}).length > 0));
-    var list = sf ? sf.apply(entries) : entries;
-    if (!active) {
-      tbody.innerHTML = renderTreeBody(list);
+    var filtered = !!(st && Object.keys(st.sfFilters || {}).length > 0);
+    var list = filtered ? sf.apply(entries) : null;
+    if (!filtered) {
+      tbody.innerHTML = renderTreeBody(st && st.sortKey ? sortedTree(entries) : entries);
     } else if (list.length === 0) {
       tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="empty-state">No interfaces match the current filters.</td></tr>';
     } else {
@@ -9579,8 +9614,8 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
     if (!t || !t.closest) return;
 
     // Expand / collapse an aggregate (or a physical port carrying VLANs).
-    // Only present in the default tree view — a sorted or filtered
-    // table renders flat, so there's nothing to collapse.
+    // Present in the tree view, sorted or not — only a filtered table
+    // renders flat, so there's nothing to collapse there.
     var tog = t.closest(".iface-expand-toggle");
     if (tog) {
       e.stopPropagation();
