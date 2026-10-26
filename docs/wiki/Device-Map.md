@@ -226,9 +226,8 @@ layout** and the editing tools, which only show while editing. The check mark
 ends editing; closing the topology ends it too.
 
 The tools sit in a row at the map's top right. From the right: **Edit**,
-**Export**, then, while editing, **Grid**, **Snap devices**, **Snap line
-points** and **Advanced line editing**. Each one remembers its setting in
-this browser; the grid only ever shows while you are editing, and comes back
+**Export**, then, while editing, **Grid**, **Snap devices** and **Snap line
+points**. Each one remembers its setting in this browser; the grid only ever shows while you are editing, and comes back
 the next time you edit if you left it on.
 
 - **Grid** draws two weights of line behind the map. The thick lines are
@@ -250,16 +249,7 @@ no points left goes back to its automatic shape. A click selects just the
 device, line or location box you clicked; hold **Shift** to add to the
 selection, or Shift-drag to box-select. Drawn lines are part of the
 layout: **Save layout** and **Reset layout** cover them, and each location
-view keeps its own.
-
-**Curved lines** (Advanced line editing on). Every point on a line grows
-**wings**, like the Photoshop path tool: two on each bend point and one on
-each end. A wing that has never been moved is hollow and changes nothing.
-Drag a wing and the line curves through that point; the bend's other wing
-turns to stay in line with it, so the curve stays smooth. Hold **Alt** while
-dragging to move one wing on its own and make a sharp turn. Select a wing
-and press **Delete** to put its point back to a sharp corner. Curves stay
-drawn when Advanced line editing is off; only the wings hide.
+view keeps its own. Lines are always straight between their points.
 
 | Control | |
 |---|---|
@@ -272,7 +262,6 @@ drawn when Advanced line editing is off; only the wings hide.
 | **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
 | **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
 | **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
-| **Advanced line editing** | while editing; per user; adds curve wings to every point of a line |
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |

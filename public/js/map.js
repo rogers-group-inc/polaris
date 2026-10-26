@@ -51,10 +51,10 @@
   // panel inside the graph if the modal was resized between sessions.
   var LEGEND_STORAGE_KEY = "polaris.topology.legend";
   // The map's corner tools (top right of the graph, right → left: Edit,
-  // Export, Grid, then — edit mode only — Snap devices, Snap line points,
-  // Advanced line editing). Every toggle is a per-user, per-browser pref;
-  // what they produce (snapped positions, drawn curves) persists through the
-  // normal layout save.
+  // Export, then — edit mode only — Grid, Snap devices, Snap line points).
+  // Every toggle is a per-user, per-browser pref; what they produce
+  // (snapped positions, drawn lines) persists through the normal layout
+  // save.
   //
   // The GRID has two weights. The thick (major) lines are the column
   // solver's lattice, TOPO_COL_SPACING × TOPO_ROW_SPACING — where devices
@@ -67,7 +67,6 @@
   // chip, so an operator who had snapping on keeps it.
   var SNAP_STORAGE_KEY = "polaris.topology.snapToGrid";           // default off
   var SNAP_POINTS_STORAGE_KEY = "polaris.topology.snapLinePoints"; // default off
-  var ADVANCED_LINES_STORAGE_KEY = "polaris.topology.advancedLines"; // default off
 
   // Register cytoscape-dagre once. Both globals are populated by the UMD builds
   // loaded in map.html. Guarded so hot-reload doesn't throw.
@@ -1897,10 +1896,9 @@
       ["Drag a selected device", "Edit mode: move the selected devices together"],
       ["Drag a connection line", "Edit mode: add a bend point there and move it"],
       ["Click a connection line", "Edit mode: show its points — drag an end point around a device to attach the line there"],
-      ["Delete", "Edit mode: remove the selected point (an end point goes back to automatic; a wing makes its point a sharp corner)"],
+      ["Delete", "Edit mode: remove the selected bend point (an end point goes back to automatic)"],
       ["Grid (top right)", "Edit mode: show the grid — thick lines where devices snap, thin lines in between"],
       ["Snap devices / Snap line points", "Edit mode: devices land on the thick lines; line points on any line"],
-      ["Advanced line editing (pen)", "Edit mode: each point grows Photoshop-style wings — drag one to curve the line, Alt + drag to move it alone"],
       ["Double-click a device", "Open its asset details"],
       ["Right-click a device", "Edit its description / grouping codes"],
     ].forEach(function (c) { parts.push(row("", c[0], c[1])); });
@@ -2707,7 +2705,6 @@
         positions: savedPositions,
         isSuspended: function () { return !!topoState.pathOverlay; },
         isEditable: function () { return !!topoState.editing; },
-        isAdvanced: function () { return !!topoState.editing && _readPref(ADVANCED_LINES_STORAGE_KEY); },
         snapPoint: function (p) { return _readPref(SNAP_POINTS_STORAGE_KEY) ? _snapFine(p) : p; },
         onChange: function () {
           if (!topoState.siteId || topoState.pathOverlay) return;
@@ -2828,10 +2825,10 @@
   //   Grid       show / hide the two-weight grid (an editing aid: never
   //              drawn outside edit mode; the on/off pref is kept for the
   //              next edit)
-  //   Snap devices · Snap line points · Advanced line editing
+  //   Snap devices · Snap line points
   // The map opens view-only: devices and location boxes don't drag, lines
   // take no bends or end-point moves, and the layout verbs (Save, Reset and
-  // the four edit-only toggles) are hidden, the grid with them. Clicking,
+  // the three edit-only toggles) are hidden, the grid with them. Clicking,
   // selecting, panning, zooming, the location views, search and Export work
   // either way.
   function _svg(inner, strokeWidth) {
@@ -2843,7 +2840,6 @@
   var GRID_ICON = _svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>');
   var SNAP_DEVICES_ICON = _svg('<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/>');
   var SNAP_POINTS_ICON = _svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>');
-  var ADVANCED_ICON = _svg('<path d="M15.7 21.3a1 1 0 0 1-1.4 0l-1.6-1.6a1 1 0 0 1 0-1.4l5.6-5.6a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4z"/><path d="m18 13-1.4-6.9a1 1 0 0 0-.7-.8L3.2 2a1 1 0 0 0-1.2 1.2l3.3 12.7a1 1 0 0 0 .8.7L13 18"/><path d="m2.3 2.3 7.3 7.3"/><circle cx="11" cy="11" r="2"/>');
 
   function _readPref(key) {
     try { return localStorage.getItem(key) === "on"; } catch (e) { return false; }
@@ -2920,11 +2916,6 @@
     row.id = "topology-corner-tools";
     row.className = "topology-corner-tools";
 
-    var advanced = _toggleTool("topology-advanced-lines", ADVANCED_LINES_STORAGE_KEY, ADVANCED_ICON,
-      "Advanced line editing",
-      "Advanced line editing is on — drag a point's wings to curve the line (Alt moves one wing alone)",
-      "Curve lines with Photoshop-style wings on each point",
-      function () { if (edgeEditor) edgeEditor.refresh(); });
     var snapPoints = _toggleTool("topology-snap-points", SNAP_POINTS_STORAGE_KEY, SNAP_POINTS_ICON,
       "Snap line points",
       "Line points snap to the grid (thin and thick lines) — click to stop",
@@ -2955,7 +2946,7 @@
       _setTopologyEditing(!topoState.editing);
     });
 
-    [advanced, snapPoints, snapDevices, grid, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
+    [snapPoints, snapDevices, grid, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
     graph.appendChild(row);
 
     // Save / Reset layout: a column under the Edit button, edit mode only
@@ -3053,11 +3044,11 @@
       btn.innerHTML = (on ? DONE_ICON + "Done Editing" : EDIT_ICON + "Edit Map");
       _setCornerTip(btn, on ? "Done editing" : "Edit map",
         on ? "Stop editing — the map goes back to view-only"
-           : "Move devices and boxes, draw and curve lines, snap to the grid");
+           : "Move devices and boxes, draw lines, snap to the grid");
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
     ["topology-save-layout", "topology-reset-layout",
-     "topology-snap-devices", "topology-snap-points", "topology-advanced-lines", "topology-grid"].forEach(function (id) {
+     "topology-snap-devices", "topology-snap-points", "topology-grid"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.hidden = !on;
     });

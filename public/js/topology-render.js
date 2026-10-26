@@ -815,40 +815,6 @@
           "border-color": "#22d3ee",
         },
       },
-      // Curve wings (advanced line editing): diamonds at the end of a thin
-      // bar from their point, Photoshop path-tool style — the same size as
-      // every other handle. A wing at REST (never dragged, the curve
-      // ignores it) is hollow.
-      {
-        selector: 'node[isEdgeHandle][handleKind = "wing"]',
-        style: {
-          shape: "diamond",
-          "background-color": "#22d3ee",
-          "border-color": isDark ? "#0d0d1a" : "#ffffff",
-        },
-      },
-      {
-        selector: 'node[isEdgeHandle][handleKind = "wing"][wingRest = 1]',
-        style: {
-          "background-color": isDark ? "#0d0d1a" : "#ffffff",
-          "border-color": "#22d3ee",
-        },
-      },
-      {
-        selector: "edge[isEdgeHandleLine]",
-        style: {
-          "curve-style": "straight",
-          width: 1,
-          "line-color": "#22d3ee",
-          "line-style": "solid",
-          opacity: 0.75,
-          label: "",
-          "source-arrow-shape": "none",
-          "target-arrow-shape": "none",
-          events: "no",
-          "z-index": 9998,
-        },
-      },
       {
         selector: "node[isEdgeHandle]:selected",
         style: {
@@ -1797,9 +1763,6 @@
   // reports a zero-length leg, which is no bend). Null for a path we can't
   // read or don't place (curved beziers).
   function _edgePolyline(e) {
-    // An operator-drawn CURVE is dozens of tiny legs; leg-based placement
-    // would hide its label, so it keeps Cytoscape's own midpoint label.
-    if (e.data("curvedPath")) return null;
     var src = e.sourceEndpoint(), tgt = e.targetEndpoint();
     if (!src || !tgt || !isFinite(src.x) || !isFinite(tgt.x)) return null;
     var cs = e.style("curve-style");

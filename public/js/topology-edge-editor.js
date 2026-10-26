@@ -16,20 +16,18 @@
  *   • Select a handle + Delete → a bend is removed; an end point returns to
  *     automatic. A line with no bends and no end points left is back to its
  *     solver/router geometry.
- *   • Advanced line editing (host's isAdvanced): every point also shows its
- *     WINGS, Photoshop path-tool style — two on a bend, one on each end.
- *     Dragging one curves the line (sampled cubic Béziers on a fine
- *     `segments` polyline); a bend's other wing stays collinear unless Alt
- *     is held. Delete on a wing returns its point to a sharp corner.
  *   • Snap line points (host's snapPoint): a dragged bend lands on the host's
  *     fine grid.
- * Editing at all needs the host's isEditable (the map's Edit mode).
+ * Lines are straight between their points (a curved "advanced" mode was
+ * tried and removed, 2026-10-26). Editing at all needs the host's
+ * isEditable (the map's Edit mode).
  *
  * Persistence rides the layout blob map.js already saves ({ id: {x, y} },
  * server TopologyLayout row + localStorage, per view): each bend is an entry
- * `edgepath:<pathKey>:b<n>` holding its {x, y} (its wings `b<n>i` / `b<n>o`
- * as offsets from it); each end point is `edgepath:<pathKey>:s` / `:t`
- * holding the unit direction {x, y} (its wing `sw` / `tw`). Save,
+ * `edgepath:<pathKey>:b<n>` holding its {x, y}; each end point is
+ * `edgepath:<pathKey>:s` / `:t` holding the unit direction {x, y}. Any other
+ * part (the retired curve wings `b<n>i`, `b<n>o`, `sw`, `tw`) is ignored on
+ * load and dropped on the next save. Save,
  * Reset to last save and Reset to baseline therefore cover paths with no
  * code of their own. `pathKey` is the edge's kind + source + target (+ "#n"
  * for a parallel link) — NOT the element id, which is a payload index
@@ -88,23 +86,16 @@
   }
 
   function _emptyPath() {
-    return { bends: [], s: null, t: null, sw: null, tw: null };
+    return { bends: [], s: null, t: null };
   }
 
-  // Layout blob → { pathKey: { bends, s, t, sw, tw } }:
-  //   bends  [{ x, y, in?, out? }] — absolute anchor points; `in` / `out`
-  //          are the anchor's curve WINGS (advanced line editing), stored as
-  //          offsets from the anchor so they travel with it
-  //   s / t  the end points' unit directions from their device's centre
-  //   sw/tw  each end point's single wing, an offset from the end point
-  // Blob parts: b<n>, b<n>i, b<n>o, s, t, sw, tw. Non-path entries (node
-  // positions) are ignored; bends are ordered by n. A wing on a bend that
-  // isn't there is dropped.
+  // Layout blob → { pathKey: { bends: [{x,y}], s: {x,y}|null, t: {x,y}|null } }.
+  // Non-path entries (node positions) are ignored; bends are ordered by n.
+  // Parts other than b<n> / s / t (the retired curve wings) are ignored.
   function parsePaths(positions) {
     var out = {};
     if (!positions || typeof positions !== "object") return out;
     var bendIdx = {};
-    var wingIdx = {};
     Object.keys(positions).forEach(function (k) {
       if (k.indexOf(KEY_PREFIX) !== 0) return;
       var cut = k.lastIndexOf(":");
@@ -119,31 +110,15 @@
         if (u) path[part] = u;
         return;
       }
-      if (part === "sw" || part === "tw") {
-        path[part] = { x: p.x, y: p.y };
-        return;
-      }
-      var m = /^b(\d+)([io])?$/.exec(part);
+      var m = /^b(\d+)$/.exec(part);
       if (!m) return;
-      var n = parseInt(m[1], 10);
-      if (m[2]) {
-        ((wingIdx[key] = wingIdx[key] || {})[n] = wingIdx[key][n] || {})[m[2] === "i" ? "in" : "out"] = { x: p.x, y: p.y };
-        return;
-      }
-      (bendIdx[key] = bendIdx[key] || []).push({ n: n, x: p.x, y: p.y });
+      (bendIdx[key] = bendIdx[key] || []).push({ n: parseInt(m[1], 10), x: p.x, y: p.y });
     });
     Object.keys(bendIdx).forEach(function (key) {
-      var wings = wingIdx[key] || {};
       out[key].bends = bendIdx[key]
         .sort(function (a, b) { return a.n - b.n; })
         .slice(0, MAX_BENDS)
-        .map(function (b) {
-          var o = { x: b.x, y: b.y };
-          var w = wings[b.n];
-          if (w && w.in) o.in = w.in;
-          if (w && w.out) o.out = w.out;
-          return o;
-        });
+        .map(function (b) { return { x: b.x, y: b.y }; });
     });
     Object.keys(out).forEach(function (key) {
       if (isEmptyPath(out[key])) delete out[key];
@@ -152,55 +127,7 @@
   }
 
   function isEmptyPath(path) {
-    return !path || ((!path.bends || path.bends.length === 0) && !path.s && !path.t && !path.sw && !path.tw);
-  }
-
-  // True when any part of the path is curved (a wing anywhere).
-  function isCurvedPath(path) {
-    if (!path) return false;
-    if (path.sw || path.tw) return true;
-    return (path.bends || []).some(function (b) { return !!(b.in || b.out); });
-  }
-
-  // Cubic Bézier samples through the anchors — the drawn shape of a curved
-  // path. `anchors` is [{ x, y, in?, out? }] from the start point to the end
-  // point (wings as offsets); a span with no wing on either side is a
-  // straight leg (just its end anchor). Returns the points AFTER the start
-  // and BEFORE the end — the interior of the polyline Cytoscape draws.
-  function sampleCurve(anchors, perSpan) {
-    var n = perSpan || 12;
-    var pts = [];
-    for (var i = 0; i + 1 < anchors.length; i++) {
-      var A = anchors[i], B = anchors[i + 1];
-      var last = i + 2 === anchors.length;
-      if (!A.out && !B.in) {
-        if (!last) pts.push({ x: B.x, y: B.y });
-        continue;
-      }
-      var c1 = { x: A.x + (A.out ? A.out.x : 0), y: A.y + (A.out ? A.out.y : 0) };
-      var c2 = { x: B.x + (B.in ? B.in.x : 0), y: B.y + (B.in ? B.in.y : 0) };
-      for (var k = 1; k <= n; k++) {
-        if (last && k === n) break; // the end point itself is the target endpoint
-        var t = k / n, u = 1 - t;
-        pts.push({
-          x: u * u * u * A.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * B.x,
-          y: u * u * u * A.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * B.y,
-        });
-      }
-    }
-    return pts;
-  }
-
-  // A point's wings after one was dragged to `dragged` (an offset): the
-  // other side stays collinear and keeps its own length — Photoshop's smooth
-  // point — unless `independent` (Alt held), when it is left as it was.
-  // `otherLen` is the opposite wing's current length (0 = mirror the drag).
-  function mirroredWing(dragged, otherLen, independent, other) {
-    if (independent) return other || null;
-    var len = Math.sqrt(dragged.x * dragged.x + dragged.y * dragged.y);
-    if (!(len > 1e-6)) return other || null;
-    var L = otherLen > 0 ? otherLen : len;
-    return { x: -dragged.x / len * L, y: -dragged.y / len * L };
+    return !path || ((!path.bends || path.bends.length === 0) && !path.s && !path.t);
   }
 
   // Paths → layout blob entries. `onlyKeys` (optional) limits the output to
@@ -213,17 +140,12 @@
       var path = paths[key];
       if (isEmptyPath(path)) return;
       var base = KEY_PREFIX + key + ":";
-      if ((base + "b" + MAX_BENDS + "o").length > MAX_BLOB_KEY) return;
+      if ((base + "b" + MAX_BENDS).length > MAX_BLOB_KEY) return;
       (path.bends || []).slice(0, MAX_BENDS).forEach(function (b, i) {
-        if (!_finitePoint(b)) return;
-        out[base + "b" + i] = { x: b.x, y: b.y };
-        if (_finitePoint(b.in)) out[base + "b" + i + "i"] = { x: b.in.x, y: b.in.y };
-        if (_finitePoint(b.out)) out[base + "b" + i + "o"] = { x: b.out.x, y: b.out.y };
+        if (_finitePoint(b)) out[base + "b" + i] = { x: b.x, y: b.y };
       });
       if (path.s) out[base + "s"] = { x: path.s.x, y: path.s.y };
       if (path.t) out[base + "t"] = { x: path.t.x, y: path.t.y };
-      if (_finitePoint(path.sw)) out[base + "sw"] = { x: path.sw.x, y: path.sw.y };
-      if (_finitePoint(path.tw)) out[base + "tw"] = { x: path.tw.x, y: path.tw.y };
     });
     return out;
   }
@@ -295,15 +217,11 @@
 
   // Bends after a drag: moved with the line when both ends travelled the
   // same distance (the whole line was carried), left in place otherwise.
-  // Wings are offsets, so they ride along with their anchor untouched.
   function carriedBends(bends0, dS, dT) {
     var together = Math.abs(dS.x - dT.x) < 0.5 && Math.abs(dS.y - dT.y) < 0.5;
     var move = together && !(Math.abs(dS.x) < 1e-6 && Math.abs(dS.y) < 1e-6);
     return bends0.map(function (b) {
-      var o = move ? { x: b.x + dS.x, y: b.y + dS.y } : { x: b.x, y: b.y };
-      if (b.in) o.in = { x: b.in.x, y: b.in.y };
-      if (b.out) o.out = { x: b.out.x, y: b.out.y };
-      return o;
+      return move ? { x: b.x + dS.x, y: b.y + dS.y } : { x: b.x, y: b.y };
     });
   }
 
@@ -322,10 +240,6 @@
   //                off): drawn paths still DRAW, but no bend is created, no
   //                handle shows and Delete removes nothing. Omitted = editable.
   //                Call refresh() after it flips so the handles follow.
-  //   isAdvanced   () → true for advanced line editing: every point also
-  //                shows its curve wings (two on a bend, one on an end point),
-  //                Photoshop path-tool style. Curves DRAW either way. Call
-  //                refresh() after it flips.
   //   snapPoint    (p) → the point a dragged bend should land on (the host's
   //                fine grid while "snap line points" is on), or p unchanged.
   function attach(cy, opts) {
@@ -339,7 +253,6 @@
     var pending = null;     // a press on a line not yet past the threshold
     var creating = null;    // the bend being created by the current press
     var handlesFor = {};    // pathKey → true while its handles are on canvas
-    var altHeld = false;    // Alt during the current drag: wings move independently
     var dragRaw = {};       // handle id → { x, y, lastX, lastY } while a bend is dragged (snap source)
 
     var edgeData = cy.edges().map(function (e) {
@@ -356,9 +269,6 @@
     }
     function isEditable() {
       return typeof opts.isEditable !== "function" || !!opts.isEditable();
-    }
-    function isAdvanced() {
-      return typeof opts.isAdvanced === "function" && !!opts.isAdvanced();
     }
     function snap(p) {
       var s = typeof opts.snapPoint === "function" ? opts.snapPoint(p) : null;
@@ -393,7 +303,7 @@
       if (isSuspended() || isEmptyPath(path)) {
         if (e.data("customPath")) {
           e.removeStyle(PATH_STYLE_PROPS);
-          e.data({ customPath: 0, curvedPath: 0 });
+          e.data("customPath", 0);
           return true; // geometry handed back
         }
         return false;
@@ -401,30 +311,6 @@
       var style = {};
       var S = e.source().position();
       var T = e.target().position();
-      if (isCurvedPath(path)) {
-        // Curves: sampled cubic Béziers through the anchors, drawn as a fine
-        // polyline between explicit end points (Cytoscape has no cubic path).
-        var ap = attachPoints(e, path);
-        var anchors = [{ x: ap.s.x, y: ap.s.y, out: path.sw }]
-          .concat(path.bends, [{ x: ap.t.x, y: ap.t.y, in: path.tw }]);
-        var cgeo = segmentGeometry(S, T, sampleCurve(anchors, 12));
-        if (cgeo && cgeo.weights.length) {
-          style["curve-style"] = "segments";
-          style["segment-weights"] = cgeo.weights.join(" ");
-          style["segment-distances"] = cgeo.distances.join(" ");
-          style["edge-distances"] = "node-position";
-        } else {
-          style["curve-style"] = "straight";
-        }
-        style["source-endpoint"] = ap.s.off.x.toFixed(1) + "px " + ap.s.off.y.toFixed(1) + "px";
-        style["target-endpoint"] = ap.t.off.x.toFixed(1) + "px " + ap.t.off.y.toFixed(1) + "px";
-        // topology-render's bent-label placement walks legs; a curve has
-        // dozens of tiny ones, so its label stays Cytoscape's own.
-        e.data({ customPath: 1, curvedPath: 1 });
-        e.style(style);
-        return false;
-      }
-      e.data("curvedPath", 0);
       var geo = path.bends.length ? segmentGeometry(S, T, path.bends) : null;
       if (geo) {
         style["curve-style"] = "segments";
@@ -468,9 +354,6 @@
 
     // Where each of a line's handles sits right now. An automatic end shows
     // where the line leaves the device today; dragging it is what pins it.
-    // In advanced mode every point also gets its wings: a set wing where it
-    // is, an unset one at a REST position along the line (rest: true —
-    // drawn hollow; the curve ignores it until it is dragged).
     function handleSpecs(key) {
       var e = edgeByKey[key];
       if (!e || e.removed()) return [];
@@ -483,35 +366,6 @@
         specs.push({ id: handleId(key, "b" + i), kind: "bend", index: i, x: b.x, y: b.y });
       });
       specs.push({ id: handleId(key, "t"), kind: "target", index: -1, x: tp.x, y: tp.y });
-      if (!isAdvanced()) return specs;
-
-      var chain = [sp].concat(path.bends, [tp]);
-      function dist(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
-      function restLen(a, b, c) {
-        var d = Math.min(a ? dist(a, b) : Infinity, c ? dist(b, c) : Infinity);
-        return Math.max(14, Math.min(40, (isFinite(d) ? d : 60) * 0.3));
-      }
-      function wing(anchorPart, side, index, anchor, set, restDir, len) {
-        var off = set || { x: restDir.x * len, y: restDir.y * len };
-        specs.push({
-          id: handleId(key, side === "s" || side === "t" ? side + "w" : "b" + index + (side === "in" ? "i" : "o")),
-          kind: "wing", index: index, side: side, rest: !set,
-          anchorId: handleId(key, anchorPart),
-          x: anchor.x + off.x, y: anchor.y + off.y,
-        });
-      }
-      // End points: one wing each, resting along the line toward the next point.
-      var sOut = _unit(chain[1].x - sp.x, chain[1].y - sp.y) || { x: 1, y: 0 };
-      wing("s", "s", -1, sp, path.sw, sOut, restLen(null, sp, chain[1]));
-      path.bends.forEach(function (b, i) {
-        var prev = chain[i], next = chain[i + 2];
-        var tan = _unit(next.x - prev.x, next.y - prev.y) || { x: 1, y: 0 };
-        var len = restLen(prev, b, next);
-        wing("b" + i, "in", i, b, b.in, { x: -tan.x, y: -tan.y }, len);
-        wing("b" + i, "out", i, b, b.out, tan, len);
-      });
-      var tIn = _unit(chain[chain.length - 2].x - tp.x, chain[chain.length - 2].y - tp.y) || { x: -1, y: 0 };
-      wing("t", "t", -1, tp, path.tw, tIn, restLen(chain[chain.length - 2], tp, null));
       return specs;
     }
 
@@ -535,42 +389,27 @@
       try {
         cy.batch(function () {
           var keep = {};
-          var lines = [];
           Object.keys(want).forEach(function (key) {
             handleSpecs(key).forEach(function (sp) {
               keep[sp.id] = true;
               var n = cy.getElementById(sp.id);
-              var data = {
-                handleKind: sp.kind, bendIndex: sp.index,
-                wingSide: sp.side || "", wingRest: sp.rest ? 1 : 0,
-              };
               if (n.length === 0) {
                 cy.add({
                   group: "nodes",
-                  data: Object.assign({ id: sp.id, label: "", isEdgeHandle: 1, noExport: 1, pathKey: key }, data),
+                  data: {
+                    id: sp.id, label: "", isEdgeHandle: 1, noExport: 1,
+                    pathKey: key, handleKind: sp.kind, bendIndex: sp.index,
+                  },
                   position: { x: sp.x, y: sp.y },
                 });
               } else {
-                n.data(data);
+                n.data({ handleKind: sp.kind, bendIndex: sp.index });
                 if (!n.grabbed()) n.position({ x: sp.x, y: sp.y });
               }
-              if (sp.anchorId) lines.push({ id: "edgehandle-line:" + sp.id, source: sp.anchorId, target: sp.id });
             });
           });
           cy.nodes("[isEdgeHandle]").forEach(function (n) {
             if (!keep[n.id()]) cy.remove(n);
-          });
-          // The thin line from each point to its wing (Photoshop's handle
-          // bar). Synthetic edges: no path key, never exported.
-          var keepLine = {};
-          lines.forEach(function (l) {
-            keepLine[l.id] = true;
-            if (cy.getElementById(l.id).length) return;
-            if (!cy.getElementById(l.source).length || !cy.getElementById(l.target).length) return;
-            cy.add({ group: "edges", data: { id: l.id, source: l.source, target: l.target, isEdgeHandleLine: 1, noExport: 1, label: "" } });
-          });
-          cy.edges("[isEdgeHandleLine]").forEach(function (l) {
-            if (!keepLine[l.id()]) cy.remove(l);
           });
           handlesFor = want;
         });
@@ -614,7 +453,6 @@
     });
     cy.on("tapdrag mousemove", function (evt) {
       if (evt.position) pointer = { x: evt.position.x, y: evt.position.y };
-      if (evt.originalEvent) altHeld = !!evt.originalEvent.altKey;
     });
 
     // Press on a line: maybe the start of a new bend.
@@ -660,7 +498,6 @@
         cp.bends[creating.index].x = sP.x;
         cp.bends[creating.index].y = sP.y;
         applyKey(creating.key);
-        if (isAdvanced()) { syncHandles(); return; } // its wings follow
         syncing = true;
         try { cy.getElementById(handleId(creating.key, "b" + creating.index)).position(sP); }
         finally { syncing = false; }
@@ -721,7 +558,7 @@
         var S = e.source().position(), T = e.target().position();
         snapshot[key] = {
           S: { x: S.x, y: S.y }, T: { x: T.x, y: T.y },
-          bends: carriedBends(paths[key].bends, { x: 0, y: 0 }, { x: 0, y: 0 }), // a copy, wings kept
+          bends: carriedBends(paths[key].bends, { x: 0, y: 0 }, { x: 0, y: 0 }), // a copy
         };
       });
     });
@@ -797,17 +634,14 @@
         } else {
           sp = h.grabbed() ? snap(p) : { x: p.x, y: p.y };
         }
-        path.bends[i].x = sp.x; // mutate: its wings (offsets) stay attached
-        path.bends[i].y = sp.y;
+        path.bends[i] = sp;
         applyKey(key);
         if (sp.x !== p.x || sp.y !== p.y) {
           syncing = true;
           try { h.position(sp); } finally { syncing = false; }
         }
-        if (isAdvanced()) syncHandles(); // wings and their bars ride along
         return;
       }
-      if (kind === "wing") { onWingMoved(h, e, key, path); return; }
       var owner = kind === "source" ? e.source() : e.target();
       // Carried along with its device (both selected) → its direction holds.
       if (owner.grabbed()) return;
@@ -823,36 +657,6 @@
       var on = endpointPos(owner, dir);
       syncing = true;
       try { h.position({ x: on.x, y: on.y }); } finally { syncing = false; }
-      if (isAdvanced()) syncHandles(); // the end's wing moves with it
-    }
-
-    // A wing dragged: its offset from the point becomes real (the point
-    // turns smooth), and on a bend the opposite wing stays collinear and
-    // keeps its length — unless Alt is held, which moves this wing alone.
-    // Dragging a resting wing of a straight point curves it; its partner
-    // mirrors the drag at the same length.
-    function onWingMoved(h, e, key, path) {
-      if (!h.grabbed()) return; // only an operator's drag edits a wing
-      var side = h.data("wingSide");
-      var p = h.position();
-      if (side === "s" || side === "t") {
-        if (isEmptyPath(path)) seedFromRendered(key);
-        var ap = attachPoints(e, path);
-        var a = side === "s" ? ap.s : ap.t;
-        path[side + "w"] = { x: p.x - a.x, y: p.y - a.y };
-      } else {
-        var b = path.bends[h.data("bendIndex")];
-        if (!b) return;
-        var other = side === "in" ? "out" : "in";
-        var off = { x: p.x - b.x, y: p.y - b.y };
-        var otherLen = b[other] ? Math.sqrt(b[other].x * b[other].x + b[other].y * b[other].y) : 0;
-        b[side] = off;
-        var mirrored = mirroredWing(off, otherLen, altHeld, b[other]);
-        if (mirrored) b[other] = mirrored;
-        else delete b[other];
-      }
-      applyKey(key);
-      syncHandles(); // the partner wing and the bars follow
     }
 
     // ── Controller ──
@@ -867,10 +671,9 @@
         });
         return serializePaths(paths, present);
       },
-      // Delete the selected handles: bends go (with their wings), end points
-      // return to automatic (direction and wing), and a wing puts its point
-      // back to a sharp corner (both wings of a bend). True when anything was
-      // removed (the caller then swallows the key press).
+      // Delete the selected handles: bends go, end points return to
+      // automatic. True when anything was removed (the caller then swallows
+      // the key press).
       deleteSelected: function () {
         if (isSuspended() || !isEditable()) return false;
         var sel = cy.nodes("[isEdgeHandle]:selected");
@@ -881,17 +684,8 @@
           var path = paths[key];
           if (!path) return;
           var kind = h.data("handleKind");
-          var side = h.data("wingSide");
           if (kind === "bend") (drop[key] = drop[key] || []).push(h.data("bendIndex"));
-          else if (kind === "wing" && (side === "s" || side === "t")) path[side + "w"] = null;
-          else if (kind === "wing") {
-            var b = path.bends[h.data("bendIndex")];
-            if (b) { delete b.in; delete b.out; }
-          } else {
-            var end = kind === "source" ? "s" : "t";
-            path[end] = null;
-            path[end + "w"] = null;
-          }
+          else path[kind === "source" ? "s" : "t"] = null;
           drop[key] = drop[key] || [];
         });
         Object.keys(drop).forEach(function (key) {
@@ -915,6 +709,13 @@
       hasCustomPath: function (key) { return !isEmptyPath(paths[key]); },
       // Re-state the handles after the host's isEditable() answer changed.
       refresh: function () { syncHandles(); },
+      // Replace every drawn path with the ones in a layout blob (the host's
+      // undo / redo): redraw all lines, re-state the handles.
+      setPaths: function (positions) {
+        paths = parsePaths(positions);
+        applyAll();
+        syncHandles();
+      },
     };
   }
 
@@ -926,9 +727,6 @@
     parsePaths: parsePaths,
     serializePaths: serializePaths,
     isEmptyPath: isEmptyPath,
-    isCurvedPath: isCurvedPath,
-    sampleCurve: sampleCurve,
-    mirroredWing: mirroredWing,
     perimeterOffset: perimeterOffset,
     segmentGeometry: segmentGeometry,
     insertIndex: insertIndex,
