@@ -718,14 +718,15 @@ function renderCertsTab(container) {
 
   // Expiry with severity pill — amber <30d, red <7d, green otherwise.
   var expiryHtml = "(unknown)";
+  var certEdge = "ok";
   if (s.expiresAt) {
     var ms = Date.parse(s.expiresAt) - Date.now();
     var days = Math.floor(ms / (24 * 60 * 60 * 1000));
     var pillClass = "badge-available";
     var pillLabel = days + " days";
-    if (days < 0)       { pillClass = "badge-deprecated"; pillLabel = "EXPIRED"; }
-    else if (days < 7)  { pillClass = "badge-deprecated"; pillLabel = days + " days"; }
-    else if (days < 30) { pillClass = "badge-reserved";   pillLabel = days + " days"; }
+    if (days < 0)       { pillClass = "badge-deprecated"; pillLabel = "EXPIRED"; certEdge = "red"; }
+    else if (days < 7)  { pillClass = "badge-deprecated"; pillLabel = days + " days"; certEdge = "red"; }
+    else if (days < 30) { pillClass = "badge-reserved";   pillLabel = days + " days"; certEdge = "amber"; }
     expiryHtml = escapeHtml(formatDate(s.expiresAt)) +
                  ' <span class="badge ' + pillClass + '" style="margin-left:6px">' +
                  escapeHtml(pillLabel) + '</span>';
@@ -763,7 +764,7 @@ function renderCertsTab(container) {
   var tlsProtocols = p.tlsProtocols || ["TLSv1.2", "TLSv1.3"];
 
   var certCardHtml =
-    '<div class="settings-card">' +
+    '<div class="settings-card severity-edge severity-edge-' + certEdge + '">' +
       '<h4>HTTPS Certificate</h4>' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
         'TLS is terminated by nginx reading the cert at <code>' + escapeHtml(certPath) + '</code>. ' +
@@ -1816,9 +1817,13 @@ function renderCapacityAdvisorCard(advisor, pgConfigFile, dbConnectionMode) {
   var recs = _advisorRecommendationsForView(advisor);
   if (recs.length === 0) return "";
 
-  var headerNote = advisor.anyChangeRequired
-    ? '<span class="advisor-header-amber">' + recs.filter(function (r) { return r.changeRequired; }).length + ' recommendation' + (recs.filter(function (r) { return r.changeRequired; }).length === 1 ? "" : "s") + ' available</span>'
-    : '<span class="advisor-header-ok">All settings at or above recommended</span>';
+  // Counted from the rows on screen, not advisor.anyChangeRequired: the view
+  // filter can drop every changed row, and the header then read
+  // "0 recommendations available" in amber.
+  var changeCount = recs.filter(function (r) { return r.changeRequired; }).length;
+  var headerNote = changeCount > 0
+    ? '<span class="advisor-header-amber">' + changeCount + ' recommendation' + (changeCount === 1 ? "" : "s") + ' available</span>'
+    : "";
 
   var coldStartNote = advisor.usingColdStartDefaults
     ? '<p class="hint" style="margin:0.4rem 0 0 0;font-size:0.78rem">Some cadences are using cold-start defaults until the histogram populates (~24h). Recommendations may shift once real workload duration data is observed.</p>'
@@ -1858,7 +1863,7 @@ function renderCapacityAdvisorCard(advisor, pgConfigFile, dbConnectionMode) {
     ? '<p class="hint" style="margin:0.4rem 0 0 0;font-size:0.78rem">Advisory-only settings live in <code>' + escapeHtml(pgConfigFile) + '</code>. Edit and restart PostgreSQL to apply.</p>'
     : "";
 
-  return '<div class="settings-card capacity-advisor-card" id="capacity-advisor-card">' +
+  return '<div class="settings-card capacity-advisor-card severity-edge severity-edge-' + (changeCount > 0 ? "amber" : "ok") + '" id="capacity-advisor-card">' +
     '<div class="capacity-header">' +
       '<h4 style="margin:0">Capacity Advisor</h4>' +
       headerNote +
@@ -2006,7 +2011,7 @@ function renderPlatformLifecycleCard(lifecycle) {
 
   if (lifecycle.datasetError) {
     // A broken dataset gets a visible message, never a silently empty card.
-    return '<div class="settings-card" id="platform-lifecycle-card">' +
+    return '<div class="settings-card severity-edge severity-edge-amber" id="platform-lifecycle-card">' +
       '<div class="capacity-header"><h4 style="margin:0">Platform Lifecycle</h4>' +
       '<span class="capacity-pill capacity-pill-amber">Unavailable</span></div>' +
       '<p class="hint" style="margin:0.6rem 0 0">The end-of-life dataset could not be read: ' +
@@ -2051,7 +2056,7 @@ function renderPlatformLifecycleCard(lifecycle) {
     return escapeHtml(i.label) + " " + escapeHtml(i.version);
   }).join(" · ");
 
-  return '<div class="settings-card" id="platform-lifecycle-card">' +
+  return '<div class="settings-card severity-edge severity-edge-' + _capacitySeverityCssClass(severity) + '" id="platform-lifecycle-card">' +
     '<div class="capacity-header">' +
       '<h4 style="margin:0">Platform Lifecycle</h4>' +
       headerNote +
@@ -2132,6 +2137,44 @@ function _capacityAllPassedHtml(computedAt, t) {
   '</div>';
 }
 
+// The "Needs attention" strip above the Database card. Read from the severity
+// edges already on the page rather than from the payloads, so every card that
+// grades itself is covered without this knowing its rules — including one that
+// grades after an async load (Scheduled Backups), which calls this again. Only
+// amber and red count: watch is informational. Each entry scrolls to its card.
+function renderCardAlertSummary(container) {
+  var host = document.getElementById("maintenance-alert-summary");
+  if (!host) return;
+  var scope = container || document;
+  var flagged = Array.prototype.slice.call(
+    scope.querySelectorAll(".severity-edge.severity-edge-red, .severity-edge.severity-edge-amber"),
+  ).filter(function (el) { return el.id; });
+  if (flagged.length === 0) { host.innerHTML = ""; return; }
+
+  var anyRed = false;
+  var items = flagged.map(function (el) {
+    var red = el.classList.contains("severity-edge-red");
+    if (red) anyRed = true;
+    var h = el.querySelector("h4");
+    var title = h ? h.textContent.trim() : el.id;
+    return '<button type="button" class="card-alert-summary-item" data-target="' + escapeHtml(el.id) + '">' +
+      '<span class="capacity-pill capacity-pill-' + (red ? "red" : "amber") + ' capacity-pill-sm">' +
+        (red ? "Critical" : "Warning") +
+      '</span>' + escapeHtml(title) +
+    '</button>';
+  });
+  host.innerHTML =
+    '<div class="card-alert-summary severity-edge severity-edge-' + (anyRed ? "red" : "amber") + '">' +
+      '<span class="card-alert-summary-label">Needs attention</span>' + items.join("") +
+    '</div>';
+  host.querySelectorAll(".card-alert-summary-item").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var target = document.getElementById(btn.getAttribute("data-target"));
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+}
+
 function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
   if (!capacity) {
     // Capacity grading unavailable (e.g. statfs not supported) — still render
@@ -2145,7 +2188,23 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
     '</div>';
   }
 
+  // Platform lifecycle reasons (EOL, below minimum, an open security advisory)
+  // ride the capacity snapshot so they reach the sidebar alert, Events and
+  // email — but on this tab they belong to the Platform Lifecycle card, which
+  // lists them per component. Drop them here and grade the card on what is
+  // left, so a Node advisory does not paint the Database card amber.
+  var allReasons = capacity.reasons || [];
+  var dbReasons = allReasons.filter(function (r) {
+    return r.family !== "platform_lifecycle" && !/^platform_/.test(r.code || "");
+  });
   var severity = capacity.severity || "ok";
+  if (dbReasons.length !== allReasons.length) {
+    var sevRank = { ok: 0, watch: 1, warning: 2, amber: 2, critical: 3, red: 3 };
+    severity = dbReasons.reduce(function (worst, r) {
+      return (sevRank[r.severity] || 0) > (sevRank[worst] || 0) ? r.severity : worst;
+    }, "ok");
+  }
+  capacity = Object.assign({}, capacity, { reasons: dbReasons });
   // CSS class suffix stays on the color vocab (`red`/`amber`/`watch`/`ok`)
   // while the severity enum uses critical/warning. See _capacitySeverityCssClass.
   var severityCssClass = _capacitySeverityCssClass(severity);
@@ -2400,7 +2459,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
 
   var enginePoolHtml = renderEnginePoolStatHtml(dbInfo, capacity);
 
-  return '<div class="settings-card capacity-card capacity-card-' + severityCssClass + '" id="capacity-card">' +
+  return '<div class="settings-card capacity-card severity-edge severity-edge-' + severityCssClass + '" id="capacity-card">' +
     '<div class="capacity-header">' +
       '<h4 style="margin:0">Database</h4>' +
       '<span class="' + pillClass + '">' + _capacitySeverityLabel(severity) + '</span>' +
@@ -2746,6 +2805,8 @@ async function loadDatabaseInfo() {
       '</div>';
 
     container.innerHTML =
+      // Filled by renderCardAlertSummary once the cards below are in the DOM.
+      '<div id="maintenance-alert-summary"></div>' +
       // Database first — the volume bars and capacity severity are what an
       // operator opens this tab to see. Capacity Advisor and Application
       // Updates then share one row as half-width cards; the advisor renders
@@ -2834,7 +2895,8 @@ async function loadDatabaseInfo() {
       // Manual backup alone means "someone remembers to click the button".
       // This is the standing recovery point; default off so it never competes
       // with an enterprise backup product already covering this Postgres.
-      '<div class="settings-card">' +
+      // The edge goes red when the last run failed (loadBackupSchedule).
+      '<div class="settings-card severity-edge severity-edge-ok" id="bksched-card">' +
         '<h4>Scheduled Backups</h4>' +
         '<p class="hint" style="margin-bottom:0.75rem">Take a backup automatically on a fixed cadence. Off by default — leave it off if an enterprise backup product already covers this PostgreSQL instance. Copies land in <code>data/backups/</code> on this host; set an off-host directory so losing the host does not lose every backup with it.</p>' +
         '<label style="display:flex;align-items:center;gap:8px;margin-bottom:0.75rem">' +
@@ -2871,6 +2933,7 @@ async function loadDatabaseInfo() {
 
       '</div>'; // close 4-column row of Backup/Restore/History/Scheduled cards
 
+    renderCardAlertSummary(container);
     initBackupControls();
     initRestoreControls();
     loadBackupHistory();
@@ -3299,6 +3362,13 @@ async function loadBackupSchedule() {
     document.getElementById("bksched-passphrase").value = s.passphrase || "";
     document.getElementById("bksched-copyto").value = s.copyToDir || "";
     syncFieldState();
+
+    var bkCard = document.getElementById("bksched-card");
+    if (bkCard) {
+      bkCard.classList.toggle("severity-edge-red", !!s.lastError);
+      bkCard.classList.toggle("severity-edge-ok", !s.lastError);
+      renderCardAlertSummary(document.getElementById("tab-maintenance"));
+    }
 
     if (s.lastError) {
       statusEl.innerHTML = '<span class="badge badge-danger">Last run failed: ' + escapeHtml(s.lastError) + '</span>';

@@ -1698,16 +1698,55 @@ code {
   50%      { box-shadow: 0 0 0 1px rgba(239,83,80,0.35) inset, 0 0 14px rgba(239,83,80,0.20); }
 }
 
-/* ─── Capacity Card (Maintenance tab) ──────────────────────────────────────── */
-.capacity-card {
+/* ─── Severity edge (any settings card that grades a state) ────────────────── */
+/* Database, Capacity Advisor, Platform Lifecycle, HTTPS Certificate, Scheduled
+   Backups: a card that can carry a warning wears its grade on the left edge, so
+   the tab reads at a glance. Suffixes are the capacity colour vocabulary
+   (_capacitySeverityCssClass). */
+.severity-edge {
   border-left: 3px solid var(--color-text-tertiary);
 }
 /* "watch" is the informational tier — the accent, not a hardcoded cyan.
    --color-info has never been defined, so this always painted its fallback and
    stayed dark-theme blue on a light ground. */
-.capacity-card.capacity-card-watch { border-left-color: var(--color-accent); }
-.capacity-card.capacity-card-amber { border-left-color: var(--color-warning); }
-.capacity-card.capacity-card-red   { border-left-color: var(--color-danger); }
+.severity-edge.severity-edge-ok    { border-left-color: var(--color-text-tertiary); }
+.severity-edge.severity-edge-watch { border-left-color: var(--color-accent); }
+.severity-edge.severity-edge-amber { border-left-color: var(--color-warning); }
+.severity-edge.severity-edge-red   { border-left-color: var(--color-danger); }
+
+/* "Needs attention" strip at the top of the Maintenance tab — one entry per
+   card graded amber/red (renderCardAlertSummary), each a jump to its card. */
+.card-alert-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.card-alert-summary.severity-edge { border-left-width: 3px; }
+.card-alert-summary-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.card-alert-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.card-alert-summary-item:hover { color: var(--color-text-primary); text-decoration: underline; }
 
 .capacity-header {
   display: flex;
@@ -1830,8 +1869,6 @@ code {
 /* ─── Capacity Advisor card ───────────────────────────────────────────────── */
 .capacity-advisor-card { border-left: 3px solid var(--color-accent); }
 .advisor-header-amber { font-size: 0.78rem; color: var(--color-warning); font-weight: 600; }
-.advisor-header-ok    { font-size: 0.78rem; color: #2ecc71; font-weight: 600; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-header-ok { color: #27ae60; }
 
 /* Header band darker than the card, not the lighter bg-primary the generic
    .ip-table header paints — the light band read as washed out on the card. */
