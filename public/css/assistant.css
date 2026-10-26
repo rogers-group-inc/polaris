@@ -13,9 +13,12 @@
  * overlay (1000) and toasts (2000).
  */
 
+/* Both sit on the layout column's right edge (--layout-edge, styles.css), not
+   the window's: on a wide screen in 16:9 / 16:10 the window edge is out in
+   the margin, past the page's own cards. */
 .asst-fab {
   position: fixed;
-  right: 1.5rem;
+  right: calc(var(--layout-edge, 0px) + 1.5rem);
   bottom: 1.5rem;
   z-index: 950;
   width: 52px;
@@ -53,7 +56,7 @@ body.asst-mounted .toast-container { bottom: 5.25rem; }
 
 .asst-panel {
   position: fixed;
-  right: 1.5rem;
+  right: calc(var(--layout-edge, 0px) + 1.5rem);
   bottom: 1.5rem;
   z-index: 950;
   width: 400px;

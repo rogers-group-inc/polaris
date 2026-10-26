@@ -204,7 +204,7 @@ How wide Polaris may grow in your browser window:
 
 | Layout | What you get |
 |---|---|
-| **16:9** (default) | a 16:9 column centred in the window — on a wider monitor the sidebar, tables and slide-overs keep to that column and the sides stay empty |
+| **16:9** (default) | a 16:9 column centred in the window — on a wider monitor the sidebar, tables, slide-overs, notifications and the AI assistant button keep to that column and the sides stay empty |
 | **16:10** | the same idea with a slightly narrower column, since 16:10 is squarer than 16:9 — it fills a 16:10 monitor exactly and leaves a thin margin at each side of anything wider |
 | **Auto** | fills the window, however wide it is — on an ultrawide the sidebar sits at the far left, tables use the full width and slide-overs open at the far right edge |
 
