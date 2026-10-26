@@ -150,6 +150,9 @@ describe("Paths renderer — per-source reads", () => {
 
 describe("slide-over Paths tab helpers", () => {
   const fns = load(assetsSrc, ["_pathTabEligible", "_trDiffHops", "_trHopRtt", "_pathAvailabilityBuckets"]);
+  const colorFns: any = new Function('var MONITOR_STATE_COLORS = { up: "#2a9d8f", down: "#d32f2f", warning: "#f4a261" };' +
+    'var _CHART_UP_COLOR = "var(--color-success)";\n' + sliceFn(assetsSrc, "_pathAvailabilityColor") +
+    "\nreturn { _pathAvailabilityColor };")();
   it("shows the tab only when the host runs a check", () => {
     expect(fns._pathTabEligible(null)).toBe(false);
     expect(fns._pathTabEligible({ checks: [] })).toBe(false);
@@ -175,6 +178,12 @@ describe("slide-over Paths tab helpers", () => {
     expect(b[0]).toMatchObject({ ok: 1, total: 2 });
     expect(b[1].total).toBe(0); // a gap, not a failure
     expect(b[3]).toMatchObject({ ok: 9, total: 10 });
+  });
+  it("colours availability buckets green / orange / red by verdict", () => {
+    const color = colorFns._pathAvailabilityColor as any;
+    expect(color({ ok: 8, total: 8 })).toBe("var(--color-success)");
+    expect(color({ ok: 7, total: 8 })).toBe("#f4a261"); // 87.5 % is not green
+    expect(color({ ok: 0, total: 8 })).toBe("#d32f2f");
   });
   it("draws no data series in the failure red or dependency grey", () => {
     const tab = assetsSrc.slice(assetsSrc.indexOf("// ─── Asset slide-over → Paths tab"));
