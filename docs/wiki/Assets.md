@@ -43,9 +43,11 @@ tooltip; an unmonitored asset reads `—`.
 three octets (`10`, `10.1`, `10.1.2`) to see every device in that range —
 `10.1` never matches `10.10.x.x` — or a network in CIDR form (`10.1.16.0/20`,
 `192.168.5.128/25`) to see just the devices inside it. A full address matches
-that one device. The **+** beside the box adds another box, as many as you
+that one device. To search from the other end, start with a dot: `.50` finds
+every device whose last octet is 50, and `.1.50` every device ending in
+`1.50` — `.50` never matches `.150`. The **+** beside the box adds another box, as many as you
 like, and a device shows when it is in **any** of them; **×** removes one. A
-box that isn't a valid prefix or CIDR is outlined red and ignored. The **▾**
+box that isn't a valid prefix, suffix or CIDR is outlined red and ignored. The **▾**
 menu still offers *Is empty* / *Is not empty*. The filter looks at each
 device's primary IP.
 

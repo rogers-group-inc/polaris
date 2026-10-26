@@ -653,7 +653,8 @@ const IP_NETWORK_TERMS_MAX = 50;
 
 /**
  * The IP Address column's `in_networks` op: `value` is a CSV of IPv4 terms —
- * partial addresses ("10", "10.1.2"), full addresses, or CIDRs — and a row
+ * partial addresses ("10", "10.1.2"), suffixes (".50", ".1.50" — the last
+ * octets), full addresses, or CIDRs — and a row
  * matches when its primary IP falls in ANY of them. Matched as exact values +
  * dotted prefixes on the string column (never an inet cast: one malformed
  * Asset.ipAddress would make the cast throw for the whole list). A term that
@@ -668,15 +669,18 @@ function buildIpNetworksFilter(value: string | undefined): Record<string, unknow
   }
   const equals = new Set<string>();
   const startsWith = new Set<string>();
+  const endsWith = new Set<string>();
   for (const t of terms) {
     const m = ipv4TermToMatchPrefixes(t);
-    if (!m) throw new AppError(400, `Not an IPv4 address, prefix or CIDR: ${t}`);
+    if (!m) throw new AppError(400, `Not an IPv4 address, prefix, suffix or CIDR: ${t}`);
     m.equals.forEach((e) => equals.add(e));
     m.startsWith.forEach((p) => startsWith.add(p));
+    (m.endsWith ?? []).forEach((s) => endsWith.add(s));
   }
   const arms: Record<string, unknown>[] = [];
   if (equals.size) arms.push({ ipAddress: { in: Array.from(equals) } });
   startsWith.forEach((p) => arms.push({ ipAddress: { startsWith: p } }));
+  endsWith.forEach((s) => arms.push({ ipAddress: { endsWith: s } }));
   return arms.length === 1 ? arms[0] : { OR: arms };
 }
 

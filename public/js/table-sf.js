@@ -522,18 +522,34 @@ TableSF.prototype._updatePickButtonLabel = function (th, key) {
 
 // IP network filter (th data-sf-filter="ipnet"). Each box takes one IPv4 term —
 // a partial address typed octet by octet ("10", "10.1.2"), a full address, or a
-// CIDR ("10.1.0.0/16") — and "+" adds another box; a row matches when its IP
+// CIDR ("10.1.0.0/16"), or with a leading "." the LAST octets (".50", ".1.50")
+// — and "+" adds another box; a row matches when its IP
 // falls in ANY term. Stored as { op: "in-networks", terms: [...] } (valid,
 // non-empty terms only — an invalid box is marked, never sent). The ▾ menu
 // keeps is empty / is not empty. The term grammar mirrors
 // ipv4TermToMatchPrefixes in src/utils/cidr.ts, which is what matches it
 // server-side; TableSF.parseIpNetTerm is the browser half.
-TableSF.IPNET_PLACEHOLDER = "10.1 or 10.1.0.0/16";
+TableSF.IPNET_PLACEHOLDER = "10.1, .50 or 10.1.0.0/16";
 
-/** Pure: an IPv4 filter term → { base: BigInt, len } (the network it names), or null. */
+/** Pure: an IPv4 filter term → { base: BigInt, mask, len } (the network it names), or null.
+ *  A suffix term (".1.50") masks the LOW octets instead, so the same
+ *  (ip & mask) === base test matches it; it carries suffix: true. */
 TableSF.parseIpNetTerm = function (raw) {
   var term = String(raw == null ? "" : raw).trim();
   if (!term) return null;
+  if (term.charAt(0) === ".") {
+    var sParts = term.slice(1).split(".");
+    if (sParts.length > 3) return null;
+    var sNum = 0n;
+    for (var s = 0; s < sParts.length; s++) {
+      if (!/^\d{1,3}$/.test(sParts[s])) return null;
+      var sv = parseInt(sParts[s], 10);
+      if (sv > 255) return null;
+      sNum = (sNum << 8n) | BigInt(sv);
+    }
+    var sBits = sParts.length * 8;
+    return { base: sNum, mask: (1n << BigInt(sBits)) - 1n, len: sBits, suffix: true };
+  }
   var addr = term, len = null;
   var slash = term.indexOf("/");
   if (slash >= 0) {
@@ -585,8 +601,8 @@ TableSF.prototype._wireIpNetFilter = function (th, key) {
       var v = inp.value.trim();
       var ok = !v || !!TableSF.parseIpNetTerm(v);
       inp.classList.toggle("sf-filter-invalid", !ok);
-      inp.title = ok ? "Type 1–3 octets (10.1) or a network in CIDR form (10.1.0.0/16)"
-                     : "Not an IPv4 prefix or CIDR — this box is ignored";
+      inp.title = ok ? "Type the first 1–3 octets (10.1), the last ones after a dot (.50, .1.50), or a network in CIDR form (10.1.0.0/16)"
+                     : "Not an IPv4 prefix, suffix or CIDR — this box is ignored";
       if (v && ok && terms.indexOf(v) < 0) terms.push(v);
     });
     if (terms.length) self._filters[key] = { op: "in-networks", terms: terms };
@@ -1294,7 +1310,7 @@ TableSF.prototype.apply = function (data) {
             if (!nets.length) return true;
             // Only a full dotted-quad row value can be in a network.
             var ipv = TableSF.parseIpNetTerm(self._val(row, k));
-            if (!ipv || ipv.len !== 32) return false;
+            if (!ipv || ipv.suffix || ipv.len !== 32) return false;
             return nets.some(function (n) { return (ipv.base & n.mask) === n.base; });
           }
           // Date range
