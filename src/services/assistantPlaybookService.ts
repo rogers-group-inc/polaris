@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "profile" | "correlate" | "changed" | "health" | "capacity" | "address";
+  id: "profile" | "telemetry" | "correlate" | "dependencies" | "paths" | "interfaces" | "changed" | "health" | "capacity" | "address" | "endpoint";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -56,10 +56,32 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
     ].join("\n"),
   },
   {
+    // Before correlate and capacity: "highest memory utilization of the 61F
+    // firewalls" matched capacity's "utilization" and was steered to networks
+    // (seen live 2026-10-26), and "why is fw1's CPU high" is a figures question
+    // before it is an outage one.
+    id: "telemetry",
+    label: "CPU / memory",
+    // "your memory" / "my memory" is the assistant's memory of the person (rule 95(i)).
+    match: /^(?!.*\b(your|my) memory\b).*\b(cpu|processor|memory|ram|mem)\b/is,
+    firstRoundTools: ["telemetry_summary", "search", "get_asset"],
+    guidance: [
+      "Playbook — CPU / memory. Follow these steps in order:",
+      "1. telemetry_summary with the devices the person named as filters — model (e.g. \"61F\"), manufacturer, " +
+        "assetType, region, or search for one hostname — metric \"memory\" or \"cpu\", sortBy \"max\" when they ask " +
+        "about peaks or spikes, order \"lowest\" for the least loaded, and hours or since/until for the period " +
+        "(the last 24 hours if they gave none).",
+      "2. If one device is in question and it looks high, get_asset for its state, alerts and upstream device.",
+      "3. Answer with the ranking from the lookup, the window it covers, and how many matching devices had no " +
+        "CPU / memory data (noData). Every figure comes from the lookup — never estimate one. More than about 15 " +
+        "rows → offer a report. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
     id: "correlate",
     label: "outage correlation",
     match: /\b(why (did|is|was|has|does)\b|what (happened|caused|took down|went wrong|killed)\b|root cause|correlat\w*|what else (went|is|was) down|cause of|caused by)/i,
-    firstRoundTools: ["search", "get_asset", "list_alerts"],
+    firstRoundTools: ["search", "get_asset", "list_alerts", "get_dependencies"],
     guidance: [
       "Playbook — outage correlation. Follow these steps in order before answering:",
       "1. Find the device: get_asset by its hostname or IP (search first if the name is partial). Note its " +
@@ -70,10 +92,61 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
         "(siblings behind the same parent, the parent itself).",
       "3. Events in the same window: list_events — configuration changes, discovery runs, maintenance holds, " +
         "integration failures. A change minutes before the drop is the lead.",
-      "4. The upstream device: get_asset on the parent; if it went down first, that is the likely cause and the " +
-        "device is a casualty, not a fault.",
+      "4. The upstream chain: get_dependencies on the device — its rootCause, when present, is the device whose " +
+        "outage explains it; otherwise check whether a parent in its upstream went down first. A device under a " +
+        "dark parent is a casualty, not a fault.",
       "5. Answer with a short timeline first (times from the lookups, in order), then the likely cause ONLY if " +
         "the data supports it, else say what is missing. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // After correlate: "why did X go down" walks the tree as one of its steps.
+    id: "dependencies",
+    label: "dependency tree",
+    match: /\b(depends? on|dependenc(y|ies)|upstream|downstream|hangs? off|what('s| is) (behind|under|connected to)|what (goes|would go|will go) down (if|when)|blast radius|parent device)\b/i,
+    firstRoundTools: ["get_dependencies", "search"],
+    guidance: [
+      "Playbook — dependency tree. Follow these steps in order:",
+      "1. get_dependencies for the device (search first if the name is partial).",
+      "2. Answer upstream first — each hop by name, top of the tree last, and how the link was learned when it " +
+        "matters — then downstream: how many devices sit behind it, how many are down or suppressed now, and the " +
+        "direct children by name (offer the rest rather than listing dozens). If rootCause is present, say it. " +
+        "Link every device you name. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // Before health: "is the ERP reachable from the branches" is a path question,
+    // not a device-health one.
+    id: "paths",
+    label: "Path Monitor",
+    match: /\b(path (checks?|monitor\w*)|reachab\w*|availability|latency (to|from)|(slow|slowest) (to reach|from))\b/i,
+    firstRoundTools: ["path_check_summary", "search_help"],
+    guidance: [
+      "Playbook — Path Monitor. Follow these steps in order:",
+      "1. path_check_summary with check set to the service or target the person named (leave it out for all " +
+        "checks), source set to the site or host they named, failingOnly when they ask what is failing, and the " +
+        "period they gave (the last 24 hours if none).",
+      "2. Answer with the worst source first: availability %, average and peak latency, the last error and when " +
+        "it last failed. Say how many sources are failing right now. If no check matches, say so and say Path " +
+        "Monitor checks are set up on the Path Monitor page. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // Narrow on purpose: "which port is <mac> on" is endpoint's, and plain
+    // "utilization" of networks is capacity's. Before both.
+    id: "interfaces",
+    label: "interfaces",
+    match: /\b(bandwidth|throughput|crc|busiest (links?|ports?|interfaces?|uplinks?)|poe( (faults?|status|ports?))?|(wan|interface|port|link|uplink)s? (utili[sz]ation|usage|traffic|errors?|speed|down|flapping)|(ports?|interfaces?|links?|uplinks?) ((that|which) (are|were) |are |were )?(down|disabled|with errors))\b/i,
+    firstRoundTools: ["interface_summary", "search"],
+    guidance: [
+      "Playbook — interfaces. Follow these steps in order:",
+      "1. interface_summary with the devices the person named as filters (model, type, region, or search for one " +
+        "hostname) and interface for a port or link name (\"wan\", \"port12\"). state [\"down\"] for links down, " +
+        "poe \"fault\" for PoE faults, withErrors for errors, sortBy \"peak\" for spikes, and hours or since/until for " +
+        "the period (the last 24 hours if none).",
+      "2. Answer with the worst first: device, interface and description, then the figures. Rows with history: " +
+        "false are interfaces not selected for monitoring — give their state, and say traffic and errors are only " +
+        "recorded for monitored interfaces; never call them idle. " + SEPARATE,
     ].join("\n"),
   },
   {
@@ -130,7 +203,7 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
     // An IPv4 literal plus a lookup verb. Last, so "why is 10.1.1.5 down" and
     // "is 10.1.1.5 ok" keep their own playbooks.
     match: /(?=.*\b(?:\d{1,3}\.){3}\d{1,3}\b)(?=.*\b(look ?up|whose|who (has|owns|uses|is using)|where is|which (device|asset|host)|what (is|device|asset|has)|find|identify|belongs?|anything (on|about|for))\b)/i,
-    firstRoundTools: ["search", "get_asset", "list_reservations"],
+    firstRoundTools: ["search", "get_asset", "list_reservations", "find_endpoint"],
     guidance: [
       "Playbook — address lookup. Follow these steps in order:",
       "1. search the exact address. Read matchedOn on each asset hit: \"ipAddress\" means it is the device's " +
@@ -141,8 +214,29 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
       "2. get_asset on each hit (by id) for its ipHistory and current state, so you can say when the address " +
         "was first and last seen on it and what the device's primary IP is now.",
       "3. list_reservations with search set to the address, for a reservation or lease that names it.",
-      "4. Answer: which device holds the address now (if any), which held it before and when, and any " +
-        "reservation — each device linked to its details. If nothing holds it, say what you checked. " + SEPARATE,
+      "4. find_endpoint with the ip: the MAC the gateways pair it with, the switch port it is on (the hit with " +
+        "likelyAccessPort), or the access point for a wireless client.",
+      "5. Answer: which device holds the address now (if any), which held it before and when, any " +
+        "reservation, and where it is plugged in — each device linked to its details. If nothing holds it, say " +
+        "what you checked. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    id: "endpoint",
+    label: "endpoint location",
+    // A MAC literal (colon, dash or Cisco dotted; four octets or more, so a
+    // time like 10:30:45 is not one), or where-is-it-plugged-in wording.
+    // Last, after address.
+    match: /\b([0-9a-f]{2}([:-])[0-9a-f]{2}(\2[0-9a-f]{2}){2,4}|[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\b|\b(which|what) (switch )?port\b|\bplugged in(to)?\b|\b(which|what) (ap|access point)\b|\bconnected to (port|interface)\b|\bon (port|interface) \S+/i,
+    firstRoundTools: ["find_endpoint", "search"],
+    guidance: [
+      "Playbook — endpoint location. Follow these steps in order:",
+      "1. find_endpoint with the MAC or IP the person gave — or, for \"what is on port X of switch Y\", device and port.",
+      "2. If they named a device rather than an address, search for it first and use its MAC or IP.",
+      "3. Answer with the access port first (likelyAccessPort: switch, port, VLAN), then the gateway that " +
+        "pairs the IP and MAC, then the access point, SSID and signal for a wireless client — each with how long " +
+        "ago it was seen. A port that holds many MACs is an uplink, not where the device is plugged in; say so " +
+        "if it is the only sighting. " + SEPARATE,
     ].join("\n"),
   },
 ];

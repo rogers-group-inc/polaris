@@ -29,6 +29,7 @@ const g = globalThis as Record<string, unknown>;
 
 const PAGE_HTML =
   '<div class="page-header-actions">' +
+    '<button id="dashboard-refresh">Refresh</button>' +
     '<button id="dashboard-customize">Customize Page</button>' +
     '<button id="dashboard-add-widgets" hidden>Add Widgets</button>' +
     '<button id="dashboard-done" hidden>Done Editing</button>' +
@@ -185,6 +186,26 @@ describe("PolarisDashboard seam — signed-in page", () => {
     expect(b.seam().widgetCount()).toBe(1);
   });
 
+  it("Refresh re-fetches every widget on the canvas, and hides while customizing", async () => {
+    const b = await boot();
+    const fetches: string[] = [];
+    const reg = g.PolarisWidgets as { getByType: (t: string) => unknown };
+    reg.getByType = (type: string) => ({
+      type, title: type, renderInstance: () => {},
+      fetchData: async () => { fetches.push(type); return null; },
+    });
+    expect(hidden(b.doc, "dashboard-refresh")).toBe(false);
+    const shell = b.doc.querySelector("#dashboard-canvas .dashboard-widget");
+    b.doc.getElementById("dashboard-refresh")!.dispatchEvent(new b.win.Event("click", { bubbles: true }));
+    expect(fetches).toEqual(["statusSummary"]);
+    // Bodies remount in place; the widget's shell is the same element.
+    expect(b.doc.querySelector("#dashboard-canvas .dashboard-widget")).toBe(shell);
+    expect(b.puts).toHaveLength(0);
+
+    b.doc.getElementById("dashboard-customize")!.dispatchEvent(new b.win.Event("click", { bubbles: true }));
+    expect(hidden(b.doc, "dashboard-refresh")).toBe(true);
+  });
+
   it("loads a saved row as a NEW tab, with fresh instance ids and unknown widgets dropped", async () => {
     const b = await boot();
     expect(b.seam().loadAsNewTab(PUBLISHED)).toBe(true);
@@ -229,6 +250,8 @@ describe("PolarisDashboard seam — viewing a published dashboard", () => {
     expect(hidden(b.doc, "dashboard-add-widgets")).toBe(true);
     expect(hidden(b.doc, "dashboard-done")).toBe(true);
     expect(hidden(b.doc, "dashboard-tabs")).toBe(true);
+    // Refresh is a viewing verb: it stays on a published dashboard.
+    expect(hidden(b.doc, "dashboard-refresh")).toBe(false);
     expect(b.doc.querySelectorAll("#dashboard-canvas .dashboard-widget")).toHaveLength(1);
     // Nothing to publish while looking at someone else's screen.
     expect(b.seam().snapshot()).toBeNull();

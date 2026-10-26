@@ -31,8 +31,30 @@ describe("pickPlaybook", () => {
     ["what is 172.22.63.254", "address"],
     ["why is 10.10.3.178 down?", "correlate"],
     ["is 10.10.3.178 ok?", "health"],
+    ["create a reported of the highest average memory utilizations of the 61f fortigate firewalls", "telemetry"],
+    ["which firewalls have the highest CPU this week", "telemetry"],
+    ["why is fw-nsh-01 cpu so high", "telemetry"],
+    ["what is in your memory about me", null],
+    ["what does sw-nsh-02 depend on?", "dependencies"],
+    ["what goes down if core-1 goes down", "dependencies"],
+    ["what's behind fw-nsh-01", "dependencies"],
+    ["why did ap-12 go down? check upstream", "correlate"],
+    ["where is 0a:11:22:33:44:55", "endpoint"],
+    ["which port is aabb.ccdd.eeff on", "endpoint"],
+    ["what access point is the CEO's laptop on", "endpoint"],
+    ["what is plugged into port 12 on sw-nsh-02", "endpoint"],
+    ["what is 10.10.3.178 plugged into", "address"],
+    ["list the switches that rebooted at 10:30:45", null],
+    ["is the ERP reachable from the branches?", "paths"],
+    ["which path checks are failing", "paths"],
+    ["what was m365 availability last week", "paths"],
+    ["what is the WAN utilization at the Nashville sites", "interfaces"],
+    ["busiest links today", "interfaces"],
+    ["which switch ports are down at HQ", "interfaces"],
+    ["any PoE faults?", "interfaces"],
+    ["which port is 0a:11:22:33:44:55 on", "endpoint"],
   ])("%s → %s", (q, id) => {
-    expect(pickPlaybook(q)?.id).toBe(id);
+    expect(pickPlaybook(q)?.id ?? null).toBe(id);
   });
 
   it("matches nothing for a plain lookup, small talk, or an empty question", () => {
@@ -46,7 +68,7 @@ describe("pickPlaybook", () => {
     for (const p of PLAYBOOKS) {
       expect(p.firstRoundTools.length).toBeGreaterThan(0);
       for (const t of p.firstRoundTools) expect(TOOL_NAMES.has(t), `${p.id}: ${t}`).toBe(true);
-      for (const m of p.guidance.match(/\b(list_\w+|get_asset|search_help|search|create_report|fleet_summary)\b/g) ?? []) {
+      for (const m of p.guidance.match(/\b((?:list|get|find|search|create|fleet|telemetry|interface|path_check)_\w+|search)\b/g) ?? []) {
         expect(TOOL_NAMES.has(m), `${p.id} guidance names ${m}`).toBe(true);
       }
       expect(p.guidance).toMatch(/what you infer/);

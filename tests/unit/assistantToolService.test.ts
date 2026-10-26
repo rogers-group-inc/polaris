@@ -20,7 +20,9 @@ const h = vi.hoisted(() => ({
     subnet: { findMany: vi.fn(), count: vi.fn() },
     tag: { findMany: vi.fn(async () => [] as Array<{ name: string }>) },
     assetIpHistory: { findMany: vi.fn(async () => [] as Array<Record<string, unknown>>) },
+    $queryRawUnsafe: vi.fn(async () => [] as Array<Record<string, unknown>>),
   },
+  tier: vi.fn(async () => ({ tier: "detail", bucketSeconds: 0 })),
   listNotifications: vi.fn(),
   searchAll: vi.fn(),
   tagScopes: vi.fn(async () => ({ regions: [] as string[], tags: [] as string[] })),
@@ -31,6 +33,8 @@ vi.mock("../../src/services/notificationService.js", () => ({ listNotifications:
 vi.mock("../../src/services/searchService.js", () => ({ searchAll: h.searchAll }));
 vi.mock("../../src/services/regionScopeService.js", () => ({ getEffectiveRegionTags: async () => [], getEffectiveTagScopes: h.tagScopes }));
 vi.mock("../../src/services/eventLogService.js", () => ({ queryEventsPage: vi.fn(async () => ({ events: [], total: 0 })) }));
+vi.mock("../../src/services/dependencyTreeService.js", () => ({ resolveDependencyBlame: vi.fn(async () => null), BLAME_MAX_HOPS: 16 }));
+vi.mock("../../src/services/sampleQueryRouter.js", () => ({ pickSampleTierForAsset: h.tier }));
 vi.mock("../../src/services/eventArchiveService.js", () => ({ getRetentionSettings: async () => ({ retentionDays: 7 }) }));
 
 import { runAssistantTool, assistantToolDefs, REPORT_ROW_CAP } from "../../src/services/assistantToolService.js";
@@ -51,6 +55,12 @@ describe("permission gate", () => {
     ["list_networks", "{}"],
     ["list_reservations", "{}"],
     ["fleet_summary", "{}"],
+    ["telemetry_summary", "{}"],
+    ["list_services", "{}"],
+    ["path_check_summary", "{}"],
+    ["interface_summary", "{}"],
+    ["find_endpoint", JSON.stringify({ mac: "0A:11:22:33:44:55" })],
+    ["get_dependencies", "{\"hostname\":\"fw1\"}"],
   ])("%s refuses a role without the key and queries nothing", async (name, args) => {
     const r = await runAssistantTool(name, args, { req: none, maxRows: 50 });
     expect(r.ok).toBe(false);
@@ -60,6 +70,7 @@ describe("permission gate", () => {
     expect(h.listNotifications).not.toHaveBeenCalled();
     expect(h.prisma.reservation.findMany).not.toHaveBeenCalled();
     expect(h.prisma.subnet.findMany).not.toHaveBeenCalled();
+    expect(h.prisma.$queryRawUnsafe).not.toHaveBeenCalled();
   });
 
   it("search asks searchAll only for the groups the role can read", async () => {
@@ -138,6 +149,79 @@ describe("create_report", () => {
     const r = await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_alerts" }), { req: reqWith({ assets: "read" }), maxRows: 10, onReport });
     expect(r.ok).toBe(false);
     expect(onReport).not.toHaveBeenCalled();
+  });
+});
+
+describe("telemetry_summary — CPU / memory figures come from the database (seen live 2026-10-26)", () => {
+  const req = reqWith({ assets: "read" });
+  const fleet = [
+    { id: "a1", hostname: "fw-a", ipAddress: "10.0.0.1", model: "FortiGate-61F", location: "Nashville" },
+    { id: "a2", hostname: "fw-b", ipAddress: "10.0.0.2", model: "FortiGate-61F", location: "Memphis" },
+    { id: "a3", hostname: "fw-c", ipAddress: "10.0.0.3", model: "FortiGate-61F", location: null },
+  ];
+  const aggs = [
+    { assetId: "a1", samples: 288, avgCpu: 12.34, maxCpu: 40, avgMem: 55.55, maxMem: 61 },
+    { assetId: "a2", samples: 288, avgCpu: 30, maxCpu: 95, avgMem: 72.04, maxMem: 74 },
+  ];
+
+  it("filters devices like list_assets, aggregates once for all of them, and ranks by average memory", async () => {
+    h.prisma.asset.findMany.mockResolvedValue(fleet);
+    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    const r = await runAssistantTool("telemetry_summary", '{"model":"61F","assetType":"firewall"}', { req, maxRows: 50 });
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toEqual(
+      expect.arrayContaining([{ model: { contains: "61F", mode: "insensitive" } }, { assetType: { in: ["firewall"] } }]),
+    );
+    expect(h.prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
+    const [sql, ids, from, to] = h.prisma.$queryRawUnsafe.mock.calls[0];
+    expect(sql).toMatch(/FROM "asset_telemetry_samples"/);
+    expect(ids).toEqual(["a1", "a2", "a3"]);
+    expect((to as Date).getTime() - (from as Date).getTime()).toBe(24 * 3_600_000);
+    const data = r.data as any;
+    expect(data.rows.map((x: any) => x.hostname)).toEqual(["fw-b", "fw-a"]);
+    expect(data.rows[0]).toMatchObject({ avgMemPct: 72, maxMemPct: 74, avgCpuPct: 30, maxCpuPct: 95, samples: 288 });
+    expect(data.rows[0]).not.toHaveProperty("window");
+    expect(data).toMatchObject({ total: 2, matchedDevices: 3, noData: 1, rankedBy: "avg memory" });
+    expect(data.window).toMatch(/–/);
+  });
+
+  it("ranks by peak CPU, lowest first, when asked", async () => {
+    h.prisma.asset.findMany.mockResolvedValue(fleet);
+    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    const r = await runAssistantTool("telemetry_summary", '{"metric":"cpu","sortBy":"max","order":"lowest"}', { req, maxRows: 50 });
+    expect((r.data as any).rows.map((x: any) => x.hostname)).toEqual(["fw-a", "fw-b"]);
+  });
+
+  it("reads the rollup the chart would read for an older window, weighting each bucket by its samples", async () => {
+    h.tier.mockResolvedValueOnce({ tier: "hourly", bucketSeconds: 3600 });
+    h.prisma.asset.findMany.mockResolvedValue(fleet);
+    h.prisma.$queryRawUnsafe.mockResolvedValue([]);
+    await runAssistantTool("telemetry_summary", '{"hours":720}', { req, maxRows: 50 });
+    expect(h.tier.mock.calls[0][1]).toBe("cpuMem");
+    const sql = h.prisma.$queryRawUnsafe.mock.calls[0][0] as string;
+    expect(sql).toMatch(/FROM "asset_telemetry_samples_hourly"/);
+    expect(sql).toMatch(/sum\(am \* n\)/);
+  });
+
+  it("queries no samples when no device matches", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([]);
+    const r = await runAssistantTool("telemetry_summary", '{"model":"nothing"}', { req, maxRows: 50 });
+    expect(h.prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(r.data).toMatchObject({ total: 0, matchedDevices: 0, noData: 0 });
+  });
+
+  it("is a create_report source, and the report carries the window on every row", async () => {
+    h.prisma.asset.findMany.mockResolvedValue(fleet);
+    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    const onReport = vi.fn();
+    await runAssistantTool(
+      "create_report",
+      JSON.stringify({ title: "61F memory", source: "telemetry_summary", args: { model: "61F" }, columns: ["hostname", "avgMemPct", "window"] }),
+      { req, maxRows: 10, onReport },
+    );
+    const report = onReport.mock.calls[0][0];
+    expect(report.rows).toHaveLength(2);
+    expect(report.rows[0]).toMatchObject({ hostname: "fw-b", avgMemPct: 72 });
+    expect(report.rows[0].window).toMatch(/–/);
   });
 });
 

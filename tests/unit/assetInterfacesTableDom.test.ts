@@ -250,28 +250,79 @@ describe("default (tree) view", () => {
 });
 
 describe("sorting", () => {
-  it("flattens the tree — no section headers, no expand toggles", () => {
+  // A sort reorders clusters, it does not dissolve them: the switch's
+  // FortiLink trunk kept its members only in the unsorted view, and a sort by
+  // name is the one operators leave on.
+  it("keeps the tree — section headers, expand toggle, the member under its aggregate", () => {
+    sortBy("ifname");
+    expect(sectionLabels()).toHaveLength(2);
+    expect(doc.querySelectorAll('.iface-expand-toggle[data-parent="lag1"]')).toHaveLength(1);
+    const n = names();
+    expect(n.indexOf("port9")).toBe(n.indexOf("lag1") + 1);
+    expect(rowFor("port9").textContent).toContain("└─");
+  });
+
+  it("orders clusters by the numeric counter, unreported rows last, members riding along", () => {
     sortBy("in");
+    expect(names().slice(0, 3)).toEqual(["port1", "lag1", "port9"]);
+    sortBy("in");
+    expect(names().slice(0, 2)).toEqual(["lag1", "port9"]);   // second click reverses
+  });
+
+  it("keeps a collapsed parent collapsed when sorted", () => {
+    click(doc.querySelector('.iface-expand-toggle[data-parent="lag1"]'));
+    sortBy("ifname");
+    expect(rowFor("port9").style.display).toBe("none");
+  });
+
+  it("goes flat when filtered, revealing the children of a collapsed parent", async () => {
+    click(doc.querySelector('.iface-expand-toggle[data-parent="lag1"]'));
+    await typeFilter("ifname", "port");
     expect(sectionLabels()).toEqual([]);
     expect(doc.querySelectorAll(".iface-expand-toggle")).toHaveLength(0);
-    // A member port is no longer indented under anything, so its badge is the
-    // only thing left identifying it as one.
+    // Not indented under anything, so the badge is what identifies a member.
     expect(rowFor("port9").outerHTML).toMatch(/Member/);
-  });
-
-  it("orders by the numeric counter, with unreported rows last", () => {
-    sortBy("in");
-    expect(names().slice(0, 3)).toEqual(["port1", "port9", "lag1"]);
-    sortBy("in");
-    expect(names()[0]).toBe("lag1");   // second click reverses
-  });
-
-  it("reveals the children of a collapsed parent instead of stranding them", () => {
-    click(doc.querySelector('.iface-expand-toggle[data-parent="lag1"]'));
-    expect(rowFor("port9").style.display).toBe("none");
-    sortBy("ifname");
-    expect(names()).toContain("port9");
     expect(dataRows().every((tr) => tr.getAttribute("style") !== "display:none")).toBe(true);
+  });
+});
+
+// IF-MIB carries no parent column, so a FortiAP's br0.10 arrives unparented.
+describe("a dotted sub-interface nests under its base", () => {
+  function renderSi(interfaces: Record<string, any>[]): void {
+    doc.body.innerHTML = '<div id="ifaces"></div>';
+    g._renderInterfacesTable(doc.getElementById("ifaces"), {
+      lastSystemInfoAt: new Date().toISOString(),
+      monitoredInterfaces: [], monitoredIpsecTunnels: [], lldpNeighbors: [], ipsecTunnels: [],
+      interfaces,
+    }, ASSET);
+  }
+
+  it("puts br0.10 / br0.11 under br0 as VLANs, with a toggle on br0", () => {
+    renderSi([
+      { ifName: "br0",    ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "br0.11", adminStatus: "up", operStatus: "up" },
+      { ifName: "br0.10", ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "wan0",   ifType: "physical", adminStatus: "up", operStatus: "up" },
+    ]);
+    expect(names()).toEqual(["br0", "br0.10", "br0.11", "wan0"]);
+    expect(rowFor("br0.10").classList.contains("iface-child")).toBe(true);
+    expect(rowFor("br0.11").textContent).toContain("└─");
+    expect(rowFor("br0.10").textContent).toContain("VLAN 10");
+    expect(doc.querySelectorAll('.iface-expand-toggle[data-parent="br0"]')).toHaveLength(1);
+  });
+
+  it("leaves a dotted name at top level when its base is not listed", () => {
+    renderSi([{ ifName: "eth0.20", ifType: "physical", adminStatus: "up", operStatus: "up" }]);
+    expect(rowFor("eth0.20").classList.contains("iface-child")).toBe(false);
+  });
+
+  it("keeps a reported ifParent over the name", () => {
+    renderSi([
+      { ifName: "lag1",   ifType: "aggregate", adminStatus: "up", operStatus: "up" },
+      { ifName: "port1",  ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "port1.5", ifType: "physical", ifParent: "lag1", adminStatus: "up", operStatus: "up" },
+    ]);
+    expect(rowFor("port1.5").getAttribute("data-parent")).toBe("lag1");
   });
 });
 
@@ -501,8 +552,8 @@ describe("a member port belongs to its aggregate", () => {
     expect(rowFor("voice.fortilink").querySelector(".asset-iface-toggle")).not.toBeNull();
   });
 
-  it("keeps the member's checkbox in flat (sorted) mode", () => {
-    sortBy("ifname");
+  it("keeps the member's checkbox in flat (filtered) mode", async () => {
+    await typeFilter("ifname", "port");
     expect(rowFor("port9").querySelector(".asset-iface-toggle")).not.toBeNull();
   });
 
