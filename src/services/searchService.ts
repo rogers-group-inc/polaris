@@ -293,7 +293,7 @@ async function runSearch(
       searchAssets(terms, mac, SCOPED_LIMIT, discovered),
       allowed.pins === true ? findAssetsByPinFingerprint(q, SCOPED_LIMIT) : Promise.resolve([]),
     ]);
-    const originBySrcId = await resolveOriginFortigates(assetRows.map((a) => a.id));
+    const originBySrcId = await resolveOriginFortigates(assetRows);
     const assetHits = assetRows.map((a) => decorateAssetHit(a, originBySrcId.get(a.id)));
     return { ...empty, assets: await withPinHits(assetHits, pinMatches, SCOPED_LIMIT) };
   }
@@ -311,7 +311,7 @@ async function runSearch(
       allowed.subnets ? searchSubnetsByTag(terms, SCOPED_LIMIT) : Promise.resolve([]),
       allowed.assets ? searchAssetsByTag(terms, SCOPED_LIMIT) : Promise.resolve([]),
     ]);
-    const originBySrcId = await resolveOriginFortigates(assetRows.map((a) => a.id));
+    const originBySrcId = await resolveOriginFortigates(assetRows);
     return {
       ...empty,
       blocks: blocks.map(blockHit),
@@ -346,9 +346,7 @@ async function runSearch(
   // details page when the operator clearly wants the connectivity
   // view. Pinned-only filter ensures we only return FortiGates the
   // map page can actually navigate to.
-  const originBySrcId = await resolveOriginFortigates(
-    assetsWithoutSites.map((a) => a.id),
-  );
+  const originBySrcId = await resolveOriginFortigates(assetsWithoutSites);
   const assetHits = assetsWithoutSites.map((a) =>
     decorateAssetHit(a, originBySrcId.get(a.id)),
   );
@@ -396,16 +394,129 @@ async function withPinHits(hits: SearchHit[], matches: PinFingerprintMatch[], li
   return [...pinned, ...hits.filter((h) => !pinnedIds.has(h.id))].slice(0, limit);
 }
 
+/** Bound on the dependency walk — the `connectionPathService` figure. */
+const ORIGIN_MAX_HOPS = 16;
+
 /**
- * For each asset id, find the FortiGate that asset was discovered on,
- * and only return the ones whose FortiGate is pinned on the Device Map
- * (lat/lng set — otherwise the map page can't navigate to it). Most-
- * recent DHCP sighting wins; falls back to `Asset.learnedLocation`
- * when no sighting exists (Entra/AD-discovered hosts that haven't been
- * seen on a FortiGate yet won't have one — that's fine, they fall
- * through to the asset-details navigation).
+ * For each asset, find the FortiGate it sits behind, and only return the ones
+ * whose FortiGate is pinned on the Device Map (lat/lng set — otherwise the map
+ * page can't navigate to it).
+ *
+ * The dependency tree decides first: walk the asset's effective parents
+ * upward to the first firewall — the same chain its General tab draws. Only
+ * when the tree reaches no firewall does the DHCP evidence decide: most-recent
+ * sighting wins, then `Asset.learnedLocation` (Entra/AD-discovered hosts that
+ * haven't been seen on a FortiGate yet have neither — they fall through to
+ * the asset-details navigation). Sightings alone are wrong for a device that
+ * moved: a server built at one site and shipped to another keeps its build
+ * site's DHCP sighting as its freshest forever once it runs on a static
+ * address, while the switch that now learns its MAC re-parents it in the tree.
+ * A tree that reaches an UNPINNED gate is still the answer — falling back to
+ * a sighting there would open some other site's topology.
  */
 async function resolveOriginFortigates(
+  assets: Array<{ id: string; assetType: string }>,
+): Promise<Map<string, { siteId: string; hostname: string }>> {
+  const out = new Map<string, { siteId: string; hostname: string }>();
+  // A firewall is never its own origin, nor another gate's (a spoke's
+  // dependency parent can be its hub) — it IS a site.
+  const assetIds = assets.filter((a) => a.assetType !== "firewall").map((a) => a.id);
+  if (assetIds.length === 0) return out;
+
+  const byTree = await resolveOriginFortigatesByTree(assetIds);
+  for (const [assetId, fg] of byTree) if (fg) out.set(assetId, fg);
+  const untreed = assetIds.filter((id) => !byTree.has(id));
+  if (untreed.length === 0) return out;
+  for (const [assetId, fg] of await resolveOriginFortigatesBySighting(untreed)) out.set(assetId, fg);
+  return out;
+}
+
+/**
+ * The dependency-tree half of `resolveOriginFortigates`. Loads the ancestor
+ * graph one LAYER per query for every asset together (override rows win per
+ * child, every other source — computed / endpoint / vcenter — is the computed
+ * set, as the asset's dependency view reads it), and stops each asset's walk
+ * at the first layer holding a firewall. Map value: the pinned gate, or null
+ * when the tree's gate is not on the map. Absent: the tree reached no gate.
+ */
+async function resolveOriginFortigatesByTree(
+  assetIds: string[],
+): Promise<Map<string, { siteId: string; hostname: string } | null>> {
+  const out = new Map<string, { siteId: string; hostname: string } | null>();
+  type Node = { id: string; hostname: string | null; assetType: string; monitorStatus: string | null; pinned: boolean };
+  const parentsOf = new Map<string, string[]>();
+  const nodes = new Map<string, Node>();
+  const frontiers = new Map<string, Set<string>>(assetIds.map((id) => [id, new Set([id])]));
+  const visited = new Map<string, Set<string>>(assetIds.map((id) => [id, new Set([id])]));
+
+  for (let hop = 0; hop < ORIGIN_MAX_HOPS && frontiers.size > 0; hop++) {
+    const want = new Set<string>();
+    for (const f of frontiers.values()) for (const id of f) if (!parentsOf.has(id)) want.add(id);
+    if (want.size > 0) {
+      const rows = await prisma.assetDependencyParent.findMany({
+        where: { assetId: { in: Array.from(want) } },
+        select: { assetId: true, parentAssetId: true, source: true },
+      });
+      const overrides = new Map<string, string[]>();
+      const computed = new Map<string, string[]>();
+      for (const r of rows) {
+        const target = r.source === "override" ? overrides : computed;
+        const cur = target.get(r.assetId);
+        if (cur) cur.push(r.parentAssetId); else target.set(r.assetId, [r.parentAssetId]);
+      }
+      for (const id of want) parentsOf.set(id, overrides.get(id) ?? computed.get(id) ?? []);
+      const missing = new Set<string>();
+      for (const id of want) for (const p of parentsOf.get(id)!) if (!nodes.has(p)) missing.add(p);
+      if (missing.size > 0) {
+        const parents = await prisma.asset.findMany({
+          where: { id: { in: Array.from(missing) } },
+          select: { id: true, hostname: true, assetType: true, monitorStatus: true, latitude: true, longitude: true },
+        });
+        for (const p of parents) {
+          nodes.set(p.id, {
+            id: p.id, hostname: p.hostname, assetType: p.assetType, monitorStatus: p.monitorStatus,
+            pinned: p.latitude != null && p.longitude != null,
+          });
+        }
+      }
+    }
+
+    for (const [assetId, frontier] of frontiers) {
+      const seen = visited.get(assetId)!;
+      const next = new Set<string>();
+      const gates: Node[] = [];
+      for (const id of frontier) {
+        for (const p of parentsOf.get(id) ?? []) {
+          if (seen.has(p)) continue;
+          seen.add(p);
+          const node = nodes.get(p);
+          if (!node) continue;
+          if (node.assetType === "firewall") gates.push(node); else next.add(p);
+        }
+      }
+      if (gates.length > 0) {
+        // Several gates on one layer (an HA pair, a dual-homed switch):
+        // a pinned one, then one that is up, then by hostname — stable.
+        gates.sort((a, b) =>
+          Number(b.pinned) - Number(a.pinned) ||
+          Number(b.monitorStatus === "up") - Number(a.monitorStatus === "up") ||
+          (a.hostname ?? "").localeCompare(b.hostname ?? ""));
+        const g = gates[0];
+        out.set(assetId, g.pinned && g.hostname ? { siteId: g.id, hostname: g.hostname } : null);
+        frontiers.delete(assetId);
+      } else if (next.size === 0) {
+        frontiers.delete(assetId);
+      } else {
+        frontiers.set(assetId, next);
+      }
+    }
+  }
+  return out;
+}
+
+/** The DHCP-evidence half of `resolveOriginFortigates`, for assets the
+ *  dependency tree does not connect to a gate. */
+async function resolveOriginFortigatesBySighting(
   assetIds: string[],
 ): Promise<Map<string, { siteId: string; hostname: string }>> {
   const out = new Map<string, { siteId: string; hostname: string }>();

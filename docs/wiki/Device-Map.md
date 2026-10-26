@@ -298,6 +298,15 @@ only its own devices ([rule 91](Business-Rules#rule-91)). A device whose
 switch name is shared and that nothing could settle is left off the panel
 rather than shown under the wrong site.
 
+The header search works the same way from any page. Search for a server,
+workstation or printer and its Device Map entry opens the topology of the
+FortiGate its **dependency tree** ends at — the same chain its asset page
+shows. A device built at one site and shipped to another opens the site it
+sits at now, even when its last DHCP lease came from the site it was built at.
+Only a device with no dependency path to a gate falls back to the gate that
+last gave it a DHCP lease. If the tree's gate is not pinned on the map, the
+search opens the device's asset page instead.
+
 ---
 
 ## The Site Map widget
