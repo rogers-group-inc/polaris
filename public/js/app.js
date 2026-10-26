@@ -5374,18 +5374,61 @@ function initSlideoverResize(panelEl, storageKey) {
   var handle = panelEl.querySelector(".slideover-resize-handle");
   if (!handle) return;
 
-  var stored = parseInt(localStorage.getItem(storageKey) || "0", 10);
+  var stored = 0;
+  try { stored = parseInt(localStorage.getItem(storageKey) || "0", 10); } catch (_) {}
   if (stored >= 380) panelEl.style.width = stored + "px";
+
+  var minW = 380;
+  function maxW() { return Math.round(window.innerWidth * 0.9); }
+
+  // The grip: a chip centred on the bar, the slide-over's twin of the Device
+  // Map topology pane's edge arrow. Dragging it resizes like the bar; a click
+  // without a drag toggles the panel between its own width and the widest it
+  // goes, and back. The expanded width is not saved — the stored width stays
+  // the operator's dragged one.
+  var grip = handle.querySelector(".slideover-resize-grip");
+  if (!grip) {
+    grip = document.createElement("button");
+    grip.type = "button";
+    grip.className = "slideover-resize-grip";
+    grip.innerHTML = '<span class="slideover-resize-grip-arrow" aria-hidden="true"></span>';
+    handle.appendChild(grip);
+  }
+  function syncGrip() {
+    var expanded = panelEl.classList.contains("slideover-expanded");
+    grip.title = expanded ? "Restore width (drag to resize)" : "Widen (drag to resize)";
+    grip.setAttribute("aria-label", expanded ? "Restore panel width" : "Widen panel");
+    grip.setAttribute("aria-pressed", expanded ? "true" : "false");
+  }
+  syncGrip();
+
+  var moved = false;
+  grip.addEventListener("click", function (e) {
+    e.stopPropagation();
+    if (moved) return;   // the end of a drag, not a click
+    if (panelEl.classList.contains("slideover-expanded")) {
+      panelEl.classList.remove("slideover-expanded");
+      panelEl.style.width = panelEl.dataset.widthBeforeExpand || "";
+    } else {
+      panelEl.dataset.widthBeforeExpand = panelEl.style.width || "";
+      panelEl.classList.add("slideover-expanded");
+      panelEl.style.width = maxW() + "px";
+    }
+    syncGrip();
+  });
 
   handle.addEventListener("mousedown", function (e) {
     e.preventDefault();
     handle.classList.add("dragging");
     var panelRight = panelEl.getBoundingClientRect().right;
-    var minW = 380;
-    var maxW = Math.round(window.innerWidth * 0.9);
+    var startX = e.clientX;
+    var limit = maxW();
+    moved = false;
 
     function onMove(e) {
-      var w = Math.max(minW, Math.min(maxW, Math.round(panelRight - e.clientX)));
+      if (Math.abs(e.clientX - startX) > 3) moved = true;
+      if (!moved) return;
+      var w = Math.max(minW, Math.min(limit, Math.round(panelRight - e.clientX)));
       panelEl.style.width = w + "px";
     }
 
@@ -5393,8 +5436,27 @@ function initSlideoverResize(panelEl, storageKey) {
       handle.classList.remove("dragging");
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      var w = Math.max(minW, Math.min(maxW, Math.round(panelRight - e.clientX)));
-      localStorage.setItem(storageKey, w);
+      if (!moved) return;
+      // A drag ends the expanded state: the panel is now the width dragged to.
+      panelEl.classList.remove("slideover-expanded");
+      syncGrip();
+      var w = Math.max(minW, Math.min(limit, Math.round(panelRight - e.clientX)));
+      try { localStorage.setItem(storageKey, w); } catch (_) {}
+      // Grace period. A fast drag outruns the repaint, so the button often
+      // comes up over the dimmed backdrop rather than the bar. The browser
+      // then sends a click to the nearest element under both the press and the
+      // release — the overlay — and every slide-over closes on an overlay
+      // click. Swallow clicks for a moment after a drag so letting go never
+      // closes the panel.
+      var until = Date.now() + 400;
+      function swallow(ev) {
+        if (Date.now() > until) { window.removeEventListener("click", swallow, true); return; }
+        ev.stopPropagation();
+        ev.preventDefault();
+        window.removeEventListener("click", swallow, true);
+      }
+      window.addEventListener("click", swallow, true);
+      setTimeout(function () { window.removeEventListener("click", swallow, true); }, 450);
     }
 
     document.addEventListener("mousemove", onMove);
