@@ -19,12 +19,16 @@
 //
 // Two deliberate departures from the automations wizard:
 //
-//   - Step 2 produces a FLAT TagCriteria ({version,match:"all",rules:[…]}), not the
-//     automations' nested scope.condition tree. That's what the server's
-//     normalizeCriteria takes, and the tree shape can't round-trip through it
-//     (no negation, no tag field, different operators). The builder is therefore
-//     ported from the maintenance-schedule criteria UI — same vocabulary, same
-//     validator — with apr- prefixed ids so the two can never collide.
+//   - Step 2 is the shared device filter: the nested condition tree tags,
+//     contacts and automations store, edited in the shared
+//     PolarisConditionBuilder over the WIDE device-filter vocabulary (tag,
+//     subnet name / range, IP block, interface, agent installed, …) served by
+//     GET /application-map/discovery/filter-schema. It replaced a flat
+//     one-row-per-field builder that could only AND its rules and had no tag
+//     field. A rule stored by that builder arrives already folded into a tree
+//     (appMapDiscoveryService.normalizeScope); the one it can't fold — an
+//     `integration` rule — arrives flat, renders as a warning, and is carried
+//     through the save untouched unless the operator builds a tree over it.
 //
 //   - Step 3's item list is SCOPE-DRIVEN: it asks the server what the assets from
 //     step 2 actually report, rather than listing the whole fleet's inventory.
@@ -45,47 +49,84 @@
 (function () {
   "use strict";
 
-  // Shared lookup caches — safe to keep at module scope (read-only reference data).
-  var _aprAssetTypes = null;
-  var _aprIntegrations = null;
+  // The builder vocabulary, fetched once per page load (read-only reference data).
+  var _aprFilterSchemaPromise = null;
 
-  // ─── Criteria vocabulary ───────────────────────────────────────────
-  //
-  // The union of what tagAssignmentService.normalizeCriteria accepts. `status` is
-  // included here (unlike the maintenance builder, which rejects it because that
-  // feature flips status itself) — pinning doesn't touch status, so scoping by it
-  // is fine.
+  function loadFilterSchema() {
+    if (!_aprFilterSchemaPromise) {
+      _aprFilterSchemaPromise = api.applicationMap.discoveryFilterSchema().catch(function (err) {
+        _aprFilterSchemaPromise = null; // let a later open retry
+        throw err;
+      });
+    }
+    return _aprFilterSchemaPromise;
+  }
 
-  var APR_FIELDS = [
-    { value: "hostname",     label: "Hostname",         kind: "string" },
-    { value: "subnet",       label: "IP / Subnet",      kind: "subnet" },
-    { value: "assetType",    label: "Asset type",       kind: "assetType" },
-    { value: "manufacturer", label: "Manufacturer",     kind: "string" },
-    { value: "model",        label: "Model",            kind: "string" },
-    { value: "os",           label: "Operating system", kind: "string" },
-    { value: "osVersion",    label: "OS version",       kind: "string" },
-    { value: "department",   label: "Department",       kind: "string" },
-    { value: "location",     label: "Location",         kind: "string" },
-    { value: "status",       label: "Status",           kind: "status" },
-    { value: "integration",  label: "Integration",      kind: "integration" },
-    { value: "fortigate",    label: "Behind FortiGate", kind: "string" },
-  ];
-  var APR_STRING_OPS = [
-    { value: "contains", label: "contains" },
-    { value: "exact",    label: "is" },
-    { value: "pattern",  label: "matches (wildcard *)" },
-  ];
-  var APR_STATUSES = ["active", "maintenance", "decommissioned", "storage", "disabled", "quarantined"];
+  /** A stored scope is either the condition tree or (legacy) flat criteria. */
+  function isTree(scope) {
+    return !!scope && Array.isArray(scope.children);
+  }
 
-  function fieldKind(field) {
-    for (var i = 0; i < APR_FIELDS.length; i++) if (APR_FIELDS[i].value === field) return APR_FIELDS[i].kind;
-    return "string";
+  // Suggestion source for one field — the tag editor's mapping, with asset types
+  // narrowed to the ones a rule can match (the server publishes that list on
+  // GET /discovery). Offering "firewall" would build a rule that matches nothing.
+  function valueOptionsFor(schema) {
+    return function (field) {
+      var fm = (((schema.scopeCondition || {}).fields) || []).find(function (f) { return f.field === field; }) || {};
+      if (fm.values) return fm.values.map(function (v) { return { value: v, label: v }; });
+      var o = schema.options || {};
+      var plain = function (list) { return (list || []).map(function (v) { return { value: v, label: v }; }); };
+      switch (fm.optionsFrom) {
+        case "assetTypes":
+          var capable = window.appMapProcessCapableTypes || null;
+          return (o.assetTypes || [])
+            .filter(function (t) { return !capable || capable.indexOf(t.name) >= 0; })
+            .map(function (t) { return { value: t.name, label: t.label || t.name }; });
+        case "manufacturers":  return plain(o.manufacturers);
+        case "models":         return plain(o.models);
+        case "interfaceNames": return plain(o.interfaceNames);
+        case "ssids":          return plain(o.ssids);
+        case "tags":           return plain(o.tags);
+        case "subnets":
+          return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr, name: sn.name }; });
+        case "ipBlocks":
+          return (o.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
+        default: return [];
+      }
+    };
+  }
+
+  /** One leaf as review text ("Tag has prod"), labelled from the catalog. */
+  function leafText(meta, c) {
+    var fm = ((meta && meta.fields) || []).find(function (f) { return f.field === c.field; });
+    var op = ((meta && meta.operatorLabels) || {})[c.operator] || c.operator;
+    return (fm ? fm.label : c.field) + " " + op + " " + c.value;
+  }
+
+  /** A tree as one line of review text; nested groups in parentheses. */
+  function treeText(meta, g) {
+    var parts = (g.children || []).map(function (c) {
+      return Array.isArray(c.children) ? "(" + treeText(meta, c) + ")" : leafText(meta, c);
+    });
+    if (g.op === "and") return parts.join("  AND  ");
+    if (g.op === "or") return parts.join("  OR  ");
+    return (((meta && meta.groupOpLabels) || {})[g.op] || g.op) + ": " + parts.join(", ");
   }
 
   // ─── Public entry point ────────────────────────────────────────────
 
   window.openAppMapRuleWizard = async function openAppMapRuleWizard(existing) {
     var editing = !!existing;
+
+    // The vocabulary has to be in hand BEFORE the body is assembled: the builder
+    // renders its field/operator selects from it.
+    var schema;
+    try {
+      schema = await loadFilterSchema();
+    } catch (err) {
+      showToast((err && err.message) || "Couldn't load the device-filter options", "error");
+      return;
+    }
 
     var draft = editing ? JSON.parse(JSON.stringify(existing)) : {
       id: null,
@@ -106,6 +147,10 @@
     // carries explicit assetIds (an auto rule), in which case a null scope means
     // JUST those assets and the checkbox must start unchecked.
     var allAssets = !draft.scope && !(draft.assetIds && draft.assetIds.length);
+    // A legacy flat filter the tree can't express (an `integration` rule). It
+    // still applies; the builder just can't render it, so it rides the save
+    // untouched unless the operator builds conditions to replace it.
+    var stuckScope = draft.scope && !isTree(draft.scope) ? draft.scope : null;
 
     // Step 3 state.
     var picked = { process: {}, service: {} };
@@ -123,6 +168,11 @@
     var visited = editing ? 4 : 1;
     var STEPS = ["Name", "Devices", "Items", "Summary"];
     var scopePreviewTimer = null;
+    var condBuilder = window.PolarisConditionBuilder.create({
+      meta: schema.scopeCondition,
+      valueOptions: valueOptionsFor(schema),
+      onChange: function () { refreshScopePreview(); },
+    });
 
     // ─── Step 1: name ────────────────────────────────────────────────
 
@@ -171,59 +221,7 @@
       return null;
     }
 
-    // ─── Step 2: devices (flat TagCriteria) ──────────────────────────
-
-    function ruleCellsHTML(field, op, valueStr) {
-      var kind = fieldKind(field);
-      if (kind === "integration") {
-        var opts = (_aprIntegrations || []).map(function (i) {
-          return '<option value="' + escapeHtml(i.id) + '"' + (i.id === valueStr ? " selected" : "") + '>' +
-            escapeHtml(i.name || i.type || i.id) + '</option>';
-        }).join("");
-        return '<span style="color:var(--color-text-secondary);font-size:0.82rem">is</span>' +
-          '<select class="input apr-rule-integration" style="flex:1">' +
-            '<option value="">Select an integration…</option>' + opts +
-          '</select>';
-      }
-      if (kind === "subnet") {
-        return '<span style="color:var(--color-text-secondary);font-size:0.82rem">in</span>' +
-          '<input type="text" class="input apr-rule-input" style="flex:1" ' +
-                 'placeholder="10.2.0.0/16, 10.3.4.5" value="' + escapeHtml(valueStr) + '">';
-      }
-      if (kind === "assetType" || kind === "status") {
-        var listId = kind === "assetType" ? "apr-assettype-list" : "apr-status-list";
-        return '<span style="color:var(--color-text-secondary);font-size:0.82rem">is</span>' +
-          '<input type="text" class="input apr-rule-input" style="flex:1" list="' + listId + '" ' +
-                 'placeholder="comma-separated" value="' + escapeHtml(valueStr) + '">';
-      }
-      var opSel = APR_STRING_OPS.map(function (o) {
-        return '<option value="' + o.value + '"' + (o.value === op ? " selected" : "") + '>' + escapeHtml(o.label) + '</option>';
-      }).join("");
-      return '<select class="input apr-rule-op" style="width:auto">' + opSel + '</select>' +
-        '<input type="text" class="input apr-rule-input" style="flex:1" ' +
-               'placeholder="comma-separated" value="' + escapeHtml(valueStr) + '">';
-    }
-
-    function ruleRowHTML(rule) {
-      var field = (rule && rule.field) || "hostname";
-      var op = (rule && rule.op) || "contains";
-      var valueStr = "";
-      if (rule) {
-        if (rule.field === "subnet") valueStr = (rule.cidrs || []).join(", ");
-        else if (rule.field === "integration") valueStr = (rule.values || [])[0] || "";
-        else valueStr = (rule.values || []).join(", ");
-      }
-      var fieldSel = APR_FIELDS.map(function (f) {
-        return '<option value="' + f.value + '"' + (f.value === field ? " selected" : "") + '>' + escapeHtml(f.label) + '</option>';
-      }).join("");
-      return '<div class="apr-rule" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">' +
-        '<select class="input apr-rule-field" style="width:auto">' + fieldSel + '</select>' +
-        '<span class="apr-rule-cells" style="display:flex;gap:6px;align-items:center;flex:1">' +
-          ruleCellsHTML(field, op, valueStr) +
-        '</span>' +
-        '<button type="button" class="btn-icon apr-rule-remove" aria-label="Remove condition" title="Remove condition">&times;</button>' +
-      '</div>';
-    }
+    // ─── Step 2: devices (shared condition tree) ──────────────────────
 
     function explicitDevicesHtml() {
       var n = (draft.assetIds || []).length;
@@ -237,8 +235,18 @@
       '</div>';
     }
 
+    /** Labels of the legacy fields the builder can't render (see stuckScope). */
+    function stuckFields() {
+      var out = [];
+      ((stuckScope && stuckScope.rules) || []).forEach(function (r) {
+        if (r.field === "integration" && out.indexOf("Integration") < 0) out.push("Integration");
+      });
+      return out;
+    }
+
     function step2Html() {
-      var rules = (draft.scope && draft.scope.rules) || [];
+      var root = isTree(draft.scope) ? draft.scope : { op: "and", children: [] };
+      var stuck = stuckFields();
       return '' +
         '<div class="form-group">' +
           '<label class="appmap-check"><input type="checkbox" id="apr-all-assets"' +
@@ -246,43 +254,39 @@
           '<p class="hint">Polaris only collects a process/service inventory from workstations and ' +
             'servers (via the Polaris Agent, or agentless SSH/WinRM), so rules only ever target those — ' +
             'firewalls, switches, APs and printers report nothing to pin. ' +
-            'Uncheck to narrow further; conditions are ANDed.</p>' +
+            'Uncheck to narrow further by tag, subnet, OS, location and more.</p>' +
         '</div>' +
         explicitDevicesHtml() +
-        '<div id="apr-scope-builder"' + (allAssets ? ' style="display:none"' : "") + '>' +
-          '<div id="apr-rules">' + (rules.length ? rules.map(ruleRowHTML).join("") : ruleRowHTML(null)) + '</div>' +
-          '<button type="button" class="btn btn-secondary btn-sm" id="apr-add-rule">+ Add condition</button>' +
+        '<div class="form-group" id="apr-scope-builder"' + (allAssets ? ' style="display:none"' : "") + '>' +
+          (stuck.length
+            ? '<p class="hint" style="color:var(--color-warning);margin:0 0 8px">This rule&rsquo;s device filter uses ' +
+                escapeHtml(stuck.join(", ")) + ', which this builder cannot show. It still applies &mdash; ' +
+                'saving without adding conditions below leaves it exactly as it is.</p>'
+            : '') +
+          '<p class="hint" style="margin:0 0 8px">Drag the <span class="aw-grip" style="cursor:default">&#x2842;</span> handle to ' +
+            'move a condition into another group or reorder groups.</p>' +
+          '<div id="apr-cond-root">' + condBuilder.groupHtml(root, 0) + '</div>' +
         '</div>' +
         '<div class="form-group" style="margin-top:1rem">' +
           '<label>Devices this rule affects</label>' +
           '<div id="apr-scope-preview" class="hint">Checking…</div>' +
-        '</div>' +
-        '<datalist id="apr-assettype-list"></datalist>' +
-        '<datalist id="apr-status-list">' +
-          APR_STATUSES.map(function (s) { return '<option value="' + s + '"></option>'; }).join("") +
-        '</datalist>';
+        '</div>';
     }
 
-    // DOM → TagCriteria via the shared walker (api.js collectTagCriteria) —
-    // same wire shape as the Maintenance builder by requirement: comma-split
-    // multi-value inputs, bare IPs promoted to /32 (or /128) so a save can't
-    // 400 on something the operator typed reasonably, empty rows dropped, and
-    // null when nothing usable is left — null means "every monitored asset",
-    // NOT "match nothing".
-    function collectCriteria() {
-      return collectTagCriteria({
-        rowSelector: "#apr-rules .apr-rule",
-        fieldSel: ".apr-rule-field",
-        integrationSel: ".apr-rule-integration",
-        opSel: ".apr-rule-op",
-        inputSel: ".apr-rule-input",
-      });
+    /** The builder's tree, or null when it holds no conditions. */
+    function collectTree() {
+      var rootGroup = document.querySelector("#apr-cond-root > .scg-group");
+      var tree = rootGroup ? condBuilder.collect(rootGroup) : null;
+      return tree && (tree.children || []).length ? tree : null;
     }
 
     function collectStep2() {
       var cb = document.getElementById("apr-all-assets");
       if (cb) allAssets = cb.checked;
-      draft.scope = allAssets ? null : collectCriteria();
+      // An empty builder is null — "no filter" — never an empty tree, which the
+      // server would read as "every device" by boolean identity. A stuck legacy
+      // filter survives an empty builder; building conditions replaces it.
+      draft.scope = allAssets ? null : (collectTree() || stuckScope);
       // Ticking "all assets" makes explicit targets redundant AND would leave the
       // stored shape ambiguous (null scope + assetIds means "just those"), so the
       // checkbox clears them.
@@ -295,15 +299,19 @@
       if (!allAssets && !draft.scope && !(draft.assetIds || []).length) {
         return "Add a condition, or tick “All monitored workstations & servers”.";
       }
-      return null;
+      return isTree(draft.scope) ? condBuilder.validate(draft.scope) : null;
     }
 
     function refreshScopePreview() {
       var el = document.getElementById("apr-scope-preview");
       if (!el) return;
       collectStep2();
-      el.textContent = "Checking…";
       if (scopePreviewTimer) clearTimeout(scopePreviewTimer);
+      // A half-built condition (an empty value, a CIDR mid-entry) would 400;
+      // say what's missing instead of flashing an error on every keystroke.
+      var problem = isTree(draft.scope) ? condBuilder.validate(draft.scope) : null;
+      if (problem) { el.textContent = problem; return; }
+      el.textContent = "Checking…";
       scopePreviewTimer = setTimeout(async function () {
         try {
           var res = await api.applicationMap.discoveryScope(draft.scope, draft.assetIds || []);
@@ -333,44 +341,27 @@
       var panel = document.getElementById("apr-step-2");
       if (!panel) return;
       panel.addEventListener("change", function (ev) {
-        if (ev.target.id === "apr-all-assets") {
-          allAssets = ev.target.checked;
-          var b = document.getElementById("apr-scope-builder");
-          if (b) b.style.display = allAssets ? "none" : "";
-          refreshScopePreview();
-          return;
-        }
-        if (ev.target.classList.contains("apr-rule-field")) {
-          // Field changed → rebuild that row's op + value cells for the new kind.
-          var row = ev.target.closest(".apr-rule");
-          row.querySelector(".apr-rule-cells").innerHTML = ruleCellsHTML(ev.target.value, "contains", "");
-        }
+        if (ev.target.id !== "apr-all-assets") return;
+        allAssets = ev.target.checked;
+        var b = document.getElementById("apr-scope-builder");
+        if (b) b.style.display = allAssets ? "none" : "";
+        // Revealed empty: seed a starter row so the operator lands on something
+        // editable (the address book's All-devices untick does the same).
+        if (!allAssets) condBuilder.seedIfEmpty(document.getElementById("apr-cond-root"));
         refreshScopePreview();
       });
-      var reprev = (typeof debounce === "function") ? debounce(refreshScopePreview, 250) : refreshScopePreview;
-      panel.addEventListener("input", function (ev) {
-        if (ev.target.classList.contains("apr-rule-input")) reprev();
-      });
       panel.addEventListener("click", function (ev) {
-        if (ev.target.id === "apr-add-rule") {
-          document.getElementById("apr-rules").insertAdjacentHTML("beforeend", ruleRowHTML(null));
-          return;
-        }
-        if (ev.target.id === "apr-clear-explicit") {
-          draft.assetIds = [];
-          var wrap = document.getElementById("apr-explicit-wrap");
-          if (wrap) wrap.remove();
-          refreshScopePreview();
-          return;
-        }
-        var rm = ev.target.closest ? ev.target.closest(".apr-rule-remove") : null;
-        if (rm) {
-          var rows = document.querySelectorAll("#apr-rules .apr-rule");
-          if (rows.length > 1) rm.closest(".apr-rule").remove();
-          else rm.closest(".apr-rule").querySelector(".apr-rule-input").value = "";
-          refreshScopePreview();
-        }
+        if (ev.target.id !== "apr-clear-explicit") return;
+        draft.assetIds = [];
+        var wrap = document.getElementById("apr-explicit-wrap");
+        if (wrap) wrap.remove();
+        refreshScopePreview();
       });
+      // Rows, groups, the value combobox and the grip drag all live in the shared
+      // module; the preview rides its onChange. Bound to the builder's own
+      // section, which dies with the modal body — never #modal-overlay, which
+      // openModal reuses, so listeners there would pile up across opens.
+      condBuilder.wire(document.getElementById("apr-scope-builder"), "#apr-cond-root");
     }
 
     // ─── Step 3: items reported by the scoped assets ─────────────────
@@ -552,16 +543,11 @@
       if (!panel) return;
       var scopeText = allAssets
         ? "All monitored workstations & servers"
-        : ((draft.scope && draft.scope.rules) || []).map(function (r) {
-            var f = r.field;
-            if (f === "subnet") return "IP in " + (r.cidrs || []).join(", ");
-            if (f === "integration") {
-              var hit = (_aprIntegrations || []).filter(function (i) { return i.id === (r.values || [])[0]; })[0];
-              return "Integration is " + escapeHtml(hit ? (hit.name || hit.id) : (r.values || [])[0] || "?");
-            }
-            var lbl = APR_FIELDS.filter(function (x) { return x.value === f; })[0];
-            return (lbl ? lbl.label : f) + " " + r.op + " " + (r.values || []).join(", ");
-          }).join("  AND  ");
+        : isTree(draft.scope)
+          ? treeText(schema.scopeCondition, draft.scope)
+          : draft.scope
+            ? "Existing filter (" + stuckFields().join(", ") + ") — unchanged"
+            : "";
       if (!allAssets && (draft.assetIds || []).length) {
         var explicit = draft.assetIds.length + " specific device(s)";
         scopeText = scopeText ? scopeText + "  +  " + explicit : explicit;
@@ -678,7 +664,7 @@
       '<button type="button" class="btn btn-primary" id="apr-save" style="display:none">' +
         (editing ? "Save changes" : "Create rule") + "</button>";
 
-    openModal(editing ? "Edit map rule" : "New map rule", body, footer, { wide: true });
+    openModal(editing ? "Edit Map Rule" : "New Map Rule", body, footer, { wide: true });
 
     document.getElementById("apr-next").addEventListener("click", function () {
       goToStep(step + 1, { validate: true });
@@ -728,36 +714,5 @@
     wireStep3();
     updateStepper();
     syncFooter();
-
-    // Lookups are cosmetic (a datalist and a select); deliberately not awaited so
-    // a slow/failed fetch can't leave the wizard inert.
-    (async function () {
-      if (!_aprAssetTypes) {
-        try { _aprAssetTypes = await api.assetTypes.list(); } catch (e) { _aprAssetTypes = []; }
-      }
-      var dl = document.getElementById("apr-assettype-list");
-      if (dl) {
-        // Only types a rule can actually match (the server publishes the list on
-        // GET /discovery). Offering "firewall" here would let an operator build a
-        // rule that silently matches nothing.
-        var capable = window.appMapProcessCapableTypes || null;
-        dl.innerHTML = (_aprAssetTypes || [])
-          .map(function (t) { return t.name || t; })
-          .filter(function (n) { return !capable || capable.indexOf(n) >= 0; })
-          .map(function (n) { return '<option value="' + escapeHtml(n) + '"></option>'; })
-          .join("");
-      }
-      if (!_aprIntegrations) {
-        try { _aprIntegrations = await api.integrations.list(); } catch (e) { _aprIntegrations = []; }
-      }
-      // Repaint any integration row that rendered before the list arrived.
-      document.querySelectorAll("#apr-rules .apr-rule").forEach(function (row) {
-        var f = row.querySelector(".apr-rule-field");
-        var cur = row.querySelector(".apr-rule-integration");
-        if (f && f.value === "integration" && cur) {
-          row.querySelector(".apr-rule-cells").innerHTML = ruleCellsHTML("integration", "exact", cur.value);
-        }
-      });
-    })();
   };
 })();

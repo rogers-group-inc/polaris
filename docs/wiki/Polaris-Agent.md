@@ -693,7 +693,13 @@ Each rule has a **mode**:
 | **Monitor + map** | Application Map **and** telemetry — mapping implies monitoring |
 | **Monitor only** | per-program CPU/RAM and logs, per-unit log collection (journal / Event Log); never touches map pins |
 
-A four-step wizard: name → devices → items → summary. The **item step is
+A four-step wizard (**New Map Rule**): name → devices → items → summary. The
+**devices step** is the same device filter tags and contacts use — match on tag,
+hostname, subnet (CIDR, range or name), IP block, OS, manufacturer, model,
+location, department, interface, Polaris Agent installed and more, combined in
+AND / OR groups. A rule made before this builder that filters by
+**Integration** keeps working; the builder shows a warning instead of its
+conditions and leaves it unchanged unless you build new ones. The **item step is
 scope-driven** — it lists only what the selected devices report, which is what
 keeps a rule from pinning a unit on every host that happens to run it.
 

@@ -307,7 +307,7 @@ Cancel and Enter cancels instead, because the key belongs to the button you
 picked. Holding Enter down from whatever opened the dialog does nothing: the
 repeat is ignored so a held key cannot confirm something you have not read.
 
-In a wizard (New automation, New discovery, New map rule) Enter means *next*
+In a wizard (New automation, New discovery, New Map Rule) Enter means *next*
 rather than *save*, so a form is never submitted from a step you are still
 filling in — on the last step, where there is no Next button, Enter saves. The
 arrows move between steps whenever you are not typing in a field; inside a text

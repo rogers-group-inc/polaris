@@ -37,10 +37,14 @@
  * additive apply), with the periodic-reconciler entry point borrowed from
  * tagAssignmentService/reconcileTagAssignments. Two deliberate differences:
  *
- *   - Scope is per-rule asset CRITERIA, not per-integration. These pins are
+ *   - Scope is a per-rule DEVICE FILTER, not per-integration. These pins are
  *     agent-fed, and an agent host's discovering integration says nothing about
- *     whether its nginx belongs on the map. The criteria vocabulary is
- *     tagAssignmentService's rather than a second one.
+ *     whether its nginx belongs on the map. The filter is the shared condition
+ *     tree tags, contacts and automations use (DEVICE_FILTER vocabulary: tag,
+ *     subnet name / range, IP block, interface, agent installed, …) rather than
+ *     a vocabulary of its own. A rule stored by the old flat builder folds
+ *     forward on read (normalizeScope); only one the tree can't express — an
+ *     `integration` rule — keeps its flat TagCriteria and matches through it.
  *
  *   - MAPPING IMPLIES MONITORING, one-way: everything a rule maps is also pinned
  *     for monitoring (per-program CPU/RAM + logs, per-unit journal tailing),
@@ -68,9 +72,13 @@ import { AppError } from "../utils/errors.js";
 import { compilePattern } from "./autoMonitorInterfacesService.js";
 import {
   normalizeCriteria,
+  normalizeTagCondition,
   resolveMatchingAssetIds,
   type TagCriteria,
 } from "./tagAssignmentService.js";
+import { conditionFields, type ScopeConditionGroup } from "./notificationTypes.js";
+import { resolveDeviceFilterAssetIds } from "./deviceFilterService.js";
+import { criteriaToCondition } from "../utils/criteriaToCondition.js";
 
 export const SETTING_KEY = "appMapAutoMap";
 
@@ -131,14 +139,26 @@ export type AppMapRuleMode = "map" | "monitor";
  *  Services-tab pin toggle (recordOperatorPinChanges). */
 export type AppMapRuleSource = "manual" | "auto";
 
+/**
+ * A rule's device filter: the shared condition tree, or — only for a stored
+ * rule the tree can't express (an `integration` rule) — the legacy flat
+ * criteria, kept so the filter still matches rather than silently widening.
+ * Told apart by shape: a tree has `children`, flat criteria have `rules`.
+ */
+export type AppMapScope = ScopeConditionGroup | TagCriteria;
+
+export function isConditionScope(scope: AppMapScope): scope is ScopeConditionGroup {
+  return Array.isArray((scope as ScopeConditionGroup).children);
+}
+
 export interface AppMapRule {
   id: string;
   name: string;
   enabled: boolean;
   mode: AppMapRuleMode;
   source: AppMapRuleSource;
-  /** Asset criteria. null = every monitored asset — UNLESS assetIds is set. */
-  scope: TagCriteria | null;
+  /** Device filter. null = every monitored asset — UNLESS assetIds is set. */
+  scope: AppMapScope | null;
   /**
    * Explicit asset targets, unioned with the scope's matches (the
    * MaintenanceSchedule targets = union(criteria, assetIds) precedent). A null
@@ -232,6 +252,25 @@ function normalizeAssetIds(raw: unknown): string[] {
   return out;
 }
 
+/**
+ * Validate + normalize a posted (or stored) device filter. A condition tree is
+ * validated against the DEVICE_FILTER vocabulary; flat criteria are folded
+ * forward into a tree, unless they carry a rule the tree can't express. Null
+ * means "no filter" — an empty tree must never mean "match nothing", and must
+ * never be stored as `and([])` either, which matches everything by identity
+ * and would be indistinguishable from an intended all-assets rule.
+ */
+export function normalizeScope(raw: unknown): AppMapScope | null {
+  if (raw == null) return null;
+  if (typeof raw === "object" && !Array.isArray(raw) && "children" in (raw as object)) {
+    return normalizeTagCondition(raw);
+  }
+  const criteria = normalizeCriteria(raw);
+  if (!criteria) return null;
+  const { condition, unconvertible } = criteriaToCondition(criteria);
+  return unconvertible.length > 0 ? criteria : (condition as ScopeConditionGroup | null);
+}
+
 /** Validate + normalize one posted rule. Throws AppError(400) on bad input. */
 export function normalizeRule(raw: unknown): AppMapRule {
   if (raw == null || typeof raw !== "object") throw new AppError(400, "Rule must be an object");
@@ -246,9 +285,7 @@ export function normalizeRule(raw: unknown): AppMapRule {
     // Pre-mode rules were all map rules, so "map" is the compatible default.
     mode: r.mode === "monitor" ? "monitor" : "map",
     source: r.source === "auto" ? "auto" : "manual",
-    // normalizeCriteria returns null when there are no usable rules, which is
-    // exactly "no scope" — an empty tree must not mean "match nothing".
-    scope: r.scope == null ? null : normalizeCriteria(r.scope),
+    scope: normalizeScope(r.scope),
     assetIds: normalizeAssetIds(r.assetIds),
     processes: normalizeBlock(r.processes, "processes"),
     services:  normalizeBlock(r.services,  "services"),
@@ -379,9 +416,22 @@ async function pinnedCounts(column: "mappedProcesses" | "mappedServices"): Promi
  * work) AND with PROCESS_CAPABLE_ASSET_TYPES, so neither an unscoped rule nor one
  * scoped at an appliance can claim devices that report no inventory.
  */
-async function scopedAssetIds(scope: TagCriteria | null): Promise<Set<string> | null> {
+async function scopedAssetIds(scope: AppMapScope | null): Promise<Set<string> | null> {
   if (!scope) return null;
-  return resolveMatchingAssetIds(scope);
+  if (!isConditionScope(scope)) return resolveMatchingAssetIds(scope);
+  // The tree has no SQL prefilter of its own (see deviceFilterService), so the
+  // monitored + process-capable intersection every caller applies anyway is
+  // pushed into the read here — at 2000 assets that keeps the switches, APs
+  // and unmonitored inventory out of the evaluated rows. Decommissioned
+  // devices are excluded unless the filter mentions status, as the flat
+  // criteria's prefilter always did.
+  return resolveDeviceFilterAssetIds(scope, {
+    where: {
+      monitored: true,
+      assetType: { in: [...PROCESS_CAPABLE_ASSET_TYPES] },
+      ...(conditionFields(scope).has("status") ? {} : { status: { not: "decommissioned" as const } }),
+    },
+  });
 }
 
 /**
@@ -392,7 +442,7 @@ async function scopedAssetIds(scope: TagCriteria | null): Promise<Set<string> | 
  */
 async function ruleTargetIds(rule: AppMapRule): Promise<Set<string> | null> {
   if (rule.assetIds.length === 0) return scopedAssetIds(rule.scope);
-  const set = rule.scope ? new Set(await resolveMatchingAssetIds(rule.scope)) : new Set<string>();
+  const set = (await scopedAssetIds(rule.scope)) ?? new Set<string>();
   for (const id of rule.assetIds) set.add(id);
   return set;
 }
@@ -413,7 +463,7 @@ async function ruleTargetIds(rule: AppMapRule): Promise<Set<string> | null> {
 // every index), so an extra index would tax those writes fleet-wide to speed
 // up one wizard step.
 export async function getInventoryAggregate(
-  scope: TagCriteria | null,
+  scope: AppMapScope | null,
 ): Promise<{ processes: AggregateRow[]; services: AggregateRow[] }> {
   const allowed = await scopedAssetIds(scope);
   if (allowed && allowed.size === 0) return { processes: [], services: [] };
@@ -688,7 +738,7 @@ export interface ScopePreview {
 }
 
 export async function previewScope(
-  scope: TagCriteria | null,
+  scope: AppMapScope | null,
   assetIds: string[] = [],
 ): Promise<ScopePreview> {
   // Same union semantics as ruleTargetIds: explicit assetIds join the scope's
@@ -697,7 +747,7 @@ export async function previewScope(
   if (assetIds.length === 0) {
     allowed = await scopedAssetIds(scope);
   } else {
-    allowed = scope ? new Set(await resolveMatchingAssetIds(scope)) : new Set<string>();
+    allowed = (await scopedAssetIds(scope)) ?? new Set<string>();
     for (const id of assetIds) allowed.add(id);
   }
   const rows = await prisma.asset.findMany({

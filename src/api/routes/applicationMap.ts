@@ -33,9 +33,13 @@ import {
   applyRules,
   unmapEverywhere,
   resolveRuleAssetLabels,
+  normalizeScope,
   PROCESS_CAPABLE_ASSET_TYPES,
 } from "../../services/appMapDiscoveryService.js";
-import { normalizeCriteria } from "../../services/tagAssignmentService.js";
+import { listAssetTags } from "../../services/tagAssignmentService.js";
+import { DEVICE_FILTER_FIELD_OPS, scopeConditionMeta } from "../../services/notificationTypes.js";
+import { listScopeOptions } from "../../services/notificationRuleService.js";
+import { listAssetTypes } from "../../services/assetTypeService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { requestActor } from "../middleware/auth.js";
@@ -121,6 +125,28 @@ router.get("/discovery", requirePermission("applicationMap", "read"), async (_re
   }
 });
 
+// GET /application-map/discovery/filter-schema — the Devices step's condition-
+// builder vocabulary + value suggestions. Its own route (the contacts /
+// filter-schema precedent) so the wizard never needs automationManagement:read
+// or assets:read for its pickers. The WIDE device-filter field set, because the
+// flat builder it replaced already offered osVersion / department / location /
+// fortigate and the wildcard operator.
+router.get("/discovery/filter-schema", requirePermission("applicationMap", "read"), async (_req, res, next) => {
+  try {
+    const [options, assetTypes, tags] = await Promise.all([listScopeOptions(), listAssetTypes(), listAssetTags()]);
+    res.json({
+      scopeCondition: scopeConditionMeta(DEVICE_FILTER_FIELD_OPS),
+      options: {
+        ...options,
+        assetTypes: assetTypes.map((t) => ({ name: t.name, label: t.label || t.name })),
+        tags,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const ScopeBodySchema = z.object({
   scope: z.unknown().optional(),
   // Explicit asset targets (auto rules carry them) so the wizard's device
@@ -134,7 +160,7 @@ const ScopeBodySchema = z.object({
 router.post("/discovery/scope-preview", requirePermission("applicationMap", "read"), async (req, res, next) => {
   try {
     const body = ScopeBodySchema.parse(req.body ?? {});
-    const scope = body.scope == null ? null : normalizeCriteria(body.scope);
+    const scope = normalizeScope(body.scope);
     res.json(await previewScope(scope, body.assetIds ?? []));
   } catch (err) {
     next(err);
@@ -147,7 +173,7 @@ router.post("/discovery/scope-preview", requirePermission("applicationMap", "rea
 router.post("/discovery/inventory", requirePermission("applicationMap", "read"), async (req, res, next) => {
   try {
     const body = ScopeBodySchema.parse(req.body ?? {});
-    const scope = body.scope == null ? null : normalizeCriteria(body.scope);
+    const scope = normalizeScope(body.scope);
     res.json(await getInventoryAggregate(scope));
   } catch (err) {
     next(err);

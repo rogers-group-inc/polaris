@@ -43,7 +43,20 @@
 
   function scopeSummary(r) {
     var parts = [];
-    if (r.scope && (r.scope.rules || []).length) {
+    if (r.scope && Array.isArray(r.scope.children)) {
+      // The condition tree (the wizard's shared device filter). Count its
+      // leaves; name the first one.
+      var leaves = [];
+      (function walk(g) {
+        (g.children || []).forEach(function (c) {
+          if (Array.isArray(c.children)) walk(c); else leaves.push(c);
+        });
+      })(r.scope);
+      if (leaves.length) {
+        var lead = leaves[0].field + " " + leaves[0].operator + " " + leaves[0].value;
+        parts.push(leaves.length === 1 ? lead : lead + " +" + (leaves.length - 1) + " more");
+      }
+    } else if (r.scope && (r.scope.rules || []).length) {
       var n = r.scope.rules.length;
       var first = r.scope.rules[0];
       var label = first.field === "subnet"
