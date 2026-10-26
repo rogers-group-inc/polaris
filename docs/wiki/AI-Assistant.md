@@ -139,6 +139,7 @@ context. Some things to try:
 - *Build a report of every FortiSwitch with its serial and firmware.*
 - *Report the highest average memory of the FortiGate-61F firewalls over the last week.*
 - *Which servers in my region peaked above 90% CPU yesterday?*
+- *What goes down if core-sw-01 goes down?*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
 - *Why are the hardware sensors unresolved on our Fortinet profile?*
@@ -179,6 +180,11 @@ samples while they are still kept, the hourly or daily averages for an older
 period. A device that reports no CPU or memory (one monitored by ping or SSH
 only) is counted, not listed. Ask for a report to get the whole ranking as a
 download. This needs **Assets** read.
+
+It can walk the **dependency tree** around a device: what it hangs off, hop by
+hop to the top, and what sits behind it, with how many of those are down or
+suppressed right now. When the device is down because something above it is,
+it names that device, the same one the alert names.
 
 It knows **your role and access**, and the **regions and tags assigned to you**
 (from your role, your account and your sign-in groups) — so "my region" means

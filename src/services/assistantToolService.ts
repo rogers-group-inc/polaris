@@ -34,6 +34,7 @@ import { queryEventsPage } from "./eventLogService.js";
 import { getRetentionSettings } from "./eventArchiveService.js";
 import { searchHelp } from "./helpIndexService.js";
 import { pickSampleTierForAsset, type SampleTier } from "./sampleQueryRouter.js";
+import { resolveDependencyBlame, BLAME_MAX_HOPS } from "./dependencyTreeService.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
 import type { ChatToolDef } from "./llmService.js";
 
@@ -590,6 +591,152 @@ const telemetrySummaryTool: ListToolDef = {
     const res = await this.rows(args, ctx, ctx.maxRows);
     if ("ok" in res) return res;
     return listResult({ ...res, rows: res.rows.map(({ window: _w, ...r }) => r) });
+  },
+};
+
+// ─── get_dependencies ────────────────────────────────────────────────────────
+//
+// The dependency tree around ONE device: what it hangs off, hop by hop up to
+// the top, and what hangs off it. Edges are AssetDependencyParent rows with the
+// precedence the suppression walk uses (dependencyTreeService loadBlameLayer):
+// a device's `override` parents REPLACE its computed / vcenter ones. When the
+// device is down or suppressed, the root cause comes from resolveDependencyBlame
+// itself, so the assistant names the same culprit the alert does.
+//
+// Scale: one edge read per hop up (bounded by BLAME_MAX_HOPS) and one per layer
+// down (bounded by DEPENDENCY_DOWN_MAX nodes) — never a per-node await.
+
+const DEPENDENCY_DOWN_MAX = 2000;
+
+const DependencyArgs = z.object({
+  id: z.string().max(60).optional(),
+  hostname: z.string().max(255).optional(),
+  ip: z.string().max(60).optional(),
+}).refine((a) => a.id || a.hostname || a.ip, "Give id, hostname or ip");
+
+const DEP_NODE_SELECT = {
+  id: true, hostname: true, ipAddress: true, assetType: true, status: true,
+  monitored: true, monitorStatus: true, dependencySuppressed: true,
+} as const;
+
+/** Effective parents per asset: overrides when it has any, else every other source. */
+async function effectiveParents(ids: string[]): Promise<Map<string, Array<{ parentAssetId: string; detectedVia: string }>>> {
+  const rows = await prisma.assetDependencyParent.findMany({
+    where: { assetId: { in: ids } },
+    select: { assetId: true, parentAssetId: true, source: true, detectedVia: true },
+  });
+  const overrides = new Map<string, Array<{ parentAssetId: string; detectedVia: string }>>();
+  const others = new Map<string, Array<{ parentAssetId: string; detectedVia: string }>>();
+  for (const r of rows) {
+    const target = r.source === "override" ? overrides : others;
+    const list = target.get(r.assetId) ?? [];
+    if (!list.some((p) => p.parentAssetId === r.parentAssetId)) list.push({ parentAssetId: r.parentAssetId, detectedVia: r.detectedVia });
+    target.set(r.assetId, list);
+  }
+  return new Map(ids.map((id) => [id, overrides.get(id) ?? others.get(id) ?? []]));
+}
+
+const getDependenciesTool: ToolDef = {
+  name: "get_dependencies",
+  label: "traced the dependency tree",
+  description:
+    "The dependency tree around ONE device (by id, exact hostname or IP): upstream — the device it hangs off, " +
+    "then that device's parent, hop by hop to the top (how each link was learned: controller, interface, lldp, " +
+    "manual, hypervisor) — and downstream — the devices that hang off it, with how many of them are down or " +
+    "suppressed. When the device is down or suppressed, rootCause names the device whose outage explains it. " +
+    "Use for \"what does X depend on\", \"what is behind X\", \"what goes down if X goes down\".",
+  parameters: {
+    type: "object",
+    properties: { id: { type: "string" }, hostname: { type: "string" }, ip: { type: "string" } },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = DependencyArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const where = a.id ? { id: a.id }
+      : a.hostname ? { hostname: { equals: a.hostname, mode: "insensitive" as const } }
+      : { ipAddress: a.ip };
+    const asset = await prisma.asset.findFirst({ where, select: DEP_NODE_SELECT });
+    if (!asset) return { ok: true, data: { found: false } };
+
+    // Upstream, layer by layer. A node seen before is not walked again (a
+    // cycle in hand-made overrides must not loop).
+    const upstream: Array<Record<string, unknown>> = [];
+    const seen = new Set([asset.id]);
+    let frontier = [asset.id];
+    let upTruncated = false;
+    for (let hop = 1; frontier.length > 0; hop++) {
+      if (hop > BLAME_MAX_HOPS) { upTruncated = true; break; }
+      const parents = await effectiveParents(frontier);
+      const next: Array<{ child: string; parentAssetId: string; detectedVia: string }> = [];
+      for (const [child, list] of parents) {
+        for (const pr of list) if (!seen.has(pr.parentAssetId)) { seen.add(pr.parentAssetId); next.push({ child, ...pr }); }
+      }
+      if (!next.length) break;
+      const nodes = await prisma.asset.findMany({ where: { id: { in: next.map((n) => n.parentAssetId) } }, select: DEP_NODE_SELECT });
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      for (const n of next) {
+        const node = byId.get(n.parentAssetId);
+        if (node) upstream.push({ hop, ...plain(node), parentOf: n.child, detectedVia: n.detectedVia });
+      }
+      frontier = next.map((n) => n.parentAssetId);
+    }
+
+    // Downstream: every device whose EFFECTIVE parents include a node already
+    // reached. Candidate edges are read by parent, then each candidate's own
+    // effective parents decide (an override elsewhere removes the edge).
+    const down = new Set<string>();
+    let layer = [asset.id];
+    let downTruncated = false;
+    const direct: string[] = [];
+    while (layer.length > 0) {
+      const cand = await prisma.assetDependencyParent.findMany({
+        where: { parentAssetId: { in: layer } },
+        select: { assetId: true },
+      });
+      const ids = Array.from(new Set(cand.map((c) => c.assetId))).filter((id) => id !== asset.id && !down.has(id));
+      if (!ids.length) break;
+      const eff = await effectiveParents(ids);
+      const layerSet = new Set(layer);
+      const nextLayer = ids.filter((id) => (eff.get(id) ?? []).some((pr) => layerSet.has(pr.parentAssetId)));
+      if (layer.length === 1 && layer[0] === asset.id) direct.push(...nextLayer);
+      for (const id of nextLayer) down.add(id);
+      if (down.size >= DEPENDENCY_DOWN_MAX) { downTruncated = true; break; }
+      layer = nextLayer;
+    }
+    const downIds = Array.from(down);
+    const [downNodes, blame] = await Promise.all([
+      downIds.length
+        ? prisma.asset.findMany({ where: { id: { in: downIds } }, select: { id: true, monitorStatus: true, dependencySuppressed: true } })
+        : Promise.resolve([] as Array<{ id: string; monitorStatus: string | null; dependencySuppressed: boolean | null }>),
+      asset.monitorStatus === "down" || asset.dependencySuppressed ? resolveDependencyBlame(asset.id) : Promise.resolve(null),
+    ]);
+    const directCap = Math.min(ctx.maxRows, 50);
+    const directNodes = direct.length
+      ? await prisma.asset.findMany({ where: { id: { in: direct.slice(0, directCap) } }, select: DEP_NODE_SELECT, orderBy: { hostname: "asc" } })
+      : [];
+    return {
+      ok: true,
+      data: {
+        found: true,
+        device: plain(asset),
+        upstream,
+        upstreamTruncated: upTruncated,
+        topOfTree: upstream.length === 0 ? "This device has no upstream device recorded." : undefined,
+        downstream: {
+          directChildren: directNodes.map(plain),
+          directChildCount: direct.length,
+          totalDevicesBehind: downIds.length,
+          downBehind: downNodes.filter((n) => n.monitorStatus === "down" && !n.dependencySuppressed).length,
+          suppressedBehind: downNodes.filter((n) => n.dependencySuppressed).length,
+          truncated: downTruncated || direct.length > directCap,
+        },
+        rootCause: blame
+          ? { device: blame.rootCause.hostname, id: blame.rootCause.id, reason: blame.rootCause.reason, hops: blame.hops, chain: blame.chain.map((c) => c.hostname) }
+          : undefined,
+      },
+    };
   },
 };
 
@@ -1413,7 +1560,7 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];

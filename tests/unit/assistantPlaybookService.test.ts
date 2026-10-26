@@ -35,6 +35,10 @@ describe("pickPlaybook", () => {
     ["which firewalls have the highest CPU this week", "telemetry"],
     ["why is fw-nsh-01 cpu so high", "telemetry"],
     ["what is in your memory about me", null],
+    ["what does sw-nsh-02 depend on?", "dependencies"],
+    ["what goes down if core-1 goes down", "dependencies"],
+    ["what's behind fw-nsh-01", "dependencies"],
+    ["why did ap-12 go down? check upstream", "correlate"],
   ])("%s → %s", (q, id) => {
     expect(pickPlaybook(q)?.id ?? null).toBe(id);
   });
@@ -50,7 +54,7 @@ describe("pickPlaybook", () => {
     for (const p of PLAYBOOKS) {
       expect(p.firstRoundTools.length).toBeGreaterThan(0);
       for (const t of p.firstRoundTools) expect(TOOL_NAMES.has(t), `${p.id}: ${t}`).toBe(true);
-      for (const m of p.guidance.match(/\b(list_\w+|get_asset|search_help|search|create_report|fleet_summary|telemetry_summary)\b/g) ?? []) {
+      for (const m of p.guidance.match(/\b((?:list|get|find|search|create|fleet|telemetry|interface|path_check)_\w+|search)\b/g) ?? []) {
         expect(TOOL_NAMES.has(m), `${p.id} guidance names ${m}`).toBe(true);
       }
       expect(p.guidance).toMatch(/what you infer/);

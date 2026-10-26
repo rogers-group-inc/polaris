@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "profile" | "telemetry" | "correlate" | "changed" | "health" | "capacity" | "address";
+  id: "profile" | "telemetry" | "correlate" | "dependencies" | "changed" | "health" | "capacity" | "address";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -81,7 +81,7 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
     id: "correlate",
     label: "outage correlation",
     match: /\b(why (did|is|was|has|does)\b|what (happened|caused|took down|went wrong|killed)\b|root cause|correlat\w*|what else (went|is|was) down|cause of|caused by)/i,
-    firstRoundTools: ["search", "get_asset", "list_alerts"],
+    firstRoundTools: ["search", "get_asset", "list_alerts", "get_dependencies"],
     guidance: [
       "Playbook — outage correlation. Follow these steps in order before answering:",
       "1. Find the device: get_asset by its hostname or IP (search first if the name is partial). Note its " +
@@ -92,10 +92,26 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
         "(siblings behind the same parent, the parent itself).",
       "3. Events in the same window: list_events — configuration changes, discovery runs, maintenance holds, " +
         "integration failures. A change minutes before the drop is the lead.",
-      "4. The upstream device: get_asset on the parent; if it went down first, that is the likely cause and the " +
-        "device is a casualty, not a fault.",
+      "4. The upstream chain: get_dependencies on the device — its rootCause, when present, is the device whose " +
+        "outage explains it; otherwise check whether a parent in its upstream went down first. A device under a " +
+        "dark parent is a casualty, not a fault.",
       "5. Answer with a short timeline first (times from the lookups, in order), then the likely cause ONLY if " +
         "the data supports it, else say what is missing. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // After correlate: "why did X go down" walks the tree as one of its steps.
+    id: "dependencies",
+    label: "dependency tree",
+    match: /\b(depends? on|dependenc(y|ies)|upstream|downstream|hangs? off|what('s| is) (behind|under|connected to)|what (goes|would go|will go) down (if|when)|blast radius|parent device)\b/i,
+    firstRoundTools: ["get_dependencies", "search"],
+    guidance: [
+      "Playbook — dependency tree. Follow these steps in order:",
+      "1. get_dependencies for the device (search first if the name is partial).",
+      "2. Answer upstream first — each hop by name, top of the tree last, and how the link was learned when it " +
+        "matters — then downstream: how many devices sit behind it, how many are down or suppressed now, and the " +
+        "direct children by name (offer the rest rather than listing dozens). If rootCause is present, say it. " +
+        "Link every device you name. " + SEPARATE,
     ].join("\n"),
   },
   {

@@ -33,6 +33,7 @@ vi.mock("../../src/services/notificationService.js", () => ({ listNotifications:
 vi.mock("../../src/services/searchService.js", () => ({ searchAll: h.searchAll }));
 vi.mock("../../src/services/regionScopeService.js", () => ({ getEffectiveRegionTags: async () => [], getEffectiveTagScopes: h.tagScopes }));
 vi.mock("../../src/services/eventLogService.js", () => ({ queryEventsPage: vi.fn(async () => ({ events: [], total: 0 })) }));
+vi.mock("../../src/services/dependencyTreeService.js", () => ({ resolveDependencyBlame: vi.fn(async () => null), BLAME_MAX_HOPS: 16 }));
 vi.mock("../../src/services/sampleQueryRouter.js", () => ({ pickSampleTierForAsset: h.tier }));
 vi.mock("../../src/services/eventArchiveService.js", () => ({ getRetentionSettings: async () => ({ retentionDays: 7 }) }));
 
@@ -55,6 +56,7 @@ describe("permission gate", () => {
     ["list_reservations", "{}"],
     ["fleet_summary", "{}"],
     ["telemetry_summary", "{}"],
+    ["get_dependencies", "{\"hostname\":\"fw1\"}"],
   ])("%s refuses a role without the key and queries nothing", async (name, args) => {
     const r = await runAssistantTool(name, args, { req: none, maxRows: 50 });
     expect(r.ok).toBe(false);
