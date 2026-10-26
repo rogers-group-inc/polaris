@@ -7490,34 +7490,28 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   cursor: pointer;
 }
 .dashboard-tab-remove:hover { color: var(--color-danger); background: var(--color-hover-tint); }
-/* Inline rename input on the active tab (edit mode) — the same field as the
-   global search (.global-search input): --color-bg-primary ground, hairline,
-   control shadow, accent ring on focus. Scoped under .dashboard-tab because
-   the bare class loses to the global input[type="text"] rule, which painted
-   it --color-bg-secondary — a near-black void on nightfall. */
-.dashboard-tab .dashboard-tab-name-input {
+/* Inline rename input on the active tab (edit mode): BARE TEXT, not a field.
+   No ground, border, radius or shadow — it reads as the tab's own label; a
+   click puts the text cursor in it and the text can be selected and typed
+   over (operator request 2026-10-26: the bubble around the name was
+   rejected). Scoped under .dashboard-tab because the bare class loses to the
+   global input[type="text"] rule (0,1,1), which would paint a box back on;
+   the :focus rule likewise beats the global input:focus ring. Zero padding
+   and margin keep the tab exactly the height and width it has as a label. */
+.dashboard-tab .dashboard-tab-name-input,
+.dashboard-tab .dashboard-tab-name-input:focus {
   width: auto;
-  padding: 0.2rem 0.5rem;
-  /* Its padding + border pulled back out of the tab's height, so the active
-     tab — and with it the whole tab row, the edit buttons and the page card
-     — does not drop 7-8px when Customize turns the name into this field. */
-  margin-block: calc(-0.2rem - 1px);
+  padding: 0;
+  margin: 0;
   font: inherit;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-control);
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   outline: none;
   cursor: text;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-/* box-shadow REPLACES, so the ring re-states the drop shadow — the same
-   reason the .global-search focus rule does. */
-.dashboard-tab .dashboard-tab-name-input:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-control);
+  caret-color: currentColor;
 }
 
 /* Column canvas. The dashboard is a 12-col grid of COLUMNS; each column is a

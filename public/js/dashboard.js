@@ -454,6 +454,11 @@
     // Inline rename on the active tab's input: Enter or blur commits, Esc cancels.
     var input = tabsEl.querySelector(".dashboard-tab-name-input");
     if (input) {
+      // The field is bare text (styles.css), so it is sized to its text —
+      // the `size` attribute counts average-width characters and left a gap
+      // after the name. Re-fitted on every keystroke.
+      fitNameInput(input);
+      input.addEventListener("input", function () { fitNameInput(input); });
       input.addEventListener("click", function (e) { e.stopPropagation(); });
       input.addEventListener("keydown", function (e) {
         if (e.key === "Enter") { e.preventDefault(); input.blur(); }
@@ -461,6 +466,30 @@
       });
       input.addEventListener("blur", function () { commitTabName(input.getAttribute("data-name"), input.value); });
     }
+  }
+
+  // Width of the input's text in its own font, measured on a hidden span; an
+  // empty name keeps 2ch so there is still something to click. Cosmetic, so
+  // it can never break the tab row: a measuring failure leaves the `size`
+  // attribute's width in place. A width of 0 (nothing laid out) is ignored.
+  function fitNameInput(input) {
+    try {
+      var probe = document.getElementById("dashboard-tab-name-probe");
+      if (!probe) {
+        probe = document.createElement("span");
+        probe.id = "dashboard-tab-name-probe";
+        probe.setAttribute("aria-hidden", "true");
+        probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;left:-9999px;top:0";
+        document.body.appendChild(probe);
+      }
+      var cs = window.getComputedStyle(input);
+      probe.style.font = cs.font;
+      probe.style.letterSpacing = cs.letterSpacing;
+      probe.textContent = input.value;
+      var w = probe.getBoundingClientRect().width;
+      if (!input.value) input.style.width = "2ch";
+      else if (w > 0) input.style.width = Math.ceil(w) + 2 + "px";
+    } catch (_) { /* keep the size-attribute width */ }
   }
 
   function nameOf(id) {
