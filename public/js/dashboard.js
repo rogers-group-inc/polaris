@@ -66,6 +66,7 @@
   var emptyEl = null;
   var tabsEl = null;
   var customizeBtn = null;
+  var refreshBtn = null;
   var addWidgetsBtn = null;
   var doneBtn = null;
   var createBtn = null;
@@ -88,6 +89,7 @@
     emptyEl      = document.getElementById("dashboard-empty-state");
     tabsEl       = document.getElementById("dashboard-tabs");
     customizeBtn = document.getElementById("dashboard-customize");
+    refreshBtn   = document.getElementById("dashboard-refresh");
     addWidgetsBtn = document.getElementById("dashboard-add-widgets");
     doneBtn      = document.getElementById("dashboard-done");
     createBtn    = document.getElementById("dashboard-create");
@@ -96,6 +98,7 @@
     emptyDefaultHTML = emptyEl.innerHTML;
 
     customizeBtn.addEventListener("click", enterEditMode);
+    if (refreshBtn) refreshBtn.addEventListener("click", refreshWidgets);
     if (addWidgetsBtn) addWidgetsBtn.addEventListener("click", function () { WidgetLibrary.open(handleTapToAdd); });
     if (doneBtn) doneBtn.addEventListener("click", exitEditMode);
     if (createBtn) createBtn.addEventListener("click", createDashboard);
@@ -330,6 +333,8 @@
     // header's old Create New Dashboard button is gone; createBtn stays null.
     var viewingPublished = !!state.external;
     if (customizeBtn)   customizeBtn.hidden   = state.editing || viewingPublished;
+    // Refresh is a viewing verb, so a published dashboard keeps it.
+    if (refreshBtn)     refreshBtn.hidden     = state.editing;
     // Widgets are added from each block's "+ Add Widget" (or "+ New Widget
     // Block"); the header's Add Widgets button is gone, addWidgetsBtn null.
     if (addWidgetsBtn)  addWidgetsBtn.hidden  = true;
@@ -345,6 +350,14 @@
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────
+
+  // Header Refresh: remount every widget body in place (the column shells
+  // stay), so each fetches its data now instead of waiting for its own
+  // interval. Nothing is saved.
+  function refreshWidgets() {
+    if (state.editing) return;
+    activeDash().columns.forEach(function (col) { col.widgets.forEach(renderWidget); });
+  }
 
   function unmountAll() {
     Object.keys(state.unmounts).forEach(function (id) {
