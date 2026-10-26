@@ -594,6 +594,136 @@ const telemetrySummaryTool: ListToolDef = {
   },
 };
 
+// ─── list_services ───────────────────────────────────────────────────────────
+//
+// The systemd units / Windows services the Polaris Agent reports (AssetService,
+// current state, agent-only). The two platforms speak different vocabularies,
+// so the model asks in plain words — running / stopped / failed, automatic /
+// manual / disabled — and they are mapped here. `problems` is the question an
+// operator actually asks: a systemd unit in `failed`, or a Windows service set
+// to start automatically that is not running. An enabled-but-inactive systemd
+// unit is NOT a problem (timer- and socket-started units sit there normally).
+//
+// Scale: one asset findMany (id + names) and one service findMany / count
+// filtered in SQL, capped — never a per-device read.
+
+const SERVICE_STATES = ["running", "stopped", "failed"] as const;
+const SERVICE_STARTUPS = ["automatic", "manual", "disabled"] as const;
+const ACTIVE_FOR: Record<(typeof SERVICE_STATES)[number], string[]> = {
+  running: ["active", "running"],
+  stopped: ["inactive", "stopped"],
+  failed: ["failed"],
+};
+const WIN_AUTO = ["auto", "auto-delayed", "boot", "system"];
+const ENABLED_FOR: Record<(typeof SERVICE_STARTUPS)[number], string[]> = {
+  automatic: ["enabled", ...WIN_AUTO],
+  manual: ["manual", "static"],
+  disabled: ["disabled", "masked"],
+};
+
+const ServiceArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  service: z.string().max(200).optional(),
+  state: oneOrMany(z.enum(SERVICE_STATES)),
+  startup: oneOrMany(z.enum(SERVICE_STARTUPS)),
+  problems: z.boolean().optional(),
+  watchedOnly: z.boolean().optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+const listServicesTool: ListToolDef = {
+  name: "list_services",
+  label: "checked services",
+  description:
+    "Services on servers and workstations running the Polaris Agent (systemd units on Linux, Windows services): " +
+    "state (running / stopped / failed), startup type (automatic / manual / disabled), CPU and memory. Takes the " +
+    "same device filters as list_assets. service matches the unit / service name or display name (\"sql\", " +
+    "\"nginx\"). problems: true finds what should be running but is not — a failed systemd unit, or a Windows " +
+    "service set to start automatically that is stopped. watchedOnly: the services pinned for monitoring on " +
+    "each device. Devices without the agent report no services.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...ASSET_FILTER_PROPS,
+      service: { type: "string", description: "Service / unit name or display name contains this text" },
+      state: { type: "array", items: { type: "string", enum: [...SERVICE_STATES] } },
+      startup: { type: "array", items: { type: "string", enum: [...SERVICE_STARTUPS] } },
+      problems: { type: "boolean", description: "Only services that should be running but are not" },
+      watchedOnly: { type: "boolean", description: "Only services pinned for monitoring on their device" },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "hostname", label: "Hostname" }, { key: "ipAddress", label: "IP" }, { key: "service", label: "Service" },
+    { key: "displayName", label: "Display name" }, { key: "platform", label: "Platform" }, { key: "state", label: "State" },
+    { key: "startup", label: "Startup" }, { key: "cpuPct", label: "CPU %" }, { key: "memMB", label: "Memory MB" },
+    { key: "watched", label: "Watched" }, { key: "updatedAt", label: "Reported" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = ServiceArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const assets = inSubnet(await prisma.asset.findMany({
+      where: filter.where,
+      select: { id: true, hostname: true, ipAddress: true, monitoredServices: true },
+    }), filter.subnet);
+    if (!assets.length) return { rows: [], total: 0, extra: { matchedDevices: 0 } };
+
+    const and: Record<string, unknown>[] = [{ assetId: { in: assets.map((x) => x.id) } }];
+    if (a.service) {
+      and.push({ OR: [
+        { unit: { contains: a.service, mode: "insensitive" } },
+        { displayName: { contains: a.service, mode: "insensitive" } },
+      ] });
+    }
+    if (a.state) and.push({ activeState: { in: a.state.flatMap((s) => ACTIVE_FOR[s]), mode: "insensitive" } });
+    if (a.startup) and.push({ enabledState: { in: a.startup.flatMap((s) => ENABLED_FOR[s]), mode: "insensitive" } });
+    if (a.problems) {
+      and.push({ OR: [
+        { activeState: { equals: "failed", mode: "insensitive" } },
+        { platform: "windows", enabledState: { in: WIN_AUTO, mode: "insensitive" }, NOT: { activeState: { equals: "running", mode: "insensitive" } } },
+      ] });
+    }
+    if (a.watchedOnly) {
+      // Pins are per device; OR of (device, its pinned units), devices with none dropped.
+      const pinned = assets.filter((x) => x.monitoredServices.length);
+      if (!pinned.length) return { rows: [], total: 0, extra: { matchedDevices: assets.length, note: "No matching device has a watched service." } };
+      and.push({ OR: pinned.map((x) => ({ assetId: x.id, unit: { in: x.monitoredServices } })) });
+    }
+    const where = { AND: and };
+    const take = Math.min(a.limit ?? cap, cap);
+    const [rows, total, devicesWithServices] = await Promise.all([
+      prisma.assetService.findMany({
+        where, take, orderBy: [{ assetId: "asc" }, { unit: "asc" }],
+        select: { assetId: true, unit: true, displayName: true, platform: true, activeState: true, subState: true, enabledState: true, cpuPct: true, memBytes: true, updatedAt: true },
+      }),
+      prisma.assetService.count({ where }),
+      prisma.assetService.groupBy({ by: ["assetId"], where: { assetId: { in: assets.map((x) => x.id) } } }).then((g) => g.length),
+    ]);
+    const byId = new Map(assets.map((x) => [x.id, x]));
+    return {
+      rows: rows.map((s) => {
+        const dev = byId.get(s.assetId);
+        const state = [s.activeState, s.subState && s.subState !== s.activeState ? s.subState : null].filter(Boolean).join(" / ");
+        return plain({
+          id: s.assetId, hostname: dev?.hostname ?? null, ipAddress: dev?.ipAddress ?? null,
+          service: s.unit, displayName: s.displayName, platform: s.platform, state: state || null, startup: s.enabledState || null,
+          cpuPct: round1(s.cpuPct), memMB: s.memBytes == null ? null : Math.round(Number(s.memBytes) / 1_048_576),
+          watched: Boolean(dev?.monitoredServices.includes(s.unit)), updatedAt: s.updatedAt,
+        });
+      }),
+      total,
+      extra: { matchedDevices: assets.length, devicesReportingServices: devicesWithServices },
+    };
+  },
+  async run(args, ctx) {
+    return listResult(await this.rows(args, ctx, ctx.maxRows));
+  },
+};
+
 // ─── get_dependencies ────────────────────────────────────────────────────────
 //
 // The dependency tree around ONE device: what it hangs off, hop by hop up to
@@ -1166,11 +1296,11 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
 
 /** The list tools a report can be built from (create_report's `source`). */
-export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary"] as const;
+export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
@@ -1195,7 +1325,8 @@ const createReportTool: ToolDef = {
       columns: {
         type: "array", items: { type: "string" },
         description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt. " +
-          "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window",
+          "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window. " +
+          "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt",
       },
     },
     required: ["title", "source"],
@@ -1560,7 +1691,7 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];

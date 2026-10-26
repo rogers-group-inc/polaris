@@ -140,6 +140,7 @@ context. Some things to try:
 - *Report the highest average memory of the FortiGate-61F firewalls over the last week.*
 - *Which servers in my region peaked above 90% CPU yesterday?*
 - *What goes down if core-sw-01 goes down?*
+- *Which automatic services are stopped on the SQL servers?*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
 - *Why are the hardware sensors unresolved on our Fortinet profile?*
@@ -180,6 +181,11 @@ samples while they are still kept, the hourly or daily averages for an older
 period. A device that reports no CPU or memory (one monitored by ping or SSH
 only) is counted, not listed. Ask for a report to get the whole ranking as a
 download. This needs **Assets** read.
+
+It can list **services** on devices running the [Polaris Agent](Polaris-Agent)
+(systemd units and Windows services): their state, startup type, CPU and memory.
+Ask for the ones that *should be running but aren't*: a failed systemd unit, or a
+Windows service set to start automatically that is stopped.
 
 It can walk the **dependency tree** around a device: what it hangs off, hop by
 hop to the top, and what sits behind it, with how many of those are down or
