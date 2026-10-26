@@ -784,19 +784,21 @@
         },
       },
       // Connection-path handles (topology-edge-editor.js): a filled dot per
-      // bend point, a ring per end point riding the device outline. Drawn
-      // above everything so a handle on top of a device stays grabbable.
+      // bend point, a ring per end point riding the device outline — every
+      // handle the same size, selected or not, so only fill and border
+      // colour tell them apart. Drawn above everything so a handle on top of
+      // a device stays grabbable.
       {
         selector: "node[isEdgeHandle]",
         style: {
           shape: "ellipse",
-          width: 10,
-          height: 10,
+          width: 12,
+          height: 12,
           label: "",
           "background-color": "#22d3ee",
           "background-opacity": 1,
           "background-image": "none",
-          "border-width": 2,
+          "border-width": 3,
           "border-color": isDark ? "#0d0d1a" : "#ffffff",
           "border-opacity": 1,
           "overlay-padding": 4,
@@ -809,18 +811,15 @@
       {
         selector: 'node[isEdgeHandle][handleKind != "bend"]',
         style: {
-          width: 12,
-          height: 12,
           "background-color": isDark ? "#0d0d1a" : "#ffffff",
-          "border-width": 3,
           "border-color": "#22d3ee",
         },
       },
       {
         selector: "node[isEdgeHandle]:selected",
         style: {
-          width: 14,
-          height: 14,
+          // Same size as an unselected handle; border-width restated so
+          // the generic node:selected rule's 5px border can't fatten it.
           "border-width": 3,
           "border-color": "#f59e0b",
           "overlay-opacity": 0,
