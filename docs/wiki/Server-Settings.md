@@ -441,6 +441,17 @@ and **Application Updates** side by side, **Platform Lifecycle**, then
 **Backup**, **Restore**, **Backup History** and **Scheduled Backups** in one
 row (two by two on a narrower window).
 
+Every card that can raise a problem wears its state on its **left edge**: grey
+when all is well, blue for watch, amber for a warning, red for critical. That
+is the Database, Capacity Advisor (amber while it has recommendations),
+Platform Lifecycle and Scheduled Backups (red when the last run failed) cards
+here, and the HTTPS Certificate card on the Certificates tab (amber inside 30
+days of expiry, red inside 7 or once expired).
+
+When any card on this tab is amber or red, a **Needs attention** strip above
+the Database card names each one; click a name to jump to its card, so a
+problem lower down the tab is not missed by someone who doesn't scroll.
+
 ### Backup
 
 **Backup** (with an optional encryption password), **Restore** (drop a `.gz` or
@@ -471,7 +482,8 @@ install** rather than assumed.
 
 The **Capacity Advisor** card beside Updates appears only when it has something
 to recommend: the queue mode, the connection-pool and worker-count variables,
-and PostgreSQL tuning (`max_connections`, `shared_buffers` and friends). Tick
+and PostgreSQL tuning (`max_connections`, `shared_buffers` and friends). Its
+header counts the recommendations only when there is at least one. Tick
 the rows you want, **Stage** them, and **Restart Polaris to apply**. On a
 Docker / podman / Unraid install there is no restart button: the card asks you
 to restart the Polaris container yourself (`docker compose restart` for a
@@ -593,6 +605,10 @@ it; hover the row for a reminder.
 Grades what this host is actually running — Node, PostgreSQL, TimescaleDB, Go,
 nginx, Java, the OS — against committed end-of-life dates, and links the upgrade
 steps.
+
+Platform findings are listed on this card, not on the Database card: they still
+reach the sidebar alert, Events and email through the capacity snapshot, but
+the Database card neither lists them nor takes their colour.
 
 A component **below the minimum** is flagged critical. An upstream end-of-life
 is flagged and emailed but deliberately does **not** hold a permanent banner

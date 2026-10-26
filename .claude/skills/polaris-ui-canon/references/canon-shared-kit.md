@@ -392,6 +392,20 @@ stack, sit in a fixed row, or reflow with the window.
 | `.settings-cards-row-4` | grid, 4 columns → 2 under 1300px viewport (`minmax(0, 1fr)` so a long token cannot widen its column) | a fixed set of four short cards — the Maintenance tab's Backup / Restore / Backup History / Scheduled Backups |
 | `.settings-cards-flow` | `columns: 360px 3` — up to 3 columns, min 360px each, count chosen by the browser | a deck of independent cards of differing height (the Web Server tab) |
 
+**Settings card severity edge.** A settings card that can raise a problem adds
+`severity-edge severity-edge-<ok|watch|amber|red>` (suffix from
+`_capacitySeverityCssClass`): a 3px left border, grey / accent / warning /
+danger. Wearing it today: Database (`#capacity-card`), Capacity Advisor (amber
+while it has changed rows), Platform Lifecycle, Scheduled Backups
+(`#bksched-card`, toggled red by `loadBackupSchedule` on `lastError`) and the
+HTTPS Certificate card (amber under 30 days, red under 7). A new card that grades
+itself takes the same classes **and an `id`**: the Maintenance tab's
+`renderCardAlertSummary` builds its **Needs attention** strip by querying the
+amber/red edges on the page (only cards with an id count, so the strip never
+counts itself), taking each card's `<h4>` as its name and scrolling to it on
+click. A card that grades after an async load calls `renderCardAlertSummary`
+again once it has set its class.
+
 **Key conventions:**
 - **A tab with more than three cards wants `.settings-cards-flow`, not a `-row` class.** The
   `-row` grids assign a card to a fixed slot, so a fourth card means another hand-written

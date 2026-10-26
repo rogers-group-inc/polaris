@@ -55,6 +55,23 @@
   </div>
 
   <div class="card">
+    <div class="card-title">Settings card severity edge + Needs attention strip</div>
+    <div class="card-alert-summary severity-edge severity-edge-red">
+      <span class="card-alert-summary-label">Needs attention</span>
+      <button type="button" class="card-alert-summary-item"><span class="capacity-pill capacity-pill-amber capacity-pill-sm">Warning</span>Platform Lifecycle</button>
+      <button type="button" class="card-alert-summary-item"><span class="capacity-pill capacity-pill-red capacity-pill-sm">Critical</span>Scheduled Backups</button>
+    </div>
+    <div class="settings-card severity-edge severity-edge-ok"><h4>Database</h4><p class="hint">ok — grey edge</p></div>
+    <div class="settings-card severity-edge severity-edge-watch"><h4>Database</h4><p class="hint">watch — accent edge</p></div>
+    <div class="settings-card severity-edge severity-edge-amber"><h4>Platform Lifecycle</h4><p class="hint">warning — amber edge</p></div>
+    <div class="settings-card severity-edge severity-edge-red"><h4>Scheduled Backups</h4><p class="hint">critical — red edge</p></div>
+    <p class="hint" style="margin-top:10px">
+      A settings card that can raise a problem adds <code>.severity-edge</code> + <code>.severity-edge-&lt;ok|watch|amber|red&gt;</code>.
+      The Maintenance tab's <code>.card-alert-summary</code> strip names every amber or red card above the first card; each name scrolls to its card.
+    </p>
+  </div>
+
+  <div class="card">
     <div class="card-title">Spinner</div>
     <span class="spinner" style="width:18px; height:18px"></span>
     <span style="margin-left:10px; font-size:0.85rem; color:var(--color-text-secondary)">Loading…</span>
