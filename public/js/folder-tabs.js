@@ -239,6 +239,16 @@ function _measureStrip(strip) {
   var box = tabs.length ? tabs[0].parentElement : strip;
   st.strip = strip;
   st.box = box;
+  // The folder card the tabs open into, if any: the slanted left fade starts
+  // at its left edge (_maskArea).
+  st.card = null;
+  var row = strip.parentElement;
+  if (row && row.classList.contains("folder-head-card")) {
+    document.querySelectorAll(".folder-body").forEach(function (b) {
+      if (!st.card && b.getClientRects().length &&
+          (row.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) st.card = b;
+    });
+  }
   st.gap = parseFloat(getComputedStyle(box).columnGap) || 0;
   st.items = [];
   var x = 0;
@@ -287,7 +297,7 @@ function _clampPos(st) {
 // opaque except where an edge fades, from the area's edge in.
 var STRIP_SHADOW_PX = 32;
 
-function _maskArea(box, on, fadeL, fadeR, R, EL) {
+function _maskArea(box, on, fadeL, fadeR, R, EL, card) {
   var E = STRIP_SHADOW_PX, F = STRIP_FADE_PX;
   // content-box: the pinned width is the AREA; the padding sits outside it.
   _setStyle(box, "boxSizing", on ? "content-box" : "");
@@ -307,10 +317,23 @@ function _maskArea(box, on, fadeL, fadeR, R, EL) {
   // it, and a slanted fade there would lay tab tops under them.
   var img = "", size = "", posn = "", rep = "";
   if (on && (fadeL || fadeR)) {
-    var W = R + E + EL, SPLIT = Math.min(W, EL + E + 4), s = Math.SQRT1_2;
+    // The slant's anchor (x0, y0), in the box's px: where the fade is fully
+    // clear. With a folder card it is the card's top-left corner — the fade's
+    // foot starts at the card's edge (operator request 2026-10-26) — else the
+    // tabs' top line, F px before the area's edge. Position along a 135deg
+    // gradient is s·(x + y), s = √2/2, so the stops are s·(x0 + y0) and
+    // s·(x0 + y0) + s·F.
+    var x0 = EL - F, y0 = E;
+    if (card) {
+      var br = box.getBoundingClientRect(), cr = card.getBoundingClientRect();
+      x0 = cr.left - br.left;
+      y0 = cr.top - br.top;
+    }
+    var s = Math.SQRT1_2, pt = s * (x0 + y0), po = pt + s * F;
+    var W = R + E + EL, SPLIT = Math.max(4, Math.min(W, Math.ceil(po / s) + 4));
     var solid = "linear-gradient(#000, #000)";
     var left = fadeL
-      ? "linear-gradient(135deg, transparent 0px, transparent " + (s * (EL - F + E)).toFixed(1) + "px, #000 " + (s * (EL + E)).toFixed(1) + "px)"
+      ? "linear-gradient(135deg, transparent 0px, transparent " + pt.toFixed(1) + "px, #000 " + po.toFixed(1) + "px)"
       : solid;
     var right = fadeR
       ? "linear-gradient(to right, #000 0px, #000 " + (EL + R - F - SPLIT).toFixed(1) + "px, transparent " + (EL + R - SPLIT).toFixed(1) + "px)"
@@ -339,7 +362,7 @@ function _layoutStrip(strip) {
   if (box && box !== strip) {
     _setStyle(box, "width", on ? R.toFixed(1) + "px" : "");
     _setStyle(box, "flexShrink", on ? "0" : "");
-    _maskArea(box, on, on && st.pos > 0.5, on && st.pos < st.max - 0.5, R, st.padL || STRIP_SHADOW_PX);
+    _maskArea(box, on, on && st.pos > 0.5, on && st.pos < st.max - 0.5, R, st.padL || STRIP_SHADOW_PX, st.card);
   }
   st.items.forEach(function (it) {
     var el = it.el;
