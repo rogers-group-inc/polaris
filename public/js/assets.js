@@ -28334,7 +28334,6 @@ function _renderPathCharts(check, data) {
     { label: "Availability", value: count ? (Math.round((okCount / count) * 1000) / 10) + " %" : null },
     { label: "Failed runs", value: String(count - okCount) },
   ]);
-  void ok;
 }
 
 /** Pure: bucket detail samples into n availability ratios over [t0, t1]. */
