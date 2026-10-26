@@ -1,19 +1,21 @@
 /**
  * tests/unit/folderTabsStripNav.test.ts — the tab strip WINDOW
- * (public/js/folder-tabs.js → _measureStrip / _layoutStrip / _stripStepTarget,
- * the ‹ › pair and the wheel).
+ * (public/js/folder-tabs.js → _measureStrip / _runWidths / _stepStrip, the
+ * ‹ › pair and the wheel).
  *
  * A strip with more tabs than room never scrolls natively (that showed tabs
- * past the card's edges, under a scrollbar). It is a window onto the row of
- * tabs: a tab the window's edge cuts is squeezed to the part inside, one wholly
- * outside is not drawn, so the drawn tabs always sum to the room. ‹ › move one
- * tab per click; a wheel moves the window by its delta.
+ * past the card's edges, under a scrollbar). It shows a run of WHOLE tabs that
+ * fits its room, starting at `first`, and draws none of the rest, so no tab is
+ * ever a sliver. One step — a ‹ › click or a wheel notch — moves `first` by
+ * one tab, whatever that tab's length.
  *
  * folder-tabs.js is a classic self-wiring script, so it is eval'd into a
  * happy-dom Window. happy-dom lays nothing out, so each tab reports its width
- * by hand: its squeezed inline width, 0 when hidden, else its natural 100px.
- * Five tabs = a 500px row; the strip is 250px wide with a 30px + button, so
- * the room is 220px. No CSS is loaded, so padding and gaps are 0.
+ * by hand: its squeezed inline width, 0 when hidden, else its natural width.
+ * The tabs are 60 / 140 / 80 / 100 / 50 px — different lengths, so a step is
+ * seen to be one TAB, not a fixed distance. The strip is 250px with a 30px +
+ * button, so the room is 220px. No CSS is loaded, so padding and gaps are 0.
+ * No requestAnimationFrame in Node, so every step lands at once.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -24,8 +26,7 @@ import { Window } from "happy-dom";
 const SRC = readFileSync(resolve(__dirname, "../../public/js/folder-tabs.js"), "utf8");
 const g = globalThis as Record<string, unknown>;
 
-const TAB_W = 100;
-const ROOM = 220;
+const WIDTHS = [60, 140, 80, 100, 50];
 
 function rowHtml(n: number, active: number) {
   let tabs = "";
@@ -39,8 +40,6 @@ function rowHtml(n: number, active: number) {
   "</div>";
 }
 
-type El = HTMLElement & { __w?: number };
-
 interface Boot {
   win: InstanceType<typeof Window>;
   strip: HTMLElement;
@@ -49,11 +48,11 @@ interface Boot {
   prev: () => HTMLButtonElement;
   next: () => HTMLButtonElement;
   drawn: () => number[];
-  pos: () => number;
+  first: () => number;
   settle: () => Promise<void>;
 }
 
-function stubBox(el: El, width: () => number) {
+function stubBox(el: HTMLElement, width: () => number) {
   Object.defineProperty(el, "getBoundingClientRect", {
     value: () => ({ width: width(), height: 20, left: 0, right: width(), top: 0, bottom: 20 }),
     configurable: true,
@@ -72,19 +71,20 @@ async function boot(n: number, active = 0, stripWidth = 250): Promise<Boot> {
   g.ResizeObserver = undefined;
   doc.body.innerHTML = rowHtml(n, active);
 
-  const strip = doc.getElementById("strip") as unknown as El;
+  const strip = doc.getElementById("strip") as unknown as HTMLElement;
   Object.defineProperty(strip, "clientWidth", { get: () => stripWidth, configurable: true });
   stubBox(strip, () => stripWidth);
-  stubBox(doc.getElementById("add") as unknown as El, () => 30);
-  const tabEls = () => Array.from(doc.querySelectorAll(".table-tab")) as unknown as El[];
-  const stubTabs = () => tabEls().forEach((t) => stubBox(t, () =>
-    t.style.display === "none" ? 0 : t.style.width ? parseFloat(t.style.width) : TAB_W));
+  stubBox(doc.getElementById("add") as unknown as HTMLElement, () => 30);
+  const tabEls = () => Array.from(doc.querySelectorAll(".table-tab")) as unknown as HTMLElement[];
+  const stubTabs = () => tabEls().forEach((t) => {
+    const natural = WIDTHS[Number(t.getAttribute("data-tab")!.slice(1))];
+    stubBox(t, () => (t.style.display === "none" ? 0 : t.style.width ? parseFloat(t.style.width) : natural));
+  });
   stubTabs();
 
   (0, eval)(SRC);
   const row = doc.querySelector(".table-head-row") as unknown as HTMLElement;
   const nav = () => row.querySelector(":scope > .table-tabs-nav") as unknown as HTMLElement;
-  const st = () => (strip as unknown as { __tabWin: { pos: number } }).__tabWin;
   const settle = async () => {
     stubTabs();
     await new Promise((r) => setTimeout(r, 5));
@@ -99,7 +99,7 @@ async function boot(n: number, active = 0, stripWidth = 250): Promise<Boot> {
     prev: () => nav().querySelector('[data-dir="-1"]') as unknown as HTMLButtonElement,
     next: () => nav().querySelector('[data-dir="1"]') as unknown as HTMLButtonElement,
     drawn: () => tabEls().map((t) => Math.round(t.getBoundingClientRect().width)),
-    pos: () => st().pos,
+    first: () => (strip as unknown as { __tabWin: { first: number } }).__tabWin.first,
     settle,
   };
 }
@@ -112,7 +112,7 @@ afterEach(() => {
 describe("tab strip window", () => {
   it("leaves the tabs alone and the pair hidden while they fit", async () => {
     const b = await boot(2);
-    expect(b.drawn()).toEqual([100, 100]);
+    expect(b.drawn()).toEqual([60, 140]);
     expect(b.tabs().every((t) => !t.getAttribute("style"))).toBe(true);
     expect(b.nav().classList.contains("is-idle")).toBe(true);
   });
@@ -123,61 +123,66 @@ describe("tab strip window", () => {
     expect(b.nav().nextElementSibling?.id).toBe("controls");
   });
 
-  it("draws exactly the room when the tabs overflow: whole tabs, then a squeezed one, then none", async () => {
+  it("shows only whole tabs when they overflow — no sliver at the end", async () => {
     const b = await boot(5);
     expect(b.nav().classList.contains("is-idle")).toBe(false);
-    expect(b.drawn()).toEqual([100, 100, 20, 0, 0]);
-    expect(b.drawn().reduce((a, c) => a + c, 0)).toBe(ROOM);
-    expect(b.tabs()[2].style.overflow).toBe("hidden");
+    expect(b.drawn()).toEqual([60, 140, 0, 0, 0]);   // 80 more would be 280 > 220
     expect(b.prev().disabled).toBe(true);
     expect(b.next().disabled).toBe(false);
   });
 
-  it("› moves one tab: the next tab on the right comes fully in, the left-most narrows", async () => {
+  it("› moves one tab each click, whatever its length", async () => {
     const b = await boot(5);
     b.next().click();
     await b.settle();
-    expect(b.pos()).toBe(80);                 // tab 2's right edge (300) − room
-    expect(b.drawn()).toEqual([20, 100, 100, 0, 0]);
+    expect(b.first()).toBe(1);
+    expect(b.drawn()).toEqual([0, 140, 80, 0, 0]);
     b.next().click();
     await b.settle();
-    expect(b.pos()).toBe(180);
-    expect(b.drawn()).toEqual([0, 20, 100, 100, 0]);
+    expect(b.drawn()).toEqual([0, 0, 80, 100, 0]);
+    b.next().click();
+    await b.settle();
+    expect(b.drawn()).toEqual([0, 0, 0, 100, 50]);   // the end: every remaining tab fits
+    expect(b.next().disabled).toBe(true);
     expect(b.prev().disabled).toBe(false);
   });
 
-  it("‹ moves one tab back: the next tab on the left comes fully in", async () => {
+  it("‹ moves one tab back", async () => {
     const b = await boot(5);
     b.next().click(); b.next().click(); b.next().click();
     await b.settle();
-    expect(b.pos()).toBe(280);                // the end: 500 − 220
-    expect(b.next().disabled).toBe(true);
-    expect(b.drawn()).toEqual([0, 0, 20, 100, 100]);
     b.prev().click();
     await b.settle();
-    expect(b.pos()).toBe(200);                // tab 2's left edge
-    expect(b.drawn()).toEqual([0, 0, 100, 100, 20]);
+    expect(b.first()).toBe(2);
+    expect(b.drawn()).toEqual([0, 0, 80, 100, 0]);
   });
 
-  it("brings a tab switched to fully in", async () => {
+  it("brings a tab switched to into the run", async () => {
     const b = await boot(5);
     b.tabs()[0].classList.remove("active");
     b.tabs()[4].classList.add("active");
     await b.settle();
-    expect(b.pos()).toBe(280);
-    expect(b.drawn()[4]).toBe(100);
+    expect(b.drawn()[4]).toBe(50);
+    expect(b.first()).toBe(3);
   });
 
-  it("opens on the active tab when it starts out of the window", async () => {
+  it("opens on the active tab when it starts outside the run", async () => {
     const b = await boot(5, 3);
     expect(b.drawn()[3]).toBe(100);
+  });
+
+  it("squeezes a single tab wider than the whole room rather than drawing nothing", async () => {
+    const b = await boot(5, 0, 150);   // room 120 < tab 1's 140
+    b.next().click();
+    await b.settle();
+    expect(b.drawn()).toEqual([0, 120, 0, 0, 0]);
   });
 
   it("lifts every squeeze when the tabs come to fit again", async () => {
     const b = await boot(5);
     b.tabs().slice(2).forEach((t) => t.remove());
     await b.settle();
-    expect(b.drawn()).toEqual([100, 100]);
+    expect(b.drawn()).toEqual([60, 140]);
     expect(b.nav().classList.contains("is-idle")).toBe(true);
   });
 });
@@ -189,26 +194,30 @@ describe("tab strip wheel", () => {
     return e;
   }
 
-  it("moves the window by a vertical wheel's delta and keeps the page still", async () => {
+  it("steps one tab per mouse-wheel notch and keeps the page still", async () => {
     const b = await boot(5);
-    const e = wheel(b, { deltaY: 50 });
-    expect(b.pos()).toBe(50);
+    const e = wheel(b, { deltaY: 100 });
+    expect(b.first()).toBe(1);
     expect(e.defaultPrevented).toBe(true);
-    expect(b.drawn()).toEqual([50, 100, 70, 0, 0]);
-    wheel(b, { deltaY: -500 });
-    expect(b.pos()).toBe(0);
+    wheel(b, { deltaY: 100 });
+    expect(b.first()).toBe(2);
+    wheel(b, { deltaY: -100 });
+    expect(b.first()).toBe(1);
   });
 
-  it("follows a trackpad's sideways swipe too", async () => {
+  it("gathers a trackpad's small deltas into one step", async () => {
     const b = await boot(5);
-    wheel(b, { deltaX: 40, deltaY: 3 });
-    expect(b.pos()).toBe(40);
+    wheel(b, { deltaX: 20 });
+    wheel(b, { deltaX: 20 });
+    expect(b.first()).toBe(0);
+    wheel(b, { deltaX: 20 });
+    expect(b.first()).toBe(1);
   });
 
-  it("scales a line-mode wheel (Firefox) to pixels", async () => {
+  it("treats a line-mode event (Firefox) as one notch", async () => {
     const b = await boot(5);
     wheel(b, { deltaY: 3, deltaMode: 1 });
-    expect(b.pos()).toBe(48);
+    expect(b.first()).toBe(1);
   });
 
   it("does nothing while the tabs fit", async () => {
