@@ -783,6 +783,49 @@
           "overlay-padding": 3,
         },
       },
+      // Connection-path handles (topology-edge-editor.js): a filled dot per
+      // bend point, a ring per end point riding the device outline. Drawn
+      // above everything so a handle on top of a device stays grabbable.
+      {
+        selector: "node[isEdgeHandle]",
+        style: {
+          shape: "ellipse",
+          width: 10,
+          height: 10,
+          label: "",
+          "background-color": "#22d3ee",
+          "background-opacity": 1,
+          "background-image": "none",
+          "border-width": 2,
+          "border-color": isDark ? "#0d0d1a" : "#ffffff",
+          "border-opacity": 1,
+          "overlay-padding": 4,
+          // Default (auto) compare: nodes already sit above edges, and among
+          // nodes this z wins. "manual" sorted the handles UNDER the devices,
+          // so pressing an end point grabbed its device instead.
+          "z-index": 9999,
+        },
+      },
+      {
+        selector: 'node[isEdgeHandle][handleKind != "bend"]',
+        style: {
+          width: 12,
+          height: 12,
+          "background-color": isDark ? "#0d0d1a" : "#ffffff",
+          "border-width": 3,
+          "border-color": "#22d3ee",
+        },
+      },
+      {
+        selector: "node[isEdgeHandle]:selected",
+        style: {
+          width: 14,
+          height: 14,
+          "border-width": 3,
+          "border-color": "#f59e0b",
+          "overlay-opacity": 0,
+        },
+      },
       {
         selector: 'core',
         style: {
@@ -1230,6 +1273,8 @@
       return coord + k * 9;
     }
     cy.edges("[isInterGroup]").forEach(function (e) {
+      // An operator-drawn path (topology-edge-editor.js) owns its geometry.
+      if (e.data("customPath")) return;
       var sN = e.source();
       var tN = e.target();
       var sHull = hullIdForNode(sN);

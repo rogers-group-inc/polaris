@@ -13,6 +13,9 @@
   var markerCluster = null;
   var markersById = Object.create(null); // id → L.Marker
   var cyInstance = null;
+  // Operator-drawn connection paths on the current graph
+  // (PolarisTopologyEdgeEditor.attach) — rebuilt with every render.
+  var edgeEditor = null;
   var siteCache = [];                    // last /map/sites payload
   // Currently-open topology modal state. siteId drives Refresh + position
   // persistence; data is the latest /topology payload (used for endpoint
@@ -25,6 +28,9 @@
   var topoSearchDebounce = null;
   var topoSuggestState  = { open: false, items: [], index: -1 };
   var POSITION_STORAGE_PREFIX = "polaris.topology.positions:";
+  // Entries per saved layout blob — MAX_LAYOUT_NODES in
+  // src/services/topologyLayoutService.ts, which rejects a bigger blob.
+  var TOPO_LAYOUT_MAX_ENTRIES = 3000;
   // Per-browser restore points — the local half of Save, and the only half a
   // non-writer gets. Keyed like the positions store (bare key = flat view).
   var CHECKPOINT_STORAGE_PREFIX = "polaris.topology.saved:";
@@ -1025,6 +1031,13 @@
     });
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && overlay.classList.contains("open")) closeTopology();
+      // Delete / Backspace removes the selected connection-path handles (a
+      // bend goes; an end point returns to automatic). Never while typing.
+      if ((e.key === "Delete" || e.key === "Backspace") && overlay.classList.contains("open") && edgeEditor) {
+        var t = e.target;
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+        if (edgeEditor.deleteSelected()) e.preventDefault();
+      }
     });
     // When the browser exits fullscreen via Esc / OS gesture, drop the
     // fullscreen class so the modal styling reverts cleanly.
@@ -1132,7 +1145,7 @@
       var b = ele.boundingBox({ includeLabels: false });
       return b.x2 >= ext.x1 && b.x1 <= ext.x2 && b.y2 >= ext.y1 && b.y1 <= ext.y2;
     };
-    var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal") && inView(n); }).length : 0;
+    var nodes = cyInstance ? cyInstance.nodes(":visible").filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal") && !n.data("isEdgeHandle") && inView(n); }).length : 0;
     var links = cyInstance ? cyInstance.edges(":visible").filter(inView).length : 0;
     meta.push(nodes + " device" + (nodes === 1 ? "" : "s") + " · " + links + " link" + (links === 1 ? "" : "s"));
     var showFull = document.getElementById("topology-show-full");
@@ -1469,18 +1482,32 @@
     } catch (e) { /* quota / private mode — the server copy (if any) still stands */ }
   }
   // Current on-canvas positions of the real nodes. Synthetic overlays (hulls,
-  // floor portals) are derived every render, so persisting them would pin
-  // stale geometry onto ids the next render rebuilds.
+  // floor portals, path handles) are derived every render, so persisting
+  // them would pin stale geometry onto ids the next render rebuilds.
+  // Operator-drawn connection paths ride the same blob as `edgepath:` entries
+  // (topology-edge-editor.js), which is how Save / Reset cover them too.
   function _currentNodePositions() {
     if (!cyInstance) return null;
     var out = {};
+    var count = 0;
     cyInstance.nodes().forEach(function (n) {
-      if (n.data("isLocGroup") || n.data("isPortal")) return;
+      if (n.data("isLocGroup") || n.data("isPortal") || n.data("isEdgeHandle")) return;
       var p = n.position();
       if (p && typeof p.x === "number" && typeof p.y === "number") {
         out[n.id()] = { x: p.x, y: p.y };
+        count++;
       }
     });
+    if (edgeEditor) {
+      // The server refuses a blob over its node cap outright, so path
+      // entries past it are left out rather than losing the whole save.
+      var paths = edgeEditor.serialize();
+      Object.keys(paths).forEach(function (k) {
+        if (count >= TOPO_LAYOUT_MAX_ENTRIES) return;
+        out[k] = paths[k];
+        count++;
+      });
+    }
     return out;
   }
   // A connection-path overlay parks the graph in a temporary tight chain the
@@ -1873,6 +1900,9 @@
       ["Shift + drag", "Box-select multiple devices"],
       ["Drag a selected device", "Move the selected devices together"],
       ["Ctrl + drag", "Pan from anywhere (even over devices)"],
+      ["Drag a connection line", "Add a bend point there and move it"],
+      ["Click a connection line", "Show its points — drag an end point around a device to attach the line there"],
+      ["Delete", "Remove the selected bend point (an end point goes back to automatic)"],
       ["Snap chip", "Snap drags to the layout grid"],
       ["Double-click a device", "Open its asset details"],
       ["Right-click a device", "Edit its description / grouping codes"],
@@ -2223,6 +2253,9 @@
       edgeId: syntheticEdgeId,
       savedPositions: savedPositions,
     };
+    // Drawn paths are anchored to the full-site layout; the temporary chain
+    // would stretch them across the canvas, so they step aside until cleared.
+    if (edgeEditor) edgeEditor.setSuspended(true);
 
     var btn = document.getElementById("topology-show-full");
     if (btn) btn.hidden = false;
@@ -2261,6 +2294,7 @@
         try { cyInstance.remove(ep); } catch (e) {}
       }
       topoState.pathOverlay = null;
+      if (edgeEditor) edgeEditor.setSuspended(false);
     }
     var btn = document.getElementById("topology-show-full");
     if (btn) btn.hidden = true;
@@ -2334,6 +2368,7 @@
       cyInstance.destroy();
       cyInstance = null;
     }
+    edgeEditor = null;
   }
 
   // Delegates to PolarisTopologyRender so desktop and mobile share one
@@ -2423,6 +2458,7 @@
       try { cyInstance.destroy(); } catch (e) {}
       cyInstance = null;
     }
+    edgeEditor = null;
 
     // Restore manually-dragged node positions from localStorage if any
     // are saved for this site. We use the dagre layout as the base
@@ -2533,7 +2569,7 @@
         var toSnap = cyInstance.collection(evt.target).union(cyInstance.nodes(":selected"));
         cyInstance.batch(function () {
           toSnap.forEach(function (n) {
-            if (n.data("isLocGroup") || n.data("isPortal")) return;
+            if (n.data("isLocGroup") || n.data("isPortal") || n.data("isEdgeHandle")) return;
             n.position(_snapPos(n.position()));
           });
         });
@@ -2554,6 +2590,7 @@
     function _assetIdForNode(node) {
       if (node.data("isPortal")) return null; // floor portal — tap navigation, not an asset
       if (node.data("isLocGroup")) return null; // location hull — hover surface only
+      if (node.data("isEdgeHandle")) return null; // connection-path handle
       var role = node.data("role");
       if (role === "lldp") return null; // ghost neighbor — no Polaris asset
       if (role === "wireless-station" || role === "remote-asset") {
@@ -2666,6 +2703,28 @@
       // Route cross-group links through the gutters between boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     }
+    // Operator-drawn connection paths — after the router, so a customised
+    // line's first edit can keep the routed shape it was drawn with. Edits
+    // persist through the same dirty-flag + debounced save as a node drag.
+    if (window.PolarisTopologyEdgeEditor) {
+      edgeEditor = window.PolarisTopologyEdgeEditor.attach(cyInstance, {
+        positions: savedPositions,
+        isSuspended: function () { return !!topoState.pathOverlay; },
+        onChange: function () {
+          if (!topoState.siteId || topoState.pathOverlay) return;
+          _markLayoutDirty();
+          saveNodePositions(topoState.siteId);
+        },
+        onGeometryReset: function () {
+          // A line back on automatic takes its routed shape again.
+          if (cyInstance && cyInstance.nodes("[isLocGroup]").length > 0) {
+            window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
+          } else if (cyInstance) {
+            window.PolarisTopologyRender.refreshBentEdgeLabels(cyInstance);
+          }
+        },
+      });
+    }
     // Dragging a group box moves its member devices with it; nested boxes
     // re-fit around the moved members. The RAF drag-follow refresh is
     // suppressed for the drag's duration (the handlers keep everything
@@ -2712,7 +2771,7 @@
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     });
     var locRefreshPending = false;
-    cyInstance.on("position", "node[!isLocGroup]", function () {
+    cyInstance.on("position", "node[!isLocGroup][!isEdgeHandle]", function () {
       if (hullDrag || locRefreshPending) return;
       locRefreshPending = true;
       window.requestAnimationFrame(function () {
@@ -2999,6 +3058,7 @@
             // Routed segments reference the removed boxes — fall back to the
             // taxi rule by clearing the per-edge style bypass.
             cyInstance.edges("[isInterGroup]").forEach(function (e) {
+              if (e.data("customPath")) return; // operator-drawn — not the router's
               e.removeStyle("curve-style segment-weights segment-distances edge-distances");
             });
             window.PolarisTopologyRender.refreshBentEdgeLabels(cyInstance);

@@ -304,6 +304,7 @@
 
     cy.nodes().forEach(function (n) {
       if (!n.visible() || psStr(n, "display", "element") === "none") return;
+      if (typeof n.data === "function" && n.data("noExport")) return; // editing chrome (connection-path handles)
       var op = n.effectiveOpacity ? n.effectiveOpacity() : 1;
       if (op <= 0.01) return;
       var bb = n.boundingBox({ includeLabels: false, includeOverlays: false });

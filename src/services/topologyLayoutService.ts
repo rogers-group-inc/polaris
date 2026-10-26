@@ -9,7 +9,10 @@
  * { [nodeId]: { x, y } } in pixel model coordinates — the exact shape
  * map.js saves/loads, so the client can treat server and localStorage
  * layouts interchangeably (server wins, localStorage is the per-browser
- * fallback for non-writers).
+ * fallback for non-writers). Operator-drawn connection paths ride the same
+ * blob as `edgepath:<pathKey>:b<n>` / `:s` / `:t` entries
+ * (public/js/topology-edge-editor.js); sanitizePositions validates them like
+ * any node entry, and MAX_LAYOUT_NODES counts them.
  *
  * Two blobs per row. `positions` is the LIVE layout -- rewritten by the
  * client's debounced drag save, shared with every viewer. `savedPositions`

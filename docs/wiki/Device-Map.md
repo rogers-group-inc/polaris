@@ -218,6 +218,18 @@ that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
+**Drawing your own connection lines.** Drag any part of a line and a bend
+point appears where you pressed, selected and following the pointer. Click a
+line to show its points: a dot for each bend and a ring where it meets each
+device. Drag a ring around the device's edge to attach the line at that spot;
+it stays on the device's outline, so the line never comes loose. A bend stays
+where you put it when you move one of the line's devices, and moves with the
+line when you move both devices together. Select a point and press
+**Delete** to remove a bend, or to put an end back on automatic. A line with
+no points left goes back to its automatic shape. Drawn lines are part of the
+layout: **Save layout** and **Reset layout** cover them, and each location
+view keeps its own.
+
 | Control | |
 |---|---|
 | **Search** | find a node |

@@ -4018,7 +4018,9 @@ model SavedDashboard {
 // cascades away with the site). `positions` is { [nodeId]: {x,y} } in pixel
 // model coords — the exact shape the browser previously kept in localStorage
 // (which remains a per-browser fallback/cache for non-writers). Stale nodeIds
-// inside the blob are ignored at render and dropped on the next save.
+// inside the blob are ignored at render and dropped on the next save. The
+// blob also carries operator-drawn connection paths as `edgepath:` entries
+// (topology-edge-editor.js) — to the server they are just more ids.
 // Last-write-wins between concurrent editors; updatedBy/updatedAt make a
 // future conditional-write possible. Single writer: topologyLayoutService.
 model TopologyLayout {
