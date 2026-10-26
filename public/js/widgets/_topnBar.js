@@ -66,7 +66,7 @@
    * el       — widget body
    * rows     — [{ id, hostname, ipAddress, value }]
    * opts     — { unit:"%"|"ms"|"°C", thresholds, baseColor, emptyText, config,
-   *              fillTo, valueNoun }
+   *              fillTo, valueNoun, format, scale, valueHeader }
    *            config: { rowLimit, sortBy }
    *            valueNoun: what the bar measures ("CPU", "response time"), used
    *            to phrase this widget's two value sort options.
@@ -77,6 +77,12 @@
    *            the limit — an alert must never be clipped away. fillTo is the
    *            fallback row count when the config carries no usable rowLimit.
    *            Omit fillTo to leave rowLimit as a plain cap (e.g. Packet Loss).
+   *            format(value, row): the value label when the unit's own
+   *            formatting doesn't fit (SD-WAN compliance ranks on time OUT of
+   *            SLA but labels the compliance; flapping labels a count).
+   *            scale: "max" scales bars against the largest visible value even
+   *            for "%" (a 2% figure on a fixed 100 is an invisible bar).
+   *            valueHeader: the export's value column header.
    */
   function renderRows(el, rows, opts) {
     opts = opts || {};
@@ -101,7 +107,7 @@
       columns: [
         { header: "Hostname", get: function (r) { return r.hostname || ""; } },
         { header: "IP Address", get: function (r) { return r.ipAddress || ""; } },
-        { header: "Value (" + (opts.unit || "%") + ")", get: function (r) { return r.value == null ? "" : r.value; } },
+        { header: opts.valueHeader || ("Value (" + (opts.unit || "%") + ")"), get: function (r) { return r.value == null ? "" : r.value; } },
         { header: "Detail", get: function (r) { return r.detail || ""; } },
         { header: "Site", get: function (r) { return r.site || ""; } },
       ],
@@ -137,7 +143,7 @@
     // Percentages scale against a fixed 100; latency scales against the max in
     // the visible set so the slowest node fills the bar. Computed over the
     // FULL visible set (not per group) so bars stay comparable across groups.
-    var scaleMax = opts.unit === "%"
+    var scaleMax = opts.unit === "%" && opts.scale !== "max"
       ? 100
       : (Math.max.apply(null, shown.map(function (r) { return r.value || 0; })) || 1);
 
@@ -156,7 +162,7 @@
       // The name cell ellipsizes — a native tooltip carries the full name (and
       // mount detail when present) for rows the column is too narrow to show.
       var tip = escapeHtml((r.hostname || r.ipAddress || "(unnamed)") + (r.detail ? " — " + r.detail : ""));
-      var label = formatValue(v, opts.unit);
+      var label = opts.format ? opts.format(v, r) : formatValue(v, opts.unit);
       var tag = r.id ? "a" : "div";
       var nav = r.id ? ' href="/assets.html#view=asset:' + encodeURIComponent(r.id) + '"' : "";
       var sevPill = PolarisWidgets.alertSeverityPill ? PolarisWidgets.alertSeverityPill(r.alertSeverity) : "";

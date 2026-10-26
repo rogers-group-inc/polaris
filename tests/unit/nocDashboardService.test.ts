@@ -888,7 +888,10 @@ describe("getNocSummaryPayload", () => {
     expect(Object.keys(r).sort()).toEqual([
       "activeAlertCount", "activeAlerts", "activeAlertsTotal", "diskUsage", "downInterfaces",
       "downIpsecTunnels", "downNodes", "downNodesTotal", "maintenanceSchedules", "packetLoss",
-      "recentReboots", "sitesWithIssues", "slowestResponse", "stalePolls", "statusCounts",
+      "recentReboots",
+      "sdwanCompliance1h", "sdwanCompliance24h", "sdwanFlaps1h", "sdwanFlaps24h",
+      "sdwanRuleFailovers", "sdwanSingleLink", "sdwanSlaHeadroom",
+      "sitesWithIssues", "slowestResponse", "stalePolls", "statusCounts",
       "storageForecast", "temperature", "topCpu", "topMemory", "uptimePercent",
     ]);
   });

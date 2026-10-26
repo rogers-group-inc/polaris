@@ -282,6 +282,16 @@ evaluated against that clock) and repeat the end as a true instant
 not narrow them: a schedule is returned when any of its devices is in scope,
 whole, with `matchedCount` giving the in-scope share.
 
+Seven `sdwan*` feeds back the SD-WAN widgets and are empty on an install with
+no SD-WAN collection: `sdwanRuleFailovers` (rules down or off their preferred
+member), `sdwanSingleLink` (gates with two or more WAN paths left with one or
+none), `sdwanSlaHeadroom` (% of the SLA target each live member uses, 100 being
+the target), `sdwanFlaps1h` / `sdwanFlaps24h` (up → down drops per member) and
+`sdwanCompliance1h` / `sdwanCompliance24h` (% of the window OUT of SLA per
+health check and member — compliance is 100 minus it). The four windowed feeds
+share one computation that is cached for about two minutes, so they lag by up
+to that much.
+
 ### Path Monitor
 
 ```

@@ -784,7 +784,9 @@
           <p>The NOC feed bundle. <code>?feeds=</code> selects a comma-separated subset of
             <code>status, downNodes, downInterfaces, downIpsecTunnels, topCpu, topMemory,
             slowestResponse, packetLoss, diskUsage, temperature, storageForecast, stalePolls,
-            sitesWithIssues, recentReboots, activeAlerts, maintenanceSchedules</code>; absent = all.
+            sitesWithIssues, recentReboots, activeAlerts, maintenanceSchedules,
+            sdwanRuleFailovers, sdwanSingleLink, sdwanSlaHeadroom, sdwanFlaps1h, sdwanFlaps24h,
+            sdwanCompliance1h, sdwanCompliance24h</code>; absent = all.
             Filters: <code>hideAssetTypes</code> (CSV of the asset types to EXCLUDE —
             built-in or operator-added; <code>assetTypes</code> is the legacy inverse and
             names the ENABLED built-ins, from which the hidden set is derived as the
@@ -812,6 +814,24 @@
             countdown. Unlike every other feed, an asset filter does not narrow the rows: a
             schedule is listed when ANY of its devices is in scope and is then reported
             whole, with <code>matchedCount</code> giving the in-scope share.</p>
+          <p>The seven <code>sdwan*</code> feeds read the SD-WAN data FortiGates report
+            (FortiManager-managed or standalone, with SD-WAN collection on) and are empty
+            otherwise. <code>sdwanRuleFailovers</code> lists enabled service rules that are
+            down or carrying traffic off their preferred member — <code>{assetId, hostname,
+            ipAddress, site, ruleName, mode, state: "down"|"failedOver", selectedMember,
+            preferredMembers[], updatedAt}</code>; only lowest-cost (SLA) and manual rules
+            can be failed over. <code>sdwanSingleLink</code> lists gates with two or more WAN
+            paths left with one or none — <code>{assetId, hostname, ipAddress, site,
+            alivePaths, totalPaths, alive[], downMembers[], lastSampleAt}</code>; an overlay
+            tunnel counts as the port it rides. The other five are top-N rows
+            (<code>{id, hostname, ipAddress, site, value, detail}</code>):
+            <code>sdwanSlaHeadroom</code> is the % of the health check's SLA target a live
+            member uses (15-minute average, worst metric; 100 is the target);
+            <code>sdwanFlaps1h</code>/<code>24h</code> count up → down drops per member;
+            <code>sdwanCompliance1h</code>/<code>24h</code> give the % of scrapes OUT of
+            SLA per health check and member (compliance is 100 minus it), omitting pairs
+            that never left SLA. The four windowed feeds share one computation cached for
+            about two minutes.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/dashboard/noc-summary?feeds=status,downNodes,activeAlerts&amp;limit=50"</code></pre>
         </div>
