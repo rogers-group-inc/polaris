@@ -75,8 +75,8 @@ FortiGate's table is the worked example: value `fgHwSensorEntValue`, name
 
 ## One vendor, several device families
 
-Under each row, **Add** a scoped row for one device type, one model pattern, or
-both. For each metric, the most specific match wins: type and model, then model,
+A metric row's **Add** button, beside **Edit**, opens a form under it for a scoped
+row: one device type, one model pattern, or both. For each metric, the most specific match wins: type and model, then model,
 then the type's default, then the row itself.
 
 A row with a model pattern and **no** device type also settles which family a

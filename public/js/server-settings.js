@@ -4529,6 +4529,7 @@ var _mfgProfileDetail = {};         // profileId → full profile (lazy)
 var _mfgProfileExpanded = {};       // profileId → bool
 var _mfgProfileMetricEdit = {};     // composite key "id:metricKey" → bool (edit-in-progress)
 var _mfgProfileOverrideEdit = {};   // overrideId → bool (edit-in-progress on a per-model override row)
+var _mfgOverrideAddOpen = {};       // composite key "id:metricKey" → bool (add-override form shown)
 // Typeahead values for the "+ Add Manufacturer" box. Lazy — fetched on first
 // focus of the input rather than with the tab payload, since the card renders
 // on two tabs and most visits never touch the add box. Invalidated after a
@@ -9704,7 +9705,7 @@ function renderProfileDetail(detail) {
           _mfgExtraEditHTML(m.metricKey, "mfg-edit", { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate, sensorColumns: m.defaultSensorColumns }) + '</td>' +
         '<td>' + renderTransformSelect(m.defaultTransform, "mfg-edit-transform", editType, m.metricKey) + '</td>' +
         '<td><button class="btn btn-sm btn-primary mfg-metric-save">Save</button> ' +
-          '<button class="btn btn-sm mfg-metric-cancel">Cancel</button></td>';
+          '<button class="btn btn-sm btn-secondary mfg-metric-cancel">Cancel</button></td>';
     } else {
       var defaultDisplay = _symbolCellViewHTML(m.defaultType, m.defaultSymbol, m.defaultSymbolB);
       // The MIB cell is PROVENANCE, not the operator's pick: where the row's
@@ -9718,7 +9719,8 @@ function renderProfileDetail(detail) {
         '<td><span style="font-size:0.78rem">' + escapeHtml(typeLabel) + '</span></td>' +
         '<td>' + defaultDisplay + _mfgExtraViewHTML(m.metricKey, { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate, sensorColumns: m.defaultSensorColumns }) + '</td>' +
         '<td><span style="font-size:0.78rem;color:var(--color-text-secondary)">' + (m.defaultTransform ? escapeHtml(transformLabel(m.defaultTransform)) : "—") + '</span></td>' +
-        '<td><button class="btn btn-sm mfg-metric-edit">Edit</button></td>';
+        '<td style="white-space:nowrap"><button class="btn btn-sm btn-secondary mfg-metric-edit">Edit</button> ' +
+          '<button class="btn btn-sm btn-primary mfg-override-add-open" title="Add a device-type default or model exception for this metric">Add</button></td>';
     }
     html += '</tr>';
 
@@ -9731,7 +9733,9 @@ function renderProfileDetail(detail) {
     // Add-override form — single inline row (Model · Symbol · MIB · Type ·
     // Transform · Add) sized so wrap is rare on the typical Identification
     // tab width. Each cell of the parent table gets its own field so the
-    // columns line up vertically with the metric row above.
+    // columns line up vertically with the metric row above. Drawn only after
+    // the metric row's Add button opens it, so the table reads as a list.
+    if (!_mfgOverrideAddOpen[editKey]) return;
     var newMibId = _mfgNewOverrideMibId(detail.id, m.metricKey) || null;
     // Add-override row layout matches the override view + edit rows:
     //   METRIC (blank) · MODEL (↳ add label + pattern input) · MIB · TYPE · SYMBOL · TRANSFORM · ACTION
@@ -9754,7 +9758,8 @@ function renderProfileDetail(detail) {
       '<td>' + _symbolCellEditHTML(newType, newMibId, "", "", "mfg-new-override-sym") +
         _mfgExtraEditHTML(m.metricKey, "mfg-new-override", {}) + '</td>' +
       '<td>' + renderTransformSelect(null, "mfg-new-override-transform", newType, m.metricKey) + '</td>' +
-      '<td><button class="btn btn-sm mfg-override-add">Add</button></td>' +
+      '<td style="white-space:nowrap"><button class="btn btn-sm btn-primary mfg-override-add">Add</button> ' +
+        '<button class="btn btn-sm btn-secondary mfg-override-add-cancel">Cancel</button></td>' +
     '</tr>';
   });
   html += '</tbody></table>';
@@ -10301,7 +10306,7 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
         _mfgExtraEditHTML(metricKey, "mfg-edit-override", { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate, sensorColumns: o.sensorColumns }) + '</td>' +
       '<td>' + renderTransformSelect(o.transform, "mfg-edit-override-transform", oEditType, metricKey) + '</td>' +
       '<td><button class="btn btn-sm btn-primary mfg-override-save">Save</button> ' +
-        '<button class="btn btn-sm mfg-override-cancel">Cancel</button></td>' +
+        '<button class="btn btn-sm btn-secondary mfg-override-cancel">Cancel</button></td>' +
     '</tr>';
   }
   var mibLabel = _mfgMibCellHTML(o.readiness, o.mibId, o.mibStdKey);
@@ -10330,7 +10335,7 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
     '<td>' + _symbolCellViewHTML(o.type, o.symbol, o.symbolB) +
       _mfgExtraViewHTML(metricKey, { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate, sensorColumns: o.sensorColumns }) + '</td>' +
     '<td><span style="font-size:0.78rem;color:var(--color-text-secondary)">' + (o.transform ? escapeHtml(transformLabel(o.transform)) : "—") + '</span></td>' +
-    '<td><button class="btn btn-sm mfg-override-edit">Edit</button> ' +
+    '<td><button class="btn btn-sm btn-secondary mfg-override-edit">Edit</button> ' +
       '<button class="btn btn-sm btn-danger mfg-override-del">Del</button></td>' +
   '</tr>';
 }
@@ -10997,6 +11002,11 @@ function _ensureMibSymbols(mibId) {
       .filter(function (n) {
         return n && !tableColumns.has(n) && !tableRows.has(n) && !tableNames.has(n);
       });
+    // A table row walks either the whole table or one of its columns — the
+    // sensor-column shape (fgHwSensorEntValue beside fgHwSensorEntName) names
+    // the value column — so both belong on the Table side, or a correct column
+    // pick is flagged "Not a table in this MIB".
+    tables = tables.concat(Array.from(tableColumns));
     // De-dupe + sort so both dropdowns are predictable.
     tables  = Array.from(new Set(tables)).sort(function (a, b) { return a.localeCompare(b); });
     scalars = Array.from(new Set(scalars)).sort(function (a, b) { return a.localeCompare(b); });
@@ -11135,6 +11145,12 @@ function wireManufacturerProfileControls() {
 
     var cancelBtn = target.closest(".mfg-metric-cancel");
     if (cancelBtn) return cancelMetricEdit(cancelBtn.closest("tr"));
+
+    var addOpenBtn = target.closest(".mfg-override-add-open");
+    if (addOpenBtn) return toggleOverrideAdd(addOpenBtn.closest("tr"), true);
+
+    var addCancelBtn = target.closest(".mfg-override-add-cancel");
+    if (addCancelBtn) return toggleOverrideAdd(addCancelBtn.closest("tr"), false);
 
     var addOverBtn = target.closest(".mfg-override-add");
     if (addOverBtn) return addOverride(addOverBtn.closest("tr"));
@@ -12104,6 +12120,21 @@ async function saveMetricEdit(tr) {
   }
 }
 
+// Opens (or closes) a metric's add-override form. Closing drops the form's
+// pending MIB / type picks so a reopen starts blank.
+function toggleOverrideAdd(tr, open) {
+  if (!tr) return;
+  var key = tr.getAttribute("data-profile-id") + ":" + tr.getAttribute("data-metric-key");
+  if (open) {
+    _mfgOverrideAddOpen[key] = true;
+  } else {
+    delete _mfgOverrideAddOpen[key];
+    delete _mfgEditMibSelections["new:" + key];
+    delete _mfgEditTypeSelections["new:" + key];
+  }
+  renderIdentificationTab();
+}
+
 async function addOverride(tr) {
   if (!tr) return;
   var profileId = tr.getAttribute("data-profile-id");
@@ -12147,6 +12178,7 @@ async function addOverride(tr) {
     if (resp && resp.override) appendOverrideToDetail(profileId, metricKey, resp.override);
     delete _mfgEditMibSelections["new:" + profileId + ":" + metricKey];
     delete _mfgEditTypeSelections["new:" + profileId + ":" + metricKey];
+    delete _mfgOverrideAddOpen[profileId + ":" + metricKey];
     showToast("Override added");
     _mfgToastWarnings(resp);
     renderIdentificationTab();
