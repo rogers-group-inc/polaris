@@ -2349,10 +2349,16 @@ button, .list-item, .chip { touch-action: manipulation; }
 /* ─── Topology surface (per-site Cytoscape graph) ────────────────────────
    Reached via the `topology/<siteId>` detail route. Renders fullscreen
    when .app is in __fullbleed mode (rule above hides the topbar slot
-   and the bottom navbar). */
+   and the bottom navbar).
+   Fixed + inset:0 escapes .app's safe-area padding, so the screen pads
+   itself: in the installed iOS app (black-translucent status bar) the bar
+   otherwise sat under the clock and notch and Back could not be tapped.
+   Unscoped — env() is 0 wherever the browser's own chrome owns the edge. */
 .topo-screen {
   position: fixed;
   inset: 0;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+           env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   background: var(--md-surface, #0f172a);
   display: flex;
   flex-direction: column;
@@ -2434,7 +2440,8 @@ button, .list-item, .chip { touch-action: manipulation; }
 }
 .topo-status {
   position: absolute;
-  bottom: 24px;
+  /* Absolute offsets ignore the screen's padding — clear the home indicator. */
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   left: 16px;
   right: 16px;
   text-align: center;

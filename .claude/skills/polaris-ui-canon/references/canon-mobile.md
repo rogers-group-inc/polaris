@@ -147,3 +147,7 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 - **Every daylight theme block sets its own `--md-secondary-container` / `--md-tertiary-container` pairs** (selected chip, active nav pill, avatar). The daylight base inherited Material's stock periwinkle `#dae2f9` and pink `#fbd7fc`, which clashed with parchment and terracotta; nightfall had always set its own. The asset-type icon circles (`.ico-*`) derive from `--md-primary` / `--md-tertiary` through `color-mix`, not hard-coded Material blue or lilac, so they follow the theme too.
 
 ---
+
+## A fixed full-screen surface pads its own safe area
+
+`.app` takes the iOS safe-area insets as padding only in standalone mode, so anything that leaves it with `position: fixed; inset: 0` gets none of that padding. Under the installed app's `black-translucent` status bar, the surface's top row is then drawn behind the clock and notch, where it can't be tapped. The topology screen (`.topo-screen`) shipped that way and trapped operators with no way out (fixed 2026-10-26). Such a surface pads all four `env(safe-area-inset-*)` sides itself, and its absolutely positioned children add the inset to their own offsets, because absolute offsets are measured from the padding box and ignore the padding.
