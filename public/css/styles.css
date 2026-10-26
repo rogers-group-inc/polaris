@@ -1579,14 +1579,16 @@ code {
 }
 
 /* ─── Open platform security advisories (sidebar; dismissable; serverSettingsSystem:write) ── */
-/* Three tints, one per lifecycle grade, so the panel agrees with the row
-   colour on the Platform Lifecycle card it clicks through to. */
+/* One panel per component, tinted by the vendor's worst CVE rating:
+   high/critical red, medium amber, low blue. */
 .platform-advisory-alert {
   margin-bottom: 0.5rem;
   transition: background 0.15s;
 }
+/* Same box as the capacity alert's triangle (.pg-tuning-icon). */
 .platform-advisory-icon {
-  font-size: 0.85rem;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
 }
 .platform-advisory-red { border-color: rgba(239,83,80,0.45); background: rgba(239,83,80,0.08); }

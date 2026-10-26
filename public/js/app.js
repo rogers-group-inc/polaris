@@ -1428,7 +1428,7 @@ function renderNav() {
       <div id="integration-failed-status" class="query-status integration-failed-status" style="display:none"></div>
       <div id="fmg-proxy-advice" class="query-status fmg-proxy-advice" style="display:none"></div>
       <div id="signing-failure-alert" class="query-status signing-failure-alert" style="display:none"></div>
-      <div id="platform-advisory-alert" class="query-status platform-advisory-alert" style="display:none"></div>
+      <div id="platform-advisory-alert" style="display:none"></div>
       <div id="update-status" class="query-status update-status" style="display:none"></div>
       <div id="query-status" class="query-status" style="display:none"></div>
       <div id="capacity-critical-alert" class="capacity-critical-alert" style="display:none"></div>
@@ -3140,19 +3140,20 @@ function renderSigningFailureAlert() {
 }
 
 // ─── Open security advisories (platform) ────────────────────────────────────
-// Renders the dismissable sidebar alert for installed components with an open
-// security advisory. Reads the closure-scoped _platformAdvisories populated by
-// pollPlatformAdvisories.
+// Renders one dismissable sidebar alert PER installed component with an open
+// security advisory, into the #platform-advisory-alert wrapper. Reads the
+// closure-scoped _platformAdvisories populated by pollPlatformAdvisories.
 //
 // Dismissal is per-user and per-ADVISORY: localStorage holds the
-// "<component>:<CVE>" pairs on screen when it was dismissed, and the alert
-// returns only when a pair outside that set opens. Patching one component
-// therefore never re-raises the others, and upgrading within a line while
-// the same CVEs stay open is not news either. An exact-match signature (the
-// FortiManager advice's shape) would get both wrong.
+// "<component>:<CVE>" pairs the user has dismissed, and a component's alert
+// returns only when one of ITS pairs is outside that set. Dismissing Node
+// leaves PostgreSQL's alert alone, and upgrading within a line while the same
+// CVEs stay open is not news. An exact-match signature (the FortiManager
+// advice's shape) would get both wrong.
 //
-// Coloured by the worst row's grade, which already folds in the vendor
-// rating and network exposure (unpatchedSeverity on the server).
+// Coloured by the vendor's worst CVE rating alone — high/critical red, medium
+// amber, low blue — NOT by the card's grade, which adds a step for a
+// network-exposed component. The sidebar answers "how bad are these CVEs".
 
 var _ADVISORY_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
 
@@ -3160,14 +3161,14 @@ function _platformAdvisoryDismissKey() {
   return "polaris.platform-advisories.dismissed." + (currentUsername || "anon");
 }
 
-function _platformAdvisoryPairs(components) {
-  var pairs = [];
-  components.forEach(function (c) {
-    (c.grade.securityFloor.advisories || []).forEach(function (a) {
-      pairs.push(c.id + ":" + a.id);
-    });
-  });
-  return pairs;
+function _platformAdvisoryPairs(c) {
+  return (c.grade.securityFloor.advisories || []).map(function (a) { return c.id + ":" + a.id; });
+}
+
+function _platformAdvisoryTint(rating) {
+  if (rating === "critical" || rating === "high") return "red";
+  if (rating === "medium") return "amber";
+  return "watch";
 }
 
 function _worstAdvisoryRating(advisories) {
@@ -3182,67 +3183,67 @@ function renderPlatformAdvisoryAlert() {
   var container = document.getElementById("platform-advisory-alert");
   if (!container) return;
   var components = (window._getPlatformAdvisories && window._getPlatformAdvisories()) || [];
-  var pairs = _platformAdvisoryPairs(components);
 
   var dismissed = [];
   try { dismissed = JSON.parse(localStorage.getItem(_platformAdvisoryDismissKey()) || "[]"); } catch (_) {}
   if (!Array.isArray(dismissed)) dismissed = [];
-  var hasNew = pairs.some(function (p) { return dismissed.indexOf(p) === -1; });
 
-  if (!components.length || !hasNew) {
+  var shown = components.filter(function (c) {
+    return _platformAdvisoryPairs(c).some(function (p) { return dismissed.indexOf(p) === -1; });
+  });
+
+  if (!shown.length) {
     container.style.display = "none";
     container.innerHTML = "";
-    container.onclick = null;
     return;
   }
 
-  var sevOrder = { critical: 2, warning: 1, watch: 0 };
-  var worst = components.reduce(function (w, c) {
-    return (sevOrder[c.grade.severity] ?? 0) > (sevOrder[w] ?? 0) ? c.grade.severity : w;
-  }, "watch");
-  container.className = "query-status platform-advisory-alert platform-advisory-" +
-    (worst === "critical" ? "red" : worst === "warning" ? "amber" : "watch");
-
   container.style.display = "block";
-  container.innerHTML =
-    '<div class="query-status-header platform-advisory-header">' +
-      '<span class="platform-advisory-icon" aria-hidden="true">&#9888;</span>' +
-      '<span class="query-status-label">Security update' + (components.length === 1 ? "" : "s") + ' available</span>' +
-      '<button class="query-abort-btn platform-advisory-dismiss" title="Dismiss (re-appears when a new advisory opens)">&#x2715;</button>' +
-    '</div>' +
-    '<ul class="query-status-list">' +
-      components.map(function (c) {
-        var sf = c.grade.securityFloor;
-        var n = (sf.advisories || []).length;
-        var rating = _worstAdvisoryRating(sf.advisories);
-        var ids = (sf.advisories || []).map(function (a) { return a.id + " (" + a.severity + ")"; }).join(", ");
-        return '<li><div style="min-width:0;flex:1">' +
-          '<span class="query-status-name" title="' + escapeHtml(ids) + '">' +
-            escapeHtml(c.label) + " " + escapeHtml(c.observedVersion || "") +
+  container.innerHTML = shown.map(function (c, i) {
+    var sf = c.grade.securityFloor;
+    var n = (sf.advisories || []).length;
+    var rating = _worstAdvisoryRating(sf.advisories);
+    var ids = (sf.advisories || []).map(function (a) { return a.id + " (" + a.severity + ")"; }).join(", ");
+    return '<div class="query-status platform-advisory-alert platform-advisory-' + _platformAdvisoryTint(rating) +
+        '" data-index="' + i + '" title="' + escapeHtml(ids) + '">' +
+      '<div class="query-status-header platform-advisory-header">' +
+        // Same triangle, same 14px box, as the capacity alert below it.
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="platform-advisory-icon" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+        '<span class="query-status-label">' + escapeHtml(c.label) + ' security update</span>' +
+        '<button class="query-abort-btn platform-advisory-dismiss" title="Dismiss (re-appears when a new advisory opens)">&#x2715;</button>' +
+      '</div>' +
+      '<ul class="query-status-list">' +
+        '<li><div style="min-width:0;flex:1">' +
+          '<span class="query-status-name">' +
+            escapeHtml(c.observedVersion || "") + " · " + n + " CVE" + (n === 1 ? "" : "s") +
+            (rating ? " · " + escapeHtml(rating) : "") +
           '</span>' +
-          '<span class="query-status-progress">' +
-            n + " CVE" + (n === 1 ? "" : "s") + (rating ? " · " + escapeHtml(rating) : "") +
-            " · update to " + escapeHtml(sf.version) +
-          '</span>' +
-          '</div></li>';
-      }).join("") +
-    '</ul>';
+          '<span class="query-status-progress">update to ' + escapeHtml(sf.version) + '</span>' +
+        '</div></li>' +
+      '</ul>' +
+    '</div>';
+  }).join("");
 
-  var dismissBtn = container.querySelector(".platform-advisory-dismiss");
-  if (dismissBtn) {
-    dismissBtn.addEventListener("click", function (e) {
+  container.querySelectorAll(".platform-advisory-alert").forEach(function (panel) {
+    var c = shown[Number(panel.getAttribute("data-index"))];
+    panel.querySelector(".platform-advisory-dismiss").addEventListener("click", function (e) {
       e.stopPropagation();
-      try { localStorage.setItem(_platformAdvisoryDismissKey(), JSON.stringify(pairs)); } catch (_) {}
+      // Keep only pairs still open (so the list cannot grow forever), plus
+      // this component's.
+      var open = [];
+      components.forEach(function (x) { open = open.concat(_platformAdvisoryPairs(x)); });
+      var next = dismissed.filter(function (p) { return open.indexOf(p) !== -1; });
+      _platformAdvisoryPairs(c).forEach(function (p) { if (next.indexOf(p) === -1) next.push(p); });
+      try { localStorage.setItem(_platformAdvisoryDismissKey(), JSON.stringify(next)); } catch (_) {}
       renderPlatformAdvisoryAlert();
     });
-  }
-
-  // Click-through to the Platform Lifecycle card on the Maintenance tab.
-  container.style.cursor = "pointer";
-  container.onclick = function (e) {
-    if (e.target && e.target.tagName === "BUTTON") return;
-    window.location.href = "/server-settings.html?tab=maintenance";
-  };
+    // Click-through to the Platform Lifecycle card on the Maintenance tab.
+    panel.style.cursor = "pointer";
+    panel.addEventListener("click", function (e) {
+      if (e.target && e.target.closest && e.target.closest("button")) return;
+      window.location.href = "/server-settings.html?tab=maintenance";
+    });
+  });
 }
 
 // ─── In-app update progress ─────────────────────────────────────────────────
