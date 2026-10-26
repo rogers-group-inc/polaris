@@ -3673,7 +3673,9 @@ async function openAutomationWizard(existing, opts) {
         aggControl = '<select class="tgl-agg" style="display:none">' + opt(s.aggregations, "latest") + '</select>' +
           '<span style="font-size:0.8rem">projected to be reached within</span>' +
           '<input type="number" class="tgl-horizon" min="1" max="365" step="1" value="' + escapeHtml(String(fd)) + '" style="width:70px;font-size:0.8rem" title="The 30-day memory trend is projected this many days ahead. Each severity level fires when memory is projected to reach its own level within this window.">' +
-          '<span style="font-size:0.8rem">days</span>';
+          '<span style="font-size:0.8rem">days, using</span>' +
+          levelSourceSelectHtml(leaf.levelsFromRuleId || "") +
+          '<span class="tgl-levels-note" style="flex-basis:100%;font-size:0.78rem"></span>';
       }
       // No per-condition window input: an aggregation's measurement period IS
       // the poll-counted duration field below the tree (see tgStampWindows).
@@ -3763,6 +3765,20 @@ async function openAutomationWizard(existing, opts) {
     if (hEl && isForecastHorizonMetric(leaf.metric)) {
       var hNum = Math.round(Number(hEl.value));
       leaf.forecastDays = isFinite(hNum) && hNum >= 1 ? Math.min(365, hNum) : forecastDaysDefault();
+      // Levels taken from a memory-utilization automation: stored as the link,
+      // and the base comparison mirrors that automation's so the condition is
+      // valid as typed (the server copies its levels on save, and the engine
+      // re-reads them every evaluation).
+      var lsEl = rowEl.querySelector(".tgl-levels-from");
+      var lsId = lsEl ? lsEl.value : "";
+      if (lsId) {
+        leaf.levelsFromRuleId = lsId;
+        var src = levelSourceById(lsId);
+        if (src && src.trigger) {
+          leaf.operator = src.trigger.operator;
+          leaf.threshold = Number(src.trigger.threshold);
+        }
+      }
     }
     return leaf;
   }
@@ -5311,6 +5327,105 @@ async function openAutomationWizard(existing, opts) {
   function forecastDaysDefault() {
     var n = s.forecastDaysDefault;
     return typeof n === "number" && n >= 1 ? n : 14;
+  }
+
+  // ── Forecast levels from another automation ──────────────────────────────
+  // A memory forecast counts down to severity LEVELS. They can be its own, or
+  // a memory-utilization automation's (the server's `forecastLevelSources`):
+  // "Days until Serious" at that automation's serious %, then critical's.
+  // The candidates are read once per wizard from the automation list.
+  var _levelSources = null;        // [{ id, name, trigger, severity, severityBands }] | null
+  var _levelSourcesLoading = false;
+  function levelSourceMetric() {
+    return (s.forecastLevelSources || { memForecastPct: "memPct" }).memForecastPct || "memPct";
+  }
+  function levelSourceById(id) {
+    if (!id || !_levelSources) return null;
+    for (var i = 0; i < _levelSources.length; i++) if (_levelSources[i].id === id) return _levelSources[i];
+    return null;
+  }
+  /** A level list in words: "Serious ≥ 85 %, Critical ≥ 90 %". */
+  function levelListPhrase(src) {
+    var tr = src.trigger || {};
+    var levels = [{ severity: src.severity, operator: tr.operator, threshold: tr.threshold }];
+    (src.severityBands || []).forEach(function (b) { levels.push({ severity: b.severity, operator: b.operator || tr.operator, threshold: b.threshold }); });
+    levels.sort(function (a, b) { return Number(a.threshold) - Number(b.threshold); });
+    return levels.map(function (l) {
+      var sev = String(l.severity || "");
+      return sev.charAt(0).toUpperCase() + sev.slice(1) + " " + (l.operator === ">" ? ">" : "≥") + " " + l.threshold + " %";
+    }).join(", ");
+  }
+  function levelSourceSelectHtml(selected) {
+    var opts = '<option value="">its own levels</option>';
+    var seen = false;
+    (_levelSources || []).forEach(function (r) {
+      if (r.id === selected) seen = true;
+      opts += '<option value="' + escapeHtml(r.id) + '"' + (r.id === selected ? " selected" : "") + '>the levels of «' + escapeHtml(r.name) + '»</option>';
+    });
+    // Not loaded yet (or since deleted): keep the stored link selectable so a
+    // re-render before the list arrives cannot silently unlink it.
+    if (selected && !seen) opts += '<option value="' + escapeHtml(selected) + '" selected>the levels of another automation…</option>';
+    return '<select class="tgl-levels-from" style="width:auto;max-width:280px;font-size:0.8rem" title="Count down to this automation\'s own severity levels, or to a memory utilization automation\'s — then editing that automation\'s percentages moves the forecast too">' + opts + '</select>';
+  }
+  function loadLevelSources(panel) {
+    if (_levelSources || _levelSourcesLoading) return;
+    _levelSourcesLoading = true;
+    var metric = levelSourceMetric();
+    // Through a resolved promise, so a list call that throws outright (an
+    // older client, a test stub without it) degrades to "no candidates"
+    // instead of breaking the trigger step.
+    Promise.resolve().then(function () { return api.automations.list(); }).then(function (rows) {
+      var selfId = editing && editing.id;
+      _levelSources = (rows || []).filter(function (r) {
+        var t = r && r.trigger;
+        return r.id !== selfId && t && t.type === "asset_metric" && t.metric === metric &&
+          (t.operator === ">" || t.operator === ">=") && typeof t.threshold === "number";
+      }).map(function (r) {
+        return { id: r.id, name: r.name, trigger: r.trigger, severity: r.severity, severityBands: r.severityBands || null };
+      });
+    }).catch(function () { _levelSources = []; }).then(function () {
+      _levelSourcesLoading = false;
+      // Re-fill every picker in place, keeping each one's current choice.
+      (panel || document).querySelectorAll(".tgl-levels-from").forEach(function (sel) {
+        var cur = sel.value;
+        sel.outerHTML = levelSourceSelectHtml(cur);
+      });
+      var p = document.getElementById("aw-step-3");
+      if (p) { syncSeverityMode(p); refreshTriggerSentence(); }
+    });
+  }
+  /** The automation the trigger step's forecast row takes its levels from, or
+   *  null — read off the DOM, which is ahead of the draft between collects. */
+  function linkedLevelSourceId(panel) {
+    var sel = panel && panel.querySelector("#aw-trig-root .tgl-levels-from");
+    return sel && sel.value ? sel.value : null;
+  }
+  /**
+   * Dress the forecast row for its level source. Linked: the row's own
+   * comparison and value are hidden (they are that automation's), the note
+   * lists the levels it will count down to, and the severity controls are
+   * handed over (syncSeverityMode). Own levels: everything as normal.
+   */
+  function syncForecastLevels(panel) {
+    var root = panel && panel.querySelector("#aw-trig-root");
+    if (!root) return;
+    if (root.querySelector(".tgl-levels-from")) loadLevelSources(panel);
+    root.querySelectorAll(".scr-row").forEach(function (row) {
+      var sel = row.querySelector(".tgl-levels-from");
+      if (!sel) return;
+      var linked = !!sel.value;
+      ["tgl-op", "tgl-threshold", "tgl-unit"].forEach(function (cls) {
+        var el = row.querySelector("." + cls);
+        if (el) el.style.display = linked ? "none" : "";
+      });
+      var note = row.querySelector(".tgl-levels-note");
+      if (!note) return;
+      var src = linked ? levelSourceById(sel.value) : null;
+      note.textContent = !linked ? ""
+        : src ? "Counts down to " + levelListPhrase(src) + " — the next level the device has not reached. Change the levels on «" + src.name + "»."
+        : _levelSources ? "That automation no longer exists or no longer watches memory utilization — the levels last copied from it are used."
+        : "Loading that automation's levels…";
+    });
   }
   function tgLeafCeiling(leaf) {
     return !!(leaf && leaf.type !== "asset_state" && isCeilingMetric(leaf.metric));
@@ -6976,12 +7091,18 @@ async function openAutomationWizard(existing, opts) {
   // Built lazily; re-syncs as the trigger tree / checkbox change without wiping
   // in-progress tiers. Also repaints the severity accent.
   function syncSeverityMode(panel) {
+    syncForecastLevels(panel);
+    // A forecast that takes its levels from another automation takes its
+    // severities from there too: no levels of its own to add, no severity to
+    // pick. Its actions still run at every one of those levels.
+    var linkedLevels = !!linkedLevelSourceId(panel);
     var cb = panel.querySelector("#aw-multi-sev");
-    var applicable = bandsApplicable(draft.trigger);
+    if (cb && linkedLevels && cb.checked) cb.checked = false;
+    var applicable = bandsApplicable(draft.trigger) && !linkedLevels;
     if (cb) cb.disabled = !applicable;
     var multi = multiSevOn(panel);
     var singleWrap = panel.querySelector("#aw-single-sev-wrap");
-    if (singleWrap) singleWrap.style.display = multi ? "none" : "";
+    if (singleWrap) singleWrap.style.display = multi || linkedLevels ? "none" : "";
     var hostWrap = panel.querySelector("#aw-bands-host");
     if (hostWrap) {
       if (multi) {

@@ -32,6 +32,7 @@
 
 import { prisma } from "../db.js";
 import { daysUntilFull, leastSquaresSlopePerDay, type TrendPoint } from "../utils/linearTrend.js";
+import type { ForecastLevel } from "./notificationTypes.js";
 
 export interface MemoryForecastRow {
   assetId: string;
@@ -153,6 +154,46 @@ export function projectMemoryPct(usedPct: number, slopePerDay: number, horizonDa
   if (!Number.isFinite(usedPct) || !Number.isFinite(slopePerDay) || slopePerDay <= 0) return null;
   const v = Math.min(100, Math.max(0, usedPct) + slopePerDay * Math.max(0, horizonDays));
   return Math.round(v * 10) / 10;
+}
+
+/** Has memory at `pct` reached `level`, by the level's own comparison? */
+function reached(pct: number, level: ForecastLevel): boolean {
+  return level.strict ? pct > level.threshold : pct >= level.threshold;
+}
+
+/**
+ * The level a memForecastPct alert counts down to: the LOWEST of the
+ * automation's levels memory has not reached yet. A level already passed is
+ * the memory-utilization automation's alert, not a forecast — so a host past
+ * serious counts down to critical, and one past every level has no target.
+ * Pure; null when there is none.
+ */
+export function nextForecastLevel(usedPct: number, levels: ForecastLevel[]): ForecastLevel | null {
+  const sorted = [...levels].sort((a, b) => a.threshold - b.threshold);
+  return sorted.find((l) => !reached(usedPct, l)) ?? null;
+}
+
+/**
+ * The memForecastPct reading for one host: the projected level, but placed so
+ * the ordinary severity ladder (business rule 19) lands on the NEXT level the
+ * host has not reached — "Days until Serious", then once past serious "Days
+ * until Critical". Null (no alert; a live one ends) when memory is not
+ * growing, when every level is already passed, or when the next level is not
+ * reached within `horizonDays`. Otherwise the projection, capped just below
+ * the level after the next one, so a host that would sail through serious AND
+ * critical inside the window still counts down to serious first. Pure.
+ */
+export function forecastLevelReading(usedPct: number, slopePerDay: number, horizonDays: number, levels: ForecastLevel[]): number | null {
+  const projected = projectMemoryPct(usedPct, slopePerDay, horizonDays);
+  if (projected == null) return null;
+  const next = nextForecastLevel(usedPct, levels);
+  if (!next || !reached(projected, next)) return null;
+  const after = [...levels].sort((a, b) => a.threshold - b.threshold).find((l) => l.threshold > next.threshold);
+  if (!after) return projected;
+  // Just short of the following level by ITS comparison: `>` is not met AT its
+  // threshold, `>=` is, so the cap sits a hair below it.
+  const cap = after.strict ? after.threshold : after.threshold - 0.001;
+  return Math.max(next.threshold, Math.min(projected, cap));
 }
 
 /**

@@ -225,7 +225,12 @@ describe("buildTemplateContext", () => {
   });
 
   it("renders every cataloged context token to a non-empty value with full parts", () => {
-    const ctx = buildTemplateContext(FULL_PARTS);
+    // The {forecast.*} tokens need a memory forecast's trend; added here only,
+    // since a forecast also rewrites {trigger.summary} that other cases pin.
+    const ctx = buildTemplateContext({
+      ...FULL_PARTS,
+      forecast: { usedPct: 79, slopePerDay: 1, levels: [{ threshold: 85, severity: String(FULL_PARTS.severity), strict: false }] },
+    });
     for (const v of CONTEXT_TOKENS) {
       expect(renderNotificationTemplate(v.token, ctx), `${v.token} rendered empty`).not.toBe("");
       expect(renderNotificationTemplate(v.token, ctx)).not.toBe(v.token);
