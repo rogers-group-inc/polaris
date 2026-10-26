@@ -1,0 +1,51 @@
+<!-- @dsCard group="Actions" page height=400 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Buttons</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<p class="pv-cap">Variants</p>
+<div class="pv-row">
+  <button class="btn btn-filled">Save</button>
+  <button class="btn btn-tonal">Assign</button>
+  <button class="btn btn-outlined">Cancel</button>
+  <button class="btn btn-text">Details</button>
+</div>
+<div class="pv-row">
+  <button class="btn btn-error">Delete</button>
+  <button class="btn btn-success">Approve</button>
+  <button class="btn btn-filled" disabled>Disabled</button>
+</div>
+<p class="pv-cap">With a leading glyph, and full width</p>
+<div class="pv-col">
+  <div><button class="btn btn-tonal"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>Add asset</button></div>
+  <button class="btn btn-filled btn-block">Sign in</button>
+</div>
+<p class="pv-cap">Icon buttons</p>
+<div class="pv-row">
+  <button class="icon-btn" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10 4a6 6 0 1 1 0 12a6 6 0 1 1 0-12zm0 2a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM15.3 13.9l5 5-1.4 1.4-5-5z"/></svg></button>
+  <button class="icon-btn" aria-label="More"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3zm0 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3z"/></svg></button>
+  <button class="icon-btn" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z"/></svg></button>
+</div>
+</body>
+</html>

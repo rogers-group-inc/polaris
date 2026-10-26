@@ -1,0 +1,62 @@
+<!-- @dsCard height=288 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Polaris Mobile</title>
+<style>
+  body::before { content: none !important; display: none !important; }
+  html, body { margin: 0; padding: 0; height: auto !important; overflow: visible !important; background: transparent; }
+  .cv { display: block; }
+  .cv-ground { fill: var(--md-surface); }
+  .cv-slab   { fill: var(--md-primary); rx: var(--shape-xl); }
+  .cv-sheet  { fill: var(--md-secondary-container); rx: var(--shape-xl); }
+  .cv-pill   { fill: var(--md-primary-container); }
+  .cv-disc   { fill: var(--md-tertiary-container); }
+  .cv-on     { fill: var(--md-primary); }
+  .cv-off    { fill: var(--md-surface); }
+  .cv-name   { fill: var(--md-on-surface); font-family: var(--font-sans); font-size: 88px; font-weight: 700; letter-spacing: -1px; }
+  .cv-tag    { fill: var(--md-on-surface-variant); font-family: var(--font-sans); font-size: 13px; }
+</style>
+</head>
+<body>
+<!-- Derivation
+     blocks: --md-primary 144x260 slab and a --md-secondary-container 256x140 sheet, both
+       at rx --shape-xl; a --md-primary-container 112x40 pill and a
+       --md-tertiary-container 80x80 disc (pill and disc: rx half the short side).
+     arrangement: one tall phone-proportioned slab bleeding off the top, beside a sheet
+       rising off the bottom edge with its two top corners rounded — the app's bottom sheet.
+     pattern: pills from the radius scale (soft, large radii) — three rows of five, one
+       lit per row in --md-primary, because the five-tab navigation bar with its active
+       pill indicator is the most specific thing in this system; the rest cut out in
+       --md-surface.
+     scales: pill 32x16 at rx 8, pitch 48 across (32 + 16) and 28 down (--shape-xl),
+       block gaps 16, radii --shape-xl 28px and --shape-full.
+-->
+<svg class="cv" width="960" height="288" viewBox="0 0 960 288" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Polaris Mobile">
+  <rect class="cv-ground" x="0" y="0" width="960" height="288"/>
+  <rect class="cv-slab"  x="528" y="-24" width="144" height="260"/>
+  <rect class="cv-pill"  x="688" y="24"  width="112" height="40" rx="20"/>
+  <rect class="cv-disc"  x="840" y="24"  width="80"  height="80" rx="40"/>
+  <rect class="cv-sheet" x="688" y="168" width="256" height="148"/>
+  <rect class="cv-on" x="704" y="188" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="752" y="188" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="800" y="188" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="848" y="188" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="896" y="188" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="704" y="216" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="752" y="216" width="32" height="16" rx="8"/>
+  <rect class="cv-on" x="800" y="216" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="848" y="216" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="896" y="216" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="704" y="244" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="752" y="244" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="800" y="244" width="32" height="16" rx="8"/>
+  <rect class="cv-on" x="848" y="244" width="32" height="16" rx="8"/>
+  <rect class="cv-off" x="896" y="244" width="32" height="16" rx="8"/>
+  <text class="cv-name" x="40" y="142">Polaris</text>
+  <text class="cv-name" x="40" y="226">Mobile</text>
+  <text class="cv-tag"  x="40" y="258">A Material 3 app, not a narrow version of the desktop.</text>
+</svg>
+</body>
+</html>

@@ -1,153 +1,97 @@
-# Claude Design sync — repo notes
+# Polaris design systems — repo notes
 
-**Entry point: `/design-sync`** (the bundled skill). It reads this file and
-`config.json` before doing anything and honors what it finds, which is why everything
-Polaris-specific about this sync lives here rather than in a project skill. There was a
-`/polaris-design-sync` skill; it was retired 2026-09-11 as a duplicate layer, and its
-unique content — the trigger table, the upload procedure, the detail-routing table — was
-folded into this file in the same commit. **Keep it here.** If a future session finds the
-sync under-documented, the fix is a section in this file, not a new skill.
+**The repo is the standard.** Two design systems are published from it as claude.ai
+artifacts, and both are marked synced-from-code, so their pages are read-only: a change is
+made in the repo and re-synced, never typed into the artifact.
 
-## Read this first: the converter does not apply here
+| System | Artifact | Covers | Built from |
+|---|---|---|---|
+| **Polaris UI** | https://claude.ai/artifact/2Haqgf2NSW7KUuc9JuTKgz | the desktop web app, plus the alert email as one page | `design/desktop/` + `public/css/styles.css` + `src/utils/alertEmailTemplate.ts` |
+| **Polaris Mobile** | https://claude.ai/artifact/U1moTSRwvzveB4xQpmLLed | the phone PWA (`mobile.html`) | `design/mobile/` + `public/css/mobile.css` |
 
-`/design-sync`'s converter (both the storybook and package shapes) needs a built JS
-package that exports renderable components with `.d.ts` types, so the design agent can
-render them from `window.<globalName>.*`. **Polaris has none of that:**
+Both are the user's own design systems for the apps they build. They are not
+organization-wide standards, whatever the artifact listing labels them.
 
-- no Storybook, no `*.stories.*`, no React/Vue/Svelte/Lit dependency
-- `dist/` is the compiled Express/TypeScript backend — `package.json` `main` is the API server
-- the frontend is vanilla JS + HTML served from `public/`, with no build step
+## What lives where
 
-So this repo uses the **off-script path** the base skill explicitly allows: we produce the
-upload layout by other means. `node .design-sync/build.mjs` assembles `ds-bundle/`.
-`config.json` here is NOT converter config — running `package-build.mjs` against it will
-fail on unknown keys. That is intentional; don't "fix" it by inventing a `pkg`.
+- `design/<system>/README.md` — the system's brand book, hand-written. What a designer or a
+  design agent reads first.
+- `design/<system>/tokens.json` — token NAMES, usage notes and type styles, hand-written.
+  No values: colour, radius and shadow values are generated from the app stylesheet at
+  build time, so they cannot drift from the app.
+- `design/<system>/components/<Name>/preview.html` + `README.md` — the example pages. Line 1
+  of every preview is `<!-- @dsCard group="…" … -->`. A page may only use classes the app
+  stylesheet defines, or helpers its own `<style>` defines; the build fails otherwise.
+- `design/img/brand/` — the logos (published to Polaris UI's Logos asset group).
+- `design/POLARIS-UI-GUIDE.md` — the long-form desktop guide, maintained in this repo.
+- `.design-sync/build.mjs` + `config.json` — assemble `ds-bundle/<system>/project/…`
+  (gitignored). `render-email.ts` renders the AlertEmail page from the real template.
 
-## What ships (stage 1 — styles only)
+The published `components/bundle.css` IS the app stylesheet, verbatim, behind the Google
+Fonts the app loads. There is no separate kit stylesheet any more: `design/css`,
+`design/js`, `design/email` and the starter templates were retired on 2026-10-26 because
+they were copies that had drifted ~1,250 lines from the app.
 
-A CSS design system, not a component library. The design agent gets:
+## When to sync
 
-- `styles.css` — the entry; rendered designs receive only its `@import` closure
-- `css/polaris-ui.css`, `css/polaris-mobile.css` — verbatim copies of the kit
-- `README.md` — `conventions.md` prepended to a generated card index
-- 10 hand-authored preview cards under `components/<Group>/<Name>/<Name>.html`
+Re-sync after a commit that changes any of:
 
-There is **no `_ds_bundle.js`** and nothing importable. The conventions header says so
-explicitly, because an agent that assumes a component library will write imports that
-resolve to nothing.
-
-Stage 2 — a thin React wrapper package over these classes, to live in `design-kit/` in
-this repo — was scoped and deferred, not rejected. Decision recorded 2026-09-09.
-
-## What triggers a re-sync
-
-| Change | Re-sync? |
+| Change | System |
 |---|---|
-| the external kit lifted into `design/css/` (a `docs(design): sync the kit` commit) | **yes** — this is the trigger |
-| a card added or edited in `.design-sync/cards/` | yes |
-| `.design-sync/conventions.md` edited | yes |
-| a new theme id, or a token renamed in the kit | yes, and re-validate every name in the conventions header |
-| `public/css/styles.css` changed and `design/` did not | **no** — see Re-sync risks |
+| `public/css/styles.css` | Polaris UI |
+| `public/css/mobile.css` | Polaris Mobile |
+| `design/desktop/**`, `design/img/**` | Polaris UI |
+| `design/mobile/**` | Polaris Mobile |
+| `src/utils/alertEmailTemplate.ts`, `src/services/alertBrandService.ts` | Polaris UI (the email page) |
+| `.design-sync/**` | both |
 
-Check the kit actually moved before rebuilding: `git log --oneline -- design/css/`, and
-compare the `design/` tree hash against the last upload (`git rev-parse <sync-commit>:design`).
-Identical hash means a re-sync would upload the same bytes.
+`/polaris-deploy` runs the sync after its push when one of these moved; a commit made
+outside it syncs by hand with the procedure below.
 
-## The upload procedure
+## The publish procedure
 
-1. **Build.** `node .design-sync/build.mjs` from the repo root. It wipes and rebuilds
-   `ds-bundle/`, which is gitignored and never a source — edit the inputs, never the output.
-2. **Validate** (see Verification below) *before* uploading. The published copy is what
-   other people design against.
-3. **Authorize.** `DesignSync(list_projects)`. If it refuses, stop and ask for
-   `/design-login` from a standalone terminal — it cannot be granted from a VS Code session.
-4. **Confirm the target type.** `DesignSync(get_project)` must report
-   `type: PROJECT_TYPE_DESIGN_SYSTEM`. That type is immutable at creation, so pushing to a
-   regular project never makes it a design system.
-5. **Plan, then write.** `finalize_plan` with `localDir` set to the absolute `ds-bundle/`
-   path and every file listed in `writes` (`deletes` is required even when empty), then
-   `write_files` with a `localPath` per file so contents never pass through context.
-6. **Verify.** `DesignSync(list_files)` and count what landed.
-7. **Record.** A *new* project's id goes into `config.json` and the Status section below in
-   the same commit. A re-sync overwrites in place against the existing `projectId` and
-   changes neither.
+From the repo root, in a Claude Code session (the Artifact tool does the publishing; no
+other authorization is needed).
 
-## Where the detail lives
+1. **Build.** `node .design-sync/build.mjs`. It exits 1 and names each problem when a page
+   uses an undefined class, a preview lacks its `@dsCard` line, or a token does not resolve.
+   Fix the source, never `ds-bundle/`. A `note:` line means the app declared a colour that
+   `design/<system>/tokens.json` has no usage note for: it is published anyway; add the note.
+2. **Per system, read the live artifact.** `Artifact read` on its url (the whole artifact,
+   then `project/design-system.json`). Someone may have edited it in the page despite the
+   read-only mark; if its `lastChange` is newer than the last sync and not from this repo,
+   stop and ask before overwriting.
+3. **Publish the files.** One `Artifact publish` with `url` = the artifact, `root` =
+   `ds-bundle/<system>`, `file_path` = one of its files, `files` = every other path under
+   `project/` mapped to itself. Paths the artifact holds under `project/components/` that
+   the build no longer produces are removed with `"project/…": null`. Never send
+   `tokens.css`, `api/…` or `manifest.json`: the page generates them.
+4. **Logos (Polaris UI, only when `design/img/brand/` changed).** Upload each PNG as an
+   asset (`asset: true`), and record it in the index under `assetGroups.Logos.files`.
+5. **The index, last.** Re-read `project/design-system.json` and publish it with
+   `"editing": "code"`, `lastChange` = `{"by": "<the user>", "at": <now>, "via":
+   "Polaris repo @<short sha>", "note": "<what changed>"}`, and every other key kept.
+   Remove a leftover `source` key once (it makes the page offer a migration clean-up).
 
-| You need | Read |
-|---|---|
-| the class and token vocabulary shipped to the design agent | `.design-sync/conventions.md` |
-| how the bundle is assembled, and what is generated vs copied | `.design-sync/build.mjs` |
-| the portable UI contract itself (tokens, themes, shell, tables, modals, badges, z-index) | `design/POLARIS-UI-GUIDE.md` — a drop-in zone, never edited in this repo |
-| which file in *this* repo implements a UI pattern | the `polaris-ui-canon` skill |
+## Design first, then build
 
-## Gotchas found while building this
+A new chart, slide-over, modal, widget or phone sheet starts as a **design canvas built on
+the matching system**: `Artifact quickstart` with intent `design`, Polaris UI for desktop,
+Polaris Mobile for the phone, an artboard per screen or state. The user reviews and
+comments on the canvas; the code is written to match the approved canvas; the new pattern
+becomes a page under `design/<system>/components/` in the same branch; the sync publishes
+it. Canvases are throwaway reviews, not a second source.
 
-- **`data-theme` is mandatory.** `:root` is the dark base that `nightfall` refines, and
-  `theme-init.js` always stamps `data-theme` on `<html>`. Every card sets
-  `data-theme="nightfall"`. The three ids are `morning`, `noon`, `nightfall`.
-- **Themes work on any element**, not just `<html>` — the selectors are
-  `[data-theme="…"]` / `:is([data-theme="morning"],[data-theme="noon"])`. That is what lets
-  `Themes.html` show all three side by side in one page.
-- **Tables carry no class.** `<table>` is styled by element selector inside
-  `.table-wrapper`. Writing `class="data-table"` (or any invented name) gets you an
-  unstyled table — that name does not exist.
-- **`.modal-overlay` and `.slideover` are invisible without `.open`.** The cards hard-code
-  `.open`; at runtime `openModal()` / `openSlideover()` add it.
-- **`.btn-secondary` is `--color-bg-primary`-filled**, so it disappears on a `.card` or a
-  table row (both the same colour) and only reads on the page ground
-  (`--color-bg-secondary`). This is authentic, not a bug — but it means a reference card
-  must demo buttons on the page ground or the variant looks broken. `Buttons.html` was
-  rebuilt once for exactly this reason.
-- **Fonts come from the Google Fonts CDN**, pulled in by an `@import` at the top of
-  `styles.css`. There is no `@font-face` and no `.woff2` in the repo. If Claude Design
-  blocks external stylesheet fetches, Inter and Roboto Mono silently fall back to
-  `-apple-system` / `Consolas` and the look degrades without an error. **Unverified** —
-  see Re-sync risks.
+## History
 
-## Verification performed (2026-09-09)
-
-- Every class and token named in `conventions.md` checked to exist in the shipped CSS —
-  caught one invented name (`.search-state`, removed).
-- Every `class="…"` in every card checked against the CSS, plus the `@dsCard` first-line
-  marker. 10/10 clean.
-- All 10 cards rendered headless via Chrome and reviewed as images. Chrome is at
-  `C:/Program Files/Google/Chrome/Application/chrome.exe`; Edge also works. The throwaway
-  scripts lived in the session scratchpad, not the repo — rewrite them if you need them.
-
-## Status
-
-- **Uploaded 2026-09-10** to design-system project `Polaris UI`,
-  `ac6a54e0-a141-4754-967c-6fb9eb604d0a` (recorded in `config.json`) — 14 files, all 14
-  confirmed present by `list_files`. A re-sync overwrites in place: rebuild, then
-  `finalize_plan` against that same `projectId` before any write.
-- **`DesignSync` needs a design-system authorization the VS Code extension session cannot
-  grant** — it reports as non-interactive and `/design-login` is not a command there. It
-  must be run once from the standalone terminal `claude` CLI on this machine; every other
-  session then reuses it. That is what blocked the original upload for a day.
-
-## Re-sync risks — what can silently go stale
-
-- **`design/` tracks the external kit, NOT `public/`.** An earlier version of this note
-  had the copy direction backwards. `polaris-ui-canon` and commit 72a6c3df are explicit:
-  `design/` is a drop-in snapshot re-synced wholesale from the external kit and is *never
-  edited to chase `public/`* — a fix made in `public/` travels back only when the kit is
-  next lifted. So `design/css/` and `public/css/` diverging is expected, not rot (they were
-  ~1250 lines apart at the first upload), and this bundle correctly ships the **kit**: the
-  portable contract, without the app-specific accretions in `public/`. Do not "fix" the
-  drift by copying `public/css/` over `design/css/`. What to check before a re-sync is
-  whether the kit has been lifted since the last `docs(design): sync the kit` commit.
-- **The conventions header is hand-written and will rot.** It enumerates ~74 class names
-  and 30 tokens. Re-run the validation described above against a fresh build on every
-  re-sync and fix or cut any name that no longer resolves. Never rewrite the file
-  wholesale — it is human-editable and its content belongs to its authors.
-- **Cards are static.** They will not notice a CSS change that alters layout, only one that
-  removes a class name. Re-render and re-review the images when `polaris-ui.css` changes
-  materially.
-- **The Google Fonts `@import` is a network dependency** at render time in someone else's
-  environment. If the brand faces look wrong in Claude Design, vendor the `.woff2` files
-  into `fonts/` and replace the `@import` with local `@font-face` rules.
-- **Cards were never rendered inside Claude Design.** The 10/10 visual pass was headless
-  Chrome locally. The Google-Fonts `@import` and the Design System pane's own card
-  rendering are still unverified in that environment — look at the pane before trusting
-  the look.
+- 2026-09-10 — first published to a standalone Claude Design project
+  (`ac6a54e0-a141-4754-967c-6fb9eb604d0a`) by `DesignSync`, from the external kit then
+  copied into `design/css`.
+- 2026-09-16 — that project was migrated into the Polaris UI artifact; 2026-09-21 the
+  phone half was split out into Polaris Mobile. Both were then edited in the browser, so
+  the repo and the artifacts drifted (65 phone colours, 25 desktop daylight colours).
+- 2026-10-26 — the artifacts' pages and notes were pulled into `design/desktop/` and
+  `design/mobile/`, the kit copies retired, and the artifacts re-published from the repo as
+  read-only. The original standalone design project ("Polaris", `3136dc76-…`, with its
+  React kit, guideline pages and UI kits) is exported to the user's `Polaris.zip`; standalone
+  Claude Design closes 2026-12-14, after which that zip is the only copy.

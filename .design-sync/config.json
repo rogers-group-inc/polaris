@@ -1,13 +1,35 @@
 {
-  "$comment": "Polaris syncs to Claude Design via an OFF-SCRIPT layout, not the /design-sync converter. Polaris has no component library to convert: dist/ is the compiled Express backend and the frontend is vanilla JS served from public/. See NOTES.md before changing anything here.",
-  "shape": "off-script-css-kit",
-  "projectId": "ac6a54e0-a141-4754-967c-6fb9eb604d0a",
+  "$comment": "The two Polaris design systems, published as claude.ai artifacts from design/ + the app's own stylesheets. Build with buildCmd, publish per NOTES.md. Theme chains list the selector groups whose custom properties apply to each theme, in cascade order.",
   "buildCmd": "node .design-sync/build.mjs",
-  "localDir": "./ds-bundle",
-  "readmeHeader": ".design-sync/conventions.md",
-  "sources": {
-    "css": ["design/css/polaris-ui.css", "design/css/polaris-mobile.css"],
-    "cards": ".design-sync/cards/",
-    "guide": "design/POLARIS-UI-GUIDE.md"
+  "localDir": "ds-bundle",
+  "systems": {
+    "desktop": {
+      "title": "Polaris UI",
+      "artifact": "https://claude.ai/artifact/2Haqgf2NSW7KUuc9JuTKgz",
+      "source": "design/desktop",
+      "stylesheet": "public/css/styles.css",
+      "fonts": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap",
+      "colorPrefixes": ["color-"],
+      "classHooks": ["dash-alert-body", "dash-alert-group-header"],
+      "themes": {
+        "nightfall": [[":root"], ["[data-theme=\"nightfall\"]"]],
+        "morning": [[":root"], [":is([data-theme=\"morning\"],[data-theme=\"noon\"],[data-theme=\"afternoon\"])"], ["[data-theme=\"morning\"]", "html[data-theme=\"morning\"]"]],
+        "noon": [[":root"], [":is([data-theme=\"morning\"],[data-theme=\"noon\"],[data-theme=\"afternoon\"])"], ["[data-theme=\"noon\"]", "html[data-theme=\"noon\"]"]]
+      }
+    },
+    "mobile": {
+      "title": "Polaris Mobile",
+      "artifact": "https://claude.ai/artifact/U1moTSRwvzveB4xQpmLLed",
+      "source": "design/mobile",
+      "stylesheet": "public/css/mobile.css",
+      "fonts": "https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap",
+      "colorPrefixes": ["md-"],
+      "classHooks": [],
+      "themes": {
+        "nightfall": [[":root"], ["[data-theme=\"nightfall\"]"]],
+        "morning": [[":root"], [":is([data-theme=\"morning\"],[data-theme=\"noon\"],[data-theme=\"afternoon\"])"], ["[data-theme=\"morning\"]"]],
+        "noon": [[":root"], [":is([data-theme=\"morning\"],[data-theme=\"noon\"],[data-theme=\"afternoon\"])"], ["[data-theme=\"noon\"]"]]
+      }
+    }
   }
 }

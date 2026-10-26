@@ -6,19 +6,27 @@ tables, modals, slide-ins, badges, forms, z-index. It contains none of Polaris's
 domain logic (asset discovery, IPAM, topology, monitoring) — build whatever the
 new app does, but render it with exactly these parts.
 
+> **Maintained in the Polaris repo** (2026-10-26). The look itself is published as two
+> design systems built from the repo: **Polaris UI** (desktop, plus the alert email) and
+> **Polaris Mobile** (the phone), whose READMEs and example pages under `design/desktop/` and
+> `design/mobile/` are the short form of this guide. Where this guide and the Polaris app
+> disagree, the app wins; some sections below predate its latest changes.
+
 ## What to copy into the new app
 
-| From this kit | To the new app | Change it? |
+The separate kit copies (`css/`, `js/`, `email/`, the page templates) were retired on
+2026-10-26; they had drifted from the app. Copy from the Polaris app itself:
+
+| From the Polaris repo | To the new app | Change it? |
 |---|---|---|
-| `css/polaris-ui.css` | `public/css/polaris-ui.css` | **No.** Verbatim. Add new rules in a separate `app.css` loaded after it. |
-| `js/theme-init.js` | `public/js/theme-init.js` | No |
-| `js/polaris-ui.js` | `public/js/polaris-ui.js` | No — extend, don't edit |
-| `js/table-sf.js` | `public/js/table-sf.js` | **No.** Verbatim. |
-| `page-template.html` | each page | Yes — that's the point |
-| `logo.png` | `public/logo.png` | Replace with the new app's mark |
-| `css/polaris-mobile.css` | `public/css/polaris-mobile.css` | **No.** Verbatim. Only if the app ships a phone surface. |
-| `mobile-template.html` | `public/mobile.html` | Yes — that's the point |
-| `email/alert-email-template.html` + `.txt` | the notification service's default templates | Yes — the tokens are yours to choose |
+| `public/css/styles.css` (the Polaris UI system's `bundle.css`) | `public/css/styles.css` | **No.** Verbatim. Add new rules in a separate `app.css` loaded after it. It carries Polaris-only rules too; they are harmless unused. |
+| `public/js/theme-init.js` | `public/js/theme-init.js` | No |
+| `public/js/table-sf.js` | `public/js/table-sf.js` | **No.** Verbatim. |
+| the modal, slide-over and toast helpers in `public/js/app.js` (`openModal`, `closeModal`, `PolarisPanels`, `showToast`) | your own small helper file | Port them; `app.js` itself is Polaris-specific |
+| a page from the Polaris UI system (PageShell) | each page | Yes — that's the point |
+| `design/img/brand/` | your app's images | Replace with the new app's mark |
+| `public/css/mobile.css` (the Polaris Mobile system's `bundle.css`) | `public/css/mobile.css` | **No.** Verbatim. Only if the app ships a phone surface. |
+| `src/utils/alertEmailTemplate.ts` (the AlertEmail page shows it rendered) | the notification service's default templates | Yes — the tokens are yours to choose |
 
 Rule: **never restyle a component that already exists here.** If a surface
 doesn't seem to fit, reach for the closest existing pattern rather than
@@ -98,7 +106,7 @@ Rules:
   or chart palette by brightness — never compare against a theme id. The CSS
   does the same with `:is([data-theme="morning"],[data-theme="noon"])`; match
   that pattern for any new daylight override.
-- **Adding a theme** = one `THEMES` entry in `polaris-ui.js`, one token block in
+- **Adding a theme** = one `THEMES` entry in `public/js/app.js`, one token block in
   the CSS, one id in `theme-init.js`'s `KNOWN` list. Nothing else.
 - `setTheme(id)` persists to `localStorage["polaris-theme"]` and fires a
   `themechange` event on `document` (`detail: {theme, family}`) — listen for it
@@ -129,10 +137,11 @@ Rules:
 ```
 
 - **Centering**: the whole app is centered by `.layout`'s
-  `max-width: calc(100vh * 16 / 9); margin: 0 auto` — a 16:9 column, never
-  full-bleed on ultrawide. Slide-overs respect it:
-  `right: max(0px, calc((100vw - 100vh * 16 / 9) / 2))`. Don't add your own
-  page-level max-width or centering wrapper.
+  `max-width: var(--layout-max-width); margin: 0 auto` — a 16:9 column by
+  default, 16:10 or Auto by the per-browser Layout setting (`data-layout` on
+  `<html>`), never full-bleed on ultrawide. Slide-overs respect it:
+  `right: max(0px, calc((100vw - var(--layout-max-width)) / 2))`. Don't add your
+  own page-level max-width or centering wrapper.
 - **Sidebar**: 220px, sticky, full height, `--color-bg-tertiary`, right border.
   Order: brand block → `.sidebar-nav` → (spacer `margin-top:auto`) → bottom
   links + theme toggle.
@@ -158,7 +167,7 @@ Rules:
   border-radius:var(--radius-md)`, 18px stroke SVG at `opacity:.7`.
   Hover `rgba(79,195,247,.08)`; `.active` gets `rgba(79,195,247,.12)`, accent
   text, weight 550, full-opacity icon. Use `renderSidebar()` from
-  `polaris-ui.js` and let it stamp `.active` from the URL.
+  `public/js/app.js` and let it stamp `.active` from the URL.
 - Sticky header variant: add `.page-header-sticky` (z-index 1050, background
   must be `--color-bg-secondary`).
 
@@ -246,7 +255,7 @@ fonts, no filled icon sets.
 
 ## 4. Tables — the centerpiece
 
-Markup (see `page-template.html`):
+Markup (see the Polaris UI PageShell page):
 
 ```html
 <div class="table-wrapper table-wrapper-sticky" id="x-table-wrapper">
@@ -488,7 +497,7 @@ into steps just hides fields behind clicks.
 ### Off-click, lock, and the bloom hint
 
 A backdrop click is never allowed to silently discard a half-filled form. Two
-mechanisms, both already in `polaris-ui.js`:
+mechanisms, both already in `public/js/app.js`:
 
 - **Panel lock** — a lock toggle sits immediately left of the X on every modal
   and slide-over header (`.panel-lock-btn`, injected automatically by a
@@ -671,7 +680,7 @@ Never hand-pick `9999`. If something must sit higher, add it to this list.
 
 ## 11. Checklist for any new page
 
-1. Copy `page-template.html`; set the title and the `<th>` set.
+1. Copy the Polaris UI PageShell page; set the title and the `<th>` set.
 2. `renderSidebar({ logo, tagline, items, bottomItems })` on DOMContentLoaded.
 3. `new TableSF(...)` → then `setupColumnLayout(...)`.
 4. Persist filters + sort + column layout in one
@@ -687,13 +696,13 @@ Never hand-pick `9999`. If something must sit higher, add it to this list.
 
 ## 12. Mobile — a separate app, not a responsive desktop
 
-The phone surface is its **own SPA** (`mobile.html` + `polaris-mobile.css` +
+The phone surface is its **own SPA** (`mobile.html` + `public/css/mobile.css` +
 `js/mobile/*`), not the desktop stylesheet at a narrow breakpoint. That is a
 deliberate split: the desktop is a dense multi-column table tool and the phone
 is a Material 3 list-and-sheet app. They share the server, the auth flow, the
 theme *key*, and nothing else.
 
-Copy `css/polaris-mobile.css` verbatim and start from `mobile-template.html`.
+Copy `public/css/mobile.css` verbatim and start from the Polaris Mobile AppShell page.
 
 ### Design language
 
@@ -833,7 +842,7 @@ covers everything.
 
 ## 13. Email notifications
 
-Start from `email/alert-email-template.html` and its `.txt` sibling. Both are
+Start from `src/utils/alertEmailTemplate.ts` (`DEFAULT_ALERT_HTML` and its plain-text sibling `DEFAULT_ALERT_TEXT`; the Polaris UI AlertEmail page shows it rendered). Both are
 templates in a `{token}` vocabulary — **not** server-side string building, and
 not rendered samples.
 

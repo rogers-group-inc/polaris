@@ -629,9 +629,9 @@
   // ─── Widget-header menus (export tiers, sort order) ─────────────────────
   // ONE dismiss / scroll / toggle implementation for every small anchored menu
   // a header button opens. The chrome class stays `.widget-export-menu` even
-  // for the sort menu: that is the kit's menu styling (design/css/polaris-ui.css
-  // carries the same rules) and renaming it here would drift this repo from the
-  // snapshot for no gain — the second class says what the menu actually is.
+  // for the sort menu: the published design system's pages name it, and
+  // renaming it would rename a documented class for no gain — the second class
+  // says what the menu actually is.
   function closeHeaderMenu() {
     var m = document.querySelector(".widget-export-menu");
     if (m) m.remove();

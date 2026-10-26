@@ -1,17 +1,27 @@
 ---
 name: polaris-ui-canon
-description: "Polaris frontend (vanilla JS, no build step, public/): which file is the reference implementation of each UI pattern (SVG charts, modals, stacked modals, slide-overs, wizards, sortable/filterable tables, column layout, row context menus, condition builder, widgets, mobile sheets), the page → permission-gate table, the shared modules never to re-derive, the three themes and the transit palette the theme band / theme strip sweep through, list-page and modal conventions, and the kit contract in design/POLARIS-UI-GUIDE.md. Load for any change under public/, any HTML/CSS/JS/UI/UX/theme/theme band/theme dial/theme strip/theme picker/dark mode/light mode/dashboard/widget/chart/mobile PWA/Dash wallboard request, anything about the sidebar or nav bar and the status panels, indicators and dots that live in it, anything about the Device Map or Site Map surfaces and the OpenStreetMap basemap they draw — the tile URL, the tile host, blocked or missing tiles, the tile usage policy — anything about a screenshot, a camera button, a capture or an image copied to the clipboard from a tab, a table or a chart, and what it did or didn't come out looking like — or 'make it look like the X page' — or the Path Monitor page, a host's Paths tab, or its traceroute path graph (NetPath-style hops, branches, the latency each link adds)."
+description: "Polaris frontend (vanilla JS, no build step, public/): which file is the reference implementation of each UI pattern (SVG charts, modals, stacked modals, slide-overs, wizards, sortable/filterable tables, column layout, row context menus, condition builder, widgets, mobile sheets), the page → permission-gate table, the shared modules never to re-derive, the three themes and the transit palette the theme band / theme strip sweep through, list-page and modal conventions, the long-form guide in design/POLARIS-UI-GUIDE.md, and the two design systems published from design/ (Polaris UI for desktop + the alert email, Polaris Mobile for the phone) with the design-first rule: a new chart, slide-over, modal, widget or phone sheet is mocked on a design canvas for review before it is built. Load for any change under public/, any request to design or mock up a new screen, graph, slide-in or dialog, anything about the Polaris UI or Polaris Mobile design system or a design canvas, any HTML/CSS/JS/UI/UX/theme/theme band/theme dial/theme strip/theme picker/dark mode/light mode/dashboard/widget/chart/mobile PWA/Dash wallboard request, anything about the sidebar or nav bar and the status panels, indicators and dots that live in it, anything about the Device Map or Site Map surfaces and the OpenStreetMap basemap they draw — the tile URL, the tile host, blocked or missing tiles, the tile usage policy — anything about a screenshot, a camera button, a capture or an image copied to the clipboard from a tab, a table or a chart, and what it did or didn't come out looking like — or 'make it look like the X page' — or the Path Monitor page, a host's Paths tab, or its traceroute path graph (NetPath-style hops, branches, the latency each link adds)."
 ---
 
 # Polaris UI canon
 
 When there are several ways to build the same thing (chart, modal, slide-over, sortable
 table, wizard, row menu), this skill names the reference implementation new work must
-match. **Read `design/POLARIS-UI-GUIDE.md` first** for the portable contract (tokens,
-themes, shell, tables, modals, badges, z-index, the phone SPA, the alert email) — that
-file is a drop-in snapshot of the external kit and is never edited to chase `public/`.
-Read the canon files here for *which file in THIS repo* to copy. Inside this repo
-`public/` is the living source; `design/js|css|email/` are snapshots.
+match. **Read `design/POLARIS-UI-GUIDE.md` first** for the long-form contract (tokens,
+themes, shell, tables, modals, badges, z-index, the phone SPA, the alert email), then the
+canon files here for *which file in THIS repo* to copy. `public/` is the living source.
+
+**Design systems.** `design/desktop/` and `design/mobile/` are the sources of the two
+design systems published as claude.ai artifacts — Polaris UI (desktop, plus the alert email
+page) and Polaris Mobile (the phone) — built with the app's own `public/css/styles.css` /
+`mobile.css` as their stylesheet and published read-only (`.design-sync/NOTES.md`).
+**Design first:** a NEW chart, slide-over, modal, widget or phone sheet starts as a design
+canvas built on the matching system (`Artifact quickstart`, intent `design`) for the user to
+review and approve before any code is written; build it to match the approved canvas, add
+the pattern as a page under `design/<system>/components/` in the same branch (the build
+fails on a class the app stylesheet does not define), and re-sync. A change to an EXISTING
+pattern skips the canvas unless its look changes. A UI commit that touches
+`public/css/styles.css` or `mobile.css` is a re-sync trigger even with no page changed.
 
 ## Which file
 

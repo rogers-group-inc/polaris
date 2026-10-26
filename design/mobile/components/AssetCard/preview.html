@@ -1,0 +1,38 @@
+<!-- @dsCard group="Assets" page height=760 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Asset card</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="asset-list" style="padding:0">
+  <button class="asset-card"><div class="top"><div class="ico ico-fw"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">edge-fw-01</div><span class="dot up"></span></div><div class="meta"><span class="mono">192.0.2.1</span><span>Firewall</span><span>1 min</span></div></button>
+  <button class="asset-card"><div class="top"><div class="ico ico-sw"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">core-sw-01</div><span class="dot up"></span></div><div class="meta"><span class="mono">192.0.2.11</span><span>Switch</span><span>2 min</span></div></button>
+  <button class="asset-card"><div class="top"><div class="ico ico-srv"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">app-srv-03</div><span class="dot warn"></span></div><div class="meta"><span class="mono">192.0.2.40</span><span>Server</span><span>5 min</span></div></button>
+  <button class="asset-card"><div class="top"><div class="ico ico-prn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">prn-office-2</div><span class="dot up"></span></div><div class="meta"><span class="mono">198.51.100.22</span><span>Printer</span><span>8 min</span></div></button>
+  <button class="asset-card"><div class="top"><div class="ico ico-ap"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">ap-warehouse-12</div><span class="dot down"></span></div><div class="meta"><span class="mono">198.51.100.7</span><span>Access point</span><span>1 hr</span></div></button>
+  <button class="asset-card"><div class="top"><div class="ico ico-rtr"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">edge-rtr-04</div><span class="dot up"></span></div><div class="meta"><span class="mono">192.0.2.254</span><span>Router</span><span>1 min</span></div></button>
+  <button class="asset-card"><div class="top"><div class="ico ico-wks"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">wks-dispatch-07</div><span class="dot unk"></span></div><div class="meta"><span class="mono">198.51.100.40</span><span>Workstation</span><span>3 hr</span></div></button>
+  <button class="asset-card"><div class="top"><div class="ico ico-other"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="name">ups-yard-01</div><span class="dot up"></span></div><div class="meta"><span class="mono">198.51.100.90</span><span>Other</span><span>12 min</span></div></button>
+</div>
+</body>
+</html>

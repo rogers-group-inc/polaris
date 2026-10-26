@@ -1,0 +1,43 @@
+<!-- @dsCard group="Containers" page height=560 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lists</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="section-head">Recent <span class="count">6 items</span></div>
+<div class="list-item"><div class="leading"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">Core switch</div><div class="supporting">One-line item</div></div></div>
+<div class="list-divider"></div>
+<div class="list-item two-line"><div class="leading tonal"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">core-sw-01</div><div class="supporting"><span class="mono">192.0.2.11</span> · Switch</div></div><div class="trailing">2 min</div></div>
+<div class="list-divider"></div>
+<div class="list-item three-line"><div class="leading tertiary"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M4 6h16v12H4zm2 2v8h12V8z"/></svg></div><div class="content"><div class="headline">ap-warehouse-12</div><div class="supporting">Access point on the warehouse floor, second aisle from the loading dock</div></div><div class="trailing">1 hr</div></div>
+<div class="list-divider"></div>
+<div class="list-item two-line"><div class="leading error"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 3 2 20h20zm-1 6h2v6h-2zm0 7.5h2v2h-2z"/></svg></div><div class="content"><div class="headline">edge-rtr-04</div><div class="supporting">Down since 06:10</div></div><div class="trailing"><span class="dot down"></span></div></div>
+<div class="list-divider"></div>
+<div class="list-item two-line"><div class="leading success"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M9 16.2l-3.5-3.5L4 14.2l5 5 11-11-1.4-1.4z"/></svg></div><div class="content"><div class="headline">prn-office-2</div><div class="supporting">Back online</div></div></div>
+<div class="list-divider"></div>
+<div class="list-item two-line"><div class="leading warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 3 2 20h20zm-1 6h2v6h-2zm0 7.5h2v2h-2z"/></svg></div><div class="content"><div class="headline">ups-yard-01</div><div class="supporting">Battery below 40%</div></div></div>
+<div class="list-divider"></div>
+<div class="list-item two-line"><div class="avatar">AB</div><div class="content"><div class="headline">Assigned to you</div><div class="supporting">3 open tasks</div></div><div class="trailing"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M9.4 6L8 7.4l4.6 4.6L8 16.6 9.4 18l6-6z"/></svg></div></div>
+
+</body>
+</html>

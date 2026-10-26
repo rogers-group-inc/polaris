@@ -1,0 +1,106 @@
+<!-- @dsCard group="Overlays" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Slide-over</title>
+<style>
+  body { padding: 24px; min-height: 760px; }
+  /* .slideover translates in from the right once .open is added; the card pins it
+     open. openSlideover() adds .open on the next animation frame at runtime. */
+  .demo-section { margin-bottom: 1.25rem; }
+  .demo-section-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .demo-section-head h4 { margin: 0; font-size: 0.95rem; color: var(--color-text-primary); }
+  .demo-push { margin-left: auto; display: flex; gap: 4px; }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Slide-over</h2></div>
+  <p class="hint" style="max-width:520px">
+    Entity detail views: an asset, a network, a block. The panel stays open while the user works the page
+    underneath, so it is deliberately not <code>aria-modal</code> and has no hard focus trap. The header
+    holds the name, a meta line and the tab strip, and stays still. Only the body scrolls. Each tab is a
+    stack of sections, and each section says where its data came from and how fresh it is.
+  </p>
+  <ul class="hint" style="max-width:520px;padding-left:1.1rem;line-height:1.7">
+    <li>One z-index for every slide-over; DOM order stacks them, a new one is raised on open, and Escape closes only the topmost.</li>
+    <li>Tabs are in a fixed order and appear only when the device has that data (no SD-WAN tab on a switch).</li>
+    <li>Every section heading names its polling method, cadence and tier, plus an "updated &hellip; ago" stamp that turns amber after one missed cadence.</li>
+    <li>A snapshot section (Wireless, MAC table, ARP table) also gets a Poll button at the far right, shown only to roles that can poll.</li>
+    <li>The stale banner sits inside the section, before its chart or table, on the empty state as well.</li>
+    <li><code>.slideover-body</code> has zero padding: wrap its content in one padded div.</li>
+  </ul>
+
+  <div class="slideover-overlay open">
+    <div class="slideover open">
+      <div class="slideover-resize-handle"></div>
+      <div class="slideover-header">
+        <div class="slideover-header-top">
+          <h3>fgt-branch-22</h3>
+          <button class="btn-icon" aria-label="Close">&times;</button>
+        </div>
+        <div class="slideover-meta">
+          <span class="mono">10.22.0.1</span>
+          <span>Firewall</span>
+          <span class="badge badge-active">Up</span>
+          <span>Seen 40s ago</span>
+        </div>
+        <div class="slideover-tabs">
+          <div class="page-tabs">
+            <button type="button" class="page-tab">General</button>
+            <button type="button" class="page-tab">System</button>
+            <button type="button" class="page-tab">Interfaces</button>
+            <button type="button" class="page-tab">IPsec</button>
+            <button type="button" class="page-tab active">SD-WAN</button>
+            <button type="button" class="page-tab">Alerts</button>
+          </div>
+        </div>
+      </div>
+      <div class="slideover-body">
+        <div style="padding: 1rem 1.25rem 1rem 2.5rem">
+
+          <div class="demo-section">
+            <div class="demo-section-head">
+              <h4>SD-WAN Members</h4>
+              <span class="badge badge-readonly">FortiOS REST · every 60s · Integration</span>
+              <span class="hint">updated 38s ago</span>
+            </div>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>Member</th><th>Zone</th><th>Health</th><th>Latency</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">wan1</td><td>underlay</td><td><span class="badge badge-active">Up</span></td><td class="mono">8 ms</td></tr>
+                  <tr><td class="mono">wan2</td><td>underlay</td><td><span class="badge badge-level-error">Down</span></td><td class="mono">&mdash;</td></tr>
+                  <tr><td class="mono">Overlay-2</td><td>overlay</td><td><span class="badge badge-level-error">Down</span></td><td class="mono">&mdash;</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="demo-section">
+            <div class="demo-section-head">
+              <h4>Performance SLA</h4>
+              <span class="badge badge-readonly">FortiOS REST · every 60s</span>
+              <span class="hint" style="color:var(--color-warning)">updated 3m ago</span>
+              <div class="demo-push">
+                <button class="btn btn-sm btn-secondary">1h</button>
+                <button class="btn btn-sm btn-primary">24h</button>
+                <button class="btn btn-sm btn-secondary">7d</button>
+              </div>
+            </div>
+            <div style="margin-bottom:0.75rem;padding:0.5rem 0.75rem;background:rgba(245,127,23,0.08);border:1px solid rgba(245,127,23,0.3);border-radius:6px;font-size:0.8rem;color:var(--color-warning)">&#9888; Last successful update 3m ago</div>
+            <div class="chart-box">
+              <svg viewBox="0 0 420 110" width="100%" role="img" aria-label="Latency of wan1 over 24 hours" style="display:block">
+                <g stroke="var(--color-border-light)"><line x1="30" y1="10" x2="410" y2="10"></line><line x1="30" y1="50" x2="410" y2="50"></line><line x1="30" y1="90" x2="410" y2="90"></line></g>
+                <line x1="30" y1="34" x2="410" y2="34" stroke="var(--color-text-tertiary)" stroke-dasharray="4 4"></line>
+                <polyline fill="none" stroke="var(--color-accent)" stroke-width="1.6" points="30,78 70,74 110,80 150,70 190,62 230,72 270,76 310,58 350,66 390,74 410,72"></polyline>
+              </svg>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

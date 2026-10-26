@@ -1,0 +1,30 @@
+<!-- @dsCard group="Input" page height=180 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Search bar</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport and, in any landscape viewport under 480px tall (which a preview card is),
+     hides the app and paints a rotate prompt. Both are undone here; .pv-stage contains the
+     fixed-position parts (sheet, scrim, snackbar, topology screen) inside a box. Glyphs are
+     plain stand-ins: the app's own icons are drawn in its JavaScript and did not come across. */
+  body::before { content: none !important; display: none !important; }
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .pv-col { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .app { display: flex !important; }
+  .pv-stage .sheet, .pv-stage .scrim { display: block !important; }
+  .pv-stage .snackbar, .pv-stage .topo-screen { display: flex !important; }
+</style>
+</head>
+<body>
+<div class="m3-searchbar"><button class="icon-btn" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10 4a6 6 0 1 1 0 12a6 6 0 1 1 0-12zm0 2a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM15.3 13.9l5 5-1.4 1.4-5-5z"/></svg></button><input class="input" placeholder="Search assets"></div>
+<div class="m3-searchbar"><button class="icon-btn" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg></button><input class="input" value="core-sw"><button class="icon-btn" aria-label="Clear"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z"/></svg></button></div>
+</body>
+</html>
