@@ -334,6 +334,9 @@ To resize a column, drag the divider on its right edge; **double-click** the
 divider to fit the column to its widest header or cell on the current page.
 The column to its right gives up the difference, but never below its own
 content; anything it can't give widens the table into a horizontal scroll.
+When the columns together are wider than the screen, every column keeps its
+width and the table scrolls sideways; the rightmost column is never squeezed
+to make the table fit.
 
 Publishing a saved filter needs `assets:write`; deleting someone else's needs
 `assets:fullwrite`.
