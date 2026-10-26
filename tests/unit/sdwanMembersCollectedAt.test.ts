@@ -63,6 +63,13 @@ describe("readSdwanMembers collectedAt", () => {
     expect(res.collectedAt?.toISOString()).toBe(NEWER.toISOString());
   });
 
+  it("builds the table from the newest scrape only, so a removed member drops off", async () => {
+    mockSamples([]);
+    await readSdwanMembers("asset-1");
+    const sql = String(h.prisma.$queryRawUnsafe.mock.calls[0]![0]);
+    expect(sql).toContain(`"timestamp" = (SELECT max("timestamp") FROM "asset_perf_sla_samples" WHERE "assetId" = $1)`);
+  });
+
   it("is null when the gate has never produced a perf-SLA sample", async () => {
     mockSamples([]);
     const res = await readSdwanMembers("asset-1");

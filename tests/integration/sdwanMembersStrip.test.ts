@@ -19,6 +19,7 @@ import { readSdwanMembers } from "../../src/services/sampleHistoryService.js";
 const ASSET = "00000000-0000-4000-8000-00000000d5a1";
 const ASSET_SLA = "00000000-0000-4000-8000-00000000d5a2";
 const ASSET_TUN = "00000000-0000-4000-8000-00000000d5a3";
+const ASSET_RECONF = "00000000-0000-4000-8000-00000000d5a4";
 const MIN = 60_000;
 
 beforeAll(async () => {
@@ -66,11 +67,28 @@ beforeAll(async () => {
       { assetId: ASSET_TUN, timestamp: new Date(now - 30 * 60 * MIN), tunnelName: "HUB2-VPN1", status: "up" },
     ],
   });
+
+  // An SD-WAN reconfiguration: wan1 was an underlay member until 10 minutes
+  // ago, then the operator moved the zone to wan2 + wan3. Every scrape stamps
+  // all its rows with one timestamp, as persistPerfSlaSampleStream does.
+  await prisma.assetPerfSlaSample.deleteMany({ where: { assetId: ASSET_RECONF } });
+  const reconf = (agoMin: number, link: string) => ({
+    assetId: ASSET_RECONF, timestamp: new Date(now - agoMin * MIN), cadence: "fast",
+    healthCheck: "Internet", link, zone: "underlay", state: "up", latencyMs: 10, jitterMs: 1, packetLoss: 0,
+  });
+  await prisma.assetPerfSlaSample.createMany({
+    data: [
+      reconf(12, "wan1"), reconf(12, "wan2"),
+      reconf(11, "wan1"), reconf(11, "wan2"),
+      reconf(2, "wan2"), reconf(2, "wan3"),
+      reconf(1, "wan2"), reconf(1, "wan3"),
+    ] as never,
+  });
 });
 
 afterAll(async () => {
   if (!dbReachable) return;
-  await prisma.assetPerfSlaSample.deleteMany({ where: { assetId: { in: [ASSET, ASSET_SLA, ASSET_TUN] } } });
+  await prisma.assetPerfSlaSample.deleteMany({ where: { assetId: { in: [ASSET, ASSET_SLA, ASSET_TUN, ASSET_RECONF] } } });
   await prisma.assetIpsecTunnelSample.deleteMany({ where: { assetId: ASSET_TUN } });
 });
 
@@ -101,5 +119,10 @@ dbDescribe("readSdwanMembers — Health Check Status strip", () => {
     const byLink = new Map(members.map((m) => [m.link, m]));
     expect(byLink.get("HUB1-VPN1")).toMatchObject({ linkState: "up", linkSource: "ipsec", linkUp: true });
     expect(byLink.get("HUB2-VPN1")).toMatchObject({ linkState: null, linkSource: null, linkUp: null });
+  });
+
+  it("drops a member the newest scrape no longer reports (removed from the SD-WAN zone)", async () => {
+    const { members } = await readSdwanMembers(ASSET_RECONF);
+    expect(members.map((m) => m.link)).toEqual(["wan2", "wan3"]);
   });
 });
