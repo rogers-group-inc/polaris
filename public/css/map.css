@@ -637,13 +637,22 @@
   border-right: 1px solid var(--color-border);
 }
 
-/* Floating Export button (screenshots, PDF, Visio), top-right of the graph
-   area. */
-.topology-map-export {
+/* Corner tools, top-right of the graph (map.js _ensureTopologyCornerTools),
+   right → left: Edit, Export, Grid, then — edit mode only — Snap devices,
+   Snap line points, Advanced line editing. One flex row, so a hidden tool
+   closes up instead of leaving a gap. */
+.topology-corner-tools {
   position: absolute;
   top: 10px;
   right: 10px;
   z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* The icon tools (Export and the toggles): small glass-free squares. `is-on`
+   lights a toggle in the accent colour. */
+.topology-tool {
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: 4px;
@@ -652,35 +661,24 @@
   opacity: 0.85;
   line-height: 0;
 }
-.topology-map-export:hover { opacity: 1; color: var(--color-accent); border-color: var(--color-accent); }
-
+.topology-tool:hover { opacity: 1; color: var(--color-accent); border-color: var(--color-accent); }
+.topology-tool.is-on {
+  opacity: 1;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-primary));
+}
 /* Edit / Done Editing (the dashboard's Customize Page pencil and Done check,
-   index.html), top-right of the graph just left of Export. The map is
-   view-only until it is pressed (map.js _applyTopologyEditMode). Sized to
-   the dashboard's card-corner variant (0.3rem around a 16px icon). */
-.topology-map-edit {
-  position: absolute;
-  top: 10px;
-  right: 46px;
-  z-index: 6;
-}
+   index.html). The map is view-only until it is pressed
+   (map.js _applyTopologyEditMode). Sized to the dashboard's card-corner
+   variant (0.3rem around a 16px icon). */
 .topology-map-edit.btn.btn-icon-only { padding: 0.3rem !important; }
-/* Layout verbs hidden outside edit mode: .btn-icon / the chips set a display
-   of their own, which beats the user-agent [hidden] rule. */
-#topology-overlay .btn-icon[hidden],
-.topology-type-chip[hidden] { display: none; }
+/* Layout verbs hidden outside edit mode: .btn-icon sets a display of its
+   own, which beats the user-agent [hidden] rule. */
+#topology-overlay .btn-icon[hidden] { display: none; }
 
-/* Floating device-type show/hide chips, top-right of the graph area just
-   left of the Edit button. .is-off = type currently hidden. */
-.topology-type-toggles {
-  position: absolute;
-  top: 10px;
-  right: 82px;
-  z-index: 6;
-  display: flex;
-  gap: 6px;
-}
-.topology-type-toggles[hidden] { display: none; }
+/* The pill chip — today the location-view switcher's (.topology-floor-chip,
+   below); it was first the device-type show/hide chips', since removed. */
 .topology-type-chip {
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
@@ -694,11 +692,6 @@
   white-space: nowrap;
 }
 .topology-type-chip:hover { opacity: 1; border-color: var(--color-accent); }
-.topology-type-chip.is-off {
-  color: var(--color-text-secondary);
-  text-decoration: line-through;
-  opacity: 0.6;
-}
 
 /* Location-view switcher, top-left of the graph area: one row per level —
    "Base" alone, then the top level (areas, plus area-less buildings; the

@@ -336,6 +336,7 @@
 
     cy.edges().forEach(function (e) {
       if (!e.visible() || psStr(e, "display", "element") === "none") return;
+      if (typeof e.data === "function" && e.data("noExport")) return; // editing chrome (wing bars)
       var op = (e.effectiveOpacity ? e.effectiveOpacity() : 1) * psNum(e, "line-opacity", 1);
       if (op <= 0.01) return;
       var src = e.sourceEndpoint(), tgt = e.targetEndpoint();

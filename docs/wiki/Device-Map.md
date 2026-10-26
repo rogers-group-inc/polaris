@@ -205,7 +205,7 @@ On the light themes (morning and noon) the links and location boxes are drawn
 in darker shades of the same colours, so they stay readable on the pale
 background; the legend matches the theme you are using.
 
-With **Locations** on, the details pane lists the switches and APs in the same
+When devices carry location codes, the details pane lists the switches and APs in the same
 nesting as the location boxes (area › building › floor › room › junction box),
 under a heading per group, with devices that have no location last.
 
@@ -222,8 +222,20 @@ The asset **Edit** form's Description field shows the same diagram.
 select, pan, zoom, switch location views and export, but nothing moves. Press
 **Edit** (the pencil at the map's top right, as on the dashboard) to move
 devices and location boxes, draw lines, and use **Save layout**, **Reset
-layout** and **Snap**, which only show while editing. The check mark ends
-editing; closing the topology ends it too.
+layout** and the editing tools, which only show while editing. The check mark
+ends editing; closing the topology ends it too.
+
+The tools sit in a row at the map's top right. From the right: **Edit**,
+**Export**, **Grid** (any time), then, while editing, **Snap devices**,
+**Snap line points** and **Advanced line editing**. Each one remembers its
+setting in this browser.
+
+- **Grid** draws two weights of line behind the map. The thick lines are
+  where devices sit in the automatic layout; the thin lines split each cell
+  in four.
+- **Snap devices** lands a dragged device on the thick lines, and lines up
+  every device on the map when you turn it on.
+- **Snap line points** lands a dragged bend point on any line, thick or thin.
 
 **Drawing your own connection lines** (while editing). Drag any part of a line and a bend
 point appears where you pressed, selected and following the pointer. Click a
@@ -239,6 +251,15 @@ selection, or Shift-drag to box-select. Drawn lines are part of the
 layout: **Save layout** and **Reset layout** cover them, and each location
 view keeps its own.
 
+**Curved lines** (Advanced line editing on). Every point on a line grows
+**wings**, like the Photoshop path tool: two on each bend point and one on
+each end. A wing that has never been moved is hollow and changes nothing.
+Drag a wing and the line curves through that point; the bend's other wing
+turns to stay in line with it, so the curve stays smooth. Hold **Alt** while
+dragging to move one wing on its own and make a sharp turn. Select a wing
+and press **Delete** to put its point back to a sharp corner. Curves stay
+drawn when Advanced line editing is off; only the wings hide.
+
 | Control | |
 |---|---|
 | **Search** | find a node |
@@ -247,7 +268,10 @@ view keeps its own.
 | **Edit** | top right of the map, left of Export: the pencil turns layout editing on, the check mark turns it off |
 | **Save layout** | while editing. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
 | **Reset layout** | while editing. A menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
-| **Snap to grid** | while editing; per user; lands drags on the solver's lattice and re-snaps everything on enable |
+| **Grid** | top right, any time: show or hide the two-weight grid |
+| **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
+| **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
+| **Advanced line editing** | while editing; per user; adds curve wings to every point of a line |
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |

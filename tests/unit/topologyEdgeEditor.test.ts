@@ -28,6 +28,9 @@ type Api = {
   segmentGeometry: (S: Pt, T: Pt, bends: Pt[]) => { weights: number[]; distances: number[] } | null;
   insertIndex: (S: Pt, T: Pt, bends: Pt[], P: Pt) => number;
   carriedBends: (bends: Pt[], dS: Pt, dT: Pt) => Pt[];
+  isCurvedPath: (path: any) => boolean;
+  sampleCurve: (anchors: any[], perSpan?: number) => Pt[];
+  mirroredWing: (dragged: Pt, otherLen: number, independent: boolean, other?: Pt | null) => Pt | null;
   attach: (cy: any, opts: any) => any;
 };
 
@@ -283,5 +286,141 @@ describe("editor on a headless graph", () => {
     expect(edge.style("curve-style")).toBe("segments");
     // The path itself survived the suspension.
     expect(blobOf(ed)["edgepath:e|a|b:b0"]).toEqual({ x: 50, y: 40 });
+  });
+});
+
+describe("curves (advanced line editing)", () => {
+  it("round-trips wings through the layout blob: b<n>i / b<n>o on a bend, sw / tw on the ends", () => {
+    const blob = {
+      "edgepath:e|a|b:b0": { x: 50, y: 40 },
+      "edgepath:e|a|b:b0i": { x: -20, y: 0 },
+      "edgepath:e|a|b:b0o": { x: 20, y: 0 },
+      "edgepath:e|a|b:sw": { x: 0, y: -30 },
+      "edgepath:e|a|b:tw": { x: 10, y: 10 },
+    };
+    const paths = api.parsePaths({ ...blob, "edgepath:e|a|b:b7o": { x: 1, y: 1 } }) as any; // + a wing on a missing bend
+    expect(paths["e|a|b"].bends).toEqual([{ x: 50, y: 40, in: { x: -20, y: 0 }, out: { x: 20, y: 0 } }]);
+    expect(paths["e|a|b"].sw).toEqual({ x: 0, y: -30 });
+    expect(api.isCurvedPath(paths["e|a|b"])).toBe(true);
+    expect(api.serializePaths(paths)).toEqual(blob);
+  });
+
+  it("an end wing alone is a path (a curved automatic line is not 'empty')", () => {
+    const paths = api.parsePaths({ "edgepath:e|a|b:sw": { x: 5, y: 5 } }) as any;
+    expect(Object.keys(paths)).toEqual(["e|a|b"]);
+  });
+
+  it("sampleCurve: straight spans pass only their anchors; a winged span is sampled as a cubic", () => {
+    const straight = api.sampleCurve([{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 }]);
+    expect(straight).toEqual([{ x: 50, y: 0 }]);
+    // Symmetric arch: both wings point up — the curve's midpoint sits above the chord.
+    const arch = api.sampleCurve([{ x: 0, y: 0, out: { x: 0, y: -40 } }, { x: 100, y: 0, in: { x: 0, y: -40 } }], 4);
+    expect(arch).toHaveLength(3); // t = 1/4, 2/4, 3/4 (the end point is the target endpoint)
+    expect(arch[1].x).toBeCloseTo(50);
+    expect(arch[1].y).toBeCloseTo(-30); // 3·(1/2)³·(-40)·2 = -30
+  });
+
+  it("mirroredWing keeps the other wing collinear at its own length; Alt leaves it alone", () => {
+    const m = api.mirroredWing({ x: 30, y: 0 }, 10, false)!;
+    expect(m.x).toBeCloseTo(-10);
+    expect(m.y).toBeCloseTo(0);
+    const same = api.mirroredWing({ x: 30, y: 0 }, 0, false)!;
+    expect(same.x).toBeCloseTo(-30);
+    expect(api.mirroredWing({ x: 30, y: 0 }, 10, true, { x: 0, y: 5 })).toEqual({ x: 0, y: 5 });
+  });
+
+  it("carried bends keep their wings", () => {
+    const b = [{ x: 10, y: 10, in: { x: -5, y: 0 }, out: { x: 5, y: 0 } }] as any;
+    expect(api.carriedBends(b, { x: 2, y: 3 }, { x: 2, y: 3 })).toEqual([
+      { x: 12, y: 13, in: { x: -5, y: 0 }, out: { x: 5, y: 0 } },
+    ]);
+  });
+});
+
+describe("advanced editing on a headless graph", () => {
+  let cy: any;
+  afterEach(() => { if (cy && !cy.destroyed()) cy.destroy(); });
+  function graph(blob: Record<string, Pt>, extra: Record<string, unknown> = {}) {
+    cy = sb.make(JSON.stringify({
+      headless: true, styleEnabled: true, layout: { name: "preset" },
+      elements: [
+        { data: { id: "a" }, position: { x: 0, y: 0 } },
+        { data: { id: "b" }, position: { x: 200, y: 0 } },
+        { data: { id: "e0", source: "a", target: "b" } },
+      ],
+      style: [{ selector: "node", style: { width: 20, height: 20, shape: "ellipse" } }],
+    }));
+    const ed = api.attach(cy, { positions: sb.J(JSON.stringify(blob)), ...extra });
+    return { ed, edge: cy.getElementById("e0") };
+  }
+  const blobOf = (ed: any) => JSON.parse(JSON.stringify(ed.serialize()));
+  // Headless Cytoscape has no pointer: mark a handle as the one being dragged.
+  const dragTo = (id: string, x: number, y: number) => {
+    const h = cy.getElementById(id);
+    h[0]._private.grabbed = true;
+    h.position(sb.P(x, y));
+    h[0]._private.grabbed = false;
+  };
+
+  it("shows a wing pair on every bend and one wing per end, each tied to its point by a bar; resting until dragged", async () => {
+    const { edge } = graph({ "edgepath:e|a|b:b0": { x: 100, y: 50 } }, { isAdvanced: () => true });
+    edge.select();
+    await tick();
+    const kinds = cy.nodes("[isEdgeHandle]").map((n: any) => n.data("handleKind") + ":" + (n.data("wingSide") || "") + (n.data("wingRest") ? "~" : "")).sort();
+    expect(kinds).toEqual(["bend:", "source:", "target:", "wing:in~", "wing:out~", "wing:s~", "wing:t~"]);
+    expect(cy.edges("[isEdgeHandleLine]").length).toBe(4);
+    expect(edge.data("curvedPath")).toBe(0); // resting wings don't curve anything
+  });
+
+  it("dragging a bend's wing curves the line and mirrors the other wing; Delete on it restores the corner", async () => {
+    const { ed, edge } = graph({ "edgepath:e|a|b:b0": { x: 100, y: 50 } }, { isAdvanced: () => true });
+    edge.select();
+    await tick();
+    dragTo("edgehandle:e|a|b:b0o", 130, 50); // out wing 30px right of the point
+    const blob = blobOf(ed);
+    expect(blob["edgepath:e|a|b:b0o"]).toEqual({ x: 30, y: 0 });
+    expect(blob["edgepath:e|a|b:b0i"].x).toBeCloseTo(-30);
+    expect(edge.data("curvedPath")).toBe(1);
+    expect(edge.style("curve-style")).toBe("segments");
+    expect(String(edge.style("segment-weights")).split(" ").length).toBeGreaterThan(10); // sampled curve
+    cy.getElementById("edgehandle:e|a|b:b0o").select();
+    expect(ed.deleteSelected()).toBe(true);
+    expect(blobOf(ed)).toEqual({ "edgepath:e|a|b:b0": { x: 100, y: 50 } });
+    expect(edge.data("curvedPath")).toBe(0);
+  });
+
+  it("an end point's single wing curves an automatic line", async () => {
+    const { ed, edge } = graph({}, { isAdvanced: () => true });
+    edge.select();
+    await tick();
+    expect(cy.getElementById("edgehandle:e|a|b:sw").length).toBe(1);
+    dragTo("edgehandle:e|a|b:sw", 40, -60);
+    expect(blobOf(ed)["edgepath:e|a|b:sw"]).toBeTruthy();
+    expect(edge.data("curvedPath")).toBe(1);
+  });
+
+  it("wings hide when advanced editing is off, but the curve stays drawn", async () => {
+    let adv = true;
+    const { ed, edge } = graph({
+      "edgepath:e|a|b:b0": { x: 100, y: 50 }, "edgepath:e|a|b:b0o": { x: 30, y: 0 }, "edgepath:e|a|b:b0i": { x: -30, y: 0 },
+    }, { isAdvanced: () => adv });
+    edge.select();
+    await tick();
+    expect(cy.nodes('[handleKind = "wing"]').length).toBe(4);
+    adv = false;
+    ed.refresh();
+    expect(cy.nodes('[handleKind = "wing"]').length).toBe(0);
+    expect(cy.edges("[isEdgeHandleLine]").length).toBe(0);
+    expect(edge.data("curvedPath")).toBe(1);
+  });
+
+  it("snap line points: a dragged bend lands on the host's fine grid", async () => {
+    const { ed, edge } = graph({ "edgepath:e|a|b:b0": { x: 100, y: 50 } }, {
+      snapPoint: (p: Pt) => sb.P(Math.round(p.x / 25) * 25, Math.round(p.y / 25) * 25),
+    });
+    edge.select();
+    await tick();
+    dragTo("edgehandle:e|a|b:b0", 112, 63);
+    expect(blobOf(ed)["edgepath:e|a|b:b0"]).toEqual({ x: 100, y: 75 });
   });
 });
