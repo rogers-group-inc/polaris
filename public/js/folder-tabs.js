@@ -169,6 +169,9 @@ function _measureStrip(strip) {
   var tabs = Array.prototype.slice.call(strip.querySelectorAll(TAB_SEL));
   tabs.forEach(_unsqueeze);
   var box = tabs.length ? tabs[0].parentElement : strip;
+  st.strip = strip;
+  st.box = box;
+  _pinBox(st, false);
   st.gap = parseFloat(getComputedStyle(box).columnGap) || 0;
   st.items = [];
   tabs.forEach(function (t) {
@@ -231,9 +234,21 @@ function _runLast(st, first) {
   return last;
 }
 
+// While the tabs overflow, the box holding them (the list wrapper, where
+// there is one) is pinned to the room, so the space a run of whole tabs leaves
+// over stays INSIDE it: the + button after it and the ‹ › pair after the
+// strip hold still as the run steps and its tabs squeeze.
+function _pinBox(st, on) {
+  var box = st.box;
+  if (!box || box === st.strip) return;
+  _setStyle(box, "width", on ? st.room.toFixed(1) + "px" : "");
+  _setStyle(box, "flexShrink", on ? "0" : "");
+}
+
 function _layoutStrip(strip) {
   var st = strip.__tabWin;
   if (!st) return;
+  _pinBox(st, st.maxFirst > 0);
   var w = _runWidths(st, st.first);
   st.items.forEach(function (it, k) { _drawTab(it, w[k]); });
 }
