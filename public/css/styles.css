@@ -6497,10 +6497,11 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 #iface-panel {
   width: clamp(760px, 60vw, 1500px);
 }
-/* Conflict Review holds the widest card in the app — the duplicate-IP table is
-   six columns, two of them controls — so it opens wider than the default. A
-   stored drag width overrides this (initSlideoverResize sets it inline). */
-#conflict-panel {
+/* The Events Alerts panel holds the widest card in the app — its conflict
+   views' duplicate-IP table is six columns, two of them controls — so it opens
+   wider than the default. A stored drag width overrides this
+   (initSlideoverResize sets it inline). */
+#alerts-panel {
   width: clamp(880px, 62vw, 1500px);
   max-width: 95vw;
 }

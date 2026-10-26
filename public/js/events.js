@@ -715,64 +715,38 @@ function getAlertsFormData() {
   };
 }
 
-/* ─── Conflict Resolution Panel ──────────────────────────────────────────── */
+/* ─── Conflict views (rendered inside the Alerts panel) ──────────────────── */
 
+// Discovery conflicts have no slide-over of their own: they are the
+// "Conflicts — …" views of the Alerts panel below, which owns opening, closing,
+// the view selector and the badge. This block only draws a conflict list into
+// that panel's body and wires its cards. `status` is null while another view is
+// showing, so a card action that finishes after the operator switched views
+// does not paint conflicts over it.
 (function () {
-  var overlay = document.getElementById("conflict-overlay");
-  var panel = document.getElementById("conflict-panel");
-  var closeBtn = document.getElementById("conflict-panel-close");
-  var filterSel = document.getElementById("conflict-panel-filter");
-  var body = document.getElementById("conflict-panel-body");
-  var countEl = document.getElementById("conflict-panel-count");
-  var badge = document.getElementById("conflict-badge");
-  var btn = document.getElementById("btn-conflicts");
-  if (!btn || !overlay) return;
+  var body = document.getElementById("alerts-panel-body");
+  var countEl = document.getElementById("alerts-panel-count");
+  if (!body) return;
+  var status = null;
 
-  // Load pending count for badge on page load
-  async function refreshBadge() {
-    try {
-      var data = await api.conflicts.count();
-      var n = data.count || 0;
-      if (n > 0) {
-        badge.textContent = n > 99 ? "99+" : String(n);
-        badge.style.display = "block";
-      } else {
-        badge.style.display = "none";
-      }
-      if (typeof window.refreshConflictDot === "function") window.refreshConflictDot();
-    } catch (_) {}
-  }
-  refreshBadge();
-
-  function openPanel() {
-    if (typeof raiseSlideover === "function") raiseSlideover(overlay);   // DOM order is stacking order
-    overlay.classList.add("open");
-    loadConflicts();
+  function refreshBadge() {
+    if (typeof window.refreshEventsAlertsBadge === "function") window.refreshEventsAlertsBadge();
   }
 
-  function closePanel() {
-    overlay.classList.remove("open");
-    refreshBadge();
-  }
-
-  btn.addEventListener("click", openPanel);
-  closeBtn.addEventListener("click", closePanel);
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) closePanel(); });
-  filterSel.addEventListener("change", loadConflicts);
-
-  // Drag-resizable like every other slide-over (the panel markup carries the
-  // handle in events.html); width persists per user under its own key. The
-  // duplicate-IP card is the widest thing in here — six columns, two of them
-  // holding controls — so a fixed-width panel is what made it unreadable.
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(panel, "polaris.panel.width.conflicts");
-  }
+  window.PolarisEventsConflicts = {
+    load: function (st) { status = st; return loadConflicts(); },
+    deactivate: function () { status = null; },
+  };
 
   async function loadConflicts(silent) {
+    if (status === null) return;
     if (!silent) body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
     try {
-      var status = filterSel.value;
-      var data = await api.conflicts.list({ status: status, limit: 5000 });
+      var requested = status;
+      var data = await api.conflicts.list({ status: requested, limit: 5000 });
+      // The operator moved to another view (or another status) while this was
+      // in flight; that view owns the body now.
+      if (status !== requested) return;
       var conflicts = data.conflicts || [];
       // One FortiGate swap raises one row per subnet; it is one decision, so
       // it is one card (business rule 41(a)) and one in the count.
@@ -2014,7 +1988,7 @@ function getAlertsFormData() {
   }
 })();
 
-/* ─── Alerts Panel (stale DHCP reservations) ─────────────────────────────── */
+/* ─── Alerts Panel: conflicts, push queue, stale reservations ────────────── */
 
 (function () {
   var overlay = document.getElementById("alerts-overlay");
@@ -2027,39 +2001,72 @@ function getAlertsFormData() {
   var btn = document.getElementById("btn-alerts");
   if (!btn || !overlay) return;
 
+  // The conflict views need the conflicts gate; without it the Alerts panel is
+  // the reservation views only. Removed rather than hidden: a hidden <option>
+  // is still selectable from the keyboard in some browsers.
+  var reviewConflicts = typeof canReviewConflicts !== "function" || canReviewConflicts();
+  var conflictGroup = document.getElementById("alerts-filter-conflicts");
+  if (!reviewConflicts && conflictGroup) conflictGroup.remove();
+
+  // Latest figures behind the badge — also what decides which view opens.
+  var counts = { conflicts: 0, failed: 0, queued: 0, stale: 0 };
+
+  // One badge for every view in the panel. Red when anything needs an operator
+  // (a pending conflict or a push that failed for good, both drawn red in their
+  // views), yellow when it is only stale reservations or pushes still retrying.
   async function refreshBadge() {
     try {
-      // Combined badge: stale-reservation alerts + queued-push count.
-      // Either signal is operator-actionable; the panel switches between
-      // the three views via its filter dropdown.
-      var both = await Promise.all([
+      var r = await Promise.all([
+        reviewConflicts
+          ? api.conflicts.count().catch(function () { return { count: 0 }; })
+          : Promise.resolve({ count: 0 }),
+        api.reservations.pushQueueCount().catch(function () { return { count: 0, failed: 0 }; }),
         api.reservations.alertsCount().catch(function () { return { count: 0 }; }),
-        api.reservations.pushQueueCount().catch(function () { return { count: 0 }; }),
       ]);
-      var n = ((both[0] && both[0].count) || 0) + ((both[1] && both[1].count) || 0);
+      counts.conflicts = (r[0] && r[0].count) || 0;
+      counts.queued = (r[1] && r[1].count) || 0;
+      counts.failed = (r[1] && r[1].failed) || 0;
+      counts.stale = (r[2] && r[2].count) || 0;
+      var n = counts.conflicts + counts.queued + counts.stale;
       if (n > 0) {
+        var danger = counts.conflicts > 0 || counts.failed > 0;
         badge.textContent = n > 99 ? "99+" : String(n);
+        badge.style.background = danger ? "var(--color-danger)" : "var(--color-warning, #ffc107)";
+        badge.style.color = danger ? "#fff" : "#000";
         badge.style.display = "block";
       } else {
         badge.style.display = "none";
       }
-      // Refresh both sidebar dots in lockstep so the Alerts button and the
-      // global indicators never disagree after an operator action: the IPAM
-      // dot tracks stale-reservation alerts, the Events dot tracks the push
-      // queue (alongside discovery conflicts).
-      if (typeof window.refreshAlertsDot === "function") window.refreshAlertsDot();
+      // The sidebar dot reads the same three figures; refresh it with the badge
+      // so the two never disagree after an operator action.
       if (typeof window.refreshConflictDot === "function") window.refreshConflictDot();
     } catch (_) { /* badge stays hidden if request fails */ }
   }
   refreshBadge();
+  window.refreshEventsAlertsBadge = refreshBadge;
 
-  function openPanel() {
+  // The view the panel opens on: the first one holding something, most urgent
+  // first. With nothing anywhere it stays on whatever the operator last chose.
+  function pickView() {
+    if (counts.conflicts > 0) return "conflicts:pending";
+    if (counts.failed > 0) return "push-queue";
+    if (counts.stale > 0) return "active";
+    if (counts.queued > 0) return "push-queue";
+    return null;
+  }
+
+  async function openPanel() {
     if (typeof raiseSlideover === "function") raiseSlideover(overlay);   // DOM order is stacking order
     overlay.classList.add("open");
+    body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
+    await refreshBadge();
+    var view = pickView();
+    if (view && filterSel) filterSel.value = view;
     loadAlerts();
   }
   function closePanel() {
     overlay.classList.remove("open");
+    if (window.PolarisEventsConflicts) window.PolarisEventsConflicts.deactivate();
     refreshBadge();
   }
 
@@ -2068,14 +2075,21 @@ function getAlertsFormData() {
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closePanel(); });
   if (filterSel) filterSel.addEventListener("change", loadAlerts);
 
-  // Same resize contract as the Conflict Review panel beside it.
+  // Drag-resizable like every other slide-over; the width persists per user.
+  // It keeps the old Conflict Review panel's key: the duplicate-IP conflict
+  // card (six columns, two holding controls) is the widest thing in here, so
+  // that is the width an operator has already set for it.
   if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(panel, "polaris.panel.width.reservationalerts");
+    initSlideoverResize(panel, "polaris.panel.width.conflicts");
   }
 
   async function loadAlerts() {
-    body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
     var filterVal = filterSel && filterSel.value;
+    if (filterVal && filterVal.indexOf("conflicts:") === 0 && window.PolarisEventsConflicts) {
+      return window.PolarisEventsConflicts.load(filterVal.slice("conflicts:".length));
+    }
+    if (window.PolarisEventsConflicts) window.PolarisEventsConflicts.deactivate();
+    body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
     var show = filterVal === "ignored" ? "ignored"
       : filterVal === "push-queue" ? "push-queue"
       : "active";

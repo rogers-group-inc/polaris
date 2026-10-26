@@ -1619,13 +1619,28 @@ export async function listPushQueue() {
   });
 }
 
-export async function countPushQueue(): Promise<number> {
-  return prisma.reservation.count({
+/**
+ * The push queue split by state. A `failed_permanent` row needs an operator
+ * (it is drawn red in the queue), a `pending` one is still being retried — so
+ * the Events alert dot and the Alerts badge colour by the failed count, not the
+ * total.
+ */
+export async function countPushQueueByState(): Promise<{ count: number; failed: number }> {
+  const groups = await prisma.reservation.groupBy({
+    by: ["pushStatus"],
     where: {
       status: "active",
       pushStatus: { in: ["pending", "failed_permanent"] },
     },
+    _count: { _all: true },
   });
+  let count = 0;
+  let failed = 0;
+  for (const g of groups) {
+    count += g._count._all;
+    if (g.pushStatus === "failed_permanent") failed += g._count._all;
+  }
+  return { count, failed };
 }
 
 // ─── Queued Push Retry ───────────────────────────────────────────────────────

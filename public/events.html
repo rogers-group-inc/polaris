@@ -53,11 +53,7 @@
               <button data-export="all" data-fmt="csv">Entire event log</button>
             </div>
           </div>
-          <button class="btn btn-secondary" id="btn-conflicts" data-review-conflicts title="Review conflicts from discovery" style="position:relative">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:middle;margin-right:4px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Conflicts
-            <span id="conflict-badge" style="display:none;position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;border-radius:99px;background:var(--color-danger);color:#fff;font-size:0.68rem;font-weight:700;line-height:18px;text-align:center"></span>
-          </button>
-          <button class="btn btn-secondary" id="btn-alerts" title="Review stale reservations and other warnings" style="position:relative">
+          <button class="btn btn-secondary" id="btn-alerts" title="Discovery conflicts, failed or queued pushes, and stale reservations" style="position:relative">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:middle;margin-right:4px"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>Alerts
             <span id="alerts-badge" style="display:none;position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;border-radius:99px;background:var(--color-warning, #ffc107);color:#000;font-size:0.68rem;font-weight:700;line-height:18px;text-align:center"></span>
           </button>
@@ -115,36 +111,9 @@
     </main>
   </div>
 
-  <!-- Conflict Resolution Panel -->
-  <div class="slideover-overlay" id="conflict-overlay">
-    <div class="slideover" id="conflict-panel">
-      <div class="slideover-resize-handle"></div>
-      <div class="slideover-header">
-        <div class="slideover-header-top">
-          <h3>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            Conflict Review
-          </h3>
-          <button class="btn-icon" id="conflict-panel-close" style="font-size:1.2rem;line-height:1">&times;</button>
-        </div>
-        <div class="slideover-meta">
-          <span id="conflict-panel-count" style="color:var(--color-text-tertiary);font-size:0.78rem"></span>
-          <span style="flex:1"></span>
-          <select id="conflict-panel-filter" style="width:auto;font-size:0.78rem;padding:2px 6px">
-            <option value="pending">Pending</option>
-            <option value="accepted">Accepted</option>
-            <option value="rejected">Rejected</option>
-            <option value="all">All</option>
-          </select>
-        </div>
-      </div>
-      <div class="slideover-body" id="conflict-panel-body">
-        <div class="empty-state" style="padding:2rem">Loading conflicts...</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Alerts Panel (stale DHCP reservations) -->
+  <!-- Alerts Panel: discovery conflicts, the reservation push queue and stale
+       reservations in one slide-over. Its view selector is the only way between
+       them; opening the panel picks the first view that has something in it. -->
   <div class="slideover-overlay" id="alerts-overlay">
     <div class="slideover" id="alerts-panel">
       <div class="slideover-resize-handle"></div>
@@ -160,9 +129,17 @@
           <span id="alerts-panel-count" style="color:var(--color-text-tertiary);font-size:0.78rem"></span>
           <span style="flex:1"></span>
           <select id="alerts-panel-filter" style="width:auto;font-size:0.78rem;padding:2px 6px">
-            <option value="active">Stale reservations</option>
-            <option value="ignored">Ignored stale</option>
-            <option value="push-queue">Push queue</option>
+            <optgroup label="Conflicts" id="alerts-filter-conflicts">
+              <option value="conflicts:pending">Conflicts — pending</option>
+              <option value="conflicts:accepted">Conflicts — accepted</option>
+              <option value="conflicts:rejected">Conflicts — rejected</option>
+              <option value="conflicts:all">Conflicts — all</option>
+            </optgroup>
+            <optgroup label="Reservations">
+              <option value="push-queue">Push queue</option>
+              <option value="active">Stale reservations</option>
+              <option value="ignored">Ignored stale</option>
+            </optgroup>
           </select>
         </div>
       </div>

@@ -113,7 +113,7 @@ FortiOS monitor endpoints support field selection via the `format` query paramet
 | `state` | `Authorized` / `Unauthorized` | `status: storage` if Unauthorized |
 | `status` | `Connected` / `Disconnected` | informational |
 
-When a discovered value conflicts with an existing manual reservation, a `Conflict` record is created instead of silently overwriting. Admins accept (apply discovered values) or reject (keep existing) via the conflict slide-over panel on the Events page.
+When a discovered value conflicts with an existing manual reservation, a `Conflict` record is created instead of silently overwriting. Admins accept (apply discovered values) or reject (keep existing) via the Conflicts views of the Events page's Alerts slide-over.
 
 ### Excluded address space (Phases 1 and 2)
 
