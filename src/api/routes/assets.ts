@@ -140,6 +140,7 @@ import {
   readSdwanMembers,
 } from "../../services/sampleHistoryService.js";
 import { readProbeOutages, serializeOutages } from "../../services/probeOutageService.js";
+import { loadMemoryForecastSeries } from "../../services/memoryForecastService.js";
 import {
   type PollingMethod,
   type Stream,
@@ -2639,6 +2640,17 @@ router.get("/:id/telemetry-history", requirePermission("assets", "read"), async 
       stats: result.stats,
       outages: serializeOutages(outages),
     });
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/memory-forecast — the 30-day memory trend behind the Memory
+// chart's forecast overlay. The same daily points and fit as the
+// memDaysUntilFull automation metric (memoryForecastService), so the overlay
+// quotes the number an automation would compare. Independent of the chart's
+// selected range: a forecast is always fitted on the full lookback.
+router.get("/:id/memory-forecast", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await loadMemoryForecastSeries(req.params.id as string));
   } catch (err) { next(err); }
 });
 

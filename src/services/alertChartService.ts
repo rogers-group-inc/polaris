@@ -64,6 +64,7 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
       return "chart.cpu";
     case "memPct":
     case "memUsedBytes":
+    case "memDaysUntilFull":
       return "chart.memory";
     case "responseTimeMs":
       return "chart.responseTime";
@@ -233,7 +234,7 @@ export function storageThresholdFromTrigger(trigger: unknown): number | null {
  * it did — and drop the rest. The top-5 process table (alertProcessService)
  * sits under them and names what is using the resource.
  */
-const RESOURCE_SCOPED_METRICS: ReadonlySet<string> = new Set(["cpuPct", "cpuCorePct", "memPct", "memUsedBytes"]);
+const RESOURCE_SCOPED_METRICS: ReadonlySet<string> = new Set(["cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "memDaysUntilFull"]);
 
 export function isResourceScopedAlert(metric: string | null | undefined): boolean {
   return !!metric && RESOURCE_SCOPED_METRICS.has(metric);

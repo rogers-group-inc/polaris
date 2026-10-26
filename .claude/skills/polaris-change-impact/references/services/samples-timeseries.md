@@ -355,3 +355,24 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:** The lookback/min-points defaults are user-visible semantics (widget copy + metric help in notificationTypes) — change them in lockstep. If storage rollups ever stop filtering on cadence, the UNION dedup keeps working but the detail arm becomes redundant past 7 days.
 
 ---
+
+## services/memoryForecastService.ts
+
+**What it owns:** Per-asset "days until memory full" forecasting (2026-10-26) — the ONE shared computation behind the asset System tab Memory chart's forecast overlay (`GET /assets/:id/memory-forecast`) and the `memDaysUntilFull` automation metric (notificationEngine's asset-metric resolver). The memory twin of storageForecastService, deliberately on the same constants.
+
+**Public API:** `computeMemoryForecast(assetIds | null, lookbackDays?, minPoints?)` → `MemoryForecastRow[]` (assetId, daysUntilFull, usedPct, slopePctPerDay, points; soonest-full first); `loadMemoryForecastSeries(assetId, lookbackDays?)` → `MemoryForecastSeries` (points, slopePerDay, daysUntilFull, minPoints, lookbackDays); the pure `memoryForecastFromDailyPoints(points, minPoints?, lookbackDays?)`; constants `MEMORY_FORECAST_LOOKBACK_DAYS` (30), `MEMORY_FORECAST_MIN_POINTS` (7), `MEMORY_FORECAST_MAX_DAYS` (365).
+
+**Cross-service deps:** `prisma` (raw regr_slope over `asset_telemetry_samples_daily` + `asset_telemetry_samples_hourly`), `utils/linearTrend.daysUntilFull` (total = 100) + `leastSquaresSlopePerDay`.
+
+**Used by:** `notificationEngine.resolveAssetMetricReadings` (the `memDaysUntilFull` case — dimKey "", one reading per device), the `/assets/:id/memory-forecast` route (assets.ts), and through it `public/js/assets.js` (`_loadMemoryForecastFor` → `_renderMemForecastBar` + the overlay in `_renderMemoryChart` / `_renderMemoryPctChart` / `_renderSystemChart`).
+
+**Invariants:**
+- **What is fitted is memory IN USE as a percentage of installed** — `avgMemUsedBytes / lastMemTotalBytes` when the row has bytes, else `avgMemPct` (FortiOS). Bytes first because the source's own memPct can disagree (and the agent's used figure excludes page cache, so cache never reads as a leak); percent rather than bytes so a resized VM is not a growth spurt and one fit covers every source. The chart's overlay leaves from the newest sample's figure computed the SAME way (`_memInUsePct`).
+- **ROLLUPS ONLY, never `asset_telemetry_samples`.** Telemetry is ~60s for every monitored asset: 30 days of detail at 2000 assets is tens of millions of rows, read on every engine tick. The daily tier carries every asset (telemetry rollups have no cadence filter — unlike storage, so there is no detail arm to UNION); the last `HOURLY_TAIL_DAYS` (2) are re-derived from the hourly tier with prio 0 so they WIN the `DISTINCT ON` over a daily bucket the daily job wrote before the day was over. ~32 rows/asset; flat at 2000.
+- Growing assets only, ≥ 7 distinct days, ≤ 365 days — a flat/shrinking/new host produces NO row, so `memDaysUntilFull <= N` rules stay silent (absence is never a firing signal). The SERIES keeps the any-sign slope (null only below minPoints) so the chart can say "Shrinking" / "No measurable growth"; its `daysUntilFull` is null exactly when the fleet query would omit the asset.
+- **The chart headline quotes the number the automation compares** — the storage chart computes its forecast client-side from 7 days of raw samples and can disagree with `storageDaysUntilFull`; memory deliberately does not. `tests/integration/memoryForecastSeries.test.ts` pins fleet query = series = previewRule reading = endpoint on real rows, plus the hourly-tail-wins and bytes-beat-memPct rules.
+- `now() AT TIME ZONE 'UTC'` on both arms, never a bare `now()` against the naive-UTC bucket columns.
+
+**When changing this:** Keep the constants in lockstep with storageForecastService unless the user decides otherwise — the wiki (Assets → Memory forecast, Automation-Triggers) states 30 days / 7 days / 1 year. A new memory source that reports neither bytes nor memPct contributes nothing. If the daily rollup job ever runs more often than the hourly tail covers, `HOURLY_TAIL_DAYS` can shrink but never below 1.
+
+---

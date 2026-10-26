@@ -1,10 +1,13 @@
 /**
  * src/utils/linearTrend.ts
  *
- * Least-squares trend helpers for the storage-forecast surfaces (the Storage
- * Forecast dashboard widget + the storageDaysUntilFull automation metric).
- * The heavy lifting (per-mount slope over the sample history) happens in SQL
- * via regr_slope (storageForecastService); these pure helpers cover the
+ * Least-squares trend helpers for the forecast surfaces (the Storage
+ * Forecast dashboard widget + the storageDaysUntilFull automation metric, and
+ * the memory forecast — the Memory chart overlay + memDaysUntilFull, which
+ * passes totalBytes = 100 because it fits a percentage).
+ * The heavy lifting (per-mount / per-asset slope over the sample history)
+ * happens in SQL via regr_slope (storageForecastService,
+ * memoryForecastService); these pure helpers cover the
  * JS-side arithmetic (days-until-full projection) and give tests/JS callers a
  * reference implementation of the same regression.
  */

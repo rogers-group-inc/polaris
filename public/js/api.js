@@ -934,6 +934,9 @@ const api = {
       }
       return request("GET", `/assets/${id}/telemetry-history` + (qs.length ? "?" + qs.join("&") : ""));
     },
+    // The 30-day memory trend behind the Memory chart's forecast overlay —
+    // same fit as the memDaysUntilFull automation metric.
+    memoryForecast:       (id) => request("GET", `/assets/${id}/memory-forecast`),
     interfaceHistory:     (id, ifName, opts) => {
       if (typeof opts === "string") opts = { range: opts };
       opts = opts || {};

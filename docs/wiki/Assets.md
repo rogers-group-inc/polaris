@@ -730,6 +730,30 @@ legend reminds you that the gap above the stack includes it, and the tooltip
 keeps reporting every figure the host actually measured, hidden ones marked —
 so nothing is lost, only undrawn.
 
+### Memory forecast
+
+Like a storage mount, memory gets a **forecast**: a headline above the memory
+chart — *Days until full: 18 · trend: +0.42%/day* — and a dashed line past a
+**now** marker continuing the trend. It appears on every shape of the
+chart: the memory stack, the percentage-only memory chart, and the memory line
+of the combined CPU & Memory chart (prefixed *Memory —* there).
+
+- The trend is worked out from the **daily average of memory in use** over
+  the last **30 days**, as a percentage of installed memory. In use means
+  what the source reports as used — on a Polaris Agent host that is the
+  Processes band, so page cache never reads as a leak.
+- It needs **7 days** of history before it says anything; until then the
+  headline reads *Forecast needs 7 days of history — N so far*.
+- A host whose memory is **shrinking** or **not measurably growing** says so,
+  and a fill date more than a year out reads *> 1 year*.
+- The number is the same one a **Days until memory full** automation
+  compares ([triggers](Automation-Triggers)), so the chart and an alert never
+  disagree. The dashed line is drawn as wide again as the selected range — an
+  hour of forecast beside an hour of history, a week beside a week.
+
+The **Forecast** button beside the headline hides or shows the line for that
+asset; your choice is remembered per asset.
+
 Below the response-time section sits the **Polaris Agent** card: the installed
 agent's version, platform, last heartbeat, WebSocket state and privilege tier,
 with Upgrade / Uninstall. On a **server** or **workstation** with no agent yet
