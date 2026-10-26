@@ -3456,11 +3456,11 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   border-radius: 50%;
   background: var(--color-primary);
 }
+/* Base-filter marker: shown INSTEAD of the dot when the tab carries a base
+   filter (assets-tabs.js render), in the accent so it reads as more than
+   "filtered" — this view has somewhere to go back to. */
 .table-tab-base {
   flex: 0 0 auto;
-  /* Accent rather than the dot's primary: the dot says "this view is filtered",
-     the star says "this view has somewhere to go back to" — two facts, so they
-     must not read as one repeated marker. */
   color: var(--color-accent);
   font-size: 0.72rem;
   line-height: 1;

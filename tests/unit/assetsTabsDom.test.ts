@@ -638,6 +638,9 @@ describe("base (default) filter", () => {
     expect(repaints).toBe(1);                             // the Clear→Reset relabel
     expect(tabEls()[0]!.querySelector(".table-tab-base")).toBeTruthy();
     expect(tabEls()[1]!.querySelector(".table-tab-base")).toBeFalsy();
+    // ONE marker: the star replaces the filters dot — the tab IS filtered
+    // (the base was applied) and still shows no dot.
+    expect(tabEls()[0]!.querySelector(".table-tab-dot")).toBeFalsy();
 
     const base = tabsApi().activeDefault()!;
     expect(base.id).toBe("f7");

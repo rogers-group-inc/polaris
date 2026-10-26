@@ -144,7 +144,9 @@ icons, **Maintenance**, the settings gear, **+ Add Asset(s)**), then **Clear**,
 **Refresh** (the circular-arrows icon), the page size (**25 / page** …) and, at
 the right end, the **Edit** pencil (the page buttons are below the page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
-or F2 renames; in edit mode ✕ closes one (never the last) and + adds one. Drag a tab sideways to
+or F2 renames; in edit mode ✕ closes one (never the last) and + adds one. A
+**dot** on a tab means it has filters applied; a **★** means it has a base filter
+(the view it resets to), and replaces the dot. Drag a tab sideways to
 move it; the new order is saved with the rest. Hold it against the end of the
 strip to carry it past the tabs out of view.
 
