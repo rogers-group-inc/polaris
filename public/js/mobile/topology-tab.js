@@ -5,18 +5,19 @@
 // first open (~670KB combined, kept off the initial bundle so users
 // who never open topology don't pay for it).
 //
-// Differences vs. the desktop topology modal in /js/map.js:
-//   - Top-to-bottom dagre layout (rankDir: "TB") instead of left-to-right.
-//     A phone's tall viewport is happier with vertical flow.
-//   - Initial viewport zooms to the FortiGate (or to a focus node when the
-//     URL carries ?q=<term>) instead of cy.fit() on the whole graph. A
-//     20-switch site is otherwise unreadable on a 375px screen.
-//   - No drag-to-reposition / layout persistence. Mobile users don't
-//     manually arrange node layouts. The shared server layouts the desktop
-//     modal saves (the /topology payload's `savedLayouts`) are deliberately
-//     NOT applied here either: they're pixel coords in the desktop's
-//     left-to-right orientation, and this surface renders transposed
-//     (lane → x, depth → y), so applying them would draw the site sideways.
+// It draws the SAME map as the desktop topology modal in /js/map.js: the
+// left-to-right column solver at the desktop's spacing, the shared server
+// layout the modal saves (the /topology payload's `savedLayouts.flat` —
+// node positions plus the operator-drawn connection lines, `edgepath:`
+// entries rendered view-only by topology-edge-editor.js), the location
+// boxes and their gutter-routed links. Because that map is wide, a PHONE
+// shows it in landscape: mobile/app.js asks for landscape on this route and
+// mobile.css covers a portrait phone with the .topo-rotate prompt rendered
+// below. A tablet or an unfolded foldable is never asked to turn.
+//
+// Differences vs. the desktop modal:
+//   - Flat view only (no building / floor views).
+//   - View only: no drag-to-reposition, no Edit mode, no layout save.
 //   - No screenshot, no fullscreen toggle (the surface IS fullscreen).
 //   - Node tap opens a bottom sheet instead of a right-rail info panel,
 //     with a "View asset" action that pivots to the asset detail page.
@@ -39,6 +40,14 @@
   var _searchDebounce = null;
   var _suggestState = { open: false, items: [], index: -1 };
   var _cyPromise = null;
+  var _viewTouched = false; // the operator has panned / zoomed since the last fit
+  var _edgeEditor = null;   // view-only drawer of the saved connection lines
+
+  // The desktop modal's lattice (map.js TOPO_COL_SPACING / TOPO_ROW_SPACING).
+  // Must match: the shared saved layout is in these coordinates, and a node
+  // the layout has no entry for lands on this grid beside the saved ones.
+  var TOPO_COL_SPACING = 130;
+  var TOPO_ROW_SPACING = 95;
 
   // ─── Lazy loaders ──────────────────────────────────────────────────────
   // Inline-duplicated from map-tab.js to keep each tab module
@@ -57,7 +66,7 @@
   }
 
   function loadCytoscape() {
-    if (window.cytoscape && window.cytoscapeDagre && window._cytoscapeDagreRegistered) {
+    if (window.cytoscape && window.cytoscapeDagre && window._cytoscapeDagreRegistered && window.PolarisTopologyEdgeEditor) {
       return Promise.resolve(window.cytoscape);
     }
     if (_cyPromise) return _cyPromise;
@@ -65,6 +74,8 @@
       await _loadScript("/js/vendor/cytoscape.min.js");
       await _loadScript("/js/vendor/dagre.min.js");
       await _loadScript("/js/vendor/cytoscape-dagre.js");
+      // Draws the operator's connection lines from the saved layout.
+      await _loadScript("/js/topology-edge-editor.js");
       if (window.cytoscape && window.cytoscape.use && window.cytoscapeDagre && !window._cytoscapeDagreRegistered) {
         window.cytoscape.use(window.cytoscapeDagre);
         window._cytoscapeDagreRegistered = true;
@@ -119,9 +130,18 @@
         + '  </div>'
         + '  <div class="topo-graph" id="topo-graph"></div>'
         + '  <div class="topo-status" id="topo-status">Loading topology…</div>'
+        // Shown by mobile.css only on a phone held portrait (see there).
+        + '  <div class="topo-rotate" role="alert">'
+        + '    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rotate"/></svg>'
+        + '    <div>Turn your phone sideways to view the topology.</div>'
+        + '    <button class="btn btn-tonal" id="topo-rotate-back"><svg viewBox="0 0 24 24"><use href="#i-back"/></svg>Back to map</button>'
+        + '  </div>'
         + '</div>';
 
       document.getElementById("topo-close").addEventListener("click", function () {
+        closeTopology();
+      });
+      document.getElementById("topo-rotate-back").addEventListener("click", function () {
         closeTopology();
       });
 
@@ -131,12 +151,17 @@
 
       wireSearchInput(document.getElementById("topo-search-input"));
 
-      // Resize handler — when the operator opens a virtual keyboard or
-      // rotates back to portrait after the lockout, Cytoscape needs a
-      // resize+fit to reflow.
+      // Resize handler — the virtual keyboard, and above all the turn to
+      // landscape: the map usually loads while the phone is still upright
+      // (behind the rotate prompt), sized for a container that is about to
+      // change shape. Re-fit on a resize until the operator has moved the
+      // view themselves; after that only reflow, never yank their view.
+      if (_resizeHandler) window.removeEventListener("resize", _resizeHandler);
       _resizeHandler = function () {
-        if (_cy) {
-          try { _cy.resize(); } catch (e) {}
+        if (!_cy) return;
+        try { _cy.resize(); } catch (e) {}
+        if (!_viewTouched && !_focusTerm) {
+          try { _cy.fit(undefined, 30); } catch (e) {}
         }
       };
       window.addEventListener("resize", _resizeHandler);
@@ -211,6 +236,7 @@
     if (_cy) {
       try { _cy.destroy(); } catch (e) {}
       _cy = null;
+      _edgeEditor = null;
     }
     _topoData = null;
     var siteId = _siteId;
@@ -255,32 +281,51 @@
     if (_cy) {
       try { _cy.destroy(); } catch (e) {}
       _cy = null;
+      _edgeEditor = null;
     }
 
-    // Deterministic column layout (shared solver with desktop). Phone
-    // viewport is tall, so map depth → vertical (firewall on top) and
-    // lane → horizontal — the transpose of desktop's left-to-right. Falls
-    // back to dagre TB when there's no firewall root to anchor the solver.
-    var DEPTH_SPACING = 110;
-    var LANE_SPACING = 70;
-    // Location-coded sites use the quotient (grouped-box) layout, matching
-    // desktop; untagged sites fall through to the flat column solver.
+    // Edges need both ends present — a dangling reference throws in
+    // Cytoscape and kills the whole render (the desktop filters the same way).
+    var nodeIds = {};
+    elements.forEach(function (el) {
+      var d = el && el.data;
+      if (d && d.id && !d.source) nodeIds[d.id] = true;
+    });
+    elements = elements.filter(function (el) {
+      var d = el && el.data;
+      if (!d) return false;
+      if (d.source && d.target) return !!(nodeIds[d.source] && nodeIds[d.target]);
+      return true;
+    });
+
+    // The desktop's flat-view layout: the shared server layout an operator
+    // saved, laid over the column solver's baseline (a node the save has no
+    // entry for keeps its solver cell). Desktop's per-browser localStorage
+    // fallback is not read — it belongs to the desktop browser that made it.
+    var layouts = data && data.savedLayouts;
+    var saved = layouts && layouts.flat && layouts.flat.positions;
+    var savedPositions = saved && typeof saved === "object" ? saved : null;
+
+    // Deterministic column layout (shared solver with desktop), left to
+    // right: depth → x, lane → y, at the desktop's spacing. Location-coded
+    // sites use the quotient (grouped-box) layout; untagged sites fall
+    // through to the flat column solver; no firewall root → dagre LR.
     var columns = window.PolarisTopologyRender.computeGroupedLayout(elements) ||
       window.PolarisTopologyRender.computeTopologyColumns(elements);
     var layoutConfig;
     if (columns) {
       var positions = {};
       Object.keys(columns).forEach(function (id) {
-        positions[id] = { x: columns[id].lane * LANE_SPACING, y: columns[id].depth * DEPTH_SPACING };
+        positions[id] = { x: columns[id].depth * TOPO_COL_SPACING, y: columns[id].lane * TOPO_ROW_SPACING };
       });
       layoutConfig = { name: "preset", positions: positions, fit: false, padding: 30 };
     } else {
       layoutConfig = {
         name: "dagre",
-        rankDir: "TB", // top-to-bottom — phone viewport is tall
-        nodeSep: 50,
-        rankSep: 110,
-        fit: false, // we'll center on the focus node ourselves
+        rankDir: "LR",
+        nodeSep: 30,
+        rankSep: 160,
+        fit: false, // fitted (or focused) in the layoutstop handler
         padding: 30,
       };
     }
@@ -311,17 +356,41 @@
     });
 
     // Registered BEFORE .layout().run() below (see the constructor note).
-    //  - Location grouping hulls (building / floor / room / jb shapes from
-    //    a:/b:/f:/r:/jb: codes) — always on for mobile (no toggle; flat view
-    //    only in v1). Nodes are ungrabbable here so no drag-follow refresh is
-    //    needed; the layout is final once it stops.
-    //  - Initial focus: zoom to the FortiGate (or the searched node) instead
-    //    of fitting the whole graph. A site with 30 switches would otherwise
-    //    be unreadable at the default zoom-to-fit on a 375px screen.
+    //  - The saved positions, then the location grouping hulls (building /
+    //    floor / room / jb shapes from a:/b:/f:/r:/jb: codes) around them,
+    //    the gutter routing of cross-box links, and the operator-drawn
+    //    connection lines last — the order the desktop modal applies them
+    //    in, so a customised line keeps the routed shape it was drawn on.
+    //    Nodes are ungrabbable here, so the layout is final once it stops.
+    //  - Initial view: the whole graph, as the desktop opens it — or the
+    //    searched node when the URL carries ?q=<term>.
     _cy.one("layoutstop", function () {
+      if (savedPositions) {
+        _cy.batch(function () {
+          _cy.nodes().forEach(function (n) {
+            var p = savedPositions[n.id()];
+            if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
+          });
+        });
+      }
       window.PolarisTopologyRender.renderLocationGroups(_cy);
+      if (_cy.nodes("[isLocGroup]").length > 0) {
+        window.PolarisTopologyRender.routeInterGroupEdges(_cy);
+      }
+      if (window.PolarisTopologyEdgeEditor) {
+        _edgeEditor = window.PolarisTopologyEdgeEditor.attach(_cy, {
+          positions: savedPositions,
+          isEditable: function () { return false; },
+        });
+      }
       applyInitialFocus();
     });
+
+    // Any touch on the graph means the operator is steering the view now —
+    // stop re-fitting it on resize (see _resizeHandler).
+    _viewTouched = false;
+    _cy.on("tapstart", function () { _viewTouched = true; });
+    _cy.on("scrollzoom", function () { _viewTouched = true; });
 
     // Tap a node → bottom sheet with details. Skip ghost LLDP nodes for
     // the no-action case (they render but have no Polaris asset linkage).
@@ -341,12 +410,11 @@
     // Run the layout now that the layoutstop listener is attached. preset
     // (location-coded / firewall-rooted sites) is synchronous; dagre (no
     // firewall root) is async — either way the handler above catches it.
-    // Fan-out links route orthogonally (see map.js) — the phone maps depth
-    // to y, so the taxi runs vertically and turns half a depth step along.
+    // Fan-out links route orthogonally, exactly as on the desktop (map.js).
     if (columns) {
       window.PolarisTopologyRender.markFanOutEdges(_cy, columns, {
-        colSpacing: DEPTH_SPACING,
-        orientation: "vertical",
+        colSpacing: TOPO_COL_SPACING,
+        orientation: "horizontal",
       });
     }
     // Port labels on bent links sit on their end legs (see topology-render.js).
@@ -356,7 +424,7 @@
 
   function applyInitialFocus() {
     if (!_cy) return;
-    var node = pickFocusNode(_focusTerm);
+    var node = _focusTerm ? pickFocusNode(_focusTerm) : null;
     if (!node || node.length === 0) {
       try { _cy.fit(undefined, 30); } catch (e) {}
       return;
@@ -405,8 +473,8 @@
   // Overlay a focused endpoint→firewall connection path on top of the live
   // Cytoscape graph: dim everything off-path, add the endpoint as a synthetic
   // node when it's not already in the graph (endpoints don't ride along in
-  // the standard topology response), and collapse the path into a tight
-  // vertical chain so it reads at a glance on a phone viewport. Mobile
+  // the standard topology response), and flatten the path onto one row so
+  // it reads at a glance, as the desktop modal does. Mobile
   // doesn't persist node positions (autoungrabify + no localStorage save),
   // so there's no "restore" path needed — closing the topology tears down
   // the cyInstance, and the operator re-opens fresh.
@@ -464,20 +532,26 @@
 
     _cy.elements().not(pathElements).addClass("dimmed");
 
-    // Pack the path into a tight vertical chain — firewall on top, endpoint
-    // on bottom — anchored at the firewall's existing X so the column stays
-    // roughly where dagre put it. Spacing tuned for phone viewport.
-    var orderedTopDown = pathNodeIds.slice().reverse();
-    var anchorX = 0;
-    if (orderedTopDown.length > 0) {
-      var topNode = _cy.getElementById(orderedTopDown[0]);
-      if (topNode.length > 0) anchorX = topNode.position().x;
-    }
-    var chainSpacing = 140;
-    orderedTopDown.forEach(function (id, idx) {
+    // Flatten the path onto one row, as the desktop modal does: real nodes
+    // keep their column x, the synthetic endpoint lands one column further
+    // from the firewall than its switch (right of a verified switch, left of
+    // a FortiLink-fallback one at a negative column).
+    pathNodeIds.forEach(function (id) {
       var n = _cy.getElementById(id);
-      if (n.length > 0) n.position({ x: anchorX, y: idx * chainSpacing });
+      if (n.length > 0) n.position("y", 0);
     });
+    var epNode = _cy.getElementById(ep.id);
+    if (nextHop && epNode.length > 0 && epNode.data("synthetic")) {
+      var hopNode = _cy.getElementById(nextHop.id);
+      if (hopNode.length > 0) {
+        var hopX = hopNode.position().x;
+        epNode.position({ x: hopX + (hopX < 0 ? -1 : 1) * TOPO_COL_SPACING, y: 0 });
+      }
+    }
+    // Drawn paths are anchored to the full-site layout; the chain would
+    // stretch them across the canvas, so they step aside. Closing the
+    // topology tears the graph down, so nothing has to bring them back.
+    if (_edgeEditor) _edgeEditor.setSuspended(true);
 
     try {
       _cy.animate({ fit: { eles: pathElements, padding: 40 }, duration: 350 });
@@ -607,6 +681,7 @@
     var input = document.getElementById("topo-search-input");
     if (input) input.value = "";
     if (!_cy || !item.switchId) return;
+    _viewTouched = true; // the view is aimed at a pick now — a resize must not re-fit it away
     var node = _cy.getElementById(item.switchId);
     if (node && node.length > 0) {
       try { _cy.animate({ center: { eles: node }, zoom: 1.5, duration: 350 }); } catch (e) {}

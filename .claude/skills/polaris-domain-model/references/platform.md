@@ -365,8 +365,8 @@ TopologyLayout                  -- SHARED Device Map topology node positions (th
                                 -- Written via PUT /map/sites/:id/topology/layout (deviceMap=write, audited);
                                 -- read by everyone via the savedLayouts embed on GET /map/sites/:id/topology.
                                 -- Server layout wins client-side; localStorage remains the per-browser
-                                -- fallback (non-writer drags, pre-server installs). Mobile deliberately does
-                                -- NOT apply it (transposed axes). Single writer: topologyLayoutService.
+                                -- fallback (non-writer drags, pre-server installs). Mobile applies the
+                                -- flat view read-only (landscape, desktop axes). Single writer: topologyLayoutService.
 
 Event                           -- Audit log, 7-day rolling retention
   id            UUID PK

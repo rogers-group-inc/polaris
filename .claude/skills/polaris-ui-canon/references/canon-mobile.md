@@ -148,6 +148,24 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 
 ---
 
+## Orientation (portrait app, landscape topology)
+
+**What it is:** the phone app prefers portrait everywhere except the per-site topology screen, which wants landscape because it draws the desktop's left-to-right map (same solver, same spacing, the shared saved layout and its drawn connection lines). Where the platform will not lock (iOS, every browser tab) the app simply rotates and works sideways. Added 2026-10-26.
+
+**Canonical implementation:** `setWantedOrientation` / `applyOrientationLock` / `isPhoneScreen` in [public/js/mobile/app.js](public/js/mobile/app.js) (called from `routeChanged`: `"landscape"` on the `topology` route, `"portrait"` on every other route and on the 401 → login path); the topology prompt's `@media` block under "Orientation" in [public/css/mobile.css](public/css/mobile.css); the `.topo-rotate` element `render()` writes in [public/js/mobile/topology-tab.js](public/js/mobile/topology-tab.js).
+
+**Key conventions:**
+- **The wanted orientation comes from the ROUTE, never from a screen module.** The router has no teardown hook, so a back gesture out of a screen that set it itself would leave the app asking for the wrong way. `html[data-orient]` is the one switch mobile.css reads.
+- **Phone-class only, by the short side ≤ 480 CSS px**: `PHONE_SHORT_SIDE` in app.js and the topology prompt's `portrait and max-width: 480px`. A tablet or an unfolded foldable never matches, so it is never prompted and the lock is released (`unlock()`, back to the manifest default) — its topology stays the way the device is held. `tests/unit/mobileOrientation.test.ts` holds the two numbers equal.
+- **The lock is best-effort, and the app has NO landscape lockout.** `screen.orientation.lock()` takes only in the installed Android app (the manifest declares `portrait`); iOS Safari and every browser tab refuse it, and there the app rotates. A full-screen "rotate back to portrait" `body::before` used to cover the app instead — on an iPhone, which can never be locked, that made Polaris unusable while turned, so it was removed (2026-10-26, by request). `mobileOrientation.test.ts` fails if a landscape media query comes back. Every screen must therefore WORK sideways (≈390 px tall), not merely survive it.
+- **The topology's prompt carries a way out.** It is a real element with a "Back to map" button, above the node sheet (z 1100 > `.sheet` 1000), so an operator who opened the map by mistake does not have to rotate just to leave.
+- **The topology loads while still upright**, behind its prompt, so its resize handler re-fits the graph after the turn — until the operator touches the graph or picks a search hit (`_viewTouched`), after which a resize only reflows.
+- **Landscape puts the notch at a side**, and `viewport-fit=cover` lets even a Safari tab paint under it: `.app` pads `env(safe-area-inset-left/right)` in every display mode (top/bottom stay standalone-only), and so do the screen-spanning fixed surfaces — `.sheet`, `.sheet.network-sheet`, `.snackbar`, and `.topo-screen` (all four sides, see the next section; its `.topo-bar` must NOT add them again, or the bar is inset twice). A new fixed, full-width surface must pay them too. The `-24px` full-bleed rows inside a sheet (`.sheet-pinned-head`, `.ae-menu`, `.ae-footer`) deliberately bleed only to the safe-area line.
+
+**When adding a new instance:** a new landscape route is one more name in the `routeChanged` ternary plus a prompt element in its own markup keyed on `html[data-orient="landscape"]`; do not add a second lock call.
+
+---
+
 ## A fixed full-screen surface pads its own safe area
 
-`.app` takes the iOS safe-area insets as padding only in standalone mode, so anything that leaves it with `position: fixed; inset: 0` gets none of that padding. Under the installed app's `black-translucent` status bar, the surface's top row is then drawn behind the clock and notch, where it can't be tapped. The topology screen (`.topo-screen`) shipped that way and trapped operators with no way out (fixed 2026-10-26). Such a surface pads all four `env(safe-area-inset-*)` sides itself, and its absolutely positioned children add the inset to their own offsets, because absolute offsets are measured from the padding box and ignore the padding.
+`.app` takes the iOS top and bottom safe-area insets as padding only in standalone mode, so anything that leaves it with `position: fixed; inset: 0` gets none of that padding. Under the installed app's `black-translucent` status bar, the surface's top row is then drawn behind the clock and notch, where it can't be tapped. The topology screen (`.topo-screen`) shipped that way and trapped operators with no way out (fixed 2026-10-26). Such a surface pads all four `env(safe-area-inset-*)` sides itself, and its absolutely positioned children add the inset to their own offsets, because absolute offsets are measured from the padding box and ignore the padding.
