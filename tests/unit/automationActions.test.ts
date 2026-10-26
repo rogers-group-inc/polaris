@@ -142,10 +142,13 @@ describe("executeActions", () => {
     // keeps a firing send byte-identical.
     await executeActions("n1", [{ type: "notify", channelId: "c1" }], { ...CTX, severity: "resolved" }, {});
     expect((expandDeliveriesMock.mock.calls[0] as any[])[2].noAck).toBe(true);
+    // ...and hands push / chat the recovery sentence to say instead of the fire's.
+    expect((expandDeliveriesMock.mock.calls[0] as any[])[2].allClearMessage).toBe("hot");
 
     expandDeliveriesMock.mockClear();
     await executeActions("n1", [{ type: "notify", channelId: "c1" }], CTX, {});
     expect((expandDeliveriesMock.mock.calls[0] as any[])[2].noAck).toBeUndefined();
+    expect((expandDeliveriesMock.mock.calls[0] as any[])[2].allClearMessage).toBeUndefined();
   });
 
   it("api_call: creates a NULL-channel delivery row with the body rendered at fire time", async () => {

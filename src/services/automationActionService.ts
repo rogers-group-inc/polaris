@@ -343,7 +343,9 @@ export async function executeActions(
           // Every row of this fan-out shares it — that is what makes the
           // footer's audience "this send" and not "this alert".
           dispatchId,
-          ...(allClear ? { noAck: true } : {}),
+          // ...and push / chat, which have no composed body, say "resolved"
+          // with the recovery sentence instead of repeating the fire.
+          ...(allClear ? { noAck: true, allClearMessage: ctx["message"] ?? "" } : {}),
           ...(action.respectUserPreference ? { enforceUserPreference: await groupOffersBothMethods() } : {}),
           ...(fanHold ? { hold: { kind: fanHold.source.kind, id: fanHold.source.id, windowEnd: fanHold.windowEnd, ...(fanHold.split ? { isHeldFor: fanHold.isHeldFor } : {}) } } : {}),
           ...(excludeRecipients ? { excludeRecipients } : {}),

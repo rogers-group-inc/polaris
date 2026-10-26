@@ -208,9 +208,24 @@ async function storageChartThreshold(ruleId: string | null): Promise<number | nu
   }
 }
 
-function titleFor(n: DeliveryRow["notification"]): string {
-  const sev = n.severity.toUpperCase();
+function titleFor(n: DeliveryRow["notification"], meta?: Record<string, unknown>): string {
+  const sev = severityFor(n, meta).toUpperCase();
   return n.assetHostname ? `[${sev}] ${n.assetHostname}` : `[${sev}] Polaris notification`;
+}
+
+/**
+ * The severity / text a body-less transport (push, Slack, Teams, Pushbullet)
+ * states for this row. An all-clear row (`meta.allClear`, stamped at fan-out
+ * with the recovery sentence) says "resolved" — the notification row still
+ * holds the FIRE's severity and message, which is what these transports used
+ * to repeat verbatim on the send meant to close the alert.
+ */
+function severityFor(n: DeliveryRow["notification"], meta?: Record<string, unknown>): string {
+  return meta?.allClear === true ? "resolved" : n.severity;
+}
+
+function messageFor(n: DeliveryRow["notification"], meta?: Record<string, unknown>): string {
+  return meta?.allClear === true && typeof meta.message === "string" && meta.message ? meta.message : n.message;
 }
 
 function cfgStr(config: Record<string, unknown>, key: string): string {
@@ -557,15 +572,15 @@ async function dispatch(d: DeliveryRow, channel: ChannelInfo | undefined, memo: 
       const webhookUrl = cfgStr(cfg, "webhookUrl");
       if (!webhookUrl) return { ok: false, error: `${type} channel has no webhook URL` };
       await sendWebhook(webhookUrl, type, {
-        title: titleFor(d.notification),
-        message: d.notification.message,
-        severity: d.notification.severity,
+        title: titleFor(d.notification, meta),
+        message: messageFor(d.notification, meta),
+        severity: severityFor(d.notification, meta),
         assetHostname: d.notification.assetHostname,
         url,
         triggeredAt: d.notification.triggeredAt.toISOString(),
       });
     } else if (type === "pushbullet") {
-      await sendPushbullet({ accessToken: cfgStr(cfg, "accessToken") }, { title: titleFor(d.notification), body: d.notification.message });
+      await sendPushbullet({ accessToken: cfgStr(cfg, "accessToken") }, { title: titleFor(d.notification, meta), body: messageFor(d.notification, meta) });
     } else if (type === "web_push") {
       // Web push gets its OWN url, not the shared `url` the email/chat
       // transports use: the deep link depends on which surface enrolled the
@@ -576,16 +591,19 @@ async function dispatch(d: DeliveryRow, channel: ChannelInfo | undefined, memo: 
         { publicKey: cfgStr(cfg, "publicKey"), privateKey: cfgStr(cfg, "privateKey"), subject: cfgStr(cfg, "subject") },
         { endpoint: d.target, p256dh: String(meta.p256dh ?? ""), auth: String(meta.auth ?? "") },
         {
-          title: titleFor(d.notification),
+          // An all-clear reads "[RESOLVED]" with the recovery sentence (see
+          // messageFor), and its "resolved" severity is not one sw.js keeps
+          // on screen — it replaces the sticky fire in the tray (same tag).
+          title: titleFor(d.notification, meta),
           // The follow-up policy rides IN the body: a push has no facts
           // table, and "will this keep bothering me / is my manager about
           // to get this" is exactly the question a tray notification is
           // read to answer. Absent (and the body unchanged) when the
           // automation neither repeats nor escalates.
           body: typeof meta.followUp === "string" && meta.followUp
-            ? `${d.notification.message}\n\n${meta.followUp}`
-            : d.notification.message,
-          severity: d.notification.severity,
+            ? `${messageFor(d.notification, meta)}\n\n${meta.followUp}`
+            : messageFor(d.notification, meta),
+          severity: severityFor(d.notification, meta),
           url: pushDeepLinkUrl(meta.surface),
           notificationId: d.notification.id,
           // The DEVICE page, as its own tray action. The body tap goes where
@@ -759,11 +777,16 @@ async function enqueuePushFallbacks(terminal: DeliveryRow[]): Promise<number> {
     for (const f of fallbacks) {
       if (pushStillInPlay(siblings, f.userId)) continue;
       if (alreadyEmailedOnChannel(siblings, f.channelId, f.address)) continue;
-      // Reuse the action's own composed body when it has one.
-      const composedSibling = siblings.find(
+      // Reuse the action's own composed body when it has one — THIS send's
+      // first, so a dead all-clear push is emailed the green "resolved" body
+      // rather than the fire's, which drained on the same channel earlier.
+      const composedOnChannel = siblings.filter(
         (s) => s.transport === "email" && s.channelId === f.channelId &&
           !!(s.meta as { composed?: unknown } | null)?.composed,
       );
+      const composedSibling =
+        (f.dispatch ? composedOnChannel.find((s) => (s.meta as { dispatch?: unknown } | null)?.dispatch === f.dispatch) : undefined) ??
+        composedOnChannel[0];
       const composed = composedSibling?.meta as Record<string, unknown> | undefined;
       created.push({
         notificationId,
