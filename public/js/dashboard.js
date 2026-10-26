@@ -1093,6 +1093,11 @@
   // menu closes. The attribute is spelled out below rather than read from
   // app.js: the /dash wallboard runs this file WITHOUT app.js (and so never
   // stamps anything). Keep it in step with ROW_MENU_OPEN_ATTR in app.js.
+  //
+  // The operator can scroll the body by hand while it holds (wheel, scrollbar,
+  // touch). When the hold ends the creep resumes from THERE: `offset` is re-read
+  // from scrollTop, or the next tick would snap the list back to where the
+  // creep had left it.
   function startAutoScroll(scrollEl, hoverEl) {
     var STEP_MS = 80;                              // tick cadence (NOC metric-box speed)
     var TOP_PAUSE_TICKS = Math.ceil(3000 / STEP_MS); // ~3s dwell at the top
@@ -1120,7 +1125,11 @@
         held = true;
         return;
       }
-      if (held) { held = false; pause = Math.max(pause, RESUME_TICKS); }
+      if (held) {
+        held = false;
+        offset = Math.min(scrollEl.scrollTop, maxScroll);
+        pause = Math.max(pause, RESUME_TICKS);
+      }
       if (pause > 0) { pause--; return; }
       offset += 1;
       if (offset > maxScroll + BOTTOM_DWELL) {       // past bottom + dwell → glide home, re-pause
