@@ -340,6 +340,7 @@
     var creating = null;    // the bend being created by the current press
     var handlesFor = {};    // pathKey → true while its handles are on canvas
     var altHeld = false;    // Alt during the current drag: wings move independently
+    var dragRaw = {};       // handle id → { x, y, lastX, lastY } while a bend is dragged (snap source)
 
     var edgeData = cy.edges().map(function (e) {
       return { id: e.id(), source: e.data("source"), target: e.data("target") };
@@ -669,10 +670,25 @@
       if (!pending) return;
       cy.userPanningEnabled(pending.panning);
       cy.boxSelectionEnabled(pending.boxSelect);
-      var made = !!creating;
+      var made = creating;
       pending = null;
       creating = null;
-      if (made) changed();
+      if (!made) return;
+      // Cytoscape doesn't know a line press became a drag (a line is not a
+      // grabbable node), so it reads the release as a CLICK on whatever is
+      // under the pointer — usually the line itself — and, in single-select
+      // mode, selects that and drops the new point (seen with real mouse
+      // input: tapend on the line, then unselect of the new handle). Its
+      // selection pass runs after this tapend; put the point back after it.
+      setTimeout(function () {
+        if (cy.destroyed()) return;
+        var e = edgeByKey[made.key];
+        var h = cy.getElementById(handleId(made.key, "b" + made.index));
+        if (!e || !h.length) return;
+        selectOnlyLine(e);
+        h.select();
+      }, 0);
+      changed();
     }
     cy.on("tapend", endPress);
     // A press that ends off the canvas never reaches Cytoscape's tapend.
@@ -714,6 +730,12 @@
       // its dragfree handler, and that move belongs to the same gesture.
       setTimeout(function () { snapshot = null; }, 0);
     });
+    // A bend handle picked up: start its raw (unsnapped) drag position.
+    cy.on("grab", 'node[isEdgeHandle][handleKind = "bend"]', function (evt) {
+      var p = evt.target.position();
+      dragRaw[evt.target.id()] = { x: p.x, y: p.y, lastX: p.x, lastY: p.y };
+    });
+    cy.on("free", "node[isEdgeHandle]", function (evt) { delete dragRaw[evt.target.id()]; });
 
     cy.on("position", "node", function (evt) {
       if (syncing) return;
@@ -758,7 +780,23 @@
         var p = h.position();
         // Carried by a selected-set drag the point follows exactly; dragged
         // on its own it lands on the fine grid while point snapping is on.
-        var sp = h.grabbed() ? snap(p) : { x: p.x, y: p.y };
+        // Snap the RAW drag position, never the point's last shown one:
+        // Cytoscape moves a grabbed node by the pointer's delta since the
+        // previous event, so snapping its position every event threw away
+        // any move under half a grid cell and the point never left its line
+        // (seen with real mouse input, 2026-10-26). `dragRaw` accumulates
+        // those deltas onto the unsnapped position.
+        var sp;
+        var raw = h.grabbed() ? dragRaw[h.id()] : null;
+        if (raw) {
+          raw.x += p.x - raw.lastX;
+          raw.y += p.y - raw.lastY;
+          sp = snap(raw);
+          raw.lastX = sp.x;
+          raw.lastY = sp.y;
+        } else {
+          sp = h.grabbed() ? snap(p) : { x: p.x, y: p.y };
+        }
         path.bends[i].x = sp.x; // mutate: its wings (offsets) stay attached
         path.bends[i].y = sp.y;
         applyKey(key);

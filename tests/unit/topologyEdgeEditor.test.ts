@@ -423,4 +423,25 @@ describe("advanced editing on a headless graph", () => {
     dragTo("edgehandle:e|a|b:b0", 112, 63);
     expect(blobOf(ed)["edgepath:e|a|b:b0"]).toEqual({ x: 100, y: 75 });
   });
+
+  it("snap line points: SMALL drag steps still move the point (snaps the raw drag, not the shown position)", async () => {
+    const { ed, edge } = graph({ "edgepath:e|a|b:b0": { x: 100, y: 50 } }, {
+      snapPoint: (p: Pt) => sb.P(Math.round(p.x / 25) * 25, Math.round(p.y / 25) * 25),
+    });
+    edge.select();
+    await tick();
+    const h = cy.getElementById("edgehandle:e|a|b:b0");
+    // Cytoscape's drag: each pointer move adds its delta to the node's
+    // CURRENT position — 5px steps, well under half the 25px grid.
+    h[0]._private.grabbed = true;
+    h.emit("grab");
+    for (let i = 0; i < 12; i++) {
+      const cur = h.position();
+      h.position(sb.P(cur.x + 5, cur.y));
+    }
+    h[0]._private.grabbed = false;
+    h.emit("free");
+    // 60px of travel from x=100 → raw 160 → snapped 150 (it used to stay at 100).
+    expect(blobOf(ed)["edgepath:e|a|b:b0"]).toEqual({ x: 150, y: 50 });
+  });
 });
