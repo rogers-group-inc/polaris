@@ -1749,7 +1749,9 @@
   // the midpoint (Cytoscape adds the margin BEFORE rotating, about the shifted
   // point) and text-rotation lays it along its leg (autorotate would follow
   // the midpoint's leg); the second copy is a target-label offset along the
-  // path back from the target, autorotated. A hidden label is `label: ""`.
+  // path back from the target, given its own leg's angle the same way (an
+  // end label's autorotate ALSO follows the midpoint's leg, not its own). A
+  // hidden label is `label: ""`.
   // The PDF / Visio export reads the shifted main label (it applies
   // text-margin) and prints it horizontally; it does not draw target-label
   // copies.
@@ -1936,10 +1938,15 @@
           for (var j = copy.li + 1; j < legs.length; j++) back += legs[j].len;
           style["target-label"] = text;
           style["target-text-offset"] = back;
-          style["target-text-rotation"] = "autorotate";
+          // An explicit angle, never "autorotate": Cytoscape resolves an end
+          // label's autorotate to the MAIN label's auto angle (the leg at the
+          // path midpoint — calculateLabelAngle returns labelAutoAngle for
+          // any prefix), so on a bent line the copy was drawn turned to some
+          // other leg instead of lying along its own.
+          style["target-text-rotation"] = _readableAngle(legs[copy.li].dx, legs[copy.li].dy);
         }
         var sig = [text, style["text-margin-x"], style["text-margin-y"], style["text-rotation"],
-          style["target-label"], style["target-text-offset"]]
+          style["target-label"], style["target-text-offset"], style["target-text-rotation"]]
           .map(function (v) { return typeof v === "number" ? v.toFixed(1) : String(v); }).join("|");
         if (e.data("_bentLabel") === sig) return;
         e.style(style);
