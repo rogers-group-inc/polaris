@@ -580,6 +580,12 @@ input, select, textarea { font-family: inherit; }
   flex-direction: column;
   /* Transparent so body's glow shows through; body paints the ground. */
   background: transparent;
+  /* Turned sideways, the notch / Dynamic Island sits at a SIDE, and with
+     viewport-fit=cover even a Safari tab paints under it — so the side
+     insets apply in every display mode, not just standalone (top/bottom
+     below). Zero when the phone is upright. */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* Installed-PWA (home screen) insets.
@@ -1164,7 +1170,8 @@ input, select, textarea { font-family: inherit; }
 /* ─── Snackbar / toast ────────────────────────────────────────────────── */
 .snackbar {
   position: fixed;
-  left: 16px; right: 16px;
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
   bottom: calc(var(--navbar-h) + 12px);
   background: var(--md-inverse-surface);
   color: var(--md-inverse-on-surface);
@@ -1226,7 +1233,9 @@ input, select, textarea { font-family: inherit; }
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border-radius: var(--shape-xl) var(--shape-xl) 0 0;
-  padding: 0 24px 24px;
+  /* Side insets: a sheet spans the screen, so turned sideways its edge
+     would run under the notch (see .app). */
+  padding: 0 calc(24px + env(safe-area-inset-right, 0px)) 24px calc(24px + env(safe-area-inset-left, 0px));
   z-index: 1001;
   box-shadow: var(--shadow-sheet);
   max-height: 90vh;
@@ -2491,47 +2500,27 @@ button, .list-item, .chip { touch-action: manipulation; }
   font-size: 12px;
 }
 
-/* ─── Orientation lockouts ───────────────────────────────────────────────
-   The app is portrait and the topology screen is landscape; `html[data-orient]`
-   (mobile/app.js → setWantedOrientation, set from the route) says which one
-   the current screen wants. screen.orientation.lock() only takes in the
-   installed Android app — iOS Safari and every browser tab ignore it — so
-   these prompts are the actual lockout for most of the install base.
+/* ─── Orientation ────────────────────────────────────────────────────────
+   The app PREFERS portrait and the topology screen landscape;
+   `html[data-orient]` (mobile/app.js → setWantedOrientation, set from the
+   route) says which one the current screen wants. screen.orientation.lock()
+   only takes in the installed Android app — iOS Safari and every browser tab
+   ignore it — and everywhere it does not, the app simply rotates and works
+   sideways. There is deliberately NO "rotate back" lockout for the app: it
+   used to replace the whole UI with one, which left iPhone users (who can
+   never be locked) unable to use the app at all while it was turned.
 
-   Both are scoped to PHONES by the short side: ≤ 480 CSS px, the bound
-   mobile/app.js's PHONE_SHORT_SIDE uses for the lock. A tablet or an unfolded
-   foldable (short side ~600–900 px) never matches either rule, so it works in
-   any orientation and its topology stays the way the device is held.
+   The topology's prompt below is scoped to PHONES by the short side: ≤ 480
+   CSS px, the bound mobile/app.js's PHONE_SHORT_SIDE uses for the lock. A
+   tablet or an unfolded foldable (short side ~600–900 px) never matches, so
+   its topology stays the way the device is held.
 
-   Wrong-way on the app: replace the entire UI with a "rotate back" prompt. */
-@media (orientation: landscape) and (max-height: 480px) {
-  html:not([data-orient="landscape"]) .app,
-  html:not([data-orient="landscape"]) .scrim,
-  html:not([data-orient="landscape"]) .sheet,
-  html:not([data-orient="landscape"]) .snackbar { display: none !important; }
-  html:not([data-orient="landscape"]) body::before {
-    content: "Rotate your device to portrait to use Polaris.";
-    position: fixed;
-    inset: 0;
-    z-index: 99999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 24px;
-    background: var(--md-surface, #0f172a);
-    color: var(--md-on-surface, #e2e8f0);
-    font: 500 16px/1.4 "Inter", "Roboto", system-ui, sans-serif;
-    letter-spacing: 0.25px;
-  }
-}
-
-/* Wrong-way on the topology: the screen draws the desktop's left-to-right
-   map, which a portrait phone cannot show at a readable size. Unlike the app
-   prompt this one is a real element (topology-tab.js renders it inside
-   .topo-screen) because it carries a Back button — an operator who opened
-   the map by mistake must not have to rotate just to leave. Above the node
-   sheet (.sheet, 1000) so a sheet left open does not cover it. */
+   Wrong-way on the topology: the screen draws the desktop's left-to-right
+   map, which a portrait phone cannot show at a readable size. It is a real
+   element (topology-tab.js renders it inside .topo-screen) carrying a Back
+   button — an operator who opened the map by mistake must not have to rotate
+   just to leave. Above the node sheet (.sheet, 1000) so a sheet left open
+   does not cover it. */
 .topo-rotate { display: none; }
 @media (orientation: portrait) and (max-width: 480px) {
   html[data-orient="landscape"] .topo-rotate {
@@ -3120,8 +3109,8 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
   z-index: 891;
   max-height: 80vh;
   bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px));
-  padding-left: 16px;
-  padding-right: 16px;
+  padding-left: calc(16px + env(safe-area-inset-left, 0px));
+  padding-right: calc(16px + env(safe-area-inset-right, 0px));
 }
 .network-sheet-head {
   display: flex;

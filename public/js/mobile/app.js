@@ -380,20 +380,21 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
   };
 
   // ─── Orientation ───────────────────────────────────────────────────────
-  // The app is portrait; the topology screen is landscape (it draws the
+  // The app prefers portrait; the topology screen landscape (it draws the
   // desktop's left-to-right map). Only on a PHONE-class screen — short side
-  // ≤ 480 CSS px, the same bound mobile.css's rotate prompts use — so an
-  // unfolded foldable or a tablet is never asked to turn and its topology
-  // stays the way the device is held.
+  // ≤ 480 CSS px, the same bound mobile.css's topology prompt uses — so an
+  // unfolded foldable or a tablet is never locked and its topology stays the
+  // way the device is held.
   //
-  // `html[data-orient]` is what mobile.css keys its rotate prompts on, set
-  // from the ROUTE (routeChanged) rather than by the topology module: the
-  // router has no teardown hook, so a back gesture out of the topology would
-  // otherwise leave the app asking for landscape.
+  // `html[data-orient]` is what mobile.css keys the topology's rotate prompt
+  // on, set from the ROUTE (routeChanged) rather than by the topology module:
+  // the router has no teardown hook, so a back gesture out of the topology
+  // would otherwise leave the app asking for landscape.
   //
   // The lock itself is best-effort. Android honors it in the installed app
   // (the manifest declares portrait); a browser tab and iOS Safari reject it,
-  // which is fine — the CSS prompts are the lockout everywhere. Wrapped in
+  // and there the app simply rotates and works sideways — there is no
+  // "rotate back" lockout (mobile.css → Orientation says why). Wrapped in
   // try/catch because the API throws synchronously on some platforms when
   // called outside fullscreen.
   var PHONE_SHORT_SIDE = 480;

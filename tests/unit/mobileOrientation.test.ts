@@ -8,10 +8,11 @@
  *    px). A tablet or an unfolded foldable is unlocked instead, so its topology
  *    stays the way the device is held;
  *  - `html[data-orient]` follows the wanted orientation, since mobile.css keys
- *    both rotate prompts on it — and a repeat request does not re-lock;
+ *    the topology's rotate prompt on it — and a repeat request does not re-lock;
  *  - the 480 px bound is ONE number: mobile/app.js's PHONE_SHORT_SIDE and the
- *    two media queries in mobile.css. Edited in one place alone, a phone would
- *    be locked one way and prompted the other.
+ *    topology prompt's media query in mobile.css; and
+ *  - there is NO landscape lockout for the rest of the app: an iPhone cannot be
+ *    locked, so one made the app unusable while turned.
  *
  * @vitest-environment happy-dom
  */
@@ -111,14 +112,24 @@ describe("mobile orientation lock", () => {
   });
 });
 
-describe("mobile.css rotate prompts", () => {
-  it("both prompts use the same phone bound as the lock", () => {
-    expect(MOBILE_CSS).toContain(`@media (orientation: landscape) and (max-height: ${PHONE_SHORT_SIDE}px)`);
+describe("mobile.css orientation", () => {
+  it("the topology prompt uses the same phone bound as the lock", () => {
     expect(MOBILE_CSS).toContain(`@media (orientation: portrait) and (max-width: ${PHONE_SHORT_SIDE}px)`);
+    expect(MOBILE_CSS).toMatch(/html\[data-orient="landscape"\] \.topo-rotate/);
   });
 
-  it("the app's portrait prompt stands aside on the landscape route", () => {
-    expect(MOBILE_CSS).toMatch(/html:not\(\[data-orient="landscape"\]\) \.app/);
-    expect(MOBILE_CSS).toMatch(/html\[data-orient="landscape"\] \.topo-rotate/);
+  // iOS can never be locked, so a landscape lockout there is the whole app
+  // gone until the phone is turned back — removed 2026-10-26 by request.
+  it("never hides the app when the phone is turned sideways", () => {
+    expect(MOBILE_CSS).not.toMatch(/@media \(orientation: landscape\)/);
+    expect(MOBILE_CSS).not.toContain("Rotate your device to portrait");
+  });
+
+  it("pays the side safe-area insets a sideways notch needs", () => {
+    const app = /\n\.app \{[^}]*\}/.exec(MOBILE_CSS)?.[0] ?? "";
+    expect(app).toContain("env(safe-area-inset-left");
+    expect(app).toContain("env(safe-area-inset-right");
+    const sheet = /\n\.sheet \{[^}]*\}/.exec(MOBILE_CSS)?.[0] ?? "";
+    expect(sheet).toContain("env(safe-area-inset-left");
   });
 });
