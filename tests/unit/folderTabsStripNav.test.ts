@@ -1,21 +1,25 @@
 /**
  * tests/unit/folderTabsStripNav.test.ts — the tab strip WINDOW
- * (public/js/folder-tabs.js → _measureStrip / _runWidths / _stepStrip, the
+ * (public/js/folder-tabs.js → _measureStrip / _layoutStrip / _stepStrip, the
  * ‹ › pair and the wheel).
  *
  * A strip with more tabs than room never scrolls natively (that showed tabs
- * past the card's edges, under a scrollbar). It shows a run of WHOLE tabs that
- * fits its room, starting at `first`, and draws none of the rest, so no tab is
- * ever a sliver. One step — a ‹ › click or a wheel notch — moves `first` by
- * one tab, whatever that tab's length.
+ * past the card's edges, under a scrollbar). The tab list is pinned to a
+ * fixed area (the room), and the row of tabs — each at its natural width,
+ * never squeezed — SLIDES inside it on `translate`; a tab crossing an edge
+ * fades into it (its own mask) and one wholly outside is `visibility:
+ * hidden`. One step — a ‹ › click or a wheel notch — slides by one tab.
  *
  * folder-tabs.js is a classic self-wiring script, so it is eval'd into a
- * happy-dom Window. happy-dom lays nothing out, so each tab reports its width
- * by hand: its squeezed inline width, 0 when hidden, else its natural width.
- * The tabs are 60 / 140 / 80 / 100 / 50 px — different lengths, so a step is
- * seen to be one TAB, not a fixed distance. The strip is 250px with a 30px +
- * button, so the room is 220px. No CSS is loaded, so padding and gaps are 0.
- * No requestAnimationFrame in Node, so every step lands at once.
+ * happy-dom Window. happy-dom lays nothing out, so each tab reports its
+ * natural width by hand (translate, mask and visibility do not change a
+ * width). The tabs are 60 / 140 / 80 / 100 / 50 px — a 430px row, starts
+ * 0 / 60 / 200 / 280 / 380. The strip is 250px with a 30px + button, so the
+ * room is 220px and the row slides at most 210px. Resting places leave the
+ * 28px fade to the tab before (a step lands a tab start 28px in), so steps
+ * land on 32 / 172 / 210. No CSS is loaded, so
+ * padding and gaps are 0. No requestAnimationFrame in Node, so every step
+ * lands at once.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -43,12 +47,15 @@ function rowHtml(n: number, active: number) {
 interface Boot {
   win: InstanceType<typeof Window>;
   strip: HTMLElement;
+  list: HTMLElement;
   tabs: () => HTMLElement[];
   nav: () => HTMLElement;
   prev: () => HTMLButtonElement;
   next: () => HTMLButtonElement;
-  drawn: () => number[];
-  first: () => number;
+  pos: () => number;
+  shown: () => boolean[];
+  shift: (i: number) => number;
+  faded: (i: number) => boolean;
   settle: () => Promise<void>;
 }
 
@@ -78,7 +85,7 @@ async function boot(n: number, active = 0, stripWidth = 250): Promise<Boot> {
   const tabEls = () => Array.from(doc.querySelectorAll(".table-tab")) as unknown as HTMLElement[];
   const stubTabs = () => tabEls().forEach((t) => {
     const natural = WIDTHS[Number(t.getAttribute("data-tab")!.slice(1))];
-    stubBox(t, () => (t.style.display === "none" ? 0 : t.style.width ? parseFloat(t.style.width) : natural));
+    stubBox(t, () => natural);
   });
   stubTabs();
 
@@ -94,12 +101,18 @@ async function boot(n: number, active = 0, stripWidth = 250): Promise<Boot> {
   return {
     win,
     strip,
+    list: doc.getElementById("list") as unknown as HTMLElement,
     tabs: tabEls,
     nav,
     prev: () => nav().querySelector('[data-dir="-1"]') as unknown as HTMLButtonElement,
     next: () => nav().querySelector('[data-dir="1"]') as unknown as HTMLButtonElement,
-    drawn: () => tabEls().map((t) => Math.round(t.getBoundingClientRect().width)),
-    first: () => (strip as unknown as { __tabWin: { first: number } }).__tabWin.first,
+    pos: () => (strip as unknown as { __tabWin: { pos: number } }).__tabWin.pos,
+    shown: () => tabEls().map((t) => t.style.visibility !== "hidden"),
+    shift: (i) => parseFloat(tabEls()[i].style.translate || "0") || 0,
+    faded: (i) => {
+      const s = tabEls()[i].style as unknown as Record<string, string>;
+      return /gradient/.test(s.maskImage || s.webkitMaskImage || "");
+    },
     settle,
   };
 }
@@ -112,8 +125,8 @@ afterEach(() => {
 describe("tab strip window", () => {
   it("leaves the tabs alone and the pair hidden while they fit", async () => {
     const b = await boot(2);
-    expect(b.drawn()).toEqual([60, 140]);
     expect(b.tabs().every((t) => !t.getAttribute("style"))).toBe(true);
+    expect(b.list.style.width).toBe("");
     expect(b.nav().classList.contains("is-idle")).toBe(true);
   });
 
@@ -123,97 +136,111 @@ describe("tab strip window", () => {
     expect(b.nav().nextElementSibling?.id).toBe("controls");
   });
 
-  it("shows only whole tabs when they overflow — no sliver at the end", async () => {
+  it("pins the list to a fixed area and never resizes a tab", async () => {
     const b = await boot(5);
-    expect(b.nav().classList.contains("is-idle")).toBe(false);
-    expect(b.drawn()).toEqual([60, 140, 0, 0, 0]);   // 80 more would be 280 > 220
+    expect(parseFloat(b.list.style.width)).toBe(220);
+    expect(b.tabs().every((t) => !t.style.width)).toBe(true);
+    b.next().click();
+    await b.settle();
+    expect(parseFloat(b.list.style.width)).toBe(220);
+    expect(b.tabs().every((t) => !t.style.width)).toBe(true);
+  });
+
+  it("at the start: the tab crossing the right edge fades, the ones past it are hidden, nothing fades on the left", async () => {
+    const b = await boot(5);
+    expect(b.shown()).toEqual([true, true, true, false, false]);
+    expect(b.faded(0)).toBe(false);
+    expect(b.faded(2)).toBe(true);           // 200..280 crosses the 220 edge
     expect(b.prev().disabled).toBe(true);
     expect(b.next().disabled).toBe(false);
   });
 
-  it("› moves one tab each click, whatever its length", async () => {
+  it("› slides one tab each click, whatever its length", async () => {
     const b = await boot(5);
     b.next().click();
     await b.settle();
-    expect(b.first()).toBe(1);
-    expect(b.drawn()).toEqual([0, 140, 80, 0, 0]);
+    expect(b.pos()).toBe(32);                // tab 1's start 28px in, past the fade
+    expect(b.shift(1)).toBe(-32);
+    expect(b.shown()).toEqual([true, true, true, false, false]);
+    expect(b.faded(0)).toBe(true);           // tab 0's tail fades into the left edge
+    expect(b.faded(1)).toBe(false);          // the first whole tab is fully opaque
     b.next().click();
     await b.settle();
-    expect(b.drawn()).toEqual([0, 0, 80, 100, 0]);
+    expect(b.pos()).toBe(172);               // tab 2's start, 28px in
     b.next().click();
     await b.settle();
-    expect(b.drawn()).toEqual([0, 0, 0, 100, 50]);   // the end: every remaining tab fits
+    expect(b.pos()).toBe(210);               // the end: the last tab flush right
+    expect(b.shown()).toEqual([false, false, true, true, true]);
+    expect(b.faded(4)).toBe(false);          // nothing past the right edge
     expect(b.next().disabled).toBe(true);
     expect(b.prev().disabled).toBe(false);
   });
 
-  it("‹ moves one tab back", async () => {
+  it("‹ slides back one tab", async () => {
     const b = await boot(5);
     b.next().click(); b.next().click(); b.next().click();
     await b.settle();
     b.prev().click();
     await b.settle();
-    expect(b.first()).toBe(2);
-    expect(b.drawn()).toEqual([0, 0, 80, 100, 0]);
+    expect(b.pos()).toBe(172);
+    b.prev().click();
+    await b.settle();
+    expect(b.pos()).toBe(32);
   });
 
-  it("brings a tab switched to into the run", async () => {
+  it("slides a tab switched to fully into view", async () => {
     const b = await boot(5);
     b.tabs()[0].classList.remove("active");
     b.tabs()[4].classList.add("active");
     await b.settle();
-    expect(b.drawn()[4]).toBe(50);
-    expect(b.first()).toBe(3);
+    expect(b.pos()).toBe(210);
+    expect(b.shown()[4]).toBe(true);
+    expect(b.faded(4)).toBe(false);
   });
 
-  it("opens on the active tab when it starts outside the run", async () => {
+  it("opens on the active tab when it starts out of view", async () => {
     const b = await boot(5, 3);
-    expect(b.drawn()[3]).toBe(100);
+    expect(b.pos()).toBe(188);               // 280 + 100 − 220 + the 28px fade
+    expect(b.faded(3)).toBe(false);
   });
 
-  it("keeps the active tab in the run when the room shrinks after it was brought in", async () => {
-    // Page load: the row's controls render after the strip and take room.
+  it("keeps the active tab in view when the room shrinks after it was brought in", async () => {
     let width = 400;
     const b = await boot(5, 3, 400);
     Object.defineProperty(b.strip, "clientWidth", { get: () => width, configurable: true });
     width = 250;
-    b.tabs()[0].setAttribute("data-x", "1");   // any watched change re-measures
     b.strip.classList.add("resized");
     await b.settle();
-    expect(b.drawn()[3]).toBe(100);
+    expect(b.pos()).toBe(188);
   });
 
-  it("leaves a run the operator stepped alone when nothing about the tabs changed", async () => {
-    const b = await boot(5);                // active = tab 0
+  it("leaves the window where the operator moved it when nothing about the tabs changed", async () => {
+    const b = await boot(5);
     b.next().click(); b.next().click();
     await b.settle();
-    b.tabs()[2].classList.add("hover-ish");   // a class write that changes no width
+    b.tabs()[2].classList.add("hover-ish");
     await b.settle();
-    expect(b.first()).toBe(2);
+    expect(b.pos()).toBe(172);
   });
 
-  it("keeps a HELD tab (one being dragged) in the run on every pass", async () => {
+  it("keeps a HELD tab (one being dragged) in view on every pass", async () => {
     const b = await boot(5);
     const w = b.win as unknown as { PolarisFolderTabs: { hold: (s: unknown, e: unknown) => void } };
     w.PolarisFolderTabs.hold(b.strip, b.tabs()[4]);
-    b.tabs()[4].classList.add("is-dragging");
+    b.tabs()[4].classList.add("held");
     await b.settle();
-    expect(b.drawn()[4]).toBe(50);
+    expect(b.shown()[4]).toBe(true);
     w.PolarisFolderTabs.hold(b.strip, null);
   });
 
-  it("squeezes a single tab wider than the whole room rather than drawing nothing", async () => {
-    const b = await boot(5, 0, 150);   // room 120 < tab 1's 140
+  it("lifts everything when the tabs come to fit again", async () => {
+    const b = await boot(5);
     b.next().click();
     await b.settle();
-    expect(b.drawn()).toEqual([0, 120, 0, 0, 0]);
-  });
-
-  it("lifts every squeeze when the tabs come to fit again", async () => {
-    const b = await boot(5);
     b.tabs().slice(2).forEach((t) => t.remove());
     await b.settle();
-    expect(b.drawn()).toEqual([60, 140]);
+    expect(b.list.style.width).toBe("");
+    expect(b.tabs().every((t) => !t.style.translate && !t.style.visibility)).toBe(true);
     expect(b.nav().classList.contains("is-idle")).toBe(true);
   });
 });
@@ -225,30 +252,30 @@ describe("tab strip wheel", () => {
     return e;
   }
 
-  it("steps one tab per mouse-wheel notch and keeps the page still", async () => {
+  it("slides one tab per mouse-wheel notch and keeps the page still", async () => {
     const b = await boot(5);
     const e = wheel(b, { deltaY: 100 });
-    expect(b.first()).toBe(1);
+    expect(b.pos()).toBe(32);
     expect(e.defaultPrevented).toBe(true);
     wheel(b, { deltaY: 100 });
-    expect(b.first()).toBe(2);
+    expect(b.pos()).toBe(172);
     wheel(b, { deltaY: -100 });
-    expect(b.first()).toBe(1);
+    expect(b.pos()).toBe(32);
   });
 
   it("gathers a trackpad's small deltas into one step", async () => {
     const b = await boot(5);
     wheel(b, { deltaX: 20 });
     wheel(b, { deltaX: 20 });
-    expect(b.first()).toBe(0);
+    expect(b.pos()).toBe(0);
     wheel(b, { deltaX: 20 });
-    expect(b.first()).toBe(1);
+    expect(b.pos()).toBe(32);
   });
 
   it("treats a line-mode event (Firefox) as one notch", async () => {
     const b = await boot(5);
     wheel(b, { deltaY: 3, deltaMode: 1 });
-    expect(b.first()).toBe(1);
+    expect(b.pos()).toBe(32);
   });
 
   it("does nothing while the tabs fit", async () => {

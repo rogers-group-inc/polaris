@@ -385,7 +385,10 @@
     // is the folder tab the page card opens from. Only an empty layout hides it.
     if (!dashes.length) { tabsEl.hidden = true; tabsEl.innerHTML = ""; return; }
     tabsEl.hidden = false;
-    tabsEl.innerHTML = dashes.map(function (d) {
+    // The tabs sit in a list wrapper, the + after it: the wrapper is the
+    // fixed area the strip window (folder-tabs.js) slides them in, so the +
+    // holds still.
+    tabsEl.innerHTML = '<div class="table-tabs-list dashboard-tabs-list">' + dashes.map(function (d) {
       var active = d.id === state.layout.activeId;
       // In edit mode the ACTIVE tab's name is an inline text input — click it
       // and type to rename. Other tabs show a plain name (click to switch).
@@ -396,7 +399,7 @@
         nameHtml +
         (state.editing && dashes.length > 1 ? '<button type="button" class="dashboard-tab-remove" data-remove="' + escapeHtml(d.id) + '" title="Delete dashboard">&times;</button>' : '') +
       '</div>';
-    }).join("") +
+    }).join("") + "</div>" +
       // Edit mode: a + after the last tab adds a dashboard (it replaced the
       // header's Create New Dashboard button).
       (state.editing
@@ -418,7 +421,7 @@
     // by delegation, so it survives this innerHTML re-render. Not on a
     // published dashboard, which is someone else's layout.
     if (window.PolarisFolderTabs && window.PolarisFolderTabs.wireDrag) {
-      window.PolarisFolderTabs.wireDrag(tabsEl, tabsEl, {
+      window.PolarisFolderTabs.wireDrag(tabsEl, tabsEl.querySelector(".dashboard-tabs-list"), {
         tabSel: ".dashboard-tab",
         idAttr: "data-dash",
         canStart: function () { return !state.external; },

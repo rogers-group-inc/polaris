@@ -2890,6 +2890,13 @@ html[data-page-top-curtain]::after {
 }
 .table-head-row.folder-head-card > .table-tabs-nav { margin-left: var(--folder-shadow-room); }
 .table-head-row > .table-tabs-nav.is-idle { display: none; }
+/* The strip window slides tabs past the end of their fixed area (masked
+   transparent there, but a positioned tab is still hit-tested): the + after
+   the area rides above them, so a click on it is never a tab's. */
+.table-head-row .table-tab-add { position: relative; z-index: 3; }
+/* Assets: a view tab's ✕ shows only in edit mode (assets.js →
+   setAssetsEditing stamps body.assets-editing), as its + does. */
+body:not(.assets-editing) #assets-tabs-list .table-tab-close { display: none; }
 /* Dragging a tab to a new place (folder-tabs.js → _wireTabDrag: the Assets
    views and the dashboards). The lifted tab follows the pointer on
    `translate`, which composes with the inactive tabs' translateY drop instead

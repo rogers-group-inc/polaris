@@ -90,7 +90,7 @@ function _writeFolderStrip(row, body) {
     var lo = Infinity, hi = -Infinity;
     strip.querySelectorAll(".page-tab, .table-tab, .dashboard-tab, .table-tab-add").forEach(function (t) {
       var rc = t.getBoundingClientRect();
-      if (!rc.width) return;
+      if (!rc.width || t.style.visibility === "hidden") return;   // hidden by the window
       if (rc.left < lo) lo = rc.left;
       if (rc.right > hi) hi = rc.right;
     });
@@ -114,71 +114,66 @@ function _writeFolderStrip(row, body) {
 
 // ─── Strip window (‹ › and the wheel) ──────────────────────────────────────
 // A strip longer than the room the row's controls leave it never pushes them
-// and never scrolls natively: native scrolling showed tabs in the strip's
-// shadow padding, past the card's edges, under a scrollbar. Instead the strip
-// shows a run of WHOLE tabs that fits its room, starting at `first`, and
-// draws none of the rest — so no tab is ever cut to a sliver at either end.
-// One step (a ‹ › click, a wheel notch) moves `first` by one tab, whatever
-// that tab's length: the tab leaving shrinks to nothing while the one arriving
-// grows from nothing (a squeeze — inline width, padding scaled, clipped label
-// — eased over STRIP_GLIDE_MS). Switching to a tab outside the run brings it
-// in. State is `strip.__tabWin`: the measured tabs ({el, w, pl, pr}), the gap
-// between them, the room, `first`, and `maxFirst` (the first index from which
-// every remaining tab fits — the run's end).
+// and never scrolls natively (that showed tabs in the strip's shadow padding,
+// past the card's edges, under a scrollbar). While the tabs overflow, the box
+// holding them (the list wrapper) is pinned to the ROOM — a fixed area, so
+// the + after it and the ‹ › pair after the strip hold still — and the row of
+// tabs, every one at its natural width, SLIDES inside it: `pos` px of the row
+// are past the area's left edge (a `--tab-shift` translate on each tab). A
+// tab crossing either edge fades into it (its own mask, STRIP_FADE_PX wide);
+// one wholly outside is `visibility: hidden`, so it is neither drawn nor hit.
+// An edge fades only while there is more of the row past it. Tabs never
+// squeeze or grow (operator request 2026-10-26; a squeezing window was tried
+// first and rejected).
 //
-// The ‹ › pair sits AFTER the strip, not either side of it: the folder card
-// pulls the strip left over its own shadow room (negative margin), which
-// would lie over a button placed before it.
+// One step — a ‹ › click, a wheel notch — slides by one tab, whatever its
+// length: › brings the row's next tab start to just inside the left fade, ‹
+// the previous one, clamped so the last tab ends flush with the right edge
+// (`max`, where nothing fades).
+// Switching to a tab partly or wholly outside slides it fully in. State is
+// `strip.__tabWin`: the measured tabs ({el, s, w}: start and natural width,
+// gaps included in s), the gap, the room, `pos`, `max`, the list box.
 var TAB_SEL = ".table-tab, .page-tab, .dashboard-tab";
 var STRIP_GLIDE_MS = 180;
+var STRIP_FADE_PX = 28;
 var STRIP_WHEEL_NOTCH = 50;   // px of pixel-mode wheel delta that make one step
 
 function _setStyle(el, prop, val) {
   if (el.style[prop] !== val) el.style[prop] = val;
 }
 
-function _unsqueeze(el) {
-  _setStyle(el, "display", "");
-  _setStyle(el, "width", "");
-  _setStyle(el, "minWidth", "");
-  _setStyle(el, "boxSizing", "");
-  _setStyle(el, "overflow", "");
-  _setStyle(el, "paddingLeft", "");
-  _setStyle(el, "paddingRight", "");
+// A tab the window draws: shown, not hidden by the page or by the window.
+function _isShown(el) {
+  return el.getClientRects().length > 0 && el.style.visibility !== "hidden";
 }
 
-// Draw one tab at width v: whole, squeezed, or not at all.
-function _drawTab(it, v) {
-  if (v >= it.w - 0.5) { _unsqueeze(it.el); return; }
-  if (v <= 0.5) { _setStyle(it.el, "display", "none"); return; }
-  var k = v / it.w;
-  _setStyle(it.el, "display", "");
-  _setStyle(it.el, "boxSizing", "border-box");
-  _setStyle(it.el, "minWidth", "0");
-  _setStyle(it.el, "overflow", "hidden");
-  _setStyle(it.el, "width", v.toFixed(1) + "px");
-  _setStyle(it.el, "paddingLeft", (it.pl * k).toFixed(1) + "px");
-  _setStyle(it.el, "paddingRight", (it.pr * k).toFixed(1) + "px");
+function _winState(strip) {
+  return strip.__tabWin || (strip.__tabWin = { pos: 0, max: 0, items: [], gap: 0, room: 0, active: null, anim: null, wheel: 0 });
 }
 
-// Natural widths, measured with every squeeze lifted. A tab the page itself
-// hides (zero width with nothing of ours on it) is left out of the run.
+// Natural widths and the room. Tab widths do not depend on the window (it
+// only translates, masks and hides), so nothing is lifted to measure them.
+// A tab the page itself hides (zero width) is left out of the row.
 function _measureStrip(strip) {
-  var st = strip.__tabWin || (strip.__tabWin = { first: 0, maxFirst: 0, items: [], gap: 0, room: 0, active: null, anim: null, wheel: 0 });
-  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; }
+  var st = _winState(strip);
   var tabs = Array.prototype.slice.call(strip.querySelectorAll(TAB_SEL));
-  tabs.forEach(_unsqueeze);
   var box = tabs.length ? tabs[0].parentElement : strip;
+  st.strip = strip;
+  st.box = box;
   st.gap = parseFloat(getComputedStyle(box).columnGap) || 0;
   st.items = [];
+  var x = 0;
   tabs.forEach(function (t) {
     var w = t.getBoundingClientRect().width;
+    // A tab the window hid keeps its width (visibility keeps layout); 0 means
+    // the page hid it.
     if (!w) return;
-    var cs = getComputedStyle(t);
-    st.items.push({ el: t, w: w, pl: parseFloat(cs.paddingLeft) || 0, pr: parseFloat(cs.paddingRight) || 0 });
+    st.items.push({ el: t, s: x, w: w });
+    x += w + st.gap;
   });
-  // The room: the strip's content box, less everything in it that is not a
-  // tab (the + button, and the list wrapper's siblings) and their gaps.
+  st.total = st.items.length ? x - st.gap : 0;
+  // The room: the strip's content box, less everything in it that is not
+  // the tab box (the + button) and their gaps.
   var scs = getComputedStyle(strip);
   var room = strip.clientWidth - (parseFloat(scs.paddingLeft) || 0) - (parseFloat(scs.paddingRight) || 0);
   var sgap = parseFloat(scs.columnGap) || 0;
@@ -188,77 +183,88 @@ function _measureStrip(strip) {
       room -= c.getBoundingClientRect().width + sgap;
     });
   }
-  Array.prototype.forEach.call(box.children, function (c) {
-    if (c.matches(TAB_SEL) || !c.getClientRects().length) return;
-    room -= c.getBoundingClientRect().width + st.gap;
-  });
   st.room = Math.max(0, room);
-  // maxFirst: walk back from the last tab while the tail still fits.
-  var used = 0, f = st.items.length;
-  while (f > 0) {
-    var need = st.items[f - 1].w + (f < st.items.length ? st.gap : 0);
-    if (used + need > st.room + 0.5) break;
-    used += need;
-    f--;
-  }
-  st.maxFirst = Math.min(f, Math.max(0, st.items.length - 1));
+  st.max = Math.max(0, st.total - st.room);
   return st;
 }
 
-// Widths of the run that starts at `first`: whole tabs while they fit, the
-// rest 0. A first tab wider than the whole room is squeezed to the room
-// rather than leaving the strip empty.
-function _runWidths(st, first) {
-  var out = st.items.map(function () { return 0; });
-  var used = 0;
-  for (var k = first; k < st.items.length; k++) {
-    var need = st.items[k].w + (k > first ? st.gap : 0);
-    if (used + need > st.room + 0.5) {
-      if (k === first) out[k] = st.room;
-      break;
-    }
-    out[k] = st.items[k].w;
-    used += need;
-  }
-  return out;
+function _clampPos(st) {
+  if (st.pos > st.max) st.pos = st.max;
+  if (st.pos < 0) st.pos = 0;
 }
 
-// The index of the last tab the run starting at `first` holds whole.
-function _runLast(st, first) {
-  var w = _runWidths(st, first);
-  var last = first;
-  for (var k = first; k < w.length; k++) if (w[k] > 0) last = k;
-  return last;
-}
-
+// Draw the window at st.pos: pin the box, shift every tab, fade or hide the
+// ones at the edges.
 function _layoutStrip(strip) {
   var st = strip.__tabWin;
   if (!st) return;
-  var w = _runWidths(st, st.first);
-  st.items.forEach(function (it, k) { _drawTab(it, w[k]); });
+  var on = st.max > 0.5;
+  var box = st.box;
+  if (box && box !== strip) {
+    _setStyle(box, "width", on ? st.room.toFixed(1) + "px" : "");
+    _setStyle(box, "flexShrink", on ? "0" : "");
+  }
+  var R = st.room;
+  var fadeL = on && st.pos > 0.5;
+  var fadeR = on && st.pos < st.max - 0.5;
+  st.items.forEach(function (it) {
+    var el = it.el;
+    if (!on) {
+      _setStyle(el, "translate", "");
+      _setStyle(el, "visibility", "");
+      _setStyle(el, "maskImage", "");
+      _setStyle(el, "webkitMaskImage", "");
+      return;
+    }
+    // A tab being dragged carries its own translate (_wireTabDrag).
+    if (!el.classList.contains("is-dragging")) _setStyle(el, "translate", (-st.pos).toFixed(1) + "px 0");
+    var left = it.s - st.pos, right = left + it.w;
+    if (right <= 0.5 || left >= R - 0.5) {
+      _setStyle(el, "visibility", "hidden");
+      _setStyle(el, "maskImage", "");
+      _setStyle(el, "webkitMaskImage", "");
+      return;
+    }
+    _setStyle(el, "visibility", "");
+    var cutL = fadeL && left < STRIP_FADE_PX;
+    var cutR = fadeR && right > R - STRIP_FADE_PX;
+    var mask = "";
+    if (cutL || cutR) {
+      // Stops in the tab's own px: transparent at the area's edge, opaque
+      // STRIP_FADE_PX in from it.
+      var a = cutL ? (0 - left) : -1, b = cutL ? (STRIP_FADE_PX - left) : -1;
+      var c = cutR ? (R - STRIP_FADE_PX - left) : it.w + 1, d = cutR ? (R - left) : it.w + 1;
+      mask = "linear-gradient(to right, transparent " + a.toFixed(1) + "px, #000 " + b.toFixed(1) + "px, #000 " +
+        c.toFixed(1) + "px, transparent " + d.toFixed(1) + "px)";
+    }
+    _setStyle(el, "maskImage", mask);
+    _setStyle(el, "webkitMaskImage", mask);
+  });
 }
 
-function _clampFirst(st) {
-  if (st.first > st.maxFirst) st.first = st.maxFirst;
-  if (st.first < 0) st.first = 0;
+// Fully in view means clear of the fade too: a tab parked against an edge
+// would sit in the fade zone and read as half gone. At either end of the row
+// there is no fade, which the clamp gives for free.
+function _bringIntoView(st, i) {
+  var it = st.items[i];
+  if (!it) return;
+  var F = STRIP_FADE_PX;
+  if (it.s < st.pos + F) st.pos = it.s - F;
+  else if (it.s + it.w > st.pos + st.room - F) st.pos = it.s + it.w - st.room + F;
+  _clampPos(st);
 }
 
-function _bringIntoRun(st, i) {
-  if (i < st.first) st.first = i;
-  else while (st.first < i && _runLast(st, st.first) < i) st.first++;
-  _clampFirst(st);
-}
-
-// Measure, lay out, and bring the active tab into the run when it changed OR
-// when the room or the tabs' widths did: the row's other controls render
+// Measure, lay out, and bring the active tab fully into view when it changed
+// OR when the room or the tabs' widths did: the row's other controls render
 // after the strip on page load and take room from it, which dropped an active
-// tab brought in a moment earlier back out of the run. A pass that changes
-// neither leaves the run where the operator stepped it. A HELD tab
-// (PolarisFolderTabs.hold: one being dragged to a new place) is kept in the
-// run on every pass, so moving it past the run's end shifts the run with it.
+// tab brought in a moment earlier back out of view. A pass that changes
+// neither leaves the window where the operator moved it. A HELD tab
+// (PolarisFolderTabs.hold: one being dragged to a new place) is kept in view
+// on every pass, so carrying it past an edge slides the row with it.
 function _refreshStrip(strip) {
   var st = _measureStrip(strip);
-  _clampFirst(st);
+  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; }
+  _clampPos(st);
   var ai = -1, hi = -1;
   st.items.forEach(function (it, k) {
     if (ai < 0 && it.el.classList.contains("active")) ai = k;
@@ -266,8 +272,8 @@ function _refreshStrip(strip) {
   });
   var act = ai >= 0 ? st.items[ai].el : null;
   var sig = Math.round(st.room) + ":" + st.items.map(function (it) { return Math.round(it.w); }).join(",");
-  if (hi >= 0) _bringIntoRun(st, hi);
-  else if (act && (act !== st.active || sig !== st.sig)) _bringIntoRun(st, ai);
+  if (hi >= 0) _bringIntoView(st, hi);
+  else if (act && (act !== st.active || sig !== st.sig)) _bringIntoView(st, ai);
   st.active = act;
   st.sig = sig;
   _layoutStrip(strip);
@@ -275,8 +281,7 @@ function _refreshStrip(strip) {
 
 function _holdTab(strip, el) {
   if (!strip) return;
-  var st = strip.__tabWin || (strip.__tabWin = { first: 0, maxFirst: 0, items: [], gap: 0, room: 0, active: null, anim: null, wheel: 0 });
-  st.held = el || null;
+  _winState(strip).held = el || null;
 }
 
 // ─── Drag a tab to a new place ──────────────────────────────────────────────
@@ -310,7 +315,7 @@ function _wireTabDrag(strip, list, opts) {
   };
 
   function visibleSiblings(el) {
-    return tabs().filter(function (t) { return t !== el && t.getClientRects().length > 0; });
+    return tabs().filter(function (t) { return t !== el && _isShown(t); });
   }
 
   function follow(x) {
@@ -339,7 +344,7 @@ function _wireTabDrag(strip, list, opts) {
   // Held at an end: one more place past the tabs out of view that way.
   function edgeStep() {
     if (!drag) return;
-    var all = tabs().filter(function (t) { return t.getClientRects().length > 0; });
+    var all = tabs().filter(_isShown);
     if (!all.length) return;
     var lo = all[0].getBoundingClientRect().left;
     var hi = all[all.length - 1].getBoundingClientRect().right;
@@ -397,7 +402,9 @@ function _wireTabDrag(strip, list, opts) {
     drag = {
       el: el, id: id, from: tabs().indexOf(el),
       x0: e.clientX, x: e.clientX, grab: e.clientX - el.getBoundingClientRect().left,
-      dx: 0, live: false, timer: null,
+      // The window slides tabs on the same `translate` (_layoutStrip): start
+      // from the offset already on it, or a slid tab jumps when lifted.
+      dx: parseFloat(el.style.translate) || 0, live: false, timer: null,
     };
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
@@ -416,19 +423,39 @@ window.PolarisFolderTabs = {
   wireDrag: _wireTabDrag,
 };
 
-// One step: `first` moves by one tab, the leaving tab shrinking and the
-// arriving one growing. A step that lands mid-glide finishes that glide first.
+// One step: the row slides by one tab, whatever its length. Resting places
+// line a tab's start up just inside the left fade (STRIP_FADE_PX in), so the
+// tab before it shows as a tail fading into the edge and the first whole tab
+// is fully opaque; clamped to [0, max]. › moves to the next tab start, ‹ to
+// the previous one. Eased over STRIP_GLIDE_MS; a step that lands mid-glide
+// starts from where the glide was headed.
+function _stepTarget(st, dir) {
+  var F = STRIP_FADE_PX;
+  var cur = 0;
+  st.items.forEach(function (it, k) { if (it.s <= st.pos + F + 0.5) cur = k; });
+  if (dir > 0) {
+    if (st.pos >= st.max - 0.5) return st.pos;
+    var n = st.items[cur + 1];
+    return n ? Math.min(st.max, Math.max(0, n.s - F)) : st.max;
+  }
+  if (st.pos <= 0.5) return 0;
+  var c = st.items[cur];
+  if (c && st.pos + F > c.s + 0.5) return Math.max(0, c.s - F);
+  var p = st.items[cur - 1];
+  return p ? Math.max(0, p.s - F) : 0;
+}
+
 function _stepStrip(strip, dir, done) {
   var st = strip.__tabWin;
   if (!st) return;
-  var to = Math.max(0, Math.min(st.maxFirst, st.first + dir));
-  if (to === st.first) return;
-  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; _layoutStrip(strip); }
-  var from = _runWidths(st, st.first);
-  st.first = to;
-  var dest = _runWidths(st, st.first);
+  if (st.anim) { cancelAnimationFrame(st.anim); st.anim = null; st.pos = st.animTo; }
+  var to = _stepTarget(st, dir);
+  if (Math.abs(to - st.pos) < 0.5) return;
+  var from = st.pos;
+  st.animTo = to;
   var finish = function () {
     st.anim = null;
+    st.pos = to;
     _layoutStrip(strip);
     if (done) done();
   };
@@ -439,12 +466,11 @@ function _stepStrip(strip, dir, done) {
     if (t0 === null) t0 = now;
     var p = Math.min(1, (now - t0) / STRIP_GLIDE_MS);
     if (p >= 1) { finish(); return; }
-    var e = 1 - Math.pow(1 - p, 3);   // ease-out
-    st.items.forEach(function (it, k) { _drawTab(it, from[k] + (dest[k] - from[k]) * e); });
+    st.pos = from + (to - from) * (1 - Math.pow(1 - p, 3));   // ease-out
+    _layoutStrip(strip);
     st.anim = requestAnimationFrame(frame);
   };
   st.anim = requestAnimationFrame(frame);
-  if (done) done();
 }
 
 function _ensureStripNav(row, strip) {
@@ -473,12 +499,12 @@ function _syncStripNav(row, strip) {
   var nav = row.querySelector(":scope > .table-tabs-nav");
   var st = strip.__tabWin;
   if (!nav || !st) return;
-  var overflowing = st.maxFirst > 0 && strip.getClientRects().length > 0;
+  var overflowing = st.max > 0.5 && strip.getClientRects().length > 0;
   if (nav.classList.contains("is-idle") === overflowing) nav.classList.toggle("is-idle", !overflowing);
   var prev = nav.querySelector('[data-dir="-1"]');
   var next = nav.querySelector('[data-dir="1"]');
-  var atStart = st.first <= 0;
-  var atEnd = st.first >= st.maxFirst;
+  var atStart = st.pos <= 0.5;
+  var atEnd = st.pos >= st.max - 0.5;
   if (prev.disabled !== atStart) prev.disabled = atStart;
   if (next.disabled !== atEnd) next.disabled = atEnd;
 }
@@ -490,7 +516,7 @@ function _syncStripNav(row, strip) {
 function _wireStripWheel(row, strip) {
   strip.addEventListener("wheel", function (e) {
     var st = strip.__tabWin;
-    if (!st || st.maxFirst <= 0) return;
+    if (!st || st.max <= 0.5) return;
     e.preventDefault();
     var d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (!d) return;
@@ -512,7 +538,7 @@ function _wireStripWheel(row, strip) {
 
 // The strip re-measures when its tabs change (added, closed, renamed,
 // switched, the page showing or hiding one) — its OWN observer, which leaves
-// out `style`, so the squeeze writes never re-trigger it — and when its room
+// out `style`, so the window's own writes never re-trigger it — and when its room
 // changes size. Coalesced to one pass per frame.
 function _wireStripWindow(row, strip, after) {
   var queued = false;
