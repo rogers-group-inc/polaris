@@ -40,6 +40,7 @@
   var _expanded = null;      // { "<nodeKey>": true|false } — an explicit choice; absent = the default
   var _bindingEdit = {};     // nodeKey → true while its inline editor is open
   var _credentials = null;   // the form-mode http credentials, fetched when an editor opens
+  var _newCredentialFor = null; // nodeKey whose "Add a device admin login…" opened the credential modal
   var _uploading = {};       // nodeKey → true while an upload is in flight
 
   // ─── helpers ───────────────────────────────────────────────────────────────
@@ -480,7 +481,7 @@
       if ((btn = target.closest(".fw-binding-edit"))) { e.stopPropagation(); return openBindingEditor(node); }
       if ((btn = target.closest(".fw-binding-save"))) { e.stopPropagation(); return saveBinding(node); }
       if ((btn = target.closest(".fw-binding-cancel"))) { e.stopPropagation(); delete _bindingEdit[node.key]; return render(); }
-      if ((btn = target.closest(".fw-binding-new"))) { e.stopPropagation(); return newCredential(); }
+      if ((btn = target.closest(".fw-binding-new"))) { e.stopPropagation(); return newCredential(node); }
       if ((btn = target.closest(".fw-image-promote"))) { e.stopPropagation(); return promoteImage(btn.getAttribute("data-id"), btn.getAttribute("data-label")); }
       if ((btn = target.closest(".fw-image-del"))) { e.stopPropagation(); return deleteImage(btn.getAttribute("data-id"), btn.getAttribute("data-label"), btn.getAttribute("data-role"), node); }
       if ((btn = target.closest(".fw-model-purge"))) { e.stopPropagation(); return purgeModel(node); }
@@ -511,7 +512,7 @@
     render();
   }
 
-  async function openBindingEditor(node) {
+  async function fetchCredentials() {
     try {
       var list = await api.credentials.list();
       _credentials = Array.isArray(list) ? list : (list && list.credentials) || [];
@@ -519,9 +520,38 @@
       _credentials = [];
       toast("Could not list credentials: " + (err && err.message ? err.message : err), "error");
     }
+  }
+
+  async function openBindingEditor(node) {
+    await fetchCredentials();
     _bindingEdit[node.key] = true;
     render();
   }
+
+  /**
+   * A credential saved from the credential modal — including one opened by
+   * "Add a device admin login…" — refreshes every open editor's select, and a
+   * login created from an editor is picked there, ready to Save.
+   */
+  async function onCredentialsChanged(e) {
+    var detail = (e && e.detail) || {};
+    var forKey = _newCredentialFor;
+    _newCredentialFor = null;
+    if (Object.keys(_bindingEdit).length === 0) return;
+    await fetchCredentials();
+    render();
+    if (!detail.created || !detail.id || !forKey || !_bindingEdit[forKey]) return;
+    var container = document.getElementById("tab-firmware");
+    var el = container && Array.prototype.find.call(container.querySelectorAll(".fw-node"), function (n) {
+      return n.getAttribute("data-fw-key") === forKey;
+    });
+    // The node's own editor only — a nested node's editor sits inside its body.
+    var sel = el && el.querySelector(":scope > .fw-node-body > .fw-binding-editor .fw-binding-select");
+    if (sel && Array.prototype.some.call(sel.options, function (o) { return o.value === detail.id; })) {
+      sel.value = detail.id;
+    }
+  }
+  window.addEventListener("polaris:credentials-changed", onCredentialsChanged);
 
   async function saveBinding(node) {
     var sel = node.el.querySelector(".fw-binding-select");
@@ -541,8 +571,9 @@
     }
   }
 
-  function newCredential() {
+  function newCredential(node) {
     if (typeof openCredentialModal === "function") {
+      _newCredentialFor = node ? node.key : null;
       openCredentialModal(null, { name: "", type: "http", config: { authMode: "form" } });
     } else {
       toast("Add the login under Server Settings → Credentials (HTTP, “Device admin login (form)”)", "info");
