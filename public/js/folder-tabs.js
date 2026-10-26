@@ -88,11 +88,24 @@ function _writeFolderStrip(row, body) {
   var l = "", r = "";
   if (strip) {
     var lo = Infinity, hi = -Infinity;
+    // While the strip window slides the tabs (below), a tab crossing the
+    // fixed area's edge is masked out past it: only the part INSIDE the area
+    // is a tab over the card. Counting the whole box ran the cut-out on past
+    // the visible tabs, under the controls, and the card lost its top cast
+    // there.
+    var win = strip.__tabWin;
+    var area = win && win.max > 0.5 && win.box && win.box !== strip ? win.box.getBoundingClientRect() : null;
     strip.querySelectorAll(".page-tab, .table-tab, .dashboard-tab, .table-tab-add").forEach(function (t) {
       var rc = t.getBoundingClientRect();
       if (!rc.width || t.style.visibility === "hidden") return;   // hidden by the window
-      if (rc.left < lo) lo = rc.left;
-      if (rc.right > hi) hi = rc.right;
+      var left = rc.left, right = rc.right;
+      if (area && !t.classList.contains("table-tab-add")) {
+        left = Math.max(left, area.left);
+        right = Math.min(right, area.right);
+        if (right <= left) return;
+      }
+      if (left < lo) lo = left;
+      if (right > hi) hi = right;
     });
     if (hi > lo) {
       var sr = strip.getBoundingClientRect();
