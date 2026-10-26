@@ -20,7 +20,7 @@
  * should read the same phrase in the email it sends.
  */
 
-import { METRIC_META, FIELD_META, CHANGE_TYPE_META, WINDOWED_RATIO_METRICS, probeLossWindowSec } from "../services/notificationTypes.js";
+import { METRIC_META, FIELD_META, CHANGE_TYPE_META, WINDOWED_RATIO_METRICS, FORECAST_HORIZON_METRICS, forecastDaysOf, probeLossWindowSec } from "../services/notificationTypes.js";
 import { monitorStatusLabel } from "./monitorStatus.js";
 
 /** "5 minutes" / "1 hour" / "45 seconds" — mirrors the wizard's humanDuration. */
@@ -77,6 +77,18 @@ export interface SummarizableTrigger {
   dimensionFilter?: Record<string, string | undefined> | null;
   changeType?: string;
   actionPattern?: string;
+  /** A forecast metric's horizon in days (FORECAST_HORIZON_METRICS). */
+  forecastDays?: number;
+}
+
+/** Is this a forecast-over-a-horizon metric (memory forecast)? */
+function isForecastHorizon(trigger: SummarizableTrigger): boolean {
+  return !!trigger.metric && (FORECAST_HORIZON_METRICS as readonly string[]).includes(trigger.metric);
+}
+
+/** "14 days" / "1 day" — a forecast horizon. */
+function daysPhrase(n: number): string {
+  return `${n} ${n === 1 ? "day" : "days"}`;
 }
 
 /**
@@ -108,8 +120,11 @@ export function triggerSubject(trigger: SummarizableTrigger, dimensionLabel?: st
     !(trigger.metric && (WINDOWED_RATIO_METRICS as readonly string[]).includes(trigger.metric))
       ? Math.round(trigger.windowPolls)
       : 0;
-  const agg =
-    trigger.metric && (WINDOWED_RATIO_METRICS as readonly string[]).includes(trigger.metric)
+  // A forecast names its horizon instead of an aggregation (it has none):
+  // "Memory forecast (14 days out)".
+  const agg = isForecastHorizon(trigger)
+    ? ` (${daysPhrase(forecastDaysOf(trigger))} out)`
+    : trigger.metric && (WINDOWED_RATIO_METRICS as readonly string[]).includes(trigger.metric)
       ? ` (over the last ${humanDuration(probeLossWindowSec(trigger.windowSec))} of ${trigger.metric === "pathFailurePct" ? "check" : "probe"} history)`
       : countWindow
         ? ` (${AGG_PHRASE[trigger.aggregation!] ?? trigger.aggregation} the last ${countWindow} readings)`
@@ -226,6 +241,12 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
     if (thr === null) return subject;
     const cmp = CMP_PHRASE[trigger.operator ?? ""] ?? trigger.operator ?? "meets";
     return `${subject} ${cmp} ${thr}${unit ? ` ${unit}` : ""}`;
+  }
+  // "Memory is projected to reach 86 % within 14 days" — the level is the
+  // reading, the horizon the trigger's; the severity says which target it met.
+  if (isForecastHorizon(trigger)) {
+    const on = parts.dimensionLabel ? ` on ${parts.dimensionLabel}` : "";
+    return `Memory${on} is projected to reach ${v}${unit ? ` ${unit}` : ""} within ${daysPhrase(forecastDaysOf(trigger))}`;
   }
   return `${subject} is ${v}${unit ? ` ${unit}` : ""}`;
 }

@@ -634,6 +634,14 @@ function makeAutomationSentences(s) {
   function isWindowedRatio(m) {
     return (s.windowedRatioMetrics || ["probeLossPct"]).indexOf(m) !== -1;
   }
+  /** A forecast-over-a-horizon metric (memory forecast): it names its horizon
+   *  where an aggregation would go — " (14 days out)", the server's
+   *  triggerSubject wording. */
+  function forecastClause(leaf) {
+    if ((s.forecastHorizonMetrics || ["memForecastPct"]).indexOf(leaf.metric) === -1) return "";
+    var n = typeof leaf.forecastDays === "number" && leaf.forecastDays >= 1 ? Math.round(leaf.forecastDays) : (s.forecastDaysDefault || 14);
+    return " (" + n + (n === 1 ? " day" : " days") + " out)";
+  }
   /** A leaf's COUNT window (business rule 66), or 0. Mirrors triggerWindowPolls
    *  server-side: never on a ratio (its window is its own denominator) and never
    *  on `latest` (no window at all), so the prose can't claim a count the engine
@@ -697,7 +705,8 @@ function makeAutomationSentences(s) {
     // A windowed ratio IS its window, so it says so plainly instead of borrowing
     // an aggregation phrase it doesn't have ("avg over 15 minutes" would be a
     // second average on top of a percentage).
-    var agg = isWindowedRatio(leaf.metric)
+    var agg = forecastClause(leaf) ? forecastClause(leaf)
+      : isWindowedRatio(leaf.metric)
       ? " (over the last " + (humanDuration(leaf.windowSec) || humanDuration(RATIO_WINDOW_DEFAULT_SEC)) + " of probe history, from the first successful probe)"
       : leaf.aggregation && leaf.aggregation !== "latest" && leafCountWindow(leaf)
         ? " (" + (AGG_PHRASE[leaf.aggregation] || leaf.aggregation) + " the last " + leafCountWindow(leaf) + " readings)"
@@ -799,7 +808,8 @@ function makeAutomationSentences(s) {
       // way tgLeafPhrase does — its aggregation is "latest", so the ordinary
       // agg clause would silently drop the window from a stored (collapsed)
       // loss rule's sentence.
-      var agg = isWindowedRatio(tr.metric)
+      var agg = forecastClause(tr) ? forecastClause(tr)
+        : isWindowedRatio(tr.metric)
         ? " (over the last " + (humanDuration(tr.windowSec) || humanDuration(RATIO_WINDOW_DEFAULT_SEC)) + " of probe history, from the first successful probe)"
         : tr.aggregation && tr.aggregation !== "latest" && tr.windowSec
           ? " (" + escapeHtml(AGG_PHRASE[tr.aggregation] || tr.aggregation) + " " +
@@ -3654,6 +3664,17 @@ async function openAutomationWizard(existing, opts) {
         aggControl = '<select class="tgl-agg" data-ratio="1" style="display:none">' + opt(s.aggregations, "latest") + '</select>' +
           '<span style="font-size:0.8rem">over the History window below, counting from the first successful probe</span>';
       }
+      // A forecast has nothing to aggregate either — the 30-day trend already
+      // smooths. Its one control is the HORIZON: the threshold (and every
+      // severity level's) is the memory level it is projected to reach within
+      // this many days.
+      if (isForecastHorizonMetric(leaf.metric)) {
+        var fd = typeof leaf.forecastDays === "number" && leaf.forecastDays >= 1 ? Math.round(leaf.forecastDays) : forecastDaysDefault();
+        aggControl = '<select class="tgl-agg" style="display:none">' + opt(s.aggregations, "latest") + '</select>' +
+          '<span style="font-size:0.8rem">projected to be reached within</span>' +
+          '<input type="number" class="tgl-horizon" min="1" max="365" step="1" value="' + escapeHtml(String(fd)) + '" style="width:70px;font-size:0.8rem" title="The 30-day memory trend is projected this many days ahead. Each severity level fires when memory is projected to reach its own level within this window.">' +
+          '<span style="font-size:0.8rem">days</span>';
+      }
       // No per-condition window input: an aggregation's measurement period IS
       // the poll-counted duration field below the tree (see tgStampWindows).
       // Two time boxes meaning almost the same thing is what this removes.
@@ -3735,6 +3756,13 @@ async function openAutomationWizard(existing, opts) {
       var df = {};
       rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) df[el.getAttribute("data-dim")] = v; });
       if (Object.keys(df).length) leaf.dimensionFilter = df;
+    }
+    // The forecast horizon, on a forecast leaf only (the box is rendered for
+    // nothing else, so switching metric drops it with the box).
+    var hEl = rowEl.querySelector(".tgl-horizon");
+    if (hEl && isForecastHorizonMetric(leaf.metric)) {
+      var hNum = Math.round(Number(hEl.value));
+      leaf.forecastDays = isFinite(hNum) && hNum >= 1 ? Math.min(365, hNum) : forecastDaysDefault();
     }
     return leaf;
   }
@@ -5274,6 +5302,15 @@ async function openAutomationWizard(existing, opts) {
    *  some other automation owns (business rule 85). */
   function isCeilingMetric(m) {
     return (s.saturationCeilingMetrics || ["probeLossPct"]).indexOf(m) !== -1;
+  }
+  /** A forecast-over-a-horizon metric (the server's `forecastHorizonMetrics`):
+   *  its condition row carries a "within N days" box instead of an aggregation. */
+  function isForecastHorizonMetric(m) {
+    return (s.forecastHorizonMetrics || ["memForecastPct"]).indexOf(m) !== -1;
+  }
+  function forecastDaysDefault() {
+    var n = s.forecastDaysDefault;
+    return typeof n === "number" && n >= 1 ? n : 14;
   }
   function tgLeafCeiling(leaf) {
     return !!(leaf && leaf.type !== "asset_state" && isCeilingMetric(leaf.metric));
@@ -7180,7 +7217,7 @@ async function openAutomationWizard(existing, opts) {
    *  aggregation, dimension filters. Only these are mirrored — a tier's own
    *  operator / threshold / sustained-for are its own. */
   function bandSampleSig(leaf) {
-    return [leaf.type, leaf.metric, leaf.aggregation || "latest", JSON.stringify(leaf.dimensionFilter || {})].join("|");
+    return [leaf.type, leaf.metric, leaf.aggregation || "latest", JSON.stringify(leaf.dimensionFilter || {}), leaf.forecastDays || ""].join("|");
   }
   /** Render + lock a tier's condition row. The shared-sampling controls (metric,
    *  aggregation, dimensions) come from the BASE condition and are disabled, so
@@ -7200,7 +7237,9 @@ async function openAutomationWizard(existing, opts) {
     if (PCT_OF_BYTES[leaf.metric]) setVal(".tgl-bunit", byteUnitFor(leaf.threshold));
     var df = leaf.dimensionFilter || {};
     cond.querySelectorAll(".tgl-dim").forEach(function (el) { el.value = df[el.getAttribute("data-dim")] || ""; });
-    cond.querySelectorAll(".tgl-what, .tgl-agg, .tgl-dim").forEach(function (el) { el.disabled = true; el.style.opacity = "0.55"; });
+    // The forecast horizon is shared sampling too: every tier is a level
+    // reached within the BASE condition's days.
+    cond.querySelectorAll(".tgl-what, .tgl-agg, .tgl-dim, .tgl-horizon").forEach(function (el) { el.disabled = true; el.style.opacity = "0.55"; });
     var grip = cond.querySelector(".aw-grip"); if (grip) grip.style.display = "none";
     var rmCond = cond.querySelector(".scr-remove"); if (rmCond) rmCond.style.display = "none";
     row._sampleSig = bandSampleSig(leaf);

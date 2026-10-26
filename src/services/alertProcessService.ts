@@ -43,11 +43,13 @@ export function processRankingForMetric(metric: string | null | undefined): Proc
     case "cpuPct":
     case "cpuCorePct":
       return "cpu";
-    // memDaysUntilFull: a memory forecast is a slow leak more often than not —
-    // the programs holding the most memory are the first thing to look at.
+    // memDaysUntilFull / memForecastPct: a memory forecast is a slow leak more
+    // often than not — the programs holding the most memory are the first
+    // thing to look at.
     case "memPct":
     case "memUsedBytes":
     case "memDaysUntilFull":
+    case "memForecastPct":
       return "memory";
     default:
       return null;

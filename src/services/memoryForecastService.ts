@@ -8,7 +8,9 @@
  * storageForecastService, and deliberately shaped like it: the same 30-day
  * lookback, the same ≥ 7 daily points, the same growing-only gate and the
  * same 365-day horizon, so an operator who has learnt one forecast has learnt
- * both.
+ * both. The same fit also answers the memForecastPct metric
+ * (computeMemoryProjection): the level memory reaches N days out, so an
+ * automation's severity levels can be the memory levels it warns about.
  *
  * What is fitted: memory IN USE as a percentage of installed memory, one
  * point per day. Bytes when the source reports them (used / total — the
@@ -94,22 +96,26 @@ function dailyPointsCte(filter: string): string {
      )`;
 }
 
-export async function computeMemoryForecast(
-  assetIds: string[] | null = null,
-  lookbackDays: number = MEMORY_FORECAST_LOOKBACK_DAYS,
-  minPoints: number = MEMORY_FORECAST_MIN_POINTS,
-): Promise<MemoryForecastRow[]> {
-  if (assetIds && assetIds.length === 0) return [];
+interface FitRow {
+  assetId: string;
+  slope_per_day: number | null;
+  points: number;
+  last_pct: number | null;
+}
+
+/** Every asset's fit with enough points, ANY slope (`growingOnly` narrows it
+ *  in SQL). One aggregate query — the shared read behind both fleet-wide
+ *  answers below. */
+async function loadFits(
+  assetIds: string[] | null,
+  lookbackDays: number,
+  minPoints: number,
+  growingOnly: boolean,
+): Promise<FitRow[]> {
   const params: unknown[] = [String(lookbackDays), minPoints];
   if (assetIds) params.push(assetIds);
   const filter = assetIds ? ` AND r."assetId" = ANY($3::text[])` : "";
-
-  const rows = await prisma.$queryRawUnsafe<Array<{
-    assetId: string;
-    slope_per_day: number | null;
-    points: number;
-    last_pct: number | null;
-  }>>(
+  return prisma.$queryRawUnsafe<FitRow[]>(
     `${dailyPointsCte(filter)}
      SELECT "assetId",
             regr_slope(pct, extract(epoch from day)::float8 / 86400.0) AS slope_per_day,
@@ -117,10 +123,75 @@ export async function computeMemoryForecast(
             (ARRAY_AGG(pct ORDER BY day DESC))[1] AS last_pct
      FROM dedup
      GROUP BY 1
-     HAVING count(*) >= $2
-        AND regr_slope(pct, extract(epoch from day)::float8 / 86400.0) > 0`,
+     HAVING count(*) >= $2${growingOnly ? `
+        AND regr_slope(pct, extract(epoch from day)::float8 / 86400.0) > 0` : ""}`,
     ...params,
   );
+}
+
+/** One asset's memory projection over a forecast horizon. */
+export interface MemoryProjectionRow {
+  assetId: string;
+  /** Memory in use (0–100) the trend reaches `horizonDays` out — null when the
+   *  host's memory is not growing (no projection to warn about). */
+  projectedPct: number | null;
+  /** The newest day's average memory in use (0–100). */
+  usedPct: number;
+  /** Fitted growth rate (percentage points per day), any sign. */
+  slopePctPerDay: number;
+}
+
+/**
+ * The level memory in use reaches `horizonDays` from now, from the newest
+ * day's average and the fitted slope, capped at 100. Pure. Null when the trend
+ * is flat or shrinking: "projected to reach 85% within 14 days" about a host
+ * that has sat at 85% all month is the memory-utilization automation's alert,
+ * not a forecast — and a null reading is what ends a forecast alert once the
+ * growth stops.
+ */
+export function projectMemoryPct(usedPct: number, slopePerDay: number, horizonDays: number): number | null {
+  if (!Number.isFinite(usedPct) || !Number.isFinite(slopePerDay) || slopePerDay <= 0) return null;
+  const v = Math.min(100, Math.max(0, usedPct) + slopePerDay * Math.max(0, horizonDays));
+  return Math.round(v * 10) / 10;
+}
+
+/**
+ * The memForecastPct automation reading: for every asset with at least
+ * `minPoints` daily points, the memory in use projected `horizonDays` out
+ * (null for a host that is not growing). A host with too little history has
+ * NO row — the engine then leaves any alert it already had frozen, as for any
+ * device that reported nothing. Same fit as `computeMemoryForecast`.
+ */
+export async function computeMemoryProjection(
+  assetIds: string[] | null,
+  horizonDays: number,
+  lookbackDays: number = MEMORY_FORECAST_LOOKBACK_DAYS,
+  minPoints: number = MEMORY_FORECAST_MIN_POINTS,
+): Promise<MemoryProjectionRow[]> {
+  if (assetIds && assetIds.length === 0) return [];
+  const rows = await loadFits(assetIds, lookbackDays, minPoints, false);
+  const out: MemoryProjectionRow[] = [];
+  for (const r of rows) {
+    if (r.last_pct == null) continue;
+    const used = Number(r.last_pct);
+    const slope = r.slope_per_day == null ? 0 : Number(r.slope_per_day);
+    out.push({
+      assetId: r.assetId,
+      projectedPct: projectMemoryPct(used, slope, horizonDays),
+      usedPct: Math.round(used * 10) / 10,
+      slopePctPerDay: Math.round(slope * 1000) / 1000,
+    });
+  }
+  return out;
+}
+
+export async function computeMemoryForecast(
+  assetIds: string[] | null = null,
+  lookbackDays: number = MEMORY_FORECAST_LOOKBACK_DAYS,
+  minPoints: number = MEMORY_FORECAST_MIN_POINTS,
+): Promise<MemoryForecastRow[]> {
+  if (assetIds && assetIds.length === 0) return [];
+  const rows = await loadFits(assetIds, lookbackDays, minPoints, true);
 
   const out: MemoryForecastRow[] = [];
   for (const r of rows) {

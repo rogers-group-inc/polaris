@@ -112,6 +112,7 @@ import {
   numMeets,
   probeLossWindowSec,
   readingAtOrAboveCeiling,
+  forecastDaysOf,
   DEVICE_FILTER_DIMENSIONS,
   deviceFilterMatch,
   type DeviceFilterAsset,
@@ -147,7 +148,7 @@ import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
 import { computeStorageForecast } from "./storageForecastService.js";
-import { computeMemoryForecast } from "./memoryForecastService.js";
+import { computeMemoryForecast, computeMemoryProjection } from "./memoryForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
@@ -1455,6 +1456,20 @@ async function resolveAssetMetricReadings(
       return fc.map((r) => {
         const a = index.get(r.assetId)!;
         return { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: r.daysUntilFull };
+      });
+    }
+    case "memForecastPct": {
+      // Forecast metric over the trigger's horizon (FORECAST_HORIZON_METRICS):
+      // the memory in use the same 30-day trend reaches `forecastDays` out, so
+      // the base threshold and every severity band are TARGET LEVELS sharing
+      // one horizon — "reaches 80% within 14 days" warning, "reaches 95%"
+      // critical — on the ordinary tier ladder. A host that is not growing
+      // reads null (recovered, so a live alert ends when the growth stops); one
+      // with <7 daily points reads nothing. One reading per device.
+      const proj = await computeMemoryProjection(ids, forecastDaysOf(trigger));
+      return proj.map((r) => {
+        const a = index.get(r.assetId)!;
+        return { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: r.projectedPct };
       });
     }
     case "cpuCorePct": {

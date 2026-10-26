@@ -503,7 +503,7 @@ export const ASSET_METRICS = [
   // hold is counted PER CORE (the same core over the line for N polls). One
   // alert per device naming the cores, superseded on a device while that
   // device carries a live all-cores cpuPct alert (business rule 89).
-  "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "memDaysUntilFull", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
+  "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "memDaysUntilFull", "memForecastPct", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
   "hwSensorValue", "hwSensorAlarm", "storageUsedPct", "storageUsedBytes", "storageDaysUntilFull",
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
@@ -897,6 +897,11 @@ const assetMetricTrigger = z.object({
    *  (see PATH_METRICS). Path metrics only; absent = agent hosts only, which
    *  is every automation authored before the server could alert. */
   includeServer: z.boolean().optional(),
+  /** FORECAST HORIZON (days) — see FORECAST_HORIZON_METRICS. The reading is
+   *  the level the metric is projected to reach this many days out, so each
+   *  severity tier's threshold is the level it is about. Inert on every other
+   *  metric; absent = FORECAST_DAYS_DEFAULT. */
+  forecastDays: z.number().int().min(1).max(365).optional(),
 });
 
 const assetStateTrigger = z.object({
@@ -4238,6 +4243,27 @@ export const WINDOWED_RATIO_METRICS = ["probeLossPct", "pathFailurePct"] as cons
 export const SATURATION_CEILING_METRICS = ["probeLossPct"] as const;
 
 /**
+ * Metrics read as a PROJECTION over the trigger's `forecastDays` horizon:
+ * "memory is projected to reach X% within N days". The reading is the level
+ * the 30-day trend reaches N days out, so a severity tier's threshold IS a
+ * target level (warning at 80%, critical at 95%) and every tier shares the one
+ * horizon — "within 14 days memory reaches 80%" and "the projection 14 days
+ * out is at or above 80%" are the same statement for a growing host. That is
+ * what lets one reading drive the ordinary tier ladder (business rule 19)
+ * instead of each tier needing a value of its own. Exposed on
+ * /automations/schema as `forecastHorizonMetrics`.
+ */
+export const FORECAST_HORIZON_METRICS = ["memForecastPct"] as const;
+/** The horizon a forecast trigger uses when it states none (days). */
+export const FORECAST_DAYS_DEFAULT = 14;
+
+/** The forecast horizon a trigger asks for, in whole days (1–365). */
+export function forecastDaysOf(trigger: unknown): number {
+  const n = (trigger as { forecastDays?: unknown } | null)?.forecastDays;
+  return typeof n === "number" && Number.isFinite(n) && n >= 1 ? Math.min(365, Math.round(n)) : FORECAST_DAYS_DEFAULT;
+}
+
+/**
  * The probe-loss measurement window, resolved exactly the way the engine
  * measures it: the configured `windowSec` floored at the 5-minute minimum (a
  * ratio always needs a few probes behind it), defaulted to 15 minutes when the
@@ -4326,6 +4352,12 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
   // growing produces no reading — see memoryForecastService). The memory twin
   // of storageDaysUntilFull. Alert with "<=", e.g. ≤ 14 days.
   memDaysUntilFull: { label: "Days until memory full", unit: "days" },
+  // Forecast metric: the memory in use (%) the 30-day trend reaches
+  // `forecastDays` out (FORECAST_HORIZON_METRICS), so each severity level's
+  // threshold is the level it warns about — "reaches 80% within 14 days" is
+  // warning, "reaches 95%" critical. Growing hosts only; a flat or shrinking
+  // host reads null (no projection), which also ends a live alert.
+  memForecastPct: { label: "Memory forecast", unit: "%" },
   sessionCount: { label: "Active sessions", unit: "" },
   responseTimeMs: { label: "Response time", unit: "ms" },
   uptimeSec: { label: "Uptime", unit: "sec" },
@@ -5604,6 +5636,11 @@ export function buildSchemaCatalog() {
     // ...and which of them the ceiling applies to at all (packet loss, not a
     // path check's failure rate — see SATURATION_CEILING_METRICS).
     saturationCeilingMetrics: SATURATION_CEILING_METRICS,
+    // Metrics read as a projection over the trigger's `forecastDays` (memory
+    // forecast), so the builder gives the condition a "within N days" box
+    // instead of an aggregation, prefilled with the server's default.
+    forecastHorizonMetrics: FORECAST_HORIZON_METRICS,
+    forecastDaysDefault: FORECAST_DAYS_DEFAULT,
     // Per-metric state names, so a boolean metric with no probe behind it still
     // renders "is Alarm" rather than "is true".
     booleanMetricLabels: BOOLEAN_METRIC_LABELS,
