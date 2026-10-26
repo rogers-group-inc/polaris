@@ -63,6 +63,40 @@ describe("panel top limit (clears the sticky top bar)", () => {
   });
 });
 
+// The panel belongs to the layout column (16:9 / 16:10 / Auto), like the
+// button and the toasts: a moved panel is saved as an offset from the
+// column's right edge, so it follows a layout change, and is kept inside the
+// column. Seen 2026-10-26: a panel moved once before reopened in the WINDOW's
+// bottom-right corner, out in the margin of a 16:9 layout on a wide screen.
+describe("panel placement (inside the layout column)", () => {
+  // 2560-wide window, 16:9 column 320..2240, 1080 high, bar clears at 120.
+  const col = { left: 320, right: 2240 };
+  const size = { width: 400, height: 600 };
+  const place = (saved: Record<string, number>, c = col) => A._panelPlacement(saved, size, c, 120, 1080);
+
+  it("an old window-pixel position in the window corner is pulled into the column and re-saved column-relative", () => {
+    // Where the panel used to sit: 24px from the WINDOW's right and bottom.
+    const r = place({ left: 2560 - 24 - 400, top: 1080 - 24 - 600 });
+    expect(r).toMatchObject({ left: 2240 - 8 - 400, top: 456 });
+    expect(r.saved).toEqual({ right: 8, bottom: 24 });
+  });
+
+  it("a column-relative position follows the column when the layout changes", () => {
+    const saved = { right: 24, bottom: 24 };
+    expect(place(saved).left).toBe(2240 - 24 - 400);
+    // Auto: the column is the whole window.
+    expect(place(saved, { left: 0, right: 2560 }).left).toBe(2560 - 24 - 400);
+  });
+
+  it("is kept inside the column on the left, and below the sticky bar", () => {
+    expect(place({ left: 10, top: 5 })).toMatchObject({ left: 328, top: 120 });
+  });
+
+  it("a panel wider than the column still starts at the column's left edge", () => {
+    expect(A._panelPlacement({ right: 0, bottom: 0 }, { width: 2000, height: 600 }, col, 120, 1080).left).toBe(328);
+  });
+});
+
 describe("PolarisMarkdown — escape first", () => {
   it.each([
     "<script>alert(1)</script>",
