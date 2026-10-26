@@ -273,14 +273,147 @@ function _refreshStrip(strip) {
   _layoutStrip(strip);
 }
 
-// The seam a page's own tab script uses (assets-tabs.js, dragging a tab):
-// hold(strip, tab) keeps `tab` in the run until hold(strip, null).
+function _holdTab(strip, el) {
+  if (!strip) return;
+  var st = strip.__tabWin || (strip.__tabWin = { first: 0, maxFirst: 0, items: [], gap: 0, room: 0, active: null, anim: null, wheel: 0 });
+  st.held = el || null;
+}
+
+// ─── Drag a tab to a new place ──────────────────────────────────────────────
+// Shared by every strip whose tabs the operator orders (the Assets views,
+// assets-tabs.js; the dashboards, dashboard.js), in and out of edit mode.
+// Press a tab and move it more than TAB_DRAG_SLOP px: it lifts
+// (.is-dragging, the list .is-reordering) and follows the pointer on the
+// `translate` property — which composes with the inactive tabs' translateY
+// drop instead of replacing it — and it is moved in the DOM past each visible
+// neighbour whose centre it crosses, so the others close up around it. Held
+// against the list's end it steps one more place past the tabs out of view
+// every TAB_DRAG_EDGE_MS, and _holdTab keeps it in the strip's run as it goes.
+// Below the slop a press is still a click or half a double-click. The drop
+// hands the page the new order of ids (opts.onDrop(ids, moved)); the click
+// that ends a drag is swallowed, so dropping never switches tabs. Pointer
+// events go on the document, not pointer capture: moving the element in the
+// DOM drops a capture. Wired once per list, by delegation, so a page that
+// re-renders its tabs keeps it.
+//
+// opts: { tabSel, idAttr, canStart(tabEl, target) -> bool, onDrop(ids, moved) }
+var TAB_DRAG_SLOP = 5;
+var TAB_DRAG_EDGE_MS = 300;
+
+function _wireTabDrag(strip, list, opts) {
+  if (!list || list.__polarisTabDrag) return;
+  list.__polarisTabDrag = true;
+  var drag = null;
+  var swallowClick = false;
+  var tabs = function () {
+    return Array.prototype.filter.call(list.children, function (c) { return c.matches(opts.tabSel); });
+  };
+
+  function visibleSiblings(el) {
+    return tabs().filter(function (t) { return t !== el && t.getClientRects().length > 0; });
+  }
+
+  function follow(x) {
+    var nl = drag.el.getBoundingClientRect().left - drag.dx;   // where it sits untranslated
+    drag.dx = x - drag.grab - nl;
+    drag.el.style.translate = drag.dx.toFixed(1) + "px 0";
+  }
+
+  function place(x) {
+    var el = drag.el;
+    var w = el.getBoundingClientRect().width;
+    var centre = x - drag.grab + w / 2;
+    var sibs = visibleSiblings(el);
+    var before = null;
+    for (var i = 0; i < sibs.length; i++) {
+      var r = sibs[i].getBoundingClientRect();
+      if (r.left + r.width / 2 > centre) { before = sibs[i]; break; }
+    }
+    var ref = before || (sibs.length ? sibs[sibs.length - 1].nextElementSibling : null);
+    if (ref !== el && el.nextElementSibling !== ref && !(ref === null && !el.nextElementSibling)) {
+      list.insertBefore(el, ref);
+    }
+    follow(x);
+  }
+
+  // Held at an end: one more place past the tabs out of view that way.
+  function edgeStep() {
+    if (!drag) return;
+    var all = tabs().filter(function (t) { return t.getClientRects().length > 0; });
+    if (!all.length) return;
+    var lo = all[0].getBoundingClientRect().left;
+    var hi = all[all.length - 1].getBoundingClientRect().right;
+    var dir = drag.x > hi - 12 ? 1 : drag.x < lo + 12 ? -1 : 0;
+    if (!dir) return;
+    var ts = tabs();
+    var i = ts.indexOf(drag.el);
+    var n = ts[i + dir];
+    if (!n) return;
+    if (dir > 0) list.insertBefore(drag.el, n.nextElementSibling); else list.insertBefore(drag.el, n);
+    requestAnimationFrame(function () { if (drag) follow(drag.x); });
+  }
+
+  function onMove(e) {
+    if (!drag) return;
+    drag.x = e.clientX;
+    if (!drag.live) {
+      if (Math.abs(e.clientX - drag.x0) < TAB_DRAG_SLOP) return;
+      drag.live = true;
+      drag.el.classList.add("is-dragging");
+      list.classList.add("is-reordering");
+      _holdTab(strip, drag.el);
+      drag.timer = setInterval(edgeStep, TAB_DRAG_EDGE_MS);
+    }
+    e.preventDefault();
+    place(e.clientX);
+  }
+
+  function onUp() {
+    if (!drag) return;
+    var d = drag;
+    drag = null;
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onUp);
+    if (!d.live) return;
+    clearInterval(d.timer);
+    d.el.style.translate = "";
+    d.el.classList.remove("is-dragging");
+    list.classList.remove("is-reordering");
+    _holdTab(strip, null);
+    swallowClick = true;
+    setTimeout(function () { swallowClick = false; }, 0);
+    var ids = tabs().map(function (t) { return t.getAttribute(opts.idAttr); });
+    opts.onDrop(ids, ids.indexOf(d.id) !== d.from);
+  }
+
+  list.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0 || drag) return;
+    var el = e.target.closest && e.target.closest(opts.tabSel);
+    if (!el || el.parentElement !== list) return;
+    if (e.target.closest("button, input, textarea, select")) return;
+    if (opts.canStart && !opts.canStart(el, e.target)) return;
+    var id = el.getAttribute(opts.idAttr);
+    drag = {
+      el: el, id: id, from: tabs().indexOf(el),
+      x0: e.clientX, x: e.clientX, grab: e.clientX - el.getBoundingClientRect().left,
+      dx: 0, live: false, timer: null,
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  });
+
+  list.addEventListener("click", function (e) {
+    if (swallowClick) { e.stopImmediatePropagation(); e.preventDefault(); }
+  }, true);
+}
+
+// The seam page tab scripts use: hold(strip, tab) keeps `tab` in the run
+// until hold(strip, null); wireDrag(strip, list, opts) — above.
 window.PolarisFolderTabs = {
-  hold: function (strip, el) {
-    if (!strip) return;
-    var st = strip.__tabWin || (strip.__tabWin = { first: 0, maxFirst: 0, items: [], gap: 0, room: 0, active: null, anim: null, wheel: 0 });
-    st.held = el || null;
-  },
+  hold: _holdTab,
+  wireDrag: _wireTabDrag,
 };
 
 // One step: `first` moves by one tab, the leaving tab shrinking and the

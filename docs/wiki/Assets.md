@@ -139,9 +139,10 @@ carries the whole message: neither colour nor motion reaches every reader.
 ### View tabs and saved filters
 
 A strip on the table's top-left edge, below the bulk bar, sharing its row with
-the page's buttons (**Import / Export**, **Maintenance**, the settings gear,
-**+ Add Asset(s)**), then **Filters**, **Clear**, **Refresh** (the
-circular-arrows icon) and the page size (**25 / page** …) (the page buttons are below the
+the page's buttons (the **Import** and **Export** icons, **Maintenance**, the
+settings gear, **+ Add Asset(s)**), then **Filters** (in edit mode only),
+**Clear**, **Refresh** (the circular-arrows icon), the page size (**25 / page** …)
+and, at the right end, the **Edit** pencil (the page buttons are below the
 page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
 or F2 renames, ✕ closes (never the last one), + adds. Drag a tab sideways to
@@ -154,6 +155,10 @@ right end. Each click moves one tab, however long its name, the tab at the far
 end shrinking away as the next one grows in; each notch of the mouse wheel over
 the tabs does the same. The same holds for the tab rows on Automations, Events,
 IPAM and the Dashboard.
+
+**Edit** (the pencil, like the Dashboard's Customize) puts the row in edit
+mode and turns into a ✓ that leaves it; **Filters ▾** shows only in edit mode.
+Every visit opens out of edit mode.
 
 **Filters ▾** saves the current column filters + sort as a named preset, loads
 one back into the current tab or a new one, and deletes them. Presets are
@@ -1762,5 +1767,7 @@ produced no readings at all.
 
 ## Import and export
 
-One **Import / Export ▾** dropdown. Exports run to PDF and CSV at page,
-filtered, or whole-list scope. Import entries are gated on `assets:write`.
+Two icons on the tab row, as on the other list pages: **Import** (the tray with
+the arrow leaving it — From CSV, From PDF Invoice; shown with `assets:write`)
+and **Export** (the download arrow). Exports run to PDF and CSV at page,
+filtered, or whole-list scope.

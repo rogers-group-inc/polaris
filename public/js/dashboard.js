@@ -81,8 +81,6 @@
   var _dragStashId = null;
   var _dragStashType = null;
   var _placeholder = null;
-  // Tab-reorder drag stash (edit mode): the dashboard id being dragged.
-  var _dragTabId = null;
 
   document.addEventListener("DOMContentLoaded", function () {
     canvasEl     = document.getElementById("dashboard-canvas");
@@ -394,13 +392,7 @@
       var nameHtml = (state.editing && active)
         ? '<input type="text" class="dashboard-tab-name-input" data-name="' + escapeHtml(d.id) + '" value="' + escapeHtml(d.name || "") + '" maxlength="60" size="' + Math.max((d.name || "").length, 8) + '" aria-label="Dashboard name">'
         : '<span class="dashboard-tab-name">' + escapeHtml(d.name || "Untitled") + '</span>';
-      // In edit mode a dedicated grip is the drag handle for reordering —
-      // the tab itself can't be draggable because the active tab is mostly
-      // the rename input (dragging would fight text selection, and there'd
-      // be no obvious place to grab).
-      var grip = state.editing ? '<span class="dashboard-tab-grip" draggable="true" title="Drag to reorder">⠿</span>' : "";
       return '<div class="dashboard-tab' + (active ? " active" : "") + '" data-dash="' + escapeHtml(d.id) + '" role="button" tabindex="0">' +
-        grip +
         nameHtml +
         (state.editing && dashes.length > 1 ? '<button type="button" class="dashboard-tab-remove" data-remove="' + escapeHtml(d.id) + '" title="Delete dashboard">&times;</button>' : '') +
       '</div>';
@@ -417,38 +409,20 @@
       tab.addEventListener("click", function (e) {
         if (e.target.closest("[data-remove]")) { e.stopPropagation(); deleteDashboard(id); return; }
         if (e.target.closest(".dashboard-tab-name-input")) return; // editing the active name, don't switch
-        if (e.target.closest(".dashboard-tab-grip")) return; // grip is for dragging, not switching
         switchDashboard(id);
       });
     });
-    // Edit mode: wire drag-to-reorder. Drags start from the grip only; the
-    // whole tab is the drop target, slotting before/after depending on which
-    // half of it the drop lands in.
-    if (state.editing) {
-      tabsEl.querySelectorAll(".dashboard-tab").forEach(function (tab) {
-        var id = tab.getAttribute("data-dash");
-        var gripEl = tab.querySelector(".dashboard-tab-grip");
-        gripEl.addEventListener("dragstart", function (e) {
-          _dragTabId = id;
-          if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", id); } catch (_e) {} }
-          tab.style.opacity = "0.5";
-        });
-        gripEl.addEventListener("dragend", function () { _dragTabId = null; tab.style.opacity = ""; clearTabDropCues(); });
-        tab.addEventListener("dragover", function (e) {
-          if (!_dragTabId || _dragTabId === id) return;
-          e.preventDefault();
-          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-          var rect = tab.getBoundingClientRect();
-          tab._dropBefore = (e.clientX - rect.left) < rect.width / 2;
-          clearTabDropCues();
-          tab.style.boxShadow = tab._dropBefore ? "inset 3px 0 0 #4fc3f7" : "inset -3px 0 0 #4fc3f7";
-        });
-        tab.addEventListener("dragleave", function () { tab.style.boxShadow = ""; });
-        tab.addEventListener("drop", function (e) {
-          if (!_dragTabId || _dragTabId === id) { clearTabDropCues(); return; }
-          e.preventDefault();
-          reorderDashboards(_dragTabId, id, tab._dropBefore !== false);
-        });
+    // Drag a tab to a new place, in and out of edit mode (folder-tabs.js,
+    // shared with the Assets view tabs). The whole tab is the handle; a press
+    // on the rename input or the × never starts one. Wired once on the strip,
+    // by delegation, so it survives this innerHTML re-render. Not on a
+    // published dashboard, which is someone else's layout.
+    if (window.PolarisFolderTabs && window.PolarisFolderTabs.wireDrag) {
+      window.PolarisFolderTabs.wireDrag(tabsEl, tabsEl, {
+        tabSel: ".dashboard-tab",
+        idAttr: "data-dash",
+        canStart: function () { return !state.external; },
+        onDrop: function (ids, moved) { setDashboardOrder(ids, moved); },
       });
     }
     // Inline rename on the active tab's input: Enter or blur commits, Esc cancels.
@@ -519,24 +493,17 @@
     queueSave();
   }
 
-  function clearTabDropCues() {
-    if (!tabsEl) return;
-    tabsEl.querySelectorAll(".dashboard-tab").forEach(function (t) { t.style.boxShadow = ""; });
-  }
-
-  // Move dashboard `fromId` to just before/after `toId` in the tab order, then
-  // persist + re-render. Splice-out first so the target index is computed
-  // against the array minus the moved item (indices stay correct).
-  function reorderDashboards(fromId, toId, before) {
+  // The strip's DOM order after a drag, written back into the layout. A
+  // drop that left a tab where it was saves nothing.
+  function setDashboardOrder(ids, moved) {
     var arr = state.layout.dashboards;
-    var fromIdx = arr.findIndex(function (d) { return d.id === fromId; });
-    if (fromIdx < 0) return;
-    var moved = arr.splice(fromIdx, 1)[0];
-    var toIdx = arr.findIndex(function (d) { return d.id === toId; });
-    if (toIdx < 0) { arr.splice(fromIdx, 0, moved); return; } // target vanished — restore
-    arr.splice(before ? toIdx : toIdx + 1, 0, moved);
-    clearTabDropCues();
-    queueSave();
+    var byId = {};
+    arr.forEach(function (d) { byId[d.id] = d; });
+    var next = ids.map(function (id) { return byId[id]; }).filter(Boolean);
+    if (next.length === arr.length) {
+      state.layout.dashboards = next;
+      if (moved) queueSave();
+    }
     renderTabs();
   }
 
@@ -1020,8 +987,6 @@
   function clearDragState() {
     _dragStashId = null;
     _dragStashType = null;
-    _dragTabId = null;
-    clearTabDropCues();
     clearPlaceholder();
     canvasEl.classList.remove("is-dragging");
     canvasEl.querySelectorAll(".dashboard-widget.lifted").forEach(function (e) { e.classList.remove("lifted"); });

@@ -897,12 +897,12 @@ document.addEventListener("DOMContentLoaded", async function () {
     if (!items.length) return;
     showRowMenu(addBtn, items, { label: "Add asset menu", align: "end" });
   });
-  // ── Import items in the merged Import / Export dropdown ──
-  // The dropdown's toggle / outside-close / stopPropagation wiring lives with
+  // ── Import items (the Import icon's menu) ──
+  // The menus' toggle / outside-close / stopPropagation wiring lives with
   // the export items (module-level IIFE below); this block only wires the
   // two import entries to their hidden file inputs.
   (function () {
-    var menu = document.getElementById("import-export-menu");
+    var menu = document.getElementById("import-menu");
     var csvBtn   = document.getElementById("btn-import-csv");
     var csvInput = document.getElementById("import-csv-input");
     var pdfBtn   = document.getElementById("btn-import-pdf");
@@ -22097,20 +22097,28 @@ async function singleOuiLookup(id, mac) {
 /* ─── Export (PDF / CSV) ──────────────────────────────────────────────────── */
 
 (function () {
-  // Merged Import / Export dropdown — this IIFE owns the toggle + outside-
-  // close + stopPropagation for the whole menu; the import items are wired
-  // separately in the DOMContentLoaded init.
-  var menu = document.getElementById("import-export-menu");
-  var btn  = document.getElementById("btn-import-export");
-  if (!btn || !menu) return;
-
-  btn.addEventListener("click", function (e) {
-    e.stopPropagation();
-    menu.classList.toggle("open");
+  // The Import and Export icons (the icon pair the other list pages carry),
+  // each with its own menu. This IIFE owns both menus' toggle + outside-
+  // close + stopPropagation; opening one closes the other. The import items
+  // are wired separately in the DOMContentLoaded init.
+  var pairs = [
+    [document.getElementById("btn-import"), document.getElementById("import-menu")],
+    [document.getElementById("btn-export"), document.getElementById("export-menu")],
+  ].filter(function (p) { return p[0] && p[1]; });
+  pairs.forEach(function (p) {
+    p[0].addEventListener("click", function (e) {
+      e.stopPropagation();
+      pairs.forEach(function (q) { if (q !== p) q[1].classList.remove("open"); });
+      p[1].classList.toggle("open");
+    });
+    p[1].addEventListener("click", function (e) { e.stopPropagation(); });
+  });
+  document.addEventListener("click", function () {
+    pairs.forEach(function (p) { p[1].classList.remove("open"); });
   });
 
-  document.addEventListener("click", function () { menu.classList.remove("open"); });
-  menu.addEventListener("click", function (e) { e.stopPropagation(); });
+  var menu = document.getElementById("export-menu");
+  if (!menu) return;
 
   menu.querySelectorAll("button[data-export]").forEach(function (item) {
     item.addEventListener("click", async function () {
@@ -22120,6 +22128,30 @@ async function singleOuiLookup(id, mac) {
       await handleAssetExport(mode, fmt);
     });
   });
+})();
+
+/* ─── Edit mode (the pencil / Done tick at the tab row's right end) ───────── */
+// The dashboard's Customize / Done pair, on the Assets tab row. Edit mode
+// shows the Filters ▾ menu (saved filter presets); outside it Filters is
+// gone. Per page view, not saved: every visit opens out of edit mode.
+(function () {
+  var editBtn = document.getElementById("assets-edit");
+  var doneBtn = document.getElementById("assets-done");
+  var filters = document.getElementById("assets-filters-cluster");
+  if (!editBtn || !doneBtn) return;
+  function setAssetsEditing(on) {
+    editBtn.hidden = on;
+    doneBtn.hidden = !on;
+    if (filters) {
+      filters.hidden = !on;
+      var menu = filters.querySelector(".btn-dropdown-menu");
+      if (!on && menu) menu.classList.remove("open");
+    }
+    document.body.classList.toggle("assets-editing", on);
+  }
+  editBtn.addEventListener("click", function () { setAssetsEditing(true); });
+  doneBtn.addEventListener("click", function () { setAssetsEditing(false); });
+  setAssetsEditing(false);
 })();
 
 // Page through GET /assets in 10k-row chunks (the route's max limit) up to a

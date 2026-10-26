@@ -2639,6 +2639,10 @@ html[data-page-top-curtain]::after {
 .btn-glyph-download {
   --btn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='7 10 12 15 17 10'/%3E%3Cline x1='12' y1='15' x2='12' y2='3'/%3E%3C/svg%3E");
 }
+/* Export's twin for Import (Assets): the same tray, the arrow leaving it. */
+.btn-glyph-upload {
+  --btn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='17 8 12 3 7 8'/%3E%3Cline x1='12' y1='3' x2='12' y2='15'/%3E%3C/svg%3E");
+}
 .btn-icon {
   padding: 0.35rem;
   border: none;
@@ -2886,15 +2890,17 @@ html[data-page-top-curtain]::after {
 }
 .table-head-row.folder-head-card > .table-tabs-nav { margin-left: var(--folder-shadow-room); }
 .table-head-row > .table-tabs-nav.is-idle { display: none; }
-/* Dragging a view tab to a new place (assets-tabs.js → wireDrag). The lifted
-   tab follows the pointer on `translate`, which composes with the inactive
-   tabs' translateY drop instead of replacing it; it rides above its
-   neighbours and does not ease, or it would lag the pointer. A press never
-   selects tab text. */
-.table-head-row .table-tabs-list .table-tab { user-select: none; }
-.table-head-row .table-tabs-list.is-reordering,
-.table-head-row .table-tabs-list.is-reordering .table-tab { cursor: grabbing; }
-.table-head-row .table-tabs-list .table-tab.is-dragging {
+/* Dragging a tab to a new place (folder-tabs.js → _wireTabDrag: the Assets
+   views and the dashboards). The lifted tab follows the pointer on
+   `translate`, which composes with the inactive tabs' translateY drop instead
+   of replacing it; it rides above its neighbours and does not ease, or it
+   would lag the pointer. A press never selects tab text (the dashboard's
+   rename input keeps its own selection: user-select does not reach into a
+   form field). */
+.table-head-row :is(.table-tabs-list .table-tab, .dashboard-tabs .dashboard-tab) { user-select: none; }
+.table-head-row .is-reordering,
+.table-head-row .is-reordering :is(.table-tab, .dashboard-tab) { cursor: grabbing; }
+.table-head-row :is(.table-tab, .dashboard-tab).is-dragging {
   z-index: 4;
   opacity: 0.92;
   transition: none;
@@ -2905,6 +2911,9 @@ html[data-page-top-curtain]::after {
 .main:has(#auto-tab-manage.active) #btn-refresh { display: none; }
 /* !important: renderPageControls stamps an inline display on its -top row. */
 .table-head-row .head-off { display: none !important; }
+/* A cluster a page hides outright (Assets' Filters ▾ outside edit mode):
+   the cluster's own display: flex beats the UA's [hidden] rule. */
+.table-head-row .table-head-controls[hidden] { display: none; }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab) {
   position: relative;
   flex: 0 0 auto;
@@ -7471,14 +7480,6 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
 }
-/* Edit-mode drag handle on each tab — the tab itself isn't draggable (the
-   active tab is mostly the rename input), so the grip is the grab target. */
-.dashboard-tab-grip {
-  cursor: grab; user-select: none; color: var(--color-text-tertiary);
-  font-size: 0.9rem; line-height: 1; padding: 2px 3px; border-radius: 4px; flex-shrink: 0;
-}
-.dashboard-tab-grip:hover { color: var(--color-text-primary); background: var(--color-hover-tint); }
-.dashboard-tab-grip:active { cursor: grabbing; }
 .dashboard-tab-remove {
   background: transparent;
   border: 0;

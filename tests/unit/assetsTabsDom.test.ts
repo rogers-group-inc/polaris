@@ -27,6 +27,9 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, unknown>;
 const SRC = readFileSync(resolve(__dirname, "../../public/js/assets-tabs.js"), "utf8");
+// Tab dragging lives in folder-tabs.js (shared with the dashboard), which
+// assets.html loads before assets-tabs.js.
+const FT_SRC = readFileSync(resolve(__dirname, "../../public/js/folder-tabs.js"), "utf8");
 const FAV_SRC = readFileSync(resolve(__dirname, "../../public/js/favorites.js"), "utf8");
 
 const STRIP_HTML =
@@ -110,6 +113,7 @@ async function boot(opts?: { hashSeeded?: boolean }) {
   }
   (0, eval)(FAV_SRC);
 
+  (0, eval)(FT_SRC);
   (0, eval)(SRC);
   await tabsApi().init(opts || {});
 }

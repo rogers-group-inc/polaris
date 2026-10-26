@@ -750,130 +750,6 @@
 
   // ─── Wiring ───────────────────────────────────────────────────────────────
 
-  // ─── Drag to reorder ──────────────────────────────────────────────────────
-  // Press a tab and move it more than DRAG_SLOP px: it lifts and follows the
-  // pointer, and it is moved in the DOM past each neighbour whose centre it
-  // crosses, so the others close up around it. Below the slop a press is
-  // still a click (select) or half a double-click (rename). Held against the
-  // strip's edge, it steps one more place past the tabs out of view every
-  // DRAG_EDGE_MS; PolarisFolderTabs.hold (folder-tabs.js) keeps it in the
-  // strip's run of whole tabs as it goes. The drop writes the DOM order back
-  // into _tabs and saves it. Pointer events on the document, not pointer
-  // capture: moving the tab in the DOM drops a capture.
-  var DRAG_SLOP = 5;
-  var DRAG_EDGE_MS = 300;
-
-  function wireDrag(strip, list) {
-    var drag = null;
-    var swallowClick = false;
-
-    function visibleSiblings(el) {
-      return Array.prototype.filter.call(list.querySelectorAll(":scope > .table-tab"), function (t) {
-        return t !== el && t.getClientRects().length > 0;
-      });
-    }
-
-    // Where the lifted tab sits with no translate on it.
-    function naturalLeft(el) {
-      return el.getBoundingClientRect().left - (drag ? drag.dx : 0);
-    }
-
-    function place(x) {
-      var el = drag.el;
-      var w = el.getBoundingClientRect().width;
-      var centre = x - drag.grab + w / 2;
-      var sibs = visibleSiblings(el);
-      var before = null;
-      for (var i = 0; i < sibs.length; i++) {
-        var r = sibs[i].getBoundingClientRect();
-        if (r.left + r.width / 2 > centre) { before = sibs[i]; break; }
-      }
-      var ref = before || (sibs.length ? sibs[sibs.length - 1].nextElementSibling : null);
-      if (ref !== el && el.nextElementSibling !== ref && !(ref === null && !el.nextElementSibling)) {
-        list.insertBefore(el, ref);
-      }
-      follow(x);
-    }
-
-    function follow(x) {
-      var nl = naturalLeft(drag.el);
-      drag.dx = x - drag.grab - nl;
-      drag.el.style.translate = drag.dx.toFixed(1) + "px 0";
-    }
-
-    // Held at an edge: one more place past the tabs out of view that way.
-    function edgeStep() {
-      if (!drag) return;
-      var sr = strip.getBoundingClientRect();
-      var el = drag.el;
-      var dir = drag.x > sr.right - 12 ? 1 : drag.x < sr.left + 12 ? -1 : 0;
-      if (!dir) return;
-      var n = dir > 0 ? el.nextElementSibling : el.previousElementSibling;
-      while (n && !n.classList.contains("table-tab")) n = dir > 0 ? n.nextElementSibling : n.previousElementSibling;
-      if (!n) return;
-      if (dir > 0) list.insertBefore(el, n.nextElementSibling); else list.insertBefore(el, n);
-      requestAnimationFrame(function () { if (drag) follow(drag.x); });
-    }
-
-    function onMove(e) {
-      if (!drag) return;
-      drag.x = e.clientX;
-      if (!drag.live) {
-        if (Math.abs(e.clientX - drag.x0) < DRAG_SLOP) return;
-        drag.live = true;
-        drag.el.classList.add("is-dragging");
-        list.classList.add("is-reordering");
-        if (window.PolarisFolderTabs) window.PolarisFolderTabs.hold(strip, drag.el);
-        drag.timer = setInterval(edgeStep, DRAG_EDGE_MS);
-      }
-      e.preventDefault();
-      place(e.clientX);
-    }
-
-    function onUp() {
-      if (!drag) return;
-      var d = drag;
-      drag = null;
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-      if (!d.live) return;
-      clearInterval(d.timer);
-      d.el.style.translate = "";
-      d.el.classList.remove("is-dragging");
-      list.classList.remove("is-reordering");
-      if (window.PolarisFolderTabs) window.PolarisFolderTabs.hold(strip, null);
-      swallowClick = true;                          // the click that ends a drag is not a select
-      setTimeout(function () { swallowClick = false; }, 0);
-      var order = Array.prototype.map.call(list.querySelectorAll(":scope > .table-tab"), function (t) {
-        return t.getAttribute("data-tab-id");
-      });
-      var byId = {};
-      _tabs.forEach(function (t) { byId[t.id] = t; });
-      var next = order.map(function (id) { return byId[id]; }).filter(Boolean);
-      if (next.length !== _tabs.length) { render(); return; }
-      var moved = next.some(function (t, i) { return t !== _tabs[i]; });
-      _tabs = next;
-      render();
-      if (moved) scheduleSave();
-    }
-
-    list.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0 || drag) return;
-      if (e.target.closest("[data-tab-close], input")) return;
-      var el = e.target.closest(".table-tab");
-      if (!el || el.querySelector("input")) return;
-      drag = { el: el, x0: e.clientX, x: e.clientX, grab: e.clientX - el.getBoundingClientRect().left, dx: 0, live: false, timer: null };
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
-    });
-
-    list.addEventListener("click", function (e) {
-      if (swallowClick) { e.stopImmediatePropagation(); e.preventDefault(); }
-    }, true);
-  }
-
   function wire(strip) {
     if (strip.getAttribute("data-wired") === "1") return;
     strip.setAttribute("data-wired", "1");
@@ -914,7 +790,24 @@
       }
     });
 
-    wireDrag(strip, list);
+    // Drag a tab to a new place (folder-tabs.js, shared with the dashboard
+    // tabs). The drop writes the new order into _tabs and saves it.
+    if (window.PolarisFolderTabs && window.PolarisFolderTabs.wireDrag) {
+      window.PolarisFolderTabs.wireDrag(strip, list, {
+        tabSel: ".table-tab",
+        idAttr: "data-tab-id",
+        canStart: function (el) { return !el.querySelector("input"); },
+        onDrop: function (ids, moved) {
+          var byId = {};
+          _tabs.forEach(function (t) { byId[t.id] = t; });
+          var next = ids.map(function (id) { return byId[id]; }).filter(Boolean);
+          if (next.length !== _tabs.length) { render(); return; }
+          _tabs = next;
+          render();
+          if (moved) scheduleSave();
+        },
+      });
+    }
 
     // A debounced layout save can still be in flight when the operator leaves.
     window.addEventListener("beforeunload", function () {
