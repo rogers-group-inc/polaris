@@ -2738,6 +2738,17 @@
     // suppressed for the drag's duration (the handlers keep everything
     // consistent themselves), then a full re-fit + re-route runs on release.
     var hullDrag = null;
+    // A box becomes the whole selection when it is clicked OR dragged:
+    // leaving a box-selected set of devices lit while their box moves reads
+    // as though the drag were acting on them. On the first real MOVE, not on
+    // the press — a Shift-drag box-select that starts inside a box presses
+    // (grabs) the box too, and must not select it or drop the devices.
+    function _selectOnlyHull(hull) {
+      if (topoState.pathOverlay) return;
+      cyInstance.elements(":selected").not(hull).unselect();
+      hull.selectify();
+      hull.select();
+    }
     cyInstance.on("grab", "node[isLocGroup]", function (evt) {
       var h = evt.target;
       var p = h.position();
@@ -2755,6 +2766,10 @@
       var p = evt.target.position();
       var dx = p.x - hullDrag.startX;
       var dy = p.y - hullDrag.startY;
+      if (!hullDrag.selected && (dx || dy)) {
+        hullDrag.selected = true;
+        _selectOnlyHull(evt.target);
+      }
       cyInstance.batch(function () {
         hullDrag.members.forEach(function (m) {
           m.node.position({ x: m.x + dx, y: m.y + dy });
@@ -2784,13 +2799,7 @@
     // selected box would ride along on the next device drag, and its own
     // drag handler would then move its members a second time), so a box is
     // made selectable for exactly as long as a click keeps it selected.
-    cyInstance.on("tap", "node[isLocGroup]", function (evt) {
-      if (topoState.pathOverlay) return;
-      var hull = evt.target;
-      cyInstance.elements(":selected").not(hull).unselect();
-      hull.selectify();
-      hull.select();
-    });
+    cyInstance.on("tap", "node[isLocGroup]", function (evt) { _selectOnlyHull(evt.target); });
     cyInstance.on("unselect", "node[isLocGroup]", function (evt) { evt.target.unselectify(); });
     var locRefreshPending = false;
     cyInstance.on("position", "node[!isLocGroup][!isEdgeHandle]", function () {

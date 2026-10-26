@@ -529,7 +529,12 @@
       var touched = {};
       n.connectedEdges().forEach(function (e) {
         var key = e.data("pathKey");
-        if (!key || isEmptyPath(paths[key])) return;
+        if (!key) return;
+        // Any line showing handles follows — an automatic line's end rings
+        // sit on the device outline too, and were left behind when only
+        // drawn lines were tracked here (a box drag moving its devices).
+        if (handlesFor[key]) touched[key] = true;
+        if (isEmptyPath(paths[key])) return;
         var snap = snapshot && snapshot[key];
         if (snap) {
           var S = e.source().position(), T = e.target().position();
