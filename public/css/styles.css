@@ -2416,8 +2416,8 @@ html[data-page-top-curtain]::after {
 .appmap-toolbar-actions .btn:not(.btn-icon):not(:disabled),
 .appmap-toolbar-top .btn:not(.btn-icon):not(:disabled),
 .table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift-control); }
-/* A page's own action buttons on a row of their own (Assets: between the
-   selection bar and the tab row), right aligned. */
+/* A page's own action buttons on a row of their own (Users), right aligned.
+   Assets used it too until its actions joined the tab row (2026-10-26). */
 .page-actions-row {
   display: flex;
   align-items: center;
@@ -2870,8 +2870,22 @@ html[data-page-top-curtain]::after {
 /* A head row with no tab strip (Path Monitor) keeps its controls on the right. */
 .table-head-row > .table-head-controls:first-child { margin-left: auto; }
 /* Dashboard: the strip is hidden (not absent) on an empty layout or a
-   published view, so :first-child never matches; pin the cluster right. */
-.table-head-row > .dashboard-tabs + .table-head-controls { margin-left: auto; }
+   published view, so :first-child never matches; pin the cluster right. The
+   strip's ‹ › pair (below) sits between them on every row that has a strip. */
+.table-head-row > .dashboard-tabs + .table-head-controls,
+.table-head-row > .dashboard-tabs + .table-tabs-nav + .table-head-controls { margin-left: auto; }
+/* The strip's ‹ › pair (folder-tabs.js → _ensureStripNav): right after the
+   strip, shown only while the tabs overflow it. A folder card's strip reaches
+   under its right neighbour by its shadow room (negative margin-right), and a
+   scrolled strip shows its tabs in that padding too — so the pair steps back
+   out by the same room, or the tab scrolled to the end sits half under it. */
+.table-head-row > .table-tabs-nav {
+  position: relative;
+  z-index: 3;
+  gap: 2px;
+}
+.table-head-row.folder-head-card > .table-tabs-nav { margin-left: var(--folder-shadow-room); }
+.table-head-row > .table-tabs-nav.is-idle { display: none; }
 /* Automations: on the Automations tab, Refresh is the list row's own (right of
    Clear); the header-cluster Refresh — which reloads whichever tab is open —
    serves the other tabs. */

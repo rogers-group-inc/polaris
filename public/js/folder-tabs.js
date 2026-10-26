@@ -112,13 +112,84 @@ function _writeFolderStrip(row, body) {
   }
 }
 
+// ─── Strip scrolling (‹ › and the wheel) ────────────────────────────────────
+// A strip longer than the room the row's controls leave it scrolls sideways
+// rather than pushing them (styles.css, .table-head-row > .table-tabs). A
+// scrollbar alone hid that there were more tabs, so the strip gets a ‹ › pair
+// right after it, shown only while it overflows, each end disabled when there
+// is nothing further that way; and a vertical wheel over the strip scrolls it
+// sideways. The pair sits AFTER the strip, not either side of it: the folder
+// card pulls the strip left over its own shadow room (negative margin), which
+// would lie over a button placed before it.
+var STRIP_STEP = 0.6;   // one click scrolls this share of the visible strip
+
+function _ensureStripNav(row, strip) {
+  var nav = row.querySelector(":scope > .table-tabs-nav");
+  if (nav) return nav;
+  nav = document.createElement("div");
+  nav.className = "table-head-controls table-tabs-nav is-idle";
+  nav.innerHTML =
+    '<button type="button" class="btn btn-secondary btn-sm btn-icon-only" data-dir="-1" aria-label="Scroll tabs left" title="Scroll tabs left">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>' +
+    '<button type="button" class="btn btn-secondary btn-sm btn-icon-only" data-dir="1" aria-label="Scroll tabs right" title="Scroll tabs right">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>';
+  nav.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("button[data-dir]");
+    if (!b || b.disabled) return;
+    var by = Math.max(40, strip.clientWidth * STRIP_STEP) * Number(b.getAttribute("data-dir"));
+    try { strip.scrollBy({ left: by, behavior: "smooth" }); }
+    catch (_) { strip.scrollLeft += by; }
+  });
+  strip.insertAdjacentElement("afterend", nav);
+  return nav;
+}
+
+// Show / hide the pair and set each end's disabled state. A class flip that
+// changes nothing writes nothing, and `disabled` is outside the observer's
+// attribute filter, so this cannot re-trigger the sync that runs it.
+function _syncStripNav(row, strip) {
+  var nav = row.querySelector(":scope > .table-tabs-nav");
+  if (!nav) return;
+  var max = strip.scrollWidth - strip.clientWidth;
+  var overflowing = max > 1 && strip.getClientRects().length > 0;
+  if (nav.classList.contains("is-idle") === overflowing) nav.classList.toggle("is-idle", !overflowing);
+  var prev = nav.querySelector('[data-dir="-1"]');
+  var next = nav.querySelector('[data-dir="1"]');
+  var atStart = strip.scrollLeft <= 1;
+  var atEnd = strip.scrollLeft >= max - 1;
+  if (prev.disabled !== atStart) prev.disabled = atStart;
+  if (next.disabled !== atEnd) next.disabled = atEnd;
+}
+
+// A vertical wheel (or a trackpad's vertical swipe) over an overflowing strip
+// scrolls it sideways. A mostly-horizontal gesture is left to the browser,
+// which already scrolls the strip natively.
+function _wireStripWheel(strip) {
+  strip.addEventListener("wheel", function (e) {
+    if (strip.scrollWidth - strip.clientWidth <= 1) return;
+    if (Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+    var d = e.deltaY;
+    if (e.deltaMode === 1) d *= 16;                       // lines
+    else if (e.deltaMode === 2) d *= strip.clientWidth;   // pages
+    strip.scrollLeft += d;
+    e.preventDefault();
+  }, { passive: false });
+}
+
 function wireFolderTabs() {
   document.querySelectorAll(".table-head-row").forEach(function (row) {
     if (row.__polarisFolderWired) return;
     row.__polarisFolderWired = true;
-    var sync = function () { syncFolderTabs(row); };
     var strip = row.querySelector(".table-tabs, .page-tabs, .dashboard-tabs");
-    if (strip) strip.addEventListener("scroll", sync, { passive: true });
+    var sync = function () {
+      syncFolderTabs(row);
+      if (strip) _syncStripNav(row, strip);
+    };
+    if (strip) {
+      _ensureStripNav(row, strip);
+      _wireStripWheel(strip);
+      strip.addEventListener("scroll", sync, { passive: true });
+    }
     window.addEventListener("resize", sync);
     if (typeof ResizeObserver === "function") {
       var ro = new ResizeObserver(sync);

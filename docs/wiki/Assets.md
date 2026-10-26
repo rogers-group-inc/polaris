@@ -139,10 +139,17 @@ carries the whole message: neither colour nor motion reaches every reader.
 ### View tabs and saved filters
 
 A strip on the table's top-left edge, below the bulk bar, sharing its row with
-**Filters**, **Refresh** (the circular-arrows icon), **Clear** and the page size (**25 / page** …) (the page buttons are below the
+the page's buttons (**Import / Export**, **Maintenance**, the settings gear,
+**+ Add Asset(s)**), then **Filters**, **Clear**, **Refresh** (the
+circular-arrows icon) and the page size (**25 / page** …) (the page buttons are below the
 page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
 or F2 renames, ✕ closes (never the last one), + adds.
+
+When there are more tabs than fit beside the buttons, the strip scrolls rather
+than crowding them: **‹ ›** buttons appear at its right end, and the mouse wheel
+over the tabs scrolls them sideways. The same holds for the tab rows on
+Automations, Events, IPAM and the Dashboard.
 
 **Filters ▾** saves the current column filters + sort as a named preset, loads
 one back into the current tab or a new one, and deletes them. Presets are
