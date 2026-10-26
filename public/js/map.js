@@ -1897,6 +1897,8 @@
     parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Mouse controls</div>');
     [
       ["Drag empty space", "Pan the view (scroll wheel zooms)"],
+      ["Click", "Select just that device, link or location box"],
+      ["Shift + click", "Add to the selection"],
       ["Shift + drag", "Box-select multiple devices"],
       ["Drag a selected device", "Move the selected devices together"],
       ["Ctrl + drag", "Pan from anywhere (even over devices)"],
@@ -2477,8 +2479,14 @@
       // selected nodes can be dragged together to rearrange. Multi-node
       // selection is also addable via shift-click on individual nodes.
       // Pan stays as plain drag on background (Cytoscape default).
+      // "single": a PLAIN click replaces the selection — a link, a group box
+      // or a device becomes the only thing selected (it used to be
+      // "additive", so clicking a second link or a box after a box-select
+      // kept everything before it selected). Shift-click and shift-drag
+      // still add: Cytoscape treats a held shift as additive in either mode.
+      // Dragging an already-selected device still moves the whole set.
       boxSelectionEnabled: true,
-      selectionType: "additive",
+      selectionType: "single",
       // Damp scroll-wheel zoom hard — the default felt jumpy on typical
       // mouse wheels (one notch was 25–30% zoom step), and even the earlier
       // 0.5 stepped too far on large site graphs. 0.2 ≈ one notch nudges
@@ -2770,6 +2778,20 @@
       window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     });
+    // Clicking a group box selects it, and only it — whatever was selected
+    // (a box-selected set of devices, a link) lets go. Boxes are created
+    // unselectable so a shift-drag box-select never sweeps one in (a
+    // selected box would ride along on the next device drag, and its own
+    // drag handler would then move its members a second time), so a box is
+    // made selectable for exactly as long as a click keeps it selected.
+    cyInstance.on("tap", "node[isLocGroup]", function (evt) {
+      if (topoState.pathOverlay) return;
+      var hull = evt.target;
+      cyInstance.elements(":selected").not(hull).unselect();
+      hull.selectify();
+      hull.select();
+    });
+    cyInstance.on("unselect", "node[isLocGroup]", function (evt) { evt.target.unselectify(); });
     var locRefreshPending = false;
     cyInstance.on("position", "node[!isLocGroup][!isEdgeHandle]", function () {
       if (hullDrag || locRefreshPending) return;

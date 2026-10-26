@@ -174,7 +174,9 @@ describe("editor on a headless graph", () => {
       elements: [
         { data: { id: "a" }, position: { x: 0, y: 0 } },
         { data: { id: "b" }, position: { x: 100, y: 0 } },
+        { data: { id: "c" }, position: { x: 200, y: 0 } },
         { data: { id: "e0", source: "a", target: "b" } },
+        { data: { id: "e1", source: "b", target: "c" } },
       ],
       style: [{ selector: "node", style: { width: 20, height: 20, shape: "ellipse" } }],
     }));
@@ -243,6 +245,17 @@ describe("editor on a headless graph", () => {
     expect(edge.data("customPath")).toBe(0);
     expect(changes).toBe(2);
     expect(ed.deleteSelected()).toBe(false); // nothing selected → key press not swallowed
+  });
+
+  it("handles follow the selection: switching to another link swaps its handles in", async () => {
+    const { edge } = graph({ "edgepath:e|a|b:b0": { x: 50, y: 40 } });
+    const other = cy.getElementById("e1");
+    edge.select();
+    await tick();
+    edge.unselect();
+    other.select();
+    await tick();
+    expect(cy.nodes("[isEdgeHandle]").map((n: any) => n.data("pathKey"))).toEqual(["e|b|c", "e|b|c"]);
   });
 
   it("suspends custom geometry while the connection-path overlay is up", () => {

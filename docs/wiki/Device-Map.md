@@ -226,7 +226,9 @@ it stays on the device's outline, so the line never comes loose. A bend stays
 where you put it when you move one of the line's devices, and moves with the
 line when you move both devices together. Select a point and press
 **Delete** to remove a bend, or to put an end back on automatic. A line with
-no points left goes back to its automatic shape. Drawn lines are part of the
+no points left goes back to its automatic shape. A click selects just the
+device, line or location box you clicked; hold **Shift** to add to the
+selection, or Shift-drag to box-select. Drawn lines are part of the
 layout: **Save layout** and **Reset layout** cover them, and each location
 view keeps its own.
 

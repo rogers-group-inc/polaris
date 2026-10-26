@@ -455,9 +455,9 @@
         applyKey(key);
         syncHandles();
         // The new point is the selection: its line stays selected (so the
-        // handles stay up) and every other handle lets go.
+        // handles stay up) and every other line and handle lets go.
+        selectOnlyLine(e);
         cy.nodes("[isEdgeHandle]:selected").unselect();
-        e.select();
         cy.getElementById(handleId(key, "b" + at)).select();
         return;
       }
@@ -486,7 +486,19 @@
     window.addEventListener("mouseup", onWindowUp);
     cy.on("destroy", function () { window.removeEventListener("mouseup", onWindowUp); });
 
+    // A new bend is the whole selection — the same rule a plain click
+    // follows on the host graph (selectionType "single"): everything else
+    // lets go, and only its line stays selected so the handles stay up.
+    function selectOnlyLine(e) {
+      cy.elements(":selected").not(e).unselect();
+      e.select();
+    }
+
     cy.on("select unselect", queueSyncHandles);
+    // A shift-drag box-select gathers devices (and the links between them);
+    // a handle swept up with them would be a point the next Delete removes
+    // without the operator ever having picked it.
+    cy.on("boxselect", "node[isEdgeHandle]", function (evt) { evt.target.unselect(); });
 
     // Device drags: remember where every customised line's ends and bends
     // were, so a line carried whole moves its bends with it.
