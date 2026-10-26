@@ -214,20 +214,28 @@ describe("column fit — the 5px minimum width", () => {
     expect(widthOf("created")).toBe(36);
   });
 
-  it("floors the auto-fill column at AUTOFILL_MIN_W, not at the 5px sliver", () => {
-    // 34 (cb) + 100 (static) + 500 + 350 leaves 16 for `created` — under the
-    // floor, so it takes 36 and the row overflows into the wrapper's
-    // horizontal scroll rather than stretching the thead.
+  it("keeps the auto-fill column's saved width when over-committed, so the row scrolls", () => {
+    // 34 (cb) + 100 (static) + 500 + 350 leaves 16 for `created`. Squeezing it
+    // into that 16 (or the 36 floor) made the table exactly fill the wrapper:
+    // the column's cells cut off with no horizontal scrollbar to reach them.
+    // It keeps its 100 and the row overflows into the wrapper's scroll.
     layout.setPrefs({ widths: { hostname: 500, ip: 350, created: 100 } });
+
+    expect(widthOf("created")).toBe(100);
+    expect(colWidths().reduce((a, b) => a + b, 0)).toBeGreaterThan(AVAIL);
+  });
+
+  it("floors the auto-fill column at AUTOFILL_MIN_W, not at a saved sliver", () => {
+    layout.setPrefs({ widths: { hostname: 500, ip: 350, created: 20 } });
 
     expect(widthOf("created")).toBe(36);
   });
 
   it("lets a th's own declared width raise that floor", () => {
     // A width on the <th> is an explicit statement of how much the column
-    // needs, so it wins over AUTOFILL_MIN_W.
+    // needs, so it wins over AUTOFILL_MIN_W and a narrower saved width.
     doc.querySelector('thead th[data-col-id="created"]')!.setAttribute("style", "width:90px");
-    layout.setPrefs({ widths: { hostname: 500, ip: 350, created: 100 } });
+    layout.setPrefs({ widths: { hostname: 500, ip: 350, created: 20 } });
 
     expect(widthOf("created")).toBe(90);
   });
