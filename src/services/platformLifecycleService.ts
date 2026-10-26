@@ -533,7 +533,7 @@ export function lifecycleCapacityReasons(result: PlatformLifecycleResult): Lifec
       suggestion = `Upgrade the runtime on this host. ${target}`;
     } else if (g.state === "unpatched" && g.securityFloor) {
       code = "platform_unpatched";
-      message = `${c.label} ${c.observedVersion ?? g.track} has a published security advisory open against it (${g.securityFloor.advisories.join(", ")}).`;
+      message = `${c.label} ${c.observedVersion ?? g.track} has a published security advisory open against it (${g.securityFloor.advisories.map((a) => `${a.id} ${a.severity}`).join(", ")}).`;
       suggestion = `Update ${c.label} on this host to ${g.securityFloor.version} or later — a patch-level update within the ${g.track} line. If the host's package repository does not carry it yet, it will shortly.`;
     } else if (g.state === "eol" || g.state === "eol_extended") {
       code = "platform_eol";

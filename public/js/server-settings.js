@@ -1963,9 +1963,12 @@ function _lifecycleRowHtml(c) {
   if (g.state === "unpatched" && g.securityFloor) {
     var sf = g.securityFloor;
     detail =
-      '<tr class="lifecycle-detail-row"><td colspan="6" style="padding:0 8px 8px;font-size:0.8rem">' +
+      '<tr class="lifecycle-detail-row"><td colspan="5" style="padding:0 8px 8px;font-size:0.8rem">' +
         "Update to <strong>" + escapeHtml(sf.version) + "</strong> or later on this line — " +
-        escapeHtml((sf.advisories || []).join(", ")) +
+        // Each CVE carries the vendor's rating; the worst one set the row colour.
+        (sf.advisories || []).map(function (a) {
+          return escapeHtml(a.id) + ' <span class="hint">(' + escapeHtml(a.severity) + ")</span>";
+        }).join(", ") +
         (sf.source ? ' <span class="hint">(' + escapeHtml(sf.source) + ")</span>" : "") +
       "</td></tr>";
   } else if (interesting && c.playbook) {
@@ -1976,7 +1979,7 @@ function _lifecycleRowHtml(c) {
       return "<code>" + escapeHtml(f) + "</code>";
     }).join(", ");
     detail =
-      '<tr class="lifecycle-detail-row"><td colspan="6" style="padding:0 8px 8px">' +
+      '<tr class="lifecycle-detail-row"><td colspan="5" style="padding:0 8px 8px">' +
         '<details>' +
           '<summary style="cursor:pointer;font-size:0.8rem">How to upgrade — ' + escapeHtml(c.playbook.title || "") + '</summary>' +
           '<div style="margin:0.5rem 0 0 0;font-size:0.8rem">' +
@@ -1990,11 +1993,10 @@ function _lifecycleRowHtml(c) {
 
   return '<tr class="capacity-reason-' + css + '"' + titleAttr + ">" +
       "<td><strong>" + escapeHtml(c.label || c.id) + "</strong></td>" +
+      "<td>" + target + "</td>" +
       "<td>" + installed + "</td>" +
-      "<td>" + (g.track ? escapeHtml(g.track) : '<span class="hint">—</span>') + "</td>" +
       "<td>" + supportedUntil + "</td>" +
       '<td><span class="capacity-pill capacity-pill-' + css + '">' + escapeHtml(_lifecycleStateLabel(g.state)) + "</span></td>" +
-      "<td>" + target + "</td>" +
     "</tr>" + detail;
 }
 
@@ -2055,17 +2057,16 @@ function renderPlatformLifecycleCard(lifecycle) {
       headerNote +
     "</div>" +
     staleNote +
-    // Six columns do not fit at every viewport; scroll inside the container
+    // Five columns do not fit at every viewport; scroll inside the container
     // rather than crushing the Component column (same fix as the advisor card).
     '<div style="overflow-x:auto;margin-top:0.75rem">' +
     '<table class="ip-table" style="width:100%;min-width:42rem">' +
       "<thead><tr>" +
         "<th>Component</th>" +
+        '<th style="width:9rem">Polaris target</th>' +
         '<th style="width:8rem">Installed</th>' +
-        '<th style="width:5rem">Track</th>' +
         '<th style="width:12rem">Supported until</th>' +
         '<th style="width:11rem">Status</th>' +
-        '<th style="width:9rem">Polaris target</th>' +
       "</tr></thead>" +
       "<tbody>" + sorted.map(_lifecycleRowHtml).join("") + "</tbody>" +
     "</table>" +

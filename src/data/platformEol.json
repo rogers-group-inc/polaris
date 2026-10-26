@@ -23,9 +23,9 @@
         { "track": "18", "released": "2022-04-19", "eol": "2025-04-30", "lts": true },
         { "track": "20", "released": "2023-04-18", "eol": "2026-04-30", "lts": true },
         { "track": "22", "released": "2024-04-24", "eol": "2027-04-30", "lts": true,
-          "securityFloor": { "version": "22.23.4", "advisories": ["CVE-2026-111497", "CVE-2026-105482", "CVE-2026-106069"], "source": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases", "sourceCheckedOn": "2026-10-23" } },
+          "securityFloor": { "version": "22.23.4", "advisories": [{ "id": "CVE-2026-111497", "severity": "high" }, { "id": "CVE-2026-105482", "severity": "high" }, { "id": "CVE-2026-106069", "severity": "high" }], "source": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases", "sourceCheckedOn": "2026-10-26" } },
         { "track": "24", "released": "2025-05-06", "eol": "2028-04-30", "lts": true,
-          "securityFloor": { "version": "24.22.1", "advisories": ["CVE-2026-111497", "CVE-2026-105482", "CVE-2026-105483", "CVE-2026-106069"], "source": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases", "sourceCheckedOn": "2026-10-23" } },
+          "securityFloor": { "version": "24.22.1", "advisories": [{ "id": "CVE-2026-111497", "severity": "high" }, { "id": "CVE-2026-105482", "severity": "high" }, { "id": "CVE-2026-105483", "severity": "high" }, { "id": "CVE-2026-106069", "severity": "high" }], "source": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases", "sourceCheckedOn": "2026-10-26" } },
         { "track": "25", "released": "2025-10-15", "eol": "2026-06-01", "prerelease": true, "note": "Odd major, never LTS." }
       ]
     },

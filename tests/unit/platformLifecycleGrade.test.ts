@@ -336,7 +336,7 @@ describe("platformEolDatasetSchema", () => {
 describe("gradeComponent — security floor", () => {
   const FLOOR = {
     version: "24.22.1",
-    advisories: ["CVE-2026-111497"],
+    advisories: [{ id: "CVE-2026-111497", severity: "high" }],
     source: "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
     sourceCheckedOn: "2026-10-23",
   };
@@ -378,8 +378,47 @@ describe("gradeComponent — security floor", () => {
     expect(gradeComponent(withFloor(), "22.12.0", NOW).state).toBe("behind_target");
   });
 
-  it("is warning, not critical, on a component that is not network-exposed", () => {
-    expect(gradeComponent(withFloor({ securityExposed: false }), "24.14.1", NOW).severity).toBe("warning");
+  it("colours by the worst vendor rating, one step higher when network-exposed", () => {
+    const at = (severities: string[], securityExposed: boolean) =>
+      gradeComponent(
+        withFloor({
+          securityExposed,
+          tracks: [
+            {
+              track: "24",
+              eol: isoIn(900),
+              securityFloor: {
+                ...FLOOR,
+                advisories: severities.map((severity, i) => ({ id: `CVE-2026-${i}`, severity })) as any,
+              },
+            },
+          ],
+        }),
+        "24.14.1",
+        NOW,
+      ).severity;
+    expect(at(["low"], false)).toBe("watch");
+    expect(at(["medium"], false)).toBe("warning");
+    expect(at(["high"], false)).toBe("critical");
+    expect(at(["critical"], false)).toBe("critical");
+    expect(at(["low"], true)).toBe("warning");
+    expect(at(["medium"], true)).toBe("critical");
+    // The worst advisory wins, wherever it sits in the list.
+    expect(at(["low", "high", "medium"], false)).toBe("critical");
+  });
+
+  it("keeps a low-rated floor out of the capacity snapshot's actionable set", () => {
+    // watch is card-only: lifecycleCapacityReasons takes warning and critical.
+    const g = gradeComponent(
+      withFloor({
+        securityExposed: false,
+        tracks: [{ track: "24", eol: isoIn(900), securityFloor: { ...FLOOR, advisories: [{ id: "CVE-1", severity: "low" }] } }],
+      }),
+      "24.14.1",
+      NOW,
+    );
+    expect(g.state).toBe("unpatched");
+    expect(g.severity).toBe("watch");
   });
 
   it("lets end of life outrank an open advisory — an EOL track has no patch to move to", () => {
@@ -400,5 +439,8 @@ describe("gradeComponent — security floor", () => {
     expect(parses(FLOOR)).toBe(true);
     expect(parses({ ...FLOOR, version: "v24.22.1" })).toBe(false);
     expect(parses({ ...FLOOR, advisories: [] })).toBe(false);
+    // Every advisory carries the vendor's rating; a bare ID is the old shape.
+    expect(parses({ ...FLOOR, advisories: ["CVE-2026-111497"] })).toBe(false);
+    expect(parses({ ...FLOOR, advisories: [{ id: "CVE-2026-111497", severity: "important" }] })).toBe(false);
   });
 });
