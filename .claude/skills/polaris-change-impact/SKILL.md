@@ -70,7 +70,7 @@ do this — which one is the reference?"). The UI counterpart is `polaris-ui-can
 
 | Group file | Services |
 |---|---|
-| [alerting-engine](references/services/alerting-engine.md) | notificationEngine, notificationRuleService, notificationService, notificationTypes, notificationChangeEvents, downDetectionService, probeLossQuery, automationTestService |
+| [alerting-engine](references/services/alerting-engine.md) | notificationEngine, notificationRuleService, notificationService, notificationTypes, notificationChangeEvents, downDetectionService, probeLossQuery, automationTestService, alertRenameService |
 | [alerting-scope-dimensions](references/services/alerting-scope-dimensions.md) | deviceFilterService, scopeRelationIndex, notificationDimensionService, notificationCadenceService, regionScopeService, maintenanceScheduleService, operationsCalendarService, automationActionService |
 | [alerting-delivery](references/services/alerting-delivery.md) | notificationDeliveryService, notificationEscalationService, notificationRecipientService, notificationPreferenceService, notificationChannelService, pushSubscriptionService, alertChartService, alertBrandService, alertInterfaceService, alertProcessService, alertDependencyPathService, contactService, directorySyncService, directorySearchService, automationScriptService, automationScriptRunner |
 | [monitoring-collection](references/services/monitoring-collection.md) | monitoringService, probePatchBuffer, interfaceInventoryService, interfaceTopologyService, apRadioService, arpTableService, ipsecConnectionService, peerInferredLldpService, agentlessHostService, agentlessProcessService, monitorOverrideService, osEventLogService, logFlagRuleService |

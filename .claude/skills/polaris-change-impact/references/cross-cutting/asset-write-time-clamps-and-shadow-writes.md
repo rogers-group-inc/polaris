@@ -11,6 +11,7 @@
   - recordIpHistory() upserts AssetIpHistory on ipAddress change
   - shadowWriteAssetSources() derives and upserts AssetSource rows when identity fields change
   - fireDnsResolvedReconcile() schedules a fire-and-forget per-asset reconcile of `dns_resolved` reservations (gated on writes that touch ipAddress / status / hostname / dnsName / macAddress)
+  - hostnameBeforeWrite() + fireAlertRenameFollow() (update / upsert staging `hostname`): read the name before the write, and when it changed rename the device's open alerts fire-and-forget via alertRenameService.followAssetRename() — business rule 134
   - fireDnsResolvedRelease() (delete branch only) releases any owned `dns_resolved` rows before the row is removed
 - `src/utils/manufacturerNormalize.ts` — normalizeManufacturer() pure function (cached alias map, no DB access)
 - `src/utils/osNormalize.ts` — normalizeOsInData() / normalizeWindowsOs() pure functions (no DB access, no row read — see the entry below for why)

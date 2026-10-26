@@ -24,7 +24,8 @@
  *   4. Asset update/upsert writes that stage `hostname` without touching
  *      `hostnameOverride` are checked against the row's operator hostname
  *      override and rewritten to it when set — discovery projection writes
- *      can never clobber an operator pin. Writes staging `ipAddress` without
+ *      can never clobber an operator pin. Any update/upsert that changes the
+ *      hostname then renames the device's OPEN alerts (alertRenameService). Writes staging `ipAddress` without
  *      touching `ipOverride` get the same guard with discovery-gets-a-vote
  *      semantics (enforceOperatorOverrides): a staged IP equal to the
  *      override releases the pin in the same write; a different staged IP is
@@ -95,6 +96,43 @@ function fireDnsResolvedReconcile(assetId: string | undefined): void {
       await svc.reconcileDnsResolvedForAsset(assetId);
     } catch {
       /* swallowed — reconcile is best-effort */
+    }
+  })();
+}
+// Same lazy shape: alertRenameService imports `prisma` from this file.
+let _alertRenameSvcPromise: Promise<typeof import("./services/alertRenameService.js")> | null = null;
+function getAlertRenameSvc() {
+  if (!_alertRenameSvcPromise) {
+    _alertRenameSvcPromise = import("./services/alertRenameService.js");
+  }
+  return _alertRenameSvcPromise;
+}
+/**
+ * The row's hostname before a write that stages `hostname` — `undefined` when
+ * the write stages none (the monitor hot paths never pay the read) or the read
+ * fails. Staged by discovery projection every cycle, so this is an indexed
+ * point read at discovery cadence, the same budget as enforceOperatorOverrides.
+ */
+async function hostnameBeforeWrite(base: PrismaClient, where: unknown, data: unknown): Promise<string | null | undefined> {
+  const d = data as Record<string, unknown> | undefined;
+  if (!d || typeof d !== "object" || !("hostname" in d)) return undefined;
+  try {
+    const row = await base.asset.findFirst({ where: where as any, select: { hostname: true } });
+    return row ? row.hostname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** An open alert follows its device's rename (alertRenameService). Fire-and-forget. */
+function fireAlertRenameFollow(before: string | null | undefined, result: any): void {
+  const after = typeof result?.hostname === "string" ? result.hostname : null;
+  if (!before || !after || before === after || typeof result?.id !== "string") return;
+  void (async () => {
+    try {
+      const svc = await getAlertRenameSvc();
+      await svc.followAssetRename(result.id, before, after);
+    } catch {
+      /* swallowed — the next rename, or the alert's clear, settles it */
     }
   })();
 }
@@ -709,8 +747,10 @@ function _buildClient(base: PrismaClient) {
           clampMonitoredForStatus(args?.data);
           await enforceMonitorableStatus(base, args?.where, args?.data);
           const overrideOutcome = await enforceOperatorOverrides(base, args?.where, args?.data);
+          const hostBefore = await hostnameBeforeWrite(base, args?.where, args?.data);
           const result = await query(args);
           if (overrideOutcome) fireIpOverrideFollowUp(overrideOutcome, (result as any)?.id);
+          fireAlertRenameFollow(hostBefore, result);
           const d = args.data as Record<string, unknown> | undefined;
           const ip = typeof d?.ipAddress === "string" ? d.ipAddress : undefined;
           if (ip) {
@@ -755,8 +795,11 @@ function _buildClient(base: PrismaClient) {
           // Create branch needs no guard — a brand-new row can't carry an
           // override; the read is a no-op miss when the row doesn't exist.
           const overrideOutcome = await enforceOperatorOverrides(base, args?.where, args?.update);
+          // A create branch has no previous name: the read misses and nothing follows.
+          const hostBefore = await hostnameBeforeWrite(base, args?.where, args?.update);
           const result = await query(args);
           if (overrideOutcome) fireIpOverrideFollowUp(overrideOutcome, (result as any)?.id);
+          fireAlertRenameFollow(hostBefore, result);
           const updateTouches = touchesAssetSources(args?.update);
           // Always fires after a create branch (we can't tell from the
           // result alone which branch ran, so we re-derive when the inputs

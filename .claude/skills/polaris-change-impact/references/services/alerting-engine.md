@@ -259,6 +259,27 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/alertRenameService.ts
+
+**What it owns:** Business rule 134 — renaming a device's OPEN alerts when the device is renamed.
+
+**Public API:** `followAssetRename(assetId, oldName, newName)` → count rewritten; the pure `replaceDeviceName(text, oldName, newName)` (whole-word) and `renameInTemplateCtx(ctx, oldName, newName)` (null when nothing changed).
+
+**Cross-service deps:** `prisma` only.
+
+**Used by:** `src/db.ts → fireAlertRenameFollow()` — the asset extension's update / upsert hooks, fire-and-forget, after `hostnameBeforeWrite()` read the name the write is replacing. Lazy-imported (the service imports `prisma` from `db.ts`), the same shape as `dnsResolvedReservationService`.
+
+**Invariants:**
+- Only `cleared: false` rows whose `assetHostname` EQUALS the old name. Cleared alerts are history and keep the fire-time name; a subnet / automation fold (rule 75) names something else in `assetHostname` and is left alone by the exact match, though its `assetId` is the renamed device.
+- Three places carry the name and all three move: `assetHostname`, `message`, every string value of `templateCtx` (what reminders / escalations render from). `members` labels are dimension labels, not device names, and are not touched.
+- Whole words only — the old name inside a longer name (`GATE-10`, `SITE-GATE-1`, `GATE-1.corp`) is a different device.
+- Each row's update re-checks `cleared: false` + the old name, so an alert cleared between the read and the write keeps its name.
+- No Event: the rename that caused it is the audited action.
+
+**When changing this:** a new Notification column that snapshots the device name must be added to `followAssetRename`'s update. A new asset writer that stages `hostname` through `updateMany` or raw SQL bypasses the hook — rename its alerts explicitly or route it through `update`.
+
+---
+
 ## services/automationTestService.ts
 
 **What it owns:** Firing ONE action of an automation draft for real, so the wizard's Summary step can prove delivery works before the rule is saved.
