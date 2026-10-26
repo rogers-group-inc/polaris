@@ -355,6 +355,14 @@ FortiManager lists the same name with a different serial, so a swap that keeps
 the name does not leave the old record active. Its switches and APs are not
 touched, because they belong to the new gate.
 
+**A renamed gate still accounts for the switches and APs it left behind.**
+When a FortiGate is renamed in FortiManager (moved to a new site, say), the
+switches and APs it still manages pick up the new name on the next discovery.
+The ones it no longer has are found by the gate's **serial** and decommissioned,
+with the old name shown in the Event ("formerly …"). A switch or AP whose
+controller is no longer in FortiManager under any name or serial is
+decommissioned too, unless another FortiGate still reports it.
+
 ### Rule 42
 **Some address space is not one network, and the way to say so is to exclude it.**
 Global, CIDR-identified and frozen after create, one-directional containment,

@@ -520,6 +520,46 @@ Phase 2a. Whether the new box is the same SITE as the old one is the operator's
 call — a chassis re-registered under the same name at another site is possible
 — so the sweep only retires, and the merge waits for the card.
 
+### 41(b) — a renamed gate still answers for what it left behind (2026-10-26)
+
+An operator moved a FortiGate to a new site and renamed it in FortiManager. The
+switches and APs that went with it were re-stamped with the new
+`controllerFortigate` on the next run. The ones that stayed at the old site, now
+removed from the gate's config, kept the OLD name, and stayed `active` through
+every later discovery.
+
+Phase 2b judged a child only when its stamped controller NAME was in the run's
+inventoried set. After the rename that set held only the new name, so the
+stranded children were skipped as "controller unreachable, no fresh answer",
+forever. Phase 2a's cascade did not help: the gate never left the roster (its
+serial was still there), so nothing was decommissioned to cascade from. It is
+the same mistake rule 41 corrects for subnets, a name standing in for a chassis.
+
+The fix resolves the controller through `controllerSerial` first (stamped since
+2026-08) against the serials of the gates processed this run, mapped to each
+gate's CURRENT name, and judges the child there. The Event names the old name.
+For a child stamped before 2026-08 (name only), or one whose gate was removed
+outright, the sweep now asks whether the controller exists in the roster under
+either identity. If it exists under neither, the child is an orphan and is
+decommissioned with `reason: "controller-not-in-roster"`.
+
+Two guards keep this from over-reaching:
+- **Only on a run that read the whole roster** (Phase 2a's gate, never
+  `finalize-scoped`). A scoped run's roster is one device, and would make the
+  whole fleet look orphaned.
+- **An orphan is spared by evidence from ANY gate** (`isSightedAnywhere`): live
+  status, or another controller's CMDB roster. This is deliberately wider than
+  `isVouchedManagedDevice`'s per-controller scope, because the orphan's own
+  controller no longer exists to vouch for it. If another gate holds the device,
+  that gate re-stamps it when it reports it. Rejected alternative: keeping the
+  per-controller CMDB scope for orphans. It would decommission a device that is
+  configured on its new gate but offline at the moment of the run.
+
+Not changed: the Phase 2a cascade still matches the retired gate's hostname.
+Where FortiManager's name differs from the hostname, the cascade misses, and
+the orphan clause catches the child in the same run, except where a gate still
+reports it.
+
 ---
 
 <a id="rule-42"></a>
