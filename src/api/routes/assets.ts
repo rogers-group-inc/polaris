@@ -101,6 +101,7 @@ import { resolveConnectionPath } from "../../services/connectionPathService.js";
 import { resolveAssetUpstream } from "../../services/assetUpstreamService.js";
 import { resolveAssetVips } from "../../services/assetVipService.js";
 import { fillMacTableVlans, getVlanNamesForAsset } from "../../services/vlanNameService.js";
+import { listInterfaceTags, setInterfaceTags } from "../../services/interfaceTagService.js";
 import { shapeManagementAccessForClient } from "../../services/fortinetManagementAccessService.js";
 import { propagateAfterStatusChange, FORTINET_INFRA_ASSET_TYPES } from "../../services/dependencyTreeService.js";
 import { pickSampleTierForAsset } from "../../services/sampleQueryRouter.js";
@@ -2784,9 +2785,10 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
     const neighborAssetIds = [...new Set(
       mergedNeighbors.map((n) => n.matchedAsset?.id).filter((v): v is string => !!v),
     )];
-    const [vlanNames, neighborAlerts] = await Promise.all([
+    const [vlanNames, neighborAlerts, interfaceTags] = await Promise.all([
       getVlanNamesForAsset(id),
       activeAlertSummaryByAsset(neighborAssetIds),
+      listInterfaceTags(id),
     ]);
 
     res.json({
@@ -2835,6 +2837,8 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
         addressingMode: i.addressingMode ?? null,
         poeStatus:   i.poeStatus ?? null,
         poeClass:    i.poeClass  ?? null,
+        // Hand-applied and filter-applied tags (business rule 133).
+        tags:        interfaceTags.get(i.ifName) ?? [],
       })),
       vlanNames,
       physicalEntities: physicalEntities.map((e) => ({
@@ -3641,6 +3645,24 @@ router.put("/:id/interfaces/:ifName/comment", requirePermission("assets", "write
       : { attempted: false as const };
 
     res.json({ ok: true, ifName, description: trimmed.length === 0 ? null : trimmed, sync });
+  } catch (err) { next(err); }
+});
+
+// PUT /assets/:id/interfaces/:ifName/tags — replace the HAND-APPLIED tags on
+// one interface (business rule 133). Tags a tag's auto-assign filter put on the
+// port are left alone (and come back in the response flagged `auto`); naming
+// one here converts it to a hand-applied tag. Same gate as the comment above.
+const InterfaceTagsSchema = z.object({
+  tags: z.array(z.string().max(200)).max(200),
+});
+router.put("/:id/interfaces/:ifName/tags", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const ifName = String(req.params.ifName || "");
+    if (!ifName) throw new AppError(400, "ifName path parameter is required");
+    const { tags } = InterfaceTagsSchema.parse(req.body || {});
+    const result = await setInterfaceTags(id, ifName, tags, requestActor(req));
+    res.json({ ok: true, ifName, tags: result });
   } catch (err) { next(err); }
 });
 

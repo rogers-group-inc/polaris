@@ -1296,6 +1296,13 @@ export const DEVICE_FILTER_FIELD_OPS: Record<string, readonly string[]> = {
   // every gate at the site. Mirrors the tagAssignmentService rule of the same
   // name; a negative operator means NONE of those names satisfy it.
   fortigate: STRING_OPS_WITH_WILDCARD,
+  // "Native VLAN" — the untagged VLAN (PVID) of ANY of the device's ports
+  // (AssetInterface.nativeVlan, every port, trunks included), so it selects
+  // SWITCHES: "every switch with a port on VLAN 30". The fourth
+  // relation-backed field, multi-valued exactly like interfaceName. A tag
+  // carrying a positive leaf also tags the matching PORTS (business rule 133).
+  // Device-filter only — the automations scope never asked for it.
+  nativeVlan: ["equals", "notEquals"],
 };
 export const DEVICE_FILTER_FIELDS = Object.keys(DEVICE_FILTER_FIELD_OPS);
 
@@ -1345,6 +1352,8 @@ function makeScopeConditionSchema(
         }
       } else if (CIDR_VALUED_FIELDS.has(r.field) && !isValidCidr(r.value) && !isValidIpAddress(r.value)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${r.value}" must be a CIDR (e.g. 10.20.0.0/16) or an IP address` });
+      } else if (r.field === "nativeVlan" && parseVlanId(r.value) == null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${r.value}" must be a VLAN number from 1 to 4094` });
       }
       // A malformed wildcard must be a 400 at save time, not a throw inside the
       // fire-time matcher — the same reason tag criteria compile theirs on write.
@@ -1421,8 +1430,11 @@ export function conditionFields(cond: ScopeConditionGroup): Set<string> {
  * which is what kept the fleet-scale SQL path and the single-asset in-memory
  * path answering the same question when the second such field arrived.
  */
-export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" | "apVaps" | "managedAgent"; column: "ifName" | "ssid" | "installStatus" }> = {
+export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" | "apVaps" | "managedAgent"; column: "ifName" | "nativeVlan" | "ssid" | "installStatus" }> = {
   interfaceName:  { relation: "interfaces",   column: "ifName" },
+  // An integer column, matched by number rather than as a string — see
+  // parseVlanId, which both the SQL leaf and the in-memory path go through.
+  nativeVlan:     { relation: "interfaces",   column: "nativeVlan" },
   ssid:           { relation: "apVaps",       column: "ssid" },
   // Not a string match like the other two: the prefetch answers "has an
   // ACTIVE agent" whatever the rule's value, and matchScopeRule compares that
@@ -1433,7 +1445,46 @@ export const RELATION_CONDITION_FIELD_NAMES = Object.keys(RELATION_CONDITION_FIE
 
 /** Does this tree ask about the interface inventory? */
 export function conditionNeedsInterfaces(cond: ScopeConditionGroup | null | undefined): boolean {
-  return !!cond && conditionFields(cond).has("interfaceName");
+  if (!cond) return false;
+  const fields = conditionFields(cond);
+  return fields.has("interfaceName") || fields.has("nativeVlan");
+}
+
+/**
+ * A `nativeVlan` rule value as a VLAN id, or null when it is not one. The
+ * value is stored as a string like every other leaf; "030" and "30" are the
+ * same VLAN, so every comparison goes through this rather than the string.
+ */
+export function parseVlanId(raw: string | null | undefined): number | null {
+  const s = String(raw ?? "").trim();
+  if (!/^\d{1,4}$/.test(s)) return null;
+  const n = Number(s);
+  return n >= 1 && n <= 4094 ? n : null;
+}
+
+/**
+ * The VLANs whose ports a tag filter TAGS (business rule 133): every
+ * `nativeVlan` leaf that asserts the VLAN is PRESENT — `equals` under an even
+ * number of negating groups (`none` / `notAll`), or `notEquals` under an odd
+ * number. A leaf asserting absence names a VLAN the matched device's ports are
+ * NOT on, so it tags no port. Empty when the tree tags no ports at all, which
+ * is the ordinary device-only tag.
+ */
+export function positiveNativeVlans(cond: ScopeConditionGroup | null | undefined): number[] {
+  const out = new Set<number>();
+  const walk = (g: ScopeConditionGroup, negated: boolean): void => {
+    const flip = g.op === "none" || g.op === "notAll" ? !negated : negated;
+    for (const c of g.children) {
+      if ("op" in c) { walk(c as ScopeConditionGroup, flip); continue; }
+      const rule = c as ScopeConditionRule;
+      if (rule.field !== "nativeVlan") continue;
+      const asserts = rule.operator === "equals" ? !flip : rule.operator === "notEquals" ? flip : false;
+      const id = parseVlanId(rule.value);
+      if (asserts && id != null) out.add(id);
+    }
+  };
+  if (cond) walk(cond, false);
+  return Array.from(out).sort((a, b) => a - b);
 }
 
 /** Does this tree ask about the broadcast-SSID inventory? */
@@ -1476,7 +1527,7 @@ export interface ScopeConditionAsset {
    *  ONLY when a tree actually references it (conditionNeedsInterfaces) — at
    *  2000 assets this relation is an order of magnitude larger than the row it
    *  hangs off, which is why only the SINGLE-asset paths read it this way. */
-  interfaces?: { ifName: string }[];
+  interfaces?: { ifName: string; nativeVlan?: number | null }[];
   /** Current-state broadcast-SSID inventory, for the `ssid` field. Joined on
    *  the same terms as `interfaces` above — only when a tree asks for it,
    *  and only on the SINGLE-asset paths. */
@@ -1620,6 +1671,15 @@ function interfaceNames(asset: ScopeConditionAsset): string[] {
   return out;
 }
 
+/** Every native VLAN the asset's ports carry, as canonical id strings. */
+function nativeVlanIds(asset: ScopeConditionAsset): string[] {
+  const out = new Set<string>();
+  for (const i of asset.interfaces ?? []) {
+    if (i.nativeVlan != null) out.add(String(i.nativeVlan));
+  }
+  return Array.from(out);
+}
+
 /** Every SSID the asset is currently broadcasting, lower-cased. One SSID is
  *  commonly broadcast by several VAPs (one per radio), so this deduplicates —
  *  otherwise a negative operator has to hold against the same name twice,
@@ -1710,6 +1770,20 @@ function matchScopeRule(rule: ScopeConditionRule, asset: ScopeConditionAsset): b
       }
       const values = rule.field === "ssid" ? broadcastSsids(asset) : interfaceNames(asset);
       return matchMultiValue(rule, values, v);
+    }
+    case "nativeVlan": {
+      // The interfaceName arm's two ways in, compared by NUMBER: the needle is
+      // the canonical id, so "030" and "30" are one VLAN on both paths. A value
+      // that is no VLAN id (only a row written past validation) matches no
+      // port — a positive claim fails, an absence claim holds.
+      const pre = asset.relationLeafHits;
+      const key = relationLeafKey(rule);
+      if (pre && pre.has(key)) {
+        const hit = pre.get(key) === true;
+        return isNegativeStringOp(rule.operator) ? !hit : hit;
+      }
+      const id = parseVlanId(rule.value);
+      return matchMultiValue(rule, nativeVlanIds(asset), id == null ? "\u0000" : String(id));
     }
     default: { // manufacturer / model / hostname / os (+ the device-filter
       // extras: osVersion / department / location) — string ops
@@ -5966,6 +6040,9 @@ const SCOPE_FIELD_META: Record<string, { label: string; optionsFrom: string | nu
   department: { label: "Department", optionsFrom: null },
   location: { label: "Location", optionsFrom: null },
   fortigate: { label: "Behind FortiGate", optionsFrom: null },
+  // Options are { value: id, label: "30 · Users_VL30" } — the VLAN names the
+  // fleet's VLAN interfaces carry — from listScopeOptions' `nativeVlans`.
+  nativeVlan: { label: "Native VLAN", optionsFrom: "nativeVlans" },
   // NOTE: `assetId` remains a valid field for saved rules (SCOPE_FIELD_OPS +
   // matchScopeRule still handle it) but is deliberately absent here, so it is
   // not offered as a new builder choice — a raw id targets one device with no

@@ -659,6 +659,20 @@ FortiGate. A VLAN nothing names shows as *VLAN 30*. The column filters list the
 names as well, as *30 · Users_VL30*. The interface panel's VLAN card uses the
 same pills.
 
+**Interfaces carry tags.** Open an interface's panel and use **Edit tags**
+under *Interface Comments* to tag that port with tags from the same registry
+assets use (`assets:write`). A tag can also land on a port automatically: a
+tag whose [auto-assign filter](Server-Settings#tags) has a **Native VLAN**
+condition goes on every port on that VLAN, on each device the filter matches,
+and on the device itself. Those show with a ⚙ and can't be unticked in the
+editor; change the tag's filter to move them. Ticking one there keeps it on the
+port by hand. A **Tags** column appears in the Interfaces table once any port
+carries a tag, and filters like the VLAN columns. A port's tags are kept while
+it is briefly missing from a scrape. Renaming a tag in the registry renames it
+on ports too. Deleting it removes the automatic copies and keeps the ones added
+by hand. The `region:` and `azure:` tags are device-only and are refused on a
+port. See [rule 133](Business-Rules#rule-133).
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 When the interface's address sits inside a network Polaris knows, the click

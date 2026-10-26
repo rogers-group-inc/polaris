@@ -587,7 +587,7 @@ function describeTagFilter(
 ): string {
   if (condition) {
     const { rules } = scopeConditionStats(condition);
-    return ` with an auto-assign device filter (${rules} condition${rules === 1 ? "" : "s"})`;
+    return ` with an auto-assign filter (${rules} condition${rules === 1 ? "" : "s"})`;
   }
   if (criteria) return ` with ${criteria.rules.length} auto-assign rule(s)`;
   return "";
@@ -818,6 +818,14 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
         prisma.$executeRaw`UPDATE ip_blocks SET tags = array_replace(tags, ${oldName}, ${name}) WHERE ${oldName} = ANY(tags)`,
         prisma.$executeRaw`UPDATE subnets SET tags = array_replace(tags, ${oldName}, ${name}) WHERE ${oldName} = ANY(tags)`,
         prisma.$executeRaw`UPDATE assets SET tags = array_replace(tags, ${oldName}, ${name}) WHERE ${oldName} = ANY(tags)`,
+        // Interface tags (business rule 133) are keyed by name, so a port that
+        // already carries the new name (an unregistered hand-typed tag — a
+        // registered one was refused above) keeps that row and drops the old.
+        prisma.$transaction([
+          prisma.$executeRaw`DELETE FROM asset_interface_tags a WHERE a.tag = ${oldName} AND EXISTS (
+            SELECT 1 FROM asset_interface_tags b WHERE b."assetId" = a."assetId" AND b."ifName" = a."ifName" AND b.tag = ${name})`,
+          prisma.$executeRaw`UPDATE asset_interface_tags SET tag = ${name} WHERE tag = ${oldName}`,
+        ]),
       ]);
     }
 
@@ -829,7 +837,7 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
       resourceName: tag.name,
       actor: req.session?.username,
       message: renamed
-        ? `Tag renamed: "${existing.name}" → "${tag.name}" (rewritten across blocks/subnets/assets)`
+        ? `Tag renamed: "${existing.name}" → "${tag.name}" (rewritten across blocks/subnets/assets/interfaces)`
         : `Tag updated: "${tag.name}"`,
     });
 

@@ -734,8 +734,20 @@ The last card on the **Identification** tab, gated `serverSettingsSystem` with
 mutations at `write`.
 
 The registry holds every tag, its category and colour, and optionally a
-**device filter that auto-assigns it**. A preview reports the match count, a
-sample, and the `+add` / `-remove` delta against the tag's current assignments.
+**filter that auto-assigns it** (the **Auto-assign by filter** switch in Add /
+Edit Tag). A preview reports the match count, a sample, and the `+add` /
+`-remove` delta against the tag's current assignments.
+
+**A Native VLAN condition tags interfaces as well as devices.** The filter's
+**Native VLAN** field matches a device with any port whose untagged (native)
+VLAN is that number, trunk ports included, so *Native VLAN is equal to 30*
+selects every switch with a port on VLAN 30. The tag then also goes on **each
+of those ports**, shown in the device's Interfaces table and interface panel
+with a ⚙. When a port moves off the VLAN its tag comes off, and when a switch
+has no port left on the VLAN the switch loses the tag too. The preview adds the
+number of interfaces the tag would land on. The value list names each VLAN the
+way the fleet's VLAN interfaces do (*30 · Users_VL30*). See
+[rule 133](Business-Rules#rule-133).
 
 A tag's colour is either a **custom colour** or a **severity colour**
 (*Severity: Notice* … *Severity: Critical* in the Color field). A severity
@@ -751,7 +763,7 @@ are drawn the same way. Through the API,
 Every install starts with five tags in the **Priority** category, one per alert
 severity and given that severity's colour: **Notice**, **Informational**,
 **Warning**, **Serious** and **Critical**. They are ordinary manual tags, so you
-can rename, recolour or delete them, or give them a device filter. A tag you
+can rename, recolour or delete them, or give them an auto-assign filter. A tag you
 already had under one of those names is left exactly as it was, whatever its
 category.
 

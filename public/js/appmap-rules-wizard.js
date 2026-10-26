@@ -86,6 +86,7 @@
         case "models":         return plain(o.models);
         case "interfaceNames": return plain(o.interfaceNames);
         case "ssids":          return plain(o.ssids);
+        case "nativeVlans":    return (o.nativeVlans || []).slice(); // already { value, label }
         case "tags":           return plain(o.tags);
         case "subnets":
           return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr, name: sn.name }; });

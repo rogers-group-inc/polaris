@@ -35,6 +35,15 @@
  *      a provenance row exists. A hand-applied copy of the same tag name on an
  *      asset the engine never tagged (no provenance) is preserved forever.
  *
+ * PORTS (business rule 133). A tag whose filter asserts a native VLAN
+ * (`nativeVlan equals 30` — positiveNativeVlans) is also applied to the PORTS
+ * of each matched device whose native VLAN is one of those, as `auto` rows in
+ * AssetInterfaceTag with `tagId` as provenance. The device itself matches
+ * through the same leaf, which is what "a switch with a port on VLAN 30
+ * inherits the tag" means. Every reconciler below runs both halves; the port
+ * half only ever adds or removes `auto` rows carrying its own tagId, and never
+ * lands on a port already holding the tag by hand.
+ *
  * Reconcile entry points:
  *   - reconcileTag(tagId)         — one tag, full diff (inline on tag create/edit)
  *   - reconcileAllTags()          — every managed tag (periodic job + discovery-end)
@@ -60,6 +69,7 @@ import {
   conditionNeedsInterfaces,
   deviceFilterConditionSchema,
   evaluateScopeCondition,
+  positiveNativeVlans,
   scopeConditionStats,
   SCOPE_CONDITION_MAX_DEPTH,
   SCOPE_CONDITION_MAX_RULES,
@@ -765,12 +775,100 @@ async function applyDelta(
   }
 }
 
+// ─── Port (interface) tag primitives — business rule 133 ─────────────────────
+
+/** One port, as AssetInterfaceTag keys it. */
+interface PortRef {
+  assetId: string;
+  ifName: string;
+}
+
+const portKey = (p: PortRef): string => p.assetId + "\u0000" + p.ifName;
+
+/**
+ * The ports a tag filter applies its tag to: every port on a VLAN the tree
+ * asserts (positiveNativeVlans) of a device in `assetIds` — the devices the
+ * same filter matched. Empty for a tree with no such leaf, which is every tag
+ * that was a device-only tag before this rule.
+ *
+ * Queried by VLAN, not by device: a broad filter can match most of the fleet,
+ * and an IN list of 2000 asset ids against the largest current-state table is
+ * the shape to avoid. A handful of VLAN ids narrows it instead, and the device
+ * set is applied here.
+ */
+async function expectedTaggedPorts(
+  cond: ScopeConditionGroup | null,
+  assetIds: ReadonlySet<string>,
+): Promise<PortRef[]> {
+  const vlans = positiveNativeVlans(cond);
+  if (vlans.length === 0 || assetIds.size === 0) return [];
+  const rows = await prisma.assetInterface.findMany({
+    where: { nativeVlan: { in: vlans } },
+    select: { assetId: true, ifName: true },
+  });
+  return rows.filter((r) => assetIds.has(r.assetId));
+}
+
+/** How many ports a tag filter would tag — the preview's second count. */
+export async function countTaggedPorts(
+  cond: ScopeConditionGroup | null,
+  assetIds: ReadonlySet<string>,
+): Promise<number> {
+  return (await expectedTaggedPorts(cond, assetIds)).length;
+}
+
+/**
+ * Diff one tag's ports against what is stored and write the difference.
+ *
+ * `rows` is every AssetInterfaceTag row carrying the tag's NAME within the
+ * caller's scope (the whole fleet, or one asset). Ours are the `auto` rows with
+ * this tagId; any other row — a manual one, or another tag's of the same name —
+ * OCCUPIES its port, so we neither add there nor ever remove it. Idempotent:
+ * no write when nothing differs.
+ */
+async function applyPortDelta(
+  tagId: string,
+  tagName: string,
+  expected: PortRef[],
+  rows: { assetId: string; ifName: string; source: string; tagId: string | null }[],
+): Promise<{ added: number; removed: number }> {
+  const ours = new Map<string, PortRef>();
+  const occupied = new Set<string>();
+  for (const r of rows) {
+    occupied.add(portKey(r));
+    if (r.source === "auto" && r.tagId === tagId) ours.set(portKey(r), r);
+  }
+  const want = new Set(expected.map(portKey));
+  const toAdd = expected.filter((p) => !occupied.has(portKey(p)));
+  const toRemove = [...ours.values()].filter((p) => !want.has(portKey(p)));
+
+  if (toAdd.length > 0) {
+    await prisma.assetInterfaceTag.createMany({
+      data: toAdd.map((p) => ({ assetId: p.assetId, ifName: p.ifName, tag: tagName, source: "auto", tagId })),
+      skipDuplicates: true,
+    });
+  }
+  for (const chunk of chunkArray(toRemove, BATCH)) {
+    await prisma.assetInterfaceTag.deleteMany({
+      where: {
+        tagId,
+        source: "auto",
+        OR: chunk.map((p) => ({ assetId: p.assetId, ifName: p.ifName })),
+      },
+    });
+  }
+  return { added: toAdd.length, removed: toRemove.length };
+}
+
 // ─── Reconcilers ──────────────────────────────────────────────────────────────
 
 export interface TagReconcileSummary extends Record<string, unknown> {
   tagId?: string;
   added: number;
   removed: number;
+  /** Ports the tag was added to / removed from (business rule 133). */
+  portsAdded?: number;
+  portsRemoved?: number;
 }
 
 /**
@@ -797,7 +895,26 @@ export async function reconcileTag(tagId: string): Promise<TagReconcileSummary> 
   if (toAdd.length > 0 || toRemove.length > 0) {
     await applyDelta(tagId, tag.name, toAdd, toRemove);
   }
-  return { tagId, added: toAdd.length, removed: toRemove.length };
+
+  // The port half. The rows are read by NAME as well as by tagId: a port that
+  // already holds the tag by hand is occupied, and an auto row is ours by tagId
+  // even if a rename has not reached its `tag` column yet.
+  const [expectedPorts, portRows] = await Promise.all([
+    expectedTaggedPorts(filter.condition, expectedIds),
+    prisma.assetInterfaceTag.findMany({
+      where: { OR: [{ tag: tag.name }, { tagId }] },
+      select: { assetId: true, ifName: true, source: true, tagId: true },
+    }),
+  ]);
+  const ports = await applyPortDelta(tagId, tag.name, expectedPorts, portRows);
+
+  return {
+    tagId,
+    added: toAdd.length,
+    removed: toRemove.length,
+    portsAdded: ports.added,
+    portsRemoved: ports.removed,
+  };
 }
 
 /** Reconcile every managed (filter-bearing) tag. Periodic + discovery-end. */
@@ -806,11 +923,15 @@ export async function reconcileAllTags(): Promise<TagReconcileSummary> {
   const managed = tags.filter(tagIsManaged);
   let added = 0;
   let removed = 0;
+  let portsAdded = 0;
+  let portsRemoved = 0;
   for (const t of managed) {
     try {
       const s = await reconcileTag(t.id);
       added += s.added;
       removed += s.removed;
+      portsAdded += s.portsAdded ?? 0;
+      portsRemoved += s.portsRemoved ?? 0;
     } catch (err: any) {
       logger.debug(
         { err: err?.message ?? String(err), tagId: t.id },
@@ -818,7 +939,18 @@ export async function reconcileAllTags(): Promise<TagReconcileSummary> {
       );
     }
   }
-  return { added, removed };
+  // Auto port rows whose tag no longer auto-assigns (deleted, or its filter
+  // cleared by a path that did not reconcile inline). Ours by provenance, so
+  // removing them never touches a hand-applied port tag.
+  try {
+    const orphaned = await prisma.assetInterfaceTag.deleteMany({
+      where: { source: "auto", NOT: { tagId: { in: managed.map((t) => t.id) } } },
+    });
+    portsRemoved += orphaned.count;
+  } catch (err: any) {
+    logger.debug({ err: err?.message ?? String(err) }, "tagAssignment: orphaned port-tag sweep failed (non-fatal)");
+  }
+  return { added, removed, portsAdded, portsRemoved };
 }
 
 /**
@@ -874,11 +1006,13 @@ export async function reconcileTagsForAsset(assetId: string): Promise<TagReconci
   // applyDelta call is bounded and cheap (managed tag counts are small).
   let added = 0;
   let removed = 0;
+  const matched = new Set<string>();
   for (const t of managed) {
     const matches = t.filter.condition
       ? tagAssetIsEligible(t.filter.condition, asset.status) &&
         evaluateScopeCondition(t.filter.condition, asset as unknown as ScopeConditionAsset)
       : buildMatcher(t.filter.criteria as TagCriteria, cidrMatch)(asset);
+    if (matches) matched.add(t.id);
     if (matches && !provSet.has(t.id)) {
       await applyDelta(t.id, t.name, [assetId], []);
       added++;
@@ -887,6 +1021,63 @@ export async function reconcileTagsForAsset(assetId: string): Promise<TagReconci
       removed++;
     }
   }
+
+  const ports = await reconcilePortTagsForAsset(assetId, managed, matched);
+  return { added, removed, portsAdded: ports.added, portsRemoved: ports.removed };
+}
+
+/**
+ * The port half of reconcileTagsForAsset: this asset's ports against every
+ * managed tag, given which of those tags the asset itself matched. No query at
+ * all when no managed tag tags ports and the asset carries no auto port row —
+ * the common case, and this runs on asset writes.
+ */
+async function reconcilePortTagsForAsset(
+  assetId: string,
+  managed: { id: string; name: string; filter: TagFilter }[],
+  matched: ReadonlySet<string>,
+): Promise<{ added: number; removed: number }> {
+  const portTags = managed
+    .map((t) => ({ ...t, vlans: positiveNativeVlans(t.filter.condition) }))
+    .filter((t) => t.vlans.length > 0);
+  const rows = await prisma.assetInterfaceTag.findMany({
+    where: { assetId },
+    select: { assetId: true, ifName: true, tag: true, source: true, tagId: true },
+  });
+  const managedIds = new Set(portTags.map((t) => t.id));
+  const strayAuto = rows.filter((r) => r.source === "auto" && (!r.tagId || !managedIds.has(r.tagId)));
+  if (portTags.length === 0 && strayAuto.length === 0) return { added: 0, removed: 0 };
+
+  const ifaces = portTags.length > 0
+    ? await prisma.assetInterface.findMany({
+        where: { assetId, nativeVlan: { not: null } },
+        select: { ifName: true, nativeVlan: true },
+      })
+    : [];
+
+  let added = 0;
+  let removed = 0;
+  for (const t of portTags) {
+    const vlans = new Set(t.vlans);
+    const expected = matched.has(t.id)
+      ? ifaces.filter((i) => i.nativeVlan != null && vlans.has(i.nativeVlan)).map((i) => ({ assetId, ifName: i.ifName }))
+      : [];
+    const d = await applyPortDelta(t.id, t.name, expected, rows.filter((r) => r.tag === t.name || r.tagId === t.id));
+    added += d.added;
+    removed += d.removed;
+  }
+  // An auto row whose tag no longer tags ports (its filter lost the VLAN leaf,
+  // or the tag is gone): ours by provenance, so it goes.
+  if (strayAuto.length > 0) {
+    await prisma.assetInterfaceTag.deleteMany({
+      where: {
+        assetId,
+        source: "auto",
+        OR: strayAuto.map((r) => ({ ifName: r.ifName, tag: r.tag })),
+      },
+    });
+    removed += strayAuto.length;
+  }
   return { added, removed };
 }
 
@@ -894,6 +1085,9 @@ export async function reconcileTagsForAsset(assetId: string): Promise<TagReconci
 
 export interface TagFilterPreview {
   matchCount: number;
+  /** Ports the tag would land on — non-zero only for a filter asserting a
+   *  native VLAN (business rule 133). */
+  portCount: number;
   sample: Array<{ id: string; hostname: string | null; ipAddress: string | null; assetType: string }>;
   diff?: { add: number; remove: number };
 }
@@ -915,10 +1109,11 @@ export async function previewTagFilter(
     : { condition: null, criteria: normalizeCriteria(input.criteria ?? null) };
 
   if (!filter.condition && !filter.criteria) {
-    return { matchCount: 0, sample: [], diff: tagId ? { add: 0, remove: 0 } : undefined };
+    return { matchCount: 0, portCount: 0, sample: [], diff: tagId ? { add: 0, remove: 0 } : undefined };
   }
 
   const expected = await resolveTagFilterAssetIds(filter);
+  const portCount = await countTaggedPorts(filter.condition, expected);
   const sampleIds = [...expected].slice(0, 25);
   const sample = sampleIds.length
     ? await prisma.asset.findMany({
@@ -942,11 +1137,14 @@ export async function previewTagFilter(
     diff = { add, remove };
   }
 
-  return { matchCount: expected.size, sample, diff };
+  return { matchCount: expected.size, portCount, sample, diff };
 }
 
-/** Strip all engine-owned copies of a tag (used on tag delete). */
+/** Strip all engine-owned copies of a tag (used on tag delete) — assets AND
+ *  ports. Returns the number of ASSETS it was removed from; hand-applied copies
+ *  on either are untouched. */
 export async function stripTagAssignments(tagId: string, tagName: string): Promise<number> {
+  await prisma.assetInterfaceTag.deleteMany({ where: { tagId, source: "auto" } });
   const provRows = await prisma.tagAutoAssignment.findMany({
     where: { tagId },
     select: { assetId: true },
