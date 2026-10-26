@@ -2919,10 +2919,11 @@ body:not(.assets-editing) #assets-tabs-list .table-tab-close { display: none; }
      backgrounds; the active tab still reads above its peers through the
      accent edge and the card's glass. The fill is a highlight that starts
      at the tab's top edge and fades out toward the rule, not one flat wash
-     over the whole chip. */
+     over the whole chip. 9% (14% read as too dark a wash, 2026-10-26); the
+     + tab below keeps the same proportion. */
   color: var(--color-text-secondary);
   background: linear-gradient(to bottom,
-    color-mix(in srgb, var(--color-text-primary) 14%, transparent),
+    color-mix(in srgb, var(--color-text-primary) 9%, transparent),
     transparent 85%);
   border: 1px solid var(--color-border);
   border-bottom: 0;
@@ -2938,7 +2939,7 @@ body:not(.assets-editing) #assets-tabs-list .table-tab-close { display: none; }
   transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease,
     opacity 0.2s ease, box-shadow 0.2s ease;
 }
-.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: linear-gradient(to bottom, color-mix(in srgb, var(--color-text-primary) 22%, transparent), transparent 85%); }
+.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: linear-gradient(to bottom, color-mix(in srgb, var(--color-text-primary) 15%, transparent), transparent 85%); }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab).active {
   z-index: 2;
   color: var(--color-accent);
@@ -3519,13 +3520,13 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   line-height: 1.2;
   /* The inactive tabs' solid-chip look (their rule above). */
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
   border: 1px solid var(--color-border);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   box-shadow: var(--shadow-tab-idle);
 }
-.table-head-row.folder-head-card .table-tab-add:hover { color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 12%, transparent); }
+.table-head-row.folder-head-card .table-tab-add:hover { color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); }
 
 /* ─── Named-preset menu (Assets → Filters ▾, Dashboard → Dashboards ▾) ─────
    A dropdown whose list rows carry a trailing delete button, so each row is a
