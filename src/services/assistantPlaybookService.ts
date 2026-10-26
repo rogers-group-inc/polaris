@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "profile" | "telemetry" | "correlate" | "dependencies" | "changed" | "health" | "capacity" | "address" | "endpoint";
+  id: "profile" | "telemetry" | "correlate" | "dependencies" | "paths" | "changed" | "health" | "capacity" | "address" | "endpoint";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -112,6 +112,23 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
         "matters — then downstream: how many devices sit behind it, how many are down or suppressed now, and the " +
         "direct children by name (offer the rest rather than listing dozens). If rootCause is present, say it. " +
         "Link every device you name. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // Before health: "is the ERP reachable from the branches" is a path question,
+    // not a device-health one.
+    id: "paths",
+    label: "Path Monitor",
+    match: /\b(path (checks?|monitor\w*)|reachab\w*|availability|latency (to|from)|(slow|slowest) (to reach|from))\b/i,
+    firstRoundTools: ["path_check_summary", "search_help"],
+    guidance: [
+      "Playbook — Path Monitor. Follow these steps in order:",
+      "1. path_check_summary with check set to the service or target the person named (leave it out for all " +
+        "checks), source set to the site or host they named, failingOnly when they ask what is failing, and the " +
+        "period they gave (the last 24 hours if none).",
+      "2. Answer with the worst source first: availability %, average and peak latency, the last error and when " +
+        "it last failed. Say how many sources are failing right now. If no check matches, say so and say Path " +
+        "Monitor checks are set up on the Path Monitor page. " + SEPARATE,
     ].join("\n"),
   },
   {

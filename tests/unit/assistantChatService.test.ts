@@ -42,12 +42,12 @@ vi.mock("../../src/services/llmService.js", async () => ({
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
   // The real tool NAMES (the round-0 steering filters by name); the shapes do not matter here.
-  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "telemetry_summary", "get_asset", "get_dependencies", "list_services", "find_endpoint", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
+  assistantToolDefs: () => ["search_help", "search", "fleet_summary", "list_assets", "telemetry_summary", "get_asset", "get_dependencies", "list_services", "find_endpoint", "path_check_summary", "list_alerts", "list_events", "list_networks", "list_reservations", "create_report",
     "list_manufacturer_profiles", "get_manufacturer_profile", "list_mibs", "search_mib_symbols", "list_automations", "get_automation"]
     .map((name) => ({ type: "function", function: { name, description: "", parameters: {} } })),
   runAssistantTool: h.runAssistantTool,
   toolLabel: (n: string) => `did ${n}`,
-  REPORT_SOURCE_NAMES: ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services"],
+  REPORT_SOURCE_NAMES: ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary"],
 }));
 vi.mock("../../src/services/assistantMemoryService.js", async () => {
   const real = await vi.importActual<typeof import("../../src/services/assistantMemoryService.js")>("../../src/services/assistantMemoryService.js");

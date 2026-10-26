@@ -36,6 +36,7 @@ import { searchHelp } from "./helpIndexService.js";
 import { pickSampleTierForAsset, type SampleTier } from "./sampleQueryRouter.js";
 import { resolveDependencyBlame, BLAME_MAX_HOPS } from "./dependencyTreeService.js";
 import { lookupOui } from "./ouiService.js";
+import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestService.js";
 import { macColonUpperOrNull } from "../utils/mac.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
 import type { ChatToolDef } from "./llmService.js";
@@ -913,6 +914,162 @@ const findEndpointTool: ToolDef = {
   },
 };
 
+// ─── path_check_summary ──────────────────────────────────────────────────────
+//
+// Path Monitor results: one row per check × source (an agent host, or the
+// Polaris server itself) over a window — availability, average and peak
+// latency — plus the source row's live facts (last result, last error, last
+// failure). Gated on `pathChecks` read, like every Path Monitor route. The
+// aggregates are SQL on the tier the check's chart reads for the same window
+// (pickSampleTierForAsset "pathCheck"); server-run samples are keyed by
+// POLARIS_SERVER_SUBJECT, not by an asset.
+//
+// Scale: one check findMany, one source findMany, one grouped aggregate over
+// (assetId, checkId) = ANY(...) inside the window.
+
+const PATH_DEFAULT_HOURS = 24;
+
+const PathArgs = z.object({
+  ...WindowArgs,
+  check: z.string().max(200).optional(),
+  source: z.string().max(255).optional(),
+  failingOnly: z.boolean().optional(),
+  sortBy: z.enum(["availability", "latency"]).optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+interface PathAgg {
+  assetId: string;
+  checkId: string;
+  samples: number;
+  okCount: number;
+  avgLatency: number | null;
+  maxLatency: number | null;
+}
+
+/** Per (source, check) availability and latency over [from, to). Exported for tests. */
+export async function pathCheckAggregates(subjects: string[], checkIds: string[], from: Date, to: Date, tier: SampleTier): Promise<PathAgg[]> {
+  if (!subjects.length || !checkIds.length) return [];
+  if (tier === "detail") {
+    return prisma.$queryRawUnsafe<PathAgg[]>(
+      `SELECT "assetId", "checkId", count(*)::int AS samples, count(*) FILTER (WHERE ok)::int AS "okCount",
+              avg("latencyMs")::float AS "avgLatency", max("latencyMs")::float AS "maxLatency"
+         FROM "asset_path_check_samples"
+        WHERE "checkId" = ANY($1::text[]) AND "assetId" = ANY($2::text[]) AND "timestamp" >= $3 AND "timestamp" < $4
+        GROUP BY "assetId", "checkId"`,
+      checkIds, subjects, from, to,
+    );
+  }
+  const table = tier === "hourly" ? "asset_path_check_samples_hourly" : "asset_path_check_samples_daily";
+  // Latency is averaged over the SUCCESSFUL samples a bucket carries (a failed
+  // run has no latency), so it weights by okCount, not sampleCount.
+  return prisma.$queryRawUnsafe<PathAgg[]>(
+    `SELECT "assetId", "checkId", sum("sampleCount")::int AS samples, sum("okCount")::int AS "okCount",
+            (sum("avgLatencyMs" * "okCount") / NULLIF(sum(CASE WHEN "avgLatencyMs" IS NOT NULL THEN "okCount" END), 0))::float AS "avgLatency",
+            max("maxLatencyMs")::float AS "maxLatency"
+       FROM "${table}"
+      WHERE "checkId" = ANY($1::text[]) AND "assetId" = ANY($2::text[]) AND "bucketStart" >= $3 AND "bucketStart" < $4
+      GROUP BY "assetId", "checkId"`,
+    checkIds, subjects, from, to,
+  );
+}
+
+const pathCheckSummaryTool: ListToolDef = {
+  name: "path_check_summary",
+  label: "checked Path Monitor",
+  description:
+    "Path Monitor results (HTTP / HTTPS / TCP / ICMP checks run from agent hosts and from the Polaris server): " +
+    "for each check and each place it runs from, availability % and average / peak latency over a window, the " +
+    "last result and error, and when it last failed. check matches the check name or target (\"m365\", " +
+    "\"erp.example.com\"); source matches the hostname it runs from (\"server\" for the Polaris server). " +
+    "failingOnly: only check/source pairs whose latest result failed. Worst availability first, or sortBy " +
+    `latency. The window defaults to the last ${PATH_DEFAULT_HOURS} hours.`,
+  parameters: {
+    type: "object",
+    properties: {
+      ...windowSchemaProps,
+      check: { type: "string", description: "Check name or target contains this text" },
+      source: { type: "string", description: "Hostname the check runs from contains this; \"server\" for the Polaris server" },
+      failingOnly: { type: "boolean" },
+      sortBy: { type: "string", enum: ["availability", "latency"] },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "check", label: "Check" }, { key: "kind", label: "Kind" }, { key: "target", label: "Target" },
+    { key: "source", label: "Runs from" }, { key: "availabilityPct", label: "Availability %" },
+    { key: "avgLatencyMs", label: "Avg latency ms" }, { key: "maxLatencyMs", label: "Peak latency ms" },
+    { key: "samples", label: "Runs" }, { key: "lastOk", label: "Last OK" }, { key: "lastError", label: "Last error" },
+    { key: "lastFailAt", label: "Last failed" }, { key: "lastSampleAt", label: "Last run" }, { key: "window", label: "Window" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "pathChecks", "read")) return denied("Path Monitor");
+    const p = PathArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const win = timeWindow(a);
+    const to = win.to ?? new Date();
+    const from = win.from ?? new Date(to.getTime() - PATH_DEFAULT_HOURS * 3_600_000);
+    if (!(from < to)) return { ok: false, data: { error: "The window's start must be before its end" } };
+
+    const checks = await prisma.pathCheck.findMany({
+      where: a.check
+        ? { OR: [{ name: { contains: a.check, mode: "insensitive" } }, { target: { contains: a.check, mode: "insensitive" } }] }
+        : {},
+      select: { id: true, name: true, kind: true, target: true, enabled: true },
+    });
+    if (!checks.length) return { rows: [], total: 0, extra: { matchedChecks: 0 } };
+
+    const serverSource = a.source != null && /\b(server|polaris)\b/i.test(a.source);
+    const sourceWhere: Record<string, unknown> = { checkId: { in: checks.map((c) => c.id) } };
+    if (a.source && !serverSource) sourceWhere.asset = { hostname: { contains: a.source, mode: "insensitive" } };
+    if (serverSource) sourceWhere.assetId = null;
+    if (a.failingOnly) sourceWhere.lastOk = false;
+    const sources = await prisma.pathCheckSource.findMany({
+      where: sourceWhere,
+      select: {
+        checkId: true, assetId: true, lastOk: true, lastError: true, lastSampleAt: true, lastFailAt: true, lastLatencyMs: true,
+        asset: { select: { hostname: true } },
+      },
+    });
+
+    const { tier } = await pickSampleTierForAsset(POLARIS_SERVER_SUBJECT, "pathCheck", from);
+    const subjects = Array.from(new Set(sources.map((s) => s.assetId ?? POLARIS_SERVER_SUBJECT)));
+    const aggs = await pathCheckAggregates(subjects, Array.from(new Set(sources.map((s) => s.checkId))), from, to, tier);
+    const aggBy = new Map(aggs.map((g) => [`${g.assetId}\u0000${g.checkId}`, g]));
+    const checkBy = new Map(checks.map((c) => [c.id, c]));
+    const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
+
+    const rows = sources.map((s) => {
+      const c = checkBy.get(s.checkId)!;
+      const g = aggBy.get(`${s.assetId ?? POLARIS_SERVER_SUBJECT}\u0000${s.checkId}`);
+      return {
+        checkId: c.id, check: c.name, kind: c.kind, target: c.target, enabled: c.enabled,
+        source: s.assetId ? s.asset?.hostname ?? null : POLARIS_SERVER_LABEL, assetId: s.assetId ?? undefined,
+        samples: g?.samples ?? 0,
+        availabilityPct: g && g.samples ? round1((g.okCount / g.samples) * 100) : null,
+        avgLatencyMs: round1(g?.avgLatency), maxLatencyMs: round1(g?.maxLatency),
+        lastOk: s.lastOk, lastError: s.lastError, lastFailAt: s.lastFailAt, lastSampleAt: s.lastSampleAt, window,
+      };
+    });
+    const byLatency = a.sortBy === "latency";
+    rows.sort((x, y) => byLatency
+      ? (y.avgLatencyMs ?? -1) - (x.avgLatencyMs ?? -1)
+      : (x.availabilityPct ?? 101) - (y.availabilityPct ?? 101) || (y.avgLatencyMs ?? -1) - (x.avgLatencyMs ?? -1));
+    const take = Math.min(a.limit ?? cap, cap);
+    return {
+      rows: rows.slice(0, take).map(plain),
+      total: rows.length,
+      extra: { window, matchedChecks: checks.length, failingNow: sources.filter((s) => s.lastOk === false).length },
+    };
+  },
+  async run(args, ctx) {
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    return listResult({ ...res, rows: res.rows.map(({ window: _w, ...r }) => r) });
+  },
+};
+
 // ─── get_dependencies ────────────────────────────────────────────────────────
 //
 // The dependency tree around ONE device: what it hangs off, hop by hop up to
@@ -1485,11 +1642,11 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
 
 /** The list tools a report can be built from (create_report's `source`). */
-export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services"] as const;
+export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
@@ -1515,7 +1672,8 @@ const createReportTool: ToolDef = {
         type: "array", items: { type: "string" },
         description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt. " +
           "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window. " +
-          "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt",
+          "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt. " +
+          "path_check_summary: check, kind, target, source, availabilityPct, avgLatencyMs, maxLatencyMs, samples, lastOk, lastError, lastFailAt, lastSampleAt, window",
       },
     },
     required: ["title", "source"],
@@ -1880,7 +2038,7 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool, findEndpointTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];

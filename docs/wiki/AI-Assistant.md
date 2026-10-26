@@ -142,6 +142,7 @@ context. Some things to try:
 - *What goes down if core-sw-01 goes down?*
 - *Which automatic services are stopped on the SQL servers?*
 - *Which switch port is 0a:11:22:33:44:55 plugged into?*
+- *Which path checks failed from the branch sites this week?*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
 - *Why are the hardware sensors unresolved on our Fortinet profile?*
@@ -195,6 +196,11 @@ wireless client, each with how long ago it was seen. A MAC is learned on every
 uplink between it and the core as well as on the port it is really plugged into,
 so the assistant leads with the port that holds the fewest MACs. Ask *what is on
 port 12 of sw-nsh-02* to see what is connected to a port.
+
+It can read **[Path Monitor](Path-Monitor)** results: for each check and each
+place it runs from (an agent host or the Polaris server), the availability and
+average and peak latency over a period, the last error and when it last failed.
+This needs **Path Monitor** read on your role.
 
 It can walk the **dependency tree** around a device: what it hangs off, hop by
 hop to the top, and what sits behind it, with how many of those are down or

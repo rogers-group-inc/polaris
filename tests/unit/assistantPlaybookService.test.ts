@@ -45,6 +45,9 @@ describe("pickPlaybook", () => {
     ["what is plugged into port 12 on sw-nsh-02", "endpoint"],
     ["what is 10.10.3.178 plugged into", "address"],
     ["list the switches that rebooted at 10:30:45", null],
+    ["is the ERP reachable from the branches?", "paths"],
+    ["which path checks are failing", "paths"],
+    ["what was m365 availability last week", "paths"],
   ])("%s → %s", (q, id) => {
     expect(pickPlaybook(q)?.id ?? null).toBe(id);
   });
