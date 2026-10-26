@@ -85,6 +85,17 @@
                dashboard's + is. -->
           <button type="button" class="table-tab-add" id="assets-tab-add" title="New tab" aria-label="New tab" hidden>+</button>
         </div>
+        <!-- Filters ▾ (saved filter presets, assets-filters.js): right after
+             the tabs, LEFT of the strip's ‹ › pair (data-tabs-nav-after:
+             folder-tabs.js puts the pair after this cluster). The menu body is
+             rendered from the server list on every open. Shown only in edit
+             mode (the pencil at the row's end; assets.js → setAssetsEditing). -->
+        <div class="table-head-controls" id="assets-filters-cluster" data-tabs-nav-after hidden>
+          <div class="btn-dropdown-wrap">
+            <button class="btn btn-secondary" id="btn-saved-filters" title="Save, load and manage table filter presets">Filters &#9662;</button>
+            <div class="btn-dropdown-menu sfl-menu" id="saved-filters-menu"></div>
+          </div>
+        </div>
         <!-- The page's action buttons (once the page header's), first on the
              row as on every list page. Import and Export are the icon pair the
              other list pages carry (.btn-glyph-upload / -download), each with
@@ -119,16 +130,6 @@
         <button class="btn btn-primary" id="btn-add-asset" aria-haspopup="menu"
                 data-perm-any="assets:write,networkScan:read"
                 title="Add one asset by hand, or run a network Discovery">+ Add Asset(s)</button>
-        </div>
-        <!-- Filters ▾ (saved filter presets, assets-filters.js), left of
-             Refresh / Clear / Show N. The menu body is rendered from the
-             server list on every open. Shown only in edit mode (the pencil
-             below; assets.js → setAssetsEditing). -->
-        <div class="table-head-controls" id="assets-filters-cluster" hidden>
-          <div class="btn-dropdown-wrap">
-            <button class="btn btn-secondary" id="btn-saved-filters" title="Save, load and manage table filter presets">Filters &#9662;</button>
-            <div class="btn-dropdown-menu sfl-menu" id="saved-filters-menu"></div>
-          </div>
         </div>
         <div id="pagination-top" class="table-head-controls"></div>
         <!-- Edit / Done Editing: the dashboard's Customize pencil and Done

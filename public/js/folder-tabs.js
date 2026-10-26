@@ -95,6 +95,9 @@ function _writeFolderStrip(row, body) {
     // there.
     var win = strip.__tabWin;
     var area = win && win.max > 0.5 && win.box && win.box !== strip ? win.box.getBoundingClientRect() : null;
+    // The box is padded out by STRIP_SHADOW_PX for its mask (_maskArea);
+    // the area itself is its content box.
+    if (area) area = { left: area.left + STRIP_SHADOW_PX, right: area.right - STRIP_SHADOW_PX };
     strip.querySelectorAll(".page-tab, .table-tab, .dashboard-tab, .table-tab-add").forEach(function (t) {
       var rc = t.getBoundingClientRect();
       if (!rc.width || t.style.visibility === "hidden") return;   // hidden by the window
@@ -132,9 +135,9 @@ function _writeFolderStrip(row, body) {
 // holding them (the list wrapper) is pinned to the ROOM — a fixed area, so
 // the + after it and the ‹ › pair after the strip hold still — and the row of
 // tabs, every one at its natural width, SLIDES inside it: `pos` px of the row
-// are past the area's left edge (a `--tab-shift` translate on each tab). A
-// tab crossing either edge fades into it (its own mask, STRIP_FADE_PX wide);
-// one wholly outside is `visibility: hidden`, so it is neither drawn nor hit.
+// are past the area's left edge (a `translate` on each tab). A tab crossing
+// either edge fades into it (the area's mask, STRIP_FADE_PX wide — see
+// _maskArea); one wholly outside is `visibility: hidden`, neither drawn nor hit.
 // An edge fades only while there is more of the row past it. Tabs never
 // squeeze or grow (operator request 2026-10-26; a squeezing window was tried
 // first and rejected).
@@ -208,50 +211,58 @@ function _clampPos(st) {
 
 // Draw the window at st.pos: pin the box, shift every tab, fade or hide the
 // ones at the edges.
+// The fade is ONE mask on the tab area, not one per tab: a mask clips
+// everything outside its box, and a per-tab mask cut each edge tab's own
+// drop shadow off square (operator report 2026-10-26). The area's mask box
+// is pushed out by STRIP_SHADOW_PX on every side (padding, cancelled by an
+// equal negative margin, so nothing moves) to take in the tabs' shadows,
+// the active tab's neck and its card-cast ring; across it the gradient is
+// opaque except where an edge fades, from the area's edge in.
+var STRIP_SHADOW_PX = 32;
+
+function _maskArea(box, on, fadeL, fadeR, R) {
+  var E = STRIP_SHADOW_PX, F = STRIP_FADE_PX;
+  var pad = on ? E + "px" : "", neg = on ? -E + "px" : "";
+  // content-box: the pinned width is the AREA; the padding sits outside it.
+  _setStyle(box, "boxSizing", on ? "content-box" : "");
+  _setStyle(box, "padding", pad);
+  _setStyle(box, "margin", on ? neg : "");
+  var mask = "";
+  if (on && (fadeL || fadeR)) {
+    var stops = fadeL
+      ? ["transparent 0px", "transparent " + E + "px", "#000 " + (E + F) + "px"]
+      : ["#000 0px"];
+    stops = stops.concat(fadeR
+      ? ["#000 " + (E + R - F).toFixed(1) + "px", "transparent " + (E + R).toFixed(1) + "px", "transparent 100%"]
+      : ["#000 100%"]);
+    mask = "linear-gradient(to right, " + stops.join(", ") + ")";
+  }
+  _setStyle(box, "maskImage", mask);
+  _setStyle(box, "webkitMaskImage", mask);
+}
+
 function _layoutStrip(strip) {
   var st = strip.__tabWin;
   if (!st) return;
   var on = st.max > 0.5;
   var box = st.box;
-  if (box && box !== strip) {
-    _setStyle(box, "width", on ? st.room.toFixed(1) + "px" : "");
-    _setStyle(box, "flexShrink", on ? "0" : "");
-  }
   var R = st.room;
-  var fadeL = on && st.pos > 0.5;
-  var fadeR = on && st.pos < st.max - 0.5;
+  if (box && box !== strip) {
+    _setStyle(box, "width", on ? R.toFixed(1) + "px" : "");
+    _setStyle(box, "flexShrink", on ? "0" : "");
+    _maskArea(box, on, on && st.pos > 0.5, on && st.pos < st.max - 0.5, R);
+  }
   st.items.forEach(function (it) {
     var el = it.el;
     if (!on) {
       _setStyle(el, "translate", "");
       _setStyle(el, "visibility", "");
-      _setStyle(el, "maskImage", "");
-      _setStyle(el, "webkitMaskImage", "");
       return;
     }
     // A tab being dragged carries its own translate (_wireTabDrag).
     if (!el.classList.contains("is-dragging")) _setStyle(el, "translate", (-st.pos).toFixed(1) + "px 0");
     var left = it.s - st.pos, right = left + it.w;
-    if (right <= 0.5 || left >= R - 0.5) {
-      _setStyle(el, "visibility", "hidden");
-      _setStyle(el, "maskImage", "");
-      _setStyle(el, "webkitMaskImage", "");
-      return;
-    }
-    _setStyle(el, "visibility", "");
-    var cutL = fadeL && left < STRIP_FADE_PX;
-    var cutR = fadeR && right > R - STRIP_FADE_PX;
-    var mask = "";
-    if (cutL || cutR) {
-      // Stops in the tab's own px: transparent at the area's edge, opaque
-      // STRIP_FADE_PX in from it.
-      var a = cutL ? (0 - left) : -1, b = cutL ? (STRIP_FADE_PX - left) : -1;
-      var c = cutR ? (R - STRIP_FADE_PX - left) : it.w + 1, d = cutR ? (R - left) : it.w + 1;
-      mask = "linear-gradient(to right, transparent " + a.toFixed(1) + "px, #000 " + b.toFixed(1) + "px, #000 " +
-        c.toFixed(1) + "px, transparent " + d.toFixed(1) + "px)";
-    }
-    _setStyle(el, "maskImage", mask);
-    _setStyle(el, "webkitMaskImage", mask);
+    _setStyle(el, "visibility", right <= 0.5 || left >= R - 0.5 ? "hidden" : "");
   });
 }
 
@@ -501,7 +512,10 @@ function _ensureStripNav(row, strip) {
     if (!b || b.disabled) return;
     _stepStrip(strip, Number(b.getAttribute("data-dir")), function () { _syncStripNav(row, strip); });
   });
-  strip.insertAdjacentElement("afterend", nav);
+  // Right after the strip, unless the page names a cluster that must sit
+  // between the tabs and the pair (Assets' Filters ▾: data-tabs-nav-after).
+  var after = row.querySelector(":scope > [data-tabs-nav-after]") || strip;
+  after.insertAdjacentElement("afterend", nav);
   return nav;
 }
 

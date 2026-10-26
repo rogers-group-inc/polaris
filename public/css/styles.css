@@ -2888,7 +2888,11 @@ html[data-page-top-curtain]::after {
   z-index: 3;
   gap: 2px;
 }
-.table-head-row.folder-head-card > .table-tabs-nav { margin-left: var(--folder-shadow-room); }
+/* …and so does a cluster a page puts between the tabs and the pair
+   (data-tabs-nav-after: Assets' Filters ▾, edit mode only), whichever of the
+   two comes first after the strip. */
+.table-head-row.folder-head-card > :is(.page-tabs, .table-tabs, .dashboard-tabs) + :is(.table-tabs-nav, [data-tabs-nav-after]:not([hidden])),
+.table-head-row.folder-head-card > :is(.page-tabs, .table-tabs, .dashboard-tabs) + [data-tabs-nav-after][hidden] + .table-tabs-nav { margin-left: var(--folder-shadow-room); }
 .table-head-row > .table-tabs-nav.is-idle { display: none; }
 /* The strip window slides tabs past the end of their fixed area (masked
    transparent there, but a positioned tab is still hit-tested): the + after

@@ -6,9 +6,9 @@
  * A strip with more tabs than room never scrolls natively (that showed tabs
  * past the card's edges, under a scrollbar). The tab list is pinned to a
  * fixed area (the room), and the row of tabs — each at its natural width,
- * never squeezed — SLIDES inside it on `translate`; a tab crossing an edge
- * fades into it (its own mask) and one wholly outside is `visibility:
- * hidden`. One step — a ‹ › click or a wheel notch — slides by one tab.
+ * never squeezed — SLIDES inside it on `translate`; the area fades at an edge
+ * (ONE mask on the list, padded out so tab shadows survive — a per-tab mask
+ * cut them off square) and a tab wholly outside is `visibility: hidden`. One step — a ‹ › click or a wheel notch — slides by one tab.
  *
  * folder-tabs.js is a classic self-wiring script, so it is eval'd into a
  * happy-dom Window. happy-dom lays nothing out, so each tab reports its
@@ -55,7 +55,8 @@ interface Boot {
   pos: () => number;
   shown: () => boolean[];
   shift: (i: number) => number;
-  faded: (i: number) => boolean;
+  /** Which edges of the tab AREA fade (one mask on the list, not per tab). */
+  fades: () => { l: boolean; r: boolean };
   settle: () => Promise<void>;
 }
 
@@ -109,9 +110,10 @@ async function boot(n: number, active = 0, stripWidth = 250): Promise<Boot> {
     pos: () => (strip as unknown as { __tabWin: { pos: number } }).__tabWin.pos,
     shown: () => tabEls().map((t) => t.style.visibility !== "hidden"),
     shift: (i) => parseFloat(tabEls()[i].style.translate || "0") || 0,
-    faded: (i) => {
-      const s = tabEls()[i].style as unknown as Record<string, string>;
-      return /gradient/.test(s.maskImage || s.webkitMaskImage || "");
+    fades: () => {
+      const s = (doc.getElementById("list") as unknown as HTMLElement).style as unknown as Record<string, string>;
+      const m = s.maskImage || s.webkitMaskImage || "";
+      return { l: m.startsWith("linear-gradient(to right, transparent"), r: m.endsWith("transparent 100%)") };
     },
     settle,
   };
@@ -139,6 +141,7 @@ describe("tab strip window", () => {
   it("pins the list to a fixed area and never resizes a tab", async () => {
     const b = await boot(5);
     expect(parseFloat(b.list.style.width)).toBe(220);
+    expect(b.list.style.boxSizing).toBe("content-box");   // the shadow padding sits outside the area
     expect(b.tabs().every((t) => !t.style.width)).toBe(true);
     b.next().click();
     await b.settle();
@@ -149,8 +152,8 @@ describe("tab strip window", () => {
   it("at the start: the tab crossing the right edge fades, the ones past it are hidden, nothing fades on the left", async () => {
     const b = await boot(5);
     expect(b.shown()).toEqual([true, true, true, false, false]);
-    expect(b.faded(0)).toBe(false);
-    expect(b.faded(2)).toBe(true);           // 200..280 crosses the 220 edge
+    expect(b.fades()).toEqual({ l: false, r: true });   // more of the row past the right edge only
+    expect(b.tabs().every((t) => !t.style.maskImage)).toBe(true);   // no tab masks itself (its shadow would go)
     expect(b.prev().disabled).toBe(true);
     expect(b.next().disabled).toBe(false);
   });
@@ -162,8 +165,7 @@ describe("tab strip window", () => {
     expect(b.pos()).toBe(32);                // tab 1's start 28px in, past the fade
     expect(b.shift(1)).toBe(-32);
     expect(b.shown()).toEqual([true, true, true, false, false]);
-    expect(b.faded(0)).toBe(true);           // tab 0's tail fades into the left edge
-    expect(b.faded(1)).toBe(false);          // the first whole tab is fully opaque
+    expect(b.fades()).toEqual({ l: true, r: true });    // tab 0's tail fades into the left edge
     b.next().click();
     await b.settle();
     expect(b.pos()).toBe(172);               // tab 2's start, 28px in
@@ -171,7 +173,7 @@ describe("tab strip window", () => {
     await b.settle();
     expect(b.pos()).toBe(210);               // the end: the last tab flush right
     expect(b.shown()).toEqual([false, false, true, true, true]);
-    expect(b.faded(4)).toBe(false);          // nothing past the right edge
+    expect(b.fades()).toEqual({ l: true, r: false });   // nothing past the right edge
     expect(b.next().disabled).toBe(true);
     expect(b.prev().disabled).toBe(false);
   });
@@ -195,13 +197,12 @@ describe("tab strip window", () => {
     await b.settle();
     expect(b.pos()).toBe(210);
     expect(b.shown()[4]).toBe(true);
-    expect(b.faded(4)).toBe(false);
+    expect(b.fades().r).toBe(false);
   });
 
   it("opens on the active tab when it starts out of view", async () => {
     const b = await boot(5, 3);
-    expect(b.pos()).toBe(188);               // 280 + 100 − 220 + the 28px fade
-    expect(b.faded(3)).toBe(false);
+    expect(b.pos()).toBe(188);               // 280 + 100 − 220 + the 28px fade: clear of it
   });
 
   it("keeps the active tab in view when the room shrinks after it was brought in", async () => {
@@ -240,6 +241,8 @@ describe("tab strip window", () => {
     b.tabs().slice(2).forEach((t) => t.remove());
     await b.settle();
     expect(b.list.style.width).toBe("");
+    expect(b.list.style.padding).toBe("");
+    expect(b.fades()).toEqual({ l: false, r: false });
     expect(b.tabs().every((t) => !t.style.translate && !t.style.visibility)).toBe(true);
     expect(b.nav().classList.contains("is-idle")).toBe(true);
   });
