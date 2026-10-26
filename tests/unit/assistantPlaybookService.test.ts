@@ -48,6 +48,11 @@ describe("pickPlaybook", () => {
     ["is the ERP reachable from the branches?", "paths"],
     ["which path checks are failing", "paths"],
     ["what was m365 availability last week", "paths"],
+    ["what is the WAN utilization at the Nashville sites", "interfaces"],
+    ["busiest links today", "interfaces"],
+    ["which switch ports are down at HQ", "interfaces"],
+    ["any PoE faults?", "interfaces"],
+    ["which port is 0a:11:22:33:44:55 on", "endpoint"],
   ])("%s → %s", (q, id) => {
     expect(pickPlaybook(q)?.id ?? null).toBe(id);
   });

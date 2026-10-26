@@ -332,6 +332,23 @@ const ASSET_FILTER_PROPS = {
 } as const;
 
 /**
+ * The device filters the measurement tools ADVERTISE — the ones a question
+ * about figures names. Their Zod schemas still accept every list_assets
+ * filter; the schema sent to the model is kept short because every tool
+ * definition rides in every round of a small local model's window.
+ */
+const DEVICE_FILTER_PROPS = {
+  search: { type: "string", description: "Hostname, IP or name contains" },
+  assetType: ASSET_FILTER_PROPS.assetType,
+  region: { type: "array", items: { type: "string" }, description: "Region names" },
+  myRegions: { type: "boolean", description: "The asker's own regions" },
+  location: { type: "string" },
+  manufacturer: { type: "string" },
+  model: { type: "string", description: "Model contains, e.g. \"61F\"" },
+  os: { type: "string" },
+} as const;
+
+/**
  * The Prisma `where` for the shared asset filters, plus the CIDR to match in
  * memory (containment is not a Prisma predicate). A ToolResult when the
  * filters cannot be applied (no region assigned, a bad CIDR).
@@ -533,7 +550,7 @@ const telemetrySummaryTool: ListToolDef = {
   parameters: {
     type: "object",
     properties: {
-      ...ASSET_FILTER_PROPS,
+      ...DEVICE_FILTER_PROPS,
       ...windowSchemaProps,
       metric: { type: "string", enum: ["memory", "cpu"], description: "What to rank by. Default memory" },
       sortBy: { type: "string", enum: ["avg", "max"], description: "Rank by the window's average (default) or its peak" },
@@ -647,7 +664,7 @@ const listServicesTool: ListToolDef = {
   parameters: {
     type: "object",
     properties: {
-      ...ASSET_FILTER_PROPS,
+      ...DEVICE_FILTER_PROPS,
       service: { type: "string", description: "Service / unit name or display name contains this text" },
       state: { type: "array", items: { type: "string", enum: [...SERVICE_STATES] } },
       startup: { type: "array", items: { type: "string", enum: [...SERVICE_STARTUPS] } },
@@ -1061,6 +1078,237 @@ const pathCheckSummaryTool: ListToolDef = {
       rows: rows.slice(0, take).map(plain),
       total: rows.length,
       extra: { window, matchedChecks: checks.length, failingNow: sources.filter((s) => s.lastOk === false).length },
+    };
+  },
+  async run(args, ctx) {
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    return listResult({ ...res, rows: res.rows.map(({ window: _w, ...r }) => r) });
+  },
+};
+
+// ─── interface_summary ───────────────────────────────────────────────────────
+//
+// Interfaces / ports on the devices the list_assets filters match. Current
+// state for EVERY interface comes from AssetInterface (status, speed, VLAN,
+// PoE). Traffic, utilization and error counts over a window exist only for the
+// interfaces selected for monitoring (Asset.monitoredInterfaces) — since the
+// pinned-only cutover no other interface writes samples — so an unpinned row
+// says `history: false` rather than reading as idle.
+//
+// Rates are counter deltas computed in SQL on the tier the interface chart
+// reads (pickSampleTierForAsset "interfaces"), with the chart's reset rule: a
+// negative delta is a counter reset and is skipped, never counted as traffic
+// (sampleHistoryService rate()). Average = bytes moved / seconds covered;
+// peak = the fastest single interval (detail) or bucket (rollup).
+// "down" means operationally down while administratively up — a port someone
+// shut on purpose is "disabled", not a fault.
+//
+// Scale: asset findMany + interface count / findMany (refused past
+// INTERFACE_SCAN_MAX until narrowed) + ONE grouped aggregate over the pinned
+// set's (assetId, ifName) = ANY(...) inside the window.
+
+const IFACE_DEFAULT_HOURS = 24;
+const INTERFACE_SCAN_MAX = 20_000;
+
+const IFACE_STATES = ["up", "down", "disabled"] as const;
+const IFACE_SORTS = ["utilization", "peak", "traffic", "errors", "name"] as const;
+
+const InterfaceArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  ...WindowArgs,
+  interface: z.string().max(200).optional(),
+  state: oneOrMany(z.enum(IFACE_STATES)),
+  poe: z.enum(["fault", "delivering"]).optional(),
+  withErrors: z.boolean().optional(),
+  monitoredOnly: z.boolean().optional(),
+  sortBy: z.enum(IFACE_SORTS).optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+interface IfaceAgg {
+  assetId: string;
+  ifName: string;
+  avgIn: number | null;
+  avgOut: number | null;
+  peakIn: number | null;
+  peakOut: number | null;
+  inErrors: number | null;
+  outErrors: number | null;
+}
+
+/**
+ * Per (asset, interface) byte rates and error counts over [from, to) for the
+ * interfaces named. Rates are bytes / second. Exported for tests.
+ */
+export async function interfaceAggregates(assetIds: string[], ifNames: string[], from: Date, to: Date, tier: SampleTier): Promise<IfaceAgg[]> {
+  if (!assetIds.length || !ifNames.length) return [];
+  const agg = `SELECT "assetId", "ifName",
+                 (sum(di) / NULLIF(sum(dt) FILTER (WHERE di IS NOT NULL), 0))::float AS "avgIn",
+                 (sum(dout) / NULLIF(sum(dt) FILTER (WHERE dout IS NOT NULL), 0))::float AS "avgOut",
+                 max(di / dt)::float AS "peakIn", max(dout / dt)::float AS "peakOut",
+                 sum(die)::float AS "inErrors", sum(doe)::float AS "outErrors"
+            FROM d WHERE dt > 0 GROUP BY "assetId", "ifName"`;
+  if (tier === "detail") {
+    return prisma.$queryRawUnsafe<IfaceAgg[]>(
+      `WITH s AS (
+         SELECT "assetId", "ifName", "timestamp" AS t, "inOctets" AS i, "outOctets" AS o, "inErrors" AS ie, "outErrors" AS oe,
+                lag("timestamp") OVER w AS pt, lag("inOctets") OVER w AS pi, lag("outOctets") OVER w AS po,
+                lag("inErrors") OVER w AS pie, lag("outErrors") OVER w AS poe
+           FROM "asset_interface_samples"
+          WHERE "assetId" = ANY($1::text[]) AND "ifName" = ANY($2::text[]) AND "timestamp" >= $3 AND "timestamp" < $4
+          WINDOW w AS (PARTITION BY "assetId", "ifName" ORDER BY "timestamp")
+       ), d AS (
+         SELECT "assetId", "ifName", extract(epoch FROM t - pt)::float AS dt,
+                CASE WHEN i >= pi THEN (i - pi)::float END AS di, CASE WHEN o >= po THEN (o - po)::float END AS dout,
+                CASE WHEN ie >= pie THEN (ie - pie)::float END AS die, CASE WHEN oe >= poe THEN (oe - poe)::float END AS doe
+           FROM s WHERE pt IS NOT NULL
+       ) ${agg}`,
+      assetIds, ifNames, from, to,
+    );
+  }
+  const table = tier === "hourly" ? "asset_interface_samples_hourly" : "asset_interface_samples_daily";
+  return prisma.$queryRawUnsafe<IfaceAgg[]>(
+    `WITH d AS (
+       SELECT "assetId", "ifName", extract(epoch FROM "lastBucketSampleAt" - "bucketStart")::float AS dt,
+              CASE WHEN "lastInOctets" >= "firstInOctets" THEN ("lastInOctets" - "firstInOctets")::float END AS di,
+              CASE WHEN "lastOutOctets" >= "firstOutOctets" THEN ("lastOutOctets" - "firstOutOctets")::float END AS dout,
+              CASE WHEN "lastInErrors" >= "firstInErrors" THEN ("lastInErrors" - "firstInErrors")::float END AS die,
+              CASE WHEN "lastOutErrors" >= "firstOutErrors" THEN ("lastOutErrors" - "firstOutErrors")::float END AS doe
+         FROM "${table}"
+        WHERE "assetId" = ANY($1::text[]) AND "ifName" = ANY($2::text[]) AND "bucketStart" >= $3 AND "bucketStart" < $4
+     ) ${agg}`,
+    assetIds, ifNames, from, to,
+  );
+}
+
+const mbps = (bytesPerSec: number | null | undefined) => (bytesPerSec == null ? null : Math.round((bytesPerSec * 8) / 10_000) / 100);
+const utilPct = (bytesPerSec: number | null | undefined, speedBps: number | null) =>
+  bytesPerSec == null || !speedBps ? null : round1(((bytesPerSec * 8) / speedBps) * 100);
+
+const interfaceSummaryTool: ListToolDef = {
+  name: "interface_summary",
+  label: "checked interfaces",
+  description:
+    "Interfaces and switch ports on the devices the list_assets filters match: status, speed, VLAN, PoE, and — for " +
+    "interfaces selected for monitoring — average and peak traffic (Mbps), utilization % of link speed and error " +
+    "counts over a window (default the last 24 hours). Rows without history (history: false) are interfaces not " +
+    "selected for monitoring: current state only. interface matches the name, alias or description (\"wan\", " +
+    "\"port12\"). state: up, down (link down although enabled), disabled (shut by an operator). poe: fault or " +
+    "delivering. withErrors: only interfaces that logged errors in the window. sortBy utilization (default), " +
+    "peak, traffic, errors or name. Use for busiest links, WAN utilization, ports down, ports with errors, PoE faults.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...DEVICE_FILTER_PROPS,
+      ...windowSchemaProps,
+      interface: { type: "string", description: "Interface name, alias or description contains this text" },
+      state: { type: "array", items: { type: "string", enum: [...IFACE_STATES] } },
+      poe: { type: "string", enum: ["fault", "delivering"] },
+      withErrors: { type: "boolean" },
+      monitoredOnly: { type: "boolean", description: "Only interfaces selected for monitoring (the ones with traffic history)" },
+      sortBy: { type: "string", enum: [...IFACE_SORTS] },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "hostname", label: "Device" }, { key: "interface", label: "Interface" }, { key: "description", label: "Description" },
+    { key: "state", label: "State" }, { key: "speedMbps", label: "Speed Mbps" }, { key: "vlan", label: "VLAN" },
+    { key: "poe", label: "PoE" }, { key: "avgInMbps", label: "Avg in Mbps" }, { key: "avgOutMbps", label: "Avg out Mbps" },
+    { key: "peakInMbps", label: "Peak in Mbps" }, { key: "peakOutMbps", label: "Peak out Mbps" },
+    { key: "avgUtilPct", label: "Avg util %" }, { key: "peakUtilPct", label: "Peak util %" },
+    { key: "inErrors", label: "In errors" }, { key: "outErrors", label: "Out errors" }, { key: "history", label: "History" },
+    { key: "window", label: "Window" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = InterfaceArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const filter = await assetFilterWhere(a, ctx.req);
+    if ("ok" in filter) return filter;
+    const win = timeWindow(a);
+    const to = win.to ?? new Date();
+    const from = win.from ?? new Date(to.getTime() - IFACE_DEFAULT_HOURS * 3_600_000);
+    if (!(from < to)) return { ok: false, data: { error: "The window's start must be before its end" } };
+
+    const assets = inSubnet(await prisma.asset.findMany({
+      where: filter.where,
+      select: { id: true, hostname: true, ipAddress: true, monitoredInterfaces: true },
+    }), filter.subnet);
+    if (!assets.length) return { rows: [], total: 0, extra: { matchedDevices: 0 } };
+
+    const and: Record<string, unknown>[] = [{ assetId: { in: assets.map((x) => x.id) } }];
+    if (a.interface) {
+      and.push({ OR: ["ifName", "alias", "description"].map((f) => ({ [f]: { contains: a.interface, mode: "insensitive" } })) });
+    }
+    if (a.state) {
+      and.push({ OR: a.state.map((s) => s === "up" ? { operStatus: { equals: "up", mode: "insensitive" } }
+        : s === "down" ? { NOT: { operStatus: { equals: "up", mode: "insensitive" } }, adminStatus: { equals: "up", mode: "insensitive" } }
+        : { adminStatus: { equals: "down", mode: "insensitive" } }) });
+    }
+    if (a.poe === "fault") and.push({ poeStatus: { in: ["fault", "other-fault"] } });
+    if (a.poe === "delivering") and.push({ poeStatus: "delivering" });
+    if (a.monitoredOnly || a.withErrors) {
+      const pinned = assets.filter((x) => x.monitoredInterfaces.length);
+      if (!pinned.length) return { rows: [], total: 0, extra: { matchedDevices: assets.length, note: "No matching device has an interface selected for monitoring, so there is no traffic or error history." } };
+      and.push({ OR: pinned.map((x) => ({ assetId: x.id, ifName: { in: x.monitoredInterfaces } })) });
+    }
+    const where = { AND: and };
+    const count = await prisma.assetInterface.count({ where });
+    if (count > INTERFACE_SCAN_MAX) {
+      return { ok: false, data: { error: `${count} interfaces match — narrow by device (model, type, region, search) or interface name first.` } };
+    }
+    const ifaces = await prisma.assetInterface.findMany({
+      where,
+      select: { assetId: true, ifName: true, alias: true, description: true, operStatus: true, adminStatus: true, speedBps: true, vlanId: true, poeStatus: true, poeClass: true },
+    });
+
+    const byAsset = new Map(assets.map((x) => [x.id, x]));
+    const pinnedRows = ifaces.filter((i) => byAsset.get(i.assetId)?.monitoredInterfaces.includes(i.ifName));
+    const { tier } = await pickSampleTierForAsset("", "interfaces", from);
+    const aggs = await interfaceAggregates(
+      Array.from(new Set(pinnedRows.map((i) => i.assetId))), Array.from(new Set(pinnedRows.map((i) => i.ifName))), from, to, tier,
+    );
+    const aggBy = new Map(aggs.map((g) => [`${g.assetId}\u0000${g.ifName}`, g]));
+    const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
+
+    let rows = ifaces.map((i) => {
+      const dev = byAsset.get(i.assetId)!;
+      const history = dev.monitoredInterfaces.includes(i.ifName);
+      const g = history ? aggBy.get(`${i.assetId}\u0000${i.ifName}`) : undefined;
+      const speed = i.speedBps == null ? null : Number(i.speedBps);
+      const admin = (i.adminStatus ?? "").toLowerCase();
+      const oper = (i.operStatus ?? "").toLowerCase();
+      return {
+        id: i.assetId, hostname: dev.hostname, interface: i.ifName,
+        description: i.alias || i.description || null,
+        state: admin === "down" ? "disabled" : oper === "up" ? "up" : oper === "down" ? "down" : oper ? `down (${oper})` : null,
+        speedMbps: speed == null ? null : Math.round(speed / 1e6), vlan: i.vlanId,
+        poe: i.poeStatus ? [i.poeStatus, i.poeClass].filter(Boolean).join(" / ") : null,
+        avgInMbps: mbps(g?.avgIn), avgOutMbps: mbps(g?.avgOut), peakInMbps: mbps(g?.peakIn), peakOutMbps: mbps(g?.peakOut),
+        avgUtilPct: utilPct(Math.max(g?.avgIn ?? -1, g?.avgOut ?? -1) < 0 ? null : Math.max(g?.avgIn ?? 0, g?.avgOut ?? 0), speed),
+        peakUtilPct: utilPct(Math.max(g?.peakIn ?? -1, g?.peakOut ?? -1) < 0 ? null : Math.max(g?.peakIn ?? 0, g?.peakOut ?? 0), speed),
+        inErrors: g?.inErrors == null ? null : Math.round(g.inErrors), outErrors: g?.outErrors == null ? null : Math.round(g.outErrors),
+        history, window,
+      };
+    });
+    if (a.withErrors) rows = rows.filter((r) => (r.inErrors ?? 0) + (r.outErrors ?? 0) > 0);
+    const sort = a.sortBy ?? (a.withErrors ? "errors" : "utilization");
+    const key = (r: (typeof rows)[number]): number | null =>
+      sort === "utilization" ? r.avgUtilPct
+      : sort === "peak" ? r.peakUtilPct
+      : sort === "traffic" ? (r.avgInMbps == null && r.avgOutMbps == null ? null : (r.avgInMbps ?? 0) + (r.avgOutMbps ?? 0))
+      : sort === "errors" ? (r.inErrors == null && r.outErrors == null ? null : (r.inErrors ?? 0) + (r.outErrors ?? 0))
+      : null;
+    rows.sort((x, y) => sort === "name"
+      ? `${x.hostname}\u0000${x.interface}`.localeCompare(`${y.hostname}\u0000${y.interface}`, undefined, { numeric: true })
+      : (key(y) ?? -1) - (key(x) ?? -1) || `${x.hostname}${x.interface}`.localeCompare(`${y.hostname}${y.interface}`, undefined, { numeric: true }));
+    const take = Math.min(a.limit ?? cap, cap);
+    return {
+      rows: rows.slice(0, take).map(plain),
+      total: rows.length,
+      extra: { window, matchedDevices: assets.length, interfacesWithHistory: pinnedRows.length, sortedBy: sort },
     };
   },
   async run(args, ctx) {
@@ -1642,11 +1890,11 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
 
 /** The list tools a report can be built from (create_report's `source`). */
-export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary"] as const;
+export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
@@ -1673,7 +1921,8 @@ const createReportTool: ToolDef = {
         description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt. " +
           "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window. " +
           "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt. " +
-          "path_check_summary: check, kind, target, source, availabilityPct, avgLatencyMs, maxLatencyMs, samples, lastOk, lastError, lastFailAt, lastSampleAt, window",
+          "path_check_summary: check, kind, target, source, availabilityPct, avgLatencyMs, maxLatencyMs, samples, lastOk, lastError, lastFailAt, lastSampleAt, window. " +
+          "interface_summary: hostname, interface, description, state, speedMbps, vlan, poe, avgInMbps, avgOutMbps, peakInMbps, peakOutMbps, avgUtilPct, peakUtilPct, inErrors, outErrors, history, window",
       },
     },
     required: ["title", "source"],
@@ -2038,11 +2287,21 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
   listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+
+/**
+ * Tools a turn offers only when the model's window has room for every
+ * definition, or when the turn's playbook names them (assistantChatService
+ * toolsForWindow). On a small local window the full list would crowd out the
+ * system prompt; every tool that predates these stays offered as before.
+ */
+export const WINDOW_OPTIONAL_TOOLS: ReadonlySet<string> = new Set([
+  "telemetry_summary", "get_dependencies", "list_services", "find_endpoint", "path_check_summary", "interface_summary",
+]);
 
 /** The OpenAI-style tool definitions sent to the model. */
 export function assistantToolDefs(): ChatToolDef[] {

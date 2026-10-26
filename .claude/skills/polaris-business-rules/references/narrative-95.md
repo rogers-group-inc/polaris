@@ -69,9 +69,15 @@ not have. `telemetry_summary` closes the gap the same way `create_report` closed
 The averages and peaks are computed in SQL over the matched devices, on the tier the device's
 CPU / memory chart reads for the same window (raw samples while they are kept, else the hourly
 or daily rollups weighted by sample count), so the assistant and the chart cannot disagree. A
-small model never sees a series it would have to summarize. Raw samples, MAC / ARP tables and
-wireless stations were deliberately left for later: they need a lookup shape (find one MAC),
-not a dump, and they name end-user devices, which matters on a hosted provider.
+small model never sees a series it would have to summarize. The same day the owner asked for
+interface statistics, Path Monitor, services, ARP tables and the dependency tree too, and the
+same rule carried over: interface traffic, utilization and error counts are counter deltas in
+SQL (a reset is skipped, never read as traffic), Path Monitor availability and latency are
+aggregated per check and source, and endpoint data (ARP, MAC tables, wireless clients) is a
+LOOKUP by MAC, IP or device-and-port, never a table dump. The owner was asked whether endpoint
+data, which names end-user devices, should be held back from hosted model providers by a
+per-integration switch and chose not to: the role check is its only gate, as for any other
+`assets` data.
 
 ### (d) Conversations belong to one person
 

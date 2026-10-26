@@ -48,6 +48,7 @@ import {
   runAssistantTool,
   toolLabel,
   REPORT_SOURCE_NAMES,
+  WINDOW_OPTIONAL_TOOLS,
   type AssistantReportPayload,
 } from "./assistantToolService.js";
 import {
@@ -479,6 +480,23 @@ export function fitHistory(
   return kept;
 }
 
+/** The share of the prompt budget every tool definition together may take before the optional ones are held back. */
+const TOOL_DEFS_SHARE = 0.45;
+
+/**
+ * The tools a turn offers. Every definition rides in every round, so on a
+ * small local window the whole list would crowd out the system prompt and the
+ * conversation — an overflowing prompt is not refused, the server drops the
+ * OLDEST tokens, which are exactly those (seen live 2026-10-07). When all of
+ * them fit in TOOL_DEFS_SHARE of the budget every tool is offered; otherwise
+ * the WINDOW_OPTIONAL_TOOLS are offered only when the turn's playbook names
+ * them (`keep`). Exported for tests.
+ */
+export function toolsForWindow<T extends { function: { name: string } }>(tools: T[], promptTokens: number, keep: ReadonlySet<string>): T[] {
+  if (estimateTokens(JSON.stringify(tools)) <= promptTokens * TOOL_DEFS_SHARE) return tools;
+  return tools.filter((t) => !WINDOW_OPTIONAL_TOOLS.has(t.function.name) || keep.has(t.function.name));
+}
+
 /**
  * When a long turn's lookups push the prompt past its budget, the OLDEST
  * lookup results are replaced by a one-line note — the model has already
@@ -552,7 +570,7 @@ export async function streamAssistantTurn(input: {
       onChange: (change) => emit("memory", change),
     }
     : null;
-  const tools = memoryTurn ? [...assistantToolDefs(), ...memoryToolDefs()] : assistantToolDefs();
+  const allTools = memoryTurn ? [...assistantToolDefs(), ...memoryToolDefs()] : assistantToolDefs();
   const budget = contextBudget(config.contextWindow);
   // What the turn did, for the Efficiency Advisor's sign-off (rule 95(h)).
   // Gathered whether or not the advisor is on; it costs a regex per lookup.
@@ -584,6 +602,7 @@ export async function streamAssistantTurn(input: {
   // tools are the only ones offered on round 0. A report request or a how-to
   // keeps priority (they steer round 0 themselves, below).
   const playbook = !asksForReport(question) && !asksHowTo(question) ? pickPlaybook(question) : null;
+  const tools = toolsForWindow(allTools, budget.promptTokens, new Set(playbook?.firstRoundTools ?? []));
   const turns = fitHistory(
     estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)) + (playbook ? estimateTokens(playbook.guidance) : 0),
     allTurns,
@@ -615,7 +634,9 @@ export async function streamAssistantTurn(input: {
   let lastListCall: { name: string; args: string } | null = null;
   // Every uuid a lookup returned this turn — the only ids an asset link may name.
   const seenIds = new Set<string>();
-  const toolNames = tools.map((t) => t.function.name);
+  // Every tool, offered or not: a call the model writes as text is still run
+  // when it names a real tool (runAssistantTool checks the caller's role).
+  const toolNames = allTools.map((t) => t.function.name);
   const maxRounds = Math.min(Math.max(config.maxToolRounds ?? LLM_DEFAULTS.maxToolRounds, 1), 12);
   const maxRows = Math.min(Math.max(config.maxRowsPerTool ?? LLM_DEFAULTS.maxRowsPerTool, 10), 1000);
 

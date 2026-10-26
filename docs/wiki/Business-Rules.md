@@ -1641,9 +1641,10 @@ the Alerts page. It can only look things up — it never changes, acknowledges,
 pushes or deletes anything, and it cannot read stored credentials, API tokens,
 user accounts, roles, sign-in settings, automation scripts or server settings.
 A report it builds is a database extract: Polaris runs the query itself (up to
-5,000 rows), so the rows you download were never written by the model. CPU and
-memory averages and peaks are computed the same way, by Polaris from the stored
-samples, never by the model. Your
+5,000 rows), so the rows you download were never written by the model. Measured
+figures (CPU and memory, interface traffic and errors, Path Monitor availability
+and latency) are computed the same way, by Polaris from the stored samples, never
+by the model. Your
 conversations are visible only to you — administrators included — and are
 deleted after 90 days without activity. Creating an AI Assistant integration needs
 Read-Write on Roles and on API Tokens, because it also creates a read-only role

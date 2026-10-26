@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "profile" | "telemetry" | "correlate" | "dependencies" | "paths" | "changed" | "health" | "capacity" | "address" | "endpoint";
+  id: "profile" | "telemetry" | "correlate" | "dependencies" | "paths" | "interfaces" | "changed" | "health" | "capacity" | "address" | "endpoint";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -129,6 +129,24 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
       "2. Answer with the worst source first: availability %, average and peak latency, the last error and when " +
         "it last failed. Say how many sources are failing right now. If no check matches, say so and say Path " +
         "Monitor checks are set up on the Path Monitor page. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // Narrow on purpose: "which port is <mac> on" is endpoint's, and plain
+    // "utilization" of networks is capacity's. Before both.
+    id: "interfaces",
+    label: "interfaces",
+    match: /\b(bandwidth|throughput|crc|busiest (links?|ports?|interfaces?|uplinks?)|poe( (faults?|status|ports?))?|(wan|interface|port|link|uplink)s? (utili[sz]ation|usage|traffic|errors?|speed|down|flapping)|(ports?|interfaces?|links?|uplinks?) ((that|which) (are|were) |are |were )?(down|disabled|with errors))\b/i,
+    firstRoundTools: ["interface_summary", "search"],
+    guidance: [
+      "Playbook — interfaces. Follow these steps in order:",
+      "1. interface_summary with the devices the person named as filters (model, type, region, or search for one " +
+        "hostname) and interface for a port or link name (\"wan\", \"port12\"). state [\"down\"] for links down, " +
+        "poe \"fault\" for PoE faults, withErrors for errors, sortBy \"peak\" for spikes, and hours or since/until for " +
+        "the period (the last 24 hours if none).",
+      "2. Answer with the worst first: device, interface and description, then the figures. Rows with history: " +
+        "false are interfaces not selected for monitoring — give their state, and say traffic and errors are only " +
+        "recorded for monitored interfaces; never call them idle. " + SEPARATE,
     ].join("\n"),
   },
   {

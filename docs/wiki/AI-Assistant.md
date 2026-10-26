@@ -143,6 +143,7 @@ context. Some things to try:
 - *Which automatic services are stopped on the SQL servers?*
 - *Which switch port is 0a:11:22:33:44:55 plugged into?*
 - *Which path checks failed from the branch sites this week?*
+- *What are the busiest WAN links this week?*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
 - *Why are the hardware sensors unresolved on our Fortinet profile?*
@@ -196,6 +197,13 @@ wireless client, each with how long ago it was seen. A MAC is learned on every
 uplink between it and the core as well as on the port it is really plugged into,
 so the assistant leads with the port that holds the fewest MACs. Ask *what is on
 port 12 of sw-nsh-02* to see what is connected to a port.
+
+It can report on **interfaces and switch ports**: status, speed, VLAN and PoE for
+every interface, and for interfaces selected for monitoring, average and peak
+traffic, utilization of the link speed and error counts over a period. Ask for
+the busiest WAN links, ports that are down (link down although enabled, not
+ports someone shut), ports logging errors, or PoE faults. Traffic is only
+recorded for monitored interfaces, so the others show their state only.
 
 It can read **[Path Monitor](Path-Monitor)** results: for each check and each
 place it runs from (an agent host or the Polaris server), the availability and
@@ -329,7 +337,7 @@ See [rule 95](Business-Rules#rule-95).
 | Lookup rounds per answer | how many rounds of lookups one answer may take (default 6) |
 | Rows per lookup | rows one lookup hands the model (default 200); reports go to 5,000 regardless |
 | Messages of history sent | the most earlier turns sent with each question (default 20); older ones are dropped first when they would not fit the context window |
-| Context window | the model server's context size in tokens (default 8192) — set it to match the server. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000. On **Azure AI Foundry** use the deployment's window (`1000000` for Claude 5.5 models); history stays capped by *Messages of history sent* and each lookup at 24,000 characters, so a large window does not mean large requests |
+| Context window | the model server's context size in tokens (default 8192) — set it to match the server. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000. Below about 32k the CPU / memory, interface, service, Path Monitor, endpoint and dependency lookups are offered only to the questions that need them, so their definitions do not crowd out the rest. On **Azure AI Foundry** use the deployment's window (`1000000` for Claude 5.5 models); history stays capped by *Messages of history sent* and each lookup at 24,000 characters, so a large window does not mean large requests |
 | Response timeout | how long the model may go silent before the answer fails |
 | Start a fresh chat after | how long a conversation can sit idle before the chat window saves it, sets it aside and opens fresh (default 30 minutes; 0 = never). `/resume` or History brings it back |
 | Extra instructions | added to the assistant's instructions — site naming conventions, who to escalate to |
