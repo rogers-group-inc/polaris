@@ -2748,7 +2748,10 @@ html[data-page-top-curtain]::after {
   z-index: 900;
   min-width: 160px;
 }
-/* The row-name trigger: reads as the name, not as a control, until hovered. */
+/* The row-name trigger: reads as the name, not as a control, until hovered.
+   No ▾ caret: a left click OPENS the row (the menu's primary verb) and the
+   menu is the right click's, so a dropdown caret would promise the wrong
+   thing (polaris-ui-canon → Row context menu). */
 .row-menu-trigger {
   background: none;
   border: none;
@@ -2763,11 +2766,6 @@ html[data-page-top-curtain]::after {
   white-space: nowrap;
 }
 .row-menu-trigger:hover { text-decoration: underline; }
-.row-menu-trigger::after {
-  content: " \25BE";
-  color: var(--color-text-tertiary);
-  font-size: 0.75em;
-}
 .row-menu-trigger:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;

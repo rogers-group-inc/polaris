@@ -54,7 +54,7 @@ async function _initBlocksPage() {
     var id = trigger.getAttribute("data-block-id");
     var b = (_blocksData || []).find(function (x) { return x.id === id; });
     if (!b) return;
-    var items = [{ label: "Open", onSelect: function () { openBlockFromRow(trigger, id); } }];
+    var items = [{ label: "Open", primary: true, onSelect: function () { openBlockFromRow(trigger, id); } }];
     if (canManageBlocks()) {
       items.push({ label: "Edit", onSelect: function () { openBlockEditModal(id); } });
       items.push({ separator: true });

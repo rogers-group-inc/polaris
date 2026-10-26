@@ -15,9 +15,9 @@
  * The properties under test:
  *   • which verbs a row offers, and to whom — Acknowledge needs `alerts:write`
  *     and an unacknowledged alert, Clear needs `alerts:fullwrite`, Open device
- *     needs a device; a row left with only "Open device" opens it without
- *     asking, as the click always did, and a row with nothing to offer does
- *     nothing rather than opening an empty menu
+ *     needs a device; a row with a device opens it on a plain click ("Open
+ *     device" is the primary item) and shows the verbs on a right click, and
+ *     a row with nothing to offer does nothing rather than opening an empty menu
  *   • that the act STICKS on screen. Both caches sit between the write and the
  *     next fetch (15s client memo over the route's 10s TTL), so a cleared row
  *     comes back from the feed and would read as a click that did nothing.
@@ -55,7 +55,9 @@ let win: Window;
 let doc: Window["document"];
 const g = globalThis as Record<string, unknown>;
 
-let menuItems: Array<{ label: string; onSelect: () => void }> | null;
+let menuItems: Array<{ label: string; onSelect: () => void; primary?: boolean }> | null;
+/** True while the click under test is a right click (app.js's forced menu). */
+let forceMenu = false;
 let openedAsset: Array<[string, unknown]>;
 let ackOpened: { alertId: string; opts: Record<string, unknown> } | null;
 let cleared: string[][];
@@ -95,7 +97,11 @@ beforeEach(() => {
   confirmAnswer = true;
   feedRows = [];
   const w = win as unknown as Record<string, unknown>;
-  w.showRowMenu = (_anchor: unknown, items: Array<{ label: string; onSelect: () => void }>) => {
+  // showRowMenu's contract (app.js): a plain click runs the primary item, a
+  // right click draws the menu.
+  w.showRowMenu = (_anchor: unknown, items: Array<{ label: string; onSelect: () => void; primary?: boolean }>) => {
+    const primary = items.find((i) => i && i.primary);
+    if (!forceMenu && primary) { primary.onSelect(); return; }
     menuItems = items.filter((i) => i && i.label);
   };
   w.openModal = () => {};
@@ -133,14 +139,16 @@ const alert = (o: Partial<AlertRow> & { id: string }): AlertRow => ({
   raisedAt: "2026-09-05T00:00:00Z", ...o,
 });
 
-/** Render rows, click the first one, hand back the live body + teardown. */
-function mountAndClick(rows: AlertRow[], config: Cfg = { minSeverity: "warning", rowLimit: 50 }) {
+/** Render rows, click the first one — a RIGHT click unless `menu` is false —
+ *  and hand back the live body + teardown. */
+function mountAndClick(rows: AlertRow[], config: Cfg = { minSeverity: "warning", rowLimit: 50 }, menu = true) {
   const el = mountWidget();
   const cleanups: Array<() => void> = [];
   mod.renderInstance(el, config, { rows, total: rows.length }, { onUnmount: (fn) => cleanups.push(fn) });
   const row = el.querySelector(".recent-item") as unknown as HTMLElement;
   const ev = new (win as any).MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
-  row.dispatchEvent(ev as unknown as Event);
+  forceMenu = menu;
+  try { row.dispatchEvent(ev as unknown as Event); } finally { forceMenu = false; }
   return { el, ev, teardown: () => cleanups.forEach((fn) => fn()) };
 }
 
@@ -161,7 +169,7 @@ describe("which verbs a row offers", () => {
 
   it("adds Open device when the alert names one", () => {
     const { teardown } = mountAndClick([alert({ id: "n1", assetId: "asset-9", hostname: "sw-1" })]);
-    expect(labels()).toEqual(["Acknowledge alert…", "Clear alert", "Open device"]);
+    expect(labels()).toEqual(["Open device", "Acknowledge alert…", "Clear alert"]);
     pick("Open device");
     // The device opens on ITS Alerts tab — the alert, not the General tab the
     // operator would then have to leave.
@@ -183,9 +191,22 @@ describe("which verbs a row offers", () => {
     teardown();
   });
 
+  it("a plain click on a row with a device opens it, whatever else is offered", () => {
+    const { teardown } = mountAndClick([alert({ id: "n1", assetId: "asset-9" })], undefined, false);
+    expect(menuItems).toBeNull();
+    expect(openedAsset).toEqual([["asset-9", { tab: "notifications" }]]);
+    teardown();
+  });
+
+  it("a plain click on a device-less alert still shows its verbs — there is nothing to open", () => {
+    const { teardown } = mountAndClick([alert({ id: "n1" })], undefined, false);
+    expect(labels()).toEqual(["Acknowledge alert…", "Clear alert"]);
+    teardown();
+  });
+
   it("opens the device without asking when that is the only verb left", () => {
     (win as unknown as Record<string, unknown>).permAtLeast = () => false;
-    const { teardown } = mountAndClick([alert({ id: "n1", assetId: "asset-9" })]);
+    const { teardown } = mountAndClick([alert({ id: "n1", assetId: "asset-9" })], undefined, false);
     expect(menuItems).toBeNull();
     expect(openedAsset).toEqual([["asset-9", { tab: "notifications" }]]);
     teardown();
@@ -201,8 +222,9 @@ describe("which verbs a row offers", () => {
 
   it("asks nothing on the /dash wallboard, which loads neither app.js nor the dialogs", () => {
     (win as unknown as Record<string, unknown>).POLARIS_DASH_LOCAL = true;
-    const { teardown } = mountAndClick([alert({ id: "n1", assetId: "asset-9" })]);
+    const { teardown } = mountAndClick([alert({ id: "n1", assetId: "asset-9" })], undefined, false);
     expect(menuItems).toBeNull();
+    expect(openedAsset).toEqual([["asset-9", { tab: "notifications" }]]);
     teardown();
   });
 });
@@ -295,9 +317,9 @@ describe("a grouped alert's components", () => {
       (idOrRow: unknown, opts: Record<string, unknown>) => { membersOpened.push([idOrRow, opts]); };
   });
 
-  it("leads the menu with the group's alerts on a grouped row", () => {
+  it("offers the group's alerts right after Open device on a grouped row", () => {
     const { teardown } = mountAndClick([alert({ id: "g1", assetId: "asset-9", dimensionCount: 2 })]);
-    expect(labels()).toEqual(["Show alerts in this group…", "Acknowledge alert…", "Clear alert", "Open device"]);
+    expect(labels()).toEqual(["Open device", "Show alerts in this group…", "Acknowledge alert…", "Clear alert"]);
     pick("Show alerts in this group…");
     // By ID: the widget's feed does not carry the members snapshot.
     expect(membersOpened.length).toBe(1);
@@ -312,6 +334,13 @@ describe("a grouped alert's components", () => {
     teardown();
   });
 
+  it("a plain click on a device-less grouped alert opens its group", () => {
+    const { teardown } = mountAndClick([alert({ id: "g1", dimensionCount: 2 })], undefined, false);
+    expect(menuItems).toBeNull();
+    expect(membersOpened.map((m) => m[0])).toEqual(["g1"]);
+    teardown();
+  });
+
   it("does not offer it on an ungrouped alert", () => {
     const { teardown } = mountAndClick([alert({ id: "n1" })]);
     expect(labels()).not.toContain("Show alerts in this group…");
@@ -321,9 +350,8 @@ describe("a grouped alert's components", () => {
   it("keeps it from a role without alerts:read, which the read behind it needs", () => {
     (win as unknown as Record<string, unknown>).permAtLeast = () => false;
     const { teardown } = mountAndClick([alert({ id: "g1", assetId: "asset-9", dimensionCount: 3 })]);
-    // Only Open device is left, which opens straight away as it always did.
-    expect(menuItems).toBeNull();
-    expect(openedAsset).toEqual([["asset-9", { tab: "notifications" }]]);
+    // Only Open device is left.
+    expect(labels()).toEqual(["Open device"]);
     teardown();
   });
 });

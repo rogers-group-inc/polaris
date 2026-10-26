@@ -153,6 +153,16 @@ someone else's needs `assets:fullwrite`.
 
 ### The row menu
 
+**Click a hostname to open the asset; right-click it for the row menu.** The
+same rule holds for every name in Polaris that has a menu behind it (assets,
+networks, blocks, automations, roles, path checks, saved discoveries, and the
+dashboard's alert, outage and maintenance rows): a left click does the menu's
+first verb, and a right click (or the keyboard's Menu key, or Shift+F10 on the
+focused name) shows the whole menu at the pointer. A name with nothing to open,
+such as a user on the Users page, shows its menu on either click.
+Shift+right-click still gives the browser's own menu, and Ctrl/middle-click on a
+dashboard row still opens the Assets page in a new tab.
+
 Each row's menu carries **Open** and, with `assets:write`, **Edit…**; then
 **Open HTTPS**, **Open RDP** and **Open SSH** where the device has that
 management surface (the same verbs as the slide-over header — a Fortinet device
@@ -661,8 +671,8 @@ same pills.
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
-When the interface's address sits inside a network Polaris knows, the click
-offers **Open interface** or **Open network** instead; *Open network* slides
+Right-click it for **Open interface** and, when the interface's address sits
+inside a network Polaris knows, **Open network**; *Open network* slides
 that network's address table in over the asset, scrolled to the address. The
 choice appears only for roles that can read networks, and only when a network
 actually contains the address. An interface with no IPv4 address looks up the

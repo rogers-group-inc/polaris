@@ -2418,7 +2418,7 @@ function _managementAccessMenuItems(a) {
 }
 
 function _assetMenuItems(a) {
-  var items = [{ label: "Open", onSelect: function () { openViewModal(a.id); } }];
+  var items = [{ label: "Open", primary: true, onSelect: function () { openViewModal(a.id); } }];
   if (canManageAssets()) {
     items.push({ label: "Edit…", onSelect: function () { openEditModal(a.id); } });
   }
@@ -9108,7 +9108,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var badgeAsChild = opts.isChild || (opts.flat && !!iface.ifParent);
     var nameCell =
       '<td class="mono" style="' + padStyle + '" title="' + escapeHtml(iface.ifName) + '">' + prefix +
-      '<a href="#" class="asset-iface-link" data-ifname="' + escapeHtml(iface.ifName) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(label) + '</a>' +
+      '<a href="#" class="asset-iface-link" data-row-menu data-ifname="' + escapeHtml(iface.ifName) + '" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(label) + '</a>' +
       typeBadge(iface, badgeAsChild) +
       subtitle +
       '</td>';
@@ -9713,11 +9713,18 @@ function _ifaceIpForLookup(raw) {
 // resolved on click through GET /assets/ip-context — one small request, only
 // for an interface that has an address, only for a viewer who can read
 // networks — so a table of 48 ports costs nothing to render, and an address in
-// no network opens the interface straight away, as before. The row menu
-// anchors on the name the operator clicked (showRowMenu, app.js); a lookup
-// that fails, or lands after the table re-rendered under it, opens the
-// interface rather than nothing.
+// no network opens the interface straight away, as before. A plain click
+// always opens the interface; the fork is the RIGHT click's menu (rowMenuGesture,
+// app.js), so the lookup is paid only when the operator asks for the menu. The
+// menu anchors at the pointer; a lookup that fails, or lands after the table
+// re-rendered under it, opens the interface rather than nothing.
 function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
+  var at = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
+  if (!at) {
+    openInterfaceDetailPanel(asset, ifName, row);
+    return;
+  }
+  var openIface = { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } };
   // IPv4 first; an IPv6-only interface looks its IPv6 network up instead
   // (business rule 126).
   var ip = _ifaceIpForLookup(row && row.ipAddress) ||
@@ -9725,22 +9732,23 @@ function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
   var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
   var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
   if (!ip || !canReadNetworks || !canLookup) {
-    openInterfaceDetailPanel(asset, ifName, row);
+    showRowMenu(anchor, [openIface], { label: ifName, menuAt: at });
     return;
   }
   api.assets.ipContext(ip).then(function (ctx) {
     var subnet = ctx && ctx.subnet;
-    if (!subnet || !subnet.id || !anchor || !document.body.contains(anchor)) {
+    if (!anchor || !document.body.contains(anchor)) {
       openInterfaceDetailPanel(asset, ifName, row);
       return;
     }
-    var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
-    showRowMenu(anchor, [
-      { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } },
-      { label: "Open network", title: ip + " is in " + where, onSelect: function () {
+    var items = [openIface];
+    if (subnet && subnet.id) {
+      var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
+      items.push({ label: "Open network", title: ip + " is in " + where, onSelect: function () {
         PolarisPanels.openNetwork(subnet.id, { focusIp: ip, subnetCidr: subnet.cidr });
-      } },
-    ], { label: ifName });
+      } });
+    }
+    showRowMenu(anchor, items, { label: ifName, menuAt: at });
   }, function () {
     openInterfaceDetailPanel(asset, ifName, row);
   });
@@ -21415,6 +21423,7 @@ function _upstreamMenuItems(ref) {
   if (!ref || !ref.id) return [];
   var items = [{
     label: "Open asset",
+    primary: true,
     title: "Open this device's details",
     onSelect: function () { openViewModal(ref.id); },
   }];
@@ -25391,6 +25400,7 @@ function _loadAssetNotificationsTab(assetId) {
           if (!row) return;
           showRowMenu(btn, [{
             label: "Show alerts in this group…",
+            primary: true,
             title: "List the components this alert is made of — which are still affected and which have recovered",
             onSelect: function () { openAlertMembers(row); },
           }], { label: "Alert actions" });

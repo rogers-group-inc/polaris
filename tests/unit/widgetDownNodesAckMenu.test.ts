@@ -5,10 +5,10 @@
  * PolarisWidgets.openAssetRow in public/js/widgets/index.js).
  *
  * A row on this widget is a prompt to do one of two things — put your name on
- * the alert, or go look at the device — so a plain left-click ASKS which,
- * rather than assuming the second. The property under test is when it asks and
- * when it doesn't, because every "doesn't" is a case where a menu would be a
- * dead end:
+ * the alert, or go look at the device. A plain left-click opens the device
+ * ("Open device" is the menu's primary item); a right click is the menu. The
+ * property under test is when the menu offers Acknowledge and when it doesn't,
+ * because every "doesn't" is a case where the verb would be a dead end:
  *
  *   • nothing to acknowledge  — a down device no automation covers (business
  *                               rule 36's `passive`) carries no alert at all
@@ -58,8 +58,10 @@ let doc: Window["document"];
 const g = globalThis as Record<string, unknown>;
 
 /** What the click ended up doing, per test. */
-let menuItems: Array<{ label: string; onSelect: () => void }> | null;
+let menuItems: Array<{ label: string; onSelect: () => void; primary?: boolean }> | null;
 let menuAnchor: unknown;
+/** True while the click under test is a right click (app.js's forced menu). */
+let forceMenu = false;
 let openedAsset: string | null;
 let ackOpened: { alertId: string; opts: Record<string, unknown> } | null;
 
@@ -86,8 +88,13 @@ beforeEach(() => {
   menuAnchor = null;
   openedAsset = null;
   ackOpened = null;
+  forceMenu = false;
   const w = win as unknown as Record<string, unknown>;
-  w.showRowMenu = (anchor: unknown, items: Array<{ label: string; onSelect: () => void }>) => {
+  // showRowMenu's contract (app.js): a plain click runs the primary item, a
+  // right click draws the menu.
+  w.showRowMenu = (anchor: unknown, items: Array<{ label: string; onSelect: () => void; primary?: boolean }>) => {
+    const primary = items.find((i) => i && i.primary);
+    if (!forceMenu && primary) { primary.onSelect(); return; }
     menuAnchor = anchor;
     menuItems = items.filter((i) => i && i.label);
   };
@@ -118,18 +125,20 @@ const node = (o: Partial<Node> & { id: string }): Node => ({
   dependencySuppressed: false, ...o,
 });
 
-/** Render, click the first row, hand back what happened. */
-function clickFirstRow(nodes: Node[], config: Cfg = { groupBy: "none", rowLimit: 10 }) {
+/** Render, click the first row (`menu`: a right click), hand back what happened. */
+function clickFirstRow(nodes: Node[], config: Cfg = { groupBy: "none", rowLimit: 10 }, menu = false) {
   const el = mountWidget();
   const cleanups: Array<() => void> = [];
   mod.renderInstance(el, config, { nodes, total: nodes.length }, { onUnmount: (fn) => cleanups.push(fn) });
   const row = el.querySelector(".dash-alert-item") as unknown as HTMLElement;
   expect(row, "the widget rendered no rows").toBeTruthy();
   const ev = new (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent("click", { bubbles: true, cancelable: true });
-  row.dispatchEvent(ev);
+  forceMenu = menu;
+  try { row.dispatchEvent(ev); } finally { forceMenu = false; }
   cleanups.forEach((fn) => fn()); // stop the 30s refresh + drop the listener
   return { el, row, ev };
 }
+const rightClickFirstRow = (nodes: Node[]) => clickFirstRow(nodes, { groupBy: "none", rowLimit: 10 }, true);
 
 describe("the row carries the alert its severity pill is showing", () => {
   it("stamps the alert id and its handled state on the row", () => {
@@ -249,19 +258,26 @@ describe("hide acknowledged outages (gear toggle)", () => {
   });
 });
 
-describe("an unacknowledged alert asks first", () => {
-  it("opens a row menu instead of the slide-in", () => {
-    const { row, ev } = clickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
-    expect(menuItems?.map((i) => i.label)).toEqual(["Acknowledge alert…", "Open device"]);
-    expect(menuAnchor).toBe(row);
-    expect(openedAsset).toBeNull();
-    // The navigation the href would otherwise do is suppressed — the menu is
-    // the whole point of intercepting the click.
+describe("an unacknowledged alert: left click opens, right click asks", () => {
+  it("a left click opens the device in place, not the Assets page", () => {
+    const { ev } = clickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
+    expect(menuItems).toBeNull();
+    expect(openedAsset).toBe("a");
+    // The navigation the href would otherwise do is suppressed — the device
+    // opens over the dashboard.
     expect(ev.defaultPrevented).toBe(true);
   });
 
+  it("a right click opens the row menu, Open device first", () => {
+    const { row } = rightClickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
+    expect(menuItems?.map((i) => i.label)).toEqual(["Open device", "Acknowledge alert…"]);
+    expect(menuItems?.[0].primary).toBe(true);
+    expect(menuAnchor).toBe(row);
+    expect(openedAsset).toBeNull();
+  });
+
   it("Acknowledge opens the modal for THAT alert, with a way back to the device", () => {
-    clickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
+    rightClickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
     menuItems!.find((i) => i.label.startsWith("Acknowledge"))!.onSelect();
     expect(ackOpened?.alertId).toBe("n-1");
     // The modal gets the widget's own in-place opener rather than navigating:
@@ -275,34 +291,33 @@ describe("an unacknowledged alert asks first", () => {
   });
 
   it("Open device goes straight to the slide-in", () => {
-    clickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
+    rightClickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
     menuItems!.find((i) => i.label === "Open device")!.onSelect();
     expect(openedAsset).toBe("a");
     expect(ackOpened).toBeNull();
   });
 });
 
-describe("nothing to acknowledge → the click behaves as it always did", () => {
-  it("opens the slide-in when the alert is already acknowledged", () => {
+describe("nothing to acknowledge → the right-click menu holds only Open device", () => {
+  it("when the alert is already acknowledged", () => {
+    rightClickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: true })]);
+    expect(menuItems?.map((i) => i.label)).toEqual(["Open device"]);
     clickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: true })]);
-    expect(menuItems).toBeNull();
     expect(openedAsset).toBe("a");
   });
 
-  it("opens the slide-in when the row carries no alert", () => {
-    clickFirstRow([node({ id: "a" })]);
-    expect(menuItems).toBeNull();
-    expect(openedAsset).toBe("a");
+  it("when the row carries no alert", () => {
+    rightClickFirstRow([node({ id: "a" })]);
+    expect(menuItems?.map((i) => i.label)).toEqual(["Open device"]);
   });
 
-  it("opens the slide-in when the role cannot acknowledge", () => {
+  it("when the role cannot acknowledge", () => {
     // Withholding the verb beats a menu item that 403s. The route stays the
     // control — this is only the courtesy.
     (win as unknown as Record<string, unknown>).permAtLeast = (key: string, level: string) =>
       !(key === "alerts" && level === "write");
-    clickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
-    expect(menuItems).toBeNull();
-    expect(openedAsset).toBe("a");
+    rightClickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
+    expect(menuItems?.map((i) => i.label)).toEqual(["Open device"]);
   });
 
   it("opens the slide-in on a surface with no dialogs (the /dash wallboard)", () => {
@@ -340,11 +355,16 @@ describe("openAssetRow is the one decider", () => {
     expect(typeof W.PolarisWidgets.openAssetRow).toBe("function");
   });
 
-  it("falls back to opening the device when handed no alert id at all", () => {
+  it("opens the device on a plain click when handed no alert id at all", () => {
     const W = win as unknown as { PolarisWidgets: { openAssetRow: (a: unknown, o: unknown) => boolean } };
-    const asked = W.PolarisWidgets.openAssetRow(doc.createElement("a"), { assetId: "z" });
-    expect(asked).toBe(false);
+    W.PolarisWidgets.openAssetRow(doc.createElement("a"), { assetId: "z" });
+    expect(menuItems).toBeNull();
     expect(openedAsset).toBe("z");
+  });
+
+  it("marks every row it renders for the right-click listener", () => {
+    const { row } = clickFirstRow([node({ id: "a" })]);
+    expect(row.hasAttribute("data-row-menu")).toBe(true);
   });
 });
 

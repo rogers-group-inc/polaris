@@ -349,7 +349,7 @@
     // asset URL to put in an href — but it carries the alert id and answers the
     // click with the two verbs that don't need a device.
     var tag = r.assetId ? "a" : "div";
-    var attrs = ' data-alert-id="' + escapeHtml(r.id || "") + '"' +
+    var attrs = ' data-row-menu data-alert-id="' + escapeHtml(r.id || "") + '"' +
       (r.acknowledged ? ' data-alert-ack="1"' : "") +
       // The row menu offers the group's components (openAlertMembers).
       (grouped ? ' data-alert-grouped="1"' : "") +

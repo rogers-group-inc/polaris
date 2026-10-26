@@ -789,7 +789,7 @@ var _rulesPage = 1;
         var r = _rules.find(function (x) { return x.id === b.dataset.id; });
         if (!r) return;
         showRowMenu(b, [
-          { label: "Edit", onSelect: function () { openWizardFor(r); } },
+          { label: "Edit", primary: true, onSelect: function () { openWizardFor(r); } },
           {
             label: "Clone",
             title: "Create a disabled copy of this automation",
