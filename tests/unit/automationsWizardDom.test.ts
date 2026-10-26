@@ -3056,6 +3056,57 @@ describe("automation wizard DOM render", () => {
     expect(saved.trigger.includeServer).toBe(true);
   });
 
+  it("gives the memory forecast a 'within N days' box that saves as forecastDays, and drops it off any other metric", async () => {
+    // memForecastPct: the threshold (and each severity level's) is a TARGET
+    // memory level, reached within the condition's horizon. The box replaces
+    // the aggregation — and, as a field the collector rebuilds the leaf from,
+    // it must be read back or the horizon is silently deleted on save.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-mem-forecast", name: "Memory forecast",
+      reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(doc.querySelector("#aw-trig-root .tgl-horizon")).toBeNull();
+    await pickMetric("memForecastPct");
+    const box = doc.querySelector("#aw-trig-root .tgl-horizon") as unknown as { value: string } | null;
+    expect(box).not.toBeNull();
+    expect(box!.value).toBe("14");
+    expect((doc.querySelector("#aw-trig-root .tgl-agg") as unknown as { style: { display: string } }).style.display).toBe("none");
+    box!.value = "21";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.metric).toBe("memForecastPct");
+    expect(saved.trigger.forecastDays).toBe(21);
+    expect(saved.trigger.aggregation).toBe("latest");
+
+    // Back to plain memory utilization: no box, nothing left behind.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-mem-forecast-2", name: "Memory forecast",
+      trigger: { ...LOSS_BASE.trigger, metric: "memForecastPct", operator: ">=", threshold: 80, forecastDays: 21 },
+      reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await pickMetric("memPct");
+    expect(doc.querySelector("#aw-trig-root .tgl-horizon")).toBeNull();
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    expect((savedPayloads[0]! as Record<string, any>).trigger.forecastDays).toBeUndefined();
+  });
+
   it("opens a stored path automation under Path Monitor, keeping its server choice", async () => {
     doc.body.innerHTML = "";
     savedPayloads.length = 0;

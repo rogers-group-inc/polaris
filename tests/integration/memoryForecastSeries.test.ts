@@ -15,7 +15,7 @@ import { it, expect, beforeAll, afterAll } from "vitest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { authedAgent, dbDescribe, ensureTestUser } from "./_helpers.js";
-import { computeMemoryForecast, loadMemoryForecastSeries } from "../../src/services/memoryForecastService.js";
+import { computeMemoryForecast, computeMemoryProjection, loadMemoryForecastSeries, projectMemoryPct } from "../../src/services/memoryForecastService.js";
 import { previewRule } from "../../src/services/notificationEngine.js";
 import { previewInputSchema } from "../../src/services/notificationTypes.js";
 
@@ -118,6 +118,30 @@ dbDescribe("memory forecast series for the Memory chart", () => {
     const fleet = await computeMemoryForecast(IDS);
     expect(matches.map((m) => m.assetId)).toEqual([GROWING]);
     expect(matches[0]!.value).toBe(fleet[0]!.daysUntilFull);
+  });
+
+  it("is what a memForecastPct automation reads — the level reached within its horizon, growing hosts only", async () => {
+    const preview = async (forecastDays: number) => {
+      const res = await previewRule(previewInputSchema.parse({
+        name: "preview",
+        trigger: { type: "asset_metric", metric: "memForecastPct", aggregation: "latest", operator: ">=", threshold: 80, forDurationSec: 0, forecastDays },
+        scope: { assetIds: IDS },
+      }) as never);
+      // The preview lists every evaluated device; the shrinking host is there
+      // with a null reading that does not meet.
+      return (res as { matches: Array<{ assetId: string; value: number; meets: boolean }> }).matches.filter((m) => m.meets);
+    };
+    // ~68% growing ~2 points/day: past 80% inside 14 days, not inside 3.
+    const proj = await computeMemoryProjection(IDS, 14);
+    const grow = proj.find((r) => r.assetId === GROWING)!;
+    expect(grow.projectedPct).toBe(projectMemoryPct(grow.usedPct, grow.slopePctPerDay, 14));
+    expect(grow.projectedPct!).toBeGreaterThan(80);
+    // The shrinking host still has a row — a NULL one, so a live alert ends.
+    expect(proj.find((r) => r.assetId === PCT_ONLY)?.projectedPct).toBeNull();
+    const within14 = await preview(14);
+    expect(within14.map((m) => m.assetId)).toEqual([GROWING]);
+    expect(within14[0]!.value).toBeCloseTo(grow.projectedPct!, 0);
+    expect(await preview(3)).toEqual([]);
   });
 
   it("serves the chart's series over GET /assets/:id/memory-forecast", async () => {
