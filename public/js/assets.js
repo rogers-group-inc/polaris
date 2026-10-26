@@ -164,6 +164,26 @@ function _setCpuHiddenCores(container, hidden) {
   else container.dataset.coresOff = keys.join(",");
 }
 
+// Per-asset memory forecast-overlay visibility — the storage pref below, one
+// level up (memory has no mount dimension). Default on; absent entry = on.
+function _getMemoryForecastVisible(assetId) {
+  if (!currentUsername || !assetId) return true;
+  try {
+    var raw = localStorage.getItem("polaris-prefs-memory-forecast-" + currentUsername);
+    var p = raw ? JSON.parse(raw) : null;
+    return !(p && p[assetId] === false);
+  } catch (_) { return true; }
+}
+function _setMemoryForecastVisible(assetId, visible) {
+  if (!currentUsername || !assetId) return;
+  try {
+    var raw = localStorage.getItem("polaris-prefs-memory-forecast-" + currentUsername);
+    var p = raw ? (JSON.parse(raw) || {}) : {};
+    p[assetId] = !!visible;
+    localStorage.setItem("polaris-prefs-memory-forecast-" + currentUsername, JSON.stringify(p));
+  } catch (_) {}
+}
+
 // Per-(asset, mount) forecast-overlay visibility. Default on; only stored
 // when the operator explicitly toggles it off (or back on after toggling
 // off) — absent entry = default on.
@@ -8075,6 +8095,9 @@ function assetSystemViewHTML(a) {
           'Loading samples…' +
         '</div>' +
         '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin:0.75rem 0 0.15rem">Memory</div>' +
+        // Forecast headline + toggle (_renderMemForecastBar). Hidden until a
+        // forecast with any history has loaded.
+        '<div id="asset-mem-forecast" style="display:none;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.35rem;font-size:0.85rem"></div>' +
         '<div id="asset-mem-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
           '<span>Loading…</span>' +
         '</div>' +
@@ -8083,7 +8106,8 @@ function assetSystemViewHTML(a) {
         '</div>'
       // Combined: no sub-heading above the chart — the section header already
       // reads "CPU & Memory" and the SVG carries its own two-key legend.
-      : '<div id="asset-system-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+      : '<div id="asset-mem-forecast" style="display:none;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.35rem;font-size:0.85rem"></div>' +
+        '<div id="asset-system-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
           '<span>Loading…</span>' +
         '</div>' +
         '<div id="asset-system-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
@@ -8299,6 +8323,12 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   var panelBody = silent ? document.getElementById("asset-panel-body") : null;
   var savedScroll = panelBody ? panelBody.scrollTop : 0;
 
+  // The memory forecast is fitted on 30 days of daily points, independent of
+  // the selected range, so it rides alongside rather than inside the history
+  // fetch — refetched on a full load, served from cache on range clicks and
+  // the silent refresh. Never throws; a failed load just draws no overlay.
+  var memForecastPromise = _loadMemoryForecastFor(assetId, !silent && !chartOnly);
+
   try {
     var tel, si;
     if (chartOnly) {
@@ -8313,6 +8343,8 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
       si  = results[1];
       _assetSystemSiCache = si;
     }
+    await memForecastPromise;
+    _memForecastLastRender = { assetId: assetId, tel: tel, asset: asset, si: si };
 
     if (combined) {
       _renderSystemChart(chart, tel, asset, si);
@@ -8320,6 +8352,7 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
       _renderCpuChart(chart, tel, asset, si);
       if (memChart) _renderMemoryChart(memChart, tel, asset, si);
     }
+    _renderMemForecastBar(assetId, !!combined);
     var sessionsChart = document.getElementById("asset-system-sessions-chart");
     if (sessionsChart) {
       var sessionsSel = _currentSessionsRange();
@@ -13261,6 +13294,12 @@ function _renderSystemChart(container, data, asset, si) {
   var memValues = samples.map(function (s) { return { s: s, v: memPctFromSample(s) }; })
                          .filter(function (e) { return typeof e.v === "number"; });
 
+  // Memory forecast overlay — leaves from the newest point on the memory line.
+  var memNewest = null;
+  memValues.forEach(function (e) { var t = +new Date(e.s.timestamp); if (!memNewest || t > memNewest.t) memNewest = { t: t, pct: e.v }; });
+  var fcProj = _memForecastProjection(asset && asset.id, memNewest, t1 - t0);
+  if (fcProj && fcProj.endT > t1) { t1 = fcProj.endT; spanMs = t1 - t0; }
+
   var yMin = 0, yMax = 100;
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, yMin, yMax);
@@ -13340,6 +13379,10 @@ function _renderSystemChart(container, data, asset, si) {
       '<text x="' + (padL + 18) + '" y="11">CPU</text>' +
       '<rect x="' + (padL + 60) + '" y="2" width="10" height="10" fill="' + memColor + '"/>' +
       '<text x="' + (padL + 74) + '" y="11">Memory</text>' +
+      (fcProj
+        ? '<line x1="' + (padL + 130) + '" y1="7" x2="' + (padL + 148) + '" y2="7" stroke="' + memColor + '" stroke-width="1.5" stroke-dasharray="4 3"/>' +
+          '<text x="' + (padL + 152) + '" y="11">Memory forecast</text>'
+        : '') +
     '</g>';
 
   var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt, _streamFailureError(si, "telemetry"));
@@ -13359,6 +13402,7 @@ function _renderSystemChart(container, data, asset, si) {
         memLine.segments +
         cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + cpuColor + '"/>'; }).join("") +
         memValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + memColor + '"/>'; }).join("") +
+        (fcProj ? _memForecastSVG(fcProj, xFor, yFor, memColor, padT, innerH) : '') +
         failDots +
         // After `hits`, not before: this chart's hit targets are full-height
         // Voronoi lanes, and a gap sits inside the neighboring sample's lane —
@@ -13899,6 +13943,157 @@ function _memRuns(points, gapMarkers) {
   return runs.filter(function (r) { return r.length > 0; });
 }
 
+// ─── Memory forecast ─────────────────────────────────────────────────────
+// The Memory chart's twin of the Storage panel's forecast: a dashed
+// projection past "now" plus a "days until full" headline. Unlike storage,
+// the fit comes from the SERVER (GET /assets/:id/memory-forecast →
+// memoryForecastService), fitted on 30 days of daily averages — the very
+// figure the memDaysUntilFull automation compares, so the headline and an
+// alert can never disagree. Memory in use is a PERCENTAGE of installed
+// memory there (bytes first, the source's own % otherwise), so the overlay
+// converts back to bytes on the byte-stacked chart.
+var _memForecastCache = null;        // { assetId, data, at }
+var _memForecastLastRender = null;   // { assetId, tel, asset, si } — toggle re-renders from it
+var _MEM_FORECAST_TTL_MS = 15 * 60 * 1000;
+
+async function _loadMemoryForecastFor(assetId, force) {
+  var c = _memForecastCache;
+  if (!force && c && c.assetId === assetId && (Date.now() - c.at) < _MEM_FORECAST_TTL_MS) return c.data;
+  try {
+    var data = await api.assets.memoryForecast(assetId);
+    _memForecastCache = { assetId: assetId, data: data, at: Date.now() };
+    return data;
+  } catch (_) {
+    // A stale forecast for this asset beats none; a different asset's never.
+    if (c && c.assetId === assetId) return c.data;
+    _memForecastCache = { assetId: assetId, data: null, at: Date.now() };
+    return null;
+  }
+}
+
+function _memForecastFor(assetId) {
+  var c = _memForecastCache;
+  return (c && assetId && c.assetId === assetId) ? c.data : null;
+}
+
+// "insufficient" | "growing" | "beyond-horizon" | "flat" | "shrinking".
+// "growing" is exactly the server's daysUntilFull being set — the condition
+// under which a memDaysUntilFull automation has a reading at all.
+function _memForecastSignal(fc) {
+  if (!fc || fc.slopePerDay == null) return "insufficient";
+  if (fc.daysUntilFull != null) return "growing";
+  // Under 0.1 percentage points a week is noise, not a trend (the storage
+  // panel's significance floor, in the same units).
+  if (Math.abs(fc.slopePerDay) * 7 < 0.1) return "flat";
+  return fc.slopePerDay < 0 ? "shrinking" : "beyond-horizon";
+}
+
+function _fmtPctPerDay(v) {
+  var a = Math.abs(v);
+  return a.toFixed(a < 1 ? 2 : 1) + "%/day";
+}
+
+function _memForecastHeadlineHTML(fc) {
+  var muted = "var(--color-text-secondary)";
+  var signal = _memForecastSignal(fc);
+  var color = muted, text;
+  if (signal === "insufficient") {
+    var have = fc && fc.points ? fc.points.length : 0;
+    var need = (fc && fc.minPoints) || 7;
+    return '<span style="color:' + muted + '">Forecast needs ' + need + ' days of history — ' + have + ' so far</span>';
+  }
+  if (signal === "growing") {
+    var days = fc.daysUntilFull;
+    color = days < 30 ? "var(--color-danger, #e63946)" : days < 90 ? "var(--color-warning, #f4a261)" : "var(--color-success, #2a9d8f)";
+    text = "Days until full: <strong>" + days.toFixed(days < 10 ? 1 : 0) + "</strong>" +
+      ' <span style="color:' + muted + '">· trend: +' + _fmtPctPerDay(fc.slopePerDay) + '</span>';
+  } else if (signal === "shrinking") {
+    color = "var(--color-success, #2a9d8f)";
+    text = 'Shrinking <span style="color:' + muted + '">· −' + _fmtPctPerDay(fc.slopePerDay) + '</span>';
+  } else if (signal === "beyond-horizon") {
+    color = "var(--color-success, #2a9d8f)";
+    text = "Days until full: <strong>&gt; 1 year</strong>";
+  } else {
+    text = "No measurable growth";
+  }
+  return '<span style="color:' + color + '" title="Fitted on ' + fc.points.length + ' daily averages over the last ' +
+    (fc.lookbackDays || 30) + ' days — the same figure a &quot;Days until memory full&quot; automation compares">' + text + '</span>';
+}
+
+// The headline + Forecast toggle above the memory chart (or above the
+// combined CPU & Memory chart, prefixed "Memory" there since the chart is
+// shared). Hidden while there is no history at all — a host that has never
+// reported memory has nothing to forecast and nothing to toggle.
+function _renderMemForecastBar(assetId, combined) {
+  var bar = document.getElementById("asset-mem-forecast");
+  if (!bar) return;
+  var fc = _memForecastFor(assetId);
+  if (!fc || !fc.points || fc.points.length === 0) {
+    bar.style.display = "none";
+    bar.innerHTML = "";
+    return;
+  }
+  var on = _getMemoryForecastVisible(assetId);
+  var canDraw = _memForecastSignal(fc) !== "insufficient";
+  bar.style.display = "flex";
+  bar.innerHTML =
+    '<div>' + (combined ? '<span style="color:var(--color-text-secondary)">Memory — </span>' : '') + _memForecastHeadlineHTML(fc) + '</div>' +
+    (canDraw
+      ? '<button class="btn btn-sm ' + (on ? 'btn-primary' : 'btn-secondary') + '" data-mem-forecast-toggle title="Per asset; default on">' +
+          (on ? '✓ Forecast' : 'Forecast') + '</button>'
+      : '');
+  var btn = bar.querySelector("[data-mem-forecast-toggle]");
+  if (btn) {
+    btn.addEventListener("click", function () {
+      _setMemoryForecastVisible(assetId, !_getMemoryForecastVisible(assetId));
+      _renderMemForecastBar(assetId, combined);
+      var last = _memForecastLastRender;
+      if (!last || last.assetId !== assetId) return;
+      var combinedEl = document.getElementById("asset-system-chart");
+      var memEl = document.getElementById("asset-memory-chart");
+      if (combinedEl) _renderSystemChart(combinedEl, last.tel, last.asset, last.si);
+      else if (memEl) _renderMemoryChart(memEl, last.tel, last.asset, last.si);
+    });
+  }
+}
+
+// The projection a chart should draw, or null. `latest` is the chart's own
+// newest memory point — { t: ms, pct: 0-100 } — so the dashed line leaves
+// from the end of the line the operator is looking at; `historySpan` is the
+// window's width, which the projection repeats into the future (the storage
+// chart's rule: an hour of history beside an hour of forecast, a week beside
+// a week).
+function _memForecastProjection(assetId, latest, historySpan) {
+  if (!latest || !isFinite(latest.t) || typeof latest.pct !== "number") return null;
+  if (!_getMemoryForecastVisible(assetId)) return null;
+  var fc = _memForecastFor(assetId);
+  if (_memForecastSignal(fc) === "insufficient") return null;
+  var endT = latest.t + Math.max(1, historySpan);
+  var endPct = latest.pct + fc.slopePerDay * ((endT - latest.t) / 86400000);
+  return { startT: latest.t, startPct: latest.pct, endT: endT, endPct: Math.max(0, Math.min(100, endPct)) };
+}
+
+// Dashed projection + the "now" divider, inside the chart's clip group.
+// `yForPct` maps a percentage onto the chart's own axis.
+function _memForecastSVG(p, xFor, yForPct, color, padT, innerH) {
+  var x1 = xFor(p.startT), y1 = yForPct(p.startPct);
+  var x2 = xFor(p.endT),   y2 = yForPct(p.endPct);
+  return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"' +
+      ' stroke="' + color + '" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85"/>' +
+    '<line x1="' + x1 + '" y1="' + padT + '" x2="' + x1 + '" y2="' + (padT + innerH) + '"' +
+      ' stroke="rgba(127,127,127,0.55)" stroke-width="1" stroke-dasharray="2,3"/>' +
+    '<text x="' + (x1 + 3) + '" y="' + (padT + 9) + '" font-size="9" fill="currentColor" opacity="0.7">now</text>';
+}
+
+// Memory in use as a percentage, the way the server fits it: bytes first,
+// the source's own percentage otherwise.
+function _memInUsePct(s) {
+  if (typeof s.memUsedBytes === "number" && typeof s.memTotalBytes === "number" && s.memTotalBytes > 0) {
+    return Math.max(0, Math.min(100, (s.memUsedBytes / s.memTotalBytes) * 100));
+  }
+  return typeof s.memPct === "number" ? s.memPct : null;
+}
+
 function _renderMemoryChart(container, data, asset, si) {
   var samples = (data && data.samples) || [];
   if (samples.length === 0) {
@@ -13990,8 +14185,27 @@ function _renderMemoryChart(container, data, asset, si) {
   var yMax = maxTotal > 0 ? maxTotal : 1;
   var swapOverTop = rows.some(function (r) { return r.b.swapUsed != null && r.b.swapUsed > yMax; });
 
+  // Forecast overlay. It leaves from the newest sample's memory in use as the
+  // server fits it (_memInUsePct — on an agent host that is the Processes
+  // band's top edge, since cache never counts), converted to bytes against
+  // that sample's installed total. The axis widens to make room; the ceiling
+  // does not move, so a projection that reaches it runs along the top.
+  var fcProj = null, fcTotal = null;
+  for (var fi = samples.length - 1; fi >= 0; fi--) {
+    var fs = samples[fi], fpct = _memInUsePct(fs);
+    if (fpct != null && typeof fs.memTotalBytes === "number" && fs.memTotalBytes > 0) {
+      fcTotal = fs.memTotalBytes;
+      fcProj = _memForecastProjection(asset && asset.id, { t: +new Date(fs.timestamp), pct: fpct }, t1 - t0);
+      break;
+    }
+  }
+  if (fcProj && fcProj.endT > t1) { t1 = fcProj.endT; spanMs = t1 - t0; }
+
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, yMax);
+  var forecastSvg = fcProj
+    ? _memForecastSVG(fcProj, xFor, function (p) { return yFor((p / 100) * fcTotal); }, "var(--color-accent)", padT, innerH)
+    : "";
 
   var unionTs = rows.map(function (r) { return r.t; }).sort(function (a, b) { return a - b; });
   var gapMarkers = _outageMarkers(data && data.outages, unionTs);
@@ -14088,6 +14302,7 @@ function _renderMemoryChart(container, data, asset, si) {
       "Click to " + (_memBandVisible(b.key) ? "hide" : "show") + " " + b.label.toLowerCase(), "mem-legend-chip");
   });
   legendParts.push(swatch(_MEM_TOTAL_COLOR, "Installed total", true));
+  if (fcProj) legendParts.push(swatch("var(--color-accent)", "Forecast (memory in use)", true));
   // A swap line running along the ceiling is a reading, not a rendering
   // fault — say which, or the flat line at the top reads as a stuck series.
   if (anySwap) {
@@ -14132,6 +14347,7 @@ function _renderMemoryChart(container, data, asset, si) {
         areas +
         totalLine +
         swapLine +
+        forecastSvg +
         failDots +
         hits +
         missHits +
@@ -14223,6 +14439,11 @@ function _renderMemoryPctChart(container, data, asset, si) {
   var innerW = W - padL - padR, innerH = H - padT - padB;
   var bounds = _chartTimeBounds(samples, since, until);
   var t0 = bounds.t0, t1 = bounds.t1;
+  // Forecast overlay — leaves from the newest point on the line.
+  var newest = null;
+  vals.forEach(function (e) { var t = +new Date(e.s.timestamp); if (!newest || t > newest.t) newest = { t: t, pct: e.v }; });
+  var fcProj = _memForecastProjection(asset && asset.id, newest, t1 - t0);
+  if (fcProj && fcProj.endT > t1) t1 = fcProj.endT;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
   var xFor = _chartXScale(padL, innerW, t0, t1);
@@ -14261,6 +14482,7 @@ function _renderMemoryPctChart(container, data, asset, si) {
   container.innerHTML =
     '<div style="display:flex;gap:12px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
       '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:' + memColor + '"></span>Memory used</span>' +
+      (fcProj ? '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:12px;height:0;border-top:2px dashed ' + memColor + '"></span>Forecast</span>' : '') +
       '<span style="color:var(--color-text-tertiary)">(this source reports a percentage only — no byte breakdown)</span>' +
     '</div>' +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
@@ -14272,6 +14494,7 @@ function _renderMemoryPctChart(container, data, asset, si) {
       '<g ' + _chartClipAttr(clipId) + '>' +
         line.segments +
         vals.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + memColor + '"/>'; }).join("") +
+        (fcProj ? _memForecastSVG(fcProj, xFor, yFor, memColor, padT, innerH) : '') +
         _outageDotsSVG(gapMarkers, xFor, baselineY) +
         hits +
         _outageHitsSVG(gapMarkers, xFor, padT, innerH) +

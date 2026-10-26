@@ -503,7 +503,7 @@ export const ASSET_METRICS = [
   // hold is counted PER CORE (the same core over the line for N polls). One
   // alert per device naming the cores, superseded on a device while that
   // device carries a live all-cores cpuPct alert (business rule 89).
-  "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
+  "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "memDaysUntilFull", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
   "hwSensorValue", "hwSensorAlarm", "storageUsedPct", "storageUsedBytes", "storageDaysUntilFull",
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
@@ -4321,6 +4321,11 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
   cpuCorePct: { label: "CPU core utilization", unit: "%" },
   memPct: { label: "Memory utilization", unit: "%" },
   memUsedBytes: { label: "Memory used", unit: "bytes" },
+  // Forecast metric: projected days until memory in use reaches 100% (30-day
+  // trend of the daily average, ≥7 daily points; an asset whose memory is not
+  // growing produces no reading — see memoryForecastService). The memory twin
+  // of storageDaysUntilFull. Alert with "<=", e.g. ≤ 14 days.
+  memDaysUntilFull: { label: "Days until memory full", unit: "days" },
   sessionCount: { label: "Active sessions", unit: "" },
   responseTimeMs: { label: "Response time", unit: "ms" },
   uptimeSec: { label: "Uptime", unit: "sec" },

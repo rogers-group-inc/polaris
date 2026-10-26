@@ -147,6 +147,7 @@ import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
 import { computeStorageForecast } from "./storageForecastService.js";
+import { computeMemoryForecast } from "./memoryForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
@@ -1443,6 +1444,18 @@ async function resolveAssetMetricReadings(
       const rows = await prisma.assetTelemetrySample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true } });
       const pick = (r: any) => trigger.metric === "memUsedBytes" ? num(r.memUsedBytes) : (r[trigger.metric] ?? null);
       return reduceReadings(rows, index, () => "", () => "", pick, agg, winPolls);
+    }
+    case "memDaysUntilFull": {
+      // Forecast metric: the shared 30-day trend (memoryForecastService), the
+      // memory twin of storageDaysUntilFull below. aggregation/windowSec don't
+      // apply — the daily averages already smooth; an asset whose memory isn't
+      // growing (or has <7 daily points) produces NO reading, so "days <= N"
+      // rules stay silent for healthy hosts. One reading per device.
+      const fc = await computeMemoryForecast(ids);
+      return fc.map((r) => {
+        const a = index.get(r.assetId)!;
+        return { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: r.daysUntilFull };
+      });
     }
     case "cpuCorePct": {
       // One reading per DEVICE (dimension ""), valued at each sample's hottest

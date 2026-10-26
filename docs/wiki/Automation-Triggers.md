@@ -32,6 +32,7 @@ A number, compared against a threshold.
 | `cpuCorePct` — **CPU core utilization** | % | — (one alert per device, naming the hot cores — see below) |
 | `memPct` — Memory utilization | % | — |
 | `memUsedBytes` — Memory used | bytes | — |
+| `memDaysUntilFull` — **Days until memory full** | days | — (a forecast — see below) |
 | `sessionCount` — Active sessions | — | — |
 | `responseTimeMs` — Response time | ms | — |
 | `uptimeSec` — Uptime | sec | — |
@@ -58,6 +59,17 @@ shows). Percent is stored as `storageUsedPct`; a size is stored as
 value at 1 or more. Severity levels share the condition's choice between
 percent and size, but each can state its size in its own unit. The clear
 threshold on the reset step is in the fire threshold's unit.
+
+**Days until memory full** (`memDaysUntilFull`) is a forecast — the same one
+the asset's memory chart draws ([Memory forecast](Assets#memory-forecast)):
+the 30-day trend of the daily average of memory in use, projected to 100%.
+Alert on it with **≤**, e.g. *Days until memory full ≤ 14*. It is one reading
+per device, and only for a host whose memory is growing with at least 7 days
+of history — a flat, shrinking or new host has no reading, so the automation
+stays silent for it. Like `storageDaysUntilFull` it moves about once a day:
+aggregation and a hold count add nothing to it. The alert email charts the
+host's CPU and memory like a memory-utilization alert, and on a host that
+reports its processes lists the programs holding the most memory.
 
 Changing a condition to a metric measured in a different unit (percent to
 days, percent to a size) empties the severity levels' values and the clear

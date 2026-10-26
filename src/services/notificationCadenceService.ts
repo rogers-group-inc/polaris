@@ -81,6 +81,9 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   cpuCorePct: "cpuMemory",
   memPct: "cpuMemory",
   memUsedBytes: "cpuMemory",
+  // A 30-day forecast off the telemetry rollups — same stream, though like
+  // storageDaysUntilFull it moves about once a day.
+  memDaysUntilFull: "cpuMemory",
   sessionCount: "cpuMemory",
   // Hardware-sensor pass (assetHardwareSensorSample).
   hwSensorValue: "temperature",

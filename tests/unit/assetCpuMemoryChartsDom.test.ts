@@ -77,6 +77,7 @@ const EXPORTS = [
   "_renderMemoryPctChart", "_MEM_BANDS_AGENT", "_MEM_BANDS_VSPHERE", "_CPU_AVG_COLOR",
   "_CPU_CORE_HUE_START", "_CPU_CORE_HUE_END",
   "_memBandVisible", "_setMemBandVisible", "_MEM_BANDS_OFF_BY_DEFAULT",
+  "_getMemoryForecastVisible", "_setMemoryForecastVisible", "_renderMemForecastBar",
 ];
 const SRC = VIS_REGION + "\n" + REGION + "\n" + EXPORTS.map((n) => `globalThis.${n} = ${n};`).join("\n");
 
@@ -906,5 +907,128 @@ describe("Memory chart - switching bands off", () => {
     // Nothing in the vSphere table is off by default, so all five draw.
     expect(el.querySelectorAll("polygon").length).toBe(5);
     expect(el.textContent).not.toContain("counted in the gap");
+  });
+});
+
+describe("Memory forecast overlay", () => {
+  const ASSET = { id: "asset-1" };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    document.body.innerHTML = "";
+    installStubs();
+    // eslint-disable-next-line no-eval
+    (0, eval)(SRC);
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  /** What GET /assets/:id/memory-forecast returns (memoryForecastService). */
+  function setForecast(slopePerDay: number | null, daysUntilFull: number | null, points = 10) {
+    g._memForecastCache = {
+      assetId: ASSET.id, at: Date.now(),
+      data: {
+        points: Array.from({ length: points }, (_, d) => ({ t: d * 86_400_000, v: 50 })),
+        slopePerDay, daysUntilFull, minPoints: 7, lookbackDays: 30,
+      },
+    };
+  }
+
+  function forecastLine(el: HTMLElement): Element | null {
+    return el.querySelector('line[stroke-dasharray="4 3"][stroke-width="1.5"]');
+  }
+
+  it("projects past now on the byte stack, from the newest sample's in-use figure", () => {
+    setForecast(2, 21);
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[10], [10], [10]])), ASSET, {});
+    const line = forecastLine(el);
+    expect(line).not.toBeNull();
+    expect(el.textContent).toContain("Forecast (memory in use)");
+    expect(el.textContent).toContain("now");
+    // The axis doubled to make room, so the projection starts mid-chart.
+    const x1 = Number(line!.getAttribute("x1"));
+    const x2 = Number(line!.getAttribute("x2"));
+    expect(x2).toBeGreaterThan(x1);
+    expect(x1).toBeGreaterThan(58 + 100);
+    // 8 of 32 GB = 25% in use; rising, so the far end sits higher (smaller y).
+    expect(Number(line!.getAttribute("y2"))).toBeLessThan(Number(line!.getAttribute("y1")));
+  });
+
+  it("draws nothing when the operator switched it off, or there is no fit yet", () => {
+    setForecast(2, 21);
+    g._setMemoryForecastVisible(ASSET.id, false);
+    const off = container();
+    g._renderMemoryChart(off, payload(agentSamples([[10], [10]])), ASSET, {});
+    expect(forecastLine(off)).toBeNull();
+    expect(off.textContent).not.toContain("Forecast");
+
+    g._setMemoryForecastVisible(ASSET.id, true);
+    setForecast(null, null, 3);
+    const thin = container();
+    g._renderMemoryChart(thin, payload(agentSamples([[10], [10]])), ASSET, {});
+    expect(forecastLine(thin)).toBeNull();
+  });
+
+  it("never uses another asset's forecast", () => {
+    setForecast(2, 21);
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[10], [10]])), { id: "someone-else" }, {});
+    expect(forecastLine(el)).toBeNull();
+  });
+
+  it("extends the percentage-only and the combined charts too", () => {
+    setForecast(-1, null);
+    const pct = [0, 1, 2].map((i) => ({ timestamp: ts(i), cpuPct: 5, memPct: 60 }));
+    const a = container();
+    g._renderMemoryPctChart(a, payload(pct), ASSET, {});
+    expect(forecastLine(a)).not.toBeNull();
+    const b = container();
+    g._renderSystemChart(b, payload(pct), ASSET, {});
+    expect(b.textContent).toContain("Memory forecast");
+    // Shrinking: the far end sits LOWER on the chart (larger y).
+    const line = forecastLine(b)!;
+    expect(Number(line.getAttribute("y2"))).toBeGreaterThan(Number(line.getAttribute("y1")));
+  });
+
+  it("headlines the same days-until-full the automation compares", () => {
+    const bar = document.createElement("div");
+    bar.id = "asset-mem-forecast";
+    document.body.appendChild(bar);
+    setForecast(0.8, 12.4);
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(bar.style.display).toBe("flex");
+    expect(bar.textContent).toContain("Days until full: 12");
+    expect(bar.textContent).toContain("+0.80%/day");
+    expect(bar.querySelector("[data-mem-forecast-toggle]")!.textContent).toContain("✓ Forecast");
+
+    setForecast(null, null, 3);
+    g._renderMemForecastBar(ASSET.id, true);
+    expect(bar.textContent).toContain("Memory — ");
+    expect(bar.textContent).toContain("needs 7 days of history — 3 so far");
+    // Nothing to draw, so nothing to toggle.
+    expect(bar.querySelector("[data-mem-forecast-toggle]")).toBeNull();
+
+    setForecast(null, null, 0);
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(bar.style.display).toBe("none");
+  });
+
+  it("toggles per asset and re-renders the memory chart in place", () => {
+    const bar = document.createElement("div");
+    bar.id = "asset-mem-forecast";
+    const chart = document.createElement("div");
+    chart.id = "asset-memory-chart";
+    document.body.append(bar, chart);
+    setForecast(2, 21);
+    const tel = payload(agentSamples([[10], [10]]));
+    g._memForecastLastRender = { assetId: ASSET.id, tel, asset: ASSET, si: {} };
+    g._renderMemoryChart(chart, tel, ASSET, {});
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(forecastLine(chart)).not.toBeNull();
+
+    (bar.querySelector("[data-mem-forecast-toggle]") as HTMLElement).click();
+    expect(g._getMemoryForecastVisible(ASSET.id)).toBe(false);
+    expect(g._getMemoryForecastVisible("other-asset")).toBe(true);
+    expect(forecastLine(chart)).toBeNull();
+    expect(bar.querySelector("[data-mem-forecast-toggle]")!.textContent).toBe("Forecast");
   });
 });
