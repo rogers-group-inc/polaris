@@ -312,6 +312,22 @@
     return load(assetId);
   }
 
+  /**
+   * The same list drawn into `el` instead of a sheet of its own — the asset
+   * sheet's Alerts page. `el` is the page's own element, so the delegated
+   * listener goes with it; `close()` (the page being left) drops a late load.
+   */
+  function renderInto(el, assetId, opts) {
+    if (!el || !assetId) return Promise.resolve();
+    close();
+    opts = opts || {};
+    _sheetAssetId = assetId;
+    _onSummary = typeof opts.onSummary === "function" ? opts.onSummary : null;
+    el.innerHTML = '<div id="asset-alerts-body"><div class="loading-screen" style="padding:32px 0;"><div class="spinner"></div></div></div>';
+    wireBody(el, assetId);
+    return load(assetId);
+  }
+
   function load(assetId) {
     return api.assets.alerts(assetId).then(function (data) {
       if (_sheetAssetId !== assetId) return;   // sheet closed, or moved on
@@ -468,6 +484,7 @@
 
   window.PolarisMobileAlerts = {
     openForAsset: openForAsset,
+    renderInto: renderInto,
     close: close,
     flagHTML: flagHTML,
     dotHTML: dotHTML,
