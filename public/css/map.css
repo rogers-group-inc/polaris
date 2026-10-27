@@ -5,7 +5,13 @@
   align-items: center;
   gap: 1rem;
   margin-bottom: 0.75rem;
+  /* Off the map card, so above it and its cast (the off-card shadow
+     standard, styles.css by .page-header-actions). */
+  position: relative;
+  z-index: 1;
 }
+/* Loose text on the page ground: the off-card text lift. */
+.map-toolbar .map-status { text-shadow: var(--shadow-lift-control-text); }
 
 /* Right-hand end of the toolbar, in order: the viewer's region scope, then
    the save/discard group (edit mode). The ordering is explicit (`order`) and

@@ -9,6 +9,10 @@
   align-items: stretch;
   gap: 8px;
   margin-bottom: 12px;
+  /* Off the page card, so above it and its ring cast (the off-card shadow
+     standard, styles.css by .page-header-actions). */
+  position: relative;
+  z-index: 1;
 }
 
 .appmap-toolbar-top {
@@ -36,12 +40,13 @@
   width: auto;
   padding: 4px 8px;
   font-size: 13px;
-  /* Same lift as the filter box above it (--shadow-control); the global
-     select rule draws none. */
-  box-shadow: var(--shadow-control);
+  /* The toolbar is off the page card: an off-card FIELD's lift, the same
+     as the filter box above it (styles.css, the standard by
+     .page-header-actions). The global select rule draws none. */
+  box-shadow: var(--shadow-lift-control);
 }
 .appmap-toolbar-field select:focus {
-  box-shadow: var(--shadow-control), 0 0 0 2px rgba(79,195,247,0.15);
+  box-shadow: var(--shadow-lift-control), 0 0 0 2px rgba(79,195,247,0.15);
 }
 
 .appmap-check {
@@ -53,16 +58,17 @@
   cursor: pointer;
   user-select: none;
 }
-/* Every control in the toolbar casts a shadow: the boxed ones take
-   --shadow-control, the loose label text, the native checkboxes and the bare
-   icon buttons take --shadow-text. drop-shadow() on the checkbox and the
-   icon's svg, not box-shadow: it follows the drawn shape (the rounded box,
-   the glyph's strokes) rather than a rectangle. */
+/* Every control in the toolbar casts a shadow, by the off-card standard
+   (styles.css, by .page-header-actions): buttons the card's ring, the boxed
+   fields the control ring, and the loose label text, the native checkboxes
+   and the bare icon buttons its text pair. drop-shadow() on the checkbox
+   and the icon's svg, not box-shadow: it follows the drawn shape (the
+   rounded box, the glyph's strokes) rather than a rectangle. */
 .appmap-toolbar-field > span,
 .appmap-check,
-.appmap-status { text-shadow: var(--shadow-text); }
+.appmap-status { text-shadow: var(--shadow-lift-control-text); }
 .appmap-check input[type="checkbox"],
-.appmap-toolbar-actions .btn-icon svg { filter: drop-shadow(var(--shadow-text)); }
+.appmap-toolbar-actions .btn-icon svg { filter: drop-shadow(0 0 1px rgba(0,0,0,.05)) drop-shadow(0 0 6px rgba(0,0,0,.07)); }
 
 /* Token/pill filter. The box stays a single-row input (pills live in their own
    row below) so a long filter set can never squeeze the typing area.
@@ -79,18 +85,20 @@
   /* The frame IS the field: same ground, border and lift as every other page
      field (the global input rule in styles.css, and --shadow-control as on
      .filter-bar fields), so it matches the "Seen within" select beside it.
-     It used to paint --color-surface, a bluer step that read as off-theme. */
+     It used to paint --color-surface, a bluer step that read as off-theme.
+     Its lift is the off-card FIELD's (the toolbar sits above the page card;
+     styles.css, the standard by .page-header-actions). */
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-control);
+  box-shadow: var(--shadow-lift-control);
 }
 
 .appmap-filter:focus-within {
   border-color: var(--color-accent);
   /* box-shadow replaces rather than composes, so restate the lift with the
      focus ring the global input:focus rule would have drawn on the field. */
-  box-shadow: var(--shadow-control), 0 0 0 2px rgba(79,195,247,0.15);
+  box-shadow: var(--shadow-lift-control), 0 0 0 2px rgba(79,195,247,0.15);
 }
 
 /* The row is RESERVED even when empty (one pill's height), so applying the

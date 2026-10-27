@@ -22,6 +22,7 @@
 @property --page-glow-p2  { syntax: "<percentage>"; inherits: false; initial-value: 26%; }
 @property --page-glow-p3  { syntax: "<percentage>"; inherits: false; initial-value: 50%; }
 @property --page-glow-end { syntax: "<percentage>"; inherits: false; initial-value: 70%; }
+@property --dawn-ring-c  { syntax: "<color>"; inherits: false; initial-value: transparent; }
 /* Nightfall's glow is a second layer that SLIDES rather than fades: in from
    off the left edge on the turn from noon, out past the right edge on the
    turn to morning. Only its horizontal centre moves; see --night-glow. */
@@ -98,12 +99,16 @@
      for the rail's sideways offset, so a card casts evenly all round);
      --shadow-lift-text is the same pair for text, which takes no spread. */
   --shadow-lift: 0 0 12px 8px rgba(0,0,0,.11), 0 0 2px 1px rgba(0,0,0,.07);
+  /* A softer ring for the folder card's INACTIVE tabs: the same shape at
+     about half the reach, so they read as lifted but sit under the active
+     tab, whose full --shadow-lift paints over them. */
+  --shadow-lift-idle: 0 0 7px 3px rgba(0,0,0,.08), 0 0 2px 1px rgba(0,0,0,.06);
   --shadow-lift-text: 0 0 2px rgba(0,0,0,.07), 0 0 12px rgba(0,0,0,.11);
-  /* The same lift for CONTROLS — the global search, the header/toolbar
-     buttons, the page-size select and the account badge (2026-10-16). Half
-     the blur and spread of --shadow-lift: a full card-sized ring round a
-     30px-tall field reads as a smudge rather than a lift. The cards and
-     folder tabs keep --shadow-lift. */
+  /* The same lift for CONTROLS — the global search, the account badge and
+     the map toolbars' buttons. Half the blur and spread of --shadow-lift.
+     Page-level BUTTONS off the card (header actions, tab-row controls) take
+     the full --shadow-lift since 2026-10-26: see the button-shadow design
+     note by .page-header-actions. */
   --shadow-lift-control: 0 0 6px 3px rgba(0,0,0,.07), 0 0 1px 1px rgba(0,0,0,.05);
   --shadow-lift-control-text: 0 0 1px rgba(0,0,0,.05), 0 0 6px rgba(0,0,0,.07);
   /* Nothing in the app paints --shadow-sm any more: it was the cards' shadow,
@@ -595,14 +600,16 @@ html[data-glow-turn] {
   transition-property: --page-glow-y, --page-glow-w, --page-glow-h,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
     --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
-    --night-glow-x, --night-glow-c;
+    --night-glow-x, --night-glow-c, --dawn-ring-c;
   transition-duration: 2000ms;
   /* One curve per property, in transition-property's order. Position and
      the main glow ease in and out; the night glow's colour (last) takes a
      gentle sine curve, inert while it is one value in every theme. Its
      SIZE is not here at all: the night-glow-in / -out keyframes own it,
      and a running transition would outrank them. Rules with shorter property lists (noon's) cut this list to fit,
-     which is why the night glow's parts must stay LAST. */
+     which is why the night glow's parts must stay LAST — bar morning's dawn
+     ring (--dawn-ring-c), appended after them; its curve is the list's
+     wrap-around first one, the main glow's. */
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.37, 0, 0.63, 1);
   transition-delay: 0s;
@@ -631,7 +638,8 @@ html[data-glow-turn][data-theme="afternoon"] {
 html[data-theme="noon"] {
   transition-property: --page-glow-y,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
+    --dawn-ring-c;
 }
 /* Morning → noon: the sun's glow ROUNDS as it climbs — morning's oval, a
    circle half way up, noon's oval — instead of going straight from one
@@ -665,7 +673,8 @@ html[data-glow-turn="morning-noon"] {
 html[data-glow-turn="morning-noon"][data-theme="noon"] {
   transition-property: --page-glow-y,
     --page-glow-c0, --page-glow-c1,
-    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end;
+    --page-glow-p1, --page-glow-p2, --page-glow-p3, --page-glow-end,
+    --dawn-ring-c;
 }
 @keyframes page-glow-band-fade {
   0%, 30% {
@@ -732,7 +741,7 @@ html[data-theme="morning"] {
      as it comes; it eases out to land (the first curve). */
   transition-property: --page-glow-y,
     --page-glow-c0, --page-glow-c1, --page-glow-c2, --page-glow-c3,
-    --night-glow-x, --night-glow-c;
+    --night-glow-x, --night-glow-c, --dawn-ring-c;
   /* The exit is the entrance played backwards: same path, mirrored. Its
      position takes the REVERSED ease (STD's control points swapped and
      flipped), so it eases off the centre slowly the way the entrance eased
@@ -746,7 +755,8 @@ html[data-theme="morning"] {
   transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1),
     cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1),
     cubic-bezier(0.8, 0, 0.6, 1),
-    cubic-bezier(0.37, 0, 0.63, 1);
+    cubic-bezier(0.37, 0, 0.63, 1),
+    cubic-bezier(0.4, 0, 0.2, 1);
 }
 @media (prefers-reduced-motion: reduce) {
   html, html[data-theme], html[data-glow-turn], html[data-glow-turn][data-theme] { transition: none; }
@@ -906,9 +916,28 @@ html[data-page-top-curtain]::after {
   --night-glow-c: inherit;
   --night-glow-w: inherit;
   --night-glow-h: inherit;
+  --dawn-ring-c: inherit;
   --night-glow: radial-gradient(ellipse var(--night-glow-w) var(--night-glow-h) at var(--night-glow-x) 0%,
     var(--night-glow-c) 0%,
     transparent 70%);
+  /* Morning's outer ring: the band's pre-dawn blue round the sunrise, out
+     past its warm glow, on the sun glow's own ellipse (its anchor, and its
+     size grown by a fixed gap), so the two read as one shape. The blue
+     starts 250px outside the line where the warm glow clears (78% of the
+     sun's ellipse) and fades in to full blue 250px outside the sun's 138%
+     line — the one through the top-left and top-right corners,
+     sqrt((50vw / 140vw)^2 + (100vh / 75vh)^2) = 1.38. Stops are lengths
+     along the ray (horizontal), so the full-blue line keeps the ellipse's
+     proportions rather than an exact 250px vertically. Every size is a
+     length: a calc() mixing % and px here makes Chromium drop the whole
+     background. Transparent in every other theme. */
+  --dawn-ring: radial-gradient(ellipse
+      calc(var(--page-glow-w) * 0.78 + 250px) calc(var(--page-glow-h) * 0.78 + 250px)
+      at 50% var(--page-glow-y),
+    transparent calc(var(--page-glow-w) * 0.78 + 250px),
+    var(--dawn-ring-c) calc(var(--page-glow-w) * 1.38 + 250px));
+  /* The dawn ring is LAST, under the sun's glow: where the two overlap (the
+     bottom corners, the sides) the sunlight lies on the sky, not under it. */
   --page-glow:
     var(--night-glow),
     radial-gradient(ellipse var(--page-glow-w) var(--page-glow-h) at 50% var(--page-glow-y),
@@ -916,7 +945,8 @@ html[data-page-top-curtain]::after {
       var(--page-glow-c1) var(--page-glow-p1),
       var(--page-glow-c2) var(--page-glow-p2),
       var(--page-glow-c3) var(--page-glow-p3),
-      transparent var(--page-glow-end));
+      transparent var(--page-glow-end)),
+    var(--dawn-ring);
   background: var(--page-glow);
   background-repeat: no-repeat;
 }
@@ -984,6 +1014,18 @@ code {
   --page-glow-c2: rgba(243,154,76,.34);
   --page-glow-c3: rgba(238,154,90,.14);
   --page-glow-end: 78%;
+  /* The pre-dawn sky still in the corners: a blue ring past the warm glow
+     (--dawn-ring, on html::before). Hue from the band's pre-dawn stretch,
+     just left of morning's gold (a violet slate, ~235°), lightened to read
+     on parchment. --dawn-blue is the one definition: the ring and the idle
+     folder tabs (their top-down glow, see the tab rule) both read it. */
+  --dawn-blue: rgb(118,128,220);
+  --dawn-ring-c: color-mix(in srgb, var(--dawn-blue) 70%, transparent);
+  --tab-idle-glow: color-mix(in srgb, var(--dawn-blue) 15%, transparent);
+  --tab-idle-glow-hover: color-mix(in srgb, var(--dawn-blue) 24%, transparent);
+  /* The active tab's glow is the sun itself: the core's warm white
+     (--page-glow-c0's colour). */
+  --tab-active-glow: rgba(255,246,220,.90);
   /* Night glow gone past the right edge: the turn from nightfall slides it
      out that way. */
   --night-glow-x: 200%;
@@ -1025,6 +1067,17 @@ code {
   /* Sunlight on a white ground — see --page-glow in :root. */
   --page-glow-color: #ffc928;
   --page-glow-strength: 24%;
+  /* The idle folder tabs catch the same sun: a yellow glow falling from
+     their top edge instead of a dark wash (see the tab rule). The same
+     yellow the window's top edge shows: the glow's core over the ground,
+     mixed as an OPAQUE colour. A translucent yellow stacked onto the page
+     glow already showing through the tab and read deeper than the window's
+     top. Hover deepens it a little. */
+  --tab-idle-glow: color-mix(in srgb, var(--page-glow-color) var(--page-glow-strength), var(--color-bg-secondary));
+  --tab-idle-glow-hover: color-mix(in srgb, var(--page-glow-color) calc(var(--page-glow-strength) * 1.35), var(--color-bg-secondary));
+  /* The active tab fades down from the colour at the BOTTOM of the window,
+     where the sun's glow has gone: the bare ground. */
+  --tab-active-glow: var(--color-bg-secondary);
 }
 
 /* ─── Afternoon — the clockface’s red-rust flank, an hour before dusk. NOT
@@ -2407,15 +2460,25 @@ html[data-page-top-curtain]::after {
 /* A disabled button is flat — the shadow is an affordance, and leaving it on
    something that cannot be pressed is the one place it misleads. */
 .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
-/* Page-level buttons — a page header's actions (including a section's own
-   header, e.g. Users → Roles) and a tab row's list controls — carry the
-   rail's lift, like the title and search beside them. Buttons inside tables,
-   cards, modals and menus keep --shadow-control. */
+/* OFF-CARD SHADOW STANDARD (2026-10-26). Everything on the page ground —
+   in .main but outside the page card, a map canvas, a slide-over or a
+   modal — lifts with the rail family (even rings, no offset, neutral), one
+   step per kind of thing, and sits ABOVE the card and its cast:
+   - buttons ................ --shadow-lift (the page card's own ring)
+   - fields (input / select). --shadow-lift-control (the global search's)
+   - loose text, checkboxes . --shadow-lift-control-text
+   The off-card clusters are page header actions, a page's own action row,
+   a tab row's controls, the Application Map's toolbar, the Device Map's
+   toolbar and a page-level .filter-bar (.main > .filter-bar; the slide-
+   over's are on a surface). ON a surface — the card, tables, slide-overs,
+   modals, menus — controls keep --shadow-control (above); buttons ON a map
+   canvas keep the map's own tight cast (map.css --map-btn-shadow). */
 .page-header-actions .btn:not(.btn-icon):not(:disabled),
 .page-actions-row .btn:not(.btn-icon):not(:disabled),
-.appmap-toolbar-actions .btn:not(.btn-icon):not(:disabled),
-.appmap-toolbar-top .btn:not(.btn-icon):not(:disabled),
-.table-head-controls .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift-control); }
+.table-head-controls .btn:not(.btn-icon):not(:disabled),
+.appmap-toolbar .btn:not(.btn-icon):not(:disabled),
+.map-toolbar .btn:not(.btn-icon):not(:disabled),
+.main > .filter-bar .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--shadow-lift); }
 /* A page's own action buttons on a row of their own (Users), right aligned.
    Assets used it too until its actions joined the tab row (2026-10-26). */
 .page-actions-row {
@@ -2425,6 +2488,9 @@ html[data-page-top-curtain]::after {
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
+  /* Off the card, so above it and its cast (the button-shadow design above). */
+  position: relative;
+  z-index: 1;
 }
 /* Buttons moved into a tab row from a page header take the row's small size
    (the list controls beside them are .btn-sm), so the row keeps one height. */
@@ -2441,7 +2507,8 @@ html[data-page-top-curtain]::after {
 }
 .table-head-row .table-head-controls .btn:not(.btn-sm):not(.btn-icon) svg,
 .table-head-row .table-head-controls .btn.btn-glyph::before { width: 14px; height: 14px; }
-/* …and so do the tab row's "Show N" label and its page-size select. */
+/* …and the tab row's page-size select is an off-card FIELD (the standard
+   by .page-header-actions). */
 .table-head-row .table-head-controls select { box-shadow: var(--shadow-lift-control); }
 /* Page-size selects carry no "Show" label any more — the options read
    "25 / page" (2026-10-16). Any other label in a tab row is secondary text at
@@ -2870,9 +2937,18 @@ html[data-page-top-curtain]::after {
   flex-wrap: wrap;
   justify-content: flex-end;
   padding-bottom: 7px;
+  /* Above the folder card: the card is positioned (and isolated), so it
+     paints over in-flow content, and its ring cast reaches ~20px above its
+     top edge, across these buttons. A positioned cluster at z-index 1 sits
+     over the whole card, cast included, and so do its dropdown menus. */
+  position: relative;
+  z-index: 1;
 }
 /* A head row with no tab strip (Path Monitor) keeps its controls on the right. */
 .table-head-row > .table-head-controls:first-child { margin-left: auto; }
+/* …and when that first cluster is empty (hidden — Path Monitor's, its + Add
+   moved beside Refresh), the next one takes the push instead. */
+.table-head-row > .table-head-controls:first-child:not(:has(*)) + .table-head-controls { margin-left: auto; }
 /* Dashboard: the strip is hidden (not absent) on an empty layout or a
    published view, so :first-child never matches; pin the cluster right. */
 .table-head-row > .dashboard-tabs + .table-head-controls { margin-left: auto; }
@@ -2907,6 +2983,9 @@ body:not(.assets-editing) #assets-tabs-list .table-tab-close { display: none; }
 /* A cluster a page hides outright (Assets' Filters ▾ outside edit mode):
    the cluster's own display: flex beats the UA's [hidden] rule. */
 .table-head-row .table-head-controls[hidden] { display: none; }
+/* A cluster left with no buttons (Path Monitor's, once its + Add moves into
+   the list-controls row beside Refresh) takes no slot in the row's gap. */
+.table-head-row .table-head-controls:not(:has(*)) { display: none; }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab) {
   position: relative;
   flex: 0 0 auto;
@@ -2920,10 +2999,13 @@ body:not(.assets-editing) #assets-tabs-list .table-tab-close { display: none; }
      accent edge and the card's glass. The fill is a highlight that starts
      at the tab's top edge and fades out toward the rule, not one flat wash
      over the whole chip. 9% (14% read as too dark a wash, 2026-10-26); the
-     + tab below keeps the same proportion. */
+     + tab below keeps the same proportion. A theme can swap the highlight's
+     colour through --tab-idle-glow / --tab-idle-glow-hover: noon's is its
+     sunlight yellow and morning's its pre-dawn blue (next to each theme's
+     palette), not a shade. */
   color: var(--color-text-secondary);
   background: linear-gradient(to bottom,
-    color-mix(in srgb, var(--color-text-primary) 9%, transparent),
+    var(--tab-idle-glow, color-mix(in srgb, var(--color-text-primary) 9%, transparent)),
     transparent 85%);
   border: 1px solid var(--color-border);
   border-bottom: 0;
@@ -2939,12 +3021,14 @@ body:not(.assets-editing) #assets-tabs-list .table-tab-close { display: none; }
   transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease,
     opacity 0.2s ease, box-shadow 0.2s ease;
 }
-.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: linear-gradient(to bottom, color-mix(in srgb, var(--color-text-primary) 15%, transparent), transparent 85%); }
+.table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab):hover { color: var(--color-text-primary); background: linear-gradient(to bottom, var(--tab-idle-glow-hover, color-mix(in srgb, var(--color-text-primary) 15%, transparent)), transparent 85%); }
 .table-head-row :is(.table-tabs, .page-tabs, .dashboard-tabs) :is(.table-tab, .page-tab, .dashboard-tab).active {
   z-index: 2;
   color: var(--color-accent);
   transform: none;
-  background: var(--folder-fill);
+  /* A theme's --tab-active-glow falls from the top edge over the fill, as
+     the idle tabs' does (morning: the sun's own warm white). */
+  background: linear-gradient(to bottom, var(--tab-active-glow, transparent), transparent 85%), var(--folder-fill);
   border-color: var(--color-border);
   /* The accent moves from the old underline to the tab's top edge — the
      bottom is open into the table now. */
@@ -3037,7 +3121,8 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
 }
 /* The ACTIVE tab rings itself in the card's cast — top and sides; below its
    bottom edge is the card (or the neck), so the cast is clipped there.
-   Inactive tabs sit behind the card and cast nothing. */
+   Inactive tabs ring themselves the same way, softer (--shadow-lift-idle);
+   the active tab's z-index 2 lays its full ring over theirs. */
 .table-head-row.folder-head-card :is(.page-tabs, .table-tabs, .dashboard-tabs) :is(.page-tab, .table-tab, .dashboard-tab) { isolation: isolate; }
 .table-head-row.folder-head-card :is(.page-tabs, .table-tabs, .dashboard-tabs) :is(.page-tab, .table-tab, .dashboard-tab)::before {
   content: "";
@@ -3046,7 +3131,7 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   z-index: -1;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: none;
+  box-shadow: var(--shadow-lift-idle);
   clip-path: inset(-60px -60px 0 -60px);
   transition: bottom 0.2s ease, box-shadow 0.2s ease;
 }
@@ -3073,8 +3158,10 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
   transition: opacity 0.2s ease;
   /* The layer paints ABOVE the tab's own border and inset accent (it is a
      child), so it is shaped to the tab's PADDING box — the 1px side and top
-     borders show around it — and draws the accent itself (::after below). */
-  background: var(--rail-glass-bg);
+     borders show around it — and draws the accent itself (::after below).
+     The theme's --tab-active-glow falls from the top over the glass, ending
+     above the neck. */
+  background: linear-gradient(to bottom, var(--tab-active-glow, transparent), transparent 70%), var(--rail-glass-bg);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
   /* Box coordinates: the tab's border box spans --folder-r … 100% - --folder-r
@@ -4505,6 +4592,16 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
 .filter-bar select:focus,
 .filter-bar .search-select-input:focus {
   box-shadow: 0 0 0 2px rgba(79,195,247,0.15), var(--shadow-control);
+}
+/* A PAGE-level filter bar sits on the page ground, off the card: its fields
+   take the off-card field lift (the standard by .page-header-actions). */
+.main > .filter-bar input,
+.main > .filter-bar select,
+.main > .filter-bar .search-select-input { box-shadow: var(--shadow-lift-control); }
+.main > .filter-bar input:focus,
+.main > .filter-bar select:focus,
+.main > .filter-bar .search-select-input:focus {
+  box-shadow: 0 0 0 2px rgba(79,195,247,0.15), var(--shadow-lift-control);
 }
 
 /* ─── Form Elements ────────────────────────────────────────────────────────── */
@@ -7194,7 +7291,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   font-size: 0.78rem;
   color: var(--color-text-tertiary);
 }
-/* Active Maintenance widget — the "+ New schedule" bar above the list. Right
+/* Active Maintenance widget — the "+ New Schedule" bar above the list. Right
    aligned and sticky to the top of the scrolling body, so the NOC auto-scroll
    cannot creep it out of frame on a wallboard-sized panel. It sits over the
    empty state too: an empty widget is exactly when someone wants to schedule
@@ -7664,7 +7761,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
 }
 
-/* "+ Add widget" at the bottom of each block in edit mode — the slim
+/* "+ Add Widget" at the bottom of each block in edit mode — the slim
    sibling of the "+ New block" target, same dashed treatment. */
 .dashboard-column-add {
   min-height: 44px;
