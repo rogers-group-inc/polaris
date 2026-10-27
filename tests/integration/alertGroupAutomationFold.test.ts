@@ -5,14 +5,18 @@
  *  - `automation` — one alert per member AUTOMATION, every governed device
  *    that trips it a member (so it also takes a whole-device "monitor status is
  *    down" automation, as a subnet group does);
- *  - `deviceAutomation` — one alert per device PER automation: one
- *    automation's components on a device fold, two automations stay apart.
+ *  - `deviceAutomation` — both folds at once: ONE alert for the whole group,
+ *    every device and every member automation in it (until 2026-10-27 it
+ *    meant one alert per device per automation; the migration that redefined
+ *    it retires alerts raised under that meaning).
  *
  * Two per-component automations on the same switches make the difference
  * visible: PoE fault and interface down, over three pinned, faulted ports
  * (pinned, so their readings come from AssetInterfaceSample rows).
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, beforeEach, expect, it } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
@@ -117,8 +121,9 @@ d("AlertGroups folding by AUTOMATION and by DEVICE + AUTOMATION (business rule 7
     if (dbReachable) await wipe();
   });
 
-  it("device + automation: one alert per automation on the device, each folding its ports", async () => {
-    const sw = await seedSwitch("a");
+  it("device + automation: the whole group is ONE alert — every device, every automation", async () => {
+    await seedSwitch("a");
+    await seedSwitch("b");
     const poe = await poeRule();
     const link = await linkRule();
     const groupId = await seedGroup("deviceAutomation", [poe, link]);
@@ -126,16 +131,21 @@ d("AlertGroups folding by AUTOMATION and by DEVICE + AUTOMATION (business rule 7
     await evaluateAllNotificationRules();
 
     const alerts = await live(groupId);
-    expect(alerts).toHaveLength(2);
-    const byRule = new Map(alerts.map((a) => [a.ruleId, a]));
-    for (const ruleId of [poe, link]) {
-      const a = byRule.get(ruleId)!;
-      expect(a.groupKey).toBe(`grp:${groupId}|${sw}/auto:${ruleId}`);
-      expect(a.assetHostname).toBe(`${HOST}-a`);
-      expect(a.dimensionCount).toBe(3);
-      // Components of ONE automation, so members name ports, not devices.
-      expect(active(a).every((m) => m.ruleId === ruleId && !m.assetId)).toBe(true);
-    }
+    expect(alerts).toHaveLength(1);
+    const a = alerts[0]!;
+    expect(a.groupKey).toBe(`grp:${groupId}|all`);
+    // Named for the group, which is what it is about.
+    expect(a.assetHostname).toBe(`${NAME} group`);
+    // 2 switches × 3 ports × 2 automations.
+    expect(a.dimensionCount).toBe(12);
+    expect(new Set(active(a).map((m) => m.ruleId))).toEqual(new Set([poe, link]));
+    expect(new Set(active(a).map((m) => m.assetId)).size).toBe(2);
+    expect(active(a).every((m) => m.group === `${NAME} group` && m.label.startsWith(`${HOST}-`))).toBe(true);
+    // Subject: "[SERIOUS] 2 automations · 2 devices — <group>".
+    const ctx = a.templateCtx as Record<string, string>;
+    expect(ctx["asset"]).toBe("2 automations");
+    expect(ctx["dimension.suffix"]).toBe(" · 2 devices");
+    expect(ctx["rule"]).toBe(`${NAME} group`);
   });
 
   it("device (for contrast): both automations on the switch are one alert", async () => {
@@ -196,12 +206,43 @@ d("AlertGroups folding by AUTOMATION and by DEVICE + AUTOMATION (business rule 7
     expect(await live(groupId)).toHaveLength(0);
   });
 
-  it("device + automation refuses a whole-device automation; switching an automation group to it is refused", async () => {
+  it("device + automation takes a whole-device automation; a device group refuses it", async () => {
     const down = await downRule();
-    await expect(seedGroup("deviceAutomation", [down])).rejects.toThrow(/per automation or per subnet/);
+    await expect(seedGroup("device", [down])).rejects.toThrow(/per device \+ automation/);
     const groupId = await seedGroup("automation", [down]);
-    await expect(updateGroup(groupId, { name: `${NAME} group`, foldBy: "deviceAutomation" }, "tester"))
-      .rejects.toThrow(/per automation or per subnet/);
+    await expect(updateGroup(groupId, { name: `${NAME} group`, foldBy: "deviceAutomation" }, "tester")).resolves.toBeTruthy();
+    await expect(updateGroup(groupId, { name: `${NAME} group`, foldBy: "device" }, "tester"))
+      .rejects.toThrow(/per automation, per device \+ automation or per subnet/);
+  });
+
+  it("the redefinition migration retires alerts raised under the old per-device-per-automation meaning", async () => {
+    const sw = await seedSwitch("a");
+    const poe = await poeRule();
+    const groupId = await seedGroup("deviceAutomation", [poe]);
+    // An alert in the OLD shape, its state row pointing at it.
+    const old = await prisma.notification.create({
+      data: { ruleId: poe, assetId: sw, assetHostname: `${HOST}-a`, severity: "serious", message: "old", groupKey: `grp:${groupId}|${sw}/auto:${poe}`, alertGroupId: groupId } as never,
+      select: { id: true },
+    });
+    await prisma.notificationRuleState.create({
+      data: { ruleId: poe, assetId: sw, dimensionKey: "port2", state: "firing", firedAt: new Date(), notificationId: old.id } as never,
+    });
+    const sql = readFileSync(resolve("prisma/migrations/20261027190000_device_automation_whole_group/migration.sql"), "utf8");
+    for (const stmt of sql.replace(/^--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean)) {
+      await prisma.$executeRawUnsafe(stmt);
+    }
+    const after = await prisma.notification.findUnique({ where: { id: old.id } });
+    expect(after!.cleared).toBe(true);
+    expect(after!.clearedBy).toBe("system:group-refolded");
+    const st = await prisma.notificationRuleState.findFirst({ where: { ruleId: poe, assetId: sw, dimensionKey: "port2" } });
+    expect(st!.state).toBe("clear");
+    expect(st!.notificationId).toBeNull();
+
+    // ...and the next tick raises the group's one alert.
+    await evaluateAllNotificationRules();
+    const again = await live(groupId);
+    expect(again).toHaveLength(1);
+    expect(again[0]!.groupKey).toBe(`grp:${groupId}|all`);
   });
 
   it("retires the group's open alerts when the fold changes between the automation modes", async () => {
@@ -217,6 +258,6 @@ d("AlertGroups folding by AUTOMATION and by DEVICE + AUTOMATION (business rule 7
     await evaluateAllNotificationRules();
     const again = await live(groupId);
     expect(again).toHaveLength(1);
-    expect(again[0]!.groupKey).toMatch(/\/auto:/);
+    expect(again[0]!.groupKey).toBe(`grp:${groupId}|all`);
   });
 });

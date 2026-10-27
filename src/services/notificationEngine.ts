@@ -80,7 +80,10 @@ import {
   groupKeyOf,
   subnetFoldTarget,
   automationFoldTarget,
-  deviceAutomationFoldTarget,
+  WHOLE_GROUP_FOLD_TARGET,
+  wholeGroupSubject,
+  countNoun,
+  type SpanCounts,
   memberMatches,
   queueGroupChanges,
   refreshMemberContext,
@@ -324,6 +327,8 @@ interface DbRule {
   /** That group's fold axis — one of ALERT_GROUP_FOLD_BY. Null
    *  with no group. Optional so a rule built without it reads as "device". */
   alertGroupFoldBy?: string | null;
+  /** That group's name — what a whole-group alert is named for. */
+  alertGroupName?: string | null;
 }
 
 /** Best-effort action fan-out — never breaks rule evaluation. (executeActions
@@ -2456,18 +2461,30 @@ function readingContextParts(
    *  — the alert IS about all of them, and a sentence naming one of eight
    *  faulted ports would be the storm's problem in a single message. */
   members?: AlertMember[] | null,
+  /** The alert's true size on a multi-device alert (spanCounts) — the members
+   *  stop at MAX_GROUP_MEMBERS, so a count taken from them stops at 64. */
+  counts?: SpanCounts | null,
 ): TemplateContextParts {
   const trigger = rule.trigger;
   // A subnet-folded alert is about the SUBNET; its members are the devices. An
   // automation-folded one spans devices with nothing else to name them by, so
   // {asset} counts them — "Monitor down on {asset}" reads "… on 5 devices".
+  // One split per path check is about that CHECK, the way a subnet fold is
+  // about its subnet, and its subject tag is the count rather than the hosts:
+  // "[CRITICAL] Salesforce HTTPS · 3 devices — Path check down". A whole-group
+  // alert counts both: "[CRITICAL] 3 path checks · 80 devices — <name>".
   const subnetLabel = members?.find((m) => m.subnet)?.subnet;
+  const pathCheck = members?.find((m) => m.component)?.component;
+  const group = members?.find((m) => m.group)?.group;
   const spansDevices = !!members?.some((m) => m.assetId);
-  const deviceCount = spansDevices ? new Set(activeMembers(members!).map((m) => m.assetId)).size : 0;
+  const deviceCount = counts?.devices ?? (spansDevices ? new Set(activeMembers(members!).map((m) => m.assetId)).size : 0);
+  const devices = countNoun(deviceCount, "device");
+  const whole = group && counts ? wholeGroupSubject(counts) : "";
   const base = {
-    asset: subnetLabel
-      || (spansDevices ? `${deviceCount} device${deviceCount === 1 ? "" : "s"}` : "")
+    asset: subnetLabel || pathCheck || whole
+      || (spansDevices ? devices : "")
       || reading.hostname || reading.assetId || "host",
+    ...(pathCheck || whole ? { dimensionSuffix: ` · ${devices}` } : {}),
     dimension: members?.length ? renderMemberList(members) : (reading.dimLabel || ""),
     // What that component IS, so the email can label it rather than leaving the
     // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
@@ -2480,7 +2497,9 @@ function readingContextParts(
     severity: rule.severity,
     time: now,
     link: notificationsPageUrl(),
-    ruleName: rule.name,
+    // A whole-group alert spanning several automations is the GROUP's, so it
+    // is named for the group; with one automation in it, for that automation.
+    ruleName: group && counts && counts.automations > 1 ? group : rule.name,
     ruleDescription: rule.description,
     // "Response time (median over 5 minutes) is 760 ms" — the wizard's own
     // "When should it fire?" wording with the observed value in it, so the
@@ -2544,6 +2563,11 @@ function applyFollowUpPolicy(parts: TemplateContextParts, rule: DbRule, severity
   Object.assign(parts, followUpParts(rule, severity));
 }
 
+/** A `{dimension.suffix}` carrying the device count (" · 80 devices") rather
+ *  than a component list — set by readingContextParts on a path-check split
+ *  and on a whole-group alert. */
+const DEVICE_COUNT_TAG = /^ · \d+ devices?$/;
+
 /** Render the in-app message from a built context (default string when no template). */
 function renderMessage(
   rule: DbRule,
@@ -2580,9 +2604,17 @@ function renderMessage(
     // An automation fold: one automation across devices. {asset} already
     // reads "5 devices"; then which, and the same dependency headline.
     const dep = reading.dependencyDown && ctx["dependency.headline"] ? ` — ${ctx["dependency.headline"]}` : "";
-    // Split per path check: the check is the subject, named once.
+    // A whole-group alert: "<name>: 3 path checks · 80 devices — <host — check>, …".
+    // The count rides in {dimension.suffix} when {asset} names something else.
+    const countTag = DEVICE_COUNT_TAG.test(ctx["dimension.suffix"] ?? "") ? ctx["dimension.suffix"]! : "";
+    if (members.some((m) => m.group)) {
+      return `${ctx["rule"]}: ${ctx["asset"]}${countTag} — ${renderMemberList(members)}${dep}`;
+    }
+    // Split per path check: the check is the subject, named once — and it is
+    // {asset} there, so the count is the subject tag.
     const component = members.find((m) => m.component)?.component;
-    return `${rule.name}${component ? ` — ${component}` : ""}: ${ctx["asset"]} — ${renderMemberList(members)}${dep}`;
+    const devices = component ? countTag.slice(3) : ctx["asset"];
+    return `${rule.name}${component ? ` — ${component}` : ""}: ${devices} — ${renderMemberList(members)}${dep}`;
   }
   if (members?.length) {
     const active = activeMembers(members);
@@ -4396,10 +4428,11 @@ interface GroupFire {
 type GroupBuffer = Map<string, GroupFire[]>;
 
 /** What one alert spans when it holds SEVERAL devices: the registry subnet
- *  they share (a SUBNET AlertGroup) or the automation they all tripped (an
- *  AUTOMATION one). Its members are devices. */
+ *  they share (a SUBNET AlertGroup), the automation they all tripped (an
+ *  AUTOMATION one) or the whole group (`deviceAutomation`). Its members are
+ *  devices. */
 interface FoldSpan {
-  kind: "subnet" | "automation";
+  kind: "subnet" | "automation" | "group";
   id: string;
   /** "Plant A (10.1.0.0/24)", or the automation's name — what the alert names
    *  in place of a device. */
@@ -4413,11 +4446,11 @@ interface FoldSpan {
 /** One alert's worth of a flush: the contributions that share a groupKey. */
 interface FoldBucket {
   /** The groupKey target — an asset id, or the fold's own target
-   *  (subnetFoldTarget / automationFoldTarget / deviceAutomationFoldTarget). */
+   *  (subnetFoldTarget / automationFoldTarget / WHOLE_GROUP_FOLD_TARGET). */
   target: string;
   /** Whether the rule's group governs these devices (else the rule's own key). */
   governs: boolean;
-  /** Set only when this bucket holds several devices (subnet / automation). */
+  /** Set only when this bucket holds several devices (subnet / automation / group). */
   span: FoldSpan | null;
   fires: GroupFire[];
 }
@@ -4636,10 +4669,57 @@ function memberOf(rule: DbRule, f: GroupFire, now: Date, span: FoldSpan | null =
       ? {
         assetId: r.assetId,
         ...(span.kind === "subnet" ? { subnet: span.label } : {}),
+        ...(span.kind === "group" ? { group: span.label } : {}),
         ...(span.component ? { component: span.component.label } : {}),
       }
       : {}),
   };
+}
+
+/**
+ * The true size of a multi-device alert: its FIRING state rows plus this
+ * tick's contributions, which are written to state only after the context is
+ * built. Never the members snapshot, which stops at MAX_GROUP_MEMBERS.
+ *
+ * Two queries, both bounded by the alert's own contributions, and only on an
+ * alert that spans devices — every other alert costs nothing.
+ */
+async function spanCounts(
+  rule: DbRule,
+  notificationId: string | null,
+  fires: GroupFire[],
+  /** A contribution releasing right now — still `firing` until the caller writes it. */
+  excludeStateId?: string,
+): Promise<SpanCounts> {
+  const rows = notificationId
+    ? await prisma.notificationRuleState.findMany({
+      where: { notificationId, state: "firing", ...(excludeStateId ? { id: { not: excludeStateId } } : {}) },
+      select: { ruleId: true, assetId: true, dimensionKey: true },
+    })
+    : [];
+  const all = [
+    ...rows.map((r) => ({ ruleId: r.ruleId, assetId: r.assetId, key: r.dimensionKey })),
+    ...fires.map((f) => ({ ruleId: rule.id, assetId: f.reading.assetId, key: f.reading.dimKey })),
+  ];
+  const ruleIds = [...new Set(all.map((c) => c.ruleId))];
+  const pathRules = new Set<string>(isPathMetric(ruleMetricOf(rule.trigger)) ? [rule.id] : []);
+  const others = ruleIds.filter((id) => id !== rule.id);
+  if (others.length) {
+    const rs = await prisma.notificationRule.findMany({ where: { id: { in: others } }, select: { id: true, trigger: true } });
+    for (const r of rs) if (isPathMetric(ruleMetricOf(r.trigger as unknown as Trigger))) pathRules.add(r.id);
+  }
+  const path = all.filter((c) => pathRules.has(c.ruleId));
+  return {
+    devices: new Set(all.map((c) => c.assetId)).size,
+    checks: new Set(path.map((c) => c.key)).size,
+    automations: ruleIds.length,
+    pathOnly: all.length > 0 && path.length === all.length,
+  };
+}
+
+/** The metric an asset_metric trigger watches, else null. */
+function ruleMetricOf(trigger: Trigger | null | undefined): string | null {
+  return trigger?.type === "asset_metric" ? trigger.metric : null;
 }
 
 /** The buffered contribution the primary member stands for — the reading the
@@ -4654,7 +4734,8 @@ function leadFire(fires: GroupFire[], primary: AlertMember | null): GroupFire {
  * Sort this tick's buffered contributions into the alerts they belong to.
  *
  * A device group (or an ungrouped rule) keeps one alert per device. A
- * DEVICE-AND-AUTOMATION group keeps one per device per automation. An
+ * DEVICE-AND-AUTOMATION group folds both ways at once: ONE alert for the whole
+ * group, every device and every member automation in it. An
  * AUTOMATION group puts every device it governs into this automation's one
  * alert — one per PATH CHECK for a Path Monitor automation, whose components
  * are fleet-wide checks rather than parts of one device — and a SUBNET group
@@ -4666,6 +4747,12 @@ async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertI
   const bySubnet = foldBy === "subnet" && !!tickIndex;
   const subnets = bySubnet ? await tickIndex!.subnetsOf([...buf.keys()]) : null;
   const automation: FoldSpan | null = foldBy === "automation" ? { kind: "automation", id: rule.id, label: rule.name } : null;
+  // Both folds at once: every device and every member automation in ONE alert,
+  // the group's. Shared across automations through the group's key, as a
+  // device group's per-device alert already is.
+  const whole: FoldSpan | null = foldBy === "deviceAutomation" && rule.alertGroupId
+    ? { kind: "group", id: rule.alertGroupId, label: rule.alertGroupName || rule.name }
+    : null;
   // "This path check is failing from these hosts" is the alert a Path Monitor
   // automation watching every check means; one alert for ALL its checks would
   // fold unrelated outages together. A port, by contrast, is part of ONE
@@ -4697,11 +4784,11 @@ async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertI
     // same checks, routed to different people. On a device no group governs,
     // the automation still folds its own components; it just does so alone.
     const governs = await groupGovernsAsset(rule, assetId, tickIndex);
-    const span = !governs ? null : automation ?? subnets?.get(assetId) ?? null;
+    const span = !governs ? null : automation ?? whole ?? subnets?.get(assetId) ?? null;
     const target = !governs ? assetId
       : span?.kind === "subnet" ? subnetFoldTarget(span.id)
       : span?.kind === "automation" ? automationFoldTarget(rule.id)
-      : foldBy === "deviceAutomation" ? deviceAutomationFoldTarget(assetId, rule.id)
+      : span?.kind === "group" ? WHOLE_GROUP_FOLD_TARGET
       : assetId;
     const k = `${governs ? "g" : "r"}|${target}`;
     const b = out.get(k);
@@ -4754,7 +4841,8 @@ async function createGroupAlert(
   // is the one its charts already describe.
   const lead = leadFire(fires, primary);
   const assetId = lead.reading.assetId;
-  const ctx = await buildGroupContext(rule, lead, members, severity, now);
+  const counts = span ? await spanCounts(rule, null, fires) : null;
+  const ctx = await buildGroupContext(rule, lead, members, severity, now, counts);
   const scope = alertScopeOf(rule, governs);
   const groupKey = groupKeyOf(scope.scope, scope.id, target);
   // The first send waits one polling interval of the reading that opened the
@@ -4889,7 +4977,8 @@ async function joinGroupAlert(
   const severity = groupSeverity(members, rule.severity);
   const primary = primaryMember(members);
   const lead = leadFire(fires, primary);
-  const ctx = await buildGroupContext(rule, lead, members, severity, now);
+  const counts = span ? await spanCounts(rule, notificationId, fires) : null;
+  const ctx = await buildGroupContext(rule, lead, members, severity, now, counts);
 
   // A contribution arriving after someone acknowledged RE-OPENS the alert:
   // acknowledging "3 ports faulted" is not acknowledging "now 9 ports". The
@@ -4993,9 +5082,11 @@ async function buildGroupContext(
   members: AlertMember[],
   severity: string,
   now: Date,
+  /** Set on an alert that spans devices (spanCounts). */
+  counts: SpanCounts | null = null,
 ): Promise<Record<string, string>> {
   const detail = groupWantsAssetDetail(rule) && lead.reading.assetId ? await assetDetail(lead.reading.assetId) : null;
-  const parts = readingContextParts(rule, lead.reading, now, undefined, members);
+  const parts = readingContextParts(rule, lead.reading, now, undefined, members, counts);
   parts.severity = severity;
   applyFollowUpPolicy(parts, rule, severity);
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
@@ -5819,7 +5910,10 @@ async function releaseGroupMember(
     if (others > 0) {
       const severity = groupSeverity(members, rule.severity);
       const primary = primaryMember(members);
-      const message = regroupedMessage(rule, members);
+      // A multi-device alert's true size, from the state rows (the members stop
+      // at MAX_GROUP_MEMBERS). One indexed query, only on such an alert.
+      const counts = members.some((m) => m.assetId) ? await spanCounts(rule, st.notificationId, [], st.id) : null;
+      const message = regroupedMessage(rule, members, counts);
       // Paced (business rule 75): the recovery is news for the next update —
       // queued, and the stored context refreshed so that update names the
       // alert as it now stands. Held: the first send will simply not name it.
@@ -5828,7 +5922,7 @@ async function releaseGroupMember(
         ? queueGroupChanges(row.pendingChanges, [{ label: departing.label || departing.key, kind: "recovered" }])
         : null;
       const ctx = paced && row.templateCtx && typeof row.templateCtx === "object"
-        ? refreshMemberContext(row.templateCtx as Record<string, string>, members, message)
+        ? refreshMemberContext(row.templateCtx as Record<string, string>, members, message, counts)
         : null;
       await prisma.notification.updateMany({
         where: { id: st.notificationId, cleared: false },
@@ -5877,7 +5971,7 @@ async function releaseGroupMember(
  * the smaller lie, and every other surface (the member list, the count, the
  * severity) is refreshed around it.
  */
-function regroupedMessage(rule: DbRule, members: AlertMember[]): string | null {
+function regroupedMessage(rule: DbRule, members: AlertMember[], counts: SpanCounts | null = null): string | null {
   if (rule.messageTemplate && rule.messageTemplate.trim()) return null;
   const active = activeMembers(members);
   const list = renderMemberList(members);
@@ -5885,6 +5979,13 @@ function regroupedMessage(rule: DbRule, members: AlertMember[]): string | null {
   const count = active.length === 1 ? "" : ` (${active.length})`;
   const subnet = members.find((m) => m.subnet)?.subnet;
   const component = members.find((m) => m.component)?.component;
+  const group = members.find((m) => m.group)?.group;
+  if (group && counts) {
+    // A whole-group alert names its true size, which the capped list cannot.
+    const what = wholeGroupSubject(counts);
+    const name = counts.automations > 1 ? group : rule.name;
+    return `${name}: ${what ? `${what} · ` : ""}${countNoun(counts.devices, "device")} still affected — ${list}`;
+  }
   const where = subnet ? `${subnet} — ` : component ? `${component} — ` : "";
   return `${rule.name}: ${where}${list}${count} still affected`;
 }
@@ -6588,7 +6689,7 @@ async function applyLinkedForecastLevels(rules: Array<Pick<DbRule, "trigger" | "
 export async function evaluateAllNotificationRules(): Promise<void> {
   const dbRules = await prisma.notificationRule.findMany({
     where: { enabled: true },
-    include: { alertGroup: { select: { foldBy: true } } },
+    include: { alertGroup: { select: { foldBy: true, name: true } } },
   });
   const rules: DbRule[] = dbRules.map((r) => {
     // Shape-v2 normalization: legacy rows (clearBehavior/targets) and v2 rows
@@ -6615,6 +6716,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       groupByAsset: r.groupByAsset === true,
       alertGroupId: r.alertGroupId ?? null,
       alertGroupFoldBy: r.alertGroup?.foldBy ?? null,
+      alertGroupName: r.alertGroup?.name ?? null,
     };
   });
   await applyLinkedForecastLevels(rules);

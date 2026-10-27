@@ -124,7 +124,7 @@ function reasonCannotJoin(trigger: Trigger | null | undefined, foldBy: string = 
     return "Fires on an instant rather than on a reading it keeps watching, so Polaris cannot tell when its part in a shared alert has ended.";
   }
   if (!foldSpansDevices(foldBy) && (type === "asset_state" || type === "asset_metric")) {
-    return "Reports once per device already, so there is nothing to fold per device. Set the group to one alert per automation or per subnet to combine it across devices.";
+    return "Reports once per device already, so there is nothing to fold per device. Set the group to one alert per automation, per device + automation or per subnet to combine it across devices.";
   }
   return "Reports once per device already, so there is nothing for a group to fold.";
 }

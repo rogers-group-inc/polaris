@@ -490,6 +490,10 @@ export interface TemplateContextParts {
    *  Blank on a whole-device alert; `{dimension.label}` falls back to the
    *  generic "Component" whenever there is a dimension but no noun for it. */
   dimensionNoun?: string;
+  /** Overrides `{dimension.suffix}` (separator included). Set only on a Path
+   *  Monitor alert split per check, whose subject reads "<check> · 3 devices":
+   *  the host list stays in `{dimension}` for the body. */
+  dimensionSuffix?: string;
   /** Composite triggers only — "k of n conditions met". */
   conditions?: string;
   message?: string;
@@ -719,7 +723,7 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // Carries its own separator so a subject line can append it unconditionally
     // and read correctly when there is no component. Same shape as
     // {repeat.quiet}: the token is the whole phrase or nothing at all.
-    "dimension.suffix": str(parts.dimension) ? ` · ${str(parts.dimension)}` : "",
+    "dimension.suffix": parts.dimensionSuffix ?? (str(parts.dimension) ? ` · ${str(parts.dimension)}` : ""),
     "conditions": str(parts.conditions),
     "message": str(parts.message),
     "severity": severity,

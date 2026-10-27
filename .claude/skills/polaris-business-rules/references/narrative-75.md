@@ -473,7 +473,7 @@ the unit, not the mechanism: a subnet fold answers "what broke at this site", an
 
 **`deviceAutomation`** — one alert per device PER automation: one automation's components on a
 device fold together (eight faulted ports are one alert), but two automations on the same device
-stay two alerts. The alert keys `<assetId>/auto:<ruleId>` (`deviceAutomationFoldTarget`); members
+stay two alerts. The alert keys `<assetId>/auto:<ruleId>` (`deviceAutomationFoldTarget`, removed 2026-10-27 — see the redefinition below); members
 are components, as in a device fold, and nothing carries `assetId`. Eligibility is the DEVICE
 group's: a whole-device trigger would only ever hold one contribution per alert, so it is refused
 with the same reason. It is the shape an automation's own `groupByAsset` checkbox already gives —
@@ -481,6 +481,31 @@ the point of putting it in a group is the group's DELIVERY (one recipient list, 
 chain) over several automations whose alerts should still stay apart.
 
 Changing between any two of the four folds retires the group's live alerts, as above.
+
+**`deviceAutomation` redefined: the whole group (2026-10-27).** The operator read "Device +
+automation" as both folds COMBINED — Device folds automations per device, Automation folds devices
+per automation, so both together is one alert for the whole group — and 80 hosts × 3 failing path
+checks producing 80 emails (240 with an automation per check) was the outcome they did not want.
+The paragraph above is the old meaning, kept for history. Now: `foldBuckets` gives every governed
+contribution of every member the one target `WHOLE_GROUP_FOLD_TARGET` ("all") with a
+`FoldSpan { kind: "group" }` named for the group (`DbRule.alertGroupName`), so the existing
+cross-rule lookup by `groupKey` (`grp:<id>|all`) joins every automation into the same row. Members
+carry `assetId` + `group` and label "host — component". Because the fold now spans devices,
+`foldSpansDevices` admits the whole-device triggers, and only a DEVICE group refuses them. The
+subject reads `[SEV] 3 path checks · 80 devices — <name>` (`wholeGroupSubject`: path checks when
+every contribution is a Path Monitor one, automations when there are several, else plain "N
+devices"). `{rule}` is the automation while only one is involved and the GROUP's name once there
+are several, since the alert is no longer any one automation's. The stored value was kept rather
+than renamed (no data migration of `foldBy`, no API break). Migration
+`20261027190000_device_automation_whole_group` retires the live alerts raised under the old meaning,
+as any refold does.
+
+**Counts come from the state rows (same day).** Building this showed the members cap was already
+lying in the automation fold: `MAX_GROUP_MEMBERS` is 64, and "N devices" was counted from the
+members, so an 80-device outage said 64. `spanCounts` counts the alert's firing state rows plus the
+tick's not-yet-written fires instead; it runs only for an alert that spans devices. The members list
+stays capped — it is a render snapshot, and an email body naming 240 contributions is not read —
+but no count is taken from it on a multi-device alert any more.
 
 ### The first-send hold
 
@@ -556,6 +581,15 @@ monitor per check. `foldBuckets` buckets those fires by `(automation, check)`
 in `AlertMember.component`), and the alert, message and regrouped message name the check.
 Components that are part of one device (ports, mounts) do NOT split — port2 on two switches is
 not one finding.
+
+**The check is the alert's subject (2026-10-27).** On such a split, `{asset}` is the CHECK's
+name — the way a subnet fold's `{asset}` is the subnet — and `{dimension.suffix}` is the host
+COUNT (`TemplateContextParts.dimensionSuffix`), so the unchanged default subject reads
+`[CRITICAL] ERP HTTPS · 3 devices — Path check down`. Before this the subject was
+`3 devices · pc-01, pc-02, pc-03 — <rule>`: hosts but no check, so two checks failing from the
+same hosts mailed identical subjects. `{dimension}` still lists the hosts for the body.
+`readingContextParts` (fire) and `refreshMemberContext` (an update re-renders the stored
+context) must agree — the latter must NOT overwrite `{asset}` with the count on a split.
 
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 

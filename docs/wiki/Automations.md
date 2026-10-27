@@ -195,10 +195,11 @@ The editor holds a name, an **Active** switch, **One alert per** (**Device**,
   one that watches something it can keep checking — a metric, a state, or a
   multi-condition device trigger. Event and change automations cannot join:
   they fire on a single moment, so Polaris could never tell when their part in
-  a shared alert had ended. In a **Device** or **Device + automation** group, a metric or state that
+  a shared alert had ended. In a **Device** group, a metric or state that
   is about the whole device (such as `monitorStatus == down`) cannot join
   either — it already raises one alert per device, so there is nothing to fold;
-  the picker suggests one alert per automation or per subnet instead. The list is re-checked whenever
+  the picker suggests one alert per automation, per device + automation or per
+  subnet instead. The list is re-checked whenever
   you switch **One alert per**.
 - **Which devices.** Narrows where the folding applies, never what a member
   watches. On a device outside the filter, a member alerts on its own exactly
@@ -240,7 +241,7 @@ subject, "pc-03 joined this alert; pc-01 recovered" at the top — one interval
 after the previous email. A device that joins and recovers inside the same
 interval is left out. A worse severity band is still emailed at once.
 
-### One alert per automation, or per device and automation
+### One alert per automation, or for the whole group
 
 **One alert per** decides what a single alert stands for:
 
@@ -248,7 +249,7 @@ interval is left out. A worse severity band is still emailed at once.
 |---|---|---|
 | **Device** | device — everything the group's automations find on it | the components (ports, tunnels…) |
 | **Automation** | automation — every device it trips, together | the devices |
-| **Device + automation** | device, separately for each automation | that automation's components |
+| **Device + automation** | the whole group — every device and every automation, together | each device with what it tripped |
 | **Subnet** | network — every device in it, together | the devices |
 
 **Automation** suits a check you want to hear about once however widely it
@@ -257,13 +258,24 @@ the automation, ends when the **last** device recovers, and (like Subnet) also
 accepts automations about the whole device, such as `monitorStatus == down`.
 A **Path Monitor** automation gets one alert **per path check** rather than one
 for every check it watches — *"Path Monitor — ERP HTTPS: 3 devices — pc-01,
-pc-02, pc-04"* — with hosts added and removed as they fail and recover.
+pc-02, pc-04"* — with hosts added and removed as they fail and recover. Its
+email subject names the check and counts the hosts — *"[CRITICAL] ERP HTTPS · 3
+devices — Path Monitor"* — and the hosts are listed in the email body.
 
-**Device + automation** keeps different checks apart on the same device — a PoE
-fault and a high temperature on one switch are two alerts — while each
-automation's own components still fold (eight faulted ports are one alert). Use
-it when you want the group's recipients and escalation over several automations
-without merging their alerts.
+**Device + automation** does both at once: the group keeps **one** alert, and
+every device and every automation in the group joins it. Eighty hosts failing
+three path checks is one email — *"[CRITICAL] 3 path checks · 80 devices —
+Path check down"* — listing each host with the checks it is failing. The
+subject counts path checks when every member is a Path Monitor automation, and
+automations otherwise (*"2 automations · 12 devices"*). It is named after the
+automation while only one is involved and after the **group** once several are.
+Like **Automation** and **Subnet**, it also accepts automations about the whole
+device. The alert ends when the last device recovers. The counts cover every
+device and check, however long the list in the email body gets.
+
+Until October 2026 this choice meant one alert per device for each automation.
+Updating Polaris ends any alerts raised that way, and the next check raises
+them again as the group's one alert.
 
 The groups list marks a group that folds any way but **Device** with a badge.
 

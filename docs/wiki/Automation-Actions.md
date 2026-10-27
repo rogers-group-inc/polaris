@@ -419,6 +419,11 @@ its own separator (" · port12") for appending to a subject line. All three are
 blank on an alert about a whole device, and the default email prunes the row and
 the subject fragment away when they are.
 
+On a Path Monitor alert grouped **per automation**, the alert is about the path
+check: `{asset}` is the check's name, `{dimension}` lists the hosts it is
+failing from, and `{dimension.suffix}` is the host count (" · 3 devices"), so
+the default subject reads *"[CRITICAL] ERP HTTPS · 3 devices — Path Monitor"*.
+
 **The automation**
 `{rule}` `{rule.description}` `{trigger.summary}`
 
