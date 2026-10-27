@@ -140,8 +140,8 @@ carries the whole message: neither colour nor motion reaches every reader.
 
 A strip on the table's top-left edge, below the bulk bar, sharing its row with
 **Filters** (in edit mode only, right after the tabs), the page's buttons (the **Import** and **Export**
-icons, **Maintenance**, the settings gear, **+ Add Asset(s)**), then **Clear**,
-**Refresh** (the circular-arrows icon), the page size (**25 / page** …) and, at
+icons, **Maintenance**, the settings gear), then **Clear**,
+**Refresh** (the circular-arrows icon), **+ Add Asset(s)**, the page size (**25 / page** …) and, at
 the right end, the **Edit** pencil (the page buttons are below the page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
 or F2 renames; in edit mode ✕ closes one (never the last) and + adds one. A

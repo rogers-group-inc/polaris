@@ -26,7 +26,7 @@ alert.
 | `automationScripts:read` | see the tab and run history |
 | `automationScripts:write` | create, edit, delete, test-run, **and attach a script action to an automation** |
 
-**+ Add script** opens the editor. Each script is a card showing its
+**+ Add Script** opens the editor. Each script is a card showing its
 interpreter and run target, its timeout and the start of its sha256, with
 **Test run**, **Edit** and **Delete** for `write`.
 

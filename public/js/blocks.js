@@ -166,7 +166,10 @@ function _renderBlocksPageControls(total) {
       className: "btn-glyph btn-glyph-refresh",
       title: "Reload the block list",
       onClick: function () { loadBlocks(); },
-    }],
+    },
+    // + Add Block, right of Refresh in IPAM's tab row (the page's own button).
+    { el: document.getElementById("btn-add-block") },
+    ].filter(function (b) { return !("el" in b) || b.el; }),
   });
 }
 

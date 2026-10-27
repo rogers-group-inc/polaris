@@ -202,7 +202,7 @@ describe("what a row says", () => {
   });
 });
 
-describe("the + New schedule button", () => {
+describe("the + New Schedule button", () => {
   const bar = (el: HTMLElement) => el.querySelector("[data-maint-new]");
 
   it("sits above the list, and above the EMPTY state too", () => {

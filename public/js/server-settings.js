@@ -7462,7 +7462,7 @@ async function openAddTagModal() {
     '<div class="form-group"><label>Category</label>' +
       '<div style="display:flex;gap:8px">' +
         '<select id="f-tag-category-select" style="flex:1">' + catOptions +
-          '<option value="__new__">+ New category...</option>' +
+          '<option value="__new__">+ New Category...</option>' +
         '</select>' +
         '<input type="text" id="f-tag-category-new" placeholder="Category name" style="flex:1;display:none">' +
       '</div>' +
@@ -7576,7 +7576,7 @@ async function openEditTagModal(id) {
     '<div class="form-group"><label>Category</label>' +
       '<div style="display:flex;gap:8px">' +
         '<select id="f-tag-category-select" style="flex:1">' + catOptions +
-          '<option value="__new__">+ New category...</option>' +
+          '<option value="__new__">+ New Category...</option>' +
         '</select>' +
         '<input type="text" id="f-tag-category-new" placeholder="Category name" style="flex:1;display:none">' +
       '</div>' +
@@ -9900,7 +9900,7 @@ function renderWidgetSection(detail) {
       '<h5 style="margin:0;font-size:0.9rem;font-weight:600">Custom widgets</h5>' +
       (_mfgAddingWidget[detail.id]
         ? '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">New widget…</span>'
-        : '<button class="btn btn-sm mfg-widget-add-toggle" data-profile-id="' + escapeHtml(detail.id) + '">+ Add widget</button>') +
+        : '<button class="btn btn-sm mfg-widget-add-toggle" data-profile-id="' + escapeHtml(detail.id) + '">+ Add Widget</button>') +
     '</div>' +
     '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-bottom:8px">' +
       'Widgets render on the asset details <b>Custom MIB</b> tab for every asset whose manufacturer matches ' +

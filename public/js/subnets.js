@@ -300,7 +300,10 @@ function _renderSubnetsPageControls(total) {
       className: "btn-glyph btn-glyph-refresh",
       title: "Reload the network list",
       onClick: function () { loadSubnets(); },
-    }],
+    },
+    // + Add Network, right of Refresh in IPAM's tab row (the page's own button).
+    { el: document.getElementById("btn-add-subnet") },
+    ].filter(function (b) { return !("el" in b) || b.el; }),
   });
 }
 

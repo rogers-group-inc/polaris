@@ -186,7 +186,7 @@
       '</label>' +
       '<div class="rc-ranges"' + (allDay ? ' hidden' : '') + '>' + rows + '</div>' +
       '<button type="button" class="rc-add btn btn-secondary btn-sm" style="align-self:flex-start"' +
-        (allDay ? ' hidden' : '') + '>+ Add hours</button>' +
+        (allDay ? ' hidden' : '') + '>+ Add Hours</button>' +
       (opts.note ? '<span class="rc-note" style="font-size:0.75rem;color:var(--color-text-tertiary)">' + esc(opts.note) + '</span>' : '') +
     '</div>';
   }
@@ -492,7 +492,7 @@
       presetsHtml(opts.presets) +
       invert +
       '<div class="rc-rule-list" style="display:grid;gap:8px">' + rules.map(ruleHtml).join("") + '</div>' +
-      '<button type="button" class="rc-rule-add btn btn-secondary btn-sm" style="margin-top:8px">+ Add period</button>' +
+      '<button type="button" class="rc-rule-add btn btn-secondary btn-sm" style="margin-top:8px">+ Add Period</button>' +
       '<div class="rc-strip" style="display:grid;grid-template-columns:2.4rem 1fr;gap:4px 8px;align-items:center;margin-top:12px;font-size:0.75rem;color:var(--color-text-secondary)"></div>' +
       '<div style="display:grid;grid-template-columns:2.4rem 1fr;gap:4px 8px"><span></span>' +
         '<div style="display:grid;grid-template-columns:repeat(4,1fr);font-size:0.7rem;color:var(--color-text-tertiary)"><span>00:00</span><span>06:00</span><span>12:00</span><span style="text-align:right">18:00 &nbsp; 24:00</span></div></div>' +

@@ -35,7 +35,7 @@ Five tabs:
 
 ### Settings
 
-The **Settings** button beside **+ New automation** opens the automation
+The **Settings** button on the Automations tab's row opens the automation
 settings. Its one tab, **Global Quiet Times**, lists the quiet periods that
 apply to every automation without a quiet time of its own: which devices, which
 severities and kinds of alert, when, and how the summary email goes out. **+ New
@@ -290,7 +290,7 @@ To set it up:
    see [Asset state](Automation-Triggers#monitorstatus--down-is-the-down-detection-automation)).
    If hosts behind a failed switch should alert too, tick **Dependency-Down
    Bypass** on its Actions step.
-2. On the **Alert Groups** tab, click **New group**, set **One alert per** to
+2. On the **Alert Groups** tab, click **+ New Group**, set **One alert per** to
    **Subnet**, and narrow **Which devices** if only some sites should fold.
 3. Tick the down automation in the member list and save. The group's
    recipients are copied from it the first time, as for any group.

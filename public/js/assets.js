@@ -1927,7 +1927,9 @@ function _renderAssetsPageControls() {
         title: "Refresh",
         onClick: loadAssets,
       },
-    ],
+      // + Add Asset(s), right of Refresh: the page's own button, moved in.
+      { el: document.getElementById("btn-add-asset") },
+    ].filter(function (b) { return !("el" in b) || b.el; }),
   });
 }
 

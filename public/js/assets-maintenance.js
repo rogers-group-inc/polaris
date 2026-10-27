@@ -387,7 +387,7 @@ function _maintEditorHTML() {
       '<label>Asset filter</label>' +
       '<p class="hint">Assets matching ALL rules enter maintenance while the schedule is active. Only <strong>monitored</strong> assets are eligible. A single IP is a /32 CIDR (e.g. <code>10.2.3.4/32</code>).</p>' +
       '<div id="maint-rules">' + _maintRuleRowHTML(null) + '</div>' +
-      '<button type="button" id="maint-add-rule" class="btn btn-secondary btn-sm" style="margin-top:4px">+ Add rule</button>' +
+      '<button type="button" id="maint-add-rule" class="btn btn-secondary btn-sm" style="margin-top:4px">+ Add Rule</button>' +
       '<div id="maint-explicit" class="hint" style="display:none;margin-top:6px"></div>' +
       '<datalist id="maint-assettype-list"></datalist>' +
       '<datalist id="maint-fortigate-list"></datalist>' +

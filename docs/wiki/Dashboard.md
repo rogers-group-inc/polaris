@@ -326,7 +326,7 @@ Hover the badge to see whether the device itself or an upstream device is in
 maintenance.
 
 The **Active Maintenance** widget is the other one you can act from. A
-**+ New schedule** button at the top of it opens the Maintenance editor to
+**+ New Schedule** button at the top of it opens the Maintenance editor to
 create one without leaving the dashboard — it is there over the empty widget
 too, which is usually when you want it. A schedule you create appears in the
 widget a few seconds later, once it is actually holding devices.

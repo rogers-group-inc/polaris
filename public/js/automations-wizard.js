@@ -6680,7 +6680,7 @@ async function openAutomationWizard(existing, opts) {
         (perSev ? '<p class="aw5-help">These actions also run at higher severities that don’t define their own.</p>'
           : bands.length ? '<p class="aw5-help">These run at every severity level — each time the alert climbs or eases into a new one.</p>' : "") +
         '<div id="aw-actions"></div>' +
-        '<button type="button" class="btn btn-sm btn-secondary" id="aw-add-action" style="margin-top:6px">+ Add action</button>' +
+        '<button type="button" class="btn btn-sm btn-secondary" id="aw-add-action" style="margin-top:6px">+ Add Action</button>' +
         // Escalation belongs to the SEVERITY, not to one action inside it: "if
         // this alert stays unhandled, do more" is a fact about the alert at this
         // severity, and hanging it off a single Notify row made it read as "if
@@ -6712,7 +6712,7 @@ async function openAutomationWizard(existing, opts) {
           bandCount ? bandCount + " action" + (bandCount === 1 ? "" : "s") : "no actions of its own",
           '<p class="aw5-help">' + escapeHtml((s.bandMeta && s.bandMeta.emptyBandNote) || "Leave empty to run the base actions at this severity.") + '</p>' +
           '<div class="ba-actions"></div>' +
-          '<button type="button" class="btn btn-sm btn-secondary ba-add" style="margin-top:6px">+ Add action</button>' +
+          '<button type="button" class="btn btn-sm btn-secondary ba-add" style="margin-top:6px">+ Add Action</button>' +
           // The band's own chain (severityBands[i].escalation) — the one the
           // sweep resolves while the alert sits in THIS band.
           escSectionHtml()) +
@@ -6742,7 +6742,7 @@ async function openAutomationWizard(existing, opts) {
       // header.
       '<p class="aw5-help"><span id="aw-reset-mirror-note"></span></p>' +
       '<div id="aw-reset-actions"></div>' +
-      '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add action</button>' +
+      '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add Action</button>' +
     '</div>';
 
     panel.innerHTML = html;
@@ -9342,7 +9342,7 @@ async function openAutomationWizard(existing, opts) {
         '<button type="button" class="btn btn-sm btn-danger tier-remove" style="margin-left:auto">Remove escalation</button>' +
       '</div>' +
       '<div class="tier-actions"></div>' +
-      '<button type="button" class="btn btn-sm btn-secondary tier-add-action">+ Add action</button>';
+      '<button type="button" class="btn btn-sm btn-secondary tier-add-action">+ Add Action</button>';
     host.appendChild(row);
     row.querySelector(".tier-remove").addEventListener("click", function () {
       row.remove();

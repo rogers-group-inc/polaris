@@ -86,7 +86,7 @@ var _rulesPage = 1;
     }
     var agBtn = document.getElementById("ag-new-btn");
     if (agBtn) {
-      agBtn.style.display = canEditRules ? "" : "none";
+      agBtn.style.display = canEditRules && activeKey === "groups" ? "" : "none";
       if (canEditRules && !agBtn._wired) {
         agBtn._wired = true;
         agBtn.addEventListener("click", function () { window.PolarisAlertGroups.openEditor(null); });
@@ -128,6 +128,8 @@ var _rulesPage = 1;
       if (nrBtn && canEditRules) nrBtn.style.display = key === "manage" ? "" : "none";
       var acBtn = document.getElementById("btn-add-channel");
       if (acBtn && canEditRules) acBtn.style.display = key === "delivery" ? "" : "none";
+      var agBtn2 = document.getElementById("ag-new-btn");
+      if (agBtn2 && canEditRules) agBtn2.style.display = key === "groups" ? "" : "none";
       var stBtn = document.getElementById("btn-automation-settings");
       if (stBtn && canManage) stBtn.style.display = key === "manage" ? "" : "none";
       var asBtn2 = document.getElementById("btn-add-script");
@@ -664,7 +666,10 @@ var _rulesPage = 1;
           className: "btn-glyph btn-glyph-refresh",
           title: "Reload the automations",
           onClick: function () { loadRules(); },
-        }],
+        },
+        // + New Automation, right of Refresh (the page's own button, moved in).
+        { el: document.getElementById("btn-new-rule") },
+        ].filter(function (b) { return !("el" in b) || b.el; }),
       });
   }
 
@@ -694,7 +699,7 @@ var _rulesPage = 1;
     if (_rulesSF) data = _rulesSF.apply(data);
     if (!data.length) {
       if (_rules.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No automations yet' + (canEditRules ? ' — click "+ New automation" to create one.' : "") + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No automations yet' + (canEditRules ? ' — click "+ New Automation" to create one.' : "") + '</td></tr>';
         clearPageControls("rules-pagination");
         return;
       }
@@ -1092,7 +1097,7 @@ function renderChannelsList(allChannels) {
   var channels = (allChannels || []).filter(function (c) { return c.type !== "web_push"; });
   if (!channels.length) {
     container.innerHTML = '<div class="empty-state-card"><p>No delivery channels configured.</p>' +
-      (canEdit ? '<p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Click “+ Add channel” to add an SMTP / Microsoft 365 email, Pushbullet, Slack, or Microsoft Teams destination.</p>' : '') + '</div>';
+      (canEdit ? '<p style="color:var(--color-text-tertiary);font-size:0.85rem;margin-top:0.5rem">Click “+ Add Channel” to add an SMTP / Microsoft 365 email, Pushbullet, Slack, or Microsoft Teams destination.</p>' : '') + '</div>';
     return;
   }
   container.innerHTML = channels.map(function (c) {
@@ -1360,7 +1365,7 @@ function renderScriptsList(scripts) {
   if (!container) return;
   var canEdit = permAtLeast("automationScripts", "write");
   if (!scripts.length) {
-    container.innerHTML = '<p class="empty-state">No scripts yet' + (canEdit ? ' — click "+ Add script" to create one.' : "") + '</p>';
+    container.innerHTML = '<p class="empty-state">No scripts yet' + (canEdit ? ' — click "+ Add Script" to create one.' : "") + '</p>';
     return;
   }
   container.innerHTML = scripts.map(function (sc) {

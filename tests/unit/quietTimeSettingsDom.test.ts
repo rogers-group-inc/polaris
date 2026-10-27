@@ -6,7 +6,7 @@
  * Both are plain browser scripts, so this loads them into a happy-dom Window
  * with the app-shell globals stubbed the way automationsWizardDom.test.ts
  * does, and the REAL schema catalogue, then drives: Settings → Global Quiet
- * Times lists what the API returns; "+ New quiet time" replaces the modal with
+ * Times lists what the API returns; "+ New Quiet Time" replaces the modal with
  * the wizard; the wizard walks its five steps and posts a body the server's
  * own schemas accept; Cancel hands control back (onDone) so the Settings
  * modal returns. The regression this nets is the one the alert-groups editor
@@ -243,7 +243,7 @@ describe("the Settings modal", () => {
     expect(put[0]!.body).toEqual({ name: "Nights", enabled: false, scope: { allAssets: true }, quiet: { windows: [NIGHTLY] } });
   });
 
-  it("+ New quiet time replaces the modal with the wizard, and Cancel brings Settings back", async () => {
+  it("+ New Quiet Time replaces the modal with the wizard, and Cancel brings Settings back", async () => {
     settings().open();
     await tick();
     click("#aqs-new");
