@@ -3545,6 +3545,7 @@ function _rowSelectForMenu(tr) {
   if (!cb || cb.checked || !tr.parentNode || tr.parentNode.tagName !== "TBODY") return;
   _rowSelLastTbody = tr.parentNode;
   _rowSelAnchor = tr;
+  _rowSelCursor = null;
   _rowSelectClearOthers(tr.parentNode, tr);
   _rowSelectSet(tr, true);
 }
@@ -3650,6 +3651,7 @@ document.addEventListener("mousedown", function (e) {
   }
   var base = new Set(_rowSelectRows(tbody).filter(function (r) { return _rowSelectBox(r).checked; }));
   _rowSelAnchor = tr;
+  _rowSelCursor = null;
   _rowSel = {
     tbody: tbody, anchor: tr, last: tr, additive: ctrl, base: base,
     // Ctrl paints the clicked row's NEW state across the drag; a plain drag selects.
@@ -3705,10 +3707,17 @@ function _rowSelectEnd(aborted) {
 document.addEventListener("mouseup", function (e) { if (e.button === 0) _rowSelectEnd(false); });
 window.addEventListener("blur", function () { _rowSelectEnd(true); });
 
-document.addEventListener("keydown", function (e) {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || (e.key !== "a" && e.key !== "A")) return;
+// The keyboard. Ctrl/⌘+A selects every row of the table; with a selection on
+// screen, Esc clears it, ↑ / ↓ move it one row (Shift+↑ / ↓ extend it from the
+// anchor, as Shift+click does), and Enter does a left click on the one
+// selected row's name — its `primary` verb, Open. None of them act while
+// focus is in a field, or through a dialog, a menu or a slide-over that does
+// not hold the table: whatever is on top owns the keyboard.
+var _rowSelCursor = null;    // the row ↑ / ↓ last moved to (Shift moves it, not the anchor)
+
+function _rowSelectKeyTbody(e) {
   var t = e.target;
-  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return null;
   var tbody = _rowSelLastTbody;
   // No table clicked yet (or it is gone): the one table that holds a selected
   // row is the target, so one asset selected + Ctrl+A selects the page however
@@ -3721,14 +3730,76 @@ document.addEventListener("keydown", function (e) {
     });
     tbody = holding.length === 1 ? holding[0] : null;
   }
-  if (!tbody) return;
-  // Not through a dialog: a modal opened over the list owns the keyboard.
+  if (!tbody) return null;
   var modal = document.querySelector("#modal-overlay.open, .modal-overlay.open");
-  if (modal && !modal.contains(tbody)) return;
+  if (modal && !modal.contains(tbody)) return null;
+  var panels = document.querySelectorAll(".slideover-overlay.open");
+  if (panels.length && !panels[panels.length - 1].contains(tbody)) return null;
+  if (document.querySelector(".row-context-menu, .btn-dropdown-menu.open")) return null;
+  return tbody;
+}
+
+document.addEventListener("keydown", function (e) {
+  if (e.defaultPrevented || e.altKey) return;
+  var key = e.key;
+  var ctrl = e.ctrlKey || e.metaKey;
+  var selectAll = ctrl && !e.shiftKey && (key === "a" || key === "A");
+  var arrow = !ctrl && (key === "ArrowDown" || key === "ArrowUp");
+  var plain = !ctrl && !e.shiftKey;
+  if (!selectAll && !arrow && !(plain && (key === "Escape" || key === "Enter"))) return;
+  var tbody = _rowSelectKeyTbody(e);
+  if (!tbody) return;
   var rows = _rowSelectRows(tbody);
   if (!rows.length) return;
+  if (selectAll) {
+    e.preventDefault();
+    rows.forEach(function (tr) { _rowSelectSet(tr, true); });
+    return;
+  }
+  // The rest act only on a selection that is on screen, so an arrow key on a
+  // page whose table holds nothing still scrolls the page.
+  var picked = rows.filter(function (tr) { return _rowSelectBox(tr).checked; });
+  if (!picked.length) return;
+  if (key === "Escape") {
+    // Before the slide-over's own Escape (it skips a prevented event): the
+    // first Esc drops the picks in a table inside a panel, the next closes it.
+    e.preventDefault();
+    _rowSelectClearOthers(tbody, null);
+    _rowSelAnchor = _rowSelCursor = null;
+    return;
+  }
+  if (key === "Enter") {
+    // A focused button or link already answers Enter natively.
+    if (e.target && e.target.closest && e.target.closest("a, button, summary, [role=button]")) return;
+    if (picked.length !== 1) return;
+    var trigger = picked[0].querySelector(".row-menu-trigger, [data-row-menu]");
+    if (!trigger) return;
+    e.preventDefault();
+    trigger.click();
+    return;
+  }
+  // ↑ / ↓ from the cursor (the row last moved to), else the anchor, else the
+  // nearest end of the selection.
+  var down = key === "ArrowDown";
+  var from = [_rowSelCursor, _rowSelAnchor].filter(function (r) {
+    return r && r.parentNode === tbody && rows.indexOf(r) >= 0;
+  })[0] || (down ? picked[picked.length - 1] : picked[0]);
+  var next = rows[rows.indexOf(from) + (down ? 1 : -1)];
   e.preventDefault();
-  rows.forEach(function (tr) { _rowSelectSet(tr, true); });
+  if (!next) return;
+  if (e.shiftKey) {
+    var anchor = _rowSelAnchor && _rowSelAnchor.parentNode === tbody && rows.indexOf(_rowSelAnchor) >= 0 ? _rowSelAnchor : from;
+    _rowSelAnchor = anchor;
+    tbody.dispatchEvent(new window.CustomEvent("polaris:rowselect-clear", { bubbles: true }));
+    _rowSelectApplyRange({ tbody: tbody, anchor: anchor, state: true, additive: false }, next);
+  } else {
+    _rowSelectClearOthers(tbody, next);
+    _rowSelectSet(next, true);
+    _rowSelAnchor = next;
+  }
+  _rowSelCursor = next;
+  _rowSelLastTbody = tbody;
+  if (typeof next.scrollIntoView === "function") next.scrollIntoView({ block: "nearest" });
 });
 
 /**

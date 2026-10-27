@@ -217,10 +217,18 @@ asset's **Alerts** tab and on a network's address list.
 | select a range | click the first row, then **Shift**+click the last |
 | select a run of rows | click and drag across them. The list scrolls when you hold the pointer at its top or bottom edge. Hold **Ctrl** to add the run to what is already selected |
 | select every row in the table | **Ctrl**+**A** (**⌘**+**A**) after clicking a row in it, or while one of its rows is selected — on the Assets table, every row of the page you are on |
-| clear the selection | click anywhere off the table, or **Clear selection** in the selection's menu |
+| move the selection up or down a row | **↑** / **↓**. The list scrolls to keep the row in view; it stops at the first and last row of the page |
+| grow or shrink the selection a row at a time | **Shift**+**↑** / **Shift**+**↓**, from the row you started at |
+| open the selected asset | **Enter**, with exactly one row selected |
+| clear the selection | **Esc**, click anywhere off the table, or **Clear selection** in the selection's menu |
 
-A plain click or drag replaces the selection, including rows you selected on
-other pages of the Assets table. **Ctrl** and **Shift** add to it. Clicking an
+The keys work only while a row of the table is selected and nothing is open over
+it — a dialog, a menu or a panel takes the keyboard first. With a table inside
+a panel (an asset's Alerts tab), the first **Esc** clears the selection and the
+next closes the panel.
+
+A plain click, drag, **↑** / **↓** or **Esc** replaces the selection, including
+rows you selected on other pages of the Assets table. **Ctrl** and **Shift** add to it. Clicking an
 asset's name still opens it, and clicking a link or button in a row does what
 it always did. Clicking the page buttons or a dialog does not clear the
 selection.
