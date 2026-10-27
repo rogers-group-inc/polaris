@@ -10,10 +10,8 @@
 // layout the modal saves (the /topology payload's `savedLayouts.flat` —
 // node positions plus the operator-drawn connection lines, `edgepath:`
 // entries rendered view-only by topology-edge-editor.js), the location
-// boxes and their gutter-routed links. Because that map is wide, a PHONE
-// shows it in landscape: mobile/app.js asks for landscape on this route and
-// mobile.css covers a portrait phone with the .topo-rotate prompt rendered
-// below. A tablet or an unfolded foldable is never asked to turn.
+// boxes and their gutter-routed links. It works held either way; the map is
+// wide, so turning the phone sideways shows more of it, but nothing asks to.
 //
 // Differences vs. the desktop modal:
 //   - Flat view only (no building / floor views).
@@ -130,18 +128,9 @@
         + '  </div>'
         + '  <div class="topo-graph" id="topo-graph"></div>'
         + '  <div class="topo-status" id="topo-status">Loading topology…</div>'
-        // Shown by mobile.css only on a phone held portrait (see there).
-        + '  <div class="topo-rotate" role="alert">'
-        + '    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rotate"/></svg>'
-        + '    <div>Turn your phone sideways to view the topology.</div>'
-        + '    <button class="btn btn-tonal" id="topo-rotate-back"><svg viewBox="0 0 24 24"><use href="#i-back"/></svg>Back to map</button>'
-        + '  </div>'
         + '</div>';
 
       document.getElementById("topo-close").addEventListener("click", function () {
-        closeTopology();
-      });
-      document.getElementById("topo-rotate-back").addEventListener("click", function () {
         closeTopology();
       });
 
@@ -151,11 +140,10 @@
 
       wireSearchInput(document.getElementById("topo-search-input"));
 
-      // Resize handler — the virtual keyboard, and above all the turn to
-      // landscape: the map usually loads while the phone is still upright
-      // (behind the rotate prompt), sized for a container that is about to
-      // change shape. Re-fit on a resize until the operator has moved the
-      // view themselves; after that only reflow, never yank their view.
+      // Resize handler — the virtual keyboard, and a turn of the phone either
+      // way, change the container's shape. Re-fit on a resize until the
+      // operator has moved the view themselves; after that only reflow,
+      // never yank their view.
       if (_resizeHandler) window.removeEventListener("resize", _resizeHandler);
       _resizeHandler = function () {
         if (!_cy) return;

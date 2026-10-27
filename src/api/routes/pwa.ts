@@ -89,9 +89,7 @@ export function buildManifest(
     // on a push click that deep-links to /automations.html.
     scope: "/",
     display: "standalone",
-    // Android honors this natively, and it also makes the screen.orientation
-    // .lock("portrait") call in mobile/app.js start succeeding once installed.
-    orientation: "portrait",
+    // No `orientation`: the installed app turns with the phone, like a tab.
     theme_color: THEME_COLOR,
     background_color: BACKGROUND_COLOR,
     lang: "en",

@@ -803,19 +803,16 @@ must leave it alone.
   24px side padding, `.list-item` min-height 56.
 - `touch-action: manipulation` on every interactive element (already applied to
   `button`, `.list-item`, `.chip`) to kill the double-tap zoom delay.
-- Phones **prefer portrait but rotate freely**. Only the installed Android app
-  honours `screen.orientation.lock()`; iOS never does, so a landscape lockout
-  made the app unusable on an iPhone while turned, and it was removed
-  (2026-10-26). Every screen must work sideways (about 390px tall), and fixed
-  full-width surfaces pad `env(safe-area-inset-left/right)` for the side
-  notch. The one landscape screen is the topology: on a phone held upright it
-  shows `.topo-rotate` with a Back to map button. Tablets and unfolded
-  foldables (short side over 480px) are never prompted.
+- **No orientation lock, no rotate prompts.** The app turns with the phone on
+  every screen, the topology included, and the manifest declares no
+  `orientation` (locks and prompts removed 2026-10-27). Every screen must work
+  sideways (about 390px tall), and fixed full-width surfaces pad
+  `env(safe-area-inset-left/right)` for the side notch.
 - Honour `prefers-reduced-motion` on anything that loops.
 
 ### How it scales across phone sizes
 
-**There are no width breakpoints.** The stylesheet has exactly three media\nqueries and none of them is a layout breakpoint: `display-mode: standalone` (safe-area\ninsets), `prefers-reduced-motion`, and the topology's rotate prompt\n(`portrait and max-width: 480px`, which only decides whether the device is a\nphone). Don't add one —\nif something breaks at a size, the fix is almost always fluid, not a\nbreakpoint.
+**There are no width breakpoints.** The stylesheet has exactly two media\nqueries and neither is a layout breakpoint: `display-mode: standalone` (safe-area\ninsets) and `prefers-reduced-motion`. Don't add one —\nif something breaks at a size, the fix is almost always fluid, not a\nbreakpoint.
 
 Everything adapts by being fluid instead:
 
@@ -827,7 +824,7 @@ Everything adapts by being fluid instead:
 - **Sheets are viewport-bounded**, not content-bounded: `max-height: 90vh`\n  (`.sheet`) / `80vh` (`.asset-sheet`), anchored at\n  `calc(var(--navbar-h) + env(safe-area-inset-bottom))`.
 - **Device chrome** is the only true per-device variation handled explicitly,\n  via `env(safe-area-inset-*)` on `.app` in standalone.
 
-Practical range is ~320px to tablet width in portrait. The tightest point is\nthe navbar at 320px — 64px pills in 64px columns with labels like "Reserved"\nat 12px. If a tab label doesn't fit there, shorten the label; don't shrink the\npill or drop to four columns.
+Practical range is ~320px to tablet width, either way up. The tightest point is\nthe navbar at 320px — 64px pills in 64px columns with labels like "Reserved"\nat 12px. If a tab label doesn't fit there, shorten the label; don't shrink the\npill or drop to four columns.
 
 ### Sheet layering
 

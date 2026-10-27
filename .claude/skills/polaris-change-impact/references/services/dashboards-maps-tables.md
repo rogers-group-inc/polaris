@@ -187,7 +187,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Saves 404 unless the site Asset exists AND `assetType === "firewall"`; rows cascade-delete with the Asset (plain table — the no-FK rule only covers Timescale hypertables).
 - Stale nodeIds inside a blob are never pruned server-side — ignored at render, dropped on the client's next full-replace save (mirrors the old localStorage semantics).
 - Reads are NOT permission-gated beyond auth (they ride the open topology GET) — readonly viewers see the shared layout; only writes need `deviceMap=write`.
-- Mobile (`public/js/mobile/topology-tab.js`) applies `savedLayouts.flat` too (2026-10-26): it draws the desktop's left-to-right map at the desktop's spacing (`TOPO_COL_SPACING` / `TOPO_ROW_SPACING`, mirrored there — change one, change both), with the saved positions and the `edgepath:` connection lines drawn view-only, shown landscape on a phone. It never writes, and reads only the flat view.
+- Mobile (`public/js/mobile/topology-tab.js`) applies `savedLayouts.flat` too (2026-10-26): it draws the desktop's left-to-right map at the desktop's spacing (`TOPO_COL_SPACING` / `TOPO_ROW_SPACING`, mirrored there — change one, change both), with the saved positions and the `edgepath:` connection lines drawn view-only, either way up on a phone. It never writes, and reads only the flat view.
 
 **When changing this:**
 - New view-key shapes (beyond b|/f|) need `isValidViewKey`, the route Zod, AND map.js `_activeViewKey` updated together.
