@@ -41,6 +41,19 @@ cp <main-checkout>/.env .env                  # gitignored; only needed for pris
 npm install --no-audit --no-fund              # own node_modules + generated Prisma client
 ```
 
+**The Prisma client is not optional, even when you skip `npm install`.** Node finds the main
+checkout's `node_modules` up-tree, so a worktree runs vitest / tsc / the design build without
+its own install, but `src/generated/prisma` is resolved INSIDE the worktree and a fresh one has
+none. Skipping step 2 is fine for a front-end-only change; skipping the client is not, so run
+this before the first test or typecheck:
+
+```
+DATABASE_URL=postgresql://x:x@localhost:5432/x npx prisma generate   # ~1 s; no DB contacted
+```
+
+A test that fails in a fresh worktree is the missing client until proved otherwise
+(the four ways it shows up: worktree-setup.md step 5).
+
 ## End of a task (short form)
 
 One-command form: `/polaris-deploy` does everything below and carries on through merge and
