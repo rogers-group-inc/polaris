@@ -148,21 +148,16 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 
 ---
 
-## Orientation (portrait app, landscape topology)
+## Orientation (none — the app turns with the phone)
 
-**What it is:** the phone app prefers portrait everywhere except the per-site topology screen, which wants landscape because it draws the desktop's left-to-right map (same solver, same spacing, the shared saved layout and its drawn connection lines). Where the platform will not lock (iOS, every browser tab) the app simply rotates and works sideways. Added 2026-10-26.
+**What it is:** the phone app has no orientation of its own. Every screen, the per-site topology included, turns with the phone; there is no `screen.orientation.lock()`, no `orientation` in the manifest, and no rotate prompt or lockout. Removed 2026-10-27 by request (the portrait lock, the topology's landscape lock and its `.topo-rotate` "Turn your phone sideways" prompt; the whole-app "rotate back to portrait" lockout had already gone 2026-10-26 because an iPhone can never be locked).
 
-**Canonical implementation:** `setWantedOrientation` / `applyOrientationLock` / `isPhoneScreen` in [public/js/mobile/app.js](public/js/mobile/app.js) (called from `routeChanged`: `"landscape"` on the `topology` route, `"portrait"` on every other route and on the 401 → login path); the topology prompt's `@media` block under "Orientation" in [public/css/mobile.css](public/css/mobile.css); the `.topo-rotate` element `render()` writes in [public/js/mobile/topology-tab.js](public/js/mobile/topology-tab.js).
+**Canonical implementation:** nothing to copy — the absence is the rule. [tests/unit/mobileOrientation.test.ts](tests/unit/mobileOrientation.test.ts) fails if a lock call, an `html[data-orient]` switch, an orientation media query or the topology's rotate prompt comes back; [tests/unit/pwaManifest.test.ts](tests/unit/pwaManifest.test.ts) fails if the manifest declares an `orientation`.
 
 **Key conventions:**
-- **The wanted orientation comes from the ROUTE, never from a screen module.** The router has no teardown hook, so a back gesture out of a screen that set it itself would leave the app asking for the wrong way. `html[data-orient]` is the one switch mobile.css reads.
-- **Phone-class only, by the short side ≤ 480 CSS px**: `PHONE_SHORT_SIDE` in app.js and the topology prompt's `portrait and max-width: 480px`. A tablet or an unfolded foldable never matches, so it is never prompted and the lock is released (`unlock()`, back to the manifest default) — its topology stays the way the device is held. `tests/unit/mobileOrientation.test.ts` holds the two numbers equal.
-- **The lock is best-effort, and the app has NO landscape lockout.** `screen.orientation.lock()` takes only in the installed Android app (the manifest declares `portrait`); iOS Safari and every browser tab refuse it, and there the app rotates. A full-screen "rotate back to portrait" `body::before` used to cover the app instead — on an iPhone, which can never be locked, that made Polaris unusable while turned, so it was removed (2026-10-26, by request). `mobileOrientation.test.ts` fails if a landscape media query comes back. Every screen must therefore WORK sideways (≈390 px tall), not merely survive it.
-- **The topology's prompt carries a way out.** It is a real element with a "Back to map" button, above the node sheet (z 1100 > `.sheet` 1000), so an operator who opened the map by mistake does not have to rotate just to leave.
-- **The topology loads while still upright**, behind its prompt, so its resize handler re-fits the graph after the turn — until the operator touches the graph or picks a search hit (`_viewTouched`), after which a resize only reflows.
+- **Every screen must WORK sideways (≈390 px tall) and upright**, not merely survive it. Do not reintroduce a lock or a prompt to dodge a layout problem; fix the layout.
+- **The topology re-fits on a turn.** Its resize handler re-fits the graph after the container changes shape — until the operator touches the graph or picks a search hit (`_viewTouched`), after which a resize only reflows.
 - **Landscape puts the notch at a side**, and `viewport-fit=cover` lets even a Safari tab paint under it: `.app` pads `env(safe-area-inset-left/right)` in every display mode (top/bottom stay standalone-only), and so do the screen-spanning fixed surfaces — `.sheet`, `.sheet.network-sheet`, `.snackbar`, and `.topo-screen` (all four sides, see the next section; its `.topo-bar` must NOT add them again, or the bar is inset twice). A new fixed, full-width surface must pay them too. The `-24px` full-bleed rows inside a sheet (`.sheet-pinned-head`, `.ae-menu`, `.ae-footer`) deliberately bleed only to the safe-area line.
-
-**When adding a new instance:** a new landscape route is one more name in the `routeChanged` ternary plus a prompt element in its own markup keyed on `html[data-orient="landscape"]`; do not add a second lock call.
 
 ---
 

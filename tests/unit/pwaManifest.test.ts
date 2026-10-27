@@ -38,9 +38,10 @@ describe("buildManifest", () => {
     expect(m.scope).toBe("/");
   });
 
-  it("declares standalone portrait with matching chrome colors", () => {
+  it("declares standalone, unlocked, with matching chrome colors", () => {
     expect(m.display).toBe("standalone");
-    expect(m.orientation).toBe("portrait");
+    // No orientation: the installed app turns with the phone.
+    expect(m.orientation).toBeUndefined();
     // Must equal mobile.html's <meta name="theme-color"> or Android's
     // task-switcher chrome flickers.
     expect(m.theme_color).toBe("#1d2244");

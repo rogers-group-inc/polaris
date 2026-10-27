@@ -17,10 +17,8 @@ desktop's own — `nightfall` for dark, `morning` or `noon` for light — becaus
 read the same stored `polaris-theme` preference and must agree on it.
 
 The stylesheet locks `html` and `body` to the viewport with `overflow: hidden`; all
-scrolling happens inside `.app-body`. The app prefers **portrait** but works
-turned sideways: there is no landscape lockout (an iPhone can never be orientation-locked,
-so one made the app unusable while turned). The topology screen is the exception: on a
-phone held upright it shows `.topo-rotate`, asking to turn sideways. `.app`, `.sheet`,
+scrolling happens inside `.app-body`. The app has no orientation lock and
+no rotate prompts: every screen, the topology included, turns with the phone. `.app`, `.sheet`,
 `.snackbar` and `.topo-screen` pad the side safe-area insets a sideways notch needs. Installed to a home screen
 (`display-mode: standalone`), `.app` pads itself by the device's safe-area insets.
 
@@ -130,9 +128,7 @@ and is described rather than shown.
 
 Sentence case. Section heads (`.section-head`) are uppercased by the stylesheet — type
 them in sentence case. Navigation labels are one word. Status words are short and fixed:
-Up, Degraded, Down, Unknown, Dependency down, Maintenance, Passive. The app's own words
-for the topology's rotate prompt: "Turn your phone sideways to view the topology.", with a
-"Back to map" button. Addresses, MACs and serials go in `.mono`.
+Up, Degraded, Down, Unknown, Dependency down, Maintenance, Passive. Addresses, MACs and serials go in `.mono`.
 
 ## Component vocabulary
 

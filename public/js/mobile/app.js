@@ -374,65 +374,8 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
   // login screen instead of /login.html.
   window.__polarisOn401 = function () {
     currentUser = null;
-    // A session can lapse on the topology screen; the login is portrait.
-    setWantedOrientation("portrait");
     PolarisAuth.renderLogin(app);
   };
-
-  // ─── Orientation ───────────────────────────────────────────────────────
-  // The app prefers portrait; the topology screen landscape (it draws the
-  // desktop's left-to-right map). Only on a PHONE-class screen — short side
-  // ≤ 480 CSS px, the same bound mobile.css's topology prompt uses — so an
-  // unfolded foldable or a tablet is never locked and its topology stays the
-  // way the device is held.
-  //
-  // `html[data-orient]` is what mobile.css keys the topology's rotate prompt
-  // on, set from the ROUTE (routeChanged) rather than by the topology module:
-  // the router has no teardown hook, so a back gesture out of the topology
-  // would otherwise leave the app asking for landscape.
-  //
-  // The lock itself is best-effort. Android honors it in the installed app
-  // (the manifest declares portrait); a browser tab and iOS Safari reject it,
-  // and there the app simply rotates and works sideways — there is no
-  // "rotate back" lockout (mobile.css → Orientation says why). Wrapped in
-  // try/catch because the API throws synchronously on some platforms when
-  // called outside fullscreen.
-  var PHONE_SHORT_SIDE = 480;
-  var _wantOrient = "portrait";
-  function isPhoneScreen() {
-    var w = (window.screen && screen.width) || window.innerWidth;
-    var h = (window.screen && screen.height) || window.innerHeight;
-    return Math.min(w, h) <= PHONE_SHORT_SIDE;
-  }
-  function applyOrientationLock() {
-    try {
-      var so = window.screen && screen.orientation;
-      if (!so) return;
-      if (isPhoneScreen()) {
-        if (typeof so.lock === "function") {
-          so.lock(_wantOrient).catch(function () { /* unsupported — the CSS prompt covers it */ });
-        }
-      } else if (typeof so.unlock === "function") {
-        so.unlock(); // a foldable opened up: back to the manifest default
-      }
-    } catch (e) { /* silent — same path as a quiet rejection */ }
-  }
-  function setWantedOrientation(orient) {
-    var changed = orient !== _wantOrient;
-    _wantOrient = orient;
-    document.documentElement.setAttribute("data-orient", orient);
-    if (changed) applyOrientationLock();
-  }
-  document.documentElement.setAttribute("data-orient", _wantOrient);
-  applyOrientationLock();
-  // Folding / unfolding swaps the screen the page is on — re-decide whether
-  // it is a phone. A rotation also lands here; re-locking the same way is a
-  // no-op.
-  var _orientResizeTimer = null;
-  window.addEventListener("resize", function () {
-    if (_orientResizeTimer) clearTimeout(_orientResizeTimer);
-    _orientResizeTimer = setTimeout(applyOrientationLock, 250);
-  });
 
   // ─── Boot ──────────────────────────────────────────────────────────────
   async function boot() {
@@ -913,8 +856,6 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     // rather than pop.
     if (route && route.name !== "search") _searchReturn.pushed = false;
     syncSearchChrome();
-    // The topology screen is the one landscape route (see Orientation above).
-    setWantedOrientation(route && route.name === "topology" ? "landscape" : "portrait");
 
     // Top-level tab?
     var tabSpec = PolarisTabs.byId(route.name);
