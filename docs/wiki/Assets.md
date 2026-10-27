@@ -365,7 +365,10 @@ visible, in the order and widths you have set, with the status dots, health-chec
 chips and coloured per-scrape strips intact — titled with the table name and
 the device. Rows hidden underneath a collapsed parent are left out, and the
 image says how many, so it cannot be mistaken for the full list: expand them
-first if you want them in.
+first if you want them in. A chart's camera titles the image with the chart,
+the device and the time it covers — **From** *date, time* **to** *time* (or
+*date, time* when it runs past midnight) — since the chart's own time axis
+shows only times of day.
 
 When the section's data has gone stale — the amber **Last successful update …
 ago** (or **No successful poll yet**) warning is showing above it — a table's or
