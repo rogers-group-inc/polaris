@@ -918,8 +918,28 @@ describe("Memory forecast overlay", () => {
     installStubs();
     // eslint-disable-next-line no-eval
     (0, eval)(SRC);
+    // The overlay is off by default; these cases are about what it draws, so
+    // switch it on for the asset under test (the default has its own case).
+    g._setMemoryForecastVisible(ASSET.id, true);
   });
   afterEach(() => { vi.useRealTimers(); });
+
+  it("is off by default: no projection and an unticked toggle until switched on", () => {
+    localStorage.clear();
+    expect(g._getMemoryForecastVisible(ASSET.id)).toBe(false);
+    setForecast(2, 21);
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[10], [10], [10]])), ASSET, {});
+    expect(forecastLine(el)).toBeNull();
+    const bar = document.createElement("div");
+    bar.id = "asset-mem-forecast";
+    document.body.appendChild(bar);
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(bar.querySelector("[data-mem-forecast-toggle]")!.textContent).toBe("Forecast");
+    // An explicit choice made before the default flipped is kept either way.
+    g._setMemoryForecastVisible(ASSET.id, true);
+    expect(g._getMemoryForecastVisible(ASSET.id)).toBe(true);
+  });
 
   /** What GET /assets/:id/memory-forecast returns (memoryForecastService). */
   function setForecast(slopePerDay: number | null, daysUntilFull: number | null, points = 10) {
@@ -1061,7 +1081,8 @@ describe("Memory forecast overlay", () => {
 
     (bar.querySelector("[data-mem-forecast-toggle]") as HTMLElement).click();
     expect(g._getMemoryForecastVisible(ASSET.id)).toBe(false);
-    expect(g._getMemoryForecastVisible("other-asset")).toBe(true);
+    g._setMemoryForecastVisible("other-asset", true);
+    expect(g._getMemoryForecastVisible("other-asset")).toBe(true); // per asset
     expect(forecastLine(chart)).toBeNull();
     expect(bar.querySelector("[data-mem-forecast-toggle]")!.textContent).toBe("Forecast");
   });
