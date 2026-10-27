@@ -8992,6 +8992,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
 
   function typeBadge(iface, isChild) {
     var t = iface.ifType;
+    if (isChild && iface.subIface) {
+      return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:5px;white-space:nowrap">Sub-interface</span>';
+    }
     // Member port of an aggregate: show "Member" regardless of its stored type.
     if (isChild && t !== "vlan") {
       return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:5px">Member</span>';
@@ -9125,7 +9128,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var rowAttrs = "";
     if (opts.isChild) {
       rowAttrs = ' class="iface-child" data-parent="' + escapeHtml(opts.parentName) + '"';
-      if (collapsed.has(opts.parentName)) rowAttrs += ' style="display:none"';
+      if (!opts.flat && collapsed.has(opts.parentName)) rowAttrs += ' style="display:none"';
     }
     var neighborCell = '<td>' + _lldpNeighborInlineCell(lldpByIf[iface.ifName] || []) + '</td>';
 
@@ -9176,11 +9179,21 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // source back-fills one — so when the base name is itself in the list the
   // row is nested under it as that VLAN. A copy, not the record: only this
   // table's tree reads the inferred parent.
+  //
+  // A FortiAP abbreviates the base: the sub-interfaces of wlan01 / wlan10 are
+  // w01.12 / w10.10. Those nest under the wlanNN row too, but as a plain
+  // sub-interface — the suffix is not documented as a VLAN id, so the badge
+  // makes no VLAN claim.
   var ifaceNameSet = new Set(rows.map(function (r) { return r.ifName; }));
   var treeRows = rows.map(function (r) {
     if (r.ifParent && ifaceNameSet.has(r.ifParent)) return r;
     var m = /^(.+)\.(\d+)$/.exec(String(r.ifName || ""));
-    if (!m || !ifaceNameSet.has(m[1])) return r;
+    if (!m) return r;
+    var wlan = /^w(\d+)$/.exec(m[1]);
+    if (!ifaceNameSet.has(m[1]) && wlan && ifaceNameSet.has("wlan" + wlan[1])) {
+      return Object.assign({}, r, { ifParent: "wlan" + wlan[1], subIface: true });
+    }
+    if (!ifaceNameSet.has(m[1])) return r;
     return Object.assign({}, r, {
       ifParent: m[1],
       ifType: "vlan",
@@ -9313,11 +9326,14 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // Two modes. Unfiltered (sorted or not): the nested tree with its section
   // headers — a sort reorders the clusters within each section and the
   // children within each cluster, so a member port stays under its aggregate
-  // with its elbow and the aggregate keeps its expand toggle. Filtered: flat —
-  // no section headers, no indentation, no expand toggles, because half a tree
-  // (a matching member port whose aggregate filtered out) is worse than an
-  // honest list. Only the tbody is rewritten, so TableSF's rebuilt header row
-  // and applyTableLayout's widths/handles survive.
+  // with its elbow and the aggregate keeps its expand toggle. Filtered: no
+  // section headers and no expand toggles, and a match is never hidden by a
+  // collapsed parent — but a child whose parent ALSO matched still nests under
+  // it with its elbow, since a filter that keeps both (a Status filter on a
+  // switch keeps its FortiLink trunk and the ports in it) has a whole tree to
+  // show. Only a child whose parent filtered out goes flat, its badge saying
+  // what it is a member of. Only the tbody is rewritten, so TableSF's rebuilt
+  // header row and applyTableLayout's widths/handles survive.
   function sortedTree(list) {
     var clusters = [], kidsOf = {};
     list.forEach(function (e) {
@@ -9348,8 +9364,26 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     });
     return out;
   }
-  function renderFlatBody(list) {
-    return list.map(function (e) { return buildRow(e.raw, { flat: true }); }).join("");
+  function renderFilteredBody(list) {
+    var matchedParents = new Set();
+    list.forEach(function (e) { if (!e.tree.isChild) matchedParents.add(e.raw.ifName); });
+    var kidsOf = {};
+    list.forEach(function (e) {
+      if (e.tree.isChild && matchedParents.has(e.tree.parentName)) {
+        (kidsOf[e.tree.parentName] = kidsOf[e.tree.parentName] || []).push(e);
+      }
+    });
+    var out = "";
+    list.forEach(function (e) {
+      if (e.tree.isChild && matchedParents.has(e.tree.parentName)) return;
+      out += buildRow(e.raw, { flat: true });
+      if (e.tree.isChild) return;
+      var kids = kidsOf[e.raw.ifName] || [];
+      kids.forEach(function (k, i) {
+        out += buildRow(k.raw, { flat: true, isChild: true, parentName: e.raw.ifName, lastChild: i === kids.length - 1 });
+      });
+    });
+    return out;
   }
   var sf = null;
   var afterRender = [];   // hooks the wiring phase adds (select-all resync)
@@ -9364,7 +9398,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     } else if (list.length === 0) {
       tbody.innerHTML = '<tr><td colspan="' + COLS + '" class="empty-state">No interfaces match the current filters.</td></tr>';
     } else {
-      tbody.innerHTML = renderFlatBody(list);
+      tbody.innerHTML = renderFilteredBody(list);
     }
     afterRender.forEach(function (fn) { fn(); });
   }
