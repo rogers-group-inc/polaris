@@ -48,7 +48,12 @@
       // (search results, assets list, etc.) with their scroll position
       // intact. Fall back to the named tab when there's nothing to pop —
       // happens when the URL was opened directly.
-      if (window.history.length > 1) window.history.back();
+      // through the asset sheet's helper, which steps past the sheet's own
+      // history entry when one is open over this page.
+      if (window.history.length > 1) {
+        if (window.PolarisAssetDetail && PolarisAssetDetail.historyBack) PolarisAssetDetail.historyBack();
+        else window.history.back();
+      }
       else PolarisRouter.go(fallbackTab || "alerts", { replace: true });
     });
   }

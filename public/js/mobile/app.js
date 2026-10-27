@@ -672,7 +672,12 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     var ret = _searchReturn;
     _searchReturn = { route: "", pushed: false };
     if (PolarisRouter.current().name !== "search") { syncSearchChrome(); return; }
-    if (ret.pushed && window.history.length > 1) window.history.back();
+    // Through the asset sheet's helper: a sheet opened from a result sits on
+    // a history entry of its own above #search.
+    if (ret.pushed && window.history.length > 1) {
+      if (window.PolarisAssetDetail && PolarisAssetDetail.historyBack) PolarisAssetDetail.historyBack();
+      else window.history.back();
+    }
     else PolarisRouter.go(ret.route || "alerts", { replace: true });
   }
 

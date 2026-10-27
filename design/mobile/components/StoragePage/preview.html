@@ -1,0 +1,86 @@
+<!-- @dsCard group="Assets" page height=760 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Storage page</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport; that is undone here; .pv-stage contains the fixed-position sheet inside a
+     box. Glyphs are plain stand-ins. */
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .sheet { display: block !important; position: absolute; bottom: 0; max-height: none; }
+</style>
+</head>
+<body>
+<div class="pv-stage" style="height:720px">
+<div class="sheet asset-sheet">
+  <div class="sheet-handle"></div>
+  <div class="asset-sheet-header">
+    <div class="asset-sheet-toolbar">
+      <button class="icon-btn" aria-label="Back to nas-backup-01"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <button class="icon-btn" aria-label="Forward" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+      <span class="asset-sheet-toolbar-gap"></span>
+      <button class="icon-btn" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
+      <button class="icon-btn" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+    </div>
+    <div class="asset-sheet-title-row">
+      <div class="asset-sheet-page">
+        <div class="asset-sheet-page-title">Storage</div>
+        <div class="asset-sheet-page-sub">nas-backup-01</div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="section-head storage-head">Arrays <span class="count">2</span></div>
+    <div class="card-filled pool-card">
+      <button class="pool-head" aria-expanded="true">
+        <span class="mono pool-name">tank</span><span class="poe-label poe-fault">DEGRADED</span>
+        <span class="pool-meta">zfs</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6z"/></svg>
+      </button>
+      <div class="storage-bar"><div class="storage-bar-fill" style="width:71%"></div></div>
+      <div class="storage-line">28.4 TB used of 40.0 TB · 71%</div>
+      <div class="storage-line warn">One or more devices are faulted in response to persistent errors.</div>
+      <div class="storage-line">Scrub: finished 3 days ago, 0 errors</div>
+      <div class="pool-group-head">Data · raidz2 <span class="mono">raidz2-0</span> <span class="poe-label poe-fault">DEGRADED</span></div>
+      <button class="pool-drive">
+        <span class="pool-drive-main"><span class="pool-drive-name"><span class="mono">sda</span> <span class="poe-label poe-idle">HDD</span></span><span class="pool-drive-sub">7.3 TB · 34 °C</span></span>
+        <span class="poe-label poe-ok">ONLINE</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <button class="pool-drive bad">
+        <span class="pool-drive-main"><span class="pool-drive-name"><span class="mono">sdc</span> <span class="poe-label poe-idle">HDD</span></span><span class="pool-drive-sub">7.3 TB · 41 °C · errors 0/14/3</span></span>
+        <span class="poe-label poe-fault">FAULTED</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+    <div class="card-filled pool-card">
+      <button class="pool-head" aria-expanded="false">
+        <span class="mono pool-name">boot-pool</span><span class="poe-label poe-ok">ONLINE</span>
+        <span class="pool-meta">zfs · 2 drives</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="storage-bar"><div class="storage-bar-fill" style="width:9%"></div></div>
+      <div class="storage-line">20.6 GB used of 232.0 GB · 9%</div>
+    </div>
+    <div class="section-head storage-head">Volumes <span class="count">2</span></div>
+    <button class="storage-vol">
+      <span class="storage-vol-top"><span class="mono storage-vol-name">/mnt/scratch</span><span class="poe-label poe-idle">Poll 1m</span><span class="storage-pct crit">92%</span></span>
+      <div class="storage-bar"><div class="storage-bar-fill crit" style="width:92%"></div></div>
+      <span class="storage-line">9.2 GB used of 10.0 GB · 0.8 GB free</span>
+    </button>
+    <button class="storage-vol">
+      <span class="storage-vol-top"><span class="mono storage-vol-name">/mnt/apps</span><span class="storage-pct warn">78%</span></span>
+      <div class="storage-bar"><div class="storage-bar-fill warn" style="width:78%"></div></div>
+      <span class="storage-line">780.0 GB used of 1000.0 GB · 220.0 GB free</span>
+    </button>
+    <div class="storage-note">Arrays and drives are as of the last discovery run; volumes as of the last poll. Tap a drive for its details.</div>
+  </div>
+</div>
+</div>
+</body>
+</html>

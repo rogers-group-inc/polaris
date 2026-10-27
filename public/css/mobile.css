@@ -1290,11 +1290,12 @@ input, select, textarea { font-family: inherit; }
 .asset-sheet.peek #asset-sheet-refresh { display: none; }
 
 /* Pinned sheet header (PolarisTabs.pinSheetHead in tabs.js): a sheet's
-   handle + header row (title, close, the row's own buttons; a table sheet's
-   filter row too) stay at the top of the scrolling sheet, so they are
-   reachable from the bottom of a long one. Every sheet with a header row
-   uses it: the asset sheet, the network address sheet, the interface, SD-WAN,
-   ARP/MAC table and per-asset alerts sheets, the edit menu and edit sheets,
+   handle + header row (title, close, the row's own buttons) stay at the top
+   of the scrolling sheet, so they are reachable from the bottom of a long
+   one. Every sheet with a header row uses it: the asset sheet (whose two
+   header rows — page history + verbs, then the name or page title — are its
+   band on every page: interface, SD-WAN, the tables, alerts, Storage…), the
+   network address sheet, the Assets list's alerts sheet, the edit menu and edit sheets,
    the site sheet, Sort & filter and the chat history. Bled to the sheet's
    edges (a sheet pads 24px) so content cannot show past its sides.
    Transparent always — the sheet's glass shows through it at rest AND while
@@ -1333,13 +1334,144 @@ input, select, textarea { font-family: inherit; }
   -webkit-tap-highlight-color: transparent;
 }
 .asset-link:active { text-decoration: underline; }
+/* Two rows: the toolbar (page back / forward, then screenshot, refresh,
+   close) and under it the title row — the status dot + asset name on the
+   asset page, a page's title over its asset's name on any other page
+   (asset-detail.js → paintTitleRow). The name gets the full width. */
 .asset-sheet-header {
   display: flex;
+  flex-direction: column;
+  padding: 0 0 10px;
+}
+.asset-sheet-toolbar {
+  display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 0 12px;
+  gap: 2px;
+  margin: 0 -8px;   /* the icon buttons' own padding lines their glyphs up with the text below */
+}
+.asset-sheet-toolbar-gap { flex: 1 1 auto; }
+.asset-sheet-toolbar .icon-btn:disabled { opacity: .38; }
+.asset-sheet.peek .asset-sheet-toolbar #asset-sheet-back,
+.asset-sheet.peek .asset-sheet-toolbar #asset-sheet-fwd { visibility: hidden; }
+.asset-sheet-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 .asset-sheet-header .dot { width: 12px; height: 12px; flex: 0 0 12px; }
+.asset-sheet-page { min-width: 0; padding: 6px 0 2px; }
+.asset-sheet-page[hidden], .asset-sheet-name-btn[hidden] { display: none; }
+.asset-sheet-page-title {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--md-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asset-sheet-page-sub {
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Storage page (asset-detail.js → renderStoragePage) ─────────────────
+   The entry button sits between the Interfaces and Discovery sources
+   sections; the pages are volumes (a usage bar each) and, on an Unraid /
+   TrueNAS / Proxmox host, arrays with their member drives. Bar tones are the
+   desktop's thresholds (75 / 90 %). */
+.asset-storage-entry { padding: 12px 16px; }
+.asset-storage-sub {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+}
+.asset-storage-sub:empty { display: none; }
+.asset-storage-sub.bad { color: var(--md-error); }
+.storage-head { padding-left: 0; }
+.storage-bar {
+  height: 6px;
+  margin: 8px 0 4px;
+  border-radius: 3px;
+  background: var(--md-surface-cont-highest);
+  overflow: hidden;
+}
+.pool-card .storage-bar { background: var(--md-surface-cont-low); }
+/* Normal usage is the info blue, as on the desktop (#4fc3f7) — not
+   --md-primary, which is terracotta on the daylight themes and read as a
+   warning beside the red of a full volume. */
+.storage-bar-fill { height: 100%; border-radius: 3px; background: var(--md-sev-info); }
+.storage-bar-fill.warn { background: var(--md-warning); }
+.storage-bar-fill.crit { background: var(--md-error); }
+.storage-line { display: block; font-size: 12px; color: var(--md-on-surface-variant); }
+.storage-line.warn { color: var(--md-warning); margin-top: 4px; }
+.storage-pct { font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--md-on-surface-variant); }
+.storage-pct.warn { color: var(--md-warning); }
+.storage-pct.crit { color: var(--md-error); }
+.storage-vol {
+  display: block;
+  width: 100%;
+  padding: 10px 0;
+  border: none;
+  border-bottom: 1px solid var(--md-outline-variant);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.storage-vol-top { display: flex; align-items: baseline; gap: 8px; }
+.storage-vol-name { flex: 1 1 auto; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storage-note { margin: 12px 0 8px; font-size: 12px; color: var(--md-on-surface-variant); }
+.pool-card { padding: 12px 14px; margin-bottom: 10px; }
+.pool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.pool-head svg, .pool-drive svg { width: 20px; height: 20px; flex: 0 0 20px; fill: var(--md-on-surface-variant); }
+.pool-name { font-size: 15px; font-weight: 500; }
+.pool-meta { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+}
+.pool-group-head .mono { font-weight: 400; }
+.pool-drive {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 0;
+  border: none;
+  border-top: 1px solid var(--md-outline-variant);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.pool-drive-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.pool-drive-name { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.pool-drive-sub { font-size: 12px; color: var(--md-on-surface-variant); }
+.pool-drive.bad .pool-drive-sub { color: var(--md-error); }
+.kv-row .v.bad { color: var(--md-error); font-weight: 500; }
 .asset-sheet-name {
   flex: 1 1 auto;
   min-width: 0;
