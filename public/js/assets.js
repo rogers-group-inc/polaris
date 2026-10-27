@@ -5269,7 +5269,8 @@ function _scheduleAssetMonitorRefresh(assetId, ms) {
   if (_assetMonitorRefreshTimer) clearTimeout(_assetMonitorRefreshTimer);
   _assetMonitorRefreshTimer = setTimeout(function tick() {
     if (!_isOverlayOpen("asset-panel-overlay") || !_isCurrentAsset(assetId)) { _assetMonitorRefreshTimer = null; return; }
-    if (document.hidden) { _assetMonitorRefreshTimer = setTimeout(tick, 30000); return; }
+    // Paused, like a hidden tab, while one of its interfaces is on screen.
+    if (document.hidden || _isIfaceViewOpen()) { _assetMonitorRefreshTimer = setTimeout(tick, 30000); return; }
     _loadMonitorHistoryFor(assetId, _currentMonitorSelection(), { silent: true });
   }, ms);
 }
@@ -5278,7 +5279,7 @@ function _scheduleAssetSystemRefresh(assetId, asset, ms) {
   if (_assetSystemRefreshTimer) clearTimeout(_assetSystemRefreshTimer);
   _assetSystemRefreshTimer = setTimeout(function tick() {
     if (!_isOverlayOpen("asset-panel-overlay") || !_isCurrentAsset(assetId)) { _assetSystemRefreshTimer = null; return; }
-    if (document.hidden) { _assetSystemRefreshTimer = setTimeout(tick, 30000); return; }
+    if (document.hidden || _isIfaceViewOpen()) { _assetSystemRefreshTimer = setTimeout(tick, 30000); return; }
     _loadSystemTabFor(assetId, _currentSystemTabRange(), asset, { silent: true });
   }, ms);
 }
@@ -5286,8 +5287,8 @@ function _scheduleAssetSystemRefresh(assetId, asset, ms) {
 function _scheduleIfaceRefresh(assetId, ifName, ms) {
   if (_ifaceRefreshTimer) clearTimeout(_ifaceRefreshTimer);
   _ifaceRefreshTimer = setTimeout(function tick() {
-    // The iface slide-over is anchored to the current asset; if either is gone we drop the chain.
-    if (!_isOverlayOpen("iface-panel-overlay") || !_isCurrentAsset(assetId)) { _ifaceRefreshTimer = null; return; }
+    // The interface page belongs to the current asset; if either is gone we drop the chain.
+    if (!_isIfaceViewOpen() || !_isCurrentAsset(assetId)) { _ifaceRefreshTimer = null; return; }
     if (document.hidden) { _ifaceRefreshTimer = setTimeout(tick, 30000); return; }
     _loadInterfaceHistoryFor(assetId, ifName, _currentIfaceRange(), { silent: true });
   }, ms);
@@ -5355,7 +5356,9 @@ var ASSET_HISTORY_MAX     = 50;
 function _assetHistoryOpen(state, id, fresh) {
   if (fresh) return { entries: [{ id: id, label: null }], idx: 0 };
   var cur = state.entries[state.idx];
-  if (cur && cur.id === id) return state;
+  // From the asset's own interface page, opening that asset is a visit (the
+  // LLDP neighbour that resolves back to the device itself), not a refresh.
+  if (cur && cur.id === id && !cur.iface) return state;
   // Opening from mid-history drops whatever was ahead of it, like a browser.
   var entries = state.entries.slice(0, state.idx + 1);
   entries.push({ id: id, label: null });
@@ -5369,6 +5372,29 @@ function _assetHistoryTarget(state, delta) {
   var i = state.idx + delta;
   if (i < 0 || i >= state.entries.length) return null;
   return { idx: i, entry: state.entries[i] };
+}
+
+// Pure: what the history becomes when one of the CURRENT asset's interfaces is
+// opened. The interface page loads inside this panel rather than stacking a
+// nested slide-over, so it is an entry of its own — ‹ returns to the asset.
+// Re-opening the interface already on screen is a refresh, as for an asset.
+function _assetHistoryOpenIface(state, id, ifName, row) {
+  var cur = state.entries[state.idx];
+  if (cur && cur.id === id && cur.iface && cur.iface.ifName === ifName) {
+    cur.iface.row = row || cur.iface.row;
+    return state;
+  }
+  var entries = state.entries.slice(0, state.idx + 1);
+  entries.push({ id: id, label: cur && cur.id === id ? cur.label : null, iface: { ifName: ifName, row: row || null } });
+  if (entries.length > ASSET_HISTORY_MAX) entries = entries.slice(entries.length - ASSET_HISTORY_MAX);
+  return { entries: entries, idx: entries.length - 1 };
+}
+
+// What a header tooltip calls an entry: the asset, or "port1 on <asset>".
+function _assetHistoryEntryName(entry) {
+  if (!entry) return "the previous asset";
+  if (entry.iface) return entry.iface.ifName + " on " + (entry.label || "this asset");
+  return entry.label || "the previous asset";
 }
 
 // Pure: label every entry for this asset once its hostname is known, so the
@@ -5398,7 +5424,7 @@ function _renderAssetPanelNav() {
     var t = _assetHistoryTarget(_assetPanelHistory, s.delta);
     s.el.disabled = !t;
     s.el.title = t
-      ? s.verb + " to " + ((t.entry && t.entry.label) || "the previous asset") + " (" + s.keys + ")"
+      ? s.verb + " to " + _assetHistoryEntryName(t.entry) + " (" + s.keys + ")"
       : "No " + s.verb.toLowerCase() + " history";
   }
 }
@@ -5417,12 +5443,69 @@ function _focusAssetPanelNav(delta) {
   if (pick) { try { pick.focus(); } catch (_) { /* detached */ } }
 }
 
+// An interface entry, or a step from an interface page back to its own
+// asset, is a VIEW switch when that asset is the one already loaded: the asset
+// page stays in the DOM (hidden) while its interface shows, so ‹ lands on the
+// tab and scroll position the operator left, without a refetch.
 function _assetPanelGo(delta) {
   var t = _assetHistoryTarget(_assetPanelHistory, delta);
   if (!t) return;
   _assetPanelHistory.idx = t.idx;
+  var e = t.entry;
+  var loaded = _currentAssetForRefresh && _currentAssetForRefresh.id === e.id ? _currentAssetForRefresh : null;
+  if (loaded) {
+    if (e.iface) {
+      openInterfaceDetailPanel(loaded, e.iface.ifName, e.iface.row, { walk: delta });
+    } else {
+      _showAssetPanelView("asset");
+      _renderAssetPanelNav();
+      _focusAssetPanelNav(delta);
+    }
+    return;
+  }
   _assetPanelWalkDelta = delta;
-  openViewModal(t.entry.id);
+  var opened = openViewModal(e.id);
+  if (!e.iface) return;
+  // A walk onto another asset's interface page loads the asset first, then
+  // its interface — unless the operator has moved on while it loaded.
+  Promise.resolve(opened).then(function () {
+    var now = _assetPanelHistory.entries[_assetPanelHistory.idx];
+    if (now !== e || !_currentAssetForRefresh || _currentAssetForRefresh.id !== e.id) return;
+    openInterfaceDetailPanel(_currentAssetForRefresh, e.iface.ifName, e.iface.row, { walk: delta });
+  });
+}
+
+// The asset panel holds two pages: the asset's tabs, and one interface of it
+// (openInterfaceDetailPanel). CSS on #asset-panel[data-view] shows one set of
+// header / body / footer elements and hides the other.
+function _showAssetPanelView(view) {
+  var panel = document.getElementById("asset-panel");
+  if (!panel) return;
+  if (view === "iface") {
+    panel.setAttribute("data-view", "iface");
+    panel.setAttribute("aria-labelledby", "iface-panel-title");
+  } else {
+    panel.removeAttribute("data-view");
+    panel.setAttribute("aria-labelledby", "asset-panel-title");
+    _clearIfaceRefreshTimer();
+  }
+}
+
+function _isIfaceViewOpen() {
+  var panel = document.getElementById("asset-panel");
+  return _isOverlayOpen("asset-panel-overlay") && !!panel && panel.getAttribute("data-view") === "iface";
+}
+
+// Escape on an interface page steps back to its asset — what closing the old
+// nested interface slide-over did — and closes the panel everywhere else.
+function _assetPanelEscape() {
+  var cur = _assetPanelHistory.entries[_assetPanelHistory.idx];
+  var back = _assetHistoryTarget(_assetPanelHistory, -1);
+  if (_isIfaceViewOpen() && cur && cur.iface && back && back.entry.id === cur.id) {
+    _assetPanelGo(-1);
+    return;
+  }
+  closeAssetPanel();
 }
 
 function _ensureAssetPanelDOM() {
@@ -5440,32 +5523,41 @@ function _ensureAssetPanelDOM() {
               '<button type="button" class="slideover-nav-btn" id="asset-panel-back" aria-label="Back to the previously viewed asset" disabled>&lsaquo;</button>' +
               '<button type="button" class="slideover-nav-btn" id="asset-panel-fwd" aria-label="Forward to the next viewed asset" disabled>&rsaquo;</button>' +
             '</div>' +
-            '<h3 id="asset-panel-title">Asset Details</h3>' +
+            // The interface page's title, shown in place of the asset's
+            // (_showAssetPanelView). Before it, so the verbs stay beside the
+            // asset title.
+            '<h3 id="iface-panel-title" class="asset-panel-iface-only">Interface</h3>' +
+            '<h3 id="asset-panel-title" class="asset-panel-asset-only">Asset Details</h3>' +
             // The device verbs — Discover Now, then Reboot — right of the
             // hostname, so they sit with the device they act on on every tab
             // rather than only on the System tab's Status row. Populated per
             // open by openViewModal (_assetHeaderVerbsHTML); the reboot slot
             // inside is filled async by _loadAssetRebootControl.
-            '<span class="slideover-header-verbs" id="asset-panel-verbs"></span>' +
+            '<span class="slideover-header-verbs asset-panel-asset-only" id="asset-panel-verbs"></span>' +
           '</div>' +
           // Per-asset actions (Screenshot + PDF | Export / Refresh / Open
           // HTTPS / Open SSH) live in the header, right-aligned, LEFT of the
           // lock button _ensureLockButton injects in front of the X — see
           // .slideover-header-actions in styles.css for how the two share the
           // header's free space. Populated per open by openViewModal.
-          '<div class="slideover-header-actions" id="asset-panel-actions"></div>' +
+          '<div class="slideover-header-actions asset-panel-asset-only" id="asset-panel-actions"></div>' +
           '<button class="btn-icon" id="asset-panel-close" title="Close" aria-label="Close asset details">&times;</button>' +
         '</div>' +
-        '<div class="slideover-meta" id="asset-panel-meta"></div>' +
+        '<div class="slideover-meta asset-panel-iface-only" id="iface-panel-meta"></div>' +
+        '<div class="slideover-meta asset-panel-asset-only" id="asset-panel-meta"></div>' +
         // The tab strip is rendered into the body by tabbedBodyHTML and then
         // moved here by openViewModal, so it stays frozen in the header while
         // the tab content scrolls. Every reader finds it by id
         // (#asset-view-tabs), never by container, so the move is invisible
         // to them.
-        '<div class="slideover-tabs" id="asset-panel-tabs"></div>' +
+        '<div class="slideover-tabs asset-panel-asset-only" id="asset-panel-tabs"></div>' +
       '</div>' +
-      '<div class="slideover-body" id="asset-panel-body"><p class="empty-state">Loading...</p></div>' +
-      '<div class="slideover-footer" id="asset-panel-footer"></div>' +
+      '<div class="slideover-body asset-panel-asset-only" id="asset-panel-body"><p class="empty-state">Loading...</p></div>' +
+      // The interface page (openInterfaceDetailPanel): one of this asset's
+      // interfaces, opened from the System tab, shown in place of the tabs.
+      '<div class="slideover-body asset-panel-iface-only" id="iface-panel-body"></div>' +
+      '<div class="slideover-footer asset-panel-asset-only" id="asset-panel-footer"></div>' +
+      '<div class="slideover-footer asset-panel-iface-only" id="iface-panel-footer"></div>' +
     '</div>';
   document.body.appendChild(overlay);
 
@@ -5492,7 +5584,7 @@ function _ensureAssetPanelDOM() {
   // both the nested drilldowns and a network or block slide-over opened from
   // inside this panel: every slide-over stacks by DOM order (raiseSlideover),
   // so whichever was opened last owns the key.
-  wireSlideoverEscape(overlay, closeAssetPanel);
+  wireSlideoverEscape(overlay, _assetPanelEscape);
 
   // Alt+Left / Alt+Right walk the panel history, mirroring the browser chord.
   // Gated exactly like Escape above: only while the asset panel is the topmost
@@ -5512,6 +5604,7 @@ var _assetPanelReturnFocus = null;  // element refocused when the asset panel cl
 function closeAssetPanel() {
   var overlay = document.getElementById("asset-panel-overlay");
   if (overlay) overlay.classList.remove("open");
+  _showAssetPanelView("asset");
   _clearAssetRefreshTimers();
   _currentAssetForRefresh = null;
   // History is per panel session — reopening from the table starts over.
@@ -5568,6 +5661,7 @@ async function openViewModal(id, opts) {
   // later open is a pivot or a walk whose activeElement is a control inside the
   // panel, and returning focus to a hidden button loses it to <body>.
   if (_fresh) _assetPanelReturnFocus = document.activeElement;
+  _showAssetPanelView("asset");
   var titleEl  = document.getElementById("asset-panel-title");
   var metaEl   = document.getElementById("asset-panel-meta");
   var bodyEl   = document.getElementById("asset-panel-body");
@@ -16712,49 +16806,16 @@ function _renderMonitorChart(container, data, transitions) {
   _observeChartResize(container, function (c) { _renderMonitorChart(c, data, transitions); });
 }
 
-// ─── Nested interface details slide-over ───────────────────────────────────
+// ─── Interface page of the asset panel ─────────────────────────────────────
 //
-// Sits on top of #asset-panel-overlay. Closing only this overlay returns the
-// user to the asset details panel underneath — that's why we do NOT touch
-// closeAssetPanel from here. Three charts: input throughput, output
-// throughput, and errors. Each chart reuses _wireChartTooltip so hover
-// behaviour matches the response-time chart.
-
-function _ensureIfacePanelDOM() {
-  if (document.getElementById("iface-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "iface-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // No z-index of its own: every slide-over stacks by DOM order, and
-  // raiseSlideover (app.js) moves this one to the top when it opens. A
-  // pinned 1099 put it over a network or block panel opened after it.
-  overlay.innerHTML =
-    '<div class="slideover" id="iface-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="iface-panel-title">Interface</h3>' +
-          '<button class="btn-icon" id="iface-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="iface-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="iface-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="iface-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeIfacePanel();
-  });
-  document.getElementById("iface-panel-close").addEventListener("click", closeIfacePanel);
-  wireSlideoverEscape(overlay, closeIfacePanel);
-  initSlideoverResize(document.getElementById("iface-panel"), "polaris.panel.width.iface");
-}
-
-function closeIfacePanel() {
-  var ov = document.getElementById("iface-panel-overlay");
-  if (ov) ov.classList.remove("open");
-  _clearIfaceRefreshTimer();
-}
+// Clicking an interface on the System tab loads it INSIDE the asset details
+// slide-over, in place of the tabs, as its own back/forward entry
+// (_assetHistoryOpenIface) — the header's ‹ (or Alt+Left, or Escape) returns to
+// the asset with its tab and scroll position intact. It used to be a nested
+// slide-over stacked on top. Its elements (#iface-panel-title / -meta / -body /
+// -footer) are built by _ensureAssetPanelDOM; _showAssetPanelView switches
+// which page shows. Two charts — throughput and errors — each reusing
+// _wireChartTooltip so hover behaviour matches the response-time chart.
 
 /**
  * Notice shown above the charts when this interface is NOT pinned for
@@ -16782,10 +16843,20 @@ function _ifaceUnpinnedNoticeHTML(asset, ifName) {
 // history loader's address line compares the window's addresses against it.
 var _ifacePanelRow = null;
 
-async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
+// opts.walk — set by _assetPanelGo when a back/forward press lands here, so the
+// visit isn't pushed again.
+async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
   if (!asset || !ifName) return;
+  opts = opts || {};
   _ifacePanelRow = ifaceRow || null;
-  _ensureIfacePanelDOM();
+  _ensureAssetPanelDOM();
+  _clearIfaceRefreshTimer();
+  if (!opts.walk) {
+    if (_assetPanelHistory.entries.length === 0) _assetPanelHistory = _assetHistoryOpen(_assetPanelHistory, asset.id, true);
+    _assetPanelHistory = _assetHistoryOpenIface(_assetPanelHistory, asset.id, ifName, ifaceRow);
+  }
+  _renderAssetPanelNav();
+  if (opts.walk) _focusAssetPanelNav(opts.walk);
   var titleEl  = document.getElementById("iface-panel-title");
   var metaEl   = document.getElementById("iface-panel-meta");
   var bodyEl   = document.getElementById("iface-panel-body");
@@ -16800,11 +16871,9 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-screenshot">Screenshot</button>' +
     '<span style="flex:1"></span>' +
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-close-btn">Close</button>';
-  raiseSlideover(document.getElementById("iface-panel-overlay"));
-  requestAnimationFrame(function () {
-    document.getElementById("iface-panel-overlay").classList.add("open");
-  });
-  document.getElementById("btn-iface-panel-close-btn").addEventListener("click", closeIfacePanel);
+  _showAssetPanelView("iface");
+  bodyEl.scrollTop = 0;
+  document.getElementById("btn-iface-panel-close-btn").addEventListener("click", closeAssetPanel);
   document.getElementById("btn-iface-panel-screenshot").addEventListener("click", function () {
     _screenshotInterfacePanel(asset, ifName);
   });
