@@ -857,6 +857,17 @@ document.addEventListener("DOMContentLoaded", async function () {
     syncSelectedRows(document.getElementById("assets-tbody"));
     _assetsUpdateBulkBar();
   });
+  // A plain click or drag replaces the selection (app.js → row selection). The
+  // rows on this page are cleared through their own change events; this drops
+  // the picks made on other pages, which have no row to clear.
+  document.getElementById("assets-tbody").addEventListener("polaris:rowselect-clear", function () {
+    var onPage = {};
+    _assetsData.forEach(function (a) { onPage[a.id] = true; });
+    Array.from(_assetsSelected).forEach(function (id) {
+      if (!onPage[id]) { _assetsSelected.delete(id); delete _assetsSelectedMeta[id]; }
+    });
+    _assetsUpdateBulkBar();
+  });
   document.getElementById("assets-tbody").addEventListener("change", function (e) {
     var cb = e.target;
     if (!cb.classList.contains("row-cb")) return;
@@ -6132,7 +6143,7 @@ function _assetGeneralTabHTML(a, sources) {
     var hostnameRowHTML = a.ipAddress && !a.hostname
         ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value">- <button class="btn btn-sm btn-secondary" onclick="singleDnsLookup(' + jsArg(a.id) + ')" title="Reverse DNS lookup (PTR record)">PTR Lookup</button></span></div>'
         : (a.hostnameOverride
-          ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(a.hostname || "") + '">' + escapeHtml(a.hostname || "-") + '</span><span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:6px" title="Hostname manually overridden — discovery will not change it. Clear the Hostname field in Edit to resume the discovered value.">overridden</span>' + hostnameOriginalLineHTML(a) + '</span></div>'
+          ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(a.hostname || "") + '">' + escapeHtml(a.hostname || "-") + '</span><span class="badge hue-pill" style="--hue:#6b7280;margin-left:6px" title="Hostname manually overridden — discovery will not change it. Clear the Hostname field in Edit to resume the discovered value.">overridden</span>' + hostnameOriginalLineHTML(a) + '</span></div>'
           : viewRow("Hostname", a.hostname, false, false, true));
     var identityHTML = hostnameRowHTML +
       ipViewRow(a) +
@@ -9089,11 +9100,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   function typeBadge(iface, isChild) {
     var t = iface.ifType;
     if (isChild && iface.subIface) {
-      return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:5px;white-space:nowrap">Sub-interface</span>';
+      return '<span class="badge hue-pill" style="--hue:#6b7280;margin-left:5px">Sub-interface</span>';
     }
     // Member port of an aggregate: show "Member" regardless of its stored type.
     if (isChild && t !== "vlan") {
-      return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:5px">Member</span>';
+      return '<span class="badge hue-pill" style="--hue:#6b7280;margin-left:5px">Member</span>';
     }
     var cfgs = {
       physical:  ["Physical",  "#6b7280"],
@@ -9105,7 +9116,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var cfg = cfgs[t];
     if (!cfg) return "";
     var c = cfg[1];
-    return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:' + c + '18;color:' + c + ';border:1px solid ' + c + '30;margin-left:5px;white-space:nowrap">' + escapeHtml(cfg[0]) + '</span>';
+    return '<span class="badge hue-pill" style="--hue:' + c + ';margin-left:5px">' + escapeHtml(cfg[0]) + '</span>';
   }
 
   // Native + Tagged VLAN cells for the interfaces table — populated only on
@@ -9174,7 +9185,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var cfg = cfgs[String(m).toLowerCase()];
     if (!cfg) return '<td>' + escapeHtml(String(m)) + "</td>";
     var c = cfg[1];
-    return '<td><span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:' + c + '18;color:' + c + ';border:1px solid ' + c + '30;white-space:nowrap">' + cfg[0] + "</span></td>";
+    return '<td><span class="badge hue-pill" style="--hue:' + c + '">' + cfg[0] + "</span></td>";
   }
 
   function buildRow(iface, opts) {
@@ -9183,9 +9194,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     // Every row is pinnable on its own, aggregate members included: the trunk
     // answers "how busy is the link", but only the members show how the load
     // splits across it, or which leg of a LAG went quiet.
-    var checked  = isPinned ? " checked" : "";
-    var disabled = canEdit ? "" : " disabled";
-    var checkbox = '<input type="checkbox" class="asset-iface-toggle" data-ifname="' + escapeHtml(iface.ifName) + '"' + checked + disabled + ' title="Poll this interface every minute for fast-cadence monitoring">';
+    var checkbox = _ifaceMonToggleHTML(iface.ifName, isPinned, canEdit);
 
     var prefix = "", padStyle = "";
     if (opts.isParent) {
@@ -9518,11 +9527,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     ? '<th data-col-id="poe" data-sf-key="poe" data-sf-options="" title="Power over Ethernet: detection status and the negotiated power CLASS (a budget bracket, e.g. class3 = up to 12.95 W at the powered device). POWER-ETHERNET-MIB defines no per-port wattage, so no draw is shown. SNMP only.">PoE</th>'
     : "";
   container.innerHTML = staleBanner +
-    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">The <strong>Poll&nbsp;1m</strong> column selects interfaces for fast-cadence polling and <strong>history</strong>. Every interface below shows its current state; only selected ones record history you can chart or alert on throughput.' +
+    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">A <strong>Monitored</strong> interface is polled every minute and records <strong>history</strong>; click its button to switch it between Monitored and Unmonitored. Every interface below shows its current state; only monitored ones record history you can chart or alert on throughput.' +
       (ipsecCount > 0 ? ' ' + _ipsecTabPointerHTML(ipsecCount) : '') + '</p>' +
     '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-iface-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
-      '<th title="Pin this interface for fast-cadence polling + history. Unselected interfaces still show current state here, but record no history to chart." style="width:32px" data-col-id="poll" data-col-required="true">' +
-        '<input type="checkbox" id="iface-poll-all" title="Select / de-select every listed interface for fast-cadence polling (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>' +
+      '<th title="Monitored interfaces are polled every minute and record history. Unmonitored interfaces still show current state here, but record no history to chart." style="width:112px" data-col-id="poll" data-col-required="true" data-col-no-resize="true">' +
+        '<button type="button" class="iface-mon-toggle iface-mon-all" id="iface-poll-all" title="Switch every listed interface (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>Monitor all</button>' +
       '</th>' +
       '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="string">Interface</th>' +
       '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
@@ -9753,6 +9762,23 @@ function _sizeAssetIfaceTableWrapper() {
 }
 window.addEventListener("resize", _sizeAssetIfaceTableWrapper);
 
+/** The Interfaces table's per-row switch: one button that reads Monitored or
+ *  Unmonitored and flips on click (_wireInterfacesTable). */
+function _ifaceMonToggleHTML(ifName, on, canEdit) {
+  return '<button type="button" class="iface-mon-toggle asset-iface-toggle' + (on ? ' is-on' : '') + '"' +
+    ' data-ifname="' + escapeHtml(ifName) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' +
+    (canEdit ? '' : ' disabled') +
+    ' title="' + (on ? 'Polled every minute with history — click to stop' : 'Current state only — click to poll every minute and record history') + '">' +
+    (on ? 'Monitored' : 'Unmonitored') + '</button>';
+}
+function _ifaceMonIsOn(btn) { return btn.getAttribute("aria-pressed") === "true"; }
+function _ifaceMonSet(btn, on) {
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.classList.toggle("is-on", on);
+  btn.textContent = on ? "Monitored" : "Unmonitored";
+  btn.title = on ? "Polled every minute with history — click to stop" : "Current state only — click to poll every minute and record history";
+}
+
 /** Distinct, non-empty, alphabetically sorted values — multi-select options. */
 function _distinctSorted(values) {
   var seen = {};
@@ -9786,23 +9812,24 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
     next.forEach(function (v) { set.add(v); });
   }
 
-  // Header select-all checkbox — mirrors the aggregate state of every Poll 1m
-  // checkbox currently in the table (collapsed rows included): checked = all
-  // pinned, indeterminate = some.
+  // Header button — offers "Monitor all" until every row button in the table
+  // (collapsed rows included) reads Monitored, then "Unmonitor all".
   var ifaceAllCb = container.querySelector("#iface-poll-all");
   function syncIfaceAllCb() {
     if (!ifaceAllCb) return;
     var boxes = container.querySelectorAll(".asset-iface-toggle");
     var on = 0;
-    boxes.forEach(function (b) { if (b.checked) on++; });
-    ifaceAllCb.checked = boxes.length > 0 && on === boxes.length;
-    ifaceAllCb.indeterminate = on > 0 && on < boxes.length;
+    boxes.forEach(function (b) { if (_ifaceMonIsOn(b)) on++; });
+    var allOn = boxes.length > 0 && on === boxes.length;
+    ifaceAllCb.textContent = allOn ? "Unmonitor all" : "Monitor all";
+    ifaceAllCb.setAttribute("data-next", allOn ? "off" : "on");
+    if (canEdit) ifaceAllCb.disabled = boxes.length === 0;
   }
   syncIfaceAllCb();
   if (state.afterRender) state.afterRender.push(syncIfaceAllCb);
   if (canEdit && asset && ifaceAllCb) {
-    ifaceAllCb.addEventListener("change", async function () {
-      var on = ifaceAllCb.checked;
+    ifaceAllCb.addEventListener("click", async function () {
+      var on = ifaceAllCb.getAttribute("data-next") !== "off";
       var ifaceBoxes  = container.querySelectorAll(".asset-iface-toggle");
       // Select-all covers the LISTED rows and leaves everything else pinned as
       // it was — with a filter active the operator can't see the rest, and
@@ -9821,8 +9848,8 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
         replaceSet(monitored, nextIf);
         if (si)    si.monitoredInterfaces    = Array.from(nextIf);
         if (asset) asset.monitoredInterfaces = Array.from(nextIf);
-        ifaceBoxes.forEach(function (b) { b.checked = on; });
-        showToast(on ? "Fast-polling every listed interface" : "Stopped fast-polling the listed interfaces");
+        ifaceBoxes.forEach(function (b) { _ifaceMonSet(b, on); });
+        showToast(on ? "Monitoring every listed interface" : "Stopped monitoring the listed interfaces");
       } catch (err) {
         showToast(err.message || "Failed to update", "error");
       } finally {
@@ -9834,14 +9861,15 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
 
   if (!tbody) return;
 
-  // Poll 1m checkboxes — interface rows write monitoredInterfaces.
-  tbody.addEventListener("change", async function (e) {
-    var cb = e.target;
-    if (!cb || !cb.classList || !cb.classList.contains("asset-iface-toggle")) return;
+  // Monitored / Unmonitored buttons — interface rows write monitoredInterfaces.
+  tbody.addEventListener("click", async function (e) {
+    var cb = e.target && e.target.closest ? e.target.closest(".asset-iface-toggle") : null;
+    if (!cb || cb.disabled) return;
     if (!canEdit || !asset) return;
     var name = cb.getAttribute("data-ifname");
+    var on = !_ifaceMonIsOn(cb);
     var next = new Set(monitored);
-    if (cb.checked) next.add(name); else next.delete(name);
+    if (on) next.add(name); else next.delete(name);
     var patch = { monitoredInterfaces: Array.from(next) };
     cb.disabled = true;
     try {
@@ -9849,9 +9877,9 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       replaceSet(monitored, next);
       if (si) si.monitoredInterfaces = Array.from(next);
       if (asset) asset.monitoredInterfaces = Array.from(next);
-      showToast(cb.checked ? ("Polling " + name + " every minute") : ("Stopped fast-polling " + name));
+      _ifaceMonSet(cb, on);
+      showToast(on ? ("Monitoring " + name + " every minute") : ("Stopped monitoring " + name));
     } catch (err) {
-      cb.checked = !cb.checked;
       showToast(err.message || "Failed to update", "error");
     } finally {
       cb.disabled = false;
@@ -10003,7 +10031,7 @@ function _lldpNeighborInlineCell(neighbors) {
     : "";
   var portStr = port ? ' <span style="opacity:0.7" class="mono">/ ' + escapeHtml(port) + '</span>' : "";
   var more = neighbors.length > 1
-    ? ' <span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030">+' + (neighbors.length - 1) + '</span>'
+    ? ' <span class="badge hue-pill" style="--hue:#6b7280">+' + (neighbors.length - 1) + '</span>'
     : "";
   return openTag + labelHtml + alertDot + portStr + more + closeTag;
 }
@@ -17440,7 +17468,7 @@ function _ifaceVlanBlockHTML(iface, names) {
   return '<div style="margin-bottom:0.75rem;padding:0.5rem 0.65rem;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px">' +
     '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:0.25rem">' +
       '<span style="font-size:0.8rem;font-weight:600;color:var(--color-text-secondary)">VLAN</span>' +
-      '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#0d948818;color:#0d9488;border:1px solid #0d948830">' + escapeHtml(role) + '</span>' +
+      '<span class="badge hue-pill" style="--hue:#0d9488">' + escapeHtml(role) + '</span>' +
     '</div>' +
     nativeBit +
     taggedBit +
@@ -17479,7 +17507,7 @@ function _renderIfaceLldpBlock(neighbors) {
     if (n.managementIp)         rows.push(["Management IP",   '<span class="mono">' + escapeHtml(n.managementIp) + '</span>']);
     if (n.capabilities && n.capabilities.length > 0) {
       rows.push(["Capabilities", n.capabilities.map(function (c) {
-        return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#3b82f618;color:#3b82f6;border:1px solid #3b82f630;margin-right:3px">' + escapeHtml(c) + '</span>';
+        return '<span class="badge hue-pill" style="--hue:#3b82f6;margin-right:3px">' + escapeHtml(c) + '</span>';
       }).join("")]);
     }
     if (n.systemDescription)    rows.push(["System description", '<span style="font-size:0.8rem">' + escapeHtml(n.systemDescription) + '</span>']);
@@ -17489,7 +17517,7 @@ function _renderIfaceLldpBlock(neighbors) {
     }).join("");
     var matchHint = n.matchedAsset
       ? ''
-      : ' <span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:6px" title="No Polaris asset matched this neighbor by management IP, chassis MAC, or hostname">unmatched</span>';
+      : ' <span class="badge hue-pill" style="--hue:#6b7280;margin-left:6px" title="No Polaris asset matched this neighbor by management IP, chassis MAC, or hostname">unmatched</span>';
     html +=
       '<div style="' + cardStyle + '"' + cardTitle + '>' +
         '<div style="margin-bottom:0.4rem">' + titleHtml + matchHint + '</div>' +
@@ -18295,7 +18323,7 @@ function _sdwanMembersTableHTML(members) {
       return '<span title="' + escapeHtml(h.healthCheck) +
         ' · jitter ' + (typeof h.jitterMs === "number" ? (Math.round(h.jitterMs * 100) / 100) + "ms" : "—") +
         ' · loss ' + (typeof h.packetLoss === "number" ? h.packetLoss + "%" : "—") +
-        '" style="display:inline-block;margin:0 4px 2px 0;padding:1px 6px;border-radius:10px;font-size:0.74rem;background:var(--color-bg-primary);border:1px solid var(--color-border)">' +
+        '" class="badge hue-pill" style="--hue:var(--color-text-tertiary);margin:0 4px 2px 0;text-transform:none">' +
         '<span data-shot-text="' + (h.state === "up" ? '▲' : '▼') + '" style="color:' + c + '">●</span> ' +
         escapeHtml(h.healthCheck) + ' ' + lat + '</span>';
     }).join("") || '<span style="color:var(--color-text-tertiary)">—</span>';
@@ -18427,10 +18455,8 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
       // rule's full candidate list so colors are stable across zone groups.
       function memberPill(m) {
         var sel = m === r.selectedMember;
-        return '<span style="display:inline-block;margin:0 4px 2px 0;padding:1px 7px;border-radius:10px;font-size:0.76rem;' +
-          (sel
-            ? 'background:' + _sdwanMemberColor(m, avail) + ';color:#fff;font-weight:600'
-            : 'background:var(--color-bg-primary);border:1px solid var(--color-border);color:var(--color-text-secondary)') +
+        return '<span class="badge hue-pill' + (sel ? ' hue-strong' : '') + '" style="margin:0 4px 2px 0;text-transform:none;--hue:' +
+          (sel ? _sdwanMemberColor(m, avail) : 'var(--color-text-tertiary)') +
           '">' + escapeHtml(m) + (sel ? ' ✓' : '') + '</span>';
       }
       var pills;
@@ -21881,8 +21907,8 @@ function authorizationRowHTML(asset) {
   var color = lower === "authorized" ? "var(--color-success,#10b981)"
             : lower === "unauthorized" ? "var(--color-danger,#ef4444)"
             : "var(--color-warning,#fbbf24)";
-  var badge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-    color + ';color:#000;font-weight:600">' + escapeHtml(label) + '</span>';
+  var badge = '<span class="badge hue-pill" style="--hue:' +
+    color + '">' + escapeHtml(label) + '</span>';
   return '<div class="detail-row"><span class="detail-label">Authorization</span><span class="detail-value">' + badge + '</span></div>';
 }
 
@@ -21925,8 +21951,8 @@ function fortilinkRowHTML(asset) {
   if (asset.fortilinkStatusRaw && String(asset.fortilinkStatusRaw).toLowerCase() !== text.toLowerCase()) {
     tip += '\nController reports: "' + asset.fortilinkStatusRaw + '"';
   }
-  var badge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-    color + ';color:#000;font-weight:600">' + escapeHtml(text) + '</span>';
+  var badge = '<span class="badge hue-pill" style="--hue:' +
+    color + '">' + escapeHtml(text) + '</span>';
   var suffix = "";
   // How long it has been in this state — the first thing asked about a link
   // that is down. changedAt holds still across confirmations, so this is the
@@ -22001,8 +22027,8 @@ function haTopologyHTML(asset) {
                 : role === "secondary" ? "Secondary (standby)"
                 : role;
   var roleColor = role === "primary" ? "var(--color-success,#10b981)" : "var(--color-warning,#fbbf24)";
-  var roleBadge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-    roleColor + ';color:#000;font-weight:600">' + escapeHtml(roleLabel) + '</span>';
+  var roleBadge = '<span class="badge hue-pill" style="--hue:' +
+    roleColor + '">' + escapeHtml(roleLabel) + '</span>';
   var peerHTML = '-';
   if (peerSerial) {
     var serialEsc = escapeHtml(peerSerial);
@@ -22020,8 +22046,8 @@ function haTopologyHTML(asset) {
   if (memberStatus === "up" || memberStatus === "down") {
     var healthColor = memberStatus === "up" ? "var(--color-success,#10b981)" : "var(--color-danger,#ef4444)";
     var healthLabel = memberStatus === "up" ? "In cluster (up)" : "Reported down";
-    var healthBadge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-      healthColor + ';color:#000;font-weight:600" title="From the cluster\'s HA roster, read each discovery cycle">' +
+    var healthBadge = '<span class="badge hue-pill" style="--hue:' +
+      healthColor + '" title="From the cluster\'s HA roster, read each discovery cycle">' +
       healthLabel + '</span>';
     healthHTML = '<div class="detail-row"><span class="detail-label">HA Member Health</span><span class="detail-value">' + healthBadge + '</span></div>';
   }

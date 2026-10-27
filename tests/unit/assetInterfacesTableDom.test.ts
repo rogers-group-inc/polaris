@@ -44,6 +44,9 @@ const FN_NAMES = [
   "_lldpNeighborInlineCell",
   "_treeElbow",
   "_distinctSorted",
+  "_ifaceMonToggleHTML",
+  "_ifaceMonIsOn",
+  "_ifaceMonSet",
   "_distinctVlanOptions",
   "_vlanPillHTML",
   "_vlanOptionLabel",
@@ -438,14 +441,26 @@ describe("re-render safety", () => {
     expect(openedIface).toBe("port1");
   });
 
-  it("still renders a pin made after load as checked", async () => {
-    const cb: any = rowFor("port1").querySelector(".asset-iface-toggle");
-    cb.checked = true;
-    change(cb);
+  it("still renders a pin made after load as Monitored", async () => {
+    const btn: any = rowFor("port1").querySelector(".asset-iface-toggle");
+    expect(btn.textContent).toBe("Unmonitored");
+    click(btn);
     await settle();
     expect(putCalls.at(-1)!.monitoredInterfaces).toContain("port1");
+    expect(btn.textContent).toBe("Monitored");
     sortBy("mac");   // re-render from the row model
-    expect((rowFor("port1").querySelector(".asset-iface-toggle") as any).checked).toBe(true);
+    const after: any = rowFor("port1").querySelector(".asset-iface-toggle");
+    expect(after.getAttribute("aria-pressed")).toBe("true");
+    expect(after.textContent).toBe("Monitored");
+  });
+
+  it("switches a Monitored interface back to Unmonitored", async () => {
+    click(rowFor("port1").querySelector(".asset-iface-toggle"));
+    await settle();
+    click(rowFor("port1").querySelector(".asset-iface-toggle"));
+    await settle();
+    expect(putCalls.at(-1)!.monitoredInterfaces).not.toContain("port1");
+    expect(rowFor("port1").querySelector(".asset-iface-toggle")!.textContent).toBe("Unmonitored");
   });
 
   it("persists sort + filter state per user and device type", async () => {
@@ -495,30 +510,32 @@ describe("re-render safety", () => {
   });
 });
 
-describe("select-all", () => {
-  it("clears every listed row when nothing is filtered", async () => {
-    const all: any = doc.getElementById("iface-poll-all");
-    all.checked = false;
-    change(all);
+describe("Monitor all / Unmonitor all", () => {
+  const all = () => doc.getElementById("iface-poll-all") as any;
+
+  it("offers Unmonitor all once every listed row is monitored, and clears them", async () => {
+    click(all());
     await settle();
-    expect(putCalls[0].monitoredInterfaces).toEqual([]);
+    expect(all().textContent).toBe("Unmonitor all");
+    click(all());
+    await settle();
+    expect(putCalls.at(-1)!.monitoredInterfaces).toEqual([]);
+    expect(all().textContent).toBe("Monitor all");
   });
 
-  it("leaves a filtered-out pin alone — un-pinning it would silently stop its polling", async () => {
-    // port2 ships pinned; filter it out of the list, then clear-all.
+  it("leaves a filtered-out pin alone — un-monitoring it would silently stop its polling", async () => {
+    // port2 ships pinned; filter it out of the list, then monitor + unmonitor all.
     await typeFilter("ifname", "port1");
-    const all: any = doc.getElementById("iface-poll-all");
-    all.checked = false;
-    change(all);
+    click(all());
     await settle();
-    expect(putCalls[0].monitoredInterfaces).toEqual(["port2"]);
+    click(all());
+    await settle();
+    expect(putCalls.at(-1)!.monitoredInterfaces).toEqual(["port2"]);
   });
 
-  it("pins only the listed rows when checked", async () => {
+  it("monitors only the listed rows", async () => {
     await typeFilter("ifname", "port3");
-    const all: any = doc.getElementById("iface-poll-all");
-    all.checked = true;
-    change(all);
+    click(all());
     await settle();
     expect(putCalls[0].monitoredInterfaces.sort()).toEqual(["port2", "port3"]);
   });
@@ -610,7 +627,8 @@ describe("a member port belongs to its aggregate", () => {
     });
     const box: any = rowFor("port9").querySelector(".asset-iface-toggle");
     expect(box).not.toBeNull();
-    expect(box.checked).toBe(true);
+    expect(box.getAttribute("aria-pressed")).toBe("true");
+    expect(box.textContent).toBe("Monitored");
   });
 
   it("keeps the checkbox on a member whose aggregate is absent", () => {
@@ -651,11 +669,12 @@ describe("a member port belongs to its aggregate", () => {
   // Select-all sweeps every rendered box, and a member is one of them now.
   it("is pinned by select-all alongside its aggregate", async () => {
     const all: any = doc.getElementById("iface-poll-all");
-    all.checked = true;
-    change(all);
+    expect(all.textContent).toBe("Monitor all");
+    click(all);
     await settle();
     expect(putCalls[0].monitoredInterfaces).toContain("port9");
     expect(putCalls[0].monitoredInterfaces).toContain("lag1");
+    expect(all.textContent).toBe("Unmonitor all");
   });
 });
 

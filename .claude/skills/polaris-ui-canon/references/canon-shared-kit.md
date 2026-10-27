@@ -378,6 +378,22 @@ unselected page tab).
   header needs a blur to hide the rows scrolling under it, and that blur lives on `thead::before`
   (canon-tables-lists.md § frozen header). Inside `.modal` / `.slideover` a table keeps its
   opaque `--color-bg-primary` / `--color-bg-tertiary` grounds.
+- **A page-level table outside a folder card is FROSTED, not tint-only** (2026-10-27). The
+  tint-only wrapper read as a paler material than the folder card beside it — the
+  `--panel-glass-blur` `saturate()` is what warms the folder card and the rail — so the Users
+  page's three tables sit in a `.glass-table-card` (styles.css): border, radius and
+  `--shadow-lift` on the card, the glass + blur on its `::after` behind the content (the
+  `.folder-card::after` idiom — never on an ancestor of the TableSF popovers), and the
+  `.table-wrapper` inside dropping its own chrome. Use it for any new page-level table that is
+  not in a `.folder-card`; do not reach for `.folder-card` itself on a page with several
+  stacked sections (it makes the page a viewport-tall flex column).
+- **An `.ip-table` header on the daylight family is `--color-bg-secondary`** (2026-10-27), the
+  darkest page tone, because `--color-bg-primary` is the LIGHTEST there and the band read paler
+  than the card it heads (the Capacity Advisor, the network IP list). Nightfall keeps
+  `bg-primary`, already darker than its surface. Opaque either way — the header is sticky.
+- **The lit bulk bar's buttons take `--map-btn-shadow`** (`.bulk-bar:not(.bulk-bar-idle) .btn`),
+  the Device Map / Application Map cast, so "these will act now" reads at a glance; a
+  disabled button stays flat.
 - **So do the table's tabs and bulk bar.** The idle `.bulk-bar` and the `.table-tab:hover` /
   `.table-tab-add:hover` states take `--rail-glass-bg`. The active `.table-tab` and the selected
   `.bulk-bar` take `--chip-glass-bg` (`--color-bg-elevated` at 70% in the dark family; `--color-surface` at 55% on the daylight base, because the surface mix all but vanished on nightfall's near-black), so they still stand out. Active tabs add a `--color-border` hairline and an inset top rim, with `--panel-glass-blur`
@@ -393,6 +409,58 @@ unselected page tab).
   rather than the modifier, because its tabs carry a grip, rename input and remove button. It
   is a modifier, not a change to `.page-tab`, because that class is also every modal's tab
   strip.
+
+## The pill family (every status pill, one look) — and toasts
+
+**What it is:** One shape and one colour recipe for every status pill in the app (2026-10-27).
+Before it, `.badge` drew a 10–12% tint with a hand-picked border per class and per theme
+family, `.hue-pill` (roles, tags, regions) an 18% tint with a border off a lightness-clamped
+label, and a dozen other pill classes plus ~15 inline-styled spans in `assets.js` each drew
+their own — 3px, 4px, 10px and 999px corners, outline-only or 30% fills, some with the pill
+shadow and some without. A role pill and the Status pill beside it read as two objects, and a
+bright label ("Missed" in `#f57f17`) all but vanished on daylight.
+
+**Canonical implementation:** the "The pill family" block directly under `.badge` in
+[public/css/styles.css](public/css/styles.css):
+- **Shape** (the non-`.badge` classes; `.badge` carries it already): `border-radius: 99px`,
+  1px solid border, `--shadow-pill`, weight 600, padding 2px 8px at 0.72rem, a small size
+  1px 6px at 0.66rem (`.capacity-pill-sm`, `.vip-badge`, `.sfl-badge`, `.advisor-cold-badge`,
+  `.address-primary-badge`). `.tag-chip` takes only the radius (it is a larger, removable chip).
+- **Colour** — the `.hue-pill` recipe derived from each class's own LABEL colour
+  (`currentColor`): an 18% fill, the glyphs repainted through `-webkit-text-fill-color` with
+  their OKLCH lightness clamped into `--hue-label-l-min/-max` (≤ 0.5 daylight, ≥ 0.78
+  nightfall — `-webkit-text-fill-color` because only outside `color` does `currentColor` mean
+  the element's own colour), and a border at 45% of the clamped label. `:root` + `:not()` lift
+  it above every per-class and per-theme rule wherever they sit, so those rules now supply only
+  the label colour; their old `background` / `border-color` values no longer paint.
+- **Members:** `.badge` (every `badge-*`), `.capacity-pill`, `.advisor-pill`, `.widget-pill`,
+  `.fw-pill` (+ `fw-binding-` / `fw-role-` / `fw-warn-` / `fw-orphan-` / `fw-engine-pill`),
+  `.integration-type-badge`, `.vip-badge`, `.dep-tree-source-tag`, `.dep-tree-override-tag`,
+  `.address-primary-badge`, `.sfl-menu .sfl-badge`, `.advisor-cold-badge`, and `.tag-chip`
+  when it is not a `.hue-pill`. **Excluded:** `.hue-pill` (the same recipe from its raw
+  `--hue`), `.badge-monitor-passive` (outline-only — its empty fill is the meaning), and things
+  that are not status pills: `.mac-badge-count` (a solid count bubble), the calendar chips, the
+  account badge.
+- **A computed colour** (a chart line's colour, a state colour chosen in JS) is
+  `class="badge hue-pill" style="--hue:…"` — the interface type tags, LLDP role / capability
+  tags, "unmatched" / "overridden", the HA role / health and FortiLink / Authorization badges
+  and the SD-WAN health-check / member chips in `assets.js` all are. Add `hue-strong` for the
+  selected chip of a set, and `text-transform:none` when the label is an identifier (`.badge`
+  capitalises its first letter).
+- **The Capacity Advisor's reason boxes** (`.capacity-reason-ok|watch|amber|red`) take the same
+  recipe at box size: one `--cap-c` per severity, an 18% fill, the border at 45% of the clamped
+  colour.
+
+**Toasts** (`.toast-success|error|warning|info`, built by `showToast` in `api.js`) are the same
+recipe on the floating-surface glass: one `--toast-c` per type, an 18% tint layered over
+`--panel-glass-bg` with `--panel-glass-blur` on the toast itself (it holds no fixed children),
+the text in the clamped colour, the border at 45% of it. `warning` and `info` had no rule before
+and floated as bare text — every type `showToast` is called with needs a rule here.
+
+**When adding a new instance:** reuse `.badge` + the closest colour class, or `badge hue-pill`
+with `--hue` for a computed colour. Never an inline fill, border, radius or font size on a pill,
+and never a new pill class — if one is truly needed, add it to BOTH selector lists of the
+family block (shape and colour) in the same commit.
 
 ## Settings-card layout (one card, a fixed row, or a reflowing deck)
 

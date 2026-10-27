@@ -250,3 +250,17 @@ describe("reset", () => {
     expect(doc.querySelector(".sf-col-chooser-reset")).toBeNull();
   });
 });
+
+// Rows are selected by clicking them (app.js → row selection), so the checkbox
+// column is never drawn: its cells and <col> are hidden, and since that is not
+// the operator's choice it never lands in the saved prefs.
+describe("the checkbox column", () => {
+  it("is hidden, <col> included, and never saved as a hidden column", () => {
+    const layout = setup();
+    layout.refresh();
+    const css = Array.from(doc.querySelectorAll("style")).map((s) => s.textContent).join("\n");
+    expect(css).toContain("> colgroup > col:nth-child(1) { display: none; }");
+    expect(css).toContain("> tbody > tr > :nth-child(1) { display: none; }");
+    expect(layout.getPrefs().hidden).not.toContain("__col0");
+  });
+});

@@ -192,7 +192,28 @@ on for some integration; and **Delete**.
 
 ## Bulk actions
 
-Select rows to raise the bulk bar:
+### Selecting rows
+
+There is no checkbox column. Select rows by clicking them, the way you
+select files on a desktop. This works the same on the Assets table, on an
+asset's **Alerts** tab and on a network's address list.
+
+| To | Do |
+|---|---|
+| select one row | click it. Clicking the only selected row again clears it |
+| add or remove one row | **Ctrl**+click (**⌘**+click on a Mac) |
+| select a range | click the first row, then **Shift**+click the last |
+| select a run of rows | click and drag across them. The list scrolls when you hold the pointer at its top or bottom edge. Hold **Ctrl** to add the run to what is already selected |
+| select every row in the table | **Ctrl**+**A** (**⌘**+**A**) after clicking a row in it |
+| clear the selection | click anywhere off the table, or **Deselect All** on the bulk bar |
+
+A plain click or drag replaces the selection, including rows you selected on
+other pages of the Assets table. **Ctrl** and **Shift** add to it. Clicking an
+asset's name still opens it, and clicking a link or button in a row does what
+it always did. Clicking the bulk bar, the page buttons or a dialog does not
+clear the selection.
+
+Selected rows raise the bulk bar:
 
 | Action | Needs | Does |
 |---|---|---|
@@ -680,10 +701,15 @@ report the link. A FortiAP shortens the parent's name, so `w01.12` nests under
 the nesting and sorts the parents, with each parent's rows sorted under it. A
 filter drops the section headings and arrows and shows every matching row. A
 member still nests under its aggregate when both match. A member whose aggregate
-is filtered out is listed on its own, marked with a **Member** badge. Each row has its own **Poll 1m** box. Pin
-the aggregate to chart the link as a whole, and pin its members to see how the
-load splits across them or which member went quiet. The header checkbox pins
-or unpins every listed row, members and VLAN sub-interfaces included.
+is filtered out is listed on its own, marked with a **Member** badge. Each row has its own
+**Monitored** / **Unmonitored** button. Click it to switch the interface
+between the two: a monitored interface is polled every minute and records the
+history you can chart and alert on, an unmonitored one shows only its current
+state. Monitor the aggregate to chart the link as a whole, and monitor its
+members to see how the load splits across them or which member went quiet. The
+header button reads **Monitor all** (or **Unmonitor all** once every listed row
+is monitored) and switches every listed row, members and VLAN sub-interfaces
+included. Rows hidden by a filter keep their setting.
 
 **Clear the filters in one click.** Each table in the asset panel that has
 column filters (Interfaces, IPsec, Software, Services and Events) has a

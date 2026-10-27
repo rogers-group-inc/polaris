@@ -23,8 +23,8 @@
     </div>
   </div>
 
-  <div class="bulk-bar bulk-bar-idle">
-    <span class="bulk-bar-count">No things selected</span>
+  <div class="bulk-bar">
+    <span class="bulk-bar-count">1 selected</span>
     <button class="btn btn-sm btn-secondary">Deselect All</button>
     <button class="btn btn-sm btn-danger" style="margin-left:auto">Delete selected</button>
   </div>
@@ -33,7 +33,6 @@
     <table>
       <thead>
         <tr>
-          <th class="cb-col"><input type="checkbox"></th>
           <th>Name</th>
           <th style="width:150px">Address</th>
           <th style="width:130px">Status</th>
@@ -44,7 +43,6 @@
       </thead>
       <tbody>
         <tr>
-          <td><input type="checkbox"></td>
           <td><a href="#">core-switch-01</a></td>
           <td class="mono">192.0.2.11</td>
           <td><span class="badge badge-active">Active</span></td>
@@ -52,8 +50,7 @@
           <td>2 min ago</td>
           <td class="actions"><button class="btn btn-sm btn-secondary">Edit</button></td>
         </tr>
-        <tr class="row-panel-active">
-          <td><input type="checkbox" checked></td>
+        <tr class="selected">
           <td><a href="#">edge-router-04</a></td>
           <td class="mono">192.0.2.24</td>
           <td><span class="badge badge-maintenance">Maintenance</span></td>
@@ -62,7 +59,6 @@
           <td class="actions"><button class="btn btn-sm btn-secondary">Edit</button></td>
         </tr>
         <tr>
-          <td><input type="checkbox"></td>
           <td><a href="#">ap-warehouse-12</a></td>
           <td class="mono">198.51.100.7</td>
           <td><span class="badge badge-level-error">Down</span></td>
@@ -70,8 +66,7 @@
           <td>1 hr ago</td>
           <td class="actions"><button class="btn btn-sm btn-secondary">Edit</button></td>
         </tr>
-        <tr>
-          <td><input type="checkbox"></td>
+        <tr class="row-panel-active">
           <td><a href="#">sensor-yard-03</a></td>
           <td class="mono">198.51.100.52</td>
           <td><span class="badge badge-passive">Passive</span></td>
@@ -96,7 +91,10 @@
       element selector inside <code>.table-wrapper</code>. Loading and empty states are a single
       row of <code>&lt;td colspan="N" class="empty-state"&gt;</code>. Identifiers get
       <code>.mono</code>; a row tied to an open slide-over gets
-      <code>tr.row-panel-active</code>.
+      <code>tr.row-panel-active</code>. There is no checkbox column: rows are selected by
+      clicking them (click, drag, Shift / Ctrl+click), a selected row is
+      <code>tr.selected</code>, and the bulk bar drops <code>.bulk-bar-idle</code> while
+      anything is selected.
     </p>
   </div>
 </body>

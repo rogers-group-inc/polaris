@@ -416,10 +416,10 @@
   }
 
   // Link colours per palette family. The dark set is the 300/400 Tailwind
-  // shades; on the daylight grounds (noon #f1efec, morning #eed9b2) those
+  // shades; on the daylight grounds (noon #eae8e5, morning #e8d4ad) those
   // measured 1.3–2.4:1 — the cyan wireless and amber LLDP lines all but
   // vanished — so the light set steps each hue down to its 600/700 shade,
-  // ≥ 3.4:1 on morning and ≥ 4.1:1 on noon (WCAG non-text minimum 3:1).
+  // ≥ 3.2:1 on morning and ≥ 3.8:1 on noon (WCAG non-text minimum 3:1).
   // Same hue per link kind in both families, so the legend reads the same.
   // The legend (topologyLegendSpec) reads this table — change them together.
   var EDGE_COLORS = {

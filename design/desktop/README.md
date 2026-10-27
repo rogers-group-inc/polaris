@@ -142,17 +142,26 @@ padding. Sticky variant of the header: `.page-header-sticky`.
   recedes inside a `.card` of the same colour — demonstrate and use it on the page ground.
 - **Tables** — the centrepiece, and **the `<table>` itself carries no class**: it is styled
   by element selector inside `.table-wrapper.table-wrapper-sticky > table > thead/tbody`.
-  Checkbox column `th.cb-col`; identifiers get `.mono`; the row tied to an open panel is
-  `tr.row-panel-active`; cell buttons live in `td.actions`. Empty and loading states are
-  one row of `<td colspan="N" class="empty-state">`. The selection bar above the table is
-  always present — `.bulk-bar.bulk-bar-idle > .bulk-bar-count`, dropping `-idle` once rows
-  are selected. View tabs: `.table-tabs > .table-tab`.
+  There is **no checkbox column**: rows are selected by clicking them (click, drag, Shift /
+  Ctrl+click, Ctrl+A; a click off the table clears) and a selected row is `tr.selected`.
+  Identifiers get `.mono`; the row tied to an open panel is `tr.row-panel-active`; cell
+  buttons live in `td.actions`. Empty and loading states are one row of
+  `<td colspan="N" class="empty-state">`. The selection bar above the table is always
+  present — `.bulk-bar.bulk-bar-idle > .bulk-bar-count`, dropping `-idle` once rows are
+  selected, when its live buttons take `map-btn-shadow`. A per-row setting is a switch
+  button (Monitored / Unmonitored), never a checkbox. A page-level table that is not in a
+  folder card sits in `.glass-table-card`. View tabs: `.table-tabs > .table-tab`.
 - **Badges** — `.badge` plus a semantic variant: `badge-active`, `badge-available`,
   `badge-reserved`, `badge-expired`, `badge-conflict`, `badge-deprecated`,
   `badge-released`, `badge-decommissioned`, `badge-disabled`, `badge-maintenance`,
   `badge-admin`, `badge-readonly`, `badge-v4`, `badge-v6`,
   `badge-level-info|warning|error|critical`. Reuse the closest; don't mint colours. Add
-  `.badge-clickable` when the pill is a control.
+  `.badge-clickable` when the pill is a control. Every status pill in the app — badges,
+  role / tag pills, widget, capacity and firmware pills — is one family: fully round, an
+  18% tint of its colour, the label darkened on daylight (lightened on nightfall) so it
+  always reads, and a border at 45% of that label. A colour computed at runtime is
+  `class="badge hue-pill" style="--hue:…"`; never an inline fill, border or radius. Toasts
+  (`.toast-success|error|warning|info`) take the same recipe over the floating glass.
 - **Cards & metrics** — `.card > .card-title`; `.kpi-grid > .kpi-card > .kpi-label +
   .kpi-value`, the grid being `repeat(auto-fit, minmax(180px,1fr))` at 10px. Utilisation
   bars are `.util-row > .util-bar-track > .util-bar-fill`.

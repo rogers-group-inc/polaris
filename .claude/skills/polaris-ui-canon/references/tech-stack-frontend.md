@@ -41,8 +41,8 @@ degrades to the right palette instead of the opposite one.
 **Link and location-box colours are per family** (since 2026-10-16). `EDGE_COLORS.dark` is
 the original 300/400 pastel set; on the daylight grounds those measured 1.3–2.4:1 (cyan
 wireless, amber LLDP and the sky-blue building box all but vanished), so `EDGE_COLORS.light`
-and `LOC_GROUP_KINDS[kind].colorLight` step each hue to its 600/700 shade — ≥ 3.4:1 on
-morning's `#eed9b2`, ≥ 4.1:1 on noon's `#f1efec` (WCAG non-text 3:1). Same hue per kind in
+and `LOC_GROUP_KINDS[kind].colorLight` step each hue to its 600/700 shade — ≥ 3.2:1 on
+morning's `#e8d4ad`, ≥ 3.8:1 on noon's `#eae8e5` (WCAG non-text 3:1). Same hue per kind in
 both families. `locGroupColor(kind, family?)` and `topologyLegendSpec(family?)` resolve the
 family like the stylesheet does (`paletteFamily`, omitted → the document's), so the hulls,
 their tooltip and the legend follow the canvas; `map.js`'s `data-theme` observer also

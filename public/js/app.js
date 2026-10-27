@@ -3492,6 +3492,223 @@ document.addEventListener("change", function (e) {
   if (tr) tr.classList.toggle("selected", cb.checked);
 });
 
+// ─── Row selection: click, drag, Shift+click, Ctrl+click ────────────────────
+// Every list table whose rows carry a `td.cb-col` checkbox is selected by
+// clicking the ROW, the way a file explorer selects files: click = this row
+// only, Ctrl/⌘+click = toggle, Shift+click = range from the last click,
+// click-and-drag = range (Ctrl+drag adds to what was already selected),
+// Ctrl/⌘+A = every row of the table last clicked. The checkbox column is
+// hidden (styles.css, table-sf.js) but the boxes stay as the state carrier:
+// this controller sets them and fires a bubbling `change`, so each page's own
+// change listener — the selection Set, the bulk bar, `tr.selected` above —
+// keeps working without knowing how the row was picked.
+//
+// A plain click or plain drag REPLACES the selection, and a page whose
+// selection outlives the visible rows (the Assets list keeps picks across
+// pages) hears `polaris:rowselect-clear` on the tbody first, so it can drop
+// the off-page ones too.
+var ROW_SELECT_SKIP = "a, button, input, select, textarea, label, summary, [contenteditable], " +
+  "[role=button], .row-menu-trigger, [data-row-menu], .fav-star, .copy-on-click, [data-no-row-select]";
+var _rowSel = null;          // the gesture in progress
+var _rowSelLastTbody = null; // Ctrl+A's target
+var _rowSelAnchor = null;    // Shift+click's start row
+
+function _rowSelectBox(tr) {
+  if (!tr || !tr.cells) return null;
+  for (var i = 0; i < tr.cells.length; i++) {
+    if (!tr.cells[i].classList.contains("cb-col")) continue;
+    var cb = tr.cells[i].querySelector("input[type=checkbox]");
+    return cb && !cb.disabled ? cb : null;
+  }
+  return null;
+}
+function _rowSelectRows(tbody) {
+  return Array.prototype.filter.call(tbody.children, function (tr) {
+    return tr.tagName === "TR" && tr.style.display !== "none" && _rowSelectBox(tr);
+  });
+}
+function _rowSelectSet(tr, on) {
+  var cb = _rowSelectBox(tr);
+  if (!cb || cb.checked === on) return;
+  cb.checked = on;
+  cb.dispatchEvent(new window.Event("change", { bubbles: true }));
+}
+function _rowSelectClearOthers(tbody, keep) {
+  tbody.dispatchEvent(new window.CustomEvent("polaris:rowselect-clear", { bubbles: true }));
+  _rowSelectRows(tbody).forEach(function (tr) { if (tr !== keep) _rowSelectSet(tr, false); });
+}
+// Rows between the anchor and `cur` take `state`; the rest go back to what they
+// were when the gesture began (additive) or off (replacing).
+function _rowSelectApplyRange(g, cur) {
+  var rows = _rowSelectRows(g.tbody);
+  var a = rows.indexOf(g.anchor), b = rows.indexOf(cur);
+  if (a < 0 || b < 0) return;
+  var lo = Math.min(a, b), hi = Math.max(a, b);
+  rows.forEach(function (tr, i) {
+    if (i >= lo && i <= hi) _rowSelectSet(tr, g.state);
+    else _rowSelectSet(tr, g.additive ? g.base.has(tr) : false);
+  });
+}
+function _rowSelectScroller(el) {
+  for (var n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+    var oy = window.getComputedStyle(n).overflowY;
+    if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight) return n;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+function _rowSelectRowOf(g, el) {
+  var tr = el && el.closest ? el.closest("tr") : null;
+  return tr && tr.parentNode === g.tbody && _rowSelectBox(tr) ? tr : null;
+}
+function _rowSelectRowAt(g, x, y) {
+  return _rowSelectRowOf(g, document.elementFromPoint(x, y));
+}
+// Holding the pointer near the top or bottom edge of the scrolling box keeps
+// the drag going past what is on screen.
+function _rowSelectAutoScroll() {
+  var g = _rowSel;
+  if (!g || !g.dragging) return;
+  var box = g.scroller.getBoundingClientRect();
+  var top = Math.max(box.top, 0), bottom = Math.min(box.bottom, window.innerHeight);
+  var EDGE = 32, step = 0;
+  if (g.y < top + EDGE) step = -Math.ceil((top + EDGE - g.y) / 3);
+  else if (g.y > bottom - EDGE) step = Math.ceil((g.y - (bottom - EDGE)) / 3);
+  if (step) {
+    g.scroller.scrollTop += step;
+    var tr = _rowSelectRowAt(g, g.x, Math.min(Math.max(g.y, top + 2), bottom - 2));
+    if (tr && tr !== g.last) { g.last = tr; _rowSelectApplyRange(g, tr); }
+  }
+  g.raf = window.requestAnimationFrame(_rowSelectAutoScroll);
+}
+
+// Clicking off a table clears its selection. "Off" excludes what acts ON the
+// selection (the bulk bar, its menus, the page buttons — the Assets list keeps
+// picks across pages) and anything floating over the page (a dialog, a menu, a
+// slide-over) unless the table itself lives in it, so the Alerts tab's picks
+// clear on a click elsewhere in the asset panel while the Assets list's survive
+// a confirm dialog. A press on a scrollbar is not a click off either.
+var ROW_SELECT_KEEP = ".bulk-bar, #pagination, .pagination, .slideover-pagination, .page-controls, [data-keep-selection]";
+var ROW_SELECT_FLOATING = "#modal-overlay, .modal-overlay, .slideover, .slideover-overlay, [role=dialog], [role=menu], " +
+  ".row-context-menu, .sf-multi-popover, .toast-container";
+function _rowSelectOnScrollbar(t, e) {
+  if (!t.getBoundingClientRect || !(t.clientWidth || t.clientHeight)) return false;
+  var r = t.getBoundingClientRect();
+  return e.clientX >= r.left + t.clientLeft + t.clientWidth || e.clientY >= r.top + t.clientTop + t.clientHeight;
+}
+function _rowSelectClickOff(t, e) {
+  if (t.closest(ROW_SELECT_KEEP) || _rowSelectOnScrollbar(t, e)) return;
+  var tbodies = [];
+  document.querySelectorAll("td.cb-col input[type=checkbox]:checked").forEach(function (cb) {
+    var tb = cb.closest("tbody");
+    if (tb && tbodies.indexOf(tb) < 0) tbodies.push(tb);
+  });
+  // Also the table last clicked, so a page holding picks only on other pages
+  // (nothing checked on screen) still hears the clear.
+  if (_rowSelLastTbody && _rowSelLastTbody.isConnected && tbodies.indexOf(_rowSelLastTbody) < 0) tbodies.push(_rowSelLastTbody);
+  var floating = t.closest(ROW_SELECT_FLOATING);
+  tbodies.forEach(function (tb) {
+    var table = tb.closest("table") || tb;
+    if (table.contains(t)) return;
+    if (floating && !floating.contains(tb)) return;
+    _rowSelectClearOthers(tb, null);
+    if (_rowSelAnchor && _rowSelAnchor.parentNode === tb) _rowSelAnchor = null;
+  });
+}
+
+document.addEventListener("mousedown", function (e) {
+  if (e.button !== 0) return;
+  var t = e.target;
+  if (!t || !t.closest) return;
+  _rowSelectClickOff(t, e);
+  var tr = t.closest("tr");
+  if (!tr || !tr.parentNode || tr.parentNode.tagName !== "TBODY" || !_rowSelectBox(tr)) return;
+  var skip = t.closest(ROW_SELECT_SKIP);
+  if (skip && tr.contains(skip)) return;
+  var tbody = tr.parentNode;
+  _rowSelLastTbody = tbody;
+  var ctrl = e.ctrlKey || e.metaKey;
+  var anchorOk = _rowSelAnchor && _rowSelAnchor.parentNode === tbody && _rowSelectBox(_rowSelAnchor);
+  if (e.shiftKey) {
+    // Shift+click: no drag, no text selection, anchor stays put.
+    e.preventDefault();
+    var anchor = anchorOk ? _rowSelAnchor : tr;
+    if (!ctrl) tbody.dispatchEvent(new window.CustomEvent("polaris:rowselect-clear", { bubbles: true }));
+    _rowSelectApplyRange({ tbody: tbody, anchor: anchor, state: true, additive: ctrl,
+      base: new Set(_rowSelectRows(tbody).filter(function (r) { return _rowSelectBox(r).checked; })) }, tr);
+    return;
+  }
+  var base = new Set(_rowSelectRows(tbody).filter(function (r) { return _rowSelectBox(r).checked; }));
+  _rowSelAnchor = tr;
+  _rowSel = {
+    tbody: tbody, anchor: tr, last: tr, additive: ctrl, base: base,
+    // Ctrl paints the clicked row's NEW state across the drag; a plain drag selects.
+    state: ctrl ? !_rowSelectBox(tr).checked : true,
+    ctrl: ctrl, dragging: false, x: e.clientX, y: e.clientY, raf: 0,
+    scroller: _rowSelectScroller(tbody),
+  };
+  if (ctrl) {
+    // Ctrl+click acts on press, so Ctrl+drag starts from a settled row.
+    e.preventDefault();
+    _rowSelectSet(tr, _rowSel.state);
+  }
+});
+
+document.addEventListener("mousemove", function (e) {
+  var g = _rowSel;
+  if (!g) return;
+  if (!(e.buttons & 1)) { _rowSelectEnd(true); return; }
+  g.x = e.clientX; g.y = e.clientY;
+  var tr = _rowSelectRowOf(g, e.target);
+  if (!g.dragging) {
+    // A drag inside one row is left alone (it may be selecting text in a cell);
+    // it becomes a row drag the moment it reaches another row.
+    if (!tr || tr === g.anchor) return;
+    g.dragging = true;
+    document.body.classList.add("row-select-dragging");
+    try { window.getSelection().removeAllRanges(); } catch (_) { /* no selection API */ }
+    if (!g.additive) g.tbody.dispatchEvent(new window.CustomEvent("polaris:rowselect-clear", { bubbles: true }));
+    g.raf = window.requestAnimationFrame(_rowSelectAutoScroll);
+  }
+  if (tr && tr !== g.last) { g.last = tr; _rowSelectApplyRange(g, tr); }
+});
+
+function _rowSelectEnd(aborted) {
+  var g = _rowSel;
+  if (!g) return;
+  _rowSel = null;
+  if (g.raf) window.cancelAnimationFrame(g.raf);
+  document.body.classList.remove("row-select-dragging");
+  if (aborted || g.dragging || g.ctrl) return;
+  // A plain click. Text the operator just highlighted inside the row is a copy,
+  // not a pick.
+  var sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed && g.anchor.contains(sel.anchorNode)) return;
+  var cb = _rowSelectBox(g.anchor);
+  if (!cb) return;
+  var onlyThis = cb.checked && g.base.size === 1;
+  _rowSelectClearOthers(g.tbody, g.anchor);
+  // Clicking the one selected row again deselects it — a table has no empty
+  // space to click to clear a single pick.
+  _rowSelectSet(g.anchor, !onlyThis);
+}
+document.addEventListener("mouseup", function (e) { if (e.button === 0) _rowSelectEnd(false); });
+window.addEventListener("blur", function () { _rowSelectEnd(true); });
+
+document.addEventListener("keydown", function (e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || (e.key !== "a" && e.key !== "A")) return;
+  var t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  var tbody = _rowSelLastTbody;
+  if (!tbody || !tbody.isConnected || !tbody.offsetParent) return;
+  // Not through a dialog: a modal opened over the list owns the keyboard.
+  var modal = document.querySelector("#modal-overlay.open, .modal-overlay.open");
+  if (modal && !modal.contains(tbody)) return;
+  var rows = _rowSelectRows(tbody);
+  if (!rows.length) return;
+  e.preventDefault();
+  rows.forEach(function (tr) { _rowSelectSet(tr, true); });
+});
+
 /**
  * Reveal an overlay that animates in: add `.open` on the next animation frame
  * so the transition has a start state, with a timeout floor because

@@ -32,20 +32,20 @@ const g = globalThis as Record<string, any>;
 
 const AVAIL = 1000;
 
-// cb (utility, pinned to FIXED_COL_W = 34px) | fixed (static-width, declared
+// fav (utility, pinned to FIXED_COL_W = 34px) | fixed (static-width, declared
 // 100px) | three resizable columns, the last of which is the auto-fill one.
 const TABLE_HTML = `
   <div class="table-wrapper">
     <table>
       <thead><tr>
-        <th class="cb-col"></th>
+        <th class="fav-col"></th>
         <th style="width:100px" data-col-no-resize="true" data-col-id="badge">Badge</th>
         <th data-col-id="hostname">Hostname</th>
         <th data-col-id="ip">IP Address</th>
         <th data-col-id="created">Created</th>
       </tr></thead>
       <tbody id="tb">
-        <tr><td class="cb-col">cb</td><td>b</td><td>host-1</td><td>10.0.0.1</td><td>Apr 17</td></tr>
+        <tr><td class="fav-col">cb</td><td>b</td><td>host-1</td><td>10.0.0.1</td><td>Apr 17</td></tr>
       </tbody>
     </table>
   </div>`;
@@ -111,7 +111,7 @@ beforeEach(() => { setup(); });
 
 describe("column fit — spending the leftover width", () => {
   it("spreads slack across every resizable column, proportionally", () => {
-    // 1000 available − 34 (cb) − 100 (static) = 866 for the three resizable
+    // 1000 available − 34 (fav) − 100 (static) = 866 for the three resizable
     // columns, whose base widths sum to 400 → ×2.165 each, and the auto-fill
     // column takes the rounding remainder so the row still sums to 1000.
     layout.setPrefs({ widths: { hostname: 100, ip: 200, created: 100 } });
@@ -125,7 +125,7 @@ describe("column fit — spending the leftover width", () => {
     layout.setPrefs({ widths: { hostname: 100, ip: 200, created: 100, badge: 999 } });
 
     expect(widthOf("badge")).toBe(100);      // declared width is the source of truth
-    expect(colWidths()[0]).toBe(34);         // cb-col pin (FIXED_COL_W)
+    expect(colWidths()[0]).toBe(34);         // fav-col pin (FIXED_COL_W)
   });
 
   it("leaves no trailing gap — the visible columns sum to the container width", () => {
