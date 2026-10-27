@@ -12971,10 +12971,9 @@ function _captureChartAsPng(container, meta, callback) {
 
     // Build header. Line 1 is "<Title> — <Subject>" (subject = interface or
     // tunnel name when the chart is in a sub-panel). Line 2 is the asset.
-    // Line 3 (when the chart is on a custom window) is the From/To range —
-    // preset ranges are implied by the x-axis, but a custom window needs to
-    // travel with the image. Line 4 is an optional stats summary (same one
-    // shown above the chart).
+    // Line 3 is the From/To range — the x-axis ticks carry only times of
+    // day, so the date has to travel with the image. Line 4 is an optional
+    // stats summary (same one shown above the chart).
     var titleParts = [];
     if (meta.title)   titleParts.push(meta.title);
     if (meta.subject) titleParts.push(meta.subject);
