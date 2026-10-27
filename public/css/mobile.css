@@ -1269,6 +1269,10 @@ input, select, textarea { font-family: inherit; }
   z-index: 901;
   transition: transform .25s ease;
   will-change: transform;
+  /* One height on every page — the asset page, Storage, an interface — so
+     paging through the sheet never resizes it under the operator's thumb.
+     A short page leaves glass below its content rather than shrinking. */
+  height: 80vh;
   max-height: 80vh;
   /* Anchor the sheet ABOVE the bottom navbar (+ safe area) so the nav
      stays visible while the asset is open. The navbar's own z-index is
@@ -1313,6 +1317,10 @@ input, select, textarea { font-family: inherit; }
   z-index: 4;
   margin: 0 -24px;
   padding: 0 24px;
+  /* A new block formatting context, so the handle's 12px top margin stays
+     INSIDE the band. Collapsed through it, the band began 12px down at rest
+     and jumped up to top: 0 on the first scroll — the header shifted. */
+  display: flow-root;
   border-radius: var(--shape-xl) var(--shape-xl) 0 0;
   background: transparent;
 }

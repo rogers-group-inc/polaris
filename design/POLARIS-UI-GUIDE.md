@@ -821,7 +821,8 @@ Everything adapts by being fluid instead:
 - **Full-width components.** `.m3-searchbar`, `.asset-card`, `.list-item`,\n  `.sheet`, `.snackbar` sit on a fixed 16px side margin and stretch. Nothing\n  is a fixed pixel width.
 - **Overflow rows scroll, they don't wrap.** `.chip-row` is `overflow-x: auto`\n  with the scrollbar hidden.
 - **Text truncates rather than reflows.** `.headline`, `.asset-card .name` and\n  the topbar `.title` are ellipsis-clipped, so a narrow screen loses\n  characters instead of gaining lines and shifting everything below.
-- **Sheets are viewport-bounded**, not content-bounded: `max-height: 90vh`\n  (`.sheet`) / `80vh` (`.asset-sheet`), anchored at\n  `calc(var(--navbar-h) + env(safe-area-inset-bottom))`.
+- **Sheets are viewport-bounded**, not content-bounded: `max-height: 90vh`\n  (`.sheet`) / a fixed `height: 80vh` (`.asset-sheet`, so paging it never
+  resizes it), anchored at\n  `calc(var(--navbar-h) + env(safe-area-inset-bottom))`.
 - **Device chrome** is the only true per-device variation handled explicitly,\n  via `env(safe-area-inset-*)` on `.app` in standalone.
 
 Practical range is ~320px to tablet width, either way up. The tightest point is\nthe navbar at 320px — 64px pills in 64px columns with labels like "Reserved"\nat 12px. If a tab label doesn't fit there, shorten the label; don't shrink the\npill or drop to four columns.
