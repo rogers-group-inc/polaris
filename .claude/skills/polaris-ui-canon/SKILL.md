@@ -27,7 +27,7 @@ pattern skips the canvas unless its look changes. A UI commit that touches
 
 | You are building or changing… | Read |
 |---|---|
-| a list page, table, column chooser, pagination, row verbs, a filter box; page tabs / view tabs as folder tabs, the page card a tabbed page's panels sit in (`.folder-card`, `.table-head-row`), a table or calendar filling it, the page navigation below it | [references/canon-tables-lists.md](references/canon-tables-lists.md) |
+| a list page, table, column chooser, pagination, row verbs, a filter box; selecting rows (click, drag, Shift / Ctrl+click, Ctrl+A — there is no checkbox column), a per-row Monitored / Unmonitored switch; page tabs / view tabs as folder tabs, the page card a tabbed page's panels sit in (`.folder-card`, `.table-head-row`), a table or calendar filling it, the page navigation below it | [references/canon-tables-lists.md](references/canon-tables-lists.md) |
 | a modal, a dialog over a modal, an integration dialog, a wizard, the condition builder, a slide-over, a blocking overlay, a standalone page, a floating draggable tool window (the AI assistant chat) | [references/canon-modals-wizards.md](references/canon-modals-wizards.md) |
 | a chart, a dashboard widget, the polling-method subtabs | [references/canon-charts-widgets.md](references/canon-charts-widgets.md) |
 | anything on the phone SPA (bottom sheet, a sheet other sheets stack on, pull-to-refresh, a list tab's filter + sort toolbar, keyboard fit, the theme strip, orientation — portrait / landscape, rotating the phone, why there is no orientation lock or rotate prompt, the notch's side insets) | [references/canon-mobile.md](references/canon-mobile.md) |

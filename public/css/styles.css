@@ -4580,6 +4580,29 @@ table:not([data-sf-table-id]) th.cb-col { width: 34px; }
    header cell the input centred vertically and read as an extra empty header
    row. text-align:center on the cell does the horizontal centering. */
 th.cb-col input, td.cb-col input { margin: 0; vertical-align: middle; }
+/* The Interfaces table's Monitored / Unmonitored switch (assets.js →
+   _ifaceMonToggleHTML): one button per row, filled accent when on. */
+.iface-mon-toggle {
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.iface-mon-toggle:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-text); }
+.iface-mon-toggle.is-on {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+.iface-mon-toggle:disabled { cursor: default; opacity: 0.7; }
+.iface-mon-all { font-weight: 600; }
 th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; padding: 0 1px; }
 .fav-star {
   background: none;

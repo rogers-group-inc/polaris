@@ -701,10 +701,15 @@ report the link. A FortiAP shortens the parent's name, so `w01.12` nests under
 the nesting and sorts the parents, with each parent's rows sorted under it. A
 filter drops the section headings and arrows and shows every matching row. A
 member still nests under its aggregate when both match. A member whose aggregate
-is filtered out is listed on its own, marked with a **Member** badge. Each row has its own **Poll 1m** box. Pin
-the aggregate to chart the link as a whole, and pin its members to see how the
-load splits across them or which member went quiet. The header checkbox pins
-or unpins every listed row, members and VLAN sub-interfaces included.
+is filtered out is listed on its own, marked with a **Member** badge. Each row has its own
+**Monitored** / **Unmonitored** button. Click it to switch the interface
+between the two: a monitored interface is polled every minute and records the
+history you can chart and alert on, an unmonitored one shows only its current
+state. Monitor the aggregate to chart the link as a whole, and monitor its
+members to see how the load splits across them or which member went quiet. The
+header button reads **Monitor all** (or **Unmonitor all** once every listed row
+is monitored) and switches every listed row, members and VLAN sub-interfaces
+included. Rows hidden by a filter keep their setting.
 
 **Clear the filters in one click.** Each table in the asset panel that has
 column filters (Interfaces, IPsec, Software, Services and Events) has a

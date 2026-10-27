@@ -9194,9 +9194,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     // Every row is pinnable on its own, aggregate members included: the trunk
     // answers "how busy is the link", but only the members show how the load
     // splits across it, or which leg of a LAG went quiet.
-    var checked  = isPinned ? " checked" : "";
-    var disabled = canEdit ? "" : " disabled";
-    var checkbox = '<input type="checkbox" class="asset-iface-toggle" data-ifname="' + escapeHtml(iface.ifName) + '"' + checked + disabled + ' title="Poll this interface every minute for fast-cadence monitoring">';
+    var checkbox = _ifaceMonToggleHTML(iface.ifName, isPinned, canEdit);
 
     var prefix = "", padStyle = "";
     if (opts.isParent) {
@@ -9529,11 +9527,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     ? '<th data-col-id="poe" data-sf-key="poe" data-sf-options="" title="Power over Ethernet: detection status and the negotiated power CLASS (a budget bracket, e.g. class3 = up to 12.95 W at the powered device). POWER-ETHERNET-MIB defines no per-port wattage, so no draw is shown. SNMP only.">PoE</th>'
     : "";
   container.innerHTML = staleBanner +
-    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">The <strong>Poll&nbsp;1m</strong> column selects interfaces for fast-cadence polling and <strong>history</strong>. Every interface below shows its current state; only selected ones record history you can chart or alert on throughput.' +
+    '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">A <strong>Monitored</strong> interface is polled every minute and records <strong>history</strong>; click its button to switch it between Monitored and Unmonitored. Every interface below shows its current state; only monitored ones record history you can chart or alert on throughput.' +
       (ipsecCount > 0 ? ' ' + _ipsecTabPointerHTML(ipsecCount) : '') + '</p>' +
     '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-iface-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
-      '<th title="Pin this interface for fast-cadence polling + history. Unselected interfaces still show current state here, but record no history to chart." style="width:32px" data-col-id="poll" data-col-required="true">' +
-        '<input type="checkbox" id="iface-poll-all" title="Select / de-select every listed interface for fast-cadence polling (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>' +
+      '<th title="Monitored interfaces are polled every minute and record history. Unmonitored interfaces still show current state here, but record no history to chart." style="width:112px" data-col-id="poll" data-col-required="true" data-col-no-resize="true">' +
+        '<button type="button" class="iface-mon-toggle iface-mon-all" id="iface-poll-all" title="Switch every listed interface (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>Monitor all</button>' +
       '</th>' +
       '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="string">Interface</th>' +
       '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
@@ -9764,6 +9762,23 @@ function _sizeAssetIfaceTableWrapper() {
 }
 window.addEventListener("resize", _sizeAssetIfaceTableWrapper);
 
+/** The Interfaces table's per-row switch: one button that reads Monitored or
+ *  Unmonitored and flips on click (_wireInterfacesTable). */
+function _ifaceMonToggleHTML(ifName, on, canEdit) {
+  return '<button type="button" class="iface-mon-toggle asset-iface-toggle' + (on ? ' is-on' : '') + '"' +
+    ' data-ifname="' + escapeHtml(ifName) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' +
+    (canEdit ? '' : ' disabled') +
+    ' title="' + (on ? 'Polled every minute with history — click to stop' : 'Current state only — click to poll every minute and record history') + '">' +
+    (on ? 'Monitored' : 'Unmonitored') + '</button>';
+}
+function _ifaceMonIsOn(btn) { return btn.getAttribute("aria-pressed") === "true"; }
+function _ifaceMonSet(btn, on) {
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.classList.toggle("is-on", on);
+  btn.textContent = on ? "Monitored" : "Unmonitored";
+  btn.title = on ? "Polled every minute with history — click to stop" : "Current state only — click to poll every minute and record history";
+}
+
 /** Distinct, non-empty, alphabetically sorted values — multi-select options. */
 function _distinctSorted(values) {
   var seen = {};
@@ -9797,23 +9812,24 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
     next.forEach(function (v) { set.add(v); });
   }
 
-  // Header select-all checkbox — mirrors the aggregate state of every Poll 1m
-  // checkbox currently in the table (collapsed rows included): checked = all
-  // pinned, indeterminate = some.
+  // Header button — offers "Monitor all" until every row button in the table
+  // (collapsed rows included) reads Monitored, then "Unmonitor all".
   var ifaceAllCb = container.querySelector("#iface-poll-all");
   function syncIfaceAllCb() {
     if (!ifaceAllCb) return;
     var boxes = container.querySelectorAll(".asset-iface-toggle");
     var on = 0;
-    boxes.forEach(function (b) { if (b.checked) on++; });
-    ifaceAllCb.checked = boxes.length > 0 && on === boxes.length;
-    ifaceAllCb.indeterminate = on > 0 && on < boxes.length;
+    boxes.forEach(function (b) { if (_ifaceMonIsOn(b)) on++; });
+    var allOn = boxes.length > 0 && on === boxes.length;
+    ifaceAllCb.textContent = allOn ? "Unmonitor all" : "Monitor all";
+    ifaceAllCb.setAttribute("data-next", allOn ? "off" : "on");
+    if (canEdit) ifaceAllCb.disabled = boxes.length === 0;
   }
   syncIfaceAllCb();
   if (state.afterRender) state.afterRender.push(syncIfaceAllCb);
   if (canEdit && asset && ifaceAllCb) {
-    ifaceAllCb.addEventListener("change", async function () {
-      var on = ifaceAllCb.checked;
+    ifaceAllCb.addEventListener("click", async function () {
+      var on = ifaceAllCb.getAttribute("data-next") !== "off";
       var ifaceBoxes  = container.querySelectorAll(".asset-iface-toggle");
       // Select-all covers the LISTED rows and leaves everything else pinned as
       // it was — with a filter active the operator can't see the rest, and
@@ -9832,8 +9848,8 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
         replaceSet(monitored, nextIf);
         if (si)    si.monitoredInterfaces    = Array.from(nextIf);
         if (asset) asset.monitoredInterfaces = Array.from(nextIf);
-        ifaceBoxes.forEach(function (b) { b.checked = on; });
-        showToast(on ? "Fast-polling every listed interface" : "Stopped fast-polling the listed interfaces");
+        ifaceBoxes.forEach(function (b) { _ifaceMonSet(b, on); });
+        showToast(on ? "Monitoring every listed interface" : "Stopped monitoring the listed interfaces");
       } catch (err) {
         showToast(err.message || "Failed to update", "error");
       } finally {
@@ -9845,14 +9861,15 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
 
   if (!tbody) return;
 
-  // Poll 1m checkboxes — interface rows write monitoredInterfaces.
-  tbody.addEventListener("change", async function (e) {
-    var cb = e.target;
-    if (!cb || !cb.classList || !cb.classList.contains("asset-iface-toggle")) return;
+  // Monitored / Unmonitored buttons — interface rows write monitoredInterfaces.
+  tbody.addEventListener("click", async function (e) {
+    var cb = e.target && e.target.closest ? e.target.closest(".asset-iface-toggle") : null;
+    if (!cb || cb.disabled) return;
     if (!canEdit || !asset) return;
     var name = cb.getAttribute("data-ifname");
+    var on = !_ifaceMonIsOn(cb);
     var next = new Set(monitored);
-    if (cb.checked) next.add(name); else next.delete(name);
+    if (on) next.add(name); else next.delete(name);
     var patch = { monitoredInterfaces: Array.from(next) };
     cb.disabled = true;
     try {
@@ -9860,9 +9877,9 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       replaceSet(monitored, next);
       if (si) si.monitoredInterfaces = Array.from(next);
       if (asset) asset.monitoredInterfaces = Array.from(next);
-      showToast(cb.checked ? ("Polling " + name + " every minute") : ("Stopped fast-polling " + name));
+      _ifaceMonSet(cb, on);
+      showToast(on ? ("Monitoring " + name + " every minute") : ("Stopped monitoring " + name));
     } catch (err) {
-      cb.checked = !cb.checked;
       showToast(err.message || "Failed to update", "error");
     } finally {
       cb.disabled = false;
