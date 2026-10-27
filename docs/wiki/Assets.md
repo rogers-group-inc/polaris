@@ -713,6 +713,9 @@ port. See [rule 133](Business-Rules#rule-133).
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
+It opens inside the asset details panel, in place of the tabs: use the
+**‹** back button at the top left (or **Alt+Left**, or **Esc**) to return to
+the asset, on the tab and scroll position you left.
 Right-click it for **Open interface** and, when the interface's address sits
 inside a network Polaris knows, **Open network**; *Open network* slides
 that network's address table in over the asset, scrolled to the address. The

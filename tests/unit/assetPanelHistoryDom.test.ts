@@ -69,6 +69,12 @@ const FN_NAMES = [
   "_focusAssetPanelNav",
   "_assetPanelGo",
   "_ensureAssetPanelDOM",
+  "_assetHistoryOpenIface",
+  "_assetHistoryEntryName",
+  "_showAssetPanelView",
+  "_isIfaceViewOpen",
+  "_assetPanelEscape",
+  "_isOverlayOpen",
 ];
 
 // The sliced functions call each other by name, so they have to land on
@@ -121,6 +127,9 @@ beforeEach(() => {
   g._handleMonitorPillClick = vi.fn();
   g.closeAssetPanel = vi.fn();
   g.openViewModal = vi.fn(async () => {});
+  g.openInterfaceDetailPanel = vi.fn();
+  g._clearIfaceRefreshTimer = vi.fn();
+  g._currentAssetForRefresh = null;
 });
 
 describe("asset panel history — reducer", () => {
@@ -321,5 +330,123 @@ describe("asset panel history — Alt+arrow chord", () => {
     resetState([{ id: "A" }, { id: "B" }], 1);
     press("ArrowLeft");
     expect(g.openViewModal).not.toHaveBeenCalled();
+  });
+});
+
+describe("asset panel history — interface page", () => {
+  // Clicking an interface on the System tab loads it INSIDE the asset panel as
+  // an entry of its own, so ‹ returns to the asset instead of the operator
+  // closing a second slide-over stacked on top.
+  const panel = () => document.getElementById("asset-panel") as HTMLElement;
+  const shown = (id: string) => {
+    const el = document.getElementById(id) as HTMLElement;
+    // happy-dom has no layout; read the view attribute the CSS keys on.
+    const iface = panel().getAttribute("data-view") === "iface";
+    return el.classList.contains("asset-panel-iface-only") ? iface : !iface;
+  };
+
+  it("pushes an interface of the current asset as its own entry, carrying the asset's label", () => {
+    const s = g._assetHistoryOpenIface({ entries: [{ id: "A", label: "gate" }], idx: 0 }, "A", "port1", { ifName: "port1" });
+    expect(s.idx).toBe(1);
+    expect(s.entries[1]).toEqual({ id: "A", label: "gate", iface: { ifName: "port1", row: { ifName: "port1" } } });
+  });
+
+  it("treats re-opening the interface on screen as a refresh", () => {
+    const before = { entries: [{ id: "A", label: null }, { id: "A", label: null, iface: { ifName: "port1", row: null } }], idx: 1 };
+    expect(g._assetHistoryOpenIface(before, "A", "port1", null)).toBe(before);
+    // A different port of the same asset is a visit.
+    expect(g._assetHistoryOpenIface(before, "A", "port2", null).entries).toHaveLength(3);
+  });
+
+  it("makes opening the asset from its own interface page a visit, not a refresh", () => {
+    const before = { entries: [{ id: "A", label: null }, { id: "A", label: null, iface: { ifName: "port1", row: null } }], idx: 1 };
+    const after = g._assetHistoryOpen(before, "A", false);
+    expect(after.entries).toHaveLength(3);
+    expect(after.entries[2].iface).toBeUndefined();
+  });
+
+  it("names the interface and its asset in the tooltip", () => {
+    mountPanel();
+    resetState([{ id: "A", label: "HARBOR-61F-1" }]);
+    g._assetPanelHistory.entries.push({ id: "A", label: "HARBOR-61F-1", iface: { ifName: "port1", row: null } });
+    g._assetPanelHistory.idx = 0;
+    g._renderAssetPanelNav();
+    expect(fwdBtn().title).toBe("Forward to port1 on HARBOR-61F-1 (Alt+Right)");
+  });
+
+  it("swaps the header, body and footer between the two pages", () => {
+    mountPanel();
+    expect(shown("asset-panel-body")).toBe(true);
+    expect(shown("iface-panel-body")).toBe(false);
+    g._showAssetPanelView("iface");
+    for (const id of ["asset-panel-title", "asset-panel-tabs", "asset-panel-body", "asset-panel-footer", "asset-panel-actions", "asset-panel-verbs"]) {
+      expect(shown(id)).toBe(false);
+    }
+    for (const id of ["iface-panel-title", "iface-panel-meta", "iface-panel-body", "iface-panel-footer"]) {
+      expect(shown(id)).toBe(true);
+    }
+    expect(panel().getAttribute("aria-labelledby")).toBe("iface-panel-title");
+    expect(g._isIfaceViewOpen()).toBe(true);
+    g._showAssetPanelView("asset");
+    expect(shown("asset-panel-body")).toBe(true);
+    expect(panel().getAttribute("aria-labelledby")).toBe("asset-panel-title");
+    // Leaving the interface page stops its chart refresh.
+    expect(g._clearIfaceRefreshTimer).toHaveBeenCalled();
+  });
+
+  it("steps back to the loaded asset as a view switch, without a refetch", () => {
+    mountPanel();
+    g._currentAssetForRefresh = { id: "A" };
+    resetState([{ id: "A" }]);
+    g._assetPanelHistory.entries.push({ id: "A", label: null, iface: { ifName: "port1", row: null } });
+    g._assetPanelHistory.idx = 1;
+    g._showAssetPanelView("iface");
+    backBtn().disabled = false;
+    g._assetPanelGo(-1);
+    expect(g._assetPanelHistory.idx).toBe(0);
+    expect(g.openViewModal).not.toHaveBeenCalled();
+    expect(g._isIfaceViewOpen()).toBe(false);
+  });
+
+  it("steps forward onto the interface of the loaded asset without re-pushing it", () => {
+    mountPanel();
+    const asset = { id: "A" };
+    g._currentAssetForRefresh = asset;
+    resetState([{ id: "A" }]);
+    g._assetPanelHistory.entries.push({ id: "A", label: null, iface: { ifName: "port1", row: { ifName: "port1" } } });
+    g._assetPanelHistory.idx = 0;
+    g._assetPanelGo(1);
+    expect(g.openViewModal).not.toHaveBeenCalled();
+    expect(g.openInterfaceDetailPanel).toHaveBeenCalledWith(asset, "port1", { ifName: "port1" }, { walk: 1 });
+  });
+
+  it("walks onto another asset's interface by loading the asset, then the interface", async () => {
+    mountPanel();
+    g._currentAssetForRefresh = { id: "B" };
+    resetState([{ id: "A" }]);
+    g._assetPanelHistory.entries.push({ id: "A", label: null, iface: { ifName: "port1", row: null } }, { id: "B", label: null });
+    g._assetPanelHistory.idx = 2;
+    g.openViewModal = vi.fn(async () => { g._currentAssetForRefresh = { id: "A" }; });
+    g._assetPanelGo(-1);
+    expect(g.openViewModal).toHaveBeenCalledWith("A");
+    expect(g._assetPanelWalkDelta).toBe(-1);
+    await Promise.resolve(); await Promise.resolve();
+    expect(g.openInterfaceDetailPanel).toHaveBeenCalledWith(g._currentAssetForRefresh, "port1", null, { walk: -1 });
+  });
+
+  it("Escape on an interface page steps back to its asset; elsewhere it closes", () => {
+    mountPanel();
+    g._currentAssetForRefresh = { id: "A" };
+    resetState([{ id: "A" }]);
+    g._assetPanelHistory.entries.push({ id: "A", label: null, iface: { ifName: "port1", row: null } });
+    g._assetPanelHistory.idx = 1;
+    g._showAssetPanelView("iface");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(g.closeAssetPanel).not.toHaveBeenCalled();
+    expect(g._assetPanelHistory.idx).toBe(0);
+    expect(g._isIfaceViewOpen()).toBe(false);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(g.closeAssetPanel).toHaveBeenCalled();
   });
 });

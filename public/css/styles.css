@@ -6727,11 +6727,13 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-overlay.open .slideover {
   transform: translateX(0);
 }
-/* Nested interface details panel: wider default so the stats row
-   ("in avg / in peak / out avg / out peak / errors") and the bps
-   throughput charts read on a single line. */
-#iface-panel {
-  width: clamp(760px, 60vw, 1500px);
+/* The asset panel's two pages: its tabs, and one of its interfaces
+   (openInterfaceDetailPanel). data-view on #asset-panel picks which
+   header / body / footer elements show; the ID in the selector is what
+   outranks .slideover-body / .slideover-footer's own display. */
+#asset-panel[data-view="iface"] .asset-panel-asset-only,
+#asset-panel:not([data-view="iface"]) .asset-panel-iface-only {
+  display: none;
 }
 /* The Events Alerts panel holds the widest card in the app — its conflict
    views' duplicate-IP table is six columns, two of them controls — so it opens

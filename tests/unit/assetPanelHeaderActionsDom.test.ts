@@ -80,6 +80,7 @@ beforeEach(() => {
   g.isTopmostSlideover = vi.fn(() => false);
   g._handleMonitorPillClick = vi.fn();
   g.closeAssetPanel = vi.fn();
+  g._assetPanelEscape = vi.fn();
   g.openViewModal = vi.fn(async () => {});
   g._ensureAssetPanelDOM();
 });
@@ -87,7 +88,7 @@ beforeEach(() => {
 describe("asset panel header actions — placement", () => {
   it("renders an empty actions container in the header, not the footer", () => {
     const actions = document.getElementById("asset-panel-actions")!;
-    expect(actions.className).toBe("slideover-header-actions");
+    expect(actions.classList.contains("slideover-header-actions")).toBe(true);
     expect(actions.closest(".slideover-header-top")).toBeTruthy();
     expect(actions.innerHTML).toBe("");
     // The footer stays in the DOM — it still carries Close / Edit.
@@ -153,7 +154,7 @@ describe("asset panel header actions — source invariants", () => {
 describe("asset panel frozen tab strip", () => {
   it("renders an empty tab slot in the header, after the meta row, outside the body", () => {
     const slot = document.getElementById("asset-panel-tabs")!;
-    expect(slot.className).toBe("slideover-tabs");
+    expect(slot.classList.contains("slideover-tabs")).toBe(true);
     expect(slot.parentElement!.classList.contains("slideover-header")).toBe(true);
     expect(slot.closest("#asset-panel-body")).toBeNull();
     expect(slot.previousElementSibling!.id).toBe("asset-panel-meta");
@@ -207,7 +208,7 @@ describe("asset panel header verbs (Discover Now, Reboot)", () => {
 
   it("renders an empty verbs slot in the title lead, right after the title", () => {
     const verbs = document.getElementById("asset-panel-verbs")!;
-    expect(verbs.className).toBe("slideover-header-verbs");
+    expect(verbs.classList.contains("slideover-header-verbs")).toBe(true);
     expect(verbs.parentElement!.classList.contains("slideover-header-lead")).toBe(true);
     expect(verbs.previousElementSibling!.id).toBe("asset-panel-title");
     expect(verbs.innerHTML).toBe("");
