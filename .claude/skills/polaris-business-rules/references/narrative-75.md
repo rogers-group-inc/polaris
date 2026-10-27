@@ -557,6 +557,15 @@ in `AlertMember.component`), and the alert, message and regrouped message name t
 Components that are part of one device (ports, mounts) do NOT split — port2 on two switches is
 not one finding.
 
+**The check is the alert's subject (2026-10-27).** On such a split, `{asset}` is the CHECK's
+name — the way a subnet fold's `{asset}` is the subnet — and `{dimension.suffix}` is the host
+COUNT (`TemplateContextParts.dimensionSuffix`), so the unchanged default subject reads
+`[CRITICAL] ERP HTTPS · 3 devices — Path check down`. Before this the subject was
+`3 devices · pc-01, pc-02, pc-03 — <rule>`: hosts but no check, so two checks failing from the
+same hosts mailed identical subjects. `{dimension}` still lists the hosts for the body.
+`readingContextParts` (fire) and `refreshMemberContext` (an update re-renders the stored
+context) must agree — the latter must NOT overwrite `{asset}` with the count on a split.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.

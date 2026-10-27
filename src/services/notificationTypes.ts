@@ -5401,7 +5401,11 @@ export function refreshMemberContext(
   out["dimension.suffix"] = list ? ` · ${list}` : "";
   if (members.some((m) => m.assetId) && !members.some((m) => m.subnet)) {
     const n = new Set(active.map((m) => m.assetId)).size;
-    out["asset"] = `${n} device${n === 1 ? "" : "s"}`;
+    const devices = `${n} device${n === 1 ? "" : "s"}`;
+    // A split per path check keeps the check as {asset}; the count is its
+    // subject tag (readingContextParts).
+    if (members.some((m) => m.component)) out["dimension.suffix"] = ` · ${devices}`;
+    else out["asset"] = devices;
   }
   if (before && out["trigger.summary"]?.includes(before)) out["trigger.summary"] = out["trigger.summary"].replace(before, list);
   if (message !== null) out["message"] = message;

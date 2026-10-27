@@ -2461,13 +2461,19 @@ function readingContextParts(
   // A subnet-folded alert is about the SUBNET; its members are the devices. An
   // automation-folded one spans devices with nothing else to name them by, so
   // {asset} counts them — "Monitor down on {asset}" reads "… on 5 devices".
+  // One split per path check is about that CHECK, the way a subnet fold is
+  // about its subnet, and its subject tag is the count rather than the hosts:
+  // "[CRITICAL] Salesforce HTTPS · 3 devices — Path check down".
   const subnetLabel = members?.find((m) => m.subnet)?.subnet;
+  const pathCheck = members?.find((m) => m.component)?.component;
   const spansDevices = !!members?.some((m) => m.assetId);
   const deviceCount = spansDevices ? new Set(activeMembers(members!).map((m) => m.assetId)).size : 0;
+  const devices = `${deviceCount} device${deviceCount === 1 ? "" : "s"}`;
   const base = {
-    asset: subnetLabel
-      || (spansDevices ? `${deviceCount} device${deviceCount === 1 ? "" : "s"}` : "")
+    asset: subnetLabel || pathCheck
+      || (spansDevices ? devices : "")
       || reading.hostname || reading.assetId || "host",
+    ...(pathCheck ? { dimensionSuffix: ` · ${devices}` } : {}),
     dimension: members?.length ? renderMemberList(members) : (reading.dimLabel || ""),
     // What that component IS, so the email can label it rather than leaving the
     // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
@@ -2580,9 +2586,12 @@ function renderMessage(
     // An automation fold: one automation across devices. {asset} already
     // reads "5 devices"; then which, and the same dependency headline.
     const dep = reading.dependencyDown && ctx["dependency.headline"] ? ` — ${ctx["dependency.headline"]}` : "";
-    // Split per path check: the check is the subject, named once.
+    // Split per path check: the check is the subject, named once — and it is
+    // {asset} there, so the count comes from the members.
     const component = members.find((m) => m.component)?.component;
-    return `${rule.name}${component ? ` — ${component}` : ""}: ${ctx["asset"]} — ${renderMemberList(members)}${dep}`;
+    const n = new Set(activeMembers(members).map((m) => m.assetId)).size;
+    const devices = component ? `${n} device${n === 1 ? "" : "s"}` : ctx["asset"];
+    return `${rule.name}${component ? ` — ${component}` : ""}: ${devices} — ${renderMemberList(members)}${dep}`;
   }
   if (members?.length) {
     const active = activeMembers(members);

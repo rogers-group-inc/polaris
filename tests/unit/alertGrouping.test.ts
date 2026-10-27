@@ -689,4 +689,17 @@ describe("the update cadence (business rule 75): queued changes", () => {
     expect(out["message"]).toBe("new message");
     expect(ctx["dimension"]).toBe("pc-01, pc-02");
   });
+
+  it("keeps a per-path-check split about its check, the count as the subject tag", () => {
+    const members = [
+      member("c1", { label: "pc-01", assetId: "a1", component: "Salesforce HTTPS" }),
+      member("c1", { label: "pc-02", assetId: "a2", component: "Salesforce HTTPS" }),
+      member("c1", { label: "pc-03", assetId: "a3", component: "Salesforce HTTPS", leftAt: T1.toISOString() }),
+    ];
+    const ctx = { asset: "Salesforce HTTPS", dimension: "pc-01, pc-02, pc-03", "dimension.suffix": " · 3 devices" };
+    const out = refreshMemberContext(ctx, members, null);
+    expect(out["asset"]).toBe("Salesforce HTTPS");
+    expect(out["dimension"]).toBe("pc-01, pc-02");
+    expect(out["dimension.suffix"]).toBe(" · 2 devices");
+  });
 });

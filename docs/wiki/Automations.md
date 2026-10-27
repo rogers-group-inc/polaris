@@ -257,7 +257,9 @@ the automation, ends when the **last** device recovers, and (like Subnet) also
 accepts automations about the whole device, such as `monitorStatus == down`.
 A **Path Monitor** automation gets one alert **per path check** rather than one
 for every check it watches — *"Path Monitor — ERP HTTPS: 3 devices — pc-01,
-pc-02, pc-04"* — with hosts added and removed as they fail and recover.
+pc-02, pc-04"* — with hosts added and removed as they fail and recover. Its
+email subject names the check and counts the hosts — *"[CRITICAL] ERP HTTPS · 3
+devices — Path Monitor"* — and the hosts are listed in the email body.
 
 **Device + automation** keeps different checks apart on the same device — a PoE
 fault and a high temperature on one switch are two alerts — while each

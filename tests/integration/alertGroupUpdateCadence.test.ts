@@ -206,5 +206,10 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(members.map((m) => m.label).sort()).toEqual([`${HOST}-pc-01`, `${HOST}-pc-02`]);
     expect(erpAlert.assetHostname).toBe(`${NAME} rule — ${NAME} erp`);
     expect(erpAlert.message).toContain(`${NAME} erp: 2 devices`);
+    // The subject names the check and counts the hosts — "[SERIOUS] <check> · 2 devices — <rule>".
+    const ctx = erpAlert.templateCtx as Record<string, string>;
+    expect(ctx["asset"]).toBe(`${NAME} erp`);
+    expect(ctx["dimension.suffix"]).toBe(" · 2 devices");
+    expect(ctx["dimension"]).toBe(`${HOST}-pc-01, ${HOST}-pc-02`);
   });
 });
