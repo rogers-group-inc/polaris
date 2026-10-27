@@ -12,7 +12,7 @@ Version policy: `<major>.<minor>` lives in `package.json` and is the single sour
 
 ## Skills — where the project memory lives
 
-This file is the always-loaded floor. Everything deeper lives in eleven project skills under
+This file is the always-loaded floor. Everything deeper lives in twelve project skills under
 `.claude/skills/` and loads on demand — each `SKILL.md` routes to its `references/` with
 "read X when Y" tables. **Load the skill before you design, not at commit time**: the
 invariants and "when changing this" checklists are what make a change land right the first time.
@@ -30,6 +30,7 @@ invariants and "when changing this" checklists are what make a change land right
 | `polaris-worktree-workflow` | the start of every coding task; "worktree", "lock", "dev environment", "merge", "push" | auto + `/polaris-worktree-workflow` |
 | `polaris-deploy` | a task is done: it runs docs-sync, audits deploy surfaces, commits, merges and pushes; env vars, systemd/nginx/Docker, the updater | `/polaris-deploy` only |
 | `polaris-docs-sync` | a commit made outside `/polaris-deploy`; after `check:docs` fails | `/polaris-docs-sync` only |
+| `design-sync` | re-publishing the Polaris UI / Polaris Mobile design-system artifacts by hand (replaces the bundled claude.ai/design sync for this repo) | `/design-sync` only |
 
 In-place references the skills point at: `.env.example` (runtime variables, with comments),
 `docs/INSTALL.md` (fresh installs + disk sizing), `docs/UPGRADING.md` (every existing-install
