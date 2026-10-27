@@ -63,6 +63,11 @@ it appears, so tables and widgets fill in a moment later.
 
 The search box searches everything at once and groups hits by kind: IPs,
 Blocks, Networks, Reservations, Assets, Device Map sites, and IPsec / VPN.
+
+Press **Ctrl**+**K** (**⌘**+**K** on a Mac) on any page to jump straight into
+the box, with whatever was there selected so you can type over it. The box
+shows the shortcut at its right end until you click into it.
+
 Prefixes narrow it:
 
 | Prefix | Short | Searches |

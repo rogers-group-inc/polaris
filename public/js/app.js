@@ -1847,10 +1847,17 @@ function renderGlobalSearch() {
   if (!pageHeader) return;
   if (pageHeader.querySelector(".global-search")) return; // already mounted
 
+  // The Ctrl+K shortcut below, advertised in the box. CSS shows it only while
+  // the box is empty and unfocused, so it never sits under typed text, the
+  // clear button or the spinner; aria-keyshortcuts says it to a screen reader.
+  var nav = typeof navigator !== "undefined" ? navigator : {};
+  var mac = /Mac|iPhone|iPad/.test(nav.platform || nav.userAgent || "");
   var wrap = document.createElement("div");
   wrap.className = "global-search";
   wrap.innerHTML =
-    '<input type="search" id="global-search-input" autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(_searchPlaceholder()) + '">' +
+    '<input type="search" id="global-search-input" autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(_searchPlaceholder()) + '"' +
+      ' aria-keyshortcuts="' + (mac ? "Meta+K" : "Control+K") + '">' +
+    '<kbd class="global-search-kbd" aria-hidden="true">' + (mac ? "⌘ K" : "Ctrl K") + '</kbd>' +
     '<span id="global-search-spinner" class="global-search-spinner" hidden aria-hidden="true"></span>' +
     '<div id="global-search-dropdown" class="global-search-dropdown" style="display:none"></div>';
 
