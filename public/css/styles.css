@@ -111,6 +111,10 @@
      note by .page-header-actions. */
   --shadow-lift-control: 0 0 6px 3px rgba(0,0,0,.07), 0 0 1px 1px rgba(0,0,0,.05);
   --shadow-lift-control-text: 0 0 1px rgba(0,0,0,.05), 0 0 6px rgba(0,0,0,.07);
+  /* Buttons ON a page card: the Device Map's and Application Map's on-map
+     button cast (map.css / appmap.css restate the same value on their
+     canvases), so a card's buttons and a map's read as one family. */
+  --map-btn-shadow: 0 2px 4px rgba(0,0,0,.3), 0 1px 1px rgba(0,0,0,.25);
   /* Nothing in the app paints --shadow-sm any more: it was the cards' shadow,
      and a 4px blur under a box hundreds of pixels wide is invisible on the
      daylight pair, which is what --shadow-card below replaced. Kept because the
@@ -2468,6 +2472,18 @@ html[data-page-top-curtain]::after {
 /* A disabled button is flat — the shadow is an affordance, and leaving it on
    something that cannot be pressed is the one place it misleads. */
 .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+/* Buttons ON a page card take the maps' button cast (--map-btn-shadow, a
+   tight 2px drop) instead of --shadow-control (2026-10-27). Declared before
+   the off-card rules below so a cluster that sits on a card's edge (a tab
+   row's controls) still lifts with them. Modals and slide-overs mount on
+   body, so they keep --shadow-control. */
+.card .btn:not(.btn-icon):not(:disabled),
+.kpi-card .btn:not(.btn-icon):not(:disabled),
+.folder-card .btn:not(.btn-icon):not(:disabled),
+.settings-card .btn:not(.btn-icon):not(:disabled),
+.integration-card .btn:not(.btn-icon):not(:disabled),
+.empty-state-card .btn:not(.btn-icon):not(:disabled),
+.dashboard-widget .btn:not(.btn-icon):not(:disabled) { box-shadow: var(--map-btn-shadow); }
 /* OFF-CARD SHADOW STANDARD (2026-10-26). Everything on the page ground —
    in .main but outside the page card, a map canvas, a slide-over or a
    modal — lifts with the rail family (even rings, no offset, neutral), one
@@ -2479,7 +2495,8 @@ html[data-page-top-curtain]::after {
    a tab row's controls, the Application Map's toolbar, the Device Map's
    toolbar and a page-level .filter-bar (.main > .filter-bar; the slide-
    over's are on a surface). ON a surface — the card, tables, slide-overs,
-   modals, menus — controls keep --shadow-control (above); buttons ON a map
+   modals, menus — controls keep --shadow-control (above), except buttons on
+   a page card, which take --map-btn-shadow (above); buttons ON a map
    canvas keep the map's own tight cast (map.css --map-btn-shadow). */
 .page-header-actions .btn:not(.btn-icon):not(:disabled),
 .page-actions-row .btn:not(.btn-icon):not(:disabled),

@@ -119,7 +119,7 @@
         : '<span class="badge badge-deprecated">Off</span> <span style="font-size:0.78rem;color:var(--color-text-tertiary)">members deliver on their own</span>') + "</td>" +
       '<td style="text-align:right;white-space:nowrap">' +
         (canEdit()
-          ? '<button type="button" class="btn btn-sm" data-ag-edit="' + escapeHtml(g.id) + '">Edit</button> ' +
+          ? '<button type="button" class="btn btn-sm btn-secondary" data-ag-edit="' + escapeHtml(g.id) + '">Edit</button> ' +
             '<button type="button" class="btn btn-sm btn-danger" data-ag-delete="' + escapeHtml(g.id) + '">Delete</button>'
           : "") +
       "</td>" +
