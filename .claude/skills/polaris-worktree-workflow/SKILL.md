@@ -5,7 +5,7 @@ description: "Polaris session workflow: start every task in its own git worktree
 
 # Session workflow — worktrees, locks, dev stacks, merge, push
 
-## The five rules (also in CLAUDE.md, always in force)
+## The six rules (also in CLAUDE.md, always in force)
 
 1. **Never edit the main checkout.** Before the first edit of a task, create a worktree
    (`EnterWorktree` → `.claude/worktrees/<slug>` on branch `worktree-<slug>`) and write
@@ -21,6 +21,10 @@ description: "Polaris session workflow: start every task in its own git worktree
    **"push"** → the push protocol below (push main, clean up what was merged).
 5. **Lock files are gitignored and never committed.** Content: one line, ISO timestamp +
    purpose. A lock older than the chat that made it is stale; the merge menu shows its age.
+6. **Record every error you hit** as one file in `error-log/` beside the memory directory
+   (`~/.claude/projects/<this project>/error-log/`, outside the repo, never committed; its
+   README has the shape). A recurring trap is logged each time — the count is the signal the
+   user reviews to change this workflow.
 
 ## Which file
 
