@@ -40,6 +40,13 @@
   var _cyPromise = null;
   var _viewTouched = false; // the operator has panned / zoomed since the last fit
   var _edgeEditor = null;   // view-only drawer of the saved connection lines
+  // The location view on screen — "flat" (Base, the whole site) or an area /
+  // building / floor key from computeFloorViews: the desktop's drill-down
+  // (map.js topoState.activeView). Every open starts on Base, as there.
+  var _activeView = "flat";
+  // A search hit that lives outside the view on screen: the view drops back
+  // to Base and the layoutstop that follows centres this node.
+  var _pendingFocusId = null;
 
   // The desktop modal's lattice (map.js TOPO_COL_SPACING / TOPO_ROW_SPACING).
   // Must match: the shared saved layout is in these coordinates, and a node
@@ -103,6 +110,8 @@
       _siteId   = qIdx >= 0 ? rawId.slice(0, qIdx) : rawId;
       _siteName = null;
       _focusTerm = parseFocusTermFromHash();
+      _activeView = "flat";
+      _pendingFocusId = null;
 
       if (!_siteId) {
         body.innerHTML = '<div class="empty-state" style="padding-top:64px;"><div class="ttl">Missing site id</div></div>';
@@ -125,6 +134,7 @@
         + '    </div>'
         + '    <button class="icon-btn" id="topo-refresh" aria-label="Refresh topology"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
         + '  </div>'
+        + '  <div class="topo-views" id="topo-views" hidden></div>'
         + '  <div class="topo-graph" id="topo-graph"></div>'
         + '  <div class="topo-status" id="topo-status">Loading topology…</div>'
         + '</div>';
@@ -146,6 +156,7 @@
       if (_resizeHandler) window.removeEventListener("resize", _resizeHandler);
       _resizeHandler = function () {
         if (leftTopology()) return;
+        fadeAllViewRows();
         if (!_cy) return;
         try { _cy.resize(); } catch (e) {}
         if (!_viewTouched && !_focusTerm) {
@@ -249,6 +260,8 @@
     _topoData = null;
     _siteId = null;
     _focusTerm = null;
+    _activeView = "flat";
+    _pendingFocusId = null;
   }
 
   // Re-fetch the topology payload and rebuild the graph in place. Mirrors
@@ -301,12 +314,27 @@
       return true;
     });
 
-    // The desktop's flat-view layout: the shared server layout an operator
-    // saved, laid over the column solver's baseline (a node the save has no
-    // entry for keeps its solver cell). Desktop's per-browser localStorage
-    // fallback is not read — it belongs to the desktop browser that made it.
+    // Location views — the desktop's drill-down (map.js renderTopologyGraph):
+    // the views this payload offers (none unless a device carries a b: or f:
+    // code), a view a refresh took away falling back to Base, the chip rows,
+    // and the graph cut down to the view on screen — its devices, the
+    // FortiGate as a root portal, and portal stubs where a link leaves it.
+    var views = window.PolarisTopologyRender.computeFloorViews(elements);
+    if (_activeView !== "flat" && !views.some(function (v) { return v.key === _activeView; })) {
+      _activeView = "flat";
+    }
+    renderViewRows(views);
+    if (_activeView !== "flat") {
+      elements = window.PolarisTopologyRender.partitionElementsForFloor(elements, _activeView);
+    }
+
+    // The desktop's layout for this view: the shared server layout an
+    // operator saved under the view's key, laid over the column solver's
+    // baseline (a node the save has no entry for keeps its solver cell).
+    // Desktop's per-browser localStorage fallback is not read — it belongs to
+    // the desktop browser that made it.
     var layouts = data && data.savedLayouts;
-    var saved = layouts && layouts.flat && layouts.flat.positions;
+    var saved = layouts && layouts[_activeView] && layouts[_activeView].positions;
     var savedPositions = saved && typeof saved === "object" ? saved : null;
 
     // Deterministic column layout (shared solver with desktop), left to
@@ -376,7 +404,8 @@
           });
         });
       }
-      window.PolarisTopologyRender.renderLocationGroups(_cy);
+      var suppress = locSuppressKinds();
+      window.PolarisTopologyRender.renderLocationGroups(_cy, suppress ? { suppressKinds: suppress } : undefined);
       if (_cy.nodes("[isLocGroup]").length > 0) {
         window.PolarisTopologyRender.routeInterGroupEdges(_cy);
       }
@@ -409,6 +438,12 @@
     _cy.on("tap", "node", function (evt) {
       var node = evt.target;
       if (node.data("isLocGroup")) return; // location hull — not a device
+      if (node.data("isPortal")) {
+        // A link leaving this view: jump to the view at its far end.
+        var target = node.data("targetView");
+        if (target) setView(target);
+        return;
+      }
       var role = node.data("role");
       if (role === "lldp") {
         // Still show a sheet with what we know — chassisId / mgmt IP /
@@ -436,6 +471,13 @@
 
   function applyInitialFocus() {
     if (!_cy) return;
+    if (_pendingFocusId) {
+      var hit = _cy.getElementById(_pendingFocusId);
+      _pendingFocusId = null;
+      try { _cy.fit(undefined, 30); } catch (e) {}
+      if (hit && hit.length > 0) pulseAt(hit, 1.5);
+      return;
+    }
     var node = _focusTerm ? pickFocusNode(_focusTerm) : null;
     if (!node || node.length === 0) {
       try { _cy.fit(undefined, 30); } catch (e) {}
@@ -693,13 +735,122 @@
     var input = document.getElementById("topo-search-input");
     if (input) input.value = "";
     if (!_cy || !item.switchId) return;
-    _viewTouched = true; // the view is aimed at a pick now — a resize must not re-fit it away
     var node = _cy.getElementById(item.switchId);
-    if (node && node.length > 0) {
-      try { _cy.animate({ center: { eles: node }, zoom: 1.5, duration: 350 }); } catch (e) {}
-      node.addClass("topology-pulse");
-      setTimeout(function () { try { node.removeClass("topology-pulse"); } catch (e) {} }, 1500);
+    if ((!node || node.length === 0) && _activeView !== "flat") {
+      // The hit lives outside the view on screen. The desktop leaves that
+      // pick doing nothing; on the phone, with no room to see why, drop back
+      // to Base and centre it there (applyInitialFocus).
+      _pendingFocusId = item.switchId;
+      setView("flat");
+      _viewTouched = true;
+      return;
     }
+    _viewTouched = true; // the view is aimed at a pick now — a resize must not re-fit it away
+    if (node && node.length > 0) pulseAt(node, 1.5);
+  }
+
+  function pulseAt(node, zoom) {
+    try { _cy.animate({ center: { eles: node }, zoom: zoom, duration: 350 }); } catch (e) {}
+    node.addClass("topology-pulse");
+    setTimeout(function () { try { node.removeClass("topology-pulse"); } catch (e) {} }, 1500);
+  }
+
+  // ─── Location views (drill-down) ──────────────────────────────────────
+  // The desktop's switcher (map.js _renderTopologyFloorViews), as chip rows
+  // under the search bar: one row per level of the drill-down — the areas
+  // (plus area-less buildings), then the selected area's buildings, then the
+  // selected building's floors; every chip on the selected path lit. Base
+  // rides at the head of the first row rather than alone on a row of its
+  // own, which a phone has no height to spare for. A row too long for the
+  // screen scrolls sideways with no scrollbar, and a chip the edge cuts
+  // fades as a whole — its opacity the share of it still showing — as the
+  // desktop's tab strips do (folder-tabs.js _layoutStrip).
+  function setView(key) {
+    if (!key || key === _activeView || !_topoData) return;
+    _activeView = key;
+    _focusTerm = null;     // the deep link was for the view it opened on
+    _viewTouched = false;  // a new view opens fitted, and refits on a turn
+    closeTopologySheet();
+    renderGraph(_topoData);
+  }
+
+  // Which hull tiers the view on screen already IS (map.js _locSuppressKinds):
+  // an area view hides the area box, a building view the area and building
+  // boxes, a floor view the floor's too. Null on Base.
+  function locSuppressKinds() {
+    var v = _activeView || "flat";
+    if (v === "flat") return null;
+    if (v.charAt(0) === "a") return ["area"];
+    if (v.charAt(0) === "b") return ["area", "building"];
+    return ["area", "building", "floor"];
+  }
+
+  // viewSwitcherRows with Base folded into the first row. Pure.
+  function viewChipRows(views, activeKey) {
+    var rows = window.PolarisTopologyRender.viewSwitcherRows(views, activeKey);
+    if (rows.length > 1) rows = [rows[0].concat(rows[1])].concat(rows.slice(2));
+    return rows;
+  }
+
+  function renderViewRows(views) {
+    var wrap = document.getElementById("topo-views");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    if (!views || views.length === 0) { wrap.hidden = true; return; }
+    viewChipRows(views, _activeView).forEach(function (chips, depth) {
+      var row = document.createElement("div");
+      row.className = "topo-view-row" + (depth ? " topo-view-row-depth-" + depth : "");
+      chips.forEach(function (c) {
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip topo-view-chip" + (c.active ? " selected" : "");
+        chip.setAttribute("aria-pressed", c.active ? "true" : "false");
+        chip.title = c.title;
+        chip.textContent = c.label;
+        chip.addEventListener("click", function () { setView(c.key); });
+        row.appendChild(chip);
+      });
+      var queued = false;
+      row.addEventListener("scroll", function () {
+        if (queued) return;
+        queued = true;
+        (window.requestAnimationFrame || setTimeout)(function () { queued = false; fadeViewRow(row); });
+      }, { passive: true });
+      wrap.appendChild(row);
+    });
+    wrap.hidden = false;
+    Array.prototype.forEach.call(wrap.children, function (row) {
+      revealSelectedChip(row);
+      fadeViewRow(row);
+    });
+  }
+
+  // Scroll a row so its lit chip shows whole (a deep selection can sit past
+  // the right edge of a long row).
+  function revealSelectedChip(row) {
+    var sel = row.querySelector(".topo-view-chip.selected");
+    if (!sel) return;
+    var r = row.getBoundingClientRect();
+    var b = sel.getBoundingClientRect();
+    if (b.left < r.left) row.scrollLeft -= (r.left - b.left) + 12;
+    else if (b.right > r.right) row.scrollLeft += (b.right - r.right) + 12;
+  }
+
+  // A chip the row's edge cuts fades as a whole, its opacity the share of it
+  // still inside; whole chips carry no opacity of their own.
+  function fadeViewRow(row) {
+    var r = row.getBoundingClientRect();
+    Array.prototype.forEach.call(row.children, function (chip) {
+      var b = chip.getBoundingClientRect();
+      var inside = Math.min(b.right, r.right) - Math.max(b.left, r.left);
+      chip.style.opacity = inside > 0.5 && inside < b.width - 0.5 ? (inside / b.width).toFixed(3) : "";
+    });
+  }
+
+  function fadeAllViewRows() {
+    var wrap = document.getElementById("topo-views");
+    if (!wrap) return;
+    Array.prototype.forEach.call(wrap.children, fadeViewRow);
   }
 
   function closeTopologySearchResults() {
@@ -874,5 +1025,7 @@
   // ─── Public surface ────────────────────────────────────────────────────
   window.PolarisTopologyTab = {
     spec: Topology,
+    viewChipRows: viewChipRows, // exported for tests
+    fadeViewRow: fadeViewRow,   // exported for tests
   };
 })();

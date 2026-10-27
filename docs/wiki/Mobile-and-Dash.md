@@ -58,7 +58,12 @@ lines drawn on the desktop. It is wide, so turning the phone sideways shows more
 it, but nothing asks you to. Nothing on it can be moved from the phone, so a
 one-finger drag anywhere pans the map, even when it starts on a location box or a
 device, and pinching zooms. The navigation bar stays at the bottom while it is
-open.
+open. When the site's devices carry location codes, chips under the search bar
+drill down as on the desktop: **Base** (the whole site) and the areas or
+buildings, then the chosen one's buildings or floors on a row below. A row too
+long for the screen slides sideways. Tapping a dashed stub where a link leaves
+the view jumps to the view at its other end, and a search for a device outside
+the view goes back to Base to show it.
 
 ## Alerts
 

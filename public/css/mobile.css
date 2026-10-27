@@ -2610,6 +2610,35 @@ button, .list-item, .chip { touch-action: manipulation; }
   color: var(--md-on-surface-variant, #9aa2b1);
   font-size: 12px;
 }
+/* Location views — the desktop's drill-down switcher (map.js
+   _renderTopologyFloorViews; topology-tab.js renderViewRows): one chip row per
+   level under the search bar — Base and the top level, then the selected
+   area's buildings, then the selected building's floors, each deeper row
+   indented a step. A row scrolls sideways with no scrollbar; a chip its edge
+   cuts fades AS A WHOLE (fadeViewRow sets its opacity to the share still
+   showing), the desktop tab strips' edge, never a gradient. In the flow, not
+   floating over the graph: a row of chips over the canvas would eat the
+   one-finger pans that start under it. */
+.topo-views {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+.topo-views[hidden] { display: none; }
+.topo-view-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 12px;
+}
+.topo-view-row::-webkit-scrollbar { display: none; }
+.topo-view-row-depth-1 { padding-left: 24px; }
+.topo-view-row-depth-2 { padding-left: 36px; }
+.topo-view-chip { flex: 0 0 auto; }
+/* .chip.selected makes room for a leading check icon; these chips carry none. */
+.topo-view-chip.selected { padding-left: 16px; }
 .topo-graph {
   flex: 1;
   min-height: 0; /* allow Cytoscape to fill the available space */
