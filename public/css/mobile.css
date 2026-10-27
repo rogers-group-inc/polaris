@@ -309,9 +309,9 @@
 
   --md-surface:                 #f7e6c8;
   --md-surface-cont-lowest:     #fff8e8;
-  --md-surface-cont-low:        #f2e0bd;
-  --md-surface-cont:            #f0dcb6;
-  --md-surface-cont-high:       #eed9b2;
+  --md-surface-cont-low:        #efddba;
+  --md-surface-cont:            #ebd7b1;
+  --md-surface-cont-high:       #e8d4ad;
   --md-surface-cont-highest:    #ead7b3;
   --md-on-surface:              #33210a;
   --md-on-surface-variant:      #6e4f22;
@@ -358,9 +358,9 @@
 
   --md-surface:                 #fbfaf9;
   --md-surface-cont-lowest:     #ffffff;
-  --md-surface-cont-low:        #f7f5f3;
-  --md-surface-cont:            #f6f4f1;
-  --md-surface-cont-high:       #f1efec;
+  --md-surface-cont-low:        #f3f1ef;
+  --md-surface-cont:            #edebe8;
+  --md-surface-cont-high:       #eae8e5;
   --md-surface-cont-highest:    #ebe7e2;
   --md-on-surface:              #201612;
   --md-on-surface-variant:      #5a453c;

@@ -6143,7 +6143,7 @@ function _assetGeneralTabHTML(a, sources) {
     var hostnameRowHTML = a.ipAddress && !a.hostname
         ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value">- <button class="btn btn-sm btn-secondary" onclick="singleDnsLookup(' + jsArg(a.id) + ')" title="Reverse DNS lookup (PTR record)">PTR Lookup</button></span></div>'
         : (a.hostnameOverride
-          ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(a.hostname || "") + '">' + escapeHtml(a.hostname || "-") + '</span><span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:6px" title="Hostname manually overridden — discovery will not change it. Clear the Hostname field in Edit to resume the discovered value.">overridden</span>' + hostnameOriginalLineHTML(a) + '</span></div>'
+          ? '<div class="detail-row"><span class="detail-label">Hostname</span><span class="detail-value"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(a.hostname || "") + '">' + escapeHtml(a.hostname || "-") + '</span><span class="badge hue-pill" style="--hue:#6b7280;margin-left:6px" title="Hostname manually overridden — discovery will not change it. Clear the Hostname field in Edit to resume the discovered value.">overridden</span>' + hostnameOriginalLineHTML(a) + '</span></div>'
           : viewRow("Hostname", a.hostname, false, false, true));
     var identityHTML = hostnameRowHTML +
       ipViewRow(a) +
@@ -9100,11 +9100,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   function typeBadge(iface, isChild) {
     var t = iface.ifType;
     if (isChild && iface.subIface) {
-      return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:5px;white-space:nowrap">Sub-interface</span>';
+      return '<span class="badge hue-pill" style="--hue:#6b7280;margin-left:5px">Sub-interface</span>';
     }
     // Member port of an aggregate: show "Member" regardless of its stored type.
     if (isChild && t !== "vlan") {
-      return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:5px">Member</span>';
+      return '<span class="badge hue-pill" style="--hue:#6b7280;margin-left:5px">Member</span>';
     }
     var cfgs = {
       physical:  ["Physical",  "#6b7280"],
@@ -9116,7 +9116,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var cfg = cfgs[t];
     if (!cfg) return "";
     var c = cfg[1];
-    return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:' + c + '18;color:' + c + ';border:1px solid ' + c + '30;margin-left:5px;white-space:nowrap">' + escapeHtml(cfg[0]) + '</span>';
+    return '<span class="badge hue-pill" style="--hue:' + c + ';margin-left:5px">' + escapeHtml(cfg[0]) + '</span>';
   }
 
   // Native + Tagged VLAN cells for the interfaces table — populated only on
@@ -9185,7 +9185,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var cfg = cfgs[String(m).toLowerCase()];
     if (!cfg) return '<td>' + escapeHtml(String(m)) + "</td>";
     var c = cfg[1];
-    return '<td><span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:' + c + '18;color:' + c + ';border:1px solid ' + c + '30;white-space:nowrap">' + cfg[0] + "</span></td>";
+    return '<td><span class="badge hue-pill" style="--hue:' + c + '">' + cfg[0] + "</span></td>";
   }
 
   function buildRow(iface, opts) {
@@ -10031,7 +10031,7 @@ function _lldpNeighborInlineCell(neighbors) {
     : "";
   var portStr = port ? ' <span style="opacity:0.7" class="mono">/ ' + escapeHtml(port) + '</span>' : "";
   var more = neighbors.length > 1
-    ? ' <span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030">+' + (neighbors.length - 1) + '</span>'
+    ? ' <span class="badge hue-pill" style="--hue:#6b7280">+' + (neighbors.length - 1) + '</span>'
     : "";
   return openTag + labelHtml + alertDot + portStr + more + closeTag;
 }
@@ -17468,7 +17468,7 @@ function _ifaceVlanBlockHTML(iface, names) {
   return '<div style="margin-bottom:0.75rem;padding:0.5rem 0.65rem;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px">' +
     '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:0.25rem">' +
       '<span style="font-size:0.8rem;font-weight:600;color:var(--color-text-secondary)">VLAN</span>' +
-      '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#0d948818;color:#0d9488;border:1px solid #0d948830">' + escapeHtml(role) + '</span>' +
+      '<span class="badge hue-pill" style="--hue:#0d9488">' + escapeHtml(role) + '</span>' +
     '</div>' +
     nativeBit +
     taggedBit +
@@ -17507,7 +17507,7 @@ function _renderIfaceLldpBlock(neighbors) {
     if (n.managementIp)         rows.push(["Management IP",   '<span class="mono">' + escapeHtml(n.managementIp) + '</span>']);
     if (n.capabilities && n.capabilities.length > 0) {
       rows.push(["Capabilities", n.capabilities.map(function (c) {
-        return '<span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#3b82f618;color:#3b82f6;border:1px solid #3b82f630;margin-right:3px">' + escapeHtml(c) + '</span>';
+        return '<span class="badge hue-pill" style="--hue:#3b82f6;margin-right:3px">' + escapeHtml(c) + '</span>';
       }).join("")]);
     }
     if (n.systemDescription)    rows.push(["System description", '<span style="font-size:0.8rem">' + escapeHtml(n.systemDescription) + '</span>']);
@@ -17517,7 +17517,7 @@ function _renderIfaceLldpBlock(neighbors) {
     }).join("");
     var matchHint = n.matchedAsset
       ? ''
-      : ' <span style="font-size:0.7rem;padding:1px 5px;border-radius:3px;background:#6b728018;color:#9ca3af;border:1px solid #6b728030;margin-left:6px" title="No Polaris asset matched this neighbor by management IP, chassis MAC, or hostname">unmatched</span>';
+      : ' <span class="badge hue-pill" style="--hue:#6b7280;margin-left:6px" title="No Polaris asset matched this neighbor by management IP, chassis MAC, or hostname">unmatched</span>';
     html +=
       '<div style="' + cardStyle + '"' + cardTitle + '>' +
         '<div style="margin-bottom:0.4rem">' + titleHtml + matchHint + '</div>' +
@@ -18323,7 +18323,7 @@ function _sdwanMembersTableHTML(members) {
       return '<span title="' + escapeHtml(h.healthCheck) +
         ' · jitter ' + (typeof h.jitterMs === "number" ? (Math.round(h.jitterMs * 100) / 100) + "ms" : "—") +
         ' · loss ' + (typeof h.packetLoss === "number" ? h.packetLoss + "%" : "—") +
-        '" style="display:inline-block;margin:0 4px 2px 0;padding:1px 6px;border-radius:10px;font-size:0.74rem;background:var(--color-bg-primary);border:1px solid var(--color-border)">' +
+        '" class="badge hue-pill" style="--hue:var(--color-text-tertiary);margin:0 4px 2px 0;text-transform:none">' +
         '<span data-shot-text="' + (h.state === "up" ? '▲' : '▼') + '" style="color:' + c + '">●</span> ' +
         escapeHtml(h.healthCheck) + ' ' + lat + '</span>';
     }).join("") || '<span style="color:var(--color-text-tertiary)">—</span>';
@@ -18455,10 +18455,8 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
       // rule's full candidate list so colors are stable across zone groups.
       function memberPill(m) {
         var sel = m === r.selectedMember;
-        return '<span style="display:inline-block;margin:0 4px 2px 0;padding:1px 7px;border-radius:10px;font-size:0.76rem;' +
-          (sel
-            ? 'background:' + _sdwanMemberColor(m, avail) + ';color:#fff;font-weight:600'
-            : 'background:var(--color-bg-primary);border:1px solid var(--color-border);color:var(--color-text-secondary)') +
+        return '<span class="badge hue-pill' + (sel ? ' hue-strong' : '') + '" style="margin:0 4px 2px 0;text-transform:none;--hue:' +
+          (sel ? _sdwanMemberColor(m, avail) : 'var(--color-text-tertiary)') +
           '">' + escapeHtml(m) + (sel ? ' ✓' : '') + '</span>';
       }
       var pills;
@@ -21909,8 +21907,8 @@ function authorizationRowHTML(asset) {
   var color = lower === "authorized" ? "var(--color-success,#10b981)"
             : lower === "unauthorized" ? "var(--color-danger,#ef4444)"
             : "var(--color-warning,#fbbf24)";
-  var badge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-    color + ';color:#000;font-weight:600">' + escapeHtml(label) + '</span>';
+  var badge = '<span class="badge hue-pill" style="--hue:' +
+    color + '">' + escapeHtml(label) + '</span>';
   return '<div class="detail-row"><span class="detail-label">Authorization</span><span class="detail-value">' + badge + '</span></div>';
 }
 
@@ -21953,8 +21951,8 @@ function fortilinkRowHTML(asset) {
   if (asset.fortilinkStatusRaw && String(asset.fortilinkStatusRaw).toLowerCase() !== text.toLowerCase()) {
     tip += '\nController reports: "' + asset.fortilinkStatusRaw + '"';
   }
-  var badge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-    color + ';color:#000;font-weight:600">' + escapeHtml(text) + '</span>';
+  var badge = '<span class="badge hue-pill" style="--hue:' +
+    color + '">' + escapeHtml(text) + '</span>';
   var suffix = "";
   // How long it has been in this state — the first thing asked about a link
   // that is down. changedAt holds still across confirmations, so this is the
@@ -22029,8 +22027,8 @@ function haTopologyHTML(asset) {
                 : role === "secondary" ? "Secondary (standby)"
                 : role;
   var roleColor = role === "primary" ? "var(--color-success,#10b981)" : "var(--color-warning,#fbbf24)";
-  var roleBadge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-    roleColor + ';color:#000;font-weight:600">' + escapeHtml(roleLabel) + '</span>';
+  var roleBadge = '<span class="badge hue-pill" style="--hue:' +
+    roleColor + '">' + escapeHtml(roleLabel) + '</span>';
   var peerHTML = '-';
   if (peerSerial) {
     var serialEsc = escapeHtml(peerSerial);
@@ -22048,8 +22046,8 @@ function haTopologyHTML(asset) {
   if (memberStatus === "up" || memberStatus === "down") {
     var healthColor = memberStatus === "up" ? "var(--color-success,#10b981)" : "var(--color-danger,#ef4444)";
     var healthLabel = memberStatus === "up" ? "In cluster (up)" : "Reported down";
-    var healthBadge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
-      healthColor + ';color:#000;font-weight:600" title="From the cluster\'s HA roster, read each discovery cycle">' +
+    var healthBadge = '<span class="badge hue-pill" style="--hue:' +
+      healthColor + '" title="From the cluster\'s HA roster, read each discovery cycle">' +
       healthLabel + '</span>';
     healthHTML = '<div class="detail-row"><span class="detail-label">HA Member Health</span><span class="detail-value">' + healthBadge + '</span></div>';
   }

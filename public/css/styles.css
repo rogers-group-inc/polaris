@@ -417,8 +417,6 @@
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .ip-table tbody tr:hover { background: rgba(2,136,209,0.04); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) tr.row-panel-active,
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) tr.row-panel-active:hover { background: rgba(2,136,209,0.08) !important; box-shadow: inset 3px 0 0 #0288d1; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .toast-success { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .toast-error   { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) input:focus, :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) select:focus, :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) textarea:focus {
   box-shadow: 0 0 0 2px rgba(2,136,209,0.20);
 }
@@ -979,10 +977,10 @@ code {
    pair reads as amber against white at a glance. */
 [data-theme="morning"] {
   --color-bg-primary: #f7e6c8;
-  --color-bg-secondary: #eed9b2;
-  --color-bg-tertiary: #f2e0bd;
+  --color-bg-secondary: #e8d4ad;
+  --color-bg-tertiary: #efddba;
   --color-surface: #fff8e8;
-  --color-bg-elevated: #f0dcb6;
+  --color-bg-elevated: #ebd7b1;
   --color-border: #d9bd8c;
   --color-border-light: #ead7b3;
   --color-text-primary: #33210a;
@@ -1046,10 +1044,10 @@ code {
    almost no hue, which is what keeps it distinct from morning’s amber. */
 [data-theme="noon"] {
   --color-bg-primary: #fbfaf9;
-  --color-bg-secondary: #f1efec;
-  --color-bg-tertiary: #f7f5f3;
+  --color-bg-secondary: #eae8e5;
+  --color-bg-tertiary: #f3f1ef;
   --color-surface: #ffffff;
-  --color-bg-elevated: #f6f4f1;
+  --color-bg-elevated: #edebe8;
   --color-border: #dbd6d0;
   --color-border-light: #ebe7e2;
   --color-text-primary: #201612;
@@ -1836,6 +1834,8 @@ code {
   letter-spacing: 0.02em;
 }
 .capacity-pill-sm { font-size: 0.68rem; padding: 1px 6px; }
+/* Shape, fill, border and label clamp come from the pill family (below); the
+   per-severity rules here supply only the label colour. */
 .capacity-pill-ok    { background: rgba(46,204,113,0.15); color: #2ecc71; }
 .capacity-pill-watch { background: rgba(79,195,247,0.18); color: var(--color-accent); }
 .capacity-pill-amber { background: rgba(255,214,0,0.18);  color: var(--color-warning); }
@@ -1864,14 +1864,27 @@ code {
   border: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
 }
-.capacity-reason-ok    { border-color: rgba(46,204,113,0.30); background: rgba(46,204,113,0.05); }
-.capacity-reason-watch { border-color: rgba(79,195,247,0.35); background: rgba(79,195,247,0.06); }
-.capacity-reason-amber { border-color: rgba(255,214,0,0.35);  background: rgba(255,214,0,0.06); }
-.capacity-reason-red   { border-color: rgba(239,83,80,0.40);  background: rgba(239,83,80,0.07); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-ok    { border-color: rgba(39,174,96,0.30);   background: rgba(39,174,96,0.05); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-watch { border-color: rgba(2,136,209,0.30);  background: rgba(2,136,209,0.06); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-amber { border-color: rgba(245,127,23,0.30); background: rgba(245,127,23,0.06); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-red   { border-color: rgba(198,40,40,0.30);  background: rgba(198,40,40,0.06); }
+/* A severity box wears the pill recipe (see `:root .badge` below): an 18%
+   fill of its severity colour and a border at 45% of that colour with its
+   lightness clamped into the theme's label band, so the box's edge reads as
+   firmly as the pill inside it. One colour per severity (--cap-c, the same
+   values the pills' labels use), rather than a hand-tuned fill/border pair per
+   severity per theme family. */
+.capacity-reason-ok    { --cap-c: #2ecc71; }
+.capacity-reason-watch { --cap-c: var(--color-accent); }
+.capacity-reason-amber { --cap-c: var(--color-warning); }
+.capacity-reason-red   { --cap-c: var(--color-danger); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-ok    { --cap-c: #27ae60; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-watch { --cap-c: #0288d1; }
+:is(.capacity-reason-ok, .capacity-reason-watch, .capacity-reason-amber, .capacity-reason-red) {
+  background: color-mix(in srgb, var(--cap-c) 18%, transparent);
+  border-color: color-mix(in srgb, var(--cap-c) 45%, transparent);
+}
+@supports (color: oklch(from red l c h)) {
+  :is(.capacity-reason-ok, .capacity-reason-watch, .capacity-reason-amber, .capacity-reason-red) {
+    border-color: color-mix(in srgb, oklch(from var(--cap-c) clamp(var(--hue-label-l-min), l, var(--hue-label-l-max)) c h) 45%, transparent);
+  }
+}
 .capacity-reason-head {
   display: flex;
   align-items: flex-start;
@@ -1941,12 +1954,9 @@ code {
 .capacity-advisor-card { border-left: 3px solid var(--color-accent); }
 .advisor-header-amber { font-size: 0.78rem; color: var(--color-warning); font-weight: 600; }
 
-/* Header band darker than the card, not the lighter bg-primary the generic
-   .ip-table header paints — the light band read as washed out on the card. */
-.advisor-table thead th {
-  background: color-mix(in srgb, var(--color-bg-primary) 88%, black);
-  color: var(--color-text-secondary);
-}
+/* The header band is .ip-table's (below), darker than the card on every theme.
+   A rule of its own used to sit here and lost to .ip-table thead th on source
+   order, so it never painted. */
 .advisor-table tbody tr.advisor-divider td {
   padding-top: 0.85rem;
   font-size: 0.75rem;
@@ -3865,6 +3875,37 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
 /* A table that stands as a page's own card (the Users page's Users, Roles and
    Group Mappings) lifts like the sidebar and the Server Settings card. */
 .table-wrapper.lift-card { box-shadow: var(--shadow-lift); }
+/* A page-level table outside a folder card (the Users page's three) wears the
+   folder card's FROSTED glass, not the bare wrapper's tint-only fill: the
+   --panel-glass-blur saturate() is what warms the rail and the folder card, so
+   a tint-only table read as a different, paler material beside them. Same
+   idiom as .folder-card::after — the blur lives on a layer BEHIND the content,
+   never on an ancestor of the TableSF popovers (it would become their
+   containing block) — and the wrapper inside drops its own chrome. */
+.glass-table-card {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lift);
+}
+.glass-table-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: calc(var(--radius-lg) - 1px);
+  pointer-events: none;
+  background: var(--rail-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+}
+.glass-table-card > .table-wrapper {
+  border: none;
+  border-radius: calc(var(--radius-lg) - 1px);
+  background: transparent;
+  box-shadow: none;
+}
 /* Sticky-header variant (Assets / Events / IPAM Blocks + Networks list
    tables): the wrapper is height-bounded to the viewport by the shared
    sizeStickyTableWrappers() in app.js (hooked into renderPageControls /
@@ -4484,6 +4525,13 @@ body.sf-resizing * { user-select: none !important; }
   box-shadow: none;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
+/* Lit (something selected), the bar's live buttons take the Device Map's and
+   Application Map's button cast (--map-btn-shadow), so "these will act now"
+   reads at a glance. Disabled ones stay flat like every disabled .btn. The
+   fallback is the same value, for a page whose :root lacks the token. */
+.bulk-bar:not(.bulk-bar-idle) .btn:not(.btn-icon):not(:disabled) {
+  box-shadow: var(--map-btn-shadow, 0 2px 4px rgba(0,0,0,.3), 0 1px 1px rgba(0,0,0,.25));
+}
 
 /* Selected rows track the bar: an accent wash plus a left marker, so the eye
    can pair "3 selected" with WHICH three. Beats a checkbox-only cue on a wide
@@ -4824,6 +4872,77 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
      daylight ground. Tinted fills sit only a few percent from the surface
      they are on; without an edge the pill dissolves into the row. */
   box-shadow: var(--shadow-pill);
+}
+/* ─── The pill family ─────────────────────────────────────────────────────────
+   ONE look for every status pill in the app — .badge and its ~45 colour
+   classes, and the pills that grew up beside it (capacity / advisor / widget /
+   firmware pills, the integration-type, VIP, dependency-tree and
+   primary-address tags, the saved-filter menu's badge) — so a role pill, an
+   asset's Status pill and a firmware "No device login" pill read as the same
+   object.
+
+   SHAPE (the classes that are not a .badge; .badge carries it above): fully
+   round, 1px border, the pill lift, weight 600, one standard and one small
+   size. The `:root` raises these above each class's own radius / padding rule
+   wherever it sits; text-transform and letter-spacing stay the class's.
+
+   COLOUR — the stored-colour pill's recipe (.hue-pill): an 18% fill of the
+   label colour, the label held inside the theme's --hue-label-l lightness band
+   (≤ 0.5 daylight, ≥ 0.78 nightfall), the border at 45% of that held label.
+   Each class owns only its LABEL colour (and any per-theme override of it);
+   its own background / border-color values no longer show.
+
+   Excluded from the colour half: .hue-pill (the same recipe from its raw
+   --hue), the outline-only Passive monitor state (its empty fill IS its
+   meaning) and a .tag-chip already painted as a .hue-pill. Not pills at all,
+   and so not here: the solid count bubble (.mac-badge-count), calendar chips,
+   the account badge.
+
+   A new pill takes `class="badge"` plus a colour class, or `badge hue-pill`
+   with `--hue` inline for a computed colour — never an inline fill, border or
+   radius. */
+:root :is(.capacity-pill, .advisor-pill, .widget-pill, .fw-pill, .integration-type-badge,
+          .vip-badge, .dep-tree-source-tag, .dep-tree-override-tag, .address-primary-badge,
+          .sfl-menu .sfl-badge, .advisor-cold-badge) {
+  display: inline-block;
+  border-radius: 99px;
+  border-width: 1px;
+  border-style: solid;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: normal;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pill);
+}
+:root :is(.capacity-pill-sm, .vip-badge, .sfl-menu .sfl-badge, .advisor-cold-badge, .address-primary-badge) {
+  padding: 1px 6px;
+  font-size: 0.66rem;
+}
+:root .tag-chip { border-radius: 99px; }
+:root :is(.badge:not(.hue-pill):not(.badge-monitor-passive), .capacity-pill, .advisor-pill,
+          .widget-pill, .fw-pill, .integration-type-badge, .vip-badge, .dep-tree-source-tag,
+          .dep-tree-override-tag, .address-primary-badge, .sfl-menu .sfl-badge,
+          .advisor-cold-badge, .tag-chip:not(.hue-pill)) {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  border-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+/* …and the stored-colour pill's LABEL clamp: the glyphs keep the class's hue
+   but take an OKLCH lightness inside the theme's --hue-label-l band (≤ 0.5 on
+   daylight, ≥ 0.78 on nightfall), so a bright label — "Missed" in #f57f17, the
+   amber Warning/Expired/v6 family — reads as firmly as a role pill's. Painted
+   through -webkit-text-fill-color because only there does currentColor mean
+   the badge's OWN colour (inside `color` it is the parent's); every browser
+   with relative colour syntax supports it. The border follows the clamped
+   label, as .hue-pill's does. */
+@supports (color: oklch(from red l c h)) {
+  :root :is(.badge:not(.hue-pill):not(.badge-monitor-passive), .capacity-pill, .advisor-pill,
+            .widget-pill, .fw-pill, .integration-type-badge, .vip-badge, .dep-tree-source-tag,
+            .dep-tree-override-tag, .address-primary-badge, .sfl-menu .sfl-badge,
+            .advisor-cold-badge, .tag-chip:not(.hue-pill)) {
+    -webkit-text-fill-color: oklch(from currentColor clamp(var(--hue-label-l-min), l, var(--hue-label-l-max)) c h);
+    border-color: color-mix(in srgb, oklch(from currentColor clamp(var(--hue-label-l-min), l, var(--hue-label-l-max)) c h) 45%, transparent);
+  }
 }
 .badge-clickable { cursor: pointer; user-select: none; transition: filter 0.12s ease, transform 0.12s ease; }
 .badge-clickable:hover  { filter: brightness(1.18); }
@@ -5224,8 +5343,35 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   animation: toast-in 0.25s ease;
   max-width: 380px;
 }
-.toast-success { background: rgba(0,200,83,0.15); color: var(--color-success); border: 1px solid rgba(0,200,83,0.3); }
-.toast-error   { background: rgba(255,23,68,0.15); color: var(--color-danger); border: 1px solid rgba(255,23,68,0.3); }
+/* A toast is the pill family's recipe on the floating-surface glass: one
+   colour per type (--toast-c), an 18% tint of it laid over --panel-glass-bg
+   and the shared blur (so the page behind a toast cannot show through and
+   muddy the message), the text in that colour held inside the theme's
+   --hue-label-l band (≤ 0.5 daylight, ≥ 0.78 nightfall), and a border at 45%
+   of the held colour. showToast (api.js) passes four types — success, error,
+   warning, info — and warning / info had no rule at all before, so they
+   floated as bare text. The glass sits on the toast itself: it holds no
+   position:fixed children, which is the only reason a surface moves its blur
+   to a ::before. */
+.toast-success { --toast-c: var(--color-success); }
+.toast-error   { --toast-c: var(--color-danger); }
+.toast-warning { --toast-c: var(--color-warning); }
+.toast-info    { --toast-c: var(--color-accent); }
+:is(.toast-success, .toast-error, .toast-warning, .toast-info) {
+  --toast-label: var(--toast-c);
+  background:
+    linear-gradient(color-mix(in srgb, var(--toast-c) 18%, transparent), color-mix(in srgb, var(--toast-c) 18%, transparent)),
+    var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  color: var(--toast-label);
+  border: 1px solid color-mix(in srgb, var(--toast-label) 45%, transparent);
+}
+@supports (color: oklch(from red l c h)) {
+  :is(.toast-success, .toast-error, .toast-warning, .toast-info) {
+    --toast-label: oklch(from var(--toast-c) clamp(var(--hue-label-l-min), l, var(--hue-label-l-max)) c h);
+  }
+}
 .toast { display: flex; align-items: center; gap: 0.5rem; }
 .toast-copy-btn {
   flex-shrink: 0;
@@ -7041,6 +7187,13 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   background: var(--color-bg-primary);
   z-index: 1;
   white-space: nowrap;
+}
+/* On the daylight family bg-primary is the LIGHTEST page tone, so the band
+   read paler than the card it heads (the Capacity Advisor, the network IP
+   list). The darkest tone instead — the same direction nightfall's bg-primary
+   already takes against its surface. Opaque, as the sticky header needs. */
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .ip-table thead th {
+  background: var(--color-bg-secondary);
 }
 .ip-table tbody td {
   padding: 0.35rem 0.75rem;
