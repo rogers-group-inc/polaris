@@ -101,7 +101,8 @@ Three desktop radii: `radius-sm` (4px) for small controls, `radius-md` (8px) as 
 default, `radius-lg` (12px) for large panels — `.card`, `.table-wrapper`, `.modal`.
 Shadows by what the surface is: `shadow-card` for a big opaque box that rests on the page
 (every card, dashboard widget, table, canvas and `.chart-box`), `shadow-control` for small
-chrome (buttons, inputs, tabs), `shadow-pill` for badges and widget pills, and `shadow-md`
+chrome (buttons, inputs, tabs) — except buttons on a page card or a map canvas, which take
+`map-btn-shadow` — `shadow-pill` for badges and widget pills, and `shadow-md`
 for anything that floats over the page (menus, dropdowns, modals, toasts). `shadow-sm` is
 retired; it was invisible under a wide card on the daylight themes. A panel gets a border
 *and* its shadow, never a shadow alone.
