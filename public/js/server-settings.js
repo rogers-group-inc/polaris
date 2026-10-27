@@ -1996,7 +1996,10 @@ function _lifecycleRowHtml(c) {
       "</td></tr>";
   }
 
-  return '<tr class="capacity-reason-' + css + '"' + titleAttr + ">" +
+  // Only a row that needs something is tinted; a healthy row stays a plain
+  // table row so the problems stand out (the Status pill still says Current).
+  var rowClass = interesting ? ' class="capacity-reason-' + css + '"' : "";
+  return "<tr" + rowClass + titleAttr + ">" +
       "<td><strong>" + escapeHtml(c.label || c.id) + "</strong></td>" +
       "<td>" + target + "</td>" +
       "<td>" + installed + "</td>" +
