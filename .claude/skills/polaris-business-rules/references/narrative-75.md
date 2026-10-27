@@ -473,7 +473,7 @@ the unit, not the mechanism: a subnet fold answers "what broke at this site", an
 
 **`deviceAutomation`** — one alert per device PER automation: one automation's components on a
 device fold together (eight faulted ports are one alert), but two automations on the same device
-stay two alerts. The alert keys `<assetId>/auto:<ruleId>` (`deviceAutomationFoldTarget`); members
+stay two alerts. The alert keys `<assetId>/auto:<ruleId>` (`deviceAutomationFoldTarget`, removed 2026-10-27 — see the redefinition below); members
 are components, as in a device fold, and nothing carries `assetId`. Eligibility is the DEVICE
 group's: a whole-device trigger would only ever hold one contribution per alert, so it is refused
 with the same reason. It is the shape an automation's own `groupByAsset` checkbox already gives —
