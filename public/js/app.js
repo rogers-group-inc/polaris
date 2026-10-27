@@ -1847,10 +1847,17 @@ function renderGlobalSearch() {
   if (!pageHeader) return;
   if (pageHeader.querySelector(".global-search")) return; // already mounted
 
+  // The Ctrl+K shortcut below, advertised in the box. CSS shows it only while
+  // the box is empty and unfocused, so it never sits under typed text, the
+  // clear button or the spinner; aria-keyshortcuts says it to a screen reader.
+  var nav = typeof navigator !== "undefined" ? navigator : {};
+  var mac = /Mac|iPhone|iPad/.test(nav.platform || nav.userAgent || "");
   var wrap = document.createElement("div");
   wrap.className = "global-search";
   wrap.innerHTML =
-    '<input type="search" id="global-search-input" autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(_searchPlaceholder()) + '">' +
+    '<input type="search" id="global-search-input" autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(_searchPlaceholder()) + '"' +
+      ' aria-keyshortcuts="' + (mac ? "Meta+K" : "Control+K") + '">' +
+    '<kbd class="global-search-kbd" aria-hidden="true">' + (mac ? "⌘ K" : "Ctrl K") + '</kbd>' +
     '<span id="global-search-spinner" class="global-search-spinner" hidden aria-hidden="true"></span>' +
     '<div id="global-search-dropdown" class="global-search-dropdown" style="display:none"></div>';
 
@@ -3537,6 +3544,18 @@ function _rowSelectClearOthers(tbody, keep) {
   tbody.dispatchEvent(new window.CustomEvent("polaris:rowselect-clear", { bubbles: true }));
   _rowSelectRows(tbody).forEach(function (tr) { if (tr !== keep) _rowSelectSet(tr, false); });
 }
+// A right click on a row that is not selected makes it the selection, as a file
+// explorer does, so a row menu acting on "the selection" acts on the row that
+// was clicked; a right click on a selected row keeps the whole selection.
+function _rowSelectForMenu(tr) {
+  var cb = _rowSelectBox(tr);
+  if (!cb || cb.checked || !tr.parentNode || tr.parentNode.tagName !== "TBODY") return;
+  _rowSelLastTbody = tr.parentNode;
+  _rowSelAnchor = tr;
+  _rowSelCursor = null;
+  _rowSelectClearOthers(tr.parentNode, tr);
+  _rowSelectSet(tr, true);
+}
 // Rows between the anchor and `cur` take `state`; the rest go back to what they
 // were when the gesture began (additive) or off (replacing).
 function _rowSelectApplyRange(g, cur) {
@@ -3639,6 +3658,7 @@ document.addEventListener("mousedown", function (e) {
   }
   var base = new Set(_rowSelectRows(tbody).filter(function (r) { return _rowSelectBox(r).checked; }));
   _rowSelAnchor = tr;
+  _rowSelCursor = null;
   _rowSel = {
     tbody: tbody, anchor: tr, last: tr, additive: ctrl, base: base,
     // Ctrl paints the clicked row's NEW state across the drag; a plain drag selects.
@@ -3694,19 +3714,99 @@ function _rowSelectEnd(aborted) {
 document.addEventListener("mouseup", function (e) { if (e.button === 0) _rowSelectEnd(false); });
 window.addEventListener("blur", function () { _rowSelectEnd(true); });
 
-document.addEventListener("keydown", function (e) {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || (e.key !== "a" && e.key !== "A")) return;
+// The keyboard. Ctrl/⌘+A selects every row of the table; with a selection on
+// screen, Esc clears it, ↑ / ↓ move it one row (Shift+↑ / ↓ extend it from the
+// anchor, as Shift+click does), and Enter does a left click on the one
+// selected row's name — its `primary` verb, Open. None of them act while
+// focus is in a field, or through a dialog, a menu or a slide-over that does
+// not hold the table: whatever is on top owns the keyboard.
+var _rowSelCursor = null;    // the row ↑ / ↓ last moved to (Shift moves it, not the anchor)
+
+function _rowSelectKeyTbody(e) {
   var t = e.target;
-  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return null;
   var tbody = _rowSelLastTbody;
-  if (!tbody || !tbody.isConnected || !tbody.offsetParent) return;
-  // Not through a dialog: a modal opened over the list owns the keyboard.
+  // No table clicked yet (or it is gone): the one table that holds a selected
+  // row is the target, so one asset selected + Ctrl+A selects the page however
+  // that asset came to be selected. Two tables holding picks is ambiguous.
+  if (!tbody || !tbody.isConnected || !tbody.offsetParent) {
+    var holding = [];
+    document.querySelectorAll("td.cb-col input[type=checkbox]:checked").forEach(function (cb) {
+      var tb = cb.closest("tbody");
+      if (tb && tb.offsetParent && holding.indexOf(tb) < 0) holding.push(tb);
+    });
+    tbody = holding.length === 1 ? holding[0] : null;
+  }
+  if (!tbody) return null;
   var modal = document.querySelector("#modal-overlay.open, .modal-overlay.open");
-  if (modal && !modal.contains(tbody)) return;
+  if (modal && !modal.contains(tbody)) return null;
+  var panels = document.querySelectorAll(".slideover-overlay.open");
+  if (panels.length && !panels[panels.length - 1].contains(tbody)) return null;
+  if (document.querySelector(".row-context-menu, .btn-dropdown-menu.open")) return null;
+  return tbody;
+}
+
+document.addEventListener("keydown", function (e) {
+  if (e.defaultPrevented || e.altKey) return;
+  var key = e.key;
+  var ctrl = e.ctrlKey || e.metaKey;
+  var selectAll = ctrl && !e.shiftKey && (key === "a" || key === "A");
+  var arrow = !ctrl && (key === "ArrowDown" || key === "ArrowUp");
+  var plain = !ctrl && !e.shiftKey;
+  if (!selectAll && !arrow && !(plain && (key === "Escape" || key === "Enter"))) return;
+  var tbody = _rowSelectKeyTbody(e);
+  if (!tbody) return;
   var rows = _rowSelectRows(tbody);
   if (!rows.length) return;
+  if (selectAll) {
+    e.preventDefault();
+    rows.forEach(function (tr) { _rowSelectSet(tr, true); });
+    return;
+  }
+  // The rest act only on a selection that is on screen, so an arrow key on a
+  // page whose table holds nothing still scrolls the page.
+  var picked = rows.filter(function (tr) { return _rowSelectBox(tr).checked; });
+  if (!picked.length) return;
+  if (key === "Escape") {
+    // Before the slide-over's own Escape (it skips a prevented event): the
+    // first Esc drops the picks in a table inside a panel, the next closes it.
+    e.preventDefault();
+    _rowSelectClearOthers(tbody, null);
+    _rowSelAnchor = _rowSelCursor = null;
+    return;
+  }
+  if (key === "Enter") {
+    // A focused button or link already answers Enter natively.
+    if (e.target && e.target.closest && e.target.closest("a, button, summary, [role=button]")) return;
+    if (picked.length !== 1) return;
+    var trigger = picked[0].querySelector(".row-menu-trigger, [data-row-menu]");
+    if (!trigger) return;
+    e.preventDefault();
+    trigger.click();
+    return;
+  }
+  // ↑ / ↓ from the cursor (the row last moved to), else the anchor, else the
+  // nearest end of the selection.
+  var down = key === "ArrowDown";
+  var from = [_rowSelCursor, _rowSelAnchor].filter(function (r) {
+    return r && r.parentNode === tbody && rows.indexOf(r) >= 0;
+  })[0] || (down ? picked[picked.length - 1] : picked[0]);
+  var next = rows[rows.indexOf(from) + (down ? 1 : -1)];
   e.preventDefault();
-  rows.forEach(function (tr) { _rowSelectSet(tr, true); });
+  if (!next) return;
+  if (e.shiftKey) {
+    var anchor = _rowSelAnchor && _rowSelAnchor.parentNode === tbody && rows.indexOf(_rowSelAnchor) >= 0 ? _rowSelAnchor : from;
+    _rowSelAnchor = anchor;
+    tbody.dispatchEvent(new window.CustomEvent("polaris:rowselect-clear", { bubbles: true }));
+    _rowSelectApplyRange({ tbody: tbody, anchor: anchor, state: true, additive: false }, next);
+  } else {
+    _rowSelectClearOthers(tbody, next);
+    _rowSelectSet(next, true);
+    _rowSelAnchor = next;
+  }
+  _rowSelCursor = next;
+  _rowSelLastTbody = tbody;
+  if (typeof next.scrollIntoView === "function") next.scrollIntoView({ block: "nearest" });
 });
 
 /**
@@ -4376,6 +4476,13 @@ function closeModal() {
 // on either button. A caller that builds its items asynchronously reads
 // rowMenuGesture() synchronously in its click handler and passes the result as
 // `opts.menuAt`, because the forced flag only lives for the replayed click.
+//
+// A `<tr data-row-menu-row>` widens the right-click target to the whole row:
+// a right click anywhere on it replays the click on the row's own trigger, so
+// the menu is the same one the name gives. Fields and real links inside the
+// row keep the browser's menu (copy / paste, open in a new tab). In a
+// selectable table it also selects the row first unless it already is
+// (_rowSelectForMenu), so the menu can offer verbs over the selection.
 var _rowMenuTeardown = null;
 var _rowMenuForced = null;
 
@@ -4393,8 +4500,16 @@ if (typeof document !== "undefined" && document.addEventListener) {
     if (e.defaultPrevented || e.shiftKey) return; // Shift+right-click keeps the browser's own menu
     var t = e.target;
     var trigger = t && typeof t.closest === "function" ? t.closest(".row-menu-trigger, [data-row-menu]") : null;
-    if (!trigger) return;
+    if (!trigger) {
+      var row = t && typeof t.closest === "function" ? t.closest("tr[data-row-menu-row]") : null;
+      if (!row || t.closest('input, textarea, select, [contenteditable], a[href]:not([href="#"])')) return;
+      trigger = row.querySelector(".row-menu-trigger, [data-row-menu]");
+      if (!trigger) return;
+      t = trigger;
+    }
     e.preventDefault();
+    var menuRow = trigger.closest("tr[data-row-menu-row]");
+    if (menuRow) _rowSelectForMenu(menuRow);
     // A keyboard-raised contextmenu reports (0, 0); anchor under the trigger then.
     var fromPointer = e.clientX || e.clientY;
     _rowMenuForced = fromPointer ? { x: e.clientX, y: e.clientY } : { x: null, y: null };
@@ -4615,7 +4730,18 @@ function showRowMenu(anchor, items, opts) {
 
   anchor.setAttribute("aria-expanded", "true");
   anchor.setAttribute(ROW_MENU_OPEN_ATTR, "");
-  if (buttons.length) buttons[0].focus();
+  // A right click focuses the MENU, not its first item: Chrome draws a focus
+  // ring on a programmatically focused item whenever the last input was a key
+  // — and Ctrl+click to build a selection is one — so the first item came up
+  // boxed. The capture-phase arrow handler above still works from here, and
+  // the first ↓ lands on the first item. A keyboard-raised menu (Menu key,
+  // Shift+F10: at.x null) and a plain click's menu keep the item focus.
+  if (at && at.x != null) {
+    menu.tabIndex = -1;
+    try { menu.focus({ preventScroll: true }); } catch (_) { menu.focus(); }
+  } else if (buttons.length) {
+    buttons[0].focus();
+  }
 }
 
 if (typeof window !== "undefined") {

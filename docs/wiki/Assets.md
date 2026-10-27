@@ -138,7 +138,7 @@ carries the whole message: neither colour nor motion reaches every reader.
 
 ### View tabs and saved filters
 
-A strip on the table's top-left edge, below the bulk bar, sharing its row with
+A strip on the table's top-left edge, sharing its row with
 **Filters** (in edit mode only, right after the tabs), the page's buttons (the **Import** and **Export**
 icons, **Maintenance**, the settings gear), then **Clear**,
 **Refresh** (the circular-arrows icon), **+ Add Asset(s)**, the page size (**25 / page** …) and, at
@@ -181,12 +181,24 @@ such as a user on the Users page, shows its menu on either click.
 Shift+right-click still gives the browser's own menu, and Ctrl/middle-click on a
 dashboard row still opens the Assets page in a new tab.
 
-Each row's menu carries **Open** and, with `assets:write`, **Edit…**; then
+On the Assets table you can **right-click anywhere on a row**, not only its
+hostname. A right click on a row that is not selected selects it (and only it)
+first, as a file explorer does; a right click on a row that is part of a
+selection of several opens the [selection's menu](#bulk-actions) instead. A
+right click on a link that leaves the page, or in a text field, still gives the
+browser's menu.
+
+Each row's menu carries **Open** and, with `assets:write`, **Edit**; then
 **Open HTTPS**, **Open RDP** and **Open SSH** where the device has that
 management surface (the same verbs as the slide-over header — a Fortinet device
-offers what its `allowaccess` permits, a server RDP and SSH); **Quarantine…** or
-**Release quarantine** for an `assetsQuarantine` holder when quarantine push is
-on for some integration; and **Delete**.
+offers what its `allowaccess` permits, a server RDP and SSH); then the
+[bulk actions](#bulk-actions) that make sense for one asset — **Change type**,
+**Change state**, **Monitoring**, **Tags**, **Deploy agent**,
+**Maintenance** and, for a FortiGate, FortiSwitch or FortiAP,
+**Upgrade firmware** — each under the same permission as below;
+**Quarantine** or **Release quarantine** for an `assetsQuarantine` holder when
+quarantine push is on for some integration; and **Delete**. Compare and Merge
+need two assets, so a single row's menu leaves them out.
 
 ---
 
@@ -204,30 +216,45 @@ asset's **Alerts** tab and on a network's address list.
 | add or remove one row | **Ctrl**+click (**⌘**+click on a Mac) |
 | select a range | click the first row, then **Shift**+click the last |
 | select a run of rows | click and drag across them. The list scrolls when you hold the pointer at its top or bottom edge. Hold **Ctrl** to add the run to what is already selected |
-| select every row in the table | **Ctrl**+**A** (**⌘**+**A**) after clicking a row in it |
-| clear the selection | click anywhere off the table, or **Deselect All** on the bulk bar |
+| select every row in the table | **Ctrl**+**A** (**⌘**+**A**) after clicking a row in it, or while one of its rows is selected — on the Assets table, every row of the page you are on |
+| move the selection up or down a row | **↑** / **↓**. The list scrolls to keep the row in view; it stops at the first and last row of the page |
+| grow or shrink the selection a row at a time | **Shift**+**↑** / **Shift**+**↓**, from the row you started at |
+| open the selected asset | **Enter**, with exactly one row selected |
+| clear the selection | **Esc**, click anywhere off the table, or **Clear selection** in the selection's menu |
 
-A plain click or drag replaces the selection, including rows you selected on
-other pages of the Assets table. **Ctrl** and **Shift** add to it. Clicking an
+The keys work only while a row of the table is selected and nothing is open over
+it — a dialog, a menu or a panel takes the keyboard first. With a table inside
+a panel (an asset's Alerts tab), the first **Esc** clears the selection and the
+next closes the panel.
+
+A plain click, drag, **↑** / **↓** or **Esc** replaces the selection, including
+rows you selected on other pages of the Assets table. **Ctrl** and **Shift** add to it. Clicking an
 asset's name still opens it, and clicking a link or button in a row does what
-it always did. Clicking the bulk bar, the page buttons or a dialog does not
-clear the selection.
+it always did. Clicking the page buttons or a dialog does not clear the
+selection.
 
-Selected rows raise the bulk bar:
+### The selection's menu
+
+There is no bulk bar. **Right-click any selected row** when several are selected
+and the menu, headed with the count ("3 selected"), acts on all of them —
+including rows selected on other pages. A verb that cannot apply to this
+selection stays in the menu, greyed, with the reason on hover.
 
 | Action | Needs | Does |
 |---|---|---|
-| **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; with more than ten selected the button greys out in yellow |
-| **Merge** | Assets **full read-write** (the button appears for the admin role), exactly **two** selected | opens the merge modal with the target pre-selected |
-| **Type ▾** / **State ▾** | `assets:write` | sets the asset type or lifecycle state on every selected row. A state that cannot carry monitoring turns monitoring off ([rule 10](Business-Rules#rule-10)) |
-| **Monitoring ▾** | `assets:write` | **Enable** or **Disable** monitoring on the selection. Assets in a state that cannot be monitored are refused with a reason |
+| **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; greyed with more than ten selected |
+| **Merge** | Assets **full read-write** (shown to the admin role), exactly **two** selected | opens the merge modal with the target pre-selected |
+| **Change type** / **Change state** | `assets:write` | opens a second menu of types or states and sets the one you pick on every selected row. A state that cannot carry monitoring turns monitoring off ([rule 10](Business-Rules#rule-10)) |
+| **Monitoring** | `assets:write` | **Enable** or **Disable** monitoring on the selection. Assets in a state that cannot be monitored are refused with a reason |
 | **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
-| **Edit** | `assets:write`, exactly **one** selected | opens the edit modal |
-| **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
+| **Deploy agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
-| **Upgrade** | `assets:write`, FortiGates / FortiSwitches / FortiAPs under **one** FortiGate | schedules a group firmware upgrade in dependency order — see [Group firmware upgrades](#group-firmware-upgrades). Turns **red** when the selection spans more than one FortiGate; clicking it then explains why |
-| **Quarantine selected** / **Release Quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
-| **Delete selected** | `assets:write` | deletes the selection after a confirmation — see [Deleting an asset](#deleting-an-asset) |
+| **Upgrade firmware** | `assets:write`, FortiGates / FortiSwitches / FortiAPs under **one** FortiGate | schedules a group firmware upgrade in dependency order — see [Group firmware upgrades](#group-firmware-upgrades). When the selection spans more than one FortiGate, choosing it explains why instead |
+| **Quarantine** / **Release quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
+| **Delete** | `assets:write` | deletes the selection after a confirmation — see [Deleting an asset](#deleting-an-asset) |
+| **Clear selection** | — | deselects every row, on every page |
+
+To edit one asset, right-click it on its own: its menu has **Edit**.
 
 **Replace keeps two kinds of tag** on every asset: Device Map `region:` tags
 and the discovery breadcrumbs `prev-entra:` / `prev-ad:`. Wiping region tags
@@ -241,22 +268,22 @@ A selection past the 500-id cap is refused **with the count**, rather than
 
 ### Group firmware upgrades
 
-**Upgrade** on the bulk bar books one firmware upgrade for a FortiGate and the
+**Upgrade firmware** in a row's menu (one device) or the selection's menu
+books one firmware upgrade for a FortiGate and the
 FortiSwitches and FortiAPs behind it, and runs them in dependency order
 ([rule 122](Business-Rules#rule-122)). It uses the same images, device logins
 and checks as a single-device upgrade from the [Firmware](#firmware) card.
 
 **One FortiGate at a time.** Every selected device must sit under the same
-FortiGate and come from the same integration. The button is:
+FortiGate and come from the same integration. The menu item is:
 
-- **grey** with nothing selected, or when a selected asset is not a FortiGate,
-  FortiSwitch or FortiAP;
-- **red** when the selection spans more than one FortiGate, or includes a device
-  Polaris cannot place under one. Clicking it lists each FortiGate with the
-  devices selected under it, and **Keep only these** narrows the selection to
-  that one;
-- **normal** when it is one FortiGate's devices. Clicking it opens the booking
-  dialog.
+- **greyed** when a selected asset is not a FortiGate, FortiSwitch or FortiAP
+  (and left out of a single non-Fortinet asset's menu);
+- a **list of sources** when the selection spans more than one FortiGate, or
+  includes a device Polaris cannot place under one. Choosing it lists each
+  FortiGate with the devices selected under it, and **Keep only these** narrows
+  the selection to that one;
+- the **booking dialog** when it is one FortiGate's devices.
 
 Only one group upgrade can be scheduled or running per FortiGate. Cancel the
 existing one first.
@@ -1292,7 +1319,7 @@ is back (see [rule 78](Business-Rules#rule-78)).
 
 A **grouped** alert (one alert covering several components of this device)
 wears a **GROUP** pill beside its severity, and its message is a link. Click
-it and choose **Show alerts in this group…** to list every component the
+it and choose **Show alerts in this group** to list every component the
 alert covers. Ones still affected come first, worst first. Ones that have
 recovered stay on the list, greyed, with the time they came back. This works
 for anyone who can see the tab; it needs no `alerts` permission.
@@ -1716,7 +1743,8 @@ Three ways in, all `assets:write` and all the same act:
 - **Delete Asset**, at the bottom-left of the **edit modal** — so a device you
   opened to fix, and then decided should not exist, does not have to be found
   again in the list; or
-- **Delete selected** on the bulk bar, for many at once.
+- **Delete** in the selection's menu (right-click a selected row), for many at
+  once.
 
 The first two ask you to confirm **by hostname** first, over the top of whatever
 you had open; cancelling leaves the edit modal and anything you had typed in it

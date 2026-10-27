@@ -163,13 +163,13 @@ describe("which verbs a row offers", () => {
   it("offers Acknowledge and Clear on an alert with NO device — the case that used to be inert", () => {
     const { ev, teardown } = mountAndClick([alert({ id: "n1" })]);
     expect(ev.defaultPrevented).toBe(true);
-    expect(labels()).toEqual(["Acknowledge alert…", "Clear alert"]);
+    expect(labels()).toEqual(["Acknowledge alert", "Clear alert"]);
     teardown();
   });
 
   it("adds Open device when the alert names one", () => {
     const { teardown } = mountAndClick([alert({ id: "n1", assetId: "asset-9", hostname: "sw-1" })]);
-    expect(labels()).toEqual(["Open device", "Acknowledge alert…", "Clear alert"]);
+    expect(labels()).toEqual(["Open device", "Acknowledge alert", "Clear alert"]);
     pick("Open device");
     // The device opens on ITS Alerts tab — the alert, not the General tab the
     // operator would then have to leave.
@@ -187,7 +187,7 @@ describe("which verbs a row offers", () => {
     // A courtesy, not the control — both routes gate server-side either way.
     (win as unknown as Record<string, unknown>).permAtLeast = (_k: string, level: string) => level !== "fullwrite";
     const { teardown } = mountAndClick([alert({ id: "n1" })]);
-    expect(labels()).toEqual(["Acknowledge alert…"]);
+    expect(labels()).toEqual(["Acknowledge alert"]);
     teardown();
   });
 
@@ -200,7 +200,7 @@ describe("which verbs a row offers", () => {
 
   it("a plain click on a device-less alert still shows its verbs — there is nothing to open", () => {
     const { teardown } = mountAndClick([alert({ id: "n1" })], undefined, false);
-    expect(labels()).toEqual(["Acknowledge alert…", "Clear alert"]);
+    expect(labels()).toEqual(["Acknowledge alert", "Clear alert"]);
     teardown();
   });
 
@@ -233,7 +233,7 @@ describe("acting on the alert", () => {
   it("hands the alert to the acknowledge modal, and stamps the owner the SERVER reports", async () => {
     feedRows = [alert({ id: "n1" })]; // the feed keeps saying unacknowledged
     const { el, teardown } = mountAndClick([alert({ id: "n1" })]);
-    pick("Acknowledge alert…");
+    pick("Acknowledge alert");
     expect(ackOpened!.alertId).toBe("n1");
     // The modal re-reads after the write, so who owns it is the server's
     // answer rather than an assumption about who clicked.
@@ -247,7 +247,7 @@ describe("acting on the alert", () => {
   it("hovers the note the modal hands back before the cached feed catches up", async () => {
     feedRows = [alert({ id: "n1" })];
     const { el, teardown } = mountAndClick([alert({ id: "n1" })]);
-    pick("Acknowledge alert…");
+    pick("Acknowledge alert");
     (ackOpened!.opts.onAcknowledged as (a: unknown) => void)({
       id: "n1", acknowledged: true, acknowledgedBy: "jsmith", acknowledgeNote: "rebooting the stack",
     });
@@ -319,8 +319,8 @@ describe("a grouped alert's components", () => {
 
   it("offers the group's alerts right after Open device on a grouped row", () => {
     const { teardown } = mountAndClick([alert({ id: "g1", assetId: "asset-9", dimensionCount: 2 })]);
-    expect(labels()).toEqual(["Open device", "Show alerts in this group…", "Acknowledge alert…", "Clear alert"]);
-    pick("Show alerts in this group…");
+    expect(labels()).toEqual(["Open device", "Show alerts in this group", "Acknowledge alert", "Clear alert"]);
+    pick("Show alerts in this group");
     // By ID: the widget's feed does not carry the members snapshot.
     expect(membersOpened.length).toBe(1);
     expect(membersOpened[0]![0]).toBe("g1");
@@ -330,7 +330,7 @@ describe("a grouped alert's components", () => {
 
   it("counts an Alert Group's alert as grouped too", () => {
     const { teardown } = mountAndClick([alert({ id: "g1", groupName: "Switch health" })]);
-    expect(labels()[0]).toBe("Show alerts in this group…");
+    expect(labels()[0]).toBe("Show alerts in this group");
     teardown();
   });
 
@@ -343,7 +343,7 @@ describe("a grouped alert's components", () => {
 
   it("does not offer it on an ungrouped alert", () => {
     const { teardown } = mountAndClick([alert({ id: "n1" })]);
-    expect(labels()).not.toContain("Show alerts in this group…");
+    expect(labels()).not.toContain("Show alerts in this group");
     teardown();
   });
 

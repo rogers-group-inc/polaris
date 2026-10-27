@@ -173,7 +173,7 @@ The Device Map's site topology has the same menu
   capture of the info rail, so the listening-port list is **in** the image, with
   the Ports key drawn under the graph so the colours still mean something off
   the page. Clipboard first, download as fallback.
-- **Export PDF…**: a PDF drawn as vectors, so it prints sharp and its text is
+- **Export PDF**: a PDF drawn as vectors, so it prints sharp and its text is
   searchable (details below).
 - **Export to Visio (.vsdx)**: one Visio page sized to the view, where every box,
   external node and connection is a separate shape you can recolour, move or

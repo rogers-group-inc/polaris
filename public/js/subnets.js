@@ -64,7 +64,7 @@ async function _initSubnetsPage() {
     var items = [{ label: "Open", primary: true, onSelect: function () { openSubnetFromRow(trigger, id); } }];
     if (canEditSubnet(s)) {
       items.push({ label: "Edit", onSelect: function () { openSubnetEditModal(id); } });
-      items.push({ label: "Move to block…", onSelect: function () { openSubnetMoveModal(id, s); } });
+      items.push({ label: "Move to block", onSelect: function () { openSubnetMoveModal(id, s); } });
       items.push({ separator: true });
       // Archive is `subnets:fullwrite`, not the ownership-aware write the rest
       // of this menu uses: a discovered network carries createdBy=null, so an

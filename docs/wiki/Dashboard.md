@@ -270,7 +270,7 @@ problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).
 Down Assets a left click opens the device (an alert with no device opens its
 group, or shows its verbs when it has no group either); on Maintenance
 Schedules it opens the schedule. A right click shows the row's menu — **Open
-device**, **Acknowledge alert…**, **Clear alert**, **Show alerts in this
+device**, **Acknowledge alert**, **Clear alert**, **Show alerts in this
 group…**, **Disable schedule** — whichever apply. Ctrl/middle-click still opens
 the Assets page in a new tab. The Dash wallboard has no menus: a click there
 opens the device.
@@ -302,7 +302,7 @@ hostname: its message lists every affected component. An ungrouped alert
 still shows its port there, which is what tells two rows from one
 per-interface automation apart.
 
-Clicking a grouped row adds **Show alerts in this group…** at the top of its
+Clicking a grouped row adds **Show alerts in this group** at the top of its
 menu (`alerts:read`). It lists every component the alert covers: its own
 severity, its reading, and when it joined. Components still affected come
 first, worst first. Ones that have recovered stay on the list, greyed, with
@@ -333,7 +333,7 @@ widget a few seconds later, once it is actually holding devices.
 
 Clicking a schedule offers:
 
-- **Open schedule…** — opens the Maintenance modal with that schedule loaded,
+- **Open schedule** — opens the Maintenance modal with that schedule loaded,
   for review or editing. It is the same editor the Assets page opens.
 - **Disable schedule** — confirmed first, because it takes effect immediately:
   the window's open sessions end, held devices leave maintenance and resume

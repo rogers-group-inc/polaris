@@ -445,6 +445,22 @@ describe("left click opens, right click shows the menu", () => {
     expect(contextmenu(anchor, { clientX: 5, clientY: 5, shiftKey: true }).defaultPrevented).toBe(false);
   });
 
+  it("a right click focuses the menu, not its first item; the Menu key focuses the item", () => {
+    anchor.className = "row-menu-trigger";
+    anchor.addEventListener("click", () => {
+      showRowMenu(anchor, [{ label: "Open", primary: true, onSelect: () => {} }, { label: "Edit", onSelect: () => {} }]);
+    });
+    contextmenu(anchor, { clientX: 120, clientY: 80 });
+    expect(doc.activeElement).toBe(menu());
+    // ↓ from there lands on the first item.
+    doc.body.dispatchEvent(new (win as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent("keydown",
+      { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect((doc.activeElement as unknown as HTMLElement).textContent).toBe("Open");
+    closeRowMenu({ silent: true });
+    contextmenu(anchor, { clientX: 0, clientY: 0 });
+    expect((doc.activeElement as unknown as HTMLElement).textContent).toBe("Open");
+  });
+
   it("a second right click re-opens rather than toggling closed", () => {
     anchor.className = "row-menu-trigger";
     anchor.addEventListener("click", () => {
@@ -453,5 +469,81 @@ describe("left click opens, right click shows the menu", () => {
     contextmenu(anchor);
     contextmenu(anchor, { clientX: 200, clientY: 90 });
     expect(doc.querySelectorAll(".row-context-menu")).toHaveLength(1);
+  });
+});
+
+// A `<tr data-row-menu-row>` makes the whole row the right-click target (the
+// Assets list), and in a selectable table a right click on an unselected row
+// selects it first, file-explorer style, so the menu's selection verbs act on
+// the row that was clicked.
+describe("right click anywhere on a data-row-menu-row", () => {
+  function contextmenu(target: Element) {
+    const ev = new (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, clientX: 120, clientY: 80,
+    });
+    target.dispatchEvent(ev);
+    return ev;
+  }
+  function row(id: string, checked = false) {
+    return '<tr data-row-menu-row id="' + id + '">' +
+      '<td class="cb-col"><input type="checkbox" class="row-cb"' + (checked ? " checked" : "") + '></td>' +
+      '<td><button class="row-menu-trigger" id="' + id + '-name">' + id + '</button></td>' +
+      '<td><span id="' + id + '-ip">10.0.0.1</span> <a href="https://example.test" id="' + id + '-link">x</a>' +
+      ' <a href="#" id="' + id + '-hash">y</a> <input id="' + id + '-field"></td></tr>';
+  }
+  let tbody: Element;
+  let clicked: string[];
+  beforeEach(() => {
+    doc.body.innerHTML = "<table><tbody>" + row("r1") + row("r2") + row("r3") + "</tbody></table>";
+    tbody = doc.querySelector("tbody") as unknown as Element;
+    clicked = [];
+    doc.querySelectorAll(".row-menu-trigger").forEach((b) => {
+      b.addEventListener("click", () => {
+        clicked.push(b.id);
+        showRowMenu(b, [{ label: "Open", primary: true, onSelect: () => {} }, { label: "Edit", onSelect: () => {} }]);
+      });
+    });
+  });
+  const checked = () => Array.from(doc.querySelectorAll("input.row-cb"))
+    .map((cb) => ((cb as unknown as HTMLInputElement).checked ? 1 : 0));
+
+  it("a right click on a plain cell opens that row's menu through its trigger", () => {
+    const ev = contextmenu(doc.querySelector("#r2-ip") as unknown as Element);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(clicked).toEqual(["r2-name"]);
+    expect(itemLabels()).toEqual(["Open", "Edit"]);
+  });
+
+  it("an in-page '#' link counts as the row; a real link and a field keep the browser's menu", () => {
+    expect(contextmenu(doc.querySelector("#r1-hash") as unknown as Element).defaultPrevented).toBe(true);
+    expect(contextmenu(doc.querySelector("#r1-link") as unknown as Element).defaultPrevented).toBe(false);
+    expect(contextmenu(doc.querySelector("#r1-field") as unknown as Element).defaultPrevented).toBe(false);
+  });
+
+  it("selects an unselected row, replacing the selection, before the click is replayed", () => {
+    const seenAtClick: number[][] = [];
+    (doc.querySelector("#r3-name") as unknown as Element).addEventListener("click", () => seenAtClick.push(checked()));
+    let cleared = 0;
+    tbody.addEventListener("polaris:rowselect-clear", () => { cleared++; });
+    (doc.querySelector("#r1 input") as unknown as HTMLInputElement).checked = true;
+    contextmenu(doc.querySelector("#r3-ip") as unknown as Element);
+    expect(cleared).toBe(1);
+    expect(seenAtClick).toEqual([[0, 0, 1]]);
+  });
+
+  it("keeps the whole selection when the right-clicked row is already in it", () => {
+    (doc.querySelector("#r1 input") as unknown as HTMLInputElement).checked = true;
+    (doc.querySelector("#r2 input") as unknown as HTMLInputElement).checked = true;
+    let cleared = 0;
+    tbody.addEventListener("polaris:rowselect-clear", () => { cleared++; });
+    contextmenu(doc.querySelector("#r2-ip") as unknown as Element);
+    expect(cleared).toBe(0);
+    expect(checked()).toEqual([1, 1, 0]);
+  });
+
+  it("a row without the attribute is not a target off its trigger", () => {
+    (doc.querySelector("#r1") as unknown as Element).removeAttribute("data-row-menu-row");
+    expect(contextmenu(doc.querySelector("#r1-ip") as unknown as Element).defaultPrevented).toBe(false);
+    expect(clicked).toEqual([]);
   });
 });

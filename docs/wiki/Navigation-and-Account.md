@@ -63,6 +63,11 @@ it appears, so tables and widgets fill in a moment later.
 
 The search box searches everything at once and groups hits by kind: IPs,
 Blocks, Networks, Reservations, Assets, Device Map sites, and IPsec / VPN.
+
+Press **Ctrl**+**K** (**⌘**+**K** on a Mac) on any page to jump straight into
+the box, with whatever was there selected so you can type over it. The box
+shows the shortcut at its right end until you click into it.
+
 Prefixes narrow it:
 
 | Prefix | Short | Searches |
@@ -333,7 +338,7 @@ or per account depending on the thing:
 | Column widths and visibility | per **screen** | same |
 | Sort and inline filters | per view tab | same |
 | **Saved filters** | server-side, private or shared | Assets → Filters ▾ |
-| **View tabs** | server-side, follow you across browsers | Assets, above the bulk bar |
+| **View tabs** | server-side, follow you across browsers | Assets, on the table's top-left edge |
 | **Saved dashboards** | server-side, private or public | Dashboard |
 
 To resize a column, drag the divider on its right edge; **double-click** the

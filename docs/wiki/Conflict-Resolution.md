@@ -438,8 +438,8 @@ The fix is a [network exclusion](IPAM#exclusions), not a rejection.
 
 ## Merging assets by hand
 
-The **Sources** tab's merge modal, or the Assets bulk bar with exactly two rows
-selected — or, from the asset form's duplicate-address dialog, *Save & review
+The **Sources** tab's merge modal, or **Merge** in the Assets selection's menu
+(right-click one of exactly two selected rows) — or, from the asset form's duplicate-address dialog, *Save & review
 merge*.
 
 **Merging requires Assets full read-write.** A merge edits one record and

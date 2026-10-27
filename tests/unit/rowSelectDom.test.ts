@@ -197,4 +197,79 @@ describe("row selection", () => {
     doc.body.dispatchEvent(new (win as any).KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
     expect(selected()).toEqual(ROWS);
   });
+
+  function key(k: string, init: Record<string, unknown> = {}) {
+    const ev = new (win as any).KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init });
+    doc.body.dispatchEvent(ev);
+    return ev;
+  }
+
+  it("↓ / ↑ move a single selection one row, replacing it", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    clickRow("b");
+    expect(key("ArrowDown").defaultPrevented).toBe(true);
+    expect(selected()).toEqual(["c"]);
+    key("ArrowDown");
+    key("ArrowUp");
+    expect(selected()).toEqual(["c"]);
+  });
+
+  it("Shift+↓ extends from the anchor, Shift+↑ shrinks back", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    clickRow("b");
+    key("ArrowDown", { shiftKey: true });
+    key("ArrowDown", { shiftKey: true });
+    expect(selected()).toEqual(["b", "c", "d"]);
+    key("ArrowUp", { shiftKey: true });
+    expect(selected()).toEqual(["b", "c"]);
+  });
+
+  it("arrows stop at the ends and leave the page alone with nothing selected", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    clickRow(ROWS[ROWS.length - 1]!);
+    key("ArrowDown");
+    expect(selected()).toEqual([ROWS[ROWS.length - 1]]);
+    mouse("mousedown", doc.getElementById("outside"));
+    expect(key("ArrowDown").defaultPrevented).toBe(false);
+  });
+
+  it("Esc clears the selection", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    clickRow("a");
+    clickRow("c", { ctrlKey: true });
+    const before = clears;
+    expect(key("Escape").defaultPrevented).toBe(true);
+    expect(selected()).toEqual([]);
+    expect(clears).toBeGreaterThan(before); // off-page picks go too
+    expect(key("Escape").defaultPrevented).toBe(false); // nothing left: Esc is someone else's
+  });
+
+  it("Enter clicks the one selected row's name; not with several selected", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    let opened = 0;
+    doc.querySelector("#r-b .row-menu-trigger")!.addEventListener("click", () => { opened++; });
+    clickRow("b");
+    key("Enter");
+    expect(opened).toBe(1);
+    clickRow("c", { ctrlKey: true });
+    key("Enter");
+    expect(opened).toBe(1);
+  });
+
+  it("the keys do nothing through an open dialog that does not hold the table", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    clickRow("b");
+    doc.getElementById("modal-overlay")!.classList.add("open");
+    expect(key("ArrowDown").defaultPrevented).toBe(false);
+    expect(key("Escape").defaultPrevented).toBe(false);
+    expect(selected()).toEqual(["b"]);
+  });
+
+  it("Ctrl+A with no table clicked yet selects the table that holds the selection", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    // Selected some other way (a re-render, a right click) — no row was clicked.
+    (doc.querySelector("#r-c input") as any).checked = true;
+    doc.body.dispatchEvent(new (win as any).KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(selected()).toEqual(ROWS);
+  });
 });

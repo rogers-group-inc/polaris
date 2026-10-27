@@ -88,35 +88,35 @@ describe("_userMenuItems", () => {
   });
 
   it("offers a password reset for a local account", () => {
-    expect(labels(userMenuItems(local()))).toContain("Reset password…");
+    expect(labels(userMenuItems(local()))).toContain("Reset password");
   });
 
   it("does NOT offer a password reset for an IdP-managed account", () => {
     // isIdpManaged is authProvider !== "local" — there is no local credential
     // to reset, so the old row hid the button and the menu must too.
     for (const p of ["azure", "oidc", "ldap", "entra-proxy"]) {
-      expect(labels(userMenuItems(local({ authProvider: p }))), p).not.toContain("Reset password…");
+      expect(labels(userMenuItems(local({ authProvider: p }))), p).not.toContain("Reset password");
     }
   });
 
   it("offers self-service 2FA on your OWN row", () => {
     const l = labels(userMenuItems(local({ username: "alice", authProvider: "local" })));
-    expect(l).toContain("Two-factor auth…");
-    expect(l).not.toContain("Reset 2FA…");
+    expect(l).toContain("Two-factor auth");
+    expect(l).not.toContain("Reset 2FA");
   });
 
   it("offers an admin 2FA reset on someone else's row only when they have it enabled", () => {
-    expect(labels(userMenuItems(local({ totpEnabled: true })))).toContain("Reset 2FA…");
-    expect(labels(userMenuItems(local({ totpEnabled: false })))).not.toContain("Reset 2FA…");
+    expect(labels(userMenuItems(local({ totpEnabled: true })))).toContain("Reset 2FA");
+    expect(labels(userMenuItems(local({ totpEnabled: false })))).not.toContain("Reset 2FA");
   });
 
   it("offers no 2FA verb at all for an Azure account", () => {
     // The IdP owns the second factor there — true even for your own row.
     const other = labels(userMenuItems(local({ authProvider: "azure", totpEnabled: true })));
-    expect(other).not.toContain("Reset 2FA…");
-    expect(other).not.toContain("Two-factor auth…");
+    expect(other).not.toContain("Reset 2FA");
+    expect(other).not.toContain("Two-factor auth");
     const self = labels(userMenuItems(local({ username: "alice", authProvider: "azure" })));
-    expect(self).not.toContain("Two-factor auth…");
+    expect(self).not.toContain("Two-factor auth");
   });
 
   it("puts Delete last, marked destructive, behind a separator", () => {
@@ -141,7 +141,7 @@ describe("_roleMenuItems", () => {
     ({ id: "r1", name: "networkadmin", isBuiltIn: false, userCount: 0, ...over });
 
   it("leads with Edit — the name used to jump straight there", () => {
-    expect(roleMenuItems(role())[0]!.label).toBe("Edit…");
+    expect(roleMenuItems(role())[0]!.label).toBe("Edit");
   });
 
   it("enables Delete for an unused custom role", () => {

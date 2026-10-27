@@ -880,15 +880,31 @@ document.addEventListener("DOMContentLoaded", async function () {
   // The row's verbs live behind the hostname (polaris-ui-canon → "Row context
   // menu"). Built from the row RECORD in _assetsData, not the trigger's
   // data-* attributes, because the quarantine verbs depend on the asset's MAC,
-  // status and type.
+  // status and type. A right click anywhere on the row lands here too (the
+  // <tr> carries data-row-menu-row); on a row that is part of a multi-row
+  // selection it offers the bulk bar's verbs instead, for the whole selection.
   document.getElementById("assets-tbody").addEventListener("click", function (e) {
     var trigger = e.target.closest(".asset-menu");
     if (!trigger) return;
     e.preventDefault();
     var id = trigger.getAttribute("data-asset-id");
+    var gesture = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
+    var bar = document.getElementById("assets-bulk-bar");
+    if (gesture && _assetsSelected.size > 1 && _assetsSelected.has(id)) {
+      var bulkItems = _assetsBulkMenuItems(bar, trigger, gesture, false);
+      if (bulkItems.length) {
+        showRowMenu(trigger, bulkItems, { label: "Actions for " + _assetsSelected.size + " selected assets" });
+        return;
+      }
+    }
     var a = (_assetsData || []).find(function (x) { return String(x.id) === id; });
     if (!a) return;
-    showRowMenu(trigger, _assetMenuItems(a), { label: "Actions for " + (a.hostname || "asset") });
+    // The selection verbs join a single row's menu only on a right click, which
+    // has just made this row the selection (_rowSelectForMenu in app.js) — the
+    // bar's handlers act on the selection. A left click runs Open regardless.
+    var extra = gesture && _assetsSelected.size === 1 && _assetsSelected.has(id)
+      ? _assetsBulkMenuItems(bar, trigger, gesture, true) : [];
+    showRowMenu(trigger, _assetMenuItems(a, extra), { label: "Actions for " + (a.hostname || "asset") });
   });
   // Favorites-first ordering is resolved server-side, so toggling a star must
   // re-fetch to re-order the page.
@@ -1967,7 +1983,7 @@ function renderAssetsPage() {
   tbody.innerHTML = page.map(function (a) {
     var checked = _assetsSelected.has(a.id) ? ' checked' : '';
     if (checked) _assetsRememberSelection(a.id);
-    return '<tr>' +
+    return '<tr data-row-menu-row>' +
       '<td class="cb-col"><input type="checkbox" class="row-cb"' + checked + ' data-id="' + a.id + '"></td>' +
       starCellHTML("assets", a.id) +
       '<td><button type="button" class="row-menu-trigger asset-menu" data-asset-id="' + a.id + '" ' +
@@ -2121,6 +2137,83 @@ function _assetsUpdateBulkBar() {
     if (bQ)  bQ.style.display  = count > 0 && hasQuarantineable && _quarantinePushAvailable() ? "" : "none";
     if (bUQ) bUQ.style.display = count > 0 && hasQuarantined    ? "" : "none";
   }
+}
+
+// The selection's verbs for the row menu, read off the (never shown) bulk bar
+// rather than re-derived, so the menu can never offer what the bar's rules
+// hide (a role gate, Merge outside a pair, Quarantine with nothing
+// quarantineable) or enable what they grey out (Compare under two, Upgrade on
+// a non-Fortinet pick) — _assetsUpdateBulkBar, hideAdminOnlyElements and
+// PolarisFirmwareGroup.syncButton stay the one decider. Each item clicks its
+// bar button, so the verb runs its own handler over _assetsSelected. A
+// dropdown (Type / State / Monitoring) becomes a menu that opens a menu at the
+// same point.
+//
+// `single`: the verbs a ONE-row menu adds beside its own. Dropped there: what
+// needs several rows (Compare, Merge), what the row menu already has (Edit,
+// Quarantine / Release, Delete — its own copies act on the row), clearing a
+// one-row selection, and any verb the bar has greyed out (Upgrade on a
+// non-Fortinet asset is not a verb for that asset at all). The several-row
+// menu is the bar entire in three groups — the verbs, then quarantine and
+// delete, then Clear selection — greyed ones kept with the bar's reason as
+// their title.
+var _ASSETS_BULK_MENU = {
+  "assets-bulk-compare-btn": { label: "Compare", multiOnly: true },
+  "assets-bulk-merge-btn": { label: "Merge", multiOnly: true },
+  "assets-bulk-type-btn": { label: "Change type" },
+  "assets-bulk-state-btn": { label: "Change state" },
+  "assets-bulk-monitor-btn": { label: "Monitoring" },
+  "assets-bulk-tags-btn": { label: "Tags" },
+  "assets-bulk-edit-btn": { skip: true },
+  "assets-bulk-agent-btn": { label: "Deploy agent" },
+  "assets-bulk-maint-btn": { label: "Maintenance" },
+  "assets-bulk-firmware-btn": { label: "Upgrade firmware" },
+  "assets-bulk-quarantine-btn": { label: "Quarantine", group: 1, danger: true, multiOnly: true },
+  "assets-bulk-unquarantine-btn": { label: "Release quarantine", group: 1, multiOnly: true },
+  "assets-bulk-delete-btn": { label: "Delete", group: 1, danger: true, multiOnly: true },
+  "assets-bulk-deselect-btn": { label: "Clear selection", group: 2, multiOnly: true },
+};
+function _assetsBulkMenuItems(bar, anchor, at, single) {
+  if (!bar) return [];
+  function shown(el) {
+    for (var n = el; n && n !== bar; n = n.parentElement) {
+      if (n.hidden || (n.style && n.style.display === "none")) return false;
+    }
+    return true;
+  }
+  function label(btn) { return (btn.textContent || "").replace(/\s*▾\s*$/, "").trim(); }
+  var groups = [[], [], []];
+  Array.prototype.forEach.call(bar.querySelectorAll("button.btn"), function (btn) {
+    var spec = _ASSETS_BULK_MENU[btn.id];
+    if (!spec || spec.skip || !shown(btn)) return;
+    if (single && (spec.multiOnly || btn.disabled)) return;
+    var item = { label: spec.label, title: btn.title || undefined, disabled: !!btn.disabled };
+    if (spec.danger && !item.disabled) item.danger = true;
+    var wrap = btn.parentElement && btn.parentElement.classList.contains("btn-dropdown-wrap") ? btn.parentElement : null;
+    var menu = wrap ? wrap.querySelector(".btn-dropdown-menu") : null;
+    if (menu) {
+      item.onSelect = function () {
+        var sub = [];
+        Array.prototype.forEach.call(menu.children, function (c) {
+          if (c.classList.contains("dropdown-heading")) { sub.push({ heading: c.textContent }); return; }
+          if (c.tagName !== "BUTTON" || !shown(c)) return;
+          sub.push({ label: label(c), disabled: !!c.disabled, onSelect: function () { c.click(); } });
+        });
+        showRowMenu(anchor, sub, { label: spec.label, menuAt: at });
+      };
+    } else {
+      item.onSelect = function () { btn.click(); };
+    }
+    groups[spec.group || 0].push(item);
+  });
+  var items = [];
+  groups.forEach(function (g) {
+    if (!g.length) return;
+    if (items.length) items.push({ separator: true });
+    items = items.concat(g);
+  });
+  if (items.length && !single) items.unshift({ heading: _assetsSelected.size + " selected" });
+  return items;
 }
 
 // View Lease cell. Renders a button that opens a lightweight reservation
@@ -2430,15 +2523,21 @@ function _managementAccessMenuItems(a) {
   return items;
 }
 
-function _assetMenuItems(a) {
+// `extra`: the selection verbs (_assetsBulkMenuItems, single mode) a right
+// click adds as their own group after the remote-access verbs.
+function _assetMenuItems(a, extra) {
   var items = [{ label: "Open", primary: true, onSelect: function () { openViewModal(a.id); } }];
   if (canManageAssets()) {
-    items.push({ label: "Edit…", onSelect: function () { openEditModal(a.id); } });
+    items.push({ label: "Edit", onSelect: function () { openEditModal(a.id); } });
   }
   var mgmt = _managementAccessMenuItems(a);
   if (mgmt.length) {
     items.push({ separator: true });
     mgmt.forEach(function (m) { items.push(m); });
+  }
+  if (extra && extra.length) {
+    items.push({ separator: true });
+    extra.forEach(function (x) { items.push(x); });
   }
   var quarantine = _quarantineMenuItems(a);
   if (quarantine.length) {
@@ -2471,7 +2570,7 @@ function _quarantineMenuItems(a) {
   // 502 with "0/0 FortiGate(s) accepted the push".
   if (!_quarantinePushAvailable()) return [];
   return [{
-    label: "Quarantine…",
+    label: "Quarantine",
     danger: true,
     title: "Pushes a MAC block to the FortiGate(s) that have seen this asset",
     onSelect: function () { quarantineAssetRow(a.id); },
@@ -25679,7 +25778,7 @@ function _loadAssetNotificationsTab(assetId) {
           var row = active.find(function (x) { return String(x.id) === id; });
           if (!row) return;
           showRowMenu(btn, [{
-            label: "Show alerts in this group…",
+            label: "Show alerts in this group",
             primary: true,
             title: "List the components this alert is made of — which are still affected and which have recovered",
             onSelect: function () { openAlertMembers(row); },

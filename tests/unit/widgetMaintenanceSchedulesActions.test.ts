@@ -253,14 +253,14 @@ describe("which verbs a row offers", () => {
     const { el, teardown } = mount([sched({ id: "s1" })]);
     const ev = clickFirst(el);
     expect(ev.defaultPrevented).toBe(true);
-    expect(labels()).toEqual(["Open schedule…", "Disable schedule"]);
+    expect(labels()).toEqual(["Open schedule", "Disable schedule"]);
     teardown();
   });
 
   it("opens the maintenance modal ON that schedule", () => {
     const { el, teardown } = mount([sched({ id: "s1" })]);
     clickFirst(el);
-    pick("Open schedule…");
+    pick("Open schedule");
     expect(openedModal).toEqual([{ scheduleId: "s1" }]);
     teardown();
   });

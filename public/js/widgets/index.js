@@ -1108,7 +1108,7 @@
     if (opts.alertId && !opts.alertAcknowledged && canAck
         && window.PolarisAlertAckModal && window.openModal) {
       items.push({
-        label: "Acknowledge alert…",
+        label: "Acknowledge alert",
         title: "Put your name on this alert without leaving the dashboard",
         onSelect: function () {
           window.PolarisAlertAckModal.open(opts.alertId, {
@@ -1175,7 +1175,7 @@
     // acknowledge dialog.
     if (dialogs && opts.alertId && opts.grouped && at("read") && typeof window.openAlertMembers === "function") {
       items.push({
-        label: "Show alerts in this group…",
+        label: "Show alerts in this group",
         primary: !opts.assetId,
         title: "List the components this alert is made of — which are still affected and which have recovered",
         onSelect: function () {
@@ -1185,7 +1185,7 @@
     }
     if (dialogs && opts.alertId && !opts.acknowledged && at("write") && window.PolarisAlertAckModal && window.openModal) {
       items.push({
-        label: "Acknowledge alert…",
+        label: "Acknowledge alert",
         title: "Put your name on this alert without leaving the dashboard",
         onSelect: function () {
           window.PolarisAlertAckModal.open(opts.alertId, {

@@ -122,7 +122,7 @@ edited; if no block contains the CIDR it says so, and saving is refused until a
 covering block exists. The same holds for **Add Network** in a block's panel: a
 CIDR that falls inside a narrower block nested in that one lands in the
 narrower block. To put a network somewhere else afterwards, use
-[Move to block…](#moving-a-network-to-another-block).
+[Move to block](#moving-a-network-to-another-block).
 
 Auto-allocation is **IPv4 only**. An allocator treats an
 [excluded range](#exclusions) as *taken space*, not as a refusal — asking for
@@ -141,7 +141,7 @@ a network another integration discovered, and never writes addresses into one.
 
 ### Moving a network to another block
 
-**Move to block…** in the row menu re-parents a network onto a different block.
+**Move to block** in the row menu re-parents a network onto a different block.
 The same permission as Edit applies (`subnets:write` moves networks you
 created; `fullwrite` moves any). The network keeps its identity, so its
 reservations, conflicts and history move with it, and an integration-managed

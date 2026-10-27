@@ -94,7 +94,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       var m = _groupMappingsById[id];
       if (!m) return;
       showRowMenu(trigger, [
-        { label: "Edit…", primary: true, onSelect: function () { openGroupMappingSlideover(id); } },
+        { label: "Edit", primary: true, onSelect: function () { openGroupMappingSlideover(id); } },
         { separator: true },
         { label: "Delete", danger: true, onSelect: function () { confirmDeleteGroupMapping(id); } },
       ], { label: "Actions for " + (m.groupLabel || m.groupKey) });
@@ -298,23 +298,23 @@ function _userMenuItems(u) {
     { label: "Assign Tags", title: "Per-user tag scope (regions included)", onSelect: function () { openUserTagScopeModal(u.id, u.username); } },
   ];
   if (!isIdpManaged(u)) {
-    items.push({ label: "Reset password…", onSelect: function () { openResetPasswordModal(u.id, u.username); } });
+    items.push({ label: "Reset password", onSelect: function () { openResetPasswordModal(u.id, u.username); } });
   }
   if (u.authProvider !== "azure") {
     if (isSelf) {
-      items.push({ label: "Two-factor auth…", title: "Manage your two-factor authentication", onSelect: function () { openTotpSelfModal(); } });
+      items.push({ label: "Two-factor auth", title: "Manage your two-factor authentication", onSelect: function () { openTotpSelfModal(); } });
     } else if (u.totpEnabled) {
-      items.push({ label: "Reset 2FA…", title: "Reset 2FA (e.g. lost device)", onSelect: function () { confirmTotpReset(u.id, u.username); } });
+      items.push({ label: "Reset 2FA", title: "Reset 2FA (e.g. lost device)", onSelect: function () { confirmTotpReset(u.id, u.username); } });
     }
   }
   if (!isIdpManaged(u)) {
     if (isSelf) {
-      items.push({ label: "Passkeys…", title: "Register or remove your own passkeys", onSelect: function () { PolarisPasskeys.open({ onChange: loadUsers }); } });
+      items.push({ label: "Passkeys", title: "Register or remove your own passkeys", onSelect: function () { PolarisPasskeys.open({ onChange: loadUsers }); } });
     } else if (u.passkeyCount > 0) {
       // The counterpart of "Reset 2FA": a lost authenticator needs an admin
       // path back. Safe because a local account always has a password, so this
       // can only widen the way in.
-      items.push({ label: "Revoke passkeys…", title: "Remove every passkey on this account (e.g. lost device)", onSelect: function () { confirmPasskeyRevoke(u.id, u.username, u.passkeyCount); } });
+      items.push({ label: "Revoke passkeys", title: "Remove every passkey on this account (e.g. lost device)", onSelect: function () { confirmPasskeyRevoke(u.id, u.username, u.passkeyCount); } });
     }
   }
   items.push({ separator: true });
@@ -1464,7 +1464,7 @@ function _roleMenuItems(r) {
     : r.userCount > 0 ? "Reassign users first"
     : null;
   var items = [
-    { label: "Edit…", primary: true, onSelect: function () { openRoleSlideover(r.id); } },
+    { label: "Edit", primary: true, onSelect: function () { openRoleSlideover(r.id); } },
   ];
   if (r.grantReviewNeeded) {
     items.push({ label: "Mark reviewed", onSelect: function () { markRoleReviewed(r.id); } });

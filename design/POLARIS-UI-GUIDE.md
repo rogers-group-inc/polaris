@@ -247,6 +247,8 @@ fonts, no filled icon sets.
   `rgba(255,23,68,.15)` on accent-red text).
 - `.btn-sm` for anything inside a table row, bulk bar, or pagination.
 - Copy: `+ Add Thing`, `Save`, `Cancel`, `Delete selected`, `Import / Export ▾`.
+- Menu entries never end in "…" — `Edit`, `Tags`, `Acknowledge alert` — even when
+  they open a dialog. Only a progress state (`Saving…`) keeps one.
   Sentence case, no ALL CAPS, no exclamation marks.
 - Dropdown: `.btn-dropdown-wrap > button + .btn-dropdown-menu`, with
   `.dropdown-heading` and `.dropdown-divider` inside for grouped items.
@@ -364,7 +366,10 @@ record id.
 - Bulk bar sits between the header and the table and is **always visible**:
   `.bulk-bar.bulk-bar-idle` with a `.bulk-bar-count` label ("No things
   selected"); on selection drop `-idle` (accent outline, buttons enable). Push
-  the destructive button right with `margin-left:auto`.
+  the destructive button right with `margin-left:auto`. The Assets list is the
+  exception: its bar is hidden and the selection's verbs are the row's
+  right-click menu (right-click anywhere on a row; a selected row of several
+  gets the whole selection's verbs).
 
 ### Row verbs — a menu on the name, not an Actions column
 
