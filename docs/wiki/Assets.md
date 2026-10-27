@@ -672,9 +672,12 @@ The Interfaces table nests an aggregate's member ports and an interface's VLAN
 sub-interfaces under their parent; the arrow on the parent shows or hides
 them. A sub-interface named after its parent with a VLAN number, such as
 `br0.10` on an access point, nests under `br0` even when the device does not
-report the link. Sorting keeps the nesting and sorts the parents, with each
-parent's rows sorted under it. A filter shows a flat list instead, where a
-**Member** badge marks each member port. Each row has its own **Poll 1m** box. Pin
+report the link. A FortiAP shortens the parent's name, so `w01.12` nests under
+`wlan01` and `w10.10` under `wlan10`, marked **Sub-interface**. Sorting keeps
+the nesting and sorts the parents, with each parent's rows sorted under it. A
+filter drops the section headings and arrows and shows every matching row. A
+member still nests under its aggregate when both match. A member whose aggregate
+is filtered out is listed on its own, marked with a **Member** badge. Each row has its own **Poll 1m** box. Pin
 the aggregate to chart the link as a whole, and pin its members to see how the
 load splits across them or which member went quiet. The header checkbox pins
 or unpins every listed row, members and VLAN sub-interfaces included.

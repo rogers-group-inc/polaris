@@ -292,6 +292,24 @@ describe("sorting", () => {
     expect(rowFor("port9").outerHTML).toMatch(/Member/);
     expect(dataRows().every((tr) => tr.getAttribute("style") !== "display:none")).toBe(true);
   });
+
+  // A filter that keeps the aggregate AND its member (a Status filter keeps a
+  // switch's FortiLink trunk and the ports in it) still draws the connector.
+  it("nests a member under its aggregate when both match the filter", async () => {
+    await typeFilter("ifname", "9");   // matches port9 only — its aggregate is out
+    expect(rowFor("port9").textContent).not.toContain("└─");
+    await typeFilter("ifname", "");
+    click(doc.querySelector('.iface-expand-toggle[data-parent="lag1"]'));
+    checkboxFilter("status", "up", true);
+    await settle();
+    const n = names();
+    expect(n.indexOf("port9")).toBe(n.indexOf("lag1") + 1);
+    expect(rowFor("port9").textContent).toContain("└─");
+    expect(rowFor("port9").classList.contains("iface-child")).toBe(true);
+    // A match is never hidden by a collapsed parent, and there is no toggle.
+    expect(rowFor("port9").getAttribute("style")).not.toBe("display:none");
+    expect(doc.querySelectorAll(".iface-expand-toggle")).toHaveLength(0);
+  });
 });
 
 // IF-MIB carries no parent column, so a FortiAP's br0.10 arrives unparented.
@@ -317,6 +335,23 @@ describe("a dotted sub-interface nests under its base", () => {
     expect(rowFor("br0.11").textContent).toContain("└─");
     expect(rowFor("br0.10").textContent).toContain("VLAN 10");
     expect(doc.querySelectorAll('.iface-expand-toggle[data-parent="br0"]')).toHaveLength(1);
+  });
+
+  it("puts a FortiAP's w01.12 under wlan01 as a sub-interface", () => {
+    renderSi([
+      { ifName: "wlan01", ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "wlan10", ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "w01.12", ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "w10.10", ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "w02.0",  ifType: "physical", adminStatus: "up", operStatus: "up" },
+    ]);
+    expect(names()).toEqual(["w02.0", "wlan01", "w01.12", "wlan10", "w10.10"]);
+    expect(rowFor("w01.12").getAttribute("data-parent")).toBe("wlan01");
+    expect(rowFor("w10.10").textContent).toContain("└─");
+    expect(rowFor("w10.10").textContent).toContain("Sub-interface");
+    expect(rowFor("w10.10").textContent).not.toContain("VLAN");
+    // wlan02 is not listed, so w02.0 stays where it was.
+    expect(rowFor("w02.0").classList.contains("iface-child")).toBe(false);
   });
 
   it("leaves a dotted name at top level when its base is not listed", () => {
@@ -391,6 +426,24 @@ describe("re-render safety", () => {
     expect(saved.sfFilters.ifname).toBe("port");
     render();   // a refresh tick rebuilds the whole container
     expect(names().sort()).toEqual(["port1", "port2", "port3", "port9"]);
+  });
+
+  // A Status picker with every state ticked reads "All": it is no filter.
+  it("keeps the tree under a saved filter that removes no row", () => {
+    g.localStorage.setItem(PREFS_KEY, JSON.stringify({
+      sortKey: null, sortDir: "asc", sfFilters: { status: ["admin shut", "down", "up"] },
+    }));
+    render();
+    expect(sectionLabels()).toHaveLength(2);
+    expect(rowFor("port9").textContent).toContain("└─");
+    expect(doc.querySelectorAll('.iface-expand-toggle[data-parent="lag1"]')).toHaveLength(1);
+  });
+
+  it("stores no filter once every option of a multi-select is ticked", () => {
+    for (const v of ["admin shut", "down", "up"]) checkboxFilter("status", v, true);
+    const saved = JSON.parse(g.localStorage.getItem(PREFS_KEY));
+    expect(saved.sfFilters.status).toBeUndefined();
+    expect(rowFor("port9").textContent).toContain("└─");
   });
 
   it("drops a VLAN filter saved as free text before the column became a picker", () => {
