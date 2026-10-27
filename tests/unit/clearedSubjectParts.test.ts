@@ -14,6 +14,11 @@ describe("clearedSubjectParts", () => {
       .toEqual({ asset: "RGILink Auth", dimension: "GRYCRT-S2212", dimensionSuffix: " · 1 device", ruleName: "Path Monitor" });
   });
 
+  it("lifts {condition.suffix} — what was wrong — when the fire said it", () => {
+    expect(clearedSubjectParts({ asset: "Truck Scale Central", "condition.suffix": " is down", "dimension.suffix": " · 1 device" }))
+      .toEqual({ asset: "Truck Scale Central", conditionSuffix: " is down", dimensionSuffix: " · 1 device" });
+  });
+
   it("keeps an empty suffix — a whole-device alert's subject has none", () => {
     expect(clearedSubjectParts({ asset: "sw1", dimension: "", "dimension.suffix": "" }))
       .toEqual({ asset: "sw1", dimension: "", dimensionSuffix: "" });

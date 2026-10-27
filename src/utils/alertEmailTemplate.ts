@@ -39,7 +39,39 @@
 // `{dependency.tag}` carries its own separator and is empty on every alert not
 // raised for a dependency-suppressed device (business rule 78), so the subject
 // appends it unconditionally and a plain alert's subject is unchanged.
-export const DEFAULT_ALERT_SUBJECT = "[{severity.upper}] {asset}{dimension.suffix} — {rule}{dependency.tag}";
+// `{condition.suffix}` is the same shape: " is down" where {asset} names a path
+// check — "[WARNING] Truck Scale Central is down · 1 device — Path Monitor",
+// where "Truck Scale Central · 1 device" alone never said what was wrong — and
+// empty on every other alert.
+export const DEFAULT_ALERT_SUBJECT = "[{severity.upper}] {asset}{condition.suffix}{dimension.suffix} — {rule}{dependency.tag}";
+
+/**
+ * Every earlier DEFAULT_ALERT_SUBJECT, oldest first. The wizard used to store
+ * a snapshot of the default on every new Notify action whether or not the
+ * operator touched it, so a stored subject equal to one of these is the
+ * default nobody chose to own — and it renders as the CURRENT default
+ * (`isRetiredDefaultSubject`), or those automations never get a fix made to
+ * it. Append the outgoing string here whenever the default changes.
+ */
+export const RETIRED_DEFAULT_ALERT_SUBJECTS: readonly string[] = [
+  "[{severity.upper}] {asset} — {rule}",
+  "[{severity.upper}] {asset}{dimension.suffix} — {rule}",
+  "[{severity.upper}] {asset}{dimension.suffix} — {rule}{dependency.tag}",
+];
+
+/** Is this stored subject one of the retired defaults (whitespace-trimmed)? Pure. */
+export function isRetiredDefaultSubject(subject: string | null | undefined): boolean {
+  const s = subject?.trim();
+  return !!s && RETIRED_DEFAULT_ALERT_SUBJECTS.includes(s);
+}
+
+/** Did an operator write this subject? Not when it is blank, and not when it
+ *  is a stored copy of a retired default. The one test behind every "only when
+ *  nobody set a subject" decision — the default fallback and the [REMINDER n] /
+ *  [UPDATED · n] / [ESCALATION n] prefixes — so they never disagree. Pure. */
+export function isOperatorSubject(subject: string | null | undefined): boolean {
+  return !!subject?.trim() && !isRetiredDefaultSubject(subject);
+}
 
 /**
  * Plain-text alternative. Not a stripped copy of the HTML: it is the version

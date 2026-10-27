@@ -48,6 +48,7 @@ import { requestScriptRun } from "./automationScriptService.js";
 import { resolveContactEmailsForAsset } from "./contactService.js";
 import { resolveQuietHold, resolveQuietWindow, type QuietHold, type QuietSource } from "./quietTimeHoldService.js";
 import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
+import { isOperatorSubject } from "../utils/alertEmailTemplate.js";
 import { logger } from "../utils/logger.js";
 import {
   actionsToTargets,
@@ -570,7 +571,7 @@ function composeForNotify(
   if (exec.repeat && !exec.escalation) {
     const comp = actionComp ?? exec.ruleEmailComposition ?? {};
     const composed = buildComposedEmail(comp, ctx);
-    if (!comp.subjectTemplate || !comp.subjectTemplate.trim()) {
+    if (!isOperatorSubject(comp.subjectTemplate)) {
       // The reminder that ends a quiet-time hold carries the alert's AGE in
       // the subject as well as the body (business rule 44): it lands in an
       // inbox beside a night's worth of other mail, and "[REMINDER 4]" alone
@@ -592,7 +593,7 @@ function composeForNotify(
   if (exec.growth && !exec.escalation) {
     const comp = actionComp ?? exec.ruleEmailComposition ?? {};
     const composed = buildComposedEmail(comp, ctx);
-    if (!comp.subjectTemplate || !comp.subjectTemplate.trim()) {
+    if (!isOperatorSubject(comp.subjectTemplate)) {
       const change = exec.growth.change ? ` · ${exec.growth.change}` : "";
       composed.subject = `[UPDATED · ${exec.growth.count}${change}] ${composed.subject}`;
     }
@@ -617,7 +618,7 @@ function composeForNotify(
     bcc: actionComp?.bcc ?? null,
   };
   const composed = buildComposedEmail(merged, ctx);
-  if (!merged.subjectTemplate || !merged.subjectTemplate.trim()) {
+  if (!isOperatorSubject(merged.subjectTemplate)) {
     composed.subject = `[ESCALATION ${exec.escalation.tier}] ${composed.subject}`;
   }
   return composed;

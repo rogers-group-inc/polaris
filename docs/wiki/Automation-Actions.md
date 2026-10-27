@@ -396,7 +396,7 @@ body, and a script's args:
 **The alert**
 `{asset}` `{metric}` `{value}` `{threshold}` `{metric.label}` `{value.display}`
 `{threshold.display}` `{dimension}` `{dimension.label}`
-`{dimension.suffix}` `{dimension.count}` `{dimension.first}` `{dimension.list}`
+`{dimension.suffix}` `{condition.suffix}` `{dimension.count}` `{dimension.first}` `{dimension.list}`
 `{conditions}` `{message}` `{severity}` `{severity.upper}` `{severity.color}`
 `{time}` `{time.local}` `{time.zone}` `{link}` `{ack}`
 
@@ -420,9 +420,13 @@ blank on an alert about a whole device, and the default email prunes the row and
 the subject fragment away when they are.
 
 On a Path Monitor alert grouped **per automation**, the alert is about the path
-check: `{asset}` is the check's name, `{dimension}` lists the hosts it is
-failing from, and `{dimension.suffix}` is the host count (" · 3 devices"), so
-the default subject reads *"[CRITICAL] ERP HTTPS · 3 devices — Path Monitor"*.
+check: `{asset}` is the check's name, `{condition.suffix}` says what is wrong
+with it (" is down", " has path latency above 200 ms"), `{dimension}` lists the
+hosts it is failing from, and `{dimension.suffix}` is the host count
+(" · 3 devices"), so the default subject reads *"[CRITICAL] ERP HTTPS is down ·
+3 devices — Path Monitor"*. A whole-group alert reads *"3 path checks are down
+· 80 devices"* when every automation in it agrees. `{condition.suffix}` is blank
+on every other alert, so a subject template can append it unconditionally.
 
 **The automation**
 `{rule}` `{rule.description}` `{trigger.summary}`
@@ -629,8 +633,10 @@ people are told once.
 
 **The Resolved email has the subject the alert was raised with**, with
 `[RESOLVED]` in place of the severity, so the two read as the same alert in an
-inbox: `[WARNING] RGILink Auth · 1 device — Path Monitor` closes as
-`[RESOLVED] RGILink Auth · 1 device — Path Monitor`. That holds however the
+inbox. The problem is the one part that changes, to say it is over:
+`[WARNING] RGILink Auth is down · 1 device — Path Monitor` closes as
+`[RESOLVED] RGILink Auth is up · 1 device — Path Monitor` (any other path
+problem closes as "… recovered"). That holds however the
 alert ended — it recovered, it timed out, or someone cleared it — and on an
 alert covering several devices or components it names the whole alert, not
 whichever one recovered last.

@@ -28,7 +28,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
 import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareRepositoryService.js";
-import { triggerSummary, triggerTokenParts, pathConditionPhrase } from "../utils/triggerSummary.js";
+import { triggerSummary, triggerTokenParts, pathConditionPhrase, recoveredConditionSuffix } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, chartTokenForMetric, CHART_TOKENS, type ChartToken } from "./alertChartService.js";
 import { PATH_GRAPH_METRICS } from "./alertPathGraphService.js";
@@ -2480,11 +2480,20 @@ function readingContextParts(
   const deviceCount = counts?.devices ?? (spansDevices ? new Set(activeMembers(members!).map((m) => m.assetId)).size : 0);
   const devices = countNoun(deviceCount, "device");
   const whole = group && counts ? wholeGroupSubject(counts) : "";
+  // What is wrong, said where {asset} names the check(s): "Truck Scale Central
+  // is down · 1 device", "3 path checks are down · 80 devices". Only there —
+  // after a host name ("GRYCRT-S2212 is down") it would claim the device is.
+  const condition = pathCheck && spansDevices
+    ? pathConditionPhrase(trigger as never)
+    : whole && counts?.pathOnly && counts.condition
+      ? (counts.checks === 1 ? counts.condition.one : counts.condition.many)
+      : null;
   const base = {
     asset: subnetLabel || pathCheck || whole
       || (spansDevices ? devices : "")
       || reading.hostname || reading.assetId || "host",
     ...(pathCheck || whole ? { dimensionSuffix: ` · ${devices}` } : {}),
+    ...(condition ? { conditionSuffix: ` ${condition}` } : {}),
     dimension: members?.length ? renderMemberList(members) : (reading.dimLabel || ""),
     // What that component IS, so the email can label it rather than leaving the
     // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
@@ -5688,6 +5697,7 @@ async function fireResolved(
   const view = await allClearView(rule, st.notificationId, reading);
   const parts = readingContextParts(rule, view.reading, now, undefined, view.members, view.counts);
   parts.severity = "resolved";
+  parts.conditionSuffix = recoveredConditionSuffix(parts.conditionSuffix);
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   setRecoverySentence(ctx, `Resolved: ${ctx["rule"] || rule.name} — ${ctx["asset"] ?? view.reading.hostname ?? ""} recovered`);
   await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);
@@ -5743,8 +5753,10 @@ async function fireReset(
   const parts = readingContextParts(rule, view.reading, now, undefined, view.members, view.counts);
   // "resolved" is a pseudo-severity (not in SEVERITIES) that colours the email
   // green and reads correctly in a subject line — the same one fireResolved
-  // uses for a severity-band recovery.
+  // uses for a severity-band recovery. The problem in the subject flips with
+  // it: "Truck Scale Central is up · 1 device", not "… is down".
   parts.severity = "resolved";
+  parts.conditionSuffix = recoveredConditionSuffix(parts.conditionSuffix);
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   setRecoverySentence(ctx, `Resolved: ${ctx["rule"] || rule.name} — ${ctx["asset"] || view.reading.hostname || "device"} ${reason}`);
   await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);

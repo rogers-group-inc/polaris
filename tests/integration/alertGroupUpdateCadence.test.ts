@@ -16,6 +16,8 @@ import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
 import type { AlertMember, PendingGroupChanges } from "../../src/services/notificationTypes.js";
+import { renderNotificationTemplate } from "../../src/utils/notificationTemplate.js";
+import { DEFAULT_ALERT_SUBJECT } from "../../src/utils/alertEmailTemplate.js";
 
 const d = dbDescribe;
 const HOST = "update-cadence-test";
@@ -207,11 +209,14 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(erpAlert.assetHostname).toBe(`${NAME} rule — ${NAME} erp`);
     // The default text says what is wrong with the check, not only where.
     expect(erpAlert.message).toBe(`${NAME} erp is down from 2 devices — ${HOST}-pc-01, ${HOST}-pc-02`);
-    // The subject names the check and counts the hosts — "[SERIOUS] <check> · 2 devices — <rule>".
+    // The subject names the check, says what is wrong and counts the hosts —
+    // "[SERIOUS] <check> is down · 2 devices — <rule>".
     const ctx = erpAlert.templateCtx as Record<string, string>;
     expect(ctx["asset"]).toBe(`${NAME} erp`);
+    expect(ctx["condition.suffix"]).toBe(" is down");
     expect(ctx["dimension.suffix"]).toBe(" · 2 devices");
     expect(ctx["dimension"]).toBe(`${HOST}-pc-01, ${HOST}-pc-02`);
+    expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, ctx)).toBe(`[SERIOUS] ${NAME} erp is down · 2 devices — ${NAME} rule`);
   });
 
   it("device + automation folds every path check from every host into one alert, counted past the member cap", async () => {
@@ -243,8 +248,9 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.groupKey).toBe(`grp:${groupId}|all`);
     const ctx = alerts[0]!.templateCtx as Record<string, string>;
-    // "[SERIOUS] 3 path checks · 25 devices — <automation>" — one automation, so it names it.
+    // "[SERIOUS] 3 path checks are down · 25 devices — <automation>" — one automation, so it names it.
     expect(ctx["asset"]).toBe("3 path checks");
+    expect(ctx["condition.suffix"]).toBe(" are down");
     expect(ctx["dimension.suffix"]).toBe(" · 25 devices");
     expect(ctx["rule"]).toBe(`${NAME} rule`);
     expect(alerts[0]!.message).toMatch(/^3 path checks are down from 25 devices — /);

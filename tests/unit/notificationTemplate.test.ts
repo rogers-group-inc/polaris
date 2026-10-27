@@ -40,6 +40,9 @@ const FULL_PARTS: TemplateContextParts = {
   dimensionCount: "3",
   dimensionFirst: "port1",
   dimensionList: "port1, port4, port9",
+  // Set only on a path alert whose {asset} is the check; set here so the
+  // every-token check covers it.
+  conditionSuffix: " is down",
   conditions: "2 of 3 conditions met",
   message: "High CPU: fw-atl-01 — cpuPct = 97.5 (threshold 90)",
   severity: "critical",

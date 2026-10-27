@@ -16,6 +16,7 @@ import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { findRulesMatchingAsset } from "./notificationRuleService.js";
 import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf, isDownDetectionTrigger, ruleAlertsWhenDependencyDown, type Trigger } from "./notificationTypes.js";
 import { higherAlertSeverity } from "../utils/alertSeverity.js";
+import { recoveredConditionSuffix } from "../utils/triggerSummary.js";
 
 // Both moved to utils/tagNormalize (a leaf) so regionHierarchyService can use
 // them without closing an import cycle through this file. Re-exported here
@@ -320,6 +321,7 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
       asset: snap.asset ?? n.assetHostname ?? "",
       dimension: snap.dimension ?? n.dimension ?? "",
       ...(snap.dimensionSuffix !== undefined ? { dimensionSuffix: snap.dimensionSuffix } : {}),
+      conditionSuffix: recoveredConditionSuffix(snap.conditionSuffix),
       severity: "resolved",
       time: new Date(),
       ruleName: snap.ruleName ?? o.name,
@@ -346,7 +348,7 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
 
 /** The subject-naming tokens out of an alert's fire-time `templateCtx`
  *  snapshot — each one only when the snapshot holds it as a string. Pure. */
-export function clearedSubjectParts(templateCtx: unknown): { asset?: string; dimension?: string; dimensionSuffix?: string; ruleName?: string } {
+export function clearedSubjectParts(templateCtx: unknown): { asset?: string; dimension?: string; dimensionSuffix?: string; conditionSuffix?: string; ruleName?: string } {
   const snap = templateCtx && typeof templateCtx === "object" ? templateCtx as Record<string, unknown> : {};
   const pick = (k: string) => (typeof snap[k] === "string" ? snap[k] as string : undefined);
   const asset = pick("asset");
@@ -356,6 +358,7 @@ export function clearedSubjectParts(templateCtx: unknown): { asset?: string; dim
     ...(rule ? { ruleName: rule } : {}),
     ...(pick("dimension") !== undefined ? { dimension: pick("dimension") } : {}),
     ...(pick("dimension.suffix") !== undefined ? { dimensionSuffix: pick("dimension.suffix") } : {}),
+    ...(pick("condition.suffix") ? { conditionSuffix: pick("condition.suffix") } : {}),
   };
 }
 

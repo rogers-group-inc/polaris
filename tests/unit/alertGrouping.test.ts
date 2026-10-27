@@ -724,7 +724,12 @@ describe("the update cadence (business rule 75): queued changes", () => {
     const out = refreshMemberContext(ctx, members, null, { devices: 79, checks: 2, automations: 1, pathOnly: true });
     expect(out["asset"]).toBe("2 path checks");
     expect(out["dimension.suffix"]).toBe(" · 79 devices");
+    expect(out["condition.suffix"]).toBe("");
     expect(out["rule"]).toBe("Path check down");
+    // The problem in the subject follows the count: one check left "is down".
+    const agreed = { devices: 79, automations: 1, pathOnly: true, condition: { one: "is down", many: "are down" } };
+    expect(refreshMemberContext(ctx, members, null, { ...agreed, checks: 2 })["condition.suffix"]).toBe(" are down");
+    expect(refreshMemberContext(ctx, members, null, { ...agreed, checks: 1 })["condition.suffix"]).toBe(" is down");
     // Several automations: the alert is the GROUP's.
     const mixed = refreshMemberContext(ctx, members, null, { devices: 79, checks: 2, automations: 2, pathOnly: true });
     expect(mixed["rule"]).toBe("WAN");

@@ -35,6 +35,9 @@ async function wipe(): Promise<void> {
   }
   await prisma.alertGroup.deleteMany({ where: { name: { startsWith: NAME } } });
   await prisma.notificationChannel.deleteMany({ where: { name: { startsWith: NAME } } });
+  const checks = await prisma.pathCheck.findMany({ where: { name: { startsWith: NAME } }, select: { id: true } });
+  await prisma.assetPathCheckSample.deleteMany({ where: { checkId: { in: checks.map((c) => c.id) } } });
+  await prisma.pathCheck.deleteMany({ where: { name: { startsWith: NAME } } });
   await prisma.asset.deleteMany({ where: { hostname: { startsWith: HOST } } });
 }
 
@@ -109,6 +112,47 @@ d("all-clear subject matches the fire", () => {
     expect(fire).toHaveLength(1);
     expect(fire[0]).toContain("2 devices");
     expect(resolved).toEqual([fire[0]!.replace("[SERIOUS]", "[RESOLVED]")]);
+  });
+
+  it("a path check's subject says it is down, and its Resolved says it is up", async () => {
+    const now = new Date();
+    const host = await prisma.asset.create({
+      data: { hostname: `${HOST}-pc`, status: "active", monitored: true, assetType: "workstation", monitorStatus: "up", lastSeen: now, lastMonitorAt: now } as never,
+      select: { id: true },
+    });
+    await prisma.managedAgent.create({ data: { assetId: host.id, osPlatform: "windows", arch: "amd64", installStatus: "active", installedBy: "tester", serverCertFingerprint: "x" } as never });
+    const check = await prisma.pathCheck.create({
+      data: { name: `${NAME} scale`, kind: "https", target: "https://scale.example.test", intervalSec: 120, traceroute: {}, scope: { assetIds: [host.id] }, assetIds: [host.id], definitionSha256: "0".repeat(64) } as never,
+      select: { id: true },
+    });
+    await prisma.assetPathCheckSample.create({ data: { assetId: host.id, checkId: check.id, timestamp: now, ok: false, error: "timeout" } as never });
+    const rule = await prisma.notificationRule.create({
+      data: {
+        name: `${NAME} path`, enabled: true, severity: "warning",
+        trigger: { type: "asset_metric", metric: "pathOk", aggregation: "latest", windowSec: 0, operator: "==", threshold: 0, forDurationSec: 0 },
+        scope: { condition: { op: "and", children: [{ field: "hostname", operator: "startsWith", value: HOST }] } },
+        reset: { mode: "auto" }, actions: [], channels: ["in_app"],
+      } as never,
+      select: { id: true },
+    });
+    await createGroup({
+      name: `${NAME} group`, foldBy: "automation" as never, ruleIds: [rule.id],
+      actions: [notify("noc@example.test")], resetActions: [notify("noc@example.test")],
+    }, "tester");
+
+    await evaluateAllNotificationRules();
+    await prisma.notification.updateMany({
+      where: { ruleId: rule.id, cleared: false, firstSentAt: null },
+      data: { firstSendDueAt: new Date(Date.now() - 1000) },
+    });
+    await evaluateAllNotificationRules();
+
+    await prisma.assetPathCheckSample.create({ data: { assetId: host.id, checkId: check.id, timestamp: new Date(now.getTime() + 1000), ok: true } as never });
+    await evaluateAllNotificationRules();
+
+    const { fire, resolved } = await subjectsOf(rule.id);
+    expect(fire).toEqual([`[WARNING] ${NAME} scale is down · 1 device — ${NAME} path`]);
+    expect(resolved).toEqual([`[RESOLVED] ${NAME} scale is up · 1 device — ${NAME} path`]);
   });
 
   it("an operator Clear of a grouped alert names the alert as the fire did", async () => {
