@@ -286,7 +286,7 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
       NOT: { firstSendDueAt: { not: null }, firstSentAt: null },
     },
     select: {
-      id: true, message: true, severity: true, assetId: true, assetHostname: true,
+      id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, templateCtx: true,
       rule: { select: { id: true, name: true, scope: true, emailComposition: true, resetActions: true } },
       alertGroup: { select: { id: true, name: true, enabled: true, emailComposition: true, resetActions: true } },
     },
@@ -310,16 +310,24 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
 
   for (const { row: n, owner } of withActions) {
     const o = owner!;
+    // Name the alert the way its fire did, so the "Resolved" subject reads as
+    // the same alert: the fire's own {asset} / {dimension} / {dimension.suffix}
+    // / {rule} when it snapshotted them (a grouped alert always does — "RGILink
+    // Auth · 3 devices — Path Monitor", not the lead host and the group's
+    // name), else the row's host + component and the owner's name.
+    const snap = clearedSubjectParts(n.templateCtx);
     const ctx = buildTemplateContext({
-      asset: n.assetHostname ?? "",
+      asset: snap.asset ?? n.assetHostname ?? "",
+      dimension: snap.dimension ?? n.dimension ?? "",
+      ...(snap.dimensionSuffix !== undefined ? { dimensionSuffix: snap.dimensionSuffix } : {}),
       severity: "resolved",
       time: new Date(),
-      ruleName: o.name,
+      ruleName: snap.ruleName ?? o.name,
     });
     // Headline AND {message}: this context has no reading behind it, so without
     // the headline the email would state the severity and the hostname and
     // nothing about what happened.
-    setRecoverySentence(ctx, `Resolved: ${o.name} — ${n.assetHostname ?? "alert"} cleared by ${actor}`);
+    setRecoverySentence(ctx, `Resolved: ${ctx["rule"] || o.name} — ${ctx["asset"] || "alert"} cleared by ${actor}`);
     await executeActions(n.id, o.resetActions as never, ctx, {
       // A group has no scope of its own; its members' scopes chose the devices
       // at fire time, and recipientDeviceRegion routing reads the ALERT's own
@@ -334,6 +342,21 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
       actor,
     }).catch(() => { /* one bad alert must not stop the rest of the batch */ });
   }
+}
+
+/** The subject-naming tokens out of an alert's fire-time `templateCtx`
+ *  snapshot — each one only when the snapshot holds it as a string. Pure. */
+export function clearedSubjectParts(templateCtx: unknown): { asset?: string; dimension?: string; dimensionSuffix?: string; ruleName?: string } {
+  const snap = templateCtx && typeof templateCtx === "object" ? templateCtx as Record<string, unknown> : {};
+  const pick = (k: string) => (typeof snap[k] === "string" ? snap[k] as string : undefined);
+  const asset = pick("asset");
+  const rule = pick("rule");
+  return {
+    ...(asset ? { asset } : {}),
+    ...(rule ? { ruleName: rule } : {}),
+    ...(pick("dimension") !== undefined ? { dimension: pick("dimension") } : {}),
+    ...(pick("dimension.suffix") !== undefined ? { dimensionSuffix: pick("dimension.suffix") } : {}),
+  };
 }
 
 /** How an acknowledgement reached us — audit detail only, never a gate. */

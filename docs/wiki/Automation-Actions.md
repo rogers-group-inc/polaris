@@ -627,6 +627,14 @@ way, so an accidental un-tick does not destroy typed actions before save.
 Recovery is announced by the rule's **reset actions** — which every automation has, banded or not — so
 people are told once.
 
+**The Resolved email has the subject the alert was raised with**, with
+`[RESOLVED]` in place of the severity, so the two read as the same alert in an
+inbox: `[WARNING] RGILink Auth · 1 device — Path Monitor` closes as
+`[RESOLVED] RGILink Auth · 1 device — Path Monitor`. That holds however the
+alert ended — it recovered, it timed out, or someone cleared it — and on an
+alert covering several devices or components it names the whole alert, not
+whichever one recovered last.
+
 ### How the reset list follows your Notify actions
 
 Adding a Notify to the trigger list puts the same Notify in the **Reset
