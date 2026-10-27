@@ -256,11 +256,21 @@
     _alerts = [];
   }
 
+  // The subtitle's name opens the asset sheet when the caller asks for it
+  // (`opts.linkName` — the Assets list's flag). From the asset sheet itself it
+  // is the asset already open, so it stays text.
+  function hostnameHtml(assetId, opts) {
+    if (opts.linkName && window.PolarisAssetDetail && PolarisAssetDetail.linkHtml) {
+      return PolarisAssetDetail.linkHtml(assetId, opts.hostname);
+    }
+    return escapeHtml(opts.hostname);
+  }
+
   /**
    * Open the alerts sheet for one asset.
    *
    * @param {string} assetId
-   * @param {{hostname?: string, onSummary?: function}} [opts] — `onSummary`
+   * @param {{hostname?: string, linkName?: boolean, onSummary?: function}} [opts] — `onSummary`
    *        receives the {severity, count, unacknowledged} summary (or null)
    *        every time the list settles, so the surface behind the sheet can
    *        repaint its own flag without re-fetching.
@@ -284,7 +294,7 @@
       + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">'
       + '  <div style="min-width:0;">'
       + '    <h3 class="sheet-title" style="margin:0 0 2px;">Alerts</h3>'
-      + (opts.hostname ? '    <div style="color:var(--md-on-surface-variant);font-size:13px;">' + escapeHtml(opts.hostname) + '</div>' : "")
+      + (opts.hostname ? '    <div style="color:var(--md-on-surface-variant);font-size:13px;">' + hostnameHtml(assetId, opts) + '</div>' : "")
       + '  </div>'
       + '  <button class="icon-btn" id="asset-alerts-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
       + '</div>'

@@ -40,11 +40,15 @@ describe("mobile asset sheet — phone Back", () => {
     nativeReplace(null, "", window.location.href.replace(/#.*$/, ""));
     entries = [{ state: null, url: window.location.href }];
     index = 0;
+    // The index moves WHEN popstate fires, not when back() is called: a
+    // browser changes history.state and fires popstate together, and a
+    // hashchange happy-dom delivers late would otherwise read the next
+    // entry's state early (a 1-in-2 flake).
     const traverse = (delta: number) => {
       const to = Math.max(0, Math.min(entries.length - 1, index + delta));
       if (to === index) return;
-      index = to;
       setTimeout(() => {
+        index = to;
         nativeReplace(entries[index].state, "", entries[index].url);
         window.dispatchEvent(new PopStateEvent("popstate", { state: entries[index].state }));
       }, 0);

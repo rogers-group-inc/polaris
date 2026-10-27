@@ -110,7 +110,17 @@ page's title bar as well, and fades out as it goes, so the title bar and the
 controls read as one frosted band. Every sheet that slides up
 does the same with its header: its title and its **close** button (and, on a
 device, the screenshot and refresh buttons) stay at the top however far down
-you scroll.
+you scroll. The header stays see-through: what you scroll fades out as it
+passes under it.
+
+**Tap a device's name to open it.** Wherever the phone names another device
+and knows which asset it is, the name is shown in the accent colour and opens
+that asset's detail sheet. This covers the FortiGate's name on a Device Map site
+sheet, a node's name on the topology, an LLDP neighbour on an interface, a
+matched device in the ARP, MAC and Wireless tables, the hostname of an address
+in a network's sheet, the HA primary or group-upgrade gate in a firmware note,
+and the device name on an alerts sheet opened from the Assets list. If the name
+sits in a sheet stacked over the detail sheet, that sheet closes first.
 
 **Your desktop Assets tabs are on the phone too.** If you have built tabs on the
 desktop [Assets](Assets) page, the Assets list shows them as a row of tabs at

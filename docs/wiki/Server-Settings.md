@@ -468,8 +468,9 @@ and **Application Updates** side by side, **Platform Lifecycle**, then
 **Backup**, **Restore**, **Backup History** and **Scheduled Backups** in one
 row (two by two on a narrower window).
 
-Every card that can raise a problem wears its state on its **left edge**: grey
-when all is well, blue for watch, amber for a warning, red for critical. That
+Every card that can raise a problem wears its state on its **left edge**: blue
+for watch, amber for a warning, red for critical. When all is well the card has
+no edge, just the same thin border all the way round. That
 is the Database, Capacity Advisor (amber while it has recommendations),
 Platform Lifecycle and Scheduled Backups (red when the last run failed) cards
 here, and the HTTPS Certificate card on the Certificates tab (amber inside 30

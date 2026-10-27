@@ -285,7 +285,8 @@
     var rowForActions = Object.assign({}, r, { ipAddress: ip.address, subnetId: subnetId, pushEligible: pushEligible });
 
     var detailRows = [];
-    if (r.hostname) detailRows.push(ipDetailRow("Hostname", escapeHtml(r.hostname)));
+    // Linked to the address's asset when it has one (PolarisAssetDetail.linkHtml).
+    if (r.hostname) detailRows.push(ipDetailRow("Hostname", assetNameHtml(ip.assetId, r.hostname)));
     if (r.owner)    detailRows.push(ipDetailRow("Owner", escapeHtml(r.owner)));
     if (r.sourceType) detailRows.push(ipDetailRow("Source", escapeHtml(String(r.sourceType).replace(/_/g, " "))));
     if (r.notes)    detailRows.push(ipDetailRow("Notes", escapeHtml(r.notes)));
@@ -620,6 +621,11 @@
   }
 
   // escapeHtml is the canonical global from api.js (loaded first on every page).
+
+  // An asset's name as the link that opens its sheet; plain text without one.
+  function assetNameHtml(id, name) {
+    return (window.PolarisAssetDetail && PolarisAssetDetail.linkHtml) ? PolarisAssetDetail.linkHtml(id, name) : escapeHtml(name);
+  }
 
   // ─── #subnet/<id> ───────────────────────────────────────────────────────
   // Search hits (networks, IPs, reservations) and old bookmarks still link

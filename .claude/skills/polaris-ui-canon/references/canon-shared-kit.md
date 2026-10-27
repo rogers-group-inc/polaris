@@ -413,8 +413,11 @@ stack, sit in a fixed row, or reflow with the window.
 
 **Settings card severity edge.** A settings card that can raise a problem adds
 `severity-edge severity-edge-<ok|watch|amber|red>` (suffix from
-`_capacitySeverityCssClass`): a 3px left border, grey / accent / warning /
-danger. Wearing it today: Database (`#capacity-card`), Capacity Advisor (amber
+`_capacitySeverityCssClass`): a 3px left border in accent / warning / danger for
+watch / amber / red. **`ok` draws no edge** (2026-10-27, by request) — the plain
+1px `--color-border` hairline all the way round, so a thick edge always means
+something is happening; the ok rule comes after the width rule below so it wins
+at equal specificity. Wearing it today: Database (`#capacity-card`), Capacity Advisor (amber
 while it has changed rows), Platform Lifecycle, Scheduled Backups
 (`#bksched-card`, toggled red by `loadBackupSchedule` on `lastError`) and the
 HTTPS Certificate card (amber under 30 days, red under 7). A new card that grades

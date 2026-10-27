@@ -520,7 +520,8 @@
       + '<div class="sheet-handle"></div>'
       + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px;">'
       + '  <div style="min-width:0;">'
-      + '    <h3 class="sheet-title" style="margin:0 0 4px;">' + escapeHtml(site.hostname || "FortiGate") + '</h3>'
+      // The gate's name opens its asset sheet (PolarisAssetDetail.linkHtml).
+      + '    <h3 class="sheet-title" style="margin:0 0 4px;">' + assetNameHtml(site.id, site.hostname || "FortiGate") + '</h3>'
       + '    <div class="muted" style="font-size:13px;letter-spacing:.25px;">' + siteParts.join(" · ") + '</div>'
       + '  </div>'
       + '  <button class="icon-btn" id="map-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
@@ -592,6 +593,11 @@
   }
 
   // escapeHtml is the canonical global from api.js (loaded first on every page).
+
+  // An asset's name as the link that opens its sheet; plain text without one.
+  function assetNameHtml(id, name) {
+    return (window.PolarisAssetDetail && PolarisAssetDetail.linkHtml) ? PolarisAssetDetail.linkHtml(id, name) : escapeHtml(name);
+  }
 
   // ─── Public surface ────────────────────────────────────────────────────
   // The tab registry in tabs.js reads from PolarisMapTab.spec; details.js's
