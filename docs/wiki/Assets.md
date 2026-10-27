@@ -679,6 +679,13 @@ the aggregate to chart the link as a whole, and pin its members to see how the
 load splits across them or which member went quiet. The header checkbox pins
 or unpins every listed row, members and VLAN sub-interfaces included.
 
+**Clear the filters in one click.** Each table in the asset panel that has
+column filters (Interfaces, IPsec, Software, Services and Events) has a
+**Clear** button at its top right, as does the Path Monitor results window.
+It is greyed out while no filter is set, so a filter you cannot see, for
+example on a hidden column, still shows. Clicking it removes every column
+filter and keeps the sort.
+
 **VLANs show by name.** On a switch that reports port VLANs, the **Native
 VLAN** and **Tagged VLANs** columns show each VLAN as a pill carrying its name;
 hover a pill for the VLAN number. The name is the VLAN interface's, read from

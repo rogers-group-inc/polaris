@@ -334,6 +334,36 @@ describe("a dotted sub-interface nests under its base", () => {
   });
 });
 
+// The asset panel's tables have no page-controls row, so TableSF puts its own
+// Clear above the table — disabled until a filter is live.
+describe("Clear button", () => {
+  const clearBtn = () => doc.querySelector(".sf-clear-bar .sf-clear-btn") as any;
+
+  it("sits above the table, disabled while nothing is filtered", () => {
+    expect(clearBtn()).not.toBeNull();
+    expect(clearBtn().disabled).toBe(true);
+    expect(doc.querySelectorAll(".sf-clear-btn")).toHaveLength(1);
+  });
+
+  it("clears every filter, re-renders and saves", async () => {
+    await typeFilter("ifname", "port");
+    expect(clearBtn().disabled).toBe(false);
+    click(clearBtn());
+    expect(names().sort()).toEqual(["lag1", "port1", "port2", "port3", "port9", "vlan50"]);
+    expect(rowFor("port9").textContent).toContain("└─");
+    expect(JSON.parse(g.localStorage.getItem(PREFS_KEY)).sfFilters).toEqual({});
+    expect(clearBtn().disabled).toBe(true);
+  });
+
+  it("is enabled by a restored filter, and not duplicated by a re-render", () => {
+    g.localStorage.setItem(PREFS_KEY, JSON.stringify({ sortKey: null, sortDir: "asc", sfFilters: { ifname: "port" } }));
+    render();
+    render();
+    expect(doc.querySelectorAll(".sf-clear-btn")).toHaveLength(1);
+    expect(clearBtn().disabled).toBe(false);
+  });
+});
+
 describe("filtering", () => {
   it("matches text against the interface name", async () => {
     await typeFilter("ifname", "port");

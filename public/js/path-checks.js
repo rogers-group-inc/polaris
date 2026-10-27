@@ -1092,6 +1092,7 @@
     var tbody = document.getElementById("path-res-tbody");
     tbody.dataset.checkId = check.id;
     var sf = typeof TableSF === "function" ? new TableSF("path-res-tbody", function () { draw(); }) : null;
+    if (sf) sf.addClearButton();
     var rows = [];
 
     function draw() {
