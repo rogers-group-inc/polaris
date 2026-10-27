@@ -168,7 +168,8 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     charts = [];
     (document.querySelector(".iface-row") as HTMLElement).click();
     await flush();
-    const sheet = document.getElementById("iface-sheet")!;
+    // The interface is a page of the asset sheet now, not a sheet of its own.
+    const sheet = document.querySelector('#asset-host .asset-page[data-page="iface"]')!;
     expect(sheet.textContent).toContain("Delivering");
     expect(sheet.textContent).toContain("class3");
     expect(calls.interfaceHistory.at(-1)!.slice(1)).toEqual(["port1", { range: "1h" }]);

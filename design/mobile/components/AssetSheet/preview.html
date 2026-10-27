@@ -38,7 +38,16 @@
 <div class="scrim asset-scrim"></div>
 <div class="sheet asset-sheet">
   <div class="sheet-handle"></div>
-  <div class="asset-sheet-header"><span class="dot up"></span><span class="asset-sheet-name">core-sw-01</span><button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button></div>
+  <div class="asset-sheet-header">
+    <div class="asset-sheet-toolbar">
+      <button class="icon-btn" id="asset-sheet-back" aria-label="Back" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <button class="icon-btn" id="asset-sheet-fwd" aria-label="Forward to Storage"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+      <span class="asset-sheet-toolbar-gap"></span>
+      <button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
+      <button class="icon-btn" id="asset-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+    </div>
+    <div class="asset-sheet-title-row"><span class="dot up"></span><button class="asset-sheet-name-btn"><span class="asset-sheet-name">core-sw-01</span></button></div>
+  </div>
   <div class="asset-hero">
     <div class="hero-name"><span class="dot up"></span>core-sw-01</div>
     <div class="hero-sub">Switch · <span class="mono">192.0.2.11</span></div>
@@ -49,6 +58,10 @@
     <div class="kv-row"><span class="k">Serial</span><span class="v mono">FOC2143X0AB</span></div>
     <div class="kv-row"><span class="k">Location</span><span class="v">North quarry, scale house</span></div>
     <div class="kv-row"><span class="k">Last seen</span><span class="v">2 min ago</span></div>
+  </div>
+  <div class="asset-storage-entry">
+    <button class="btn btn-tonal btn-block"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M3 4h18v7H3V4Zm3 2.5v2h2v-2H6ZM3 13h18v7H3v-7Zm3 2.5v2h2v-2H6Z"/></svg>View Storage</button>
+    <div class="asset-storage-sub">2 volumes</div>
   </div>
   <button class="asset-sect-header"><div><div class="sect-title">Traffic</div><div class="sect-sub">Last 24 hours</div></div></button>
   <div class="sect-body"><div class="chart-wrap" style="height:120px"><div class="chart-empty">No samples yet</div></div></div>

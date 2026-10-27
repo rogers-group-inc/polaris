@@ -146,7 +146,7 @@ describe("pinned sheet header (PolarisTabs.pinSheetHead)", () => {
 
   it("is applied by every sheet that has a header row", () => {
     const sites: [string, number][] = [
-      ["asset-detail.js", 4],   // asset sheet, interface, SD-WAN, table (+ its filter row)
+      ["asset-detail.js", 1],   // asset sheet (interface, SD-WAN and the tables are its pages)
       ["subnet-detail.js", 1],  // network address sheet
       ["alerts.js", 1],         // per-asset alerts sheet
       ["asset-edit.js", 2],     // edit menu + each edit sheet
@@ -157,7 +157,6 @@ describe("pinned sheet header (PolarisTabs.pinSheetHead)", () => {
     for (const [file, n] of sites) {
       expect(mobile(file).match(/PolarisTabs\.pinSheetHead\(sheet/g)?.length, file).toBe(n);
     }
-    expect(SHEET).toMatch(/pinSheetHead\(sheet, \{ also: \["#table-sheet-controls"\] \}\)/);
   });
 
   it("keeps the asset sheet's controls in the header row the band pins", () => {
@@ -165,7 +164,7 @@ describe("pinned sheet header (PolarisTabs.pinSheetHead)", () => {
     const host = SHEET.indexOf("'<div id=\"asset-host\"></div>'");
     expect(at).toBeGreaterThan(0);
     const header = SHEET.slice(at, host);
-    for (const id of ["asset-sheet-name-btn", "asset-sheet-screenshot", "asset-sheet-refresh", "asset-sheet-close"]) {
+    for (const id of ["asset-sheet-back", "asset-sheet-fwd", "asset-sheet-name-btn", "asset-sheet-page-title", "asset-sheet-screenshot", "asset-sheet-refresh", "asset-sheet-close"]) {
       expect(header).toContain(id);
     }
   });

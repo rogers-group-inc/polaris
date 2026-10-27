@@ -108,7 +108,8 @@ async function openAsset(id: string) {
 }
 
 const btn = (key: string) => document.getElementById("asset-" + key + "-btn") as HTMLButtonElement | null;
-const tableSheet = () => document.getElementById("table-sheet");
+// The tables are pages of the asset sheet now: the page's own element.
+const tableSheet = () => document.querySelector("#asset-host .asset-page") as HTMLElement | null;
 const sheetText = () => (tableSheet()?.textContent || "").replace(/\s+/g, " ");
 
 beforeEach(() => {
@@ -146,7 +147,7 @@ describe("ARP Table sheet", () => {
     btn("arp")!.click();
     await flush();
     expect(arpTable).toHaveBeenCalledWith("fw", "current");
-    const heads = Array.from(document.querySelectorAll("#table-sheet .tbl-group-head .mono")).map((e) => e.textContent);
+    const heads = Array.from(document.querySelectorAll("#asset-host .asset-page .tbl-group-head .mono")).map((e) => e.textContent);
     expect(heads).toEqual(["port1", "port2"]);   // natural order
     expect(sheetText()).toContain("10.4.12.63");
     expect(sheetText()).toContain("1h 01m");
@@ -171,14 +172,18 @@ describe("ARP Table sheet", () => {
     expect(opt.disabled).toBe(true);
   });
 
-  it("a matched device opens that asset and closes the table sheet", async () => {
+  it("a matched device opens that asset a page forward; Back returns to the table", async () => {
     await openAsset("fw");
     btn("arp")!.click();
     await flush();
-    (document.querySelector('#table-sheet [data-open-asset="pc"]') as HTMLElement).click();
+    (document.querySelector('#asset-host [data-open-asset="pc"]') as HTMLElement).click();
     await flush();
     expect(tableSheet()).toBeNull();
     expect(document.getElementById("asset-sheet-name")!.textContent).toBe("PRINTER-4");
+    (document.getElementById("asset-sheet-back") as HTMLButtonElement).click();
+    await flush();
+    expect(tableSheet()!.dataset.page).toBe("arp");
+    expect(document.getElementById("asset-sheet-page-title")!.textContent).toBe("ARP Table");
   });
 });
 
@@ -217,7 +222,7 @@ describe("Wireless sheet", () => {
     btn("wireless")!.click();
     await flush();
     const calls = systemInfo.mock.calls.length;
-    (document.getElementById("table-sheet-reload") as HTMLElement).click();
+    (document.getElementById("asset-sheet-refresh") as HTMLElement).click();   // the header's Refresh
     await flush();
     expect(systemInfo.mock.calls.length).toBe(calls + 1);
   });

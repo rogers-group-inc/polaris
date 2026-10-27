@@ -1,7 +1,14 @@
 // public/js/mobile/asset-detail.js — Asset detail slide-up sheet.
 //
-// Header carries camera (screenshot — see screenshotSheet), refresh and
-// close icon buttons. The asset's NAME is a button: it opens the edit menu
+// The sheet shows ONE PAGE at a time (see "Page history"): the asset, or a
+// page opened from it — SD-WAN, the ARP / MAC / Wireless tables, an
+// interface, the alerts list, Storage, a volume, a drive, another asset.
+// Opening one goes forward; the header's back / forward walk the list.
+//
+// Header, two rows: back, forward, then camera (screenshot — see
+// screenshotSheet), refresh and close; under them the status dot and the
+// asset's NAME, the full width — or, on any other page, that page's title
+// over the asset's name. The NAME is a button: it opens the edit menu
 // (General / Monitoring / Maintenance — the desktop Edit Asset modal's tabs,
 // each as its own sheet; see mobile/asset-edit.js), and a save there
 // re-reads this sheet.
@@ -15,9 +22,11 @@
 //   - Temperatures section — current per-sensor reading + 1h min/avg/max
 //   - Interfaces section — a PoE summary (delivering / searching / fault,
 //     faulted ports named) when any port reports PoE, then the list,
-//     operStatus=="up" only, each row with its PoE state; tap a row opens a
-//     bottom sheet with status / speed / ip / mac / PoE / errors / LLDP
-//     neighbor(s), plus throughput + error charts for a MONITORED interface
+//     operStatus=="up" only, each row with its PoE state; tap a row opens its
+//     page: status / speed / ip / mac / PoE / errors / LLDP neighbor(s), plus
+//     throughput + error charts for a MONITORED interface
+//   - "View Storage" — opens the Storage page (volumes; a hypervisor's arrays
+//     and drives). See the Storage block.
 //
 // The four monitoring sections carry a polling-method chip beside the title
 // (loadPollingChips, from /effective-monitor-settings).
@@ -28,8 +37,8 @@
 //
 // Hero carries the strobing "Alerts" flag when the device has live alerts —
 // the same control the Assets list card shows, in the colour of the worst one,
-// tapping through to the shared alerts sheet (acknowledge / clear, per role;
-// PolarisMobileAlerts in mobile/alerts.js). It sits on the status pill's row
+// tapping through to the Alerts page (acknowledge / clear, per role; drawn by
+// PolarisMobileAlerts.renderInto in mobile/alerts.js). It sits on the status pill's row
 // because the two together are how this device is doing.
 //
 // Hero also carries a Quarantine / Release Quarantine button, gated on the
@@ -39,18 +48,17 @@
 //
 // Hero also carries a "View SD-WAN" button for FortiGate firewalls that
 // reported SD-WAN data (perf-SLA links / rules / members exist). Tapping it
-// slides up a second bottom sheet (stacked on the asset sheet, like the
-// interface sheet) with SD-WAN Members + Rules current-state lists and a
+// opens the SD-WAN page: Members + Rules current-state lists and a
 // Performance SLA section (per-member latency / jitter / packet-loss charts
-// over a selectable health-check + range). See openSdwanSheet.
+// over a selectable health-check + range). See renderSdwanPage.
 //
 // Below it, one current-state table button per device class — "View ARP
 // Table" on a firewall, "View MAC Table" on a switch, "View Wireless" on a
 // monitored access point (the desktop's ARP Table / MAC Table / Wireless
-// tabs). Each opens a stacked sheet read-only: ARP with a range + filter,
-// MAC grouped by port, Wireless as radio → SSID → client. A matched device in
-// any of them opens that asset. See openArpSheet / openMacSheet /
-// openWirelessSheet.
+// tabs). Each opens a read-only page: ARP with a range + filter, MAC grouped
+// by port, Wireless as radio → SSID → client. A matched device in any of
+// them opens that asset a page forward. See renderTablePage and the
+// loadArpSheet / loadMacSheet / loadWirelessSheet loaders.
 //
 // A switch or access point's OS row in General carries the firmware upgrade
 // verb (business rule 87): "Upgrade to <version>" when the Repository holds a
@@ -59,9 +67,11 @@
 // upgrade block (osRowValue / loadFirmwareRow / confirmFirmwareUpgrade /
 // watchFirmwareRun).
 //
-// The phone's Back button walks the sheet down — a stacked sheet first, then
-// expanded → peek → closed — before it leaves the page (see the "Phone Back
-// button" block: the sheet keeps one history entry of its own while open).
+// The phone's Back button is the header's back: a sheet stacked over this one
+// (an edit sheet, a confirm) closes first, then the page history steps back,
+// then the first page shrinks to its peek band, then the sheet closes — and
+// only then does Back leave the page (see the "Phone Back button" block: the
+// sheet keeps one history entry of its own while open).
 //
 // Out of scope for v1 (desktop-only):
 //   - The Firmware Repository, the choice of a model's backup image, and a
@@ -72,7 +82,7 @@
 //   - IPsec tunnels
 //   - SNMP walk
 //   - SD-WAN rule member-selection categorical timeline (the mobile chart
-//     helper is numeric-only; the SD-WAN sheet shows the current selected
+//     helper is numeric-only; the SD-WAN page shows the current selected
 //     member per rule, not its failover history)
 //   - Per-source observed blob view (mobile shows the source summary, not the
 //     full observed key/value table)
@@ -169,7 +179,7 @@
   }
 
   // Per-asset cache of the SD-WAN gate fetch (members + rules + perf-SLA
-  // links) so openSdwanSheet renders the current-state lists without a
+  // links) so renderSdwanPage draws the current-state lists without a
   // re-fetch. Populated by loadSdwanGate; only set when data actually exists.
   var _sdwanCache = Object.create(null);
 
@@ -219,11 +229,16 @@
   // Minimize is triggered by tapping the scrim (i.e. the dimmed area over the
   // searchbar); expand by tapping the peek bar; dismiss by swipe-down or the
   // close button.
-  // Sized to clear the full peek-band content above the bottom navbar:
-  // 32px of handle area (4px line + 12+16 margins) + 64px of header (48px
-  // icon-btn rows + 4+12 padding) = 96px. Anything smaller cuts into the
-  // hostname row.
-  var PEEK_BAND_PX = 96;
+  // The peek band is the pinned head — handle + both header rows (toolbar and
+  // the name / page title) — MEASURED (peekBandPx), since the title row's
+  // height follows the page. This is only the fallback before layout: 32px of
+  // handle area + two 48px rows + 4+12 padding + 4 between them.
+  var PEEK_BAND_PX = 148;
+  function peekBandPx(sheet) {
+    var head = sheet.querySelector(".sheet-pinned-head") || sheet.querySelector(".asset-sheet-header");
+    var h = head ? head.offsetHeight : 0;
+    return h > 0 ? h : PEEK_BAND_PX;
+  }
   var _state = "closed";   // "closed" | "expanded" | "peek"
   var _openId = null;      // asset id currently shown — also the loader race guard
   var _openAsset = null;   // its row, as last painted — what the edit menu opens on
@@ -243,17 +258,32 @@
     sheet.innerHTML = ''
       + '<div class="sheet-handle"></div>'
       + '<div class="asset-sheet-header">'
-      + '  <span class="dot" id="asset-sheet-dot" style="display:none;"></span>'
+      // Row 1: the page history (back / forward) on the left, the sheet's
+      // own verbs on the right.
+      + '  <div class="asset-sheet-toolbar">'
+      + '    <button class="icon-btn" id="asset-sheet-back" aria-label="Back" disabled><svg viewBox="0 0 24 24"><use href="#i-chev-left"/></svg></button>'
+      + '    <button class="icon-btn" id="asset-sheet-fwd" aria-label="Forward" disabled><svg viewBox="0 0 24 24"><use href="#i-chev-right"/></svg></button>'
+      + '    <span class="asset-sheet-toolbar-gap"></span>'
+      + '    <button class="icon-btn" id="asset-sheet-screenshot" aria-label="Screenshot"><svg viewBox="0 0 24 24"><use href="#i-camera"/></svg></button>'
+      + '    <button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
+      + '    <button class="icon-btn" id="asset-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
+      + '  </div>'
+      // Row 2: on the asset page the status dot + name, the full width; on
+      // any other page that page's title over the asset's name.
+      + '  <div class="asset-sheet-title-row">'
+      + '    <span class="dot" id="asset-sheet-dot" style="display:none;"></span>'
       // The name is the edit menu's trigger (PolarisAssetEdit in
       // mobile/asset-edit.js) — one entry per tab of the desktop's Edit Asset
       // modal. Disabled until the row loads; the text keeps its own id.
-      + '  <button type="button" class="asset-sheet-name-btn" id="asset-sheet-name-btn" aria-haspopup="menu" aria-label="Edit asset" disabled>'
-      + '    <span class="asset-sheet-name" id="asset-sheet-name">Asset</span>'
-      + '    <svg class="caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev-down"/></svg>'
-      + '  </button>'
-      + '  <button class="icon-btn" id="asset-sheet-screenshot" aria-label="Screenshot"><svg viewBox="0 0 24 24"><use href="#i-camera"/></svg></button>'
-      + '  <button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
-      + '  <button class="icon-btn" id="asset-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
+      + '    <button type="button" class="asset-sheet-name-btn" id="asset-sheet-name-btn" aria-haspopup="menu" aria-label="Edit asset" disabled>'
+      + '      <span class="asset-sheet-name" id="asset-sheet-name">Asset</span>'
+      + '      <svg class="caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev-down"/></svg>'
+      + '    </button>'
+      + '    <div class="asset-sheet-page" id="asset-sheet-page" hidden>'
+      + '      <div class="asset-sheet-page-title" id="asset-sheet-page-title"></div>'
+      + '      <div class="asset-sheet-page-sub" id="asset-sheet-page-sub"></div>'
+      + '    </div>'
+      + '  </div>'
       + '</div>'
       + '<div id="asset-host"></div>';
 
@@ -270,7 +300,13 @@
     scrim.addEventListener("click", minimize);
     document.getElementById("asset-sheet-close").addEventListener("click", closeSheet);
     document.getElementById("asset-sheet-refresh").addEventListener("click", function () {
-      if (_openId) reloadSheet(_openId, this);
+      refreshPage(this);
+    });
+    document.getElementById("asset-sheet-back").addEventListener("click", function () {
+      if (_state === "expanded") pageBack();
+    });
+    document.getElementById("asset-sheet-fwd").addEventListener("click", function () {
+      if (_state === "expanded") pageForward();
     });
     // While peeked the header tap handler below re-expands instead (the
     // camera isn't in its exclusion list) and this guard makes the
@@ -287,6 +323,8 @@
     // band still just re-expands (the handler above), as the camera does.
     document.getElementById("asset-sheet-name-btn").addEventListener("click", function () {
       if (_state !== "expanded" || !_openAsset || !window.PolarisAssetEdit) return;
+      var pg = currentPage();
+      if (!pg || pg.kind !== "asset") return;
       var id = _openAsset.id;
       var menuAsset = _openAsset;
       PolarisAssetEdit.openMenu(menuAsset, {
@@ -321,7 +359,7 @@
       // sheet back to its natural position before the drag continues.
       baselineTranslate: function () {
         if (_state !== "peek") return 0;
-        return Math.max(0, (sheet.offsetHeight || 0) - PEEK_BAND_PX);
+        return Math.max(0, (sheet.offsetHeight || 0) - peekBandPx(sheet));
       },
     });
     return sheet;
@@ -352,13 +390,13 @@
     if (!sheet) return;
     // Slide the sheet down so only its top band (handle + header) peeks above
     // the bottom navbar. The sheet is anchored at bottom: navbar-h (see CSS),
-    // so translateY(offsetHeight - PEEK_BAND_PX) leaves the band exposed just
+    // so translateY(offsetHeight - band) leaves the band exposed just
     // above the navbar; the rest of the sheet extends behind the navbar and
     // is occluded by the navbar's higher z-index. Measured from the live
     // height so short content peeks correctly too. attachSwipeToDismiss
     // clears inline transform on snap-back, which falls through to the CSS
     // translate, so peek is restored.
-    var translate = Math.max(0, (sheet.offsetHeight || 0) - PEEK_BAND_PX);
+    var translate = Math.max(0, (sheet.offsetHeight || 0) - peekBandPx(sheet));
     sheet.style.setProperty("--asset-peek-y", translate + "px");
     sheet.classList.add("peek");
     if (scrim) scrim.style.display = "none";
@@ -383,9 +421,10 @@
     // Tear down any stacked child sheets first so they don't orphan over the
     // backdrop once the asset sheet is gone.
     if (window.PolarisAssetEdit) PolarisAssetEdit.closeAll();
-    closeSdwanSheet();
-    closeTableSheet();
-    closeInterfaceSheet();
+    leavePage(currentPage());
+    _pages = [];
+    _pageIdx = -1;
+    _pageSeq++;
     closeFirmwareConfirm(false);
     stopFirmwarePoll();
     closeRebootConfirm(false);
@@ -441,8 +480,8 @@
     window.history.back();
   }
 
-  // The newest sheet stacked over the asset sheet (interface, table, SD-WAN,
-  // alerts, edit, a confirm…) — closed through its own scrim, which every one
+  // The newest sheet stacked over the asset sheet (the edit menu or an edit
+  // sheet, a confirm, the acknowledge-note prompt…) — closed through its own scrim, which every one
   // wires to its close path, so its state (a poll, a pending promise) is torn
   // down the way a tap outside it would. True when there was one.
   function closeStackedSheet() {
@@ -484,6 +523,9 @@
     if (!wasOnEntry || _state === "closed") return;
     if (window.location.href !== _sheetEntryHref) return;   // navigated away, not Back
     if (closeStackedSheet()) { pushSheetEntry(); return; }
+    // Expanded, Back is the panel's own ‹ until the first page; then it
+    // shrinks. Peeked, Back closes whatever page is showing.
+    if (_state === "expanded" && pageBack()) { pushSheetEntry(); return; }
     if (_state === "expanded") { minimize(); pushSheetEntry(); return; }
     dismiss();
   }
@@ -637,32 +679,177 @@
     return "Screenshot downloaded";
   }
 
-  // Public opener. Builds the sheet (if needed), then fetches + renders the
-  // asset into it. Opening a different asset while one is shown replaces the
-  // content in place (single #asset-host). Opening the same asset just
-  // re-expands. `_openId` doubles as the loader race guard: a late promise
-  // from a superseded asset bails because `_openId` no longer matches.
+  // Public opener. Builds the sheet (if needed), then shows the asset as a
+  // page. On a closed sheet that starts a fresh page history; on an open one
+  // the asset is a page FORWARD of the one showing (a link, a neighbor, a
+  // matched device), so ‹ returns to it. The asset already showing just
+  // re-expands.
   function open(id) {
     if (!id) return;
     var sheet = ensureSheet();
+    var cur = currentPage();
 
-    if (_openId === id && _state !== "closed") { expand(); pushSheetEntry(); return; }
+    if (_state !== "closed" && cur && cur.kind === "asset" && cur.assetId === id) { expand(); pushSheetEntry(); return; }
 
-    _openId = id;
     // A fresh open re-reads the windows: one may have started or ended since.
     _maintWindows = { assetId: null, promise: null };
-    expandFresh(sheet);
-    // Back now steps the sheet down (peek, then closed) before the page.
-    // No-op when the current entry is already the sheet's (another asset
-    // opened over this one).
+    if (_state === "closed") {
+      _pages = [];
+      _pageIdx = -1;
+      expandFresh(sheet);
+    } else if (_state === "peek") {
+      expand();
+    }
+    // Back now steps the sheet down (pages, peek, then closed) before the
+    // page behind it. No-op when the current entry is already the sheet's.
     pushSheetEntry();
+    goToPage({ kind: "asset", assetId: id });
+  }
 
-    loadAsset(id, mountState(id)).catch(function (err) {
-      if (_openId !== id) return;
+  // ─── Page history ──────────────────────────────────────────────────────
+  // The sheet shows ONE page at a time: the asset, or something opened from
+  // it — SD-WAN, the ARP / MAC / Wireless tables, an interface, the alerts
+  // list, Storage, a volume, a drive, or another asset. Opening one goes
+  // FORWARD (dropping any pages ahead, as a browser does); the header's ‹ and
+  // › walk the list, and the phone's Back is ‹ (see onPopState). Each page
+  // remembers its scroll offset. A page is { kind, assetId, title?, sub?, … };
+  // PAGE_KINDS says how each kind draws, refreshes and is left.
+  var _pages = [];
+  var _pageIdx = -1;
+  // Bumped on every page shown: a loader that captured it and finds it moved
+  // belongs to a page no longer on screen (two pages of one asset share
+  // `_openId`, so that guard alone cannot tell them apart).
+  var _pageSeq = 0;
+
+  function currentPage() { return _pageIdx >= 0 ? _pages[_pageIdx] || null : null; }
+
+  function hostEl() { return document.getElementById("asset-host"); }
+  function sheetEl() { return document.getElementById("asset-sheet"); }
+
+  function saveScroll() {
+    var p = currentPage(), s = sheetEl();
+    if (p && s) p.scrollTop = s.scrollTop;
+  }
+
+  function restoreScroll(p) {
+    var s = sheetEl();
+    if (s && p === currentPage()) s.scrollTop = p.scrollTop || 0;
+  }
+
+  function leavePage(p) {
+    if (!p) return;
+    var k = PAGE_KINDS[p.kind];
+    if (k && k.leave) { try { k.leave(p); } catch (_) { /* leaving never fails the move */ } }
+  }
+
+  function goToPage(page) {
+    saveScroll();
+    leavePage(currentPage());
+    _pages = _pages.slice(0, _pageIdx + 1);
+    _pages.push(page);
+    _pageIdx = _pages.length - 1;
+    showPage();
+  }
+
+  function pageBack() {
+    if (_pageIdx <= 0) return false;
+    saveScroll();
+    leavePage(currentPage());
+    _pageIdx--;
+    showPage();
+    return true;
+  }
+
+  function pageForward() {
+    if (_pageIdx >= _pages.length - 1) return false;
+    saveScroll();
+    leavePage(currentPage());
+    _pageIdx++;
+    showPage();
+    return true;
+  }
+
+  // The hostname a sub-page names under its title: the page's own, else the
+  // nearest asset page behind it that has loaded.
+  function pageAssetName(p) {
+    if (p.hostname) return p.hostname;
+    for (var i = _pageIdx; i >= 0; i--) {
+      var q = _pages[i];
+      if (q && q.kind === "asset" && q.assetId === p.assetId && q.hostname) return q.hostname;
+    }
+    return "";
+  }
+
+  function paintNav() {
+    var back = document.getElementById("asset-sheet-back");
+    var fwd = document.getElementById("asset-sheet-fwd");
+    var prev = _pages[_pageIdx - 1], next = _pages[_pageIdx + 1];
+    if (back) {
+      back.disabled = !prev;
+      back.setAttribute("aria-label", prev ? "Back to " + pageLabel(prev) : "Back");
+    }
+    if (fwd) {
+      fwd.disabled = !next;
+      fwd.setAttribute("aria-label", next ? "Forward to " + pageLabel(next) : "Forward");
+    }
+  }
+
+  function pageLabel(p) {
+    return p.kind === "asset" ? (p.hostname || "asset") : (p.title || p.kind);
+  }
+
+  // Row 2 of the header: the asset page's dot + name (setHeader fills them
+  // once the row loads), or a sub-page's title over its asset's name.
+  function paintTitleRow(p) {
+    var nameBtn = document.getElementById("asset-sheet-name-btn");
+    var dot = document.getElementById("asset-sheet-dot");
+    var block = document.getElementById("asset-sheet-page");
+    var isAsset = p.kind === "asset";
+    if (nameBtn) nameBtn.hidden = !isAsset;
+    if (block) block.hidden = isAsset;
+    if (isAsset) return;
+    if (dot) dot.style.display = "none";
+    var t = document.getElementById("asset-sheet-page-title");
+    var s = document.getElementById("asset-sheet-page-sub");
+    if (t) t.textContent = p.title || "";
+    if (s) s.textContent = [pageAssetName(p), p.sub].filter(Boolean).join(" · ");
+  }
+
+  function showPage() {
+    var p = currentPage();
+    var host = hostEl();
+    if (!p || !host) return;
+    _pageSeq++;
+    _openId = p.assetId;
+    paintNav();
+    paintTitleRow(p);
+    var refreshBtn = document.getElementById("asset-sheet-refresh");
+    if (p.kind === "asset") { renderAssetPage(p); return; }
+    _openAsset = null;
+    if (refreshBtn) refreshBtn.style.display = "";
+    // Each page draws into a fresh element: a listener a page delegates from
+    // it goes when the page does, never piling up on #asset-host.
+    host.innerHTML = '<div class="asset-page" data-page="' + escapeHtml(p.kind) + '"></div>';
+    var el = host.firstChild;
+    var s = sheetEl();
+    if (s) s.scrollTop = 0;
+    PAGE_KINDS[p.kind].render(el, p);
+    restoreScroll(p);
+  }
+
+  function renderAssetPage(p) {
+    var id = p.assetId;
+    resetAssetHeader(p);
+    var host = hostEl();
+    if (host) host.innerHTML = '<div class="loading-screen"><div class="spinner"></div></div>';
+    loadAsset(id, mountState(id)).then(function () {
+      restoreScroll(p);
+    }).catch(function (err) {
+      if (currentPage() !== p) return;
       var msg = (err && err.message) ? err.message : "Failed to load asset";
-      var host = document.getElementById("asset-host");
-      if (!host) return;
-      host.innerHTML = ''
+      var h = hostEl();
+      if (!h) return;
+      h.innerHTML = ''
         + '<div class="empty-state" style="padding-top:64px;">'
         + '  <div class="icon" style="background:var(--md-error-container);color:var(--md-on-error-container);"><svg viewBox="0 0 24 24"><use href="#i-warn"/></svg></div>'
         + '  <div class="ttl">Couldn’t load asset</div>'
@@ -671,14 +858,53 @@
     });
   }
 
+  // The header's Refresh: the asset page re-reads the asset (reloadSheet);
+  // any other page its own refresh, or is drawn again.
+  function refreshPage(btn) {
+    var p = currentPage();
+    if (!p) return;
+    if (p.kind === "asset") { reloadSheet(p.assetId, btn); return; }
+    var k = PAGE_KINDS[p.kind];
+    if (k.refresh) { k.refresh(p); return; }
+    saveScroll();
+    leavePage(p);
+    showPage();
+  }
+
+  // How each kind of page draws (into its own element), refreshes in place,
+  // and is left. Sub-pages for the asset page's own buttons and rows;
+  // "asset" is drawn by renderAssetPage.
+  var PAGE_KINDS = {
+    sdwan:    { render: function (el, p) { renderSdwanPage(el, p.assetId); },
+                leave: function () { _sdwanSheetState = null; } },
+    arp:      { render: function (el, p) { renderTablePage(el, "arp", p.assetId); loadArpSheet(p.assetId); },
+                refresh: function (p) { loadArpSheet(p.assetId); },
+                leave: function () { _tableSheet = null; } },
+    mac:      { render: function (el, p) { renderTablePage(el, "mac", p.assetId); loadMacSheet(p.assetId); },
+                refresh: function (p) { loadMacSheet(p.assetId); },
+                leave: function () { _tableSheet = null; } },
+    wireless: { render: function (el, p) { renderTablePage(el, "wireless", p.assetId); loadWirelessSheet(p.assetId); },
+                refresh: function (p) { loadWirelessSheet(p.assetId, true); },
+                leave: function () { _tableSheet = null; } },
+    iface:    { render: function (el, p) { renderInterfacePage(el, p.iface, p.info, p.assetId, p.monitored); } },
+    alerts:   { render: function (el, p) { renderAlertsPage(el, p); },
+                leave: function () { if (window.PolarisMobileAlerts && PolarisMobileAlerts.close) PolarisMobileAlerts.close(); } },
+    storage:  { render: function (el, p) { renderStoragePage(el, p); },
+                // Re-read system-info rather than the copy the asset page cached.
+                refresh: function (p) { saveScroll(); p.refetch = true; showPage(); } },
+    volume:   { render: function (el, p) { renderVolumePage(el, p); } },
+    drive:    { render: function (el, p) { renderDrivePage(el, p); } },
+  };
+
   // ─── Asset names are tap targets ────────────────────────────────────────
   // Wherever the phone names ANOTHER asset and knows its id, the name is a
   // link that opens that asset's sheet: linkHtml draws it, and one capture-
   // phase listener on the document opens it — so a surface only has to draw
   // the link, and a row handler underneath (a collapsible IP row, a table
-  // group head) never sees the tap. A sheet stacked ABOVE the asset sheet
-  // (the generic .sheet at 1000/1001: interface, table, site, topology node,
-  // alerts) would hide the sheet being opened, so it is closed first through
+  // group head) never sees the tap. Inside the asset sheet the asset opens a
+  // page forward (open). A sheet stacked ABOVE the asset sheet (the generic
+  // .sheet at 1000/1001: site, topology node, the Assets list's alerts sheet)
+  // would hide the sheet being opened, so it is closed first through
   // its own Close button — every pinned sheet header carries one — which runs
   // that sheet's own teardown. The one sheet BELOW it (the network sheet,
   // 891) stays, as its "Open asset" button leaves it. The current asset's own
@@ -709,9 +935,14 @@
   // and reloadSheet() so a refresh shows exactly what a fresh open would.
   // Resolves once the row is painted; the section loaders land on their own.
   function loadAsset(id, st) {
+    var seq = _pageSeq;
+    var page = currentPage();
     return api.assets.get(id).then(function (asset) {
-      if (_openId !== id) return;
+      if (_openId !== id || seq !== _pageSeq) return;
       if (!asset) throw new Error("Asset not found");
+      // The name the sub-pages show under their titles, and the Back label.
+      if (page && page.kind === "asset") page.hostname = asset.hostname || asset.assetTag || "";
+      paintNav();
       setHeader(asset);
       renderShell(asset, st);
       // Fire monitor + telemetry + IP history fetches in parallel — these
@@ -739,6 +970,8 @@
   // content stays up until the new row arrives (a failed reload keeps it).
   function reloadSheet(id, btn) {
     if (!id || _openId !== id) return Promise.resolve();
+    var cur = currentPage();
+    if (!cur || cur.kind !== "asset") return Promise.resolve();
     var sheet = document.getElementById("asset-sheet");
     var scroll = sheet ? sheet.scrollTop : 0;
     if (btn) {
@@ -767,10 +1000,14 @@
     if (scrim) scrim.style.display = "";
     _state = "expanded";
     sheet.scrollTop = 0;
+  }
+
+  // An asset page about to load: its name if a visit already learned it,
+  // no menu until the row lands, and no edit sheet left open on the previous
+  // asset.
+  function resetAssetHeader(p) {
     var nameEl = document.getElementById("asset-sheet-name");
-    if (nameEl) nameEl.textContent = "Asset";
-    // A new asset: no menu until its row loads, and no edit sheet left open
-    // on the previous one.
+    if (nameEl) nameEl.textContent = (p && p.hostname) || "Asset";
     _openAsset = null;
     var nameBtn = document.getElementById("asset-sheet-name-btn");
     if (nameBtn) nameBtn.disabled = true;
@@ -825,7 +1062,7 @@
       + '  </div>'
       // SD-WAN entry button — hidden until loadSdwanGate confirms this
       // FortiGate firewall actually reported SD-WAN data, then revealed +
-      // wired to openSdwanSheet.
+      // wired to open the SD-WAN page.
       + '  <div id="asset-sdwan-btn-wrap" style="margin-top:12px;display:none;">'
       + '    <button class="btn btn-tonal btn-block" id="asset-sdwan-btn"><svg viewBox="0 0 24 24"><use href="#i-router"/></svg>View SD-WAN</button>'
       + '  </div>'
@@ -880,6 +1117,14 @@
       + '  <div id="asset-interfaces-host"><div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div></div>'
       + '</div>'
 
+      // Storage — a page of its own (volumes; a hypervisor's arrays and
+      // drives). Drawn for every asset: the page explains an empty answer.
+      // The line under it is filled by loadSystemInfo / storageSummaryFor.
+      + '<div class="asset-storage-entry">'
+      + '  <button class="btn btn-tonal btn-block" id="asset-storage-btn"><svg viewBox="0 0 24 24"><use href="#i-storage"/></svg>View Storage</button>'
+      + '  <div class="asset-storage-sub" id="asset-storage-sub"></div>'
+      + '</div>'
+
       // Discovery sources — which integrations independently reported this
       // asset. Header subtitle shows the source count once loaded.
       + sectionHeader("sources", "Discovery sources", "", st.sections.sources, "asset-sources-sub")
@@ -899,6 +1144,12 @@
       + '<div class="sect-body" data-sect="ipHistory"' + (st.sections.ipHistory ? '' : ' hidden') + '>'
       + '  <div id="asset-ip-history-host"><div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div></div>'
       + '</div>';
+
+    var storageBtn = document.getElementById("asset-storage-btn");
+    if (storageBtn) storageBtn.onclick = function () {
+      goToPage({ kind: "storage", assetId: asset.id, title: "Storage", asset: asset });
+    };
+    paintStorageSummary(asset, null);
 
     // Section toggles
     document.querySelectorAll(".asset-sect-header").forEach(function (h) {
@@ -1295,6 +1546,7 @@
 
       if (tempsHost)  renderTemperatures(tempsHost, info, tempHist);
       if (ifacesHost) renderInterfaces(ifacesHost, info, id, st, resolvedAsset);
+      paintStorageSummary(resolvedAsset, info);
     });
   }
 
@@ -1496,7 +1748,12 @@
       row.addEventListener("click", function () {
         var idx = parseInt(row.dataset.ifaceIdx, 10);
         if (isNaN(idx)) return;
-        openInterfaceSheet(visible[idx], info, assetId, !!monitoredSet[visible[idx].ifName]);
+        var ifc = visible[idx];
+        goToPage({
+          kind: "iface", assetId: assetId, iface: ifc, info: info, monitored: !!monitoredSet[ifc.ifName],
+          title: ifc.alias || ifc.ifName || "Interface",
+          sub: (ifc.alias && ifc.ifName && ifc.alias !== ifc.ifName) ? ifc.ifName : "",
+        });
       });
     });
 
@@ -1508,24 +1765,12 @@
     });
   }
 
-  // ─── Interface bottom sheet ────────────────────────────────────────────
-  // Reuses the .sheet + .scrim pattern from map-tab.js for consistency.
-  // `monitored`: the interface is in the asset's monitoredInterfaces — those
-  // get the throughput + error charts (the desktop interface panel's pair).
-  function openInterfaceSheet(iface, info, assetId, monitored) {
-    closeInterfaceSheet();
-
-    var scrim = document.createElement("div");
-    scrim.className = "scrim";
-    scrim.id = "iface-sheet-scrim";
-
-    var sheet = document.createElement("div");
-    sheet.className = "sheet";
-    sheet.id = "iface-sheet";
-
-    var title = iface.alias || iface.ifName || "Interface";
-    var ifSubtitle = (iface.alias && iface.ifName && iface.alias !== iface.ifName) ? iface.ifName : "";
-
+  // ─── Interface page ────────────────────────────────────────────────────
+  // A page of the asset sheet (PAGE_KINDS.iface); its title and ifName ride
+  // the header's title row. `monitored`: the interface is in the asset's
+  // monitoredInterfaces — those get the throughput + error charts (the
+  // desktop interface panel's pair).
+  function renderInterfacePage(el, iface, info, assetId, monitored) {
     // Rows: status, speed, ip, mac, errors. Keep it tight.
     var rows = [];
     function row(k, v, mono) {
@@ -1598,15 +1843,7 @@
       }).join("");
     }
 
-    sheet.innerHTML = ''
-      + '<div class="sheet-handle"></div>'
-      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">'
-      + '  <div style="min-width:0;">'
-      + '    <h3 class="sheet-title" style="margin:0 0 4px;">' + escapeHtml(title) + '</h3>'
-      + (ifSubtitle ? '    <div class="muted mono" style="font-size:13px;">' + escapeHtml(ifSubtitle) + '</div>' : '')
-      + '  </div>'
-      + '  <button class="icon-btn" id="iface-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
-      + '</div>'
+    el.innerHTML = ''
       + detailRowsHtml
       + (monitored
         ? ''
@@ -1621,19 +1858,10 @@
       + '<div style="font-weight:500;margin:16px 0 8px;">Neighbor</div>'
       + neighborHtml;
 
-    document.body.appendChild(scrim);
-    document.body.appendChild(sheet);
-
-    scrim.addEventListener("click", closeInterfaceSheet);
-    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
-    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
-    document.getElementById("iface-sheet-close").addEventListener("click", closeInterfaceSheet);
-    PolarisTabs.attachSwipeToDismiss(sheet, closeInterfaceSheet);
-    sheet.querySelectorAll(".iface-neighbor-pivot").forEach(function (b) {
+    el.querySelectorAll(".iface-neighbor-pivot").forEach(function (b) {
       b.addEventListener("click", function () {
         var nid = b.dataset.assetId;
-        closeInterfaceSheet();
-        if (nid) open(nid);   // replace the sheet content in place with the neighbor
+        if (nid) open(nid);   // the neighbor, a page forward of this one
       });
     });
     if (monitored && iface.ifName) {
@@ -1783,13 +2011,6 @@
     });
   }
 
-  function closeInterfaceSheet() {
-    var s = document.getElementById("iface-sheet");
-    var sc = document.getElementById("iface-sheet-scrim");
-    if (s) s.remove();
-    if (sc) sc.remove();
-  }
-
   function formatBps(bps) {
     if (bps == null) return "";
     var n = Number(bps);
@@ -1800,11 +2021,371 @@
     return n + " bps";
   }
 
+  // ─── Storage ─────────────────────────────────────────────────────────────
+  // "View Storage" (between Interfaces and Discovery sources) opens the
+  // Storage page: the storage stream's volumes for every asset, and on a
+  // hypervisor its arrays — an Unraid / TrueNAS / Proxmox host's pools with
+  // their device groups and member drives (the desktop System tab's Storage
+  // table + Pool devices), a vCenter host's datastores with their type and
+  // backing. A volume opens its usage chart, a drive its details — each a
+  // page forward. Volumes are as fresh as the last poll; pools and drives as
+  // the last discovery run. Physical drives exist only on those platforms:
+  // nothing else reports them, so every other device shows volumes alone.
+
+  // The desktop's _STORAGE_PCT_THRESHOLDS — a volume reads the same on both.
+  var STORAGE_PCT_WARN = 75, STORAGE_PCT_CRIT = 90;
+  var WORKLOAD_PLATFORMS = { unraid: true, truenas: true, proxmox: true };
+  var POOL_ROLE = { data: "Data", parity: "Parity", log: "Log", cache: "Cache", spare: "Spare", special: "Special", dedup: "Dedup" };
+
+  function bytesText(n) {
+    if (n == null || isNaN(n)) return "—";
+    return typeof formatBytes === "function" ? formatBytes(Number(n)) : n + " B";
+  }
+
+  function storagePct(used, total) {
+    return (total > 0 && used != null) ? Math.max(0, Math.min(100, (used / total) * 100)) : null;
+  }
+
+  // The desktop's healthy / failing words (_storageHealthCell): a pool's,
+  // a group's, a drive's or a SMART verdict. Unknown words stay neutral.
+  function healthClass(h) {
+    var s = String(h || "").toUpperCase();
+    if (/^(ONLINE|HEALTHY|STARTED|DISK_OK|OK|PASSED)$/.test(s)) return "poe-ok";
+    if (/(FAULT|UNAVAIL|REMOVED|OFFLINE|DEGRADED|FAIL|INVALID|DSBL|WRONG|STOPPED)/.test(s)) return "poe-fault";
+    return "poe-idle";
+  }
+  function healthPill(h) {
+    return h ? '<span class="poe-label ' + healthClass(h) + '">' + escapeHtml(h) + '</span>' : "";
+  }
+
+  // The desktop's _poolMemberUnhealthy, word for word.
+  function memberUnhealthy(m) {
+    var errs = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0);
+    var h = String(m.health || "").toUpperCase();
+    return errs > 0 || (h !== "" && !/^(ONLINE|DISK_OK|AVAIL|INUSE)$/.test(h)) ||
+      (!!m.smart && !/^(OK|PASSED|UNKNOWN)$/i.test(m.smart));
+  }
+  function poolUnhealthy(pool) {
+    return (pool.health && !/^(ONLINE|STARTED|DISK_OK)$/i.test(pool.health)) ||
+      (pool.groups || []).some(function (g) { return (g.members || []).some(memberUnhealthy); });
+  }
+
+  // The desktop's _poolScanText.
+  function poolScanText(scan) {
+    if (!scan) return "";
+    var kind = scan.kind === "parity-check" ? "Parity check" : scan.kind === "resilver" ? "Resilver" : scan.kind === "scrub" ? "Scrub" : (scan.kind || "Scan");
+    var when = scan.at ? " " + (scan.state === "running" ? "started " : "") + timeAgo(scan.at) : "";
+    var state = scan.state === "running"
+      ? "running" + (scan.percent != null ? " (" + Number(scan.percent).toFixed(1) + "%)" : "")
+      : (scan.state || "—");
+    var errs = scan.errors != null ? ", " + scan.errors + " error" + (scan.errors === 1 ? "" : "s") : "";
+    return kind + ": " + state + when + errs;
+  }
+
+  function hostPools(v) {
+    return (v && v.role === "host" && WORKLOAD_PLATFORMS[v.platform] && Array.isArray(v.pools)) ? v.pools : [];
+  }
+
+  function usageBarHtml(pct) {
+    if (pct == null) return "";
+    var tone = pct >= STORAGE_PCT_CRIT ? " crit" : pct >= STORAGE_PCT_WARN ? " warn" : "";
+    return '<div class="storage-bar"><div class="storage-bar-fill' + tone + '" style="width:' + pct.toFixed(1) + '%"></div></div>';
+  }
+
+  function tempText(c) {
+    if (c == null) return null;
+    var TU = window.PolarisTempUnit;
+    return TU ? (Math.round(TU.convertReading(c, "°C") * 10) / 10) + " " + TU.displayUnit("°C") : c + " °C";
+  }
+
+  // The line under the button: "2 arrays · 8 drives · 1 degraded", or the
+  // volume count. Painted from the asset row first (its pools ride the
+  // virtualization blob), then again once system-info adds the volumes.
+  function paintStorageSummary(asset, info) {
+    var el = document.getElementById("asset-storage-sub");
+    if (!el || !asset) return;
+    var pools = hostPools(asset.virtualization);
+    var poolNames = {};
+    var bits = [], bad = 0, drives = 0;
+    pools.forEach(function (pool) {
+      poolNames[pool.name] = true;
+      (pool.groups || []).forEach(function (g) { drives += (g.members || []).length; });
+      if (poolUnhealthy(pool)) bad++;
+    });
+    if (pools.length) bits.push(pools.length + (pools.length === 1 ? " array" : " arrays"));
+    if (drives) bits.push(drives + (drives === 1 ? " drive" : " drives"));
+    if (info) {
+      var vols = (info.storage || []).filter(function (r) { return !poolNames[r.mountPath]; }).length;
+      if (vols) bits.push(vols + (vols === 1 ? " volume" : " volumes"));
+    }
+    if (bad) bits.push(bad + " degraded");
+    el.textContent = bits.join(" · ");
+    el.classList.toggle("bad", bad > 0);
+  }
+
+  function renderStoragePage(el, p) {
+    var id = p.assetId;
+    var seq = _pageSeq;
+    var asset = p.asset || _assetCache[id] || null;
+    var isHost = !!(asset && asset.virtualization && asset.virtualization.role === "host");
+    var cachedInfo = !p.refetch && _systemInfoCache[id];
+    p.refetch = false;
+    el.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    Promise.all([
+      cachedInfo ? Promise.resolve(cachedInfo) : api.assets.systemInfo(id),
+      isHost && api.assets.virtualization ? api.assets.virtualization(id).catch(function () { return null; }) : Promise.resolve(null),
+    ]).then(function (r) {
+      if (seq !== _pageSeq) return;
+      var info = r[0] || {};
+      _systemInfoCache[id] = info;
+      p.data = { info: info, virt: r[1] };
+      paintStoragePage(el, p);
+      restoreScroll(p);
+    }).catch(function (err) {
+      if (seq !== _pageSeq) return;
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0 16px;">Couldn’t load storage: ' + escapeHtml((err && err.message) || "error") + '</div>';
+    });
+  }
+
+  function paintStoragePage(el, p) {
+    var info = p.data.info || {}, virt = p.data.virt;
+    var asset = p.asset || _assetCache[p.assetId] || {};
+    var v = (virt && virt.virtualization) || asset.virtualization || {};
+    var pools = hostPools(v);
+    var poolNames = {};
+    pools.forEach(function (pool) { poolNames[pool.name] = true; });
+    var dsByName = {};
+    ((virt && virt.datastores) || []).forEach(function (d) { if (d && d.name) dsByName[d.name] = d; });
+    var rows = (info.storage || []);
+    var rowByName = {};
+    rows.forEach(function (r) { rowByName[r.mountPath] = r; });
+    var volumes = rows.filter(function (r) { return !poolNames[r.mountPath]; });
+    var pinned = {};
+    (info.monitoredStorage || asset.monitoredStorage || []).forEach(function (m) { pinned[m] = true; });
+    if (!p.open) p.open = {};
+
+    var html = "";
+    if (pools.length) {
+      html += '<div class="section-head storage-head">Arrays <span class="count">' + pools.length + '</span></div>';
+      html += pools.map(function (pool, pi) {
+        var bad = poolUnhealthy(pool);
+        var openNow = p.open[pool.name] != null ? p.open[pool.name] : bad;
+        var row = rowByName[pool.name];
+        var used = pool.usedBytes != null ? pool.usedBytes : row && row.usedBytes;
+        var total = pool.totalBytes != null ? pool.totalBytes : row && row.totalBytes;
+        var pct = storagePct(used, total);
+        var fs = pool.filesystem ? String(pool.filesystem).replace(/^unraid-array/, "Unraid array") : (pool.kind || "");
+        var groups = pool.groups || [];
+        var driveCount = groups.reduce(function (s, g) { return s + (g.members || []).length; }, 0);
+        var meta = [fs];
+        if (!openNow && driveCount) meta.push(driveCount + (driveCount === 1 ? " drive" : " drives"));
+        var body = "";
+        if (openNow) {
+          body += groups.map(function (g, gi) {
+            var gLabel = (POOL_ROLE[g.role] || g.role || "") + (g.layout ? " · " + g.layout : "");
+            return '<div class="pool-group-head">' + escapeHtml(gLabel)
+              + (g.name ? ' <span class="mono">' + escapeHtml(g.name) + '</span>' : '')
+              + ((g.members || []).length > 1 ? ' ' + healthPill(g.health) : '') + '</div>'
+              + (g.members || []).map(function (m, mi) {
+                var sub = [m.sizeBytes != null ? bytesText(m.sizeBytes) : null, tempText(m.temperatureC)];
+                var errs = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0);
+                if (errs > 0) {
+                  sub.push(m.readErrors != null || m.writeErrors != null || m.checksumErrors != null
+                    ? "errors " + [m.readErrors, m.writeErrors, m.checksumErrors].map(function (x) { return x == null ? "—" : x; }).join("/")
+                    : "errors " + m.errors);
+                }
+                return '<button type="button" class="pool-drive' + (memberUnhealthy(m) ? " bad" : "") + '" data-drive="' + pi + ':' + gi + ':' + mi + '">'
+                  + '  <span class="pool-drive-main">'
+                  + '    <span class="pool-drive-name"><span class="mono">' + escapeHtml(m.name) + '</span>'
+                  +        (m.mediaType ? ' <span class="poe-label poe-idle">' + escapeHtml(m.mediaType) + '</span>' : '') + '</span>'
+                  + '    <span class="pool-drive-sub">' + escapeHtml(sub.filter(Boolean).join(" · ")) + '</span>'
+                  + '  </span>'
+                  + (m.health ? healthPill(m.health) : '')
+                  + '  <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev-right"/></svg>'
+                  + '</button>';
+              }).join("");
+          }).join("");
+        }
+        return '<div class="card-filled pool-card">'
+          + '<button type="button" class="pool-head" data-pool="' + escapeHtml(pool.name) + '" aria-expanded="' + (openNow ? "true" : "false") + '">'
+          + '  <span class="mono pool-name">' + escapeHtml(pool.name) + '</span>'
+          +    healthPill(pool.health)
+          + '  <span class="pool-meta">' + escapeHtml(meta.filter(Boolean).join(" · ")) + '</span>'
+          + '  <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#' + (openNow ? "i-chev-down" : "i-chev-right") + '"/></svg>'
+          + '</button>'
+          + usageBarHtml(pct)
+          + (pct != null ? '<div class="storage-line">' + escapeHtml(bytesText(used) + " used of " + bytesText(total) + " · " + Math.round(pct) + "%") + '</div>' : '')
+          + (pool.healthDetail ? '<div class="storage-line warn">' + escapeHtml(pool.healthDetail) + '</div>' : '')
+          + (pool.scan ? '<div class="storage-line">' + escapeHtml(poolScanText(pool.scan)) + '</div>' : '')
+          + body
+          + '</div>';
+      }).join("");
+    }
+
+    if (volumes.length) {
+      html += '<div class="section-head storage-head">Volumes <span class="count">' + volumes.length + '</span></div>';
+      html += volumes.map(function (r, i) {
+        var pct = storagePct(r.usedBytes, r.totalBytes);
+        var free = (r.totalBytes != null && r.usedBytes != null) ? r.totalBytes - r.usedBytes : null;
+        var ds = dsByName[r.mountPath];
+        var extra = ds ? [ds.dsType, ds.backingLabel].filter(Boolean).join(" · ") : "";
+        var tone = pct == null ? "" : pct >= STORAGE_PCT_CRIT ? " crit" : pct >= STORAGE_PCT_WARN ? " warn" : "";
+        return '<button type="button" class="storage-vol" data-vol="' + i + '">'
+          + '  <span class="storage-vol-top">'
+          + '    <span class="mono storage-vol-name">' + escapeHtml(r.mountPath) + '</span>'
+          +      (pinned[r.mountPath] ? '<span class="poe-label poe-idle">Poll 1m</span>' : '')
+          +      (ds && ds.accessible === false ? '<span class="poe-label poe-fault">Inaccessible</span>' : '')
+          +      (pct != null ? '<span class="storage-pct' + tone + '">' + Math.round(pct) + '%</span>' : '')
+          + '  </span>'
+          +    usageBarHtml(pct)
+          + '  <span class="storage-line">' + escapeHtml(
+                (r.usedBytes != null ? bytesText(r.usedBytes) + " used of " + bytesText(r.totalBytes) : "Size " + bytesText(r.totalBytes))
+                + (free != null ? " · " + bytesText(free) + " free" : "")
+                + (extra ? " · " + extra : "")) + '</span>'
+          + '</button>';
+      }).join("");
+    }
+
+    if (!pools.length && !volumes.length) {
+      html += '<div class="empty-state" style="padding:24px 0;">'
+        + '<div class="icon"><svg viewBox="0 0 24 24"><use href="#i-storage"/></svg></div>'
+        + '<div class="ttl">No storage reported</div>'
+        + '<div class="desc">Volumes come from this device’s Storage stream. Check its polling method under Monitoring in the edit menu (tap the asset’s name).</div></div>';
+    } else if (!pools.length) {
+      html += '<div class="storage-note">Tap a volume for its usage over time. Physical drives are reported only by Unraid, TrueNAS and Proxmox hosts; this device reports its mounted volumes.</div>';
+    } else {
+      html += '<div class="storage-note">Arrays and drives are as of the last discovery run; volumes as of the last poll. Tap a drive for its details.</div>';
+    }
+    el.innerHTML = html;
+
+    el.querySelectorAll(".pool-head").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var name = b.getAttribute("data-pool");
+        var bad = pools.some(function (x) { return x.name === name && poolUnhealthy(x); });
+        var was = p.open[name] != null ? p.open[name] : bad;
+        p.open[name] = !was;
+        paintStoragePage(el, p);
+      });
+    });
+    el.querySelectorAll(".pool-drive").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var ix = b.getAttribute("data-drive").split(":").map(Number);
+        var pool = pools[ix[0]], g = pool && pool.groups[ix[1]], m = g && g.members[ix[2]];
+        if (!m) return;
+        goToPage({
+          kind: "drive", assetId: p.assetId, title: m.name,
+          sub: [pool.name, g.name || (POOL_ROLE[g.role] || g.role)].filter(Boolean).join(" · "),
+          member: m,
+        });
+      });
+    });
+    el.querySelectorAll(".storage-vol").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var r = volumes[Number(b.getAttribute("data-vol"))];
+        if (!r) return;
+        goToPage({ kind: "volume", assetId: p.assetId, title: r.mountPath, row: r, pinned: !!pinned[r.mountPath], ds: dsByName[r.mountPath] || null });
+      });
+    });
+  }
+
+  function kvRowsHtml(rows) {
+    return rows.filter(function (r) { return r && r.v != null && r.v !== ""; }).map(function (r) {
+      return '<div class="kv-row"><span class="k">' + escapeHtml(r.k) + '</span>'
+        + '<span class="v' + (r.mono ? " mono" : "") + (r.cls ? " " + r.cls : "") + '">' + (r.html ? r.v : escapeHtml(r.v)) + '</span></div>';
+    }).join("");
+  }
+
+  // A volume: its figures, then used % over a range (the desktop storage
+  // panel's chart, phone-sized).
+  function renderVolumePage(el, p) {
+    var r = p.row || {};
+    var ds = p.ds;
+    var pct = storagePct(r.usedBytes, r.totalBytes);
+    var free = (r.totalBytes != null && r.usedBytes != null) ? r.totalBytes - r.usedBytes : null;
+    el.innerHTML = kvRowsHtml([
+      { k: "Used", v: r.usedBytes != null ? bytesText(r.usedBytes) + (pct != null ? " (" + Math.round(pct) + "%)" : "") : null },
+      { k: "Total", v: r.totalBytes != null ? bytesText(r.totalBytes) : null },
+      { k: "Free", v: free != null ? bytesText(free) : null },
+      { k: "Type", v: ds && ds.dsType },
+      { k: "Backing", v: ds && ds.backingLabel },
+      { k: "Provisioned", v: ds && ds.provisionedBytes != null ? bytesText(Number(ds.provisionedBytes)) : null },
+      { k: "Polled every minute", v: p.pinned ? "Yes" : "No" },
+    ])
+      + '<div style="font-weight:500;margin:16px 0 8px;">Usage</div>'
+      + rangeSegHtml("vol-range-seg", CHART_RANGES, p.range || "24h")
+      + '<div id="vol-chart" style="min-height:120px;"></div>'
+      + '<div class="muted" id="vol-chart-sub" style="font-size:12px;margin-top:4px;"></div>';
+    wireRangeSeg("vol-range-seg", function (range) { p.range = range; loadVolumeChart(p, range); });
+    loadVolumeChart(p, p.range || "24h");
+  }
+
+  function loadVolumeChart(p, range) {
+    var chartEl = document.getElementById("vol-chart");
+    var sub = document.getElementById("vol-chart-sub");
+    if (!chartEl || !api.assets.storageHistory) return;
+    var seq = _pageSeq;
+    chartEl.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    if (sub) sub.textContent = "";
+    var current = function () { return seq === _pageSeq && (p.range || "24h") === range && document.getElementById("vol-chart") === chartEl; };
+    Promise.all([api.assets.storageHistory(p.assetId, p.row.mountPath, { range: range }), maintWindowsFor(p.assetId)]).then(function (got) {
+      if (!current()) return;
+      var data = got[0] || {}, maint = got[1];
+      var t0 = data.since != null ? +new Date(data.since) : NaN;
+      var pts = [], max = null, last = null;
+      (data.samples || []).forEach(function (s) {
+        var v = storagePct(s.usedBytes, s.totalBytes);
+        if (v == null) return;
+        pts.push({ ts: s.timestamp, v: v });
+        if (!(+new Date(s.timestamp) < t0)) { last = v; if (max == null || v > max) max = v; }
+      });
+      if (!pts.length) {
+        chartEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
+        return;
+      }
+      var bounds = rangeBounds(range);
+      chartEl.innerHTML = PolarisCharts.lineChart({
+        series: [{ values: pts, color: "var(--md-primary)", gapFade: true }],
+        yMin: 0, yMax: 100, yUnit: "%",
+        maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, outages: data.outages, height: 120,
+        ariaLabel: p.row.mountPath + " used over " + range,
+      });
+      if (sub && last != null) sub.textContent = "now " + Math.round(last) + "% · peak " + Math.round(max) + "%";
+    }).catch(function (err) {
+      if (!current()) return;
+      chartEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">Couldn’t load usage: ' + escapeHtml((err && err.message) || "error") + '</div>';
+    });
+  }
+
+  // A drive of an array, as the last discovery run saw it. Rows the
+  // platform does not report are left out (no SMART on Proxmox, one error
+  // total on Unraid).
+  function renderDrivePage(el, p) {
+    var m = p.member || {};
+    var split = m.readErrors != null || m.writeErrors != null || m.checksumErrors != null;
+    var errCls = function (n) { return n > 0 ? "bad" : ""; };
+    el.innerHTML = kvRowsHtml([
+      { k: "Health", v: m.health ? healthPill(m.health) : null, html: true },
+      { k: "Model", v: m.model },
+      { k: "Serial", v: m.serial, mono: true },
+      { k: "Device", v: m.device && m.device !== m.name ? m.device : null, mono: true },
+      { k: "Media", v: m.mediaType },
+      { k: "Size", v: m.sizeBytes != null ? bytesText(m.sizeBytes) : null },
+      { k: "Temperature", v: tempText(m.temperatureC) },
+      { k: "Filesystem", v: m.filesystem },
+      { k: "SMART", v: m.smart ? healthPill(m.smart) : null, html: true },
+      split ? { k: "Read errors", v: m.readErrors != null ? String(m.readErrors) : null, cls: errCls(m.readErrors) } : null,
+      split ? { k: "Write errors", v: m.writeErrors != null ? String(m.writeErrors) : null, cls: errCls(m.writeErrors) } : null,
+      split ? { k: "Checksum errors", v: m.checksumErrors != null ? String(m.checksumErrors) : null, cls: errCls(m.checksumErrors) } : null,
+      !split ? { k: "Errors", v: m.errors != null ? String(m.errors) : null, cls: errCls(m.errors) } : null,
+    ])
+      + '<div class="storage-note">As of the last discovery run.</div>';
+  }
+
   // ─── Alerts ──────────────────────────────────────────────────────────────
   // The hero's alert flag — the same strobing "Alerts" control the Assets list
   // card carries, for the same reason, on the screen an operator lands on
-  // after tapping that card. Tapping it opens the shared alerts sheet
-  // (acknowledge / clear, per role) stacked over this one.
+  // after tapping that card. Tapping it opens the Alerts page of this sheet
+  // (acknowledge / clear, per role).
   //
   // Its own fetch rather than a field on the asset row: `activeAlert` is
   // enriched onto the LIST payload only, and the detail sheet can be opened
@@ -1829,13 +2410,20 @@
     var btn = host.querySelector(".alert-flag");
     if (!btn) return;
     btn.addEventListener("click", function () {
-      PolarisMobileAlerts.openForAsset(id, {
-        hostname: (asset && (asset.hostname || asset.assetTag)) || "",
-        // Settle the flag from what the sheet loaded, so acknowledging or
-        // clearing from up there stops the strobe down here without a reload.
-        onSummary: function (next) { paintAlertFlag(id, next, asset); },
-      });
+      goToPage({ kind: "alerts", assetId: id, title: "Alerts" });
     });
+  }
+
+  // The alerts list as a page of this sheet (PAGE_KINDS.alerts) — the same
+  // list, acknowledge and clear as the standalone sheet the Assets list opens
+  // (PolarisMobileAlerts.renderInto). Going back re-reads the asset, so the
+  // hero's flag picks up whatever was acknowledged or cleared here.
+  function renderAlertsPage(el, p) {
+    if (!window.PolarisMobileAlerts || !PolarisMobileAlerts.renderInto) {
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0 16px;">Alerts are unavailable.</div>';
+      return;
+    }
+    PolarisMobileAlerts.renderInto(el, p.assetId);
   }
 
   // ─── SD-WAN ──────────────────────────────────────────────────────────────
@@ -1866,23 +2454,23 @@
       var wrap = document.getElementById("asset-sdwan-btn-wrap");
       var btn  = document.getElementById("asset-sdwan-btn");
       if (wrap) wrap.style.display = "";
-      if (btn) btn.onclick = function () { openSdwanSheet(id); };
+      if (btn) btn.onclick = function () { goToPage({ kind: "sdwan", assetId: id, title: "SD-WAN" }); };
     }).catch(function () { /* gate is best-effort — no button on failure */ });
   }
 
-  // Holds the open SD-WAN sheet's perf-SLA selection (health-check grouping +
+  // Holds the open SD-WAN page's perf-SLA selection (health-check grouping +
   // active range) so the range segmented control can reload the charts.
   var _sdwanSheetState = null;
 
-  // ─── SD-WAN bottom sheet ───────────────────────────────────────────────
-  // Stacked on top of the asset sheet using the generic .sheet/.scrim pattern
-  // (same as openInterfaceSheet). Sections: Members + Rules current-state
-  // lists, then a Performance SLA section with per-member latency / jitter /
-  // packet-loss charts for a selectable health-check + range.
-  function openSdwanSheet(assetId) {
-    closeSdwanSheet();
+  // ─── SD-WAN page ───────────────────────────────────────────────────────
+  // A page of the asset sheet (PAGE_KINDS.sdwan). Sections: Members + Rules
+  // current-state lists, then a Performance SLA section with per-member
+  // latency / jitter / packet-loss charts for a selectable health-check +
+  // range.
+  function renderSdwanPage(el, assetId) {
+    _sdwanSheetState = null;
     var cache = _sdwanCache[assetId];
-    if (!cache) return;
+    if (!cache) { el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0 16px;">No SD-WAN data for this device.</div>'; return; }
     var members = cache.members || [];
     var rules   = cache.rules || [];
     var links   = cache.links || [];
@@ -1902,14 +2490,6 @@
       hcName: hcNames[0] || null,
       range: "24h",
     };
-
-    var scrim = document.createElement("div");
-    scrim.className = "scrim";
-    scrim.id = "sdwan-sheet-scrim";
-
-    var sheet = document.createElement("div");
-    sheet.className = "sheet";
-    sheet.id = "sdwan-sheet";
 
     var sections = "";
 
@@ -1945,22 +2525,7 @@
         + '<div class="card-filled" style="padding:12px;margin-bottom:8px;"><div style="font-size:13px;margin-bottom:4px;">Packet loss (%)</div><div id="sdwan-loss-chart" style="min-height:120px;"></div></div>';
     }
 
-    sheet.innerHTML = ''
-      + '<div class="sheet-handle"></div>'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">'
-      + '  <h3 class="sheet-title" style="margin:0;">SD-WAN</h3>'
-      + '  <button class="icon-btn" id="sdwan-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
-      + '</div>'
-      + sections;
-
-    document.body.appendChild(scrim);
-    document.body.appendChild(sheet);
-
-    scrim.addEventListener("click", closeSdwanSheet);
-    // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
-    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
-    document.getElementById("sdwan-sheet-close").addEventListener("click", closeSdwanSheet);
-    PolarisTabs.attachSwipeToDismiss(sheet, closeSdwanSheet);
+    el.innerHTML = sections;
 
     // Wire the perf-SLA controls + initial load.
     if (hcNames.length) {
@@ -1982,14 +2547,6 @@
       });
       loadSdwanPerfSla(assetId, _sdwanSheetState.hcName, _sdwanSheetState.range);
     }
-  }
-
-  function closeSdwanSheet() {
-    _sdwanSheetState = null;
-    var s = document.getElementById("sdwan-sheet");
-    var sc = document.getElementById("sdwan-sheet-scrim");
-    if (s) s.remove();
-    if (sc) sc.remove();
   }
 
   // Members list — status dot + member name (+ zone), IP / link / speed, and
@@ -2171,9 +2728,9 @@
   // monitored access points. All three endpoints sit behind assets:read — the
   // gate the asset sheet itself already needed — so no permission check here.
   var TABLE_BUTTONS = [
-    { key: "arp",      label: "View ARP Table", icon: "i-list",        applies: function (a) { return a.assetType === "firewall"; } },
-    { key: "mac",      label: "View MAC Table", icon: "i-switch-icon", applies: function (a) { return a.assetType === "switch"; } },
-    { key: "wireless", label: "View Wireless",  icon: "i-wifi",        applies: function (a) { return a.assetType === "access_point" && !!a.monitored; } },
+    { key: "arp",      label: "View ARP Table", title: "ARP Table", icon: "i-list",        applies: function (a) { return a.assetType === "firewall"; } },
+    { key: "mac",      label: "View MAC Table", title: "MAC Table", icon: "i-switch-icon", applies: function (a) { return a.assetType === "switch"; } },
+    { key: "wireless", label: "View Wireless",  title: "Wireless",  icon: "i-wifi",        applies: function (a) { return a.assetType === "access_point" && !!a.monitored; } },
   ];
 
   function tableButtonsHtml(asset) {
@@ -2185,55 +2742,31 @@
     }).join("");
   }
 
-  function wireTableButtons(id, asset) {
-    var openers = { arp: openArpSheet, mac: openMacSheet, wireless: openWirelessSheet };
+  function wireTableButtons(id) {
     TABLE_BUTTONS.forEach(function (b) {
       var btn = document.getElementById("asset-" + b.key + "-btn");
-      if (btn) btn.onclick = function () { openers[b.key](id, asset); };
+      if (btn) btn.onclick = function () { goToPage({ kind: b.key, assetId: id, title: b.title }); };
     });
   }
 
-  // The open table sheet: which asset + which table, and a token bumped on
+  // The open table page: which asset + which table, and a token bumped on
   // every (re)load so a late response for a closed or re-ranged sheet bails.
   var _tableSheet = null;
 
-  // Shared shell — the generic stacked .sheet (same shape as openSdwanSheet):
-  // handle, title row with a Reload + Close button, a controls slot, a
-  // freshness/count line and the body the loader renders into.
-  function openTableSheet(key, assetId, title, onReload) {
-    closeTableSheet();
+  // Shared shell of the three table pages (PAGE_KINDS.arp / mac / wireless):
+  // a controls slot, a freshness/count line and the body the loader renders
+  // into. The title is the header's; Reload is the header's Refresh.
+  function renderTablePage(el, key, assetId) {
     _tableSheet = { key: key, assetId: assetId, token: 0 };
-
-    var scrim = document.createElement("div");
-    scrim.className = "scrim";
-    scrim.id = "table-sheet-scrim";
-    var sheet = document.createElement("div");
-    sheet.className = "sheet";
-    sheet.id = "table-sheet";
-    sheet.innerHTML = ''
-      + '<div class="sheet-handle"></div>'
-      + '<div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;">'
-      + '  <h3 class="sheet-title" style="margin:0;flex:1;min-width:0;">' + escapeHtml(title) + '</h3>'
-      + '  <button class="icon-btn" id="table-sheet-reload" aria-label="Reload"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
-      + '  <button class="icon-btn" id="table-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
-      + '</div>'
+    el.innerHTML = ''
       + '<div id="table-sheet-controls"></div>'
       + '<div id="table-sheet-meta" class="muted" style="font-size:12px;margin-bottom:8px;"></div>'
       + '<div id="table-sheet-body"><div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div></div>';
-    document.body.appendChild(scrim);
-    document.body.appendChild(sheet);
 
-    scrim.addEventListener("click", closeTableSheet);
-    // Header + its controls row (the filter) stay put while the table scrolls.
-    if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet, { also: ["#table-sheet-controls"] });
-    document.getElementById("table-sheet-close").addEventListener("click", closeTableSheet);
-    document.getElementById("table-sheet-reload").addEventListener("click", onReload);
-    PolarisTabs.attachSwipeToDismiss(sheet, closeTableSheet);
-
-    // One delegated listener for the whole body: group headers expand and
+    // One delegated listener for the whole page: group headers expand and
     // collapse in place. A matched device's link is the document-level
-    // asset-link listener's (onAssetLinkClick), which closes this sheet first.
-    sheet.addEventListener("click", function (e) {
+    // asset-link listener's (onAssetLinkClick), which opens it a page forward.
+    el.addEventListener("click", function (e) {
       var head = e.target.closest(".tbl-group-head");
       if (head) {
         var grp = head.parentNode;
@@ -2244,15 +2777,6 @@
         if (use) use.setAttribute("href", isOpen ? "#i-chev-right" : "#i-chev-down");
       }
     });
-    return sheet;
-  }
-
-  function closeTableSheet() {
-    _tableSheet = null;
-    var s = document.getElementById("table-sheet");
-    var sc = document.getElementById("table-sheet-scrim");
-    if (s) s.remove();
-    if (sc) sc.remove();
   }
 
   // Start a load: returns a guard that says whether the response still
@@ -2371,11 +2895,6 @@
     return Math.round(sec / 3600) + "h";
   }
 
-  function openArpSheet(assetId) {
-    openTableSheet("arp", assetId, "ARP Table", function () { loadArpSheet(assetId); });
-    loadArpSheet(assetId);
-  }
-
   function loadArpSheet(assetId) {
     var current = beginTableLoad("arp", assetId);
     if (!current) return;
@@ -2471,11 +2990,6 @@
   // port is the group, its learned-MAC count says access port vs uplink, and
   // entries on unresolved trunk / LAG pseudo-ports are hidden behind a toggle
   // rather than swamping the real ports.
-  function openMacSheet(assetId) {
-    openTableSheet("mac", assetId, "MAC Table", function () { loadMacSheet(assetId); });
-    loadMacSheet(assetId);
-  }
-
   function loadMacSheet(assetId) {
     var current = beginTableLoad("mac", assetId);
     if (!current) return;
@@ -2617,11 +3131,6 @@
     var dev = matchedDeviceHtml(s.matchedAsset);
     sub.push(dev || '<span class="muted">not in inventory</span>');
     return tableRowHtml(escapeHtml(s.staMacAddr || "—"), sub.join(" · "));
-  }
-
-  function openWirelessSheet(assetId) {
-    openTableSheet("wireless", assetId, "Wireless", function () { loadWirelessSheet(assetId, true); });
-    loadWirelessSheet(assetId, false);
   }
 
   function loadWirelessSheet(assetId, refetch) {
@@ -3790,6 +4299,8 @@
   // until the row lands. The route carries the id on a #asset/<id> deep link;
   // a sheet opened in-app has none, so fall back to the open one.
   function refreshFromPtr(ctx) {
+    var cur = currentPage();
+    if (cur && cur.kind !== "asset") { refreshPage(null); return Promise.resolve(); }
     var id = (ctx && ctx.route && ctx.route.parts && ctx.route.parts[0]) || _openId;
     if (!id) return null;
     return reloadSheet(id, null);

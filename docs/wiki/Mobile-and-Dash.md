@@ -153,20 +153,28 @@ FortiGate **VIP** or **interface address** belongs to the device's own config
 and offers no Edit or Release. The **+ Reserve** button on the Networks tab
 takes any address and finds its network for you.
 
-**Tapping an asset opens its detail sheet.** Its header (the device name, which opens the
-edit menu, and the screenshot, refresh and close buttons) stays at the top of
-the sheet. The refresh button in its header
+**Tapping an asset opens its detail sheet.** Its header stays at the top of the
+sheet in two rows: back and forward on the left with the screenshot, refresh and
+close buttons on the right, and under them the device name, which opens the edit
+menu. The refresh button in its header
 (or pulling the sheet down) re-reads what Polaris has for the device and
 repaints the sheet, keeping the sections you opened; it does not poll the device.
 The sheet does not refresh on its own, so tap it to catch up with the latest
 poll.
 
-**The phone's Back button steps the sheet down before it leaves the page.**
-With the sheet open, the first Back shrinks it to the band at the bottom of the
-screen and the next Back closes it; only the Back after that goes to the
-previous page. If another sheet is open on top of it (an interface, the ARP
-table, a confirm), Back closes that one first. A sheet you shrank by tapping
-outside it closes on the first Back. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
+**The sheet keeps a history of the pages you open in it.** SD-WAN, the ARP,
+MAC and Wireless tables, an interface, the device's alerts, Storage, a volume, a
+drive, and another device (a neighbour, a matched client, a linked name) each
+open as a page of the same sheet, with its title in the header over the
+device's name. The back and forward buttons in the header walk those pages,
+like a browser's; opening something new from a page you went back to drops the
+pages that were ahead of it.
+
+**The phone's Back button is the sheet's back button.** It steps back through
+the pages, and on the first page it shrinks the sheet to the band at the bottom
+of the screen, then closes it; only the Back after that goes to the page behind
+the sheet. An edit form or a confirmation open on top closes first. A sheet you
+shrank by tapping outside it closes on the first Back. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
 **Interfaces** each name the polling method that collects them beside the
 title (**Not collected** when nothing does), and CPU + Memory has its own
 **1h · 24h · 7d** range. On a switch with PoE ports, Interfaces opens with a
@@ -183,8 +191,22 @@ firewall that reports SD-WAN:
 | Monitored access point | **View Wireless** | each radio (band, channel, width), the SSIDs it broadcasts, and the clients on each. Clients that match no broadcast SSID are listed under their own heading, not dropped |
 
 A client or neighbour Polaris matched to a known device links to it, and tapping
-it opens that asset. The sheets are read-only; the reload button re-reads what
-Polaris has stored, not the device itself.
+it opens that asset as the next page. The tables are read-only; the refresh
+button re-reads what Polaris has stored, not the device itself.
+
+**View Storage**, between *Interfaces* and *Discovery sources*, opens what the
+device stores on. Every device shows its **volumes** — each mount with a usage
+bar (amber from 75 %, red from 90 %, as on the desktop), what is used and free,
+and *Poll 1m* on a volume polled every minute; tapping one shows its usage over
+**1h · 24h · 7d**. An Unraid, TrueNAS or Proxmox host also shows its **arrays**:
+each pool with its health, usage and last scrub or parity check, and its drives
+by group (data, parity, cache, spare…) with size, temperature and health. A
+degraded array opens by itself; a healthy one stays closed until tapped. Tapping
+a drive shows its model, serial, SMART result and error counts. Arrays and
+drives are as of the last discovery run. Other devices report only their
+mounted volumes — Polaris has no physical-drive data for them — and a vCenter
+host shows its datastores' type and backing on each volume. The line under the
+button summarises the page, for example *2 arrays · 8 drives · 1 degraded*.
 
 **A switch, access point or FortiGate can be upgraded from its sheet.** When the
 [Repository](Server-Settings#repository) holds newer firmware for the device,

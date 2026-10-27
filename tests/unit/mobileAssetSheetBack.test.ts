@@ -95,8 +95,11 @@ describe("mobile asset sheet — phone Back", () => {
     g.PolarisMobile = { user: () => ({ permissions: {} }) };
     g.mobileFormatDate = (s: any) => String(s ?? "");
     g.timeAgo = () => "1m ago";
-    const asset = { id: "a1", hostname: "SW-1", assetType: "switch", monitored: true, status: "active", monitorStatus: "up", macAddresses: [] };
-    g.api = { assets: new Proxy({ get: async () => asset } as Record<string, any>, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
+    const assets: Record<string, any> = {
+      a1: { id: "a1", hostname: "SW-1", assetType: "switch", monitored: true, status: "active", monitorStatus: "up", macAddresses: [] },
+      a2: { id: "a2", hostname: "SW-2", assetType: "switch", monitored: true, status: "active", monitorStatus: "up", macAddresses: [] },
+    };
+    g.api = { assets: new Proxy({ get: async (id: string) => assets[id] } as Record<string, any>, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(DETAIL_SRC)();
   });
@@ -161,6 +164,116 @@ describe("mobile asset sheet — phone Back", () => {
     window.history.back();
     await flush();
     expect(sheet()!.classList.contains("peek")).toBe(true);
+  });
+
+  describe("page history", () => {
+    const page = () => (document.querySelector("#asset-host .asset-page") as HTMLElement | null)?.dataset.page ?? "asset";
+    const backBtn = () => document.getElementById("asset-sheet-back") as HTMLButtonElement;
+    const fwdBtn = () => document.getElementById("asset-sheet-fwd") as HTMLButtonElement;
+    const openStorage = async () => {
+      (document.getElementById("asset-storage-btn") as HTMLButtonElement).click();
+      await flush();
+    };
+
+    it("a page opened from the asset goes forward; ‹ and › walk the list", async () => {
+      g.PolarisAssetDetail.open("a1");
+      await flush();
+      expect(backBtn().disabled).toBe(true);
+      await openStorage();
+      expect(page()).toBe("storage");
+      expect(document.getElementById("asset-sheet-page-title")!.textContent).toBe("Storage");
+      expect(document.getElementById("asset-sheet-page-sub")!.textContent).toBe("SW-1");
+      expect(backBtn().getAttribute("aria-label")).toBe("Back to SW-1");
+      expect(fwdBtn().disabled).toBe(true);
+
+      backBtn().click();
+      await flush();
+      expect(page()).toBe("asset");
+      expect(fwdBtn().disabled).toBe(false);
+      expect(fwdBtn().getAttribute("aria-label")).toBe("Forward to Storage");
+
+      fwdBtn().click();
+      await flush();
+      expect(page()).toBe("storage");
+    });
+
+    it("the phone's Back walks the pages, then shrinks, then closes", async () => {
+      g.PolarisAssetDetail.open("a1");
+      await flush();
+      await openStorage();
+
+      window.history.back();
+      await flush();
+      expect(page()).toBe("asset");
+      expect(sheet()!.classList.contains("peek")).toBe(false);
+
+      window.history.back();
+      await flush();
+      expect(sheet()!.classList.contains("peek")).toBe(true);
+
+      window.history.back();
+      await flush();
+      expect(sheet()).toBeNull();
+      expect(index).toBe(0);
+    });
+
+    it("another asset opened over this one is a page forward", async () => {
+      g.PolarisAssetDetail.open("a1");
+      await flush();
+      g.PolarisAssetDetail.open("a2");
+      await flush();
+      expect(backBtn().disabled).toBe(false);
+      backBtn().click();
+      await flush();
+      expect(document.getElementById("asset-sheet-name")!.textContent).toBe("SW-1");
+    });
+
+    it("opening a page from a back position drops the pages ahead", async () => {
+      g.PolarisAssetDetail.open("a1");
+      await flush();
+      await openStorage();
+      backBtn().click();
+      await flush();
+      g.PolarisAssetDetail.open("a2");
+      await flush();
+      expect(fwdBtn().disabled).toBe(true);
+    });
+
+    it("the hero's alert flag opens the Alerts page, drawn by the alerts module", async () => {
+      const renderInto = vi.fn();
+      const close = vi.fn();
+      g.PolarisMobileAlerts = {
+        summarize: () => ({ severity: "critical", count: 1, unacknowledged: 1 }),
+        flagHTML: () => '<button class="alert-flag">Alerts</button>',
+        renderInto, close,
+      };
+      try {
+        g.PolarisAssetDetail.open("a1");
+        await flush();
+        (document.querySelector("#asset-hero-alerts .alert-flag") as HTMLElement).click();
+        await flush();
+        expect(page()).toBe("alerts");
+        expect(document.getElementById("asset-sheet-page-title")!.textContent).toBe("Alerts");
+        expect(renderInto).toHaveBeenCalledWith(document.querySelector("#asset-host .asset-page"), "a1");
+        backBtn().click();
+        await flush();
+        expect(close).toHaveBeenCalled();   // a late load for the page just left is dropped
+      } finally {
+        delete g.PolarisMobileAlerts;
+      }
+    });
+
+    it("a fresh open after a close starts a new history", async () => {
+      g.PolarisAssetDetail.open("a1");
+      await flush();
+      await openStorage();
+      (document.getElementById("asset-sheet-close") as HTMLButtonElement).click();
+      await flush();
+      g.PolarisAssetDetail.open("a2");
+      await flush();
+      expect(backBtn().disabled).toBe(true);
+      expect(fwdBtn().disabled).toBe(true);
+    });
   });
 
   it("a navbar navigation is not taken for Back", async () => {
