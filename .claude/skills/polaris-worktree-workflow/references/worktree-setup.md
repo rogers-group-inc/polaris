@@ -41,7 +41,10 @@ A fresh worktree has no `.env`, no `node_modules` and no `src/generated/prisma`.
    absence wears a THIRD face that reads like a broken import in your own test: a single unit
    file failing to collect with `Error: Cannot find module './generated/prisma/client.js'
    imported from src/db.ts`, pointed at by whatever that test imports transitively (a service
-   → `src/db.ts`). When only the client is missing, `cp -r <main-checkout>/src/generated/prisma
+   → `src/db.ts`). A FOURTH face hides the cause entirely: `designSystemBuild.test.ts`
+   spawns `.design-sync/build.mjs` (which imports `src/db.ts`) and asserts only its exit status,
+   so it fails with a bare `expected 1 to be +0` — run `node .design-sync/build.mjs` to see the
+   `ERR_MODULE_NOT_FOUND` (2026-10-27). When only the client is missing, `cp -r <main-checkout>/src/generated/prisma
    src/generated/` (~12 MB) is the quick way past it — a COPY, never a junction (step 3), and
    it costs nothing at removal time.
 6. **Nothing tells you step 2 was skipped.** The worktrees live INSIDE the main checkout

@@ -2,7 +2,7 @@
 
 The site map: asset markers and clusters over a basemap, with a locate button.
 
-`.map-screen` fills its tab (`data-tab="__fullbleed"` drops the bars) and holds
+`.map-screen` fills its tab and holds
 `#map-container`, where the map library draws, plus `.map-fab-pos` for the FAB. Markers
 are `.fg-marker` (one asset, 34px) and `.fg-cluster` (a count, 40px), each with a
 `.monitor-*` state: `up`, `degraded`, `down`, `maintenance`, `unknown`, `unmonitored`.

@@ -109,10 +109,9 @@
         return;
       }
 
-      // Fullbleed mode hides the topbar slot AND the bottom navbar so the
-      // topology owns the whole viewport. app.js's setActiveTab on the
-      // next route change restores the navbar; we reset on close ourselves
-      // for the fast path (close FAB → router.go("site/<id>")).
+      // Fullbleed mode hides the topbar and search slots so the topology
+      // owns the screen above the navbar. The navbar stays (lit on Map), so
+      // a nav tap can leave without closeTopology — see leftTopology().
       var appEl = document.getElementById("app");
       if (appEl) appEl.dataset.tab = "__fullbleed";
 
@@ -146,6 +145,7 @@
       // never yank their view.
       if (_resizeHandler) window.removeEventListener("resize", _resizeHandler);
       _resizeHandler = function () {
+        if (leftTopology()) return;
         if (!_cy) return;
         try { _cy.resize(); } catch (e) {}
         if (!_viewTouched && !_focusTerm) {
@@ -161,6 +161,7 @@
       // positions so the dagre re-layout is the right behavior here.
       if (_themeObserver) { try { _themeObserver.disconnect(); } catch (e) {} }
       _themeObserver = new MutationObserver(function (muts) {
+        if (leftTopology()) return;
         for (var i = 0; i < muts.length; i++) {
           if (muts[i].attributeName === "data-theme" && _topoData) {
             renderGraph(_topoData);
@@ -210,7 +211,26 @@
     }
   }
 
+  // The router has no leave hook, and the navbar (or the back gesture) can
+  // swap the topology out without closeTopology. The first resize or theme
+  // change after that finds the screen gone and disposes the graph, rather
+  // than keep refitting and re-rendering a detached Cytoscape.
+  function leftTopology() {
+    if (document.getElementById("topo-screen")) return false;
+    teardownTopology();
+    return true;
+  }
+
   function closeTopology() {
+    var siteId = _siteId;
+    teardownTopology();
+    // Hand off to the site sheet on the map. router.go restores app
+    // dataset.tab and renders the map underneath.
+    if (siteId) PolarisRouter.go("site/" + siteId);
+    else PolarisRouter.go("map");
+  }
+
+  function teardownTopology() {
     closeTopologySheet();
     closeTopologySearchResults();
     if (_themeObserver) {
@@ -227,13 +247,8 @@
       _edgeEditor = null;
     }
     _topoData = null;
-    var siteId = _siteId;
     _siteId = null;
     _focusTerm = null;
-    // Hand off to the site sheet on the map. router.go restores app
-    // dataset.tab, navbar visibility, and renders the map underneath.
-    if (siteId) PolarisRouter.go("site/" + siteId);
-    else PolarisRouter.go("map");
   }
 
   // Re-fetch the topology payload and rebuild the graph in place. Mirrors
@@ -379,6 +394,15 @@
     _viewTouched = false;
     _cy.on("tapstart", function () { _viewTouched = true; });
     _cy.on("scrollzoom", function () { _viewTouched = true; });
+
+    // Nothing is editable on the phone, so a one-finger drag anywhere pans
+    // the map. Cytoscape only pans a drag that starts on empty background or
+    // on a `pannable` element — without this, a drag that lands on a
+    // location-group hull (which fills most of a grouped site) or a device
+    // does nothing. Hulls are added later (layoutstop, re-renders), hence
+    // the add listener. Taps still fire on pannable nodes.
+    _cy.nodes().panify();
+    _cy.on("add", "node", function (evt) { evt.target.panify(); });
 
     // Tap a node → bottom sheet with details. Skip ghost LLDP nodes for
     // the no-action case (they render but have no Polaris asset linkage).

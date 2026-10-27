@@ -55,7 +55,10 @@ The app works whichever way you hold the phone, upright or sideways, and turns
 with it, installed or in a browser. That includes a site's **topology**: it is the
 same map the desktop draws, left to right, with the saved layout and any connection
 lines drawn on the desktop. It is wide, so turning the phone sideways shows more of
-it, but nothing asks you to.
+it, but nothing asks you to. Nothing on it can be moved from the phone, so a
+one-finger drag anywhere pans the map, even when it starts on a location box or a
+device, and pinching zooms. The navigation bar stays at the bottom while it is
+open.
 
 ## Alerts
 

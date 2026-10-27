@@ -5,7 +5,7 @@ description: "Polaris session workflow: start every task in its own git worktree
 
 # Session workflow — worktrees, locks, dev stacks, merge, push
 
-## The five rules (also in CLAUDE.md, always in force)
+## The six rules (also in CLAUDE.md, always in force)
 
 1. **Never edit the main checkout.** Before the first edit of a task, create a worktree
    (`EnterWorktree` → `.claude/worktrees/<slug>` on branch `worktree-<slug>`) and write
@@ -21,6 +21,10 @@ description: "Polaris session workflow: start every task in its own git worktree
    **"push"** → the push protocol below (push main, clean up what was merged).
 5. **Lock files are gitignored and never committed.** Content: one line, ISO timestamp +
    purpose. A lock older than the chat that made it is stale; the merge menu shows its age.
+6. **Record every error you hit** as one file in `error-log/` beside the memory directory
+   (`~/.claude/projects/<this project>/error-log/`, outside the repo, never committed; its
+   README has the shape). A recurring trap is logged each time — the count is the signal the
+   user reviews to change this workflow.
 
 ## Which file
 
@@ -40,6 +44,19 @@ printf '%s %s\n' "$(date -u +%FT%TZ)" "<purpose>" > WORKLOCK
 cp <main-checkout>/.env .env                  # gitignored; only needed for prisma generate / tests
 npm install --no-audit --no-fund              # own node_modules + generated Prisma client
 ```
+
+**The Prisma client is not optional, even when you skip `npm install`.** Node finds the main
+checkout's `node_modules` up-tree, so a worktree runs vitest / tsc / the design build without
+its own install, but `src/generated/prisma` is resolved INSIDE the worktree and a fresh one has
+none. Skipping step 2 is fine for a front-end-only change; skipping the client is not, so run
+this before the first test or typecheck:
+
+```
+DATABASE_URL=postgresql://x:x@localhost:5432/x npx prisma generate   # ~1 s; no DB contacted
+```
+
+A test that fails in a fresh worktree is the missing client until proved otherwise
+(the four ways it shows up: worktree-setup.md step 5).
 
 ## End of a task (short form)
 

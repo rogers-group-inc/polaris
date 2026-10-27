@@ -9,7 +9,8 @@ five `.nav-item`s — each an `.nav-icon-pill` glyph and a one-word `.nav-label`
 
 - Scrolling happens in `.app-body` only; `html` and `body` are locked to the viewport.
 - `data-tab` on `.app` is required: an empty value hides the navigation bar, and
-  `__fullbleed` hides both bars and the body padding for a full-screen view (the map).
+  `__fullbleed` hides the top bar and the body padding for a full-screen view (the site
+  topology); the navigation bar stays.
 - The bar heights are `topbar-h` and `navbar-h`; don't set heights by hand.
 - The shell has no orientation lock and must work sideways (about 390px tall): `.app`
   pads the side safe-area insets.

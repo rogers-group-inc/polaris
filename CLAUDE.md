@@ -68,6 +68,13 @@ Both are fed from this repo's commits, not edited on their own schedule: the `/p
    (update an entry, or add a skill, when the work changed what a future session needs told). **"push"** → audit deploy surfaces, push `main`,
    then remove the merged worktrees and branches. Both protocols are in `/polaris-worktree-workflow`.
 5. `WORKLOCK` / `DEVLOCK` are gitignored and never committed.
+6. **Record every error you hit while working**: a failed test or check you did not cause, a
+   tool or hook refusal, a missing generated file, a trap that cost a retry. One file per error
+   in `error-log/` beside your memory directory (`~/.claude/projects/<this project>/error-log/`,
+   OUTSIDE the repository — it is local and **never committed**; `YYYY-MM-DD-<slug>.md`,
+   frontmatter `category:` + `cost:`, then what happened, the cause, the fix; its README has the
+   shape). The user reviews the most frequent categories to fix the workflow, so log a known
+   trap again each time it recurs; that count is the signal.
 
 ---
 

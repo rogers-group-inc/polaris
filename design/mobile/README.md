@@ -135,7 +135,7 @@ Up, Degraded, Down, Unknown, Dependency down, Maintenance, Passive. Addresses, M
 - **Shell** — `.app > .m3-topbar + .app-body + .m3-navbar`. The top bar holds `.leading`,
   `.title` and `.trailing`; the navigation bar is a five-column grid of `.nav-item`, each
   with `.nav-icon-pill` and `.nav-label`, `.active` on the current one, and an optional
-  `.nav-badge`. `.app[data-tab="__fullbleed"]` drops the bars for a full-screen view.
+  `.nav-badge`. `.app[data-tab="__fullbleed"]` drops the top bar for a full-screen view; the navigation bar stays.
 - **Actions** — `.btn` plus exactly one of `.btn-filled` (the screen's primary
   action), `.btn-tonal`, `.btn-outlined`, `.btn-text`, `.btn-error`, `.btn-success`;
   `.btn-block` for full width. `.icon-btn` for a bare glyph, `.fab` / `.fab-ext` for the
