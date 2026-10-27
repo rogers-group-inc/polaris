@@ -310,9 +310,27 @@ const ASSET_TOOL_SELECT = {
   location: true, learnedLocation: true, tags: true, monitored: true, monitorStatus: true,
   monitorStatusChangedAt: true, lastSeen: true, lastResponseTimeMs: true, assignedTo: true, department: true,
   // The General tab's lifecycle rows — without them "acquired before 2022" or
-  // "oldest switches" had nothing to read.
-  acquiredAt: true, warrantyExpiry: true, purchaseOrder: true,
+  // "oldest switches" had nothing to read. createdAt is the Acquired row's
+  // fallback (withAcquired).
+  acquiredAt: true, warrantyExpiry: true, purchaseOrder: true, createdAt: true,
 } as const;
+
+/**
+ * The Acquired date as the asset's General tab shows it: the date entered on
+ * the asset, else the day Polaris first saw it. Reading the column alone,
+ * the assistant called a device with "Acquired Jan 22, 2025" on screen
+ * undated and told the user to go and save the date (seen live 2026-10-27).
+ * Exported for tests.
+ */
+export function withAcquired<T extends { acquiredAt?: Date | null; createdAt?: Date | null }>(row: T): T & { acquiredFrom: string | null } {
+  const acquiredAt = row.acquiredAt ?? row.createdAt ?? null;
+  return { ...row, acquiredAt, acquiredFrom: row.acquiredAt ? "entered" : acquiredAt ? "first seen by Polaris" : null };
+}
+
+/** The Prisma predicate for "Acquired (as shown) <op> d": the entered date, else first seen. */
+function acquiredBound(op: "lt" | "gte", d: Date): Record<string, unknown> {
+  return { OR: [{ acquiredAt: { [op]: d } }, { acquiredAt: null, createdAt: { [op]: d } }] };
+}
 
 /**
  * Every tag spelling a region name may be stored under on an asset. A model
@@ -428,7 +446,7 @@ async function assetFilterWhere(
     if (!value) continue;
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return { ok: false, data: { error: `"${value}" is not a date — use an ISO date like 2022-01-01` } };
-    and.push({ [field]: { [op]: d } });
+    and.push(field === "acquiredAt" ? acquiredBound(op, d) : { [field]: { [op]: d } });
   }
   let subnet: string | undefined;
   const cidrArg = a.network ?? a.subnet;
@@ -454,7 +472,9 @@ const listAssetsTool: ListToolDef = {
     "assetType values include firewall, switch, access_point, server, workstation, printer, other. " +
     "network filters to assets whose IP is inside a network CIDR. Decommissioned assets are left out unless " +
     "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets. " +
-    "Each row carries acquiredAt (the Acquired date), warrantyExpiry and purchaseOrder; filter on them with " +
+    "Each row carries acquiredAt (the Acquired date the asset page shows — acquiredFrom says whether it was " +
+    "entered or is the day Polaris first saw the device, which the page shows when none was entered), " +
+    "warrantyExpiry and purchaseOrder; filter on them with " +
     "acquiredBefore / acquiredAfter / warrantyExpiresBefore / warrantyExpiresAfter and sort with sortBy " +
     "acquiredAt or warrantyExpiry (order asc = oldest / soonest first). " +
     "Carries no CPU or memory figures — use telemetry_summary for those.",
@@ -473,6 +493,7 @@ const listAssetsTool: ListToolDef = {
     { key: "model", label: "Model" }, { key: "serialNumber", label: "Serial" }, { key: "osVersion", label: "OS version" },
     { key: "location", label: "Location" }, { key: "tags", label: "Tags" }, { key: "lastSeen", label: "Last seen" },
     { key: "monitorStatusChangedAt", label: "Status changed" }, { key: "acquiredAt", label: "Acquired" },
+    { key: "acquiredFrom", label: "Acquired from" },
     { key: "warrantyExpiry", label: "Warranty expires" }, { key: "purchaseOrder", label: "Purchase order" },
   ],
   async rows(args, ctx, cap) {
@@ -484,22 +505,35 @@ const listAssetsTool: ListToolDef = {
     if ("ok" in filter) return filter;
     const { where, subnet } = filter;
     const dir = a.order ?? (a.sortBy === "hostname" || a.sortBy === "ipAddress" ? "asc" : "desc");
-    // Most assets carry no Acquired / warranty date: those sort last either way.
-    const orderBy = !a.sortBy ? { hostname: "asc" }
-      : a.sortBy === "acquiredAt" || a.sortBy === "warrantyExpiry" ? { [a.sortBy]: { sort: dir, nulls: "last" } }
+    // Most assets carry no warranty date: those sort last either way.
+    const byAcquired = a.sortBy === "acquiredAt";
+    const orderBy = !a.sortBy || byAcquired ? { hostname: "asc" }
+      : a.sortBy === "warrantyExpiry" ? { warrantyExpiry: { sort: dir, nulls: "last" } }
       : { [a.sortBy]: dir };
     const take = Math.min(a.limit ?? cap, cap);
-    if (subnet) {
-      // CIDR containment is not a Prisma predicate: narrow in SQL first, then
-      // match in memory.
-      const hits = inSubnet(await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT }), subnet);
+    const out = (r: Parameters<typeof withAcquired>[0]) => plain(withAcquired(r));
+    if (subnet || byAcquired) {
+      // CIDR containment is not a Prisma predicate, and neither is the
+      // Acquired date the page shows (entered, else first seen): narrow in
+      // SQL first, then match and order in memory.
+      let hits = inSubnet(await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT }), subnet).map(withAcquired);
+      if (byAcquired) {
+        const t = (r: { acquiredAt: Date | null }) => r.acquiredAt?.getTime() ?? null;
+        hits = hits.sort((x, y) => {
+          const tx = t(x), ty = t(y);
+          if (tx === ty) return 0;
+          if (tx === null) return 1;
+          if (ty === null) return -1;
+          return dir === "asc" ? tx - ty : ty - tx;
+        });
+      }
       return { rows: hits.slice(0, take).map(plain), total: hits.length };
     }
     const [rows, total] = await Promise.all([
       prisma.asset.findMany({ where, orderBy: orderBy as never, take, select: ASSET_TOOL_SELECT }),
       prisma.asset.count({ where }),
     ]);
-    return { rows: rows.map(plain), total };
+    return { rows: rows.map(out), total };
   },
   async run(args, ctx) {
     return listResult(await this.rows(args, ctx, ctx.maxRows));
@@ -1519,7 +1553,8 @@ const getAssetTool: ToolDef = {
   name: "get_asset",
   label: "opened an asset",
   description:
-    "Full detail for ONE asset by id, exact hostname or IP: identity, monitoring state, acquired date, warranty " +
+    "Full detail for ONE asset by id, exact hostname or IP: identity, monitoring state, acquired date (as the " +
+      "asset page shows it; acquiredFrom says entered or first seen by Polaris), warranty " +
       "expiry and purchase order, the upstream device " +
     "it hangs off, its active alerts, its most recent monitor status changes, and ipHistory — every address it " +
     "has held (primary, secondary, WAN) with first/last seen. Use to investigate a device.",
@@ -1556,7 +1591,7 @@ const getAssetTool: ToolDef = {
     const { discoveredByIntegration, ipHistory, ...rest } = asset;
     const out: Record<string, unknown> = {
       found: true,
-      ...plain(rest),
+      ...plain(withAcquired(rest)),
       discoveredBy: discoveredByIntegration?.name ?? null,
       ipHistory: (ipHistory ?? []).map((h) => plain(h)),
     };
@@ -1968,7 +2003,7 @@ const createReportTool: ToolDef = {
       args: { type: "object", description: "The same filter arguments the source tool accepts" },
       columns: {
         type: "array", items: { type: "string" },
-        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt, acquiredAt, warrantyExpiry, purchaseOrder. " +
+        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt, acquiredAt, acquiredFrom, warrantyExpiry, purchaseOrder. " +
           "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window. " +
           "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt. " +
           "path_check_summary: check, kind, target, source, availabilityPct, avgLatencyMs, maxLatencyMs, samples, lastOk, lastError, lastFailAt, lastSampleAt, window. " +
