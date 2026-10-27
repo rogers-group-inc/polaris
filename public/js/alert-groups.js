@@ -40,7 +40,7 @@
   var FOLD_OPTIONS = [
     { value: "device", label: "Device", badge: "per device", hint: "everything wrong with one device is one alert" },
     { value: "automation", label: "Automation", badge: "per automation", hint: "every device one automation trips shares that automation's alert (a Path Monitor automation: one alert per path check)" },
-    { value: "deviceAutomation", label: "Device + automation", badge: "per device + automation", hint: "one alert per device for each automation; two automations on one device stay two alerts" },
+    { value: "deviceAutomation", label: "Device + automation", badge: "whole group", hint: "both at once: every device and every automation in the group share one alert (\"3 path checks · 80 devices\")" },
     { value: "subnet", label: "Subnet", badge: "per subnet", hint: "every device in the same subnet shares one alert" },
   ];
 

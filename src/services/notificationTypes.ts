@@ -5022,6 +5022,39 @@ export interface AlertMember {
    *  Monitor automation: one alert per path check): the component every
    *  device on the alert shares, as a human reads it — the check's name. */
   component?: string;
+  /** Set only on a WHOLE-GROUP alert (foldBy `deviceAutomation`): the group's
+   *  name. Every device and every member automation share that one alert. */
+  group?: string;
+}
+
+/** The true size of a multi-device alert, read from its state rows.
+ *
+ *  The members snapshot is capped at MAX_GROUP_MEMBERS, so a count taken from
+ *  it stops at 64 — "64 devices" in the subject of an 80-device outage. These
+ *  are counted over every FIRING contribution instead. */
+export interface SpanCounts {
+  /** Distinct devices. */
+  devices: number;
+  /** Distinct path checks among the Path Monitor contributions. */
+  checks: number;
+  /** Distinct automations. */
+  automations: number;
+  /** Every contribution is a Path Monitor one. */
+  pathOnly: boolean;
+}
+
+/** "3 devices", "1 path check". */
+export function countNoun(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+/** What a whole-group alert is about, before its " · N devices": the path
+ *  checks when every contribution is a Path Monitor one, the automations when
+ *  there are several, else nothing (one automation reads as "N devices" alone,
+ *  as an automation fold does). */
+export function wholeGroupSubject(c: SpanCounts): string {
+  if (c.pathOnly) return countNoun(c.checks, "path check");
+  return c.automations > 1 ? countNoun(c.automations, "automation") : "";
 }
 
 /** A 48-port switch plus its SFPs. Past this an alert has stopped being about
@@ -5045,7 +5078,7 @@ export const GROUP_LABEL_CAP = 6;
 export function groupKeyOf(scope: "rule" | "grp", id: string, target: string): string {
   // `target` is the asset id, or the fold's own target on a group that folds
   // another way (subnetFoldTarget / automationFoldTarget /
-  // deviceAutomationFoldTarget).
+  // WHOLE_GROUP_FOLD_TARGET).
   return `${scope}:${id}|${target}`;
 }
 
@@ -5092,9 +5125,11 @@ export function ruleGroupsByAsset(rule: {
  *  `device` — one alert per device, its components and automations folded in
  *  (the original shape). `automation` — one alert per member AUTOMATION: every
  *  device the group governs that trips it shares that automation's one alert,
- *  each device a member. `deviceAutomation` — one alert per device PER
- *  automation: one automation's components on a device fold together, but two
- *  automations on the same device stay two alerts. `subnet` — one alert per
+ *  each device a member. `deviceAutomation` — BOTH folds at once: one alert for
+ *  the WHOLE group, every device and every member automation in it ("3 path
+ *  checks · 80 devices"). Until 2026-10-27 it meant the opposite — one alert
+ *  per device per automation — and the migration that redefined it retired the
+ *  alerts raised under that meaning. `subnet` — one alert per
  *  registry SUBNET: every device the group governs whose primary IP falls in
  *  the same subnet (the most specific non-deprecated Subnet row containing it)
  *  shares one alert, so a switch dropping twelve hosts behind it is one page,
@@ -5105,7 +5140,7 @@ export type AlertGroupFoldBy = (typeof ALERT_GROUP_FOLD_BY)[number];
 /** Does this fold put SEVERAL devices into one alert? Its members then carry
  *  their device (`AlertMember.assetId`), which joins their identity. */
 export function foldSpansDevices(foldBy: string | null | undefined): boolean {
-  return foldBy === "subnet" || foldBy === "automation";
+  return foldBy === "subnet" || foldBy === "automation" || foldBy === "deviceAutomation";
 }
 
 /** The `groupKey` target of a subnet-folded alert. Prefixed so it can never be
@@ -5121,11 +5156,9 @@ export function automationFoldTarget(ruleId: string, componentKey?: string | nul
   return componentKey ? `auto:${ruleId}/${componentKey}` : `auto:${ruleId}`;
 }
 
-/** The `groupKey` target of a device-and-automation alert: the device, split
- *  by the automation raising it. */
-export function deviceAutomationFoldTarget(assetId: string, ruleId: string): string {
-  return `${assetId}/auto:${ruleId}`;
-}
+/** The `groupKey` target of a whole-group (`deviceAutomation`) alert: the one
+ *  alert the group keeps, whatever devices and automations it covers. */
+export const WHOLE_GROUP_FOLD_TARGET = "all";
 
 /**
  * May this trigger contribute to an AlertGroup?
@@ -5144,10 +5177,10 @@ export function deviceAutomationFoldTarget(assetId: string, ruleId: string): str
  */
 export function triggerCanJoinGroup(
   trigger: Trigger | null | undefined,
-  /** A SUBNET or AUTOMATION group folds DEVICES, so a whole-device trigger —
-   *  "monitor status is down" above all — has something to fold there, where a
-   *  device (or device-and-automation) group would only ever hold one
-   *  contribution per alert. */
+  /** A SUBNET, AUTOMATION or WHOLE-GROUP fold holds DEVICES, so a whole-device
+   *  trigger — "monitor status is down" above all — has something to fold
+   *  there, where a device group would only ever hold one contribution per
+   *  alert. */
   foldBy?: string | null,
 ): boolean {
   if (!trigger) return false;
@@ -5389,6 +5422,9 @@ export function refreshMemberContext(
   ctx: Record<string, string>,
   members: AlertMember[],
   message: string | null,
+  /** The alert's true size (state rows) on a multi-device alert. Without it
+   *  the counts come from the members, which stop at MAX_GROUP_MEMBERS. */
+  counts?: SpanCounts | null,
 ): Record<string, string> {
   const out = { ...ctx };
   const before = out["dimension"] ?? "";
@@ -5400,12 +5436,20 @@ export function refreshMemberContext(
   out["dimension.list"] = renderMemberList(members, Number.MAX_SAFE_INTEGER);
   out["dimension.suffix"] = list ? ` · ${list}` : "";
   if (members.some((m) => m.assetId) && !members.some((m) => m.subnet)) {
-    const n = new Set(active.map((m) => m.assetId)).size;
-    const devices = `${n} device${n === 1 ? "" : "s"}`;
-    // A split per path check keeps the check as {asset}; the count is its
-    // subject tag (readingContextParts).
-    if (members.some((m) => m.component)) out["dimension.suffix"] = ` · ${devices}`;
-    else out["asset"] = devices;
+    const devices = countNoun(counts?.devices ?? new Set(active.map((m) => m.assetId)).size, "device");
+    const group = members.find((m) => m.group)?.group;
+    const whole = group && counts ? wholeGroupSubject(counts) : "";
+    if (group) {
+      // A whole-group alert (readingContextParts): "3 path checks · 80 devices",
+      // named for its one automation or, once there are several, the group.
+      if (whole) { out["asset"] = whole; out["dimension.suffix"] = ` · ${devices}`; }
+      else out["asset"] = devices;
+      if (counts) out["rule"] = counts.automations === 1 ? (active[0]?.ruleName ?? out["rule"] ?? "") : group;
+    } else if (members.some((m) => m.component)) {
+      // A split per path check keeps the check as {asset}; the count is its
+      // subject tag (readingContextParts).
+      out["dimension.suffix"] = ` · ${devices}`;
+    } else out["asset"] = devices;
   }
   if (before && out["trigger.summary"]?.includes(before)) out["trigger.summary"] = out["trigger.summary"].replace(before, list);
   if (message !== null) out["message"] = message;

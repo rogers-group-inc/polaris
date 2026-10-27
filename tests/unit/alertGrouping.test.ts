@@ -37,7 +37,9 @@ import {
   memberMatches,
   subnetFoldTarget,
   automationFoldTarget,
-  deviceAutomationFoldTarget,
+  WHOLE_GROUP_FOLD_TARGET,
+  wholeGroupSubject,
+  countNoun,
   foldSpansDevices,
   ALERT_GROUP_FOLD_BY,
   mergeGroupChanges,
@@ -617,33 +619,43 @@ describe("automation folding (foldBy = automation | deviceAutomation)", () => {
     expect([...ALERT_GROUP_FOLD_BY]).toEqual(["device", "automation", "deviceAutomation", "subnet"]);
   });
 
-  it("spans devices by automation or subnet, never per device", () => {
+  it("spans devices by automation, by device + automation (the whole group) or by subnet, never per device", () => {
     expect(foldSpansDevices("automation")).toBe(true);
     expect(foldSpansDevices("subnet")).toBe(true);
+    expect(foldSpansDevices("deviceAutomation")).toBe(true);
     expect(foldSpansDevices("device")).toBe(false);
-    expect(foldSpansDevices("deviceAutomation")).toBe(false);
     expect(foldSpansDevices(null)).toBe(false);
   });
 
-  it("admits a whole-device trigger by automation, and refuses it per device and automation", () => {
+  it("admits a whole-device trigger to every fold that spans devices, and refuses it per device", () => {
     expect(triggerCanJoinGroup(down, "automation")).toBe(true);
-    expect(triggerCanJoinGroup(down, "deviceAutomation")).toBe(false);
+    expect(triggerCanJoinGroup(down, "deviceAutomation")).toBe(true);
+    expect(triggerCanJoinGroup(down, "device")).toBe(false);
     expect(triggerCanJoinGroup(poe, "deviceAutomation")).toBe(true);
     expect(triggerCanJoinGroup(poe, "automation")).toBe(true);
     expect(ruleGroupsByAsset({ alertGroupId: "g1", alertGroupFoldBy: "automation", trigger: down })).toBe(true);
-    expect(ruleGroupsByAsset({ alertGroupId: "g1", alertGroupFoldBy: "deviceAutomation", trigger: down })).toBe(false);
+    expect(ruleGroupsByAsset({ alertGroupId: "g1", alertGroupFoldBy: "deviceAutomation", trigger: down })).toBe(true);
   });
 
   it("keys every fold apart within one group", () => {
     const keys = [
       groupKeyOf("grp", "g1", "a1"),
       groupKeyOf("grp", "g1", automationFoldTarget(RULE)),
-      groupKeyOf("grp", "g1", deviceAutomationFoldTarget("a1", RULE)),
-      groupKeyOf("grp", "g1", deviceAutomationFoldTarget("a1", RULE_B)),
+      groupKeyOf("grp", "g1", automationFoldTarget(RULE_B)),
+      groupKeyOf("grp", "g1", WHOLE_GROUP_FOLD_TARGET),
       groupKeyOf("grp", "g1", subnetFoldTarget("a1")),
     ];
     expect(new Set(keys).size).toBe(keys.length);
-    expect(keys[2]).toBe(`grp:g1|a1/auto:${RULE}`);
+    expect(keys[3]).toBe("grp:g1|all");
+  });
+
+  it("names a whole-group alert by its path checks, else its automations, else nothing", () => {
+    expect(wholeGroupSubject({ devices: 80, checks: 3, automations: 1, pathOnly: true })).toBe("3 path checks");
+    expect(wholeGroupSubject({ devices: 80, checks: 1, automations: 3, pathOnly: true })).toBe("1 path check");
+    expect(wholeGroupSubject({ devices: 9, checks: 0, automations: 2, pathOnly: false })).toBe("2 automations");
+    expect(wholeGroupSubject({ devices: 9, checks: 0, automations: 1, pathOnly: false })).toBe("");
+    expect(countNoun(1, "device")).toBe("1 device");
+    expect(countNoun(80, "device")).toBe("80 devices");
   });
 });
 
@@ -701,5 +713,20 @@ describe("the update cadence (business rule 75): queued changes", () => {
     expect(out["asset"]).toBe("Salesforce HTTPS");
     expect(out["dimension"]).toBe("pc-01, pc-02");
     expect(out["dimension.suffix"]).toBe(" · 2 devices");
+  });
+
+  it("counts a whole-group alert from the true counts, not the capped members", () => {
+    const members = [
+      member("chk1", { label: "pc-01 — ERP", assetId: "a1", group: "WAN", ruleName: "Path check down" }),
+      member("chk2", { label: "pc-01 — VPN", assetId: "a1", group: "WAN", ruleName: "Path check down" }),
+    ];
+    const ctx = { asset: "3 path checks", rule: "Path check down", "dimension.suffix": " · 80 devices" };
+    const out = refreshMemberContext(ctx, members, null, { devices: 79, checks: 2, automations: 1, pathOnly: true });
+    expect(out["asset"]).toBe("2 path checks");
+    expect(out["dimension.suffix"]).toBe(" · 79 devices");
+    expect(out["rule"]).toBe("Path check down");
+    // Several automations: the alert is the GROUP's.
+    const mixed = refreshMemberContext(ctx, members, null, { devices: 79, checks: 2, automations: 2, pathOnly: true });
+    expect(mixed["rule"]).toBe("WAN");
   });
 });

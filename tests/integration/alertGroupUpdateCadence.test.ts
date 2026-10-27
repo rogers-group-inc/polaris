@@ -212,4 +212,51 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(ctx["dimension.suffix"]).toBe(" · 2 devices");
     expect(ctx["dimension"]).toBe(`${HOST}-pc-01, ${HOST}-pc-02`);
   });
+
+  it("device + automation folds every path check from every host into one alert, counted past the member cap", async () => {
+    const now = new Date();
+    // 25 hosts × 3 checks = 75 contributions, past MAX_GROUP_MEMBERS (64): the
+    // counts must come from the state rows, not the capped snapshot.
+    const hosts = (await Promise.all(Array.from({ length: 25 }, (_, i) => prisma.asset.create({
+      data: { hostname: `${HOST}-wg-${String(i).padStart(2, "0")}`, status: "active", monitored: true, assetType: "workstation", monitorStatus: "up", lastSeen: now, lastMonitorAt: now, tags: [NAME] } as never,
+      select: { id: true },
+    })))).map((a) => a.id);
+    await prisma.managedAgent.createMany({
+      data: hosts.map((assetId) => ({ assetId, osPlatform: "windows", arch: "amd64", installStatus: "active", installedBy: "tester", serverCertFingerprint: "x" })) as never,
+    });
+    const checks = await Promise.all(["erp", "vpn", "crm"].map((n) => prisma.pathCheck.create({
+      data: { name: `${NAME} ${n}`, kind: "https", target: `https://${n}.example.test`, intervalSec: 120, traceroute: {}, scope: { assetIds: hosts }, assetIds: hosts, definitionSha256: "0".repeat(64) } as never,
+      select: { id: true },
+    })));
+    await prisma.assetPathCheckSample.createMany({
+      data: hosts.flatMap((assetId) => checks.map((c) => ({ assetId, checkId: c.id, timestamp: now, ok: false, error: "timeout" }))) as never,
+    });
+    const { groupId, ruleId } = await seedGroup(
+      "deviceAutomation",
+      { type: "asset_metric", metric: "pathOk", aggregation: "latest", windowSec: 0, operator: "==", threshold: 0, forDurationSec: 0 },
+      NAME,
+    );
+    await evaluateAllNotificationRules();
+
+    const alerts = await prisma.notification.findMany({ where: { ruleId, cleared: false } });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]!.groupKey).toBe(`grp:${groupId}|all`);
+    const ctx = alerts[0]!.templateCtx as Record<string, string>;
+    // "[SERIOUS] 3 path checks · 25 devices — <automation>" — one automation, so it names it.
+    expect(ctx["asset"]).toBe("3 path checks");
+    expect(ctx["dimension.suffix"]).toBe(" · 25 devices");
+    expect(ctx["rule"]).toBe(`${NAME} rule`);
+    expect(alerts[0]!.message).toContain("3 path checks · 25 devices");
+    expect(await prisma.notificationRuleState.count({ where: { notificationId: alerts[0]!.id, state: "firing" } })).toBe(75);
+
+    // One host recovers from everything: the counts drop with it.
+    await prisma.assetPathCheckSample.createMany({
+      data: checks.map((c) => ({ assetId: hosts[0]!, checkId: c.id, timestamp: new Date(now.getTime() + 1000), ok: true })) as never,
+    });
+    await prisma.notification.updateMany({ where: { id: alerts[0]!.id }, data: { firstSentAt: new Date(), firstSendDueAt: new Date(Date.now() - 1000) } });
+    await evaluateAllNotificationRules();
+    const after = await prisma.notification.findUniqueOrThrow({ where: { id: alerts[0]!.id } });
+    expect((after.templateCtx as Record<string, string>)["dimension.suffix"]).toBe(" · 24 devices");
+    expect(after.message).toContain("24 devices still affected");
+  });
 });
