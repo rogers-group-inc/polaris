@@ -5041,6 +5041,10 @@ export interface SpanCounts {
   automations: number;
   /** Every contribution is a Path Monitor one. */
   pathOnly: boolean;
+  /** What every contributing automation's condition says about a check
+   *  (pathConditionPhrase), when they all say the same thing — "is down" /
+   *  "are down". Absent when they differ or any is not a Path Monitor one. */
+  condition?: { one: string; many: string } | null;
 }
 
 /** "3 devices", "1 path check". */

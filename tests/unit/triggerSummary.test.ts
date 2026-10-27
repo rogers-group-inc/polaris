@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { triggerSummary, triggerSubject, humanDuration } from "../../src/utils/triggerSummary.js";
+import { triggerSummary, triggerSubject, humanDuration, pathConditionPhrase } from "../../src/utils/triggerSummary.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -176,5 +176,33 @@ describe("triggerSummary", () => {
     expect(triggerSummary({ trigger: { type: "change", changeType: "lldp_neighbor" } }))
       .toContain("lldp_neighbor");
     expect(triggerSummary({ trigger: { type: "composite" } })).toContain("conditions");
+  });
+});
+
+describe("pathConditionPhrase", () => {
+  const path = (metric: string, operator: string, threshold: number) =>
+    ({ type: "asset_metric", metric, operator, threshold });
+
+  it("a pathOk condition on a failed run reads as down, however it is spelled", () => {
+    expect(pathConditionPhrase(path("pathOk", "==", 0))).toBe("is down");
+    expect(pathConditionPhrase(path("pathOk", "!=", 1))).toBe("is down");
+    expect(pathConditionPhrase(path("pathOk", "<", 1))).toBe("is down");
+    expect(pathConditionPhrase(path("pathOk", "==", 0), true)).toBe("are down");
+    expect(pathConditionPhrase(path("pathOk", "==", 1))).toBe("is up");
+  });
+
+  it("a failure rate is failing, with the rate it crossed", () => {
+    expect(pathConditionPhrase(path("pathFailurePct", ">", 20))).toBe("is failing (path failure rate above 20 %)");
+    expect(pathConditionPhrase(path("pathFailurePct", ">", 20), true)).toBe("are failing (path failure rate above 20 %)");
+  });
+
+  it("any other path metric states its condition", () => {
+    expect(pathConditionPhrase(path("pathLatencyMs", ">", 200))).toBe("has path latency above 200 ms");
+    expect(pathConditionPhrase(path("pathLatencyMs", ">", 200), true)).toBe("have path latency above 200 ms");
+  });
+
+  it("is null for anything that is not a path metric", () => {
+    expect(pathConditionPhrase(path("cpuPct", ">", 90))).toBeNull();
+    expect(pathConditionPhrase({ type: "asset_state", field: "monitorStatus", operator: "==", value: "down" })).toBeNull();
   });
 });

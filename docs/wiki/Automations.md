@@ -257,15 +257,21 @@ fires — *"Device down: 5 devices — sw-01, sw-02, …"*. The alert is named a
 the automation, ends when the **last** device recovers, and (like Subnet) also
 accepts automations about the whole device, such as `monitorStatus == down`.
 A **Path Monitor** automation gets one alert **per path check** rather than one
-for every check it watches — *"Path Monitor — ERP HTTPS: 3 devices — pc-01,
-pc-02, pc-04"* — with hosts added and removed as they fail and recover. Its
+for every check it watches — *"ERP HTTPS is down from 3 devices — pc-01,
+pc-02, pc-04"* — with hosts added and removed as they fail and recover. The
+alert text says what is wrong with the check, whatever the automation is called:
+*is down* for a check that failed, *is failing (path failure rate above 20 %)*
+for a failure rate, or the condition itself (*has path latency above 200 ms*).
+Typing your own **Alert text** on the group replaces it. Its
 email subject names the check and counts the hosts — *"[CRITICAL] ERP HTTPS · 3
 devices — Path Monitor"* — and the hosts are listed in the email body.
 
 **Device + automation** does both at once: the group keeps **one** alert, and
 every device and every automation in the group joins it. Eighty hosts failing
 three path checks is one email — *"[CRITICAL] 3 path checks · 80 devices —
-Path check down"* — listing each host with the checks it is failing. The
+Path check down"* — listing each host with the checks it is failing. When every
+automation in the group means the same thing, the alert text says it too:
+*"3 path checks are down from 80 devices — pc-01 — ERP HTTPS, …"*. The
 subject counts path checks when every member is a Path Monitor automation, and
 automations otherwise (*"2 automations · 12 devices"*). It is named after the
 automation while only one is involved and after the **group** once several are.
