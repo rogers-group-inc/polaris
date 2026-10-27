@@ -192,7 +192,28 @@ on for some integration; and **Delete**.
 
 ## Bulk actions
 
-Select rows to raise the bulk bar:
+### Selecting rows
+
+There is no checkbox column. Select rows by clicking them, the way you
+select files on a desktop. This works the same on the Assets table, on an
+asset's **Alerts** tab and on a network's address list.
+
+| To | Do |
+|---|---|
+| select one row | click it. Clicking the only selected row again clears it |
+| add or remove one row | **Ctrl**+click (**⌘**+click on a Mac) |
+| select a range | click the first row, then **Shift**+click the last |
+| select a run of rows | click and drag across them. The list scrolls when you hold the pointer at its top or bottom edge. Hold **Ctrl** to add the run to what is already selected |
+| select every row in the table | **Ctrl**+**A** (**⌘**+**A**) after clicking a row in it |
+| clear the selection | click anywhere off the table, or **Deselect All** on the bulk bar |
+
+A plain click or drag replaces the selection, including rows you selected on
+other pages of the Assets table. **Ctrl** and **Shift** add to it. Clicking an
+asset's name still opens it, and clicking a link or button in a row does what
+it always did. Clicking the bulk bar, the page buttons or a dialog does not
+clear the selection.
+
+Selected rows raise the bulk bar:
 
 | Action | Needs | Does |
 |---|---|---|

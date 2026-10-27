@@ -4494,9 +4494,13 @@ tbody tr.selected > td {
 tbody tr.selected:hover > td {
   background: color-mix(in srgb, var(--color-accent) 16%, var(--color-surface));
 }
-tbody tr.selected > td:first-child {
+tbody tr.selected > td:first-child,
+tbody tr.selected > td.cb-col + td {
   box-shadow: inset 3px 0 0 var(--color-accent);
 }
+/* Rows are picked by click / drag / Shift / Ctrl (app.js → row selection), so
+   a drag across rows paints rows, not text. */
+body.row-select-dragging { user-select: none; -webkit-user-select: none; cursor: default; }
 /* Reusable on/off toggle switch (e.g. the Notifications → Manage "Enabled"
    column). A styled checkbox; the input itself stays accessible. */
 .toggle-switch {
@@ -4557,11 +4561,15 @@ tbody tr.selected > td:first-child {
    full 1rem the box looked left-hugging, because the gap on its right carried
    the neighbour's padding on top of its own centering slack. */
 th.cb-col, td.cb-col { padding: 0 !important; text-align: center; }
+/* The checkbox column is no longer drawn: rows are selected by clicking them
+   (app.js → row selection). The cells stay in the markup as the selection's
+   state carrier; table-sf.js hides the matching <col> as well. The rules
+   below still size it for anything that opts back in. */
+th.cb-col, td.cb-col { display: none !important; }
 /* Header checkbox sits on the label line rather than the middle of the tall
    two-row header cell. Header padding only — the filter row's alignment is
    measured off td padding, so the half-padding rule below must not touch th. */
 thead th.cb-col { vertical-align: top; padding: 0.65rem 0 0 0 !important; }
-td.cb-col + td { padding-left: 0.5rem; }
 /* A plain (non-TableSF) table has no <col> width track, so the zero-padding
    cell above collapses to the box itself and the checkbox ends up flush
    against the table border rather than centred in a column (asset details

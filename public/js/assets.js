@@ -857,6 +857,17 @@ document.addEventListener("DOMContentLoaded", async function () {
     syncSelectedRows(document.getElementById("assets-tbody"));
     _assetsUpdateBulkBar();
   });
+  // A plain click or drag replaces the selection (app.js → row selection). The
+  // rows on this page are cleared through their own change events; this drops
+  // the picks made on other pages, which have no row to clear.
+  document.getElementById("assets-tbody").addEventListener("polaris:rowselect-clear", function () {
+    var onPage = {};
+    _assetsData.forEach(function (a) { onPage[a.id] = true; });
+    Array.from(_assetsSelected).forEach(function (id) {
+      if (!onPage[id]) { _assetsSelected.delete(id); delete _assetsSelectedMeta[id]; }
+    });
+    _assetsUpdateBulkBar();
+  });
   document.getElementById("assets-tbody").addEventListener("change", function (e) {
     var cb = e.target;
     if (!cb.classList.contains("row-cb")) return;

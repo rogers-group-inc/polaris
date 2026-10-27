@@ -1690,6 +1690,7 @@ function setupColumnLayout(tableEl, options) {
   var AUTOFILL_MIN_W = 36;
   var widths = {};
   var hidden = {};
+  var alwaysHidden = {};
 
   // Pin fixed utility columns to FIXED_COL_W up front so every applyWidths()
   // call honors them — otherwise, in table-layout:fixed, a column with no
@@ -1723,6 +1724,10 @@ function setupColumnLayout(tableEl, options) {
     if (!required[colIds[i]] && th.getAttribute("data-col-default-hidden") === "true") {
       hidden[colIds[i]] = true;
     }
+    // The checkbox column is never drawn — rows are selected by clicking them
+    // (app.js → row selection) — so its <col> must not hold a track either.
+    // Not an operator choice, so it never reaches the saved prefs.
+    if (th.classList.contains("cb-col")) { hidden[colIds[i]] = true; alwaysHidden[colIds[i]] = true; }
   });
 
   // Below this a column is mostly padding: the 1rem horizontal cell padding on
@@ -2498,7 +2503,7 @@ function setupColumnLayout(tableEl, options) {
       var shown = colIds.filter(function (id) { return !required[id] && !hidden[id]; });
       return {
         widths: Object.assign({}, widths),
-        hidden: Object.keys(hidden),
+        hidden: Object.keys(hidden).filter(function (id) { return !alwaysHidden[id]; }),
         shown: shown,
         order: order.slice(),
       };
