@@ -123,6 +123,36 @@ describe("argument handling", () => {
   });
 });
 
+describe("list_assets — acquired date and warranty", () => {
+  const req = reqWith({ assets: "read" });
+  beforeEach(() => { h.prisma.asset.findMany.mockResolvedValue([]); h.prisma.asset.count.mockResolvedValue(0); });
+
+  it("returns the Acquired date, warranty expiry and PO on every row", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1", acquiredAt: new Date("2019-03-01T00:00:00Z"), warrantyExpiry: null, purchaseOrder: "PO-7" }]);
+    h.prisma.asset.count.mockResolvedValue(1);
+    const r = await runAssistantTool("list_assets", "{}", { req, maxRows: 10 });
+    const select = h.prisma.asset.findMany.mock.calls[0][0].select;
+    expect(select).toMatchObject({ acquiredAt: true, warrantyExpiry: true, purchaseOrder: true });
+    expect((r.data as any).rows[0]).toMatchObject({ acquiredAt: "2019-03-01T00:00:00.000Z", purchaseOrder: "PO-7" });
+  });
+
+  it("filters on acquired / warranty dates and sorts oldest first with undated assets last", async () => {
+    await runAssistantTool("list_assets", JSON.stringify({ acquiredBefore: "2022-01-01", warrantyExpiresAfter: "2026-01-01", sortBy: "acquiredAt", order: "asc" }), { req, maxRows: 10 });
+    const call = h.prisma.asset.findMany.mock.calls[0][0];
+    expect(call.where.AND).toEqual(expect.arrayContaining([
+      { acquiredAt: { lt: new Date("2022-01-01") } },
+      { warrantyExpiry: { gte: new Date("2026-01-01") } },
+    ]));
+    expect(call.orderBy).toEqual({ acquiredAt: { sort: "asc", nulls: "last" } });
+  });
+
+  it("refuses a date it cannot read", async () => {
+    const r = await runAssistantTool("list_assets", JSON.stringify({ acquiredBefore: "last spring" }), { req, maxRows: 10 });
+    expect(r.ok).toBe(false);
+    expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("create_report", () => {
   it("re-runs the source tool with the report cap and projects the chosen columns", async () => {
     h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1", ipAddress: "10.0.0.2", model: "FS-148", serialNumber: "S1" }]);
@@ -142,6 +172,26 @@ describe("create_report", () => {
       truncated: false,
     });
     expect(r.data).toMatchObject({ created: true, rowCount: 1 });
+  });
+
+  it("offers only the formats asked for — the user's own words over the model's argument", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1" }]);
+    h.prisma.asset.count.mockResolvedValue(1);
+    const req = reqWith({ assets: "read" });
+    const onReport = vi.fn();
+    const r = await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_assets", formats: ["Markdown", "pdf"] }), { req, maxRows: 10, onReport });
+    expect(onReport.mock.calls[0][0].formats).toEqual(["md", "pdf"]);
+    expect(r.data).toMatchObject({ downloads: ["Markdown", "PDF"] });
+
+    onReport.mockClear();
+    await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_assets", formats: ["csv"] }), { req, maxRows: 10, onReport, reportFormats: ["pdf"] });
+    expect(onReport.mock.calls[0][0].formats).toEqual(["pdf"]);
+
+    onReport.mockClear();
+    await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_assets" }), { req, maxRows: 10, onReport });
+    expect(onReport.mock.calls[0][0]).not.toHaveProperty("formats");
+
+    expect((await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_assets", formats: ["docx"] }), { req, maxRows: 10, onReport })).ok).toBe(false);
   });
 
   it("refuses a report over data the caller cannot read", async () => {

@@ -95,6 +95,23 @@ describe("mobile Chat tab", () => {
     expect(Number(localStorage.getItem("polaris-assistant-active"))).toBeGreaterThan(0);
   });
 
+  it("offers only the report formats asked for; a PDF-only report says the PDF is on the desktop", async () => {
+    const { spec, body } = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry" }] });
+    await spec.render(body, {});
+    const report = (formats: string[]) => ({ title: "T", columns: [{ key: "h", label: "Host" }], rows: [{ h: "sw-1" }], rowCount: 1, formats });
+    g.fetch = vi.fn(async () => ({
+      ok: true, status: 200,
+      body: sseBody([["start", { question: "q" }], ["report", report(["md"])], ["report", report(["pdf"])], ["done", { stopped: false }]]),
+    }));
+    (body.querySelector("#chat-input") as HTMLTextAreaElement).value = "q";
+    body.querySelector("#chat-form")!.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    const cards = body.querySelectorAll(".chat-report");
+    expect([...cards[0].querySelectorAll("[data-dl]")].map((b) => b.getAttribute("data-dl"))).toEqual(["md"]);
+    expect([...cards[1].querySelectorAll("[data-dl]")].map((b) => b.getAttribute("data-dl"))).toEqual(["csv", "md"]);
+    expect(cards[1].textContent).toContain("PDF download is on the desktop");
+  });
+
   it("sets an idle conversation aside after 30 minutes, and /resume brings it back", async () => {
     const { spec, body } = setup({ enabled: true, integrations: [{ id: "i1", name: "Foundry" }] });
     localStorage.setItem("polaris-assistant-conv", "c-old");

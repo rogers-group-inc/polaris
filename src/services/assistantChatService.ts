@@ -51,6 +51,7 @@ import {
   REPORT_SOURCE_NAMES,
   WINDOW_OPTIONAL_TOOLS,
   type AssistantReportPayload,
+  type ReportFormat,
 } from "./assistantToolService.js";
 import {
   beginTurn,
@@ -281,7 +282,8 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
       "time window (list_alerts / list_events with hours or since/until), and the upstream device it depends on. " +
       "Separate what the data shows from what you infer.",
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
-      "right source and filters. The user sees the finished table with download buttons; you do not see its rows, " +
+      "right source and filters, and formats set to the ones the user named (e.g. [\"pdf\"]) when they named any. " +
+      "The user sees the finished table with download buttons; you do not see its rows, " +
       "so never type a table or rows for it — reply with one sentence naming what it holds.",
     "- CPU and memory figures (highest, lowest, average, peak, over a period) come from telemetry_summary, which " +
       "takes the same device filters as list_assets; a report of them is create_report with source " +
@@ -376,11 +378,24 @@ export function asksForReport(text: string): boolean {
   return /\b(create|make|build|generate|run|pull|produce|give me)\b.{0,20}\breport\w*/i.test(t);
 }
 
+/**
+ * The download formats a message names — "a PDF of the switches" offers the
+ * PDF alone. Empty when it names none (the card then offers all three).
+ * Exported for tests.
+ */
+export function reportFormatsFromQuestion(text: string): ReportFormat[] {
+  const out: ReportFormat[] = [];
+  if (/\bcsv\b|\bspreadsheet\b|\bexcel\b|\bxlsx\b/i.test(text)) out.push("csv");
+  if (/\bpdfs?\b/i.test(text)) out.push("pdf");
+  if (/\bmarkdown\b|\.md\b/i.test(text)) out.push("md");
+  return out;
+}
+
 /** A report title from the question that asked for it. Exported for tests. */
 export function reportTitleFromQuestion(text: string): string {
   const t = trimTrailing(text
     .replace(/^\s*(create a downloadable report:\s*)/i, "")
-    .replace(/^\s*(please\s+)?(can you\s+|could you\s+)?(give me|make|build|create|generate|export|download|show me)?\s*(me\s+)?(a\s+|an\s+|the\s+)?(downloadable\s+)?(report|export|spreadsheet|csv)?\s*(of|on|for|about|with)?\s*/i, "")
+    .replace(/^\s*(please\s+)?(can you\s+|could you\s+)?(give me|make|build|create|generate|export|download|show me)?\s*(me\s+)?(a\s+|an\s+|the\s+)?(downloadable\s+)?(pdf\s+|csv\s+|markdown\s+)?(report|export|spreadsheet|csv|pdf)?\s*(of|on|for|about|with)?\s*/i, "")
     .replace(/^(the|a|an|all)\s+/i, ""), "?.!")
     .trim();
   if (!t) return "Report";
@@ -723,6 +738,7 @@ export async function streamAssistantTurn(input: {
       reports.push(r);
       emit("report", r);
     },
+    reportFormats: reportFormatsFromQuestion(question),
   };
   let stopped = false;
   let failure: string | null = null;

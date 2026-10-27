@@ -6874,6 +6874,7 @@ model AssistantReport {
   rows        Json // [{ [key]: value }]
   rowCount    Int
   truncated   Boolean          @default(false)
+  formats     String[]         @default([]) // downloads offered: csv / pdf / md; empty = all three
   generatedAt DateTime         @default(now())
 
   @@index([messageId])
