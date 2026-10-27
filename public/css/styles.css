@@ -1768,7 +1768,13 @@ code {
 /* "watch" is the informational tier — the accent, not a hardcoded cyan.
    --color-info has never been defined, so this always painted its fallback and
    stayed dark-theme blue on a light ground. */
-.severity-edge.severity-edge-ok    { border-left-color: var(--color-text-tertiary); }
+/* A card graded ok has nothing to say: it wears the same 1px hairline all the
+   way round, and only a graded state (watch / amber / red) thickens the edge.
+   Comes after the two-class width rule above so it wins at equal specificity. */
+.severity-edge.severity-edge-ok {
+  border-left-width: 1px;
+  border-left-color: var(--color-border);
+}
 .severity-edge.severity-edge-watch { border-left-color: var(--color-accent); }
 .severity-edge.severity-edge-amber { border-left-color: var(--color-warning); }
 .severity-edge.severity-edge-red   { border-left-color: var(--color-danger); }
