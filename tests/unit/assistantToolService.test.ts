@@ -136,14 +136,26 @@ describe("list_assets — acquired date and warranty", () => {
     expect((r.data as any).rows[0]).toMatchObject({ acquiredAt: "2019-03-01T00:00:00.000Z", purchaseOrder: "PO-7" });
   });
 
-  it("filters on acquired / warranty dates and sorts oldest first with undated assets last", async () => {
-    await runAssistantTool("list_assets", JSON.stringify({ acquiredBefore: "2022-01-01", warrantyExpiresAfter: "2026-01-01", sortBy: "acquiredAt", order: "asc" }), { req, maxRows: 10 });
+  it("filters on the Acquired date the page shows (entered, else first seen) and on warranty", async () => {
+    await runAssistantTool("list_assets", JSON.stringify({ acquiredBefore: "2022-01-01", warrantyExpiresAfter: "2026-01-01" }), { req, maxRows: 10 });
     const call = h.prisma.asset.findMany.mock.calls[0][0];
     expect(call.where.AND).toEqual(expect.arrayContaining([
-      { acquiredAt: { lt: new Date("2022-01-01") } },
+      { OR: [{ acquiredAt: { lt: new Date("2022-01-01") } }, { acquiredAt: null, createdAt: { lt: new Date("2022-01-01") } }] },
       { warrantyExpiry: { gte: new Date("2026-01-01") } },
     ]));
-    expect(call.orderBy).toEqual({ acquiredAt: { sort: "asc", nulls: "last" } });
+  });
+
+  it("sorts by that Acquired date, an entered date and a first-seen one interleaved", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([
+      { hostname: "c", acquiredAt: null, createdAt: new Date("2024-06-01T00:00:00Z") },
+      { hostname: "a", acquiredAt: new Date("2019-01-01T00:00:00Z"), createdAt: new Date("2025-01-01T00:00:00Z") },
+      { hostname: "b", acquiredAt: null, createdAt: new Date("2021-01-01T00:00:00Z") },
+    ]);
+    const r = await runAssistantTool("list_assets", JSON.stringify({ sortBy: "acquiredAt", order: "asc", limit: 2 }), { req, maxRows: 10 });
+    const rows = (r.data as any).rows;
+    expect(rows.map((x: any) => x.hostname)).toEqual(["a", "b"]);
+    expect(rows.map((x: any) => x.acquiredFrom)).toEqual(["entered", "first seen by Polaris"]);
+    expect((r.data as any).total).toBe(3);
   });
 
   it("refuses a date it cannot read", async () => {
@@ -408,5 +420,17 @@ describe("an address a device HELD is a hit, and says so (seen live 2026-10-09)"
     const select = h.prisma.asset.findFirst.mock.calls[0][0].select;
     expect(select).toMatchObject({ acquiredAt: true, warrantyExpiry: true, purchaseOrder: true });
     expect((r.data as any).acquiredAt).toBe("2022-11-15T00:00:00.000Z");
+    expect((r.data as any).acquiredFrom).toBe("entered");
+  });
+
+  it("get_asset with no entered date reports the Acquired the page shows — first seen — and says so (seen live 2026-10-27)", async () => {
+    h.prisma.asset.findFirst.mockResolvedValueOnce({
+      id: "a1", hostname: "ONEIDA-61F-1", tags: [], discoveredByIntegration: null, ipHistory: [],
+      acquiredAt: null, createdAt: new Date("2025-01-22T15:00:00Z"), warrantyExpiry: null, purchaseOrder: null,
+    });
+    h.listNotifications.mockResolvedValueOnce({ notifications: [], total: 0 });
+    const r = await runAssistantTool("get_asset", '{"hostname":"ONEIDA-61F-1"}', { req, maxRows: 25 });
+    expect((r.data as any).acquiredAt).toBe("2025-01-22T15:00:00.000Z");
+    expect((r.data as any).acquiredFrom).toBe("first seen by Polaris");
   });
 });

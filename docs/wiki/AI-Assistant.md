@@ -244,6 +244,9 @@ moment to prepare; the card says *Preparing PDF…* until it is ready.
 Asset lookups and reports carry each device's **Acquired** date, **warranty
 expiry** and **purchase order** from its General tab, so you can ask for
 *"firewalls whose warranty expires before 2027"* or *"the 20 oldest switches"*.
+The Acquired date is the one the General tab shows: the date entered on the
+asset, or — when none was entered — the day Polaris first saw it. The assistant
+says which it is, and a report has an **Acquired from** column for the same.
 
 ### Help questions
 
