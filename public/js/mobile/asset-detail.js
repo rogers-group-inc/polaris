@@ -433,7 +433,10 @@
     // Chrome/Edge carry "Chrome/" in the UA; iOS Chrome is "CriOS" and IS
     // WebKit, so it correctly falls into the double-capture branch.
     var isWebKit = /AppleWebKit/.test(navigator.userAgent) && !/Chrome\//.test(navigator.userAgent);
-    function capture() { return htmlToImage.toCanvas(host, { pixelRatio: scale, backgroundColor: bg }); }
+    // The body fades out under the pinned header while scrolled (a mask,
+    // tabs.js sheetFade) — the picture is of the whole body, unmasked.
+    var unmask = { maskImage: "none", webkitMaskImage: "none" };
+    function capture() { return htmlToImage.toCanvas(host, { pixelRatio: scale, backgroundColor: bg, style: unmask }); }
 
     (isWebKit ? capture().then(capture) : capture()).then(function (cap) {
       var pad = 16;
@@ -540,6 +543,40 @@
         + '</div>';
     });
   }
+
+  // ─── Asset names are tap targets ────────────────────────────────────────
+  // Wherever the phone names ANOTHER asset and knows its id, the name is a
+  // link that opens that asset's sheet: linkHtml draws it, and one capture-
+  // phase listener on the document opens it — so a surface only has to draw
+  // the link, and a row handler underneath (a collapsible IP row, a table
+  // group head) never sees the tap. A sheet stacked ABOVE the asset sheet
+  // (the generic .sheet at 1000/1001: interface, table, site, topology node,
+  // alerts) would hide the sheet being opened, so it is closed first through
+  // its own Close button — every pinned sheet header carries one — which runs
+  // that sheet's own teardown. The one sheet BELOW it (the network sheet,
+  // 891) stays, as its "Open asset" button leaves it. The current asset's own
+  // name (header, General, confirm sheets) is never drawn as a link.
+  function linkHtml(id, name) {
+    if (!id) return escapeHtml(name);
+    return '<a href="#" class="asset-link" data-open-asset="' + escapeHtml(id) + '">' + escapeHtml(name) + '</a>';
+  }
+
+  function onAssetLinkClick(e) {
+    var link = e.target && e.target.closest ? e.target.closest("[data-open-asset]") : null;
+    if (!link) return;
+    var id = link.getAttribute("data-open-asset");
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var over = link.closest(".sheet");
+    if (over && over.id !== "asset-sheet" && !over.classList.contains("network-sheet")) {
+      var closeBtn = over.querySelector('[aria-label="Close"]');
+      if (closeBtn) closeBtn.click();
+      else over.remove();
+    }
+    open(id);
+  }
+  document.addEventListener("click", onAssetLinkClick, true);
 
   // Fetch the asset row and paint the whole sheet from it. Shared by open()
   // and reloadSheet() so a refresh shows exactly what a fresh open would.
@@ -1424,7 +1461,7 @@
         return ''
           + '<div class="card-filled" style="padding:12px;margin-bottom:8px;">'
           + '  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
-          + '    <div style="min-width:0;font-weight:500;">' + escapeHtml(headline) + '</div>'
+          + '    <div style="min-width:0;font-weight:500;">' + linkHtml(n.matchedAsset && n.matchedAsset.id, headline) + '</div>'
           + '    <div style="font-size:12px;">' + portBit + '</div>'
           + '  </div>'
           + (metaBits.length ? '  <div class="muted" style="font-size:12px;margin-top:4px;">' + metaBits.join(" · ") + '</div>' : '')
@@ -2067,16 +2104,9 @@
     PolarisTabs.attachSwipeToDismiss(sheet, closeTableSheet);
 
     // One delegated listener for the whole body: group headers expand and
-    // collapse in place, and a matched device swaps the asset sheet to it.
+    // collapse in place. A matched device's link is the document-level
+    // asset-link listener's (onAssetLinkClick), which closes this sheet first.
     sheet.addEventListener("click", function (e) {
-      var link = e.target.closest("[data-open-asset]");
-      if (link) {
-        e.preventDefault();
-        var target = link.getAttribute("data-open-asset");
-        closeTableSheet();
-        open(target);
-        return;
-      }
       var head = e.target.closest(".tbl-group-head");
       if (head) {
         var grp = head.parentNode;
@@ -2117,8 +2147,7 @@
   // The matched-device cell shared by all three tables.
   function matchedDeviceHtml(m) {
     if (!m || !m.id) return "";
-    return '<a href="#" data-open-asset="' + escapeHtml(m.id) + '" style="color:var(--md-primary);text-decoration:none;">'
-      + escapeHtml(m.hostname || m.ipAddress || m.id) + '</a>';
+    return linkHtml(m.id, m.hostname || m.ipAddress || m.id);
   }
 
   // A collapsible group: tappable header (chevron + mono key + summary),
@@ -2830,13 +2859,14 @@
     // An HA secondary (business rule 129): its cluster is upgraded from the primary.
     if (fw.state === "cluster-member") {
       var primaryName = fw.clusterPrimary && fw.clusterPrimary.hostname ? fw.clusterPrimary.hostname : "its primary";
+      var primaryId = fw.clusterPrimary && fw.clusterPrimary.hostname ? fw.clusterPrimary.assetId : null;
       return '<div class="muted" id="asset-fw-cluster" style="font-size:12px;margin-top:4px;">HA secondary — '
-        + (fw.activeRun ? "the cluster is upgrading now, from " : "upgraded with its cluster from ") + escapeHtml(primaryName) + '</div>';
+        + (fw.activeRun ? "the cluster is upgrading now, from " : "upgraded with its cluster from ") + linkHtml(primaryId, primaryName) + '</div>';
     }
     // In a pending / running GROUP upgrade (business rule 122): the group
     // flashes it, and the group is managed from the desktop Assets page.
     if (fw.group) {
-      return '<div class="muted" id="asset-fw-group" style="font-size:12px;margin-top:4px;">Part of a group upgrade on ' + escapeHtml(fw.group.gateName) + ' — '
+      return '<div class="muted" id="asset-fw-group" style="font-size:12px;margin-top:4px;">Part of a group upgrade on ' + linkHtml(fw.group.gateAssetId, fw.group.gateName) + ' — '
         + (fw.group.status === "running" ? "running now" : escapeHtml(fwWhenText(fw.group.scheduledFor))) + '</div>';
     }
     var out = "";
@@ -3640,6 +3670,8 @@
 
   window.PolarisAssetDetail = {
     open: open,
+    // Another asset's name as a link that opens its sheet (see onAssetLinkClick).
+    linkHtml: linkHtml,
     // Pure firmware-row pieces, for the tests.
     _fw: { fwProgressText: fwProgressText, fwSlotHtml: fwSlotHtml, fwResultHtml: fwResultHtml, fwBadgeHtml: fwBadgeHtml },
     // Pure uptime / reboot pieces, for the tests.
