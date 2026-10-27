@@ -165,14 +165,17 @@ function _setCpuHiddenCores(container, hidden) {
 }
 
 // Per-asset memory forecast-overlay visibility — the storage pref below, one
-// level up (memory has no mount dimension). Default on; absent entry = on.
+// level up (memory has no mount dimension). Default OFF (operator decision
+// 2026-10-27): absent entry = off, so the dashed projection appears only on an
+// asset someone switched it on for. Both choices are stored, so an asset
+// toggled either way before the default flipped keeps that choice.
 function _getMemoryForecastVisible(assetId) {
-  if (!currentUsername || !assetId) return true;
+  if (!currentUsername || !assetId) return false;
   try {
     var raw = localStorage.getItem("polaris-prefs-memory-forecast-" + currentUsername);
     var p = raw ? JSON.parse(raw) : null;
-    return !(p && p[assetId] === false);
-  } catch (_) { return true; }
+    return !!(p && p[assetId] === true);
+  } catch (_) { return false; }
 }
 function _setMemoryForecastVisible(assetId, visible) {
   if (!currentUsername || !assetId) return;
@@ -14457,7 +14460,7 @@ function _renderMemForecastBar(assetId, combined) {
   bar.innerHTML =
     '<div>' + (combined ? '<span style="color:var(--color-text-secondary)">Memory — </span>' : '') + _memForecastHeadlineHTML(fc) + '</div>' +
     (canDraw
-      ? '<button class="btn btn-sm ' + (on ? 'btn-primary' : 'btn-secondary') + '" data-mem-forecast-toggle title="Per asset; default on">' +
+      ? '<button class="btn btn-sm ' + (on ? 'btn-primary' : 'btn-secondary') + '" data-mem-forecast-toggle title="Per asset; default off">' +
           (on ? '✓ Forecast' : 'Forecast') + '</button>'
       : '');
   var btn = bar.querySelector("[data-mem-forecast-toggle]");
