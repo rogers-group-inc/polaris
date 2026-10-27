@@ -48,12 +48,18 @@ const ALERT_SEVERITIES = ["notice", "informational", "warning", "serious", "crit
 
 export interface ReportColumn { key: string; label: string }
 
+/** The downloads a report card offers. */
+export const REPORT_FORMATS = ["csv", "pdf", "md"] as const;
+export type ReportFormat = (typeof REPORT_FORMATS)[number];
+
 export interface AssistantReportPayload {
   title: string;
   columns: ReportColumn[];
   rows: Array<Record<string, unknown>>;
   rowCount: number;
   truncated: boolean;
+  /** The downloads to offer — only the ones the user asked for. Absent or empty = all three. */
+  formats?: ReportFormat[];
 }
 
 export interface ToolContext {
@@ -62,6 +68,11 @@ export interface ToolContext {
   maxRows: number;
   /** Called when create_report produces a table for the client. */
   onReport?: (report: AssistantReportPayload) => void;
+  /**
+   * The download formats the user's own message named ("a PDF of…"). They win
+   * over create_report's `formats` argument, which a small model often omits.
+   */
+  reportFormats?: ReportFormat[];
 }
 
 export interface ToolResult {
@@ -278,12 +289,18 @@ const ASSET_FILTER_ARGS = {
   network: z.string().max(60).optional(),
   subnet: z.string().max(60).optional(), // older spelling of `network`, still accepted
   notSeenForHours: z.number().positive().max(24 * 3650).optional(),
+  // The General tab's lifecycle dates, as ISO dates ("2022-01-01").
+  acquiredBefore: z.string().max(40).optional(),
+  acquiredAfter: z.string().max(40).optional(),
+  warrantyExpiresBefore: z.string().max(40).optional(),
+  warrantyExpiresAfter: z.string().max(40).optional(),
 };
 const AssetFilterArgs = z.object(ASSET_FILTER_ARGS);
 
 const AssetArgs = z.object({
   ...ASSET_FILTER_ARGS,
-  sortBy: z.enum(["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress"]).optional(),
+  sortBy: z.enum(["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry"]).optional(),
+  order: z.enum(["asc", "desc"]).optional(),
   limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
 });
 
@@ -292,6 +309,9 @@ const ASSET_TOOL_SELECT = {
   manufacturer: true, model: true, serialNumber: true, os: true, osVersion: true,
   location: true, learnedLocation: true, tags: true, monitored: true, monitorStatus: true,
   monitorStatusChangedAt: true, lastSeen: true, lastResponseTimeMs: true, assignedTo: true, department: true,
+  // The General tab's lifecycle rows — without them "acquired before 2022" or
+  // "oldest switches" had nothing to read.
+  acquiredAt: true, warrantyExpiry: true, purchaseOrder: true,
 } as const;
 
 /**
@@ -329,6 +349,10 @@ const ASSET_FILTER_PROPS = {
   os: { type: "string" },
   network: { type: "string", description: "A network CIDR, e.g. 10.20.0.0/16" },
   notSeenForHours: { type: "number", description: "Only assets not seen on the network for at least this many hours" },
+  acquiredBefore: { type: "string", description: "Acquired (purchase) date before this ISO date, e.g. \"2022-01-01\"" },
+  acquiredAfter: { type: "string", description: "Acquired (purchase) date on or after this ISO date" },
+  warrantyExpiresBefore: { type: "string", description: "Warranty expires before this ISO date — use for \"warranty expired\" / \"expiring soon\"" },
+  warrantyExpiresAfter: { type: "string", description: "Warranty expires on or after this ISO date" },
 } as const;
 
 /**
@@ -396,6 +420,16 @@ async function assetFilterWhere(
   if (a.model) and.push({ model: { contains: a.model, mode: "insensitive" } });
   if (a.os) and.push({ OR: [{ os: { contains: a.os, mode: "insensitive" } }, { osVersion: { contains: a.os, mode: "insensitive" } }] });
   if (a.notSeenForHours) and.push({ lastSeen: { lt: new Date(Date.now() - a.notSeenForHours * 3_600_000) } });
+  const dateBounds: Array<[string | undefined, "acquiredAt" | "warrantyExpiry", "lt" | "gte"]> = [
+    [a.acquiredBefore, "acquiredAt", "lt"], [a.acquiredAfter, "acquiredAt", "gte"],
+    [a.warrantyExpiresBefore, "warrantyExpiry", "lt"], [a.warrantyExpiresAfter, "warrantyExpiry", "gte"],
+  ];
+  for (const [value, field, op] of dateBounds) {
+    if (!value) continue;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return { ok: false, data: { error: `"${value}" is not a date — use an ISO date like 2022-01-01` } };
+    and.push({ [field]: { [op]: d } });
+  }
   let subnet: string | undefined;
   const cidrArg = a.network ?? a.subnet;
   if (cidrArg) {
@@ -420,12 +454,16 @@ const listAssetsTool: ListToolDef = {
     "assetType values include firewall, switch, access_point, server, workstation, printer, other. " +
     "network filters to assets whose IP is inside a network CIDR. Decommissioned assets are left out unless " +
     "status includes \"decommissioned\" — pass it only when the person asks about decommissioned assets. " +
+    "Each row carries acquiredAt (the Acquired date), warrantyExpiry and purchaseOrder; filter on them with " +
+    "acquiredBefore / acquiredAfter / warrantyExpiresBefore / warrantyExpiresAfter and sort with sortBy " +
+    "acquiredAt or warrantyExpiry (order asc = oldest / soonest first). " +
     "Carries no CPU or memory figures — use telemetry_summary for those.",
   parameters: {
     type: "object",
     properties: {
       ...ASSET_FILTER_PROPS,
-      sortBy: { type: "string", enum: ["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress"] },
+      sortBy: { type: "string", enum: ["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry"] },
+      order: { type: "string", enum: ["asc", "desc"], description: "Sort direction; dates default to newest first" },
       limit: { type: "number" },
     },
   },
@@ -434,7 +472,8 @@ const listAssetsTool: ListToolDef = {
     { key: "status", label: "Status" }, { key: "monitorStatus", label: "Monitor" }, { key: "manufacturer", label: "Manufacturer" },
     { key: "model", label: "Model" }, { key: "serialNumber", label: "Serial" }, { key: "osVersion", label: "OS version" },
     { key: "location", label: "Location" }, { key: "tags", label: "Tags" }, { key: "lastSeen", label: "Last seen" },
-    { key: "monitorStatusChangedAt", label: "Status changed" },
+    { key: "monitorStatusChangedAt", label: "Status changed" }, { key: "acquiredAt", label: "Acquired" },
+    { key: "warrantyExpiry", label: "Warranty expires" }, { key: "purchaseOrder", label: "Purchase order" },
   ],
   async rows(args, ctx, cap) {
     if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
@@ -444,7 +483,11 @@ const listAssetsTool: ListToolDef = {
     const filter = await assetFilterWhere(a, ctx.req);
     if ("ok" in filter) return filter;
     const { where, subnet } = filter;
-    const orderBy = a.sortBy ? { [a.sortBy]: a.sortBy === "hostname" || a.sortBy === "ipAddress" ? "asc" : "desc" } : { hostname: "asc" };
+    const dir = a.order ?? (a.sortBy === "hostname" || a.sortBy === "ipAddress" ? "asc" : "desc");
+    // Most assets carry no Acquired / warranty date: those sort last either way.
+    const orderBy = !a.sortBy ? { hostname: "asc" }
+      : a.sortBy === "acquiredAt" || a.sortBy === "warrantyExpiry" ? { [a.sortBy]: { sort: dir, nulls: "last" } }
+      : { [a.sortBy]: dir };
     const take = Math.min(a.limit ?? cap, cap);
     if (subnet) {
       // CIDR containment is not a Prisma predicate: narrow in SQL first, then
@@ -1501,9 +1544,6 @@ const getAssetTool: ToolDef = {
       select: {
         ...ASSET_TOOL_SELECT,
         dnsName: true, description: true, assetTag: true, createdAt: true,
-        // The General tab's lifecycle rows — without them the model reads a
-        // device with an Acquired date as having none.
-        acquiredAt: true, warrantyExpiry: true, purchaseOrder: true,
         lastMonitorAt: true, dependencySuppressed: true, maintenanceReturnStatus: true,
         discoveredByIntegration: { select: { name: true, type: true } },
         // Every address the device has held (primary, secondary, WAN) — the
@@ -1905,6 +1945,12 @@ const ReportArgs = z.object({
   source: z.enum(REPORT_SOURCE_NAMES),
   args: z.record(z.unknown()).optional(),
   columns: z.array(z.string().max(60)).max(30).optional(),
+  formats: z.preprocess((v) => {
+    if (v == null || v === "") return undefined;
+    const list = Array.isArray(v) ? v : String(v).split(",");
+    // "markdown" is what a model writes as often as "md".
+    return Array.from(new Set(list.map((f) => String(f).trim().toLowerCase()).map((f) => (f === "markdown" ? "md" : f))));
+  }, z.array(z.enum(REPORT_FORMATS)).max(3).optional()),
 });
 
 const createReportTool: ToolDef = {
@@ -1922,11 +1968,15 @@ const createReportTool: ToolDef = {
       args: { type: "object", description: "The same filter arguments the source tool accepts" },
       columns: {
         type: "array", items: { type: "string" },
-        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt. " +
+        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt, acquiredAt, warrantyExpiry, purchaseOrder. " +
           "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window. " +
           "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt. " +
           "path_check_summary: check, kind, target, source, availabilityPct, avgLatencyMs, maxLatencyMs, samples, lastOk, lastError, lastFailAt, lastSampleAt, window. " +
           "interface_summary: hostname, interface, description, state, speedMbps, vlan, poe, avgInMbps, avgOutMbps, peakInMbps, peakOutMbps, avgUtilPct, peakUtilPct, inErrors, outErrors, history, window",
+      },
+      formats: {
+        type: "array", items: { type: "string", enum: [...REPORT_FORMATS] },
+        description: "Only the download formats the user asked for, e.g. [\"pdf\"]. Omit when they named none — all three are offered.",
       },
     },
     required: ["title", "source"],
@@ -1943,12 +1993,14 @@ const createReportTool: ToolDef = {
       const picked = tool.columns.filter((c) => wanted.has(c.key));
       if (picked.length) columns = picked;
     }
+    const formats = ctx.reportFormats?.length ? ctx.reportFormats : p.data.formats;
     const report: AssistantReportPayload = {
       title: p.data.title,
       columns,
       rows: res.rows.map((r) => Object.fromEntries(columns.map((c) => [c.key, r[c.key] ?? null]))),
       rowCount: res.rows.length,
       truncated: res.total > res.rows.length,
+      ...(formats?.length ? { formats } : {}),
     };
     ctx.onReport?.(report);
     return {
@@ -1960,6 +2012,7 @@ const createReportTool: ToolDef = {
         totalMatching: res.total,
         truncated: report.truncated,
         columns: columns.map((c) => c.label),
+        downloads: (report.formats ?? REPORT_FORMATS).map((f) => (f === "md" ? "Markdown" : f.toUpperCase())),
         // The model never sees the rows — only this summary — so any table it
         // writes afterwards would be invented. The chat service strips tables
         // from text after a report regardless (stripMarkdownTables); this says why.

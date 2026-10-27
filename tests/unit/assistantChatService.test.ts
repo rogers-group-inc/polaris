@@ -75,7 +75,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
-  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, asksHowTo, sanitizeAnswerLinks,
+  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
   pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS,
 } from "../../src/services/assistantChatService.js";
@@ -480,6 +480,13 @@ describe("report intent", () => {
     expect(reportTitleFromQuestion("give me a report on the network utilizations")).toBe("Network utilizations");
     expect(reportTitleFromQuestion("Create a downloadable report: switches down in the last 24h")).toBe("Switches down in the last 24h");
     expect(reportTitleFromQuestion("report")).toBe("Report");
+    expect(reportTitleFromQuestion("create a pdf report of switches acquired before 2022")).toBe("Switches acquired before 2022");
+  });
+
+  it("reads the download formats the question names", () => {
+    expect(reportFormatsFromQuestion("give me a PDF of the switches")).toEqual(["pdf"]);
+    expect(reportFormatsFromQuestion("export the firewalls to excel and markdown")).toEqual(["csv", "md"]);
+    expect(reportFormatsFromQuestion("report of the switches")).toEqual([]);
   });
 });
 

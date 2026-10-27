@@ -51,14 +51,22 @@
     return '<span class="chat-chip' + cls + '">' + escapeHtml(t.label || t.name) + '</span>';
   }
 
+  // The phone has no PDF writer: a report asked for as a PDF alone offers
+  // both of the phone's downloads and says where the PDF is.
   function reportHTML(r, ri, mi) {
+    var asked = r.formats || [];
+    var kinds = asked.filter(function (f) { return f === "csv" || f === "md"; });
+    var pdfOnly = !kinds.length && asked.indexOf("pdf") !== -1;
+    if (!kinds.length) kinds = ["csv", "md"];
     return ''
       + '<div class="chat-report">'
       + '  <div class="chat-report-title">' + escapeHtml(r.title || "Report") + '</div>'
-      + '  <div class="chat-report-meta">' + (r.rowCount | 0) + ' row' + (r.rowCount === 1 ? '' : 's') + (r.truncated ? ' · capped' : '') + '</div>'
+      + '  <div class="chat-report-meta">' + (r.rowCount | 0) + ' row' + (r.rowCount === 1 ? '' : 's') + (r.truncated ? ' · capped' : '')
+      + (pdfOnly ? ' · PDF download is on the desktop' : '') + '</div>'
       + '  <div class="chat-report-actions">'
-      + '    <button class="btn-tonal" data-dl="csv" data-m="' + mi + '" data-i="' + ri + '">CSV</button>'
-      + '    <button class="btn-tonal" data-dl="md" data-m="' + mi + '" data-i="' + ri + '">Markdown</button>'
+      + kinds.map(function (f) {
+          return '    <button class="btn-tonal" data-dl="' + f + '" data-m="' + mi + '" data-i="' + ri + '">' + (f === "csv" ? "CSV" : "Markdown") + '</button>';
+        }).join("")
       + '  </div>'
       + '</div>';
   }

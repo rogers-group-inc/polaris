@@ -237,6 +237,14 @@ runs the query itself (up to **5,000 rows**), so the rows are an extract from th
 database, never typed by the model. The report is saved with the conversation:
 reopening it later downloads the same figures you saw then.
 
+Name a format and you get only that one: *"a PDF of the switches acquired
+before 2022"* shows just the **PDF** button. The first PDF in a session takes a
+moment to prepare; the card says *Preparing PDF…* until it is ready.
+
+Asset lookups and reports carry each device's **Acquired** date, **warranty
+expiry** and **purchase order** from its General tab, so you can ask for
+*"firewalls whose warranty expires before 2027"* or *"the 20 oldest switches"*.
+
 ### Help questions
 
 Questions about using or configuring Polaris are answered from this wiki — the

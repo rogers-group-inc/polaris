@@ -31,7 +31,8 @@ page you were on.
 
 **Chat** is the same assistant as the desktop's chat
 button: the same saved conversations, lookups made with your own permissions,
-reports to download as CSV or Markdown, **History** and **New** in its top bar,
+reports to download as CSV or Markdown (a report asked for as a PDF offers
+both and points you to the desktop for the PDF), **History** and **New** in its top bar,
 and the same fresh chat after the integration's idle time (`/resume` goes back).
 Opening Chat continues the conversation you were just having on the desktop,
 if you used it within that idle time (30 minutes unless the integration says otherwise).

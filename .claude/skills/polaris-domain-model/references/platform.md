@@ -113,6 +113,7 @@ AssistantReport                 -- A downloadable table the create_report tool b
   rows        Json              -- [{ [key]: value }] read from the DB, never from model text; ≤ 5000
   rowCount    Int
   truncated   Boolean           -- more rows matched than the cap
+  formats     String[]          -- downloads the card offers (csv / pdf / md): the ones the user asked for; empty = all three (every pre-2026-10-27 row)
   generatedAt DateTime
   @@index([messageId]); @@map("assistant_reports")
 

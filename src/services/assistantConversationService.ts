@@ -188,7 +188,7 @@ export async function getConversation(userId: string, id: string) {
           images: { orderBy: { position: "asc" }, select: { id: true, mimeType: true } },
           reports: {
             orderBy: { generatedAt: "asc" },
-            select: { id: true, title: true, columns: true, rows: true, rowCount: true, truncated: true, generatedAt: true },
+            select: { id: true, title: true, columns: true, rows: true, rowCount: true, truncated: true, formats: true, generatedAt: true },
           },
         },
       },
@@ -343,6 +343,7 @@ export async function finishTurn(
         rows: r.rows as never,
         rowCount: r.rowCount,
         truncated: r.truncated,
+        formats: r.formats ?? [],
       },
       select: { id: true },
     });

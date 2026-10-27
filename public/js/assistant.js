@@ -617,15 +617,42 @@
         "</tbody></table></div>"
       : '<div style="color:var(--color-text-tertiary)">No matching rows.</div>';
     var more = (r.rowCount > preview.length ? " · showing " + preview.length : "") + (cols.length < (r.columns || []).length ? " · " + (r.columns.length - cols.length) + " more columns in the download" : "");
+    var formats = reportFormats(r);
+    // The PDF writer loads on demand; until it has, the downloads wait behind
+    // one line rather than offering a PDF button that stalls on its first click.
+    var waitPdf = formats.indexOf("pdf") !== -1 && preparePdf() === "loading";
     return '<div class="asst-report">' +
       '<div class="asst-report-head"><strong>' + esc(r.title) + '</strong><span>' + r.rowCount + ' row' + (r.rowCount === 1 ? "" : "s") + (r.truncated ? " (capped)" : "") + '</span></div>' +
       table +
       (more ? '<div style="color:var(--color-text-tertiary);font-size:0.7rem;margin-top:3px">' + esc(more.replace(/^ · /, "")) + '</div>' : "") +
       '<div class="asst-report-actions">' +
-        '<button type="button" class="btn btn-sm btn-secondary" data-dl="csv" data-m="' + msgIdx + '" data-i="' + idx + '">CSV</button>' +
-        '<button type="button" class="btn btn-sm btn-secondary" data-dl="pdf" data-m="' + msgIdx + '" data-i="' + idx + '">PDF</button>' +
-        '<button type="button" class="btn btn-sm btn-secondary" data-dl="md" data-m="' + msgIdx + '" data-i="' + idx + '">Markdown</button>' +
+        (waitPdf
+          ? '<span class="asst-thinking">Preparing PDF…</span>'
+          : formats.map(function (f) {
+              return '<button type="button" class="btn btn-sm btn-secondary" data-dl="' + f + '" data-m="' + msgIdx + '" data-i="' + idx + '">' + REPORT_FORMAT_LABELS[f] + '</button>';
+            }).join("")) +
       '</div></div>';
+  }
+
+  var REPORT_FORMAT_LABELS = { csv: "CSV", pdf: "PDF", md: "Markdown" };
+
+  /** The downloads a report offers: the ones the user asked for, else all three. */
+  function reportFormats(r) {
+    var asked = (r.formats || []).filter(function (f) { return REPORT_FORMAT_LABELS[f]; });
+    return asked.length ? asked : ["csv", "pdf", "md"];
+  }
+
+  // "loading" until the PDF writer is in, then "ready" — or "failed", which
+  // shows the buttons anyway (a PDF click then says why it cannot).
+  function preparePdf() {
+    if (S.pdfState) return S.pdfState;
+    if (window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API && window.jspdf.jsPDF.API.autoTable) return (S.pdfState = "ready");
+    S.pdfState = "loading";
+    ensureJsPdf().then(function () { S.pdfState = "ready"; }, function () { S.pdfState = "failed"; }).then(function () {
+      if (!S.els || !S.els.body) return;
+      S.messages.forEach(function (m, i) { if (m.reports && m.reports.length) renderOne(i); });
+    });
+    return S.pdfState;
   }
 
   // The live line before the first word arrives. A thinking model can reason

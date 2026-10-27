@@ -206,6 +206,20 @@ describe("report downloads", () => {
     expect(md).toContain("| x\\|y |");
   });
 
+  it("offers only the formats asked for, and holds a PDF's buttons until the PDF writer has loaded", async () => {
+    const rep = (formats?: string[]) => ({ title: "T", columns: [{ key: "a", label: "A" }], rows: [{ a: "x" }], rowCount: 1, truncated: false, formats });
+    const kinds = (html: string) => [...html.matchAll(/data-dl="(\w+)"/g)].map((m) => m[1]);
+    expect(kinds(A._messageHTML({ role: "assistant", content: "", reports: [rep(["csv"])] }, 0, false))).toEqual(["csv"]);
+    // The first PDF report starts the load and waits behind one line…
+    const waiting = A._messageHTML({ role: "assistant", content: "", reports: [rep(["pdf"])] }, 0, false);
+    expect(waiting).toContain("Preparing PDF…");
+    expect(kinds(waiting)).toEqual([]);
+    // …and once the load settles (here it fails: no loader on this page) the button shows.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(kinds(A._messageHTML({ role: "assistant", content: "", reports: [rep(["pdf"])] }, 0, false))).toEqual(["pdf"]);
+    expect(kinds(A._messageHTML({ role: "assistant", content: "", reports: [rep()] }, 0, false))).toEqual(["csv", "pdf", "md"]);
+  });
+
   it("escapes backslashes before pipes, so an escaped pipe can't open a column", () => {
     const md = A._reportToMarkdown({ title: "T", columns: [{ key: "a", label: "A" }], rows: [{ a: "C:\\temp\\|x" }], rowCount: 1, truncated: false });
     expect(md).toContain("| C:\\\\temp\\\\\\|x |");
