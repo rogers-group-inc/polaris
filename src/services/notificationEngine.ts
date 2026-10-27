@@ -28,7 +28,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
 import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareRepositoryService.js";
-import { triggerSummary, triggerTokenParts } from "../utils/triggerSummary.js";
+import { triggerSummary, triggerTokenParts, pathConditionPhrase } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, chartTokenForMetric, CHART_TOKENS, type ChartToken } from "./alertChartService.js";
 import { PATH_GRAPH_METRICS } from "./alertPathGraphService.js";
@@ -2576,6 +2576,8 @@ function renderMessage(
   /** The contributions on a grouped alert — the default sentence then names
    *  the set and says how many, instead of naming one of them. */
   members?: AlertMember[] | null,
+  /** The alert's true size on a multi-device alert (spanCounts). */
+  counts?: SpanCounts | null,
 ): string {
   if (rule.messageTemplate && rule.messageTemplate.trim()) {
     const own = renderNotificationTemplate(rule.messageTemplate, ctx);
@@ -2607,14 +2609,23 @@ function renderMessage(
     // A whole-group alert: "<name>: 3 path checks · 80 devices — <host — check>, …".
     // The count rides in {dimension.suffix} when {asset} names something else.
     const countTag = DEVICE_COUNT_TAG.test(ctx["dimension.suffix"] ?? "") ? ctx["dimension.suffix"]! : "";
+    const list = renderMemberList(members);
     if (members.some((m) => m.group)) {
-      return `${ctx["rule"]}: ${ctx["asset"]}${countTag} — ${renderMemberList(members)}${dep}`;
+      // Every automation in it saying the same thing about its checks: say it —
+      // "3 path checks are down from 80 devices — <host — check>, …".
+      if (counts?.pathOnly && counts.condition && countTag) {
+        return `${ctx["asset"]} ${counts.checks === 1 ? counts.condition.one : counts.condition.many} from ${countTag.slice(3)} — ${list}${dep}`;
+      }
+      return `${ctx["rule"]}: ${ctx["asset"]}${countTag} — ${list}${dep}`;
     }
     // Split per path check: the check is the subject, named once — and it is
-    // {asset} there, so the count is the subject tag.
+    // {asset} there, so the count is the subject tag. The sentence says what
+    // is wrong with it: "Salesforce HTTPS is down from 3 devices — …".
     const component = members.find((m) => m.component)?.component;
+    const phrase = component ? pathConditionPhrase(rule.trigger as never) : null;
+    if (component && phrase && countTag) return `${component} ${phrase} from ${countTag.slice(3)} — ${list}${dep}`;
     const devices = component ? countTag.slice(3) : ctx["asset"];
-    return `${rule.name}${component ? ` — ${component}` : ""}: ${devices} — ${renderMemberList(members)}${dep}`;
+    return `${rule.name}${component ? ` — ${component}` : ""}: ${devices} — ${list}${dep}`;
   }
   if (members?.length) {
     const active = activeMembers(members);
@@ -4703,17 +4714,26 @@ async function spanCounts(
   ];
   const ruleIds = [...new Set(all.map((c) => c.ruleId))];
   const pathRules = new Set<string>(isPathMetric(ruleMetricOf(rule.trigger)) ? [rule.id] : []);
+  // What each automation's condition says about a check — the default message
+  // says it once when they all agree ("3 path checks are down").
+  const phrases = new Set<string | null>(all.length ? [pathConditionPhrase(rule.trigger as never)] : []);
   const others = ruleIds.filter((id) => id !== rule.id);
   if (others.length) {
     const rs = await prisma.notificationRule.findMany({ where: { id: { in: others } }, select: { id: true, trigger: true } });
-    for (const r of rs) if (isPathMetric(ruleMetricOf(r.trigger as unknown as Trigger))) pathRules.add(r.id);
+    for (const r of rs) {
+      const t = r.trigger as unknown as Trigger;
+      if (isPathMetric(ruleMetricOf(t))) pathRules.add(r.id);
+      phrases.add(pathConditionPhrase(t as never));
+    }
   }
   const path = all.filter((c) => pathRules.has(c.ruleId));
+  const shared = phrases.size === 1 ? [...phrases][0] : null;
   return {
     devices: new Set(all.map((c) => c.assetId)).size,
     checks: new Set(path.map((c) => c.key)).size,
     automations: ruleIds.length,
     pathOnly: all.length > 0 && path.length === all.length,
+    condition: shared ? { one: shared, many: pathConditionPhrase(rule.trigger as never, true)! } : null,
   };
 }
 
@@ -5091,7 +5111,7 @@ async function buildGroupContext(
   applyFollowUpPolicy(parts, rule, severity);
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   await applySensorUnitToSummary(rule, lead.reading, ctx);
-  ctx["message"] = renderMessage(rule, lead.reading, ctx, members);
+  ctx["message"] = renderMessage(rule, lead.reading, ctx, members, counts);
   return ctx;
 }
 
@@ -5584,12 +5604,14 @@ async function reconcileGroupSeverity(
   const increased = severityRank(groupSev) > severityRank(row.severity);
   const tier = tierForSeverity(rule, groupSev);
   const detail = groupWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
-  const parts = readingContextParts(rule, reading, now, undefined, members);
+  // A multi-device alert's true size, as at fire (the members stop at 64).
+  const counts = members.some((m) => m.assetId) ? await spanCounts(rule, notificationId, []) : null;
+  const parts = readingContextParts(rule, reading, now, undefined, members, counts);
   parts.severity = groupSev;
   applyFollowUpPolicy(parts, rule, groupSev);
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
   await applySensorUnitToSummary(rule, reading, ctx);
-  const message = renderMessage(rule, reading, ctx, members);
+  const message = renderMessage(rule, reading, ctx, members, counts);
   ctx["message"] = message;
 
   await prisma.notification.updateMany({
@@ -5980,12 +6002,19 @@ function regroupedMessage(rule: DbRule, members: AlertMember[], counts: SpanCoun
   const subnet = members.find((m) => m.subnet)?.subnet;
   const component = members.find((m) => m.component)?.component;
   const group = members.find((m) => m.group)?.group;
+  const devices = countNoun(counts?.devices ?? new Set(active.map((m) => m.assetId)).size, "device");
   if (group && counts) {
-    // A whole-group alert names its true size, which the capped list cannot.
+    // A whole-group alert names its true size, which the capped list cannot —
+    // and says what is wrong when every automation in it agrees (renderMessage).
     const what = wholeGroupSubject(counts);
+    if (counts.pathOnly && counts.condition) {
+      return `${what} ${counts.checks === 1 ? counts.condition.one : counts.condition.many} from ${devices} — ${list}`;
+    }
     const name = counts.automations > 1 ? group : rule.name;
     return `${name}: ${what ? `${what} · ` : ""}${countNoun(counts.devices, "device")} still affected — ${list}`;
   }
+  const phrase = component && members.some((m) => m.assetId) ? pathConditionPhrase(rule.trigger as never) : null;
+  if (component && phrase) return `${component} ${phrase} from ${devices} — ${list}`;
   const where = subnet ? `${subnet} — ` : component ? `${component} — ` : "";
   return `${rule.name}: ${where}${list}${count} still affected`;
 }

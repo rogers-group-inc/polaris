@@ -20,7 +20,7 @@
  * should read the same phrase in the email it sends.
  */
 
-import { METRIC_META, FIELD_META, CHANGE_TYPE_META, WINDOWED_RATIO_METRICS, FORECAST_HORIZON_METRICS, forecastDaysOf, probeLossWindowSec } from "../services/notificationTypes.js";
+import { METRIC_META, FIELD_META, CHANGE_TYPE_META, WINDOWED_RATIO_METRICS, FORECAST_HORIZON_METRICS, forecastDaysOf, probeLossWindowSec, isPathMetric } from "../services/notificationTypes.js";
 import { monitorStatusLabel } from "./monitorStatus.js";
 
 /** "5 minutes" / "1 hour" / "45 seconds" — mirrors the wizard's humanDuration. */
@@ -249,6 +249,44 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
     return `Memory${on} is projected to reach ${v}${unit ? ` ${unit}` : ""} within ${daysPhrase(forecastDaysOf(trigger))}`;
   }
   return `${subject} is ${v}${unit ? ` ${unit}` : ""}`;
+}
+
+/**
+ * What a Path Monitor automation's condition says about the CHECK, as the
+ * default message of a grouped path alert words it — the check is the subject
+ * and this is its verb: "Salesforce HTTPS is down from 3 devices".
+ *
+ *   pathOk firing on Unreachable   "is down"   (Reachable: "is up")
+ *   pathFailurePct                 "is failing (path failure rate above 20 %)"
+ *   any other path metric          "has path latency above 200 ms"
+ *
+ * `plural` is for a count of checks: "3 path checks are down". Null for a
+ * trigger that is not a path metric — the caller keeps its own wording.
+ */
+export function pathConditionPhrase(trigger: SummarizableTrigger, plural = false): string | null {
+  if (trigger.type !== "asset_metric" || !isPathMetric(trigger.metric)) return null;
+  const is = plural ? "are" : "is";
+  if (trigger.metric === "pathOk") return `${is} ${pathOkFiresOnFailure(trigger) ? "down" : "up"}`;
+  const { metricLabel, thresholdDisplay } = triggerTokenParts(trigger);
+  const condition = `${metricLabel.charAt(0).toLowerCase()}${metricLabel.slice(1)}${thresholdDisplay ? ` ${thresholdDisplay}` : ""}`;
+  if (trigger.metric === "pathFailurePct") return `${is} failing (${condition})`;
+  return `${plural ? "have" : "has"} ${condition}`;
+}
+
+/** Does a pathOk condition match a failed run (0)? The builder writes "== 0";
+ *  the other spellings of the same thing are read the same way. */
+function pathOkFiresOnFailure(trigger: SummarizableTrigger): boolean {
+  const t = Number(trigger.threshold === true ? 1 : trigger.threshold === false ? 0 : trigger.threshold);
+  if (!Number.isFinite(t)) return true;
+  switch (trigger.operator) {
+    case "==": return t === 0;
+    case "!=": return t !== 0;
+    case "<": return 0 < t;
+    case "<=": return 0 <= t;
+    case ">": return 0 > t;
+    case ">=": return 0 >= t;
+    default: return true;
+  }
 }
 
 /**

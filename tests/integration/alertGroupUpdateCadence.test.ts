@@ -205,7 +205,8 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     const members = erpAlert.members as unknown as AlertMember[];
     expect(members.map((m) => m.label).sort()).toEqual([`${HOST}-pc-01`, `${HOST}-pc-02`]);
     expect(erpAlert.assetHostname).toBe(`${NAME} rule — ${NAME} erp`);
-    expect(erpAlert.message).toContain(`${NAME} erp: 2 devices`);
+    // The default text says what is wrong with the check, not only where.
+    expect(erpAlert.message).toBe(`${NAME} erp is down from 2 devices — ${HOST}-pc-01, ${HOST}-pc-02`);
     // The subject names the check and counts the hosts — "[SERIOUS] <check> · 2 devices — <rule>".
     const ctx = erpAlert.templateCtx as Record<string, string>;
     expect(ctx["asset"]).toBe(`${NAME} erp`);
@@ -246,7 +247,7 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(ctx["asset"]).toBe("3 path checks");
     expect(ctx["dimension.suffix"]).toBe(" · 25 devices");
     expect(ctx["rule"]).toBe(`${NAME} rule`);
-    expect(alerts[0]!.message).toContain("3 path checks · 25 devices");
+    expect(alerts[0]!.message).toMatch(/^3 path checks are down from 25 devices — /);
     expect(await prisma.notificationRuleState.count({ where: { notificationId: alerts[0]!.id, state: "firing" } })).toBe(75);
 
     // One host recovers from everything: the counts drop with it.
@@ -257,6 +258,6 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     await evaluateAllNotificationRules();
     const after = await prisma.notification.findUniqueOrThrow({ where: { id: alerts[0]!.id } });
     expect((after.templateCtx as Record<string, string>)["dimension.suffix"]).toBe(" · 24 devices");
-    expect(after.message).toContain("24 devices still affected");
+    expect(after.message).toMatch(/^3 path checks are down from 24 devices — /);
   });
 });

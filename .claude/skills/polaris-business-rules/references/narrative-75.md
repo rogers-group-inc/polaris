@@ -591,6 +591,18 @@ same hosts mailed identical subjects. `{dimension}` still lists the hosts for th
 `readingContextParts` (fire) and `refreshMemberContext` (an update re-renders the stored
 context) must agree — the latter must NOT overwrite `{asset}` with the count on a split.
 
+**The default message says what is wrong (same day).** The default (blank-template) message of
+such a split read `Path check down — ERP HTTPS: 3 devices — <hosts>`, so whether it said "down"
+depended on what the operator had NAMED the automation. It now leads with the check and the
+condition's own meaning, `pathConditionPhrase(trigger)`: `ERP HTTPS is down from 3 devices —
+<hosts>` (pathOk on a failed run), `… is failing (path failure rate above 20 %) from …`, or
+`… has path latency above 200 ms from …`. A whole-group alert does the same when every
+contributing automation's phrase agrees (`SpanCounts.condition`): `3 path checks are down from 80
+devices — <host — check>, …`; mixed conditions keep `<name>: 3 path checks · 80 devices — …`.
+`renderMessage` (fire, severity change) and `regroupedMessage` (an update after a recovery) write
+the same sentence, so an update states the current size rather than "N still affected". An
+operator's own Alert text replaces all of this, as before; the email subject is unchanged.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.
