@@ -197,4 +197,12 @@ describe("row selection", () => {
     doc.body.dispatchEvent(new (win as any).KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
     expect(selected()).toEqual(ROWS);
   });
+
+  it("Ctrl+A with no table clicked yet selects the table that holds the selection", () => {
+    Object.defineProperty(doc.getElementById("tb"), "offsetParent", { get: () => doc.body });
+    // Selected some other way (a re-render, a right click) — no row was clicked.
+    (doc.querySelector("#r-c input") as any).checked = true;
+    doc.body.dispatchEvent(new (win as any).KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(selected()).toEqual(ROWS);
+  });
 });

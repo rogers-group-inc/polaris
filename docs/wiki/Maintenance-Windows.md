@@ -4,7 +4,7 @@ A maintenance window is how you tell Polaris *"we are working on this, do not
 report it"*.
 
 Gated by `maintenanceManagement`. Reached from **Assets → Maintenance**, from a
-selection's bulk bar, from a single device's edit modal (**Maintenance** tab),
+row's or a selection's right-click menu (**Maintenance…**), from a single device's edit modal (**Maintenance** tab),
 or from the **Active Maintenance** dashboard widget.
 
 ---
@@ -87,7 +87,7 @@ Two tabs:
 | **Schedules** | the list of what exists, with a link to the calendar on the Events page |
 
 A schedule selects devices either by a **filter** or by **explicit asset ids**
-(which is what the bulk bar pins), and states a recurrence.
+(which is what the Assets right-click menu pins), and states a recurrence.
 
 **Create Schedule** (or **Save Changes** while editing) and **Cancel Edit** sit
 bottom-right in the modal footer and show only on the Create Schedule tab; the

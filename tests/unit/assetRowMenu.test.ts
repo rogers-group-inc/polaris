@@ -24,6 +24,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Window } from "happy-dom";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -342,5 +343,121 @@ describe("_assetMenuItems", () => {
       withPerms(ma, qa);
       expect(labels(assetMenuItems(endpoint())).length).toBeGreaterThan(0);
     }
+  });
+
+  it("a right click's selection verbs sit as their own group before quarantine and delete", () => {
+    withPerms(true, true);
+    const items = (g._assetMenuItems as (a: AssetRow, extra: MenuItem[]) => MenuItem[])(
+      endpoint(), [{ label: "Tags…", onSelect: () => {} }]);
+    const l = labels(items);
+    expect(l.indexOf("Tags…")).toBeGreaterThan(l.indexOf("Edit…"));
+    expect(l.indexOf("Tags…")).toBeLessThan(l.indexOf("Quarantine…"));
+    expect(items[items.findIndex((i) => i.label === "Tags…") - 1]!.separator).toBe(true);
+  });
+});
+
+// The bulk bar is never shown: a right click on a row offers its verbs in the
+// row menu (`_assetsBulkMenuItems`), read off the bar's real markup so every
+// gate that hides or greys a bar button still decides the menu. Built against
+// the bar as assets.html ships it, so a renamed or added button is caught here.
+describe("_assetsBulkMenuItems — the selection's verbs in the row menu", () => {
+  const html = readFileSync(resolve(__dirname, "../../public/assets.html"), "utf8").replace(/\r\n/g, "\n");
+  const barStart = html.indexOf('<div id="assets-bulk-bar"');
+  const barHtml = html.slice(barStart, html.indexOf("\n      </div>", barStart) + "\n      </div>".length);
+  const constStart = assetsLines.findIndex((l) => l.startsWith("var _ASSETS_BULK_MENU = {"));
+  const constEnd = assetsLines.findIndex((l, i) => i > constStart && l === "};");
+
+  type Item = MenuItem & { heading?: string };
+  let win: InstanceType<typeof Window>;
+  let bar: HTMLElement;
+  let sub: { items: Item[]; opts: Record<string, unknown> } | null;
+  let build: (bar: unknown, anchor: unknown, at: unknown, single: boolean) => Item[];
+
+  beforeEach(() => {
+    win = new Window();
+    win.document.body.innerHTML = barHtml;
+    bar = win.document.getElementById("assets-bulk-bar") as unknown as HTMLElement;
+    // Type entries as _renderBulkTypeMenu draws them.
+    (win.document.getElementById("assets-bulk-type-menu") as unknown as HTMLElement).innerHTML =
+      '<div class="dropdown-heading">Change type</div><button type="button">Switch</button><button type="button">Server</button>';
+    sub = null;
+    g.showRowMenu = (_a: unknown, items: Item[], opts: Record<string, unknown>) => { sub = { items, opts }; };
+    g._assetsSelected = new Set(["a1", "a2", "a3"]);
+    (0, eval)(assetsLines.slice(constStart, constEnd + 1).join("\n"));
+    (0, eval)(fnSrc("_assetsBulkMenuItems"));
+    build = g._assetsBulkMenuItems;
+  });
+  const btn = (id: string) => win.document.getElementById(id) as unknown as HTMLButtonElement;
+  const actionable = (items: Item[]) => items.filter((i) => i.label).map((i) => i.label);
+
+  it("finds the bar in assets.html, never shown", () => {
+    expect(constStart).toBeGreaterThan(0);
+    expect(barStart).toBeGreaterThan(0);
+    expect(bar.style.display).toBe("none");
+  });
+
+  it("multi: offers every bar verb but Edit, grouped verbs / red / Clear selection", () => {
+    btn("assets-bulk-merge-btn").style.display = "";
+    btn("assets-bulk-quarantine-btn").style.display = "";
+    const items = build(bar, {}, { x: 1, y: 2 }, false);
+    expect(items[0]!.heading).toBe("3 selected");
+    expect(actionable(items)).toEqual([
+      "Compare…", "Merge…", "Change type…", "Change state…", "Monitoring…", "Tags…",
+      "Deploy agent…", "Maintenance…", "Upgrade firmware…",
+      "Quarantine…", "Delete…",
+      "Clear selection",
+    ]);
+    expect(items.filter((i) => i.separator)).toHaveLength(2);
+    expect(items.find((i) => i.label === "Delete…")!.danger).toBe(true);
+  });
+
+  it("multi: a greyed bar button stays, disabled, with the bar's reason", () => {
+    btn("assets-bulk-compare-btn").disabled = true;
+    btn("assets-bulk-compare-btn").title = "Compare supports up to 10 assets";
+    const cmp = build(bar, {}, {}, false).find((i) => i.label === "Compare…")!;
+    expect(cmp.disabled).toBe(true);
+    expect(cmp.title).toBe("Compare supports up to 10 assets");
+  });
+
+  it("a button the role gate hid (display:none on it or its wrapper) is not offered", () => {
+    btn("assets-bulk-delete-btn").style.display = "none";
+    (btn("assets-bulk-type-btn").parentElement as HTMLElement).style.display = "none";
+    const got = actionable(build(bar, {}, {}, false));
+    expect(got).not.toContain("Delete…");
+    expect(got).not.toContain("Change type…");
+  });
+
+  it("single: only the verbs that make sense for one asset and the row menu lacks", () => {
+    btn("assets-bulk-merge-btn").style.display = "";
+    btn("assets-bulk-quarantine-btn").style.display = "";
+    btn("assets-bulk-compare-btn").disabled = true;
+    btn("assets-bulk-firmware-btn").disabled = true; // a non-Fortinet asset
+    const items = build(bar, {}, {}, true);
+    expect(items.some((i) => i.heading)).toBe(false);
+    expect(actionable(items)).toEqual([
+      "Change type…", "Change state…", "Monitoring…", "Tags…", "Deploy agent…", "Maintenance…",
+    ]);
+  });
+
+  it("single: Upgrade firmware joins when the bar enables it (a Fortinet device)", () => {
+    btn("assets-bulk-firmware-btn").disabled = false;
+    expect(actionable(build(bar, {}, {}, true))).toContain("Upgrade firmware…");
+  });
+
+  it("a verb clicks its bar button; a dropdown opens its entries as a second menu at the same point", () => {
+    let tags = 0;
+    btn("assets-bulk-tags-btn").addEventListener("click", () => { tags++; });
+    const items = build(bar, {}, { x: 7, y: 9 }, false);
+    items.find((i) => i.label === "Tags…")!.onSelect!();
+    expect(tags).toBe(1);
+
+    let picked = "";
+    win.document.querySelectorAll("#assets-bulk-type-menu button").forEach((b) =>
+      b.addEventListener("click", () => { picked = b.textContent || ""; }));
+    items.find((i) => i.label === "Change type…")!.onSelect!();
+    expect(sub!.opts.menuAt).toEqual({ x: 7, y: 9 });
+    expect(sub!.items.map((i) => i.heading || i.label)).toEqual(["Change type", "Switch", "Server"]);
+    sub!.items[2]!.onSelect!();
+    expect(picked).toBe("Server");
   });
 });

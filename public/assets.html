@@ -23,10 +23,12 @@
         <div class="page-header-actions"></div>
       </div>
 
-      <!-- Always-visible selection bar: idle (neutral border) until rows are
-           selected, then it gets the accent outline and its buttons enable.
-           Same pattern as the Notifications View tab. -->
-      <div id="assets-bulk-bar" class="bulk-bar bulk-bar-idle">
+      <!-- The selection's verbs, never shown: a right click on a row offers
+           them in its context menu (_assetsBulkMenuItems in assets.js reads
+           this bar), so the bar is kept only as the state carrier — the gates
+           and enable / disable rules below still decide what the menu offers,
+           as the hidden row checkboxes still carry the selection. -->
+      <div id="assets-bulk-bar" class="bulk-bar bulk-bar-idle" style="display:none" aria-hidden="true">
         <span class="bulk-bar-count">No assets selected</span>
         <button class="btn btn-sm btn-secondary" id="assets-bulk-deselect-btn">Deselect All</button>
         <button class="btn btn-sm btn-secondary" id="assets-bulk-compare-btn" title="Select two or more assets to compare their telemetry" disabled>Compare</button>

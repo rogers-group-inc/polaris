@@ -333,7 +333,7 @@ or per account depending on the thing:
 | Column widths and visibility | per **screen** | same |
 | Sort and inline filters | per view tab | same |
 | **Saved filters** | server-side, private or shared | Assets → Filters ▾ |
-| **View tabs** | server-side, follow you across browsers | Assets, above the bulk bar |
+| **View tabs** | server-side, follow you across browsers | Assets, on the table's top-left edge |
 | **Saved dashboards** | server-side, private or public | Dashboard |
 
 To resize a column, drag the divider on its right edge; **double-click** the

@@ -3537,6 +3537,17 @@ function _rowSelectClearOthers(tbody, keep) {
   tbody.dispatchEvent(new window.CustomEvent("polaris:rowselect-clear", { bubbles: true }));
   _rowSelectRows(tbody).forEach(function (tr) { if (tr !== keep) _rowSelectSet(tr, false); });
 }
+// A right click on a row that is not selected makes it the selection, as a file
+// explorer does, so a row menu acting on "the selection" acts on the row that
+// was clicked; a right click on a selected row keeps the whole selection.
+function _rowSelectForMenu(tr) {
+  var cb = _rowSelectBox(tr);
+  if (!cb || cb.checked || !tr.parentNode || tr.parentNode.tagName !== "TBODY") return;
+  _rowSelLastTbody = tr.parentNode;
+  _rowSelAnchor = tr;
+  _rowSelectClearOthers(tr.parentNode, tr);
+  _rowSelectSet(tr, true);
+}
 // Rows between the anchor and `cur` take `state`; the rest go back to what they
 // were when the gesture began (additive) or off (replacing).
 function _rowSelectApplyRange(g, cur) {
@@ -3699,7 +3710,18 @@ document.addEventListener("keydown", function (e) {
   var t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   var tbody = _rowSelLastTbody;
-  if (!tbody || !tbody.isConnected || !tbody.offsetParent) return;
+  // No table clicked yet (or it is gone): the one table that holds a selected
+  // row is the target, so one asset selected + Ctrl+A selects the page however
+  // that asset came to be selected. Two tables holding picks is ambiguous.
+  if (!tbody || !tbody.isConnected || !tbody.offsetParent) {
+    var holding = [];
+    document.querySelectorAll("td.cb-col input[type=checkbox]:checked").forEach(function (cb) {
+      var tb = cb.closest("tbody");
+      if (tb && tb.offsetParent && holding.indexOf(tb) < 0) holding.push(tb);
+    });
+    tbody = holding.length === 1 ? holding[0] : null;
+  }
+  if (!tbody) return;
   // Not through a dialog: a modal opened over the list owns the keyboard.
   var modal = document.querySelector("#modal-overlay.open, .modal-overlay.open");
   if (modal && !modal.contains(tbody)) return;
@@ -4376,6 +4398,13 @@ function closeModal() {
 // on either button. A caller that builds its items asynchronously reads
 // rowMenuGesture() synchronously in its click handler and passes the result as
 // `opts.menuAt`, because the forced flag only lives for the replayed click.
+//
+// A `<tr data-row-menu-row>` widens the right-click target to the whole row:
+// a right click anywhere on it replays the click on the row's own trigger, so
+// the menu is the same one the name gives. Fields and real links inside the
+// row keep the browser's menu (copy / paste, open in a new tab). In a
+// selectable table it also selects the row first unless it already is
+// (_rowSelectForMenu), so the menu can offer verbs over the selection.
 var _rowMenuTeardown = null;
 var _rowMenuForced = null;
 
@@ -4393,8 +4422,16 @@ if (typeof document !== "undefined" && document.addEventListener) {
     if (e.defaultPrevented || e.shiftKey) return; // Shift+right-click keeps the browser's own menu
     var t = e.target;
     var trigger = t && typeof t.closest === "function" ? t.closest(".row-menu-trigger, [data-row-menu]") : null;
-    if (!trigger) return;
+    if (!trigger) {
+      var row = t && typeof t.closest === "function" ? t.closest("tr[data-row-menu-row]") : null;
+      if (!row || t.closest('input, textarea, select, [contenteditable], a[href]:not([href="#"])')) return;
+      trigger = row.querySelector(".row-menu-trigger, [data-row-menu]");
+      if (!trigger) return;
+      t = trigger;
+    }
     e.preventDefault();
+    var menuRow = trigger.closest("tr[data-row-menu-row]");
+    if (menuRow) _rowSelectForMenu(menuRow);
     // A keyboard-raised contextmenu reports (0, 0); anchor under the trigger then.
     var fromPointer = e.clientX || e.clientY;
     _rowMenuForced = fromPointer ? { x: e.clientX, y: e.clientY } : { x: null, y: null };
