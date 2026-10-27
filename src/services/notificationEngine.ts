@@ -28,7 +28,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
 import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareRepositoryService.js";
-import { triggerSummary, triggerTokenParts, pathConditionPhrase } from "../utils/triggerSummary.js";
+import { triggerSummary, triggerTokenParts, pathConditionPhrase, recoveredConditionSuffix } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent, chartTokensForAlert, chartTokenForMetric, CHART_TOKENS, type ChartToken } from "./alertChartService.js";
 import { PATH_GRAPH_METRICS } from "./alertPathGraphService.js";
@@ -2480,11 +2480,20 @@ function readingContextParts(
   const deviceCount = counts?.devices ?? (spansDevices ? new Set(activeMembers(members!).map((m) => m.assetId)).size : 0);
   const devices = countNoun(deviceCount, "device");
   const whole = group && counts ? wholeGroupSubject(counts) : "";
+  // What is wrong, said where {asset} names the check(s): "Truck Scale Central
+  // is down · 1 device", "3 path checks are down · 80 devices". Only there —
+  // after a host name ("GRYCRT-S2212 is down") it would claim the device is.
+  const condition = pathCheck && spansDevices
+    ? pathConditionPhrase(trigger as never)
+    : whole && counts?.pathOnly && counts.condition
+      ? (counts.checks === 1 ? counts.condition.one : counts.condition.many)
+      : null;
   const base = {
     asset: subnetLabel || pathCheck || whole
       || (spansDevices ? devices : "")
       || reading.hostname || reading.assetId || "host",
     ...(pathCheck || whole ? { dimensionSuffix: ` · ${devices}` } : {}),
+    ...(condition ? { conditionSuffix: ` ${condition}` } : {}),
     dimension: members?.length ? renderMemberList(members) : (reading.dimLabel || ""),
     // What that component IS, so the email can label it rather than leaving the
     // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
@@ -4708,10 +4717,18 @@ async function spanCounts(
       select: { ruleId: true, assetId: true, dimensionKey: true },
     })
     : [];
-  const all = [
+  return countSpan(rule, [
     ...rows.map((r) => ({ ruleId: r.ruleId, assetId: r.assetId, key: r.dimensionKey })),
     ...fires.map((f) => ({ ruleId: rule.id, assetId: f.reading.assetId, key: f.reading.dimKey })),
-  ];
+  ]);
+}
+
+/** spanCounts over an explicit list of contributions — the all-clear's, which
+ *  are read off the members snapshot because no state row is firing by then. */
+async function countSpan(
+  rule: DbRule,
+  all: { ruleId: string; assetId: string | null; key: string }[],
+): Promise<SpanCounts> {
   const ruleIds = [...new Set(all.map((c) => c.ruleId))];
   const pathRules = new Set<string>(isPathMetric(ruleMetricOf(rule.trigger)) ? [rule.id] : []);
   // What each automation's condition says about a check — the default message
@@ -5677,10 +5694,12 @@ async function fireResolved(
     : owner ? ownerActions(owner) : tierForSeverity(rule, st.firingSeverity ?? rule.severity).actions;
   if (!actions.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
-  const parts = readingContextParts(rule, reading, now);
+  const view = await allClearView(rule, st.notificationId, reading);
+  const parts = readingContextParts(rule, view.reading, now, undefined, view.members, view.counts);
   parts.severity = "resolved";
+  parts.conditionSuffix = recoveredConditionSuffix(parts.conditionSuffix);
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
-  setRecoverySentence(ctx, `Resolved: ${rule.name} — ${ctx["asset"] ?? reading.hostname ?? ""} recovered`);
+  setRecoverySentence(ctx, `Resolved: ${ctx["rule"] || rule.name} — ${ctx["asset"] ?? view.reading.hostname ?? ""} recovered`);
   await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);
 }
 
@@ -5730,14 +5749,68 @@ async function fireReset(
   const actions = owner ? owner.resetActions : rule.resetActions;
   if (!actions?.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
-  const parts = readingContextParts(rule, reading, now);
+  const view = await allClearView(rule, st.notificationId, reading);
+  const parts = readingContextParts(rule, view.reading, now, undefined, view.members, view.counts);
   // "resolved" is a pseudo-severity (not in SEVERITIES) that colours the email
   // green and reads correctly in a subject line — the same one fireResolved
-  // uses for a severity-band recovery.
+  // uses for a severity-band recovery. The problem in the subject flips with
+  // it: "Truck Scale Central is up · 1 device", not "… is down".
   parts.severity = "resolved";
+  parts.conditionSuffix = recoveredConditionSuffix(parts.conditionSuffix);
   const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
-  setRecoverySentence(ctx, `Resolved: ${rule.name} — ${ctx["asset"] || reading.hostname || "device"} ${reason}`);
+  setRecoverySentence(ctx, `Resolved: ${ctx["rule"] || rule.name} — ${ctx["asset"] || view.reading.hostname || "device"} ${reason}`);
   await enqueueAlertActions(st.notificationId, actions, ctx, rule, reading, undefined, owner);
+}
+
+/**
+ * What an all-clear is ABOUT: the alert as it was announced, so the "Resolved"
+ * subject reads as the same alert the fire did. Two shapes went wrong without
+ * it:
+ *  - a GROUPED alert built its subject from the one contribution whose recovery
+ *    ended it — "[RESOLVED] GRYCRT-S2212 · RGILink Auth — Path Monitor"
+ *    answering "[WARNING] RGILink Auth · 1 device — Path Monitor";
+ *  - a reset with no live reading (a timed clear, `readingFromState`) has no
+ *    hostname and only the raw dimension key, so {asset} fell back to the
+ *    asset's id and {dimension} to "hc|link".
+ *
+ * On a grouped alert every member counts, departed or not: by now the last one
+ * has been marked left (releaseGroupMember runs first), and the alert being
+ * closed covered all of them. The counts come from the same snapshot because no
+ * state row is firing any more. One indexed read per all-clear, which happens
+ * once per alert, never per tick.
+ */
+async function allClearView(
+  rule: DbRule,
+  notificationId: string,
+  reading: Reading,
+): Promise<{ reading: Reading; members: AlertMember[] | null; counts: SpanCounts | null }> {
+  // Best-effort: a failed read names the alert from the reading, as before,
+  // rather than losing the all-clear.
+  const row = await prisma.notification.findUnique({
+    where: { id: notificationId },
+    select: { members: true, assetHostname: true, templateCtx: true },
+  }).catch((err: unknown) => {
+    logger.debug({ err: (err as Error)?.message, notificationId }, "all-clear alert lookup failed — naming it from the reading");
+    return null;
+  });
+  if (!row) return { reading, members: null, counts: null };
+  // The fire's own component label, when it snapshotted one — the state row
+  // only knows the key ("port12", not "port12 (AP-1)").
+  const snap = row.templateCtx && typeof row.templateCtx === "object" ? row.templateCtx as Record<string, unknown> : null;
+  const firedLabel = typeof snap?.["dimension"] === "string" ? snap["dimension"] as string : "";
+  const fromState = !reading.hostname && reading.dimLabel === reading.dimKey;
+  const view: Reading = {
+    ...reading,
+    hostname: reading.hostname || row.assetHostname,
+    ...(fromState && firedLabel ? { dimLabel: firedLabel } : {}),
+  };
+  if (!ruleGroupsByAsset(rule)) return { reading: view, members: null, counts: null };
+  const members = ((row.members ?? []) as unknown as AlertMember[]).map(({ leftAt: _left, ...m }) => m);
+  if (!members.length) return { reading: view, members: null, counts: null };
+  const counts = members.some((m) => m.assetId)
+    ? await countSpan(rule, members.map((m) => ({ ruleId: m.ruleId, assetId: m.assetId ?? null, key: m.key })))
+    : null;
+  return { reading: view, members, counts };
 }
 
 /**

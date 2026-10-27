@@ -18,7 +18,11 @@ import {
   DEFAULT_ALERT_HTML,
   DEFAULT_ALERT_TEXT,
   DEFAULT_ALERT_SUBJECT,
+  RETIRED_DEFAULT_ALERT_SUBJECTS,
+  isOperatorSubject,
+  isRetiredDefaultSubject,
 } from "../../src/utils/alertEmailTemplate.js";
+import { buildComposedEmail } from "../../src/services/notificationRecipientService.js";
 import { substituteChartTokens, chartTokensIn, attachmentsFor, CHART_TOKENS, type RenderedChart, type ChartToken } from "../../src/services/alertChartService.js";
 import { renderNotificationTemplate, buildTemplateContext } from "../../src/utils/notificationTemplate.js";
 
@@ -38,6 +42,49 @@ const CTX = buildTemplateContext({
     manufacturer: "Fortinet",
     model: "FAP-431F",
   },
+});
+
+describe("a path alert's subject says what is wrong", () => {
+  const path = buildTemplateContext({
+    asset: "Truck Scale Central", conditionSuffix: " is down", dimensionSuffix: " · 1 device",
+    dimension: "GRYCRT-S2212", severity: "warning", time: new Date("2026-10-27T12:00:00Z"), ruleName: "Path Monitor",
+  });
+
+  it("puts the problem after the check and before the count", () => {
+    expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, path)).toBe("[WARNING] Truck Scale Central is down · 1 device — Path Monitor");
+  });
+
+  it("is unchanged on every alert that carries no problem phrase", () => {
+    expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, CTX)).toBe("[CRITICAL] PINERUN-222E-4 — Packet loss");
+  });
+
+  it("reaches automations that stored a copy of an earlier default", () => {
+    for (const old of RETIRED_DEFAULT_ALERT_SUBJECTS) {
+      expect(buildComposedEmail({ subjectTemplate: old }, path).subject).toBe("[WARNING] Truck Scale Central is down · 1 device — Path Monitor");
+    }
+  });
+
+  it("leaves a subject the operator wrote alone", () => {
+    expect(buildComposedEmail({ subjectTemplate: "Scale: {asset}" }, path).subject).toBe("Scale: Truck Scale Central");
+  });
+});
+
+describe("isRetiredDefaultSubject / isOperatorSubject", () => {
+  it("knows every earlier default, and not the current one", () => {
+    for (const old of RETIRED_DEFAULT_ALERT_SUBJECTS) expect(isRetiredDefaultSubject(old)).toBe(true);
+    expect(isRetiredDefaultSubject(`  ${RETIRED_DEFAULT_ALERT_SUBJECTS[0]}  `)).toBe(true);
+    expect(isRetiredDefaultSubject(DEFAULT_ALERT_SUBJECT)).toBe(false);
+    expect(RETIRED_DEFAULT_ALERT_SUBJECTS).not.toContain(DEFAULT_ALERT_SUBJECT);
+  });
+
+  it("an operator subject is non-blank and not a retired default", () => {
+    expect(isOperatorSubject("Scale: {asset}")).toBe(true);
+    expect(isOperatorSubject(DEFAULT_ALERT_SUBJECT)).toBe(true);
+    expect(isOperatorSubject(RETIRED_DEFAULT_ALERT_SUBJECTS[2])).toBe(false);
+    expect(isOperatorSubject("   ")).toBe(false);
+    expect(isOperatorSubject(null)).toBe(false);
+    expect(isOperatorSubject(undefined)).toBe(false);
+  });
 });
 
 describe("a dependency-down alert says so in the subject, the banner and the facts (business rule 78)", () => {

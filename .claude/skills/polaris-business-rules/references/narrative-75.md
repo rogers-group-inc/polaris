@@ -591,6 +591,19 @@ same hosts mailed identical subjects. `{dimension}` still lists the hosts for th
 `readingContextParts` (fire) and `refreshMemberContext` (an update re-renders the stored
 context) must agree — the latter must NOT overwrite `{asset}` with the count on a split.
 
+**The subject says what is wrong (later the same day).** `ERP HTTPS · 3 devices` named the
+check and counted the hosts but never said the problem — an operator reading "Truck Scale
+Central · 1 device — Path Monitor" could not tell down from slow. The default subject is now
+`[{severity.upper}] {asset}{condition.suffix}{dimension.suffix} — {rule}{dependency.tag}`, and
+`{condition.suffix}` (`TemplateContextParts.conditionSuffix`) is `pathConditionPhrase` with a
+leading space — `[CRITICAL] ERP HTTPS is down · 3 devices — Path check down`; on a whole-group
+alert whose automations agree, `3 path checks are down · 80 devices`. It is set ONLY where
+`{asset}` names the check(s): after a host name ("pc-01 is down") it would claim the DEVICE is
+down. `refreshMemberContext` re-derives it with the count ("is" → "are"). Every all-clear
+(`fireReset`, `fireResolved`, `runResetActionsForCleared`) passes it through
+`recoveredConditionSuffix` — " is down" → " is up", anything else → " recovered" — so the
+Resolved subject keeps the fire's shape without repeating a problem that is over.
+
 **The default message says what is wrong (same day).** The default (blank-template) message of
 such a split read `Path check down — ERP HTTPS: 3 devices — <hosts>`, so whether it said "down"
 depended on what the operator had NAMED the automation. It now leads with the check and the

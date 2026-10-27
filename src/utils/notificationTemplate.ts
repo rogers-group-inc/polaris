@@ -137,6 +137,7 @@ const PLACEMENT: Record<string, Placement> = {
   "{dimension}": { section: "component", appliesTo: "component" },
   "{dimension.label}": { section: "component", appliesTo: "component" },
   "{dimension.suffix}": { section: "component", appliesTo: "component" },
+  "{condition.suffix}": { section: "component", appliesTo: "component" },
   "{dimension.count}": { section: "component", appliesTo: "component" },
   "{dimension.first}": { section: "component", appliesTo: "component" },
   "{dimension.list}": { section: "component", appliesTo: "component" },
@@ -233,6 +234,7 @@ const RAW_TEMPLATE_VARIABLES: Array<Omit<TemplateVariable, keyof Placement>> = [
   { token: "{dimension}", label: "Component", description: "The part of the device the alert is about — an interface, sensor, storage mount, tunnel, SD-WAN member or path check; on a CPU core trigger, the hot cores with their readings (\"Core 3 (97%), Core 7 (93%)\"). On an automation that consolidates per device, every affected one — \"port12 (AP-1), port14 and 5 more\"", group: "notification" },
   { token: "{dimension.label}", label: "Component kind", description: "What that component is called — \"Interface\", \"Sensor\", \"IPsec tunnel\". Blank when the alert is about the whole device", group: "notification" },
   { token: "{dimension.suffix}", label: "Component suffix", description: "The component with its own separator (\" · port12\"), for appending to a subject line — blank when the alert is about the whole device", group: "notification" },
+  { token: "{condition.suffix}", label: "Problem suffix", description: "What is wrong with a path check, with its own leading space (\" is down\", \" has path latency above 200 ms\"), for appending after {asset} in a subject line. Set only on a Path Monitor alert that groups by check, where {asset} is the check's name; \" is up\" or \" recovered\" on its all-clear; blank on every other alert", group: "notification" },
   { token: "{dimension.count}", label: "Component count", description: "How many components this alert names (1 when it is about a single one)", group: "notification" },
   { token: "{dimension.first}", label: "Leading component", description: "The one component the alert leads with — the worst, and the one its charts are about", group: "notification" },
   { token: "{dimension.list}", label: "Component list", description: "Every affected component, uncapped — for a body rather than a subject line", group: "notification" },
@@ -494,6 +496,12 @@ export interface TemplateContextParts {
    *  Monitor alert split per check, whose subject reads "<check> · 3 devices":
    *  the host list stays in `{dimension}` for the body. */
   dimensionSuffix?: string;
+  /** What is wrong, as the verb of `{asset}` with its leading space — " is
+   *  down", " are down", " has path latency above 200 ms". Set only where
+   *  {asset} names the CHECK(S) (a path alert split per check, a whole-group
+   *  path alert) so the subject says the problem; an all-clear carries the
+   *  recovered form (" is up", " recovered"). Blank everywhere else. */
+  conditionSuffix?: string;
   /** Composite triggers only — "k of n conditions met". */
   conditions?: string;
   message?: string;
@@ -724,6 +732,8 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // and read correctly when there is no component. Same shape as
     // {repeat.quiet}: the token is the whole phrase or nothing at all.
     "dimension.suffix": parts.dimensionSuffix ?? (str(parts.dimension) ? ` · ${str(parts.dimension)}` : ""),
+    // Same carries-its-own-separator shape: the whole phrase or nothing.
+    "condition.suffix": str(parts.conditionSuffix),
     "conditions": str(parts.conditions),
     "message": str(parts.message),
     "severity": severity,

@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { triggerSummary, triggerSubject, humanDuration, pathConditionPhrase } from "../../src/utils/triggerSummary.js";
+import { triggerSummary, triggerSubject, humanDuration, pathConditionPhrase, recoveredConditionSuffix } from "../../src/utils/triggerSummary.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -204,5 +204,24 @@ describe("pathConditionPhrase", () => {
   it("is null for anything that is not a path metric", () => {
     expect(pathConditionPhrase(path("cpuPct", ">", 90))).toBeNull();
     expect(pathConditionPhrase({ type: "asset_state", field: "monitorStatus", operator: "==", value: "down" })).toBeNull();
+  });
+});
+
+describe("recoveredConditionSuffix", () => {
+  it("turns down into up, keeping the count's verb", () => {
+    expect(recoveredConditionSuffix(" is down")).toBe(" is up");
+    expect(recoveredConditionSuffix(" are down")).toBe(" are up");
+  });
+
+  it("says recovered for every other problem — repeating it would read as still broken", () => {
+    expect(recoveredConditionSuffix(" has path latency above 200 ms")).toBe(" recovered");
+    expect(recoveredConditionSuffix(" is failing (path failure rate above 20 %)")).toBe(" recovered");
+    expect(recoveredConditionSuffix(" is up")).toBe(" recovered");
+  });
+
+  it("stays blank on an alert whose subject carries no problem", () => {
+    expect(recoveredConditionSuffix("")).toBe("");
+    expect(recoveredConditionSuffix(undefined)).toBe("");
+    expect(recoveredConditionSuffix(null)).toBe("");
   });
 });

@@ -5446,7 +5446,15 @@ export function refreshMemberContext(
     if (group) {
       // A whole-group alert (readingContextParts): "3 path checks · 80 devices",
       // named for its one automation or, once there are several, the group.
-      if (whole) { out["asset"] = whole; out["dimension.suffix"] = ` · ${devices}`; }
+      if (whole) {
+        out["asset"] = whole;
+        out["dimension.suffix"] = ` · ${devices}`;
+        // The problem agrees with the new count — "1 path check is down" became
+        // "2 path checks are down" (readingContextParts' {condition.suffix}).
+        out["condition.suffix"] = counts?.pathOnly && counts.condition
+          ? ` ${counts.checks === 1 ? counts.condition.one : counts.condition.many}`
+          : "";
+      }
       else out["asset"] = devices;
       if (counts) out["rule"] = counts.automations === 1 ? (active[0]?.ruleName ?? out["rule"] ?? "") : group;
     } else if (members.some((m) => m.component)) {

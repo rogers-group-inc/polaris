@@ -273,6 +273,19 @@ export function pathConditionPhrase(trigger: SummarizableTrigger, plural = false
   return `${plural ? "have" : "has"} ${condition}`;
 }
 
+/**
+ * The all-clear's form of a `{condition.suffix}`, so a Resolved subject keeps
+ * the fire's shape without repeating its problem: " is down" → " is up",
+ * " are down" → " are up", anything else (" has path latency above 200 ms",
+ * " is failing (…)") → " recovered". Blank stays blank. Pure.
+ */
+export function recoveredConditionSuffix(suffix: string | null | undefined): string {
+  if (!suffix) return "";
+  const m = /^ (is|are) down$/.exec(suffix);
+  if (m) return ` ${m[1]} up`;
+  return " recovered";
+}
+
 /** Does a pathOk condition match a failed run (0)? The builder writes "== 0";
  *  the other spellings of the same thing are read the same way. */
 function pathOkFiresOnFailure(trigger: SummarizableTrigger): boolean {

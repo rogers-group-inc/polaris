@@ -78,6 +78,8 @@ vi.mock("../../src/db.js", () => ({
       },
       findMany: async ({ where }: any) =>
         db.notifications.filter((n) => n.ruleId === where.ruleId && !n.cleared),
+      // The all-clear reads the alert it is closing (allClearView).
+      findUnique: async ({ where }: any) => db.notifications.find((n) => n.id === where.id) ?? null,
       updateMany: async ({ where, data }: any) => {
         let count = 0;
         for (const n of db.notifications) {

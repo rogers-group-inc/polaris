@@ -39,7 +39,7 @@ import {
   substituteAckToken,
   ackUrlForEmail,
 } from "../utils/notificationTemplate.js";
-import { defaultAlertEmailTemplate, pruneDeadLinks, pruneEmptyDivs, pruneEmptyRows, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
+import { defaultAlertEmailTemplate, isOperatorSubject, pruneDeadLinks, pruneEmptyDivs, pruneEmptyRows, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
 import { isInterfaceDimensionMetric } from "./alertInterfaceService.js";
 import {
   normalizePermissions,
@@ -130,10 +130,14 @@ export function buildComposedEmail(comp: EmailComposition, ctx: Record<string, s
   // defaultBodyContext); an operator's own body gets the context untouched.
   const ctxFor = (operatorAuthored: boolean) => (operatorAuthored ? ctx : defaultBodyContext(ctx));
 
+  // A stored copy of an EARLIER default is the default, not the operator's
+  // own subject: the old wizard snapshotted it onto every new action, and
+  // reading it as authored would freeze those automations on the old wording.
+  const ownSubject = isOperatorSubject(comp.subjectTemplate);
   const subject = renderNotificationTemplate(
-    own(comp.subjectTemplate) ? comp.subjectTemplate! : def.subjectTemplate,
+    ownSubject ? comp.subjectTemplate! : def.subjectTemplate,
     ctx,
-    optsFor(own(comp.subjectTemplate)),
+    optsFor(ownSubject),
   );
   const text = renderNotificationTemplate(
     own(comp.bodyTextTemplate) ? comp.bodyTextTemplate! : def.bodyTextTemplate,
