@@ -1421,7 +1421,7 @@
       items.push({ label: s.label, icon: ICON_CAMERA, onSelect: s.run });
     });
     if (opts.screenshot) items.push({ label: opts.screenshotLabel || "Copy screenshot", icon: ICON_CAMERA, onSelect: opts.screenshot });
-    items.push({ label: "Export PDF…", icon: ICON_DOC, onSelect: function () { openPdfDialog(getCtx()); } });
+    items.push({ label: "Export PDF", icon: ICON_DOC, onSelect: function () { openPdfDialog(getCtx()); } });
     items.push({ label: "Export to Visio (.vsdx)", icon: ICON_SHAPES, onSelect: function () { exportVisio(getCtx()); } });
     showRowMenu(anchor, items, { align: "end", label: "Export" });
   }

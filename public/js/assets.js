@@ -2158,19 +2158,19 @@ function _assetsUpdateBulkBar() {
 // delete, then Clear selection — greyed ones kept with the bar's reason as
 // their title.
 var _ASSETS_BULK_MENU = {
-  "assets-bulk-compare-btn": { label: "Compare…", multiOnly: true },
-  "assets-bulk-merge-btn": { label: "Merge…", multiOnly: true },
+  "assets-bulk-compare-btn": { label: "Compare", multiOnly: true },
+  "assets-bulk-merge-btn": { label: "Merge", multiOnly: true },
   "assets-bulk-type-btn": { label: "Change type" },
   "assets-bulk-state-btn": { label: "Change state" },
   "assets-bulk-monitor-btn": { label: "Monitoring" },
-  "assets-bulk-tags-btn": { label: "Tags…" },
+  "assets-bulk-tags-btn": { label: "Tags" },
   "assets-bulk-edit-btn": { skip: true },
-  "assets-bulk-agent-btn": { label: "Deploy agent…" },
-  "assets-bulk-maint-btn": { label: "Maintenance…" },
-  "assets-bulk-firmware-btn": { label: "Upgrade firmware…" },
-  "assets-bulk-quarantine-btn": { label: "Quarantine…", group: 1, danger: true, multiOnly: true },
+  "assets-bulk-agent-btn": { label: "Deploy agent" },
+  "assets-bulk-maint-btn": { label: "Maintenance" },
+  "assets-bulk-firmware-btn": { label: "Upgrade firmware" },
+  "assets-bulk-quarantine-btn": { label: "Quarantine", group: 1, danger: true, multiOnly: true },
   "assets-bulk-unquarantine-btn": { label: "Release quarantine", group: 1, multiOnly: true },
-  "assets-bulk-delete-btn": { label: "Delete…", group: 1, danger: true, multiOnly: true },
+  "assets-bulk-delete-btn": { label: "Delete", group: 1, danger: true, multiOnly: true },
   "assets-bulk-deselect-btn": { label: "Clear selection", group: 2, multiOnly: true },
 };
 function _assetsBulkMenuItems(bar, anchor, at, single) {
@@ -2192,7 +2192,6 @@ function _assetsBulkMenuItems(bar, anchor, at, single) {
     var wrap = btn.parentElement && btn.parentElement.classList.contains("btn-dropdown-wrap") ? btn.parentElement : null;
     var menu = wrap ? wrap.querySelector(".btn-dropdown-menu") : null;
     if (menu) {
-      item.label += "…";
       item.onSelect = function () {
         var sub = [];
         Array.prototype.forEach.call(menu.children, function (c) {
@@ -2529,7 +2528,7 @@ function _managementAccessMenuItems(a) {
 function _assetMenuItems(a, extra) {
   var items = [{ label: "Open", primary: true, onSelect: function () { openViewModal(a.id); } }];
   if (canManageAssets()) {
-    items.push({ label: "Edit…", onSelect: function () { openEditModal(a.id); } });
+    items.push({ label: "Edit", onSelect: function () { openEditModal(a.id); } });
   }
   var mgmt = _managementAccessMenuItems(a);
   if (mgmt.length) {
@@ -2571,7 +2570,7 @@ function _quarantineMenuItems(a) {
   // 502 with "0/0 FortiGate(s) accepted the push".
   if (!_quarantinePushAvailable()) return [];
   return [{
-    label: "Quarantine…",
+    label: "Quarantine",
     danger: true,
     title: "Pushes a MAC block to the FortiGate(s) that have seen this asset",
     onSelect: function () { quarantineAssetRow(a.id); },
@@ -25779,7 +25778,7 @@ function _loadAssetNotificationsTab(assetId) {
           var row = active.find(function (x) { return String(x.id) === id; });
           if (!row) return;
           showRowMenu(btn, [{
-            label: "Show alerts in this group…",
+            label: "Show alerts in this group",
             primary: true,
             title: "List the components this alert is made of — which are still affected and which have recovered",
             onSelect: function () { openAlertMembers(row); },

@@ -41,7 +41,7 @@ administrator (a role with full write on both Users and Roles) is warned and
 may delete the network anyway; its reservations go with it, nothing is removed
 from any FortiGate, and the Event is logged as a warning. A block delete is refused (409)
 while the block contains **any** network at all — move each one to another
-block (**Move to block…** on the Networks tab), archive it or delete it first.
+block (**Move to block** on the Networks tab), archive it or delete it first.
 (Archiving is deliberately exempt — see [rule 41](#rule-41).)
 
 ### Rule 5

@@ -270,7 +270,7 @@ describe("an unacknowledged alert: left click opens, right click asks", () => {
 
   it("a right click opens the row menu, Open device first", () => {
     const { row } = rightClickFirstRow([node({ id: "a", alertId: "n-1", alertAcknowledged: false })]);
-    expect(menuItems?.map((i) => i.label)).toEqual(["Open device", "Acknowledge alert…"]);
+    expect(menuItems?.map((i) => i.label)).toEqual(["Open device", "Acknowledge alert"]);
     expect(menuItems?.[0].primary).toBe(true);
     expect(menuAnchor).toBe(row);
     expect(openedAsset).toBeNull();

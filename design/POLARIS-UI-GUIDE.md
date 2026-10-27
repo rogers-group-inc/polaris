@@ -247,6 +247,8 @@ fonts, no filled icon sets.
   `rgba(255,23,68,.15)` on accent-red text).
 - `.btn-sm` for anything inside a table row, bulk bar, or pagination.
 - Copy: `+ Add Thing`, `Save`, `Cancel`, `Delete selected`, `Import / Export ▾`.
+- Menu entries never end in "…" — `Edit`, `Tags`, `Acknowledge alert` — even when
+  they open a dialog. Only a progress state (`Saving…`) keeps one.
   Sentence case, no ALL CAPS, no exclamation marks.
 - Dropdown: `.btn-dropdown-wrap > button + .btn-dropdown-menu`, with
   `.dropdown-heading` and `.dropdown-divider` inside for grouped items.

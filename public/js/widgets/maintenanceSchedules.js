@@ -219,7 +219,7 @@
     var items = [];
     if (typeof window.openMaintenanceModal === "function") {
       items.push({
-        label: "Open schedule…",
+        label: "Open schedule",
         primary: true,
         title: "Review this maintenance schedule — its filter, targets and window",
         onSelect: function () { window.openMaintenanceModal({ scheduleId: row.id }); },

@@ -188,15 +188,15 @@ selection of several opens the [selection's menu](#bulk-actions) instead. A
 right click on a link that leaves the page, or in a text field, still gives the
 browser's menu.
 
-Each row's menu carries **Open** and, with `assets:write`, **Edit…**; then
+Each row's menu carries **Open** and, with `assets:write`, **Edit**; then
 **Open HTTPS**, **Open RDP** and **Open SSH** where the device has that
 management surface (the same verbs as the slide-over header — a Fortinet device
 offers what its `allowaccess` permits, a server RDP and SSH); then the
-[bulk actions](#bulk-actions) that make sense for one asset — **Change type…**,
-**Change state…**, **Monitoring…**, **Tags…**, **Deploy agent…**,
-**Maintenance…** and, for a FortiGate, FortiSwitch or FortiAP,
-**Upgrade firmware…** — each under the same permission as below;
-**Quarantine…** or **Release quarantine** for an `assetsQuarantine` holder when
+[bulk actions](#bulk-actions) that make sense for one asset — **Change type**,
+**Change state**, **Monitoring**, **Tags**, **Deploy agent**,
+**Maintenance** and, for a FortiGate, FortiSwitch or FortiAP,
+**Upgrade firmware** — each under the same permission as below;
+**Quarantine** or **Release quarantine** for an `assetsQuarantine` holder when
 quarantine push is on for some integration; and **Delete**. Compare and Merge
 need two assets, so a single row's menu leaves them out.
 
@@ -242,19 +242,19 @@ selection stays in the menu, greyed, with the reason on hover.
 
 | Action | Needs | Does |
 |---|---|---|
-| **Compare…** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; greyed with more than ten selected |
-| **Merge…** | Assets **full read-write** (shown to the admin role), exactly **two** selected | opens the merge modal with the target pre-selected |
-| **Change type…** / **Change state…** | `assets:write` | opens a second menu of types or states and sets the one you pick on every selected row. A state that cannot carry monitoring turns monitoring off ([rule 10](Business-Rules#rule-10)) |
-| **Monitoring…** | `assets:write` | **Enable** or **Disable** monitoring on the selection. Assets in a state that cannot be monitored are refused with a reason |
-| **Tags…** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
-| **Deploy agent…** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
-| **Maintenance…** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
-| **Upgrade firmware…** | `assets:write`, FortiGates / FortiSwitches / FortiAPs under **one** FortiGate | schedules a group firmware upgrade in dependency order — see [Group firmware upgrades](#group-firmware-upgrades). When the selection spans more than one FortiGate, choosing it explains why instead |
-| **Quarantine…** / **Release quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
-| **Delete…** | `assets:write` | deletes the selection after a confirmation — see [Deleting an asset](#deleting-an-asset) |
+| **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; greyed with more than ten selected |
+| **Merge** | Assets **full read-write** (shown to the admin role), exactly **two** selected | opens the merge modal with the target pre-selected |
+| **Change type** / **Change state** | `assets:write` | opens a second menu of types or states and sets the one you pick on every selected row. A state that cannot carry monitoring turns monitoring off ([rule 10](Business-Rules#rule-10)) |
+| **Monitoring** | `assets:write` | **Enable** or **Disable** monitoring on the selection. Assets in a state that cannot be monitored are refused with a reason |
+| **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
+| **Deploy agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
+| **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
+| **Upgrade firmware** | `assets:write`, FortiGates / FortiSwitches / FortiAPs under **one** FortiGate | schedules a group firmware upgrade in dependency order — see [Group firmware upgrades](#group-firmware-upgrades). When the selection spans more than one FortiGate, choosing it explains why instead |
+| **Quarantine** / **Release quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
+| **Delete** | `assets:write` | deletes the selection after a confirmation — see [Deleting an asset](#deleting-an-asset) |
 | **Clear selection** | — | deselects every row, on every page |
 
-To edit one asset, right-click it on its own: its menu has **Edit…**.
+To edit one asset, right-click it on its own: its menu has **Edit**.
 
 **Replace keeps two kinds of tag** on every asset: Device Map `region:` tags
 and the discovery breadcrumbs `prev-entra:` / `prev-ad:`. Wiping region tags
@@ -268,7 +268,7 @@ A selection past the 500-id cap is refused **with the count**, rather than
 
 ### Group firmware upgrades
 
-**Upgrade firmware…** in a row's menu (one device) or the selection's menu
+**Upgrade firmware** in a row's menu (one device) or the selection's menu
 books one firmware upgrade for a FortiGate and the
 FortiSwitches and FortiAPs behind it, and runs them in dependency order
 ([rule 122](Business-Rules#rule-122)). It uses the same images, device logins
@@ -1319,7 +1319,7 @@ is back (see [rule 78](Business-Rules#rule-78)).
 
 A **grouped** alert (one alert covering several components of this device)
 wears a **GROUP** pill beside its severity, and its message is a link. Click
-it and choose **Show alerts in this group…** to list every component the
+it and choose **Show alerts in this group** to list every component the
 alert covers. Ones still affected come first, worst first. Ones that have
 recovered stay on the list, greyed, with the time they came back. This works
 for anyone who can see the tab; it needs no `alerts` permission.
@@ -1743,7 +1743,7 @@ Three ways in, all `assets:write` and all the same act:
 - **Delete Asset**, at the bottom-left of the **edit modal** — so a device you
   opened to fix, and then decided should not exist, does not have to be found
   again in the list; or
-- **Delete…** in the selection's menu (right-click a selected row), for many at
+- **Delete** in the selection's menu (right-click a selected row), for many at
   once.
 
 The first two ask you to confirm **by hostname** first, over the top of whatever

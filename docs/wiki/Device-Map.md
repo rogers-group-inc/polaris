@@ -300,7 +300,7 @@ To export the whole site, zoom out until all of it is in view first.
   panel as one image. Clipboard first, download as fallback.
 
   Neither screenshot shows a selected line's drag points.
-- **Export PDF…**: the graph drawn as vectors on white paper whatever theme you
+- **Export PDF**: the graph drawn as vectors on white paper whatever theme you
   are using, so it prints sharp and its text is searchable. Choose the paper
   size, orientation and **minimum text size** (7 pt by default): **nothing on
   the printed graph is smaller than that**. A site that fits one sheet at that

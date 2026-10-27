@@ -223,7 +223,7 @@ The **Export** button at the right of the Path heading opens a menu:
 - **Copy screenshot**: the whole graph and its legend as an image on the
   clipboard, even the part the panel has scrolled out of view. Copying an
   image needs HTTPS.
-- **Export PDF…**: the graph on paper, in the light colours whatever theme you
+- **Export PDF**: the graph on paper, in the light colours whatever theme you
   use. A header names the source, the destination, the check type and the
   trace shown, and a key in a box at the bottom left explains the link and
   status colours. Choose the

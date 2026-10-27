@@ -1485,7 +1485,7 @@
     var writable = permAtLeast("networkScan", "write");
     var mine = !scan || scan.isOwner !== false || permAtLeast("networkScan", "fullwrite");
     if (writable) {
-      items.push({ label: "Open…", primary: true, onSelect: function () { open(scan).catch(function () {}); } });
+      items.push({ label: "Open", primary: true, onSelect: function () { open(scan).catch(function () {}); } });
       items.push({
         label: "Run now",
         title: "Starts a scan with the saved configuration",

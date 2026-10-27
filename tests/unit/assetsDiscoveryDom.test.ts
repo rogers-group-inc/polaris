@@ -511,7 +511,7 @@ describe("PolarisAssetDiscovery — saved list row verbs", () => {
   it("gives a write-level caller the full set", () => {
     const D = load({ scan: "write" });
     (g.window as any).PolarisDiscoveryPortability = { buildExportFile: () => ({}), filenameForExport: () => "x.json" };
-    expect(labels(D.listRowItems(scan))).toEqual(["Open…", "Run now", "Export config", "Delete"]);
+    expect(labels(D.listRowItems(scan))).toEqual(["Open", "Run now", "Export config", "Delete"]);
   });
 
   it("gives a read-level caller Export only", () => {
@@ -527,7 +527,7 @@ describe("PolarisAssetDiscovery — saved list row verbs", () => {
   it("omits Export when the portability module is not loaded", () => {
     const D = load({ scan: "write" });
     delete (g.window as any).PolarisDiscoveryPortability;
-    expect(labels(D.listRowItems(scan))).toEqual(["Open…", "Run now", "Delete"]);
+    expect(labels(D.listRowItems(scan))).toEqual(["Open", "Run now", "Delete"]);
   });
 });
 
@@ -597,7 +597,7 @@ describe("PolarisAssetDiscovery — visibility", () => {
     const D = load({ scan: "write" });
     delete (g.window as any).PolarisDiscoveryPortability;
     const labels = D.listRowItems({ ...theirs, latestRun: null }).filter((i) => !i.separator).map((i) => i.label);
-    expect(labels).toEqual(["Open…", "Run now"]);
+    expect(labels).toEqual(["Open", "Run now"]);
   });
 
   it("names the owner in the list's Owner cell", () => {

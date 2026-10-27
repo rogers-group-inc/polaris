@@ -121,7 +121,7 @@ beforeEach(() => {
 describe("_quarantineMenuItems — permission gate", () => {
   it("offers Quarantine with assetsQuarantine, even without assets:write", () => {
     withPerms(false, true);
-    expect(labels(quarantineMenuItems(endpoint()))).toEqual(["Quarantine…"]);
+    expect(labels(quarantineMenuItems(endpoint()))).toEqual(["Quarantine"]);
   });
 
   it("offers NOTHING without assetsQuarantine, even with assets:write", () => {
@@ -150,7 +150,7 @@ describe("_quarantineMenuItems — permission gate", () => {
   it("keeps quarantine out of the row menu entirely when the key is missing", () => {
     withPerms(true, false);
     const l = labels(assetMenuItems(endpoint()));
-    expect(l).not.toContain("Quarantine…");
+    expect(l).not.toContain("Quarantine");
     expect(l).not.toContain("Release quarantine");
   });
 });
@@ -158,7 +158,7 @@ describe("_quarantineMenuItems — permission gate", () => {
 describe("_quarantineMenuItems — which devices", () => {
   it("offers Quarantine for an ordinary endpoint with a MAC", () => {
     const items = quarantineMenuItems(endpoint());
-    expect(items[0]!.label).toBe("Quarantine…");
+    expect(items[0]!.label).toBe("Quarantine");
     expect(items[0]!.danger).toBe(true);
   });
 
@@ -169,7 +169,7 @@ describe("_quarantineMenuItems — which devices", () => {
 
   it("accepts a MAC from the macAddresses list when the primary is empty", () => {
     const items = quarantineMenuItems(endpoint({ macAddress: null, macAddresses: [{ macAddress: "aa:bb:cc:00:11:22" }] }));
-    expect(labels(items)).toEqual(["Quarantine…"]);
+    expect(labels(items)).toEqual(["Quarantine"]);
   });
 
   it("never offers Quarantine for Fortinet infrastructure", () => {
@@ -294,18 +294,18 @@ describe("_assetMenuItems", () => {
 
   it("adds Edit and Delete with assets:write", () => {
     withPerms(true, false);
-    expect(labels(assetMenuItems(endpoint()))).toEqual(["Open", "Edit…", "Delete"]);
+    expect(labels(assetMenuItems(endpoint()))).toEqual(["Open", "Edit", "Delete"]);
   });
 
   it("orders the full menu Open, Edit, Quarantine, Delete", () => {
-    expect(labels(assetMenuItems(endpoint()))).toEqual(["Open", "Edit…", "Quarantine…", "Delete"]);
+    expect(labels(assetMenuItems(endpoint()))).toEqual(["Open", "Edit", "Quarantine", "Delete"]);
   });
 
   it("puts the remote-access verbs between Edit and the quarantine group", () => {
     // A firewall is never quarantinable, so this shape shows the access verbs
     // sitting on their own between the edit and delete groups.
     expect(labels(assetMenuItems(mgmtAsset())))
-      .toEqual(["Open", "Edit…", "Open HTTPS", "Open SSH", "Delete"]);
+      .toEqual(["Open", "Edit", "Open HTTPS", "Open SSH", "Delete"]);
   });
 
   it("leaves an ordinary endpoint's menu untouched", () => {
@@ -348,11 +348,11 @@ describe("_assetMenuItems", () => {
   it("a right click's selection verbs sit as their own group before quarantine and delete", () => {
     withPerms(true, true);
     const items = (g._assetMenuItems as (a: AssetRow, extra: MenuItem[]) => MenuItem[])(
-      endpoint(), [{ label: "Tags…", onSelect: () => {} }]);
+      endpoint(), [{ label: "Tags", onSelect: () => {} }]);
     const l = labels(items);
-    expect(l.indexOf("Tags…")).toBeGreaterThan(l.indexOf("Edit…"));
-    expect(l.indexOf("Tags…")).toBeLessThan(l.indexOf("Quarantine…"));
-    expect(items[items.findIndex((i) => i.label === "Tags…") - 1]!.separator).toBe(true);
+    expect(l.indexOf("Tags")).toBeGreaterThan(l.indexOf("Edit"));
+    expect(l.indexOf("Tags")).toBeLessThan(l.indexOf("Quarantine"));
+    expect(items[items.findIndex((i) => i.label === "Tags") - 1]!.separator).toBe(true);
   });
 });
 
@@ -402,19 +402,19 @@ describe("_assetsBulkMenuItems — the selection's verbs in the row menu", () =>
     const items = build(bar, {}, { x: 1, y: 2 }, false);
     expect(items[0]!.heading).toBe("3 selected");
     expect(actionable(items)).toEqual([
-      "Compare…", "Merge…", "Change type…", "Change state…", "Monitoring…", "Tags…",
-      "Deploy agent…", "Maintenance…", "Upgrade firmware…",
-      "Quarantine…", "Delete…",
+      "Compare", "Merge", "Change type", "Change state", "Monitoring", "Tags",
+      "Deploy agent", "Maintenance", "Upgrade firmware",
+      "Quarantine", "Delete",
       "Clear selection",
     ]);
     expect(items.filter((i) => i.separator)).toHaveLength(2);
-    expect(items.find((i) => i.label === "Delete…")!.danger).toBe(true);
+    expect(items.find((i) => i.label === "Delete")!.danger).toBe(true);
   });
 
   it("multi: a greyed bar button stays, disabled, with the bar's reason", () => {
     btn("assets-bulk-compare-btn").disabled = true;
     btn("assets-bulk-compare-btn").title = "Compare supports up to 10 assets";
-    const cmp = build(bar, {}, {}, false).find((i) => i.label === "Compare…")!;
+    const cmp = build(bar, {}, {}, false).find((i) => i.label === "Compare")!;
     expect(cmp.disabled).toBe(true);
     expect(cmp.title).toBe("Compare supports up to 10 assets");
   });
@@ -423,8 +423,8 @@ describe("_assetsBulkMenuItems — the selection's verbs in the row menu", () =>
     btn("assets-bulk-delete-btn").style.display = "none";
     (btn("assets-bulk-type-btn").parentElement as HTMLElement).style.display = "none";
     const got = actionable(build(bar, {}, {}, false));
-    expect(got).not.toContain("Delete…");
-    expect(got).not.toContain("Change type…");
+    expect(got).not.toContain("Delete");
+    expect(got).not.toContain("Change type");
   });
 
   it("single: only the verbs that make sense for one asset and the row menu lacks", () => {
@@ -435,26 +435,26 @@ describe("_assetsBulkMenuItems — the selection's verbs in the row menu", () =>
     const items = build(bar, {}, {}, true);
     expect(items.some((i) => i.heading)).toBe(false);
     expect(actionable(items)).toEqual([
-      "Change type…", "Change state…", "Monitoring…", "Tags…", "Deploy agent…", "Maintenance…",
+      "Change type", "Change state", "Monitoring", "Tags", "Deploy agent", "Maintenance",
     ]);
   });
 
   it("single: Upgrade firmware joins when the bar enables it (a Fortinet device)", () => {
     btn("assets-bulk-firmware-btn").disabled = false;
-    expect(actionable(build(bar, {}, {}, true))).toContain("Upgrade firmware…");
+    expect(actionable(build(bar, {}, {}, true))).toContain("Upgrade firmware");
   });
 
   it("a verb clicks its bar button; a dropdown opens its entries as a second menu at the same point", () => {
     let tags = 0;
     btn("assets-bulk-tags-btn").addEventListener("click", () => { tags++; });
     const items = build(bar, {}, { x: 7, y: 9 }, false);
-    items.find((i) => i.label === "Tags…")!.onSelect!();
+    items.find((i) => i.label === "Tags")!.onSelect!();
     expect(tags).toBe(1);
 
     let picked = "";
     win.document.querySelectorAll("#assets-bulk-type-menu button").forEach((b) =>
       b.addEventListener("click", () => { picked = b.textContent || ""; }));
-    items.find((i) => i.label === "Change type…")!.onSelect!();
+    items.find((i) => i.label === "Change type")!.onSelect!();
     expect(sub!.opts.menuAt).toEqual({ x: 7, y: 9 });
     expect(sub!.items.map((i) => i.heading || i.label)).toEqual(["Change type", "Switch", "Server"]);
     sub!.items[2]!.onSelect!();

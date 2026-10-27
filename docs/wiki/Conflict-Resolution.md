@@ -438,7 +438,7 @@ The fix is a [network exclusion](IPAM#exclusions), not a rejection.
 
 ## Merging assets by hand
 
-The **Sources** tab's merge modal, or **Merge…** in the Assets selection's menu
+The **Sources** tab's merge modal, or **Merge** in the Assets selection's menu
 (right-click one of exactly two selected rows) — or, from the asset form's duplicate-address dialog, *Save & review
 merge*.
 
