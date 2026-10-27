@@ -4958,6 +4958,15 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
   function _fillPageControlsRight(right, withSize, withButtons) {
     if (withButtons !== false && opts && opts.actionButtons && opts.actionButtons.length) {
       opts.actionButtons.forEach(function (cfg) {
+        // { el }: a page's OWN button (its primary Add), moved into the row at
+        // this position on every render — its listeners, menu and permission
+        // gating (display set by the page) travel with the element. Only in a
+        // tab row (.table-head-row); elsewhere the button stays where the page
+        // put it (the standalone blocks / subnets pages).
+        if (cfg.el) {
+          if (right.closest(".table-head-row")) right.appendChild(cfg.el);
+          return;
+        }
         var btn = document.createElement("button");
         btn.className = "btn btn-secondary btn-sm" + (cfg.className ? " " + cfg.className : "");
         btn.textContent = cfg.label;

@@ -1206,7 +1206,7 @@
     // how many browsers each user actually enrolled (push is opt-in PER
     // BROWSER, so a perfectly reasonable-looking pick can deliver nothing);
     // rows push cannot reach lose their checkbox; the Responsible-Contacts
-    // entry and "+ New contact" are withheld; and the footer offers To alone,
+    // entry and "+ New Contact" are withheld; and the footer offers To alone,
     // since a push action has no Cc or Bcc.
     //
     // Counts ride IN from the caller (`pushDevices`, userId -> n) rather than
@@ -1228,7 +1228,7 @@
         Z_PICKER,
         "Address book",
         pickerBodyHtml(),
-        (isPush ? "" : '<button class="btn btn-secondary" type="button" data-ab="new">+ New contact</button>') +
+        (isPush ? "" : '<button class="btn btn-secondary" type="button" data-ab="new">+ New Contact</button>') +
         '<span style="flex:1"></span>' +
         '<button class="btn btn-secondary" type="button" data-ab="add-to">Add to To</button>' +
         (isPush ? "" :

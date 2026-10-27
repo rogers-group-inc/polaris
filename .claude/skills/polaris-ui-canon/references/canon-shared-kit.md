@@ -231,6 +231,25 @@ unselected page tab).
   `radial-gradient` ellipse size that mixes percent and length (`calc(70% + 230px)`), which is
   what a %-to-vmin animation passes through, and it drops the WHOLE background to `none`, both
   glows gone for the turn. Caught live over CDP; a frozen-mock check never sees it. A theme that overrides `--page-glow` whole goes back to cutting.
+  **Morning's dawn ring (2026-10-26, desktop only):** a third layer, `--dawn-ring`, the pre-dawn
+  sky still in the corners — `--dawn-blue` `rgb(118,128,220)` (the theme band's pre-dawn stretch,
+  just left of morning's gold, a violet slate ~235°, lightened for parchment) at 70% as
+  `--dawn-ring-c`, ONE registered `<color>` part (transparent everywhere but morning, appended
+  LAST to every glow transition list so it fades with the turn; its curve and duration are the
+  lists' wrap-around first entries). It is the SUN's ellipse, not its own shape (by the user's
+  call: "the same shape as the other glows"): sized `calc(var(--page-glow-w) * 0.78 + 250px)` ×
+  `calc(var(--page-glow-h) * 0.78 + 250px)` at the sun's anchor, transparent at that size and
+  full blue at `calc(var(--page-glow-w) * 1.38 + 250px)` along the ray — 250px past the line the
+  warm glow clears (78%) and 250px past the sun's 138% line, the one through the top corners
+  (`sqrt((50/140)² + (100/75)²) = 1.38`, vw and vh cancelling). Every size is a length, never a
+  % mix (the blank-background trap above). It is the LAST layer of `--page-glow`, UNDER the
+  sun's glow, so where they overlap the sunlight lies on the sky. The phone (mobile.css) has no
+  dawn ring.
+  **The standalone pages show the glow too** (2026-10-26): `login.html`, `signed-out.html`,
+  `alert-ack.html` and `setup.html` load styles.css, so the layer paints, but their full-screen
+  wrapper (`.login-wrapper` / `.ack-wrapper` / `.setup-wrapper`) used to fill
+  `--color-bg-secondary` over it. The wrappers have NO fill: `body` already paints that ground
+  under the layer. A new standalone page's wrapper stays unfilled.
   **Nightfall's glow is a second, SLIDING layer** (`--night-glow`, MOONLIGHT BLUE at 25%,
   `rgba(109,151,255,.25)` — `#6d97ff`, the electric `#2f6bff` with 30% white — with four registered
   parts: `--night-glow-x`, its size `--night-glow-w` / `--night-glow-h`, and `--night-glow-c`, ONE
@@ -297,7 +316,7 @@ unselected page tab).
   RAIL's lift, so the header sits at the same height as the sidebar and the Server Settings folder card:
   `--shadow-lift` (the sidebar's cast, halved in strength and blur to 12px / 2px, as a ring; spread stands in for the rail's sideways offset) on
   boxes and `--shadow-lift-text` on text. These are theme-independent like the rail's rgba, and declared on
-  `:root`. **Since 2026-10-16 the CONTROLS take the lighter `--shadow-lift-control` / `--shadow-lift-control-text`** (6px blur / 3px spread — half the card ring): the global search (and its focus ring), the account badge's name, avatar, role pill and caret, and the page-level buttons below; the page title, cards and folder tabs keep `--shadow-lift`. The caret takes the same pair as `drop-shadow()`s. Page-level buttons carry `--shadow-lift-control` too: any `.btn` in a `.page-header-actions` (a section's own header included, e.g. Users → Roles) or a `.table-head-controls`. Buttons in tables, cards, modals and menus keep `--shadow-control`. A table that stands as a page's own card takes `.table-wrapper.lift-card` (the Users page's three tables).
+  `:root`. **Since 2026-10-16 the CONTROLS take the lighter `--shadow-lift-control` / `--shadow-lift-control-text`** (6px blur / 3px spread — half the card ring): the global search (and its focus ring), the account badge's name, avatar, role pill and caret, and the page-level buttons below; the page title, cards and folder tabs keep `--shadow-lift`. The caret takes the same pair as `drop-shadow()`s. **Off-card shadow standard (2026-10-26):** everything on the page ground — in `.main` but outside the page card, a map canvas, a slide-over or a modal — lifts with the rail family (even rings, no offset, neutral), one step per kind, and sits ABOVE the card and its ring cast: **buttons** `--shadow-lift` (the card's own ring), **fields** (inputs, selects, the Application Map filter box) `--shadow-lift-control`, **loose text and checkboxes** `--shadow-lift-control-text` (its `drop-shadow()` pair on a checkbox or a bare icon's svg). The off-card clusters: `.page-header-actions` (a section's own header included, e.g. Users → Roles), `.page-actions-row`, `.table-head-controls`, `.appmap-toolbar`, `.map-toolbar` and a page-level `.main > .filter-bar`; each is positioned at `z-index: 1` (the pinned header is already at 1050, `.filter-bar` at 20). ON a surface — the card, tables, slide-overs (their `.filter-bar` included), modals, menus — controls keep `--shadow-control`; buttons on a map canvas keep the map's tight cast (`--map-btn-shadow`, `--topology-btn-shadow`). Never mix the families within one off-card strip. A table that stands as a page's own card takes `.table-wrapper.lift-card` (the Users page's three tables).
   This applies on every `.page-header`, frozen or not. `--shadow-text` is the general token for loose text and glyphs on the page ground
   (`--shadow-control`'s counterpart for things with no box); the Application Map toolbar uses it on
   its labels and status, and as `drop-shadow()` on its native checkboxes and icon-button svgs, and

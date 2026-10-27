@@ -41,16 +41,20 @@
           <button type="button" class="page-tab" data-tab="contacts" id="auto-tab-contacts-btn" style="display:none">Address Book</button>
         </div>
         <!-- The page's action buttons, moved from the header into the tab
-             row, left of the list controls. -->
+             row, left of the list controls. Each tab's + Add sits RIGHT of
+             Refresh: the other tabs' after the header Refresh below; + New
+             Automation is moved by automations.js into the Manage tab's
+             list-controls row, after that row's own Refresh. -->
         <div class="table-head-controls">
-          <button class="btn btn-primary" id="btn-new-rule" style="display:none">+ New automation</button>
-          <button class="btn btn-primary" id="btn-add-channel" style="display:none">+ Add channel</button>
-          <button class="btn btn-primary" id="btn-add-script" style="display:none">+ Add script</button>
-          <button class="btn btn-primary" id="btn-add-contact" style="display:none">+ Add contact</button>
+          <button class="btn btn-primary" id="btn-new-rule" style="display:none">+ New Automation</button>
           <!-- Automation settings (Global Quiet Times, business rule 92). Shown
                with automationManagement:read; the verbs inside need write. -->
           <button class="btn btn-secondary btn-icon-only" id="btn-automation-settings" style="display:none" title="Automation settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:middle;margin-right:4px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Settings</button>
           <button class="btn btn-glyph btn-glyph-refresh btn-secondary" id="btn-refresh" title="Refresh">Refresh</button>
+          <button class="btn btn-primary" id="btn-add-channel" style="display:none">+ Add Channel</button>
+          <button type="button" class="btn btn-primary" id="ag-new-btn" style="display:none">+ New Group</button>
+          <button class="btn btn-primary" id="btn-add-script" style="display:none">+ Add Script</button>
+          <button class="btn btn-primary" id="btn-add-contact" style="display:none">+ Add Contact</button>
         </div>
         <div id="rules-pagination-top" class="table-head-controls" data-head-for="manage"></div>
       </div>
@@ -135,12 +139,10 @@
              automationManagement, like the automations themselves: a group
              decides who gets paged about every one of its members. -->
         <div class="page-tab-panel folder-card-scroll" id="auto-tab-groups">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin:0 0 1rem">
-            <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0;max-width:60ch">
-              A group folds everything its automations raise about one device into a <strong>single alert</strong> — one message, one acknowledgement, up until the last problem clears. The group decides who is told and how it escalates; its automations keep deciding what to watch for.
-            </p>
-            <button type="button" class="btn btn-primary" id="ag-new-btn">New group</button>
-          </div>
+          <!-- + New Group is on the tab row, right of Refresh. -->
+          <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem;max-width:60ch">
+            A group folds everything its automations raise about one device into a <strong>single alert</strong> — one message, one acknowledgement, up until the last problem clears. The group decides who is told and how it escalates; its automations keep deciding what to watch for.
+          </p>
           <div id="ag-list"><p class="empty-state">Loading...</p></div>
         </div>
 

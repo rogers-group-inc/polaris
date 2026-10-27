@@ -189,7 +189,8 @@
   }
 
   // The list-controls row: page numbers below the card, and — on the tab row
-  // above it — Clear, Refresh and Show N (+ Add Monitor sits just left).
+  // above it — Clear, Refresh, + Add Monitor (the page's own button, moved
+  // in) and Show N.
   function renderControls(total) {
     renderPageControls("path-pagination", total, _pageSize, _page,
       function (p) { _page = p; renderList(); },
@@ -210,7 +211,7 @@
           className: "btn-glyph btn-glyph-refresh",
           title: "Reload the path checks",
           onClick: function () { loadTab(); },
-        }],
+        }, { el: document.getElementById("btn-add-check") }].filter(function (b) { return !("el" in b) || b.el; }),
       });
   }
 

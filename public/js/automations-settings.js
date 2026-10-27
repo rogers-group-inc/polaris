@@ -2,7 +2,7 @@
 /**
  * public/js/automations-settings.js — the Automations page's Settings modal.
  *
- * Opened by the Settings button beside "+ New automation". One tab today,
+ * Opened by the Settings button on the Automations tab row. One tab today,
  * Global Quiet Times (business rule 92): the schedules during which every
  * automation WITHOUT a quiet time of its own holds the people-facing sends of
  * the alerts the schedule selects, and emails a summary when the window ends.
@@ -59,7 +59,7 @@
         "An automation with a quiet time of its own (its Quiet time step) is left alone by these schedules." +
       "</p>";
     var newBtn = canEdit()
-      ? '<div style="margin:0 0 0.75rem"><button type="button" class="btn btn-primary" id="aqs-new">+ New quiet time</button></div>'
+      ? '<div style="margin:0 0 0.75rem"><button type="button" class="btn btn-primary" id="aqs-new">+ New Quiet Time</button></div>'
       : "";
 
     var table;

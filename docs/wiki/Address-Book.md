@@ -51,7 +51,7 @@ total rather than inferring truncation from a full-looking array.
 
 ## A contact
 
-**+ Add contact**, or Edit on a row you own.
+**+ Add Contact**, or Edit on a row you own.
 
 | Field | |
 |---|---|
@@ -175,6 +175,6 @@ Differences:
     nest).
 - Opened from a **push** box it runs in push mode: a Push devices column, no
   checkbox on rows push cannot reach, no Responsible-Contacts entry, no
-  "+ New contact", and a To-only footer.
+  "+ New Contact", and a To-only footer.
 
 Selections are keyed so that a People selection survives a look at Tags.

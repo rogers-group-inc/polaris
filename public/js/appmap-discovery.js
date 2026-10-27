@@ -12,7 +12,7 @@
 // operators at this card.
 //
 // Two rule sources render side by side:
-//   - manual rules, authored in the wizard (+ Add rule);
+//   - manual rules, authored in the wizard (+ Add Rule);
 //   - AUTO rules, minted server-side when an operator ticks a Monitor/Map
 //     checkbox on an asset's Services tab. Auto rules are single-item, target
 //     the specific assets whose checkboxes created them, and consolidate — the
@@ -88,7 +88,7 @@
   function bodyHTML() {
     return '' +
       '<div style="display:flex;justify-content:flex-end;margin-bottom:0.6rem">' +
-        (canWrite() ? '<button type="button" class="btn btn-primary btn-sm" id="apd-add">+ Add rule</button>' : "") +
+        (canWrite() ? '<button type="button" class="btn btn-primary btn-sm" id="apd-add">+ Add Rule</button>' : "") +
       '</div>' +
       '<div class="table-wrapper" style="max-height:46vh;overflow:auto">' +
         '<table class="data-table" style="margin:0">' +

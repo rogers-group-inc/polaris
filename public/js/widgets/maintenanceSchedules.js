@@ -148,7 +148,7 @@
     if (!canCreate(el)) return "";
     return '<div class="maint-widget-bar">' +
       '<button type="button" class="btn btn-secondary btn-sm" data-maint-new ' +
-      'title="Create a maintenance schedule — opens the Maintenance editor">+ New schedule</button>' +
+      'title="Create a maintenance schedule — opens the Maintenance editor">+ New Schedule</button>' +
     "</div>";
   }
 

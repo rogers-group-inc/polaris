@@ -18,7 +18,8 @@
       align-items: center;
       justify-content: center;
       padding: 1rem 0;
-      background: var(--color-bg-secondary);
+      /* No fill: the body's ground is the same colour, and a fill here hid
+         the theme's sky glow (html::before), which the app pages show. */
     }
     /* On-screen-keyboard mode (mobile). iOS Safari does not resize the layout
        viewport when the keyboard opens, so 100vh/100dvh still measure the whole

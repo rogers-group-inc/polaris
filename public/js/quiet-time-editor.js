@@ -322,7 +322,7 @@
     var body =
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">These addresses do not follow the quiet time’s own choices. Tick what stays held for each one; an address with nothing ticked hears every alert, reminder and escalation live. Everyone else follows the quiet time. A reminder held for someone is sent to them when the quiet period ends.</p>' +
       '<div class="qte-rx-list"></div>' +
-      '<button type="button" class="btn btn-secondary btn-sm qte-rx-add">+ Add recipient</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm qte-rx-add">+ Add Recipient</button>' +
       '<p class="qte-rx-problem" role="alert" style="font-size:0.8rem;color:var(--color-warning);margin:8px 0 0"></p>';
     var footer =
       '<button type="button" class="btn btn-secondary qte-rx-cancel">Cancel</button>' +

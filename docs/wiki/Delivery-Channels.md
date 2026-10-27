@@ -5,7 +5,7 @@ An automation's notify action names one or more channels; the channel knows how
 to talk to the transport, and the action knows who to reach.
 
 Gated by `automationManagement`: `read` sees the cards, `write` adds, edits,
-tests and deletes. **+ Add channel** opens a type picker, then that type's form.
+tests and deletes. **+ Add Channel** opens a type picker, then that type's form.
 Deleting a channel an automation still references leaves that automation
 delivering nothing through it.
 
@@ -68,7 +68,7 @@ send-as user must be a **licensed Exchange Online mailbox**.
 ## Web Push
 
 **Web Push is a single on/off capability, not a destination.** There is one
-singleton channel for the whole install, and it is not in **+ Add channel**: it
+singleton channel for the whole install, and it is not in **+ Add Channel**: it
 has its own **Web Push** card at the head of the tab, with an on/off switch, the
 number of devices enrolled, and (while on) **Send test**, which pushes to your
 own enrolled devices.

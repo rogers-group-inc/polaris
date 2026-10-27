@@ -122,7 +122,7 @@ Each theme also lights the page differently, and the light moves with the turn:
 
 | Theme | Its light |
 |---|---|
-| **Morning** | a sunrise glowing up from the bottom edge |
+| **Morning** | a sunrise glowing up from the bottom edge, with the pre-dawn blue still in the top corners |
 | **Noon** | a soft sunlight wash across the top |
 | **Nightfall** | a moonlight-blue glow across the top |
 
@@ -133,7 +133,12 @@ lands. Nightfall → Morning reverses it: the oval rounds back into a circle and
 out to the right, shrinking, as the sunrise comes up. The palette
 itself takes 1.6 s for Noon → Nightfall and Nightfall → Morning and 0.8 s for
 Morning → Noon; the light takes a moment longer to settle. Only a click on the
-band animates anything: opening a page just paints the theme's light.
+band animates anything: opening a page just paints the theme's light. The
+sign-in, signed-out and alert-acknowledge pages show the same light.
+
+A page's own **+ Add** button (**+ Add Asset(s)**, **+ Add Monitor**, **+ Add
+Block**, **+ Add Network**, **+ New Automation** …) sits immediately to the right
+of its **Refresh** button.
 
 `prefers-reduced-motion` is honoured throughout the app: the alert strobe drops
 to a steady rendering, and the title text always carries the whole message —

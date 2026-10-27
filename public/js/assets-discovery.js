@@ -502,7 +502,7 @@
           'link-local (including the cloud-metadata address), multicast and reserved addresses are always excluded, ' +
           'whatever you type.') +
         '<div id="nd-targets">' + draft.targets.map(targetRowHtml).join("") + '</div>' +
-        '<button type="button" class="btn btn-secondary btn-sm" id="nd-add-target">+ Add target</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="nd-add-target">+ Add Target</button>' +
         '<div class="aw-preview-box aw-preview-compact" id="nd-target-preview" style="margin-top:1rem">' + previewShell("Enter a target to see what it covers.", "") + '</div>';
     }
 
