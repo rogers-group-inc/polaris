@@ -155,8 +155,12 @@ TableSF.prototype._setup = function () {
         var selected = Array.prototype.slice.call(
           pop.querySelectorAll('input[type="checkbox"]:checked')
         ).map(function (cb) { return cb.value; });
-        if (selected.length) self._filters[key] = selected;
-        else                  delete self._filters[key];
+        // Every option ticked is labelled "All", so it is stored as no filter
+        // too — otherwise the header reads "All" while a filter is live (and
+        // a row whose value is not among the options would still drop out).
+        var total = pop.querySelectorAll('input[type="checkbox"]').length;
+        if (selected.length && selected.length < total) self._filters[key] = selected;
+        else                                             delete self._filters[key];
         self._updateMultiButtonLabel(th);
         self._onChange();
       });

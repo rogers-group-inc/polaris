@@ -428,6 +428,24 @@ describe("re-render safety", () => {
     expect(names().sort()).toEqual(["port1", "port2", "port3", "port9"]);
   });
 
+  // A Status picker with every state ticked reads "All": it is no filter.
+  it("keeps the tree under a saved filter that removes no row", () => {
+    g.localStorage.setItem(PREFS_KEY, JSON.stringify({
+      sortKey: null, sortDir: "asc", sfFilters: { status: ["admin shut", "down", "up"] },
+    }));
+    render();
+    expect(sectionLabels()).toHaveLength(2);
+    expect(rowFor("port9").textContent).toContain("└─");
+    expect(doc.querySelectorAll('.iface-expand-toggle[data-parent="lag1"]')).toHaveLength(1);
+  });
+
+  it("stores no filter once every option of a multi-select is ticked", () => {
+    for (const v of ["admin shut", "down", "up"]) checkboxFilter("status", v, true);
+    const saved = JSON.parse(g.localStorage.getItem(PREFS_KEY));
+    expect(saved.sfFilters.status).toBeUndefined();
+    expect(rowFor("port9").textContent).toContain("└─");
+  });
+
   it("drops a VLAN filter saved as free text before the column became a picker", () => {
     // Upgrade path: both VLAN columns used to render text inputs, so installs
     // carry saved string filters under these keys. Left in place, a string

@@ -9391,8 +9391,12 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var tbody = container.querySelector("#asset-iface-tbody");
     if (!tbody) return;
     var st = sf ? sf.getPrefs() : null;
-    var filtered = !!(st && Object.keys(st.sfFilters || {}).length > 0);
-    var list = filtered ? sf.apply(entries) : null;
+    // Filtered means a filter that REMOVES a row, not merely one that is set:
+    // a Status picker with every state ticked reads "All" and keeps every
+    // row, and treating it as a filter flattened the tree under a header that
+    // showed nothing active (a saved ["down","up"] on the switch type did).
+    var list = (st && Object.keys(st.sfFilters || {}).length > 0) ? sf.apply(entries) : null;
+    var filtered = !!list && list.length < entries.length;
     if (!filtered) {
       tbody.innerHTML = renderTreeBody(st && st.sortKey ? sortedTree(entries) : entries);
     } else if (list.length === 0) {
