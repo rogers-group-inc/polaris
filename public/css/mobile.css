@@ -1122,10 +1122,10 @@ input, select, textarea { font-family: inherit; }
 }
 
 /* Fullbleed mode — used by the topology surface so the Cytoscape graph
-   gets the entire viewport. The tab module renders its own floating
-   chrome (close FAB, search bar) over the graph; the shell's topbar
-   slot and bottom navbar both step out of the way. */
-.app[data-tab="__fullbleed"] .m3-navbar { display: none; }
+   gets the whole screen above the navbar. The tab module renders its own
+   chrome (Back, site search) over the graph; the shell's topbar and search
+   slots step out of the way. The bottom navbar stays, lit on Map — the
+   graph is a place inside the Map tab, not a mode that hides the app. */
 .app[data-tab="__fullbleed"] #topbar-slot { display: none; }
 .app[data-tab="__fullbleed"] #search-slot { display: none; }
 .app[data-tab="__fullbleed"] .app-body { padding: 0; }
@@ -2509,18 +2509,23 @@ button, .list-item, .chip { touch-action: manipulation; }
 }
 
 /* ─── Topology surface (per-site Cytoscape graph) ────────────────────────
-   Reached via the `topology/<siteId>` detail route. Renders fullscreen
-   when .app is in __fullbleed mode (rule above hides the topbar slot
-   and the bottom navbar).
-   Fixed + inset:0 escapes .app's safe-area padding, so the screen pads
-   itself: in the installed iOS app (black-translucent status bar) the bar
-   otherwise sat under the clock and notch and Back could not be tapped.
+   Reached via the `topology/<siteId>` detail route. Fills the screen down
+   to the navbar when .app is in __fullbleed mode (rule above hides the
+   topbar slot; the navbar stays).
+   Fixed escapes .app's safe-area padding, so the screen pads itself: in
+   the installed iOS app (black-translucent status bar) the bar otherwise
+   sat under the clock and notch and Back could not be tapped. The bottom
+   edge stops on the navbar, which itself sits above the home-indicator
+   inset — the same anchor the asset sheet and snackbar use.
    Unscoped — env() is 0 wherever the browser's own chrome owns the edge. */
 .topo-screen {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px));
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
-           env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+           0 env(safe-area-inset-left, 0px);
   background: var(--md-surface, #0f172a);
   display: flex;
   flex-direction: column;
@@ -2604,8 +2609,8 @@ button, .list-item, .chip { touch-action: manipulation; }
 }
 .topo-status {
   position: absolute;
-  /* Absolute offsets ignore the screen's padding — clear the home indicator. */
-  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  /* The screen ends on the navbar, which already clears the home indicator. */
+  bottom: 24px;
   left: 16px;
   right: 16px;
   text-align: center;

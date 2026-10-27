@@ -752,8 +752,8 @@ moves between them.
 - `.app-body` is `overscroll-behavior-y: contain` so the pull-to-refresh puck
   gets unambiguous touchmove deltas.
 - `data-tab=""` hides the navbar (boot / login). `data-tab="__fullbleed"`
-  hides the topbar slot, search slot and navbar — for a full-screen canvas
-  surface that renders its own floating chrome.
+  hides the topbar slot and search slot — for a full-screen canvas surface
+  that renders its own chrome. The navbar stays; the surface ends on it.
 - **Five tabs.** The navbar grid is `repeat(5, 1fr)`; a sixth breaks it and a
   fourth looks broken. Overflow goes behind a **More** tab with sub-pages.
 
