@@ -1173,6 +1173,66 @@ TableSF.prototype.restoreFilterUI = function () {
 TableSF.prototype.clearFilters = function () {
   this._filters = {};
   this.restoreFilterUI();
+  this._syncClearButton();
+};
+
+/**
+ * A "Clear" button for a table that has no page-controls row to carry one
+ * (the asset panel's tabs, a results modal) — the list pages pass theirs as a
+ * page-controls actionButton instead. With `host` (an existing toolbar above
+ * the table) the button goes after its Refresh; without one it gets its own
+ * right-aligned row directly above the table. Disabled while nothing is
+ * filtered, so a live filter shows even when its column is hidden or too
+ * narrow to read. Clearing runs the table's own onChange, which re-renders
+ * and saves prefs.
+ */
+TableSF.prototype.addClearButton = function (host) {
+  var self = this;
+  var table = this._thead && this._thead.closest("table");
+  if (!table) return null;
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-sm btn-secondary sf-clear-btn";
+  btn.textContent = "Clear";
+  btn.title = "Clear every column filter on this table";
+  btn.addEventListener("click", function () {
+    self.clearFilters();
+    self._onChange();
+  });
+  if (host) {
+    var old = host.querySelector(".sf-clear-btn");
+    if (old) old.remove();
+    var refresh = host.querySelector(".btn-glyph-refresh");
+    if (refresh) refresh.insertAdjacentElement("afterend", btn);
+    else host.appendChild(btn);
+  } else {
+    var anchor = table.parentElement && table.parentElement.classList.contains("table-wrapper")
+      ? table.parentElement : table;
+    var bar = anchor.previousElementSibling;
+    if (!bar || !bar.classList.contains("sf-clear-bar")) {
+      bar = document.createElement("div");
+      bar.className = "sf-clear-bar";
+      bar.style.cssText = "display:flex;justify-content:flex-end;margin:0 0 0.35rem";
+      anchor.parentNode.insertBefore(bar, anchor);
+    }
+    bar.innerHTML = "";
+    bar.appendChild(btn);
+  }
+  this._clearBtn = btn;
+  if (!this._clearWrapped) {
+    var onChange = this._onChange;
+    this._onChange = function () {
+      if (typeof onChange === "function") onChange.apply(this, arguments);
+      self._syncClearButton();
+    };
+    this._clearWrapped = true;
+  }
+  this._syncClearButton();
+  return btn;
+};
+
+TableSF.prototype._syncClearButton = function () {
+  if (this._clearBtn) this._clearBtn.disabled = Object.keys(this._filters || {}).length === 0;
 };
 
 TableSF.prototype._updateIcons = function () {
@@ -2541,6 +2601,7 @@ TableSF.prototype.setPrefs = function (p) {
     this.restoreFilterUI();
   }
   this._updateIcons();
+  this._syncClearButton();
 };
 
 /**
@@ -2585,6 +2646,7 @@ TableSF.prototype.applyState = function (state) {
   this._sortDir = state.sortDir === "desc" ? "desc" : "asc";
   this.restoreFilterUI();
   this._updateIcons();
+  this._syncClearButton();
 };
 
 window.PolarisPrefs = {

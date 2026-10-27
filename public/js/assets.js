@@ -9455,6 +9455,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       PolarisPrefs.save(ifaceTypeKey, currentUsername, sf.getPrefs());
       renderBody();
     });
+    sf.addClearButton();
     // Status and PoE offer only what this device actually reports — the value
     // sets are device-dependent (a tunnel reports "dynamic", a FortiSwitch port
     // reports "searching") and a checkbox that can never match is noise.
@@ -24085,6 +24086,8 @@ function _wireAssetSoftwareTab(asset) {
   function ensureTableWiring() {
     if (!sf && typeof TableSF !== "undefined") {
       sf = new TableSF("asset-view-sw-tbody", apply);
+      var swRefresh = document.getElementById("asset-view-sw-refresh");
+      sf.addClearButton(swRefresh && swRefresh.parentElement);
     }
     if (!layoutApplied && typeof applyTableLayout === "function") {
       var t = document.getElementById("asset-view-sw-table");
@@ -24436,6 +24439,8 @@ function _wireAssetServicesTab(asset) {
   function ensureTableWiring() {
     if (!sf && typeof TableSF !== "undefined") {
       sf = new TableSF("asset-view-svc-tbody", apply);
+      var svcRefresh = document.getElementById("asset-view-svc-refresh");
+      sf.addClearButton(svcRefresh && svcRefresh.parentElement);
     }
     if (!layoutApplied && typeof applyTableLayout === "function") {
       var svcTable = document.getElementById("asset-view-svc-table");
@@ -26118,6 +26123,8 @@ function _wireAssetEventsTab(assetId) {
     _loadAssetEventsTabFor();
     _saveAssetEventsPrefs();
   });
+  var evRefresh = document.getElementById("asset-view-events-refresh");
+  _assetEventsSF.addClearButton(evRefresh && evRefresh.parentElement);
   _restoreAssetEventsPrefs();
 
   var ps = document.getElementById("asset-view-events-pagesize");
@@ -28637,6 +28644,7 @@ function _renderAssetIpsec(assetId, data, asset) {
       if (typeof PolarisPrefs !== "undefined") PolarisPrefs.save(prefsKey, currentUsername, sf.getPrefs());
       render();
     });
+    sf.addClearButton();
     optionKeys.forEach(function (k) {
       sf.setColumnOptions(k, _distinctSorted(entries.map(function (e) { return e[k]; })));
     });
