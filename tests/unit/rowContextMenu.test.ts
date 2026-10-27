@@ -445,6 +445,22 @@ describe("left click opens, right click shows the menu", () => {
     expect(contextmenu(anchor, { clientX: 5, clientY: 5, shiftKey: true }).defaultPrevented).toBe(false);
   });
 
+  it("a right click focuses the menu, not its first item; the Menu key focuses the item", () => {
+    anchor.className = "row-menu-trigger";
+    anchor.addEventListener("click", () => {
+      showRowMenu(anchor, [{ label: "Open", primary: true, onSelect: () => {} }, { label: "Edit", onSelect: () => {} }]);
+    });
+    contextmenu(anchor, { clientX: 120, clientY: 80 });
+    expect(doc.activeElement).toBe(menu());
+    // ↓ from there lands on the first item.
+    doc.body.dispatchEvent(new (win as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent("keydown",
+      { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect((doc.activeElement as unknown as HTMLElement).textContent).toBe("Open");
+    closeRowMenu({ silent: true });
+    contextmenu(anchor, { clientX: 0, clientY: 0 });
+    expect((doc.activeElement as unknown as HTMLElement).textContent).toBe("Open");
+  });
+
   it("a second right click re-opens rather than toggling closed", () => {
     anchor.className = "row-menu-trigger";
     anchor.addEventListener("click", () => {

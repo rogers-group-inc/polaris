@@ -2860,6 +2860,11 @@ html[data-page-top-curtain]::after {
   z-index: 900;
   min-width: 160px;
 }
+/* A menu opened by the pointer holds focus itself (showRowMenu), so it draws
+   no ring; an item reached by the keyboard takes the accent ring, not the
+   browser's black default. */
+.row-context-menu:focus { outline: none; }
+.row-context-menu button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
 /* The row-name trigger: reads as the name, not as a control, until hovered.
    No ▾ caret: a left click OPENS the row (the menu's primary verb) and the
    menu is the right click's, so a dropdown caret would promise the wrong

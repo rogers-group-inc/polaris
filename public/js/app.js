@@ -4723,7 +4723,18 @@ function showRowMenu(anchor, items, opts) {
 
   anchor.setAttribute("aria-expanded", "true");
   anchor.setAttribute(ROW_MENU_OPEN_ATTR, "");
-  if (buttons.length) buttons[0].focus();
+  // A right click focuses the MENU, not its first item: Chrome draws a focus
+  // ring on a programmatically focused item whenever the last input was a key
+  // — and Ctrl+click to build a selection is one — so the first item came up
+  // boxed. The capture-phase arrow handler above still works from here, and
+  // the first ↓ lands on the first item. A keyboard-raised menu (Menu key,
+  // Shift+F10: at.x null) and a plain click's menu keep the item focus.
+  if (at && at.x != null) {
+    menu.tabIndex = -1;
+    try { menu.focus({ preventScroll: true }); } catch (_) { menu.focus(); }
+  } else if (buttons.length) {
+    buttons[0].focus();
+  }
 }
 
 if (typeof window !== "undefined") {
