@@ -181,7 +181,7 @@
         (canEdit()
           ? '<label style="display:inline-flex;align-items:center;gap:4px;margin:0 8px 0 0;font-weight:400;cursor:pointer" title="Enabled">' +
               '<input type="checkbox" data-qt-toggle="' + escapeHtml(s.id) + '"' + (s.enabled ? " checked" : "") + ' style="width:auto"> On</label>' +
-            '<button type="button" class="btn btn-sm" data-qt-edit="' + escapeHtml(s.id) + '">Edit</button> ' +
+            '<button type="button" class="btn btn-sm btn-secondary" data-qt-edit="' + escapeHtml(s.id) + '">Edit</button> ' +
             '<button type="button" class="btn btn-sm btn-danger" data-qt-delete="' + escapeHtml(s.id) + '" data-qt-name="' + escapeHtml(s.name) + '">Delete</button>'
           : "") +
       "</td>" +
@@ -210,7 +210,7 @@
       '<td><span class="badge ' + statusCls + '"' + (firstErr ? ' title="' + escapeHtml(firstErr) + '"' : "") + '>' + escapeHtml(r.status) + "</span></td>" +
       '<td style="text-align:right;white-space:nowrap">' +
         (failed && canEdit() && recips.length
-          ? '<button type="button" class="btn btn-sm" data-qt-resend="' + escapeHtml(r.id) + '" title="Send again to the recipients it did not reach">Resend</button>'
+          ? '<button type="button" class="btn btn-sm btn-secondary" data-qt-resend="' + escapeHtml(r.id) + '" title="Send again to the recipients it did not reach">Resend</button>'
           : "") +
       "</td>" +
     "</tr>";
@@ -323,7 +323,7 @@
           "<td " + TD + '><span class="badge ' + cls + '">' + escapeHtml(r.status) + "</span></td>" +
           "<td " + TD + ">" + escapeHtml(String(r.attempts == null ? "—" : r.attempts)) + "</td>" +
           "<td " + TD + ">" + (r.error ? escapeHtml(r.error) : "—") + "</td>" +
-          "<td " + TD + ' style="text-align:right;white-space:nowrap"><button type="button" class="btn btn-sm" data-qt-email="' + escapeHtml(r.address) + '" title="' +
+          "<td " + TD + ' style="text-align:right;white-space:nowrap"><button type="button" class="btn btn-sm btn-secondary" data-qt-email="' + escapeHtml(r.address) + '" title="' +
             (r.status === "sent" ? "The email this recipient was sent" : "The email this recipient will be sent") + '">View email</button></td></tr>';
       }).join("") + "</tbody></table>";
   }
