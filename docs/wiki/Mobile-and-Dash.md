@@ -149,7 +149,14 @@ the sheet. The refresh button in its header
 (or pulling the sheet down) re-reads what Polaris has for the device and
 repaints the sheet, keeping the sections you opened; it does not poll the device.
 The sheet does not refresh on its own, so tap it to catch up with the latest
-poll. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
+poll.
+
+**The phone's Back button steps the sheet down before it leaves the page.**
+With the sheet open, the first Back shrinks it to the band at the bottom of the
+screen and the next Back closes it; only the Back after that goes to the
+previous page. If another sheet is open on top of it (an interface, the ARP
+table, a confirm), Back closes that one first. A sheet you shrank by tapping
+outside it closes on the first Back. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
 **Interfaces** each name the polling method that collects them beside the
 title (**Not collected** when nothing does), and CPU + Memory has its own
 **1h · 24h · 7d** range. On a switch with PoE ports, Interfaces opens with a

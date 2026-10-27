@@ -59,6 +59,10 @@
 // upgrade block (osRowValue / loadFirmwareRow / confirmFirmwareUpgrade /
 // watchFirmwareRun).
 //
+// The phone's Back button walks the sheet down — a stacked sheet first, then
+// expanded → peek → closed — before it leaves the page (see the "Phone Back
+// button" block: the sheet keeps one history entry of its own while open).
+//
 // Out of scope for v1 (desktop-only):
 //   - The Firmware Repository, the choice of a model's backup image, and a
 //     run's history and log
@@ -264,7 +268,7 @@
 
     // Tapping the scrim (over the searchbar) minimizes rather than dismisses.
     scrim.addEventListener("click", minimize);
-    document.getElementById("asset-sheet-close").addEventListener("click", dismiss);
+    document.getElementById("asset-sheet-close").addEventListener("click", closeSheet);
     document.getElementById("asset-sheet-refresh").addEventListener("click", function () {
       if (_openId) reloadSheet(_openId, this);
     });
@@ -296,7 +300,7 @@
         },
       });
     });
-    PolarisTabs.attachSwipeToDismiss(sheet, dismiss, {
+    PolarisTabs.attachSwipeToDismiss(sheet, closeSheet, {
       // First swipe-down locks to peek; second swipe-down dismisses.
       onSwipeDown: function () {
         if (_state === "expanded") {
@@ -304,7 +308,7 @@
         } else if (_state === "peek") {
           sheet.style.transition = "transform .2s ease-out";
           sheet.style.transform = "translateY(100%)";
-          setTimeout(dismiss, 180);
+          setTimeout(closeSheet, 180);
         }
       },
       // Swipe-up from the peek band re-expands. In the expanded state baseline
@@ -391,6 +395,125 @@
     if (s) s.remove();
     if (sc) sc.remove();
   }
+
+  // Closed by the operator (the X, or the second swipe-down): tear down, then
+  // take the sheet's history entry back off so the next Back is the page's.
+  function closeSheet() {
+    dismiss();
+    dropSheetEntry();
+  }
+
+  // ─── Phone Back button ──────────────────────────────────────────────
+  // While the sheet is open it keeps one history entry of its own on top —
+  // pushState with the SAME url, so no hashchange and no route render. Back
+  // pops that entry and popstate decides what it meant, nearest thing first:
+  // a sheet stacked on this one closes, then expanded → peek (the entry is
+  // put back), then peek → closed. Minimize / expand by tap or swipe leave
+  // the entry alone, so Back from a peek always closes.
+  //
+  // A pop is told from a forward hash navigation (Chrome fires popstate for
+  // both) by the url: the entry sits over one with the same url, a navbar tap
+  // goes somewhere else. An entry left behind by a sheet closed from another
+  // route is stepped over when Back lands on it.
+  var SHEET_ENTRY_KEY = "polarisAssetSheet";
+  var _onSheetEntry = false;     // the current history entry is the sheet's
+  var _sheetEntryHref = "";      // the url it was pushed at
+  var _popsToIgnore = 0;         // popstates our own back()/go() cause
+  var _repushAfterIgnore = false;
+
+  function isSheetEntry(st) { return !!(st && st[SHEET_ENTRY_KEY]); }
+
+  function pushSheetEntry() {
+    if (isSheetEntry(window.history.state)) { _onSheetEntry = true; return; }
+    var st = {};
+    st[SHEET_ENTRY_KEY] = true;
+    try {
+      window.history.pushState(st, "", window.location.href);
+      _onSheetEntry = true;
+      _sheetEntryHref = window.location.href;
+    } catch (_) { /* history unavailable — Back just leaves the page, as before */ }
+  }
+
+  function dropSheetEntry() {
+    if (!isSheetEntry(window.history.state)) return;
+    _onSheetEntry = false;
+    _popsToIgnore++;
+    window.history.back();
+  }
+
+  // The newest sheet stacked over the asset sheet (interface, table, SD-WAN,
+  // alerts, edit, a confirm…) — closed through its own scrim, which every one
+  // wires to its close path, so its state (a poll, a pending promise) is torn
+  // down the way a tap outside it would. True when there was one.
+  function closeStackedSheet() {
+    var base = document.getElementById("asset-sheet");
+    if (!base) return false;
+    var sheets = document.querySelectorAll("body > .sheet");
+    for (var i = sheets.length - 1; i >= 0; i--) {
+      var s = sheets[i];
+      if (s === base) return false;
+      if (!(base.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      var scrim = s.previousElementSibling;
+      if (scrim && scrim.classList.contains("scrim")) scrim.click();
+      else {
+        var x = s.querySelector('[aria-label="Close"]');
+        if (x) x.click(); else s.remove();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function onPopState(e) {
+    var wasOnEntry = _onSheetEntry;
+    _onSheetEntry = isSheetEntry(e.state);
+    if (_onSheetEntry) _sheetEntryHref = window.location.href;
+    if (_popsToIgnore > 0) {
+      _popsToIgnore--;
+      if (_repushAfterIgnore) {
+        _repushAfterIgnore = false;
+        if (_state !== "closed") pushSheetEntry();
+      }
+      return;
+    }
+    if (_onSheetEntry) {
+      // Landed on an entry a sheet closed elsewhere left behind: step over it.
+      if (_state === "closed") { _popsToIgnore++; window.history.back(); }
+      return;
+    }
+    if (!wasOnEntry || _state === "closed") return;
+    if (window.location.href !== _sheetEntryHref) return;   // navigated away, not Back
+    if (closeStackedSheet()) { pushSheetEntry(); return; }
+    if (_state === "expanded") { minimize(); pushSheetEntry(); return; }
+    dismiss();
+  }
+
+  /**
+   * history.back() for an in-app back control (search's arrow, a detail
+   * page's chevron) that may be pressed while this sheet is open: steps past
+   * the sheet's own entry as well, so the control does its job and the sheet
+   * stays as it is (its entry is put back on the page it lands on).
+   */
+  function historyBack() {
+    if (_state !== "closed" && isSheetEntry(window.history.state)) {
+      _popsToIgnore++;
+      _repushAfterIgnore = true;
+      window.history.go(-2);
+    } else {
+      window.history.back();
+    }
+  }
+
+  // One listener per page even if this file is evaluated again (the unit
+  // tests do) — a stale copy would act on its own stale state.
+  if (window.__polarisAssetSheetPop) window.removeEventListener("popstate", window.__polarisAssetSheetPop);
+  window.__polarisAssetSheetPop = onPopState;
+  window.addEventListener("popstate", onPopState);
+  // A browser that navigates a fragment without a popstate still moves the
+  // current entry; keep the flag honest.
+  if (window.__polarisAssetSheetHash) window.removeEventListener("hashchange", window.__polarisAssetSheetHash);
+  window.__polarisAssetSheetHash = function () { _onSheetEntry = isSheetEntry(window.history.state); };
+  window.addEventListener("hashchange", window.__polarisAssetSheetHash);
 
   // ─── Screenshot ──────────────────────────────────────────────────────
   // Camera button in the sheet header. Captures the sheet body (#asset-host
@@ -520,12 +643,16 @@
     if (!id) return;
     var sheet = ensureSheet();
 
-    if (_openId === id && _state !== "closed") { expand(); return; }
+    if (_openId === id && _state !== "closed") { expand(); pushSheetEntry(); return; }
 
     _openId = id;
     // A fresh open re-reads the windows: one may have started or ended since.
     _maintWindows = { assetId: null, promise: null };
     expandFresh(sheet);
+    // Back now steps the sheet down (peek, then closed) before the page.
+    // No-op when the current entry is already the sheet's (another asset
+    // opened over this one).
+    pushSheetEntry();
 
     loadAsset(id, mountState(id)).catch(function (err) {
       if (_openId !== id) return;
@@ -3640,6 +3767,7 @@
 
   window.PolarisAssetDetail = {
     open: open,
+    historyBack: historyBack,
     // Pure firmware-row pieces, for the tests.
     _fw: { fwProgressText: fwProgressText, fwSlotHtml: fwSlotHtml, fwResultHtml: fwResultHtml, fwBadgeHtml: fwBadgeHtml },
     // Pure uptime / reboot pieces, for the tests.
