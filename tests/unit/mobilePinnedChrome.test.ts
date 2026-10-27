@@ -106,12 +106,42 @@ describe("pinned sheet header (PolarisTabs.pinSheetHead)", () => {
     expect(sheet.classList.contains("scrolled")).toBe(false);
   });
 
-  it("is sticky at the top, see-through at rest and filled once scrolled", () => {
+  it("is sticky at the top and stays see-through once scrolled", () => {
     const r = rule(".sheet-pinned-head");
     expect(r).toMatch(/position:\s*sticky/);
     expect(r).toMatch(/top:\s*0/);
     expect(r).toMatch(/background:\s*transparent/);
-    expect(rule(".sheet.scrolled > .sheet-pinned-head")).toMatch(/background:\s*var\(--md-surface\)/);
+    // The old opaque fill on scroll is gone: the body fades out instead.
+    expect(CSS).not.toMatch(/\.sheet\.scrolled > \.sheet-pinned-head\s*\{/);
+    expect(rule(".sheet > .sheet-pinned-head ~ *"))
+      .toContain("linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px))");
+  });
+
+  it("fades the body out under the band as it scrolls, and not at rest", async () => {
+    const sheet = makeSheet();
+    const rect = (el: Element, top: number, bottom: number) => {
+      (el as any).getBoundingClientRect = () => ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top });
+    };
+    g.PolarisTabs.pinSheetHead(sheet);
+    const band = sheet.querySelector(".sheet-pinned-head")!;
+    const body = sheet.querySelector("#x-body") as HTMLElement;
+    rect(band, 100, 196);
+    rect(body, 196, 900);
+    g.PolarisTabs.pinSheetHead(sheet); // at rest: unmasked
+    expect(body.style.getPropertyValue("--fade-from")).toBe("0px");
+    expect(body.style.getPropertyValue("--fade-to")).toBe("0px");
+
+    Object.defineProperty(sheet, "scrollTop", { value: 300, configurable: true });
+    rect(body, -104, 600);
+    sheet.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 30));
+    // Clear to 12px above the band's edge (184), opaque 24px below it (220).
+    expect(body.style.getPropertyValue("--fade-from")).toBe("288px");
+    expect(body.style.getPropertyValue("--fade-to")).toBe("324px");
+  });
+
+  it("keeps the fade out of the asset screenshot", () => {
+    expect(SHEET).toMatch(/toCanvas\(host, \{[^}]*style: unmask/);
   });
 
   it("is applied by every sheet that has a header row", () => {

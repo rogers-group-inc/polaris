@@ -833,6 +833,7 @@
     var row = _state.assets.find(function (x) { return x.id === assetId; });
     PolarisMobileAlerts.openForAsset(assetId, {
       hostname: (row && (row.hostname || row.assetTag)) || "",
+      linkName: true,   // opened from the list, so the name opens the asset
       onSummary: function (summary) { paintAlertFlag(assetId, summary); },
     });
   }

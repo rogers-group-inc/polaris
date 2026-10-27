@@ -1297,11 +1297,13 @@ input, select, textarea { font-family: inherit; }
    ARP/MAC table and per-asset alerts sheets, the edit menu and edit sheets,
    the site sheet, Sort & filter and the chat history. Bled to the sheet's
    edges (a sheet pads 24px) so content cannot show past its sides.
-   Transparent at rest; once the body scrolls under it (.scrolled, set by the
-   helper's scroll listener) it fills OPAQUE, like the edit sheets' sticky
-   .ae-footer: a backdrop blur here does nothing, because the sheet's own
-   backdrop-filter makes the sheet the backdrop root, and the sheet's glass
-   mix would let scrolled text read straight through the buttons. Above the
+   Transparent always — the sheet's glass shows through it at rest AND while
+   scrolled. So scrolled text never reads through the buttons, the body FADES
+   OUT under the band instead (the mask below; the lists' .list-sticky-head
+   treatment): clear behind the title row, opaque just below the band's
+   edge. A fill here (the old rule, 2026-10-13) made the band an opaque slab
+   the moment the body moved; a backdrop blur does nothing, because the
+   sheet's own backdrop-filter makes the sheet the backdrop root. Above the
    body's positioned content (z-index), below any sheet stacked over this one
    (those are separate fixed elements, so no conflict). */
 .sheet-pinned-head {
@@ -1312,12 +1314,25 @@ input, select, textarea { font-family: inherit; }
   padding: 0 24px;
   border-radius: var(--shape-xl) var(--shape-xl) 0 0;
   background: transparent;
-  transition: background-color .15s ease, box-shadow .15s ease;
 }
-.sheet.scrolled > .sheet-pinned-head {
-  background: var(--md-surface);
-  box-shadow: 0 1px 0 var(--md-outline-variant);
+/* The stops are placed per scroll frame by sheetFade (tabs.js pinSheetHead);
+   unset they are both 0, which masks nothing. A mask makes its element a
+   backdrop root — harmless here, where backdrop blur already does nothing. */
+.sheet > .sheet-pinned-head ~ * {
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px));
+  mask-image: linear-gradient(to bottom, transparent var(--fade-from, 0px), #000 var(--fade-to, 0px));
 }
+/* Another asset's name, as the link that opens its sheet
+   (PolarisAssetDetail.linkHtml; one document-level listener opens it).
+   Keeps the surrounding size and weight — a sheet title stays a title — and
+   only takes the primary colour that says it can be tapped. */
+.asset-link {
+  color: var(--md-primary);
+  text-decoration: none;
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.asset-link:active { text-decoration: underline; }
 .asset-sheet-header {
   display: flex;
   align-items: center;
@@ -1700,9 +1715,15 @@ input, select, textarea { font-family: inherit; }
 button, .list-item, .chip { touch-action: manipulation; }
 
 /* ─── Map ─────────────────────────────────────────────────────────────── */
+/* `isolation: isolate` keeps Leaflet's own z-indexes INSIDE the map: its
+   control corners (.leaflet-top / .leaflet-bottom — the status legend and
+   the OpenStreetMap attribution) carry z-index 1000, and without a stacking
+   context here they competed at the root and drew over the asset sheet
+   (901) and its scrim. */
 .map-screen {
   position: relative;
   height: 100%;
+  isolation: isolate;
 }
 .map-screen #map-container {
   position: absolute;

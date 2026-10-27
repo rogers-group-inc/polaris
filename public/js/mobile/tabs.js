@@ -691,9 +691,10 @@
   // so close / reload / the title's menu are reachable from the bottom of a
   // long sheet. Wraps `.sheet-handle` + the element right after it in a
   // `.sheet-pinned-head` band; `opts.also` names further direct children to
-  // pin with them, in order (a table sheet's filter row). The band is see-
-  // through at rest and fills once the body scrolls under it — the sheet gets
-  // `.scrolled` (mobile.css explains why it fills rather than blurs).
+  // pin with them, in order (a table sheet's filter row). The band stays
+  // see-through: the body FADES OUT as it scrolls under it instead (the
+  // lists' .list-sticky-head treatment, sheetFade below). The sheet gets
+  // `.scrolled` while its body is scrolled.
   // Idempotent: a sheet that repaints its innerHTML calls it again after each
   // paint; the scroll listener is attached once per sheet element.
   function pinSheetHead(sheet, opts) {
@@ -716,11 +717,42 @@
     }
     if (!sheet.__pinnedHeadWired) {
       sheet.__pinnedHeadWired = true;
+      var queued = false;
       sheet.addEventListener("scroll", function () {
         sheet.classList.toggle("scrolled", sheet.scrollTop > 0);
+        if (queued) return;
+        queued = true;
+        (window.requestAnimationFrame || setTimeout)(function () { queued = false; sheetFade(sheet); });
       }, { passive: true });
     }
     sheet.classList.toggle("scrolled", sheet.scrollTop > 0);
+    sheetFade(sheet);
+  }
+
+  // The body of a pinned sheet fades out under the band: fully transparent
+  // behind the title and buttons (down to SHEET_FADE_CLEAR_PX above the
+  // band's bottom edge), opaque FADE_LEAD_PX below it — the lead capped at
+  // scrollTop, so a sheet at rest is unmasked. Placed in each element's own
+  // coordinates, as installListFade does; mobile.css carries the mask.
+  var SHEET_FADE_CLEAR_PX = 12;
+  function sheetFade(sheet) {
+    var band = null;
+    for (var i = 0; i < sheet.children.length; i++) {
+      if (sheet.children[i].classList.contains("sheet-pinned-head")) { band = sheet.children[i]; break; }
+    }
+    if (!band) return;
+    var bandBottom = band.getBoundingClientRect().bottom;
+    var lead = Math.min(FADE_LEAD_PX, sheet.scrollTop || 0);
+    var from = bandBottom - Math.min(SHEET_FADE_CLEAR_PX, lead);
+    var to = bandBottom + lead;
+    var els = [];
+    for (var el = band.nextElementSibling; el; el = el.nextElementSibling) {
+      els.push({ el: el, top: el.getBoundingClientRect().top });
+    }
+    els.forEach(function (e) {
+      e.el.style.setProperty("--fade-from", Math.round(from - e.top) + "px");
+      e.el.style.setProperty("--fade-to", Math.round(to - e.top) + "px");
+    });
   }
 
   // ─── List fade under the pinned header ─────────────────────────────────
