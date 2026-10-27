@@ -632,7 +632,8 @@ it; hover the row for a reminder.
 
 Grades what this host is actually running — Node, PostgreSQL, TimescaleDB, Go,
 nginx, Java, the OS — against committed end-of-life dates, and links the upgrade
-steps.
+steps. Only a row that needs attention is tinted; a current, not-installed
+or unknown component is a plain row, with its colour on the Status pill alone.
 
 Platform findings are listed on this card, not on the Database card: they still
 reach the sidebar alert, Events and email through the capacity snapshot, but

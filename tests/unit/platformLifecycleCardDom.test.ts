@@ -182,7 +182,6 @@ describe("row rendering", () => {
       ["critical", "capacity-reason-red"],
       ["warning", "capacity-reason-amber"],
       ["watch", "capacity-reason-watch"],
-      ["none", "capacity-reason-ok"],
     ];
     for (const [sev, cls] of cases) {
       const html = renderPlatformLifecycleCard(
@@ -190,6 +189,14 @@ describe("row rendering", () => {
       );
       expect(html, `severity ${sev}`).toContain(cls);
     }
+  });
+
+  it("leaves a healthy row untinted while its pill stays green", () => {
+    const html = renderPlatformLifecycleCard(
+      payload({ components: [comp({ grade: { ...comp().grade, severity: "none", state: "current" } })] }),
+    );
+    expect(html).not.toContain("capacity-reason-");
+    expect(html).toContain("capacity-pill-ok");
   });
 
   it("labels each lifecycle state in operator language", () => {
