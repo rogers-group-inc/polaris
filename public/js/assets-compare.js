@@ -557,7 +557,7 @@ function _cmpUnitTitle(unit, metrics) {
 function _cmpAxisLabel(unit) {
   if (unit === "%") return "Utilization (%)";
   if (unit === "ms") return "Response time (ms)";
-  if (unit === "bps") return "Throughput (bps)";
+  if (unit === "bps") return "Throughput (bits/s)";
   if (unit === "err") return "Errors / interval";
   return "";
 }

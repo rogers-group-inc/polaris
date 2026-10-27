@@ -13065,10 +13065,9 @@ function _captureChartAsPng(container, meta, callback) {
 
     // Build header. Line 1 is "<Title> — <Subject>" (subject = interface or
     // tunnel name when the chart is in a sub-panel). Line 2 is the asset.
-    // Line 3 (when the chart is on a custom window) is the From/To range —
-    // preset ranges are implied by the x-axis, but a custom window needs to
-    // travel with the image. Line 4 is an optional stats summary (same one
-    // shown above the chart).
+    // Line 3 is the From/To range — the x-axis ticks carry only times of
+    // day, so the date has to travel with the image. Line 4 is an optional
+    // stats summary (same one shown above the chart).
     var titleParts = [];
     if (meta.title)   titleParts.push(meta.title);
     if (meta.subject) titleParts.push(meta.subject);
@@ -13151,20 +13150,25 @@ function _statsSummaryFrom(statsElId) {
   };
 }
 
-// "From <local datetime> to <local datetime>" label for a chart showing a
-// custom window (read from the dataset.from/to the loaders stamp on the
-// container). Empty string on preset ranges — those are implied by the
-// x-axis and don't need to travel with a screenshot.
-function _chartCustomRangeLabel(container) {
-  if (!container || !container.dataset || !container.dataset.from || !container.dataset.to) return "";
-  function fmt(iso) {
-    var d = new Date(iso);
-    if (isNaN(+d)) return iso;
-    return d.toLocaleString(undefined, {
-      month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
-    });
-  }
-  return "From " + fmt(container.dataset.from) + " to " + fmt(container.dataset.to);
+// "From <local datetime> to <local datetime>" label for a chart's window: the
+// custom From/To the loaders stamp on the container when there is one,
+// otherwise the span the chart actually drew (dataset.geomT0/T1 from
+// _stashChartGeometry). Preset ranges need it too — the x-axis ticks carry
+// only times of day, so a pasted screenshot would otherwise have no date.
+// The "to" end drops its date when it falls on the same day as "from".
+function _chartRangeLabel(container) {
+  if (!container || !container.dataset) return "";
+  var ds = container.dataset;
+  var from = null, to = null;
+  if (ds.from && ds.to) { from = new Date(ds.from); to = new Date(ds.to); }
+  else if (ds.geomT0 && ds.geomT1) { from = new Date(Number(ds.geomT0)); to = new Date(Number(ds.geomT1)); }
+  if (!from || !to || isNaN(+from) || isNaN(+to)) return "";
+  var dateOpts = { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" };
+  var sameDay = from.toDateString() === to.toDateString();
+  var toText = sameDay
+    ? to.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : to.toLocaleString(undefined, dateOpts);
+  return "From " + from.toLocaleString(undefined, dateOpts) + " to " + toText;
 }
 
 // Inject a small camera button at the top-right of a chart container. The
@@ -13210,10 +13214,10 @@ function _addChartScreenshotButton(container, label, axisOpts) {
       xAxis: axisOpts.xAxis || "Time",
       yAxis: axisOpts.yAxis || label,
       stats: statsLine,
-      // Charts on a custom window carry their From/To in the header so the
-      // captured image is unambiguous about what it shows. Read at click
-      // time from the dataset the loaders stamp on the container.
-      range: _chartCustomRangeLabel(container),
+      // Every capture carries its From/To in the header so the image is
+      // dated once it leaves the page. Read at click time from the dataset
+      // stamped on the container (custom window, else the rendered span).
+      range: _chartRangeLabel(container),
       // The section's amber "Last successful update …" banner, so a chart of
       // stalled data says so once it leaves the page.
       stale: _staleBannerTextFor(container),
@@ -13286,9 +13290,9 @@ function _screenshotInterfacePanel(asset, ifName) {
   }
   var tputStatsText = _ifaceStatsText(tputStatsEl);
   var errStatsText  = _ifaceStatsText(errStatsEl);
-  // Custom-window charts prepend their From/To so the composite screenshot
-  // states the window it captured (preset ranges read off the x-axis).
-  var rangeText = _chartCustomRangeLabel(tputContainer);
+  // Prepend the From/To so the composite screenshot states the window it
+  // captured — the x-axis ticks alone carry no date.
+  var rangeText = _chartRangeLabel(tputContainer);
   var statsText = [rangeText, tputStatsText, errStatsText].filter(Boolean).join(" · ");
 
   // Resolved comment: textarea value if non-empty (covers in-progress edits and
@@ -14678,7 +14682,7 @@ function _renderMemoryChart(container, data, asset, si) {
     return html;
   });
   _wireMemLegend(container, data, asset, si);
-  _addChartScreenshotButton(container, "Memory", { yAxis: "Memory (bytes)", getStats: _statsSummaryFrom("asset-mem-summary") });
+  _addChartScreenshotButton(container, "Memory", { yAxis: "Memory used", getStats: _statsSummaryFrom("asset-mem-summary") });
   _observeChartResize(container, function (c) { _renderMemoryChart(c, data, asset, si); });
 }
 
@@ -16927,7 +16931,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
         '<div style="display:flex;gap:6px">' + rangeBtns + '</div>' +
       '</div>' +
       ifaceCustomPanel +
-      '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Throughput (bps)</h5>' +
+      '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Throughput</h5>' +
       '<div id="iface-tput-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
       '<div id="iface-tput-chart" class="iface-chart-box"></div>' +
       '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Errors per interval (in / out)</h5>' +
@@ -17621,7 +17625,7 @@ function _renderIfaceThroughputChart(container, derived, opts) {
       '<div>Input: '  + (inV  !== "" ? _fmtBitsPerSec(Number(inV))  : "—") + '</div>' +
       '<div>Output: ' + (outV !== "" ? _fmtBitsPerSec(Number(outV)) : "—") + '</div>';
   });
-  _addChartScreenshotButton(container, "Throughput", { yAxis: "Throughput (bps)", subject: opts.subject, getStats: _statsSummaryFrom("iface-tput-stats") });
+  _addChartScreenshotButton(container, "Throughput", { yAxis: "Throughput (bits/s)", subject: opts.subject, getStats: _statsSummaryFrom("iface-tput-stats") });
   _observeChartResize(container, function (c) { _renderIfaceThroughputChart(c, derived, opts); });
 }
 
@@ -18173,7 +18177,7 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
       '<div>' + (side === "in" ? "Incoming" : "Outgoing") + ': ' + _fmtBitsPerSec(Number(target.getAttribute("data-v"))) + '</div>';
   });
-  _addChartScreenshotButton(container, side === "in" ? "IPsec incoming" : "IPsec outgoing", { yAxis: "Throughput (bps)", subject: opts.subject, getStats: _statsSummaryFrom("ipsec-stats") });
+  _addChartScreenshotButton(container, side === "in" ? "IPsec incoming" : "IPsec outgoing", { yAxis: "Throughput (bits/s)", subject: opts.subject, getStats: _statsSummaryFrom("ipsec-stats") });
   _observeChartResize(container, function (c) { _renderIpsecBpsChart(c, derived, side, opts); });
 }
 
