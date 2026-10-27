@@ -423,7 +423,11 @@ itself takes the same classes **and an `id`**: the Maintenance tab's
 amber/red edges on the page (only cards with an id count, so the strip never
 counts itself), taking each card's `<h4>` as its name and scrolling to it on
 click. A card that grades after an async load calls `renderCardAlertSummary`
-again once it has set its class.
+again once it has set its class. The 3px width is restated as
+`.settings-card.severity-edge` (2026-10-26): `.settings-card`'s later
+`border: 1px solid` shorthand, at the same specificity, had been resetting the
+edge to a 1px hairline while the two-class colour rules survived. The strip lies
+flat in the folder card like the cards around it (`box-shadow: none`).
 
 **Key conventions:**
 - **A tab with more than three cards wants `.settings-cards-flow`, not a `-row` class.** The

@@ -1759,6 +1759,12 @@ code {
 .severity-edge {
   border-left: 3px solid var(--color-text-tertiary);
 }
+/* .settings-card's `border: 1px solid` shorthand comes later at the same
+   specificity and reset the edge to a 1px hairline (only the two-class colour
+   rules below survived it), so the width is restated at two classes too. */
+.settings-card.severity-edge {
+  border-left-width: 3px;
+}
 /* "watch" is the informational tier — the accent, not a hardcoded cyan.
    --color-info has never been defined, so this always painted its fallback and
    stayed dark-theme blue on a light ground. */
@@ -1768,7 +1774,9 @@ code {
 .severity-edge.severity-edge-red   { border-left-color: var(--color-danger); }
 
 /* "Needs attention" strip at the top of the Maintenance tab — one entry per
-   card graded amber/red (renderCardAlertSummary), each a jump to its card. */
+   card graded amber/red (renderCardAlertSummary), each a jump to its card.
+   It lies flat in the folder card like the settings cards around it: no
+   shadow. */
 .card-alert-summary {
   display: flex;
   flex-wrap: wrap;
@@ -1779,7 +1787,7 @@ code {
   background: var(--card-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
 }
 .card-alert-summary.severity-edge { border-left-width: 3px; }
 .card-alert-summary-label {
