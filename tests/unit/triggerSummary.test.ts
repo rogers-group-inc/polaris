@@ -207,6 +207,20 @@ describe("pathConditionPhrase", () => {
   });
 });
 
+describe("triggerSummary on a path check result", () => {
+  const pathOk = { type: "asset_metric", metric: "pathOk", operator: "==", threshold: 0 } as const;
+
+  it("says the check is down or up, never 'is 0'", () => {
+    expect(triggerSummary({ trigger: pathOk, value: 0, dimensionLabel: "Truck Scale Central" })).toBe("Truck Scale Central is down");
+    expect(triggerSummary({ trigger: pathOk, value: 1, dimensionLabel: "Truck Scale Central" })).toBe("Truck Scale Central is up");
+  });
+
+  it("states the condition when there is no reading, and names the check generically when unlabelled", () => {
+    expect(triggerSummary({ trigger: pathOk, value: null, dimensionLabel: "ERP HTTPS" })).toBe("ERP HTTPS is down");
+    expect(triggerSummary({ trigger: pathOk, value: 0 })).toBe("The path check is down");
+  });
+});
+
 describe("recoveredConditionSuffix", () => {
   it("turns down into up, keeping the count's verb", () => {
     expect(recoveredConditionSuffix(" is down")).toBe(" is up");

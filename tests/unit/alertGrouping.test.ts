@@ -708,11 +708,16 @@ describe("the update cadence (business rule 75): queued changes", () => {
       member("c1", { label: "pc-02", assetId: "a2", component: "Salesforce HTTPS" }),
       member("c1", { label: "pc-03", assetId: "a3", component: "Salesforce HTTPS", leftAt: T1.toISOString() }),
     ];
-    const ctx = { asset: "Salesforce HTTPS", dimension: "pc-01, pc-02, pc-03", "dimension.suffix": " · 3 devices" };
+    const ctx = {
+      asset: "Salesforce HTTPS", dimension: "pc-01, pc-02, pc-03", "dimension.suffix": " · 3 devices",
+      "trigger.summary": "Salesforce HTTPS is down from pc-01, pc-02, pc-03",
+    };
     const out = refreshMemberContext(ctx, members, null);
     expect(out["asset"]).toBe("Salesforce HTTPS");
     expect(out["dimension"]).toBe("pc-01, pc-02");
     expect(out["dimension.suffix"]).toBe(" · 2 devices");
+    // The headline drops the recovered host and keeps the check as its subject.
+    expect(out["trigger.summary"]).toBe("Salesforce HTTPS is down from pc-01, pc-02");
   });
 
   it("counts a whole-group alert from the true counts, not the capped members", () => {
@@ -730,6 +735,9 @@ describe("the update cadence (business rule 75): queued changes", () => {
     const agreed = { devices: 79, automations: 1, pathOnly: true, condition: { one: "is down", many: "are down" } };
     expect(refreshMemberContext(ctx, members, null, { ...agreed, checks: 2 })["condition.suffix"]).toBe(" are down");
     expect(refreshMemberContext(ctx, members, null, { ...agreed, checks: 1 })["condition.suffix"]).toBe(" is down");
+    // ...and so does the headline, both counts restated.
+    expect(refreshMemberContext(ctx, members, null, { ...agreed, checks: 2 })["trigger.summary"]).toBe("2 path checks are down from 79 devices");
+    expect(refreshMemberContext(ctx, members, null, { ...agreed, checks: 1 })["trigger.summary"]).toBe("1 path check is down from 79 devices");
     // Several automations: the alert is the GROUP's.
     const mixed = refreshMemberContext(ctx, members, null, { devices: 79, checks: 2, automations: 2, pathOnly: true });
     expect(mixed["rule"]).toBe("WAN");

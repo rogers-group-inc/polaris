@@ -5454,6 +5454,9 @@ export function refreshMemberContext(
         out["condition.suffix"] = counts?.pathOnly && counts.condition
           ? ` ${counts.checks === 1 ? counts.condition.one : counts.condition.many}`
           : "";
+        // The headline restates both counts ("3 path checks are down from 80
+        // devices"), which the host-list replace below cannot reach.
+        if (out["condition.suffix"]) out["trigger.summary"] = `${whole}${out["condition.suffix"]} from ${devices}`;
       }
       else out["asset"] = devices;
       if (counts) out["rule"] = counts.automations === 1 ? (active[0]?.ruleName ?? out["rule"] ?? "") : group;

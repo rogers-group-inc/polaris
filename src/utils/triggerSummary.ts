@@ -230,6 +230,15 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
     const state = flag === 1 || flag === true || flag === "1" ? "in ALARM" : "OK";
     return `${subject} is ${state}`;
   }
+  // A path check's result is a 0/1 flag too — "Path check result on ERP HTTPS
+  // is 0" told the reader nothing. The check is the subject: "ERP HTTPS is
+  // down". From the reading when there is one, else from the condition.
+  if (trigger.metric === "pathOk") {
+    const check = parts.dimensionLabel || "The path check";
+    const r = parts.value;
+    if (r === null || r === undefined) return `${check} ${pathConditionPhrase(trigger)}`;
+    return `${check} is ${r === 0 || r === false || r === "0" ? "down" : "up"}`;
+  }
   const unit = triggerUnit(trigger, parts.sensorUnit);
   const v = formatValue(parts.value);
   if (v === null) {

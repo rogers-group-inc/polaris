@@ -2513,13 +2513,22 @@ function readingContextParts(
     // "Response time (median over 5 minutes) is 760 ms" — the wizard's own
     // "When should it fire?" wording with the observed value in it, so the
     // alert email says what the number means instead of "responseTimeMs = 760".
-    triggerSummary: triggerSummary({
-      trigger: trigger as never,
-      value: reading.value,
-      // On a grouped alert the sentence names every affected component, for
-      // the same reason {dimension} does.
-      dimensionLabel: members?.length ? renderMemberList(members) : (reading.dimLabel || null),
-    }),
+    // A path alert about the CHECK leads with the check and says where it is
+    // failing from — "Truck Scale Central is down from GRYCRT-S2212", "3 path
+    // checks are down from 80 devices" — where the generic sentence put the
+    // hosts in the component's place ("Path check result on GRYCRT-S2212 is
+    // 0"). refreshMemberContext keeps both current as the alert changes.
+    triggerSummary: condition && pathCheck
+      ? `${pathCheck} ${condition} from ${renderMemberList(members)}`
+      : condition && whole
+        ? `${whole} ${condition} from ${devices}`
+        : triggerSummary({
+          trigger: trigger as never,
+          value: reading.value,
+          // On a grouped alert the sentence names every affected component, for
+          // the same reason {dimension} does.
+          dimensionLabel: members?.length ? renderMemberList(members) : (reading.dimLabel || null),
+        }),
     // Grouped-alert tokens. Present on every alert so a template is never
     // broken by them, and "1" / the single component's own label on an
     // ungrouped one — which is exactly what they mean there.
