@@ -6834,6 +6834,19 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 .tag-picker-chip.hue-pill:hover { border-color: var(--color-accent); }
 
+/* The interfaces table's type tag beside a port name (typeBadge in assets.js):
+   Physical / Aggregate / VLAN / Member / Sub-interface. A small rectangle on
+   the .hue-pill colours, not a round .badge — it labels the row, it is not a
+   status. */
+.iface-type-tag {
+  display: inline-block;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
 /* A VLAN by name, its number on hover (_vlanPillHTML in assets.js). Rides
    .hue-pill in the teal the interface VLAN badges use. `.vlan-inferred` is a
    MAC-table VLAN filled from the access port's native VLAN, not reported. */

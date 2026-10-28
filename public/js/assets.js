@@ -9216,11 +9216,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   function typeBadge(iface, isChild) {
     var t = iface.ifType;
     if (isChild && iface.subIface) {
-      return '<span class="badge hue-pill" style="--hue:#6b7280;margin-left:5px">Sub-interface</span>';
+      return '<span class="hue-pill iface-type-tag" style="--hue:#6b7280;margin-left:5px">Sub-interface</span>';
     }
     // Member port of an aggregate: show "Member" regardless of its stored type.
     if (isChild && t !== "vlan") {
-      return '<span class="badge hue-pill" style="--hue:#6b7280;margin-left:5px">Member</span>';
+      return '<span class="hue-pill iface-type-tag" style="--hue:#6b7280;margin-left:5px">Member</span>';
     }
     var cfgs = {
       physical:  ["Physical",  "#6b7280"],
@@ -9236,7 +9236,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var bundleLabels = { "hard-switch": "Hardware switch", "switch": "Software switch", "redundant": "Redundant", "vap-switch": "WiFi switch" };
     if (t === "aggregate" && bundleLabels[iface.ifSubtype]) cfg = [bundleLabels[iface.ifSubtype], cfg[1]];
     var c = cfg[1];
-    return '<span class="badge hue-pill" style="--hue:' + c + ';margin-left:5px">' + escapeHtml(cfg[0]) + '</span>';
+    return '<span class="hue-pill iface-type-tag" style="--hue:' + c + ';margin-left:5px">' + escapeHtml(cfg[0]) + '</span>';
   }
 
   // Native + Tagged VLAN cells for the interfaces table — populated only on

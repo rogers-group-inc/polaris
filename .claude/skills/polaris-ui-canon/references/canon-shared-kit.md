@@ -442,11 +442,16 @@ bright label ("Missed" in `#f57f17`) all but vanished on daylight.
   that are not status pills: `.mac-badge-count` (a solid count bubble), the calendar chips, the
   account badge.
 - **A computed colour** (a chart line's colour, a state colour chosen in JS) is
-  `class="badge hue-pill" style="--hue:…"` — the interface type tags, LLDP role / capability
+  `class="badge hue-pill" style="--hue:…"` — the LLDP role / capability
   tags, "unmatched" / "overridden", the HA role / health and FortiLink / Authorization badges
   and the SD-WAN health-check / member chips in `assets.js` all are. Add `hue-strong` for the
   selected chip of a set, and `text-transform:none` when the label is an identifier (`.badge`
   capitalises its first letter).
+- **Not pills:** the interfaces table's type tag beside a port name (`typeBadge` — Physical /
+  Aggregate / VLAN / Member / Sub-interface / the bundle kinds) is `class="hue-pill
+  iface-type-tag"`: the `.hue-pill` colours on a small 3px-radius rectangle, no `.badge`, no
+  shadow, like `.vlan-pill`. The user asked for it back as a rectangle (2026-10-28); do not
+  fold it into the pill family.
 - **The Capacity Advisor's reason boxes** (`.capacity-reason-ok|watch|amber|red`) take the same
   recipe at box size: one `--cap-c` per severity, an 18% fill, the border at 45% of the clamped
   colour.
