@@ -4,6 +4,22 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # A push that touches ONLY these neither changes the image nor anything the
+    # test jobs read, so it builds nothing. Kept deliberately narrow: docs/ stays
+    # (docs/wiki is COPYed into the image, and rootHelperHintsFullPath scans
+    # docs/ + README.md), and so does deploy/ (the unit suite reads its
+    # scripts). GitHub evaluates path filters against the whole push, so any
+    # code file in the range still builds; tag pushes ignore path filters.
+    paths-ignore:
+      - ".claude/**"
+      - ".design-sync/**"
+      - "design/**"
+      - "plugin-candidates/**"
+      - "CLAUDE.md"
+      - "CONTRIBUTING.md"
+      - "DEVELOPMENT.md"
+      - ".github/workflows/check-docs.yml"
+      - ".github/workflows/codeql.yml"
   workflow_dispatch:
 
 env:
@@ -21,9 +37,19 @@ permissions:
 # build job `packages: write` + `id-token: write` — enough to publish a signed
 # image under our own name. Dependabot updates SHA pins and their comments
 # natively, so this costs nothing to keep current.
+#
+# Concurrency is per JOB, not per workflow, so a newer push to the same ref
+# cancels an older run's tests but never an older run's build mid-publish: a
+# build killed between "Build and push" and the attestation leaves a pushed
+# image with no provenance. The build group queues instead (cancel-in-progress
+# false), and a still-pending older build is replaced by the newer one, so
+# `latest` can't be overwritten by a stale commit finishing last.
 jobs:
   test:
     runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-test
+      cancel-in-progress: true
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,6 +80,9 @@ jobs:
 
   integration:
     runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-integration
+      cancel-in-progress: true
     env:
       DATABASE_URL: postgresql://polaris:polaris@localhost:5432/polaris_test
       SESSION_SECRET: ci-integration-secret
@@ -179,6 +208,9 @@ jobs:
   build:
     needs: [test, integration]
     runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-build
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write

@@ -1,0 +1,63 @@
+name: CodeQL
+
+# Code scanning, once a night instead of on every push. GitHub's "default
+# setup" ran it on every push to main — about 13 a day, 13 runner-minutes
+# each, roughly 4,800 minutes a month — and it offers no schedule of its own,
+# so this advanced-setup workflow replaces it. It only takes over once default
+# setup is switched to "Advanced" (Settings → Code security → Code scanning →
+# CodeQL analysis); while default setup is on, GitHub refuses the upload from
+# this workflow.
+#
+# Same three languages default setup scanned, with the same "/language:<x>"
+# categories, so existing alerts carry over instead of closing and reopening:
+#   javascript-typescript  src/ + public/ (no build needed)
+#   go                     agent/ (autobuild finds agent/go.mod)
+#   actions                .github/workflows/
+#
+# 07:00 UTC is 02:00 Central in summer, 01:00 in winter. A commit pushed
+# during the day is scanned that night; workflow_dispatch runs it on demand.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every `uses:` is pinned to a commit SHA with the version in a trailing
+# comment, as in docker-publish.yml; Dependabot keeps the pins current.
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: "/language:${{ matrix.language }}"

@@ -23,7 +23,7 @@ and disagree often. Triage each on its own; clearing one says nothing about the 
 | Feed | Covers | Read it with |
 |---|---|---|
 | **Dependabot alerts** | advisories against the dependency tree | `gh api repos/:owner/:repo/dependabot/alerts` |
-| **CodeQL / code scanning** | defects in **our own source**, server and browser | `gh api repos/:owner/:repo/code-scanning/alerts` |
+| **CodeQL / code scanning** | defects in **our own source**, server and browser — scanned **nightly** by `.github/workflows/codeql.yml` (advanced setup, 2026-10-28), so a fix pushed today closes its alert tomorrow | `gh api repos/:owner/:repo/code-scanning/alerts` |
 | **`npm audit`** | advisories again, but a different verdict set from Dependabot's | `npm run audit:deps` |
 | **Aikido** | SAST + secrets + IaC + container, via its MCP plugin | the `aikido:issues` skill |
 

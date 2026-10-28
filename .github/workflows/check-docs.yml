@@ -32,6 +32,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to the same branch or PR cancels the older run: only the latest
+# commit's result matters. No path filter on purpose: the check is cheap, and if
+# branch protection ever requires it, a PR the filter skipped would sit
+# "pending" forever instead of passing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
