@@ -133,7 +133,55 @@ export async function queryEventsPage(q: {
     }),
     prisma.event.count({ where: q.where }),
   ]);
-  return { events, total };
+  return { events: await withAssetNames(events), total };
+}
+
+/**
+ * Stamp each event with `assetName` — the CURRENT hostname (else IP) of the
+ * device in `Event.assetId` — for the Events page's Device column. One lookup
+ * per page, however many rows share a device. `Event.assetId` is not a foreign
+ * key (events outlive their asset), so a deleted device reads null here and
+ * the page falls back to what the row itself recorded.
+ */
+export async function withAssetNames<T extends { assetId: string | null }>(
+  events: T[],
+): Promise<(T & { assetName: string | null })[]> {
+  const ids = Array.from(new Set(events.map((e) => e.assetId).filter((x): x is string => !!x)));
+  const assets = ids.length
+    ? await prisma.asset.findMany({ where: { id: { in: ids } }, select: { id: true, hostname: true, ipAddress: true } })
+    : [];
+  const names = new Map(assets.map((a) => [a.id, a.hostname || a.ipAddress || null]));
+  return events.map((e) => ({ ...e, assetName: (e.assetId && names.get(e.assetId)) || null }));
+}
+
+/**
+ * The Device column's filter, as a where-level fragment on `Event.assetId`.
+ * The device name lives on Asset, not Event, so a text match is resolved to
+ * the matching asset ids first (hostname or IP, case-insensitive) and the
+ * events are then filtered by id. `empty` / `is_not_empty` mean "about no
+ * device" / "about a device". Same (value, op) contract as
+ * utils/prismaTextFilter.
+ */
+export async function eventDeviceFilter(
+  value: string | undefined,
+  op: string | undefined,
+): Promise<Record<string, unknown> | undefined> {
+  if (op === "empty") return { assetId: null };
+  if (op === "is_not_empty") return { assetId: { not: null } };
+  const v = (value || "").trim();
+  if (!v) return undefined;
+  const matches = await prisma.asset.findMany({
+    where: {
+      OR: [
+        { hostname: { contains: v, mode: "insensitive" } },
+        { ipAddress: { contains: v, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true },
+  });
+  const ids = matches.map((a) => a.id);
+  if (op === "not_contains") return { OR: [{ assetId: null }, { assetId: { notIn: ids } }] };
+  return { assetId: { in: ids } };
 }
 
 /**

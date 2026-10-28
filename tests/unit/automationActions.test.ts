@@ -321,7 +321,7 @@ describe("emailSentEventsFor — the asset Event for a sent alert email", () => 
       level: "info",
       details: { assetId: "a1", ruleId: "r1", deliveryId: "d1", to: ["ops@example.com", "noc@example.com"], cc: ["mgr@example.com"], bccCount: 2, subject: "[WARNING] sw-core-1" },
     });
-    expect(e!.message).toBe('Alert email from automation "Core CPU" sent to ops@example.com, noc@example.com; Cc mgr@example.com (+2 Bcc)');
+    expect(e!.message).toBe('Alert email for sw-core-1 from automation "Core CPU" sent to ops@example.com, noc@example.com; Cc mgr@example.com (+2 Bcc)');
   });
 
   it("never names a Bcc address — not in the message, not in details", () => {
@@ -358,6 +358,11 @@ describe("emailSentEventsFor — the asset Event for a sent alert email", () => 
   it("falls back to the hostname when the automation is gone", () => {
     const [e] = emailSentEventsFor([row({ notification: { rule: null } })]);
     expect(e!.resourceName).toBe("sw-core-1");
-    expect(e!.message).toMatch(/^Alert email sent to /);
+    expect(e!.message).toMatch(/^Alert email for sw-core-1 sent to /);
+  });
+
+  it("leaves the asset out of the message when the alert has no hostname snapshot", () => {
+    const [e] = emailSentEventsFor([row({ notification: { assetHostname: null } })]);
+    expect(e!.message).toMatch(/^Alert email from automation "Core CPU" sent to /);
   });
 });

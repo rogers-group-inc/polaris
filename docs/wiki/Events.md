@@ -20,11 +20,12 @@ Gated by `events`. The page has two tabs: **Events** (the log, below) and
 | **Level** | `info` · `warning` · `error` |
 | **Action** | a dotted verb — `reservation.created`, `asset.firmware.changed`, `monitor.status_changed` |
 | **Resource** | the entity type |
-| **Resource Name** | |
+| **Resource Name** | for an alert row, the automation |
+| **Device** | the device the event is about, by its current hostname — on an alert's fire, clear or email row too, where Resource Name is the automation. Click it to open the device. Filterable by hostname or IP; not sortable |
 | **Message** | |
 | **User** | the actor |
 
-Sortable, inline-filterable, resizable, with saved layouts like every other list
+Sortable (all but Device), inline-filterable, resizable, with saved layouts like every other list
 page. **Export** downloads PDF or CSV of the current page, all filtered results,
 or the entire event log; **Export** (download icon), **Alerts**, **Settings** (gear icon), **Refresh** (circular-arrows icon), **Clear Filters** and the page size (**15 / page** …)
 sit on the tab row, and the page buttons are below the page card. The **Calendar**
@@ -52,8 +53,8 @@ discovery and change events, **and its alerts** — an automation firing
 (`notification.auto_cleared`). Those alert rows show **Resource**
 `notification` with the automation's name beside it. A device whose alert keeps
 firing and clearing shows each round there. Every alert **email** that goes out
-adds a `notification.email_sent` row naming the automation and its To and Cc
-recipients (Bcc is only counted) — see [rule 106](Business-Rules#rule-106).
+adds a `notification.email_sent` row naming the device, the automation and its
+To and Cc recipients (Bcc is only counted) — see [rule 106](Business-Rules#rule-106).
 
 An automation only writes its *fired* event when it has a **Create an Event** action;
 the clear is written regardless. Acknowledging or clearing alerts by hand is one
@@ -267,7 +268,8 @@ change-triggered automations are carved out — one that wrote an Event would fe
 its own trigger.
 
 `notification.email_sent` records each alert email that was delivered, on the
-device it is about. It never triggers or clears an automation, even one whose
+device it is about, and names that device in its message so the row reads on
+the Events page too. It never triggers or clears an automation, even one whose
 pattern is `*` or `notification.*`.
 
 `notification.superseded` records an alert cleared by a carve-out, a

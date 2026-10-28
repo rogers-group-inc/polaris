@@ -9,7 +9,7 @@ import { requirePermission } from "../middleware/permissions.js";
 import { SECRET_MASK, isMaskedSecret } from "../../utils/secretMask.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter } from "../../utils/prismaTextFilter.js";
-import { queryEventsPage, listEventResourceTypes } from "../../services/eventLogService.js";
+import { queryEventsPage, listEventResourceTypes, eventDeviceFilter } from "../../services/eventLogService.js";
 import {
   getArchiveSettings,
   updateArchiveSettings,
@@ -55,6 +55,10 @@ const ListQuerySchema = z.object({
   actorOp: z.string().optional(),
   message: z.string().optional(),
   messageOp: z.string().optional(),
+  // The Device column: a text match on the hostname / IP of the asset the
+  // event is about (Event.assetId), resolved through eventDeviceFilter.
+  device: z.string().optional(),
+  deviceOp: z.string().optional(),
   // Date range on `timestamp`. The retention cutoff is the floor regardless
   // of what `since` says.
   since: z.string().optional(),
@@ -151,6 +155,7 @@ router.get("/", requirePermission("events", "read"), async (req, res, next) => {
       buildTextFilter("resourceName", q.resourceName, q.resourceNameOp),
       buildTextFilter("actor", q.actor, q.actorOp),
       buildTextFilter("message", q.message, q.messageOp),
+      await eventDeviceFilter(q.device, q.deviceOp),
     ].filter((f): f is Record<string, unknown> => f !== undefined);
     if (textFilters.length) where.AND = textFilters;
 

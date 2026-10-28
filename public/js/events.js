@@ -121,6 +121,7 @@ var _eventsSF = null;
     pushText("resourceName", filters.resourceName);
     pushText("actor", filters.actor);
     pushText("message", filters.message);
+    pushText("device", filters.device);
 
     // Date-range filter on the timestamp column maps to since/until.
     if (filters.timestamp && filters.timestamp.type === "date") {
@@ -168,7 +169,7 @@ var _eventsSF = null;
       }
     } catch (err) {
       document.getElementById("events-tbody").innerHTML =
-        '<tr><td colspan="8" class="empty-state">Failed to load events</td></tr>';
+        '<tr><td colspan="9" class="empty-state">Failed to load events</td></tr>';
     }
   }
 
@@ -200,7 +201,7 @@ var _eventsSF = null;
   function renderTable(events) {
     var tbody = document.getElementById("events-tbody");
     if (!events.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No events found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No events found</td></tr>';
       return;
     }
 
@@ -216,6 +217,17 @@ var _eventsSF = null;
       var resourceLabel = ev.resourceType || "-";
       var resourceName = ev.resourceName || "-";
 
+      // Device = the asset the event is ABOUT (Event.assetId), named by its
+      // current hostname. An alert's Resource Name is the automation, so this
+      // is the only column that says which device fired. A deleted device
+      // falls back to the name an asset row recorded for itself.
+      var deviceName = ev.assetName || (ev.resourceType === "asset" && ev.resourceName) || "";
+      var deviceCell = !deviceName
+        ? "-"
+        : (ev.assetName && permAtLeast("assets", "read")
+            ? '<a href="#" class="ev-device-link" data-asset-id="' + escapeHtml(ev.assetId) + '">' + escapeHtml(deviceName) + '</a>'
+            : escapeHtml(deviceName));
+
       var detailBtn = ev.details && ev.details.changes
         ? '<button class="btn btn-secondary btn-sm btn-event-detail" data-event-idx="' + idx + '" style="padding:2px 8px;font-size:0.75rem">Detail</button>'
         : '';
@@ -226,6 +238,7 @@ var _eventsSF = null;
         '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ev.action || "") + '</td>' +
         '<td>' + escapeHtml(resourceLabel) + '</td>' +
         '<td class="cell-wrap">' + escapeHtml(resourceName) + '</td>' +
+        '<td class="cell-wrap">' + deviceCell + '</td>' +
         '<td class="cell-wrap">' + escapeHtml(ev.message || "") + '</td>' +
         '<td>' + escapeHtml(ev.actor || "-") + '</td>' +
         '<td>' + detailBtn + '</td>' +
@@ -327,6 +340,12 @@ var _eventsSF = null;
 
   // Detail button delegation
   document.getElementById("events-tbody").addEventListener("click", function (e) {
+    var deviceLink = e.target.closest(".ev-device-link");
+    if (deviceLink) {
+      e.preventDefault();
+      PolarisPanels.openAsset(deviceLink.getAttribute("data-asset-id"));
+      return;
+    }
     var btn = e.target.closest(".btn-event-detail");
     if (!btn) return;
     var idx = parseInt(btn.getAttribute("data-event-idx"), 10);
