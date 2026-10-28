@@ -40,6 +40,7 @@ import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestS
 import { macColonUpperOrNull } from "../utils/mac.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
 import type { ChatToolDef } from "./llmService.js";
+import { ASSET_SECTIONS, ASSET_SECTION_HELP, readAssetSections } from "./assetDetailReadService.js";
 
 export const REPORT_ROW_CAP = 5000;
 
@@ -1625,6 +1626,56 @@ const getAssetTool: ToolDef = {
   },
 };
 
+// ─── asset_details ───────────────────────────────────────────────────────────
+//
+// The rest of the asset slide-in, one section at a time (assetDetailReadService
+// holds the readers and their per-section second gates). One tool with a
+// section enum rather than one tool per tab: every definition rides in every
+// round, and a local model's window cannot afford sixteen of them.
+
+const AssetDetailsArgs = z.object({
+  id: z.string().max(60).optional(),
+  hostname: z.string().max(255).optional(),
+  ip: z.string().max(60).optional(),
+  sections: z.array(z.enum(ASSET_SECTIONS)).min(1).max(6),
+}).refine((a) => a.id || a.hostname || a.ip, "Give id, hostname or ip");
+
+const assetDetailsTool: ToolDef = {
+  name: "asset_details",
+  label: "read the asset's details",
+  description:
+    "The rest of ONE asset's details page (by id, exact hostname or IP), 1-6 sections per call: " +
+    ASSET_SECTIONS.map((s) => (ASSET_SECTION_HELP[s] ? `${s} (${ASSET_SECTION_HELP[s]})` : s)).join(", ") + ".",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      hostname: { type: "string" },
+      ip: { type: "string" },
+      sections: { type: "array", items: { type: "string", enum: [...ASSET_SECTIONS] } },
+    },
+    required: ["sections"],
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = AssetDetailsArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const where = a.id ? { id: a.id }
+      : a.hostname ? { hostname: { equals: a.hostname, mode: "insensitive" as const } }
+      : { ipAddress: a.ip };
+    const asset = await prisma.asset.findFirst({ where, select: { id: true, hostname: true, assetType: true } });
+    if (!asset) return { ok: true, data: { found: false } };
+    // Section rows are capped tighter than a list lookup: several sections
+    // ride in one result.
+    const cap = Math.min(ctx.maxRows, 100);
+    return {
+      ok: true,
+      data: { found: true, ...asset, ...(await readAssetSections(asset.id, a.sections, ctx.req, cap)) },
+    };
+  },
+};
+
 // ─── list_alerts ─────────────────────────────────────────────────────────────
 
 /** Same scoping the Alerts page applies (routes/notifications.ts alertViewerRegionTags). */
@@ -1887,8 +1938,9 @@ const listReservationsTool: ListToolDef = {
     },
   },
   columns: [
-    { key: "ipAddress", label: "IP" }, { key: "hostname", label: "Hostname" }, { key: "owner", label: "Owner" },
-    { key: "status", label: "Status" }, { key: "sourceType", label: "Source" }, { key: "network", label: "Network" },
+    { key: "ipAddress", label: "IP" }, { key: "hostname", label: "Hostname" }, { key: "macAddress", label: "MAC" },
+    { key: "owner", label: "Owner" }, { key: "status", label: "Status" }, { key: "sourceType", label: "Source" },
+    { key: "dhcpBinding", label: "DHCP binding" }, { key: "network", label: "Network" }, { key: "notes", label: "Notes" },
     { key: "expiresAt", label: "Expires" }, { key: "createdAt", label: "Created" },
   ],
   async rows(args, ctx, cap) {
@@ -1911,6 +1963,9 @@ const listReservationsTool: ListToolDef = {
         where, take, orderBy: { createdAt: "desc" },
         select: {
           ipAddress: true, hostname: true, owner: true, status: true, sourceType: true,
+          // The network slide-in's other columns: the MAC, how the gate serves
+          // the address, whether a push landed, and the operator's notes.
+          macAddress: true, dhcpBinding: true, pushStatus: true, conflictMessage: true, notes: true,
           expiresAt: true, createdAt: true, subnet: { select: { cidr: true, name: true } },
         },
       }),
@@ -1923,6 +1978,176 @@ const listReservationsTool: ListToolDef = {
   },
   async run(args, ctx) {
     return listResult(await this.rows(args, ctx, ctx.maxRows));
+  },
+};
+
+// ─── get_network ─────────────────────────────────────────────────────────────
+//
+// Everything the network slide-in (ip-panel.js) shows, for ONE network: the
+// header (purpose, VLAN, the FortiGate and interface serving it, the
+// integration that discovered it and when), the utilization footer — counted
+// over the whole network here rather than the panel's one page — and the
+// address grid one page at a time. The page comes from getSubnetIps, the call
+// the panel itself makes, so the two cannot disagree about which reservation
+// owns an address or which asset sits on it; that function strips the
+// integration config before returning, and only its return value is read.
+
+const NETWORK_PAGE_MAX = 256;
+const FIRST_FREE_COUNT = 10;
+
+const GetNetworkArgs = z.object({
+  id: z.string().max(60).optional(),
+  cidr: z.string().max(60).optional(),
+  name: z.string().max(200).optional(),
+  page: z.number().int().positive().max(1_000_000).optional(),
+  usedOnly: z.boolean().optional(),
+}).refine((a) => a.id || a.cidr || a.name, "Give id, cidr or name");
+
+/** Drop null / empty fields so a page of addresses costs the model less. */
+function compact(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) continue;
+    out[k] = v instanceof Date ? v.toISOString() : v;
+  }
+  return out;
+}
+
+const getNetworkTool: ToolDef = {
+  name: "get_network",
+  label: "opened a network",
+  description:
+    "ONE network's details (by id, CIDR or name): purpose, VLAN, gate + interface, discovery, utilization by " +
+    "kind, conflicts, first free addresses, and a page of addresses with who holds each (hostname, MAC, owner, " +
+    "lease / reservation / VIP, push state, notes) and the asset on it.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      cidr: { type: "string" },
+      name: { type: "string" },
+      page: { type: "number" },
+      usedOnly: { type: "boolean", description: "Default true: held addresses only" },
+    },
+  },
+  async run(args, ctx) {
+    if (!hasPermission(ctx.req, "subnets", "read")) return denied("networks");
+    const p = GetNetworkArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const where = a.id ? { id: a.id }
+      : a.cidr ? { cidr: a.cidr.trim() }
+      : { name: { equals: a.name!.trim(), mode: "insensitive" as const } };
+    const select = {
+      id: true, cidr: true, name: true, purpose: true, status: true, vlan: true, tags: true,
+      fortigateDevice: true, fortigateInterface: true, fortigateVlanParent: true,
+      lastDiscoveredAt: true, createdBy: true, createdAt: true,
+      block: { select: { name: true, cidr: true } },
+      integration: { select: { name: true, type: true } },
+    } as const;
+    let matches = await prisma.subnet.findMany({ where, select, take: 6, orderBy: { cidr: "asc" } });
+    if (!matches.length && a.name) {
+      matches = await prisma.subnet.findMany({
+        where: { name: { contains: a.name.trim(), mode: "insensitive" } }, select, take: 6, orderBy: { cidr: "asc" },
+      });
+    }
+    if (!matches.length) return { ok: true, data: { found: false } };
+    if (matches.length > 1) {
+      // The same CIDR can sit in two blocks; a name can be shared. Let the model pick.
+      return {
+        ok: true,
+        data: {
+          found: false,
+          ambiguous: true,
+          note: "More than one network matches — call again with the id of the one meant.",
+          candidates: matches.map((s) => ({ id: s.id, cidr: s.cidr, name: s.name, block: s.block?.name ?? null, status: s.status })),
+        },
+      };
+    }
+    const s = matches[0];
+    const ipv6 = s.cidr.includes(":");
+    const canReservations = hasPermission(ctx.req, "reservations", "read");
+    const canAssets = hasPermission(ctx.req, "assets", "read");
+
+    const { getSubnetIps } = await import("./subnetService.js");
+    const { findNextAvailableIps } = await import("./reservationService.js");
+    const pageSize = Math.min(NETWORK_PAGE_MAX, Math.max(32, ctx.maxRows));
+    const page = a.page ?? 1;
+    const [byKind, conflicts, pushProblems, grid] = await Promise.all([
+      // Business rule 69's numerator: active rows holding an address.
+      prisma.reservation.groupBy({
+        by: ["sourceType"],
+        where: { subnetId: s.id, status: "active", ipAddress: { not: null } },
+        _count: { _all: true },
+      }),
+      prisma.reservation.count({ where: { subnetId: s.id, conflictMessage: { not: null } } }),
+      prisma.reservation.count({ where: { subnetId: s.id, status: "active", pushStatus: { in: ["pending", "failed_permanent"] } } }),
+      // An IPv6 network is not enumerable — getSubnetIps returns every
+      // reservation as one list, which is paged here instead.
+      getSubnetIps(s.id, ipv6 ? 1 : page, pageSize),
+    ]);
+    const reserved = byKind.reduce((n, k) => n + k._count._all, 0);
+    const usable = ipv6 ? null : usableHostCount(s.cidr);
+    // findNextAvailableIps refuses (409) when it cannot return the whole
+    // count, so a small or nearly full network asks only for what is free.
+    const wantFree = usable != null && s.status !== "deprecated" ? Math.min(FIRST_FREE_COUNT, Math.max(0, usable - reserved)) : 0;
+    const firstFree = wantFree > 0 ? await findNextAvailableIps(s.id, wantFree, false).catch(() => null) : null;
+
+    const allRows = ipv6 ? grid.ips.slice((page - 1) * pageSize, page * pageSize) : grid.ips;
+    const used = (r: (typeof grid.ips)[number]) => !!r.reservation || !!r.assetId;
+    const rows = (a.usedOnly === false ? allRows : allRows.filter(used)).map((r) => {
+      const res = r.reservation;
+      return compact({
+        address: r.address,
+        type: r.type === "host" ? null : r.type,
+        free: used(r) ? null : true,
+        ...(canReservations && res ? {
+          status: res.status, hostname: res.hostname, owner: res.owner, macAddress: res.macAddress,
+          sourceType: res.sourceType, dhcpBinding: res.dhcpBinding, vip: res.vipInfo,
+          pushStatus: res.pushStatus, pushError: res.pushError, notes: res.notes,
+          expiresAt: res.expiresAt, leaseExpiresAt: res.leaseExpiresAt, createdBy: res.createdBy,
+          conflict: res.conflictMessage,
+        } : {}),
+        ...(!canReservations && res ? { held: true } : {}),
+        ...(canAssets && r.assetId ? { assetId: r.assetId, assetHostname: r.assetHostname } : {}),
+      });
+    });
+    const totalForPaging = ipv6 ? grid.ips.length : grid.totalIps;
+
+    return {
+      ok: true,
+      data: {
+        found: true,
+        ...compact({
+          id: s.id, cidr: s.cidr, name: s.name, purpose: s.purpose, status: s.status, vlan: s.vlan, tags: s.tags,
+          ipv6,
+          block: s.block ? `${s.block.name} (${s.block.cidr})` : null,
+          discoveredBy: s.integration ? `${s.integration.name} (${s.integration.type})` : null,
+          lastDiscoveredAt: s.lastDiscoveredAt,
+          fortigateDevice: s.fortigateDevice,
+          fortigateInterface: s.fortigateInterface,
+          fortigateVlanParent: s.fortigateVlanParent,
+          createdBy: s.createdBy, createdAt: s.createdAt,
+        }),
+        utilization: {
+          reserved,
+          usableHosts: usable,
+          free: usable != null ? Math.max(0, usable - reserved) : null,
+          utilizationPercent: usable ? Math.round((reserved / usable) * 1000) / 10 : null,
+          byKind: Object.fromEntries(byKind.map((k) => [k.sourceType, k._count._all])),
+          conflicts,
+          pushPendingOrFailed: pushProblems,
+        },
+        firstFree: firstFree ?? undefined,
+        addresses: {
+          page,
+          pageCount: Math.max(1, Math.ceil(totalForPaging / pageSize)),
+          usedOnly: a.usedOnly !== false,
+          ...(canReservations ? {} : { note: "Your role cannot read reservations, so who holds each address is left out." }),
+          rows,
+        },
+      },
+    };
   },
 };
 
@@ -2379,8 +2604,8 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
-  listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, createReportTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, assetDetailsTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
+  listAlertsTool, listEventsTool, listSubnetsTool, getNetworkTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));

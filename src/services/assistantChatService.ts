@@ -281,6 +281,9 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- To correlate an issue, look at the device (get_asset), then what else alerted or changed state in the same " +
       "time window (list_alerts / list_events with hours or since/until), and the upstream device it depends on. " +
       "Separate what the data shows from what you infer.",
+    "- Anything else a device's details page shows (hardware, temperatures, disks, neighbors, MAC / ARP table, " +
+      "wireless, SD-WAN, IPsec, processes, software, agent, firmware, sources, polling settings) comes from " +
+      "asset_details with the matching sections; one network's addresses and who holds each, from get_network.",
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
       "right source and filters, and formats set to the ones the user named (e.g. [\"pdf\"]) when they named any. " +
       "The user sees the finished table with download buttons; you do not see its rows, " +
