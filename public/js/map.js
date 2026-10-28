@@ -678,24 +678,14 @@
       return;
     }
 
-    var latlngs = [];
     siteCache.forEach(function (s) {
       if (s.latitude == null || s.longitude == null) return;
-      var m = makeMarker(s);
-      markerCluster.addLayer(m);
-      markersById[s.id] = m;
-      latlngs.push([s.latitude, s.longitude]);
+      markersById[s.id] = makeMarker(s);
     });
-
-    if (latlngs.length > 0 && !opts.keepView) {
-      var bounds = L.latLngBounds(latlngs);
-      // Tighter fit — 5% padding around the actual asset bounds (was 20%)
-      // so the operator's eye lands on the cluster, not the empty
-      // ocean/border. maxZoom bumped to 12 for clustered fleets where
-      // the natural fit zoom would otherwise be capped too far out.
-      map.fitBounds(bounds.pad(0.05), { maxZoom: 12 });
-    }
-    setStatus(siteCache.length + " FortiGate" + (siteCache.length === 1 ? "" : "s") + " on the map");
+    // Sites inside a region the viewer hid stay off the map (map.js
+    // applySiteVisibility), so the region geometry has to be in hand first.
+    await ensureRegionPayloadForSites();
+    applySiteVisibility({ fit: !opts.keepView });
 
     // If the operator landed here from a global-search hit, the URL hash
     // tells us what to do:
@@ -722,6 +712,61 @@
           window.polarisMapPanToAsset(hashSiteId);
         }
       });
+    }
+  }
+
+  // ─── Sites in hidden regions ──────────────────────────────────────────────
+  // A FortiGate whose pin lies inside a region the viewer hid in the Regions
+  // panel (or inside anything nested under one) is left off the map, whether
+  // or not the panel is open — the hidden set is a standing per-user filter,
+  // and the status line says how many it holds back. Every marker is still
+  // built and kept in markersById; only the cluster layer's membership
+  // changes, so showing the region again is a re-add, not a re-fetch.
+  async function ensureRegionPayloadForSites() {
+    if (Object.keys(regionViewState.hidden).length === 0) return;
+    try { await loadRegionOverlay(); }
+    catch (e) { /* no geometry, no filter: every site shows */ }
+  }
+
+  function siteHiddenTest() {
+    if (!regionViewState.payload || !window.PolarisRegionTree) return null;
+    return window.PolarisRegionTree.hiddenPointTest(regionViewState.payload, regionViewState.hidden);
+  }
+
+  // opts.fit re-centres / re-zooms on the FortiGates still shown (the same
+  // fit the first load makes). With every site hidden the view is left alone.
+  function applySiteVisibility(opts) {
+    opts = opts || {};
+    var test = siteHiddenTest();
+    closeClusterList();
+    hideSpiderAnchor();
+    markerCluster.clearLayers();
+    var shown = [];
+    var latlngs = [];
+    var hiddenCount = 0;
+    siteCache.forEach(function (s) {
+      var m = markersById[s.id];
+      if (!m) return;
+      if (test && test(s.latitude, s.longitude)) { hiddenCount++; return; }
+      shown.push(m);
+      latlngs.push([s.latitude, s.longitude]);
+    });
+    markerCluster.addLayers(shown);
+
+    if (latlngs.length > 0 && opts.fit) {
+      // Tighter fit — 5% padding around the actual asset bounds (was 20%)
+      // so the operator's eye lands on the cluster, not the empty
+      // ocean/border. maxZoom bumped to 12 for clustered fleets where
+      // the natural fit zoom would otherwise be capped too far out.
+      map.fitBounds(L.latLngBounds(latlngs).pad(0.05), { maxZoom: 12 });
+    }
+    var total = shown.length + hiddenCount;
+    if (shown.length === 0 && hiddenCount > 0) {
+      setStatus("All " + total + " FortiGate" + (total === 1 ? " is" : "s are") +
+        " in hidden regions — show a region in the Regions panel to see them.");
+    } else {
+      setStatus(shown.length + " FortiGate" + (shown.length === 1 ? "" : "s") + " on the map" +
+        (hiddenCount > 0 ? " · " + hiddenCount + " in hidden regions" : ""));
     }
   }
 
@@ -867,8 +912,11 @@
           markerCluster.zoomToShowLayer(marker, function () {
             marker.openTooltip();
           });
-        } else {
+        } else if (marker._map) {
           marker.openTooltip();
+        } else {
+          // Left off the map by a hidden region (applySiteVisibility).
+          setStatus((site.hostname || "This FortiGate") + " is in a hidden region — show the region in the Regions panel to see it.");
         }
       }, 700);
     }
@@ -3976,8 +4024,10 @@
   // only what THIS browser draws, so it needs no permission beyond
   // deviceMap:read. Remembered per user in localStorage, keyed by region id (a
   // rename keeps it hidden; a deleted region's id is simply never matched).
-  // Edit mode ignores it and draws every polygon — an editor has to see what
-  // they are reshaping and nesting.
+  // Hiding a region hides everything nested under it and every FortiGate
+  // inside it (applySiteVisibility), and each toggle re-fits the view to the
+  // FortiGates still shown. Edit mode ignores it for POLYGONS and draws every
+  // one — an editor has to see what they are reshaping and nesting.
   function _hiddenRegionsKey() {
     var u = (typeof currentUsername === "string" && currentUsername) ? currentUsername : "anon";
     return "polaris-prefs-map-hidden-regions-" + u;
@@ -4009,26 +4059,41 @@
     });
   }
 
+  // Hiding cascades: a region nested under a hidden one is hidden with it
+  // (PolarisRegionTree.effectiveHidden), and shown again with it.
+  function regionEffectiveHidden() {
+    if (!regionViewState.payload || !window.PolarisRegionTree) return regionViewState.hidden;
+    return window.PolarisRegionTree.effectiveHidden(regionViewState.payload, regionViewState.hidden);
+  }
+
+  // Brings the read-only layer in line with the hidden set: every polygon
+  // added or removed, then the shown ones re-stacked largest first (a re-add
+  // lands on top, which would bury the regions inside it and their hover).
+  function syncRegionPolygons() {
+    if (!regionViewState.layer) return;
+    var eff = regionEffectiveHidden();
+    var ordered = regionViewState.payload && window.PolarisRegionTree
+      ? window.PolarisRegionTree.paintOrder(regionViewState.payload)
+      : [];
+    ordered.forEach(function (r) {
+      var p = regionViewState.polys[r.id];
+      if (!p) return;
+      if (eff[r.id]) { regionViewState.layer.removeLayer(p); return; }
+      regionViewState.layer.addLayer(p);
+      if (p.bringToFront) p.bringToFront();
+    });
+  }
+
   function toggleRegionVisibility(id) {
     if (!id) return;
-    var nowHidden = !regionViewState.hidden[id];
-    if (nowHidden) regionViewState.hidden[id] = true;
-    else delete regionViewState.hidden[id];
+    if (regionViewState.hidden[id]) delete regionViewState.hidden[id];
+    else regionViewState.hidden[id] = true;
     saveHiddenRegions();
-    var poly = regionViewState.polys[id];
-    if (poly && regionViewState.layer) {
-      if (nowHidden) regionViewState.layer.removeLayer(poly);
-      else regionViewState.layer.addLayer(poly);
-    }
-    // Re-adding a container puts it on top of the regions inside it; restore
-    // the largest-first paint order so the inner regions stay hoverable.
-    if (!nowHidden && regionViewState.payload && window.PolarisRegionTree) {
-      window.PolarisRegionTree.paintOrder(regionViewState.payload).forEach(function (r) {
-        var p = regionViewState.polys[r.id];
-        if (p && !regionViewState.hidden[r.id] && p.bringToFront) p.bringToFront();
-      });
-    }
+    syncRegionPolygons();
     if (regionViewState.payload) renderRegionsList(regionViewState.payload);
+    // The FortiGates inside follow their region, and the view re-fits to
+    // whatever is still on the map.
+    applySiteVisibility({ fit: true });
     var eye = document.querySelector('.map-regions-eye[data-region-eye="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
     if (eye) eye.focus();
   }
@@ -4167,8 +4232,9 @@
       ? window.PolarisRegionTree.paintOrder(payload)
       : regions;
     renderRegionsList(payload);
+    var eff = regionEffectiveHidden();
     for (var i = 0; i < ordered.length; i++) {
-      addReadOnlyRegionPolygon(ordered[i], payload.maxLevel);
+      addReadOnlyRegionPolygon(ordered[i], payload.maxLevel, eff);
     }
     regionViewState.showing = true;
     setShowRegionsButton(true);
@@ -4178,7 +4244,7 @@
   // Read-only twin of addRegionPolygon. Shares applyRegionColor and nothing
   // else — in particular no click handler that could open the rename / delete
   // popup, and no vertex handles.
-  function addReadOnlyRegionPolygon(region, maxLevel) {
+  function addReadOnlyRegionPolygon(region, maxLevel, effHidden) {
     if (!region || !Array.isArray(region.polygon) || region.polygon.length < 3) return;
     var style = window.PolarisRegionTree
       ? window.PolarisRegionTree.overlayStyle(region.level, maxLevel)
@@ -4205,7 +4271,7 @@
       className: "map-region-label"
     });
     regionViewState.polys[region.id] = poly;
-    if (!regionViewState.hidden[region.id]) regionViewState.layer.addLayer(poly);
+    if (!(effHidden || regionViewState.hidden)[region.id]) regionViewState.layer.addLayer(poly);
   }
 
   function hideRegionOverlay() {
@@ -4434,6 +4500,9 @@
     } else if (regionsPanelApi) {
       regionsPanelApi.setExpanded(false);
     }
+    // A reshape, nest or delete can move FortiGates into or out of a hidden
+    // region; re-judge them against the fresh geometry without moving the view.
+    ensureRegionPayloadForSites().then(function () { applySiteVisibility({ fit: false }); });
   }
 
   function addRegionPolygon(region) {

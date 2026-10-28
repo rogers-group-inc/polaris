@@ -98,12 +98,22 @@ ring of a nested set (fill opacity is held low because nesting stacks it), and
 level. **Smaller regions always draw on top of the regions around them** (in
 edit mode too), so an L1 inside an L2 is the one you click.
 
-**Each row has an eye.** Click it to hide that region's polygon (the row dims
-and the eye is struck through); click again to show it. Every region is its
-own switch — hiding a division leaves the regions inside it on the map. Anyone
-who can open the Device Map can do this, read-only roles included: it changes
-only what **your** browser draws, and the choice is remembered for your
-account in that browser. Edit mode ignores it and draws every region, since
+**Each row has an eye.** Click it to hide that region (the row dims and the
+eye is struck through); click again to show it. Hiding a region:
+
+- **hides every region nested inside it** — hide an L2 and its L1s go with it.
+  Their rows dim too, with a greyed eye that says which region they are hidden
+  with; showing the container brings them back;
+- **takes the FortiGates inside it off the map** — every pin that lies within
+  the hidden region, including ones in none of its L1s. This holds whether or
+  not the Regions panel is open, and the status line says how many FortiGates
+  hidden regions are holding back. A search hit on one of them still moves the
+  map there and says it is in a hidden region;
+- **re-fits the map** to the FortiGates still shown, as it does on first load.
+
+Anyone who can open the Device Map can do this, read-only roles included: it
+changes only what **your** browser draws, and the choice is remembered for
+your account in that browser. Edit mode draws every region regardless, since
 you have to see what you are reshaping.
 
 ### Nesting a region by dragging

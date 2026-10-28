@@ -327,6 +327,8 @@
 .map-regions-list .map-regions-eye:hover,
 .map-regions-list .map-regions-eye:focus-visible { opacity: 1; color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); }
 .map-regions-list .map-regions-row-hidden > :not(.map-regions-eye) { opacity: 0.45; }
+/* Hidden with the region it sits in: the container's eye is the switch. */
+.map-regions-list .map-regions-eye:disabled { opacity: 0.35; cursor: default; background: none; color: inherit; }
 .map-regions-list .map-regions-dragging { opacity: 0.45; }
 .map-regions-list .map-regions-drop-ok {
   border-color: var(--color-accent);
