@@ -13,36 +13,9 @@
 /* Loose text on the page ground: the off-card text lift. */
 .map-toolbar .map-status { text-shadow: var(--shadow-lift-control-text); }
 
-/* Right-hand end of the toolbar, in order: the viewer's region scope, then
-   the save/discard group (edit mode). The ordering is explicit (`order`) and
-   the toolbar's slack is absorbed by `.map-status` growing, rather than by an
-   `auto` left margin on each of them: they show and hide independently, and
-   with several auto margins live at once the slack splits between whichever
-   happen to be visible instead of pushing the group to the right edge.
-   Show regions and Edit regions left the toolbar on 2026-10-16 for the map's
-   Regions panel (map.js buildRegionsPanel; styled further down). */
-
-/* "My regions" - the region tags the signed-in operator is scoped to,
-   read-only. It answers "which regions am I assigned to?", which nothing
-   else on the page states; it is deliberately NOT a filter (the map already
-   shows every site the viewer may read). An empty scope means unrestricted,
-   which the strip says in words rather than rendering as a bare label. */
-.map-my-regions {
-  order: 98;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-  color: var(--color-text-tertiary);
-}
-/* An author `display` beats the UA sheet's `[hidden] { display: none }`, so
-   the attribute the markup ships with (and the pre-render state) needs its own
-   rule or the empty strip would still claim a toolbar gap. */
-.map-my-regions[hidden] { display: none; }
-.map-my-regions-label { white-space: nowrap; }
-.map-my-regions-all { font-style: italic; }
+/* Show regions and Edit regions left the toolbar on 2026-10-16 for the map's
+   Regions panel (map.js buildRegionsPanel; styled further down); the "My
+   regions" strip was removed 2026-10-28. */
 
 /* Per-user map theme toggle. Visually a square icon button matching
    the topology modal's btn-icon convention; sits between the search
@@ -337,6 +310,23 @@
 /* A parent the operator chose (drag-to-nest), not automatic nesting. */
 .map-regions-list .map-regions-row-chosen .map-regions-row-name { font-style: italic; }
 .map-regions-list .map-regions-row[draggable="true"] { cursor: grab; }
+/* The per-region show / hide eye (view mode — region-tree.js eyeButtonHtml);
+   a hidden region's row dims and its eye is struck through. */
+.map-regions-list .map-regions-eye {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  opacity: 0.7;
+  padding: 1px 2px;
+  line-height: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.map-regions-list .map-regions-eye:hover,
+.map-regions-list .map-regions-eye:focus-visible { opacity: 1; color: var(--color-accent); background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); }
+.map-regions-list .map-regions-row-hidden > :not(.map-regions-eye) { opacity: 0.45; }
 .map-regions-list .map-regions-dragging { opacity: 0.45; }
 .map-regions-list .map-regions-drop-ok {
   border-color: var(--color-accent);

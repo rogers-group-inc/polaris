@@ -98,6 +98,14 @@ ring of a nested set (fill opacity is held low because nesting stacks it), and
 level. **Smaller regions always draw on top of the regions around them** (in
 edit mode too), so an L1 inside an L2 is the one you click.
 
+**Each row has an eye.** Click it to hide that region's polygon (the row dims
+and the eye is struck through); click again to show it. Every region is its
+own switch — hiding a division leaves the regions inside it on the map. Anyone
+who can open the Device Map can do this, read-only roles included: it changes
+only what **your** browser draws, and the choice is remembered for your
+account in that browser. Edit mode ignores it and draws every region, since
+you have to see what you are reshaping.
+
 ### Nesting a region by dragging
 
 In edit mode, drag a region's row in the panel onto another row to nest it
@@ -116,7 +124,8 @@ smallest container until the shape is restored. See
 
 ### Edit regions
 
-Needs `mapRegions`: the **pencil** left of the Regions panel's title. Draw,
+Needs `mapRegions` at Read-Write: the **pencil** left of the Regions panel's
+title, shown only to roles that hold it. Draw,
 edit and delete polygons. While you edit, the panel's header holds the
 controls:
 
@@ -168,17 +177,6 @@ and an operator could hand-apply `region:Narnia` to a printer.
 > retired name resolve every down alert's L1 to the *division*, mailing the
 > division's recipients while the people scoped to the site are never reached —
 > and the automation looks "working" by every check the UI can offer.
-
-### My regions
-
-A read-only strip in the toolbar: your own effective region scope as coloured
-pills, each tooltipped with **where that scope comes from** — your account, your
-role, or an IdP group. An empty scope is stated as **"all regions"**, since
-empty means unrestricted.
-
-It answers *"which regions am I assigned to?"* — which the Users page shows only
-to whoever administers users — and is deliberately **not a filter**: the map
-already shows exactly the sites you may read.
 
 ---
 
