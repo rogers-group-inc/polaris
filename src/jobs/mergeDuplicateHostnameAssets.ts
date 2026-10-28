@@ -38,9 +38,10 @@
  * acceptAssetConflict's ghost-absorption block) but leaves the OTHER ghosts
  * untouched, so the queue refills on the next discovery cycle.
  *
- * This job runs TWO passes, each walking groups of ≥2 Asset rows, picking the
- * canonical by source-kind priority and merging every sibling into it inside
- * a single transaction per sibling.
+ * This job runs THREE passes. Passes 1 and 3 walk groups of ≥2 Asset rows,
+ * pick the canonical by source-kind priority and merge every sibling into it
+ * inside a single transaction per sibling; pass 2 pairs one placeholder with
+ * one device.
  *
  *   1. **Serial** (`normalizeSerialKey`) — the stronger identity, so it goes
  *      first. Two rows carrying one real serial are one device, which is the
@@ -49,7 +50,14 @@
  *      rule's `isUsableSerial` + `MAX_PLAUSIBLE_DUPLICATES` filtering, and
  *      skips both the `hostnameOverride` exclusion and the MAC tie-break,
  *      neither of which applies once a serial has settled identity.
- *   2. **Hostname** (`lower(hostname)`) — re-queried after the serial pass,
+ *   2. **Serial-as-hostname** — a "fortigate-endpoint" placeholder whose
+ *      HOSTNAME is another asset's discovered SERIAL (FortiOS names a managed
+ *      switch / AP's DHCP client by its serial) is absorbed into that asset
+ *      through `mergeEndpointGhostIntoAsset`, the same executor as the
+ *      discovery-time sweep. Policy: `decideSerialHostnameGhost`. Needed
+ *      because the sweep runs only when a later discovery re-processes the
+ *      switch, and the hostname pass can't group the pair (different names).
+ *   3. **Hostname** (`lower(hostname)`) — re-queried after the serial pass,
  *      so anything it already merged is gone. Endpoint assets never get a
  *      serial, so this remains the ONLY pass that can reach a MAC-less
  *      workstation ghost — the case this job was originally written for.
@@ -145,6 +153,7 @@ import {
   decideDuplicateHostnameGroup,
   decideDuplicateSerialGroup,
   mergeDuplicateHostnameGhost,
+  mergeSerialHostnameGhosts,
   type DuplicateHostnameAssetRow,
 } from "../services/assetGhostMergeService.js";
 // Serial usability + the vendor-default cap are business rule 83's, reused so
@@ -206,7 +215,7 @@ async function mergeDuplicateHostnameAssets(): Promise<void> {
     await runInstrumentedJob("mergeDuplicateHostnameAssets", async () => {
       const dryRun = process.env.POLARIS_GHOST_MERGE_DRY_RUN === "1";
 
-      // ── Pass 1 of 2: SERIAL ────────────────────────────────────────────
+      // ── Pass 1 of 3: SERIAL ────────────────────────────────────────────
       // Runs first because a serial is the stronger identity. Two rows
       // carrying one real serial are one device, full stop — so this pass
       // needs neither the hostname pass's `hostnameOverride` exclusion (that
@@ -322,7 +331,22 @@ async function mergeDuplicateHostnameAssets(): Promise<void> {
         }
       }
 
-      // ── Pass 2 of 2: HOSTNAME ──────────────────────────────────────────
+      // ── Pass 2 of 3: SERIAL-AS-HOSTNAME ────────────────────────────────
+      // An endpoint placeholder whose hostname is another asset's discovered
+      // serial is that device: FortiOS reports a managed switch / AP's DHCP
+      // client under its serial. The discovery-time sweep only absorbs it on a
+      // run that re-processes the switch, so this pass makes the merge
+      // periodic. Policy in `decideSerialHostnameGhost`; executor is the
+      // inline sweep's own `mergeEndpointGhostIntoAsset` (placeholder sources
+      // dropped, MAC adopted only when the canonical has none).
+      //
+      // The pass lives in the service so its query is integration-tested.
+      const serialHostStats = await mergeSerialHostnameGhosts({ dryRun });
+      if (serialHostStats.scanned > 0) {
+        logger.info(serialHostStats, dryRun ? "serial-hostname-merge dry-run complete" : "serial-hostname-merge complete");
+      }
+
+      // ── Pass 3 of 3: HOSTNAME ──────────────────────────────────────────
       // Re-queried from scratch below, so rows the serial pass just deleted
       // are already gone. This pass still earns its place: endpoint assets
       // carry no serial at all, so MAC-less workstation ghosts — the case
