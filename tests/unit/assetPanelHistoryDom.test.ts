@@ -333,6 +333,58 @@ describe("asset panel history — Alt+arrow chord", () => {
   });
 });
 
+describe("asset panel history — mouse back / forward buttons", () => {
+  // Without this the side buttons navigate the whole page away from the panel.
+  function click(button: number, type = "mouseup") {
+    const ev = new MouseEvent(type, { button, bubbles: true, cancelable: true });
+    document.dispatchEvent(ev);
+    return ev;
+  }
+
+  it("walks back on button 3 and forward on button 4, and keeps the page put", () => {
+    mountPanel();
+    resetState([{ id: "A" }, { id: "B" }], 1);
+    expect(click(3).defaultPrevented).toBe(true);
+    expect(g.openViewModal).toHaveBeenCalledWith("A");
+
+    resetState([{ id: "A" }, { id: "B" }], 0);
+    g.openViewModal.mockClear();
+    click(4);
+    expect(g.openViewModal).toHaveBeenCalledWith("B");
+  });
+
+  it("walks once per press: mousedown and auxclick are swallowed, not acted on", () => {
+    mountPanel();
+    resetState([{ id: "A" }, { id: "B" }], 1);
+    expect(click(3, "mousedown").defaultPrevented).toBe(true);
+    expect(click(3, "auxclick").defaultPrevented).toBe(true);
+    expect(g.openViewModal).not.toHaveBeenCalled();
+  });
+
+  it("ignores the other buttons", () => {
+    mountPanel();
+    resetState([{ id: "A" }, { id: "B" }], 1);
+    expect(click(0).defaultPrevented).toBe(false);
+    expect(click(1).defaultPrevented).toBe(false);
+    expect(g.openViewModal).not.toHaveBeenCalled();
+  });
+
+  it("leaves the buttons to the browser while the panel is closed or covered", () => {
+    buildPanel();  // built but never opened
+    resetState([{ id: "A" }, { id: "B" }], 1);
+    expect(click(3).defaultPrevented).toBe(false);
+
+    mountPanel();
+    resetState([{ id: "A" }, { id: "B" }], 1);
+    const modal = document.createElement("div");
+    modal.id = "modal-overlay";
+    modal.className = "open";
+    document.body.appendChild(modal);
+    expect(click(3).defaultPrevented).toBe(false);
+    expect(g.openViewModal).not.toHaveBeenCalled();
+  });
+});
+
 describe("asset panel history — interface page", () => {
   // Clicking an interface on the System tab loads it INSIDE the asset panel as
   // an entry of its own, so ‹ returns to the asset instead of the operator

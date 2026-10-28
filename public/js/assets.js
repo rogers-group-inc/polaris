@@ -5709,6 +5709,20 @@ function _ensureAssetPanelDOM() {
     _assetPanelGo(e.key === "ArrowLeft" ? -1 : 1);
   });
 
+  // The mouse's back / forward side buttons (button 3 / 4) walk it too, under
+  // the same gate. Left alone they navigate the whole PAGE away from the open
+  // panel. Browsers fire the navigation on mouseup and honour preventDefault
+  // there; mousedown and auxclick are swallowed as well so no engine acts on
+  // an earlier event. The walk itself runs once, on mouseup.
+  ["mousedown", "mouseup", "auxclick"].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      if (e.button !== 3 && e.button !== 4) return;
+      if (!isTopmostSlideover(overlay)) return;
+      e.preventDefault();
+      if (type === "mouseup") _assetPanelGo(e.button === 3 ? -1 : 1);
+    });
+  });
+
   initSlideoverResize(document.getElementById("asset-panel"), "polaris.panel.width.asset");
 }
 
