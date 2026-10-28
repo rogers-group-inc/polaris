@@ -106,6 +106,15 @@ model Subnet {
   // genuinely new chassis raises the `chassis-replaced` Conflict flavour.
   // Business rule 41.
   fortigateSerial String?
+  // The FortiGate interface the network is served on (its DHCP server's /
+  // router advertisement's interface) and, when that is a VLAN interface, the
+  // interface the VLAN sits on (CMDB `system/interface.interface` — a
+  // FortiLink, an aggregate, a hardware or software switch). Written by FMG /
+  // FortiGate discovery only, and only when the run read the interface table:
+  // NULL is "not a VLAN interface, or not read yet". The parent is what tells
+  // two VLAN 30s on one gate apart (business rule 137).
+  fortigateInterface  String?
+  fortigateVlanParent String?
   createdBy       String?
 
   // Bumped whenever discovery touches this subnet — both the integration-wide
@@ -1718,6 +1727,12 @@ model AssetInterface {
   ifType   String?
   ifParent String?
   vlanId   Int?
+  // For an ifType "aggregate" row, which kind of bundle it is, in FortiOS's
+  // own vocabulary: "aggregate" | "redundant" | "hard-switch" (hardware
+  // switch) | "switch" (software switch) | "vap-switch". All five group member
+  // ports under ifParent, which is why they share ifType; this tells them
+  // apart for display. FortiOS REST only; NULL everywhere else.
+  ifSubtype String?
 
   // Switch-port VLAN config -- FortiSwitch only, null elsewhere.
   nativeVlan     Int?
@@ -1755,8 +1770,12 @@ model AssetInterface {
 //   - "auto": tagAssignmentService, for a tag whose auto-assign filter carries a
 //     positive `nativeVlan` leaf — the matching device's ports on that VLAN.
 //     `tagId` is the provenance; the engine adds and removes only these rows.
-// A manual row wins a collision: the engine's insert skips an existing row, and
-// a manual save of a name the engine applied converts it to manual.
+//   - "network": networkTagInheritanceService (business rule 137) — a tag on a
+//     FortiGate-discovered network, inherited by a port of one of that gate's
+//     switches that carries the network's VLAN. `tagId` stays null; the source
+//     itself is the provenance, and that service adds and removes only these.
+// A manual row wins a collision: either engine's insert skips an existing row,
+// and a manual save of a name an engine applied converts it to manual.
 //
 // `tag` is the registry NAME (Asset.tags' denormalized design); a rename rewrites
 // it, a registry delete strips the auto rows and leaves manual ones.
@@ -1765,7 +1784,7 @@ model AssetInterfaceTag {
   asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
   ifName    String
   tag       String
-  // "manual" | "auto"
+  // "manual" | "auto" | "network"
   source    String   @default("manual")
   // The Tag whose filter applied an "auto" row; null on a manual row.
   tagId     String?
@@ -4397,6 +4416,25 @@ model TagAutoAssignment {
   @@index([assetId])
   @@index([tagId])
   @@map("tag_auto_assignments")
+}
+
+// Provenance for network tag inheritance (business rule 137) — the
+// TagAutoAssignment pattern for a SWITCH that inherited a tag from a network its
+// gate serves. One row per (asset, tag) networkTagInheritanceService itself put
+// in Asset.tags, so a reconcile strips only what it added: a same-named tag an
+// operator or a tag filter put there first has no row here and is left alone.
+// Keyed by tag NAME, not a network, because several networks can hand a switch
+// the same tag and it must stay while any of them does; a registry rename
+// rewrites `tag` beside Asset.tags. No FK, as for TagAutoAssignment: a row whose
+// asset is gone is inert and the next reconcile drops it.
+model NetworkTagAssignment {
+  assetId   String
+  tag       String
+  createdAt DateTime @default(now())
+
+  @@id([assetId, tag])
+  @@index([tag])
+  @@map("network_tag_assignments")
 }
 
 // Provenance for map-region tag propagation — the TagAutoAssignment pattern,

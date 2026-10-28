@@ -2387,6 +2387,23 @@ export function resolveSweepController(topology: unknown, ctx: SweepControllerCo
   return { kind: "orphan", controller: name || serial };
 }
 
+/**
+ * The FortiGate interface a discovered network is served on and, for a VLAN
+ * interface, the interface it sits on (business rule 137). Only what the run
+ * read: an entry whose interface table was not read this run (`vlanParent`
+ * undefined) leaves the stored parent alone, so one failed CMDB read never
+ * clears it.
+ */
+export function subnetInterfaceFields(entry: { name?: string; vlanParent?: string | null }): {
+  fortigateInterface?: string;
+  fortigateVlanParent?: string | null;
+} {
+  return {
+    ...(entry.name ? { fortigateInterface: entry.name } : {}),
+    ...(entry.vlanParent !== undefined ? { fortigateVlanParent: entry.vlanParent } : {}),
+  };
+}
+
 // Exported for tests: Phase 7's device-inventory pass defers its asset writes
 // to a flush at the end of the phase while keeping every in-memory effect
 // inline, and the hazard that shape has to survive — two sightings of ONE
@@ -3043,6 +3060,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         lastDiscoveredAt: new Date(),
         ...(serialToWrite ? { fortigateSerial: serialToWrite } : {}),
         ...(entry.vlan != null ? { vlan: entry.vlan } : {}),
+        ...subnetInterfaceFields(entry),
       };
       if (isFirstClaim) {
         // Bring the manually-created row into parity with a freshly-discovered
@@ -3167,6 +3185,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         lastDiscoveredAt: new Date(),
         tags: ["dhcp-discovered", integrationType],
         ...(entry.vlan != null ? { vlan: entry.vlan } : {}),
+        ...subnetInterfaceFields(entry),
       // Hand the seam this run's already-loaded exclusion set so its business
       // rule 42 backstop costs no read per created subnet.
       }, { exclusions: subnetExclusions });

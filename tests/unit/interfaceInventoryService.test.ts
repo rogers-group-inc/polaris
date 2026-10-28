@@ -10,26 +10,33 @@ import { describe, it, expect } from "vitest";
 import {
   dedupeAndCapInterfaces,
   INTERFACE_ROW_CAP,
-  nativeVlanSignature,
+  portVlanSignature,
 } from "../../src/services/interfaceInventoryService.js";
 
-// The edge trigger for the business rule 133 tag reconcile: a scrape fires it
-// only when a port's native VLAN actually changed.
-describe("nativeVlanSignature", () => {
+// The edge trigger for the business rule 133 / 137 tag reconcile: a scrape fires
+// it only when a port's VLANs (native, tagged, allow-all) actually changed.
+describe("portVlanSignature", () => {
   it("is order-independent", () => {
-    expect(nativeVlanSignature([{ ifName: "port2", nativeVlan: 30 }, { ifName: "port1", nativeVlan: 10 }]))
-      .toBe(nativeVlanSignature([{ ifName: "port1", nativeVlan: 10 }, { ifName: "port2", nativeVlan: 30 }]));
+    expect(portVlanSignature([{ ifName: "port2", nativeVlan: 30 }, { ifName: "port1", nativeVlan: 10 }]))
+      .toBe(portVlanSignature([{ ifName: "port1", nativeVlan: 10 }, { ifName: "port2", nativeVlan: 30 }]));
   });
   it("ignores ports with no native VLAN, so a router's scrape never differs", () => {
-    expect(nativeVlanSignature([{ ifName: "wan1", nativeVlan: null }, { ifName: "lo" }])).toBe("");
-    expect(nativeVlanSignature([{ ifName: "port1", nativeVlan: 10 }, { ifName: "port9", nativeVlan: null }]))
-      .toBe(nativeVlanSignature([{ ifName: "port1", nativeVlan: 10 }]));
+    expect(portVlanSignature([{ ifName: "wan1", nativeVlan: null }, { ifName: "lo" }])).toBe("");
+    expect(portVlanSignature([{ ifName: "port1", nativeVlan: 10 }, { ifName: "port9", nativeVlan: null }]))
+      .toBe(portVlanSignature([{ ifName: "port1", nativeVlan: 10 }]));
   });
   it("differs when a port moves VLAN or a VLAN port appears or goes", () => {
-    const base = nativeVlanSignature([{ ifName: "port1", nativeVlan: 10 }]);
-    expect(nativeVlanSignature([{ ifName: "port1", nativeVlan: 20 }])).not.toBe(base);
-    expect(nativeVlanSignature([{ ifName: "port1", nativeVlan: 10 }, { ifName: "port2", nativeVlan: 10 }])).not.toBe(base);
-    expect(nativeVlanSignature([])).not.toBe(base);
+    const base = portVlanSignature([{ ifName: "port1", nativeVlan: 10 }]);
+    expect(portVlanSignature([{ ifName: "port1", nativeVlan: 20 }])).not.toBe(base);
+    expect(portVlanSignature([{ ifName: "port1", nativeVlan: 10 }, { ifName: "port2", nativeVlan: 10 }])).not.toBe(base);
+    expect(portVlanSignature([])).not.toBe(base);
+  });
+  it("differs when a trunk's tagged VLANs or allow-all flag change (rule 137)", () => {
+    const base = portVlanSignature([{ ifName: "port48", nativeVlan: 1, taggedVlans: [30, 40] }]);
+    expect(portVlanSignature([{ ifName: "port48", nativeVlan: 1, taggedVlans: [40, 30] }])).toBe(base);
+    expect(portVlanSignature([{ ifName: "port48", nativeVlan: 1, taggedVlans: [30] }])).not.toBe(base);
+    expect(portVlanSignature([{ ifName: "port48", nativeVlan: 1, taggedVlans: [30, 40], trunksAllVlans: true }])).not.toBe(base);
+    expect(portVlanSignature([{ ifName: "port9", taggedVlans: [30] }])).not.toBe("");
   });
 });
 

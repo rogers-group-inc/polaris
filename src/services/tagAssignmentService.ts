@@ -48,6 +48,11 @@
  *   - reconcileTag(tagId)         — one tag, full diff (inline on tag create/edit)
  *   - reconcileAllTags()          — every managed tag (periodic job + discovery-end)
  *   - reconcileTagsForAsset(id)   — one asset vs. all managed tags (asset-write hook)
+ *
+ * Both reconcileAllTags and reconcileTagsForAsset finish with the network tag
+ * inheritance pass (networkTagInheritanceService, business rule 137) — a
+ * separate writer with its own provenance, run here so every path that keeps
+ * filter tags current keeps inherited ones current too.
  *   - previewTagFilter(...)       — dry-run match count + diff for the editor UI
  *
  * Modeled on mapRegionService (add/remove tag primitives + diff-based
@@ -78,6 +83,7 @@ import {
 } from "./notificationTypes.js";
 import { deviceFilterSelect, resolveDeviceFilterAssetIds } from "./deviceFilterService.js";
 import { decorateSubnetNameHits, type RelationDecoratable } from "./scopeRelationIndex.js";
+import { reconcileNetworkTags } from "./networkTagInheritanceService.js";
 import { randomTagColor } from "./mapRegionService.js";
 import { AZURE_TAG_PREFIX, AZURE_TAG_CATEGORY } from "../utils/tagNormalize.js";
 
@@ -869,6 +875,11 @@ export interface TagReconcileSummary extends Record<string, unknown> {
   /** Ports the tag was added to / removed from (business rule 133). */
   portsAdded?: number;
   portsRemoved?: number;
+  /** Network tags inherited by switches / their ports (business rule 137). */
+  networkAdded?: number;
+  networkRemoved?: number;
+  networkPortsAdded?: number;
+  networkPortsRemoved?: number;
 }
 
 /**
@@ -950,7 +961,26 @@ export async function reconcileAllTags(): Promise<TagReconcileSummary> {
   } catch (err: any) {
     logger.debug({ err: err?.message ?? String(err) }, "tagAssignment: orphaned port-tag sweep failed (non-fatal)");
   }
-  return { added, removed, portsAdded, portsRemoved };
+  // Network tags inherited by switches and ports (business rule 137). After the
+  // filters, so a tag a filter now owns on a switch is seen as owned.
+  const network = await reconcileNetworkTagsSafely();
+  return { added, removed, portsAdded, portsRemoved, ...network };
+}
+
+/** reconcileNetworkTags as a summary fragment; a failure is logged, not thrown. */
+async function reconcileNetworkTagsSafely(assetId?: string): Promise<Partial<TagReconcileSummary>> {
+  try {
+    const s = await reconcileNetworkTags(assetId ? { assetId } : {});
+    return {
+      networkAdded: s.assetsAdded,
+      networkRemoved: s.assetsRemoved,
+      networkPortsAdded: s.portsAdded,
+      networkPortsRemoved: s.portsRemoved,
+    };
+  } catch (err: any) {
+    logger.debug({ err: err?.message ?? String(err), assetId }, "tagAssignment: network tag inheritance failed (non-fatal)");
+    return {};
+  }
 }
 
 /**
@@ -961,6 +991,11 @@ export async function reconcileAllTags(): Promise<TagReconcileSummary> {
  * makes no extra query at all).
  */
 export async function reconcileTagsForAsset(assetId: string): Promise<TagReconcileSummary> {
+  const summary = await reconcileFilterTagsForAsset(assetId);
+  return { ...summary, ...(await reconcileNetworkTagsSafely(assetId)) };
+}
+
+async function reconcileFilterTagsForAsset(assetId: string): Promise<TagReconcileSummary> {
   const tags = await prisma.tag.findMany({
     select: { id: true, name: true, criteria: true, assetCondition: true },
   });

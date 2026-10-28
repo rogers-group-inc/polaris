@@ -749,7 +749,10 @@ with a ⚙. When a port moves off the VLAN its tag comes off, and when a switch
 has no port left on the VLAN the switch loses the tag too. The preview adds the
 number of interfaces the tag would land on. The value list names each VLAN the
 way the fleet's VLAN interfaces do (*30 · Users_VL30*). See
-[rule 133](Business-Rules#rule-133).
+[rule 133](Business-Rules#rule-133). You don't need a filter for a VLAN
+IPAM already knows: tag the FortiGate's network on the IPAM page and the
+switches carrying it inherit the tag, trunks included
+([rule 137](Business-Rules#rule-137)).
 
 A tag's colour is either a **custom colour** or a **severity colour**
 (*Severity: Notice* … *Severity: Critical* in the Color field). A severity

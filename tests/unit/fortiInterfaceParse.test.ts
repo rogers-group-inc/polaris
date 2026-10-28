@@ -14,6 +14,10 @@ import {
   backfillFortiAggregateMembers,
   backfillFortiCmdbOnlyTunnels,
   fortiMonitorDuplex,
+  applyFortiSoftwareSwitchMembers,
+  backfillFortiCmdbOnlyBundles,
+  fortiIfSubtype,
+  normalizeFortiIfType,
 } from "../../src/services/monitoringService.js";
 
 describe("parseFortiCmdbInterfaceTable", () => {
@@ -285,5 +289,84 @@ describe("fortiMonitorDuplex / buildFortiInterfaceSamples duplex", () => {
     const by = Object.fromEntries(rows.map((r) => [r.ifName, r]));
     expect(by.wan1).toMatchObject({ operStatus: "up", speedBps: 1_000_000_000, duplex: "full" });
     expect(by.dmz).toMatchObject({ operStatus: "down", duplex: null });
+  });
+});
+
+// Hardware and software switches (business rule 137 groundwork). A software
+// switch is FortiOS type "switch" with its members in system/switch-interface;
+// a hardware switch is "hard-switch" with them on the interface row. Both group
+// member ports like an aggregate and keep their own kind as ifSubtype.
+describe("FortiGate hardware and software switches", () => {
+  it("types every bundle as aggregate and keeps the FortiOS kind as ifSubtype", () => {
+    for (const k of ["aggregate", "redundant", "hard-switch", "switch", "vap-switch"]) {
+      expect(normalizeFortiIfType(k)).toBe("aggregate");
+      expect(fortiIfSubtype(k)).toBe(k);
+    }
+    expect(fortiIfSubtype("vlan")).toBeNull();
+    expect(fortiIfSubtype("physical")).toBeNull();
+  });
+
+  it("nests a software switch's members, read from system/switch-interface", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([
+      { name: "lan-sw", type: "switch" },
+      { name: "hw-sw", type: "hard-switch", member: [{ "interface-name": "port5" }] },
+      { name: "port1", type: "physical" },
+      { name: "port2", type: "physical" },
+      { name: "port5", type: "physical" },
+    ]);
+    applyFortiSoftwareSwitchMembers(cmdb, {
+      results: [
+        { name: "lan-sw", member: [{ "interface-name": "port1" }, { q_origin_key: "port2" }] },
+        // A hardware switch's own members win; an unknown name is ignored.
+        { name: "hw-sw", member: [{ "interface-name": "port9" }] },
+        { name: "ghost", member: [{ "interface-name": "port3" }] },
+      ],
+    });
+    expect(cmdb.get("lan-sw")!.members).toEqual(["port1", "port2"]);
+    expect(cmdb.get("hw-sw")!.members).toEqual(["port5"]);
+    expect(cmdb.has("ghost")).toBe(false);
+
+    const monitor = { "lan-sw": { link: true }, "hw-sw": { link: true }, port1: { link: true }, port2: { link: false }, port5: { link: true } };
+    const rows = buildFortiInterfaceSamples(monitor, cmdb);
+    backfillFortiAggregateMembers(rows, monitor, cmdb);
+    const by = new Map(rows.map((r) => [r.ifName, r]));
+    expect(by.get("lan-sw")).toMatchObject({ ifType: "aggregate", ifSubtype: "switch" });
+    expect(by.get("hw-sw")).toMatchObject({ ifType: "aggregate", ifSubtype: "hard-switch" });
+    expect(by.get("port1")!.ifParent).toBe("lan-sw");
+    expect(by.get("port2")!.ifParent).toBe("lan-sw");
+    expect(by.get("port5")!.ifParent).toBe("hw-sw");
+  });
+
+  // FortiOS 7.6.8 (HUB1-a, 2026-10-28): the MONITOR endpoint omits the software
+  // switch itself while listing its members and the VLAN on it.
+  it("lists a software switch the monitor endpoint omitted, from the CMDB, and nests its members", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([
+      { name: "Software Switch", type: "switch", status: "up", ip: "10.123.4.1 255.255.255.0" },
+      { name: "a", type: "physical" },
+      { name: "b", type: "physical" },
+      { name: "LabSSProd", type: "vlan", interface: "Software Switch", vlanid: 2 },
+    ]);
+    applyFortiSoftwareSwitchMembers(cmdb, [{ name: "Software Switch", type: "switch", member: [{ "interface-name": "a", q_origin_key: "a" }, { "interface-name": "b", q_origin_key: "b" }] }]);
+    const monitor = { a: { link: false }, b: { link: false }, LabSSProd: { link: false, ip: "10.123.5.1" } };
+    const rows = buildFortiInterfaceSamples(monitor, cmdb);
+    backfillFortiCmdbOnlyBundles(rows, cmdb);
+    backfillFortiAggregateMembers(rows, monitor, cmdb);
+    const by = new Map(rows.map((r) => [r.ifName, r]));
+    expect(by.get("Software Switch")).toMatchObject({
+      ifType: "aggregate", ifSubtype: "switch", adminStatus: "up", ipAddress: "10.123.4.1", operStatus: null,
+    });
+    expect(by.get("a")!.ifParent).toBe("Software Switch");
+    expect(by.get("b")!.ifParent).toBe("Software Switch");
+    expect(by.get("LabSSProd")).toMatchObject({ ifType: "vlan", ifParent: "Software Switch", vlanId: 2 });
+    // A bundle the monitor DID report is not duplicated.
+    const twice = buildFortiInterfaceSamples({ "Software Switch": { link: true } }, cmdb);
+    backfillFortiCmdbOnlyBundles(twice, cmdb);
+    expect(twice.filter((r) => r.ifName === "Software Switch")).toHaveLength(1);
+  });
+
+  it("changes nothing when the switch-interface read failed", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([{ name: "lan-sw", type: "switch" }]);
+    applyFortiSoftwareSwitchMembers(cmdb, null);
+    expect(cmdb.get("lan-sw")!.members).toEqual([]);
   });
 });

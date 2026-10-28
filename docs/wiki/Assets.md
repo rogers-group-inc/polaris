@@ -724,7 +724,10 @@ sub-interfaces under their parent; the arrow on the parent shows or hides
 them. A sub-interface named after its parent with a VLAN number, such as
 `br0.10` on an access point, nests under `br0` even when the device does not
 report the link. A FortiAP shortens the parent's name, so `w01.12` nests under
-`wlan01` and `w10.10` under `wlan10`, marked **Sub-interface**. Sorting keeps
+`wlan01` and `w10.10` under `wlan10`, marked **Sub-interface**. On a FortiGate
+monitored over its REST API, a hardware switch and a software switch nest their
+member ports the same way and are badged **Hardware switch** / **Software
+switch** rather than *Aggregate*. Sorting keeps
 the nesting and sorts the parents, with each parent's rows sorted under it. A
 filter drops the section headings and arrows and shows every matching row. A
 member still nests under its aggregate when both match. A member whose aggregate
@@ -758,8 +761,11 @@ under *Interface Comments* to tag that port with tags from the same registry
 assets use (`assets:write`). A tag can also land on a port automatically: a
 tag whose [auto-assign filter](Server-Settings#tags) has a **Native VLAN**
 condition goes on every port on that VLAN, on each device the filter matches,
-and on the device itself. Those show with a ⚙ and can't be unticked in the
-editor; change the tag's filter to move them. Ticking one there keeps it on the
+and on the device itself. A FortiSwitch port also inherits the tags of a
+[network](IPAM#networks) its FortiGate serves when the port carries that
+network's VLAN, natively or tagged ([rule 137](Business-Rules#rule-137)).
+Those show with a ⚙ and can't be unticked in the editor; change the tag's
+filter, or the network's tags, to move them. Ticking one there keeps it on the
 port by hand. A **Tags** column appears in the Interfaces table once any port
 carries a tag, and filters like the VLAN columns. A port's tags are kept while
 it is briefly missing from a scrape. Renaming a tag in the registry renames it

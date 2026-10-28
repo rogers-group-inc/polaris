@@ -61,6 +61,7 @@ import {
   loadExclusions,
 } from "./subnetExclusionService.js";
 import { exclusionsOverlapping, type ExclusionLike } from "../utils/subnetExclusion.js";
+import { scheduleNetworkTagReconcile } from "./networkTagInheritanceService.js";
 
 /**
  * The client handed to an interactive `$transaction` callback.
@@ -852,6 +853,14 @@ export async function updateSubnet(id: string, input: UpdateSubnetInput) {
     message: `Subnet "${input.name || updated.name}" updated`,
     details: changes ? { changes } : undefined,
   });
+  // A network's tags reach the switches and ports that carry it (business rule
+  // 137); anything that moves which ports those are, or which tags, reconciles.
+  const before = subnet.tags ?? [];
+  const after = updated.tags ?? [];
+  const sameTags = before.length === after.length && before.every((t) => after.includes(t));
+  if (!sameTags || subnet.vlan !== updated.vlan || subnet.status !== updated.status || input.convertToManual) {
+    scheduleNetworkTagReconcile(input.actor);
+  }
   return updated;
 }
 
@@ -1280,5 +1289,7 @@ export async function deleteSubnet(
         }
       : undefined,
   });
+  // The tags it handed its switches and ports go with it (business rule 137).
+  if ((subnet.tags?.length ?? 0) > 0 && subnet.vlan != null) scheduleNetworkTagReconcile(actor);
   return { ...subnet, deletedReservations };
 }

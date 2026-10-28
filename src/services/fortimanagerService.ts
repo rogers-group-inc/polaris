@@ -27,6 +27,7 @@ import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial } from "../util
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { getFmgWorker } from "./fmgWorker.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
+import { fortiosVlanParentOf } from "../utils/fortiosInterfaceRef.js";
 import {
   discoverDhcpSubnets as discoverViaFortigate,
   testConnection as fgTestConnection,
@@ -942,6 +943,11 @@ export interface DiscoveredSubnet {
   fortigateSerial?: string;
   dhcpServerId: string;
   vlan?: number;          // 802.1Q VLAN ID from the interface, if present
+  // The interface a VLAN interface sits on (a FortiLink, an aggregate, a
+  // hardware or software switch) — what tells two VLAN 30s on one gate apart
+  // (business rule 137). Undefined: the interface table was not read this run
+  // (leave the stored value alone). Null: read, and not a VLAN interface.
+  vlanParent?: string | null;
   // Where the network came from — names the created subnet. Absent means an
   // IPv4 DHCP scope (every source that predates IPv6). "dhcp6" is a DHCPv6
   // server scope, "ra" a prefix the gate announces by router advertisement
@@ -2071,11 +2077,13 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
         // parent field returns the whole nested array as embedded JSON.
         // `ipv6` is the interface's IPv6 sub-object (addresses, RA prefixes —
         // business rule 125), returned whole like secondary-ip.
-        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip", "ipv6"] }],
+        // `type` + `interface` give a VLAN interface's parent (rule 137).
+        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip", "ipv6"] }],
       };
       const ifaceRes = await rpc(baseUrl, ifacePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       const ifaceData = ifaceRes.result?.[0]?.data;
       const ifaceVlanMap = new Map<string, number>();
+      const ifaceVlanParent = new Map<string, string>();
       let ifaceIpCount = 0;
       let secondaryIpCount = 0;
       let ipv6IpCount = 0;
@@ -2090,6 +2098,8 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
           };
           const vid = parseVid(iface.vlanid) || parseVid(iface["switch-controller-mgmt-vlan"]);
           if (vid > 0) ifaceVlanMap.set(ifaceName, vid);
+          const vlanParent = fortiosVlanParentOf(iface);
+          if (vlanParent) ifaceVlanParent.set(ifaceName, vlanParent);
           // Router-advertised prefixes are networks the gate serves (business
           // rule 125) — the IPv6 counterpart of a DHCP scope, so they answer
           // to the DHCP include / exclude filter, not the interface filter.
@@ -2133,6 +2143,7 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
       for (const sub of localSubnets) {
         const vid = ifaceVlanMap.get(sub.name);
         if (vid) sub.vlan = vid;
+        if (Array.isArray(ifaceData)) sub.vlanParent = ifaceVlanParent.get(sub.name) ?? null;
       }
       log("discover.interfaces", "info", `${deviceName}: Resolved ${ifaceIpCount} interface IP(s)${secondaryIpCount > 0 ? ` + ${secondaryIpCount} secondary IP(s)` : ""}${ipv6IpCount > 0 ? ` + ${ipv6IpCount} IPv6 address(es)` : ""}${raSubnetCount > 0 ? `, ${raSubnetCount} advertised IPv6 prefix(es)` : ""}`, deviceName);
     } catch (err: any) {

@@ -4754,6 +4754,8 @@ export interface InterfaceSample {
   outErrors?:   number | null;
   /** "physical" | "aggregate" | "vlan" | "loopback" | "tunnel" — FortiOS REST + SNMP ifType OID. */
   ifType?:      string | null;
+  /** For an "aggregate" row, FortiOS's own bundle type: "aggregate" | "redundant" | "hard-switch" | "switch" (software switch) | "vap-switch". FortiOS REST only. */
+  ifSubtype?:   string | null;
   /** Aggregate name (for member ports) or parent interface name (for VLANs). FortiOS REST only. */
   ifParent?:    string | null;
   /** 802.1Q VLAN ID. FortiOS REST only. */
@@ -6223,6 +6225,41 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
 }
 
 /**
+ * A software switch's member ports live in `/api/v2/cmdb/system/switch-interface`,
+ * not on its `system/interface` row (which carries `type: "switch"` and no
+ * `member`, unlike a hardware switch). Copy them onto the CMDB map's entry so
+ * `backfillFortiAggregateMembers` nests them under the switch like any other
+ * bundle. Only entries the interface table already knows are touched, and an
+ * entry that already has members keeps them. Tolerates both REST envelopes; a
+ * failed read (null) changes nothing. Mutates `cmdbByName` in place.
+ */
+export function applyFortiSoftwareSwitchMembers(
+  cmdbByName: Map<string, FortiCmdbInterfaceEntry>,
+  switchIfaceRes: unknown,
+): void {
+  if (!switchIfaceRes) return;
+  const rows = Array.isArray(switchIfaceRes)
+    ? switchIfaceRes
+    : (Array.isArray((switchIfaceRes as any)?.results) ? (switchIfaceRes as any).results : []);
+  for (const r of rows) {
+    if (!r || typeof r !== "object" || typeof r.name !== "string") continue;
+    const entry = cmdbByName.get(r.name);
+    if (!entry || entry.members.length > 0) continue;
+    const members: string[] = Array.isArray(r.member)
+      ? r.member.map((m: any) => {
+          if (typeof m === "string") return m;
+          if (m && typeof m === "object") {
+            if (typeof m["interface-name"] === "string") return m["interface-name"];
+            if (typeof m.q_origin_key === "string") return m.q_origin_key;
+          }
+          return null;
+        }).filter(Boolean)
+      : [];
+    if (members.length > 0) entry.members = members;
+  }
+}
+
+/**
  * Merge the `/api/v2/monitor/system/interface` payload with the CMDB map
  * into InterfaceSample rows. CMDB type/parent/vlanid/alias/description win;
  * the monitor payload supplies runtime state (link, counters, IP, MAC,
@@ -6278,6 +6315,7 @@ export function buildFortiInterfaceSamples(
       inErrors:    pickFiniteNumber(i.rx_errors  ?? i.errors_in),
       outErrors:   pickFiniteNumber(i.tx_errors  ?? i.errors_out),
       ifType:      normalizeFortiIfType(rawType),
+      ifSubtype:   fortiIfSubtype(rawType),
       ifParent:    rawParent,
       vlanId:      rawVlanId,
       alias:       cmdbEntry?.alias       ?? null,
@@ -6355,6 +6393,50 @@ export function backfillFortiAggregateMembers(
       interfaces.push(synthetic);
       ifMap.set(memberStr, synthetic);
     }
+  }
+}
+
+/**
+ * Synthesize a row for a CMDB bundle the monitor endpoint omitted. FortiOS's
+ * `/api/v2/monitor/system/interface` leaves a SOFTWARE switch out entirely
+ * while listing its member ports and the VLANs on it (FortiOS 7.6.8, HUB1-a,
+ * 2026-10-28: `Software Switch` absent, `a` / `b` / `LabSSProd` present), so
+ * without this the switch never reached the inventory and its members never
+ * nested. Built from the CMDB alone — admin status, configured address, alias,
+ * description — with no runtime state, exactly like the tunnel back-fill
+ * below. Run BEFORE `backfillFortiAggregateMembers`, which then nests the
+ * members under it. A bundle the monitor did report is left alone. Mutates
+ * `interfaces` in place.
+ */
+export function backfillFortiCmdbOnlyBundles(
+  interfaces: InterfaceSample[],
+  cmdbByName: Map<string, FortiCmdbInterfaceEntry>,
+): void {
+  const present = new Set(interfaces.map((s) => s.ifName));
+  for (const [name, c] of cmdbByName) {
+    const subtype = fortiIfSubtype(c.type);
+    if (!subtype || present.has(name)) continue;
+    interfaces.push({
+      ifName:      name,
+      adminStatus: c.adminStatus,
+      operStatus:  null,
+      speedBps:    null,
+      ipAddress:   c.ipAddress,
+      ipv6Address: c.ipv6Address,
+      macAddress:  null,
+      inOctets:    null,
+      outOctets:   null,
+      inErrors:    null,
+      outErrors:   null,
+      ifType:      "aggregate",
+      ifSubtype:   subtype,
+      ifParent:    null,
+      vlanId:      null,
+      alias:       c.alias,
+      description: c.description,
+      addressingMode: c.addressingMode,
+    });
+    present.add(name);
   }
 }
 
@@ -6440,6 +6522,13 @@ async function collectSystemInfoFortinet(
   const cmdbInterfacePromise = fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root" }, timeoutMs })
     .catch(() => null as any)
     .then((res) => { endCmdb({ ok: res != null }); return res; });
+  // Software switch members (applyFortiSoftwareSwitchMembers). Best-effort: a
+  // gate with none returns an empty list, a token without the scope fails and
+  // the switch simply shows without nested members.
+  const endSwitchIf = startPhase("systeminfo.rest.cmdb_switch_interface");
+  const switchInterfacePromise = fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/switch-interface", { query: { vdom: "root" }, timeoutMs })
+    .catch(() => null as any)
+    .then((res) => { endSwitchIf({ ok: res != null }); return res; });
   const endMonitorIf = startPhase("systeminfo.rest.monitor_interface");
   const monitorInterfacePromise = fgRequest<any>(fg, "GET", "/api/v2/monitor/system/interface", {
     query: { scope: "vdom", include_vlan: "true", include_aggregate: "true" },
@@ -6480,8 +6569,9 @@ async function collectSystemInfoFortinet(
       })()
     : Promise.resolve<ArpNeighborEntry[] | undefined>(undefined);
 
-  const [cmdbRes, monitorOutcome, ipsec, lldpNeighbors, arpNeighbors] = await Promise.all([
+  const [cmdbRes, switchIfaceRes, monitorOutcome, ipsec, lldpNeighbors, arpNeighbors] = await Promise.all([
     cmdbInterfacePromise,
+    switchInterfacePromise,
     monitorInterfacePromise,
     ipsecPromise,
     lldpPromise,
@@ -6489,6 +6579,7 @@ async function collectSystemInfoFortinet(
   ]);
 
   const cmdbByName = parseFortiCmdbInterfaceTable(cmdbRes);
+  applyFortiSoftwareSwitchMembers(cmdbByName, switchIfaceRes);
   // FortiLink-enabled interface set (fortilink-flagged interfaces + their member
   // ports) from the same CMDB response — fed back to the caller so the LLDP
   // exclusion filter can drop FortiLink links without a second CMDB fetch.
@@ -6499,6 +6590,7 @@ async function collectSystemInfoFortinet(
     const res = monitorOutcome.res;
     const obj = (res && typeof res === "object" && !Array.isArray(res)) ? res as Record<string, any> : {};
     interfaces = buildFortiInterfaceSamples(obj, cmdbByName);
+    backfillFortiCmdbOnlyBundles(interfaces, cmdbByName);
     backfillFortiAggregateMembers(interfaces, obj, cmdbByName);
     backfillFortiCmdbOnlyTunnels(interfaces, cmdbByName);
   } else if (interfaces.length === 0) {
@@ -7101,11 +7193,25 @@ function applyFortiInterfaceFilter(
 // discovery-side device filters, so all of them import the one canonical.
 const fortiInterfaceWildcardMatch = matchesWildcard;
 
-function normalizeFortiIfType(raw: unknown): string | null {
+/** The FortiOS types that group member ports under one interface. "switch" is
+ *  a SOFTWARE switch (members in `system/switch-interface`), "hard-switch" a
+ *  hardware one (members on the interface row). They share ifType "aggregate"
+ *  — member back-fill, the interface tree and the auto-monitor type filter all
+ *  treat them alike — and keep the FortiOS name as `ifSubtype`. */
+const FORTI_BUNDLE_TYPES: ReadonlySet<string> = new Set(["aggregate", "redundant", "hard-switch", "switch", "vap-switch"]);
+
+/** `ifSubtype` for a FortiOS type: the type itself for a bundle, else null. */
+export function fortiIfSubtype(raw: unknown): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const t = raw.toLowerCase();
+  return FORTI_BUNDLE_TYPES.has(t) ? t : null;
+}
+
+export function normalizeFortiIfType(raw: unknown): string | null {
   if (!raw || typeof raw !== "string") return null;
   const t = raw.toLowerCase();
   if (t === "physical" || t === "wl-mesh")                                          return "physical";
-  if (t === "aggregate" || t === "redundant" || t === "hard-switch" || t === "vap-switch") return "aggregate";
+  if (FORTI_BUNDLE_TYPES.has(t))                                                     return "aggregate";
   if (t === "vlan")                                                                  return "vlan";
   if (t === "loopback")                                                              return "loopback";
   if (t === "tunnel" || t === "ssl" || t === "vxlan" || t === "gre" ||

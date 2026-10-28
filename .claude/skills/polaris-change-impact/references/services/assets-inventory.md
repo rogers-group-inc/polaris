@@ -189,14 +189,37 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Criteria tags are normal registry tags, fully editable in the manual tag picker. (`region:` tags are too, since 2026-08 — the picker's protected-prefix machinery is gone; provenance is what protects hand-edits now, for both engines.)
 - **`listTagCatalog` must stay LEAN, and its route must stay above the mount.** A `Tag` row also carries `assetCondition` / `criteria` — the auto-assignment device filter, which is registry-management detail and belongs behind the `serverSettingsSystem` gate. What a picker needs (name, category, colour) is what every asset, block and subnet row already shows anyone with read on that page, which is what makes the auth-only gate right. If you add a column to the projection, ask which of those two it is. And if you ever need the catalogue at a THIRD surface, read this route rather than adding a fourth workaround — `GET /automations/scope-options`' `tagCatalog` field and `GET /server-settings/tags/filter-schema`' `tags` already exist because this route didn't.
 - See cross-cutting **Asset.tags** for the full writer list (this service is now one of them).
+- `reconcileAllTags` and `reconcileTagsForAsset` END with `networkTagInheritanceService.reconcileNetworkTags` (fleet / that asset), after the filter tags, so a tag a filter now owns on a switch is seen as owned; the summary carries `networkAdded` / `networkRemoved` / `networkPortsAdded` / `networkPortsRemoved`. A failure there is logged, never thrown. The orphan sweep deletes `auto` rows only — never `network` ones; keep it that way.
+
+---
+
+## services/networkTagInheritanceService.ts
+
+**What it owns:** Network tags inherited by FortiSwitches and their ports (business rule 137). A tag on a non-`deprecated` network that has a `vlan` and a gate stamp (`Subnet.fortigateSerial` / `fortigateDevice`) lands on every port of that gate's switches that carries the VLAN natively or tagged (never a `trunksAllVlans` port) as an `AssetInterfaceTag` row with source `network`, and on the switch in `Asset.tags` with `NetworkTagAssignment` provenance. Every tag except `region:` / `azure:` and `NETWORK_SYSTEM_TAGS` (`dhcp-discovered`, `fortimanager`, `fortigate`).
+
+**Public API:** `reconcileNetworkTags({ assetId? })` → `{ assetsAdded, assetsRemoved, portsAdded, portsRemoved }` (fleet, or one switch); `scheduleNetworkTagReconcile(actor?)` (fire-and-forget, coalesced, Event `tag.network_inherited` when anything moved); pure `planNetworkTagInheritance(input)`, `portCarriesVlan`, `isInheritableNetworkTag`, `NETWORK_SYSTEM_TAGS`.
+
+**Matching key:** gate asset id + the network's `fortigateVlanParent` (case-insensitive) = the switch's `fortinetTopology.uplinkInterface` + VLAN number. A network with no parent yet hands nothing down; a switch with no `uplinkInterface` inherits nothing.
+
+**Cross-service deps:** `utils/fortinetParentKey.ts` (`buildInfraParentIndex`, `resolveInfraParentAsset` for the network's gate, `controllerGateIdOf` for the switch's) — never a string compare of `fortigateDevice` against a hostname; `utils/tagNormalize.ts` (`REGION_TAG_PREFIX`, `isAzureTag`); `prisma.subnet` (read), `prisma.asset` (firewalls + switches read, `tags` read-modify-write), `prisma.assetInterface` (ports by VLAN), `prisma.assetInterfaceTag`, `prisma.networkTagAssignment`, `prisma.tag` + `prisma.tagAutoAssignment` (filter ownership on remove); `eventLogService.logEvent`.
+
+**Used by:** `tagAssignmentService` (`reconcileAllTags` → discovery end + the 6 h `reconcileTagAssignments` tick; `reconcileTagsForAsset` → asset writes and `interfaceInventoryService`'s `portVlanSignature` edge trigger); `subnetService` (`scheduleNetworkTagReconcile` from `updateSubnet` when tags / VLAN / status changed or `convertToManual`, and from `deleteSubnet`). `routes/serverSettings.ts` tag rename rewrites `network_tag_assignments.tag`.
+
+**Invariants:**
+- **Owns only what it wrote.** A port where any row of the tag name sits is occupied; only `network` rows are ever removed. A switch tag with no provenance row is someone else's and is never claimed; one of ours missing from `Asset.tags` was removed by hand and is not put back; ours ending keeps the tag when a `TagAutoAssignment` row for the same name on that switch exists.
+- **Never `auto`.** `tagAssignmentService.reconcileAllTags` sweeps every `auto` row whose `tagId` is not a managed Tag; a network row has no Tag behind it.
+- **The match is per gate.** VLAN ids repeat across sites; a network hands down only to switches whose controller resolves to the SAME gate asset.
+- Scale: one pass reads the gated networks with tags, every firewall and switch (5 columns), and the ports BY VLAN (`nativeVlan IN … OR taggedVlans && …`, `trunksAllVlans = false`), never an IN of every switch; writes chunked at 50; a steady state writes nothing. Network edits coalesce into at most one rerun.
+
+**When changing this:** a new network source that knows its device must stamp the same gate fields (or this needs a second resolution path); a new system marker stamped on networks must join `NETWORK_SYSTEM_TAGS`; a new reader of port tags should decide whether `network` rows count (the automation engine counts all sources).
 
 ---
 
 ## services/interfaceTagService.ts
 
-**What it owns:** Tags on individual interfaces (business rule 133) — the READ that decorates the Interfaces table and interface slide-over, and the operator's WRITE of the hand-applied set on one port. Storage is `AssetInterfaceTag` (keyed by ifName, not by the delete-replaced `AssetInterface` row). It writes only `source: "manual"` rows; the `auto` rows are `tagAssignmentService`'s.
+**What it owns:** Tags on individual interfaces (business rule 133) — the READ that decorates the Interfaces table and interface slide-over, and the operator's WRITE of the hand-applied set on one port. Storage is `AssetInterfaceTag` (keyed by ifName, not by the delete-replaced `AssetInterface` row). It writes only `source: "manual"` rows; the `auto` rows are `tagAssignmentService`'s and the `network` rows `networkTagInheritanceService`'s (rule 137) — a manual save naming either converts that row, and the read reports which engine applied an auto tag as `via`.
 
-**Public API:** `listInterfaceTags(assetId)` → `Map<ifName, InterfaceTagView[]>` (`{ name, color, auto }`, manual first, registry colour joined in one read); `setInterfaceTags(assetId, ifName, tags, actor)` → the port's full list afterwards; `normalizeInterfaceTags(input)` (pure: `normalizeTags` + refuses `region:` / `azure:`); type `InterfaceTagView`.
+**Public API:** `listInterfaceTags(assetId)` → `Map<ifName, InterfaceTagView[]>` (`{ name, color, auto, via? }`, manual first, registry colour joined in one read); `setInterfaceTags(assetId, ifName, tags, actor)` → the port's full list afterwards; `normalizeInterfaceTags(input)` (pure: `normalizeTags` + refuses `region:` / `azure:`); type `InterfaceTagView`.
 
 **Cross-service deps:** `prisma.assetInterfaceTag` / `prisma.assetInterface` / `prisma.asset` / `prisma.tag`; `utils/tagNormalize.ts` (`normalizeTags`, `isAzureTag`, `REGION_TAG_PREFIX`); `eventLogService.logEvent`.
 

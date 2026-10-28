@@ -13,6 +13,8 @@
  *                asserts a native VLAN. Never written here, except that a
  *                manual save naming a tag the engine applied converts that row
  *                to manual, so the operator's choice survives the filter.
+ *   - "network" — networkTagInheritanceService (business rule 137), a tag on a
+ *                network the port carries. Read-only and converted the same way.
  *
  * A manual save replaces the MANUAL set only. Auto rows are shown read-only
  * beside it: the way to take an auto tag off a port is the tag's filter, the
@@ -29,8 +31,11 @@ export interface InterfaceTagView {
   name: string;
   /** The registry colour, or null for a name with no registry row. */
   color: string | null;
-  /** Applied by a tag's auto-assign filter (read-only in the editor). */
+  /** Applied by Polaris, not by hand (read-only in the editor). */
   auto: boolean;
+  /** Who applied an auto tag: a tag's auto-assign filter (rule 133), or a
+   *  network this port carries (rule 137). Absent on a manual tag. */
+  via?: "filter" | "network";
 }
 
 /**
@@ -53,7 +58,8 @@ export async function listInterfaceTags(assetId: string): Promise<Map<string, In
   const colorOf = new Map(registry.map((t) => [t.name, t.color]));
   for (const r of rows) {
     const list = out.get(r.ifName) ?? [];
-    list.push({ name: r.tag, color: colorOf.get(r.tag) ?? null, auto: r.source === "auto" });
+    const via = r.source === "network" ? "network" : r.source === "auto" ? "filter" : undefined;
+    list.push({ name: r.tag, color: colorOf.get(r.tag) ?? null, auto: via !== undefined, ...(via ? { via } : {}) });
     out.set(r.ifName, list);
   }
   for (const list of out.values()) {
@@ -112,7 +118,8 @@ export async function setInterfaceTags(
 
   const wantedSet = new Set(wanted);
   const manual = existing.filter((r) => r.source === "manual").map((r) => r.tag);
-  const autoNames = new Set(existing.filter((r) => r.source === "auto").map((r) => r.tag));
+  // A filter's row or a network's (rule 137): naming either keeps it by hand.
+  const autoNames = new Set(existing.filter((r) => r.source !== "manual").map((r) => r.tag));
   const toRemove = manual.filter((t) => !wantedSet.has(t));
   const toConvert = wanted.filter((t) => autoNames.has(t));
   const toCreate = wanted.filter((t) => !autoNames.has(t) && !manual.includes(t));
