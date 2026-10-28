@@ -1193,7 +1193,7 @@ TableSF.prototype.addClearButton = function (host) {
   var btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn btn-sm btn-secondary sf-clear-btn";
-  btn.textContent = "Clear";
+  btn.textContent = "Clear Filters";
   btn.title = "Clear every column filter on this table";
   btn.addEventListener("click", function () {
     self.clearFilters();

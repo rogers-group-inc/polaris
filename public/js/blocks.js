@@ -152,7 +152,7 @@ function _renderBlocksPageControls(total) {
     _saveBlocksPrefs();
   }, {
     actionButtons: [{
-      label: "Clear",
+      label: "Clear Filters",
       title: "Clear every column filter on this list",
       onClick: function () {
         if (!_blocksSF) return;

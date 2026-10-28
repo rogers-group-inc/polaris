@@ -1933,7 +1933,7 @@ function _renderAssetsPageControls() {
     topNav: false,
     actionButtons: [
       {
-        label: _base ? "Reset Filter" : "Clear",
+        label: _base ? "Reset Filter" : "Clear Filters",
         title: _base
           ? 'Back to this tab\'s base filter "' + (_base.name || "base") +
             '" — clear it from Filters \u25be'
