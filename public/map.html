@@ -33,9 +33,6 @@
              Regions panel (buildRegionsPanel), with Full screen / Refresh /
              Export to its right (addMapViewTools). -->
         <button type="button" id="map-theme-toggle" class="btn btn-secondary btn-icon-only map-theme-toggle" aria-label="Toggle map theme" title="Toggle map theme (saved per user)" style="line-height:0"></button>
-        <!-- The viewer's own region scope, read-only. Rendered by map.js
-             (renderMyRegions) once /auth/me has answered. -->
-        <div class="map-my-regions" id="map-my-regions" hidden></div>
         <div id="map-status" class="map-status"></div>
         <!-- Region edit mode's save / undo / redo / discard live in the
              Regions panel's header (map.js buildRegionsPanel). -->
@@ -121,7 +118,6 @@
   <script src="/js/vendor/jspdf.plugin.autotable.min.js"></script>
   <script src="/js/vendor/html-to-image.min.js"></script>
   <script src="/js/api.js"></script>
-  <script src="/js/region-pills.js"></script>
   <script src="/js/region-tree.js"></script>
   <script src="/js/push.js"></script>
   <script src="/js/password-self.js"></script>

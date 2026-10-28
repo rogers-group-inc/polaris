@@ -173,9 +173,31 @@
    *
    * `opts.draggable` (edit mode) makes each row a drag source and drop target
    * for drag-to-nest; `canNestUnder` decides which drops are allowed.
+   *
+   * `opts.visibility` (view mode) gives each row an eye button
+   * (`.map-regions-eye`, `data-region-eye="<id>"`) that shows / hides that one
+   * region's polygon; `opts.hidden` is the `{id: true}` set currently hidden,
+   * whose rows dim and whose eye is struck through.
    */
+  var EYE_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" aria-hidden="true">' +
+      '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" aria-hidden="true">' +
+      '<path d="M9.9 4.2A10.6 10.6 0 0 1 12 4c6.5 0 10 8 10 8a17.6 17.6 0 0 1-2.2 3.2"/>' +
+      '<path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/>' +
+      '<path d="M14.1 14.2a3 3 0 0 1-4.2-4.3"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+
+  function eyeButtonHtml(r, hidden) {
+    var label = (hidden ? "Show " : "Hide ") + String(r.name == null ? "" : r.name);
+    return '<button type="button" class="map-regions-eye" data-region-eye="' + esc(r.id) + '"' +
+      ' aria-pressed="' + (hidden ? "false" : "true") + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' +
+      (hidden ? EYE_OFF_ICON : EYE_ICON) + "</button>";
+  }
+
   function buildPanelTreeHtml(payload, opts) {
     var options = opts || {};
+    var hiddenSet = options.hidden && typeof options.hidden === "object" ? options.hidden : {};
     var regions = regionsOf(payload);
     if (regions.length === 0) {
       return '<span class="map-regions-empty">' + esc(options.emptyText || "No regions are defined yet.") + "</span>";
@@ -193,10 +215,13 @@
         // stored pick, which is in force when it IS the parent.
         var chosen = !!r.nestChosen || (!!r.nestUnderId && r.nestUnderId === r.parentId);
         var title = chosen ? ' title="Nested here by hand — drop it on another region that contains it to move it"' : "";
+        var isHidden = !!options.visibility && !!hiddenSet[r.id];
         out +=
           '<div class="map-regions-node">' +
-            '<div class="map-regions-row' + (chosen ? " map-regions-row-chosen" : "") + '" data-region-id="' + esc(r.id) + '"' +
+            '<div class="map-regions-row' + (chosen ? " map-regions-row-chosen" : "") + (isHidden ? " map-regions-row-hidden" : "") +
+              '" data-region-id="' + esc(r.id) + '"' +
               (options.draggable ? ' draggable="true"' : "") + title + ">" +
+              (options.visibility ? eyeButtonHtml(r, isHidden) : "") +
               '<i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' +
               '<span class="map-regions-row-name">' + esc(r.name) + "</span>" +
               "<em>L" + esc(r.level == null ? 1 : r.level) + "</em>" +
@@ -212,7 +237,10 @@
     regions.forEach(function (r) {
       if (!seen[r.id]) {
         seen[r.id] = true;
-        body += '<div class="map-regions-node"><div class="map-regions-row" data-region-id="' + esc(r.id) + '">' +
+        var isHidden = !!options.visibility && !!hiddenSet[r.id];
+        body += '<div class="map-regions-node"><div class="map-regions-row' + (isHidden ? " map-regions-row-hidden" : "") +
+          '" data-region-id="' + esc(r.id) + '">' +
+          (options.visibility ? eyeButtonHtml(r, isHidden) : "") +
           '<span class="map-regions-row-name">' + esc(r.name) + "</span><em>L" + esc(r.level == null ? 1 : r.level) + "</em></div></div>";
       }
     });

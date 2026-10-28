@@ -47,7 +47,10 @@ type Tree = {
   paintOrder: (p: unknown) => OverlayRegion[];
   overlayStyle: (level: number, maxLevel: number) => Record<string, unknown>;
   polygonArea: (p: unknown) => number;
-  buildPanelTreeHtml: (p: unknown, opts?: { draggable?: boolean; emptyText?: string }) => string;
+  buildPanelTreeHtml: (
+    p: unknown,
+    opts?: { draggable?: boolean; emptyText?: string; visibility?: boolean; hidden?: Record<string, boolean> },
+  ) => string;
   canNestUnder: (p: unknown, childId: string, targetId: string) => { ok: boolean; reason: string };
   attachTreeTooltip: (
     button: unknown,
@@ -344,6 +347,32 @@ describe("buildPanelTreeHtml (the Regions panel list)", () => {
     const html = load().buildPanelTreeHtml({ regions: [{ id: "a", name: "A", parentId: "b" }, { id: "b", name: "B", parentId: "a" }] });
     expect(html).toContain('data-region-id="a"');
     expect(html).toContain('data-region-id="b"');
+  });
+
+  it("gives every row a show / hide eye only when asked", () => {
+    const t = load();
+    expect(t.buildPanelTreeHtml(NESTED)).not.toContain("map-regions-eye");
+    const html = t.buildPanelTreeHtml(NESTED, { visibility: true });
+    expect((html.match(/class="map-regions-eye"/g) || []).length).toBe(5);
+    expect(html).toContain('data-region-eye="memphis"');
+    expect(html).toContain('aria-label="Hide Memphis"');
+    expect(html).not.toContain("map-regions-row-hidden");
+  });
+
+  it("marks hidden regions: dimmed row, struck eye, Show label", () => {
+    const html = load().buildPanelTreeHtml(NESTED, { visibility: true, hidden: { memphis: true } });
+    expect(html).toMatch(/class="map-regions-row map-regions-row-hidden" data-region-id="memphis"/);
+    expect(html).toContain('aria-label="Show Memphis"');
+    expect(html).toMatch(/data-region-eye="memphis" aria-pressed="false"/);
+    // Only the hidden one — its children keep their own state.
+    expect((html.match(/map-regions-row-hidden/g) || []).length).toBe(1);
+    expect(html).toMatch(/data-region-eye="bartlett" aria-pressed="true"/);
+  });
+
+  it("ignores the hidden set without the eyes (edit mode draws every row plain)", () => {
+    const html = load().buildPanelTreeHtml(NESTED, { draggable: true, hidden: { memphis: true } });
+    expect(html).not.toContain("map-regions-row-hidden");
+    expect(html).not.toContain("map-regions-eye");
   });
 });
 

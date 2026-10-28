@@ -83,9 +83,9 @@
     initMap();
     wireModal();
     // The Regions panel first: it builds the pencil wireRegionEditing wires.
+    regionViewState.hidden = loadHiddenRegions();
     wireShowRegions();
     wireRegionEditing();
-    renderMyRegions().catch(function () {});
 
     try {
       await loadSites();
@@ -3740,63 +3740,17 @@
     showing: false,
     layer: null,
     payload: null,      // memoized /map/region-overlay response
-    wasShowing: false   // restore the overlay after edit mode exits
+    wasShowing: false,  // restore the overlay after edit mode exits
+    polys: {},          // region id -> read-only polygon, shown or not
+    hidden: {}          // region ids this viewer hid (loadHiddenRegions)
   };
 
-  // ---- "My regions" strip ---------------------------------------------------
-  // The signed-in operator's OWN region scope, rendered read-only at the right
-  // of the toolbar beside "Edit regions". Region tags decide which sites and
-  // assets a scoped operator is answerable for, and which alerts route to
-  // them, but until now no page said what a given operator's own scope was --
-  // the Users page shows it only to whoever can administer users.
-  //
-  // Display only: it is not a map filter. The map already renders exactly the
-  // sites the viewer's role may read, so narrowing to "my" regions would hide
-  // sites the operator is legitimately responsible for seeing.
-  async function renderMyRegions() {
-    var box = document.getElementById("map-my-regions");
-    if (!box) return;
-    var mine = Array.isArray(window.currentEffectiveRegions)
-      ? window.currentEffectiveRegions.slice().sort()
-      : [];
-
-    box.hidden = false;
-    if (mine.length === 0) {
-      // An empty effective scope means UNRESTRICTED, not "assigned to none" --
-      // a bare label with nothing after it would read as a broken widget, so
-      // the strip states the semantics.
-      box.innerHTML =
-        '<span class="map-my-regions-label">My regions:</span>' +
-        '<span class="map-my-regions-all" title="Your account is not scoped to any region, ' +
-        'so every site you can read is on the map.">all regions</span>';
-      return;
-    }
-
-    // Pill colors come from the map-region catalogue, whose GET is gated
-    // `mapRegions:read` -- a viewer holding only `deviceMap:read` gets the
-    // neutral hue rather than a failed strip (PolarisRegionPills.load swallows
-    // that, the same fallback a tag outside the catalogue already takes).
-    if (!window.PolarisRegionPills.isLoaded()) await window.PolarisRegionPills.load();
-    box.innerHTML =
-      '<span class="map-my-regions-label">My regions:</span>' +
-      window.PolarisRegionPills.html(mine, regionScopeSource);
-  }
-
-  // Why the viewer holds a given region -- their own account, their role, or an
-  // IdP group. /auth/me returns all three sets and the effective union; app.js
-  // keeps the account + role halves, so a tag in the union but in neither of
-  // those is group-derived (those are re-resolved live at each login and never
-  // persisted onto the user's own columns).
-  function regionScopeSource(name) {
-    var own  = Array.isArray(window.currentUserRegions) ? window.currentUserRegions : [];
-    var role = Array.isArray(window.currentRoleRegions) ? window.currentRoleRegions : [];
-    var from = [];
-    if (own.indexOf(name) !== -1) from.push("your account");
-    if (role.indexOf(name) !== -1) {
-      from.push("your role" + (window.currentUserRole ? " (" + window.currentUserRole + ")" : ""));
-    }
-    if (from.length === 0) from.push("your identity-provider groups");
-    return "Region scope from " + from.join(" and ");
+  // The pencil is offered to roles holding mapRegions:write — the key every
+  // region mutation in src/api/routes/mapRegions.ts gates on. Viewing and the
+  // per-region show / hide eyes need only the deviceMap:read that opened the
+  // page.
+  function canEditRegions() {
+    return typeof permAtLeast === "function" && permAtLeast("mapRegions", "write");
   }
 
   function wireRegionEditing() {
@@ -3805,7 +3759,7 @@
     var undoBtn    = document.getElementById("map-undo-region");
     var redoBtn    = document.getElementById("map-redo-region");
     if (!editBtn) return;
-    if (typeof canManageNetworks === "function" && !canManageNetworks()) return;
+    if (!canEditRegions()) return;
     editBtn.hidden = false;
     // The check mark (save), undo and redo stay hidden until the operator
     // enters edit mode, where the check takes the pencil's place and the
@@ -4004,12 +3958,79 @@
   }
 
   // The panel's rows: the containment tree, each region indented under its
-  // parent with its colour, name and nesting level (region-tree.js).
+  // parent with its colour, name and nesting level (region-tree.js), and an
+  // eye per row that shows / hides that region's polygon.
   function renderRegionsList(payload) {
     var el = document.getElementById("map-regions-list");
     if (!el) return;
     if (!window.PolarisRegionTree) { el.innerHTML = ""; return; }
-    el.innerHTML = window.PolarisRegionTree.buildPanelTreeHtml(payload);
+    el.innerHTML = window.PolarisRegionTree.buildPanelTreeHtml(payload, {
+      visibility: true,
+      hidden: regionViewState.hidden
+    });
+    wireRegionEyes();
+  }
+
+  // ---- Per-region show / hide (view mode) -----------------------------------
+  // Any viewer of the map may hide regions they don't care about; it changes
+  // only what THIS browser draws, so it needs no permission beyond
+  // deviceMap:read. Remembered per user in localStorage, keyed by region id (a
+  // rename keeps it hidden; a deleted region's id is simply never matched).
+  // Edit mode ignores it and draws every polygon — an editor has to see what
+  // they are reshaping and nesting.
+  function _hiddenRegionsKey() {
+    var u = (typeof currentUsername === "string" && currentUsername) ? currentUsername : "anon";
+    return "polaris-prefs-map-hidden-regions-" + u;
+  }
+
+  function loadHiddenRegions() {
+    var out = {};
+    try {
+      var ids = JSON.parse(localStorage.getItem(_hiddenRegionsKey()) || "[]");
+      if (Array.isArray(ids)) ids.forEach(function (id) { if (typeof id === "string") out[id] = true; });
+    } catch (e) { /* per-viewer convenience */ }
+    return out;
+  }
+
+  function saveHiddenRegions() {
+    try { localStorage.setItem(_hiddenRegionsKey(), JSON.stringify(Object.keys(regionViewState.hidden))); }
+    catch (e) { /* per-viewer convenience */ }
+  }
+
+  function wireRegionEyes() {
+    var el = document.getElementById("map-regions-list");
+    if (!el || el._polarisEyes) return;
+    el._polarisEyes = true;
+    el.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest(".map-regions-eye[data-region-eye]") : null;
+      if (!btn || !el.contains(btn) || regionState.editing) return;
+      ev.preventDefault();
+      toggleRegionVisibility(btn.getAttribute("data-region-eye"));
+    });
+  }
+
+  function toggleRegionVisibility(id) {
+    if (!id) return;
+    var nowHidden = !regionViewState.hidden[id];
+    if (nowHidden) regionViewState.hidden[id] = true;
+    else delete regionViewState.hidden[id];
+    saveHiddenRegions();
+    var poly = regionViewState.polys[id];
+    if (poly && regionViewState.layer) {
+      if (nowHidden) regionViewState.layer.removeLayer(poly);
+      else regionViewState.layer.addLayer(poly);
+    }
+    // Re-adding a container puts it on top of the regions inside it; restore
+    // the largest-first paint order so the inner regions stay hoverable.
+    if (!nowHidden && regionViewState.payload && window.PolarisRegionTree) {
+      window.PolarisRegionTree.paintOrder(regionViewState.payload).forEach(function (r) {
+        var p = regionViewState.polys[r.id];
+        if (p && !regionViewState.hidden[r.id] && p.bringToFront) p.bringToFront();
+      });
+    }
+    if (regionViewState.payload) renderRegionsList(regionViewState.payload);
+    var eye = document.querySelector('.map-regions-eye[data-region-eye="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+    if (eye) eye.focus();
   }
 
   // ---- Drag-to-nest (edit mode) ---------------------------------------------
@@ -4141,6 +4162,7 @@
       return;
     }
     regionViewState.layer = L.featureGroup().addTo(map);
+    regionViewState.polys = {};
     var ordered = window.PolarisRegionTree
       ? window.PolarisRegionTree.paintOrder(payload)
       : regions;
@@ -4182,11 +4204,13 @@
       direction: "center",
       className: "map-region-label"
     });
-    regionViewState.layer.addLayer(poly);
+    regionViewState.polys[region.id] = poly;
+    if (!regionViewState.hidden[region.id]) regionViewState.layer.addLayer(poly);
   }
 
   function hideRegionOverlay() {
     if (regionViewState.layer) { map.removeLayer(regionViewState.layer); regionViewState.layer = null; }
+    regionViewState.polys = {};
     regionViewState.showing = false;
     setShowRegionsButton(false);
   }
