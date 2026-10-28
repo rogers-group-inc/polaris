@@ -105,6 +105,7 @@ import { recordDiscovery, observeDiscoveryPhase } from "../../metrics.js";
 import { getAdMonitorProtocol, persistManagedApLldpNeighbors, invalidateLldpMatchCache } from "../monitoringService.js";
 import { persistApRadioInventory } from "../apRadioService.js";
 import { isFortiapStatusOnline } from "../../utils/fortiapMonitorRow.js";
+import { buildGateMacIndex, fortiapGateMac, isFortiapUnauthorized } from "../../utils/fortiapGateMac.js";
 import * as autoMonitor from "../autoMonitorInterfacesService.js";
 import * as autoMonitorStorage from "../autoMonitorStorageService.js";
 import * as agentAutoDeploy from "../agentAutoDeployService.js";
@@ -4779,15 +4780,32 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   if ((result.fortiAps || []).some((ap) => Array.isArray(ap.lldpNeighbors) && ap.lldpNeighbors.length > 0)) {
     invalidateLldpMatchCache();
   }
+  // Business rule 91(e): an AP with no base MAC (unauthorized — named by its
+  // serial, while the gate's lease knows it by its own hostname) is paired
+  // with the MAC its OWN controller sees on its reported address.
+  const apGateMacIndex = buildGateMacIndex({
+    leases: result.dhcpEntries || [],
+    inventory: result.deviceInventory || [],
+    arp: result.arpTable || [],
+    aps: result.fortiAps || [],
+  });
   for (const ap of result.fortiAps || []) {
     const dhcpFallback = dhcpByHostname.get(ap.name.toLowerCase()) ?? dhcpByHostname.get(ap.serial.toLowerCase()) ?? null;
     const resolvedIp = ap.ipAddress || dhcpFallback?.ip || null;
-    const rawMac = ap.baseMac || dhcpFallback?.mac || "";
+    const rawMac = ap.baseMac || dhcpFallback?.mac || fortiapGateMac(apGateMacIndex, ap) || "";
+    // Unauthorized on its controller → the asset sits in storage, like an
+    // Unauthorized FortiSwitch. Blank state (older firmware) decides nothing.
+    const apUnauthorized = isFortiapUnauthorized(ap.authorizationState);
+    const apAuthKnown = !!(ap.authorizationState || "").trim();
     const normalizedMac = normalizeMacOrNull(rawMac);
     try {
       let existingAsset: any = ap.serial ? assetIdx.findBySerial(ap.serial) : null;
       if (!existingAsset && normalizedMac) existingAsset = assetIdx.findByMac(normalizedMac);
-      if (!existingAsset && ap.name) existingAsset = assetIdx.findByEntry(undefined, ap.name, resolvedIp || undefined);
+      // Name only — never bare IP (rule 91(e)). The AP's address is often the
+      // factory default 192.168.1.2, which sits behind many gates at once; a
+      // fleet-wide IP rung adopted whichever serial-less asset last indexed
+      // it, at any site. The same-gate case is the gate MAC above.
+      if (!existingAsset && ap.name) existingAsset = assetIdx.findByEntry(undefined, ap.name, undefined, { allowIpFallback: false });
       // Serial-mismatch guard on the fallback matches: serial is chassis
       // identity, so a MAC/name/IP match must never bind this row to an
       // asset that carries a DIFFERENT non-empty serial. Without it, an
@@ -4868,7 +4886,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           fortinetTopology: apTopology,
           // Resurrection, like the lastSeen bump below, requires the AP to
           // be connected — an offline WTP entry must not undo a decommission.
-          ...(existingAsset.status === "decommissioned" && apOnline ? { status: "active", statusChangedAt: new Date(now), statusChangedBy: integrationLabel } : {}),
+          // Authorization moves an asset only between active and storage, so an
+          // operator-set status (and a scheduler-owned maintenance) is left alone.
+          ...(existingAsset.status === "decommissioned" && apOnline
+            ? { status: apUnauthorized ? "storage" : "active", statusChangedAt: new Date(now), statusChangedBy: integrationLabel }
+            : apAuthKnown
+              && (existingAsset.status === "active" || existingAsset.status === "storage")
+              && existingAsset.status !== (apUnauthorized ? "storage" : "active")
+              ? { status: apUnauthorized ? "storage" : "active", statusChangedAt: new Date(now), statusChangedBy: integrationLabel }
+              : {}),
           ...buildClassMonitorStamp(apMonitorCfg, existingAsset),
           // Unconditional attribution — see the FortiSwitch update-path comment.
           ...(existingAsset.discoveredByIntegrationId !== integrationId
@@ -4921,7 +4947,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         // it the flush would read the pre-update value and re-report the same
         // move every run.
         if (updateData.lastSeenSwitch) existingAsset.lastSeenSwitch = updateData.lastSeenSwitch;
-        if (existingAsset.status === "decommissioned" && apOnline) existingAsset.status = "active";
+        if (typeof updateData.status === "string") existingAsset.status = updateData.status;
         if (existingAsset.discoveredByIntegrationId !== integrationId) existingAsset.discoveredByIntegrationId = integrationId;
         assetIdx.reindex(existingAsset);
         await sweepEndpointGhostsInto(existingAsset, [
@@ -4952,7 +4978,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             assetType: "access_point",
             // Unconditional attribution — see the FortiSwitch update-path comment.
             discoveredByIntegrationId: integrationId,
-            status: "active",
+            status: apUnauthorized ? "storage" : "active",
             statusChangedAt: new Date(now),
             statusChangedBy: integrationLabel,
             osVersion: apCreateProjected.osVersion,

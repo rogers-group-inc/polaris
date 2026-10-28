@@ -1569,6 +1569,18 @@ leaves it alone when its name has been pinned, when it carries a different
 serial of its own, or when two assets share the serial. Each merge writes an
 event on the switch.
 
+**91(e) An access point with no MAC is matched through its own gate, never by
+its address alone.** Until a FortiAP is authorized, its gate reports it
+with no MAC and names it by its serial. Meanwhile the gate's client list knows
+the same box by its own hostname and MAC. Discovery looks up the AP's reported
+address in **that gate's** client list, leases and ARP table. If they agree on
+one MAC, discovery uses it to find the AP, and an asset that came only from
+the gate's client list is merged into the AP. Discovery does not match when the
+gate's sources name two different MACs for the address, or when two access
+points on the gate report the same address. An access point is never matched
+to another asset by address alone. 192.168.1.2, the FortiAP factory default, is
+in use behind many gates at once.
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time
