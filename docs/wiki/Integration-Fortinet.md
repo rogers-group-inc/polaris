@@ -350,6 +350,21 @@ from the gate's configuration too, so the same runtime gap applies there.
 FortiGates, managed FortiSwitches, managed FortiAPs, and — from device
 inventory, MAC tables and ARP tables — **endpoints**.
 
+**A switch or access point waiting for authorization is kept in Storage.** A
+FortiSwitch the gate reports as Unauthorized, or a FortiAP it reports as
+Discovered, gets the status **Storage**, so it is not monitored and raises no
+alerts. Once the gate authorizes it, the next discovery sets it **Active**. For
+an access point, discovery only switches between Active and Storage. A status
+you set by hand, such as Disabled, is left alone.
+
+**An access point waiting for authorization appears once, not twice.** Before
+an AP is authorized, its gate reports it with no MAC and names it by its
+serial. The gate's client list shows the same box under its own hostname.
+Discovery pairs the two by reading what **the AP's own gate** sees on the AP's
+address, and folds the client-list entry into the AP. It never pairs by address
+alone across gates, because 192.168.1.2, the FortiAP factory default, is used
+at many sites at once. See [Rule 91](Business-Rules#rule-91).
+
 **Resolving a managed switch's or AP's parent never matches against a
 hostname.** `controllerFortigate` holds FortiManager's *device name*, which
 diverges from the gate's configured hostname on real fleets. Because "no parent"
