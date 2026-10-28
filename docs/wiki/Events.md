@@ -273,8 +273,8 @@ the Events page too. It never triggers or clears an automation, even one whose
 pattern is `*` or `notification.*`.
 
 `notification.superseded` records an alert cleared by a carve-out, a
-device-down supersession (any metric or device-state alert on a device that went
-`down`) or a saturated reading.
+device-down supersession (a response-time, packet-loss or polls-failing alert on
+a device that went `down`) or a saturated reading.
 
 ### Security and audit
 

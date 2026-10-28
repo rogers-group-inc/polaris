@@ -246,32 +246,34 @@ someone.
 > under an alert that fired at 8 %. They answer different questions, and only
 > the caption's is reconstructible from the picture.
 
-### A device that goes down takes its other alerts with it
+### A device that goes down hands off its response-time and loss alerts
 
-When a device goes **down**, any alert already open about something that device
-reports (CPU, memory, an interface, a sensor, an SD-WAN SLA or member, an IPsec
-tunnel, FortiLink) **clears as *superseded***, and the asset-down alert speaks
-for the outage ([rule 29](Business-Rules#rule-29)). It sends no "resolved"
-message and runs no reset actions, because the condition has not recovered.
-Nothing new fires about the device while it is down. If the condition is still
-bad when the device comes back, it fires again as a fresh alert once its hold
-is met.
+When a device goes **down**, an open alert on a reading that is *made of* the
+outage **clears as *superseded***, and the asset-down alert speaks for the
+outage ([rule 29](Business-Rules#rule-29)). Those readings are:
 
-Without this, an alert open when the device goes dark would freeze, because no
-readings arrive to recover it. It would sit beside the asset-down alert for the
-whole outage and mail "resolved" the moment the device returned.
+- **Response time** and **Packet loss**, which are measured from the same
+  probes that declared the device down;
+- **CPU & memory polls failing** and **Interface polls failing**
+  (`telemetryFailingMinutes`, `systemInfoFailingMinutes`), which count failed
+  polls and would otherwise fire partway through every outage.
 
-This does **not** apply to:
+A cleared alert sends no "resolved" message and runs no reset actions, because
+the condition has not recovered. Nothing new fires on those readings while the
+device is down. If the condition is still bad when the device comes back, it
+fires again as a fresh alert once its hold is met.
 
-- the asset-down alert itself (`monitorStatus`, `consecutiveFailures`) — the
-  stream-failing fields (`telemetryFailingMinutes`, `systemInfoFailingMinutes`)
-  are not part of it, so they are handed off like CPU;
-- facts about the device that an outage does not change (`status`,
-  `quarantined`, `firmwareVsPrimary`, `tag`, `dependencySuppressed`);
-- path checks, which are measured *from* the device rather than *about* it;
-- a multiple-condition automation with any of those in its tree;
-- a device that is `passive`, `unknown` or `recovering`. Only a confirmed
-  `down` has an asset-down alert to hand to.
+**Every other alert stays open** through the outage: CPU, memory, the memory
+and storage forecasts, interfaces, sensors, SD-WAN, IPsec, FortiLink, path
+checks, and facts like `status` or `quarantined`. An outage does not change
+what the device last reported, so clearing those would only make them fire
+again each time a flapping link brought the device back. An alert that stays
+open freezes while no readings arrive, and resolves through its own automation
+once the device reports healthy again.
+
+A multiple-condition automation is handed off only when every condition in it
+would be. Only a confirmed `down` counts: a device that is `passive`, `unknown`
+or `recovering` has no asset-down alert to hand to.
 
 ### 0/1 metrics render differently
 
@@ -411,9 +413,9 @@ ping or SNMP while its REST pull is refused reads `monitorStatus = up`, so the
 down-detection automation never sees it. This one does.
 
 - **No double alert for an outage.** If the device goes **down**, an open alert
-  on either field is handed to the asset-down alert, like CPU or an interface
-  (see [A device that goes down takes its other alerts with
-  it](#a-device-that-goes-down-takes-its-other-alerts-with-it)). Adding
+  on either field is handed to the asset-down alert, like response time and
+  packet loss (see [A device that goes down hands off its response-time and
+  loss alerts](#a-device-that-goes-down-hands-off-its-response-time-and-loss-alerts)). Adding
   `monitorStatus == up` to the same automation is still allowed if you want it
   written down.
 - **The reading stops advancing when polling stops.** It measures to the latest
