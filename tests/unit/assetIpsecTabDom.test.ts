@@ -33,6 +33,7 @@ function varSrc(name: string): string {
 const FNS = [
   "_ipsecIsRemoteAccess", "_ipsecUptimeLabel", "_ipsecStatusPill", "_setIpsecTunnelPin",
   "_reloadAssetIpsec", "_renderAssetIpsec", "_treeElbow", "_distinctSorted",
+  "_getCollapsedIfaces", "_setCollapsedIfaces",
 ];
 
 const ASSET_ID = "HUB";
@@ -126,12 +127,12 @@ function render(): void {
 }
 
 const tunRows = () => Array.from(doc.querySelectorAll(`#ipsec-tunnels-tbody-${ASSET_ID} > tr`));
-/** The row's name, without the elbow and the kind sub-line under it. */
+/** The row's name, without the toggle, the elbow and the kind sub-line under it. */
 const firstCellText = (tr: Element) => {
   const td = tr.querySelectorAll(":scope > td")[1];
   if (!td) return "";
   const c = td.cloneNode(true) as Element;
-  c.querySelectorAll("div, span[aria-hidden]").forEach((n) => n.remove());
+  c.querySelectorAll("div, span[aria-hidden], button").forEach((n) => n.remove());
   return c.textContent!.replace(/[├└─]/g, "").trim();
 };
 const tunNames = () => tunRows().map(firstCellText).filter(Boolean);
@@ -172,6 +173,55 @@ describe("tunnel table — default view", () => {
     expect(box("H2H-1").checked).toBe(true);       // interface twin only
     expect(box("Overlay-1").checked).toBe(true);   // IPsec pin
     expect(box("Overlay-3").checked).toBe(false);
+  });
+});
+
+describe("dial-up templates — collapse and connected count", () => {
+  const peerRows = () => tunRows().filter((tr) => tr.classList.contains("ipsec-peer"));
+  const shown = (tr: Element) => (tr as any).style.display !== "none";
+  const toggle = () => doc.querySelector('.ipsec-expand-toggle[data-parent="Overlay-1"]') as any;
+
+  it("starts collapsed: the template's peers are rendered but hidden", () => {
+    expect(toggle().textContent).toBe("▶");
+    expect(peerRows()).toHaveLength(2);
+    expect(peerRows().every((tr) => !shown(tr))).toBe(true);
+  });
+
+  it("gives a toggle only to a dial-up template that has peers under it", () => {
+    expect(doc.querySelectorAll(".ipsec-expand-toggle")).toHaveLength(1);
+  });
+
+  it("expands and collapses on the toggle, and remembers it per user per asset", () => {
+    click(toggle());
+    expect(toggle().textContent).toBe("▼");
+    expect(peerRows().every(shown)).toBe(true);
+    render();
+    expect(peerRows().every(shown)).toBe(true);
+    click(toggle());
+    expect(peerRows().every((tr) => !shown(tr))).toBe(true);
+    render();
+    expect(peerRows().every((tr) => !shown(tr))).toBe(true);
+  });
+
+  it("shows every match when sorted or filtered, with no toggle", async () => {
+    await typeFilter("ipsec-tunnels-table", "name", "spoke");
+    expect(peerRows().every(shown)).toBe(true);
+    expect(doc.querySelector(".ipsec-expand-toggle")).toBeNull();
+  });
+
+  it("counts FortiClient users in the template they hang off", () => {
+    const p = payload();
+    p.tunnels.push({ tunnelName: "IPsecRA_VPN", status: "dynamic", remoteGateway: "0.0.0.0", parentInterface: "wan1",
+      overlayIp: null, incomingBytes: null, outgoingBytes: null, pinned: false, interfacePinned: false });
+    doc.body.innerHTML = `<div id="asset-ipsec-mount-${ASSET_ID}"></div>`;
+    g._renderAssetIpsec(ASSET_ID, p, { id: ASSET_ID });
+    const row = tunRows().find((tr) => firstCellText(tr) === "IPsecRA_VPN")!;
+    expect(row.textContent).toContain("Dial-up template · 1 connected");
+    // ADVPN's count is its nested spokes, as before.
+    expect(tunRows().find((tr) => firstCellText(tr) === "Overlay-1")!.textContent).toContain("2 connected");
+    // The user stays in Remote access, and a template with only users has nothing to fold.
+    expect(userNames()).toEqual(["asmith", "jdoe"]);
+    expect(row.querySelector(".ipsec-expand-toggle")).toBeNull();
   });
 });
 
