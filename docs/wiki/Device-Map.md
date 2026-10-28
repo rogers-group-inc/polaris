@@ -107,14 +107,19 @@ eye is struck through); click again to show it. Hiding a region:
 - **takes the FortiGates inside it off the map** — every pin that lies within
   the hidden region, including ones in none of its L1s. This holds whether or
   not the Regions panel is open, and the status line says how many FortiGates
-  hidden regions are holding back. A search hit on one of them still moves the
-  map there and says it is in a hidden region;
+  hidden regions are holding back;
 - **re-fits the map** to the FortiGates still shown, as it does on first load.
 
+**Search still reaches a hidden FortiGate.** Picking one from the global
+search opens its topology as usual; the map stays where it is and the status
+line says the FortiGate is in a hidden region.
+
 Anyone who can open the Device Map can do this, read-only roles included: it
-changes only what **your** browser draws, and the choice is remembered for
-your account in that browser. Edit mode draws every region regardless, since
-you have to see what you are reshaping.
+changes only what **your** maps draw, never what you can see elsewhere. The
+choice is saved to **your account**, so it follows you to any browser you sign
+in on and to the [phone app](Mobile-and-Dash)'s map, which leaves out the same
+FortiGates. Edit mode draws every region regardless, since you have to see
+what you are reshaping.
 
 ### Nesting a region by dragging
 

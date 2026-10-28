@@ -3863,6 +3863,15 @@ model User {
   // which is the best answer available for it.
   detectedTimezone String? @map("detected_timezone")
 
+  // The map regions this account has HIDDEN with the Device Map Regions
+  // panel's eyes — MapRegion ids. A hidden region (and everything nested in
+  // it) is not drawn and the FortiGates inside it leave the map, on the
+  // desktop page and the phone's Map tab alike, which is why it lives on the
+  // User rather than in one browser. A view preference only: it narrows what
+  // is DRAWN, never what the account may read (search still finds and opens
+  // a hidden gate). No FK — a deleted region's id is simply never matched.
+  // Validation is normalizeHiddenMapRegionIds() in userMapViewService.
+  hiddenMapRegionIds String[] @default([]) @map("hidden_map_region_ids")
 
   // Flipped true the first time the user actually logs in (lastLogin transitions
   // null → set). Drives the sidebar "new user — review role" notification for

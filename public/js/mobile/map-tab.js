@@ -137,7 +137,7 @@
         initMap();
         return loadSites();
       }).then(function () {
-        setStatus("");
+        setStatus(hiddenSitesStatus());
         // Auto-start the user-location watch when geolocation permission
         // was already granted on a prior visit. Permissions API is
         // best-effort — Safari historically lacked support, but modern
@@ -291,8 +291,31 @@
     });
   }
 
+  // The regions this account hid on the desktop Device Map's Regions panel
+  // (GET /me/hidden-map-regions) apply here too: a FortiGate inside a hidden
+  // region, or inside anything nested under one, gets no pin, and the map
+  // fits the pins that are left. The same PolarisRegionTree.hiddenPointTest
+  // the desktop uses decides it. The phone has no eyes of its own — the
+  // choice is made on the desktop. Every site stays in _sites, so a search
+  // deep-link (`site/<id>`) still opens a hidden gate's sheet and topology.
+  // Either fetch failing hides nothing.
+  function loadHiddenSiteTest() {
+    if (!window.PolarisRegionTree || !api.hiddenMapRegions) return Promise.resolve(null);
+    return api.hiddenMapRegions.get().then(function (res) {
+      var ids = res && Array.isArray(res.regionIds) ? res.regionIds : [];
+      if (ids.length === 0) return null;
+      var hidden = {};
+      ids.forEach(function (id) { hidden[id] = true; });
+      return api.mapRegions.overlay().then(function (payload) {
+        return window.PolarisRegionTree.hiddenPointTest(payload, hidden);
+      });
+    }).catch(function () { return null; });
+  }
+
   function loadSites() {
-    return api.map.sites().then(function (sites) {
+    return Promise.all([api.map.sites(), loadHiddenSiteTest()]).then(function (res) {
+      var sites = res[0];
+      var hiddenTest = res[1];
       _sites = Array.isArray(sites) ? sites : [];
       _markerCluster.clearLayers();
       _markersById = Object.create(null);
@@ -304,18 +327,31 @@
 
       var L = window.L;
       var latlngs = [];
+      var hiddenCount = 0;
       _sites.forEach(function (s) {
         if (s.latitude == null || s.longitude == null) return;
         var m = makeMarker(s);
-        _markerCluster.addLayer(m);
         _markersById[s.id] = m;
+        if (hiddenTest && hiddenTest(s.latitude, s.longitude)) { hiddenCount++; return; }
+        _markerCluster.addLayer(m);
         latlngs.push([s.latitude, s.longitude]);
       });
       if (latlngs.length > 0) {
         _map.fitBounds(L.latLngBounds(latlngs).pad(0.05), { maxZoom: 12 });
       }
+      _hiddenSiteCount = hiddenCount;
       return _sites;
     });
+  }
+
+  // "N in hidden regions" — said once the map has loaded, since an operator
+  // looking for a pin on the phone may not remember hiding its region on the
+  // desktop.
+  var _hiddenSiteCount = 0;
+  function hiddenSitesStatus() {
+    if (_hiddenSiteCount === 0) return "";
+    return _hiddenSiteCount + " FortiGate" + (_hiddenSiteCount === 1 ? " is" : "s are") +
+      " in regions you hid on the Device Map";
   }
 
   function monitorClass(site) {
@@ -351,6 +387,9 @@
 
   function focusSite(site) {
     if (!site || site.latitude == null || site.longitude == null) return;
+    // In a hidden region there is no pin to fly to; the sheet still opens.
+    var m = _markersById[site.id];
+    if (m && !_markerCluster.hasLayer(m)) return;
     _map.flyTo([site.latitude, site.longitude], 13, { duration: 0.6 });
   }
 

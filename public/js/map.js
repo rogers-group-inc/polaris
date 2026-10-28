@@ -83,7 +83,7 @@
     initMap();
     wireModal();
     // The Regions panel first: it builds the pencil wireRegionEditing wires.
-    regionViewState.hidden = loadHiddenRegions();
+    regionViewState.hidden = await loadHiddenRegions();
     wireShowRegions();
     wireRegionEditing();
 
@@ -902,8 +902,15 @@
 
   function focusSite(site) {
     if (site.latitude == null || site.longitude == null) return;
-    map.flyTo([site.latitude, site.longitude], 13, { duration: 0.8 });
     var marker = markersById[site.id];
+    if (marker && !markerCluster.hasLayer(marker)) {
+      // Left off the map by a hidden region (applySiteVisibility): there is
+      // no pin to fly to, so the view stays put. Returns false so the
+      // search hooks keep this status line; the topology still opens.
+      setStatus((site.hostname || "This FortiGate") + " is in a hidden region — show the region in the Regions panel to see its pin.");
+      return false;
+    }
+    map.flyTo([site.latitude, site.longitude], 13, { duration: 0.8 });
     if (marker) {
       // If the marker is still inside a cluster, zoom to it; once revealed,
       // fire a click so the tooltip/modal path is consistent with direct use.
@@ -914,12 +921,10 @@
           });
         } else if (marker._map) {
           marker.openTooltip();
-        } else {
-          // Left off the map by a hidden region (applySiteVisibility).
-          setStatus((site.hostname || "This FortiGate") + " is in a hidden region — show the region in the Regions panel to see it.");
         }
       }, 700);
     }
+    return true;
   }
 
   // ─── Hooks for the global app-wide search ─────────────────────────────────
@@ -934,8 +939,7 @@
     if (!assetId) return false;
     var site = siteCache.find(function (s) { return s.id === assetId; });
     if (!site) return false;
-    focusSite(site);
-    setStatus('Showing "' + (site.hostname || site.id) + '"');
+    if (focusSite(site) !== false) setStatus('Showing "' + (site.hostname || site.id) + '"');
     return true;
   };
 
@@ -948,8 +952,9 @@
     if (!siteId) return false;
     var site = siteCache.find(function (s) { return s.id === siteId; });
     if (!site) return false;
-    focusSite(site);
-    setStatus('Showing "' + (site.hostname || site.id) + '"');
+    // A gate in a hidden region has no pin, but its topology still opens —
+    // search finds a hidden gate the same as any other.
+    if (focusSite(site) !== false) setStatus('Showing "' + (site.hostname || site.id) + '"');
     // Slight delay so the marker pan-and-zoom animation has started
     // before the modal opens — feels like one continuous gesture.
     setTimeout(function () {
@@ -3790,7 +3795,7 @@
     payload: null,      // memoized /map/region-overlay response
     wasShowing: false,  // restore the overlay after edit mode exits
     polys: {},          // region id -> read-only polygon, shown or not
-    hidden: {}          // region ids this viewer hid (loadHiddenRegions)
+    hidden: {}          // region ids this account hid (loadHiddenRegions)
   };
 
   // The pencil is offered to roles holding mapRegions:write — the key every
@@ -4021,30 +4026,62 @@
 
   // ---- Per-region show / hide (view mode) -----------------------------------
   // Any viewer of the map may hide regions they don't care about; it changes
-  // only what THIS browser draws, so it needs no permission beyond
-  // deviceMap:read. Remembered per user in localStorage, keyed by region id (a
-  // rename keeps it hidden; a deleted region's id is simply never matched).
-  // Hiding a region hides everything nested under it and every FortiGate
-  // inside it (applySiteVisibility), and each toggle re-fits the view to the
-  // FortiGates still shown. Edit mode ignores it for POLYGONS and draws every
-  // one — an editor has to see what they are reshaping and nesting.
-  function _hiddenRegionsKey() {
+  // only what their own maps draw, so it needs no permission beyond
+  // deviceMap:read. Stored on the account (GET / PUT /me/hidden-map-regions)
+  // so the phone's Map tab hides the same regions and FortiGates; keyed by
+  // region id (a rename keeps it hidden; a deleted region's id is simply never
+  // matched). Hiding a region hides everything nested under it and every
+  // FortiGate inside it (applySiteVisibility), and each toggle re-fits the
+  // view to the FortiGates still shown. Global search still opens a hidden
+  // gate's topology: polarisMapOpenSiteTopology looks it up in siteCache,
+  // which keeps every site, not only the drawn ones. Edit mode ignores the
+  // set for POLYGONS and draws every one — an editor has to see what they are
+  // reshaping and nesting.
+
+  // The browser-only copy this page kept before the hidden set moved onto
+  // the User (2026-10-28). Read once, uploaded when the account has nothing
+  // stored yet, then removed.
+  function _legacyHiddenRegionsKey() {
     var u = (typeof currentUsername === "string" && currentUsername) ? currentUsername : "anon";
     return "polaris-prefs-map-hidden-regions-" + u;
   }
 
-  function loadHiddenRegions() {
+  function idsToSet(ids) {
     var out = {};
-    try {
-      var ids = JSON.parse(localStorage.getItem(_hiddenRegionsKey()) || "[]");
-      if (Array.isArray(ids)) ids.forEach(function (id) { if (typeof id === "string") out[id] = true; });
-    } catch (e) { /* per-viewer convenience */ }
+    if (Array.isArray(ids)) ids.forEach(function (id) { if (typeof id === "string" && id) out[id] = true; });
     return out;
   }
 
+  // GET /me/hidden-map-regions — the same list the phone's Map tab reads. A
+  // failed read hides nothing rather than blocking the map.
+  async function loadHiddenRegions() {
+    var legacy = [];
+    try { legacy = JSON.parse(localStorage.getItem(_legacyHiddenRegionsKey()) || "[]"); } catch (e) { legacy = []; }
+    try {
+      var res = await api.hiddenMapRegions.get();
+      var ids = res && Array.isArray(res.regionIds) ? res.regionIds : [];
+      if (ids.length === 0 && Array.isArray(legacy) && legacy.length > 0) {
+        res = await api.hiddenMapRegions.set(legacy);
+        ids = res && Array.isArray(res.regionIds) ? res.regionIds : legacy;
+      }
+      try { localStorage.removeItem(_legacyHiddenRegionsKey()); } catch (e) { /* nothing to clean */ }
+      return idsToSet(ids);
+    } catch (e) {
+      return idsToSet(legacy);
+    }
+  }
+
+  // PUT the whole set after every toggle. Writes are chained so a quick
+  // hide-then-show lands in click order; a failed write says so but keeps the
+  // map as the operator left it.
+  var hiddenRegionsWrite = Promise.resolve();
   function saveHiddenRegions() {
-    try { localStorage.setItem(_hiddenRegionsKey(), JSON.stringify(Object.keys(regionViewState.hidden))); }
-    catch (e) { /* per-viewer convenience */ }
+    var ids = Object.keys(regionViewState.hidden);
+    hiddenRegionsWrite = hiddenRegionsWrite.then(function () {
+      return api.hiddenMapRegions.set(ids);
+    }).catch(function (err) {
+      showToast("Could not save hidden regions: " + (err && err.message ? err.message : err), "error");
+    });
   }
 
   function wireRegionEyes() {
