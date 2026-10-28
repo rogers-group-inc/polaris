@@ -2874,3 +2874,21 @@ alert's severity is the highest Priority tag on the device (or on the port), and
 a device or port with no Priority tag does not alert. A tag that changes while
 the device is down changes the open alert's severity. A tag that is removed
 clears it. See [Automation Triggers](Automation-Triggers#severity-from-the-priority-tag).
+
+### Rule 137
+
+**A tag on a network a FortiGate serves is inherited by the ports of that
+gate's switches that carry the network's VLAN, and by those switches.** Only a
+network that knows its FortiGate and its VLAN hands tags down: one discovered
+through FortiManager or a FortiGate integration. A network learned from a DHCP
+server, vCenter or a Generic API feed, or typed by hand, keeps its tags to
+itself. The match is per gate, because the same VLAN number means a different
+network at another site. A port carries the VLAN when it is the native VLAN or
+one of the tagged VLANs. A trunk that allows all VLANs never inherits. Every tag
+is handed down except `region:` and `azure:` tags and the `dhcp-discovered` /
+integration markers. The switch gets every tag its ports inherit, so a switch
+with ports on a Critical network and a Warning network alerts at Critical under
+[rule 136(e)](#rule-136). Polaris only removes what it added: a tag already on
+the port or the switch is left alone, a tag you take off a switch by hand stays
+off, and ticking an inherited tag in a port's tag editor keeps it there by hand.
+See [IPAM](IPAM#networks).

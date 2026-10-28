@@ -62,6 +62,23 @@ Tags · **Sources** · Integration · Creator · **Reservations** · **Utilizati
 
 **Status** is `available`, `reserved` or `deprecated`.
 
+**A network's tags reach the switches that carry it.** When a FortiGate
+network (one discovered through FortiManager or a FortiGate integration, so it
+knows its gate and its VLAN) carries a tag, every FortiSwitch behind that gate
+gets the tag on each port that carries the VLAN, and the switch itself gets it
+too. A port carries the VLAN when it's the port's native VLAN or one of its
+tagged VLANs. A trunk set to allow all VLANs (a FortiLink uplink) never
+inherits, or it would pick up every network's tags. Any tag works, Priority
+tags included, so a port on a **Priority Critical** network and a **Priority
+Warning** one carries both, and a [Priority-severity
+automation](Automation-Triggers#severity-from-the-priority-tag) alerts at
+Critical. The `region:` and `azure:` tags and the `dhcp-discovered` /
+integration markers stay on the network. A network learned from a DHCP server,
+vCenter, a Generic API feed or typed by hand has no gate, so its tags stay on
+the network. Take a tag off the network (or delete or deprecate the network)
+and it comes off the switches and ports again. A copy you added by hand is
+never removed. See [rule 137](Business-Rules#rule-137).
+
 **Reservations** counts the addresses the network is holding right now —
 reservations that are active and sit on an address. Released and expired
 reservations are kept as history and are *not* counted, so on a busy

@@ -758,8 +758,11 @@ under *Interface Comments* to tag that port with tags from the same registry
 assets use (`assets:write`). A tag can also land on a port automatically: a
 tag whose [auto-assign filter](Server-Settings#tags) has a **Native VLAN**
 condition goes on every port on that VLAN, on each device the filter matches,
-and on the device itself. Those show with a ⚙ and can't be unticked in the
-editor; change the tag's filter to move them. Ticking one there keeps it on the
+and on the device itself. A FortiSwitch port also inherits the tags of a
+[network](IPAM#networks) its FortiGate serves when the port carries that
+network's VLAN, natively or tagged ([rule 137](Business-Rules#rule-137)).
+Those show with a ⚙ and can't be unticked in the editor; change the tag's
+filter, or the network's tags, to move them. Ticking one there keeps it on the
 port by hand. A **Tags** column appears in the Interfaces table once any port
 carries a tag, and filters like the VLAN columns. A port's tags are kept while
 it is briefly missing from a scrape. Renaming a tag in the registry renames it
