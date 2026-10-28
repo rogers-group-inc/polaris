@@ -349,7 +349,7 @@ a missing or mismatched JDK degrades signing rather than breaking the app.
 | RHEL / Rocky / AlmaLinux | 9 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh`, `docs/INSTALL.md`, `README.md` |
 | Ubuntu / Debian | Ubuntu 22.04+ | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh`, `docs/INSTALL.md` |
 | Debian (container base) | 13 trixie | `Dockerfile`, `Dockerfile.dev` — moved from 12 bookworm on 2026-09-09, because trixie ships the PostgreSQL 17 client and openjdk-25 |
-| Ubuntu (CI runner) | 24.04 | `runs-on: ubuntu-24.04` on all four jobs in `.github/workflows/check-docs.yml` and `docker-publish.yml`. Was `ubuntu-latest` until 2026-10-20, when GitHub began moving that label to Ubuntu 26: the integration job's PGDG apt line is built from `lsb_release -cs`, and its comments assume the runner's own pg_dump is 16, so a label move would change the job with no commit. Move it deliberately, after PGDG publishes for the new codename |
+| Ubuntu (CI runner) | 24.04 | `runs-on: ubuntu-24.04` on every job in `.github/workflows/check-docs.yml`, `docker-publish.yml` and `codeql.yml`. Was `ubuntu-latest` until 2026-10-20, when GitHub began moving that label to Ubuntu 26: the integration job's PGDG apt line is built from `lsb_release -cs`, and its comments assume the runner's own pg_dump is 16, so a label move would change the job with no commit. Move it deliberately, after PGDG publishes for the new codename |
 
 The nginx.org `baseurl` in the RHEL scripts encodes the OS release (`centos/9`), so a RHEL 10
 move is a URL change in the install scripts, not just a documentation change. Check the PGDG
