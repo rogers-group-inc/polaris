@@ -604,6 +604,15 @@ down. `refreshMemberContext` re-derives it with the count ("is" → "are"). Ever
 `recoveredConditionSuffix` — " is down" → " is up", anything else → " recovered" — so the
 Resolved subject keeps the fire's shape without repeating a problem that is over.
 
+**The headline says it too.** `{trigger.summary}` (the email's headline) on such a split was the
+generic sentence with the HOSTS in the component's place — "Path check result on GRYCRT-S2212
+is 0". `readingContextParts` now writes `<check> <condition> from <hosts>` on a split and
+`<N path checks> <condition> from <N devices>` on an agreeing whole-group alert;
+`refreshMemberContext` keeps the first current by its host-list replace and REWRITES the second
+(both counts move). Outside the grouping, `utils/triggerSummary.ts → triggerSummary` words a
+`pathOk` reading as `<check> is down` / `is up` instead of "is 0". An all-clear still replaces
+the headline with its recovery sentence (`setRecoverySentence`).
+
 **The default message says what is wrong (same day).** The default (blank-template) message of
 such a split read `Path check down — ERP HTTPS: 3 devices — <hosts>`, so whether it said "down"
 depended on what the operator had NAMED the automation. It now leads with the check and the

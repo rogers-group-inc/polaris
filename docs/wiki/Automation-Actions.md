@@ -427,6 +427,9 @@ hosts it is failing from, and `{dimension.suffix}` is the host count
 3 devices — Path Monitor"*. A whole-group alert reads *"3 path checks are down
 · 80 devices"* when every automation in it agrees. `{condition.suffix}` is blank
 on every other alert, so a subject template can append it unconditionally.
+The email's headline (`{trigger.summary}`) leads with the check the same way —
+*"ERP HTTPS is down from pc-01, pc-02"*, *"3 path checks are down from 80
+devices"* — and an ungrouped path alert's reads *"ERP HTTPS is down"*.
 
 **The automation**
 `{rule}` `{rule.description}` `{trigger.summary}`

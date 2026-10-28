@@ -217,6 +217,8 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(ctx["dimension.suffix"]).toBe(" · 2 devices");
     expect(ctx["dimension"]).toBe(`${HOST}-pc-01, ${HOST}-pc-02`);
     expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, ctx)).toBe(`[SERIOUS] ${NAME} erp is down · 2 devices — ${NAME} rule`);
+    // The email's headline leads with the check too, not "Path check result on … is 0".
+    expect(ctx["trigger.summary"]).toBe(`${NAME} erp is down from ${HOST}-pc-01, ${HOST}-pc-02`);
   });
 
   it("device + automation folds every path check from every host into one alert, counted past the member cap", async () => {
@@ -252,6 +254,7 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(ctx["asset"]).toBe("3 path checks");
     expect(ctx["condition.suffix"]).toBe(" are down");
     expect(ctx["dimension.suffix"]).toBe(" · 25 devices");
+    expect(ctx["trigger.summary"]).toBe("3 path checks are down from 25 devices");
     expect(ctx["rule"]).toBe(`${NAME} rule`);
     expect(alerts[0]!.message).toMatch(/^3 path checks are down from 25 devices — /);
     expect(await prisma.notificationRuleState.count({ where: { notificationId: alerts[0]!.id, state: "firing" } })).toBe(75);
@@ -264,6 +267,7 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     await evaluateAllNotificationRules();
     const after = await prisma.notification.findUniqueOrThrow({ where: { id: alerts[0]!.id } });
     expect((after.templateCtx as Record<string, string>)["dimension.suffix"]).toBe(" · 24 devices");
+    expect((after.templateCtx as Record<string, string>)["trigger.summary"]).toBe("3 path checks are down from 24 devices");
     expect(after.message).toMatch(/^3 path checks are down from 24 devices — /);
   });
 });
