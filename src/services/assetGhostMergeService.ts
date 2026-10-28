@@ -46,6 +46,8 @@
  */
 
 import { prisma } from "../db.js";
+import { logger } from "../utils/logger.js";
+import { logEvent } from "./eventLogService.js";
 import { transferAssetSideTables } from "./assetMergeService.js";
 import { recomputeMonitorOverrideForAssets } from "./monitorOverrideService.js";
 import { macHexKeyOrNull } from "../utils/mac.js";
@@ -315,6 +317,157 @@ export function decideDuplicateSerialGroup(rows: DuplicateHostnameAssetRow[]): D
     ghosts: decorated.slice(1).map((d) => d.row),
     tiers: decorated.map((d) => d.tier),
   };
+}
+
+/** The two sides of a serial-hostname pair, as the job hydrates them. */
+export interface SerialHostnamePairRow {
+  id: string;
+  hostname: string | null;
+  serialNumber: string | null;
+  sources: { sourceKind: string }[];
+}
+
+export type SerialHostnameDecision =
+  | { kind: "merge"; canonical: SerialHostnamePairRow }
+  | { kind: "skip"; reason: string };
+
+/**
+ * Should `ghost` — an asset whose HOSTNAME is a serial — be absorbed into the
+ * asset that carries that string as its discovered SERIAL?
+ *
+ * The case (prod 2026-10-28, GAINESBOROPLANT-148F-1): a managed FortiSwitch's
+ * mgmt port takes a DHCP lease from its gate, FortiOS reports the client with
+ * the switch SERIAL as its hostname, and Phase 7 mints a "fortigate-endpoint"
+ * asset under that name before the switch's own record has a MAC. The inline
+ * Phase 3b sweep absorbs it only on a later run that re-processes the switch;
+ * nothing periodic did, so the pair could sit side by side for days.
+ *
+ * A hostname that is exactly another asset's real serial names that device:
+ * FortiOS reports the serial, the operator did not type it. Merges only a pure
+ * endpoint placeholder (`isMergeableGhostSourceKinds`) into a canonical that
+ * is NOT one itself, and refuses when the name is not a usable serial
+ * (rule 84), when the ghost carries a different usable serial of its own, or
+ * when more than one asset claims the serial (the serial pass's business).
+ */
+export function decideSerialHostnameGhost(
+  ghost: SerialHostnamePairRow,
+  candidates: SerialHostnamePairRow[],
+): SerialHostnameDecision {
+  const ghostKinds = ghost.sources.map((s) => s.sourceKind);
+  if (!isMergeableGhostSourceKinds(ghostKinds)) {
+    return { kind: "skip", reason: "not an endpoint placeholder" };
+  }
+  if (!isUsableSerial(ghost.hostname)) {
+    return { kind: "skip", reason: "hostname is not a usable serial" };
+  }
+  const key = normalizeSerialKey(ghost.hostname);
+  if (isUsableSerial(ghost.serialNumber) && normalizeSerialKey(ghost.serialNumber) !== key) {
+    return { kind: "skip", reason: `ghost carries its own serial ${normalizeSerialKey(ghost.serialNumber)}` };
+  }
+  const matches = candidates.filter((c) =>
+    c.id !== ghost.id
+    && isUsableSerial(c.serialNumber)
+    && normalizeSerialKey(c.serialNumber) === key
+    && !isMergeableGhostSourceKinds(c.sources.map((s) => s.sourceKind)),
+  );
+  if (matches.length === 0) return { kind: "skip", reason: "no discovered asset carries the serial" };
+  if (matches.length > 1) return { kind: "skip", reason: `serial ${key} is on ${matches.length} assets` };
+  return { kind: "merge", canonical: matches[0] };
+}
+
+export interface SerialHostnameMergeStats {
+  scanned: number;
+  merged: number;
+  skipped: number;
+}
+
+/**
+ * The serial-as-hostname pass of the mergeDuplicateHostnameAssets job: find
+ * every "fortigate-endpoint" asset whose hostname equals a live asset's
+ * serial, decide each pair with `decideSerialHostnameGhost`, and absorb the
+ * placeholder through `mergeEndpointGhostIntoAsset` — the discovery-time
+ * sweep's executor, so the two paths leave identical results.
+ *
+ * The SQL is a coarse prefilter (a hash join on the two normalized
+ * expressions; the placeholder set is small on any fleet); the policy
+ * re-checks everything with `normalizeSerialKey`. Per-pair failures are
+ * logged and retried next cycle.
+ */
+export async function mergeSerialHostnameGhosts(opts: { dryRun?: boolean } = {}): Promise<SerialHostnameMergeStats> {
+  const stats: SerialHostnameMergeStats = { scanned: 0, merged: 0, skipped: 0 };
+  const pairs = await prisma.$queryRaw<{ ghostId: string; canonicalIds: string[] }[]>`
+    SELECT g.id AS "ghostId", array_agg(c.id) AS "canonicalIds"
+    FROM assets g
+    JOIN assets c
+      ON upper(btrim(c."serialNumber")) = upper(btrim(g.hostname))
+     AND c.id <> g.id
+    WHERE g.hostname IS NOT NULL
+      AND g."hostnameOverride" IS NULL
+      AND c.status::text NOT IN ('decommissioned', 'disabled')
+      AND EXISTS (
+        SELECT 1 FROM asset_sources s
+        WHERE s."assetId" = g.id AND s."sourceKind" = 'fortigate-endpoint'
+      )
+    GROUP BY g.id
+    LIMIT 2000
+  `;
+  if (pairs.length === 0) return stats;
+
+  const rows = await prisma.asset.findMany({
+    where: { id: { in: [...new Set(pairs.flatMap((p) => [p.ghostId, ...p.canonicalIds]))] } },
+    select: { id: true, hostname: true, serialNumber: true, sources: { select: { sourceKind: true } } },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  for (const pair of pairs) {
+    const ghost = byId.get(pair.ghostId);
+    if (!ghost) continue;
+    stats.scanned++;
+    const candidates = pair.canonicalIds
+      .map((id) => byId.get(id))
+      .filter((r): r is NonNullable<typeof r> => r !== undefined);
+    const decision = decideSerialHostnameGhost(ghost, candidates);
+    if (decision.kind === "skip") {
+      stats.skipped++;
+      logger.debug({ ghostId: ghost.id, hostname: ghost.hostname, reason: decision.reason }, "serial-hostname-merge: skipping");
+      continue;
+    }
+    const { canonical } = decision;
+    if (opts.dryRun) {
+      logger.info({ ghostId: ghost.id, hostname: ghost.hostname, canonicalId: canonical.id, dryRun: true }, "serial-hostname-merge: WOULD merge (dry-run)");
+      continue;
+    }
+    try {
+      const res = await mergeEndpointGhostIntoAsset(canonical.id, ghost.id);
+      stats.merged++;
+      logger.info(
+        { ghostId: ghost.id, hostname: ghost.hostname, canonicalId: canonical.id, adoptedMac: res.adoptedMac },
+        "serial-hostname-merge: merged",
+      );
+      await logEvent({
+        action: "asset.duplicate_merged",
+        resourceType: "asset",
+        resourceId: canonical.id,
+        resourceName: canonical.hostname ?? undefined,
+        level: "info",
+        message:
+          `Duplicate cleanup — absorbed endpoint asset ${ghost.hostname} into ${canonical.hostname || canonical.id}, ` +
+          `whose serial it is named after` +
+          (res.adoptedMac ? `; adopted MAC ${res.adoptedMac}` : ""),
+        details: {
+          matchedOn: "serial-hostname",
+          serial: ghost.hostname,
+          canonicalId: canonical.id,
+          ghostId: ghost.id,
+          adoptedMac: res.adoptedMac,
+          transferredMonitored: res.transferredMonitored,
+        },
+      });
+    } catch (err) {
+      logger.warn({ err, ghostId: ghost.id, canonicalId: canonical.id }, "serial-hostname-merge: failed (will retry next cycle)");
+    }
+  }
+  return stats;
 }
 
 /**

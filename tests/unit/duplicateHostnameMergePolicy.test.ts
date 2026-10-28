@@ -8,7 +8,9 @@ import { describe, it, expect } from "vitest";
 import {
   decideDuplicateHostnameGroup,
   decideDuplicateSerialGroup,
+  decideSerialHostnameGhost,
   type DuplicateHostnameAssetRow,
+  type SerialHostnamePairRow,
 } from "../../src/services/assetGhostMergeService.js";
 
 function row(over: Partial<DuplicateHostnameAssetRow> & { id: string }): DuplicateHostnameAssetRow {
@@ -207,5 +209,69 @@ describe("decideDuplicateHostnameGroup — conflicting serials (rule 91)", () =>
     const a = row({ id: "a", sources: [{ sourceKind: "fortigate-endpoint" }], serialNumber: "To Be Filled By O.E.M." });
     const b = row({ id: "b", sources: [{ sourceKind: "fortigate-endpoint" }], serialNumber: "Default string" });
     expect(decideDuplicateHostnameGroup([a, b]).kind).toBe("merge");
+  });
+});
+
+describe("decideSerialHostnameGhost", () => {
+  const SERIAL = "S148FFTF25033194";
+  const ghost = (over: Partial<SerialHostnamePairRow> = {}): SerialHostnamePairRow => ({
+    id: "ghost",
+    hostname: SERIAL,
+    serialNumber: null,
+    sources: [{ sourceKind: "fortigate-endpoint" }],
+    ...over,
+  });
+  const sw = (over: Partial<SerialHostnamePairRow> = {}): SerialHostnamePairRow => ({
+    id: "switch",
+    hostname: "GAINESBOROPLANT-148F-1",
+    serialNumber: SERIAL,
+    sources: [{ sourceKind: "fortiswitch" }],
+    ...over,
+  });
+
+  it("merges an endpoint placeholder named after a switch's serial into the switch", () => {
+    const d = decideSerialHostnameGhost(ghost(), [sw()]);
+    expect(d).toEqual({ kind: "merge", canonical: sw() });
+  });
+
+  it("matches case- and whitespace-insensitively", () => {
+    const d = decideSerialHostnameGhost(ghost({ hostname: ` ${SERIAL.toLowerCase()} ` }), [sw()]);
+    expect(d.kind).toBe("merge");
+  });
+
+  it("still merges a placeholder that also carries the empty manual row", () => {
+    const g = ghost({ sources: [{ sourceKind: "fortigate-endpoint" }, { sourceKind: "manual" }] });
+    expect(decideSerialHostnameGhost(g, [sw()]).kind).toBe("merge");
+  });
+
+  it("refuses a ghost with an authoritative source of its own", () => {
+    const g = ghost({ sources: [{ sourceKind: "fortigate-endpoint" }, { sourceKind: "entra" }] });
+    expect(decideSerialHostnameGhost(g, [sw()]).kind).toBe("skip");
+  });
+
+  it("refuses a hostname that is not a usable serial", () => {
+    const g = ghost({ hostname: "To Be Filled By O.E.M." });
+    const c = sw({ serialNumber: "To Be Filled By O.E.M." });
+    expect(decideSerialHostnameGhost(g, [c]).kind).toBe("skip");
+  });
+
+  it("refuses a ghost carrying a different usable serial", () => {
+    const g = ghost({ serialNumber: "FGT61FTK22083255" });
+    expect(decideSerialHostnameGhost(g, [sw()]).kind).toBe("skip");
+  });
+
+  it("refuses when the serial-holder is itself only an endpoint placeholder", () => {
+    const c = sw({ sources: [{ sourceKind: "fortigate-endpoint" }] });
+    expect(decideSerialHostnameGhost(ghost(), [c]).kind).toBe("skip");
+  });
+
+  it("refuses when two assets carry the serial", () => {
+    const d = decideSerialHostnameGhost(ghost(), [sw(), sw({ id: "switch-2" })]);
+    expect(d.kind).toBe("skip");
+  });
+
+  it("never pairs the ghost with itself", () => {
+    const g = ghost({ serialNumber: SERIAL });
+    expect(decideSerialHostnameGhost(g, [g]).kind).toBe("skip");
   });
 });

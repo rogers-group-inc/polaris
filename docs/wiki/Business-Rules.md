@@ -1557,6 +1557,18 @@ only the MAC and fills blank fields. A row that carries the serial on any other
 address is still only a name the client sent, and changes nothing on the
 switch.
 
+**91(d) A separate asset named after a device's serial is merged into that
+device within 30 minutes.** When a separate "other" asset still appears
+(the switch took a different address first, or the lease arrived before the
+switch was discovered), the duplicate cleanup that runs every 30 minutes merges
+it into the asset that carries that serial number. Its MAC moves to the switch
+when the switch has none, and its address history and sightings move with it.
+The switch keeps its own name, address and type. The cleanup only merges an
+asset that came from a FortiGate's client list and has no other source. It
+leaves it alone when its name has been pinned, when it carries a different
+serial of its own, or when two assets share the serial. Each merge writes an
+event on the switch.
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time
