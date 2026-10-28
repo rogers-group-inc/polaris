@@ -371,6 +371,50 @@ per-bucket averages with `okCount` / `failCount` on the hourly and daily tiers.
 hop carries the asset, interface and subnet Polaris matched its address to at
 the time of the trace.
 
+Each `/path-checks` row also carries `maintenance: { inMaintenance, windows[] }`
+— whether a maintenance schedule has the check paused right now (below).
+
+### Maintenance schedules
+
+```
+GET    /maintenance-schedules?target=assets|pathChecks
+POST   /maintenance-schedules
+PUT    /maintenance-schedules/:id
+DELETE /maintenance-schedules/:id
+GET    /maintenance-schedules/server-time
+GET    /maintenance-schedules/occurrences?from=YYYY-MM-DD&to=YYYY-MM-DD
+GET    /maintenance-schedules/path-checks/:checkId
+POST   /maintenance-schedules/path-checks/:checkId/release
+```
+
+A [maintenance schedule](Maintenance-Windows) pauses either **assets** or
+**path checks**, never both in one schedule. Every route gates on
+`maintenanceManagement` (read to list, write to change), and a write takes
+effect before the call returns.
+
+- **Assets:** `criteria` (an asset filter, never on status) and / or
+  `assetIds`; only monitored assets enter. `suppressChildren` (default `true`)
+  marks devices behind them as down for dependency suppression.
+- **Path checks:** `pathCheckIds` in place of both. A paused check stops
+  running on every agent host and on the server, and its `path*` automations
+  neither fire nor send reminders or escalations. A body carrying both kinds,
+  or naming an unknown check, is a `400`.
+- **Times** are the Polaris server's wall clock, `"YYYY-MM-DDTHH:MM"` with no
+  offset — read `server-time` first. A one-time `schedule` may say
+  `"startNow": true` in place of `startAt`. A one-time schedule naming a single
+  asset or path check, with no criteria, removes itself when its window ends.
+- `PUT` replaces the whole schedule; a field left out returns to its default.
+- `path-checks/:checkId` reports whether a check is paused, by which windows
+  (each with its end as `until`) and which schedules name it.
+  `path-checks/:checkId/release` ends its maintenance now (`{ released }`); a
+  recurring schedule takes it again at its next occurrence.
+
+```
+curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ERP upgrade","pathCheckIds":["<check id>"],"schedule":{"version":1,"kind":"oneshot","startNow":true,"endAt":"2026-11-01T06:00"}}' \
+  https://polaris.example.com/api/v1/maintenance-schedules
+```
+
 ### Search
 
 ```

@@ -242,6 +242,39 @@ the Polaris server's results under **Path Monitor → Results**. The Device Map
 and the Application Map have the same menu
 ([Device Map](Device-Map#exporting-the-topology), [Application Map](Application-Map#export)).
 
+## Maintenance — pausing a check
+
+When the *target* is down for planned work (an application upgrade, a web
+server's patch night), put its check in maintenance instead of letting every
+source report it failing. A check in maintenance:
+
+- **stops running** on every agent host and on the Polaris server — agents drop
+  it on their next config refresh, which Polaris asks for at once;
+- **raises no alerts**: its Path Monitor automations neither fire nor send
+  reminders or escalations about it. An alert that was already open stays open
+  and clears on its own once the check runs again and passes;
+- leaves its hosts alone. They stay monitored and keep alerting about
+  everything else. To pause a *host*, use [asset maintenance](Maintenance-Windows).
+
+Three ways in, all gated by `maintenanceManagement` (the same permission as asset
+maintenance):
+
+- **Enter maintenance** on a check's row menu, with an end time in the Polaris
+  server's clock. **End maintenance** on the same menu stops it early.
+- **Maintenance schedule** on the row menu, or the page's **Maintenance**
+  button, opens the same editor the Assets page uses. Tick the checks to pause
+  and choose a one-time window or a recurrence (for example every Sunday
+  02:00–04:00). The **Schedules** tab lists only path-check schedules.
+- The [API](API) — `POST /maintenance-schedules` with `pathCheckIds`.
+
+The list's **Maintenance** column shows *Until …* (the server's time) for a
+paused check; hover it for the schedule's name. Filter the column to
+*In maintenance* to see every paused check. Entering and leaving maintenance
+are recorded on the Events page. Deleting a check removes it from its
+schedules, and deletes a schedule that named only that check.
+
+The **Clear Filters** button on the list's tab row clears every column filter.
+
 ## Alerting — setting an SLA
 
 A check has no threshold of its own. To be alerted, create an

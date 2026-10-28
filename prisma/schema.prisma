@@ -3585,7 +3585,8 @@ model PathCheck {
   updatedAt        DateTime @updatedAt
   lastReconciledAt DateTime?
 
-  sources PathCheckSource[]
+  sources            PathCheckSource[]
+  maintenanceWindows PathCheckMaintenanceWindow[]
 
   @@index([credentialId])
   @@map("path_checks")
@@ -6260,6 +6261,10 @@ model MaintenanceSchedule {
   enabled          Boolean  @default(true)
   criteria         Json? // tagAssignmentService criteria shape; null = explicit assets only
   assetIds         String[] @default([]) // explicit targets, unioned with criteria matches
+  // Path checks this schedule pauses (business rule 135). A schedule targets
+  // assets (criteria / assetIds) OR path checks, never both — normalizeInput
+  // refuses the mix. Ids of deleted checks are dropped by deleteCheck.
+  pathCheckIds     String[] @default([])
   schedule         Json // recurrence shape (see maintenanceRecurrence.ts)
   // Whether an in-window asset counts as DOWN for child dependency
   // suppression (evaluateSuppression). true (default) = dependents behind it
@@ -6272,10 +6277,36 @@ model MaintenanceSchedule {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  windows AssetMaintenanceWindow[]
+  windows          AssetMaintenanceWindow[]
+  pathCheckWindows PathCheckMaintenanceWindow[]
 
   @@index([enabled])
   @@map("maintenance_schedules")
+}
+
+// One open row per (path check, schedule) while that schedule holds the check
+// in maintenance (business rule 135) — the path-check twin of
+// AssetMaintenanceWindow, reconciled in the same maintenance tick. Open rows
+// are the source of truth for "in maintenance": the agent config and the server
+// runner stop shipping/running the check, and the engine freezes its alerts.
+// Closed rows are history, pruned with the asset windows (400 days).
+model PathCheckMaintenanceWindow {
+  id           String    @id @default(uuid())
+  pathCheckId  String
+  scheduleId   String? // SetNull on schedule delete — history survives
+  scheduleName String // snapshot, survives the schedule's delete
+  startedAt    DateTime  @default(now())
+  endedAt      DateTime? // null = window currently open
+  // "schedule" | "operator" | "disabled" | "deleted" | "criteria" (the check
+  // was dropped from the schedule's list)
+  endReason    String?
+
+  pathCheck PathCheck            @relation(fields: [pathCheckId], references: [id], onDelete: Cascade)
+  schedule  MaintenanceSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+
+  @@index([pathCheckId, startedAt])
+  @@index([endedAt])
+  @@map("path_check_maintenance_windows")
 }
 
 // Downtime POLARIS ITSELF is causing, as an intent the reconcile turns into a

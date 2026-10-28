@@ -252,6 +252,18 @@ immediately rather than on the next tick.
 
 ---
 
+## Path checks
+
+A schedule can pause [path checks](Path-Monitor) instead of assets — never both
+in one schedule ([rule 135](Business-Rules#rule-135)). It is built in the same
+editor, from **Path Monitor → Maintenance** or a check's row menu, and listed
+only there. A check in maintenance stops running on every source and raises no
+alerts, reminders or escalations; its hosts are not touched. Recurrence,
+server-local time, the calendar, ad-hoc one-shots and releasing *this
+occurrence* work exactly as they do for assets.
+
+---
+
 ## Windows Polaris opens for itself
 
 Some of what Polaris does to a device **is** downtime for it. Upgrading,

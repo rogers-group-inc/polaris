@@ -61,12 +61,39 @@ const h = vi.hoisted(() => {
     createdBy: string | null;
   };
 
+  // Business rule 135: path checks and their maintenance windows.
+  type FakeCheckWindow = {
+    id: string;
+    pathCheckId: string;
+    scheduleId: string | null;
+    scheduleName: string;
+    startedAt: Date;
+    endedAt: Date | null;
+    endReason: string | null;
+  };
+
   const db = {
     assets: [] as FakeAsset[],
     windows: [] as FakeWindow[],
     schedules: [] as FakeSchedule[],
     holds: [] as FakeHold[],
+    checks: [] as Array<{ id: string; name: string }>,
+    checkWindows: [] as FakeCheckWindow[],
   };
+  function checkWindowMatches(w: FakeCheckWindow, where: any): boolean {
+    if (!where) return true;
+    if (where.id?.in && !where.id.in.includes(w.id)) return false;
+    if (where.endedAt === null && w.endedAt !== null) return false;
+    if (where.endedAt && typeof where.endedAt === "object") {
+      if ("not" in where.endedAt && where.endedAt.not === null && w.endedAt === null) return false;
+      if ("lt" in where.endedAt && !(w.endedAt !== null && w.endedAt < where.endedAt.lt)) return false;
+    }
+    if (typeof where.pathCheckId === "string" && w.pathCheckId !== where.pathCheckId) return false;
+    if (where.pathCheckId?.in && !where.pathCheckId.in.includes(w.pathCheckId)) return false;
+    if (where.scheduleId?.in && !(w.scheduleId && where.scheduleId.in.includes(w.scheduleId))) return false;
+    if (where.endReason && w.endReason !== where.endReason) return false;
+    return true;
+  }
   let seq = 1;
   const nextId = () => `gen-${seq++}`;
 
@@ -186,11 +213,50 @@ const h = vi.hoisted(() => {
         return { count };
       },
     },
+    pathCheck: {
+      findMany: async (args: any = {}) =>
+        db.checks.filter((c) => !args.where?.id?.in || args.where.id.in.includes(c.id)).map((c) => ({ ...c })),
+      findUnique: async (args: any) => {
+        const c = db.checks.find((x) => x.id === args.where.id);
+        return c ? { ...c } : null;
+      },
+    },
+    // No agent sources in these tests: the nudge is asserted on its argument.
+    pathCheckSource: { findMany: async () => [] },
+    pathCheckMaintenanceWindow: {
+      findMany: async (args: any = {}) => {
+        const rows = db.checkWindows.filter((w) => checkWindowMatches(w, args.where)).map((w) => ({ ...w }));
+        if (!args.distinct) return rows;
+        const seen = new Set<string>();
+        return rows.filter((r) => (seen.has(r.pathCheckId) ? false : (seen.add(r.pathCheckId), true)));
+      },
+      updateMany: async (args: any) => {
+        let count = 0;
+        for (const w of db.checkWindows) {
+          if (!checkWindowMatches(w, args.where)) continue;
+          Object.assign(w, args.data);
+          count++;
+        }
+        return { count };
+      },
+      createMany: async (args: any) => {
+        for (const row of args.data) db.checkWindows.push({ id: nextId(), endedAt: null, endReason: null, ...row });
+        return { count: args.data.length };
+      },
+      deleteMany: async (args: any) => {
+        const keep = db.checkWindows.filter((w) => !checkWindowMatches(w, args.where));
+        const count = db.checkWindows.length - keep.length;
+        db.checkWindows = keep;
+        return { count };
+      },
+    },
     maintenanceSchedule: {
       findMany: async (args?: any) => {
         let rows = db.schedules;
         const idIn = args?.where?.id?.in;
         if (idIn) rows = rows.filter((s) => idIn.includes(s.id));
+        const has = args?.where?.pathCheckIds?.has;
+        if (has) rows = rows.filter((s) => ((s as any).pathCheckIds ?? []).includes(has));
         return rows.map((s) => ({ ...s }));
       },
       findUnique: async (args: any) => {
@@ -219,6 +285,7 @@ const h = vi.hoisted(() => {
         const [row] = db.schedules.splice(idx, 1);
         // Prisma onDelete: SetNull on the window FK.
         for (const w of db.windows) if (w.scheduleId === row.id) w.scheduleId = null;
+        for (const w of db.checkWindows) if (w.scheduleId === row.id) w.scheduleId = null;
         return { ...row };
       },
       deleteMany: async (args: any) => {
@@ -227,6 +294,7 @@ const h = vi.hoisted(() => {
         db.schedules = db.schedules.filter((s) => !idIn.includes(s.id));
         for (const r of removed) {
           for (const w of db.windows) if (w.scheduleId === r.id) w.scheduleId = null;
+          for (const w of db.checkWindows) if (w.scheduleId === r.id) w.scheduleId = null;
         }
         return { count: removed.length };
       },
@@ -236,11 +304,12 @@ const h = vi.hoisted(() => {
   return {
     db,
     prisma,
-    reset: () => { db.assets = []; db.windows = []; db.schedules = []; db.holds = []; seq = 1; },
+    reset: () => { db.assets = []; db.windows = []; db.schedules = []; db.holds = []; db.checks = []; db.checkWindows = []; seq = 1; },
   };
 });
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/services/agentCommandWake.js", () => ({ publishConfigRefresh: vi.fn(async () => {}) }));
 vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: vi.fn(async () => {}),
   logEventsBatch: vi.fn(async () => 0),
@@ -266,7 +335,12 @@ import {
   listOccurrences,
   openMaintenanceHold,
   releaseMaintenanceHold,
+  operatorReleasePathCheck,
+  pathCheckIdsInMaintenance,
+  getPathCheckMaintenanceStates,
+  dropPathCheckFromSchedules,
 } from "../../src/services/maintenanceScheduleService.js";
+import { publishConfigRefresh } from "../../src/services/agentCommandWake.js";
 import { logEvent, logEventsBatch } from "../../src/services/eventLogService.js";
 import { resolveMatchingAssetIds } from "../../src/services/tagAssignmentService.js";
 
@@ -1070,5 +1144,140 @@ describe("maintenance holds", () => {
     await expect(
       openMaintenanceHold({ assetId: "a1", kind: "agent-reboot" as never }),
     ).rejects.toThrow(/hold kind/i);
+  });
+});
+
+// ─── Path checks (business rule 135) ────────────────────────────────────────
+
+describe("path-check maintenance (business rule 135)", () => {
+  const openCheckWindows = () => h.db.checkWindows.filter((w) => w.endedAt === null);
+  function pathSchedule(id: string, shape: unknown, checks: string[], over: { enabled?: boolean; name?: string } = {}) {
+    return { ...schedule(id, shape, over), pathCheckIds: checks };
+  }
+
+  it("refuses a schedule that targets assets AND path checks", async () => {
+    h.db.checks.push({ id: "c1", name: "Intranet" });
+    await expect(
+      createSchedule({ name: "Mixed", assetIds: ["a1"], pathCheckIds: ["c1"], schedule: ACTIVE_ONESHOT }),
+    ).rejects.toThrow(/not both/);
+  });
+
+  it("refuses an unknown path check id rather than saving a schedule that pauses nothing", async () => {
+    await expect(
+      createSchedule({ name: "Typo", pathCheckIds: ["nope"], schedule: ACTIVE_ONESHOT }),
+    ).rejects.toThrow(/Unknown path check id: nope/);
+    expect(h.db.schedules).toHaveLength(0);
+  });
+
+  it("enters a check while its schedule is in window — one Event, its agents nudged — and touches no asset", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.checks.push({ id: "c1", name: "Intranet" });
+    h.db.schedules.push(pathSchedule("s1", ACTIVE_ONESHOT, ["c1"]));
+
+    await reconcileMaintenance();
+
+    expect(openCheckWindows()).toEqual([expect.objectContaining({ pathCheckId: "c1", scheduleId: "s1", scheduleName: "Schedule s1" })]);
+    expect(openWindows()).toHaveLength(0);
+    expect(assetById("a1").status).toBe("active");
+    expect(vi.mocked(logEventsBatch)).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ action: "path_check.maintenance_entered", resourceId: "c1", resourceType: "path-check" })]),
+    );
+    expect(vi.mocked(publishConfigRefresh)).toHaveBeenCalled();
+    expect(await pathCheckIdsInMaintenance()).toEqual(new Set(["c1"]));
+  });
+
+  it("is idempotent: a second tick in the same window writes nothing new", async () => {
+    h.db.checks.push({ id: "c1", name: "Intranet" });
+    h.db.schedules.push(pathSchedule("s1", DAILY, ["c1"]));
+    await reconcileMaintenance();
+    vi.mocked(logEventsBatch).mockClear();
+    await reconcileMaintenance();
+    expect(h.db.checkWindows).toHaveLength(1);
+    expect(vi.mocked(logEventsBatch)).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ action: "path_check.maintenance_entered" })]),
+    );
+  });
+
+  it("exits when the window ends, and a spent single-check one-shot deletes itself", async () => {
+    h.db.checks.push({ id: "c1", name: "Intranet" });
+    h.db.schedules.push(pathSchedule("s1", ACTIVE_ONESHOT, ["c1"]));
+    await reconcileMaintenance();
+
+    vi.setSystemTime(new Date(2026, 6, 10, 15, 0, 0));
+    await reconcileMaintenance();
+
+    expect(openCheckWindows()).toHaveLength(0);
+    expect(h.db.checkWindows[0]).toMatchObject({ endReason: "schedule" });
+    expect(h.db.schedules).toHaveLength(0);
+    expect(vi.mocked(logEventsBatch)).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ action: "path_check.maintenance_exited", resourceId: "c1" })]),
+    );
+  });
+
+  it("closes with 'disabled', and with 'criteria' when the check leaves the schedule's list", async () => {
+    h.db.checks.push({ id: "c1", name: "A" }, { id: "c2", name: "B" });
+    h.db.schedules.push(pathSchedule("s1", DAILY, ["c1", "c2"]));
+    await reconcileMaintenance();
+    expect(openCheckWindows()).toHaveLength(2);
+
+    (h.db.schedules[0] as any).pathCheckIds = ["c1"];
+    await reconcileMaintenance();
+    expect(h.db.checkWindows.find((w) => w.pathCheckId === "c2")).toMatchObject({ endReason: "criteria" });
+
+    h.db.schedules[0].enabled = false;
+    await reconcileMaintenance();
+    expect(h.db.checkWindows.find((w) => w.pathCheckId === "c1")).toMatchObject({ endReason: "disabled" });
+    expect(openCheckWindows()).toHaveLength(0);
+  });
+
+  it("operator release ends it now and holds for the rest of THIS occurrence of a recurring schedule", async () => {
+    h.db.checks.push({ id: "c1", name: "Intranet" });
+    h.db.schedules.push(pathSchedule("s1", DAILY, ["c1"]));
+    await reconcileMaintenance();
+
+    expect(await operatorReleasePathCheck("c1", "alice")).toBe(true);
+    expect(openCheckWindows()).toHaveLength(0);
+    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(expect.objectContaining({ action: "path_check.maintenance_exited", actor: "alice" }));
+
+    // Same occurrence: stays out.
+    vi.setSystemTime(new Date(2026, 6, 10, 12, 30, 0));
+    await reconcileMaintenance();
+    expect(openCheckWindows()).toHaveLength(0);
+
+    // Next day's occurrence: taken again.
+    vi.setSystemTime(new Date(2026, 6, 11, 12, 0, 0));
+    await reconcileMaintenance();
+    expect(openCheckWindows()).toHaveLength(1);
+    // The recurring schedule is no ad-hoc: it survived the release.
+    expect(h.db.schedules).toHaveLength(1);
+  });
+
+  it("operator release deletes an ad-hoc one-shot it ended, and is false when nothing was open", async () => {
+    h.db.checks.push({ id: "c1", name: "Intranet" });
+    h.db.schedules.push(pathSchedule("s1", ACTIVE_ONESHOT, ["c1"]));
+    await reconcileMaintenance();
+
+    expect(await operatorReleasePathCheck("c1")).toBe(true);
+    expect(h.db.schedules).toHaveLength(0);
+    expect(await operatorReleasePathCheck("c1")).toBe(false);
+  });
+
+  it("reports each open window's end as the server-local wall clock", async () => {
+    h.db.checks.push({ id: "c1", name: "Intranet" });
+    h.db.schedules.push(pathSchedule("s1", ACTIVE_ONESHOT, ["c1"]));
+    await reconcileMaintenance();
+
+    const st = (await getPathCheckMaintenanceStates()).get("c1");
+    expect(st).toMatchObject({ inMaintenance: true, windows: [expect.objectContaining({ scheduleName: "Schedule s1", until: "2026-07-10T14:00" })] });
+  });
+
+  it("a deleted check leaves its schedules — and a schedule left naming none is deleted", async () => {
+    h.db.checks.push({ id: "c1", name: "A" }, { id: "c2", name: "B" });
+    h.db.schedules.push(pathSchedule("both", DAILY, ["c1", "c2"]), pathSchedule("only", DAILY, ["c1"]));
+
+    await dropPathCheckFromSchedules("c1", "alice");
+
+    expect(h.db.schedules.map((s) => s.id)).toEqual(["both"]);
+    expect((h.db.schedules[0] as any).pathCheckIds).toEqual(["c2"]);
   });
 });

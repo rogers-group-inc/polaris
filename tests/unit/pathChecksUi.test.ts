@@ -119,6 +119,40 @@ describe("row menu", () => {
   it("never asks for fullwrite on the UP_TO_WRITE key (rule 43d)", () => {
     expect(pageSrc).not.toMatch(/pathChecks",\s*"fullwrite"/);
   });
+  it("offers the maintenance verbs on maintenanceManagement alone, the right one for the check's state (rule 135)", () => {
+    const idle = { id: "c1", name: "x", enabled: true, maintenance: { inMaintenance: false, windows: [] } };
+    const held = { ...idle, maintenance: { inMaintenance: true, windows: [{ scheduleName: "s", until: "2026-07-10T14:00" }] } };
+    const labels = (c: any, perms: any) => CC.menuItems(c, perms).filter((i: any) => !i.separator).map((i: any) => i.label);
+    expect(labels(idle, { canMaintain: true })).toEqual(["Results", "Enter maintenance", "Maintenance schedule"]);
+    expect(labels(held, { canMaintain: true })).toEqual(["Results", "End maintenance", "Maintenance schedule"]);
+    expect(labels(held, { canEdit: true, canMaintain: false })).not.toContain("End maintenance");
+  });
+  it("reads a check's soonest maintenance end, server-local, and null when none is derivable", () => {
+    expect(CC.maintenanceUntil({ maintenance: { inMaintenance: true, windows: [{ until: "2026-07-11T02:00" }, { until: "2026-07-10T14:00" }] } }))
+      .toBe("2026-07-10T14:00");
+    expect(CC.maintenanceUntil({ maintenance: { inMaintenance: true, windows: [{ until: null }] } })).toBeNull();
+    expect(CC.maintenanceUntil({})).toBeNull();
+  });
+  it("labels the list's reset button Clear Filters", () => {
+    expect(pageSrc).toMatch(/label: "Clear Filters"/);
+  });
+});
+
+describe("Maintenance modal — path-check picker filter (rule 135)", () => {
+  const maintSrc = readFileSync(resolve(ROOT, "public/js/assets-maintenance.js"), "utf8");
+  const filter = vm.runInNewContext("(" + sliceFn(maintSrc, "maintFilterPathChecks") + ")");
+  const checks = [
+    { id: "a", name: "Payroll", target: "https://pay.example" },
+    { id: "b", name: "Intranet", target: "https://intra.example" },
+    { id: "c", name: "DNS", target: "10.0.0.53" },
+  ];
+  it("matches name or target, case-insensitively", () => {
+    expect(filter(checks, "INTRA", []).map((c: any) => c.id)).toEqual(["b"]);
+    expect(filter(checks, "10.0.0", []).map((c: any) => c.id)).toEqual(["c"]);
+  });
+  it("puts ticked checks first, then by name", () => {
+    expect(filter(checks, "", ["c"]).map((c: any) => c.id)).toEqual(["c", "b", "a"]);
+  });
 });
 
 describe("Paths renderer — per-source reads", () => {

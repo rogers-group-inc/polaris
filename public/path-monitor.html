@@ -35,6 +35,10 @@
         <!-- The page's action buttons, moved from the header into the tab
              row, left of the list controls. -->
         <div class="table-head-controls">
+          <!-- The Assets page's Maintenance button, for path checks (business
+               rule 135): same modal, path-check mode. It stays here; + Add
+               Monitor moves into the right cluster, as + Add Asset(s) does. -->
+          <button class="btn btn-secondary" id="btn-maintenance" data-maintenance-mgmt title="Maintenance schedules — pause path checks and their alerts">Maintenance</button>
           <button class="btn btn-primary" id="btn-add-check" style="display:none">+ Add Monitor</button>
         </div>
         <div id="path-pagination-top" class="table-head-controls"></div>
@@ -55,11 +59,12 @@
               <th style="width:150px" data-col-id="lastRun" data-sf-key="lastRunAt" data-sf-type="date">Last run</th>
               <th style="width:130px" data-col-no-resize="true" data-col-id="traceroute" data-sf-key="tracerouteEnabled" data-sf-type="string" data-sf-options="true=On|false=Off">Traceroute</th>
               <th style="width:110px" data-col-no-resize="true" data-col-id="enabled" data-sf-key="enabled" data-sf-type="string" data-sf-options="true=Enabled|false=Disabled">Enabled</th>
+              <th style="width:170px" data-col-id="maintenance" data-sf-key="maintenanceState" data-sf-type="string" data-sf-options="maintenance=In maintenance|none=Not in maintenance">Maintenance</th>
               <th data-col-id="createdBy" data-sf-key="createdBy" data-sf-type="string">Created by</th>
             </tr>
           </thead>
           <tbody id="path-tbody">
-            <tr><td colspan="10" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="11" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
       </div>

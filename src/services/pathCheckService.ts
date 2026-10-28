@@ -60,6 +60,7 @@ import { loadScopeAssetIds } from "./notificationEngine.js";
 import { scopeIsUnconstrained, type RuleScope } from "./notificationTypes.js";
 import { AGENT_SERVER_URL_SETTING_KEY } from "./agentInstallService.js";
 import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestService.js";
+import { getPathCheckMaintenanceStates, dropPathCheckFromSchedules } from "./maintenanceScheduleService.js";
 
 import { runServerCheck, type RunCapture } from "./pathCheckServerRunner.js";
 
@@ -579,12 +580,19 @@ async function summariesFor(checkIds: string[]): Promise<Map<string, CheckSummar
   return out;
 }
 
+/** A check with no open maintenance window (business rule 135). */
+const NO_MAINTENANCE = { inMaintenance: false, windows: [] };
+
 export async function listChecks() {
   const checks = await prisma.pathCheck.findMany({ orderBy: { name: "asc" } });
-  const sums = await summariesFor(checks.map((c) => c.id));
+  const [sums, maint] = await Promise.all([
+    summariesFor(checks.map((c) => c.id)),
+    getPathCheckMaintenanceStates(),
+  ]);
   return checks.map((c) => ({
     ...c,
     ...(sums.get(c.id) ?? EMPTY_SUMMARY),
+    maintenance: maint.get(c.id) ?? NO_MAINTENANCE,
   }));
 }
 
@@ -601,8 +609,8 @@ export async function listCheckCatalog() {
 export async function getCheck(id: string) {
   const check = await prisma.pathCheck.findUnique({ where: { id } });
   if (!check) throw new AppError(404, "Path check not found");
-  const sums = await summariesFor([id]);
-  return { ...check, ...(sums.get(id) ?? EMPTY_SUMMARY) };
+  const [sums, maint] = await Promise.all([summariesFor([id]), getPathCheckMaintenanceStates([id])]);
+  return { ...check, ...(sums.get(id) ?? EMPTY_SUMMARY), maintenance: maint.get(id) ?? NO_MAINTENANCE };
 }
 
 async function assertEnabledCap(excludeId?: string): Promise<void> {
@@ -824,6 +832,8 @@ export async function deleteCheck(id: string, actor?: string) {
   // compressed hypertable chunks, and a row DELETE there decompresses the
   // chunk (the 2026-06-08 incident). They age out on the retention schedule.
   await prisma.pathCheck.delete({ where: { id } });
+  // Its maintenance windows cascaded; the schedules naming it must let go too.
+  await dropPathCheckFromSchedules(id, actor);
   await logEvent({
     action: "path_check.deleted",
     resourceType: "path-check",
@@ -1244,16 +1254,17 @@ export async function listServerTraceroutes(checkId: string, limit: number) {
 
 /**
  * The definitions the server job runs: every ENABLED check with a server
- * source row, in the agent's wire shape (the runner mirrors the agent's probe,
- * so it reads the same definition). No per-host cap — the fleet-wide
- * MAX_ENABLED_CHECKS already bounds it.
+ * source row and no open maintenance window (business rule 135), in the
+ * agent's wire shape (the runner mirrors the agent's probe, so it reads the
+ * same definition). No per-host cap — the fleet-wide MAX_ENABLED_CHECKS
+ * already bounds it.
  */
 /** A server-run definition: the agent's wire shape plus the server-only credential. */
 export type ServerCheckDef = AgentCheckDef & { credentialId: string | null };
 
 export async function serverCheckDefinitions(): Promise<ServerCheckDef[]> {
   const rows = await prisma.pathCheckSource.findMany({
-    where: { assetId: null, check: { enabled: true, runOnServer: true } },
+    where: { assetId: null, check: { enabled: true, runOnServer: true, maintenanceWindows: { none: { endedAt: null } } } },
     select: {
       check: {
         select: {
@@ -1327,6 +1338,10 @@ export async function getAssetChecks(assetId: string) {
  * a member of, oldest first, capped at MAX_CHECKS_PER_AGENT — and NONE for an
  * agent older than MIN_AGENT_PATH_CHECK_VERSION, which would ignore the
  * field anyway and whose operator should see "upgrade" rather than silence.
+ *
+ * A check in maintenance (business rule 135) is left out AFTER the cap, so a
+ * window never lets a check past the cap run in its place. Both config ETags
+ * are folded from this list, so entering or leaving maintenance changes them.
  */
 export async function agentConfigChecks(assetId: string, agentVersion: string | null | undefined): Promise<AgentCheckDef[]> {
   if (!versionAtLeast(agentVersion, MIN_AGENT_PATH_CHECK_VERSION)) return [];
@@ -1339,6 +1354,7 @@ export async function agentConfigChecks(assetId: string, agentVersion: string | 
         select: {
           id: true, name: true, kind: true, target: true, intervalSec: true, timeoutMs: true,
           http: true, traceroute: true, keepBodyExcerpt: true, definitionSha256: true, createdAt: true,
+          maintenanceWindows: { where: { endedAt: null }, select: { id: true }, take: 1 },
         },
       },
     },
@@ -1347,7 +1363,8 @@ export async function agentConfigChecks(assetId: string, agentVersion: string | 
     .map((r) => r.check)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
     .slice(0, MAX_CHECKS_PER_AGENT)
-    .map((c) => toAgentCheckDef(c))
+    .filter((c) => c.maintenanceWindows.length === 0)
+    .map(({ maintenanceWindows: _held, ...c }) => toAgentCheckDef(c))
     // A definition this agent would half-understand is not shipped at all.
     .filter((d) => versionAtLeast(agentVersion, requiredAgentVersion(d)));
 }

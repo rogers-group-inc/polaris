@@ -87,6 +87,7 @@ import { resolveQuietHold, newQuietHoldMemo, primeQuietHoldAssets, type QuietHol
 import type { QuietSend } from "../utils/quietTime.js";
 import { logEvent } from "./eventLogService.js";
 import { isSuppressedForNotifications } from "./notificationEngine.js";
+import { pathCheckIdsInMaintenance } from "./maintenanceScheduleService.js";
 import { executeActions } from "./automationActionService.js";
 import { scopeRegionTagsOf } from "./notificationRecipientService.js";
 import {
@@ -104,6 +105,7 @@ import {
   type EscalatableAction,
   type SeverityBand,
   type RuleScope,
+  isPathMetric,
 } from "./notificationTypes.js";
 
 const DEFAULT_MAX_REPEATS = 5;
@@ -356,6 +358,8 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       // Quiet time (business rule 92): `metric` is the alert KIND a global
       // schedule filters on; `quietSummarizedAt` restarts the clocks below.
       metric: true, quietSummarizedAt: true,
+      // The path check a path alert is about (business rule 135's pause).
+      dimension: true,
       // The released first send of a held grouped alert: its clocks start there.
       firstSentAt: true,
     },
@@ -379,6 +383,13 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       }
     }
   }
+  // A path check in maintenance pauses the follow-ups of every alert ABOUT it
+  // (business rule 135) — on any agent host, and on the Polaris server's own
+  // row, which has no asset to be suppressed. The check is the alert's
+  // dimension. Read only when some candidate is a path alert.
+  const pathHeld = notifs.some((n) => isPathMetric(n.metric))
+    ? await pathCheckIdsInMaintenance()
+    : new Set<string>();
 
   const stateUpdates: { id: string; state: EscalationState }[] = [];
   let tierRuns = 0;
@@ -416,6 +427,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     // repeat-only automation (no chains at all) would hit, silently disabling
     // the whole feature. Nothing may early-continue between the two passes.
     if (n.assetId && suppressedAssetIds.has(n.assetId)) continue; // silenced — resumes post-window
+    if (n.dimension && pathHeld.has(n.dimension) && isPathMetric(n.metric)) continue; // rule 135 — same pause
 
     const state = stateOf(n.escalationState);
 
