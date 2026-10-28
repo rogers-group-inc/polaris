@@ -43,7 +43,10 @@ CI (`.github/workflows/docker-publish.yml`) runs typecheck + lint + unit
 (`test` job) and the integration suite against a `postgres:17` service
 container plus a matching `postgresql-client-17` (`integration` job). It is the
 only workflow that runs the suites — `check-docs.yml` runs the structural doc
-guards, and CodeQL runs separately.
+guards, and CodeQL runs separately. A push that only touches `.claude/`,
+`design/`, `.design-sync/`, `plugin-candidates/` or the contributor docs
+(`CLAUDE.md`, `CONTRIBUTING.md`, `DEVELOPMENT.md`) skips it, and a newer push
+to the same ref cancels an older run's test jobs (never a build in progress).
 
 Both jobs gate the image build, but note *how*: `build` declares
 `needs: [test, integration]`, so a failing suite does not fail the build — the

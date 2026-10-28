@@ -133,6 +133,17 @@ on a `v*` tag, runs `test` → `integration` → `build`, and pushes to
 `ghcr.io/<repo>` with a build-provenance attestation. `:latest` is published only from the
 default branch; tags also produce semver and short-SHA tags.
 
+**Not every push to `main` runs it** (2026-10-28). A `paths-ignore` list skips a push whose
+whole range touches only `.claude/**`, `.design-sync/**`, `design/**`, `plugin-candidates/**`,
+`CLAUDE.md`, `CONTRIBUTING.md`, `DEVELOPMENT.md` or `check-docs.yml` — none of it is in the
+image or read by a test. `docs/`, `README.md` and `deploy/` are deliberately NOT on it
+(`docs/wiki` is COPYed into the image; `rootHelperHintsFullPath` scans `docs/` + `README.md`;
+the unit suite reads `deploy/` scripts). **Before adding a path, grep `tests/` and the
+Dockerfile for it.** And `test` / `integration` carry per-job `concurrency` with
+`cancel-in-progress`, so a quick second push cancels the first run's suites; `build` queues
+instead (never cancelled mid-publish, so no unattested image). A **cancelled** older run is
+therefore normal — the check below applies to the newest run.
+
 **This workflow is also the only test gate on `main`.** `check-docs.yml` runs the structural
 doc guards and CodeQL runs separately; nothing else runs the suites. And `build` declares
 `needs: [test, integration]`, so a failing test does not fail *visibly* — the `build` job is
