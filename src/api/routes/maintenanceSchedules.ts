@@ -3,7 +3,12 @@
  * (Assets page → Maintenance modal).
  *
  * Mounted at /api/v1/maintenance-schedules.
- *   GET  /              maintenanceManagement:read  (list)
+ *   GET  /              maintenanceManagement:read  (list; ?target=assets |
+ *                  pathChecks narrows it to one kind — business rule 135)
+ *   GET  /path-checks/:checkId          maintenanceManagement:read  (one path
+ *                  check's open windows + every schedule naming it)
+ *   POST /path-checks/:checkId/release  maintenanceManagement:write  (end
+ *                  its maintenance now — the Path Monitor "End maintenance")
  *   GET  /occurrences   maintenanceManagement:read  (calendar tab — every
  *                  schedule's occurrences expanded over a ?from/?to day range,
  *                  returned as server-local wall-clock strings)
@@ -37,6 +42,8 @@ import {
   removeAssetFromSchedule,
   previewTargets,
   listOccurrences,
+  getPathCheckMaintenanceInfo,
+  operatorReleasePathCheck,
 } from "../../services/maintenanceScheduleService.js";
 import { serverClockInfo } from "../../utils/maintenanceRecurrence.js";
 
@@ -45,11 +52,16 @@ const scheduleInputSchema = z.object({
   enabled: z.boolean().optional(),
   criteria: z.unknown().optional(),
   assetIds: z.array(z.string()).max(500).optional(),
+  // Business rule 135: a schedule pauses path checks INSTEAD of assets —
+  // normalizeInput refuses a body carrying both.
+  pathCheckIds: z.array(z.string()).max(500).optional(),
   schedule: z.unknown(),
   // In-window assets count as DOWN for child dependency suppression
   // (default true — omitting preserves launch behavior).
   suppressChildren: z.boolean().optional(),
 });
+
+const listQuerySchema = z.object({ target: z.enum(["assets", "pathChecks"]).optional() });
 
 const localDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected a local date like 2026-07-12");
 const occurrencesQuerySchema = z.object({ from: localDay, to: localDay });
@@ -61,9 +73,28 @@ const previewInputSchema = z.object({
 
 export const maintenanceSchedulesRouter = Router();
 
-maintenanceSchedulesRouter.get("/", requirePermission("maintenanceManagement", "read"), async (_req, res, next) => {
+maintenanceSchedulesRouter.get("/", requirePermission("maintenanceManagement", "read"), async (req, res, next) => {
   try {
-    res.json({ schedules: await listSchedules() });
+    const q = listQuerySchema.parse(req.query);
+    res.json({ schedules: await listSchedules(q.target) });
+  } catch (err) { next(err); }
+});
+
+// Path-check maintenance (business rule 135). One check's picture: its open
+// windows (with the current occurrence's end, server-local) and every schedule
+// naming it. Static first segment, so no "/:id" route captures it.
+maintenanceSchedulesRouter.get("/path-checks/:checkId", requirePermission("maintenanceManagement", "read"), async (req, res, next) => {
+  try {
+    res.json(await getPathCheckMaintenanceInfo(req.params.checkId as string));
+  } catch (err) { next(err); }
+});
+
+// End a check's maintenance now. Holds for the rest of the current occurrence
+// of each schedule it closed; an ad-hoc one-shot it ended is deleted.
+maintenanceSchedulesRouter.post("/path-checks/:checkId/release", requirePermission("maintenanceManagement", "write"), async (req, res, next) => {
+  try {
+    const released = await operatorReleasePathCheck(req.params.checkId as string, requestActor(req) ?? undefined);
+    res.json({ released });
   } catch (err) { next(err); }
 });
 

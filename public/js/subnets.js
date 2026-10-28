@@ -286,7 +286,7 @@ function _renderSubnetsPageControls(total) {
     _saveSubnetsPrefs();
   }, {
     actionButtons: [{
-      label: "Clear",
+      label: "Clear Filters",
       title: "Clear every column filter on this list",
       onClick: function () {
         if (!_subnetsSF) return;

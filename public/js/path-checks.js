@@ -57,6 +57,8 @@
   function canRead() { return typeof permAtLeast === "function" && permAtLeast("pathChecks", "read"); }
   function canEdit() { return typeof permAtLeast === "function" && permAtLeast("pathChecks", "write"); }
   function canRunOnServer() { return typeof permAtLeast === "function" && permAtLeast("networkScan", "write"); }
+  // Maintenance rides the Assets page's key (business rule 135), not pathChecks.
+  function canMaintain() { return typeof canManageMaintenance === "function" && canManageMaintenance(); }
 
   function esc(s) { return escapeHtml(s == null ? "" : String(s)); }
 
@@ -161,13 +163,22 @@
       renderList();
     } catch (err) {
       var tb = document.getElementById("path-tbody");
-      if (tb) tb.innerHTML = '<tr><td colspan="10" class="empty-state">' + esc(err.message || "Failed to load path checks") + "</td></tr>";
+      if (tb) tb.innerHTML = '<tr><td colspan="11" class="empty-state">' + esc(err.message || "Failed to load path checks") + "</td></tr>";
     }
   }
 
-  /** Row verbs, pure (tested): Results first — it is the one a reader has. */
+  /** Row verbs, pure (tested): Results first — it is the one a reader has.
+   *  The maintenance verbs (business rule 135) ride maintenanceManagement,
+   *  not pathChecks: perms.canMaintain. */
   function menuItems(check, perms) {
     var items = [{ label: "Results", primary: true, onSelect: function () { openResults(check); } }];
+    if (perms && perms.canMaintain) {
+      items.push({ separator: true });
+      items.push(inMaintenance(check)
+        ? { label: "End maintenance", title: "Resume this check now", onSelect: function () { endMaintenance(check); } }
+        : { label: "Enter maintenance", title: "Pause this check and its alerts until a time you pick", onSelect: function () { enterMaintenance(check); } });
+      items.push({ label: "Maintenance schedule", title: "A named one-time or recurring window for this check", onSelect: function () { openMaintenance([check.id]); } });
+    }
     if (perms && perms.canEdit) {
       items.push({ separator: true });
       items.push({ label: "Edit", onSelect: function () { openCheckModal(check); } });
@@ -197,7 +208,7 @@
       function (size) { _pageSize = size; _page = 1; renderList(); savePrefs(); },
       {
         actionButtons: [{
-          label: "Clear",
+          label: "Clear Filters",
           title: "Clear every column filter on this list",
           onClick: function () {
             if (!_sf) return;
@@ -219,15 +230,19 @@
     var tbody = document.getElementById("path-tbody");
     if (!tbody) return;
     var editor = canEdit();
+    var maintainer = canMaintain();
     var data = _checks.map(function (c) {
-      return Object.assign({}, c, { tracerouteEnabled: !!(c.traceroute && c.traceroute.enabled) ? "true" : "false" });
+      return Object.assign({}, c, {
+        tracerouteEnabled: !!(c.traceroute && c.traceroute.enabled) ? "true" : "false",
+        maintenanceState: inMaintenance(c) ? "maintenance" : "none",
+      });
     });
     if (_sf) data = _sf.apply(data);
     // The controls row renders on an empty result too — clearing it would take
     // Clear Filters away in exactly the state that needs it (polaris-ui-canon →
     // "Paginated list controls row").
     if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' +
+      tbody.innerHTML = '<tr><td colspan="11" class="empty-state">' +
         (_checks.length ? "No checks match the filters." : "No path checks yet" + (editor ? ' — click "+ Add Monitor" to create one.' : ".")) +
         "</td></tr>";
       _page = 1;
@@ -266,6 +281,7 @@
         "<td>" + esc(fmtWhen(c.lastRunAt)) + "</td>" +
         "<td>" + (c.tracerouteEnabled === "true" ? "On" : '<span style="color:var(--color-text-tertiary)">Off</span>') + "</td>" +
         "<td>" + enabledCell + "</td>" +
+        "<td>" + maintenanceCell(c) + "</td>" +
         "<td>" + esc(c.createdBy || "—") + "</td>" +
         "</tr>";
     }).join("");
@@ -273,7 +289,7 @@
     tbody.querySelectorAll(".path-menu").forEach(function (b) {
       b.addEventListener("click", function () {
         var c = _checks.find(function (x) { return x.id === b.dataset.id; });
-        if (c) showRowMenu(b, menuItems(c, { canEdit: editor }));
+        if (c) showRowMenu(b, menuItems(c, { canEdit: editor, canMaintain: maintainer }));
       });
     });
     tbody.querySelectorAll(".path-enabled-toggle").forEach(function (cb) {
@@ -293,6 +309,88 @@
     } catch (err) {
       if (cb) { cb.checked = !enabled; cb.disabled = false; }
       showToast(err.message || "Update failed", "error");
+    }
+  }
+
+  // ─── Maintenance (business rule 135) ────────────────────────────────────
+  // The modal, its server-clock handling and the ad-hoc create live in
+  // assets-maintenance.js (loaded on this page for the asset slide-over).
+
+  function inMaintenance(check) { return !!(check && check.maintenance && check.maintenance.inMaintenance); }
+
+  /** Pure (tested): the soonest end among a check's open windows, as the
+   *  server-local "YYYY-MM-DDTHH:MM" string, or null when none is derivable. */
+  function maintenanceUntil(check) {
+    var ends = ((check && check.maintenance && check.maintenance.windows) || [])
+      .map(function (w) { return w.until; })
+      .filter(Boolean)
+      .sort();
+    return ends.length ? ends[0] : null;
+  }
+
+  // Server-local wall clock, so it is formatted as digits — never re-parsed as
+  // an instant in the viewer's zone.
+  function fmtWallClock(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso || "");
+    if (!m) return "";
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return months[Number(m[2]) - 1] + " " + Number(m[3]) + ", " + m[4] + ":" + m[5];
+  }
+
+  function maintenanceCell(c) {
+    if (!inMaintenance(c)) return '<span style="color:var(--color-text-tertiary)">—</span>';
+    var until = maintenanceUntil(c);
+    var names = c.maintenance.windows.map(function (w) { return w.scheduleName; }).join(", ");
+    return '<span class="badge badge-maintenance" title="' + esc(names + (until ? " — until " + fmtWallClock(until) + " (server time)" : "")) + '">' +
+      (until ? "Until " + esc(fmtWallClock(until)) : "Maintenance") + "</span>";
+  }
+
+  function openMaintenance(pathCheckIds) {
+    if (typeof openMaintenanceModal !== "function") return;
+    openMaintenanceModal({ target: "pathChecks", pathCheckIds: pathCheckIds || [], onChange: loadTab });
+  }
+
+  function enterMaintenance(check) {
+    var now = typeof maintServerNow === "function" ? maintServerNow() : new Date();
+    var end = typeof maintLocalIso === "function" ? maintLocalIso(new Date(now.getTime() + 2 * 60 * 60 * 1000)) : "";
+    var clock = typeof maintServerClockLabel === "function" ? maintServerClockLabel() : "";
+    var body =
+      '<p class="hint" style="margin-top:0">"' + esc(check.name) + '" stops running on every source — its agent hosts and this server — until the time below, ' +
+      "and its automations neither fire nor escalate. An alert already live stays up and recovers on its own once runs resume.</p>" +
+      '<div class="form-group"><label for="path-maint-until">Until</label>' +
+      '<input type="datetime-local" id="path-maint-until" value="' + esc(end) + '" style="width:auto">' +
+      '<span class="hint" style="display:block">Polaris server’s wall clock' + (clock ? " (" + esc(clock) + ")" : "") + ".</span></div>";
+    var footer = '<button type="button" class="btn btn-secondary" id="path-maint-cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary" id="path-maint-go">Enter Maintenance</button>';
+    openModal("Enter maintenance — " + check.name, body, footer);
+    document.getElementById("path-maint-cancel").addEventListener("click", closeModal);
+    document.getElementById("path-maint-go").addEventListener("click", async function () {
+      var btn = this;
+      var v = maintValidateAdhocEnd(document.getElementById("path-maint-until").value);
+      if (!v.ok) { showToast(v.error, "error"); return; }
+      btn.disabled = true;
+      try {
+        await maintCreatePathCheckAdhoc(check.id, check.name, v.value);
+        closeModal();
+        showToast('"' + check.name + '" is in maintenance', "success");
+        loadTab();
+      } catch (err) {
+        btn.disabled = false;
+        showToast(err.message || "Could not enter maintenance", "error");
+      }
+    });
+  }
+
+  async function endMaintenance(check) {
+    var ok = await showConfirm('End maintenance on "' + check.name + '" now? It resumes running on its next config refresh. ' +
+      "A recurring schedule takes it again at its next window; a one-off window is removed.");
+    if (!ok) return;
+    try {
+      await api.maintenanceSchedules.releasePathCheck(check.id);
+      showToast('"' + check.name + '" left maintenance', "success");
+      loadTab();
+    } catch (err) {
+      showToast(err.message || "Could not end maintenance", "error");
     }
   }
 
@@ -1188,6 +1286,11 @@
     }
     var refresh = document.getElementById("btn-refresh-checks");
     if (refresh && !refresh._wired) { refresh._wired = true; refresh.addEventListener("click", loadTab); }
+    // Hidden by app.js's [data-maintenance-mgmt] sweep without the key.
+    var maint = document.getElementById("btn-maintenance");
+    if (maint && !maint._wired) { maint._wired = true; maint.addEventListener("click", function () { openMaintenance([]); }); }
+    // Warm the server-clock skew the ad-hoc "Until" picker is prefilled from.
+    if (canMaintain() && typeof maintLoadServerClock === "function") maintLoadServerClock().catch(function () {});
     loadTab();
   }
   if (typeof document !== "undefined" && document.getElementById) {
@@ -1202,6 +1305,7 @@
     openCheckModal: openCheckModal,
     openResults: openResults,
     menuItems: menuItems,
+    maintenanceUntil: maintenanceUntil,
     resultRowMenu: resultRowMenu,
     parseStatusSpec: parseStatusSpec,
     validateCheck: validateCheck,

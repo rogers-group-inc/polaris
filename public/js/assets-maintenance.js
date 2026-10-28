@@ -17,6 +17,13 @@
  *   Schedules — every schedule with a human-readable date/time summary,
  *     enabled toggle, edit + delete.
  *
+ * PATH-CHECK MODE (business rule 135): openMaintenanceModal({target:
+ * "pathChecks"}) — the Path Monitor page's Maintenance button — is the same
+ * modal with the asset filter, its preview and the dependents toggle replaced
+ * by a path-check picker, and the Schedules tab narrowed to path-check
+ * schedules. A schedule pauses assets OR path checks, never both, so each mode
+ * lists only its own (GET /maintenance-schedules?target=…).
+ *
  * Also exposes the ad-hoc helper used by the status-pill / edit-modal flows
  * in assets.js: maintCreateAdhoc(assetId, hostname, endLocalIso) creates a
  * one-shot single-asset schedule starting now (the server reconciles inline,
@@ -63,6 +70,13 @@ var MAINT_STRING_OPS = [
 var _maintSchedules = [];       // list-tab cache
 var _maintEditingId = null;     // schedule id being edited (null = create mode)
 var _maintEditingAssetIds = []; // explicit assetIds carried by the edited schedule
+// "assets" (the Assets page) or "pathChecks" (Path Monitor, business rule 135).
+var _maintTarget = "assets";
+var _maintEditingPathCheckIds = []; // the path-check picker's ticked ids
+var _maintPathChecksCache = null;   // [{id, name, kind, target}] for the picker
+// Called after any write, so the page behind the modal repaints (path mode;
+// asset mode keeps calling the Assets page's own loadAssets).
+var _maintOnChange = null;
 var _maintPreviewTimer = null;
 var _maintAssetTypesCache = null;
 var _maintIntegrationsCache = null; // [{id, name, type}] for the Integration rule select
@@ -222,13 +236,28 @@ function maintScheduleSummary(schedule) {
 async function openMaintenanceModal(opts) {
   var pinned = (opts && Array.isArray(opts.assetIds)) ? opts.assetIds.slice() : [];
   var openId = (opts && opts.scheduleId) || null;
+  // opts.target — "pathChecks" opens the path-check mode (business rule 135);
+  // omitted = assets. With only a scheduleId (the Events calendar) the mode is
+  // read off the schedule itself. opts.pathCheckIds pre-ticks checks (the Path
+  // Monitor row menu); opts.onChange repaints the page behind after a write.
+  var target = opts && opts.target;
+  if (!target && openId) {
+    try {
+      var all = await api.maintenanceSchedules.list();
+      var found = (all.schedules || []).find(function (s) { return s.id === openId; });
+      if (found && found.pathCheckIds && found.pathCheckIds.length) target = "pathChecks";
+    } catch (e) { /* the list tab reports its own failure */ }
+  }
+  _maintTarget = target === "pathChecks" ? "pathChecks" : "assets";
+  _maintOnChange = (opts && typeof opts.onChange === "function") ? opts.onChange : null;
   _maintEditingId = null;
-  _maintEditingAssetIds = pinned;
+  _maintEditingAssetIds = _maintTarget === "assets" ? pinned : [];
+  _maintEditingPathCheckIds = (_maintTarget === "pathChecks" && opts && Array.isArray(opts.pathCheckIds)) ? opts.pathCheckIds.slice() : [];
   var body = tabbedBodyHTML("maint", [
     { key: "create",   label: "Create Schedule", html: _maintEditorHTML() },
     { key: "list",     label: "Schedules",       html: '<div id="maint-list-body" class="empty-state">Loading…</div>' },
   ]);
-  openModal("Maintenance", body, _maintFooterHTML(), { large: true });
+  openModal(_maintTarget === "pathChecks" ? "Path Monitor Maintenance" : "Maintenance", body, _maintFooterHTML(), { large: true });
   wireModalTabs("maint");
   Array.prototype.forEach.call(document.querySelectorAll("#maint-tabs .page-tab"), function (tab) {
     tab.addEventListener("click", function () {
@@ -251,6 +280,14 @@ async function openMaintenanceModal(opts) {
     _maintSyncExplicitLine();
     _maintRefreshPreview();
     if (nameEl) { nameEl.focus(); nameEl.select(); }
+  }
+  if (_maintTarget === "pathChecks" && _maintEditingPathCheckIds.length && !openId) {
+    var pcName = document.getElementById("maint-name");
+    if (pcName && !pcName.value) {
+      pcName.value = "Maintenance — " + _maintEditingPathCheckIds.length +
+        (_maintEditingPathCheckIds.length === 1 ? " path check" : " path checks");
+      pcName.focus(); pcName.select();
+    }
   }
   // Review an existing schedule: wait for the list the modal just asked for
   // rather than issuing a second one, then hand the row to the same loader the
@@ -289,6 +326,7 @@ async function maintSetScheduleEnabled(id, enabled, row) {
     enabled: enabled,
     criteria: full.criteria || null,
     assetIds: full.assetIds || [],
+    pathCheckIds: full.pathCheckIds || [],
     schedule: full.schedule,
     // Pass through — normalizeInput defaults a missing value to true, which
     // would silently flip an opted-out schedule.
@@ -383,6 +421,7 @@ function _maintEditorHTML() {
       '<input type="text" id="maint-name" maxlength="200" placeholder="e.g. Shop switch stack patching">' +
     '</div>' +
 
+    (_maintTarget === "pathChecks" ? _maintPathCheckPickerHTML() :
     '<div class="form-group" style="border-top:1px solid var(--color-border);padding-top:12px">' +
       '<label>Asset filter</label>' +
       '<p class="hint">Assets matching ALL rules enter maintenance while the schedule is active. Only <strong>monitored</strong> assets are eligible. A single IP is a /32 CIDR (e.g. <code>10.2.3.4/32</code>).</p>' +
@@ -396,7 +435,7 @@ function _maintEditorHTML() {
     '<div class="form-group">' +
       '<label>Included devices (preview)</label>' +
       '<div id="maint-preview" class="hint" style="font-style:italic">Add a filter rule to preview matching devices.</div>' +
-    '</div>' +
+    '</div>') +
 
     '<div class="form-group" style="border-top:1px solid var(--color-border);padding-top:12px">' +
       '<label>When</label>' +
@@ -458,7 +497,8 @@ function _maintEditorHTML() {
       '</div>' +
     '</div>' +
 
-    '<div class="form-group" style="border-top:1px solid var(--color-border);padding-top:12px">' +
+    // A path check has no dependents — the toggle is the asset mode's alone.
+    '<div class="form-group" style="border-top:1px solid var(--color-border);padding-top:12px' + (_maintTarget === "pathChecks" ? ";display:none" : "") + '">' +
       '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin:0">' +
         '<input type="checkbox" id="maint-suppress-children" checked style="width:auto"> Mark dependent devices as down' +
       '</label>' +
@@ -471,6 +511,97 @@ function _maintEditorHTML() {
       '</label>' +
     '</div>'
   );
+}
+
+// ─── Path-check picker (path mode, business rule 135) ──────────────────────
+
+function _maintPathCheckPickerHTML() {
+  return '<div class="form-group" style="border-top:1px solid var(--color-border);padding-top:12px">' +
+      '<label>Path checks</label>' +
+      '<p class="hint">Ticked checks stop running — on every agent host and on this server — while the schedule is active, and their automations neither fire nor escalate. An alert already live stays up and recovers on its own once runs resume.</p>' +
+      '<input type="text" id="maint-pc-search" placeholder="Filter by name or target" autocomplete="off" style="margin-bottom:6px">' +
+      '<div id="maint-pc-list" style="max-height:240px;overflow-y:auto;border:1px solid var(--color-border);border-radius:4px;padding:4px 8px">' +
+        '<div class="hint">Loading path checks…</div>' +
+      '</div>' +
+      '<div id="maint-pc-count" class="hint" style="margin-top:4px"></div>' +
+    '</div>';
+}
+
+/** Pure (tested): the picker rows a filter leaves, ticked ones first. */
+function maintFilterPathChecks(checks, query, tickedIds) {
+  var q = String(query == null ? "" : query).trim().toLowerCase();
+  var ticked = {};
+  (tickedIds || []).forEach(function (id) { ticked[id] = true; });
+  return (checks || [])
+    .filter(function (c) {
+      return !q || String(c.name || "").toLowerCase().indexOf(q) >= 0 || String(c.target || "").toLowerCase().indexOf(q) >= 0;
+    })
+    .sort(function (a, b) {
+      return (ticked[b.id] ? 1 : 0) - (ticked[a.id] ? 1 : 0) || String(a.name).localeCompare(String(b.name));
+    });
+}
+
+function _maintSyncPathCheckCount() {
+  var el = document.getElementById("maint-pc-count");
+  if (!el) return;
+  var n = _maintEditingPathCheckIds.length;
+  el.textContent = n ? n + (n === 1 ? " path check" : " path checks") + " selected" : "No path checks selected";
+}
+
+function _maintRenderPathCheckList() {
+  var host = document.getElementById("maint-pc-list");
+  if (!host || _maintPathChecksCache === null) return;
+  var search = document.getElementById("maint-pc-search");
+  var rows = maintFilterPathChecks(_maintPathChecksCache, search ? search.value : "", _maintEditingPathCheckIds);
+  var ticked = {};
+  _maintEditingPathCheckIds.forEach(function (id) { ticked[id] = true; });
+  host.innerHTML = rows.length
+    ? rows.map(function (c) {
+        return '<label style="display:flex;align-items:center;gap:8px;padding:3px 0;margin:0;cursor:pointer;font-weight:normal">' +
+          '<input type="checkbox" class="maint-pc-cb" value="' + escapeHtml(c.id) + '"' + (ticked[c.id] ? " checked" : "") + ' style="width:auto">' +
+          '<span>' + escapeHtml(c.name) + '</span>' +
+          '<span class="hint" style="margin:0;font-family:var(--font-mono,monospace);font-size:0.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+            escapeHtml(String(c.kind || "").toUpperCase() + " " + (c.target || "")) + '</span>' +
+        '</label>';
+      }).join("")
+    : '<div class="hint">' + (_maintPathChecksCache.length ? "No checks match the filter." : "No path checks yet.") + '</div>';
+  _maintSyncPathCheckCount();
+}
+
+// Read on every open — a check added since the last one must be pickable.
+async function _maintLoadPathChecks() {
+  try {
+    var res = await api.pathChecks.list();
+    _maintPathChecksCache = ((res && res.checks) || []).map(function (c) {
+      return { id: c.id, name: c.name, kind: c.kind, target: c.target };
+    });
+  } catch (e) {
+    _maintPathChecksCache = [];
+  }
+  _maintRenderPathCheckList();
+}
+
+function _maintWirePathCheckPicker() {
+  _maintPathChecksCache = null;
+  _maintLoadPathChecks();
+  var search = document.getElementById("maint-pc-search");
+  if (search) search.addEventListener("input", _maintRenderPathCheckList);
+  var list = document.getElementById("maint-pc-list");
+  if (list) list.addEventListener("change", function (e) {
+    var cb = e.target.closest ? e.target.closest(".maint-pc-cb") : null;
+    if (!cb) return;
+    var id = cb.value;
+    _maintEditingPathCheckIds = _maintEditingPathCheckIds.filter(function (x) { return x !== id; });
+    if (cb.checked) _maintEditingPathCheckIds.push(id);
+    _maintSyncPathCheckCount();
+  });
+  _maintSyncPathCheckCount();
+}
+
+/** Repaint whatever the open page shows after a schedule write. */
+function _maintAfterWrite() {
+  if (_maintTarget === "pathChecks") { if (_maintOnChange) _maintOnChange(); return; }
+  if (typeof loadAssets === "function") loadAssets();
 }
 
 /**
@@ -693,8 +824,9 @@ async function _maintLoadEditorLookups() {
 
 function _maintWireEditor() {
   // Kick the lookup fetches WITHOUT awaiting — every listener below must be
-  // live the moment the modal paints.
-  _maintLoadEditorLookups().catch(function () { /* best-effort */ });
+  // live the moment the modal paints. Path mode has no asset filter to feed.
+  if (_maintTarget === "pathChecks") _maintWirePathCheckPicker();
+  else _maintLoadEditorLookups().catch(function () { /* best-effort */ });
 
   // Sensible one-shot defaults: now → now + 2h, in the SERVER's wall clock.
   // maintServerNow falls back to the browser clock until the skew read lands;
@@ -711,10 +843,15 @@ function _maintWireEditor() {
     document.getElementById(id).addEventListener("input", function () { _maintOneshotTouched = true; });
   });
 
-  document.getElementById("maint-add-rule").addEventListener("click", function () {
+  var addRule = document.getElementById("maint-add-rule");
+  if (addRule) addRule.addEventListener("click", function () {
     document.getElementById("maint-rules").insertAdjacentHTML("beforeend", _maintRuleRowHTML(null));
   });
-  var rulesEl = document.getElementById("maint-rules");
+  // The asset filter's rows. Gated on the MODE, never on the element: the
+  // recurrence editor's host also carries id "maint-rules" (rulesEditorHtml's
+  // prefix), so in path mode getElementById finds THAT and would wire — or,
+  // in reset/load, overwrite — the days-and-hours editor.
+  var rulesEl = _maintTarget === "assets" ? document.getElementById("maint-rules") : document.createElement("div");
   rulesEl.addEventListener("change", function (e) {
     var fieldSel = e.target.closest ? e.target.closest(".maint-rule-field") : null;
     if (fieldSel) {
@@ -751,8 +888,11 @@ function _maintWireEditor() {
 function _maintResetEditor() {
   _maintEditingId = null;
   _maintEditingAssetIds = [];
+  _maintEditingPathCheckIds = [];
   document.getElementById("maint-name").value = "";
-  document.getElementById("maint-rules").innerHTML = _maintRuleRowHTML(null);
+  // Asset mode only — see _maintWireEditor on the shared "maint-rules" id.
+  if (_maintTarget === "assets") document.getElementById("maint-rules").innerHTML = _maintRuleRowHTML(null);
+  _maintRenderPathCheckList();
   document.getElementById("maint-enabled").checked = true;
   document.getElementById("maint-suppress-children").checked = true;
   document.getElementById("maint-kind-oneshot").checked = true;
@@ -776,15 +916,19 @@ function _maintResetEditor() {
 function _maintLoadIntoEditor(row) {
   _maintEditingId = row.id;
   _maintEditingAssetIds = Array.isArray(row.assetIds) ? row.assetIds.slice() : [];
+  _maintEditingPathCheckIds = Array.isArray(row.pathCheckIds) ? row.pathCheckIds.slice() : [];
   document.getElementById("maint-name").value = row.name || "";
   document.getElementById("maint-enabled").checked = row.enabled !== false;
   document.getElementById("maint-suppress-children").checked = row.suppressChildren !== false;
 
   var criteria = row.criteria;
-  var rulesEl = document.getElementById("maint-rules");
-  rulesEl.innerHTML = criteria && criteria.rules && criteria.rules.length
-    ? criteria.rules.map(function (r) { return _maintRuleRowHTML(r); }).join("")
-    : _maintRuleRowHTML(null);
+  var rulesEl = _maintTarget === "assets" ? document.getElementById("maint-rules") : null;
+  if (rulesEl) {
+    rulesEl.innerHTML = criteria && criteria.rules && criteria.rules.length
+      ? criteria.rules.map(function (r) { return _maintRuleRowHTML(r); }).join("")
+      : _maintRuleRowHTML(null);
+  }
+  _maintRenderPathCheckList();
 
   var s = row.schedule || {};
   var oneshot = s.kind === "oneshot";
@@ -833,16 +977,27 @@ async function _maintSave() {
   try {
     var name = document.getElementById("maint-name").value.trim();
     if (!name) throw new Error("Schedule name is required");
-    var criteria = _maintCollectCriteria();
-    if (!criteria && !_maintEditingAssetIds.length) throw new Error("Add at least one filter rule");
-    var body = {
-      name: name,
-      enabled: document.getElementById("maint-enabled").checked,
-      criteria: criteria,
-      assetIds: _maintEditingAssetIds,
-      schedule: _maintCollectSchedule(),
-      suppressChildren: document.getElementById("maint-suppress-children").checked,
-    };
+    var body;
+    if (_maintTarget === "pathChecks") {
+      if (!_maintEditingPathCheckIds.length) throw new Error("Tick at least one path check");
+      body = {
+        name: name,
+        enabled: document.getElementById("maint-enabled").checked,
+        pathCheckIds: _maintEditingPathCheckIds,
+        schedule: _maintCollectSchedule(),
+      };
+    } else {
+      var criteria = _maintCollectCriteria();
+      if (!criteria && !_maintEditingAssetIds.length) throw new Error("Add at least one filter rule");
+      body = {
+        name: name,
+        enabled: document.getElementById("maint-enabled").checked,
+        criteria: criteria,
+        assetIds: _maintEditingAssetIds,
+        schedule: _maintCollectSchedule(),
+        suppressChildren: document.getElementById("maint-suppress-children").checked,
+      };
+    }
     if (_maintEditingId) {
       await api.maintenanceSchedules.update(_maintEditingId, body);
       showToast("Maintenance schedule updated");
@@ -853,7 +1008,7 @@ async function _maintSave() {
     _maintResetEditor();
     await _maintReloadList();
     // Statuses may have flipped immediately (inline reconcile) — refresh the table.
-    if (typeof loadAssets === "function") loadAssets();
+    _maintAfterWrite();
     var listTab = document.querySelector('#maint-tabs .page-tab[data-tab="list"]');
     if (listTab) listTab.click();
   } catch (err) {
@@ -866,6 +1021,8 @@ async function _maintSave() {
 // ─── Tab 2 — schedules list ─────────────────────────────────────────────────
 
 function _maintTargetsSummary(row) {
+  var checks = Array.isArray(row.pathCheckIds) ? row.pathCheckIds.length : 0;
+  if (checks) return checks + " path check" + (checks === 1 ? "" : "s");
   var parts = [];
   var ruleCount = row.criteria && row.criteria.rules ? row.criteria.rules.length : 0;
   if (ruleCount) parts.push(ruleCount + " filter rule" + (ruleCount === 1 ? "" : "s"));
@@ -884,7 +1041,8 @@ async function _maintReloadList() {
   if (!el) return;
   _maintCalRefresh();
   try {
-    var res = await api.maintenanceSchedules.list();
+    // Each mode lists only its own kind of schedule (business rule 135).
+    var res = await api.maintenanceSchedules.list(_maintTarget);
     _maintSchedules = res.schedules || [];
   } catch (err) {
     el.innerHTML = '<div class="empty-state">' + escapeHtml(err.message || "Failed to load schedules") + "</div>";
@@ -896,12 +1054,13 @@ async function _maintReloadList() {
     el.innerHTML = calLink + '<div class="empty-state">No maintenance schedules yet. Create one on the Create Schedule tab.</div>';
     return;
   }
+  var pathMode = _maintTarget === "pathChecks";
   var rows = _maintSchedules.map(function (s) {
     return "<tr>" +
       "<td><a href=\"#\" class=\"maint-edit-link\" data-id=\"" + s.id + "\">" + escapeHtml(s.name) + "</a></td>" +
       "<td>" + escapeHtml(maintScheduleSummary(s.schedule)) + "</td>" +
       '<td style="white-space:nowrap">' + escapeHtml(_maintTargetsSummary(s)) + "</td>" +
-      '<td style="white-space:nowrap">' + (s.suppressChildren !== false ? "Marked down" : "Unaffected") + "</td>" +
+      (pathMode ? "" : '<td style="white-space:nowrap">' + (s.suppressChildren !== false ? "Marked down" : "Unaffected") + "</td>") +
       '<td style="white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">' +
         '<input type="checkbox" class="maint-enable-toggle" data-id="' + s.id + '"' + (s.enabled ? " checked" : "") + ' style="width:auto">' +
         (s.enabled ? "Enabled" : "Disabled") + "</label></td>" +
@@ -912,9 +1071,13 @@ async function _maintReloadList() {
   }).join("");
   el.innerHTML = calLink +
     '<table class="data-table"><thead><tr style="white-space:nowrap">' +
-    '<th>Name</th><th>Schedule</th><th>Targets</th><th title="Whether devices behind an in-maintenance asset are dependency-suppressed for the window">Dependents</th><th>State</th><th></th>' +
+    '<th>Name</th><th>Schedule</th><th>Targets</th>' +
+    (pathMode ? "" : '<th title="Whether devices behind an in-maintenance asset are dependency-suppressed for the window">Dependents</th>') +
+    '<th>State</th><th></th>' +
     "</tr></thead><tbody>" + rows + "</tbody></table>" +
-    '<p class="hint" style="margin-top:8px">Disabling or deleting a schedule ends its active maintenance windows immediately and restores asset statuses.</p>';
+    '<p class="hint" style="margin-top:8px">' + (pathMode
+      ? "Disabling or deleting a schedule ends its active maintenance windows immediately and its path checks resume running."
+      : "Disabling or deleting a schedule ends its active maintenance windows immediately and restores asset statuses.") + '</p>';
 
   el.querySelectorAll(".maint-edit-btn, .maint-edit-link").forEach(function (b) {
     b.addEventListener("click", function (e) {
@@ -931,7 +1094,7 @@ async function _maintReloadList() {
         await maintSetScheduleEnabled(row.id, cb.checked, row);
         showToast(cb.checked ? "Schedule enabled" : "Schedule disabled");
         await _maintReloadList();
-        if (typeof loadAssets === "function") loadAssets();
+        _maintAfterWrite();
       } catch (err) {
         showToast(err.message || "Failed to update schedule", "error");
         cb.checked = !cb.checked;
@@ -942,13 +1105,14 @@ async function _maintReloadList() {
     b.addEventListener("click", async function () {
       var row = _maintSchedules.find(function (s) { return s.id === b.getAttribute("data-id"); });
       if (!row) return;
-      var ok = await showConfirm('Delete maintenance schedule "' + row.name + '"? Active windows end immediately and asset statuses are restored.');
+      var ok = await showConfirm('Delete maintenance schedule "' + row.name + '"? Active windows end immediately and ' +
+        (_maintTarget === "pathChecks" ? "its path checks resume running." : "asset statuses are restored."));
       if (!ok) return;
       try {
         await api.maintenanceSchedules.delete(row.id);
         showToast("Schedule deleted");
         await _maintReloadList();
-        if (typeof loadAssets === "function") loadAssets();
+        _maintAfterWrite();
       } catch (err) {
         showToast(err.message || "Failed to delete schedule", "error");
       }
@@ -1050,8 +1214,25 @@ async function maintCreateAdhoc(assetId, hostname, endLocalIso, opts) {
   });
 }
 
+/**
+ * The path-check twin of maintCreateAdhoc (business rule 135): a one-shot
+ * schedule pausing ONE check from now until endLocalIso (server-local
+ * "YYYY-MM-DDTHH:MM", validated by maintValidateAdhocEnd). The server stamps
+ * the start and reconciles inline, so the check is paused when this resolves;
+ * the schedule deletes itself once its window ends or is ended by hand.
+ */
+async function maintCreatePathCheckAdhoc(checkId, checkName, endLocalIso) {
+  return api.maintenanceSchedules.create({
+    name: "Ad-hoc — " + (checkName || checkId),
+    pathCheckIds: [checkId],
+    schedule: { version: 1, kind: "oneshot", startNow: true, endAt: endLocalIso },
+  });
+}
+
 window.openMaintenanceModal = openMaintenanceModal;
 window.maintCreateAdhoc = maintCreateAdhoc;
+window.maintCreatePathCheckAdhoc = maintCreatePathCheckAdhoc;
+window.maintFilterPathChecks = maintFilterPathChecks;
 // The one enable/disable writer — the Active Maintenance widget's row menu
 // calls it so the full-body PUT's passthrough list lives in one place.
 window.maintSetScheduleEnabled = maintSetScheduleEnabled;

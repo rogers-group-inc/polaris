@@ -1241,7 +1241,12 @@ const api = {
     get: (from, to) => request("GET", `/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   },
   maintenanceSchedules: {
-    list:    ()      => request("GET", "/maintenance-schedules"),
+    // target: "assets" | "pathChecks" narrows the list to one kind (business
+    // rule 135); omitted = every schedule.
+    list:    (target) => request("GET", "/maintenance-schedules" + (target ? `?target=${encodeURIComponent(target)}` : "")),
+    // One path check's maintenance picture, and "End maintenance" on it.
+    pathCheckInfo:    (checkId) => request("GET", `/maintenance-schedules/path-checks/${encodeURIComponent(checkId)}`),
+    releasePathCheck: (checkId) => request("POST", `/maintenance-schedules/path-checks/${encodeURIComponent(checkId)}/release`),
     // Calendar tab. from/to are LOCAL day strings ("YYYY-MM-DD") and the
     // occurrences come back as server-local wall-clock strings — never parse
     // them as instants (see listOccurrences).

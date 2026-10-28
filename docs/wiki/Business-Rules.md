@@ -2816,3 +2816,19 @@ editing the asset, its alerts that are still open switch to the new name. Alerts
 that have already cleared are history and keep the old name. A grouped alert that
 names a subnet or an automation instead of one device keeps its own subject.
 Only whole names are changed: renaming `GATE-1` leaves `GATE-10` alone.
+
+### Rule 135
+
+**A path check can be put in maintenance: it stops running everywhere and its
+alerts freeze, the way an asset's do.** A maintenance schedule can name path
+checks instead of assets, never both in one schedule. While a check is in its
+window, no agent host and not the Polaris server runs it, and its Path Monitor
+automations neither fire nor send reminders or escalations about it, including
+on failures recorded just before the window opened. An alert that was already
+open stays open and recovers on its own once the check runs again. The hosts
+that run the check are not touched: they stay monitored and keep alerting about
+everything else. Ending it early holds for the rest of that occurrence of a
+recurring schedule, as for assets. Deleting a check removes it from its
+schedules, and deletes a schedule that named only that check. Gated by
+`maintenanceManagement`; see [Maintenance windows](Maintenance-Windows) and
+[Path Monitor](Path-Monitor).

@@ -38,6 +38,7 @@ import { poeIsFault } from "../utils/poePorts.js";
 import { resolveAssetCadenceSec } from "./notificationCadenceService.js";
 import { REGION_TAG_PREFIX, rootCauseAckFor, sameAssetDownAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "./notificationService.js";
 import { POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
+import { pathCheckIdsInMaintenance } from "./maintenanceScheduleService.js";
 import {
   isPathTrigger,
   isPathMetric,
@@ -1747,7 +1748,7 @@ async function resolveAssetMetricReadings(
     // this trigger's threshold, not anything stored on the check.
     case "pathLatencyMs": case "pathHttpStatus": case "pathOk": case "pathTlsDaysLeft": {
       const rows = await prisma.assetPathCheckSample.findMany({
-        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(df.checkId ? { checkId: df.checkId } : {}) },
+        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(await pathCheckIdWhere(df.checkId)) },
         select: { assetId: true, timestamp: true, checkId: true, ok: true, latencyMs: true, httpStatus: true, tlsNotAfter: true },
       });
       const names = await pathCheckNames(rows.map((r) => r.checkId));
@@ -1769,7 +1770,7 @@ async function resolveAssetMetricReadings(
       // Read off the traceroutes (every Nth run + each pass→fail), not the
       // per-run samples, which carry no hop count.
       const rows = await prisma.assetPathCheckTraceroute.findMany({
-        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(df.checkId ? { checkId: df.checkId } : {}) },
+        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(await pathCheckIdWhere(df.checkId)) },
         select: { assetId: true, timestamp: true, checkId: true, hopCount: true },
       });
       const names = await pathCheckNames(rows.map((r) => r.checkId));
@@ -1789,7 +1790,7 @@ async function resolveAssetMetricReadings(
         where: {
           assetId: { in: ids },
           timestamp: { gte: new Date(Date.now() - windowSec * 1000) },
-          ...(df.checkId ? { checkId: df.checkId } : {}),
+          ...(await pathCheckIdWhere(df.checkId)),
         },
         _count: { _all: true },
         _max: { timestamp: true },
@@ -1824,6 +1825,21 @@ async function resolveAssetMetricReadings(
     default:
       return [];
   }
+}
+
+/**
+ * The `checkId` clause every path-sample read applies: the automation's own
+ * check filter, and NEVER a check in maintenance (business rule 135). Applied
+ * at the read rather than to the readings so every caller — the single-trigger
+ * loop, a composite, the frozen re-read, a reset tree — is blind to a paused
+ * check alike: samples from before the window included, which would otherwise
+ * keep a windowed metric (pathFailurePct) reading the outage the window was
+ * declared for.
+ */
+async function pathCheckIdWhere(dfCheckId: string | undefined): Promise<{ checkId?: string | { in: string[] } | { notIn: string[] } }> {
+  const held = await pathCheckIdsInMaintenance();
+  if (dfCheckId) return held.has(dfCheckId) ? { checkId: { in: [] } } : { checkId: dfCheckId };
+  return held.size > 0 ? { checkId: { notIn: [...held] } } : {};
 }
 
 /** id → name for the path checks a resolver's rows mention. One small
@@ -3436,6 +3452,29 @@ async function evaluateThresholdRule(
     }
   }
 
+  // Business rule 135 — a path check in maintenance is FROZEN on this rule, the
+  // check-level twin of rule 16's asset freeze. Its samples were never read
+  // (pathCheckIdWhere), so its firing rows are marked seen — otherwise a host
+  // still reporting its OTHER checks would have them cleared as vanished — and
+  // left to recover on their own evidence once runs resume; a pending row
+  // restarts its debounce after the window, a missing reading being evidence
+  // of nothing. Narrowed to this rule's rows for the held checks: a handful.
+  const pathHeld = trigger.type === "asset_metric" && isPathMetric(trigger.metric)
+    ? await pathCheckIdsInMaintenance()
+    : null;
+  if (pathHeld?.size) {
+    for (const st of states) {
+      if (!pathHeld.has(st.dimensionKey)) continue;
+      seen.add(`${st.assetId ?? ""}|${st.dimensionKey}`);
+      if (st.state === "pending") {
+        await prisma.notificationRuleState.update({
+          where: { id: st.id },
+          data: { state: "clear", conditionMetSince: null },
+        });
+      }
+    }
+  }
+
   // Vanished states: assets that left the scope or dimensions that stopped
   // being reported — the readings loop never sees them, so clear them here
   // (suppressed assets stay frozen, in-scope assets with no readings at all
@@ -3466,7 +3505,9 @@ async function evaluateThresholdRule(
       // A suppressed asset (maintenance / dependency-down) is frozen — unless
       // its trigger reading was taken during the freeze, the same evidence
       // test the readings loop applies (business rule 16).
-      .filter((st) => !(st.assetId && suppressedIds.has(st.assetId) && !frozenFreshIds.has(st.assetId)));
+      .filter((st) => !(st.assetId && suppressedIds.has(st.assetId) && !frozenFreshIds.has(st.assetId)))
+      // …and so is a path check in maintenance (business rule 135).
+      .filter((st) => !pathHeld?.has(st.dimensionKey));
     // Resolve the tree against the FIRING assets only — usually a handful out of
     // the whole scope, and the leaves are separate queries per sample table, so
     // handing them 2000 asset ids to answer a question about three alerts is the

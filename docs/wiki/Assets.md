@@ -140,7 +140,7 @@ carries the whole message: neither colour nor motion reaches every reader.
 
 A strip on the table's top-left edge, sharing its row with
 **Filters** (in edit mode only, right after the tabs), the page's buttons (the **Import** and **Export**
-icons, **Maintenance**, the settings gear), then **Clear**,
+icons, **Maintenance**, the settings gear), then **Clear Filters** (**Reset Filter** while the tab has a base filter),
 **Refresh** (the circular-arrows icon), **+ Add Asset(s)**, the page size (**25 / page** …) and, at
 the right end, the **Edit** pencil (the page buttons are below the page card). Each tab holds its own filter and sort state, saved
 to your account so it follows you between browsers. Click switches, double-click
@@ -740,7 +740,7 @@ included. Rows hidden by a filter keep their setting.
 
 **Clear the filters in one click.** Each table in the asset panel that has
 column filters (Interfaces, IPsec, Software, Services and Events) has a
-**Clear** button at its top right, as does the Path Monitor results window.
+**Clear Filters** button at its top right, as does the Path Monitor results window.
 It is greyed out while no filter is set, so a filter you cannot see, for
 example on a hidden column, still shows. Clicking it removes every column
 filter and keeps the sort.

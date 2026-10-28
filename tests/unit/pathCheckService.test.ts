@@ -15,8 +15,15 @@ const db = {
   agents: [] as any[],
   settings: new Map<string, unknown>(),
   credentials: [] as any[],
+  // Checks with an open maintenance window (business rule 135).
+  held: new Set<string>(),
 };
 let seq = 0;
+
+vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
+  getPathCheckMaintenanceStates: vi.fn(async () => new Map()),
+  dropPathCheckFromSchedules: vi.fn(async () => {}),
+}));
 
 const { loadScopeAssetIds, publishConfigRefresh, logEvent } = vi.hoisted(() => ({
   loadScopeAssetIds: vi.fn(async () => [] as string[]),
@@ -46,6 +53,9 @@ function matchWhere(row: any, where: any): boolean {
     } else if (k === "check") {
       const c = db.checks.find((x) => x.id === row.checkId);
       if (!c || !matchWhere(c, v)) return false;
+    } else if (k === "maintenanceWindows") {
+      // `{ none: { endedAt: null } }` — no open maintenance window.
+      if (db.held.has(row.id)) return false;
     } else if (row[k] !== v) return false;
   }
   return true;
@@ -81,7 +91,13 @@ vi.mock("../../src/db.js", () => ({
       findMany: vi.fn(async ({ where, select }: any = {}) => {
         const rows = db.sources.filter((s) => matchWhere(s, where));
         if (select?.check) {
-          return rows.map((s) => ({ ...s, check: db.checks.find((c) => c.id === s.checkId) }));
+          return rows.map((s) => {
+            const c = db.checks.find((x) => x.id === s.checkId);
+            const withWindows = select.check.select?.maintenanceWindows
+              ? { ...c, maintenanceWindows: db.held.has(c.id) ? [{ id: "w" }] : [] }
+              : c;
+            return { ...s, check: withWindows };
+          });
         }
         if (select?.asset) return rows.map(() => ({ asset: { managedAgent: null } }));
         return rows;
@@ -156,6 +172,7 @@ beforeEach(() => {
   db.agents = [];
   db.settings.clear();
   db.credentials = [];
+  db.held.clear();
   loadScopeAssetIds.mockReset().mockResolvedValue([]);
   publishConfigRefresh.mockClear();
   logEvent.mockClear();
@@ -307,6 +324,17 @@ describe("agentConfigChecks", () => {
     expect(defs[0].id).toBe("c0");
     expect(defs.some((d) => d.id === "off")).toBe(false);
   });
+  it("leaves a check in maintenance out — after the cap, so no over-cap check runs in its place (rule 135)", async () => {
+    for (let i = 0; i < MAX_CHECKS_PER_AGENT + 1; i++) seedCheck(`c${i}`, true, new Date(1_000_000 + i));
+    db.held.add("c0");
+    const defs = await agentConfigChecks("host", "0.21.0");
+    expect(defs).toHaveLength(MAX_CHECKS_PER_AGENT - 1);
+    expect(defs.some((d) => d.id === "c0")).toBe(false);
+    expect(defs.some((d) => d.id === `c${MAX_CHECKS_PER_AGENT}`)).toBe(false);
+    // The fold both config ETags carry changes with it, so a running agent refetches.
+    db.held.clear();
+    expect(pathCheckEtagFold(await agentConfigChecks("host", "0.21.0"))).not.toBe(pathCheckEtagFold(defs));
+  });
 });
 
 describe("reconcilePathCheckSources", () => {
@@ -387,6 +415,9 @@ describe("the Polaris server as a source", () => {
     const defs = await serverCheckDefinitions();
     expect(defs.map((d) => d.id)).toEqual(["old", "new"]);
     expect(defs[0]).toMatchObject({ kind: "icmp", revision: "h-old", traceroute: { enabled: true } });
+    // A check in maintenance is not run from the server either (rule 135).
+    db.held.add("old");
+    expect((await serverCheckDefinitions()).map((d) => d.id)).toEqual(["new"]);
   });
 });
 

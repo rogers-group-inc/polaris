@@ -48,12 +48,22 @@
  * opened and released by code rather than by the clock (`openMaintenanceHold` /
  * `releaseMaintenanceHold`), and it carries `expiresAt` — a held asset is not
  * being watched, so a release that never runs must not be able to strand one.
+ *
+ * PATH CHECKS (business rule 135). A schedule may target path checks
+ * (`pathCheckIds`) instead of assets — never both. Its windows live in
+ * `PathCheckMaintenanceWindow`, diffed by `reconcilePathCheckWindows` in the
+ * same tick and on the same rules (open rows are the truth, operator release
+ * holds for the current occurrence, a spent ad-hoc deletes itself). A check in
+ * maintenance is not shipped to agents (`pathCheckService.agentConfigChecks`)
+ * nor run by the server (`serverCheckDefinitions`), and the engine freezes its
+ * alerts — no asset status is touched, a path check has none.
  */
 
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
+import { publishConfigRefresh } from "./agentCommandWake.js";
 import {
   normalizeCriteria,
   resolveMatchingAssetIds,
@@ -152,6 +162,8 @@ export interface MaintenanceScheduleInput {
   enabled?: boolean;
   criteria?: unknown;
   assetIds?: string[];
+  /** Path checks to pause (business rule 135) — exclusive with criteria / assetIds. */
+  pathCheckIds?: string[];
   // Optional at the type level (z.unknown() infers optional); normalizeInput
   // rejects a missing/invalid shape with a 400.
   schedule?: unknown;
@@ -164,8 +176,17 @@ interface NormalizedInput {
   enabled: boolean;
   criteria: TagCriteria | null;
   assetIds: string[];
+  pathCheckIds: string[];
   schedule: MaintenanceScheduleShape;
   suppressChildren: boolean;
+}
+
+/** What a schedule pauses: assets, or path checks (business rule 135). */
+export type MaintenanceTarget = "assets" | "pathChecks";
+
+/** A stored schedule's target — a schedule never carries both. */
+export function scheduleTarget(row: { pathCheckIds?: string[] | null }): MaintenanceTarget {
+  return (row.pathCheckIds ?? []).length > 0 ? "pathChecks" : "assets";
 }
 
 function normalizeInput(input: MaintenanceScheduleInput): NormalizedInput {
@@ -194,8 +215,17 @@ function normalizeInput(input: MaintenanceScheduleInput): NormalizedInput {
   const assetIds = Array.from(
     new Set((input.assetIds ?? []).map((id) => String(id).trim()).filter((id) => id.length > 0)),
   );
-  if (!criteria && assetIds.length === 0) {
-    throw new AppError(400, "Schedule must target at least one asset (criteria or explicit assets)");
+  const pathCheckIds = Array.from(
+    new Set((input.pathCheckIds ?? []).map((id) => String(id).trim()).filter((id) => id.length > 0)),
+  );
+  // One schedule pauses one kind of thing (business rule 135): the two
+  // Maintenance modals each list only their own, and a mixed row would be
+  // half-invisible from either.
+  if (pathCheckIds.length > 0 && (criteria || assetIds.length > 0)) {
+    throw new AppError(400, "A maintenance schedule targets assets or path checks, not both");
+  }
+  if (!criteria && assetIds.length === 0 && pathCheckIds.length === 0) {
+    throw new AppError(400, "Schedule must target at least one asset (criteria or explicit assets) or path check");
   }
 
   return {
@@ -203,9 +233,21 @@ function normalizeInput(input: MaintenanceScheduleInput): NormalizedInput {
     enabled: input.enabled !== false,
     criteria,
     assetIds,
+    pathCheckIds,
     schedule,
     suppressChildren: input.suppressChildren !== false,
   };
+}
+
+/** 400 naming any path check id that does not exist — a typo'd API call must
+ *  not save a schedule that silently pauses nothing. */
+async function assertPathChecksExist(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const found = await prisma.pathCheck.findMany({ where: { id: { in: ids } }, select: { id: true } });
+  if (found.length === ids.length) return;
+  const known = new Set(found.map((c) => c.id));
+  const missing = ids.filter((id) => !known.has(id));
+  throw new AppError(400, `Unknown path check id${missing.length === 1 ? "" : "s"}: ${missing.slice(0, 5).join(", ")}`);
 }
 
 /**
@@ -215,12 +257,16 @@ function normalizeInput(input: MaintenanceScheduleInput): NormalizedInput {
  * over (operator ended it early, or it ran to its end time) it can never fire
  * again, so it self-deletes instead of accumulating in the Schedules list.
  * Multi-asset / criteria-based / recurring schedules are never auto-deleted.
+ * The path-check twin (business rule 135) is a one-shot naming exactly one
+ * check — the Path Monitor row menu's "Enter maintenance".
  */
 function isAdhocShape(
-  row: { criteria: unknown; assetIds: string[] },
+  row: { criteria: unknown; assetIds: string[]; pathCheckIds?: string[] | null },
   shape: MaintenanceScheduleShape | null,
 ): boolean {
-  return !!shape && shape.kind === "oneshot" && row.criteria == null && row.assetIds.length === 1;
+  if (!shape || shape.kind !== "oneshot" || row.criteria != null) return false;
+  const checks = (row.pathCheckIds ?? []).length;
+  return (row.assetIds.length === 1 && checks === 0) || (row.assetIds.length === 0 && checks === 1);
 }
 
 /** Parse a stored schedule blob defensively; null (+ warn) on mismatch. */
@@ -321,6 +367,8 @@ export interface MaintenanceOccurrenceRow {
   kind: "oneshot" | "recurring";
   /** Single-asset one-shot with no criteria — the pill / edit-modal artifact. */
   adhoc: boolean;
+  /** What the schedule pauses (business rule 135). */
+  target: MaintenanceTarget;
   /** SERVER-LOCAL wall clock "YYYY-MM-DDTHH:MM" — never a UTC instant. */
   start: string;
   end: string;
@@ -373,6 +421,7 @@ export async function listOccurrences(input: {
         enabled: s.enabled,
         kind: shape.kind,
         adhoc: isAdhocShape(s, shape),
+        target: scheduleTarget(s),
         start: formatLocalIsoMinute(occ.start),
         end: formatLocalIsoMinute(occ.end),
       });
@@ -476,6 +525,9 @@ export async function getActiveMaintenanceSchedules(
 
   const out: ActiveMaintenanceSchedule[] = [];
   for (const s of schedules) {
+    // A path-check schedule holds no devices (business rule 135) — the
+    // isInWindow arm below would list it as an empty device window.
+    if (scheduleTarget(s) === "pathChecks") continue;
     const shape = parseStoredShape(s);
     if (!shape) continue;
     const held = bySchedule.get(s.id);
@@ -521,8 +573,15 @@ export async function getActiveMaintenanceSchedules(
 
 // ─── Schedule CRUD ───────────────────────────────────────────────────────────
 
-export async function listSchedules() {
-  return prisma.maintenanceSchedule.findMany({ orderBy: { createdAt: "desc" } });
+/** Every schedule, or only those pausing one kind of target (business rule
+ *  135) — each Maintenance modal lists its own. */
+export async function listSchedules(target?: MaintenanceTarget) {
+  const where = target === "pathChecks"
+    ? { NOT: { pathCheckIds: { isEmpty: true } } }
+    : target === "assets"
+      ? { pathCheckIds: { isEmpty: true } }
+      : {};
+  return prisma.maintenanceSchedule.findMany({ where, orderBy: { createdAt: "desc" } });
 }
 
 export async function getSchedule(id: string) {
@@ -533,12 +592,14 @@ export async function getSchedule(id: string) {
 
 export async function createSchedule(input: MaintenanceScheduleInput, actor?: string) {
   const n = normalizeInput(input);
+  await assertPathChecksExist(n.pathCheckIds);
   const row = await prisma.maintenanceSchedule.create({
     data: {
       name: n.name,
       enabled: n.enabled,
       criteria: (n.criteria ?? undefined) as any,
       assetIds: n.assetIds,
+      pathCheckIds: n.pathCheckIds,
       schedule: n.schedule as any,
       suppressChildren: n.suppressChildren,
       createdBy: actor ?? null,
@@ -551,7 +612,7 @@ export async function createSchedule(input: MaintenanceScheduleInput, actor?: st
     resourceName: row.name,
     actor,
     message: `Maintenance schedule "${row.name}" created (${n.schedule.kind})`,
-    details: { kind: n.schedule.kind, enabled: n.enabled },
+    details: { kind: n.schedule.kind, enabled: n.enabled, target: scheduleTarget(n) },
   });
   await reconcileMaintenance();
   return row;
@@ -560,6 +621,7 @@ export async function createSchedule(input: MaintenanceScheduleInput, actor?: st
 export async function updateSchedule(id: string, input: MaintenanceScheduleInput, actor?: string) {
   await getSchedule(id); // 404 if missing
   const n = normalizeInput(input);
+  await assertPathChecksExist(n.pathCheckIds);
   const row = await prisma.maintenanceSchedule.update({
     where: { id },
     data: {
@@ -567,6 +629,7 @@ export async function updateSchedule(id: string, input: MaintenanceScheduleInput
       enabled: n.enabled,
       criteria: (n.criteria ?? null) as any,
       assetIds: n.assetIds,
+      pathCheckIds: n.pathCheckIds,
       schedule: n.schedule as any,
       suppressChildren: n.suppressChildren,
     },
@@ -578,7 +641,7 @@ export async function updateSchedule(id: string, input: MaintenanceScheduleInput
     resourceName: row.name,
     actor,
     message: `Maintenance schedule "${row.name}" updated`,
-    details: { kind: n.schedule.kind, enabled: n.enabled },
+    details: { kind: n.schedule.kind, enabled: n.enabled, target: scheduleTarget(n) },
   });
   await reconcileMaintenance();
   return row;
@@ -1108,6 +1171,362 @@ async function releaseAllHolds(assetIds: string[]): Promise<string[]> {
 
 // ─── Reconcile ───────────────────────────────────────────────────────────────
 
+// ─── Path checks (business rule 135) ────────────────────────────────────────
+
+type ScheduleRow = Awaited<ReturnType<typeof prisma.maintenanceSchedule.findMany>>[number];
+
+/** Nudge every agent that runs one of these checks to refetch its config —
+ *  a check entering maintenance leaves the shipped list, one leaving rejoins
+ *  it, and the heartbeat ETag alone would take up to a heartbeat to notice. */
+async function refreshPathCheckAgents(checkIds: string[]): Promise<void> {
+  if (checkIds.length === 0) return;
+  const members = await prisma.pathCheckSource.findMany({
+    where: { checkId: { in: checkIds }, assetId: { not: null } },
+    select: { asset: { select: { managedAgent: { select: { id: true } } } } },
+  });
+  const ids = Array.from(new Set(members.map((m) => m.asset?.managedAgent?.id ?? "").filter(Boolean)));
+  await publishConfigRefresh(ids);
+}
+
+/** Path-check names for Events, one query. */
+async function pathCheckNames(ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+  const rows = await prisma.pathCheck.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+/**
+ * The path-check half of the reconcile: diff open `PathCheckMaintenanceWindow`
+ * rows against every path-check schedule in window right now, with the asset
+ * diff's rules — close reasons, operator release holding for the current
+ * occurrence, a spent ad-hoc deleting itself. A check ENTERS on its first open
+ * row and EXITS on its last; each transition is one Event and a config nudge to
+ * the agents that run it. Two queries on a quiet tick (schedules are already
+ * loaded): the check-id existence read and the open-row read.
+ */
+async function reconcilePathCheckWindows(
+  schedules: ScheduleRow[],
+  shapeById: Map<string, MaintenanceScheduleShape>,
+  now: Date,
+): Promise<void> {
+  const scheduleById = new Map(schedules.map((s) => [s.id, s]));
+  const named = new Set<string>();
+  for (const s of schedules) for (const id of s.pathCheckIds ?? []) named.add(id);
+  const existing = named.size > 0
+    ? new Set((await prisma.pathCheck.findMany({ where: { id: { in: Array.from(named) } }, select: { id: true } })).map((c) => c.id))
+    : new Set<string>();
+
+  const desired = new Map<string, Set<string>>(); // scheduleId → checkIds
+  for (const s of schedules) {
+    if (scheduleTarget(s) !== "pathChecks") continue;
+    const shape = shapeById.get(s.id);
+    if (!shape || !s.enabled || !isInWindow(shape, now)) continue;
+    desired.set(s.id, new Set(s.pathCheckIds.filter((id) => existing.has(id))));
+  }
+
+  const openRows = await prisma.pathCheckMaintenanceWindow.findMany({
+    where: { endedAt: null },
+    select: { id: true, pathCheckId: true, scheduleId: true },
+  });
+  if (desired.size === 0 && openRows.length === 0) return;
+
+  const toClose: Array<{ id: string; pathCheckId: string; scheduleId: string | null; reason: string }> = [];
+  const openPairs = new Set<string>();
+  for (const row of openRows) {
+    const sched = row.scheduleId ? scheduleById.get(row.scheduleId) : undefined;
+    const reason = !sched ? "deleted"
+      : !sched.enabled ? "disabled"
+        : !desired.has(sched.id) ? "schedule"
+          : !desired.get(sched.id)!.has(row.pathCheckId) ? "criteria"
+            : null;
+    if (reason) toClose.push({ ...row, reason });
+    else openPairs.add(`${row.pathCheckId}|${row.scheduleId}`);
+  }
+
+  const candidates: Array<{ pathCheckId: string; scheduleId: string }> = [];
+  for (const [scheduleId, ids] of desired) {
+    for (const pathCheckId of ids) {
+      if (!openPairs.has(`${pathCheckId}|${scheduleId}`)) candidates.push({ pathCheckId, scheduleId });
+    }
+  }
+  // Operator release holds for the CURRENT occurrence, as for assets.
+  let toOpen = candidates;
+  if (candidates.length > 0) {
+    const released = await prisma.pathCheckMaintenanceWindow.findMany({
+      where: {
+        endReason: "operator",
+        pathCheckId: { in: Array.from(new Set(candidates.map((c) => c.pathCheckId))) },
+        scheduleId: { in: Array.from(new Set(candidates.map((c) => c.scheduleId))) },
+        endedAt: { not: null },
+      },
+      select: { pathCheckId: true, scheduleId: true, endedAt: true },
+    });
+    const latest = new Map<string, number>();
+    for (const r of released) {
+      const key = `${r.pathCheckId}|${r.scheduleId}`;
+      latest.set(key, Math.max(latest.get(key) ?? 0, r.endedAt!.getTime()));
+    }
+    toOpen = candidates.filter((c) => {
+      const releasedAt = latest.get(`${c.pathCheckId}|${c.scheduleId}`);
+      if (releasedAt == null) return true;
+      const occ = currentWindow(shapeById.get(c.scheduleId)!, now);
+      return occ ? releasedAt < occ.start.getTime() : true;
+    });
+  }
+  if (toClose.length === 0 && toOpen.length === 0) return;
+
+  const before = new Map<string, number>();
+  for (const r of openRows) before.set(r.pathCheckId, (before.get(r.pathCheckId) ?? 0) + 1);
+  const after = new Map(before);
+  for (const c of toClose) after.set(c.pathCheckId, (after.get(c.pathCheckId) ?? 0) - 1);
+  for (const o of toOpen) after.set(o.pathCheckId, (after.get(o.pathCheckId) ?? 0) + 1);
+  const entering = [...after].filter(([id, n]) => n > 0 && (before.get(id) ?? 0) === 0).map(([id]) => id);
+  // A check deleted mid-window cascaded its rows away, so it never shows up
+  // here — and has no agents left to tell.
+  const exiting = [...after].filter(([id, n]) => n <= 0 && (before.get(id) ?? 0) > 0).map(([id]) => id);
+
+  const closesByReason = new Map<string, string[]>();
+  for (const c of toClose) closesByReason.set(c.reason, [...(closesByReason.get(c.reason) ?? []), c.id]);
+  const writes: any[] = [...closesByReason].map(([reason, ids]) =>
+    prisma.pathCheckMaintenanceWindow.updateMany({ where: { id: { in: ids } }, data: { endedAt: now, endReason: reason } }),
+  );
+  if (toOpen.length > 0) {
+    writes.push(prisma.pathCheckMaintenanceWindow.createMany({
+      data: toOpen.map((o) => ({
+        pathCheckId: o.pathCheckId,
+        scheduleId: o.scheduleId,
+        scheduleName: scheduleById.get(o.scheduleId)?.name ?? "(unknown)",
+        startedAt: now,
+      })),
+    }));
+  }
+  await prisma.$transaction(writes);
+
+  const names = await pathCheckNames([...entering, ...exiting]);
+  const openNames = new Map<string, string[]>();
+  for (const o of toOpen) openNames.set(o.pathCheckId, [...(openNames.get(o.pathCheckId) ?? []), scheduleById.get(o.scheduleId)?.name ?? "(unknown)"]);
+  const closeReasons = new Map<string, string>();
+  for (const c of toClose) closeReasons.set(c.pathCheckId, c.reason);
+  await logEventsBatch([
+    ...entering.map((id) => ({
+      action: "path_check.maintenance_entered",
+      resourceType: "path-check",
+      resourceId: id,
+      resourceName: names.get(id) ?? id,
+      actor: SYSTEM_ACTOR,
+      message: `Path check "${names.get(id) ?? id}" entered maintenance (${(openNames.get(id) ?? []).join(", ") || "schedule"}) — runs paused, alerts frozen`,
+      details: { schedules: openNames.get(id) ?? [] },
+    })),
+    ...exiting.map((id) => ({
+      action: "path_check.maintenance_exited",
+      resourceType: "path-check",
+      resourceId: id,
+      resourceName: names.get(id) ?? id,
+      actor: SYSTEM_ACTOR,
+      message: `Path check "${names.get(id) ?? id}" left maintenance — runs resume`,
+      details: { reason: closeReasons.get(id) ?? "schedule" },
+    })),
+  ]);
+  await refreshPathCheckAgents([...entering, ...exiting]);
+
+  // Spent ad-hoc one-shots delete themselves, as the asset pill's do.
+  const ended = Array.from(new Set(toClose.filter((c) => c.reason === "schedule" && c.scheduleId).map((c) => c.scheduleId as string)));
+  const spent = ended
+    .map((id) => scheduleById.get(id))
+    .filter((s): s is ScheduleRow => !!s)
+    .filter((s) => {
+      const shape = shapeById.get(s.id) ?? null;
+      return scheduleTarget(s) === "pathChecks" && isAdhocShape(s, shape) && shape != null && nextWindow(shape, now) == null;
+    });
+  if (spent.length > 0) {
+    await prisma.maintenanceSchedule.deleteMany({ where: { id: { in: spent.map((s) => s.id) } } });
+    await logEventsBatch(spent.map((s) => ({
+      action: "maintenance_schedule.deleted",
+      resourceType: "maintenance-schedule",
+      resourceId: s.id,
+      resourceName: s.name,
+      actor: SYSTEM_ACTOR,
+      message: `Ad-hoc maintenance schedule "${s.name}" removed (window ended)`,
+      details: { reason: "adhoc-spent", target: "pathChecks" },
+    })));
+  }
+}
+
+/** Ids of every path check in maintenance right now — the engine's and the
+ *  escalation sweep's gate (business rule 135). One read of the open rows,
+ *  which are few (at most the checks × their covering schedules). */
+export async function pathCheckIdsInMaintenance(): Promise<Set<string>> {
+  const rows = await prisma.pathCheckMaintenanceWindow.findMany({
+    where: { endedAt: null },
+    select: { pathCheckId: true },
+    distinct: ["pathCheckId"],
+  });
+  return new Set(rows.map((r) => r.pathCheckId));
+}
+
+export interface PathCheckMaintenanceState {
+  inMaintenance: boolean;
+  windows: Array<{
+    scheduleId: string | null;
+    scheduleName: string;
+    startedAt: Date;
+    /** End of the current occurrence, SERVER-LOCAL wall clock "YYYY-MM-DDTHH:MM" — the only form to display. */
+    until: string | null;
+    /** The same end as an instant, for a countdown. */
+    untilUtc: string | null;
+  }>;
+}
+
+/**
+ * Open windows per check, with the current occurrence's end — the Path Monitor
+ * list's Maintenance column and `GET /path-checks` rows. One read of open rows
+ * plus one of their schedules; checks with no open row are absent.
+ */
+export async function getPathCheckMaintenanceStates(checkIds?: string[]): Promise<Map<string, PathCheckMaintenanceState>> {
+  const rows = await prisma.pathCheckMaintenanceWindow.findMany({
+    where: { endedAt: null, ...(checkIds ? { pathCheckId: { in: checkIds } } : {}) },
+    orderBy: { startedAt: "asc" },
+    select: { pathCheckId: true, scheduleId: true, scheduleName: true, startedAt: true },
+  });
+  const out = new Map<string, PathCheckMaintenanceState>();
+  if (rows.length === 0) return out;
+  const scheduleIds = Array.from(new Set(rows.map((r) => r.scheduleId).filter((id): id is string => !!id)));
+  const schedules = await prisma.maintenanceSchedule.findMany({ where: { id: { in: scheduleIds } }, select: { id: true, name: true, schedule: true } });
+  const now = new Date();
+  const endById = new Map<string, Date | null>();
+  for (const s of schedules) {
+    const shape = parseStoredShape(s);
+    endById.set(s.id, shape ? currentWindow(shape, now)?.end ?? null : null);
+  }
+  for (const r of rows) {
+    const end = r.scheduleId ? endById.get(r.scheduleId) ?? null : null;
+    const st = out.get(r.pathCheckId) ?? { inMaintenance: true, windows: [] };
+    st.windows.push({
+      scheduleId: r.scheduleId,
+      scheduleName: r.scheduleName,
+      startedAt: r.startedAt,
+      until: end ? formatLocalIsoMinute(end) : null,
+      untilUtc: end ? end.toISOString() : null,
+    });
+    out.set(r.pathCheckId, st);
+  }
+  return out;
+}
+
+export interface PathCheckMaintenanceInfo extends PathCheckMaintenanceState {
+  /** Every schedule naming this check, in or out of window. */
+  schedules: Array<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    kind: "oneshot" | "recurring";
+    activeNow: boolean;
+    /** SERVER-LOCAL wall clock of the next occurrence, or null. */
+    nextStart: string | null;
+    nextEnd: string | null;
+  }>;
+}
+
+/** One check's maintenance picture — `GET /maintenance-schedules/path-checks/:id`. */
+export async function getPathCheckMaintenanceInfo(checkId: string): Promise<PathCheckMaintenanceInfo> {
+  const check = await prisma.pathCheck.findUnique({ where: { id: checkId }, select: { id: true } });
+  if (!check) throw new AppError(404, "Path check not found");
+  const [states, schedules] = await Promise.all([
+    getPathCheckMaintenanceStates([checkId]),
+    prisma.maintenanceSchedule.findMany({ where: { pathCheckIds: { has: checkId } }, orderBy: { name: "asc" } }),
+  ]);
+  const now = new Date();
+  const st = states.get(checkId) ?? { inMaintenance: false, windows: [] };
+  return {
+    ...st,
+    schedules: schedules.flatMap((s) => {
+      const shape = parseStoredShape(s);
+      if (!shape) return [];
+      const next = nextWindow(shape, now);
+      return [{
+        id: s.id,
+        name: s.name,
+        enabled: s.enabled,
+        kind: shape.kind,
+        activeNow: s.enabled && isInWindow(shape, now),
+        nextStart: next ? formatLocalIsoMinute(next.start) : null,
+        nextEnd: next ? formatLocalIsoMinute(next.end) : null,
+      }];
+    }),
+  };
+}
+
+/**
+ * End a check's maintenance NOW (the row menu's "End maintenance", `POST
+ * /maintenance-schedules/path-checks/:id/release`). Closes every open window
+ * `endReason: "operator"` — which the reconcile honours for the rest of the
+ * current occurrence, so a recurring schedule takes the check again next time —
+ * deletes an ad-hoc schedule it ended (it can never fire again), and resumes
+ * the check on its agents straight away. False when nothing was open.
+ */
+export async function operatorReleasePathCheck(checkId: string, actor?: string): Promise<boolean> {
+  const check = await prisma.pathCheck.findUnique({ where: { id: checkId }, select: { id: true, name: true } });
+  if (!check) throw new AppError(404, "Path check not found");
+  const open = await prisma.pathCheckMaintenanceWindow.findMany({
+    where: { pathCheckId: checkId, endedAt: null },
+    select: { id: true, scheduleId: true },
+  });
+  if (open.length === 0) return false;
+  const now = new Date();
+  await prisma.pathCheckMaintenanceWindow.updateMany({
+    where: { id: { in: open.map((o) => o.id) } },
+    data: { endedAt: now, endReason: "operator" },
+  });
+  const scheduleIds = Array.from(new Set(open.map((o) => o.scheduleId).filter((id): id is string => !!id)));
+  const schedules = await prisma.maintenanceSchedule.findMany({ where: { id: { in: scheduleIds } } });
+  const adhoc = schedules.filter((s) => isAdhocShape(s, parseStoredShape(s)) && scheduleTarget(s) === "pathChecks");
+  if (adhoc.length > 0) {
+    await prisma.maintenanceSchedule.deleteMany({ where: { id: { in: adhoc.map((s) => s.id) } } });
+  }
+  await logEvent({
+    action: "path_check.maintenance_exited",
+    resourceType: "path-check",
+    resourceId: check.id,
+    resourceName: check.name,
+    actor,
+    message: `Path check "${check.name}" taken out of maintenance by an operator — runs resume`,
+    details: { reason: "operator", adhocDeleted: adhoc.map((s) => s.name) },
+  });
+  await refreshPathCheckAgents([checkId]);
+  return true;
+}
+
+/**
+ * A deleted check leaves every schedule naming it (called by
+ * `pathCheckService.deleteCheck`). A schedule left naming no check is deleted
+ * rather than saved targetless — `normalizeInput` would refuse that row on its
+ * next edit, and it could never fire again (the asset side's
+ * removeAssetFromSchedule makes the same call). Its windows cascaded with the
+ * check.
+ */
+export async function dropPathCheckFromSchedules(checkId: string, actor?: string): Promise<void> {
+  const rows = await prisma.maintenanceSchedule.findMany({ where: { pathCheckIds: { has: checkId } } });
+  if (rows.length === 0) return;
+  const emptied = rows.filter((r) => r.pathCheckIds.every((id) => id === checkId));
+  const narrowed = rows.filter((r) => !emptied.includes(r));
+  await prisma.$transaction([
+    ...narrowed.map((r) => prisma.maintenanceSchedule.update({
+      where: { id: r.id },
+      data: { pathCheckIds: r.pathCheckIds.filter((id) => id !== checkId) },
+    })),
+    ...(emptied.length ? [prisma.maintenanceSchedule.deleteMany({ where: { id: { in: emptied.map((r) => r.id) } } })] : []),
+  ]);
+  await logEventsBatch(emptied.map((r) => ({
+    action: "maintenance_schedule.deleted",
+    resourceType: "maintenance-schedule",
+    resourceId: r.id,
+    resourceName: r.name,
+    actor,
+    message: `Maintenance schedule "${r.name}" deleted (its last path check was deleted)`,
+    details: { reason: "last-path-check-deleted", pathCheckId: checkId },
+  })));
+}
+
 // Serialized + coalesced: an in-flight run never overlaps another, and a call
 // made during a run (a CRUD mutation racing the 30s tick) queues exactly one
 // follow-up so the mutation is guaranteed to be reflected by a run that
@@ -1156,6 +1575,10 @@ async function runReconcile(): Promise<void> {
     );
     desired.set(s.id, new Set(targets.map((t) => t.id)));
   }
+
+  // Path checks first (business rule 135): their diff is independent of the
+  // asset one, which returns early on a quiet tick.
+  await reconcilePathCheckWindows(schedules, shapeById, now);
 
   // Live holds — the other kind of holder (business rule 80). An expired one
   // is deleted HERE rather than by whoever forgot to release it: the whole
@@ -1535,4 +1958,5 @@ async function selfHealStatuses(assetIds: string[], now: Date): Promise<void> {
 async function pruneOldWindows(now: Date): Promise<void> {
   const cutoff = new Date(now.getTime() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   await prisma.assetMaintenanceWindow.deleteMany({ where: { endedAt: { lt: cutoff } } });
+  await prisma.pathCheckMaintenanceWindow.deleteMany({ where: { endedAt: { lt: cutoff } } });
 }

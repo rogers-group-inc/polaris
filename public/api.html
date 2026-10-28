@@ -230,6 +230,7 @@
       <a href="#quarantine">Quarantine (SIEM)</a>
       <a href="#dashboard">Dashboard &amp; NOC feeds</a>
       <a href="#path-monitor">Path Monitor</a>
+      <a href="#maintenance">Maintenance schedules</a>
       <a href="#search">Search</a>
       <a href="#ipam-blocks">IPAM: IP blocks</a>
       <a href="#ipam-subnets">IPAM: Networks</a>
@@ -902,7 +903,11 @@
             <code>okCount</code> / <code>failCount</code> (hosts whose latest run passed / failed
             — a host with no result yet is in neither), <code>unexpectedCount</code> (of the
             failing, those whose run still got an HTTP answer, just not the expected status or
-            body) and <code>lastRunAt</code>.</p>
+            body) and <code>lastRunAt</code>. <code>maintenance: { inMaintenance, windows[] }</code>
+            says whether it is paused by a <a href="#maintenance">maintenance schedule</a> right
+            now; each window carries <code>scheduleId, scheduleName, startedAt</code> and the
+            current occurrence's end as <code>until</code> (the server's wall clock,
+            <code>"YYYY-MM-DDTHH:MM"</code>) and <code>untilUtc</code>.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/path-checks"</code></pre>
         </div>
@@ -1109,6 +1114,116 @@
             (<code>ip: null</code> and <code>-1</code> RTTs for probes that got no reply), plus
             <code>assetId, hostname, monitorStatus, interfaceName, subnetCidr</code> when the
             address belongs to something Polaris knows, as it stood when the trace was stored.</p>
+        </div>
+      </section>
+
+      <section id="maintenance">
+        <h2>Maintenance schedules</h2>
+        <p>
+          A maintenance schedule pauses either <strong>assets</strong> or <strong>path
+          checks</strong> — never both in one schedule — for a one-time window or on a recurrence.
+          An asset in maintenance stops being polled and alerted on; a path check in maintenance
+          stops running on every agent host and on the server, and its <code>path*</code>
+          automations neither fire nor send reminders or escalations. An alert already open stays
+          open and recovers on its own once the window ends. All times are the
+          <strong>Polaris server's wall clock</strong>, written <code>"YYYY-MM-DDTHH:MM"</code>
+          with no offset — read <code>GET /maintenance-schedules/server-time</code> before
+          building one. Every route gates on <code>maintenanceManagement</code>; a write applies
+          at once, so a schedule that is already in its window takes effect before the call
+          returns.
+        </p>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /maintenance-schedules
+            <span class="gate">maintenanceManagement:read</span></div>
+          <p><code>{ schedules: [...] }</code>, newest first. <code>?target=assets</code> or
+            <code>?target=pathChecks</code> lists only that kind (<code>400</code> on any other
+            value). A schedule is <code>{ id, name, enabled, criteria, assetIds, pathCheckIds,
+            schedule, suppressChildren, createdBy, createdAt, updatedAt }</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /maintenance-schedules/server-time
+            <span class="gate">maintenanceManagement:read</span></div>
+          <p><code>{ now, timeZone, offsetMinutes }</code> — the server's wall clock in the form
+            every schedule time uses, its IANA zone, and its UTC offset (east-positive).</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /maintenance-schedules
+            <span class="gate">maintenanceManagement:write</span></div>
+          <p>Create a schedule; <code>201</code> with <code>{ schedule }</code>. Body:</p>
+          <ul>
+            <li><code>name</code> (required, ≤200), <code>enabled?</code> (default
+              <code>true</code>).</li>
+            <li><strong>Assets:</strong> <code>criteria?</code> (an asset filter — hostname, IP /
+              subnet, model, manufacturer, OS, asset type, integration, behind-FortiGate; not
+              status) and / or <code>assetIds?</code> (≤500). Only monitored assets enter.
+              <code>suppressChildren?</code> (default <code>true</code>) marks devices behind an
+              asset in maintenance as down for dependency suppression.</li>
+            <li><strong>Path checks:</strong> <code>pathCheckIds</code> (≤500), instead of the
+              two above. <code>400</code> on a body carrying both, or naming a check that does not
+              exist.</li>
+            <li><code>schedule</code>: a one-time window <code>{ "version": 1, "kind": "oneshot",
+              "startAt", "endAt" }</code> — or <code>"startNow": true</code> in place of
+              <code>startAt</code> to start at the server's own <em>now</em> — or a recurrence
+              <code>{ "version": 1, "kind": "recurring", "freq": "daily" | "weekly" | "monthly" |
+              "yearly", … }</code> with <code>daysOfWeek</code> (weekly, 0 = Sunday),
+              <code>dayOfMonth</code> (monthly) or <code>month</code> + <code>day</code> (yearly),
+              and <code>hours: [{ startTime, endTime }]</code> (<code>"HH:MM"</code>; an end at or
+              before the start runs past midnight; omitted = all day), plus optional
+              <code>activeFrom</code> / <code>activeUntil</code> dates.</li>
+          </ul>
+          <p>A one-time schedule naming a single asset or a single path check, with no
+            criteria, removes itself once its window has ended.</p>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ERP upgrade","pathCheckIds":["&lt;check id&gt;"],"schedule":{"version":1,"kind":"oneshot","startNow":true,"endAt":"2026-11-01T06:00"}}' \
+  "<span class="js-base-url">/api/v1</span>/maintenance-schedules"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /maintenance-schedules/:id
+            <span class="gate">maintenanceManagement:write</span></div>
+          <p>Replace a schedule — the full body <code>POST</code> takes, not a patch: a field you
+            leave out returns to its default (<code>suppressChildren</code> to
+            <code>true</code>). Disabling one ends its open windows at once.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /maintenance-schedules/:id
+            <span class="gate">maintenanceManagement:write</span></div>
+          <p><code>204</code>. Its open windows end at once; assets return to the status they
+            had, path checks resume running.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /maintenance-schedules/occurrences?from=YYYY-MM-DD&amp;to=YYYY-MM-DD
+            <span class="gate">maintenanceManagement:read</span></div>
+          <p><code>{ from, to, truncated, occurrences: [{ scheduleId, name, enabled, kind, adhoc,
+            target, start, end }] }</code> — every schedule's windows over the day range (at most
+            400 days), times in the server's wall clock. <code>target</code> is
+            <code>assets</code> or <code>pathChecks</code>.</p>
+        </div>
+
+        <h3>Path checks</h3>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /maintenance-schedules/path-checks/:checkId
+            <span class="gate">maintenanceManagement:read</span></div>
+          <p><code>{ inMaintenance, windows: [...], schedules: [{ id, name, enabled, kind,
+            activeNow, nextStart, nextEnd }] }</code> — whether the check is paused now, by which
+            windows (the <code>/path-checks</code> row's shape), and every schedule that names
+            it. <code>404</code> for an unknown check.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /maintenance-schedules/path-checks/:checkId/release
+            <span class="gate">maintenanceManagement:write</span></div>
+          <p><code>{ released }</code> — ends the check's maintenance now, so it resumes on its
+            agents' next config refresh. A recurring schedule takes it again at its next
+            occurrence, not later in this one; a one-time schedule naming only this check is
+            removed. <code>released: false</code> when it was not in maintenance.</p>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" \
+  "<span class="js-base-url">/api/v1</span>/maintenance-schedules/path-checks/&lt;check id&gt;/release"</code></pre>
         </div>
       </section>
 

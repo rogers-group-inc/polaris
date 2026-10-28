@@ -26,6 +26,8 @@ const h = vi.hoisted(() => ({
     assetTelemetrySample: { findMany: vi.fn() },
     assetPathCheckSample: { groupBy: vi.fn(), findMany: vi.fn() },
     pathCheck: { findMany: vi.fn() },
+    // Business rule 135: open path-check maintenance windows.
+    pathCheckMaintenanceWindow: { findMany: vi.fn() },
     event: { findMany: vi.fn() },
     setting: { findUnique: vi.fn(), upsert: vi.fn() },
     hostMetricsSample: { findMany: vi.fn() },
@@ -103,6 +105,56 @@ beforeEach(() => {
   h.prisma.asset.findMany.mockResolvedValue([scopeAsset(HOST)]);
   h.prisma.managedAgent.findMany.mockResolvedValue([{ assetId: HOST }]);
   h.prisma.pathCheck.findMany.mockResolvedValue([{ id: CHECK, name: "ERP" }]);
+  h.prisma.pathCheckMaintenanceWindow.findMany.mockResolvedValue([]);
+});
+
+describe("a path check in maintenance (business rule 135)", () => {
+  const OTHER = "check-web";
+  /** Grouped counts that honour the read's checkId clause, as Postgres would. */
+  function runsWhere(rows: Array<[check: string, failed: number, passed: number]>) {
+    const at = new Date();
+    h.prisma.assetPathCheckSample.groupBy.mockImplementation(async (args: any) => {
+      const notIn: string[] = args.where.checkId?.notIn ?? [];
+      return rows.filter(([c]) => !notIn.includes(c)).flatMap(([c, failed, passed]) => [
+        ...(failed ? [{ assetId: HOST, checkId: c, ok: false, _count: { _all: failed }, _max: { timestamp: at } }] : []),
+        ...(passed ? [{ assetId: HOST, checkId: c, ok: true, _count: { _all: passed }, _max: { timestamp: at } }] : []),
+      ]);
+    });
+  }
+  beforeEach(() => {
+    h.prisma.pathCheckMaintenanceWindow.findMany.mockResolvedValue([{ pathCheckId: CHECK }]);
+  });
+
+  it("never fires, even on failures recorded before the window opened", async () => {
+    runsWhere([[CHECK, 10, 0]]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+  });
+
+  it("freezes its live alert rather than clearing it as vanished while the host reports other checks", async () => {
+    h.prisma.notificationRuleState.findMany.mockResolvedValue([{
+      id: "s1", ruleId: "r1", assetId: HOST, dimensionKey: CHECK, state: "firing", notificationId: "n9",
+      firedAt: new Date(Date.now() - 60_000), conditionMetSince: new Date(Date.now() - 60_000),
+      recoveredSince: null, lastValue: 80, firingSeverity: null, bandMetSince: null,
+    }]);
+    runsWhere([[CHECK, 10, 0], [OTHER, 0, 10]]);
+    await evaluateAllNotificationRules();
+    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
+    const upd = h.prisma.notificationRuleState.update.mock.calls.find((c: any) => c[0].where.id === "s1");
+    expect(upd).toBeUndefined();
+  });
+
+  it("restarts a pending debounce rather than carrying it through the window", async () => {
+    h.prisma.notificationRuleState.findMany.mockResolvedValue([{
+      id: "s2", ruleId: "r1", assetId: HOST, dimensionKey: CHECK, state: "pending", notificationId: null,
+      firedAt: null, conditionMetSince: new Date(Date.now() - 30_000),
+      recoveredSince: null, lastValue: 80, firingSeverity: null, bandMetSince: null,
+    }]);
+    runsWhere([[CHECK, 10, 0]]);
+    await evaluateAllNotificationRules();
+    const upd = h.prisma.notificationRuleState.update.mock.calls.find((c: any) => c[0].where.id === "s2");
+    expect(upd?.[0].data).toMatchObject({ state: "clear", conditionMetSince: null });
+  });
 });
 
 describe("Path Monitor pool (business rule 85, 2026-10-05)", () => {
