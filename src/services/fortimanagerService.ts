@@ -2965,6 +2965,8 @@ export async function discoverDhcpSubnets(
           for (const sw of fgResult.fortiSwitches)  sw.device         = sw.device === fgDeviceName ? deviceName : sw.device;
           for (const ap of fgResult.fortiAps)       ap.device         = ap.device === fgDeviceName ? deviceName : ap.device;
           for (const inv of fgResult.deviceInventory) inv.device      = inv.device === fgDeviceName ? deviceName : inv.device;
+          for (const a of fgResult.arpTable)        a.fortigateDevice = a.fortigateDevice === fgDeviceName ? deviceName : a.fortigateDevice;
+          for (const m of fgResult.switchMacTable)  m.fortigateDevice = m.fortigateDevice === fgDeviceName ? deviceName : m.fortigateDevice;
 
           // Prefer FMG-configured coordinates (Device Manager → Geographical
           // Location) and fall back to whatever the FortiGate itself returned
