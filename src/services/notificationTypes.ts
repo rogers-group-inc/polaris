@@ -17,6 +17,7 @@ import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
 import { SENSOR_CLASS_UNITS } from "../utils/hardwareSensors.js";
 import { POE_STATUS_VALUES } from "../utils/poePorts.js";
 import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
+import { PRIORITY_TAGS } from "../utils/priorityTags.js";
 import {
   quietConfigSchema,
   quietTimeConfigSchema,
@@ -749,6 +750,12 @@ const dimensionFilterSchema = z
     // of the interface's name OR its description (interfacePatternMatch). As
     // long as the SD-WAN pair below because it holds a list too.
     ifNamePattern: z.string().max(1000).optional(),
+    // INTERFACE TAG (business rule 133(g)): one tag name, or several joined by
+    // "|" — any-of, each matched whole and case-insensitively against the
+    // port's AssetInterfaceTag rows (interfaceTagMatch). Narrows the readings
+    // of the interface conditions without keying them, like sdwanMemberIp, so
+    // it is in no *_DIMENSIONS list. Valid only on INTERFACE_TAG_TARGETS.
+    ifTag: z.string().max(1000).optional(),
     // ── Device-identifier dimensions (DEVICE_FILTER_DIMENSIONS below) ──────
     // The asset's own identity — hostname / IP / MAC / manufacturer / model —
     // available on EVERY asset metric and asset-state field. They narrow the
@@ -3040,6 +3047,11 @@ const ruleInputBaseSchema = z.object({
   // trigger that does not report per component — there would be nothing to
   // fold, and a checkbox that silently does nothing is worse than none.
   groupByAsset: z.boolean().optional(),
+  // Business rule 136(e): the alert takes the severity of the HIGHEST Priority
+  // tag on the device (monitor status is down) or on the port (interface oper
+  // status is down); an untagged device / port does not alert. Refused by
+  // validatePrioritySeverity on any other trigger or beside severity bands.
+  severityFromPriorityTag: z.boolean().optional(),
   channels: z.array(z.string().max(50)).default(["in_app"]),
   emailComposition: emailCompositionSchema.optional().nullable(),
   // Accepts BOTH shapes: legacy email tiers (pre-wizard UI) and v2 tiers of
@@ -3114,6 +3126,8 @@ export interface RuleInput {
   /** Fold this automation's per-component alerts into one alert per device
    *  (business rule 75). Per-dimension triggers only. */
   groupByAsset: boolean;
+  /** Severity follows the device's / port's Priority tag (business rule 136(e)). */
+  severityFromPriorityTag: boolean;
   channels: string[];
   emailComposition: EmailComposition | null;
   /** As posted (legacy email tiers OR v2 tiers-of-actions) — stored verbatim;
@@ -3263,6 +3277,7 @@ function normalizeRuleInputCore(raw: Omit<RuleInputRaw, "trigger">): Omit<RuleIn
     messageTemplate: raw.messageTemplate ?? null,
     requireAckNote: raw.requireAckNote === true,
     groupByAsset: raw.groupByAsset === true,
+    severityFromPriorityTag: raw.severityFromPriorityTag === true,
     channels: raw.channels,
     emailComposition: raw.emailComposition ?? null,
     escalation: raw.escalation ?? null,
@@ -3525,6 +3540,66 @@ function validateTagCondition(trigger: Trigger | undefined, ctx: z.RefinementCtx
   }
 }
 
+/**
+ * `dimensionFilter.ifTag` only means something on a condition that reads one
+ * interface per reading (INTERFACE_TAG_TARGETS) — business rule 133(g). Refused
+ * anywhere else rather than kept inert, the way the member-IP filter is.
+ */
+function validateInterfaceTagFilter(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
+  if (!trigger) return;
+  const leaves: Array<{ type: string; metric?: string; field?: string; dimensionFilter?: { ifTag?: string } }> =
+    trigger.type === "composite" ? (collectTriggerLeaves(trigger) as never) : [trigger as never];
+  const offender = leaves.find((l) => {
+    if (!l.dimensionFilter?.ifTag) return false;
+    const target = l.type === "asset_state" ? l.field : l.type === "asset_metric" ? l.metric : undefined;
+    return !INTERFACE_TAG_TARGETS.has(target ?? "");
+  });
+  if (offender) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: trigger.type === "composite" ? ["trigger", "children"] : ["trigger", "dimensionFilter", "ifTag"],
+      message:
+        "an interface tag filter only applies to the interface conditions — oper / admin status, IP address, PoE status, throughput and errors",
+    });
+  }
+}
+
+/**
+ * Business rule 136(e). Which Priority tag a trigger's severity can follow:
+ * the DEVICE's for "monitor status is down", the PORT's for "interface oper
+ * status is down", null for anything else. Bare triggers only — a composite
+ * folds several leaves per device, and which leaf's subject would own the tag
+ * has no single answer.
+ */
+export function priorityTagSubjectOf(trigger: unknown): "device" | "interface" | null {
+  const t = trigger as { type?: string; field?: string; operator?: string; value?: unknown } | null | undefined;
+  if (!t || t.type !== "asset_state" || t.operator !== "==" || t.value !== "down") return null;
+  if (t.field === "monitorStatus") return "device";
+  if (t.field === "ifOperStatus") return "interface";
+  return null;
+}
+
+function validatePrioritySeverity(
+  v: { trigger?: Trigger; severityBands?: SeverityBand[] | null; severityFromPriorityTag?: boolean | null },
+  ctx: z.RefinementCtx,
+): void {
+  if (v.severityFromPriorityTag !== true) return;
+  if (!priorityTagSubjectOf(v.trigger)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["severityFromPriorityTag"],
+      message: 'severity can follow the Priority tag only on "monitor status is down" or "interface oper status is down"',
+    });
+  }
+  if (v.severityBands && v.severityBands.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["severityFromPriorityTag"],
+      message: "an automation's severity follows the Priority tag or its severity bands, not both",
+    });
+  }
+}
+
 function validateMemberIpFilter(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
   if (!trigger) return;
   const leaves: Array<{ type: string; metric?: string; field?: string; dimensionFilter?: { sdwanMemberIp?: string } }> =
@@ -3574,6 +3649,7 @@ function validateRuleV2(
     actions?: AutomationAction[] | null;
     repeat?: RepeatConfig | null;
     groupByAsset?: boolean | null;
+    severityFromPriorityTag?: boolean | null;
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -3585,6 +3661,8 @@ function validateRuleV2(
   validateGrouping(v, ctx);
   validateIncludeServer(trigger, reset, ctx);
   validateMemberIpFilter(trigger, ctx);
+  validateInterfaceTagFilter(trigger, ctx);
+  validatePrioritySeverity(v, ctx);
   validateTagCondition(trigger, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
@@ -4842,6 +4920,31 @@ export const SDWAN_MEMBER_IP_TARGETS: ReadonlySet<string> = new Set([
   "sdwanMemberState", "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss",
 ]);
 
+// ── Interface tag (business rule 133(g)) ────────────────────────────────────
+// A filter on the conditions that read one INTERFACE per reading, by the tags
+// on that port (AssetInterfaceTag, manual and auto alike): "interface down on
+// ports tagged priority-critical". Derived from the interface-name dimension so
+// the two can't disagree about which conditions are about an interface. Kept
+// out of METRIC_DIMENSIONS / FIELD_DIMENSIONS for the reason sdwanMemberIp is:
+// it narrows readings, it does not key them.
+export const INTERFACE_TAG_TARGETS: ReadonlySet<string> = new Set(
+  [...Object.entries(METRIC_DIMENSIONS), ...Object.entries(FIELD_DIMENSIONS)]
+    .filter(([, dims]) => dims.includes("ifNamePattern"))
+    .map(([key]) => key),
+);
+
+/**
+ * Does a port carrying `tags` pass an `ifTag` filter? Pure. Each "|" term is a
+ * whole tag name, compared case-insensitively — the same matching the device
+ * `tag` condition uses, so "critical" never selects "priority-critical". No
+ * terms = match; a port with no tags fails any non-empty filter.
+ */
+export function interfaceTagMatch(tags: readonly string[] | null | undefined, pattern?: string | null): boolean {
+  const terms = sdwanDimensionTerms(pattern).map((t) => t.toLowerCase());
+  if (terms.length === 0) return true;
+  return (tags ?? []).some((t) => terms.includes(t.toLowerCase()));
+}
+
 export interface MemberIpFilter { operator: "==" | "!="; ip: string }
 
 /** "!= 0.0.0.0" → {operator, ip}; null for anything else. Whitespace-tolerant;
@@ -4941,6 +5044,7 @@ export function deviceFilterMatch(
 export function triggerDimensionApplicable(metricOrField: string, dimension: string): boolean {
   if (METRIC_DIMENSIONS[metricOrField]?.includes(dimension)) return true;
   if (FIELD_DIMENSIONS[metricOrField]?.includes(dimension)) return true;
+  if (dimension === "ifTag") return INTERFACE_TAG_TARGETS.has(metricOrField);
   return (
     (DEVICE_FILTER_DIMENSIONS as readonly string[]).includes(dimension) &&
     ((ASSET_METRICS as readonly string[]).includes(metricOrField) ||
@@ -5803,6 +5907,19 @@ export function buildSchemaCatalog() {
     // The conditions that take the SD-WAN member IP address filter (business
     // rule 98). Absent on a pre-upgrade server; the wizard then offers no row.
     sdwanMemberIpTargets: Array.from(SDWAN_MEMBER_IP_TARGETS),
+    // The conditions that take the interface tag filter (business rule
+    // 133(g)). Absent on a pre-upgrade server; the wizard then offers no row.
+    interfaceTagTargets: Array.from(INTERFACE_TAG_TARGETS),
+    // Business rule 136(e): which triggers may take their severity from the
+    // Priority tag, and the tag → severity ladder the wizard explains. Absent
+    // on a pre-upgrade server; the wizard then offers no switch.
+    prioritySeverity: {
+      triggers: [
+        { field: "monitorStatus", operator: "==", value: "down", subject: "device" },
+        { field: "ifOperStatus", operator: "==", value: "down", subject: "interface" },
+      ],
+      tags: PRIORITY_TAGS.map((p) => ({ name: p.name, severity: p.severity })),
+    },
     // Down-detection authority: which leaf shape carries the missed-poll count,
     // and what an uncovered device reads instead. Sent as data rather than
     // hardcoded in the wizard so the count control, its bounds and the "passive"
@@ -6044,6 +6161,7 @@ export function buildSchemaCatalog() {
       sensorClass: "for sensors of class {value}",
       sensorNamePattern: "on sensors matching {value}",
       ifNamePattern: "on interfaces matching {value}",
+      ifTag: "on interfaces tagged {value}",
       hostnamePattern: "on devices whose hostname matches {value}",
       ipPattern: "on devices whose IP matches {value}",
       macPattern: "on devices whose MAC matches {value}",

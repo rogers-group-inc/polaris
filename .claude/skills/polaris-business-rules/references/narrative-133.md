@@ -90,6 +90,43 @@ no query unless a VLAN moved. The picker's VLAN list is two grouped reads.
 - **Tagging ports for `interfaceName` leaves too.** Not asked for; a name leaf already says
   which ports, and the VLAN case is the one the operator described.
 
+### (g) Automations narrowed by an interface's tag (2026-10-28)
+
+The operator asked for it in one sentence: a switch with several monitored interfaces, some
+tagged Priority **Critical** and some **Warning**, alerting at the matching severity. Port
+tags already existed (this rule's (a)); an automation could only select ports by name or
+description (rule 124), so a priority split meant maintaining a name list per automation.
+
+**Shape: a filter, not a dimension.** `ifTag` copies rule 98's `sdwanMemberIp`, not
+`ifNamePattern`. It is kept OUT of `METRIC_DIMENSIONS` / `FIELD_DIMENSIONS` because those
+are the reading-KEY space (`dimensionSpaceOf`): adding it would split interface leaves into a
+second space and break a reset tree mixing a filtered and an unfiltered interface leaf. The
+readings are still keyed by `ifName`; the tag only decides which ports produce one. It does
+ride `triggerSignature` (every `dimensionFilter` key does), so a Critical and a Warning
+automation on the same trigger never carve each other out under rule 18.
+
+**Targets derived, not listed.** `INTERFACE_TAG_TARGETS` is every metric / field whose
+dimensions include `ifNamePattern`, so a new interface condition takes the tag filter the day
+it takes a name filter.
+
+**Whole-name match.** The device `tag` condition matches whole names, case-insensitively;
+substring (every other `*Pattern`) would let "critical" select "priority-critical". The
+wizard's match cue mirrors it (`awInterfaceTagMatch`).
+
+**Fails closed on a failed read, by throwing.** Rule 98 keeps every member when its address
+read fails, because a kept reading there is harmless. Here, failing open would raise a
+"critical" automation about every port, and failing closed would drop readings, which
+clears live alerts as if the tags had been removed. Both are wrong, so the read throws like
+the sample query beside it and the rule is skipped for that tick.
+
+**Scale.** One indexed read of `asset_interface_tags` per interface arm per tick, only when
+the filter is set, narrowed in SQL to the scoped assets AND the named tags (`@@index([tag])`),
+so at 2000 assets it returns the tagged ports, not the table.
+
+Rejected: a new trigger field ("interface tag is X") ANDed with the interface leaf. Two leaves
+in a composite fold per DEVICE, so it could never say "this port is down AND this port is
+critical"; that is the same reason rule 98 is a filter.
+
 <a id="rule-133-invariant"></a>
 
 ### Rule 133 — the invariant as first stated

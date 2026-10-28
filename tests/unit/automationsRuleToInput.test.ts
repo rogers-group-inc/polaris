@@ -91,6 +91,24 @@ describe("_ruleToInput", () => {
     expect(ruleInputSchema.parse(body).repeat).toEqual({ everyMin: 15, stopOn: "acknowledge" });
   });
 
+  it("resends the two boolean columns, so the enable toggle can't switch them off", () => {
+    // updateRule stores each as `input.x === true`: an omitted flag is FALSE.
+    // Grouping (rule 75) used to be lost on every flip of the list toggle.
+    const grouped = { ...loadedRule(), groupByAsset: true };
+    expect(ruleToInput(grouped, { enabled: false }).groupByAsset).toBe(true);
+    const prio = {
+      ...loadedRule(),
+      trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down" },
+      reset: { mode: "auto" },
+      severityBands: null,
+      bandNotify: null,
+      severityFromPriorityTag: true,
+    };
+    const body = ruleToInput(prio, { enabled: false });
+    expect(body.severityFromPriorityTag).toBe(true);
+    expect(ruleInputSchema.parse(body).severityFromPriorityTag).toBe(true);
+  });
+
   it("sends null for an automation that does not repeat", () => {
     const r = loadedRule();
     r.repeat = null;

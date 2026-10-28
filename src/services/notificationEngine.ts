@@ -145,6 +145,8 @@ import {
   parseMemberIpFilter,
   memberIpPasses,
   interfacePatternMatch,
+  interfaceTagMatch,
+  priorityTagSubjectOf,
   type DeliveryOwner,
   type ShadowIndex as ShadowIndexOf,
   eventFeedsAutomations,
@@ -156,6 +158,8 @@ import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "
 import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
+import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
+import { PRIORITY_TAGS, prioritySeverityOf, type PrioritySeverity } from "../utils/priorityTags.js";
 import { computeStorageForecast } from "./storageForecastService.js";
 import { computeMemoryForecast, computeMemoryProjection, forecastLevelReading } from "./memoryForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
@@ -321,6 +325,10 @@ interface DbRule {
    *  (business rule 75). Never read directly — go through `ruleGroupsByAsset`,
    *  which also checks the trigger actually reports per component. */
   groupByAsset: boolean;
+  /** Business rule 136(e): severity follows the device's / port's Priority
+   *  tag. Optional so a rule built without it reads as off. Read through
+   *  `rulePrioritySubject`, which also checks the trigger qualifies. */
+  severityFromPriorityTag?: boolean;
   /** The AlertGroup this rule delivers through, or null. Membership implies
    *  the per-component fold AND folds this rule's alerts together with every
    *  other member's on the same device. */
@@ -1175,6 +1183,142 @@ function reduceReadings(
  * AssetInterface narrowed to the gates in play (the member rows, and which
  * gates have any address), none at all when the filter is unset.
  */
+/**
+ * Business rule 133(g): the port test for `dimensionFilter.ifTag` — does this
+ * (asset, interface) carry one of the named tags? Returns a pass-all predicate
+ * with no query when the filter is unset. Otherwise ONE indexed read of
+ * AssetInterfaceTag, narrowed in SQL to the scoped assets and the named tags
+ * (manual and auto rows alike), so at 2000 assets it returns only the tagged
+ * ports, never the whole tag table. A port that fails produces no reading —
+ * the unpinned-interface contract: clearVanishedStates retires a live alert
+ * once its port loses the tag. A failed read throws, like the sample query
+ * beside it; failing open would raise a "critical" rule on every port.
+ */
+async function loadInterfaceTagFilter(
+  df: { ifTag?: string } | undefined,
+  ids: string[],
+): Promise<(assetId: string, ifName: string) => boolean> {
+  const terms = sdwanDimensionTerms(df?.ifTag);
+  if (terms.length === 0) return () => true;
+  if (ids.length === 0) return () => false;
+  const rows = await prisma.assetInterfaceTag.findMany({
+    where: { assetId: { in: ids }, OR: terms.map((t) => ({ tag: { equals: t, mode: "insensitive" as const } })) },
+    select: { assetId: true, ifName: true, tag: true },
+  });
+  const byPort = new Map<string, string[]>();
+  for (const r of rows) {
+    const key = `${r.assetId}|${r.ifName}`;
+    const list = byPort.get(key) ?? [];
+    list.push(r.tag);
+    byPort.set(key, list);
+  }
+  return (assetId, ifName) => interfaceTagMatch(byPort.get(`${assetId}|${ifName}`), df?.ifTag);
+}
+
+/**
+ * Business rule 136(e): whose Priority tag this rule's severity follows —
+ * "device" (monitor status is down), "interface" (interface oper status is
+ * down) — or null when the rule takes its severity the ordinary way.
+ */
+function rulePrioritySubject(rule: Pick<DbRule, "severityFromPriorityTag" | "trigger">): "device" | "interface" | null {
+  return rule.severityFromPriorityTag ? priorityTagSubjectOf(rule.trigger) : null;
+}
+
+/** Port → its Priority tags, for the ports of `ids`. ONE read narrowed in SQL
+ *  to the five Priority names (case-insensitive), so at 2000 assets it returns
+ *  the prioritised ports, not the tag table. */
+async function loadPortPriorityTags(ids: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (ids.length === 0) return out;
+  const rows = await prisma.assetInterfaceTag.findMany({
+    where: { assetId: { in: ids }, OR: PRIORITY_TAGS.map((p) => ({ tag: { equals: p.name, mode: "insensitive" as const } })) },
+    select: { assetId: true, ifName: true, tag: true },
+  });
+  for (const r of rows) {
+    const key = `${r.assetId}|${r.ifName}`;
+    const list = out.get(key) ?? [];
+    list.push(r.tag);
+    out.set(key, list);
+  }
+  return out;
+}
+
+/**
+ * Business rule 136(e): the Priority severity of each reading, keyed
+ * `assetId|dimKey`, with every reading whose device (or port) carries no
+ * Priority tag DROPPED — an untagged subject is not this automation's to
+ * alert on, and a live alert on one retires through clearVanishedStates
+ * (its `tagGateGone` carve-out). The device's tags ride the scope row (no
+ * query); a port's take one read (loadPortPriorityTags). A no-op returning
+ * null for an ordinary rule.
+ */
+async function applyPrioritySeverity(
+  rule: DbRule,
+  readings: Reading[],
+  assetIndex: Map<string, ScopeAssetRow>,
+): Promise<{ readings: Reading[]; severityByKey: Map<string, PrioritySeverity> } | null> {
+  const subject = rulePrioritySubject(rule);
+  if (!subject) return null;
+  const portTags = subject === "interface"
+    ? await loadPortPriorityTags(Array.from(new Set(readings.map((r) => r.assetId).filter(Boolean))))
+    : null;
+  const severityByKey = new Map<string, PrioritySeverity>();
+  const kept: Reading[] = [];
+  for (const r of readings) {
+    const sev = portTags
+      ? prioritySeverityOf(portTags.get(`${r.assetId}|${r.dimKey}`))
+      : prioritySeverityOf(assetIndex.get(r.assetId)?.tags);
+    if (!sev) continue;
+    severityByKey.set(`${r.assetId || ""}|${r.dimKey}`, sev);
+    kept.push(r);
+  }
+  return { readings: kept, severityByKey };
+}
+
+/**
+ * The tag half of clearVanishedStates' no-readings carve-out (business rules
+ * 133(g) and 136(e)). A device that produced NO readings for a rule is frozen
+ * there, because a collection gap is not recovery. But a reading dropped
+ * because its port lost the filtered tag, or its device / port lost every
+ * Priority tag, is a configuration edge, like an unpin: without this, the
+ * alert on a switch's ONLY Critical port would fire forever once the tag came
+ * off. Returns the state-row ids whose subject no longer passes the rule's
+ * tag gates. Runs only over the frozen candidates, so the steady-state tick
+ * pays nothing; at most one port-tag read.
+ */
+async function tagGateGone(
+  rule: DbRule,
+  rows: SweepStateRow[],
+  assetIndex: Map<string, ScopeAssetRow>,
+): Promise<Set<string>> {
+  const gone = new Set<string>();
+  if (rows.length === 0) return gone;
+  const ifTag = (rule.trigger as { dimensionFilter?: { ifTag?: string } }).dimensionFilter?.ifTag;
+  const subject = rulePrioritySubject(rule);
+  const portRows = rows.filter((st) => st.dimensionKey && (ifTag || subject === "interface"));
+  let portTags: Map<string, string[]> | null = null;
+  if (portRows.length > 0) {
+    portTags = new Map();
+    const tagRows = await prisma.assetInterfaceTag.findMany({
+      where: {
+        OR: portRows.map((st) => ({ assetId: st.assetId as string, ifName: st.dimensionKey })),
+      },
+      select: { assetId: true, ifName: true, tag: true },
+    });
+    for (const r of tagRows) {
+      const key = `${r.assetId}|${r.ifName}`;
+      portTags.set(key, [...(portTags.get(key) ?? []), r.tag]);
+    }
+  }
+  for (const st of rows) {
+    const tagsOnPort = portTags?.get(`${st.assetId}|${st.dimensionKey}`);
+    if (ifTag && st.dimensionKey && !interfaceTagMatch(tagsOnPort, ifTag)) gone.add(st.id);
+    else if (subject === "interface" && st.dimensionKey && !prioritySeverityOf(tagsOnPort)) gone.add(st.id);
+    else if (subject === "device" && !prioritySeverityOf(assetIndex.get(st.assetId as string)?.tags)) gone.add(st.id);
+  }
+  return gone;
+}
+
 async function filterByMemberIp(
   df: { sdwanMemberIp?: string } | undefined,
   readings: Reading[],
@@ -1730,7 +1874,8 @@ async function resolveAssetMetricReadings(
       // Pinned interfaces only (interfaceIsPinned) — the same default the
       // ifOperStatus/ifAdminStatus/ifIpAddress/poeStatus resolvers apply. See its header for
       // why the pinned-only sample table isn't a gate by itself.
-      const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern));
+      const tagged = await loadInterfaceTagFilter(df, ids);
+      const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern) && tagged(r.assetId, r.ifName));
       return rateReadings(filtered, index, (r) => r.ifName, (r) => interfaceDimLabel(r.ifName, r.alias), (r) => num((r as any)[col]), mult);
     }
     case "ipsecThroughputBps": {
@@ -2042,15 +2187,18 @@ const POE_INVENTORY_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 async function unpinnedPoeFaultReadings(
   index: Map<string, ScopeAssetRow>,
   ids: string[],
-  df: { ifNamePattern?: string },
+  df: { ifNamePattern?: string; ifTag?: string },
   mk: (a: ScopeAssetRow, dimKey: string, dimLabel: string, value: any) => Reading,
 ): Promise<Reading[]> {
   if (ids.length === 0) return [];
   const freshSince = new Date(Date.now() - POE_INVENTORY_MAX_AGE_MS);
-  const rows = await prisma.assetInterface.findMany({
-    where: { assetId: { in: ids }, poeStatus: { not: null }, lastSeen: { gte: freshSince } },
-    select: { assetId: true, ifName: true, alias: true, poeStatus: true, lastSeen: true },
-  });
+  const [rows, tagged] = await Promise.all([
+    prisma.assetInterface.findMany({
+      where: { assetId: { in: ids }, poeStatus: { not: null }, lastSeen: { gte: freshSince } },
+      select: { assetId: true, ifName: true, alias: true, poeStatus: true, lastSeen: true },
+    }),
+    loadInterfaceTagFilter(df, ids),
+  ]);
   const out: Reading[] = [];
   for (const r of rows) {
     const a = index.get(r.assetId);
@@ -2063,6 +2211,7 @@ async function unpinnedPoeFaultReadings(
     // two paths can't drift into disagreeing about what a port reports.
     if (r.poeStatus === "disabled") continue;
     if (!interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern)) continue;
+    if (!tagged(r.assetId, r.ifName)) continue;
     out.push({
       ...mk(a, r.ifName, interfaceDimLabel(r.ifName, r.alias), r.poeStatus),
       readingAt: r.lastSeen,
@@ -2213,6 +2362,7 @@ async function resolveAssetStateReadings(
       // row — see interfaceStateSeries for why, and for what a duplicate alert
       // email per collection gap used to look like.
       const byPort = groupSeries(rows, (r) => `${r.assetId}|${r.ifName}`);
+      const tagged = await loadInterfaceTagFilter(df, ids);
       const out: Reading[] = [];
       for (const g of byPort) {
         const picked = interfaceStateSeries(trigger.field, g);
@@ -2227,6 +2377,7 @@ async function resolveAssetStateReadings(
         // is unaffected: a disabled port reports "disabled", never "fault".
         if (trigger.field === "poeStatus" && r.poeStatus === "disabled") continue;
         if (!interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern)) continue;
+        if (!tagged(r.assetId, r.ifName)) continue;
         // An address is compared as its BARE form on both the reading and the
         // series, so the shape a transport happened to report it in ("0.0.0.0"
         // vs the CMDB pair "0.0.0.0 0.0.0.0") can't decide whether an operator's
@@ -2828,6 +2979,7 @@ async function clearVanishedStates(
   const pinTest = pinTestForTrigger(rule.trigger);
   const vanished: Array<{ st: SweepStateRow; reason: "scope" | "dimension" }> = [];
   const scopeChecks: SweepStateRow[] = [];
+  const frozen: SweepStateRow[] = [];
   for (const st of states) {
     if (!st.assetId) {
       // host/global rows have no scope to leave — except the server's rows on
@@ -2847,11 +2999,18 @@ async function clearVanishedStates(
         vanished.push({ st, reason: "dimension" }); // unpinned — config edge, clear even with no readings
       } else if (assetsWithReadings.has(st.assetId)) {
         vanished.push({ st, reason: "dimension" });
+      } else {
+        // The asset reported nothing this tick — stay frozen, unless a tag
+        // gate dropped it (tagGateGone, below).
+        frozen.push(st);
       }
-      // else: the asset reported nothing this tick — stay frozen
     } else {
       scopeChecks.push(st);
     }
+  }
+  if (frozen.length > 0) {
+    const gone = await tagGateGone(rule, frozen, assetIndex);
+    for (const st of frozen) if (gone.has(st.id)) vanished.push({ st, reason: "dimension" });
   }
   if (scopeChecks.length > 0) {
     const ids = Array.from(new Set(scopeChecks.map((s) => s.assetId as string)));
@@ -3058,6 +3217,20 @@ async function evaluateThresholdRule(
       for (const r of frozenReadings) frozenFreshIds.add(r.assetId);
     }
   }
+  // Business rule 136(e): severity from the Priority tag. Untagged readings are
+  // dropped here, before the loop, so they neither fire nor count as "the
+  // asset reported" for the vanished-state sweep.
+  let prioritySeverityByKey: Map<string, PrioritySeverity> | null = null;
+  if (rulePrioritySubject(rule)) {
+    const index = new Map([...activeAssets, ...suppressedAssets].map((a) => [a.id, a]));
+    const live = await applyPrioritySeverity(rule, readings, index);
+    const held = await applyPrioritySeverity(rule, frozenReadings, index);
+    if (live && held) {
+      readings = live.readings;
+      frozenReadings = held.readings;
+      prioritySeverityByKey = new Map([...live.severityByKey, ...held.severityByKey]);
+    }
+  }
   // Business rule 78 — which FLAVOUR each live alert of this rule was raised
   // in (plain Down, or dependency-down), so a firing row can be handed off when
   // the asset's suppression flag no longer agrees with its alert. Read only for
@@ -3135,6 +3308,10 @@ async function evaluateThresholdRule(
         ? sustainedSeverityByRun(tierPolls, tiers)
         : sustainedSeverity(metSince, tiers, now.getTime()))
       : null;
+    // Business rule 136(e): the Priority tag's severity, when the rule follows
+    // it. Never set beside bands (validatePrioritySeverity refuses the pair).
+    const prioritySev = prioritySeverityByKey?.get(key) ?? null;
+    const firedSev = sustainedSev ?? prioritySev;
     /** Persist the current-state counters, but only when this reading moved
      *  them — a series-backed rule stores nothing, having nothing to remember. */
     const runPatch = (): Prisma.NotificationRuleStateUpdateInput =>
@@ -3143,9 +3320,9 @@ async function evaluateThresholdRule(
         : {};
     // The grouping buffer rides fireOpts so the six fire() sites below stay
     // untouched — every one of them already threads it.
-    const fireOpts = sustainedSev || groupBuf
+    const fireOpts = firedSev || groupBuf
       ? {
-        ...(sustainedSev ? { severity: sustainedSev, actions: tierForSeverity(rule, sustainedSev).actions } : {}),
+        ...(firedSev ? { severity: firedSev, actions: tierForSeverity(rule, firedSev).actions } : {}),
         ...(groupBuf ? { group: groupBuf } : {}),
       }
       : undefined;
@@ -3227,6 +3404,11 @@ async function evaluateThresholdRule(
           // Crossed into a band that has now held for its own duration —
           // escalate/de-escalate the live alert.
           await applyBandTransition(rule, reading, st, sustainedSev, now, metSince);
+        } else if (prioritySev && prioritySev !== (st.firingSeverity ?? rule.severity)) {
+          // Business rule 136(e): the device's (or port's) Priority tag changed
+          // while it was down — the live alert takes the new severity and
+          // re-notifies per bandNotify, the way a band crossing does.
+          await applyBandTransition(rule, reading, st, prioritySev, now);
         } else if (st.recoveredSince || metSinceChanged) {
           // Re-met mid-recovery: cancel the clear-sustain timer (transition-only
           // write — a steadily-firing condition costs nothing per tick). Also
@@ -4375,6 +4557,10 @@ export function tierForSeverity(rule: DbRule, severity: string): EffectiveTier {
         escalation: bandEsc ?? rule.escalation,
       };
     }
+    // A severity no band names: the Priority tag's (business rule 136(e)).
+    // It keeps the severity it was asked for, with the base actions — every
+    // priority shares the automation's own actions and escalation.
+    if (rulePrioritySubject(rule)) return { severity, actions: rule.actions, escalation: rule.escalation };
   }
   return { severity: rule.severity, actions: rule.actions, escalation: rule.escalation };
 }
@@ -6866,6 +7052,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       // change triggerSignature and stop a grouped rule shadowing its
       // ungrouped sibling in the carve-out index, business rule 46).
       groupByAsset: r.groupByAsset === true,
+      severityFromPriorityTag: r.severityFromPriorityTag === true,
       alertGroupId: r.alertGroupId ?? null,
       alertGroupFoldBy: r.alertGroup?.foldBy ?? null,
       alertGroupName: r.alertGroup?.name ?? null,

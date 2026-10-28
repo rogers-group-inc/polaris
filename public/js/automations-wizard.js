@@ -584,6 +584,7 @@ function makeAutomationSentences(s) {
   var DIM_PHRASE = Object.assign({
     sensorClass: "for sensors of class {value}", sensorNamePattern: "on sensors matching {value}",
     ifNamePattern: "on interfaces matching {value}",
+    ifTag: "on interfaces tagged {value}",
     hostnamePattern: "on devices whose hostname matches {value}",
     ipPattern: "on devices whose IP matches {value}",
     macPattern: "on devices whose MAC matches {value}",
@@ -894,7 +895,7 @@ function makeAutomationSentences(s) {
   // as min()/max() of a boolean is the same unreadability the state labels fix.
   var FORMULA_STATE_AGG = { latest: "latest", max: "any", min: "all", avg: "avg", median: "median" };
   var FORMULA_DIM = Object.assign({
-    sensorClass: "class=", sensorNamePattern: "name~", ifNamePattern: "if~",
+    sensorClass: "class=", sensorNamePattern: "name~", ifNamePattern: "if~", ifTag: "ifTag=",
     mountPathPattern: "mount~", sdwanRulePattern: "rule~", healthCheck: "health=", link: "member=",
     tunnelName: "tunnel=", widgetId: "widget=", processNamePattern: "process~",
     stateProbeId: "probe=", stateRowPattern: "row~", hostnamePattern: "host~", checkId: "check=",
@@ -1297,7 +1298,7 @@ function awMacDimensionMatch(mac, pattern) {
  *  server matcher is notificationTypes.interfacePatternMatch, which also reads
  *  each interface's description — the picker offers descriptions as values, so
  *  the any-of match below over those values agrees with it. */
-function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link" || dim === "ifNamePattern"; }
+function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link" || dim === "ifNamePattern" || dim === "ifTag"; }
 
 /** The "|"-separated terms of a multi value — trimmed, blanks dropped. */
 function awDimTerms(value) {
@@ -1372,8 +1373,19 @@ function awDimTogglePick(res, text, value) {
 function awDimMatcher(dim) {
   if (dim === "ipPattern") return awIpDimensionMatch;
   if (dim === "macPattern") return awMacDimensionMatch;
+  if (dim === "ifTag") return awInterfaceTagMatch;
   if (awDimIsMulti(dim)) return awSdwanDimensionMatch;
   return awDimSubstringMatch;
+}
+
+/** Mirror of the server's `interfaceTagMatch` (business rule 133(g)): any term
+ *  equal to the tag, case-insensitively — a tag is a whole name, never a
+ *  substring. No terms = match. */
+function awInterfaceTagMatch(value, pattern) {
+  var terms = awDimTerms(pattern);
+  if (!terms.length) return true;
+  var v = String(value == null ? "" : value).toLowerCase();
+  return terms.some(function (t) { return t.toLowerCase() === v; });
 }
 
 /** Values a typed pattern selects out of what the scoped devices report. */
@@ -1738,7 +1750,7 @@ async function openAutomationWizard(existing, opts) {
       scope: { allAssets: true },
       trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null, forDurationSec: 0 },
       reset: null, // defaulted per trigger type on Step-4 entry
-      cooldownSec: null, messageTemplate: null, requireAckNote: false, groupByAsset: false, repeat: null,
+      cooldownSec: null, messageTemplate: null, requireAckNote: false, groupByAsset: false, severityFromPriorityTag: false, repeat: null,
       quietTime: null,
       // The audit Event is an action now, present by default — a new
       // automation behaves like every existing one until someone removes it.
@@ -1827,7 +1839,7 @@ async function openAutomationWizard(existing, opts) {
       dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick one or more, or type a name or description", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick", sdwanMemberIp: "!= 0.0.0.0 (or == an address)" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick one or more, or type a name or description", ifTag: "click to pick one or more interface tags", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick", sdwanMemberIp: "!= 0.0.0.0 (or == an address)" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
@@ -1878,6 +1890,8 @@ async function openAutomationWizard(existing, opts) {
     manufacturerPattern: { label: "Manufacturer", rep: "cpuPct", device: true },
     modelPattern: { label: "Model", rep: "cpuPct", device: true },
     ifNamePattern: { label: "Interface name", rep: "ifOperStatus" },
+    // Business rule 133(g): the ports' own tags, whole names (awInterfaceTagMatch).
+    ifTag: { label: "Interface tag", rep: "ifOperStatus" },
     tunnelName: { label: "IPsec tunnel name", rep: "ipsecStatus" },
     mountPathPattern: { label: "Storage mount", rep: "storageUsedPct" },
     sdwanRulePattern: { label: "SD-WAN rule name", rep: "sdwanRuleStatus" },
@@ -1888,6 +1902,7 @@ async function openAutomationWizard(existing, opts) {
     sdwanMemberIp: { label: "SD-WAN member IP address", rep: "sdwanPacketLoss", memberIp: true },
   };
   if (!Array.isArray(s.sdwanMemberIpTargets)) delete TG_FILTER_META.sdwanMemberIp;
+  if (!Array.isArray(s.interfaceTagTargets)) delete TG_FILTER_META.ifTag;
   function tgFilterLabel(dim) { return (TG_FILTER_META[dim] && TG_FILTER_META[dim].label) || dim; }
   /**
    * The dimension a field's reading IS ABOUT rather than one that narrows a set
@@ -1920,6 +1935,10 @@ async function openAutomationWizard(existing, opts) {
     if (d === "sdwanMemberIp") {
       var target = leaf.type === "asset_state" ? leaf.field : leaf.metric;
       return (s.sdwanMemberIpTargets || []).indexOf(target) !== -1;
+    }
+    if (d === "ifTag") {
+      var ifTarget = leaf.type === "asset_state" ? leaf.field : leaf.metric;
+      return (s.interfaceTagTargets || []).indexOf(ifTarget) !== -1;
     }
     if (leaf.type === "asset_state") return (((s.fieldDimensions || {})[leaf.field]) || []).indexOf(d) !== -1;
     return (((s.metricDimensions || {})[leaf.metric]) || []).indexOf(d) !== -1;
@@ -1965,6 +1984,7 @@ async function openAutomationWizard(existing, opts) {
     // An unlifted member-IP filter (siblings disagree) is in no base list, so
     // it would evaluate while drawing nothing — show it where it lives.
     if (df && df.sdwanMemberIp && out.indexOf("sdwanMemberIp") === -1) out.push("sdwanMemberIp");
+    if (df && df.ifTag && out.indexOf("ifTag") === -1) out.push("ifTag");
     return out;
   }
   // Filter-placement problems from the LAST collect, surfaced by validateStep3 /
@@ -3537,7 +3557,7 @@ async function openAutomationWizard(existing, opts) {
         '<div style="display:flex;gap:6px;align-items:center">' +
           '<span class="aw-grip" draggable="true" title="Drag to move">&#x2842;</span>' +
           '<select class="tgl-what" style="flex:0 1 220px;min-width:0">' + tgWhatOptions(kind, "d:" + leaf.dim) + '</select>' +
-          '<span style="font-size:0.85rem;white-space:nowrap">matches</span>' +
+          '<span style="font-size:0.85rem;white-space:nowrap">' + (leaf.dim === "ifTag" ? "is" : "matches") + '</span>' +
           dimControlHtml(leaf.dim, fdf, (TG_FILTER_META[leaf.dim] || {}).rep || "") +
           '<button type="button" class="btn btn-sm btn-danger scr-remove" title="Remove filter">&times;</button>' +
         '</div>' +
@@ -4829,6 +4849,7 @@ async function openAutomationWizard(existing, opts) {
       '<div class="aw-formula" id="aw-trigger-formula" style="display:none"></div>' +
       '<div class="form-group"><label><input type="checkbox" id="aw-multi-sev"' + (multi ? " checked" : "") + '> Use multiple severity levels (escalate severity as the value climbs)</label></div>' +
       '<div class="form-group" id="aw-single-sev-wrap"><label>Alert severity</label><select id="aw-trigger-severity" class="sev-select sev-' + escapeHtml(draft.severity || "warning") + '">' + sevOpt(draft.severity || "warning") + '</select></div>' +
+      prioritySeverityHtml() +
       '<div class="form-group"><label>Trigger type</label><select id="aw-trigger-type">' + typeOpts + '</select></div>' +
       '<div id="aw-trigger-fields"></div>' +
       '<div id="aw-bands-host" style="display:none"></div>' +
@@ -4837,6 +4858,50 @@ async function openAutomationWizard(existing, opts) {
       '<div style="margin:0.5rem 0"><button type="button" class="btn btn-sm btn-secondary" id="aw-trigger-test">Test against current data</button></div>' +
       '<div id="aw-trigger-preview"></div>';
   }
+  // ── Severity from the Priority tag (business rule 136(e)) ───────────────
+  // Offered only for a bare "monitor status is down" (the device's tag) or
+  // "interface oper status is down" (the port's tag), and only when the server
+  // publishes the capability. On, the Alert severity select hides: the
+  // severity is whichever Priority tag the device / port carries, and one
+  // carrying none does not alert.
+  function prioritySeveritySubject(tr) {
+    var meta = s.prioritySeverity;
+    if (!meta || !tr || tr.type !== "asset_state") return null;
+    var hit = (meta.triggers || []).filter(function (t) {
+      return t.field === tr.field && t.operator === tr.operator && t.value === tr.value;
+    })[0];
+    return hit ? hit.subject : null;
+  }
+  function prioritySeverityApplicable(tr) { return !!prioritySeveritySubject(tr); }
+  function prioritySeverityHtml() {
+    if (!s.prioritySeverity) return "";
+    var ladder = (s.prioritySeverity.tags || []).map(function (t) { return escapeHtml(t.name); }).join(", ");
+    return '<div class="form-group" id="aw-prio-sev-wrap" style="display:none">' +
+      '<label><input type="checkbox" id="aw-prio-sev"' + (draft.severityFromPriorityTag ? " checked" : "") + '> ' +
+        'Take the severity from the <span id="aw-prio-sev-subject">device</span>&rsquo;s Priority tag</label>' +
+      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' +
+        'A <span class="aw-prio-sev-noun">device</span> tagged ' + ladder + ' alerts at that severity. ' +
+        'With several, the highest wins. A <span class="aw-prio-sev-noun">device</span> with no Priority tag does not alert. ' +
+        'If the tag changes while it is down, the alert changes severity and notifies again.' +
+      '</p>' +
+    '</div>';
+  }
+  /** Show the switch only for a qualifying trigger; while it is on, the
+   *  single severity select hides (the tag decides). Called from
+   *  syncSeverityMode, which runs whenever the trigger tree changes. */
+  function syncPrioritySeverity(panel) {
+    var wrap = panel.querySelector("#aw-prio-sev-wrap");
+    if (!wrap) return false;
+    var subject = prioritySeveritySubject(draft.trigger);
+    wrap.style.display = subject ? "" : "none";
+    var word = subject === "interface" ? "interface" : "device";
+    var subj = wrap.querySelector("#aw-prio-sev-subject");
+    if (subj) subj.textContent = word;
+    wrap.querySelectorAll(".aw-prio-sev-noun").forEach(function (el) { el.textContent = word; });
+    var cb = wrap.querySelector("#aw-prio-sev");
+    return !!(subject && cb && cb.checked);
+  }
+
   // ── Capacity alert hold (business rule 105) ──────────────────────────────
   // capacityWatch writes capacity.severity_changed / _recovered only once a
   // severity change has held for this long. It is ONE global setting — it
@@ -5056,6 +5121,8 @@ async function openAutomationWizard(existing, opts) {
     }
     var multiCb = panel.querySelector("#aw-multi-sev");
     if (multiCb) multiCb.addEventListener("change", function () { syncSeverityMode(panel); });
+    var prioCb = panel.querySelector("#aw-prio-sev");
+    if (prioCb) prioCb.addEventListener("change", function () { syncSeverityMode(panel); });
     panel.querySelector("#aw-trigger-type").addEventListener("change", function () {
       renderTriggerFields(); // category swap renders fresh from the draft
     });
@@ -5290,6 +5357,10 @@ async function openAutomationWizard(existing, opts) {
     var baseSel = multiSevOn(panel) ? panel.querySelector("#aw-trig-root .scg-sev") : panel.querySelector("#aw-trigger-severity");
     if (baseSel) draft.severity = baseSel.value;
     collectBands(panel); // severity tiers live with the trigger (step 3)
+    // Business rule 136(e): forced off when the trigger no longer qualifies,
+    // so a stale tick never reaches the server's validatePrioritySeverity.
+    var prioCb = panel.querySelector("#aw-prio-sev");
+    draft.severityFromPriorityTag = !!(prioCb && prioCb.checked && prioritySeverityApplicable(draft.trigger));
   }
   /**
    * A WINDOWED-RATIO metric (today just probeLossPct) is a percentage computed
@@ -7101,8 +7172,9 @@ async function openAutomationWizard(existing, opts) {
     var applicable = bandsApplicable(draft.trigger) && !linkedLevels;
     if (cb) cb.disabled = !applicable;
     var multi = multiSevOn(panel);
+    var fromPriority = syncPrioritySeverity(panel);
     var singleWrap = panel.querySelector("#aw-single-sev-wrap");
-    if (singleWrap) singleWrap.style.display = multi || linkedLevels ? "none" : "";
+    if (singleWrap) singleWrap.style.display = multi || linkedLevels || fromPriority ? "none" : "";
     var hostWrap = panel.querySelector("#aw-bands-host");
     if (hostWrap) {
       if (multi) {
@@ -10077,6 +10149,9 @@ async function openAutomationWizard(existing, opts) {
       // stops reporting per component, so the server's validateGrouping and
       // this flag never disagree.
       groupByAsset: draft.groupByAsset === true,
+      // Business rule 136(e). collectStep3 forces it off when the trigger stops
+      // qualifying, so validatePrioritySeverity never sees a stale flag.
+      severityFromPriorityTag: draft.severityFromPriorityTag === true && prioritySeverityApplicable(draft.trigger),
       channels: ["in_app"],
       emailComposition: null, // per-action composition in v2; rule-level field retired by the wizard
       escalation: draft.escalation,
@@ -10168,6 +10243,7 @@ function _awDraftFromRule(r) {
     messageTemplate: r.messageTemplate != null ? r.messageTemplate : null,
     requireAckNote: r.requireAckNote === true,
     groupByAsset: r.groupByAsset === true,
+    severityFromPriorityTag: r.severityFromPriorityTag === true,
     // Read-only here: membership is managed on the Groups tab, not in the
     // wizard. Carried so the actions step can say who is really delivering.
     alertGroupName: (r.alertGroup && r.alertGroup.name) || null,

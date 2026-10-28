@@ -2817,6 +2817,14 @@ it removes only the automatic copies. `region:` and `azure:` tags are
 device-only and are refused on a port. A port moving VLAN is picked up on its
 next full poll.
 
+**(g) An interface automation can be narrowed to the ports that carry a tag.**
+The **Interface tag** filter on an interface condition (status, IP address, PoE,
+throughput, errors) keeps only the ports carrying one of the named tags. The tag
+must match by whole name, ignoring case, and tags you added by hand count the
+same as automatic ones. A port without the tag never alerts. A port that loses
+it has its open alert cleared. So one automation per priority covers a switch
+whose ports matter differently.
+
 ### Rule 134
 
 **An open alert follows its device's rename; a cleared alert keeps the name it
@@ -2844,3 +2852,23 @@ recurring schedule, as for assets. Deleting a check removes it from its
 schedules, and deletes a schedule that named only that check. Gated by
 `maintenanceManagement`; see [Maintenance windows](Maintenance-Windows) and
 [Path Monitor](Path-Monitor).
+
+### Rule 136
+
+**The five Priority tags are built in: nobody renames, recolours, moves or
+deletes them, and a device filter on one only adds.** Every install has
+**Notice**, **Informational**, **Warning**, **Serious** and **Critical** in the
+**Priority** category, each in its severity's colour. Nobody can change their
+name, colour or category or delete them, whatever their role. The only thing
+you can edit is the device filter. A filter adds the tag to the devices it
+matches and removes only what it added. Priority tags you put on assets or
+interfaces by hand always stay. On upgrade, a tag that still has one of the
+five names is brought back into **Priority** with its colour and keeps its
+devices. A missing one is re-created. See [Server Settings](Server-Settings).
+
+**(e) A down automation can take its severity from the Priority tag.** On a
+*monitor status is down* or *interface oper status is down* automation, the
+alert's severity is the highest Priority tag on the device (or on the port), and
+a device or port with no Priority tag does not alert. A tag that changes while
+the device is down changes the open alert's severity. A tag that is removed
+clears it. See [Automation Triggers](Automation-Triggers#severity-from-the-priority-tag).
