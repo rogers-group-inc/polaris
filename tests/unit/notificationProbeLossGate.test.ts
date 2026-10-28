@@ -211,9 +211,9 @@ describe("packet-loss gate", () => {
   });
 
   it("the answering gate is metric-scoped — a recovering asset still evaluates for CPU", async () => {
-    // Every other metric hands off on `down` alone (rule 29(i), covered in
-    // notificationDeviceDownHandoff.test.ts); `recovering` is answering again,
-    // so its CPU readings are real.
+    // Response time hands off on `down` alone and CPU never does (rule 29(i),
+    // covered in notificationDeviceDownHandoff.test.ts); `recovering` is
+    // answering again, so its CPU readings are real.
     h.prisma.notificationRule.findMany.mockResolvedValue([CPU_RULE]);
     h.prisma.asset.findMany.mockResolvedValue([scopeAsset("rec-1", { monitorStatus: "recovering" })]);
     h.prisma.assetTelemetrySample.findMany.mockResolvedValue([

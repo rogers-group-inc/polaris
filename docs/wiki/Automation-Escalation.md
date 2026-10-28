@@ -316,7 +316,7 @@ the Actions step still warns that `stopAfterHours` counts quiet time too.
 | **The device leaves the scope** | alert cleared as `out_of_scope` |
 | **The device stops being monitored** | same ([rule 37](Business-Rules#rule-37)) |
 | **A maintenance window opens** | a **device-down** alert (`monitorStatus == down`) is cleared — down is what planned downtime looks like, and a device still down afterwards fires a new alert. Every other alert stays open with escalation and reminders **paused** until the window ends, then resolves or carries on as usual ([rule 16](Business-Rules#rule-16)) |
-| **The device itself goes down** | an alert about something the device reports (CPU, an interface, a sensor…) clears as `superseded` and the asset-down alert speaks for the outage — see [Triggers](Automation-Triggers#a-device-that-goes-down-takes-its-other-alerts-with-it) ([rule 29](Business-Rules#rule-29)) |
+| **The device itself goes down** | a response-time, packet-loss or polls-failing alert clears as `superseded` and the asset-down alert speaks for the outage; every other alert (CPU, memory, an interface, a sensor…) stays open — see [Triggers](Automation-Triggers#a-device-that-goes-down-hands-off-its-response-time-and-loss-alerts) ([rule 29](Business-Rules#rule-29)) |
 | **The parent goes dark** | dependency suppression retires it — a parent genuinely down, not one in maintenance ([rule 38](Business-Rules#rule-38)) |
 | **A more specific automation carves the device out** | cleared as `superseded` ([rule 18](Business-Rules#rule-18)) |
 | **The pin is removed** | a dimensioned alert clears ([rule 57](Business-Rules#rule-57)) |

@@ -125,6 +125,14 @@ Two things deliberately do NOT change. `readMonitorHistory.stats.packetLossRate`
 
 Pinned by `tests/unit/notificationDeviceDownHandoff.test.ts`.
 
+### Rule 29(i) narrowed — only the outage's own readings hand off (2026-10-28)
+
+**Incident.** A branch FortiGate's internet link was bouncing. Each bounce took the gate `down` long enough for the asset-down verdict, and 29(i) cleared its live memory-forecast alert (`memForecastPct`) as superseded. When the gate came back a minute later the forecast read exactly what it had before: it is a 30-day regression over daily rollups, and a failed poll writes no sample (rule 118), so the outage cannot move it. The alert re-earned its hold and mailed again. Every flap was a fresh forecast email about a trend that had not changed.
+
+**Rule.** The hand-off is narrowed to the readings whose INPUT is the outage: `responseTimeMs` (a missed poll is the timeout it cost, rule 67) and `probeLossPct` (failed probes), the two the operator asked to keep, plus the stream-failing fields `telemetryFailingMinutes` / `systemInfoFailingMinutes`, which count failed polls and would otherwise newly fire partway through every outage. They are listed in `DEVICE_DOWN_HANDOFF_METRICS` / `DEVICE_DOWN_HANDOFF_STATE_FIELDS`; everything else is kept, which retires `DEVICE_DOWN_KEEPS_STATE_FIELDS`. Path checks and held facts were already kept and stay kept.
+
+**Accepted cost.** The 2026-10-05 incident shape returns for alerts outside the list: an SD-WAN SLA alert live when its gate goes dark freezes beside the asset-down alert, and mails "resolved" through its own automation once the gate returns healthy. The operator chose that over a re-fire on every flap: one late "resolved" per real outage is cheaper than one new alert per bounce, and a frozen alert is the truth about what the device last said.
+
 ### Rule 29 — the invariant as stated in full until 2026-09-22
 > Moved here verbatim from the invariants file on 2026-09-22, when the invariant layer was cut back to the contract alone; the short invariant now points here for the reasoning and the dated history. Nothing below was rewritten.
 

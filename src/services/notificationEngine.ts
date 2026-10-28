@@ -819,37 +819,32 @@ function triggerNeedsAnsweringDevice(trigger: Trigger): boolean {
 }
 
 /**
- * One outage is one alert, for EVERY reading the device itself reports
- * (business rule 29(i)). A metric alert already live when its device goes
- * `down` used to freeze — the readings stop, so nothing recovered it — and sat
- * next to the asset-down alert for the whole outage, then mailed "resolved"
- * the moment the device came back and reported healthy (an SD-WAN SLA alert
- * resolving twelve hours after its gate's modem was power-cycled). A device
- * that is `down` hands every such alert to asset-down, exactly as packet loss
- * does above: cleared as superseded, no reset actions, no new fire while dark.
+ * An outage hands off only the alerts whose INPUT is the outage (business rule
+ * 29(i)). Packet loss and response time are measured from the very probes that
+ * declare a device `down` — a missed response-time poll is the timeout it cost
+ * (rule 67) — so while the device is dark they would only restate the
+ * asset-down alert. A device that is `down` hands every such alert to
+ * asset-down: cleared as superseded, no reset actions, no new fire while dark.
+ * The two stream-failing fields (rule 118) count failed polls the same way, so
+ * they would fire partway through every outage; they hand off too.
+ *
+ * Everything else FREEZES. A CPU, memory, interface, SD-WAN or forecast
+ * reading is a fact the device reported before it went dark, and the outage
+ * does not falsify it. Clearing it on `down` turned every flap of a WAN link
+ * into a fresh alert when the device came back with the same condition — a
+ * memory-forecast email resent on every bounce, about a 30-day trend the
+ * outage cannot move.
  *
  * Gated on `down` alone, not "not answering": `passive` and `unknown` have no
  * asset-down alert to hand to (see assetIsAnsweringProbes), and `recovering`
  * is answering again — its readings are real.
- *
- * Kept out, because they are not the device reporting:
- *   - the outage itself (`monitorStatus`, `consecutiveFailures`) — that alert
- *     IS the one everything hands to;
- *   - facts Polaris holds about the device rather than reads from it
- *     (`status`, `dependencySuppressed`, `quarantined`, `firmwareVsPrimary`, `tag`) —
- *     an outage changes none of them, and clearing one would only re-fire it,
- *     a fresh alert, when the device came back;
- *   - path checks (`isPathMetric`) — the asset is the vantage point, not the subject,
- *     and a server-sourced check keeps measuring while that host is dark.
  */
-const DEVICE_DOWN_KEEPS_STATE_FIELDS = new Set<string>([
-  "monitorStatus", "consecutiveFailures",
-  "status", "dependencySuppressed", "quarantined", "firmwareVsPrimary", "tag",
-]);
+const DEVICE_DOWN_HANDOFF_METRICS = new Set<string>(["probeLossPct", "responseTimeMs"]);
+const DEVICE_DOWN_HANDOFF_STATE_FIELDS = new Set<string>(["telemetryFailingMinutes", "systemInfoFailingMinutes"]);
 
 function leafHandsOffWhenDeviceDown(leaf: { type: string; metric?: string; field?: string }): boolean {
-  if (leaf.type === "asset_metric") return !!leaf.metric && !isPathMetric(leaf.metric);
-  if (leaf.type === "asset_state") return !!leaf.field && !DEVICE_DOWN_KEEPS_STATE_FIELDS.has(leaf.field);
+  if (leaf.type === "asset_metric") return !!leaf.metric && DEVICE_DOWN_HANDOFF_METRICS.has(leaf.metric);
+  if (leaf.type === "asset_state") return !!leaf.field && DEVICE_DOWN_HANDOFF_STATE_FIELDS.has(leaf.field);
   return false;
 }
 
@@ -3107,8 +3102,9 @@ async function evaluateThresholdRule(
   // all-cores CPU alert this tick. Handed off like a carve-out.
   const coreSupersededIds = new Set<string>();
   // Assets whose device isn't answering, on a rule whose metric needs it to be
-  // (packet loss — business rule 29), or that is `down` on a rule reading
-  // anything else the device reports (29(i)). Handed off to asset-down alerting.
+  // (packet loss — business rule 29), or that is `down` on a rule whose input
+  // is the outage itself (response time, stream failing — 29(i)). Handed off
+  // to asset-down alerting.
   const notAnsweringIds = new Set<string>();
   // Assets whose reading sat at or above the trigger's saturation ceiling, so
   // there is no reading this tick. Handled like notAnswering: cleared, not
@@ -3548,10 +3544,10 @@ async function evaluateThresholdRule(
   //
   //   device-down       — packet loss: the device stopped answering, so it
   //                       produces no reading at all (assetIsAnsweringProbes).
-  //                       Every other reading the device reports: it is
-  //                       `down` (triggerHandsOffWhenDeviceDown, 29(i)) — the
-  //                       readings stopped with it, and a frozen alert would
-  //                       mail "resolved" the moment it came back.
+  //                       Response time and the stream-failing fields: it
+  //                       is `down` (triggerHandsOffWhenDeviceDown, 29(i)) —
+  //                       their input is the outage itself. Every other
+  //                       reading freezes through it.
   //   reading-saturated — it IS answering, but the ratio reached the rule's
   //                       own `ignoreAtOrAbove` ceiling, so the number has
   //                       stopped describing a lossy link. This is the case
@@ -4135,8 +4131,8 @@ async function evaluateCompositeRule(
 ): Promise<void> {
   const trigger = rule.trigger as CompositeTrigger;
   const suppressedIds = new Set<string>();
-  // Devices that are `down`, on a tree whose every leaf the device itself
-  // reports — handed off to asset-down (business rule 29(i)).
+  // Devices that are `down`, on a tree whose every leaf is read from the
+  // outage itself — handed off to asset-down (business rule 29(i)).
   const deviceDownIds = new Set<string>();
   let scopeAssets: ScopeAssetRow[] = [];
   let activeAssets: ScopeAssetRow[];
