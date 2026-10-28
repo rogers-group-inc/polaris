@@ -219,6 +219,28 @@ hop to the top, and what sits behind it, with how many of those are down or
 suppressed right now. When the device is down because something above it is,
 it names that device, the same one the alert names.
 
+It can read **everything a device's details page shows**: every address and MAC
+it has, its notes and HA role; the switch, access point and firewall it was last
+seen behind, its MCLAG peer, the VIPs that publish it and its contacts; how each
+stream is polled and why, the automation that decides it is down, its
+maintenance and its last poll errors; its hardware modules, disks, temperatures,
+fans and power supplies; LLDP neighbors, wireless radios and clients, SD-WAN
+rules and members, IPsec tunnels and VPN users, the MAC and ARP tables,
+processes and their connections, installed software, virtual machines and
+containers, the Polaris Agent, firmware and reboot state, which integrations
+report it, and its active alerts with the automations that apply. Ask *what
+temperature is fw-nsh-01 running at* or *which ports on sw-02 have LLDP
+neighbors*. It reads what Polaris last collected; it never polls the device,
+runs an SNMP walk or looks up DNS. VIPs need **Reservations** read, contacts
+**Address Book** read and gate sightings **Asset Quarantine** read, as on the page.
+
+It can open **one network** the way its slide-in does: purpose, VLAN, the
+FortiGate and interface serving it, when it was last discovered, how many
+addresses are held and by what (reservation, lease, interface, VIP), conflicts,
+failed pushes, the first free addresses, and each held address with its
+hostname, MAC, owner, notes and the asset on it. Without **Reservations** read
+it says which addresses are held but not by whom.
+
 It knows **your role and access**, and the **regions and tags assigned to you**
 (from your role, your account and your sign-in groups) — so "my region" means
 your regions, and "how do I…" answers say whether your role can do it. That

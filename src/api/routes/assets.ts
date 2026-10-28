@@ -91,8 +91,8 @@ import {
   resolveSdwanPollIntervalForAsset,
   snmpWalkRaw,
   resolveMonitorSettings,
-  resolveMonitorSettingsWithProvenance,
 } from "../../services/monitoringService.js";
+import { getEffectiveMonitorSettings } from "../../services/assetDetailReadService.js";
 import { getApRadioInventory } from "../../services/apRadioService.js";
 import { describeDownDetectionFor, recoveryPollsFor } from "../../services/downDetectionService.js";
 import { getArpEntryRetentionDays } from "../../services/sampleRetentionService.js";
@@ -1815,121 +1815,7 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
 // each field. Read-open to any authenticated caller.
 router.get("/:id/effective-monitor-settings", requirePermission("assets", "read"), async (req, res, next) => {
   try {
-    const id = req.params.id as string;
-    const asset = await prisma.asset.findUnique({
-      where: { id },
-      select: {
-        id:                         true,
-        assetType:                  true,
-        // The workload sources' response-time default depends on it (ICMP
-        // when there is an address, the platform's state check when not) —
-        // without it this endpoint reported the state check for every
-        // workload asset while the monitor pinged.
-        ipAddress:                  true,
-        discoveredByIntegrationId:  true,
-        discoveredByIntegration:    { select: { name: true, type: true, pollInterval: true } },
-        monitorIntervalSec:         true,
-        cpuMemoryIntervalSec:       true,
-        temperatureIntervalSec:     true,
-        systemInfoIntervalSec:      true,
-        probeTimeoutMs:             true,
-        cpuMemoryTimeoutMs:         true,
-        temperatureTimeoutMs:       true,
-        systemInfoTimeoutMs:        true,
-        responseTimePolling:        true,
-        cpuMemoryPolling:           true,
-        temperaturePolling:         true,
-        interfacesPolling:          true,
-        lldpPolling:                true,
-        storagePolling:             true,
-        responseTimeMibId:          true,
-        cpuMemoryMibId:             true,
-        temperatureMibId:           true,
-        interfacesMibId:            true,
-        lldpMibId:                  true,
-        responseTimeCredentialId:   true,
-        cpuMemoryCredentialId:      true,
-        temperatureCredentialId:    true,
-        interfacesCredentialId:     true,
-        lldpCredentialId:           true,
-      },
-    });
-    if (!asset) throw new AppError(404, "Asset not found");
-    const result = await resolveMonitorSettingsWithProvenance({
-      ...asset,
-      discoveredByIntegrationType: asset.discoveredByIntegration?.type ?? null,
-    });
-    // mibLookup: every non-null MIB UUID across the five streams, mapped to
-    // its moduleName so the frontend's monitoring chips can append a "MIB:
-    // <module>" segment without a second round-trip. Standard MIB ids (the
-    // `std:<key>` namespace, owned entirely by the frontend) are skipped —
-    // those resolve through `_SNMP_STANDARD_MIBS` in assets.js.
-    const mibIds = new Set<string>();
-    for (const id of [
-      result.resolved.responseTimeMibId,
-      result.resolved.cpuMemoryMibId,
-      result.resolved.temperatureMibId,
-      result.resolved.interfacesMibId,
-      result.resolved.lldpMibId,
-    ]) {
-      if (typeof id === "string" && id && !id.startsWith("std:")) mibIds.add(id);
-    }
-    const mibLookup: Record<string, { moduleName: string }> = {};
-    if (mibIds.size > 0) {
-      const rows = await prisma.mibFile.findMany({
-        where:  { id: { in: [...mibIds] } },
-        select: { id: true, moduleName: true },
-      });
-      for (const r of rows) mibLookup[r.id] = { moduleName: r.moduleName };
-    }
-    // Surface the integration's name + pollInterval alongside the resolved
-    // settings so the frontend can render the "integrationPollInterval"
-    // provenance badge as `Inherit: 14400s (4h, from <integration> discovery
-    // cycle)` without a second /integrations/:id round-trip.
-    const integrationInfo = asset.discoveredByIntegration
-      ? {
-          id:           asset.discoveredByIntegrationId,
-          name:         asset.discoveredByIntegration.name,
-          type:         asset.discoveredByIntegration.type,
-          pollInterval: asset.discoveredByIntegration.pollInterval,
-        }
-      : null;
-    // WHICH AUTOMATION DECIDES THIS DEVICE IS DOWN. The missed-poll count is no
-    // longer a settings value (business rule 36), so the modal that used to
-    // point operators at "the tier where it lives" has to point at the
-    // automation instead — and for a device no automation covers, say that
-    // plainly rather than rendering a threshold nobody applies. `passive: true`
-    // is that case. Derived, never stored; the resolver reads its cached
-    // snapshot so this costs no query in the steady state.
-    const downCoverage = await describeDownDetectionFor(id);
-    const downDetection = downCoverage
-      ? {
-          passive:      downCoverage.passive,
-          missedPolls:  downCoverage.winner?.threshold ?? null,
-          // The counterpart count: how many probes must ANSWER before the asset
-          // reads `up` again. Resolved here rather than left to the client to
-          // divide seconds by a cadence, so the intermittency strip's replay of
-          // the state machine reads the same number the probe loop applied.
-          recoveryPolls: downCoverage.winner
-            ? recoveryPollsFor(downCoverage.winner, result.resolved.intervalSeconds)
-            : null,
-          automationId: downCoverage.winner?.ruleId ?? null,
-          automationName: downCoverage.winner?.ruleName ?? null,
-          // The colour every surface paints `down` in (business rule 36). Down
-          // is not inherently red — red is what `critical` looks like, and it
-          // is merely the default severity of a seeded down automation. Sent as
-          // the severity NAME, not a colour: the palette belongs to the client
-          // that is drawing (browser tokens vs the email's flat hex).
-          severity: downCoverage.winner?.severity ?? null,
-          // A tie is two equally-specific automations asking for different
-          // counts on this device — surfaced so the modal can say which one
-          // won rather than leaving the operator to guess.
-          conflict:     downCoverage.conflict
-            ? { ruleIds: downCoverage.conflict.ruleIds, counts: downCoverage.conflict.counts, chosen: downCoverage.conflict.chosen }
-            : null,
-        }
-      : null;
-    res.json({ ...result, mibLookup, integration: integrationInfo, downDetection });
+    res.json(await getEffectiveMonitorSettings(req.params.id as string));
   } catch (err) {
     next(err);
   }
