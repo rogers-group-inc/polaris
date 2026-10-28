@@ -87,10 +87,13 @@
     }
     host.innerHTML =
       '<table class="data-table"><thead><tr>' +
-        "<th>Group</th><th>Automations</th><th>Tells</th><th>Status</th><th></th>" +
+        "<th>Group</th><th>Automations</th><th>Tells</th><th>Enabled</th><th></th>" +
       "</tr></thead><tbody>" +
       groups.map(rowHtml).join("") +
       "</tbody></table>";
+    host.querySelectorAll(".ag-enabled-toggle").forEach(function (cb) {
+      cb.addEventListener("change", function () { toggleEnabled(cb); });
+    });
     host.querySelectorAll("[data-ag-edit]").forEach(function (el) {
       el.addEventListener("click", function () { openEditor(el.getAttribute("data-ag-edit")); });
     });
@@ -112,11 +115,16 @@
       "</td>" +
       "<td>" + memberText + "</td>" +
       "<td>" + escapeHtml(tellsSummary(g)) + "</td>" +
-      // badge-active / badge-deprecated: the lifecycle pair every list page
-      // uses for on / off.
-      "<td>" + (g.enabled
-        ? '<span class="badge badge-active">Active</span>'
-        : '<span class="badge badge-deprecated">Off</span> <span style="font-size:0.78rem;color:var(--color-text-tertiary)">members deliver on their own</span>') + "</td>" +
+      // Enabled — the same switch the Automations list uses for editors; a
+      // static Yes / No for everyone else.
+      "<td style=\"white-space:nowrap\">" + (canEdit()
+        ? '<label class="toggle-switch" title="' + (g.enabled ? "Enabled — click to disable" : "Disabled — click to enable") + '">' +
+            '<input type="checkbox" class="ag-enabled-toggle" data-id="' + escapeHtml(g.id) + '"' + (g.enabled ? " checked" : "") + ">" +
+            '<span class="toggle-slider"></span>' +
+          "</label>"
+        : (g.enabled ? "Yes" : '<span style="color:var(--color-text-tertiary)">No</span>')) +
+        (g.enabled ? "" : ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">members deliver on their own</span>') +
+      "</td>" +
       '<td style="text-align:right;white-space:nowrap">' +
         (canEdit()
           ? '<button type="button" class="btn btn-sm btn-secondary" data-ag-edit="' + escapeHtml(g.id) + '">Edit</button> ' +
@@ -124,6 +132,36 @@
           : "") +
       "</td>" +
     "</tr>";
+  }
+
+  /** The list row's Enabled switch. PUT is a full replace for the plain
+   *  fields — an omitted description, alert text or ack-note flag is stored
+   *  cleared, and an omitted scope reads as a scope CHANGE that retires every
+   *  live alert — so this resends them from the listed row. Actions, the chain,
+   *  the email layout and membership are left out: absent means untouched. */
+  async function toggleEnabled(cb) {
+    var g = groups.find(function (x) { return x.id === cb.getAttribute("data-id"); });
+    if (!g) return;
+    var desired = cb.checked;
+    cb.disabled = true;
+    try {
+      await api.alertGroups.update(g.id, {
+        name: g.name,
+        description: g.description || null,
+        enabled: desired,
+        scope: g.scope == null ? null : g.scope,
+        foldBy: foldByOf(g),
+        messageTemplate: g.messageTemplate || null,
+        requireAckNote: !!g.requireAckNote,
+        repeat: g.repeat || null,
+      });
+      showToast("Alert group " + (desired ? "enabled" : "disabled"), "success");
+      renderTab();
+    } catch (err) {
+      cb.checked = !desired;
+      cb.disabled = false;
+      showToast((err && err.message) || "Update failed", "error");
+    }
   }
 
   /** One line saying what this group actually DOES when something breaks —
@@ -243,7 +281,7 @@
         '<input type="text" id="ag-desc" value="' + escapeHtml(g.description || "") + '" style="width:100%"></div>' +
 
       '<div class="form-group">' +
-        '<label style="font-weight:400"><input type="checkbox" id="ag-enabled"' + (g.enabled !== false ? " checked" : "") + "> Active</label>" +
+        '<label style="font-weight:400"><input type="checkbox" id="ag-enabled"' + (g.enabled !== false ? " checked" : "") + "> Enabled</label>" +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' +
           "Turning a group off does not turn its automations off — they go back to delivering on their own, and their live alerts are retired so the next check re-raises them that way." +
         "</p>" +
