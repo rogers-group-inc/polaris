@@ -622,7 +622,12 @@ Gated on `manufacturerProfiles`; the widget device list and switch also need
 GET    /events
 ```
 
-The audit tail. Events older than 7 days are pruned by default.
+The audit tail. Events older than 7 days are pruned by default. Text filters
+(`action`, `resourceName`, `actor`, `message`, `device`) each take an optional
+`<field>Op` of `contains` (default), `not_contains`, `empty` or `is_not_empty`;
+`assetId` returns every event about one asset. Each event carries `assetId` and
+`assetName`, that asset's current hostname (else its IP; `null` when the asset
+is gone), and `device` filters on that name.
 
 ---
 
