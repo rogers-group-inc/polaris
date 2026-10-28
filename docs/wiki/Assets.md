@@ -1509,11 +1509,17 @@ marked with the tree line, are the peers connected through it:
 - On an **ADVPN hub**, each spoke dialled into the hub's template, shown as
   **ADVPN spoke**. A dial-up template's status reads **dynamic** (it is
   working as configured whether or not anyone is on it) and its second line
-  says how many peers are connected.
+  says how many peers are connected. That count includes the FortiClient
+  users connected through the template, although they are listed under
+  **Remote access** rather than under the template.
 - On an **ADVPN spoke**, each on-demand shortcut to another spoke, shown as
   **ADVPN shortcut**. A quiet spoke has none, which is normal.
 - A site dialled into a dial-up template that is not ADVPN shows as **Dial-up
   peer**.
+
+**Dial-up templates start collapsed.** A template with peers under it has a
+▶ before its name; click it to show the peers (▼ hides them again). Polaris
+remembers which templates you opened, per gate.
 
 Each peer row carries its **remote gateway** (the peer's public / underlay
 address), its **tunnel IP** (its overlay or assigned address), how long it
@@ -1527,7 +1533,8 @@ asset.
 
 **Every column sorts and filters**, as in the other asset tables, and your
 sort and filters are remembered. With a sort or a filter active the tree
-flattens, and each peer's second line names the tunnel it is connected
+flattens, every matching peer is shown whether or not its template is
+collapsed, and each peer's second line names the tunnel it is connected
 through. The **Tunnel / peer** filter matches a row's name, its kind (*ADVPN
 spoke*, *Site-to-site*…), the tunnel a peer hangs off and the peer's IKE
 identity.

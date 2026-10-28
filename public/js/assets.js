@@ -28626,9 +28626,25 @@ function _renderAssetIpsec(assetId, data, asset) {
     var k = c.parentTunnel || "";
     (byParent[k] = byParent[k] || []).push(c);
   });
+  // FortiClient users hang off a dial-up template too, but are listed under
+  // Remote access rather than nested here — a template's "N connected" still
+  // counts them, or a remote-access template always read 0.
+  var usersByParent = {};
+  users.forEach(function (c) {
+    if (c.parentTunnel) usersByParent[c.parentTunnel] = (usersByParent[c.parentTunnel] || 0) + 1;
+  });
   var tunnelNames = {};
   tunnels.forEach(function (t) { tunnelNames[t.tunnelName] = true; });
   var orphanParents = Object.keys(byParent).filter(function (k) { return !tunnelNames[k]; }).sort();
+
+  // A dial-up template with peers nested under it collapses, and starts
+  // collapsed: a hub's ADVPN template can carry hundreds of spokes. So the
+  // persisted set is the OPENED templates (its own scope — the helper's sets
+  // are otherwise collapsed names), per user per asset.
+  var opened = _getCollapsedIfaces(assetId, "ipsec-open");
+  function isCollapsible(t) { return t.status === "dynamic" && (byParent[t.tunnelName] || []).length > 0; }
+  var collapsibleNames = {};
+  tunnels.forEach(function (t) { if (isCollapsible(t)) collapsibleNames[t.tunnelName] = true; });
 
   function tunnelKind(t) { return t.status === "dynamic" ? "Dial-up template" : "Site-to-site"; }
 
@@ -28639,6 +28655,7 @@ function _renderAssetIpsec(assetId, data, asset) {
     var kids = byParent[t.tunnelName] || [];
     return {
       kind: "tunnel", raw: t, kids: kids.length,
+      connected: kids.length + (usersByParent[t.tunnelName] || 0),
       name: [t.tunnelName, tunnelKind(t)],
       status: t.status || "",
       gw: t.remoteGateway && t.remoteGateway !== "0.0.0.0" ? t.remoteGateway : "",
@@ -28679,17 +28696,25 @@ function _renderAssetIpsec(assetId, data, asset) {
       (on ? " checked" : "") + (canEdit ? "" : " disabled") + ' title="' + escapeHtml(title) + '"></td>';
   }
 
-  function tunnelRowHTML(e) {
+  function tunnelRowHTML(e, tree) {
     var t = e.raw;
     var kindText = t.status === "dynamic"
-      ? "Dial-up template &middot; " + e.kids + " connected"
+      ? "Dial-up template &middot; " + e.connected + " connected"
       : "Site-to-site";
     var via = t.overlayIp
       ? monoOrDash(t.parentInterface) + '<div class="mono" style="font-size:0.72rem;color:var(--color-text-secondary);white-space:nowrap" title="Tunnel interface address">' + escapeHtml(t.overlayIp) + '</div>'
       : monoOrDash(t.parentInterface);
+    // The toggle only in the tree view — flat (sorted / filtered) rows have
+    // no children under them to hide.
+    var toggle = "";
+    if (tree && isCollapsible(t)) {
+      var isOpen = opened.has(t.tunnelName);
+      toggle = '<button type="button" class="ipsec-expand-toggle" data-parent="' + escapeHtml(t.tunnelName) + '" style="background:none;border:none;cursor:pointer;color:var(--color-text-secondary);padding:0 3px 0 0;font-size:0.75rem;vertical-align:middle;line-height:1" title="' +
+        (isOpen ? "Collapse peers" : "Expand peers") + '">' + (isOpen ? "▼" : "▶") + '</button>';
+    }
     return '<tr class="ipsec-tunnel">' +
       pinCell(t) +
-      '<td class="mono" style="font-weight:600;white-space:nowrap">' +
+      '<td class="mono" style="font-weight:600;white-space:nowrap">' + toggle +
         '<a href="#" class="asset-ipsec-link" data-name="' + escapeHtml(t.tunnelName) + '" style="color:var(--color-accent);text-decoration:none" title="Open this tunnel\'s status and throughput history">' +
           escapeHtml(t.tunnelName) + '</a>' + subLine(kindText) + '</td>' +
       '<td>' + _ipsecStatusPill(t.status) + '</td>' +
@@ -28712,7 +28737,14 @@ function _renderAssetIpsec(assetId, data, asset) {
           subLine(kind + (c.parentTunnel ? ' &middot; via ' + escapeHtml(c.parentTunnel) : '')) + '</td>'
       : '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(e.isLast) + escapeHtml(c.name) +
           '<div style="padding-left:1.55rem">' + subLine(kind) + '</div></td>';
-    return '<tr class="ipsec-peer">' +
+    // In the tree, a peer names its template so the toggle can find it, and
+    // ships hidden while that template is collapsed.
+    var rowAttrs = "";
+    if (!flat && c.parentTunnel) {
+      rowAttrs = ' data-parent="' + escapeHtml(c.parentTunnel) + '"';
+      if (collapsibleNames[c.parentTunnel] && !opened.has(c.parentTunnel)) rowAttrs += ' style="display:none"';
+    }
+    return '<tr class="ipsec-peer"' + rowAttrs + '>' +
       '<td style="width:1%" title="Peers come and go with traffic — pin the tunnel they hang off"></td>' +
       nameCell +
       '<td>' + _ipsecStatusPill(c.status) + '</td>' +
@@ -28826,14 +28858,14 @@ function _renderAssetIpsec(assetId, data, asset) {
     var active = !!(st && (st.sortKey || Object.keys(st.sfFilters || {}).length > 0));
     if (!active) {
       tbody.innerHTML = tunEntries.map(function (e) {
-        return e.kind === "tunnel" ? tunnelRowHTML(e) : e.kind === "group" ? groupRowHTML(e) : peerRowHTML(e, false);
+        return e.kind === "tunnel" ? tunnelRowHTML(e, true) : e.kind === "group" ? groupRowHTML(e) : peerRowHTML(e, false);
       }).join("");
       return;
     }
     var list = tunSf.apply(tunEntries.filter(function (e) { return e.kind !== "group"; }));
     tbody.innerHTML = list.length === 0
       ? '<tr><td colspan="' + TUN_COLS + '" class="empty-state">No tunnels or peers match the current filters.</td></tr>'
-      : list.map(function (e) { return e.kind === "tunnel" ? tunnelRowHTML(e) : peerRowHTML(e, true); }).join("");
+      : list.map(function (e) { return e.kind === "tunnel" ? tunnelRowHTML(e, false) : peerRowHTML(e, true); }).join("");
   }
   var userSf = null;
   function renderUsers() {
@@ -28879,6 +28911,22 @@ function _renderAssetIpsec(assetId, data, asset) {
     tunBody.addEventListener("click", function (ev) {
       var t = ev.target;
       if (!t || !t.closest) return;
+      // Expand / collapse a dial-up template's peers (tree view only).
+      var tog = t.closest(".ipsec-expand-toggle");
+      if (tog) {
+        ev.stopPropagation();
+        var parentName = tog.getAttribute("data-parent");
+        var isOpen = tog.textContent.trim() === "▼";
+        tog.textContent = isOpen ? "▶" : "▼";
+        tog.title = isOpen ? "Expand peers" : "Collapse peers";
+        tunBody.querySelectorAll("tr.ipsec-peer").forEach(function (row) {
+          if (row.getAttribute("data-parent") !== parentName) return;
+          row.style.display = isOpen ? "none" : "";
+        });
+        if (isOpen) opened.delete(parentName); else opened.add(parentName);
+        _setCollapsedIfaces(assetId, opened, "ipsec-open");
+        return;
+      }
       var link = t.closest(".asset-ipsec-link");
       if (link) {
         ev.preventDefault();
