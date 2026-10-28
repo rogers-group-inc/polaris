@@ -148,6 +148,11 @@ shows its tags in the info panel; click one to add it as a pill.
 **Pills combine OR within a kind and AND across kinds.** `×` or Backspace
 removes.
 
+**Nothing is drawn until there is at least one pill.** With no pills the map
+says *Add a filter to start* instead of drawing every mapped asset at once,
+which is unreadable on any real fleet. Removing the last pill clears the map
+again. Hiding ports in the Ports key does not count as a filter on its own.
+
 ### Seen within
 
 Built from the server's **configured retention window**, so its widest option
@@ -200,10 +205,10 @@ dashed and heavy lines mean.
 ### Saved
 
 Named views, per user and per browser: the **pills plus the ports hidden in the
-Ports key** (a filter can be only hidden ports, with no pills). Nothing else is
-stored — recalling one must not move your time window — and it **replaces**
-rather than merges, so recalling a filter saved with no hidden ports shows every
-port again.
+Ports key** (a filter can be only hidden ports, with no pills — recalling one of
+those leaves the map waiting for a pill). Nothing else is stored — recalling one
+must not move your time window — and it **replaces** rather than merges, so
+recalling a filter saved with no hidden ports shows every port again.
 
 
 ---
@@ -227,7 +232,9 @@ then process and service children stacked under their parent.
 
 ## If the map is empty
 
-The empty state points at the two places data comes from: the **discovery rules**
+*Add a filter to start* is not an empty map — type a pill (see
+[The filter box](#the-filter-box)). When nothing has been mapped at all, the
+empty state points at the two places data comes from: the **discovery rules**
 card and the per-asset **Services** tab.
 
 Work through these:

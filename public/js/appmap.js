@@ -1165,6 +1165,27 @@
       setStatus("");
       return;
     }
+    // Nothing is drawn until a pill narrows the view — the unfiltered fleet is
+    // an unreadable hairball at any real size. A #focus=asset: deep link is
+    // turned into its asset pill first (applyFocusHash needs a drawn graph,
+    // so it can't do that itself from here).
+    if (filterPills.length === 0) {
+      if (pillFromFocusHash()) return; // addPill re-rendered
+      showEmpty(
+        "Add a filter to start",
+        "The Application Map draws only what a filter selects. Type a host, device type, tag, " +
+        "process, service, protocol, port or external IP in the filter box above, or pick a Saved filter.",
+      );
+      renderPortLegend(null);
+      if (cy) { cy.destroy(); cy = null; }
+      // Removing the last pill must not leave the rail describing a box that
+      // is no longer drawn.
+      selectedId = null;
+      var info = document.getElementById("appmap-info");
+      if (info) { info.hidden = true; info.innerHTML = ""; }
+      setStatus("");
+      return;
+    }
     if (g.edges.length === 0 && unhidden.edges.length > 0) {
       showEmpty(
         "Every port is switched off",
@@ -1172,10 +1193,8 @@
       );
     } else if (g.edges.length === 0 && payload.edges.length > 0) {
       showEmpty(
-        filterPills.length ? "No connections match these filters" : "No connections in this window",
-        filterPills.length
-          ? "Remove a filter pill — connection data exists but nothing matches all of them at once."
-          : "Widen the “Seen within” filter — connection data exists but nothing was seen recently enough.",
+        "No connections match these filters",
+        "Remove a filter pill or widen the “Seen within” filter — connection data exists but nothing matches all of them at once.",
       );
     } else if (emptyEl) {
       emptyEl.hidden = true;
@@ -1239,7 +1258,14 @@
       else textEl.textContent = text;
     }
     if (titleEl) titleEl.textContent = title;
-    if (emptyEl) emptyEl.hidden = false;
+    if (emptyEl) {
+      // The Integrations / Assets buttons belong to the onboarding copy; under
+      // "Add a filter" or "No connections match" they point nowhere useful.
+      emptyEl.querySelectorAll("a.btn").forEach(function (a) {
+        a.hidden = !(text === null || text === undefined);
+      });
+      emptyEl.hidden = false;
+    }
   }
 
   function setStatus(text) {
@@ -1987,6 +2013,19 @@
       }
     }
     focusNode(id);
+  }
+
+  // The unfiltered-map half of the deep link: with no graph drawn yet, add the
+  // focused asset's pill so the render that follows draws it (and then
+  // applyFocusHash above centres on it). True when a pill was added.
+  function pillFromFocusHash() {
+    var m = /[#&]focus=([^&]+)/.exec(window.location.hash || "");
+    if (!m || !payload) return false;
+    var n = findNode(decodeURIComponent(m[1]));
+    var label = n && n.kind === "asset" ? (n.hostname || n.ipAddress) : null;
+    if (!label) return false;
+    addPill("asset", label);
+    return true;
   }
 
   // Lets pin-changing surfaces (the Services-tab checkboxes in the asset
