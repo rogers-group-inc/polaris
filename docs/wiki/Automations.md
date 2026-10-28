@@ -186,7 +186,11 @@ The split is the whole idea:
   reminders, acknowledge-note policy and email. While an automation is in a
   group, **its own recipients are not used** for alerts the group governs.
 
-The editor holds a name, an **Active** switch, **One alert per** (**Device**,
+The list shows each group's members, who it tells, and an **Enabled** switch
+that turns the group on or off without opening it (users without
+Automations Read-Write see **Yes** / **No** instead).
+
+The editor holds a name, an **Enabled** checkbox, **One alert per** (**Device**,
 **Automation**, **Device + automation** or **Subnet**), a **Which devices** filter, the member list, the alert text,
 **Require a note when acknowledging** and **Remind while unhandled**.
 
