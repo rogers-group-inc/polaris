@@ -348,6 +348,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/userMapViewService.ts
+
+**What it owns:** `User.hiddenMapRegionIds` — the MapRegion ids an account has hidden with the Device Map Regions panel's eyes.
+
+**Public API:** `MAX_HIDDEN_MAP_REGIONS` (500), pure `normalizeHiddenMapRegionIds(v)`, `getHiddenMapRegionIds(userId)`, `setHiddenMapRegionIds(userId, ids)` (full replace).
+
+**Cross-service deps:** `prisma` (User) only.
+
+**Used by:** `src/api/routes/userHiddenMapRegions.ts` (`GET|PUT /me/hidden-map-regions`). Clients: `public/js/map.js` (`loadHiddenRegions` / `saveHiddenRegions` — the eyes, with a one-time upload of the pre-2026-10-28 localStorage copy) and `public/js/mobile/map-tab.js` (`loadHiddenSiteTest` — the phone hides the same gates; it has no eyes of its own). Both decide what is hidden with `PolarisRegionTree.hiddenPointTest` over `GET /map/region-overlay`.
+
+**Invariants:**
+- **A view preference, not an access control.** It narrows what a map DRAWS. Search still finds a gate in a hidden region and opens its topology (desktop `polarisMapOpenSiteTopology` reads `siteCache`, which keeps every site; the phone keeps every site in `_sites`). Never use this list to filter an API response.
+- **Lenient normalization on read AND write** — dedupe, trim, drop non-strings / empties / ids over 128 chars, cap 500. Ids are NOT checked against MapRegion: a stale id matches nothing on the client, and validating would turn it into a 400 that loses the rest of the list.
+- No Event audit and no permission gate beyond sign-in (the `/me/timezone` precedent); strictly per-caller.
+
+**When changing this:** the cascade (hide an L2 → its L1s and every gate inside) lives in `public/js/region-tree.js` (`effectiveHidden`, `hiddenPointTest`), shared by both clients — change it there, not in either map.
+
 ## services/userDashboardService.ts
 
 **What it owns:** Per-user dashboard layout persistence. Wraps the `UserDashboard` Prisma model.

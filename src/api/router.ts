@@ -53,6 +53,7 @@ import savedDashboardsRouter from "./routes/savedDashboards.js";
 import tableTabsRouter from "./routes/tableTabs.js";
 import notificationPreferenceRouter from "./routes/notificationPreference.js";
 import userTimezoneRouter from "./routes/userTimezone.js";
+import userHiddenMapRegionsRouter from "./routes/userHiddenMapRegions.js";
 import { agentsEnrollRouter, agentsRouter, agentsBinaryRouter } from "./routes/agents.js";
 import { haRouter, haEnrollRouter } from "./routes/ha.js";
 import rolesRouter from "./routes/roles.js";
@@ -168,6 +169,9 @@ router.use("/me/table-tabs", tableTabsRouter);
 // each client enrolls or unsubscribes its own browser to match at boot.
 router.use("/me/notification-preference", notificationPreferenceRouter);
 router.use("/me/timezone", userTimezoneRouter);
+// The map regions the caller hid (Device Map Regions panel eyes) — on the User
+// so the desktop map and the phone's Map tab hide the same regions and gates.
+router.use("/me/hidden-map-regions", userHiddenMapRegionsRouter);
 // Saved table filters (Assets page → Filters ▾). Gated per-request on the
 // function key that owns the requested scope — see routes/savedFilters.ts.
 router.use("/saved-filters", savedFiltersRouter);

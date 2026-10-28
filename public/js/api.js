@@ -747,6 +747,12 @@ const api = {
     set:      (tz) => request("PUT",  "/me/timezone", { timezone: tz }),
     detected: (tz) => request("POST", "/me/timezone/detected", { timezone: tz }),
   },
+  // The map regions this account hid with the Device Map Regions panel's eyes
+  // — on the User, so the desktop map and the phone's Map tab agree.
+  hiddenMapRegions: {
+    get: ()    => request("GET", "/me/hidden-map-regions"),
+    set: (ids) => request("PUT", "/me/hidden-map-regions", { regionIds: ids }),
+  },
   savedFilters: {
     list:   (scope)   => request("GET",    "/saved-filters" + toQuery({ scope })),
     create: (body)    => request("POST",   "/saved-filters", body),

@@ -43,7 +43,10 @@ scroll up to read earlier answers while you write; if you were at the newest
 answer, it stays in view as the box grows.
 The More tab holds the rest, top to bottom: the **Device Map** (sites and
 topology; a legend at the bottom left names each marker colour: Up, Warn, Down,
-Maint, Unmonitored, Unknown) and **Blocks**; **Events** (the audit log, last 7 days); the **Notification
+Maint, Unmonitored, Unknown; FortiGates inside regions you
+[hid on the desktop Device Map](Device-Map#show-regions) are left off, the map
+fits the ones that remain, and a line at the bottom says how many are hidden —
+a search for one still opens its sheet and topology) and **Blocks**; **Events** (the audit log, last 7 days); the **Notification
 preference**; **Add to Home Screen** when the app is not installed yet; the
 **theme strip** (tap to move through the day, as the desktop's theme band
 does; on Android the phone's status bar takes the theme's colour too); your **Account**; **Desktop view**; and **Sign out**. Its **Account** row shows your name, your
