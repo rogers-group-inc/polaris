@@ -145,6 +145,7 @@ import {
   parseMemberIpFilter,
   memberIpPasses,
   interfacePatternMatch,
+  interfaceTagMatch,
   type DeliveryOwner,
   type ShadowIndex as ShadowIndexOf,
   eventFeedsAutomations,
@@ -156,6 +157,7 @@ import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "
 import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
+import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import { computeStorageForecast } from "./storageForecastService.js";
 import { computeMemoryForecast, computeMemoryProjection, forecastLevelReading } from "./memoryForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
@@ -1175,6 +1177,38 @@ function reduceReadings(
  * AssetInterface narrowed to the gates in play (the member rows, and which
  * gates have any address), none at all when the filter is unset.
  */
+/**
+ * Business rule 133(g): the port test for `dimensionFilter.ifTag` — does this
+ * (asset, interface) carry one of the named tags? Returns a pass-all predicate
+ * with no query when the filter is unset. Otherwise ONE indexed read of
+ * AssetInterfaceTag, narrowed in SQL to the scoped assets and the named tags
+ * (manual and auto rows alike), so at 2000 assets it returns only the tagged
+ * ports, never the whole tag table. A port that fails produces no reading —
+ * the unpinned-interface contract: clearVanishedStates retires a live alert
+ * once its port loses the tag. A failed read throws, like the sample query
+ * beside it; failing open would raise a "critical" rule on every port.
+ */
+async function loadInterfaceTagFilter(
+  df: { ifTag?: string } | undefined,
+  ids: string[],
+): Promise<(assetId: string, ifName: string) => boolean> {
+  const terms = sdwanDimensionTerms(df?.ifTag);
+  if (terms.length === 0) return () => true;
+  if (ids.length === 0) return () => false;
+  const rows = await prisma.assetInterfaceTag.findMany({
+    where: { assetId: { in: ids }, OR: terms.map((t) => ({ tag: { equals: t, mode: "insensitive" as const } })) },
+    select: { assetId: true, ifName: true, tag: true },
+  });
+  const byPort = new Map<string, string[]>();
+  for (const r of rows) {
+    const key = `${r.assetId}|${r.ifName}`;
+    const list = byPort.get(key) ?? [];
+    list.push(r.tag);
+    byPort.set(key, list);
+  }
+  return (assetId, ifName) => interfaceTagMatch(byPort.get(`${assetId}|${ifName}`), df?.ifTag);
+}
+
 async function filterByMemberIp(
   df: { sdwanMemberIp?: string } | undefined,
   readings: Reading[],
@@ -1730,7 +1764,8 @@ async function resolveAssetMetricReadings(
       // Pinned interfaces only (interfaceIsPinned) — the same default the
       // ifOperStatus/ifAdminStatus/ifIpAddress/poeStatus resolvers apply. See its header for
       // why the pinned-only sample table isn't a gate by itself.
-      const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern));
+      const tagged = await loadInterfaceTagFilter(df, ids);
+      const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern) && tagged(r.assetId, r.ifName));
       return rateReadings(filtered, index, (r) => r.ifName, (r) => interfaceDimLabel(r.ifName, r.alias), (r) => num((r as any)[col]), mult);
     }
     case "ipsecThroughputBps": {
@@ -2042,15 +2077,18 @@ const POE_INVENTORY_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 async function unpinnedPoeFaultReadings(
   index: Map<string, ScopeAssetRow>,
   ids: string[],
-  df: { ifNamePattern?: string },
+  df: { ifNamePattern?: string; ifTag?: string },
   mk: (a: ScopeAssetRow, dimKey: string, dimLabel: string, value: any) => Reading,
 ): Promise<Reading[]> {
   if (ids.length === 0) return [];
   const freshSince = new Date(Date.now() - POE_INVENTORY_MAX_AGE_MS);
-  const rows = await prisma.assetInterface.findMany({
-    where: { assetId: { in: ids }, poeStatus: { not: null }, lastSeen: { gte: freshSince } },
-    select: { assetId: true, ifName: true, alias: true, poeStatus: true, lastSeen: true },
-  });
+  const [rows, tagged] = await Promise.all([
+    prisma.assetInterface.findMany({
+      where: { assetId: { in: ids }, poeStatus: { not: null }, lastSeen: { gte: freshSince } },
+      select: { assetId: true, ifName: true, alias: true, poeStatus: true, lastSeen: true },
+    }),
+    loadInterfaceTagFilter(df, ids),
+  ]);
   const out: Reading[] = [];
   for (const r of rows) {
     const a = index.get(r.assetId);
@@ -2063,6 +2101,7 @@ async function unpinnedPoeFaultReadings(
     // two paths can't drift into disagreeing about what a port reports.
     if (r.poeStatus === "disabled") continue;
     if (!interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern)) continue;
+    if (!tagged(r.assetId, r.ifName)) continue;
     out.push({
       ...mk(a, r.ifName, interfaceDimLabel(r.ifName, r.alias), r.poeStatus),
       readingAt: r.lastSeen,
@@ -2213,6 +2252,7 @@ async function resolveAssetStateReadings(
       // row — see interfaceStateSeries for why, and for what a duplicate alert
       // email per collection gap used to look like.
       const byPort = groupSeries(rows, (r) => `${r.assetId}|${r.ifName}`);
+      const tagged = await loadInterfaceTagFilter(df, ids);
       const out: Reading[] = [];
       for (const g of byPort) {
         const picked = interfaceStateSeries(trigger.field, g);
@@ -2227,6 +2267,7 @@ async function resolveAssetStateReadings(
         // is unaffected: a disabled port reports "disabled", never "fault".
         if (trigger.field === "poeStatus" && r.poeStatus === "disabled") continue;
         if (!interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern)) continue;
+        if (!tagged(r.assetId, r.ifName)) continue;
         // An address is compared as its BARE form on both the reading and the
         // series, so the shape a transport happened to report it in ("0.0.0.0"
         // vs the CMDB pair "0.0.0.0 0.0.0.0") can't decide whether an operator's

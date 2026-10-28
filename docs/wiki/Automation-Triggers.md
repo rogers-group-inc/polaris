@@ -781,8 +781,8 @@ The **+ Condition** menu also offers:
 
 - **Device identifier** — Hostname / IP address / MAC address / Manufacturer /
   Model. Valid on every asset metric or state leaf.
-- **Component name** — Interface name / IPsec tunnel name / Storage mount /
-  SD-WAN rule name.
+- **Component name** — Interface name / Interface tag / IPsec tunnel name /
+  Storage mount / SD-WAN rule name.
 
 Every **per-component condition** carries its component picker **on the row
 itself** and needs no filter row for it: the four interface conditions
@@ -883,6 +883,28 @@ Use the filter row rather than a separate *Interface IP address is not 0.0.0.0*
 condition. With two conditions, each is checked across the whole device rather
 than on the same port: some other interface always has an address, so that
 second condition never filters anything.
+
+### Interface tag
+
+The interface conditions (*Interface oper status*, *admin status*, *IP address*,
+*PoE status*, *Interface in / out bps* and *in / out error rate*) can be narrowed
+to the ports that carry a tag ([rule 133](Business-Rules#rule-133)). Add it with
+**+ Condition → Interface tag**. Click the box for the tags on the scoped
+devices' monitored ports, and pick one or several. Several means *any of them*.
+
+The usual use is one automation per priority on the same switches:
+*Interface oper status is down*, filtered to **Interface tag is Critical**, at
+severity critical, and a second one filtered to **Warning** at severity warning.
+Each fires only about its own ports, and the two never replace each other.
+
+- A tag matches by its **whole name**, ignoring case. `Critical` does not match a
+  port tagged `priority-critical`.
+- Tags you put on a port by hand and tags a tag's auto-assign filter put there
+  both count.
+- A port without the tag never raises an alert. If a port loses the tag, its open
+  alert clears.
+- Only interface conditions take this filter. On any other condition it is refused
+  when you save.
 
 ---
 

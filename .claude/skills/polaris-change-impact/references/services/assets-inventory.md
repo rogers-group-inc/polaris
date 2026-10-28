@@ -200,7 +200,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma.assetInterfaceTag` / `prisma.assetInterface` / `prisma.asset` / `prisma.tag`; `utils/tagNormalize.ts` (`normalizeTags`, `isAzureTag`, `REGION_TAG_PREFIX`); `eventLogService.logEvent`.
 
-**Used by:** `src/api/routes/assets.ts` → `GET /assets/:id/system-info` (`listInterfaceTags` → `interfaces[].tags`) and `PUT /assets/:id/interfaces/:ifName/tags` (`setInterfaceTags`).
+**Used by:** `src/api/routes/assets.ts` → `GET /assets/:id/system-info` (`listInterfaceTags` → `interfaces[].tags`) and `PUT /assets/:id/interfaces/:ifName/tags` (`setInterfaceTags`). The table it writes is also READ by the automation engine (`notificationEngine.loadInterfaceTagFilter`, rule 133(g)) — a manual save changes which ports an `ifTag`-filtered automation reads on its next tick, and a port that loses the tag has its open alert cleared.
 
 **Invariants:**
 - **A manual save replaces the MANUAL set only.** Auto rows are left alone unless the operator names their tag, which converts the row to `manual` (`tagId` null) so it survives the filter. Diffed, not delete-all-then-insert.

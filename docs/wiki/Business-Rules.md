@@ -2817,6 +2817,14 @@ it removes only the automatic copies. `region:` and `azure:` tags are
 device-only and are refused on a port. A port moving VLAN is picked up on its
 next full poll.
 
+**(g) An interface automation can be narrowed to the ports that carry a tag.**
+The **Interface tag** filter on an interface condition (status, IP address, PoE,
+throughput, errors) keeps only the ports carrying one of the named tags. The tag
+must match by whole name, ignoring case, and tags you added by hand count the
+same as automatic ones. A port without the tag never alerts. A port that loses
+it has its open alert cleared. So one automation per priority covers a switch
+whose ports matter differently.
+
 ### Rule 134
 
 **An open alert follows its device's rename; a cleared alert keeps the name it

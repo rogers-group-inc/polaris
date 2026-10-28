@@ -584,6 +584,7 @@ function makeAutomationSentences(s) {
   var DIM_PHRASE = Object.assign({
     sensorClass: "for sensors of class {value}", sensorNamePattern: "on sensors matching {value}",
     ifNamePattern: "on interfaces matching {value}",
+    ifTag: "on interfaces tagged {value}",
     hostnamePattern: "on devices whose hostname matches {value}",
     ipPattern: "on devices whose IP matches {value}",
     macPattern: "on devices whose MAC matches {value}",
@@ -894,7 +895,7 @@ function makeAutomationSentences(s) {
   // as min()/max() of a boolean is the same unreadability the state labels fix.
   var FORMULA_STATE_AGG = { latest: "latest", max: "any", min: "all", avg: "avg", median: "median" };
   var FORMULA_DIM = Object.assign({
-    sensorClass: "class=", sensorNamePattern: "name~", ifNamePattern: "if~",
+    sensorClass: "class=", sensorNamePattern: "name~", ifNamePattern: "if~", ifTag: "ifTag=",
     mountPathPattern: "mount~", sdwanRulePattern: "rule~", healthCheck: "health=", link: "member=",
     tunnelName: "tunnel=", widgetId: "widget=", processNamePattern: "process~",
     stateProbeId: "probe=", stateRowPattern: "row~", hostnamePattern: "host~", checkId: "check=",
@@ -1297,7 +1298,7 @@ function awMacDimensionMatch(mac, pattern) {
  *  server matcher is notificationTypes.interfacePatternMatch, which also reads
  *  each interface's description — the picker offers descriptions as values, so
  *  the any-of match below over those values agrees with it. */
-function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link" || dim === "ifNamePattern"; }
+function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link" || dim === "ifNamePattern" || dim === "ifTag"; }
 
 /** The "|"-separated terms of a multi value — trimmed, blanks dropped. */
 function awDimTerms(value) {
@@ -1372,8 +1373,19 @@ function awDimTogglePick(res, text, value) {
 function awDimMatcher(dim) {
   if (dim === "ipPattern") return awIpDimensionMatch;
   if (dim === "macPattern") return awMacDimensionMatch;
+  if (dim === "ifTag") return awInterfaceTagMatch;
   if (awDimIsMulti(dim)) return awSdwanDimensionMatch;
   return awDimSubstringMatch;
+}
+
+/** Mirror of the server's `interfaceTagMatch` (business rule 133(g)): any term
+ *  equal to the tag, case-insensitively — a tag is a whole name, never a
+ *  substring. No terms = match. */
+function awInterfaceTagMatch(value, pattern) {
+  var terms = awDimTerms(pattern);
+  if (!terms.length) return true;
+  var v = String(value == null ? "" : value).toLowerCase();
+  return terms.some(function (t) { return t.toLowerCase() === v; });
 }
 
 /** Values a typed pattern selects out of what the scoped devices report. */
@@ -1827,7 +1839,7 @@ async function openAutomationWizard(existing, opts) {
       dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick one or more, or type a name or description", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick", sdwanMemberIp: "!= 0.0.0.0 (or == an address)" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick one or more, or type a name or description", ifTag: "click to pick one or more interface tags", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick", sdwanMemberIp: "!= 0.0.0.0 (or == an address)" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
@@ -1878,6 +1890,8 @@ async function openAutomationWizard(existing, opts) {
     manufacturerPattern: { label: "Manufacturer", rep: "cpuPct", device: true },
     modelPattern: { label: "Model", rep: "cpuPct", device: true },
     ifNamePattern: { label: "Interface name", rep: "ifOperStatus" },
+    // Business rule 133(g): the ports' own tags, whole names (awInterfaceTagMatch).
+    ifTag: { label: "Interface tag", rep: "ifOperStatus" },
     tunnelName: { label: "IPsec tunnel name", rep: "ipsecStatus" },
     mountPathPattern: { label: "Storage mount", rep: "storageUsedPct" },
     sdwanRulePattern: { label: "SD-WAN rule name", rep: "sdwanRuleStatus" },
@@ -1888,6 +1902,7 @@ async function openAutomationWizard(existing, opts) {
     sdwanMemberIp: { label: "SD-WAN member IP address", rep: "sdwanPacketLoss", memberIp: true },
   };
   if (!Array.isArray(s.sdwanMemberIpTargets)) delete TG_FILTER_META.sdwanMemberIp;
+  if (!Array.isArray(s.interfaceTagTargets)) delete TG_FILTER_META.ifTag;
   function tgFilterLabel(dim) { return (TG_FILTER_META[dim] && TG_FILTER_META[dim].label) || dim; }
   /**
    * The dimension a field's reading IS ABOUT rather than one that narrows a set
@@ -1920,6 +1935,10 @@ async function openAutomationWizard(existing, opts) {
     if (d === "sdwanMemberIp") {
       var target = leaf.type === "asset_state" ? leaf.field : leaf.metric;
       return (s.sdwanMemberIpTargets || []).indexOf(target) !== -1;
+    }
+    if (d === "ifTag") {
+      var ifTarget = leaf.type === "asset_state" ? leaf.field : leaf.metric;
+      return (s.interfaceTagTargets || []).indexOf(ifTarget) !== -1;
     }
     if (leaf.type === "asset_state") return (((s.fieldDimensions || {})[leaf.field]) || []).indexOf(d) !== -1;
     return (((s.metricDimensions || {})[leaf.metric]) || []).indexOf(d) !== -1;
@@ -1965,6 +1984,7 @@ async function openAutomationWizard(existing, opts) {
     // An unlifted member-IP filter (siblings disagree) is in no base list, so
     // it would evaluate while drawing nothing — show it where it lives.
     if (df && df.sdwanMemberIp && out.indexOf("sdwanMemberIp") === -1) out.push("sdwanMemberIp");
+    if (df && df.ifTag && out.indexOf("ifTag") === -1) out.push("ifTag");
     return out;
   }
   // Filter-placement problems from the LAST collect, surfaced by validateStep3 /
@@ -3537,7 +3557,7 @@ async function openAutomationWizard(existing, opts) {
         '<div style="display:flex;gap:6px;align-items:center">' +
           '<span class="aw-grip" draggable="true" title="Drag to move">&#x2842;</span>' +
           '<select class="tgl-what" style="flex:0 1 220px;min-width:0">' + tgWhatOptions(kind, "d:" + leaf.dim) + '</select>' +
-          '<span style="font-size:0.85rem;white-space:nowrap">matches</span>' +
+          '<span style="font-size:0.85rem;white-space:nowrap">' + (leaf.dim === "ifTag" ? "is" : "matches") + '</span>' +
           dimControlHtml(leaf.dim, fdf, (TG_FILTER_META[leaf.dim] || {}).rep || "") +
           '<button type="button" class="btn btn-sm btn-danger scr-remove" title="Remove filter">&times;</button>' +
         '</div>' +

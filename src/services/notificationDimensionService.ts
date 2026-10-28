@@ -281,6 +281,26 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
       ];
     },
   },
+  ifTag: {
+    // Business rule 133(g): the tags on the scoped devices' PINNED ports —
+    // manual and auto alike, the rows the engine's loadInterfaceTagFilter
+    // reads. Pinned only, for the reason ifNamePattern reads the pin set: a
+    // tag that sits only on unpinned ports names a filter that never fires.
+    // `since` is unused; a tag has no cadence.
+    noun: "interface tags",
+    strict: false,
+    candidateWhere: { interfaceTags: { some: {} } },
+    pairs: async (ids) => {
+      const [assets, rows] = await Promise.all([
+        prisma.asset.findMany({ where: { id: { in: ids } }, select: { id: true, monitoredInterfaces: true } }),
+        prisma.assetInterfaceTag.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ifName: true, tag: true } }),
+      ]);
+      const pinned = new Map(assets.map((a) => [a.id, new Set(a.monitoredInterfaces)]));
+      return rows
+        .filter((r) => pinned.get(r.assetId)?.has(r.ifName) ?? false)
+        .map((r) => ({ value: r.tag, assetId: r.assetId }));
+    },
+  },
   mountPathPattern: {
     // The operator-pinned set (`Asset.monitoredStorage`), mirroring
     // ifNamePattern — and since 2026-09 for the same reason rather than a
