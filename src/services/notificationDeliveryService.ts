@@ -891,6 +891,9 @@ export function emailSentEventsFor(sent: DeliveryRow[]): LogEventInput[] {
       level: "info",
       message:
         `${allClear ? "All-clear email" : "Alert email"}` +
+        // The asset is named in the message, not just details.assetId: on the
+        // global Events page there is no asset tab around it to say which one.
+        `${n.assetHostname ? ` for ${n.assetHostname}` : ""}` +
         `${ruleName ? ` from automation "${ruleName}"` : ""} sent to ${to.join(", ") || "(no To recipients)"}` +
         `${cc.length ? `; Cc ${cc.join(", ")}` : ""}` +
         `${bccCount ? ` (+${bccCount} Bcc)` : ""}` +

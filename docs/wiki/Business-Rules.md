@@ -2099,7 +2099,7 @@ never raises an automation.**
 
 When an automation's email is delivered, Polaris writes a
 `notification.email_sent` event on the device the alert is about. It names the
-automation, the To and Cc recipients, and the subject, and it says when the
+device, the automation, the To and Cc recipients, and the subject, and it says when the
 email was an all-clear or was sent because web push could not reach someone.
 It appears on the device's **Events** tab beside the alert's fire and clear.
 
