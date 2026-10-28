@@ -2883,7 +2883,11 @@ network that knows its FortiGate and its VLAN hands tags down: one discovered
 through FortiManager or a FortiGate integration. A network learned from a DHCP
 server, vCenter or a Generic API feed, or typed by hand, keeps its tags to
 itself. The match is per gate, because the same VLAN number means a different
-network at another site. A port carries the VLAN when it is the native VLAN or
+network at another site, and within a gate it is per interface: the network's
+VLAN must sit on the FortiLink (or aggregate, hardware or software switch) the
+switch is managed through, because one gate can carry VLAN 30 on two of them.
+A network discovered before this rule hands nothing down until its next
+discovery run records that interface. A port carries the VLAN when it is the native VLAN or
 one of the tagged VLANs. A trunk that allows all VLANs never inherits. Every tag
 is handed down except `region:` and `azure:` tags and the `dhcp-discovered` /
 integration markers. The switch gets every tag its ports inherit, so a switch

@@ -66,8 +66,10 @@ Tags · **Sources** · Integration · Creator · **Reservations** · **Utilizati
 network (one discovered through FortiManager or a FortiGate integration, so it
 knows its gate and its VLAN) carries a tag, every FortiSwitch behind that gate
 gets the tag on each port that carries the VLAN, and the switch itself gets it
-too. A port carries the VLAN when it's the port's native VLAN or one of its
-tagged VLANs. A trunk set to allow all VLANs (a FortiLink uplink) never
+too. Only switches managed through the interface the VLAN sits on count, so
+a gate with VLAN 30 on two FortiLinks keeps the two networks apart; a network
+learns that interface on its next discovery run. A port carries the VLAN when
+it's the port's native VLAN or one of its tagged VLANs. A trunk set to allow all VLANs (a FortiLink uplink) never
 inherits, or it would pick up every network's tags. Any tag works, Priority
 tags included, so a port on a **Priority Critical** network and a **Priority
 Warning** one carries both, and a [Priority-severity

@@ -199,6 +199,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `reconcileNetworkTags({ assetId? })` → `{ assetsAdded, assetsRemoved, portsAdded, portsRemoved }` (fleet, or one switch); `scheduleNetworkTagReconcile(actor?)` (fire-and-forget, coalesced, Event `tag.network_inherited` when anything moved); pure `planNetworkTagInheritance(input)`, `portCarriesVlan`, `isInheritableNetworkTag`, `NETWORK_SYSTEM_TAGS`.
 
+**Matching key:** gate asset id + the network's `fortigateVlanParent` (case-insensitive) = the switch's `fortinetTopology.uplinkInterface` + VLAN number. A network with no parent yet hands nothing down; a switch with no `uplinkInterface` inherits nothing.
+
 **Cross-service deps:** `utils/fortinetParentKey.ts` (`buildInfraParentIndex`, `resolveInfraParentAsset` for the network's gate, `controllerGateIdOf` for the switch's) — never a string compare of `fortigateDevice` against a hostname; `utils/tagNormalize.ts` (`REGION_TAG_PREFIX`, `isAzureTag`); `prisma.subnet` (read), `prisma.asset` (firewalls + switches read, `tags` read-modify-write), `prisma.assetInterface` (ports by VLAN), `prisma.assetInterfaceTag`, `prisma.networkTagAssignment`, `prisma.tag` + `prisma.tagAutoAssignment` (filter ownership on remove); `eventLogService.logEvent`.
 
 **Used by:** `tagAssignmentService` (`reconcileAllTags` → discovery end + the 6 h `reconcileTagAssignments` tick; `reconcileTagsForAsset` → asset writes and `interfaceInventoryService`'s `portVlanSignature` edge trigger); `subnetService` (`scheduleNetworkTagReconcile` from `updateSubnet` when tags / VLAN / status changed or `convertToManual`, and from `deleteSubnet`). `routes/serverSettings.ts` tag rename rewrites `network_tag_assignments.tag`.
