@@ -50,8 +50,13 @@ async function seedSwitch(over: { status?: "active" | "decommissioned" } = {}): 
       ipAddress: MGMT_IP, manufacturer: "Fortinet",
     },
   });
-  await prisma.assetSource.create({
-    data: { assetId: a.id, sourceKind: "fortiswitch", externalId: SERIAL, observed: { serial: SERIAL } },
+  // Upsert, not create: the Asset create hook (db.ts → shadowWriteAssetSources)
+  // derives this same (fortiswitch, serial) row fire-and-forget from a Fortinet
+  // switch, so a plain create races it on the unique key.
+  await prisma.assetSource.upsert({
+    where: { sourceKind_externalId: { sourceKind: "fortiswitch", externalId: SERIAL } },
+    create: { assetId: a.id, sourceKind: "fortiswitch", externalId: SERIAL, observed: { serial: SERIAL } },
+    update: { assetId: a.id },
   });
   return a.id;
 }
