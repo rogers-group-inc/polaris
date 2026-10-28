@@ -331,7 +331,9 @@ record id.
 - Frozen header: the `.table-wrapper-sticky` class + `renderPageControls`
   (which calls `sizeStickyTableWrappers()`) bound the wrapper to the viewport so
   it scrolls internally. Inside a slide-over use `.table-wrapper-panel-sticky`
-  and your own panel-relative sizer instead — never the viewport one.
+  and your own panel-relative sizer instead — never the viewport one. A table
+  that is its whole tab can instead fill the panel with CSS flex and stop the
+  panel body scrolling (the asset Events tab).
 
 ### Client vs server mode
 

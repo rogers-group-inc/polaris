@@ -1280,9 +1280,12 @@ Things to know:
 ### Events
 
 The audit history about this asset — its own [Events](Events), plus each of
-its alerts firing and clearing — newest first. The header's Screenshot gives way
-to an **Export** dropdown here (CSV or PDF, this page or every event for the
-asset).
+its alerts firing and clearing — newest first. The table fills the panel and
+scrolls on its own, with its column headers held in place; the panel itself
+does not scroll on this tab. Above the table's right edge sit **Clear
+Filters**, **Refresh** and the rows-per-page picker, in that order. The
+header's Screenshot gives way to an **Export** dropdown here (CSV or PDF, this
+page or every event for the asset).
 
 ### Alerts
 
