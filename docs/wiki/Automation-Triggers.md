@@ -756,6 +756,38 @@ band, in seconds), and the engine honours it. The wizard shows only the one
 hold, so **saving the automation from the wizard removes per-tier holds** and
 every tier then follows "Sustained for".
 
+### Severity from the Priority tag
+
+Severity bands need a number to climb, so *monitor status is down* cannot use
+them. Instead, a bare **monitor status is down** or **interface oper status is
+down** automation offers **"Take the severity from the device's Priority tag"**
+(or "interface's") under the trigger ([rule 136](Business-Rules#rule-136)).
+With it on, one automation does the work of one per priority:
+
+| The device (or port) carries | The alert |
+|---|---|
+| **Critical** | critical |
+| **Serious** | serious |
+| **Warning** | warning |
+| **Informational** / **Notice** | that severity |
+| several Priority tags | the highest of them |
+| no Priority tag | **no alert** from this automation |
+
+- The Priority tags are the five built-in ones (see
+  [Server Settings](Server-Settings)). A tag typed by hand in another case,
+  such as `critical`, counts the same.
+- For an interface automation it is the **port's** tag that counts, not the
+  switch's. Tag ports in the interface panel, or with a tag's native-VLAN
+  filter.
+- If the tag changes while the device is down, the open alert changes severity
+  and notifies again, as it does when a band changes. If the tag is removed,
+  the alert clears.
+- Every priority uses the automation's own actions and escalation.
+- The **Alert severity** box is hidden while the switch is on. The automations
+  list shows **PRIORITY TAG** in the Severity column.
+- It cannot be combined with severity bands, and it is offered only for those
+  two triggers on their own (not inside a multi-condition trigger).
+
 ---
 
 ## Narrowing to part of a device

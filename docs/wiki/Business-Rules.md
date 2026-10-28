@@ -2865,3 +2865,10 @@ matches and removes only what it added. Priority tags you put on assets or
 interfaces by hand always stay. On upgrade, a tag that still has one of the
 five names is brought back into **Priority** with its colour and keeps its
 devices. A missing one is re-created. See [Server Settings](Server-Settings).
+
+**(e) A down automation can take its severity from the Priority tag.** On a
+*monitor status is down* or *interface oper status is down* automation, the
+alert's severity is the highest Priority tag on the device (or on the port), and
+a device or port with no Priority tag does not alert. A tag that changes while
+the device is down changes the open alert's severity. A tag that is removed
+clears it. See [Automation Triggers](Automation-Triggers#severity-from-the-priority-tag).

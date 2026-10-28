@@ -250,6 +250,12 @@ var _rulesPage = 1;
       cooldownSec: r.cooldownSec != null ? r.cooldownSec : null,
       messageTemplate: r.messageTemplate != null ? r.messageTemplate : null,
       requireAckNote: r.requireAckNote === true,
+      // MANDATORY, both: updateRule writes each boolean as `=== true`, so an
+      // omitted one is stored false — the enable toggle used to switch "one
+      // alert per device" (business rule 75) off on every flip, and would do
+      // the same to a severity that follows the Priority tag (rule 136(e)).
+      groupByAsset: r.groupByAsset === true,
+      severityFromPriorityTag: r.severityFromPriorityTag === true,
       // MANDATORY. This function backs the list row's enable/disable toggle,
       // which PUTs the whole record; an omitted nullable Json field is cleared
       // server-side by jsonOrClear, so leaving this out would delete the
@@ -595,6 +601,11 @@ var _rulesPage = 1;
    *  The column's filter/sort still key on that base severity. */
   function severityPill(r) {
     var base = r.severity || "info";
+    // Business rule 136(e): the severity is whichever Priority tag the device
+    // or port carries, so no single level is true of the automation.
+    if (r.severityFromPriorityTag === true) {
+      return '<span class="badge badge-level-' + escapeHtml(base) + '" title="Severity follows the Priority tag; untagged devices do not alert">PRIORITY TAG</span>';
+    }
     var bands = Array.isArray(r.severityBands) ? r.severityBands : [];
     if (!bands.length) {
       return '<span class="badge badge-level-' + escapeHtml(base) + '">' + escapeHtml(base.toUpperCase()) + '</span>';

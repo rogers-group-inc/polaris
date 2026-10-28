@@ -771,6 +771,9 @@ only thing you can edit is their **device filter**. A filter only adds the tag
 to the devices it matches. You can still put a Priority tag on any asset or
 interface by hand, and a filter never removes a tag that was added by hand.
 
+A down automation can take its severity from these tags. See [Automation
+Triggers](Automation-Triggers#severity-from-the-priority-tag).
+
 Upgrading an install where one of the five had been changed: a tag that still
 has the name moves back into **Priority** with its severity colour and keeps its
 devices. A missing one is re-created. A tag that was renamed (say *Critical* to

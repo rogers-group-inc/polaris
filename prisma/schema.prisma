@@ -5626,6 +5626,12 @@ model NotificationRule {
   // feed the carve-out precedence index, so a grouped rule must keep shadowing
   // its ungrouped sibling (business rule 46).
   groupByAsset Boolean  @default(false)
+  // Business rule 136(e): the alert's severity is the HIGHEST Priority tag on
+  // the device (monitor status is down) or on the port (interface oper status
+  // is down) instead of `severity`; a device / port with no Priority tag does
+  // not alert. A column, not a trigger key, for groupByAsset's reason: it must
+  // not change triggerSignature. Validated by validatePrioritySeverity.
+  severityFromPriorityTag Boolean @default(false)
   /// The AlertGroup this automation delivers through (business rule 75), or
   /// NULL when it delivers on its own. At most ONE: a fire has to have a single
   /// alert to join. Membership IMPLIES `groupByAsset` — joining a group means

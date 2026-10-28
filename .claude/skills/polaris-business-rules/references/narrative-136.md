@@ -52,6 +52,47 @@ fleet, so the names became part of the alerting contract and had to stop being e
 - **Lock only what exists (no restore).** Offered; the operator chose restore. An install missing
   "Critical" would otherwise have no way to tag a critical device for severity-following automations.
 
+### (e) An automation's severity may follow the Priority tag (2026-10-28)
+
+The reason the tags had to be locked. The operator's words: "right now severity band condition
+can only be set with a single condition. e.g. memory utilization 80% is warning, 90% is serious,
+etc. i want to include monitor status to the severity bands, but when device status is chosen it
+has to be paired with a priority tag. that way i don't need 3 or 4 automations for alerting when a
+device is down based on which priority tag it has."
+
+**Operator choices (asked, 2026-10-28).** Severity *follows* the tag rather than being mapped band
+by band ("Critical" tag → critical; the names ARE the severities, so a per-band mapping would only
+let them disagree). A device with **no** Priority tag does **not** alert from such an automation.
+The same mechanism applies to "interface oper status is down" with the PORT's tag, building on
+rule 133's port tags. With several Priority tags the **highest** wins: a device tagged Warning and
+Critical is a critical device, and taking the lower would silently demote it.
+
+**Why not severity bands.** Bands are thresholds on a NUMBER (`severityForValue`, the tier ladder,
+per-tier runs). Monitor status is a state; there is no value to climb. The engine reuses the band
+machinery only where it is shape-agnostic: `fireOpts.severity` on the first fire, and
+`applyBandTransition` when the tag changes under a live alert (one alert, severity rewritten,
+escalation clock restarted, re-notified per `bandNotify`). `tierForSeverity` returns the requested
+severity with the BASE actions for such a rule, rather than falling back to `rule.severity`.
+
+**Untagged = no reading, and the freeze it would cause.** Dropping an untagged reading is how "does
+not alert" is expressed, the unpinned-interface contract. But a device that produces no readings
+for a rule is FROZEN by `clearVanishedStates` (a collection gap is not recovery), so a device whose
+tag came off while it was down would have kept its alert forever. `tagGateGone` is the carve-out,
+the twin of the unpin carve-out: over the frozen candidates only, it asks whether the subject still
+passes the rule's tag gates and clears it ("no longer reported or monitored") when it does not. The
+same gap existed in rule 133(g)'s `ifTag` filter for a switch whose only matching port lost the tag;
+the carve-out covers both.
+
+**Found on the way: the list toggle cleared boolean columns.** `updateRule` stores
+`groupByAsset` (and now `severityFromPriorityTag`) as `input.x === true`, and the list row's
+enable switch PUTs the whole record through `_ruleToInput`, which never carried `groupByAsset`. So
+flipping an automation off and on silently turned rule 75's "one alert per device" off. Fixed by
+resending both, pinned in `tests/unit/automationsRuleToInput.test.ts`.
+
+Rejected: a composite "monitor status is down AND tag is Critical" per band. Composite leaves fold
+per device and a band needs a number; it would also have needed the 3-4 automations the operator
+was trying not to write.
+
 <a id="rule-136-invariant"></a>
 
 ### Rule 136 — the invariant as first stated
