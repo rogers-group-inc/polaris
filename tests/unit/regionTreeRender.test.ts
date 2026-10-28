@@ -51,6 +51,9 @@ type Tree = {
     p: unknown,
     opts?: { draggable?: boolean; emptyText?: string; visibility?: boolean; hidden?: Record<string, boolean> },
   ) => string;
+  effectiveHidden: (p: unknown, hidden: Record<string, boolean>) => Record<string, string>;
+  pointInPolygon: (lat: number, lng: number, polygon: unknown) => boolean;
+  hiddenPointTest: (p: unknown, hidden: Record<string, boolean>) => ((lat: number, lng: number) => boolean) | null;
   canNestUnder: (p: unknown, childId: string, targetId: string) => { ok: boolean; reason: string };
   attachTreeTooltip: (
     button: unknown,
@@ -363,16 +366,89 @@ describe("buildPanelTreeHtml (the Regions panel list)", () => {
     const html = load().buildPanelTreeHtml(NESTED, { visibility: true, hidden: { memphis: true } });
     expect(html).toMatch(/class="map-regions-row map-regions-row-hidden" data-region-id="memphis"/);
     expect(html).toContain('aria-label="Show Memphis"');
-    expect(html).toMatch(/data-region-eye="memphis" aria-pressed="false"/);
-    // Only the hidden one — its children keep their own state.
-    expect((html.match(/map-regions-row-hidden/g) || []).length).toBe(1);
-    expect(html).toMatch(/data-region-eye="bartlett" aria-pressed="true"/);
+    expect(html).toMatch(/data-region-eye="memphis" aria-pressed="false" title/);
+    // Memphis and Bartlett (inside it) — nothing else.
+    expect((html.match(/map-regions-row-hidden/g) || []).length).toBe(2);
+    expect(html).toMatch(/data-region-eye="nashville" aria-pressed="true" title/);
+  });
+
+  it("hides a nested region with its container: struck, disabled eye naming the container", () => {
+    const html = load().buildPanelTreeHtml(NESTED, { visibility: true, hidden: { memphis: true } });
+    expect(html).toMatch(/data-region-eye="bartlett" aria-pressed="false" disabled title="Bartlett is hidden with Memphis"/);
+    // The container's own eye stays live — it is the switch.
+    expect(html).not.toMatch(/data-region-eye="memphis"[^>]*disabled/);
   });
 
   it("ignores the hidden set without the eyes (edit mode draws every row plain)", () => {
     const html = load().buildPanelTreeHtml(NESTED, { draggable: true, hidden: { memphis: true } });
     expect(html).not.toContain("map-regions-row-hidden");
     expect(html).not.toContain("map-regions-eye");
+  });
+});
+
+describe("effectiveHidden (hiding cascades down the tree)", () => {
+  it("hides every descendant with the region the viewer hid, naming it as the hider", () => {
+    expect(load().effectiveHidden(NESTED, { south: true })).toEqual({
+      south: "south",
+      nashville: "south",
+      memphis: "south",
+      bartlett: "south",
+    });
+  });
+
+  it("names the NEAREST hidden ancestor, and ignores ids that match no region", () => {
+    const eff = load().effectiveHidden(NESTED, { south: true, memphis: true, gone: true });
+    expect(eff.bartlett).toBe("memphis");
+    expect(eff.memphis).toBe("memphis");
+    expect(eff.gone).toBeUndefined();
+    expect(eff.elsewhere).toBeUndefined();
+  });
+
+  it("survives a parent cycle and an empty set", () => {
+    const t = load();
+    const cyc = { regions: [{ id: "a", name: "A", parentId: "b" }, { id: "b", name: "B", parentId: "a" }] };
+    expect(t.effectiveHidden(cyc, { a: true })).toEqual({ a: "a", b: "a" });
+    expect(t.effectiveHidden(NESTED, {})).toEqual({});
+    expect(t.effectiveHidden(null, { a: true })).toEqual({});
+  });
+});
+
+describe("hiddenPointTest (FortiGates in hidden regions)", () => {
+  // Geometry: South contains Memphis contains Bartlett; Elsewhere apart.
+  const GEO = {
+    regions: [
+      { id: "south", name: "South", parentId: null, polygon: sq(30, -95, 10) },
+      { id: "memphis", name: "Memphis", parentId: "south", polygon: sq(34, -91, 3) },
+      { id: "bartlett", name: "Bartlett", parentId: "memphis", polygon: sq(35, -90, 1) },
+      { id: "elsewhere", name: "Elsewhere", parentId: null, polygon: sq(50, -10, 5) },
+    ],
+  };
+
+  it("is null when nothing is hidden, so callers skip filtering", () => {
+    expect(load().hiddenPointTest(GEO, {})).toBeNull();
+    expect(load().hiddenPointTest(GEO, { gone: true })).toBeNull();
+  });
+
+  it("hides points in the hidden region and everything inside it, nothing outside", () => {
+    const test = load().hiddenPointTest(GEO, { memphis: true })!;
+    expect(test(35.5, -89.5)).toBe(true); // in Bartlett, inside Memphis
+    expect(test(34.5, -90.5)).toBe(true); // Memphis outside Bartlett
+    expect(test(31, -94)).toBe(false); // South only
+    expect(test(52, -8)).toBe(false); // Elsewhere
+  });
+
+  it("hiding an L2 hides a site that is in it but in none of its L1s", () => {
+    const test = load().hiddenPointTest(GEO, { south: true })!;
+    expect(test(31, -94)).toBe(true);
+    expect(test(35.5, -89.5)).toBe(true);
+  });
+
+  it("pointInPolygon handles junk without throwing", () => {
+    const t = load();
+    expect(t.pointInPolygon(1, 1, sq(0, 0, 2))).toBe(true);
+    expect(t.pointInPolygon(3, 1, sq(0, 0, 2))).toBe(false);
+    expect(t.pointInPolygon(NaN, 1, sq(0, 0, 2))).toBe(false);
+    expect(t.pointInPolygon(1, 1, null)).toBe(false);
   });
 });
 

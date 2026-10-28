@@ -177,7 +177,9 @@
    * `opts.visibility` (view mode) gives each row an eye button
    * (`.map-regions-eye`, `data-region-eye="<id>"`) that shows / hides that one
    * region's polygon; `opts.hidden` is the `{id: true}` set currently hidden,
-   * whose rows dim and whose eye is struck through.
+   * whose rows dim and whose eye is struck through. Hiding cascades
+   * (`effectiveHidden`): rows nested under a hidden region dim too, and their
+   * eye is struck and disabled until the container is shown again.
    */
   var EYE_ICON =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" aria-hidden="true">' +
@@ -188,17 +190,103 @@
       '<path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/>' +
       '<path d="M14.1 14.2a3 3 0 0 1-4.2-4.3"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
 
-  function eyeButtonHtml(r, hidden) {
-    var label = (hidden ? "Show " : "Hide ") + String(r.name == null ? "" : r.name);
+  // `inheritedFrom` (a name) marks a row hidden only because a region it sits
+  // inside is hidden: its eye is struck and disabled, since showing it on its
+  // own would contradict the hidden container.
+  function eyeButtonHtml(r, hidden, inheritedFrom) {
+    var name = String(r.name == null ? "" : r.name);
+    var label = inheritedFrom != null
+      ? name + " is hidden with " + inheritedFrom
+      : (hidden ? "Show " : "Hide ") + name;
     return '<button type="button" class="map-regions-eye" data-region-eye="' + esc(r.id) + '"' +
-      ' aria-pressed="' + (hidden ? "false" : "true") + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' +
+      ' aria-pressed="' + (hidden ? "false" : "true") + '"' + (inheritedFrom != null ? " disabled" : "") +
+      ' title="' + esc(label) + '" aria-label="' + esc(label) + '">' +
       (hidden ? EYE_OFF_ICON : EYE_ICON) + "</button>";
+  }
+
+  function eyeStateOf(r, effHidden, nameById) {
+    var hider = effHidden[r.id];
+    if (!hider) return { hidden: false, inheritedFrom: null };
+    return { hidden: true, inheritedFrom: hider === r.id ? null : (nameById[hider] == null ? "" : String(nameById[hider])) };
+  }
+
+  /**
+   * The regions a viewer's hidden set actually hides: every region they hid
+   * plus everything nested under one (hiding an L2 hides the L1s inside it).
+   * Returns `{regionId: hiderId}` — the hiderId is the region itself when the
+   * viewer hid it, else the nearest hidden ancestor, so a row can say what it
+   * is hidden with. Ids in `hidden` that match no region are ignored.
+   */
+  function effectiveHidden(payload, hidden) {
+    var set = hidden && typeof hidden === "object" ? hidden : {};
+    var byId = {};
+    regionsOf(payload).forEach(function (r) { byId[r.id] = r; });
+    var out = {};
+    Object.keys(byId).forEach(function (id) {
+      var cur = byId[id];
+      var steps = 0;
+      while (cur && steps++ < 64) {
+        if (set[cur.id]) { out[id] = cur.id; return; }
+        cur = cur.parentId ? byId[cur.parentId] : null;
+      }
+    });
+    return out;
+  }
+
+  /** Ray-casting test of a point against a [[lat, lng], ...] ring. */
+  function pointInPolygon(lat, lng, polygon) {
+    if (!Array.isArray(polygon) || polygon.length < 3) return false;
+    var y = Number(lat), x = Number(lng);
+    if (!isFinite(x) || !isFinite(y)) return false;
+    var inside = false;
+    for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      var yi = Number(polygon[i][0]), xi = Number(polygon[i][1]);
+      var yj = Number(polygon[j][0]), xj = Number(polygon[j][1]);
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  /**
+   * A `(lat, lng) -> boolean` test answering "is this point inside a region
+   * the viewer has hidden?", or null when nothing is hidden (callers then
+   * skip filtering altogether). Each hidden polygon carries a bounding box so
+   * a 2000-site fleet pays a ring walk only for points near it.
+   */
+  function hiddenPointTest(payload, hidden) {
+    var eff = effectiveHidden(payload, hidden);
+    var rings = [];
+    regionsOf(payload).forEach(function (r) {
+      if (!eff[r.id] || !Array.isArray(r.polygon) || r.polygon.length < 3) return;
+      var box = { minLat: Infinity, maxLat: -Infinity, minLng: Infinity, maxLng: -Infinity };
+      r.polygon.forEach(function (p) {
+        var la = Number(p[0]), ln = Number(p[1]);
+        if (la < box.minLat) box.minLat = la;
+        if (la > box.maxLat) box.maxLat = la;
+        if (ln < box.minLng) box.minLng = ln;
+        if (ln > box.maxLng) box.maxLng = ln;
+      });
+      rings.push({ polygon: r.polygon, box: box });
+    });
+    if (rings.length === 0) return null;
+    return function (lat, lng) {
+      var la = Number(lat), ln = Number(lng);
+      for (var i = 0; i < rings.length; i++) {
+        var b = rings[i].box;
+        if (la < b.minLat || la > b.maxLat || ln < b.minLng || ln > b.maxLng) continue;
+        if (pointInPolygon(la, ln, rings[i].polygon)) return true;
+      }
+      return false;
+    };
   }
 
   function buildPanelTreeHtml(payload, opts) {
     var options = opts || {};
     var hiddenSet = options.hidden && typeof options.hidden === "object" ? options.hidden : {};
+    var effHidden = options.visibility ? effectiveHidden(payload, hiddenSet) : {};
     var regions = regionsOf(payload);
+    var nameById = {};
+    regions.forEach(function (r) { nameById[r.id] = r.name; });
     if (regions.length === 0) {
       return '<span class="map-regions-empty">' + esc(options.emptyText || "No regions are defined yet.") + "</span>";
     }
@@ -215,13 +303,13 @@
         // stored pick, which is in force when it IS the parent.
         var chosen = !!r.nestChosen || (!!r.nestUnderId && r.nestUnderId === r.parentId);
         var title = chosen ? ' title="Nested here by hand — drop it on another region that contains it to move it"' : "";
-        var isHidden = !!options.visibility && !!hiddenSet[r.id];
+        var eye = eyeStateOf(r, effHidden, nameById);
         out +=
           '<div class="map-regions-node">' +
-            '<div class="map-regions-row' + (chosen ? " map-regions-row-chosen" : "") + (isHidden ? " map-regions-row-hidden" : "") +
+            '<div class="map-regions-row' + (chosen ? " map-regions-row-chosen" : "") + (eye.hidden ? " map-regions-row-hidden" : "") +
               '" data-region-id="' + esc(r.id) + '"' +
               (options.draggable ? ' draggable="true"' : "") + title + ">" +
-              (options.visibility ? eyeButtonHtml(r, isHidden) : "") +
+              (options.visibility ? eyeButtonHtml(r, eye.hidden, eye.inheritedFrom) : "") +
               '<i class="map-region-swatch"' + color + ' aria-hidden="true"></i>' +
               '<span class="map-regions-row-name">' + esc(r.name) + "</span>" +
               "<em>L" + esc(r.level == null ? 1 : r.level) + "</em>" +
@@ -237,10 +325,10 @@
     regions.forEach(function (r) {
       if (!seen[r.id]) {
         seen[r.id] = true;
-        var isHidden = !!options.visibility && !!hiddenSet[r.id];
-        body += '<div class="map-regions-node"><div class="map-regions-row' + (isHidden ? " map-regions-row-hidden" : "") +
+        var eye = eyeStateOf(r, effHidden, nameById);
+        body += '<div class="map-regions-node"><div class="map-regions-row' + (eye.hidden ? " map-regions-row-hidden" : "") +
           '" data-region-id="' + esc(r.id) + '">' +
-          (options.visibility ? eyeButtonHtml(r, isHidden) : "") +
+          (options.visibility ? eyeButtonHtml(r, eye.hidden, eye.inheritedFrom) : "") +
           '<span class="map-regions-row-name">' + esc(r.name) + "</span><em>L" + esc(r.level == null ? 1 : r.level) + "</em></div></div>";
       }
     });
@@ -358,6 +446,9 @@
     paintOrder: paintOrder,
     polygonArea: polygonArea,
     buildPanelTreeHtml: buildPanelTreeHtml,
+    effectiveHidden: effectiveHidden,
+    pointInPolygon: pointInPolygon,
+    hiddenPointTest: hiddenPointTest,
     canNestUnder: canNestUnder,
     overlayStyle: overlayStyle,
     attachTreeTooltip: attachTreeTooltip,
