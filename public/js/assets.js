@@ -26101,18 +26101,23 @@ function _renderAssetRuleRows(rTbody, rules, sent, assetId) {
   });
 }
 
+// The tab fills the slide-over: the panel body stops scrolling and the table
+// scrolls inside it under a sticky header (styles.css, "Asset Events tab").
+// The toolbar is a plain flex row, not a .filter-bar — that one is a sticky,
+// opaque page-level strip and drew a box over the panel's glass. Order, left
+// to right: Clear Filters (moved in by _wireAssetEventsTab), Refresh, N / page.
 function _assetEventsTabHTML(assetId) {
-  return '<div class="section-block">' +
-    '<div class="filter-bar" style="justify-content:flex-end;margin-bottom:0.5rem">' +
+  return '<div class="section-block asset-events-tab">' +
+    '<div class="asset-events-toolbar" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:0.5rem">' +
+      '<button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="asset-view-events-refresh" title="Refresh">Refresh</button>' +
       '<select id="asset-view-events-pagesize" style="width:auto" aria-label="Rows per page">' +
         '<option value="15" selected>15 / page</option>' +
         '<option value="25">25 / page</option>' +
         '<option value="50">50 / page</option>' +
         '<option value="100">100 / page</option>' +
       '</select>' +
-      '<button class="btn btn-glyph btn-glyph-refresh btn-secondary btn-sm" id="asset-view-events-refresh" title="Refresh">Refresh</button>' +
     '</div>' +
-    '<div class="table-wrapper">' +
+    '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-view-events-wrapper">' +
       '<table id="asset-view-events-table">' +
         '<thead><tr>' +
           '<th style="width:160px" data-col-id="timestamp" data-sf-key="timestamp" data-sf-type="date">Timestamp</th>' +
@@ -26128,7 +26133,7 @@ function _assetEventsTabHTML(assetId) {
         '</tbody>' +
       '</table>' +
     '</div>' +
-    '<div id="asset-view-events-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>' +
+    '<div id="asset-view-events-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:0.75rem 0 0;flex:none"></div>' +
   '</div>';
 }
 
@@ -26327,7 +26332,9 @@ function _wireAssetEventsTab(assetId) {
     _saveAssetEventsPrefs();
   });
   var evRefresh = document.getElementById("asset-view-events-refresh");
-  _assetEventsSF.addClearButton(evRefresh && evRefresh.parentElement);
+  // addClearButton puts it after Refresh; this toolbar wants it before.
+  var evClear = _assetEventsSF.addClearButton(evRefresh && evRefresh.parentElement);
+  if (evClear && evRefresh) evRefresh.insertAdjacentElement("beforebegin", evClear);
   _restoreAssetEventsPrefs();
 
   var ps = document.getElementById("asset-view-events-pagesize");

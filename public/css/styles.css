@@ -7164,6 +7164,29 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   container-type: inline-size;
 }
 
+/* Asset Events tab: the table is the size of the slide-over. While the tab is
+   active the panel body does not scroll; the toolbar and pagination keep their
+   height and the table wrapper (.table-wrapper-panel-sticky — sticky thead,
+   overflow:auto) takes the rest and scrolls. Pure CSS, so no sizer: it tracks
+   resizes and the slide-over's width drag on its own. Scoped off the interface
+   page, whose own display:none on this body must keep winning. */
+#asset-panel:not([data-view="iface"]) #asset-panel-body:has(#asset-view-tab-events.active) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+#asset-panel-body:has(#asset-view-tab-events.active) > .asset-panel-content,
+#asset-view-tab-events.active,
+#asset-view-tab-events > .asset-events-tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#asset-view-tab-events > .asset-events-tab { margin: 0; }
+#asset-view-tab-events .asset-events-toolbar { flex: none; }
+#asset-view-events-wrapper { flex: 1; min-height: 0; }
+
 /* Applied to the asset-details tab panel only while the Screenshot button's
    DOM capture runs (_runScreenshotCapture in assets.js). html-to-image
    inlines each element's COMPUTED styles into its clone, so hiding the live
