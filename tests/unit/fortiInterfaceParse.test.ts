@@ -15,6 +15,7 @@ import {
   backfillFortiCmdbOnlyTunnels,
   fortiMonitorDuplex,
   applyFortiSoftwareSwitchMembers,
+  backfillFortiCmdbOnlyBundles,
   fortiIfSubtype,
   normalizeFortiIfType,
 } from "../../src/services/monitoringService.js";
@@ -334,6 +335,33 @@ describe("FortiGate hardware and software switches", () => {
     expect(by.get("port1")!.ifParent).toBe("lan-sw");
     expect(by.get("port2")!.ifParent).toBe("lan-sw");
     expect(by.get("port5")!.ifParent).toBe("hw-sw");
+  });
+
+  // FortiOS 7.6.8 (HUB1-a, 2026-10-28): the MONITOR endpoint omits the software
+  // switch itself while listing its members and the VLAN on it.
+  it("lists a software switch the monitor endpoint omitted, from the CMDB, and nests its members", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([
+      { name: "Software Switch", type: "switch", status: "up", ip: "10.123.4.1 255.255.255.0" },
+      { name: "a", type: "physical" },
+      { name: "b", type: "physical" },
+      { name: "LabSSProd", type: "vlan", interface: "Software Switch", vlanid: 2 },
+    ]);
+    applyFortiSoftwareSwitchMembers(cmdb, [{ name: "Software Switch", type: "switch", member: [{ "interface-name": "a", q_origin_key: "a" }, { "interface-name": "b", q_origin_key: "b" }] }]);
+    const monitor = { a: { link: false }, b: { link: false }, LabSSProd: { link: false, ip: "10.123.5.1" } };
+    const rows = buildFortiInterfaceSamples(monitor, cmdb);
+    backfillFortiCmdbOnlyBundles(rows, cmdb);
+    backfillFortiAggregateMembers(rows, monitor, cmdb);
+    const by = new Map(rows.map((r) => [r.ifName, r]));
+    expect(by.get("Software Switch")).toMatchObject({
+      ifType: "aggregate", ifSubtype: "switch", adminStatus: "up", ipAddress: "10.123.4.1", operStatus: null,
+    });
+    expect(by.get("a")!.ifParent).toBe("Software Switch");
+    expect(by.get("b")!.ifParent).toBe("Software Switch");
+    expect(by.get("LabSSProd")).toMatchObject({ ifType: "vlan", ifParent: "Software Switch", vlanId: 2 });
+    // A bundle the monitor DID report is not duplicated.
+    const twice = buildFortiInterfaceSamples({ "Software Switch": { link: true } }, cmdb);
+    backfillFortiCmdbOnlyBundles(twice, cmdb);
+    expect(twice.filter((r) => r.ifName === "Software Switch")).toHaveLength(1);
   });
 
   it("changes nothing when the switch-interface read failed", () => {

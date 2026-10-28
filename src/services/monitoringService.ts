@@ -6397,6 +6397,50 @@ export function backfillFortiAggregateMembers(
 }
 
 /**
+ * Synthesize a row for a CMDB bundle the monitor endpoint omitted. FortiOS's
+ * `/api/v2/monitor/system/interface` leaves a SOFTWARE switch out entirely
+ * while listing its member ports and the VLANs on it (FortiOS 7.6.8, HUB1-a,
+ * 2026-10-28: `Software Switch` absent, `a` / `b` / `LabSSProd` present), so
+ * without this the switch never reached the inventory and its members never
+ * nested. Built from the CMDB alone — admin status, configured address, alias,
+ * description — with no runtime state, exactly like the tunnel back-fill
+ * below. Run BEFORE `backfillFortiAggregateMembers`, which then nests the
+ * members under it. A bundle the monitor did report is left alone. Mutates
+ * `interfaces` in place.
+ */
+export function backfillFortiCmdbOnlyBundles(
+  interfaces: InterfaceSample[],
+  cmdbByName: Map<string, FortiCmdbInterfaceEntry>,
+): void {
+  const present = new Set(interfaces.map((s) => s.ifName));
+  for (const [name, c] of cmdbByName) {
+    const subtype = fortiIfSubtype(c.type);
+    if (!subtype || present.has(name)) continue;
+    interfaces.push({
+      ifName:      name,
+      adminStatus: c.adminStatus,
+      operStatus:  null,
+      speedBps:    null,
+      ipAddress:   c.ipAddress,
+      ipv6Address: c.ipv6Address,
+      macAddress:  null,
+      inOctets:    null,
+      outOctets:   null,
+      inErrors:    null,
+      outErrors:   null,
+      ifType:      "aggregate",
+      ifSubtype:   subtype,
+      ifParent:    null,
+      vlanId:      null,
+      alias:       c.alias,
+      description: c.description,
+      addressingMode: c.addressingMode,
+    });
+    present.add(name);
+  }
+}
+
+/**
  * Synthesize rows for CMDB `type tunnel` interfaces the monitor endpoint
  * omitted — IPsec phase1-interfaces (site-to-site, dial-up and ADVPN hub /
  * spoke overlays), plus GRE / VXLAN, which FortiOS also types `tunnel`.
@@ -6546,6 +6590,7 @@ async function collectSystemInfoFortinet(
     const res = monitorOutcome.res;
     const obj = (res && typeof res === "object" && !Array.isArray(res)) ? res as Record<string, any> : {};
     interfaces = buildFortiInterfaceSamples(obj, cmdbByName);
+    backfillFortiCmdbOnlyBundles(interfaces, cmdbByName);
     backfillFortiAggregateMembers(interfaces, obj, cmdbByName);
     backfillFortiCmdbOnlyTunnels(interfaces, cmdbByName);
   } else if (interfaces.length === 0) {
