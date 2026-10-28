@@ -94,6 +94,13 @@ describe("tag registry chip", () => {
     }
   });
 
+  it("gives a built-in Priority tag Edit (its filter) but never Delete, and says why (rule 136)", () => {
+    const el = render(chip({ id: "t3", name: "Critical", color: "severity:critical", builtIn: true }, true));
+    expect(el.querySelector(".tag-chip-edit")).not.toBeNull();
+    expect(el.querySelector(".tag-chip-delete")).toBeNull();
+    expect(el.getAttribute("title")).toContain("Built-in Priority tag");
+  });
+
   it("is a button that opens the slide-in only when the viewer can read assets", () => {
     const open = render(chip({ id: "t1", name: "prod" }, true));
     expect(open.classList.contains("tag-chip-open")).toBe(true);

@@ -2852,3 +2852,16 @@ recurring schedule, as for assets. Deleting a check removes it from its
 schedules, and deletes a schedule that named only that check. Gated by
 `maintenanceManagement`; see [Maintenance windows](Maintenance-Windows) and
 [Path Monitor](Path-Monitor).
+
+### Rule 136
+
+**The five Priority tags are built in: nobody renames, recolours, moves or
+deletes them, and a device filter on one only adds.** Every install has
+**Notice**, **Informational**, **Warning**, **Serious** and **Critical** in the
+**Priority** category, each in its severity's colour. Nobody can change their
+name, colour or category or delete them, whatever their role. The only thing
+you can edit is the device filter. A filter adds the tag to the devices it
+matches and removes only what it added. Priority tags you put on assets or
+interfaces by hand always stay. On upgrade, a tag that still has one of the
+five names is brought back into **Priority** with its colour and keeps its
+devices. A missing one is re-created. See [Server Settings](Server-Settings).

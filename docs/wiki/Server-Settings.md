@@ -764,10 +764,17 @@ are drawn the same way. Through the API,
 
 Every install starts with five tags in the **Priority** category, one per alert
 severity and given that severity's colour: **Notice**, **Informational**,
-**Warning**, **Serious** and **Critical**. They are ordinary manual tags, so you
-can rename, recolour or delete them, or give them an auto-assign filter. A tag you
-already had under one of those names is left exactly as it was, whatever its
-category.
+**Warning**, **Serious** and **Critical**. They are **built in**
+([rule 136](Business-Rules#rule-136)). Nobody can rename, recolour or move them
+to another category, and they have no Delete button, whatever their role. The
+only thing you can edit is their **device filter**. A filter only adds the tag
+to the devices it matches. You can still put a Priority tag on any asset or
+interface by hand, and a filter never removes a tag that was added by hand.
+
+Upgrading an install where one of the five had been changed: a tag that still
+has the name moves back into **Priority** with its severity colour and keeps its
+devices. A missing one is re-created. A tag that was renamed (say *Critical* to
+*P1*) stays an ordinary tag, and a new *Critical* is created beside it.
 
 **Click a tag** to open a slide-in that lists every asset carrying exactly that
 tag, with each asset's address, type and state. Click an asset to open its

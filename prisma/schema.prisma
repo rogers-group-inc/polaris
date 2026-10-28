@@ -4370,6 +4370,12 @@ model Tag {
   // { field:"subnet", op:"inCidr", cidrs[] }] }.
   criteria Json?
 
+  // One of the five built-in Priority tags (business rule 136,
+  // src/utils/priorityTags.ts). Name, category and colour are locked for
+  // everyone and the row cannot be deleted; only the device filter above is
+  // editable. Set by migration only — no route writes it.
+  builtIn Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   @@index([category])

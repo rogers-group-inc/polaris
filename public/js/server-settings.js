@@ -5101,7 +5101,8 @@ function renderIdentificationTab() {
             autoMark +
             escapeHtml(t.name) +
             (isAdmin() ? '<button class="tag-chip-edit" data-tag-id="' + t.id + '" title="Edit" style="margin-left:4px;background:none;border:none;color:inherit;cursor:pointer;font-size:0.75rem;opacity:0.7;padding:0">&#9998;</button>' : '') +
-            (isAdmin() ? '<button class="tag-chip-delete" data-tag-id="' + t.id + '" title="Delete">&times;</button>' : '') +
+            // Business rule 136: a built-in Priority tag is never deleted.
+            (isAdmin() && !t.builtIn ? '<button class="tag-chip-delete" data-tag-id="' + t.id + '" title="Delete">&times;</button>' : '') +
           '</span>';
         });
         html += '</div>';
@@ -7572,8 +7573,20 @@ async function openEditTagModal(id) {
     }
   });
 
-  var body =
-    '<div class="form-group"><label>Tag Name *</label>' +
+  // Business rule 136: a built-in Priority tag shows its name, category and
+  // colour read-only, and the save posts the device filter alone.
+  var locked = !!tag.builtIn;
+  var body = locked
+    ? '<p class="hint" style="margin:0 0 12px">Built-in Priority tag. Its name, category and colour are fixed and it ' +
+        'cannot be deleted. A device filter adds the tag to matching devices; tags people add by hand stay.</p>' +
+      '<div class="form-group"><label>Tag Name</label>' +
+        '<input type="text" id="f-tag-name" value="' + escapeHtml(tag.name) + '" disabled>' +
+      '</div>' +
+      '<div class="form-group"><label>Category</label>' +
+        '<input type="text" value="' + escapeHtml(tag.category || "") + '" disabled>' +
+      '</div>' +
+      _tagFilterSectionHTML(tag, condBuilder, schema)
+    : '<div class="form-group"><label>Tag Name *</label>' +
       '<input type="text" id="f-tag-name" value="' + escapeHtml(tag.name) + '">' +
     '</div>' +
     '<div class="form-group"><label>Category</label>' +
@@ -7591,6 +7604,28 @@ async function openEditTagModal(id) {
     '<button class="btn btn-primary" id="btn-save-tag">Save Changes</button>';
   openModal("Edit Tag", body, footer);
   _wireTagFilterBuilder(tag.id, condBuilder);
+
+  if (locked) {
+    document.getElementById("btn-save-tag").addEventListener("click", async function () {
+      var btn = this;
+      var problem = _validateTagFilter(condBuilder, stuckFields);
+      if (problem) { showToast(problem, "error"); return; }
+      btn.disabled = true;
+      try {
+        await api.serverSettings.updateTag(id, _collectTagFilter(condBuilder, stuckFields));
+        closeModal();
+        showToast('Tag "' + tag.name + '" updated');
+        if (typeof _tagCache !== "undefined") _tagCache.loaded = false;
+        _tagsData = await api.serverSettings.listTags();
+        renderIdentificationTab();
+      } catch (err) {
+        showToast(err.message, "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    return;
+  }
 
   var catSelect = document.getElementById("f-tag-category-select");
   var catNew = document.getElementById("f-tag-category-new");
@@ -7995,6 +8030,7 @@ function _tagRegistryChipHTML(t, canOpenTagAssets) {
   var chipTitle = [
     canOpenTagAssets ? "Show the assets with this tag" : "",
     mirrored ? "Mirrored from Azure by the Azure Arc integration — change it in Azure; Polaris removes it once no asset carries it" : "",
+    t.builtIn ? "Built-in Priority tag — its name, category and colour are fixed and it cannot be deleted; only its device filter can be edited" : "",
   ].filter(Boolean).join(". ");
   return '<span class="tag-chip' + (hueStyle ? ' hue-pill hue-strong' : '') + (canOpenTagAssets ? ' tag-chip-open' : '') + '"' +
       ' data-tag-name="' + escapeHtml(t.name) + '"' +
@@ -8004,7 +8040,7 @@ function _tagRegistryChipHTML(t, canOpenTagAssets) {
     autoMark +
     escapeHtml(t.name) +
     (canEdit ? '<button class="tag-chip-edit" data-tag-id="' + t.id + '" title="Edit" style="margin-left:4px;background:none;border:none;color:inherit;cursor:pointer;font-size:0.75rem;opacity:0.7;padding:0">&#9998;</button>' : '') +
-    (canEdit ? '<button class="tag-chip-delete" data-tag-id="' + t.id + '" title="Delete">&times;</button>' : '') +
+    (canEdit && !t.builtIn ? '<button class="tag-chip-delete" data-tag-id="' + t.id + '" title="Delete">&times;</button>' : '') +
   '</span>';
 }
 

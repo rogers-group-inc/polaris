@@ -577,6 +577,29 @@ function assertNotMirroredAzureRow(name: string, verb: "edited" | "deleted"): vo
 }
 
 /**
+ * Business rule 136: a built-in Priority tag keeps its name, category and
+ * colour whoever asks — no permission level unlocks them. A body that repeats
+ * the stored values (the editor posts every field) passes; a body that changes
+ * one is a 409, so a stale client can't half-apply an edit.
+ */
+function assertBuiltInFieldsUnchanged(
+  existing: { name: string; category: string; color: string; builtIn: boolean },
+  body: Record<string, unknown>,
+): void {
+  if (!existing.builtIn) return;
+  const changed: string[] = [];
+  if (body.name != null && String(body.name).trim() !== existing.name) changed.push("renamed");
+  if (body.category != null && String(body.category) !== existing.category) changed.push("moved to another category");
+  if (body.color != null && normalizeTagColor(body.color) !== existing.color) changed.push("recoloured");
+  if (changed.length) {
+    throw new AppError(
+      409,
+      `"${existing.name}" is a built-in Priority tag and cannot be ${changed.join(" or ")}. Only its device filter can be edited.`,
+    );
+  }
+}
+
+/**
  * How the audit Event describes the filter a write left on the tag. Counts
  * only — the tree itself is on the row, and an Event is shipped off-host by the
  * syslog / SFTP archivers.
@@ -760,6 +783,7 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
     const existing = await prisma.tag.findUnique({ where: { id } });
     if (!existing) throw new AppError(404, "Tag not found");
     assertNotMirroredAzureRow(existing.name, "edited");
+    assertBuiltInFieldsUnchanged(existing, req.body);
 
     const name = (req.body.name ?? existing.name).trim();
     if (!name) throw new AppError(400, "Tag name is required");
@@ -861,6 +885,10 @@ router.delete("/tags/:id", requirePermission("serverSettingsSystem", "write"), a
     const tag = await prisma.tag.findUnique({ where: { id: tagId } });
     if (!tag) throw new AppError(404, "Tag not found");
     assertNotMirroredAzureRow(tag.name, "deleted");
+    // Business rule 136: no one deletes a built-in Priority tag.
+    if (tag.builtIn) {
+      throw new AppError(409, `"${tag.name}" is a built-in Priority tag and cannot be deleted. Clear its device filter instead.`);
+    }
     // Strip engine-applied copies (and their provenance) before deleting. Manual
     // copies on assets the engine never tagged are untouched — same as before.
     let stripped = 0;
