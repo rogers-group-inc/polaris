@@ -293,7 +293,8 @@ Most detail in Polaris opens in a **slide-over** (a panel from the right) or a
   edit modal opens over it, and Cancel or Save brings you back to the panel
   (refreshed after a save).
 - The asset slide-over has **back / forward history** (‹ / › in the header, or
-  Alt+Left / Alt+Right). A dependency-tree row, an HA peer, an LLDP neighbour, a
+  Alt+Left / Alt+Right, or your mouse's back / forward buttons — they walk the
+  panel, not the page). A dependency-tree row, an HA peer, an LLDP neighbour, a
   MAC-table match and the Application Map rail all pivot the *open* panel to
   another asset in place, and the arrows walk you back.
 - **Every slide-over opens on every page.** An asset, a network or a block opens
