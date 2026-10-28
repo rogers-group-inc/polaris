@@ -88,6 +88,7 @@ function toRow(i: InterfaceSample): InterfaceInventoryRow {
     inErrors:    i.inErrors  != null ? BigInt(Math.round(i.inErrors))  : null,
     outErrors:   i.outErrors != null ? BigInt(Math.round(i.outErrors)) : null,
     ifType:      i.ifType   ?? null,
+    ifSubtype:   i.ifSubtype ?? null,
     ifParent:    i.ifParent ?? null,
     vlanId:      i.vlanId   ?? null,
     nativeVlan:  i.nativeVlan ?? null,

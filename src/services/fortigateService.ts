@@ -56,6 +56,7 @@ import { parseVipServerInfo } from "./fortimanagerService.js";
 import { findFortiswitchUplinkPorts } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
+import { fortiosVlanParentOf } from "../utils/fortiosInterfaceRef.js";
 
 export interface FortiGateConfig {
   host: string;
@@ -797,6 +798,7 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
           try {
             const ifaceData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", { query: queryBase, signal });
     const ifaceVlanMap = new Map<string, number>();
+    const ifaceVlanParent = new Map<string, string>();
     let ifaceIpCount = 0;
     let secondaryIpCount = 0;
     let ipv6IpCount = 0;
@@ -811,6 +813,9 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         const ifaceName = iface.name || "";
         const vid = parseVid(iface.vlanid) || parseVid(iface["switch-controller-mgmt-vlan"]);
         if (vid > 0) ifaceVlanMap.set(ifaceName, vid);
+        // A VLAN interface's parent tells two VLAN 30s on one gate apart (rule 137).
+        const vlanParent = fortiosVlanParentOf(iface);
+        if (vlanParent) ifaceVlanParent.set(ifaceName, vlanParent);
 
         if (!ifaceName) continue;
 
@@ -874,6 +879,7 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
     for (const sub of discovered) {
       const vid = ifaceVlanMap.get(sub.name);
       if (vid) sub.vlan = vid;
+      if (Array.isArray(ifaceData)) sub.vlanParent = ifaceVlanParent.get(sub.name) ?? null;
     }
     log("discover.interfaces", "info", `${deviceHostname}: Resolved ${ifaceIpCount} interface IP(s)${secondaryIpCount > 0 ? ` + ${secondaryIpCount} secondary IP(s)` : ""}${ipv6IpCount > 0 ? ` + ${ipv6IpCount} IPv6 address(es)` : ""}${raSubnetCount > 0 ? `, ${raSubnetCount} advertised IPv6 prefix(es)` : ""}`, deviceHostname);
   } catch (err: any) {

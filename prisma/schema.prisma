@@ -106,6 +106,15 @@ model Subnet {
   // genuinely new chassis raises the `chassis-replaced` Conflict flavour.
   // Business rule 41.
   fortigateSerial String?
+  // The FortiGate interface the network is served on (its DHCP server's /
+  // router advertisement's interface) and, when that is a VLAN interface, the
+  // interface the VLAN sits on (CMDB `system/interface.interface` — a
+  // FortiLink, an aggregate, a hardware or software switch). Written by FMG /
+  // FortiGate discovery only, and only when the run read the interface table:
+  // NULL is "not a VLAN interface, or not read yet". The parent is what tells
+  // two VLAN 30s on one gate apart (business rule 137).
+  fortigateInterface  String?
+  fortigateVlanParent String?
   createdBy       String?
 
   // Bumped whenever discovery touches this subnet — both the integration-wide
@@ -1718,6 +1727,12 @@ model AssetInterface {
   ifType   String?
   ifParent String?
   vlanId   Int?
+  // For an ifType "aggregate" row, which kind of bundle it is, in FortiOS's
+  // own vocabulary: "aggregate" | "redundant" | "hard-switch" (hardware
+  // switch) | "switch" (software switch) | "vap-switch". All five group member
+  // ports under ifParent, which is why they share ifType; this tells them
+  // apart for display. FortiOS REST only; NULL everywhere else.
+  ifSubtype String?
 
   // Switch-port VLAN config -- FortiSwitch only, null elsewhere.
   nativeVlan     Int?

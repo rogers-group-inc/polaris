@@ -9231,6 +9231,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     };
     var cfg = cfgs[t];
     if (!cfg) return "";
+    // A bundle names its FortiOS kind: a hardware or software switch groups
+    // member ports like an aggregate but is not one.
+    var bundleLabels = { "hard-switch": "Hardware switch", "switch": "Software switch", "redundant": "Redundant", "vap-switch": "WiFi switch" };
+    if (t === "aggregate" && bundleLabels[iface.ifSubtype]) cfg = [bundleLabels[iface.ifSubtype], cfg[1]];
     var c = cfg[1];
     return '<span class="badge hue-pill" style="--hue:' + c + ';margin-left:5px">' + escapeHtml(cfg[0]) + '</span>';
   }

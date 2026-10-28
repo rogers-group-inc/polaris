@@ -15,6 +15,7 @@ import { reconcileNetworkTags } from "../../src/services/networkTagInheritanceSe
 import { reconcileTagsForAsset } from "../../src/services/tagAssignmentService.js";
 import { listInterfaceTags, setInterfaceTags } from "../../src/services/interfaceTagService.js";
 import { updateSubnet } from "../../src/services/subnetService.js";
+import { syncDhcpSubnets } from "../../src/services/discovery/discoveryEngine.js";
 
 const d = dbDescribe;
 const PFX = "nettag-test-";
@@ -41,13 +42,18 @@ async function cleanup(): Promise<void> {
   await prisma.ipBlock.deleteMany({ where: { name: { startsWith: PFX } } });
 }
 
-async function makeSwitch(name: string, controllerSerial: string, ports: Array<[string, number | null, number[], boolean?]>): Promise<string> {
+async function makeSwitch(
+  name: string,
+  controllerSerial: string,
+  ports: Array<[string, number | null, number[], boolean?]>,
+  via = "fortilink",
+): Promise<string> {
   const a = await prisma.asset.create({
     data: {
       hostname: PFX + name,
       assetType: "switch",
       status: "active",
-      fortinetTopology: { role: "fortiswitch", controllerSerial } as any,
+      fortinetTopology: { role: "fortiswitch", controllerSerial, uplinkInterface: via } as any,
     },
   });
   for (const [ifName, nativeVlan, taggedVlans, trunksAllVlans] of ports) {
@@ -67,11 +73,11 @@ d("Network tags inherited by switches and ports (business rule 137)", () => {
     // Gate A serves VLAN 30 (Critical) and VLAN 40 (Warning).
     ids.net30 = (await prisma.subnet.create({
       data: { blockId: block.id, cidr: "10.137.30.0/24", name: PFX + "v30", vlan: 30, fortigateSerial: "NETTAGFGTA",
-        fortigateDevice: "gate-a", tags: [CRIT, "dhcp-discovered", "fortigate"] },
+        fortigateDevice: "gate-a", fortigateVlanParent: "fortilink", tags: [CRIT, "dhcp-discovered", "fortigate"] },
     })).id;
     ids.net40 = (await prisma.subnet.create({
       data: { blockId: block.id, cidr: "10.137.40.0/24", name: PFX + "v40", vlan: 40, fortigateSerial: "NETTAGFGTA",
-        fortigateDevice: "gate-a", tags: [WARN] },
+        fortigateDevice: "gate-a", fortigateVlanParent: "fortilink", tags: [WARN] },
     })).id;
     // A DHCP-server-learned network on VLAN 30: no gate, hands nothing down.
     await prisma.subnet.create({
@@ -109,6 +115,52 @@ d("Network tags inherited by switches and ports (business rule 137)", () => {
 
     // Idempotent: a second pass writes nothing.
     expect(await reconcileNetworkTags()).toEqual({ assetsAdded: 0, assetsRemoved: 0, portsAdded: 0, portsRemoved: 0 });
+  });
+
+  it("keeps a second VLAN 30 on another FortiLink of the same gate to its own switches", async () => {
+    const block = await prisma.ipBlock.findFirstOrThrow({ where: { name: PFX + "block" } });
+    await prisma.subnet.create({
+      data: { blockId: block.id, cidr: "10.137.31.0/24", name: PFX + "v30-fl2", vlan: 30, fortigateSerial: "NETTAGFGTA",
+        fortigateDevice: "gate-a", fortigateVlanParent: "fortilink2", tags: [`${PFX}second-site`] },
+    });
+    // A network whose parent is not known yet hands nothing down.
+    await prisma.subnet.create({
+      data: { blockId: block.id, cidr: "10.137.32.0/24", name: PFX + "v30-unknown", vlan: 30, fortigateSerial: "NETTAGFGTA",
+        fortigateDevice: "gate-a", tags: [`${PFX}unknown-parent`] },
+    });
+    const swA2 = await makeSwitch("sw-a2", "NETTAGFGTA", [["port1", 30, []]], "fortilink2");
+    await reconcileNetworkTags();
+    expect(await portTags(swA2)).toEqual([`port1:${PFX}second-site:network`]);
+    expect((await portTags(ids.swA)).filter((t) => t.startsWith("port1:"))).toEqual([`port1:${CRIT}:network`]);
+  });
+
+  it("discovery stores the network's interface and VLAN parent, and a run that did not read them keeps them", async () => {
+    const intg = await prisma.integration.create({ data: { type: "fortimanager", name: PFX + "fmg", config: {}, enabled: true } });
+    const run = (vlanParent: string | null | undefined) =>
+      syncDhcpSubnets(intg.id, PFX + "fmg", "fortimanager", {
+        subnets: [{ cidr: "10.137.77.0/24", name: "Users_VL77", fortigateDevice: "gate-a", fortigateSerial: "NETTAGFGTA",
+          dhcpServerId: "9", vlan: 77, ...(vlanParent !== undefined ? { vlanParent } : {}) }],
+        devices: [], interfaceIps: [], dhcpEntries: [], deviceInventory: [], inventoryDevices: [],
+        knownDeviceNames: ["gate-a"], knownDeviceSerials: [], fortiSwitches: [], fortiAps: [], vips: [],
+        switchMacTable: [], arpTable: [], arpQueriedDevices: [], cmdbSwitchSerials: [], cmdbApSerials: [],
+        switchInventoriedDevices: [], apInventoriedDevices: [], vipInventoriedDevices: [],
+        dhcpReservationsInventoriedDevices: [], dhcpLeasesInventoriedDevices: [],
+      } as any, "tester", "skip-deprecation");
+    const read = () => prisma.subnet.findFirstOrThrow({
+      where: { cidr: "10.137.77.0/24" }, select: { fortigateInterface: true, fortigateVlanParent: true },
+    });
+    try {
+      await run("fortilink2");
+      expect(await read()).toEqual({ fortigateInterface: "Users_VL77", fortigateVlanParent: "fortilink2" });
+      await run(undefined);
+      expect((await read()).fortigateVlanParent).toBe("fortilink2");
+      await run(null);
+      expect((await read()).fortigateVlanParent).toBeNull();
+    } finally {
+      await prisma.subnet.deleteMany({ where: { cidr: "10.137.77.0/24" } });
+      await prisma.conflict.deleteMany({ where: { integrationId: intg.id } });
+      await prisma.integration.delete({ where: { id: intg.id } });
+    }
   });
 
   it("takes the tags back off when the network loses them, and leaves a hand-applied copy alone", async () => {

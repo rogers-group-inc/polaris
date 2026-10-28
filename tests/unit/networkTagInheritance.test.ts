@@ -25,19 +25,19 @@ const gate = (id: string, serial: string, hostname: string, deviceName?: string)
   fortinetTopology: { role: "fortigate", ...(deviceName ? { deviceName } : {}) },
 });
 
-const sw = (id: string, controller: { serial?: string; name?: string }) => ({
+const sw = (id: string, controller: { serial?: string; name?: string }, via: string | null = "fortilink") => ({
   id,
   hostname: id,
   serialNumber: "S-" + id,
   assetType: "switch",
-  fortinetTopology: { role: "fortiswitch", controllerSerial: controller.serial, controllerFortigate: controller.name },
+  fortinetTopology: { role: "fortiswitch", controllerSerial: controller.serial, controllerFortigate: controller.name, uplinkInterface: via },
 });
 
 const port = (assetId: string, ifName: string, nativeVlan: number | null, taggedVlans: number[] = [], trunksAllVlans = false): InheritancePort =>
   ({ assetId, ifName, nativeVlan, taggedVlans, trunksAllVlans });
 
-const net = (vlan: number, tags: string[], serial: string | null, device: string | null = null) =>
-  ({ fortigateSerial: serial, fortigateDevice: device, vlan, tags });
+const net = (vlan: number, tags: string[], serial: string | null, device: string | null = null, vlanParent: string | null = "fortilink") =>
+  ({ fortigateSerial: serial, fortigateDevice: device, vlanParent, vlan, tags });
 
 const portsOf = (plan: ReturnType<typeof planNetworkTagInheritance>, assetId: string): Record<string, string[]> =>
   Object.fromEntries([...(plan.ports.get(assetId) ?? new Map()).entries()].map(([k, v]) => [k, [...v].sort()]));
@@ -102,6 +102,31 @@ describe("planNetworkTagInheritance", () => {
       ports: [port("s1", "port1", 30)],
     });
     expect(portsOf(plan, "s1")).toEqual({ port1: ["Users"] });
+  });
+
+  it("tells two VLAN 30s on one gate apart by the interface they sit on", () => {
+    const plan = planNetworkTagInheritance({
+      gates,
+      switches: [sw("s1", { serial: "FGT1" }, "fortilink"), sw("s2", { serial: "FGT1" }, "FortiLink2")],
+      networks: [
+        net(30, ["Priority Critical"], "FGT1", null, "fortilink"),
+        net(30, ["Priority Warning"], "FGT1", null, "fortilink2"),
+      ],
+      ports: [port("s1", "port1", 30), port("s2", "port1", 30)],
+    });
+    expect(portsOf(plan, "s1")).toEqual({ port1: ["Priority Critical"] });
+    // Interface names compare case-insensitively.
+    expect(portsOf(plan, "s2")).toEqual({ port1: ["Priority Warning"] });
+  });
+
+  it("hands nothing down while a network's parent, or a switch's management interface, is unknown", () => {
+    const plan = planNetworkTagInheritance({
+      gates,
+      switches: [sw("s1", { serial: "FGT1" }), sw("s2", { serial: "FGT1" }, null)],
+      networks: [net(30, ["Users"], "FGT1", null, null), net(40, ["Voice"], "FGT1")],
+      ports: [port("s1", "port1", 30), port("s2", "port1", 40)],
+    });
+    expect(plan.ports.size).toBe(0);
   });
 
   it("hands nothing down from a network with no gate, or a gate it cannot resolve", () => {

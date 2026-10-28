@@ -14,6 +14,9 @@ import {
   backfillFortiAggregateMembers,
   backfillFortiCmdbOnlyTunnels,
   fortiMonitorDuplex,
+  applyFortiSoftwareSwitchMembers,
+  fortiIfSubtype,
+  normalizeFortiIfType,
 } from "../../src/services/monitoringService.js";
 
 describe("parseFortiCmdbInterfaceTable", () => {
@@ -285,5 +288,57 @@ describe("fortiMonitorDuplex / buildFortiInterfaceSamples duplex", () => {
     const by = Object.fromEntries(rows.map((r) => [r.ifName, r]));
     expect(by.wan1).toMatchObject({ operStatus: "up", speedBps: 1_000_000_000, duplex: "full" });
     expect(by.dmz).toMatchObject({ operStatus: "down", duplex: null });
+  });
+});
+
+// Hardware and software switches (business rule 137 groundwork). A software
+// switch is FortiOS type "switch" with its members in system/switch-interface;
+// a hardware switch is "hard-switch" with them on the interface row. Both group
+// member ports like an aggregate and keep their own kind as ifSubtype.
+describe("FortiGate hardware and software switches", () => {
+  it("types every bundle as aggregate and keeps the FortiOS kind as ifSubtype", () => {
+    for (const k of ["aggregate", "redundant", "hard-switch", "switch", "vap-switch"]) {
+      expect(normalizeFortiIfType(k)).toBe("aggregate");
+      expect(fortiIfSubtype(k)).toBe(k);
+    }
+    expect(fortiIfSubtype("vlan")).toBeNull();
+    expect(fortiIfSubtype("physical")).toBeNull();
+  });
+
+  it("nests a software switch's members, read from system/switch-interface", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([
+      { name: "lan-sw", type: "switch" },
+      { name: "hw-sw", type: "hard-switch", member: [{ "interface-name": "port5" }] },
+      { name: "port1", type: "physical" },
+      { name: "port2", type: "physical" },
+      { name: "port5", type: "physical" },
+    ]);
+    applyFortiSoftwareSwitchMembers(cmdb, {
+      results: [
+        { name: "lan-sw", member: [{ "interface-name": "port1" }, { q_origin_key: "port2" }] },
+        // A hardware switch's own members win; an unknown name is ignored.
+        { name: "hw-sw", member: [{ "interface-name": "port9" }] },
+        { name: "ghost", member: [{ "interface-name": "port3" }] },
+      ],
+    });
+    expect(cmdb.get("lan-sw")!.members).toEqual(["port1", "port2"]);
+    expect(cmdb.get("hw-sw")!.members).toEqual(["port5"]);
+    expect(cmdb.has("ghost")).toBe(false);
+
+    const monitor = { "lan-sw": { link: true }, "hw-sw": { link: true }, port1: { link: true }, port2: { link: false }, port5: { link: true } };
+    const rows = buildFortiInterfaceSamples(monitor, cmdb);
+    backfillFortiAggregateMembers(rows, monitor, cmdb);
+    const by = new Map(rows.map((r) => [r.ifName, r]));
+    expect(by.get("lan-sw")).toMatchObject({ ifType: "aggregate", ifSubtype: "switch" });
+    expect(by.get("hw-sw")).toMatchObject({ ifType: "aggregate", ifSubtype: "hard-switch" });
+    expect(by.get("port1")!.ifParent).toBe("lan-sw");
+    expect(by.get("port2")!.ifParent).toBe("lan-sw");
+    expect(by.get("port5")!.ifParent).toBe("hw-sw");
+  });
+
+  it("changes nothing when the switch-interface read failed", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([{ name: "lan-sw", type: "switch" }]);
+    applyFortiSoftwareSwitchMembers(cmdb, null);
+    expect(cmdb.get("lan-sw")!.members).toEqual([]);
   });
 });

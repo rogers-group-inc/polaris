@@ -13,8 +13,14 @@
  * way to tell which switch it is on. The gate is resolved to an asset through
  * utils/fortinetParentKey.ts, the same resolution a switch's own controller
  * stamp goes through (`controllerGateIdOf`), so the two meet on an asset id and
- * an FMG device name that differs from the gate's hostname still matches. A
- * port carries the VLAN when it is the port's native VLAN or one of its tagged
+ * an FMG device name that differs from the gate's hostname still matches.
+ * Within the gate the match is on the interface the network's VLAN sits on
+ * (`Subnet.fortigateVlanParent`, read at discovery) against the interface the
+ * switch is managed through (`fortinetTopology.uplinkInterface`): one gate can
+ * hold VLAN 30 on two FortiLinks, or on an aggregate and a hardware switch,
+ * and those are different networks. A network whose parent is not known yet
+ * (a row from before the column, until its next discovery run) hands nothing
+ * down rather than guess. A port carries the VLAN when it is the port's native VLAN or one of its tagged
  * VLANs; a trunk set to allow ALL VLANs (a FortiLink uplink) never matches,
  * because it would inherit every network's tags and every uplink would read
  * Critical.
@@ -83,9 +89,19 @@ export function portCarriesVlan(port: PortVlans, vlan: number): boolean {
 export interface InheritanceNetwork {
   fortigateSerial: string | null;
   fortigateDevice: string | null;
+  /** The interface the VLAN sits on (`Subnet.fortigateVlanParent`). */
+  vlanParent: string | null;
   vlan: number;
   tags: string[];
 }
+
+/** The gate-side interface a switch is managed through (`uplinkInterface`, FortiOS's `fgt_peer_intf_name`). */
+export function switchManagementInterface(topology: unknown): string | null {
+  const v = topology && typeof topology === "object" ? (topology as { uplinkInterface?: unknown }).uplinkInterface : null;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+const ifKey = (name: string): string => name.trim().toLowerCase();
 
 export interface InheritancePort extends PortVlans {
   assetId: string;
@@ -113,25 +129,31 @@ export function planNetworkTagInheritance(input: InheritancePlanInput): Inherita
   const plan: InheritancePlan = { ports: new Map(), assets: new Map() };
   const index = buildInfraParentIndex([...input.gates, ...input.switches]);
 
-  // gate asset id → VLAN → tags its networks on that VLAN carry
-  const byGate = new Map<string, Map<number, Set<string>>>();
+  // gate asset id + the interface the VLAN sits on → VLAN → the tags its
+  // networks carry. One gate can hold VLAN 30 on two FortiLinks (or on an
+  // aggregate and a hardware switch); only the parent tells them apart, so a
+  // network whose parent is unknown hands nothing down rather than guess.
+  const byGateParent = new Map<string, Map<number, Set<string>>>();
   for (const n of input.networks) {
     const tags = n.tags.filter(isInheritableNetworkTag);
-    if (tags.length === 0) continue;
+    if (tags.length === 0 || !n.vlanParent) continue;
     const gate = resolveInfraParentAsset(index, { serial: n.fortigateSerial, name: n.fortigateDevice }, "firewall");
     if (!gate) continue;
-    const vlans = byGate.get(gate.id) ?? new Map<number, Set<string>>();
+    const key = gate.id + "\u0000" + ifKey(n.vlanParent);
+    const vlans = byGateParent.get(key) ?? new Map<number, Set<string>>();
     const set = vlans.get(n.vlan) ?? new Set<string>();
     for (const t of tags) set.add(t);
     vlans.set(n.vlan, set);
-    byGate.set(gate.id, vlans);
+    byGateParent.set(key, vlans);
   }
-  if (byGate.size === 0) return plan;
+  if (byGateParent.size === 0) return plan;
 
+  // A switch carries the VLANs of the gate interface it is managed through.
   const gateOfSwitch = new Map<string, Map<number, Set<string>>>();
   for (const s of input.switches) {
     const gateId = controllerGateIdOf(index, s);
-    const vlans = gateId ? byGate.get(gateId) : undefined;
+    const via = switchManagementInterface(s.fortinetTopology);
+    const vlans = gateId && via ? byGateParent.get(gateId + "\u0000" + ifKey(via)) : undefined;
     if (vlans) gateOfSwitch.set(s.id, vlans);
   }
 
@@ -163,15 +185,22 @@ async function loadPlan(assetId?: string): Promise<InheritancePlan> {
   const rows = await prisma.subnet.findMany({
     where: {
       vlan: { not: null },
+      fortigateVlanParent: { not: null },
       status: { not: "deprecated" },
       NOT: { tags: { isEmpty: true } },
       OR: [{ fortigateSerial: { not: null } }, { fortigateDevice: { not: null } }],
     },
-    select: { fortigateSerial: true, fortigateDevice: true, vlan: true, tags: true },
+    select: { fortigateSerial: true, fortigateDevice: true, fortigateVlanParent: true, vlan: true, tags: true },
   });
   const networks: InheritanceNetwork[] = rows
     .filter((r) => r.vlan != null && r.tags.some(isInheritableNetworkTag))
-    .map((r) => ({ fortigateSerial: r.fortigateSerial, fortigateDevice: r.fortigateDevice, vlan: r.vlan as number, tags: r.tags }));
+    .map((r) => ({
+      fortigateSerial: r.fortigateSerial,
+      fortigateDevice: r.fortigateDevice,
+      vlanParent: r.fortigateVlanParent,
+      vlan: r.vlan as number,
+      tags: r.tags,
+    }));
   if (networks.length === 0) return empty;
 
   const [gates, switches] = await Promise.all([
