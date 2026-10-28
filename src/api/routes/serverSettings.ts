@@ -850,6 +850,13 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "write"), asyn
             SELECT 1 FROM asset_interface_tags b WHERE b."assetId" = a."assetId" AND b."ifName" = a."ifName" AND b.tag = ${name})`,
           prisma.$executeRaw`UPDATE asset_interface_tags SET tag = ${name} WHERE tag = ${oldName}`,
         ]),
+        // Network-inheritance provenance (business rule 137) is keyed by name
+        // too; it follows the string it vouches for in assets.tags.
+        prisma.$transaction([
+          prisma.$executeRaw`DELETE FROM network_tag_assignments a WHERE a.tag = ${oldName} AND EXISTS (
+            SELECT 1 FROM network_tag_assignments b WHERE b."assetId" = a."assetId" AND b.tag = ${name})`,
+          prisma.$executeRaw`UPDATE network_tag_assignments SET tag = ${name} WHERE tag = ${oldName}`,
+        ]),
       ]);
     }
 

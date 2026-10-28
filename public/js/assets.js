@@ -9764,7 +9764,8 @@ function _ifaceTagPillsHTML(tags) {
   if (list.length === 0) return "";
   return '<span class="vlan-pills">' + list.map(function (t) {
     var hue = tagHueStyle(t.color || "");
-    var title = t.auto ? "Applied by this tag's auto-assign filter (Native VLAN)" : "Added by hand";
+    var title = t.via === "network" ? "Inherited from a network this port carries"
+      : t.auto ? "Applied by this tag's auto-assign filter (Native VLAN)" : "Added by hand";
     return '<span class="hue-pill vlan-pill"' + (hue ? ' style="' + hue + '"' : "") + ' title="' + escapeHtml(title) + '">' +
       (t.auto ? '&#9881; ' : '') + escapeHtml(t.name) + '</span>';
   }).join("") + '</span>';
@@ -9791,13 +9792,21 @@ async function _openInterfaceTagsModal(asset, ifName, row, onSaved) {
   await _ensureTagCache();
   var tags = (row && Array.isArray(row.tags)) ? row.tags : [];
   var manual = tags.filter(function (t) { return !t.auto; }).map(function (t) { return t.name; });
-  var auto = tags.filter(function (t) { return t.auto; });
+  var byFilter = tags.filter(function (t) { return t.auto && t.via !== "network"; });
+  var byNetwork = tags.filter(function (t) { return t.auto && t.via === "network"; });
   var body =
-    (auto.length
+    (byFilter.length
       ? '<div class="form-group"><label>Applied by a tag filter</label>' +
-          '<div>' + _ifaceTagPillsHTML(auto) + '</div>' +
+          '<div>' + _ifaceTagPillsHTML(byFilter) + '</div>' +
           '<p class="hint">Applied because this port is on a VLAN the tag&rsquo;s auto-assign filter names. Change the filter under ' +
             'Server Settings &rarr; Tags to remove one; ticking it below keeps it on this port by hand.</p>' +
+        '</div>'
+      : '') +
+    (byNetwork.length
+      ? '<div class="form-group"><label>Inherited from a network</label>' +
+          '<div>' + _ifaceTagPillsHTML(byNetwork) + '</div>' +
+          '<p class="hint">Inherited because this port carries the VLAN of a network tagged in IP Management. Change that ' +
+            'network&rsquo;s tags to remove one; ticking it below keeps it on this port by hand.</p>' +
         '</div>'
       : '') +
     tagFieldHTML(manual);

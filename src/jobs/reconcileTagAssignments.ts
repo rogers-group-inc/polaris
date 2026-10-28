@@ -38,11 +38,14 @@ async function tick(): Promise<void> {
   try {
     await runInstrumentedJob("reconcileTagAssignments", async () => {
       const summary = await reconcileAllTags();
-      if (summary.added > 0 || summary.removed > 0) {
+      const inherited = (summary.networkAdded ?? 0) + (summary.networkRemoved ?? 0) +
+        (summary.networkPortsAdded ?? 0) + (summary.networkPortsRemoved ?? 0);
+      if (summary.added > 0 || summary.removed > 0 || inherited > 0) {
         logEvent({
           action: "tag.assignments_reconciled",
           resourceType: "tag",
-          message: `Periodic tag reconcile: +${summary.added} / -${summary.removed}`,
+          message: `Periodic tag reconcile: +${summary.added} / -${summary.removed}` +
+            (inherited > 0 ? `; network tags on switches +${summary.networkAdded ?? 0} / -${summary.networkRemoved ?? 0}, ports +${summary.networkPortsAdded ?? 0} / -${summary.networkPortsRemoved ?? 0}` : ""),
           details: summary,
         });
       }
