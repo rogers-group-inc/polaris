@@ -2040,7 +2040,7 @@
                 (levels: <code>info</code>, <code>warning</code>, <code>error</code>; resource
                 types enumerable via <code>GET /events/resource-types</code>).</li>
             <li><code>action</code>, <code>resourceName</code>, <code>actor</code>,
-                <code>message</code> text filters, each with an optional
+                <code>message</code>, <code>device</code> text filters, each with an optional
                 <code>&lt;field&gt;Op</code> (<code>contains</code> default,
                 <code>not_contains</code>, <code>empty</code>, <code>is_not_empty</code>).</li>
             <li><code>resourceId</code> exact match; <code>since</code> / <code>until</code>
@@ -2049,7 +2049,10 @@
                 under: the asset's own <code>resourceType=asset</code> rows plus its alerts'
                 <code>notification.*</code> rows (fired, escalated, cleared). Every returned event
                 carries an <code>assetId</code> field (<code>null</code> when it is about no
-                single asset).</li>
+                single asset) and an <code>assetName</code> &mdash; that asset's current hostname,
+                else its IP, <code>null</code> when the asset no longer exists.
+                <code>device</code> filters on that name (hostname or IP); its <code>empty</code> /
+                <code>is_not_empty</code> mean about no asset / about one.</li>
             <li><code>sortBy</code> ∈ <code>timestamp, level, action, resourceType, resourceName,
                 actor, message</code> + <code>sortDir</code>; default newest first. Sorting by
                 <code>level</code> orders by severity, not alphabetically.</li>

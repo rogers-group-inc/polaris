@@ -9,6 +9,9 @@
  *   <th data-sf-key="name" data-sf-type="string">Name</th>
  *
  * Supported types: string (default), number, date, ip, array
+ *
+ * data-sf-nosort -> filterable but NOT sortable (no sort icon, header click
+ * does nothing) - for a server-side column the API cannot order by.
  * Nested keys work:  data-sf-key="block.name"  or  data-sf-key="_count.subnets"
  *
  * Multi-select dropdown filter: add data-sf-options="value1|value2|value3" to
@@ -57,10 +60,11 @@ TableSF.prototype._setup = function () {
 
     th.classList.add("sf-th");
 
+    var noSort = th.hasAttribute("data-sf-nosort");
     var headerHtml =
       '<div class="sf-header">' +
         '<span class="sf-label">' + escapeHtml(label) + '</span>' +
-        '<span class="sf-sort-icon">⇅</span>' +
+        (noSort ? '' : '<span class="sf-sort-icon">⇅</span>') +
       '</div>';
 
     var typeAttr = th.getAttribute("data-sf-type") || "string";
@@ -122,6 +126,7 @@ TableSF.prototype._setup = function () {
     }
 
     th.querySelector(".sf-header").addEventListener("click", function () {
+      if (noSort) return;
       if (self._sortKey === key) {
         self._sortDir = self._sortDir === "asc" ? "desc" : "asc";
       } else {

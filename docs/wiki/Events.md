@@ -20,11 +20,12 @@ Gated by `events`. The page has two tabs: **Events** (the log, below) and
 | **Level** | `info` · `warning` · `error` |
 | **Action** | a dotted verb — `reservation.created`, `asset.firmware.changed`, `monitor.status_changed` |
 | **Resource** | the entity type |
-| **Resource Name** | |
+| **Resource Name** | for an alert row, the automation |
+| **Device** | the device the event is about, by its current hostname — on an alert's fire, clear or email row too, where Resource Name is the automation. Click it to open the device. Filterable by hostname or IP; not sortable |
 | **Message** | |
 | **User** | the actor |
 
-Sortable, inline-filterable, resizable, with saved layouts like every other list
+Sortable (all but Device), inline-filterable, resizable, with saved layouts like every other list
 page. **Export** downloads PDF or CSV of the current page, all filtered results,
 or the entire event log; **Export** (download icon), **Alerts**, **Settings** (gear icon), **Refresh** (circular-arrows icon), **Clear Filters** and the page size (**15 / page** …)
 sit on the tab row, and the page buttons are below the page card. The **Calendar**
