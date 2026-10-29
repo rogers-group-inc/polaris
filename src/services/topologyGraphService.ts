@@ -181,6 +181,87 @@ function normalizePortName(name: string | null | undefined): string {
   return trimmed;
 }
 
+/** One LLDP neighbor row as `lldpOnlySwitchLinks` reads it. */
+export type SwitchLldpRow = {
+  assetId: string;
+  matchedAssetId: string | null;
+  localIfName: string | null;
+  portId: string | null;
+  portIdSubtype: string | null;
+  lastSeen: Date | string;
+};
+
+/** A switch↔switch link evidenced by LLDP alone (no interface-name match). */
+export type LldpOnlySwitchLink = {
+  source: string;
+  target: string;
+  sourceIfName: string | null;
+  targetIfName: string | null;
+};
+
+// The SNMP collector's `port-<ifIndex>` fallback is not a port name, and only
+// these port-id subtypes carry an operator-readable name (not a MAC/address).
+const SYNTHETIC_LLDP_PORT_RE = /^port-\d+$/i;
+const LLDP_PORT_NAME_SUBTYPES = new Set(["interfaceName", "interfaceAlias", "agentCircuitId", "local"]);
+
+/**
+ * Switch↔switch links between two in-site switches that LLDP sees but that
+ * no other edge class drew. Interface-name inference only catches FortiOS
+ * peer aggregates named after the peer's serial or hostname, so a plain fiber
+ * ISL (or one whose interface scrape is stale) left the two switches with no
+ * line between them even though both report each other over LLDP.
+ *
+ * One link per unordered pair, sourced from the first row seen; the far side's
+ * port comes from the peer's own row when it has one, else the advertised
+ * name-form port-id. Rows at or before `staleCutoff` are ignored — the LLDP
+ * table keeps a vanished neighbor for 48h, and a link must not outlive its
+ * cable. Pairs in `coveredPairs` (sorted "a|b") are skipped.
+ */
+export function lldpOnlySwitchLinks(
+  rows: SwitchLldpRow[],
+  switchIds: Set<string>,
+  coveredPairs: Set<string>,
+  staleCutoff: Date,
+): LldpOnlySwitchLink[] {
+  const realPort = (p: string | null): string | null =>
+    p && p.trim() && !SYNTHETIC_LLDP_PORT_RE.test(p) ? p : null;
+  const byPair = new Map<string, LldpOnlySwitchLink>();
+  const fresh = rows.filter((r) =>
+    r.matchedAssetId &&
+    r.matchedAssetId !== r.assetId &&
+    switchIds.has(r.assetId) &&
+    switchIds.has(r.matchedAssetId) &&
+    new Date(r.lastSeen) > staleCutoff,
+  );
+  for (const r of fresh) {
+    const peer = r.matchedAssetId as string;
+    const pairKey = [r.assetId, peer].sort().join("|");
+    if (coveredPairs.has(pairKey)) continue;
+    const advertised =
+      r.portIdSubtype && LLDP_PORT_NAME_SUBTYPES.has(r.portIdSubtype) ? realPort(r.portId) : null;
+    const link = byPair.get(pairKey);
+    if (!link) {
+      byPair.set(pairKey, {
+        source: r.assetId,
+        target: peer,
+        sourceIfName: realPort(r.localIfName),
+        targetIfName: advertised,
+      });
+      continue;
+    }
+    // Fill whichever half this row reports authoritatively (its own local port)
+    // or by advertisement, without overwriting an authoritative value.
+    if (r.assetId === link.target) {
+      if (realPort(r.localIfName)) link.targetIfName = realPort(r.localIfName);
+      if (!link.sourceIfName) link.sourceIfName = advertised;
+    } else if (!link.sourceIfName) {
+      link.sourceIfName = realPort(r.localIfName);
+      if (!link.targetIfName) link.targetIfName = advertised;
+    }
+  }
+  return [...byPair.values()];
+}
+
 export type MonitorHealth = "up" | "degraded" | "down" | "unknown" | "passive";
 
 // Map view's traffic-light: examines the last 10 AssetMonitorSample rows for
@@ -858,6 +939,46 @@ export async function buildSiteTopology(siteId: string) {
       },
     });
 
+    // Switch↔switch links LLDP sees but interface-name inference missed (a
+    // plain fiber ISL, a non-FortiOS-named trunk, a stale interface scrape).
+    // The LLDP loop below skips every sibling match on the assumption that
+    // another edge class drew it — true for FG↔switch and AP↔switch, not for
+    // two switches. Joined to interfaceEdges so chain demotion, the per-cable
+    // expansion and MCLAG stripping treat them like any inter-switch link.
+    const coveredPairs = new Set(
+      [...edges, ...interfaceEdges].map((e) => [e.source, e.target].sort().join("|")),
+    );
+    const lldpSwitchLinks = lldpOnlySwitchLinks(
+      lldpRows.map((n) => ({
+        assetId: n.assetId,
+        matchedAssetId: n.matchedAsset?.id ?? null,
+        localIfName: n.localIfName,
+        portId: n.portId,
+        portIdSubtype: n.portIdSubtype,
+        lastSeen: n.lastSeen,
+      })),
+      new Set(switches.map((s) => s.id)),
+      coveredPairs,
+      new Date(Date.now() - 60 * 60 * 1000),
+    );
+    for (const l of lldpSwitchLinks) {
+      const aLabel = switchHostById.get(l.source) || l.source;
+      const bLabel = switchHostById.get(l.target) || l.target;
+      interfaceEdges.push({
+        source: l.source,
+        target: l.target,
+        sourceIfName: l.sourceIfName || "unknown",
+        label: portLabel(l.sourceIfName, l.targetIfName),
+        via: "interface",
+        matchVia: "lldp",
+        reason:
+          `Rule: inter-switch link from LLDP (no interface-name match).\n` +
+          `Evidence: ${aLabel} and ${bLabel} report each other as LLDP neighbors ` +
+          `(${aLabel} "${l.sourceIfName || "?"}" ↔ ${bLabel} "${l.targetIfName || "?"}"), seen within the last hour. ` +
+          `Neither side carries a FortiOS peer aggregate named after the other, so interface-name inference drew nothing.`,
+      });
+    }
+
     type LldpNode = {
       id: string;
       hostname: string | null;
@@ -1076,7 +1197,8 @@ export async function buildSiteTopology(siteId: string) {
       if (n.matchedAsset && n.matchedAsset.id) {
         // Skip neighbors that resolve back to a sibling node — fortinetTopology
         // has already drawn that edge from authoritative controller data, so a
-        // duplicate LLDP edge would just clutter the graph. We still emit the
+        // duplicate LLDP edge would just clutter the graph (a switch↔switch
+        // pair it did not draw was added above by lldpOnlySwitchLinks). We still emit the
         // LLDP edge when the matched asset is OUTSIDE this site (e.g. a
         // separate firewall) — that's the whole point.
         if (siblingIds.has(n.matchedAsset.id)) continue;
