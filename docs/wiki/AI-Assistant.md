@@ -344,6 +344,11 @@ See [rule 95](Business-Rules#rule-95).
 
 - Conversations are **saved** and reopen where you left off. The history button
   (or `/history`) lists them; rename or delete from there.
+- Every question and answer shows **when it was sent**: the time for today, the
+  date and time for anything older. The assistant sees those times too, along
+  with which lookups each earlier answer ran. So when a conversation spans an
+  update, it re-checks an older answer before relying on it, rather than
+  repeating it or wrongly taking it back.
 - After **30 minutes without activity** by default — set it with **Start a fresh
   chat after** on the integration; 0 turns it off — (no question, answer or opened
   conversation in this browser) the window starts a **fresh chat** the next

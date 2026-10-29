@@ -71,13 +71,26 @@
       + '</div>';
   }
 
+  // When a message was sent: the time alone today, the date as well before
+  // that — as the desktop widget shows it.
+  function stampHTML(iso) {
+    var d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) return "";
+    var now = new Date();
+    var time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    var label = d.toDateString() === now.toDateString() ? time
+      : d.toLocaleDateString([], d.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" }) + ", " + time;
+    return '<time class="chat-time" datetime="' + escapeHtml(d.toISOString()) + '">' + escapeHtml(label) + '</time>';
+  }
+
   function messageHTML(m, i) {
     if (m.local) return '<div class="chat-msg assistant"><div class="chat-bubble local">' + md(m.content) + '</div></div>';
-    if (m.role === "user") return '<div class="chat-msg user"><div class="chat-bubble">' + escapeHtml(m.content) + '</div></div>';
+    if (m.role === "user") return '<div class="chat-msg user"><div class="chat-bubble">' + escapeHtml(m.content) + '</div>' + stampHTML(m.createdAt) + '</div>';
     var text = m.content ? md(m.content)
       : m.waiting ? '<span class="chat-thinking">Still answering your last question…</span>'
       : (m.live && !m.error ? '<span class="chat-thinking">Thinking…</span>' : "");
-    var chips = (m.tools || m.toolsUsed || []).map(chipHTML).join("") + (m.stopped ? '<span class="chat-chip failed">stopped</span>' : "");
+    var chips = (m.live ? "" : stampHTML(m.createdAt)) +
+      (m.tools || m.toolsUsed || []).map(chipHTML).join("") + (m.stopped ? '<span class="chat-chip failed">stopped</span>' : "");
     return '<div class="chat-msg assistant" data-idx="' + i + '">'
       + (m.preface ? '<div class="chat-aside">' + escapeHtml(m.preface) + '</div>' : "")
       + (text ? '<div class="chat-bubble">' + text + '</div>' : "")
@@ -143,7 +156,7 @@
   // ─── Conversations ─────────────────────────────────────────────────────
   function fromServer(c) {
     return (c.messages || []).map(function (m) {
-      return { role: m.role, content: m.content, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, reports: m.reports || [] };
+      return { role: m.role, content: m.content, createdAt: m.createdAt || null, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, reports: m.reports || [] };
     });
   }
 
@@ -267,7 +280,7 @@
     try {
       var convId = await ensureConversation();
       markActive();
-      S.messages.push({ role: "user", content: content });
+      S.messages.push({ role: "user", content: content, createdAt: new Date().toISOString() });
       m = { role: "assistant", content: "", tools: [], reports: [], live: true };
       S.messages.push(m);
       renderLog();
@@ -310,7 +323,7 @@
         snack((err && err.message) || "The assistant failed", { error: true });
       }
     } finally {
-      if (m) m.live = false;
+      if (m) { m.live = false; m.createdAt = new Date().toISOString(); }
       S.busy = false;
       S.abort = null;
       if (S.convId) markActive();

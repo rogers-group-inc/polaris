@@ -31,6 +31,7 @@ const h = vi.hoisted(() => ({
   runMemoryTool: vi.fn(),
   loadTurnImages: vi.fn(async (_ids: string[]) => new Map<string, { mimeType: string; base64: string }>()),
 }));
+const TURN_AT = new Date("2026-10-28T14:02:00Z");
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
@@ -67,7 +68,10 @@ vi.mock("../../src/services/assistantMemoryService.js", async () => {
 vi.mock("../../src/services/assistantConversationService.js", () => ({
   beginTurn: h.beginTurn,
   finishTurn: h.finishTurn,
-  recentTurns: h.recentTurns,
+  // Every stored turn has a time and its lookups (rule 95(n)); the mocks list only what a test varies.
+  recentTurns: async (...a: [string, number]) => ((await h.recentTurns(...a)) as any[]).map((t) => ({
+    createdAt: TURN_AT, toolsUsed: [], reports: [], ...t,
+  })),
   loadTurnImages: h.loadTurnImages,
   getEfficiencyAdvisor: h.getEfficiencyAdvisor,
   recentAdvisorLines: h.recentAdvisorLines,
@@ -77,7 +81,7 @@ import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlac
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
-  pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS,
+  pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS, turnHeader, stripTurnHeaders,
 } from "../../src/services/assistantChatService.js";
 
 const integration = { id: "i1", name: "Ollama", config: { host: "10.0.0.5", model: "qwen", maxToolRounds: 2 } as any };
@@ -435,7 +439,7 @@ describe("streamAssistantTurn", () => {
     ] as any);
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], _t: any, o: any) => {
       expect(msgs.map((m: any) => m.role)).toEqual(["system", "user"]);
-      expect(msgs[1].content).toBe("what is down?");
+      expect(msgs[1].content).toBe("[Polaris: sent 2026-10-28 14:02 UTC]\nwhat is down?");
       o.onText("ok");
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
@@ -1020,5 +1024,72 @@ describe("screenshots (rule 95(l))", () => {
     });
     await run().p;
     expect(h.loadTurnImages).toHaveBeenCalledWith([]);
+  });
+});
+
+describe("turn headers — when each earlier turn was said and what it looked up (rule 95(n))", () => {
+  const at = new Date("2026-10-28T16:10:02Z");
+
+  it("stamps a question with when it was sent", () => {
+    expect(turnHeader({ role: "user", createdAt: at })).toBe("[Polaris: sent 2026-10-28 16:10 UTC]");
+  });
+
+  it("names the lookups and reports an answer ran, once each, with failures marked", () => {
+    const h1 = turnHeader({
+      role: "assistant", createdAt: at,
+      toolsUsed: [
+        { name: "list_assets", label: "looked up assets", ok: true },
+        { name: "list_assets", label: "looked up assets", ok: true },
+        { name: "get_asset", label: "opened an asset", ok: false },
+      ],
+      reports: [{ title: "Firewalls sorted by uptime", rowCount: 214 }],
+    });
+    expect(h1).toBe('[Polaris: answered 2026-10-28 16:10 UTC · lookups it ran: looked up assets, opened an asset (failed) · report built: "Firewalls sorted by uptime" (214 rows)]');
+  });
+
+  it("marks an answer that ran no lookup as unverified", () => {
+    expect(turnHeader({ role: "assistant", createdAt: at, toolsUsed: [] })).toContain("no lookups ran, so its facts are unverified");
+  });
+
+  it("strips a header the model copied into its answer, and nothing else", () => {
+    expect(stripTurnHeaders("[Polaris: answered 2026-10-29 13:00 UTC · lookups it ran: looked up assets]\nCKYSMA-91G-1 is up.")).toBe("CKYSMA-91G-1 is up.");
+    expect(stripTurnHeaders("Up since [Polaris: answered] in text")).toBe("Up since [Polaris: answered] in text");
+    expect(stripTurnHeaders("A [note] here.")).toBe("A [note] here.");
+  });
+
+  // Asserted OUTSIDE the model mock: an expect thrown inside it is caught as a
+  // failed turn and the test still passes.
+  it("opens every resent turn with its header, so a looked-up answer reads as one", async () => {
+    h.recentTurns.mockResolvedValueOnce([
+      { role: "user", content: "firewalls by uptime", createdAt: new Date("2026-10-28T15:00:00Z") },
+      { role: "assistant", content: "CKYSMA-91G-1 leads.", createdAt: new Date("2026-10-28T15:01:00Z"), toolsUsed: [{ name: "list_assets", label: "looked up assets", ok: true }] },
+      { role: "user", content: "what is down?" },
+    ] as any);
+    let sent: any[] = [];
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[]) => {
+      sent = msgs.map((m: any) => ({ ...m }));
+      return { content: "ok", toolCalls: [], finishReason: "stop" };
+    });
+    await run().p;
+    const history = sent.filter((m) => m.role !== "system");
+    expect(history.map((m) => m.content)).toEqual([
+      "[Polaris: sent 2026-10-28 15:00 UTC]\nfirewalls by uptime",
+      "[Polaris: answered 2026-10-28 15:01 UTC · lookups it ran: looked up assets]\nCKYSMA-91G-1 leads.",
+      "[Polaris: sent 2026-10-28 14:02 UTC]\nwhat is down?",
+    ]);
+    expect(sent[0].content).toContain("do not disown or apologise for it");
+    expect(sent[0].content).not.toContain("your earlier answers are not lookups");
+  });
+
+  it("removes a copied header from the answer the user sees and the one stored", async () => {
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any[], _t: any, o: any) => {
+      const text = "[Polaris: answered 2026-10-29 13:00 UTC · lookups it ran: looked up assets]\nNothing is down.";
+      o.onText(text);
+      return { content: text, toolCalls: [], finishReason: "stop" };
+    });
+    const { p, events } = run();
+    await p;
+    expect(events.some(([e]) => e === "retract")).toBe(true);
+    expect(h.finishTurn).toHaveBeenCalledWith("c1", expect.objectContaining({ content: "Nothing is down." }));
   });
 });

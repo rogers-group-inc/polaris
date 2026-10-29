@@ -87,7 +87,10 @@ describe("mobile Chat tab", () => {
     const [url, init] = g.fetch.mock.calls[0];
     expect(url).toBe("/api/v1/assistant/conversations/c-new/messages");
     expect(JSON.parse(init.body)).toEqual({ content: "what is down?" });
-    expect(body.querySelector(".chat-msg.user")!.textContent).toBe("what is down?");
+    expect(body.querySelector(".chat-msg.user .chat-bubble")!.textContent).toBe("what is down?");
+    // Both sides carry when they were said (rule 95(n)) — the answer's first in its chip row.
+    expect(body.querySelector(".chat-msg.user time.chat-time")!.getAttribute("datetime")).toMatch(/^\d{4}-\d\d-\d\dT/);
+    expect(body.querySelector(".chat-msg.assistant .chat-chips > time.chat-time")).not.toBeNull();
     expect(body.querySelector(".chat-msg.assistant .chat-bubble")!.innerHTML).toContain("<strong>is down</strong>");
     expect(body.querySelector(".chat-chip")!.textContent).toBe("Assets");
     expect(body.querySelectorAll("[data-dl]")).toHaveLength(2);

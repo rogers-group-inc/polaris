@@ -414,7 +414,8 @@ A rule written in the prompt is not enforced.
   talk, a how-to, a refusal, "3 polls"), not for recall. A memory write is not a lookup.
 - **Asked again, once.** The answer is retracted (`retract` from 0) and the model is sent its
   own answer plus `LOOKUP_NUDGE` on the user's side of the turn, with every tool on offer. The
-  nudge says it is from Polaris and that earlier answers are not lookups either. It is never
+  nudge says it is from Polaris, that figures from earlier answers are not lookups for this
+  turn, and not to retract an earlier answer unless a lookup now contradicts it (n). It is never
   stored: only the question and the final answer are.
 - **Still no lookup.** The second answer stands, with `UNVERIFIED_NOTE` under it, written by
   Polaris. One retry, not a loop: a model that will not look things up is labelled rather
@@ -422,9 +423,39 @@ A rule written in the prompt is not enforced.
 - **Not `tool_choice`.** Forcing a tool call would apply to one provider at a time, and Claude
   refuses a forced tool choice with thinking on. A second round with the nudge works on every
   provider (j).
-- **History.** Earlier turns carry only text (d), so a turn that invented a figure hands it to
-  the next turn as if it were known. The prompt's "your earlier answers are not lookups" line
-  is the only answer to that; nothing marks an old answer as unverified.
+- **History.** Earlier turns used to carry only text (d), so a turn that invented a figure
+  handed it to the next as if it were known. The answer to that is now (n).
+
+### (n) Every resent turn says when it was said and what it looked up
+
+2026-10-29, the same thread as (m), read back by the owner. The fix in (m) told the model
+"your earlier answers are not lookups", and the model took that literally. Two turns after it
+gave a correct uptime ranking from a real lookup, it disowned it ("the 15-firewall table was
+not drawn from a lookup I can show in this conversation"), then disowned the counts and the
+report it had built. The turns also spanned a release: the first answer ("Polaris does not
+record firewall uptime") was given before `withUptime` existed and was true of that build. The
+owner asked for timestamps on the conversation for that reason. Text alone could not tell the
+model an answer was looked up, invented, or simply out of date.
+
+- **The header.** `recentTurns` returns each stored turn's `createdAt`, its `toolsUsed`
+  labels and its reports' titles and row counts. `turnHeader` writes one bracketed line from
+  them at the top of the resent turn: `[Polaris: sent …]` on a question, and on an answer
+  `[Polaris: answered … · lookups it ran: … · report built: "…" (n rows)]`, or "no lookups ran,
+  so its facts are unverified". Times are UTC to the minute, matching the system prompt's
+  Current time. Labels and counts only: (d) still holds, and no result is replayed.
+- **The prompt.** An answer whose header lists lookups did come from Polaris at that time. The
+  model must not disown it or apologise for it. Its figures are dated, though, and Polaris may
+  see more now, so the model re-runs a lookup before repeating, building on or correcting one.
+  It corrects an earlier answer only when a lookup this turn contradicts it.
+- **Copying.** A model copies what its history shows (the trap of (h)). `stripTurnHeaders`
+  removes a whole header line from the answer before the link sanitizer runs. The answer is
+  then replaced (`retract` + `token`), so the copy is never shown for good and never stored.
+- **Cost.** The header is costed into `fitHistory` through `extraTokens`, about 15–40 tokens
+  a turn.
+- **The UIs.** The desktop widget and the phone Chat tab show each message's time: under a
+  question, and first in an answer's chip row. The time alone is shown for today, the date and
+  time before that, and the desktop shows the full local stamp on hover. A live message takes
+  the browser's time; a reopened one takes the stored `createdAt`.
 
 ### What is deliberately not here
 

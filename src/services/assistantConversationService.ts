@@ -242,19 +242,31 @@ export async function clearConversation(userId: string, id: string): Promise<voi
 /**
  * The last `n` turns, oldest first — what is resent to the model. Older turns
  * stay saved and visible but are not resent, which keeps a small local
- * model's context window from overflowing.
+ * model's context window from overflowing. Each turn carries when it was
+ * said and which lookups and reports its answer ran (labels and counts only —
+ * never results, rule 95(d)) for the chat service's turn header (rule 95(n)).
  */
-export async function recentTurns(conversationId: string, n: number): Promise<Array<{ role: "user" | "assistant"; content: string; imageIds?: string[] }>> {
+export async function recentTurns(conversationId: string, n: number): Promise<Array<{
+  role: "user" | "assistant"; content: string; imageIds?: string[];
+  createdAt: Date; toolsUsed: ToolUseRecord[]; reports: Array<{ title: string; rowCount: number }>;
+}>> {
   const rows = await prisma.assistantMessage.findMany({
     where: { conversationId },
     orderBy: { createdAt: "desc" },
     take: Math.max(n, 1),
     // Image ids only: the chat service decides which are resent (rule 95(l)) and loads just those.
-    select: { role: true, content: true, images: { orderBy: { position: "asc" }, select: { id: true } } },
+    select: {
+      role: true, content: true, createdAt: true, toolsUsed: true,
+      images: { orderBy: { position: "asc" }, select: { id: true } },
+      reports: { orderBy: { generatedAt: "asc" }, select: { title: true, rowCount: true } },
+    },
   });
   return rows.reverse().map((r) => ({
     role: r.role === "assistant" ? "assistant" : "user",
     content: r.content,
+    createdAt: r.createdAt,
+    toolsUsed: Array.isArray(r.toolsUsed) ? (r.toolsUsed as unknown as ToolUseRecord[]) : [],
+    reports: r.reports ?? [],
     ...(r.images?.length ? { imageIds: r.images.map((i) => i.id) } : {}),
   }));
 }
