@@ -80,7 +80,8 @@ function pages(): { page: string; statics: string[] }[] {
 const BUNDLES = readBundles();
 const OPENERS = readOpeners();
 
-describe("panel bundles", () => {
+// Parses every panel bundle (~8 s on a loaded laptop); the 5 s default is too tight.
+describe("panel bundles", { timeout: 30_000 }, () => {
   it("are read out of app.js with the three panels and their openers", () => {
     expect(Object.keys(BUNDLES).sort()).toEqual(["asset", "block", "network"]);
     expect(OPENERS).toEqual({ asset: "openViewModal", network: "openIpPanel", block: "openBlockPanel" });

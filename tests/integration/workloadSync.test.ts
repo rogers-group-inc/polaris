@@ -89,7 +89,8 @@ async function byName(suffix: string) {
   return prisma.asset.findFirst({ where: { hostname: `${PREFIX}${suffix}` }, select: { id: true, assetType: true, status: true, virtualization: true, monitored: true, dependencyLayer: true } });
 }
 
-d("syncWorkloadDevices", () => {
+// The fleet-loss guard case syncs 60 containers twice; 5 s is right at the line on a loaded VM.
+d("syncWorkloadDevices", { timeout: 30_000 }, () => {
   it("creates host / VM / containers with source rows and placement edges, idempotently", async () => {
     const r1 = await syncWorkloadDevices(integrationId, NAME, {}, result());
     expect(r1.created.sort()).toEqual([`${PREFIX}plex`, `${PREFIX}sonarr`, `${PREFIX}tower`, `${PREFIX}win11`].sort());

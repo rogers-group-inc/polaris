@@ -117,7 +117,8 @@ describe("normalizeBrandTheme", () => {
   });
 });
 
-describe("renderAccentedLogo", () => {
+// Real image composites; the 5 s default is crossed under full-suite load.
+describe("renderAccentedLogo", { timeout: 30_000 }, () => {
   it("composites a PNG and memoizes it", async () => {
     const first = await renderAccentedLogo();
     expect(first).not.toBeNull();

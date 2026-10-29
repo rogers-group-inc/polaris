@@ -32,7 +32,8 @@ function* files(p: string): Generator<string> {
   }
 }
 
-describe("root helper hints", () => {
+// Walks deploy/ docs/ src/ public/ synchronously; the 5 s default is crossed under full-suite load.
+describe("root helper hints", { timeout: 30_000 }, () => {
   it("never tell the operator to run a bare `sudo polaris-…` command", () => {
     const bare: string[] = [];
     for (const top of SCAN) {

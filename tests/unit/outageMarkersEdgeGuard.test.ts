@@ -42,7 +42,8 @@ function extractFunction(src: string, name: string): string {
 const impls: Record<string, MarkersFn> = {};
 
 beforeAll(() => {
-  const desktopSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
+  // A Windows checkout may carry CRLF; extractFunction slices on "\n}\n".
+  const desktopSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").replace(/\r\n/g, "\n");
   const body = ["_medianCadenceMs", "_seriesReportedThrough", "_outageMarkers"]
     .map((n) => extractFunction(desktopSrc, n))
     .join("\n");

@@ -138,7 +138,8 @@ async function tagsOf(subnetId: string): Promise<string[]> {
   return row?.tags ?? [];
 }
 
-d("mapRegionService — subnet region tags", () => {
+// The 5 s default is crossed in the full serial integration run.
+d("mapRegionService — subnet region tags", { timeout: 30_000 }, () => {
   let region: MapRegion;
   let inSubnetId: string;
   let outSubnetId: string;

@@ -79,7 +79,8 @@ describe("update-linux.sh — the pre-update dump is private (F57)", () => {
   });
 });
 
-describe.skipIf(!hasBash)("root_helper / write_pending", () => {
+// Spawns bash per case; the 5 s default is crossed under full-suite load.
+describe.skipIf(!hasBash)("root_helper / write_pending", { timeout: 30_000 }, () => {
   const script = join(ROOT, "deploy/scripts/polaris-update-sync.sh").replace(/\\/g, "/");
   // A fake tree and install root; `install -o/-g` and logger are stubbed so it
   // runs unprivileged. Prints one line per check.

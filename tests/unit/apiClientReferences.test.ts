@@ -78,7 +78,8 @@ function unresolvedIn(shape: Map<string, Set<string>>, label: string, source: st
   return [...new Set(bad)];
 }
 
-describe("frontend api client references", () => {
+// Scans every file in public/js; the 5 s default is crossed under full-suite load.
+describe("frontend api client references", { timeout: 30_000 }, () => {
   const shape = buildApiShape();
 
   it("parses a sane api shape out of api.js", () => {
