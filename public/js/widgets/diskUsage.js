@@ -13,7 +13,7 @@
   function render(el, config, rows) {
     PolarisTopN.renderRows(el, rows || [], {
       unit: "%", thresholds: THRESHOLDS, baseColor: "#4fc3f7", emptyText: EMPTY, config: config || {}, fillTo: 20,
-      valueNoun: "disk usage",
+      valueNoun: "disk usage", valueHeader: "Disk Usage (%)",
     });
   }
 
