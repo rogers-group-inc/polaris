@@ -95,7 +95,31 @@ interface ToolDef {
 /** A list tool also exposes its rows + column set to create_report. */
 interface ListToolDef extends ToolDef {
   columns: ReportColumn[];
+  /** Every argument it accepts — Zod drops the rest silently (ignoredArgKeys). */
+  argSchema: z.AnyZodObject;
   rows(args: unknown, ctx: ToolContext, cap: number): Promise<ListRows | ToolResult>;
+}
+
+/**
+ * The argument names a list tool does not know. Zod strips them without a
+ * word, so a made-up filter (`hostnames`) read as applied: a "15-firewall"
+ * report came back with 1,964 devices (seen live 2026-10-28). Exported for tests.
+ */
+export function ignoredArgKeys(schema: z.AnyZodObject, args: unknown): string[] {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return [];
+  const known = new Set(Object.keys(schema.shape));
+  return Object.keys(args).filter((k) => !known.has(k));
+}
+
+/** Said with any result whose arguments named filters the tool does not have. */
+function ignoredArgsNote(keys: string[]): Record<string, unknown> {
+  return keys.length
+    ? {
+      ignoredArgs: keys,
+      ignoredArgsNote: `These arguments are not filters this lookup has and were IGNORED: ${keys.join(", ")}. ` +
+        "The result is NOT narrowed by them — say so to the user, or retry with the filters this lookup lists.",
+    }
+    : {};
 }
 
 interface ListRows {
@@ -265,18 +289,22 @@ const MONITOR_STATUSES = ["up", "down", "warning", "recovering", "unknown", "pas
  * filter turned "every switch and firewall" into a 0-row report (2026-10-07).
  * Normalized to a de-duplicated list.
  */
-function oneOrMany<T extends z.ZodTypeAny>(item: T) {
+function oneOrMany<T extends z.ZodTypeAny>(item: T, max = 20) {
   return z.preprocess((v) => {
     if (v == null || v === "") return undefined;
     const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [v];
     const clean = list.map((x) => (typeof x === "string" ? x.trim() : x)).filter((x) => x !== "" && x != null);
     return clean.length ? Array.from(new Set(clean)) : undefined;
-  }, z.array(item).max(20).optional());
+  }, z.array(item).max(max).optional());
 }
 
 /** The asset filters list_assets and telemetry_summary share. */
 const ASSET_FILTER_ARGS = {
   search: z.string().max(200).optional(),
+  // Exact names, any case: "those 15 gates" from an earlier answer. Without
+  // it a model invented a `hostnames` filter, which was dropped, and the
+  // "15-firewall" report held 1,964 devices (seen live 2026-10-28).
+  hostname: oneOrMany(z.string().trim().min(1).max(255), 200),
   assetType: oneOrMany(z.string().max(60)),
   status: oneOrMany(z.enum(ASSET_STATUSES)),
   monitorStatus: oneOrMany(z.enum(MONITOR_STATUSES)),
@@ -371,8 +399,14 @@ export async function regionTagVariants(names: string[]): Promise<string[]> {
   return Array.from(new Set([...wanted, ...registered.map((t) => t.name)]));
 }
 
+const HOSTNAME_PROP = {
+  type: "array", items: { type: "string" },
+  description: "Exact hostnames, any case — to narrow to named devices, e.g. the ones an earlier answer listed",
+} as const;
+
 const ASSET_FILTER_PROPS = {
   search: { type: "string", description: "Matches hostname, DNS name, IP, MAC, asset tag or assigned-to" },
+  hostname: HOSTNAME_PROP,
   assetType: { type: "array", items: { type: "string" }, description: "One or more types, e.g. [\"switch\", \"firewall\"] for switches AND firewalls" },
   status: { type: "array", items: { type: "string", enum: [...ASSET_STATUSES] } },
   monitorStatus: { type: "array", items: { type: "string", enum: [...MONITOR_STATUSES] } },
@@ -400,6 +434,7 @@ const ASSET_FILTER_PROPS = {
  */
 const DEVICE_FILTER_PROPS = {
   search: { type: "string", description: "Hostname, IP or name contains" },
+  hostname: HOSTNAME_PROP,
   assetType: ASSET_FILTER_PROPS.assetType,
   region: { type: "array", items: { type: "string" }, description: "Region names" },
   myRegions: { type: "boolean", description: "The asker's own regions" },
@@ -426,6 +461,7 @@ async function assetFilterWhere(
       })),
     });
   }
+  if (a.hostname) and.push({ OR: a.hostname.map((h) => ({ hostname: { equals: h, mode: "insensitive" } })) });
   if (a.assetType) and.push({ assetType: { in: a.assetType } });
   // Decommissioned assets are history, not inventory: left out unless the
   // status filter asks for them (owner's call, 2026-10-09).
@@ -484,6 +520,7 @@ function inSubnet<T extends { ipAddress: string | null }>(rows: T[], subnet: str
 }
 
 const listAssetsTool: ListToolDef = {
+  argSchema: AssetArgs,
   name: "list_assets",
   label: "looked up assets",
   description:
@@ -578,6 +615,11 @@ const listAssetsTool: ListToolDef = {
 // Memory is memPct where the source reports a percentage (FortiOS), else
 // used / total bytes — the same preference as the charts and the NOC widget.
 //
+// Each row also carries the device's uptime as the asset page shows it
+// (withUptime), so "firewalls by uptime, with memory" is ONE table — asked
+// for live on 2026-10-28, when no source held both. sortBy "uptime" ranks by
+// it and keeps devices that reported no CPU / memory in the window.
+//
 // Scale: one asset findMany (tight select) + ONE grouped aggregate over
 // `assetId = ANY(ids)` inside the window — flat from 100 to 2000 assets.
 
@@ -587,7 +629,7 @@ const TelemetryArgs = z.object({
   ...ASSET_FILTER_ARGS,
   ...WindowArgs,
   metric: z.enum(["memory", "cpu"]).optional(),
-  sortBy: z.enum(["avg", "max"]).optional(),
+  sortBy: z.enum(["avg", "max", "uptime"]).optional(),
   order: z.enum(["highest", "lowest"]).optional(),
   limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
 });
@@ -641,6 +683,7 @@ export async function telemetryAggregates(ids: string[], from: Date, to: Date, t
 const round1 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 10) / 10);
 
 const telemetrySummaryTool: ListToolDef = {
+  argSchema: TelemetryArgs,
   name: "telemetry_summary",
   label: "checked CPU and memory",
   description:
@@ -649,21 +692,24 @@ const telemetrySummaryTool: ListToolDef = {
     "hot\", or a device's CPU / memory over a period. Takes the same device filters as list_assets (model \"61F\", " +
     `manufacturer, assetType, region…). metric picks what to rank by (memory or cpu); window defaults to the last ` +
     `${TELEMETRY_DEFAULT_HOURS} hours. Devices that report no CPU / memory in the window are counted in noData, ` +
-    "not listed. For a downloadable table use create_report with source telemetry_summary.",
+    "not listed. Each row also carries uptime / upSince; sortBy uptime ranks longest-up first (order lowest = " +
+    "most recently rebooted) — use it when uptime and CPU / memory are wanted in one table. " +
+    "For a downloadable table use create_report with source telemetry_summary.",
   parameters: {
     type: "object",
     properties: {
       ...DEVICE_FILTER_PROPS,
       ...windowSchemaProps,
       metric: { type: "string", enum: ["memory", "cpu"], description: "What to rank by. Default memory" },
-      sortBy: { type: "string", enum: ["avg", "max"], description: "Rank by the window's average (default) or its peak" },
-      order: { type: "string", enum: ["highest", "lowest"], description: "Default highest" },
+      sortBy: { type: "string", enum: ["avg", "max", "uptime"], description: "Rank by the window's average (default), its peak, or the device's uptime" },
+      order: { type: "string", enum: ["highest", "lowest"], description: "Default highest (for uptime: longest up)" },
       limit: { type: "number" },
     },
   },
   columns: [
     { key: "hostname", label: "Hostname" }, { key: "ipAddress", label: "IP" }, { key: "model", label: "Model" },
-    { key: "location", label: "Location" }, { key: "avgMemPct", label: "Avg memory %" }, { key: "maxMemPct", label: "Peak memory %" },
+    { key: "location", label: "Location" }, { key: "uptime", label: "Uptime" }, { key: "upSince", label: "Up since" },
+    { key: "avgMemPct", label: "Avg memory %" }, { key: "maxMemPct", label: "Peak memory %" },
     { key: "avgCpuPct", label: "Avg CPU %" }, { key: "maxCpuPct", label: "Peak CPU %" }, { key: "samples", label: "Samples" },
     { key: "window", label: "Window" },
   ],
@@ -681,32 +727,44 @@ const telemetrySummaryTool: ListToolDef = {
 
     const assets = inSubnet(await prisma.asset.findMany({
       where: filter.where,
-      select: { id: true, hostname: true, ipAddress: true, model: true, location: true },
+      select: {
+        id: true, hostname: true, ipAddress: true, model: true, location: true,
+        // withUptime's inputs — the System tab's Uptime row.
+        lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true, monitorStatus: true,
+      },
     }), filter.subnet);
     const { tier } = await pickSampleTierForAsset("", "cpuMem", from);
     const aggs = await telemetryAggregates(assets.map((x) => x.id), from, to, tier);
 
     const metric = a.metric ?? "memory";
-    const key = (a.sortBy ?? "avg") === "avg" ? (metric === "memory" ? "avgMem" : "avgCpu") : (metric === "memory" ? "maxMem" : "maxCpu");
+    const byUptime = a.sortBy === "uptime";
+    const key = (a.sortBy ?? "avg") === "max" ? (metric === "memory" ? "maxMem" : "maxCpu") : (metric === "memory" ? "avgMem" : "avgCpu");
     const dir = a.order === "lowest" ? 1 : -1;
-    const byId = new Map(assets.map((x) => [x.id, x]));
+    const aggById = new Map(aggs.map((g) => [g.assetId, g]));
     const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
-    const ranked = aggs
-      .filter((g) => g[key] != null && byId.has(g.assetId))
-      .sort((x, y) => dir * ((x[key] as number) - (y[key] as number)))
-      .map((g) => {
-        const asset = byId.get(g.assetId)!;
-        return {
-          id: asset.id, hostname: asset.hostname, ipAddress: asset.ipAddress, model: asset.model, location: asset.location,
-          avgMemPct: round1(g.avgMem), maxMemPct: round1(g.maxMem), avgCpuPct: round1(g.avgCpu), maxCpuPct: round1(g.maxCpu),
-          samples: g.samples, window,
-        };
-      });
+    const rowOf = (asset: (typeof assets)[number], g: TelemetryAgg | undefined) => {
+      const up = withUptime(asset);
+      return {
+        id: asset.id, hostname: asset.hostname, ipAddress: asset.ipAddress, model: asset.model, location: asset.location,
+        uptime: up.uptime, upSince: up.upSince?.toISOString() ?? null, uptimeSec: up.uptimeSec,
+        avgMemPct: round1(g?.avgMem), maxMemPct: round1(g?.maxMem), avgCpuPct: round1(g?.avgCpu), maxCpuPct: round1(g?.maxCpu),
+        samples: g?.samples ?? 0, window,
+      };
+    };
+    // By a metric: only devices that reported it. By uptime: every device
+    // with an uptime or a reading, those with no uptime last either way.
+    const ranked = (byUptime
+      ? assets.map((x) => rowOf(x, aggById.get(x.id))).filter((r) => r.uptimeSec != null || r.samples > 0)
+        .sort((x, y) => (x.uptimeSec == null ? 1 : y.uptimeSec == null ? -1 : dir * (x.uptimeSec - y.uptimeSec)))
+      : assets.filter((x) => aggById.get(x.id)?.[key] != null)
+        .sort((x, y) => dir * ((aggById.get(x.id)![key] as number) - (aggById.get(y.id)![key] as number)))
+        .map((x) => rowOf(x, aggById.get(x.id))))
+      .map(({ uptimeSec: _s, ...r }) => r);
     const take = Math.min(a.limit ?? cap, cap);
     return {
       rows: ranked.slice(0, take),
       total: ranked.length,
-      extra: { window, matchedDevices: assets.length, noData: assets.length - ranked.length, rankedBy: `${a.sortBy ?? "avg"} ${metric}` },
+      extra: { window, matchedDevices: assets.length, noData: assets.length - ranked.length, rankedBy: byUptime ? "uptime" : `${a.sortBy ?? "avg"} ${metric}` },
     };
   },
   async run(args, ctx) {
@@ -755,6 +813,7 @@ const ServiceArgs = z.object({
 });
 
 const listServicesTool: ListToolDef = {
+  argSchema: ServiceArgs,
   name: "list_services",
   label: "checked services",
   description:
@@ -1095,6 +1154,7 @@ export async function pathCheckAggregates(subjects: string[], checkIds: string[]
 }
 
 const pathCheckSummaryTool: ListToolDef = {
+  argSchema: PathArgs,
   name: "path_check_summary",
   label: "checked Path Monitor",
   description:
@@ -1290,6 +1350,7 @@ const utilPct = (bytesPerSec: number | null | undefined, speedBps: number | null
   bytesPerSec == null || !speedBps ? null : round1(((bytesPerSec * 8) / speedBps) * 100);
 
 const interfaceSummaryTool: ListToolDef = {
+  argSchema: InterfaceArgs,
   name: "interface_summary",
   label: "checked interfaces",
   description:
@@ -1720,6 +1781,7 @@ const AlertArgs = z.object({
 });
 
 const listAlertsTool: ListToolDef = {
+  argSchema: AlertArgs,
   name: "list_alerts",
   label: "checked alerts",
   description:
@@ -1794,6 +1856,7 @@ const EventArgs = z.object({
 });
 
 const listEventsTool: ListToolDef = {
+  argSchema: EventArgs,
   name: "list_events",
   label: "read the event log",
   description:
@@ -1863,6 +1926,7 @@ const SubnetArgs = z.object({
 });
 
 const listSubnetsTool: ListToolDef = {
+  argSchema: SubnetArgs,
   name: "list_networks",
   label: "looked up networks",
   description:
@@ -1949,6 +2013,7 @@ const ReservationArgs = z.object({
 });
 
 const listReservationsTool: ListToolDef = {
+  argSchema: ReservationArgs,
   name: "list_reservations",
   label: "looked up reservations",
   description: "List IP reservations, optionally inside one network (cidr) or matching an IP / hostname / owner.",
@@ -2238,6 +2303,18 @@ const ReportArgs = z.object({
   }, z.array(z.enum(REPORT_FORMATS)).max(3).optional()),
 });
 
+/**
+ * create_report's column hint, read from the sources' own column lists. Typed
+ * by hand it fell behind: uptime / upSince were list_assets columns the hint
+ * never named, and the assistant told a user an uptime PDF could not print
+ * uptime (seen live 2026-10-28). Exported for tests.
+ */
+export const REPORT_COLUMN_HINT_SOURCES = ["list_assets", "telemetry_summary", "list_services", "path_check_summary", "interface_summary"] as const;
+const reportColumnsHint = (): string =>
+  "Column keys to include. " + REPORT_COLUMN_HINT_SOURCES
+    .map((s) => `${s}: ${LIST_BY_NAME.get(s)!.columns.map((c) => c.key).join(", ")}`)
+    .join(". ");
+
 const createReportTool: ToolDef = {
   name: "create_report",
   label: "built a report",
@@ -2251,14 +2328,7 @@ const createReportTool: ToolDef = {
       title: { type: "string" },
       source: { type: "string", enum: LIST_TOOLS.map((t) => t.name) },
       args: { type: "object", description: "The same filter arguments the source tool accepts" },
-      columns: {
-        type: "array", items: { type: "string" },
-        description: "Column keys to include. list_assets: hostname, ipAddress, assetType, status, monitorStatus, manufacturer, model, serialNumber, osVersion, location, tags, lastSeen, monitorStatusChangedAt, acquiredAt, acquiredFrom, warrantyExpiry, purchaseOrder. " +
-          "telemetry_summary: hostname, ipAddress, model, location, avgMemPct, maxMemPct, avgCpuPct, maxCpuPct, samples, window. " +
-          "list_services: hostname, ipAddress, service, displayName, platform, state, startup, cpuPct, memMB, watched, updatedAt. " +
-          "path_check_summary: check, kind, target, source, availabilityPct, avgLatencyMs, maxLatencyMs, samples, lastOk, lastError, lastFailAt, lastSampleAt, window. " +
-          "interface_summary: hostname, interface, description, state, speedMbps, vlan, poe, avgInMbps, avgOutMbps, peakInMbps, peakOutMbps, avgUtilPct, peakUtilPct, inErrors, outErrors, history, window",
-      },
+      columns: { type: "array", items: { type: "string" }, description: reportColumnsHint() },
       formats: {
         type: "array", items: { type: "string", enum: [...REPORT_FORMATS] },
         description: "Only the download formats the user asked for, e.g. [\"pdf\"]. Omit when they named none — all three are offered.",
@@ -2273,10 +2343,15 @@ const createReportTool: ToolDef = {
     const res = await tool.rows(p.data.args ?? {}, ctx, REPORT_ROW_CAP);
     if ("ok" in res) return res;
     let columns = tool.columns;
+    // A column key the source does not have is dropped like an unknown filter
+    // — and said, so the model does not promise a column the table lacks.
+    let unknownColumns: string[] = [];
     if (p.data.columns?.length) {
       const wanted = new Set(p.data.columns);
       const picked = tool.columns.filter((c) => wanted.has(c.key));
       if (picked.length) columns = picked;
+      const have = new Set(tool.columns.map((c) => c.key));
+      unknownColumns = p.data.columns.filter((k) => !have.has(k));
     }
     const formats = ctx.reportFormats?.length ? ctx.reportFormats : p.data.formats;
     const report: AssistantReportPayload = {
@@ -2291,6 +2366,8 @@ const createReportTool: ToolDef = {
     return {
       ok: true,
       data: {
+        ...ignoredArgsNote(ignoredArgKeys(tool.argSchema, p.data.args ?? {})),
+        ...(unknownColumns.length ? { unknownColumns, unknownColumnsNote: `This source has no ${unknownColumns.join(", ")} column — the report does not include it.` } : {}),
         created: true,
         title: report.title,
         rowCount: report.rowCount,
@@ -2303,7 +2380,8 @@ const createReportTool: ToolDef = {
         // from text after a report regardless (stripMarkdownTables); this says why.
         note: "The user ALREADY SEES the full table with CSV / PDF / Markdown download buttons. " +
           "You have NOT seen its rows. Reply with ONE short sentence about what the report holds " +
-          "(its title and row count). Do NOT write a table, list rows, or invent values.",
+          "(its title and row count), plus one about anything ignoredArgsNote or unknownColumnsNote says. " +
+          "Do NOT write a table, list rows, or invent values.",
       },
     };
   },
@@ -2669,7 +2747,14 @@ export async function runAssistantTool(name: string, rawArgs: string, ctx: ToolC
     }
   }
   try {
-    return await tool.run(args, ctx);
+    const res = await tool.run(args, ctx);
+    // A list tool's result names the arguments it dropped (ignoredArgKeys).
+    const listTool = LIST_BY_NAME.get(name);
+    const ignored = listTool ? ignoredArgKeys(listTool.argSchema, args) : [];
+    if (ignored.length && res.ok && res.data && typeof res.data === "object") {
+      return { ...res, data: { ...ignoredArgsNote(ignored), ...(res.data as Record<string, unknown>) } };
+    }
+    return res;
   } catch (err: any) {
     return { ok: false, data: { error: `Lookup failed: ${err?.message || "unknown error"}` } };
   }

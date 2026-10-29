@@ -669,17 +669,32 @@
     return secs >= 2 ? t + " · " + secs + "s" : t;
   }
 
+  // When a message was sent: the time alone today, the date as well before
+  // that, the full stamp on hover. A thread can span days, and what the
+  // assistant could see may have changed between its turns.
+  function stampHTML(iso) {
+    var d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) return "";
+    var now = new Date();
+    var time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    var label = d.toDateString() === now.toDateString() ? time
+      : d.toLocaleDateString([], d.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" }) + ", " + time;
+    return '<time class="asst-time" datetime="' + esc(d.toISOString()) + '" title="' + esc(d.toLocaleString()) + '">' + esc(label) + '</time>';
+  }
+
   function messageHTML(m, idx, isLive) {
     if (m.local) {
       return '<div class="asst-msg assistant"><div class="asst-bubble" style="border-style:dashed">' + md(m.content) + '</div></div>';
     }
     if (m.role === "user") {
+      var sent = stampHTML(m.createdAt);
       return '<div class="asst-msg user" data-idx="' + idx + '">' +
         (m.images && m.images.length ? '<div class="asst-shots">' + m.images.map(function (img) {
           var src = imageSrc(img);
           return src ? '<a href="' + esc(src) + '" target="_blank" rel="noopener" class="asst-shot" title="Open full size"><img src="' + esc(src) + '" alt="Screenshot"></a>' : "";
         }).join("") + '</div>' : "") +
         (m.content ? '<div class="asst-bubble">' + esc(m.content) + '</div>' : "") +
+        (sent ? '<div class="asst-meta">' + sent + '</div>' : "") +
         '</div>';
     }
     var body = m.content ? md(m.content)
@@ -687,6 +702,7 @@
       : (isLive && !m.error ? '<span class="asst-thinking">' + esc(thinkingText(m)) + '</span>' : "");
     var chips = (m.tools || m.toolsUsed || []).map(chipHTML).join("");
     if (m.stopped) chips += '<span class="asst-chip stopped">stopped</span>';
+    if (!isLive) chips = stampHTML(m.createdAt) + chips;
     var reports = (m.reports || []).map(function (r, i) { return reportHTML(r, i, idx); }).join("");
     var err = m.error
       ? '<div class="asst-error"><span>' + esc(m.error) + '</span><button type="button" class="btn btn-sm btn-secondary" data-a2="retry">Retry</button></div>'
@@ -782,6 +798,7 @@
       return {
         role: m.role,
         content: m.content,
+        createdAt: m.createdAt || null,
         toolsUsed: m.toolsUsed || m.tools || [],
         stopped: !!m.stopped,
         preface: m.preface || null,
@@ -803,7 +820,7 @@
 
   function fromServer(c) {
     return (c.messages || []).map(function (m) {
-      return { role: m.role, content: m.content, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, images: m.images || [], reports: m.reports || [] };
+      return { role: m.role, content: m.content, createdAt: m.createdAt || null, toolsUsed: m.toolsUsed || [], stopped: m.stopped, preface: m.preface || null, signOff: m.signOff || null, images: m.images || [], reports: m.reports || [] };
     });
   }
 
@@ -1553,7 +1570,7 @@
       var images = (!regenerate && opts.images) || [];
       var userMsg = null;
       if (!regenerate) {
-        userMsg = { role: "user", content: opts.display || opts.content || "", images: images.map(function (p) { return { url: p.url }; }) };
+        userMsg = { role: "user", content: opts.display || opts.content || "", createdAt: new Date().toISOString(), images: images.map(function (p) { return { url: p.url }; }) };
         S.messages.push(userMsg);
       }
       S.messages.push({ role: "assistant", content: "", tools: [], reports: [], live: true, startedAt: Date.now(), thinkingChars: 0 });
@@ -1636,6 +1653,7 @@
       });
       m.live = false;
       m.done = true;
+      m.createdAt = new Date().toISOString();
       renderOne(liveIdx);
       memoryChanges.forEach(function (c) {
         addLocalNote((c.action === "forgot" ? "Forgot: " : "Remembered: ") + (c.text || "") + " — see `/memory`.");

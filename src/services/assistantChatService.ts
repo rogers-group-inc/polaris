@@ -263,7 +263,13 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- Talk naturally. Small talk and follow-up questions are fine; earlier turns are context.",
     "- Any fact about THIS install (devices, alerts, networks, events, counts, times) must come from a tool. " +
       "Never invent hostnames, IPs, counts or timestamps. If the tools return nothing, say so. Never say you " +
-      "checked something you did not look up this turn; your earlier answers are not lookups.",
+      "checked something you did not look up this turn.",
+    "- Polaris starts each earlier message with a [Polaris: …] line: when it was sent and, for an answer, the " +
+      "lookups and reports it ran. Never write such a line yourself. An earlier answer whose line lists lookups " +
+      "did come from Polaris at that time — do not disown or apologise for it. Its figures are as of then, and " +
+      "Polaris may have learned to see more since, so re-run a lookup before repeating, building on or " +
+      "correcting one; correct an earlier answer only when a lookup this turn contradicts it. An answer marked " +
+      "\"no lookups ran\" is unverified.",
     "- For questions about how to use, configure or troubleshoot Polaris, call search_help first and answer ONLY " +
       "from what it returns, linking the page with the exact url it gave, as [Page — Section](url). Never make up a " +
       "link, a page, a button or a menu. If the help has nothing, say you are not sure.",
@@ -285,7 +291,9 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- Anything else a device's details page shows (hardware, temperatures, disks, neighbors, MAC / ARP table, " +
       "wireless, SD-WAN, IPsec, processes, software, agent, firmware, sources, polling settings) comes from " +
       "asset_details with the matching sections; one network's addresses and who holds each, from get_network. " +
-      "Uptime and last reboot are on list_assets rows (sortBy uptime ranks a fleet).",
+      "Uptime and last reboot are on list_assets rows (sortBy uptime ranks a fleet); telemetry_summary rows carry " +
+      "uptime too, so uptime with CPU / memory is one telemetry_summary lookup or report. To narrow to devices " +
+      "named earlier, pass their exact names as hostname — never invent a filter a lookup does not list.",
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
       "right source and filters, and formats set to the ones the user named (e.g. [\"pdf\"]) when they named any. " +
       "The user sees the finished table with download buttons; you do not see its rows, " +
@@ -433,9 +441,10 @@ export function claimsUnlookedFacts(text: string): boolean {
  */
 const LOOKUP_NUDGE =
   "(From Polaris, not the user.) Your reply stated facts about this install, but you ran no lookup this turn, " +
-  "so none of them are verified. Earlier answers in this conversation are not lookups either. Call the tools " +
-  "that answer the question now, then answer only from what they return. If no tool can answer it, say that " +
-  "instead of giving figures.";
+  "so none of them are verified. Figures from earlier answers are not lookups for this turn either. Call the " +
+  "tools that answer the question now, then answer only from what they return. If no tool can answer it, say " +
+  "that instead of giving figures. Do not apologise for or retract earlier answers unless a lookup now " +
+  "contradicts them.";
 
 /** Added by Polaris under an answer that still claimed facts after the nudge. */
 const UNVERIFIED_NOTE = "\n\n_Polaris ran no lookup for this answer, so its figures are not from your install._";
@@ -580,6 +589,40 @@ export function userTurnText(content: string, imageCount: number, resentCount: n
   return lines.filter(Boolean).join("\n");
 }
 
+/**
+ * The line Polaris puts at the top of every turn it resends (rule 95(n)):
+ * when it was said and, for an answer, which lookups and reports it ran.
+ * Without it the model could not tell a looked-up answer from an invented
+ * one, nor an answer given before Polaris could see something from one given
+ * after — seen live 2026-10-28: told "earlier answers are not lookups", it
+ * disowned a real uptime ranking two turns later. Labels and counts only,
+ * never results (rule 95(d)). Exported for tests.
+ */
+export function turnHeader(t: {
+  role: "user" | "assistant";
+  createdAt: Date;
+  toolsUsed?: ToolUseRecord[];
+  reports?: Array<{ title: string; rowCount: number }>;
+}): string {
+  const at = t.createdAt.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+  if (t.role === "user") return `[Polaris: sent ${at}]`;
+  const ran = Array.from(new Set((t.toolsUsed ?? []).map((u) => u.label + (u.ok ? "" : " (failed)"))));
+  const parts = [`answered ${at}`];
+  parts.push(ran.length ? `lookups it ran: ${ran.join(", ")}` : "no lookups ran, so its facts are unverified");
+  for (const r of t.reports ?? []) parts.push(`report built: "${r.title}" (${r.rowCount} rows)`);
+  return `[Polaris: ${parts.join(" · ")}]`;
+}
+
+/**
+ * Remove turn headers (turnHeader) a model copied into its own answer — a
+ * model copies what its history shows (the trap of rule 95(h)). Only whole
+ * lines, so prose that mentions Polaris in brackets is left. Exported for tests.
+ */
+export function stripTurnHeaders(text: string): string {
+  if (!text.includes("[Polaris:")) return text;
+  return text.replace(/^[ \t]*\[Polaris: (?:sent|answered) [^\]\n]*\][ \t]*(?:\r?\n)*/gm, "").trimStart();
+}
+
 /** The share of the prompt budget every tool definition together may take before the optional ones are held back. */
 const TOOL_DEFS_SHARE = 0.45;
 
@@ -710,14 +753,18 @@ export async function streamAssistantTurn(input: {
   // Rule 95(l): the newest screenshots ride along, costed into the history budget.
   const canReadImages = acceptsImages(config);
   const resent = canReadImages ? pickResentImages(allTurns) : new Set<string>();
+  // Rule 95(n): every resent turn opens with its turnHeader, costed in too.
   const turns = fitHistory(
     estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools)) + (playbook ? estimateTokens(playbook.guidance) : 0),
-    allTurns.map((t) => ({ ...t, extraTokens: (t.imageIds ?? []).filter((id) => resent.has(id)).length * IMAGE_TOKENS })),
+    allTurns.map((t) => {
+      const header = turnHeader(t);
+      return { ...t, header, extraTokens: estimateTokens(header) + (t.imageIds ?? []).filter((id) => resent.has(id)).length * IMAGE_TOKENS };
+    }),
     budget.promptTokens,
   );
   const imageBytes = await loadTurnImages(turns.flatMap((t) => (t.imageIds ?? []).filter((id) => resent.has(id))));
   const historyMessages: ChatMessage[] = turns.map((t): ChatMessage => {
-    if (t.role === "assistant") return { role: "assistant", content: t.content };
+    if (t.role === "assistant") return { role: "assistant", content: `${t.header}\n${t.content}` };
     const ids = t.imageIds ?? [];
     const images = ids.flatMap((id) => {
       const img = imageBytes.get(id);
@@ -725,7 +772,7 @@ export async function streamAssistantTurn(input: {
     });
     return {
       role: "user",
-      content: userTurnText(t.content, ids.length, images.length, canReadImages),
+      content: `${t.header}\n${userTurnText(t.content, ids.length, images.length, canReadImages)}`,
       ...(images.length ? { images } : {}),
     };
   });
@@ -934,8 +981,9 @@ export async function streamAssistantTurn(input: {
 
   // Links may only go to a real help page or inside Polaris (sanitizeAnswerLinks).
   // The answer streamed as written, so a changed answer is replaced whole.
+  // A copied turn header (rule 95(n)) goes the same way.
   if (answer) {
-    const clean = sanitizeAnswerLinks(answer, await wikiPageNames(), seenIds);
+    const clean = sanitizeAnswerLinks(stripTurnHeaders(answer), await wikiPageNames(), seenIds);
     if (clean !== answer) {
       answer = clean;
       emit("retract", { from: 0 });

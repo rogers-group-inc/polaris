@@ -196,7 +196,9 @@ body.asst-mounted .toast-container { bottom: 5.25rem; }
 .asst-cursor::after { content: "▍"; animation: asst-blink 1s steps(1) infinite; color: var(--color-text-tertiary); margin-left: 1px; }
 @keyframes asst-blink { 50% { opacity: 0; } }
 
-.asst-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.asst-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
+/* When a message was sent: under the question, first in an answer's chip row. */
+.asst-time { font-size: 0.7rem; color: var(--color-text-tertiary); margin-right: 2px; white-space: nowrap; }
 /* Efficiency Advisor (rule 95(h)): the header checkbox and the line under an answer. */
 /* R.A.L.P.H. is a toggle BUTTON (aria-pressed): a quiet pill while off, lit in
    the accent colour and slowly breathing while on — the glow is the state. */

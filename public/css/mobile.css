@@ -3325,7 +3325,9 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
 .chat-bubble pre { overflow-x: auto; font-size: 12px; }
 .chat-bubble a { color: var(--md-primary); }
 .chat-thinking { color: var(--md-on-surface-variant); font-style: italic; }
-.chat-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 88%; }
+.chat-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 88%; }
+/* When a message was sent: under the question, first in an answer's chip row. */
+.chat-time { font-size: 12px; color: var(--md-on-surface-variant); padding: 0 4px; white-space: nowrap; }
 .chat-chip {
   font-size: 12px; padding: 3px 10px; border-radius: 999px;
   background: var(--md-secondary-container); color: var(--md-on-secondary-container);
