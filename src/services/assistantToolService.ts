@@ -39,6 +39,7 @@ import { lookupOui } from "./ouiService.js";
 import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestService.js";
 import { macColonUpperOrNull } from "../utils/mac.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
+import { deviceUptime } from "../utils/uptime.js";
 import type { ChatToolDef } from "./llmService.js";
 import { ASSET_SECTIONS, ASSET_SECTION_HELP, readAssetSections } from "./assetDetailReadService.js";
 
@@ -300,7 +301,7 @@ const AssetFilterArgs = z.object(ASSET_FILTER_ARGS);
 
 const AssetArgs = z.object({
   ...ASSET_FILTER_ARGS,
-  sortBy: z.enum(["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry"]).optional(),
+  sortBy: z.enum(["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry", "uptime"]).optional(),
   order: z.enum(["asc", "desc"]).optional(),
   limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
 });
@@ -314,7 +315,24 @@ const ASSET_TOOL_SELECT = {
   // "oldest switches" had nothing to read. createdAt is the Acquired row's
   // fallback (withAcquired).
   acquiredAt: true, warrantyExpiry: true, purchaseOrder: true, createdAt: true,
+  // The System tab's Uptime row (withUptime). Without them the assistant told
+  // a user Polaris collects no FortiGate uptime (seen live 2026-10-28).
+  lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true,
 } as const;
+
+/**
+ * Uptime as the System tab shows it (deviceUptime): carried forward from the
+ * last probe's reading, with upSince the detected reboot or implied boot.
+ * The raw reading is dropped: on its own it is the uptime at lastMonitorAt,
+ * which the model would report as current. Exported for tests.
+ */
+export function withUptime<T extends { lastUptimeSec?: number | null; lastMonitorAt?: Date | null; lastRebootAt?: Date | null; monitorStatus?: string | null }>(
+  row: T,
+): Omit<T, "lastUptimeSec" | "lastRebootAt"> & { uptimeSec: number | null; uptime: string | null; upSince: Date | null } {
+  const { lastUptimeSec: _u, lastRebootAt: _r, ...rest } = row;
+  const up = deviceUptime(row);
+  return { ...rest, uptimeSec: up?.uptimeSec ?? null, uptime: up?.uptime ?? null, upSince: up?.upSince ?? null };
+}
 
 /**
  * The Acquired date as the asset's General tab shows it: the date entered on
@@ -478,12 +496,14 @@ const listAssetsTool: ListToolDef = {
     "warrantyExpiry and purchaseOrder; filter on them with " +
     "acquiredBefore / acquiredAfter / warrantyExpiresBefore / warrantyExpiresAfter and sort with sortBy " +
     "acquiredAt or warrantyExpiry (order asc = oldest / soonest first). " +
+    "Rows carry uptime / upSince as the asset page shows them (null where no probe reports uptime); " +
+    "sortBy uptime ranks longest-up first (order asc = most recently rebooted). " +
     "Carries no CPU or memory figures — use telemetry_summary for those.",
   parameters: {
     type: "object",
     properties: {
       ...ASSET_FILTER_PROPS,
-      sortBy: { type: "string", enum: ["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry"] },
+      sortBy: { type: "string", enum: ["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry", "uptime"] },
       order: { type: "string", enum: ["asc", "desc"], description: "Sort direction; dates default to newest first" },
       limit: { type: "number" },
     },
@@ -496,6 +516,7 @@ const listAssetsTool: ListToolDef = {
     { key: "monitorStatusChangedAt", label: "Status changed" }, { key: "acquiredAt", label: "Acquired" },
     { key: "acquiredFrom", label: "Acquired from" },
     { key: "warrantyExpiry", label: "Warranty expires" }, { key: "purchaseOrder", label: "Purchase order" },
+    { key: "uptime", label: "Uptime" }, { key: "upSince", label: "Up since" },
   ],
   async rows(args, ctx, cap) {
     if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
@@ -508,18 +529,22 @@ const listAssetsTool: ListToolDef = {
     const dir = a.order ?? (a.sortBy === "hostname" || a.sortBy === "ipAddress" ? "asc" : "desc");
     // Most assets carry no warranty date: those sort last either way.
     const byAcquired = a.sortBy === "acquiredAt";
-    const orderBy = !a.sortBy || byAcquired ? { hostname: "asc" }
+    const byUptime = a.sortBy === "uptime";
+    const orderBy = !a.sortBy || byAcquired || byUptime ? { hostname: "asc" }
       : a.sortBy === "warrantyExpiry" ? { warrantyExpiry: { sort: dir, nulls: "last" } }
       : { [a.sortBy]: dir };
     const take = Math.min(a.limit ?? cap, cap);
-    const out = (r: Parameters<typeof withAcquired>[0]) => plain(withAcquired(r));
-    if (subnet || byAcquired) {
+    type Row = Parameters<typeof withAcquired>[0] & Parameters<typeof withUptime>[0];
+    const shown = (r: Row) => withUptime(withAcquired(r));
+    if (subnet || byAcquired || byUptime) {
       // CIDR containment is not a Prisma predicate, and neither is the
-      // Acquired date the page shows (entered, else first seen): narrow in
-      // SQL first, then match and order in memory.
-      let hits = inSubnet(await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT }), subnet).map(withAcquired);
-      if (byAcquired) {
-        const t = (r: { acquiredAt: Date | null }) => r.acquiredAt?.getTime() ?? null;
+      // Acquired date the page shows (entered, else first seen) or the uptime
+      // it carries forward from the last probe: narrow in SQL first, then
+      // match and order in memory.
+      let hits = inSubnet(await prisma.asset.findMany({ where, orderBy: orderBy as never, select: ASSET_TOOL_SELECT }), subnet).map(shown);
+      if (byAcquired || byUptime) {
+        // Rows with no value sort last either way.
+        const t = (r: (typeof hits)[number]) => byUptime ? r.uptimeSec : r.acquiredAt?.getTime() ?? null;
         hits = hits.sort((x, y) => {
           const tx = t(x), ty = t(y);
           if (tx === ty) return 0;
@@ -534,7 +559,7 @@ const listAssetsTool: ListToolDef = {
       prisma.asset.findMany({ where, orderBy: orderBy as never, take, select: ASSET_TOOL_SELECT }),
       prisma.asset.count({ where }),
     ]);
-    return { rows: rows.map(out), total };
+    return { rows: rows.map((r) => plain(shown(r))), total };
   },
   async run(args, ctx) {
     return listResult(await this.rows(args, ctx, ctx.maxRows));
@@ -1580,7 +1605,7 @@ const getAssetTool: ToolDef = {
       select: {
         ...ASSET_TOOL_SELECT,
         dnsName: true, description: true, assetTag: true, createdAt: true,
-        lastMonitorAt: true, dependencySuppressed: true, maintenanceReturnStatus: true,
+        dependencySuppressed: true, maintenanceReturnStatus: true,
         discoveredByIntegration: { select: { name: true, type: true } },
         // Every address the device has held (primary, secondary, WAN) — the
         // Sources tab's IP History. A question about an address the device no
@@ -1592,7 +1617,7 @@ const getAssetTool: ToolDef = {
     const { discoveredByIntegration, ipHistory, ...rest } = asset;
     const out: Record<string, unknown> = {
       found: true,
-      ...plain(withAcquired(rest)),
+      ...plain(withUptime(withAcquired(rest))),
       discoveredBy: discoveredByIntegration?.name ?? null,
       ipHistory: (ipHistory ?? []).map((h) => plain(h)),
     };

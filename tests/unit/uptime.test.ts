@@ -1,7 +1,32 @@
 import { describe, it, expect } from "vitest";
-import { snmpTicksToSeconds, formatUptime, formatUptimeLong } from "../../src/utils/uptime.js";
+import { snmpTicksToSeconds, formatUptime, formatUptimeLong, deviceUptime } from "../../src/utils/uptime.js";
 
 // Pure helpers — no DB, no network.
+
+describe("deviceUptime", () => {
+  const at = new Date("2026-10-28T12:00:00Z");
+  const now = at.getTime() + 3600_000;
+
+  it("carries the last reading forward to now, as the System tab does", () => {
+    expect(deviceUptime({ lastUptimeSec: 86400, lastMonitorAt: at, monitorStatus: "up" }, now)).toEqual({
+      uptimeSec: 90000, uptime: "1d 1h", upSince: new Date("2026-10-27T12:00:00Z"),
+    });
+  });
+
+  it("does not climb while the device is down", () => {
+    expect(deviceUptime({ lastUptimeSec: 600, lastMonitorAt: at, monitorStatus: "down" }, now)?.uptimeSec).toBe(600);
+  });
+
+  it("prefers the reboot Polaris detected for upSince", () => {
+    const rebooted = new Date("2026-10-28T11:55:00Z");
+    expect(deviceUptime({ lastUptimeSec: 300, lastMonitorAt: at, lastRebootAt: rebooted }, now)?.upSince).toBe(rebooted);
+  });
+
+  it("is null when no probe reported uptime", () => {
+    expect(deviceUptime({ lastUptimeSec: null, lastMonitorAt: at }, now)).toBeNull();
+    expect(deviceUptime({ lastUptimeSec: 60, lastMonitorAt: null }, now)).toBeNull();
+  });
+});
 
 describe("snmpTicksToSeconds", () => {
   it("converts centiseconds to whole seconds", () => {

@@ -221,7 +221,8 @@ it names that device, the same one the alert names.
 
 It can read **everything a device's details page shows**: every address and MAC
 it has, its notes and HA role; the switch, access point and firewall it was last
-seen behind, its MCLAG peer, the VIPs that publish it and its contacts; how each
+seen behind, its MCLAG peer, the VIPs that publish it and its contacts; its
+uptime and when it last restarted; how each
 stream is polled and why, the automation that decides it is down, its
 maintenance and its last poll errors; its hardware modules, disks, temperatures,
 fans and power supplies; LLDP neighbors, wireless radios and clients, SD-WAN
@@ -230,7 +231,9 @@ processes and their connections, installed software, virtual machines and
 containers, the Polaris Agent, firmware and reboot state, which integrations
 report it, and its active alerts with the automations that apply. Ask *what
 temperature is fw-nsh-01 running at* or *which ports on sw-02 have LLDP
-neighbors*. It reads what Polaris last collected; it never polls the device,
+neighbors*. Uptime is also on every device list, so *firewalls by uptime* or
+*which switches rebooted most recently* is one lookup; a device whose only probe
+is ping, SSH or WinRM reports no uptime. It reads what Polaris last collected; it never polls the device,
 runs an SNMP walk or looks up DNS. VIPs need **Reservations** read, contacts
 **Address Book** read and gate sightings **Asset Quarantine** read, as on the page.
 

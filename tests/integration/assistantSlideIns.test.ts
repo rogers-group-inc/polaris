@@ -43,8 +43,15 @@ async function wipe(): Promise<void> {
 d("asset_details + get_network", () => {
   beforeAll(async () => {
     await wipe();
+    const polled = new Date(Date.now() - 60_000);
     const a = await prisma.asset.create({
-      data: { hostname: `${HOST}-sw`, status: "active", assetType: "switch", ipAddress: "10.250.77.2", notes: "rack 4" } as never,
+      data: {
+        hostname: `${HOST}-sw`, status: "active", assetType: "switch", ipAddress: "10.250.77.2", notes: "rack 4",
+        monitorStatus: "up", lastMonitorAt: polled, lastUptimeSec: 7 * 86_400,
+      } as never,
+    });
+    await prisma.asset.create({
+      data: { hostname: `${HOST}-sw2`, status: "active", assetType: "switch", monitorStatus: "up", lastMonitorAt: polled, lastUptimeSec: 3_600 } as never,
     });
     assetId = a.id;
     await prisma.assetPhysicalEntity.create({ data: { assetId, entIndex: 1, entClass: "powerSupply", name: "PSU 1", serialNum: "PSU-123", isFru: true } });
@@ -88,11 +95,19 @@ d("asset_details + get_network", () => {
       expect(all[s]?.error, `${s}: ${all[s]?.error}`).toBeUndefined();
     }
     expect(all.identity.notes).toBe("rack 4");
+    expect(all.monitoring.uptime).toMatchObject({ uptime: "7d" });
     expect(all.hardware.inventory.rows[0]).toMatchObject({ name: "PSU 1", serialNum: "PSU-123" });
     expect(all.hardware.sensors.rows[0]).toMatchObject({ sensorName: "CPU", value: 51 });
     expect(all.mac_table.rows[0]).toMatchObject({ macAddress: "0A:00:00:00:00:01", vlanId: 20, ifName: "port1" });
     expect(all.processes.processes.rows[0]).toMatchObject({ name: "sshd", instanceCount: 2 });
     expect(all.connections.mclagPeers[0]).toMatchObject({ localPort: "port48", peerSn: "S124XXXX" });
+  });
+
+  it("list_assets ranks by the uptime the System tab shows", async () => {
+    const r = (await runAssistantTool("list_assets", JSON.stringify({ search: HOST, sortBy: "uptime" }), { req, maxRows: 50 })).data as any;
+    const mine = r.rows.filter((x: any) => x.hostname.startsWith(HOST));
+    // Carried forward from a poll a minute ago: 1h of reading + 1m since.
+    expect(mine.map((x: any) => [x.hostname, x.uptime])).toEqual([[`${HOST}-sw`, "7d"], [`${HOST}-sw2`, "1h 1m"]]);
   });
 
   it("get_network reads the panel's page, counts and first free addresses", async () => {

@@ -283,7 +283,8 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
       "Separate what the data shows from what you infer.",
     "- Anything else a device's details page shows (hardware, temperatures, disks, neighbors, MAC / ARP table, " +
       "wireless, SD-WAN, IPsec, processes, software, agent, firmware, sources, polling settings) comes from " +
-      "asset_details with the matching sections; one network's addresses and who holds each, from get_network.",
+      "asset_details with the matching sections; one network's addresses and who holds each, from get_network. " +
+      "Uptime and last reboot are on list_assets rows (sortBy uptime ranks a fleet).",
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
       "right source and filters, and formats set to the ones the user named (e.g. [\"pdf\"]) when they named any. " +
       "The user sees the finished table with download buttons; you do not see its rows, " +

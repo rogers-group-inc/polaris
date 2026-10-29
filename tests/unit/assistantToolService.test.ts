@@ -160,6 +160,27 @@ describe("list_assets — acquired date and warranty", () => {
     expect((r.data as any).total).toBe(3);
   });
 
+  it("carries uptime as the System tab shows it and ranks by it, unreported last", async () => {
+    // A recent poll, so the carried-forward figure stays in the same order.
+    const polled = new Date(Date.now() - 60_000);
+    h.prisma.asset.findMany.mockResolvedValue([
+      { hostname: "icmp-only", lastUptimeSec: null, lastMonitorAt: polled },
+      { hostname: "fgt-short", lastUptimeSec: 3_600, lastMonitorAt: polled, monitorStatus: "up" },
+      { hostname: "fgt-long", lastUptimeSec: 90 * 86_400, lastMonitorAt: polled, monitorStatus: "up" },
+    ]);
+    const r = await runAssistantTool("list_assets", JSON.stringify({ assetType: "firewall", sortBy: "uptime" }), { req, maxRows: 10 });
+    expect(h.prisma.asset.findMany.mock.calls[0][0].select).toMatchObject({ lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true });
+    const rows = (r.data as any).rows;
+    expect(rows.map((x: any) => x.hostname)).toEqual(["fgt-long", "fgt-short", "icmp-only"]);
+    expect(rows[0].uptime).toBe("90d");
+    // The raw reading is the uptime at the last poll, never handed over as current.
+    expect(rows[0]).not.toHaveProperty("lastUptimeSec");
+    expect(rows[2].uptime ?? null).toBeNull();
+
+    const asc = await runAssistantTool("list_assets", JSON.stringify({ sortBy: "uptime", order: "asc" }), { req, maxRows: 10 });
+    expect((asc.data as any).rows.map((x: any) => x.hostname)).toEqual(["fgt-short", "fgt-long", "icmp-only"]);
+  });
+
   it("refuses a date it cannot read", async () => {
     const r = await runAssistantTool("list_assets", JSON.stringify({ acquiredBefore: "last spring" }), { req, maxRows: 10 });
     expect(r.ok).toBe(false);
