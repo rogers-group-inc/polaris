@@ -4508,7 +4508,7 @@ function closeModal() {
 // replay a plain click on its trigger — the row's primary verb (Open), or,
 // for a row with no primary (a Users-page user), its menu. A double click on
 // the trigger itself is left alone (its first click already opened the row),
-// as is one on a field, a button, a label or a real link inside the row.
+// as is one on a field, a button, a label or a link inside the row.
 var _rowMenuTeardown = null;
 var _rowMenuForced = null;
 
@@ -4554,7 +4554,8 @@ if (typeof document !== "undefined" && document.addEventListener) {
     var t = e.target;
     var row = t && typeof t.closest === "function" ? t.closest("tr[data-row-menu-row]") : null;
     if (!row) return;
-    if (t.closest('.row-menu-trigger, [data-row-menu], button, input, textarea, select, label, [contenteditable], a[href]:not([href="#"])')) return;
+    // Any link, the in-page "#" ones included: its own click already went somewhere.
+    if (t.closest(".row-menu-trigger, [data-row-menu], button, input, textarea, select, label, [contenteditable], a")) return;
     var trigger = row.querySelector(".row-menu-trigger, [data-row-menu]");
     if (!trigger) return;
     // A double click also selects the word under the pointer; drop it.

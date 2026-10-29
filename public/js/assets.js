@@ -25556,17 +25556,11 @@ function _assetNotificationsTabHTML() {
   // unstoppable, and clearing an alert was desktop-Automations-page-only.
   var shape = _assetAlertTableShape();
   var actionW = shape.canAck && shape.canClear ? "240" : (shape.canAck || shape.canClear ? "200" : "160");
-  // Bulk bar, always rendered and idle until something is selected (the
-  // Automations View tab's precedent). One switch losing its uplink raises one
-  // alert per pinned interface, so a per-row-only tab means a dozen prompts
-  // and a dozen confirms to close out a single outage.
-  var bulkBar = shape.canSelect
-    ? '<div class="bulk-bar bulk-bar-idle" id="asset-alert-bulkbar">' +
-        '<span class="bulk-bar-count" id="asset-alert-selcount">None selected</span>' +
-        (shape.canAck ? '<button class="btn btn-sm btn-secondary" id="asset-alert-bulk-ack" disabled>Acknowledge selected</button>' : "") +
-        (shape.canClear ? '<button class="btn btn-sm btn-secondary" id="asset-alert-bulk-clear" disabled>Clear selected</button>' : "") +
-      '</div>'
-    : "";
+  // No bulk bar (removed 2026-10-29): rows are selected by clicking them, and
+  // a right click on one of several selected rows offers Acknowledge / Clear
+  // for the whole selection (_assetAlertMenuItems). One switch losing its
+  // uplink raises one alert per pinned interface, so acting on many at once
+  // still has to be one prompt and one confirm.
   // Down detection FIRST: "which automation decides this device is down?" is
   // the question an operator opens this tab with once the count lives on
   // automations, and the answer is not in either table below — the governing
@@ -25579,13 +25573,12 @@ function _assetNotificationsTabHTML() {
 
   return downBlock + '<div class="section-block">' +
     '<h4 style="margin:0 0 0.5rem">Active alerts <span id="asset-notif-active-count" style="color:var(--color-text-tertiary);font-weight:400"></span></h4>' +
-    bulkBar +
     // Self-bounding sticky header (max-height set here, no JS sizer — see the
     // .table-wrapper-modal-sticky note in styles.css): a device whose gate went
     // down fills this table, and the header scrolling away took with it the
     // only thing that said which column was which.
     '<div class="table-wrapper table-wrapper-modal-sticky" style="max-height:42vh"><table><thead><tr>' +
-      (shape.canSelect ? '<th class="cb-col"><input type="checkbox" id="asset-alert-selall" title="Select all"></th>' : "") +
+      (shape.canSelect ? '<th class="cb-col"></th>' : "") +
       '<th style="width:160px">Time</th><th style="width:80px">Severity</th>' +
       // The alert sentence. It already carries the dimension the alert was
       // raised FOR — an interface, a sensor, a mount — as `[label]`, which is
@@ -25603,7 +25596,7 @@ function _assetNotificationsTabHTML() {
       '<th style="width:240px">Acknowledge</th>' +
       '<th style="width:' + actionW + 'px">Actions</th>' +
     '</tr></thead><tbody id="asset-notif-active-tbody"><tr><td colspan="' + shape.colspan + '" class="empty-state">Loading…</td></tr></tbody></table></div>' +
-    '<h4 style="margin:1rem 0 0.5rem">Automations that can trigger for this asset</h4>' +
+    '<h4 style="margin:1rem 0 0.5rem">This Asset\'s Automations</h4>' +
     '<div class="table-wrapper"><table><thead><tr>' +
       '<th style="width:200px">Name</th><th style="min-width:260px">Trigger</th><th style="width:180px">Scope</th>' +
     '</tr></thead><tbody id="asset-notif-rules-tbody"><tr><td colspan="3" class="empty-state">Loading…</td></tr></tbody></table></div>' +
@@ -25768,14 +25761,17 @@ function _loadAssetNotificationsTab(assetId) {
         var depBadge = n.dependencyDown
           ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device. No reminders or escalation until the upstream recovers.">Dep. Down</span>'
           : "";
-        // A GROUPED alert (business rule 75) names many problems in one
-        // sentence; its message is the row's name and opens a menu whose verb
-        // lists them (openAlertMembers, off this row's own `members` snapshot —
-        // no fetch, so it needs nothing beyond the tab's assets:read).
+        // The message is the row's name and opens its menu (_assetAlertMenuItems):
+        // a GROUPED alert (business rule 75) names many problems in one
+        // sentence, and its primary verb lists them (openAlertMembers, off this
+        // row's own `members` snapshot — no fetch, so it needs nothing beyond
+        // the tab's assets:read); Acknowledge / Clear follow by permission. A
+        // row with no verb at all stays plain text, unmarked.
         var grouped = !!n.groupKey || n.dimensionCount != null;
-        var msgCell = grouped
-          ? '<button type="button" class="row-menu-trigger asset-alert-group-menu" data-id="' + escapeHtml(n.id) + '" ' +
-            'aria-haspopup="menu" aria-expanded="false" style="white-space:normal;overflow-wrap:anywhere">' +
+        var hasMenu = grouped || shape.canSelect;
+        var msgCell = hasMenu
+          ? '<button type="button" class="row-menu-trigger asset-alert-menu" data-id="' + escapeHtml(n.id) + '" ' +
+            'aria-haspopup="menu" aria-expanded="false" style="white-space:normal;overflow-wrap:anywhere;text-align:left">' +
             escapeHtml(n.message || "") + '</button>'
           : escapeHtml(n.message || "");
         // Frozen for planned work (business rule 16) — the same MAINT badge
@@ -25789,7 +25785,7 @@ function _loadAssetNotificationsTab(assetId) {
           ? ' <span class="widget-pill widget-pill-watch" title="' +
             escapeHtml("Grouped alert" + (n.dimensionCount ? " — " + n.dimensionCount + " still affected" : "")) + '">GROUP</span>'
           : "";
-        return '<tr>' + sel +
+        return '<tr' + (hasMenu ? ' data-row-menu-row' : '') + '>' + sel +
           '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ts) + '</td>' +
           '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + maintPill + groupPill + '</td>' +
           '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + msgCell + '</td>' +
@@ -25802,20 +25798,20 @@ function _loadAssetNotificationsTab(assetId) {
       aTbody.querySelectorAll(".asset-alert-clear").forEach(function (btn) {
         btn.addEventListener("click", function () { _clearAssetAlert(btn, assetId); });
       });
-      aTbody.querySelectorAll(".asset-alert-group-menu").forEach(function (btn) {
+      aTbody.querySelectorAll(".asset-alert-menu").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var id = btn.getAttribute("data-id");
           var row = active.find(function (x) { return String(x.id) === id; });
           if (!row) return;
-          showRowMenu(btn, [{
-            label: "Show alerts in this group",
-            primary: true,
-            title: "List the components this alert is made of — which are still affected and which have recovered",
-            onSelect: function () { openAlertMembers(row); },
-          }], { label: "Alert actions" });
+          // The selection's verbs only on a RIGHT click (the replayed click
+          // rowMenuGesture reports); a left click is about this row alone.
+          var gesture = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
+          var selected = gesture
+            ? Array.prototype.map.call(aTbody.querySelectorAll(".asset-alert-sel:checked"), function (b) { return b.getAttribute("data-id"); })
+            : [];
+          showRowMenu(btn, _assetAlertMenuItems(row, shape, selected, assetId), { label: "Alert actions" });
         });
       });
-      _wireAssetAlertSelection(assetId);
     }
     var rTbody = document.getElementById("asset-notif-rules-tbody");
     if (!rTbody) return;
@@ -25834,59 +25830,40 @@ function _loadAssetNotificationsTab(assetId) {
 }
 
 /**
- * Wire the select-all box, the row checkboxes and the two bulk buttons after a
- * render.
+ * One active alert's row menu. Pure apart from the handlers it returns.
  *
- * The tbody is rebuilt on every load but the thead's select-all and the bulk
- * bar's buttons are NOT — they live in the tab shell — so each of the three
- * persistent nodes is replaced by a fresh clone before its listener goes on.
- * Without that, a tab that reloads after every acknowledge accumulates one
- * handler per reload and the third click fires three batches.
+ * `selected` is the ids of the selected rows, passed only on a right click:
+ * when this row is one of SEVERAL selected, the menu is the selection's —
+ * Acknowledge / Clear for all of them, in one request each (the Assets-list
+ * pattern; the bulk bar that used to carry these is gone). Otherwise it is the
+ * row's own: a grouped alert's "Show alerts in this group" first and primary
+ * (what a click on the message does), then Acknowledge while unacknowledged
+ * (alerts:write) and Clear (alerts:fullwrite). Neither of those is ever
+ * primary — a left click must not change an alert's state unconfirmed.
  */
-function _wireAssetAlertSelection(assetId) {
-  function fresh(el) {
-    if (!el || !el.parentNode) return el;
-    var c = el.cloneNode(true);
-    el.parentNode.replaceChild(c, el);
-    return c;
+function _assetAlertMenuItems(n, shape, selected, assetId) {
+  var id = String(n.id);
+  var sel = (selected || []).map(String);
+  if (sel.length > 1 && sel.indexOf(id) >= 0) {
+    var bulk = [{ heading: sel.length + " selected" }];
+    if (shape.canAck) bulk.push({ label: "Acknowledge", onSelect: function () { _bulkAcknowledgeAssetAlerts(sel, assetId); } });
+    if (shape.canClear) bulk.push({ label: "Clear", danger: true, onSelect: function () { _bulkClearAssetAlerts(sel, assetId); } });
+    return bulk;
   }
-  var bar = document.getElementById("asset-alert-bulkbar");
-  if (!bar) return; // viewer can't act on alerts — no selection column rendered
-  var boxes = Array.prototype.slice.call(document.querySelectorAll(".asset-alert-sel"));
-  var all = fresh(document.getElementById("asset-alert-selall"));
-  var ackBtn = fresh(document.getElementById("asset-alert-bulk-ack"));
-  var clearBtn = fresh(document.getElementById("asset-alert-bulk-clear"));
-  var label = document.getElementById("asset-alert-selcount");
-
-  function selectedIds() {
-    return boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.getAttribute("data-id"); });
-  }
-  function sync() {
-    var n = selectedIds().length;
-    syncSelectedRows(bar.parentNode);
-    if (label) label.textContent = n ? n + " selected" : "None selected";
-    bar.classList.toggle("bulk-bar-idle", n === 0);
-    if (ackBtn) ackBtn.disabled = n === 0;
-    if (clearBtn) clearBtn.disabled = n === 0;
-    if (all) {
-      all.checked = n > 0 && n === boxes.length;
-      // Partial selection reads as neither on nor off, so one more click on
-      // the header box means "take all of them" rather than "drop what I just
-      // picked".
-      all.indeterminate = n > 0 && n < boxes.length;
-      all.disabled = boxes.length === 0;
-    }
-  }
-  boxes.forEach(function (b) { b.addEventListener("change", sync); });
-  if (all) {
-    all.addEventListener("change", function () {
-      boxes.forEach(function (b) { b.checked = all.checked; });
-      sync();
+  var items = [];
+  if (n.groupKey || n.dimensionCount != null) {
+    items.push({
+      label: "Show alerts in this group",
+      primary: true,
+      title: "List the components this alert is made of — which are still affected and which have recovered",
+      onSelect: function () { openAlertMembers(n); },
     });
   }
-  if (ackBtn) ackBtn.addEventListener("click", function () { _bulkAcknowledgeAssetAlerts(selectedIds(), assetId, ackBtn); });
-  if (clearBtn) clearBtn.addEventListener("click", function () { _bulkClearAssetAlerts(selectedIds(), assetId, clearBtn); });
-  sync();
+  var verbs = [];
+  if (!n.acknowledged && shape.canAck) verbs.push({ label: "Acknowledge", onSelect: function () { _bulkAcknowledgeAssetAlerts([id], assetId); } });
+  if (shape.canClear) verbs.push({ label: "Clear", danger: true, onSelect: function () { _bulkClearAssetAlerts([id], assetId); } });
+  if (items.length && verbs.length) items.push({ separator: true });
+  return items.concat(verbs);
 }
 
 /** "1 alert" / "3 alerts" — used in every prompt, confirm and toast below. */
@@ -25983,7 +25960,8 @@ async function _clearAssetAlert(btn, assetId) {
 }
 
 /**
- * Acknowledge every selected alert in ONE request. The note is prompted once
+ * Acknowledge every selected alert in ONE request (or one alert, from its row
+ * menu; `btn` is optional and only shows progress). The note is prompted once
  * for the batch because the route takes one shared note by design — and
  * because nobody types a per-interface note for the twelve ports that went
  * down together.
@@ -26000,9 +25978,8 @@ async function _bulkAcknowledgeAssetAlerts(ids, assetId, btn) {
   });
   var note = await _promptAckNote(ids.length, required);
   if (note === null) return; // cancelled
-  btn.disabled = true;
-  var old = btn.textContent;
-  btn.textContent = "…";
+  var old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
   try {
     var res = await api.alerts.acknowledge(ids, note || undefined);
     var n = res && typeof res.acknowledged === "number" ? res.acknowledged : ids.length;
@@ -26010,8 +25987,7 @@ async function _bulkAcknowledgeAssetAlerts(ids, assetId, btn) {
     _loadAssetNotificationsTab(assetId);
   } catch (err) {
     showToast(err.message || "Couldn't acknowledge the alerts", "error");
-    btn.disabled = false;
-    btn.textContent = old;
+    if (btn) { btn.disabled = false; btn.textContent = old; }
   }
 }
 
@@ -26025,9 +26001,8 @@ async function _bulkClearAssetAlerts(ids, assetId, btn) {
   if (!ids.length) return;
   var ok = await showConfirm("Clear " + _alertCountLabel(ids.length) + "? Clearing stops escalation and runs each automation's reset actions. A still-true condition can raise a new alert.");
   if (!ok) return;
-  btn.disabled = true;
-  var old = btn.textContent;
-  btn.textContent = "…";
+  var old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
   try {
     var res = await api.alerts.clear(ids);
     var n = res && typeof res.cleared === "number" ? res.cleared : ids.length;
@@ -26035,8 +26010,7 @@ async function _bulkClearAssetAlerts(ids, assetId, btn) {
     _loadAssetNotificationsTab(assetId);
   } catch (err) {
     showToast(err.message || "Couldn't clear the alerts", "error");
-    btn.disabled = false;
-    btn.textContent = old;
+    if (btn) { btn.disabled = false; btn.textContent = old; }
   }
 }
 
@@ -26092,38 +26066,45 @@ function _renderAssetRuleRows(rTbody, rules, sent, assetId) {
     var trig = sent
       ? sent.triggerSentence(r.trigger, { severity: r.severity, severityBands: r.severityBands })
       : '<span class="badge">' + escapeHtml((r.trigger && r.trigger.type) || "") + '</span>';
+    // The standard row gestures (polaris-ui-canon → Row context menu): click
+    // the name or double-click the row to edit, right-click for the menu.
     var name = canEdit
-      ? '<a href="#" class="asset-notif-rule-edit" data-rule-idx="' + i + '" title="Edit this automation" style="color:var(--color-accent);text-decoration:none">' + escapeHtml(r.name) + '</a>'
+      ? '<button type="button" class="row-menu-trigger asset-notif-rule-edit" data-rule-idx="' + i + '" ' +
+          'aria-haspopup="menu" aria-expanded="false" title="Actions for this automation">' + escapeHtml(r.name) + '</button>'
       : escapeHtml(r.name);
-    return '<tr><td>' + name + '</td>' +
+    return '<tr' + (canEdit ? ' data-row-menu-row' : '') + '><td>' + name + '</td>' +
       '<td style="font-size:0.85rem">' + trig + '</td>' +
       '<td style="font-size:0.85rem">' + escapeHtml(scope) + '</td></tr>';
   }).join("") : '<tr><td colspan="3" class="empty-state">No automations currently match this asset</td></tr>';
   if (!canEdit) return;
-  rTbody.querySelectorAll(".asset-notif-rule-edit").forEach(function (a) {
-    a.addEventListener("click", function (ev) {
-      ev.preventDefault();
-      var rule = rules[parseInt(a.getAttribute("data-rule-idx"), 10)];
+  function editRule(rule) {
+    // Saving refreshes the Automations page list through this optional hook;
+    // wrapping it is how this tab picks up the edit. The wrapper is one-shot
+    // (it restores on the first fire) and unwraps any stale copy of itself
+    // first — open-then-cancel leaves one installed, and chaining them would
+    // reload the tab once per cancelled attempt. automations.html loads
+    // assets.js too, so the page's own reloader must survive either way.
+    var prevReload = window._reloadRules;
+    while (prevReload && prevReload._assetAlertsPrev !== undefined) prevReload = prevReload._assetAlertsPrev;
+    var hook = function () {
+      window._reloadRules = prevReload;
+      if (prevReload) prevReload();
+      if (document.getElementById("asset-notif-rules-tbody")) _loadAssetNotificationsTab(assetId);
+    };
+    hook._assetAlertsPrev = prevReload || null;
+    window._reloadRules = hook;
+    openAutomationWizard(rule).catch(function (err) {
+      window._reloadRules = prevReload;
+      showToast((err && err.message) || "Failed to open the automation wizard", "error");
+    });
+  }
+  rTbody.querySelectorAll(".asset-notif-rule-edit").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var rule = rules[parseInt(b.getAttribute("data-rule-idx"), 10)];
       if (!rule) return;
-      // Saving refreshes the Automations page list through this optional hook;
-      // wrapping it is how this tab picks up the edit. The wrapper is one-shot
-      // (it restores on the first fire) and unwraps any stale copy of itself
-      // first — open-then-cancel leaves one installed, and chaining them would
-      // reload the tab once per cancelled attempt. automations.html loads
-      // assets.js too, so the page's own reloader must survive either way.
-      var prevReload = window._reloadRules;
-      while (prevReload && prevReload._assetAlertsPrev !== undefined) prevReload = prevReload._assetAlertsPrev;
-      var hook = function () {
-        window._reloadRules = prevReload;
-        if (prevReload) prevReload();
-        if (document.getElementById("asset-notif-rules-tbody")) _loadAssetNotificationsTab(assetId);
-      };
-      hook._assetAlertsPrev = prevReload || null;
-      window._reloadRules = hook;
-      openAutomationWizard(rule).catch(function (err) {
-        window._reloadRules = prevReload;
-        showToast((err && err.message) || "Failed to open the automation wizard", "error");
-      });
+      showRowMenu(b, [
+        { label: "Edit", primary: true, onSelect: function () { editRule(rule); } },
+      ], { label: "Actions for " + rule.name });
     });
   });
 }
@@ -28226,6 +28207,23 @@ function _arpCadenceLabel(sec) {
   return h === 1 ? "hour" : h + " hours";
 }
 
+/**
+ * One neighbour-cache entry's row menu. Pure: `h` is { openAsset(id),
+ * copy(text, what) }. The entry opens the device it matched — what a click on
+ * the address or a double click on the row does; an unmatched entry has
+ * nothing to open, so its menu shows on either click.
+ */
+function _arpRowMenuItems(e, h) {
+  var items = [];
+  if (e.matchedAsset) {
+    items.push({ label: "Open device", primary: true, onSelect: function () { h.openAsset(e.matchedAsset.id); } });
+    items.push({ separator: true });
+  }
+  items.push({ label: "Copy IP address", onSelect: function () { h.copy(e.ipAddress, "IP address"); } });
+  if (e.macAddress) items.push({ label: "Copy MAC address", onSelect: function () { h.copy(e.macAddress, "MAC address"); } });
+  return items;
+}
+
 async function _loadAssetArpTable(assetId, range) {
   var mount = document.getElementById("asset-arptable-mount-" + assetId);
   if (!mount) return;
@@ -28403,6 +28401,25 @@ async function _loadAssetArpTable(assetId, range) {
         '</div>' +
         '<div id="' + bodyId + '"></div>';
 
+      // Delegated, so it survives renderBody() rewriting the table per keystroke.
+      var bodyEl = document.getElementById(bodyId);
+      if (bodyEl) {
+        bodyEl.addEventListener("click", function (ev) {
+          var trig = ev.target && ev.target.closest ? ev.target.closest(".arptable-menu") : null;
+          if (!trig) return;
+          var entry = entries[parseInt(trig.getAttribute("data-idx"), 10)];
+          if (!entry) return;
+          showRowMenu(trig, _arpRowMenuItems(entry, {
+            openAsset: function (id) { openViewModal(id); },
+            copy: function (text, what) {
+              copyTextToClipboard(text).then(function (ok) {
+                showToast(ok ? what + " copied" : "Couldn't copy to the clipboard", ok ? "success" : "error");
+              });
+            },
+          }), { label: "Actions for " + entry.ipAddress });
+        });
+      }
+
       var box = document.getElementById("arptable-filter-" + assetId);
       if (box) {
         // Debounced (the shared global from table-sf.js, as at ~14 other call
@@ -28455,10 +28472,13 @@ async function _loadAssetArpTable(assetId, range) {
             escapeHtml(e.matchedAsset.hostname || e.matchedAsset.ipAddress || e.matchedAsset.id) + '</a>'
         : dash;
       var age = _arpAgeLabel(e.ageSec);
-      return '<tr class="arptable-entry" data-group="' + escapeHtml(groupKey) + '">' +
+      // The address is the row's name (the standard row gestures): its menu
+      // is _arpRowMenuItems, opened through the delegated listener in render().
+      return '<tr class="arptable-entry" data-row-menu-row data-group="' + escapeHtml(groupKey) + '">' +
         '<td class="mono" style="padding-left:1.4rem">' +
           _treeElbow(isLast) +
-          escapeHtml(e.ipAddress) +
+          '<button type="button" class="row-menu-trigger arptable-menu" data-idx="' + entries.indexOf(e) + '" ' +
+            'aria-haspopup="menu" aria-expanded="false">' + escapeHtml(e.ipAddress) + '</button>' +
         '</td>' +
         '<td class="mono">' + escapeHtml(e.macAddress) + '</td>' +
         '<td class="mono">' + (age ? escapeHtml(age) : dash) + '</td>' +
@@ -28555,6 +28575,32 @@ function _ipsecStatusPill(status) {
            : status === "dynamic" ? "monitor-passive"
            : "monitor-warning";
   return '<span class="badge badge-' + kind + '" style="white-space:nowrap">' + escapeHtml(status || "—") + '</span>';
+}
+
+/**
+ * A Tunnels & peers row's menu (the standard row gestures — click the name or
+ * double-click the row runs the primary item, right-click shows them all).
+ * Pure: `tunnelNames` is the set of tunnels in this read, `h` the open
+ * handlers ({ openTunnel(name), openAsset(id) }).
+ *
+ * A tunnel opens its own status + throughput panel, then its far end's device
+ * when the remote gateway matched one. A peer has no panel of its own, so it
+ * opens its device when matched, else the tunnel it hangs off; a peer with
+ * neither gets no items, and its name renders as plain text.
+ */
+function _ipsecRowMenuItems(kind, raw, tunnelNames, h) {
+  var items = [];
+  var dev = raw.matchedAsset;
+  if (kind === "tunnel") {
+    items.push({ label: "Open tunnel", primary: true, onSelect: function () { h.openTunnel(raw.tunnelName); } });
+    if (dev) items.push({ label: "Open device", onSelect: function () { h.openAsset(dev.id); } });
+    return items;
+  }
+  if (dev) items.push({ label: "Open device", primary: true, onSelect: function () { h.openAsset(dev.id); } });
+  if (raw.parentTunnel && tunnelNames[raw.parentTunnel]) {
+    items.push({ label: "Open tunnel " + raw.parentTunnel, primary: !dev, onSelect: function () { h.openTunnel(raw.parentTunnel); } });
+  }
+  return items;
 }
 
 async function _reloadAssetIpsec(assetId) {
@@ -28739,11 +28785,12 @@ function _renderAssetIpsec(assetId, data, asset) {
       toggle = '<button type="button" class="ipsec-expand-toggle" data-parent="' + escapeHtml(t.tunnelName) + '" style="background:none;border:none;cursor:pointer;color:var(--color-text-secondary);padding:0 3px 0 0;font-size:0.75rem;vertical-align:middle;line-height:1" title="' +
         (isOpen ? "Collapse peers" : "Expand peers") + '">' + (isOpen ? "▼" : "▶") + '</button>';
     }
-    return '<tr class="ipsec-tunnel">' +
+    return '<tr class="ipsec-tunnel" data-row-menu-row>' +
       pinCell(t) +
       '<td class="mono" style="font-weight:600;white-space:nowrap">' + toggle +
-        '<a href="#" class="asset-ipsec-link" data-name="' + escapeHtml(t.tunnelName) + '" style="color:var(--color-accent);text-decoration:none" title="Open this tunnel\'s status and throughput history">' +
-          escapeHtml(t.tunnelName) + '</a>' + subLine(kindText) + '</td>' +
+        '<button type="button" class="row-menu-trigger asset-ipsec-menu" data-kind="tunnel" data-name="' + escapeHtml(t.tunnelName) + '" ' +
+          'aria-haspopup="menu" aria-expanded="false" title="Open this tunnel\'s status and throughput history">' +
+          escapeHtml(t.tunnelName) + '</button>' + subLine(kindText) + '</td>' +
       '<td>' + _ipsecStatusPill(t.status) + '</td>' +
       '<td>' + monoOrDash(t.remoteGateway) + '</td>' +
       '<td>' + via + '</td>' +
@@ -28757,18 +28804,25 @@ function _renderAssetIpsec(assetId, data, asset) {
   function peerRowHTML(e, flat) {
     var c = e.raw;
     var kind = escapeHtml(_IPSEC_KIND_LABELS[c.kind] || c.kind);
+    // The peer's name opens its device, else the tunnel it hangs off; with
+    // neither there is nothing to open and the name stays plain text.
+    var hasMenu = _ipsecRowMenuItems("peer", c, tunnelNames, {}).length > 0;
+    var peerName = hasMenu
+      ? '<button type="button" class="row-menu-trigger asset-ipsec-menu" data-kind="peer" data-peer="' + sitePeers.indexOf(c) + '" ' +
+          'aria-haspopup="menu" aria-expanded="false">' + escapeHtml(c.name) + '</button>'
+      : escapeHtml(c.name);
     // Flat (sorted / filtered): no parent row above it, so the second line
     // names the tunnel it hangs off.
     var nameCell = flat
-      ? '<td class="mono" style="white-space:nowrap">' + escapeHtml(c.name) +
+      ? '<td class="mono" style="white-space:nowrap">' + peerName +
           subLine(kind + (c.parentTunnel ? ' &middot; via ' + escapeHtml(c.parentTunnel) : '')) + '</td>'
-      : '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(e.isLast) + escapeHtml(c.name) +
+      : '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(e.isLast) + peerName +
           '<div style="padding-left:1.55rem">' + subLine(kind) + '</div></td>';
     // In the tree, a peer names its template so the toggle can find it, and
     // ships hidden while that template is collapsed.
-    var rowAttrs = "";
+    var rowAttrs = hasMenu ? " data-row-menu-row" : "";
     if (!flat && c.parentTunnel) {
-      rowAttrs = ' data-parent="' + escapeHtml(c.parentTunnel) + '"';
+      rowAttrs += ' data-parent="' + escapeHtml(c.parentTunnel) + '"';
       if (collapsibleNames[c.parentTunnel] && !opened.has(c.parentTunnel)) rowAttrs += ' style="display:none"';
     }
     return '<tr class="ipsec-peer"' + rowAttrs + '>' +
@@ -28954,10 +29008,18 @@ function _renderAssetIpsec(assetId, data, asset) {
         _setCollapsedIfaces(assetId, opened, "ipsec-open");
         return;
       }
-      var link = t.closest(".asset-ipsec-link");
-      if (link) {
-        ev.preventDefault();
-        openIpsecTunnelDetailPanel(asset, link.getAttribute("data-name"));
+      // The row's name: a menu whose primary verb a plain click runs.
+      var trig = t.closest(".asset-ipsec-menu");
+      if (trig) {
+        var isTunnel = trig.getAttribute("data-kind") === "tunnel";
+        var raw = isTunnel
+          ? tunnels.find(function (x) { return x.tunnelName === trig.getAttribute("data-name"); })
+          : sitePeers[parseInt(trig.getAttribute("data-peer"), 10)];
+        if (!raw) return;
+        showRowMenu(trig, _ipsecRowMenuItems(isTunnel ? "tunnel" : "peer", raw, tunnelNames, {
+          openTunnel: function (name) { openIpsecTunnelDetailPanel(asset, name); },
+          openAsset: function (id) { openViewModal(id); },
+        }), { label: "Actions for " + (isTunnel ? raw.tunnelName : raw.name) });
         return;
       }
       // The peer's asset — delegated rather than _wireAssetPivotLinks'
