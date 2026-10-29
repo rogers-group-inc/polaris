@@ -19,10 +19,10 @@
  *    got a column;
  *  - the empty-state colspan tracking the permission-dependent column count;
  *  - equal-timestamp ordering by dimension, numerically (port2 before port10);
- *  - the select/bulk wiring, including that a reload does NOT stack a second
- *    handler on the persistent bulk buttons — that bug fires N batches on the
- *    Nth click, and clearing twice as many alerts as asked is not recoverable
- *    from the UI;
+ *  - the row menu: a right click on one of several selected rows acts on the
+ *    whole selection in ONE request (the bulk bar that used to carry this is
+ *    gone), and no verb that changes an alert is ever the primary a left click
+ *    runs unconfirmed;
  *  - action toasts reporting the SERVER's count, which is how "I clicked Clear
  *    and nothing happened" becomes "that alert was already cleared".
  *
@@ -76,7 +76,8 @@ const FN_NAMES = [
   // Paints the "which automation decides Down for this device" panel above the
   // tables. Sliced in because _loadAssetNotificationsTab calls it directly.
   "_paintAssetDownDetectionPanel",
-  "_wireAssetAlertSelection",
+  // The row menu — the selection's verbs live here since the bulk bar went.
+  "_assetAlertMenuItems",
   // The tab's own strobe — painted from the alerts the tab just loaded, so it
   // settles on acknowledge/clear without a second fetch.
   "_paintAssetAlertsTabStrobe",
@@ -278,44 +279,49 @@ describe("asset Alerts tab — active list", () => {
   });
 });
 
-describe("asset Alerts tab — selection + bulk actions", () => {
-  it("enables the bulk buttons only once something is selected", async () => {
-    await mount();
-    const ack = document.getElementById("asset-alert-bulk-ack") as HTMLButtonElement;
-    const clr = document.getElementById("asset-alert-bulk-clear") as HTMLButtonElement;
-    expect(ack.disabled).toBe(true);
-    expect(clr.disabled).toBe(true);
-    expect(document.getElementById("asset-alert-selcount")!.textContent).toBe("None selected");
+describe("asset Alerts tab — selection + the row menu", () => {
+  const shape = () => g._assetAlertTableShape();
+  const alert = (id: string) => makeAlerts().find((a) => a.id === id)!;
+  const labels = (items: any[]) => items.map((i) => i.heading ?? i.label ?? "—");
+  const pick = (items: any[], label: string) => items.find((i) => i.label === label)!.onSelect();
 
-    const boxes = Array.from(document.querySelectorAll<HTMLInputElement>(".asset-alert-sel"));
-    boxes[0].checked = true;
-    boxes[0].dispatchEvent(new Event("change"));
-    expect(ack.disabled).toBe(false);
-    expect(clr.disabled).toBe(false);
-    expect(document.getElementById("asset-alert-selcount")!.textContent).toBe("1 selected");
-    // Partial selection: the header box reads as neither on nor off.
-    const all = document.getElementById("asset-alert-selall") as HTMLInputElement;
-    expect(all.indeterminate).toBe(true);
-    expect(all.checked).toBe(false);
+  it("renders no bulk bar and no select-all — rows are selected by clicking them", async () => {
+    await mount();
+    expect(document.querySelector(".bulk-bar")).toBeNull();
+    expect(document.getElementById("asset-alert-selall")).toBeNull();
+    // The hidden boxes stay as the selection's state carrier.
+    expect(document.querySelectorAll(".asset-alert-sel").length).toBe(3);
+    expect(rows().every((tr) => tr.hasAttribute("data-row-menu-row"))).toBe(true);
+    expect(document.querySelectorAll(".asset-alert-menu").length).toBe(3);
   });
 
-  it("select-all takes every rendered row", async () => {
+  it("a row's own menu: Acknowledge while unacknowledged, Clear, and neither is primary", async () => {
     await mount();
-    const all = document.getElementById("asset-alert-selall") as HTMLInputElement;
-    all.checked = true;
-    all.dispatchEvent(new Event("change"));
-    expect(document.querySelectorAll<HTMLInputElement>(".asset-alert-sel:checked").length).toBe(3);
-    expect(document.getElementById("asset-alert-selcount")!.textContent).toBe("3 selected");
-    expect(all.indeterminate).toBe(false);
+    expect(labels(g._assetAlertMenuItems(alert("n1"), shape(), [], "A1"))).toEqual(["Acknowledge", "Clear"]);
+    expect(labels(g._assetAlertMenuItems(alert("n0"), shape(), [], "A1"))).toEqual(["Clear"]);
+    expect(g._assetAlertMenuItems(alert("n1"), shape(), [], "A1").some((i: any) => i.primary)).toBe(false);
+    // One selected is still the row's own menu.
+    expect(labels(g._assetAlertMenuItems(alert("n1"), shape(), ["n1"], "A1"))).toEqual(["Acknowledge", "Clear"]);
+  });
+
+  it("a grouped alert opens its members first — the primary verb", async () => {
+    await mount();
+    const items = g._assetAlertMenuItems({ ...alert("n1"), groupKey: "g1" }, shape(), [], "A1");
+    expect(labels(items)).toEqual(["Show alerts in this group", "—", "Acknowledge", "Clear"]);
+    expect(items[0].primary).toBe(true);
+  });
+
+  it("right-clicking one of several selected rows gives the selection's verbs", async () => {
+    await mount();
+    expect(labels(g._assetAlertMenuItems(alert("n1"), shape(), ["n1", "n2"], "A1"))).toEqual(["2 selected", "Acknowledge", "Clear"]);
+    // A row OUTSIDE the selection keeps its own menu.
+    expect(labels(g._assetAlertMenuItems(alert("n0"), shape(), ["n1", "n2"], "A1"))).toEqual(["Clear"]);
   });
 
   it("clears the whole selection in ONE request, confirmed with the count", async () => {
     ctx.clearResult = () => ({ cleared: 3 });
     await mount();
-    const all = document.getElementById("asset-alert-selall") as HTMLInputElement;
-    all.checked = true;
-    all.dispatchEvent(new Event("change"));
-    (document.getElementById("asset-alert-bulk-clear") as HTMLButtonElement).click();
+    pick(g._assetAlertMenuItems(alert("n1"), shape(), ["n1", "n2", "n0"], "A1"), "Clear");
     await new Promise((r) => setTimeout(r, 0));
 
     expect(g.showConfirm).toHaveBeenCalledTimes(1);
@@ -328,23 +334,24 @@ describe("asset Alerts tab — selection + bulk actions", () => {
     ctx.ackResult = () => ({ acknowledged: 2 });
     (g.showPrompt as any).mockResolvedValue("switch reboot");
     await mount();
-    const boxes = Array.from(document.querySelectorAll<HTMLInputElement>(".asset-alert-sel"));
-    boxes[0].checked = true; boxes[0].dispatchEvent(new Event("change"));
-    boxes[1].checked = true; boxes[1].dispatchEvent(new Event("change"));
-    (document.getElementById("asset-alert-bulk-ack") as HTMLButtonElement).click();
+    pick(g._assetAlertMenuItems(alert("n1"), shape(), ["n1", "n2"], "A1"), "Acknowledge");
     await new Promise((r) => setTimeout(r, 0));
 
     expect(ctx.acked).toEqual([{ ids: ["n1", "n2"], note: "switch reboot" }]);
     expect(ctx.toasts.at(-1)!.msg).toBe("Acknowledged 2 alerts");
   });
 
+  it("acknowledges one row from its own menu", async () => {
+    await mount();
+    pick(g._assetAlertMenuItems(alert("n2"), shape(), [], "A1"), "Acknowledge");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ctx.acked).toEqual([{ ids: ["n2"], note: undefined }]);
+  });
+
   it("cancelling the note prompt sends nothing", async () => {
     (g.showPrompt as any).mockResolvedValue(null);
     await mount();
-    const all = document.getElementById("asset-alert-selall") as HTMLInputElement;
-    all.checked = true;
-    all.dispatchEvent(new Event("change"));
-    (document.getElementById("asset-alert-bulk-ack") as HTMLButtonElement).click();
+    pick(g._assetAlertMenuItems(alert("n1"), shape(), ["n1", "n2", "n0"], "A1"), "Acknowledge");
     await new Promise((r) => setTimeout(r, 0));
     expect(ctx.acked).toEqual([]);
   });
@@ -388,30 +395,10 @@ describe("asset Alerts tab — selection + bulk actions", () => {
       { id: "n1", severity: "warning", message: "a", dimension: null, triggeredAt: "2026-07-23T14:50:00Z", acknowledged: false },
       { id: "n2", severity: "critical", message: "b", dimension: null, triggeredAt: "2026-07-23T14:49:00Z", acknowledged: false, requireAckNote: true },
     ] });
-    const all = document.getElementById("asset-alert-selall") as HTMLInputElement;
-    all.checked = true;
-    all.dispatchEvent(new Event("change"));
-    (document.getElementById("asset-alert-bulk-ack") as HTMLButtonElement).click();
+    const both = [{ id: "n1", acknowledged: false }, { id: "n2", acknowledged: false }];
+    pick(g._assetAlertMenuItems(both[0], shape(), ["n1", "n2"], "A1"), "Acknowledge");
     await new Promise((r) => setTimeout(r, 0));
     expect((g.showPrompt as any).mock.calls[0][1].required).toBe(true);
-  });
-
-  it("does not stack a second handler on the bulk buttons when the tab reloads", async () => {
-    await mount();
-    // Every action reloads the tab; the tbody is rebuilt but the bulk bar and
-    // the select-all are NOT, so a naive re-wire fires N batches on click N.
-    g._loadAssetNotificationsTab("A1");
-    await new Promise((r) => setTimeout(r, 0));
-    g._loadAssetNotificationsTab("A1");
-    await new Promise((r) => setTimeout(r, 0));
-
-    const all = document.getElementById("asset-alert-selall") as HTMLInputElement;
-    all.checked = true;
-    all.dispatchEvent(new Event("change"));
-    expect(document.querySelectorAll<HTMLInputElement>(".asset-alert-sel:checked").length).toBe(3);
-    (document.getElementById("asset-alert-bulk-clear") as HTMLButtonElement).click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(ctx.cleared.length).toBe(1);
   });
 });
 
@@ -436,9 +423,10 @@ describe("asset Alerts tab — what the toast reports", () => {
 describe("asset Alerts tab — permission gating", () => {
   it("offers no selection at all to a viewer who cannot act", async () => {
     await mount({ perm: "read" });
-    expect(document.getElementById("asset-alert-bulkbar")).toBeNull();
-    expect(document.getElementById("asset-alert-selall")).toBeNull();
     expect(document.querySelectorAll(".asset-alert-sel").length).toBe(0);
+    // Nothing to do to an ungrouped alert: plain text, no row menu.
+    expect(document.querySelectorAll(".asset-alert-menu").length).toBe(0);
+    expect(rows().some((tr) => tr.hasAttribute("data-row-menu-row"))).toBe(false);
     // Five columns, not six — and the empty state has to match.
     await mount({ perm: "read", alerts: [] });
     expect(Number(document.querySelector("#asset-notif-active-tbody td")!.getAttribute("colspan"))).toBe(5);
@@ -446,8 +434,10 @@ describe("asset Alerts tab — permission gating", () => {
 
   it("gives a write-level operator acknowledge but not clear", async () => {
     await mount({ perm: "write" });
-    expect(document.getElementById("asset-alert-bulk-ack")).toBeTruthy();
-    expect(document.getElementById("asset-alert-bulk-clear")).toBeNull();
+    const shape = g._assetAlertTableShape();
+    const one = { id: "n1", acknowledged: false };
+    expect(g._assetAlertMenuItems(one, shape, [], "A1").map((i: any) => i.label)).toEqual(["Acknowledge"]);
+    expect(g._assetAlertMenuItems(one, shape, ["n1", "n2"], "A1").map((i: any) => i.heading ?? i.label)).toEqual(["2 selected", "Acknowledge"]);
     expect(document.querySelectorAll(".asset-alert-clear").length).toBe(0);
     expect(document.querySelectorAll(".asset-alert-sel").length).toBe(3);
   });

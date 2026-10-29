@@ -33,7 +33,7 @@ function varSrc(name: string): string {
 const FNS = [
   "_ipsecIsRemoteAccess", "_ipsecUptimeLabel", "_ipsecStatusPill", "_setIpsecTunnelPin",
   "_reloadAssetIpsec", "_renderAssetIpsec", "_treeElbow", "_distinctSorted",
-  "_getCollapsedIfaces", "_setCollapsedIfaces",
+  "_getCollapsedIfaces", "_setCollapsedIfaces", "_ipsecRowMenuItems",
 ];
 
 const ASSET_ID = "HUB";
@@ -75,6 +75,7 @@ let putCalls: Record<string, any>[];
 let serverAsset: Record<string, any>;
 let opened: string | null;
 let openedAsset: string | null;
+let menuLabels: string[];
 
 function setup(): void {
   win = new Window();
@@ -104,6 +105,13 @@ function setup(): void {
   g.applyTableLayout = undefined;
   g.openIpsecTunnelDetailPanel = (_a: unknown, n: string) => { opened = n; };
   g.openViewModal = (id: string) => { openedAsset = id; };
+  // showRowMenu's plain-click half: run the primary item, record the menu.
+  menuLabels = [];
+  g.showRowMenu = (_anchor: unknown, items: { label: string; primary?: boolean; onSelect: () => void }[]) => {
+    menuLabels = items.map((i) => i.label);
+    const p = items.find((i) => i.primary);
+    if (p) p.onSelect();
+  };
   g.api = {
     assets: {
       get: vi.fn(async () => JSON.parse(JSON.stringify(serverAsset))),
@@ -132,7 +140,8 @@ const firstCellText = (tr: Element) => {
   const td = tr.querySelectorAll(":scope > td")[1];
   if (!td) return "";
   const c = td.cloneNode(true) as Element;
-  c.querySelectorAll("div, span[aria-hidden], button").forEach((n) => n.remove());
+  // The expand toggle is a button too; the name is a .row-menu-trigger button and stays.
+  c.querySelectorAll("div, span[aria-hidden], button:not(.row-menu-trigger)").forEach((n) => n.remove());
   return c.textContent!.replace(/[├└─]/g, "").trim();
 };
 const tunNames = () => tunRows().map(firstCellText).filter(Boolean);
@@ -301,8 +310,26 @@ describe("Poll 1m pin", () => {
 describe("links", () => {
   it("opens the tunnel's history from its name, after a re-render too", () => {
     sortBy("name");
-    click(doc.querySelector('.asset-ipsec-link[data-name="Overlay-1"]'));
+    click(doc.querySelector('.asset-ipsec-menu[data-name="Overlay-1"]'));
     expect(opened).toBe("Overlay-1");
+  });
+
+  it("marks tunnel rows for the standard row gestures; the name's menu adds the far-end device", () => {
+    expect(doc.querySelector('.asset-ipsec-menu[data-name="H2H-1"]')!.closest("tr")!.hasAttribute("data-row-menu-row")).toBe(true);
+    click(doc.querySelector('.asset-ipsec-menu[data-name="H2H-1"]'));
+    expect(opened).toBe("H2H-1");
+    expect(menuLabels).toEqual(["Open tunnel", "Open device"]);
+  });
+
+  it("a peer's name opens its device, else the tunnel it hangs off", () => {
+    const peers = Array.from(doc.querySelectorAll('.asset-ipsec-menu[data-kind="peer"]')) as any[];
+    const spk2 = peers.find((b) => b.textContent === "Overlay-1_0");
+    click(spk2);
+    expect(openedAsset).toBe("SPK2");
+    expect(menuLabels).toEqual(["Open device", "Open tunnel Overlay-1"]);
+    const items = g._ipsecRowMenuItems("peer", { name: "x", parentTunnel: "Overlay-1", matchedAsset: null }, { "Overlay-1": true }, {});
+    expect(items.map((i: any) => [i.label, !!i.primary])).toEqual([["Open tunnel Overlay-1", true]]);
+    expect(g._ipsecRowMenuItems("peer", { name: "y", parentTunnel: "gone", matchedAsset: null }, { "Overlay-1": true }, {})).toEqual([]);
   });
 
   it("links a site-to-site tunnel to the device at its far end", () => {

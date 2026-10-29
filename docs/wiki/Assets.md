@@ -183,7 +183,8 @@ dashboard row still opens the Assets page in a new tab.
 
 The tables work the same way everywhere: Assets, Users (users, roles and group
 mappings), Automations, IPAM (blocks and networks), Path Monitor (the check list
-and a check's Results) and saved Discoveries.
+and a check's Results), saved Discoveries, and on an asset's details the ARP
+Table, IPsec Tunnels & peers, Alerts and This Asset's Automations.
 
 - **Click a row** to select it (Ctrl+click adds or removes a row, Shift+click
   or a drag selects a range).
@@ -1328,9 +1329,15 @@ Equal timestamps order by dimension **numerically**, so `port2` precedes
 `port10`.
 
 **Actions** carries **Acknowledge** (`alerts:write`) and **Clear**
-(`alerts:fullwrite`), individually or over a multi-select in one request each.
-Clearing ends the alert, stops escalation and runs the automation's reset
-actions, so it is confirmed.
+(`alerts:fullwrite`). Clearing ends the alert, stops escalation and runs the
+automation's reset actions, so it is confirmed.
+
+The rows work like every other table ([The row menu](#the-row-menu)); there is
+no selection bar. Click a row to select it (Ctrl+click adds rows, Shift+click
+or a drag selects a range). Click an alert's **message**, or right-click its
+row, for its menu: **Acknowledge** and **Clear**, by permission. Right-click a
+row that is one of several selected to **Acknowledge** or **Clear** all of
+them in one request, with one note.
 
 A purple **MAINT** badge beside the severity means the alert is paused for
 planned work: this device is in a maintenance window, or sits behind one that
@@ -1341,8 +1348,8 @@ by maintenance: its reminders and escalation resume once the upstream device
 is back (see [rule 78](Business-Rules#rule-78)).
 
 A **grouped** alert (one alert covering several components of this device)
-wears a **GROUP** pill beside its severity, and its message is a link. Click
-it and choose **Show alerts in this group** to list every component the
+wears a **GROUP** pill beside its severity. Click its message, or double-click
+the row, for **Show alerts in this group**, which lists every component the
 alert covers. Ones still affected come first, worst first. Ones that have
 recovered stay on the list, greyed, with the time they came back. This works
 for anyone who can see the tab; it needs no `alerts` permission.
@@ -1353,10 +1360,12 @@ cannot mark a field required, which a note-requiring automation needs. The
 question is a **placeholder, never a value**, so an untouched box submits as no
 note at all.
 
-The second table lists matching automations: **Name · Trigger · Scope**, where
-Trigger is the automation's plain-English sentence — every severity tier
-included. The name opens the
-automation in the wizard in place, for `automationManagement:write`.
+The second table, **This Asset's Automations**, lists the automations whose
+scope matches this device: **Name · Trigger · Scope**, where Trigger is the
+automation's plain-English sentence — every severity tier included. With
+`automationManagement:write`, clicking the name or double-clicking the row
+opens the automation in the wizard in place, and a right click shows its
+menu (**Edit**).
 
 ### Custom MIB
 
@@ -1510,6 +1519,12 @@ gets. The stated figure is always the one that actually applies to this device.
 A historical range adds a *Last seen* column; Current omits it because every row
 shares one instant.
 
+The rows work like every other table ([The row menu](#the-row-menu)). Click a
+row to select it. Click its **address**, or double-click the row, to open the
+device the entry matched. Right-click the row for **Open device**, **Copy IP
+address** and **Copy MAC address**. An entry that matched no device has
+nothing to open, so a click on its address shows the copy menu.
+
 ### IPsec (FortiGate firewalls)
 
 The gate's IPsec tunnels and **who is connected through them**. Headed by the
@@ -1563,6 +1578,12 @@ tunnel every minute and keeps its history — what an IPsec tunnel automation
 reads. It is also checked when the tunnel's *interface* is pinned; clearing
 it stops both. Peers are not pinnable: they come and go with traffic. Click a
 tunnel's name for its status and throughput charts.
+
+The rows work like every other table ([The row menu](#the-row-menu)): click a
+row to select it, click its **name** or double-click the row to open it, and
+right-click the row for its menu. A tunnel opens its charts, and its menu adds
+**Open device** when its far end is a known asset. A peer opens its device;
+with no device known it opens the tunnel it hangs off.
 
 **Remote access** lists FortiClient users: those on an IPsec dial-up tunnel
 (one using XAuth or EAP, or built by the FortiClient wizard) and, on firmware
