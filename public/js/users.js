@@ -232,7 +232,7 @@ function renderUsersBody() {
       ' data-role-id="' + escapeHtml(roleId) + '"' +
       ' aria-haspopup="menu" aria-expanded="false" title="Actions for this user">' +
       '<strong>' + escapeHtml(u.username) + '</strong></button>';
-    return '<tr>' +
+    return '<tr data-row-menu-row>' +
       '<td style="text-align:center">' + onlineDot + '</td>' +
       '<td>' + nameCell + displayName + regionsLabel + '</td>' +
       '<td>' + authBadge + '</td>' +
@@ -1447,7 +1447,7 @@ function renderRolesBody() {
     var builtInCell = r.isBuiltIn
       ? '<span class="badge" style="background:var(--color-bg-secondary);color:var(--color-text-secondary)">Built-in</span>'
       : '<span style="color:var(--color-text-tertiary)">—</span>';
-    return '<tr>' +
+    return '<tr data-row-menu-row>' +
       '<td>' + nameCell + '</td>' +
       '<td>' + descCell + '</td>' +
       '<td>' + usersCell + '</td>' +
@@ -1554,7 +1554,7 @@ function renderGroupMappingsBody() {
     var enabled = m.enabled
       ? '<span class="badge" style="background:rgba(34,197,94,0.14);color:#22c55e;border:1px solid rgba(34,197,94,0.4)">Enabled</span>'
       : '<span class="badge" style="background:rgba(158,158,158,0.14);color:var(--color-text-tertiary);border:1px solid rgba(158,158,158,0.4)">Disabled</span>';
-    return '<tr>' +
+    return '<tr data-row-menu-row>' +
       '<td style="text-transform:uppercase;font-size:0.75rem;font-weight:600">' + escapeHtml(m.provider) + '</td>' +
       '<td style="word-break:break-all">' +
         '<button type="button" class="row-menu-trigger gm-menu" data-gm-id="' + m.id + '"' +

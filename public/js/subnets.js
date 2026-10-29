@@ -252,7 +252,7 @@ function renderSubnetsPage() {
     // `_count.reservations`. Released and expired rows are deliberately not in
     // it; the delete confirmation uses `totalReservations` for those.
     var resvCount = s._count ? s._count.reservations : 0;
-    return '<tr>' +
+    return '<tr data-row-menu-row>' +
       starCellHTML("subnets", s.id) +
       '<td><button type="button" class="row-menu-trigger subnet-menu" data-subnet-id="' + s.id + '" ' +
         'aria-haspopup="menu" aria-expanded="false" title="Actions for this network">' +

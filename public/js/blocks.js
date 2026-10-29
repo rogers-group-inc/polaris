@@ -122,7 +122,7 @@ function renderBlocksPage() {
   var page = sfData.slice(start, start + _blocksPageSize);
   tbody.innerHTML = page.map(function (b) {
     var tags = (b.tags || []).map(function (t) { return escapeHtml(t); }).join(", ");
-    return '<tr>' +
+    return '<tr data-row-menu-row>' +
       starCellHTML("blocks", b.id) +
       '<td><button type="button" class="row-menu-trigger block-menu" data-block-id="' + b.id + '" ' +
         'aria-haspopup="menu" aria-expanded="false" title="Actions for this block">' +

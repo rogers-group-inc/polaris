@@ -752,7 +752,7 @@ var _rulesPage = 1;
             '<span class="toggle-slider"></span>' +
           '</label>'
         : (r.enabled ? "Yes" : '<span style="color:var(--color-text-tertiary)">No</span>');
-      return '<tr>' +
+      return '<tr data-row-menu-row>' +
         '<td>' + nameCell + '</td>' +
         '<td><span class="badge">' + escapeHtml(r.triggerType) + '</span></td>' +
         '<td>' + severityPill(r) + '</td>' +

@@ -271,7 +271,7 @@
             '<input type="checkbox" class="path-enabled-toggle" data-id="' + esc(c.id) + '"' + (c.enabled ? " checked" : "") + '>' +
             '<span class="toggle-slider"></span></label>'
         : (c.enabled ? "Yes" : '<span style="color:var(--color-text-tertiary)">No</span>');
-      return "<tr>" +
+      return "<tr data-row-menu-row>" +
         '<td><button type="button" class="row-menu-trigger path-menu" data-id="' + esc(c.id) + '" aria-haspopup="menu" aria-expanded="false" title="Actions for this check">' + esc(c.name) + "</button></td>" +
         "<td>" + kindBadge(c.kind) + "</td>" +
         '<td title="' + esc(c.target) + '" style="font-family:var(--font-mono,monospace);font-size:0.82rem">' + esc(c.target) + "</td>" +
@@ -1206,7 +1206,7 @@
           ? '<span title="Runs on this Polaris server" style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;background:var(--color-accent)"></span>'
           : '<span title="' + (r.online ? "agent online" : "agent offline") + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:' +
             (r.online ? "var(--color-success,#2a9d8f)" : "var(--color-text-tertiary)") + '"></span>';
-        return "<tr>" +
+        return "<tr data-row-menu-row>" +
           '<td>' + dot + '<button type="button" class="row-menu-trigger path-res-host" data-id="' + esc(r.assetId || "") + '"' + (r.server ? ' data-server="1"' : "") + ">" +
             esc(r.hostname || r.ipAddress || r.assetId) + "</button>" +
             (r.server ? ' <span class="badge" title="The Polaris server runs this check itself">server</span>' : "") +

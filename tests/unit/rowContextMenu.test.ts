@@ -547,3 +547,84 @@ describe("right click anywhere on a data-row-menu-row", () => {
     expect(clicked).toEqual([]);
   });
 });
+
+// The same attribute makes a DOUBLE click anywhere on the row open it: the
+// listener replays a plain click on the row's trigger, so the primary verb runs
+// (or, with no primary, the menu shows). The trigger itself, fields, buttons
+// and real links keep their own double-click.
+describe("double click anywhere on a data-row-menu-row", () => {
+  function dblclick(target: Element) {
+    const ev = new (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent("dblclick", {
+      bubbles: true, cancelable: true, button: 0,
+    });
+    target.dispatchEvent(ev);
+    return ev;
+  }
+  let opened: string[];
+  function build(primary: boolean) {
+    doc.body.innerHTML = '<table><tbody><tr data-row-menu-row id="r1">' +
+      '<td><button class="row-menu-trigger" id="r1-name">r1</button></td>' +
+      '<td><span id="r1-ip">10.0.0.1</span> <a href="https://example.test" id="r1-link">x</a>' +
+      ' <input id="r1-field"> <button id="r1-star">*</button></td></tr>' +
+      '<tr id="r2"><td><button class="row-menu-trigger" id="r2-name">r2</button></td><td id="r2-ip">x</td></tr>' +
+      "</tbody></table>";
+    opened = [];
+    doc.querySelectorAll(".row-menu-trigger").forEach((b) => {
+      b.addEventListener("click", () => {
+        showRowMenu(b, [
+          { label: "Open", primary, onSelect: () => { opened.push(b.id); } },
+          { label: "Edit", onSelect: () => {} },
+        ]);
+      });
+    });
+  }
+
+  it("opens the row through its primary verb from a plain cell", () => {
+    build(true);
+    dblclick(doc.querySelector("#r1-ip") as unknown as Element);
+    expect(opened).toEqual(["r1-name"]);
+    expect(menu()).toBeNull();
+  });
+
+  it("shows the menu when the row has no primary verb", () => {
+    build(false);
+    dblclick(doc.querySelector("#r1-ip") as unknown as Element);
+    expect(opened).toEqual([]);
+    expect(itemLabels()).toEqual(["Open", "Edit"]);
+  });
+
+  it("leaves the trigger, buttons, fields and real links alone", () => {
+    build(true);
+    for (const id of ["#r1-name", "#r1-star", "#r1-field", "#r1-link"]) {
+      dblclick(doc.querySelector(id) as unknown as Element);
+    }
+    expect(opened).toEqual([]);
+  });
+
+  it("a row without the attribute does nothing", () => {
+    build(true);
+    dblclick(doc.querySelector("#r2-ip") as unknown as Element);
+    expect(opened).toEqual([]);
+  });
+});
+
+// Which list pages opt their rows in. Each is one attribute on a <tr> built in
+// a string, so a rewrite of the row template silently drops the double-click
+// open and the whole-row right-click menu; pin the count per file.
+describe("list pages that open on double click and menu on right click", () => {
+  const cases: Array<[string, number]> = [
+    ["public/js/assets.js", 1],
+    ["public/js/users.js", 3],
+    ["public/js/automations.js", 1],
+    ["public/js/blocks.js", 1],
+    ["public/js/subnets.js", 1],
+    ["public/js/path-checks.js", 2],
+    ["public/js/assets-discovery.js", 1],
+  ];
+  for (const [file, n] of cases) {
+    it(file + " marks its row" + (n > 1 ? "s" : ""), () => {
+      const src = readFileSync(resolve(__dirname, "../..", file), "utf8");
+      expect((src.match(/<tr data-row-menu-row/g) || []).length).toBe(n);
+    });
+  }
+});

@@ -273,3 +273,52 @@ describe("row selection", () => {
     expect(selected()).toEqual(ROWS);
   });
 });
+
+// A `tr[data-row-menu-row]` with NO checkbox (Users, Automations, IPAM, Path
+// Monitor) is selectable too — the standard table gestures — with the state on
+// `tr.selected` itself.
+describe("row selection without a checkbox column", () => {
+  beforeEach(() => {
+    doc.body.innerHTML = '<p id="outside">page text</p><table><tbody id="tb2">' +
+      ["p", "q", "r"].map((id) =>
+        '<tr data-row-menu-row id="m-' + id + '"><td><button class="row-menu-trigger">' + id + '</button></td>' +
+        '<td class="plain">cell ' + id + "</td></tr>").join("") +
+      '<tr id="m-plain"><td class="plain">no marker</td></tr>' +
+      "</tbody></table>";
+  });
+  const mcell = (id: string) => doc.querySelector("#m-" + id + " td.plain") as any;
+  const msel = () => ["p", "q", "r"].filter((id) => doc.getElementById("m-" + id)!.classList.contains("selected"));
+  function mclick(id: string, opts: Record<string, unknown> = {}) {
+    mouse("mousedown", mcell(id), { buttons: 1, ...opts });
+    mouse("mouseup", mcell(id), opts);
+  }
+
+  it("a click selects the row, another click moves it, Ctrl+click adds", () => {
+    mclick("p");
+    expect(msel()).toEqual(["p"]);
+    mclick("q");
+    expect(msel()).toEqual(["q"]);
+    mclick("r", { ctrlKey: true });
+    expect(msel()).toEqual(["q", "r"]);
+  });
+
+  it("the second click of a double click keeps the row selected", () => {
+    mclick("p");
+    mclick("p", { detail: 2 });
+    expect(msel()).toEqual(["p"]);
+    mclick("p");
+    expect(msel()).toEqual([]);
+  });
+
+  it("clicking off the table clears it", () => {
+    mclick("q");
+    mouse("mousedown", doc.getElementById("outside"), { buttons: 1 });
+    expect(msel()).toEqual([]);
+  });
+
+  it("a row without the marker is not selectable", () => {
+    mouse("mousedown", doc.querySelector("#m-plain td"), { buttons: 1 });
+    mouse("mouseup", doc.querySelector("#m-plain td"));
+    expect(doc.getElementById("m-plain")!.classList.contains("selected")).toBe(false);
+  });
+});
