@@ -79,6 +79,28 @@ data, which names end-user devices, should be held back from hosted model provid
 per-integration switch and chose not to: the role check is its only gate, as for any other
 `assets` data.
 
+2026-10-29, from the thread in (m) and (n). The owner asked for a PDF of firewalls sorted by
+uptime, with memory, and got three wrong reports:
+- **A filter that did not exist.** To narrow to 15 named firewalls the model passed a
+  made-up `hostnames` argument. Zod drops unknown keys without a word, so the "15-firewall"
+  report held 1,964 devices.
+- **A hand-typed column hint.** `create_report`'s list of columns had fallen behind and never
+  named list_assets' `uptime` / `upSince`, so the model said the uptime PDF could not print
+  uptime.
+- **No source with both figures.** No single source held uptime and memory together.
+
+Three changes followed:
+- **Hostnames.** list_assets and telemetry_summary take `hostname`: exact names, any case,
+  up to 200.
+- **Dropped arguments are named.** Every list tool carries its `argSchema`, and
+  `ignoredArgKeys` names any argument the schema does not know. The result gains
+  `ignoredArgs` and a note that it is NOT narrowed by them, and `create_report` also names
+  column keys its source does not have.
+- **Generated hint, and uptime beside memory.** The column hint is generated from the sources'
+  own `columns`. telemetry_summary rows carry `uptime` / `upSince` (`withUptime`, as the asset
+  page shows them), and its `sortBy: "uptime"` ranks by them. That ranking keeps devices with
+  an uptime but no CPU / memory in the window, so one report holds both.
+
 ### (d) Conversations belong to one person
 
 A conversation contains whatever its owner could see, so it is that owner's data: every query

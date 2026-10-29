@@ -291,7 +291,9 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- Anything else a device's details page shows (hardware, temperatures, disks, neighbors, MAC / ARP table, " +
       "wireless, SD-WAN, IPsec, processes, software, agent, firmware, sources, polling settings) comes from " +
       "asset_details with the matching sections; one network's addresses and who holds each, from get_network. " +
-      "Uptime and last reboot are on list_assets rows (sortBy uptime ranks a fleet).",
+      "Uptime and last reboot are on list_assets rows (sortBy uptime ranks a fleet); telemetry_summary rows carry " +
+      "uptime too, so uptime with CPU / memory is one telemetry_summary lookup or report. To narrow to devices " +
+      "named earlier, pass their exact names as hostname — never invent a filter a lookup does not list.",
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
       "right source and filters, and formats set to the ones the user named (e.g. [\"pdf\"]) when they named any. " +
       "The user sees the finished table with download buttons; you do not see its rows, " +

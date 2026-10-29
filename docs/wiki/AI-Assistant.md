@@ -186,8 +186,10 @@ manufacturer, a type, a region). Polaris computes the figures from the same
 stored samples the device's CPU / memory chart draws, so the two agree: the raw
 samples while they are still kept, the hourly or daily averages for an older
 period. A device that reports no CPU or memory (one monitored by ping or SSH
-only) is counted, not listed. Ask for a report to get the whole ranking as a
-download. This needs **Assets** read.
+only) is counted, not listed. Each row also shows the device's **uptime** and
+when it came up, so *a PDF of the firewalls sorted by uptime, with their memory*
+is one report. Ask for a report to get the whole ranking as a download. This
+needs **Assets** read.
 
 It can list **services** on devices running the [Polaris Agent](Polaris-Agent)
 (systemd units and Windows services): their state, startup type, CPU and memory.
@@ -261,6 +263,11 @@ with a preview and **CSV**, **PDF** and **Markdown** download buttons. Polaris
 runs the query itself (up to **5,000 rows**), so the rows are an extract from the
 database, never typed by the model. The report is saved with the conversation:
 reopening it later downloads the same figures you saw then.
+
+To narrow a report or lookup to particular devices, name them: *"just those 15
+firewalls"* matches each hostname exactly. If you ask for a filter or column
+Polaris doesn't have, the assistant says it was left out instead of handing back
+an unfiltered table.
 
 Name a format and you get only that one: *"a PDF of the switches acquired
 before 2022"* shows just the **PDF** button. The first PDF in a session takes a

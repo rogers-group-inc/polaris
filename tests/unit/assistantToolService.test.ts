@@ -37,7 +37,7 @@ vi.mock("../../src/services/dependencyTreeService.js", () => ({ resolveDependenc
 vi.mock("../../src/services/sampleQueryRouter.js", () => ({ pickSampleTierForAsset: h.tier }));
 vi.mock("../../src/services/eventArchiveService.js", () => ({ getRetentionSettings: async () => ({ retentionDays: 7 }) }));
 
-import { runAssistantTool, assistantToolDefs, REPORT_ROW_CAP } from "../../src/services/assistantToolService.js";
+import { runAssistantTool, assistantToolDefs, REPORT_ROW_CAP, REPORT_COLUMN_HINT_SOURCES } from "../../src/services/assistantToolService.js";
 
 function reqWith(perms: Record<string, string>) {
   return { session: { userId: "u1", roleSnapshot: { permissions: perms } } } as any;
@@ -307,6 +307,126 @@ describe("telemetry_summary — CPU / memory figures come from the database (see
     expect(report.rows).toHaveLength(2);
     expect(report.rows[0]).toMatchObject({ hostname: "fw-b", avgMemPct: 72 });
     expect(report.rows[0].window).toMatch(/–/);
+  });
+});
+
+// "Firewalls sorted by uptime, with memory" had no source that held both
+// (seen live 2026-10-28): telemetry_summary now carries the asset page's uptime.
+describe("telemetry_summary — uptime beside memory", () => {
+  const req = reqWith({ assets: "read" });
+  const seen = new Date(Date.now() - 60_000);
+  const DAY = 86_400;
+  const fleet = [
+    { id: "a1", hostname: "fw-a", ipAddress: "10.0.0.1", model: "FortiGate-61F", location: null, lastUptimeSec: 10 * DAY, lastMonitorAt: seen, lastRebootAt: null, monitorStatus: "up" },
+    { id: "a2", hostname: "fw-b", ipAddress: "10.0.0.2", model: "FortiGate-61F", location: null, lastUptimeSec: 130 * DAY, lastMonitorAt: seen, lastRebootAt: null, monitorStatus: "up" },
+    // Uptime, but no CPU / memory in the window.
+    { id: "a3", hostname: "fw-c", ipAddress: "10.0.0.3", model: "FortiGate-61F", location: null, lastUptimeSec: 50 * DAY, lastMonitorAt: seen, lastRebootAt: null, monitorStatus: "up" },
+    // Neither.
+    { id: "a4", hostname: "fw-d", ipAddress: "10.0.0.4", model: "FortiGate-61F", location: null, lastUptimeSec: null, lastMonitorAt: null, lastRebootAt: null, monitorStatus: "unknown" },
+  ];
+  const aggs = [
+    { assetId: "a1", samples: 288, avgCpu: 10, maxCpu: 20, avgMem: 80, maxMem: 84 },
+    { assetId: "a2", samples: 288, avgCpu: 10, maxCpu: 20, avgMem: 60, maxMem: 62 },
+  ];
+
+  it("carries uptime and upSince on every row of a memory ranking", async () => {
+    h.prisma.asset.findMany.mockResolvedValue(fleet);
+    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    const data = (await runAssistantTool("telemetry_summary", "{}", { req, maxRows: 50 })).data as any;
+    expect(h.prisma.asset.findMany.mock.calls[0][0].select).toMatchObject({ lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true, monitorStatus: true });
+    expect(data.rows.map((r: any) => r.hostname)).toEqual(["fw-a", "fw-b"]);
+    expect(data.rows[0]).toMatchObject({ uptime: "10d", avgMemPct: 80 });
+    expect(data.rows[0].upSince).toMatch(/^\d{4}-\d\d-\d\dT/);
+    expect(data.rows[0]).not.toHaveProperty("uptimeSec");
+  });
+
+  it("sortBy uptime ranks longest-up first, keeps a device with no reading, and leaves out one with neither", async () => {
+    h.prisma.asset.findMany.mockResolvedValue(fleet);
+    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    const data = (await runAssistantTool("telemetry_summary", '{"sortBy":"uptime"}', { req, maxRows: 50 })).data as any;
+    expect(data.rows.map((r: any) => r.hostname)).toEqual(["fw-b", "fw-c", "fw-a"]);
+    expect(data.rows[1]).toMatchObject({ uptime: "50d", avgMemPct: null, samples: 0 });
+    expect(data).toMatchObject({ total: 3, noData: 1, rankedBy: "uptime" });
+
+    const asc = (await runAssistantTool("telemetry_summary", '{"sortBy":"uptime","order":"lowest"}', { req, maxRows: 50 })).data as any;
+    expect(asc.rows.map((r: any) => r.hostname)).toEqual(["fw-a", "fw-c", "fw-b"]);
+  });
+
+  it("builds one report holding uptime and memory", async () => {
+    h.prisma.asset.findMany.mockResolvedValue(fleet);
+    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    const onReport = vi.fn();
+    const r = await runAssistantTool(
+      "create_report",
+      JSON.stringify({ title: "Firewalls by uptime", source: "telemetry_summary", args: { assetType: "firewall", sortBy: "uptime" }, columns: ["hostname", "uptime", "upSince", "avgMemPct", "maxMemPct"] }),
+      { req, maxRows: 10, onReport },
+    );
+    const report = onReport.mock.calls[0][0];
+    expect(report.columns.map((c: any) => c.label)).toEqual(["Hostname", "Uptime", "Up since", "Avg memory %", "Peak memory %"]);
+    expect(report.rows[0]).toMatchObject({ hostname: "fw-b", uptime: "130d", avgMemPct: 60 });
+    expect(r.data).not.toHaveProperty("ignoredArgs");
+    expect(r.data).not.toHaveProperty("unknownColumns");
+  });
+});
+
+describe("hostname filter and dropped arguments (seen live 2026-10-28: a 15-firewall report held 1,964 devices)", () => {
+  const req = reqWith({ assets: "read" });
+
+  it("narrows to exact hostnames, any case, in list_assets and telemetry_summary", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([]);
+    h.prisma.asset.count.mockResolvedValue(0);
+    await runAssistantTool("list_assets", '{"hostname":["CKYSMA-91G-1","decatur-61f-1"]}', { req, maxRows: 50 });
+    const want = { OR: [
+      { hostname: { equals: "CKYSMA-91G-1", mode: "insensitive" } },
+      { hostname: { equals: "decatur-61f-1", mode: "insensitive" } },
+    ] };
+    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual(want);
+    await runAssistantTool("telemetry_summary", '{"hostname":"CKYSMA-91G-1, decatur-61f-1"}', { req, maxRows: 50 });
+    expect(h.prisma.asset.findMany.mock.calls[1][0].where.AND).toContainEqual(want);
+  });
+
+  it("takes up to 200 names — enough for a fleet-sized earlier answer", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([]);
+    h.prisma.asset.count.mockResolvedValue(0);
+    const names = Array.from({ length: 200 }, (_, i) => `fw-${i}`);
+    expect((await runAssistantTool("list_assets", JSON.stringify({ hostname: names }), { req, maxRows: 50 })).ok).toBe(true);
+    expect((await runAssistantTool("list_assets", JSON.stringify({ hostname: [...names, "one-more"] }), { req, maxRows: 50 })).ok).toBe(false);
+  });
+
+  it("says which arguments a lookup ignored instead of dropping them silently", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1" }]);
+    h.prisma.asset.count.mockResolvedValue(1);
+    const r = await runAssistantTool("list_assets", '{"hostnames":["fw-a"],"assetType":"firewall"}', { req, maxRows: 50 });
+    expect(r.ok).toBe(true);
+    expect(r.data).toMatchObject({ ignoredArgs: ["hostnames"], total: 1 });
+    expect((r.data as any).ignoredArgsNote).toMatch(/NOT narrowed/);
+
+    const clean = await runAssistantTool("list_assets", '{"assetType":"firewall"}', { req, maxRows: 50 });
+    expect(clean.data).not.toHaveProperty("ignoredArgs");
+  });
+
+  it("a report says which filters and columns it could not apply", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1" }]);
+    h.prisma.asset.count.mockResolvedValue(1);
+    const r = await runAssistantTool(
+      "create_report",
+      JSON.stringify({ title: "x", source: "list_assets", args: { hostnames: ["fw-a"] }, columns: ["hostname", "memory"] }),
+      { req, maxRows: 10, onReport: vi.fn() },
+    );
+    expect(r.data).toMatchObject({ ignoredArgs: ["hostnames"], unknownColumns: ["memory"], created: true });
+  });
+});
+
+describe("create_report's column hint is read from the sources (seen live 2026-10-28: uptime was missing from it)", () => {
+  it("names every column each hinted source really has", () => {
+    const report = assistantToolDefs().find((d) => d.function.name === "create_report")!;
+    const hint = (report.function.parameters as any).properties.columns.description as string;
+    for (const src of REPORT_COLUMN_HINT_SOURCES) {
+      const tool = assistantToolDefs().find((d) => d.function.name === src);
+      expect(tool, src).toBeTruthy();
+    }
+    expect(hint).toMatch(/list_assets: [^.]*\buptime\b[^.]*\bupSince\b/);
+    expect(hint).toMatch(/telemetry_summary: [^.]*\buptime\b[^.]*\bavgMemPct\b/);
   });
 });
 
