@@ -4483,6 +4483,12 @@ function closeModal() {
 // row keep the browser's menu (copy / paste, open in a new tab). In a
 // selectable table it also selects the row first unless it already is
 // (_rowSelectForMenu), so the menu can offer verbs over the selection.
+//
+// The same `<tr data-row-menu-row>` makes a DOUBLE click anywhere on the row
+// replay a plain click on its trigger — the row's primary verb (Open), or,
+// for a row with no primary (a Users-page user), its menu. A double click on
+// the trigger itself is left alone (its first click already opened the row),
+// as is one on a field, a button, a label or a real link inside the row.
 var _rowMenuTeardown = null;
 var _rowMenuForced = null;
 
@@ -4521,6 +4527,19 @@ if (typeof document !== "undefined" && document.addEventListener) {
     } finally {
       _rowMenuForced = null;
     }
+  });
+
+  document.addEventListener("dblclick", function (e) {
+    if (e.defaultPrevented || e.button !== 0) return;
+    var t = e.target;
+    var row = t && typeof t.closest === "function" ? t.closest("tr[data-row-menu-row]") : null;
+    if (!row) return;
+    if (t.closest('.row-menu-trigger, [data-row-menu], button, input, textarea, select, label, [contenteditable], a[href]:not([href="#"])')) return;
+    var trigger = row.querySelector(".row-menu-trigger, [data-row-menu]");
+    if (!trigger) return;
+    // A double click also selects the word under the pointer; drop it.
+    try { window.getSelection().removeAllRanges(); } catch (_) { /* no selection API */ }
+    trigger.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
   });
 }
 

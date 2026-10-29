@@ -181,8 +181,15 @@ such as a user on the Users page, shows its menu on either click.
 Shift+right-click still gives the browser's own menu, and Ctrl/middle-click on a
 dashboard row still opens the Assets page in a new tab.
 
-On the Assets table you can **right-click anywhere on a row**, not only its
-hostname. A right click on a row that is not selected selects it (and only it)
+On the Assets, Users (users, roles and group mappings), Automations, IPAM
+(blocks and networks) and Path Monitor tables (the check list and a check's
+Results) you can **right-click anywhere on a row**, not only its name, and
+**double-click anywhere on a row** to open it, as clicking the name does. On a
+Users-page user, which has nothing to open, a double click shows its menu.
+Double-clicking a button, a switch, a text field or a link in the row does what
+that control does instead.
+
+On the Assets table a right click on a row that is not selected selects it (and only it)
 first, as a file explorer does; a right click on a row that is part of a
 selection of several opens the [selection's menu](#bulk-actions) instead. A
 right click on a link that leaves the page, or in a text field, still gives the

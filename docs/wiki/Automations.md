@@ -79,8 +79,8 @@ in which case the pill reads **Escalation**, coloured by the base severity (the
 first tier it fires at). Hovering it lists the ladder, e.g. *Warning → Serious
 (20) → Critical (30)*. The column's filter and sort use that base severity.
 
-Clicking an automation's **name** opens it in the editor; right-clicking it
-opens a menu: **Edit**, **Clone**, **View code**, **Export**, **Delete**. Below `automationManagement:write` the name
+Clicking an automation's **name**, or double-clicking anywhere on its row, opens
+it in the editor; right-clicking the name or the row opens a menu: **Edit**, **Clone**, **View code**, **Export**, **Delete**. Below `automationManagement:write` the name
 renders as plain text and the **Enabled** column as a static label.
 
 **Clone** pre-fills the wizard, saves as a create, names it `<name> (copy)`, and
