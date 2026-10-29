@@ -8648,11 +8648,15 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    palettes (worst case 5.2:1, on afternoon) rather than three near-identical
    blocks. Hue is preserved per variant, so the severity vocabulary
    — green ok, blue watch, amber attention, orange serious, red problem,
-   slate neutral — survives the shift. ───────────────────────────────── */
+   slate neutral — survives the shift. Amber and orange carry Warning and
+   Serious in the Active Alerts widget, so they take the daylight severity
+   palette's gold (#8a6d00, = --color-sev-warning) and --color-sev-serious:
+   the earlier #6b4400 / #7a3f00 were two browns ~10° of hue apart, and the
+   pill family's label clamp (L ≤ 0.5) flattened them into one. ────────── */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-ok { background: rgba(76,175,80,0.30); color: #1b5e20; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-watch { background: rgba(79,195,247,0.30); color: #01466f; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-amber { background: rgba(255,193,7,0.30); color: #6b4400; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-orange { background: rgba(255,138,0,0.30); color: #7a3f00; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-amber { background: rgba(255,193,7,0.30); color: #8a6d00; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-orange { background: rgba(255,138,0,0.30); color: var(--color-sev-serious); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-neutral { background: rgba(148,163,184,0.30); color: #2b373d; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-red { background: rgba(255,23,68,0.30); color: #8c0d1c; }
 
@@ -8661,8 +8665,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    deeper to win inside an alert title. */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-ok { color: #1b5e20; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-watch { color: #01466f; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-amber { color: #6b4400; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-orange { color: #7a3f00; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-amber { color: #8a6d00; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-orange { color: var(--color-sev-serious); }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-neutral { color: #2b373d; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-red { color: #8c0d1c; }
 
