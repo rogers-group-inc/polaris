@@ -375,6 +375,21 @@ record id.
 
 ### Row verbs — a menu on the name, not an Actions column
 
+**The standard row gestures — every table in Polaris whose rows can be opened
+or acted on:**
+
+| Gesture | Does |
+|---|---|
+| Left click on the row | selects it (Ctrl/⌘ toggles, Shift extends, drag selects a range) |
+| Left click on the name (the row's primary column) | opens the row |
+| Double click anywhere on the row | opens the row, as clicking the name does |
+| Right click anywhere on the row | selects it and shows the row's context menu |
+
+All four come from one marker: `<tr data-row-menu-row>` on a row whose name
+cell holds the `.row-menu-trigger`. Selection keeps its state on `tr.selected`
+(or, on a table with bulk verbs, on the hidden `td.cb-col` checkbox). A new
+table adopts all four, never a subset.
+
 Per-row verbs (Open / Edit / Clone / Delete) hang off the row's **name cell**,
 never a column of buttons: one affordance, no column competing with the data,
 and a verb can be added without re-cutting the layout.

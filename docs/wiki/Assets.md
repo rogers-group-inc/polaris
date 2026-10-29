@@ -181,11 +181,17 @@ such as a user on the Users page, shows its menu on either click.
 Shift+right-click still gives the browser's own menu, and Ctrl/middle-click on a
 dashboard row still opens the Assets page in a new tab.
 
-On the Assets, Users (users, roles and group mappings), Automations, IPAM
-(blocks and networks) and Path Monitor tables (the check list and a check's
-Results) you can **right-click anywhere on a row**, not only its name, and
-**double-click anywhere on a row** to open it, as clicking the name does. On a
-Users-page user, which has nothing to open, a double click shows its menu.
+The tables work the same way everywhere: Assets, Users (users, roles and group
+mappings), Automations, IPAM (blocks and networks), Path Monitor (the check list
+and a check's Results) and saved Discoveries.
+
+- **Click a row** to select it (Ctrl+click adds or removes a row, Shift+click
+  or a drag selects a range).
+- **Click the name** to open it.
+- **Double-click anywhere on the row** to open it. On a Users-page user, which
+  has nothing to open, a double click shows its menu.
+- **Right-click anywhere on the row** to select it and show its menu.
+
 Double-clicking a button, a switch, a text field or a link in the row does what
 that control does instead.
 

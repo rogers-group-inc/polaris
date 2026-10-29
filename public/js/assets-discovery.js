@@ -1440,7 +1440,7 @@
           var nameCell = permAtLeast("networkScan", "write")
             ? '<button type="button" class="row-menu-trigger nd-list-name" data-id="' + escapeHtml(s.id) + '" aria-haspopup="menu">' + escapeHtml(s.name) + '</button>'
             : escapeHtml(s.name);
-          return '<tr><td>' + nameCell + '</td>' +
+          return '<tr data-row-menu-row><td>' + nameCell + '</td>' +
             '<td class="hint">' + ownerCellHtml(s) + '</td>' +
             '<td class="hint">' + escapeHtml((s.targets || []).map(function (t) { return t.value; }).join(", ")) + '</td>' +
             '<td class="hint">' + escapeHtml(when) + '</td>' +

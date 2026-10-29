@@ -619,6 +619,7 @@ describe("list pages that open on double click and menu on right click", () => {
     ["public/js/blocks.js", 1],
     ["public/js/subnets.js", 1],
     ["public/js/path-checks.js", 2],
+    ["public/js/assets-discovery.js", 1],
   ];
   for (const [file, n] of cases) {
     it(file + " marks its row" + (n > 1 ? "s" : ""), () => {

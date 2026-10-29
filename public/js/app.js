@@ -3520,6 +3520,23 @@ var _rowSel = null;          // the gesture in progress
 var _rowSelLastTbody = null; // Ctrl+A's target
 var _rowSelAnchor = null;    // Shift+click's start row
 
+// A `<tr data-row-menu-row>` with no checkbox (a table with no bulk verbs: the
+// Users, Automations, IPAM and Path Monitor lists) is selectable too — the
+// standard table gestures are click selects, click the name opens, double
+// click opens, right click is the menu. Its stand-in box keeps the state on
+// `tr.selected` itself, so every gesture below works without knowing which
+// kind of row it has.
+function _rowClassBox(tr) {
+  if (!tr._rowSelBox) {
+    tr._rowSelBox = {
+      disabled: false,
+      get checked() { return tr.classList.contains("selected"); },
+      set checked(on) { tr.classList.toggle("selected", !!on); },
+      dispatchEvent: function () { return true; },
+    };
+  }
+  return tr._rowSelBox;
+}
 function _rowSelectBox(tr) {
   if (!tr || !tr.cells) return null;
   for (var i = 0; i < tr.cells.length; i++) {
@@ -3527,8 +3544,10 @@ function _rowSelectBox(tr) {
     var cb = tr.cells[i].querySelector("input[type=checkbox]");
     return cb && !cb.disabled ? cb : null;
   }
-  return null;
+  return tr.hasAttribute && tr.hasAttribute("data-row-menu-row") ? _rowClassBox(tr) : null;
 }
+// Every tbody holding a selected row, of either kind.
+var ROW_SELECT_CHECKED = "td.cb-col input[type=checkbox]:checked, tr[data-row-menu-row].selected";
 function _rowSelectRows(tbody) {
   return Array.prototype.filter.call(tbody.children, function (tr) {
     return tr.tagName === "TR" && tr.style.display !== "none" && _rowSelectBox(tr);
@@ -3617,7 +3636,7 @@ function _rowSelectOnScrollbar(t, e) {
 function _rowSelectClickOff(t, e) {
   if (t.closest(ROW_SELECT_KEEP) || _rowSelectOnScrollbar(t, e)) return;
   var tbodies = [];
-  document.querySelectorAll("td.cb-col input[type=checkbox]:checked").forEach(function (cb) {
+  document.querySelectorAll(ROW_SELECT_CHECKED).forEach(function (cb) {
     var tb = cb.closest("tbody");
     if (tb && tbodies.indexOf(tb) < 0) tbodies.push(tb);
   });
@@ -3692,7 +3711,7 @@ document.addEventListener("mousemove", function (e) {
   if (tr && tr !== g.last) { g.last = tr; _rowSelectApplyRange(g, tr); }
 });
 
-function _rowSelectEnd(aborted) {
+function _rowSelectEnd(aborted, repeat) {
   var g = _rowSel;
   if (!g) return;
   _rowSel = null;
@@ -3708,10 +3727,11 @@ function _rowSelectEnd(aborted) {
   var onlyThis = cb.checked && g.base.size === 1;
   _rowSelectClearOthers(g.tbody, g.anchor);
   // Clicking the one selected row again deselects it — a table has no empty
-  // space to click to clear a single pick.
-  _rowSelectSet(g.anchor, !onlyThis);
+  // space to click to clear a single pick. Not the second click of a double
+  // click, though: that opens the row, and it should stay selected.
+  _rowSelectSet(g.anchor, repeat || !onlyThis);
 }
-document.addEventListener("mouseup", function (e) { if (e.button === 0) _rowSelectEnd(false); });
+document.addEventListener("mouseup", function (e) { if (e.button === 0) _rowSelectEnd(false, e.detail > 1); });
 window.addEventListener("blur", function () { _rowSelectEnd(true); });
 
 // The keyboard. Ctrl/⌘+A selects every row of the table; with a selection on
@@ -3731,7 +3751,7 @@ function _rowSelectKeyTbody(e) {
   // that asset came to be selected. Two tables holding picks is ambiguous.
   if (!tbody || !tbody.isConnected || !tbody.offsetParent) {
     var holding = [];
-    document.querySelectorAll("td.cb-col input[type=checkbox]:checked").forEach(function (cb) {
+    document.querySelectorAll(ROW_SELECT_CHECKED).forEach(function (cb) {
       var tb = cb.closest("tbody");
       if (tb && tb.offsetParent && holding.indexOf(tb) < 0) holding.push(tb);
     });
