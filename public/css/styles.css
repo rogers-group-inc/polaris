@@ -8641,34 +8641,34 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    size; nightfall already clears it at 3.9–7.7:1, which is why this is a
    family override and not an edit to the values above.)
 
-   Two changes, because neither alone is enough: the tint goes to 30% so the
-   chip has a body on a light ground, and the ink goes to a dark hued tone
-   rather than the theme accent — the accents are mid-tone and still only
-   reached ~2.8–4.4:1 on these tints. One set serves all three daylight
-   palettes (worst case 5.2:1, on afternoon) rather than three near-identical
-   blocks. Hue is preserved per variant, so the severity vocabulary
-   — green ok, blue watch, amber attention, orange serious, red problem,
-   slate neutral — survives the shift. Amber and orange carry Warning and
-   Serious in the Active Alerts widget, so they take the daylight severity
-   palette's gold (#8a6d00, = --color-sev-warning) and --color-sev-serious:
-   the earlier #6b4400 / #7a3f00 were two browns ~10° of hue apart, and the
-   pill family's label clamp (L ≤ 0.5) flattened them into one. ────────── */
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-ok { background: rgba(76,175,80,0.30); color: #1b5e20; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-watch { background: rgba(79,195,247,0.30); color: #01466f; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-amber { background: rgba(255,193,7,0.30); color: #8a6d00; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-orange { background: rgba(255,138,0,0.30); color: var(--color-sev-serious); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-neutral { background: rgba(148,163,184,0.30); color: #2b373d; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-red { background: rgba(255,23,68,0.30); color: #8c0d1c; }
+   So on daylight the pills carry their own night: the nightfall pill as it
+   is — the pale ink, an 18% tint of it, a 45% border — mixed into
+   nightfall's ground (#141427) instead of into transparent, so the chip is
+   a dark lozenge on the cream and the ink reads at nightfall's 3.9–7.7:1.
+   A drop shadow lifts it off the light ground. The label clamp takes
+   nightfall's band (L ≥ 0.78) on the pill itself, since the daylight band
+   (L ≤ 0.5) would darken the inks into their own fill. (Operator decision
+   2026-10-29. The previous answer — a 30% tint and a dark hued ink per
+   variant — read Warning and Serious as two browns on morning.)
 
-/* The .recent-item-title rules above re-assert the dark inks at the same
-   specificity these have, so the daylight set has to be re-stated one level
-   deeper to win inside an alert title. */
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-ok { color: #1b5e20; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-watch { color: #01466f; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-amber { color: #8a6d00; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-orange { color: var(--color-sev-serious); }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-neutral { color: #2b373d; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-red { color: #8c0d1c; }
+   Specificity: :root:is(theme) + two classes beats the pill family's
+   `:root :is(…)` (0,3,0) AND the `.recent-item-title .widget-pill-*` ink
+   re-assertions, so no second deeper set is needed. The orange and neutral
+   inks are literal because their dark-block values are --color-sev-*
+   tokens, which the daylight block retunes to dark tones. ───────────── */
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill:is(.widget-pill-ok, .widget-pill-watch, .widget-pill-amber, .widget-pill-orange, .widget-pill-neutral, .widget-pill-red) {
+  --hue-label-l-min: 0.78;
+  --hue-label-l-max: 1;
+  background: color-mix(in srgb, currentColor 18%, #141427);
+  border-color: color-mix(in srgb, currentColor 45%, #141427);
+  box-shadow: 0 1px 2px rgba(40,25,5,.30), 0 2px 6px rgba(40,25,5,.28);
+}
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-ok      { color: #81c784; }
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-watch   { color: #4fc3f7; }
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-amber   { color: #ffd54f; }
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-orange  { color: #ff8a00; }
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-neutral { color: #94a3b8; }
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-red     { color: #ef5350; }
 
 /* ─── Site Map widget markers ─────────────────────────────────────────────
  * Lifted from map.css so the siteMap dashboard widget renders correctly on
