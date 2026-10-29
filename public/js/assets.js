@@ -9408,7 +9408,8 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // A FortiAP abbreviates the base: the sub-interfaces of wlan01 / wlan10 are
   // w01.12 / w10.10. Those nest under the wlanNN row too, but as a plain
   // sub-interface — the suffix is not documented as a VLAN id, so the badge
-  // makes no VLAN claim.
+  // makes no VLAN claim. The bridge is abbreviated the same way: br0's
+  // sub-interfaces are br.10 / br.12, and nest under br0 on the same terms.
   var ifaceNameSet = new Set(rows.map(function (r) { return r.ifName; }));
   var treeRows = rows.map(function (r) {
     if (r.ifParent && ifaceNameSet.has(r.ifParent)) return r;
@@ -9417,6 +9418,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var wlan = /^w(\d+)$/.exec(m[1]);
     if (!ifaceNameSet.has(m[1]) && wlan && ifaceNameSet.has("wlan" + wlan[1])) {
       return Object.assign({}, r, { ifParent: "wlan" + wlan[1], subIface: true });
+    }
+    if (m[1] === "br" && !ifaceNameSet.has("br") && ifaceNameSet.has("br0")) {
+      return Object.assign({}, r, { ifParent: "br0", subIface: true });
     }
     if (!ifaceNameSet.has(m[1])) return r;
     return Object.assign({}, r, {

@@ -357,6 +357,24 @@ describe("a dotted sub-interface nests under its base", () => {
     expect(rowFor("w02.0").classList.contains("iface-child")).toBe(false);
   });
 
+  it("puts a FortiAP's br.10 under br0 as a sub-interface", () => {
+    renderSi([
+      { ifName: "br.10", ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "br.12", ifType: "physical", adminStatus: "up", operStatus: "up" },
+      { ifName: "br0",   ifType: "physical", adminStatus: "up", operStatus: "up" },
+    ]);
+    expect(names()).toEqual(["br0", "br.10", "br.12"]);
+    expect(rowFor("br.10").getAttribute("data-parent")).toBe("br0");
+    expect(rowFor("br.12").textContent).toContain("└─");
+    expect(rowFor("br.12").textContent).toContain("Sub-interface");
+    expect(rowFor("br.12").textContent).not.toContain("VLAN");
+  });
+
+  it("leaves br.10 at top level when br0 is not listed", () => {
+    renderSi([{ ifName: "br.10", ifType: "physical", adminStatus: "up", operStatus: "up" }]);
+    expect(rowFor("br.10").classList.contains("iface-child")).toBe(false);
+  });
+
   it("leaves a dotted name at top level when its base is not listed", () => {
     renderSi([{ ifName: "eth0.20", ifType: "physical", adminStatus: "up", operStatus: "up" }]);
     expect(rowFor("eth0.20").classList.contains("iface-child")).toBe(false);
