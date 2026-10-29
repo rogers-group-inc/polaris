@@ -738,7 +738,8 @@ sub-interfaces under their parent; the arrow on the parent shows or hides
 them. A sub-interface named after its parent with a VLAN number, such as
 `br0.10` on an access point, nests under `br0` even when the device does not
 report the link. A FortiAP shortens the parent's name, so `w01.12` nests under
-`wlan01` and `w10.10` under `wlan10`, marked **Sub-interface**. On a FortiGate
+`wlan01`, `w10.10` under `wlan10` and `br.10` under `br0`, marked
+**Sub-interface**. On a FortiGate
 monitored over its REST API, a hardware switch and a software switch nest their
 member ports the same way and are badged **Hardware switch** / **Software
 switch** rather than *Aggregate*. Sorting keeps
