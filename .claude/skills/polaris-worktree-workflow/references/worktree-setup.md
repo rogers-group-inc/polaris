@@ -6,7 +6,15 @@ Use the `EnterWorktree` tool with a short slug (`skills-conversion`, `fix-arp-ta
 `.claude/worktrees/<slug>` on branch `worktree-<slug>` from `origin/main` (setting
 `worktree.baseRef`; check `git status -sb` in the main checkout first — if local `main` is
 ahead of `origin/main`, the fresh worktree will not carry those commits) and switches the
-session's working directory into it. Then, before the first edit:
+session's working directory into it.
+
+**"core.worktree redirect" from `EnterWorktree name=`** is not a failure to create: the
+worktree and branch exist. It happens when the session was launched from a lowercase `c:\` and
+git reports `C:/` (six sessions hit it 2026-10-27/28). Enter it with
+`EnterWorktree path=<main-checkout, uppercase drive>/.claude/worktrees/<slug>` and carry on.
+
+Then, before the first edit, write the lock — the Write tool is fine (`require-worklock.mjs`
+exempts the lock file itself since 2026-10-29), or as a lone Bash call:
 
 ```
 printf '%s %s\n' "$(date -u +%FT%TZ)" "<purpose>" > WORKLOCK
@@ -81,7 +89,8 @@ verify on the new base (`prisma generate`, `typecheck`, unit suite) before pushi
 
 ## Reference
 
-A worktree-isolated session's Bash guard refuses any command it cannot statically prove stays
+The refused shapes and what to do instead are tabled in SKILL.md → "Shell inside a worktree";
+this is the history. A worktree-isolated session's Bash guard refuses any command it cannot statically prove stays
 inside the worktree — and that is **wider than "compound commands naming `git`"**, which is how
 this was described until 2026-09-11. A plain `cat >> file <<'EOF' … EOF` heredoc, naming no git
 and touching nothing outside the worktree, is refused on its own with *"too complex to verify

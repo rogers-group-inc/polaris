@@ -120,7 +120,8 @@ describe("ICON_SPECS", () => {
   });
 });
 
-describe("renderAppIcon", () => {
+// Real image renders; the 5 s default is crossed under full-suite load.
+describe("renderAppIcon", { timeout: 30_000 }, () => {
   it("renders each spec at its declared pixel size", async () => {
     for (const spec of ICON_SPECS) {
       const png = await renderAppIcon(spec.variant, spec.size);

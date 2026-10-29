@@ -69,6 +69,8 @@ try {
   if (!under(root.dir, join(main, ".claude", "worktrees"))) {
     // A worktree that lives elsewhere (manual git worktree add) is still a worktree — apply the lock rule.
   }
+  // Writing the lock itself is how the rule is satisfied.
+  if (norm(target) === norm(join(root.dir, "WORKLOCK"))) process.exit(0);
   if (!existsSync(join(root.dir, "WORKLOCK"))) {
     process.stderr.write(
       `Polaris workflow: no WORKLOCK in worktree ${root.dir}. Write it before editing:\n` +
