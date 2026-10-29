@@ -4917,7 +4917,9 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
    label colour, the label held inside the theme's --hue-label-l lightness band
    (≤ 0.5 daylight, ≥ 0.78 nightfall), the border at 45% of that held label.
    Each class owns only its LABEL colour (and any per-theme override of it);
-   its own background / border-color values no longer show.
+   its own background / border-color values no longer show. One exception:
+   the daylight .widget-pill-orange / -amber / -red ring (see "Widget pills
+   on a daylight ground") outranks this block on purpose.
 
    Excluded from the colour half: .hue-pill (the same recipe from its raw
    --hue), the outline-only Passive monitor state (its empty fill IS its
