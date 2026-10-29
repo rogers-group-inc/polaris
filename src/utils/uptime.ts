@@ -72,3 +72,24 @@ export function formatUptimeLong(seconds: number | null | undefined): string {
   parts.push(`${secs}s`);
   return parts.join(" ");
 }
+
+/**
+ * A device's uptime as the asset's System tab shows it, for readers that are
+ * not the browser (the AI assistant's list_assets and asset_details).
+ * lastUptimeSec is the reading at the last probe (lastMonitorAt); it is
+ * carried forward to `now` unless the device is down, since a dead box's
+ * uptime should not keep climbing. upSince prefers the reboot Polaris
+ * detected (lastRebootAt), else the boot instant the reading implies.
+ * Null when the probe path never reported uptime (ICMP / SSH / WinRM only).
+ */
+export function deviceUptime(
+  a: { lastUptimeSec?: number | null; lastMonitorAt?: Date | null; lastRebootAt?: Date | null; monitorStatus?: string | null },
+  now: number = Date.now(),
+): { uptimeSec: number; uptime: string; upSince: Date } | null {
+  if (a.lastUptimeSec == null || !a.lastMonitorAt) return null;
+  const observedAt = a.lastMonitorAt.getTime();
+  const elapsed = Math.max(0, Math.floor((now - observedAt) / 1000));
+  const uptimeSec = a.monitorStatus === "down" ? a.lastUptimeSec : a.lastUptimeSec + elapsed;
+  const upSince = a.lastRebootAt ?? new Date(observedAt - a.lastUptimeSec * 1000);
+  return { uptimeSec, uptime: formatUptime(uptimeSec), upSince };
+}

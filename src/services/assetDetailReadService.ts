@@ -26,6 +26,7 @@ import { hasPermission } from "../api/middleware/permissions.js";
 import { isWorkloadPlatform } from "../utils/workloadSources.js";
 import { resolveMonitorSettingsWithProvenance } from "./monitoringService.js";
 import { describeDownDetectionFor, recoveryPollsFor } from "./downDetectionService.js";
+import { deviceUptime } from "../utils/uptime.js";
 
 // ─── Effective monitor settings ──────────────────────────────────────────────
 
@@ -161,7 +162,7 @@ export type AssetSection = (typeof ASSET_SECTIONS)[number];
 export const ASSET_SECTION_HELP: Partial<Record<AssetSection, string>> = {
   identity: "all IPs/MACs, notes, HA, users",
   connections: "upstream switch/AP/firewall, MCLAG, VIPs, contacts",
-  monitoring: "polling per stream, down rule, maintenance, poll errors",
+  monitoring: "uptime, polling per stream, down rule, maintenance, poll errors",
   hardware: "modules, disks, temperatures, fans, PSUs",
   lifecycle: "agent, firmware, reboots",
   sources: "integrations reporting it, gate sightings",
@@ -209,7 +210,7 @@ const READERS: Record<AssetSection, SectionReader> = {
         productType: true, fortinetTopology: true, managementAccess: true,
         snmpLocation: true, latitude: true, longitude: true, coordSource: true,
         associatedUsers: true, notes: true, description: true, statusChangedAt: true, statusChangedBy: true,
-        lastSeenSource: true, createdBy: true, lastUptimeSec: true, lastRebootAt: true,
+        lastSeenSource: true, createdBy: true,
         quarantineReason: true, quarantinedAt: true, quarantinedBy: true,
         associatedIpRows: { select: { ip: true, source: true, interfaceName: true, lastSeen: true }, take: 100 },
         macAddressRows: { select: { mac: true, source: true, device: true, lastSeen: true }, take: 100 },
@@ -274,6 +275,7 @@ const READERS: Record<AssetSection, SectionReader> = {
           fortilinkStatus: true, fortilinkCheckedAt: true, fortilinkChangedAt: true,
           monitoredInterfaces: true, monitoredStorage: true, monitoredIpsecTunnels: true,
           monitoredProcesses: true, monitoredServices: true,
+          lastUptimeSec: true, lastRebootAt: true,
         },
       }),
       prisma.assetTelemetrySample.findFirst({
@@ -281,8 +283,15 @@ const READERS: Record<AssetSection, SectionReader> = {
         select: { timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, memTotalBytes: true },
       }),
     ]);
+    // Uptime as the System tab shows it, carried forward from the last
+    // reading; the raw reading alone is the uptime at lastMonitorAt. Its
+    // absence is said in words: compact() drops nulls, and a missing key is
+    // what let the model conclude Polaris collects no uptime at all.
+    const { lastUptimeSec: _u, lastRebootAt: _r, ...state } = a ?? {};
+    const up = a ? deviceUptime(a) : null;
     return compact({
-      state: a,
+      state: a ? state : null,
+      uptime: up ?? "not reported: no probe on this device reads uptime (ICMP / SSH / WinRM only)",
       latestCpuMemory: telemetry,
       streams: settings.resolved,
       settingSources: settings.provenance,

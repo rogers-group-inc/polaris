@@ -221,7 +221,8 @@ it names that device, the same one the alert names.
 
 It can read **everything a device's details page shows**: every address and MAC
 it has, its notes and HA role; the switch, access point and firewall it was last
-seen behind, its MCLAG peer, the VIPs that publish it and its contacts; how each
+seen behind, its MCLAG peer, the VIPs that publish it and its contacts; its
+uptime and when it last restarted; how each
 stream is polled and why, the automation that decides it is down, its
 maintenance and its last poll errors; its hardware modules, disks, temperatures,
 fans and power supplies; LLDP neighbors, wireless radios and clients, SD-WAN
@@ -230,7 +231,9 @@ processes and their connections, installed software, virtual machines and
 containers, the Polaris Agent, firmware and reboot state, which integrations
 report it, and its active alerts with the automations that apply. Ask *what
 temperature is fw-nsh-01 running at* or *which ports on sw-02 have LLDP
-neighbors*. It reads what Polaris last collected; it never polls the device,
+neighbors*. Uptime is also on every device list, so *firewalls by uptime* or
+*which switches rebooted most recently* is one lookup; a device whose only probe
+is ping, SSH or WinRM reports no uptime. It reads what Polaris last collected; it never polls the device,
 runs an SNMP walk or looks up DNS. VIPs need **Reservations** read, contacts
 **Address Book** read and gate sightings **Asset Quarantine** read, as on the page.
 
@@ -422,6 +425,8 @@ See [rule 95](Business-Rules#rule-95).
 | "Thinking…" counts up with no reasoning shown | a non-thinking model loading or working on slow hardware; the first answer after the model loads is the slowest |
 | Answers arrive all at once instead of streaming | a proxy or load balancer in front of Polaris buffers responses; the answer still arrives |
 | "Not permitted" in an answer | your role cannot read that area — the assistant is telling you, not failing |
+| An answer appears, vanishes and is rewritten | it gave facts without looking anything up, and Polaris asked it again to run the lookups ([rule 95(m)](Business-Rules#rule-95)) |
+| "Polaris ran no lookup for this answer" under a reply | asked again, the model still looked nothing up — do not trust its figures; ask again naming the device or list you want |
 | "Help is not available on this install" | the `docs/wiki` folder is missing from this install |
 | Azure: "refused the API key (HTTP 401)" | the key is wrong or was regenerated — paste Key 1 or Key 2 again |
 | Azure: "Entra ID refused the token request … AADSTS…" | the tenant ID, client ID or secret is wrong, or the secret expired; the AADSTS code says which |
