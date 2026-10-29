@@ -1,8 +1,9 @@
 // public/js/mobile/asset-detail.js — Asset detail slide-up sheet.
 //
 // The sheet shows ONE PAGE at a time (see "Page history"): the asset, or a
-// page opened from it — SD-WAN, the ARP / MAC / Wireless tables, an
-// interface, the alerts list, Storage, a volume, a drive, another asset.
+// page opened from it — the Dependency Tree, SD-WAN, IPsec, the ARP / MAC /
+// Wireless tables, an interface, the alerts list, Storage, a volume, a drive,
+// another asset.
 // Opening one goes forward; the header's back / forward walk the list.
 //
 // Header, two rows: back, forward, then camera (screenshot — see
@@ -20,7 +21,11 @@
 //     1h / 24h / 7d range)
 //   - General section (IP/MAC/type/model/OS/location/last seen)
 //   - Temperatures section — current per-sensor reading + 1h min/avg/max
-//   - Interfaces section — a PoE summary (delivering / searching / fault,
+//   - "View IPsec" — on a Fortinet firewall that reported tunnels or peers;
+//     opens the IPsec page (tunnels with their dial-up peers, remote-access
+//     users). See the IPsec block.
+//   - Interfaces section — IPsec tunnel twins left out (they are the IPsec
+//     page's, with a line pointing there); a PoE summary (delivering / searching / fault,
 //     faulted ports named) when any port reports PoE, then the list,
 //     operStatus=="up" only, each row with its PoE state; tap a row opens its
 //     page: status / speed / ip / mac / PoE / errors / LLDP neighbor(s), plus
@@ -45,6 +50,10 @@
 // assetsQuarantine:write permission and the same eligibility as the desktop
 // quarantine tab (non-infra + has a MAC to push, or already quarantined →
 // Release). See quarantineButtonHtml / wireQuarantineButton.
+//
+// Hero's first button is "View Dependency Tree" (every asset): upstream /
+// this device / downstream, each other device a link a page forward. See the
+// Dependency Tree block.
 //
 // Hero also carries a "View SD-WAN" button for FortiGate firewalls that
 // reported SD-WAN data (perf-SLA links / rules / members exist). Tapping it
@@ -79,7 +88,8 @@
 //   - Per-interface charts for an UNMONITORED interface, and custom date
 //     ranges on them
 //   - Per-interface comments editor
-//   - IPsec tunnels
+//   - An IPsec tunnel's per-minute pin and its status / throughput history
+//   - The dependency override and the Dependency Test
 //   - SNMP walk
 //   - SD-WAN rule member-selection categorical timeline (the mobile chart
 //     helper is numeric-only; the SD-WAN page shows the current selected
@@ -877,6 +887,10 @@
   var PAGE_KINDS = {
     sdwan:    { render: function (el, p) { renderSdwanPage(el, p.assetId); },
                 leave: function () { _sdwanSheetState = null; } },
+    // Both re-read on Refresh; IPsec draws from the gate's copy otherwise.
+    ipsec:    { render: function (el, p) { renderIpsecPage(el, p); },
+                refresh: function (p) { saveScroll(); p.refetch = true; showPage(); } },
+    deptree:  { render: function (el, p) { renderDepTreePage(el, p); } },
     arp:      { render: function (el, p) { renderTablePage(el, "arp", p.assetId); loadArpSheet(p.assetId); },
                 refresh: function (p) { loadArpSheet(p.assetId); },
                 leave: function () { _tableSheet = null; } },
@@ -954,6 +968,8 @@
       loadSightings(id, st);
       loadIpHistory(id, st);
       loadSdwanGate(id, st, asset);
+      loadIpsecGate(id, asset);
+      wireDepTreeButton(id);
       wireTableButtons(id, asset);
       loadAlerts(id, asset);
       loadFirmwareRow(id, asset);
@@ -1060,6 +1076,11 @@
       + '    <div id="asset-hero-pill">' + monitorPillHtml + '</div>'
       + '    <span id="asset-hero-alerts"></span>'
       + '  </div>'
+      // Dependency Tree — drawn for every asset, as the desktop General tab
+      // draws its block for every asset: the page explains an empty tree.
+      + '  <div style="margin-top:12px;">'
+      + '    <button class="btn btn-tonal btn-block" id="asset-deptree-btn"><svg viewBox="0 0 24 24"><use href="#i-subnet"/></svg>View Dependency Tree</button>'
+      + '  </div>'
       // SD-WAN entry button — hidden until loadSdwanGate confirms this
       // FortiGate firewall actually reported SD-WAN data, then revealed +
       // wired to open the SD-WAN page.
@@ -1109,6 +1130,13 @@
       + sectionHeader("temperatures", "Hardware Sensors", "", st.sections.temperatures, null, "temperature")
       + '<div class="sect-body" data-sect="temperatures"' + (st.sections.temperatures ? '' : ' hidden') + '>'
       + '  <div id="asset-temperatures-host"><div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div></div>'
+      + '</div>'
+
+      // IPsec — hidden until loadIpsecGate finds tunnels or peers on this
+      // Fortinet firewall (the desktop IPsec tab's prefetch-then-show).
+      + '<div class="asset-storage-entry" id="asset-ipsec-btn-wrap" hidden>'
+      + '  <button class="btn btn-tonal btn-block" id="asset-ipsec-btn"><svg viewBox="0 0 24 24"><use href="#i-shield"/></svg>View IPsec</button>'
+      + '  <div class="asset-storage-sub" id="asset-ipsec-sub"></div>'
       + '</div>'
 
       // Interfaces section — populated by loadSystemInfo (operStatus=="up" only).
@@ -1677,7 +1705,18 @@
   }
 
   function renderInterfaces(host, info, assetId, st, asset) {
-    var ifaces = (info && info.interfaces) || [];
+    // IPsec tunnels are the IPsec page's, as they are the desktop IPsec tab's
+    // and not its Interfaces table: FortiGate reports each one twice, as an
+    // IPsec tunnel and as a tunnel-type interface. A tunnel interface with no
+    // IPsec twin (GRE, VXLAN, ssl.root) stays. Mirrors _renderInterfacesTable.
+    var ipsecNames = Object.create(null);
+    var ipsecCount = 0;
+    ((info && info.ipsecTunnels) || []).forEach(function (tn) {
+      if (tn && tn.tunnelName && !ipsecNames[tn.tunnelName]) { ipsecNames[tn.tunnelName] = true; ipsecCount++; }
+    });
+    var ifaces = ((info && info.interfaces) || []).filter(function (i) {
+      return !(i.ifType === "tunnel" && ipsecNames[i.ifName]);
+    });
     var monitoredSet = Object.create(null);
     var monitoredArr = (asset && asset.monitoredInterfaces) || [];
     monitoredArr.forEach(function (n) { if (n) monitoredSet[n] = true; });
@@ -1741,7 +1780,19 @@
       + '  <button class="btn btn-tonal" id="iface-show-all-btn" style="width:100%;">' + escapeHtml(btnLabel) + '</button>'
       + '</div>';
 
-    host.innerHTML = poeSummaryHtml(ifaces) + listHtml + toggleHtml;
+    // "4 IPsec tunnels are on the IPsec page" — the line that replaces them.
+    var ipsecPointer = ipsecCount
+      ? '<div class="muted" style="padding:8px 16px 0;font-size:13px;">' + ipsecCount + ' IPsec tunnel' + (ipsecCount === 1 ? ' is' : 's are')
+        + ' on the <a href="#" id="iface-ipsec-link">IPsec page</a>.</div>'
+      : '';
+
+    host.innerHTML = poeSummaryHtml(ifaces) + listHtml + ipsecPointer + toggleHtml;
+
+    var ipsecLink = document.getElementById("iface-ipsec-link");
+    if (ipsecLink) ipsecLink.addEventListener("click", function (e) {
+      e.preventDefault();
+      goToPage({ kind: "ipsec", assetId: assetId, title: "IPsec" });
+    });
 
     // Wire row taps — index into the same `visible` list rendered above.
     host.querySelectorAll(".iface-row").forEach(function (row) {
@@ -2019,6 +2070,348 @@
     if (n >= 1e6) return (n / 1e6) + " Mbps";
     if (n >= 1e3) return (n / 1e3) + " Kbps";
     return n + " bps";
+  }
+
+  // ─── IPsec ───────────────────────────────────────────────────────────────
+  // "View IPsec" (above Interfaces) opens the IPsec page: the desktop IPsec
+  // tab's two lists — Tunnels & peers (each tunnel, and under a dial-up
+  // template the spokes / peers connected through it) and Remote access
+  // (FortiClient users). Read-only: the per-minute pin and a tunnel's history
+  // are desktop-only. A matched peer device opens that asset a page forward.
+  var IPSEC_KIND_LABELS = {
+    "advpn-spoke": "ADVPN spoke", "advpn-shortcut": "ADVPN shortcut", "dialup-peer": "Dial-up peer",
+    "remote-access": "FortiClient (IPsec)", "ssl-vpn": "FortiClient (SSL-VPN)",
+  };
+  function ipsecIsRemoteAccess(c) { return c.kind === "remote-access" || c.kind === "ssl-vpn"; }
+  // The payload the gate fetched, per asset — the page draws from it.
+  var _ipsecCache = Object.create(null);
+
+  // Gate: the desktop's — a firewall from FortiManager / standalone FortiGate,
+  // and the button only once the read returns a tunnel or a connection.
+  function loadIpsecGate(id, asset) {
+    if (!asset || asset.assetType !== "firewall") return;
+    var srcType = (asset.discoveredByIntegration && asset.discoveredByIntegration.type) || "manual";
+    if (srcType !== "fortimanager" && srcType !== "fortigate") return;
+    api.assets.ipsec(id).then(function (data) {
+      if (_openId !== id) return;
+      var tunnels = (data && data.tunnels) || [];
+      var conns = (data && data.connections) || [];
+      if (!tunnels.length && !conns.length) return;
+      _ipsecCache[id] = data;
+      var wrap = document.getElementById("asset-ipsec-btn-wrap");
+      var btn = document.getElementById("asset-ipsec-btn");
+      var sub = document.getElementById("asset-ipsec-sub");
+      if (wrap) wrap.hidden = false;
+      if (btn) btn.onclick = function () { goToPage({ kind: "ipsec", assetId: id, title: "IPsec" }); };
+      if (sub) sub.textContent = ipsecSummary(tunnels, conns);
+    }).catch(function () { /* gate is best-effort — no button on failure */ });
+  }
+
+  // "6 tunnels · 1 down · 42 peers · 3 users" — the line under the button.
+  function ipsecSummary(tunnels, conns) {
+    var down = tunnels.filter(function (t) { return t.status === "down"; }).length;
+    var users = conns.filter(ipsecIsRemoteAccess).length;
+    var peers = conns.length - users;
+    var bits = [tunnels.length + " tunnel" + (tunnels.length === 1 ? "" : "s")];
+    if (down) bits.push(down + " down");
+    if (peers) bits.push(peers + " peer" + (peers === 1 ? "" : "s"));
+    if (users) bits.push(users + " user" + (users === 1 ? "" : "s"));
+    return bits.join(" · ");
+  }
+
+  // "3d 04h" / "5h 12m" / "40m" — how long a connection has been up
+  // (the desktop's _ipsecUptimeLabel).
+  function ipsecUptime(since) {
+    if (!since) return "";
+    var sec = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
+    if (sec < 3600) return Math.max(1, Math.floor(sec / 60)) + "m";
+    if (sec < 86400) return Math.floor(sec / 3600) + "h " + String(Math.floor((sec % 3600) / 60)).padStart(2, "0") + "m";
+    return Math.floor(sec / 86400) + "d " + String(Math.floor((sec % 86400) / 3600)).padStart(2, "0") + "h";
+  }
+
+  // up / down as every asset dot reads; "dynamic" (a dial-up template working
+  // as configured with nobody on it) the passive one, not a verdict.
+  function ipsecDotCls(status) {
+    return status === "up" ? "up" : status === "down" ? "down" : status === "dynamic" ? "passive" : "warn";
+  }
+
+  function renderIpsecPage(el, p) {
+    var cached = _ipsecCache[p.assetId];
+    if (cached && !p.refetch) { drawIpsecPage(el, cached, p); return; }
+    p.refetch = false;
+    el.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    var seq = _pageSeq;
+    api.assets.ipsec(p.assetId).then(function (data) {
+      if (seq !== _pageSeq || currentPage() !== p) return;
+      _ipsecCache[p.assetId] = data;
+      drawIpsecPage(el, data, p);
+      restoreScroll(p);
+    }).catch(function (err) {
+      if (seq !== _pageSeq || currentPage() !== p) return;
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0 16px;">Couldn’t load IPsec: ' + escapeHtml((err && err.message) || "error") + '</div>';
+    });
+  }
+
+  function drawIpsecPage(el, data, p) {
+    var tunnels = (data && data.tunnels) || [];
+    var conns = (data && data.connections) || [];
+    if (!tunnels.length && !conns.length) {
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0 16px;">This firewall reported no IPsec tunnels or VPN connections.</div>';
+      return;
+    }
+    var users = conns.filter(ipsecIsRemoteAccess);
+    var byParent = Object.create(null);
+    var usersByParent = Object.create(null);
+    conns.forEach(function (c) {
+      var k = c.parentTunnel || "";
+      if (ipsecIsRemoteAccess(c)) { if (k) usersByParent[k] = (usersByParent[k] || 0) + 1; return; }
+      (byParent[k] = byParent[k] || []).push(c);
+    });
+    var tunnelNames = Object.create(null);
+    tunnels.forEach(function (t) { tunnelNames[t.tunnelName] = true; });
+    // A peer whose template is not in the tunnel read (that pass failed) still
+    // gets a group of its own.
+    var orphanParents = Object.keys(byParent).filter(function (k) { return !tunnelNames[k]; }).sort();
+    // Which dial-up templates the operator opened — they start closed, since a
+    // hub's ADVPN template can carry hundreds of spokes. Per page visit.
+    var opened = p.openTemplates || (p.openTemplates = Object.create(null));
+
+    function deviceHtml(matched, peerId) {
+      if (matched) return linkHtml(matched.id, matched.hostname || matched.ipAddress || matched.id);
+      return peerId ? '<span class="mono">' + escapeHtml(peerId) + '</span>' : "";
+    }
+    function addr(v) { return v && v !== "0.0.0.0" ? '<span class="mono">' + escapeHtml(v) + '</span>' : ""; }
+    function bytesLine(i, o) {
+      if (i == null && o == null) return "";
+      return "in " + escapeHtml(bytesText(i)) + " · out " + escapeHtml(bytesText(o));
+    }
+    function row(dotCls, headHtml, lines, opts) {
+      opts = opts || {};
+      var body = lines.filter(Boolean).map(function (l) { return '<div class="supporting">' + l + '</div>'; }).join("");
+      return ''
+        + '<div class="list-item two-line ipsec-row' + (opts.nested ? ' ipsec-peer' : '') + '"' + (opts.attrs || '')
+        + ' style="padding-left:' + (opts.nested ? '20px' : '0') + ';padding-right:0;align-items:flex-start;' + (opts.hidden ? 'display:none;' : '') + '">'
+        + '  <span class="leading" style="margin-top:4px;"><span class="dot ' + dotCls + '"></span></span>'
+        + '  <div class="content" style="min-width:0;">'
+        + '    <div class="headline">' + headHtml + '</div>'
+        + body
+        + '  </div>'
+        + (opts.trailing ? '  <span class="trailing">' + opts.trailing + '</span>' : '')
+        + '</div>';
+    }
+    function peerRow(c, parent, hidden) {
+      var kind = escapeHtml(IPSEC_KIND_LABELS[c.kind] || c.kind || "");
+      var up = ipsecUptime(c.connectedSince);
+      return row(ipsecDotCls(c.status), '<span class="mono">' + escapeHtml(c.name || "") + '</span>', [
+        [kind, up ? "up " + escapeHtml(up) : ""].filter(Boolean).join(" · "),
+        [deviceHtml(c.matchedAsset, c.peerId), addr(c.remoteGateway), addr(c.tunnelIp)].filter(Boolean).join(" · "),
+        bytesLine(c.incomingBytes, c.outgoingBytes),
+      ], { nested: true, hidden: hidden, attrs: parent != null ? ' data-parent="' + escapeHtml(parent) + '"' : '' });
+    }
+
+    var html = '<div style="font-weight:500;margin:8px 0 4px;">Tunnels &amp; peers</div>';
+    tunnels.forEach(function (t) {
+      var kids = byParent[t.tunnelName] || [];
+      var collapsible = t.status === "dynamic" && kids.length > 0;
+      var isOpen = !!opened[t.tunnelName];
+      var connected = kids.length + (usersByParent[t.tunnelName] || 0);
+      var kindText = t.status === "dynamic" ? "Dial-up template · " + connected + " connected" : "Site-to-site";
+      var via = [t.parentInterface ? '<span class="mono">' + escapeHtml(t.parentInterface) + '</span>' : "", addr(t.overlayIp)].filter(Boolean).join(" · ");
+      var toggle = collapsible
+        ? '<button type="button" class="btn btn-text ipsec-toggle" data-parent="' + escapeHtml(t.tunnelName) + '" aria-expanded="' + isOpen + '"'
+          + ' aria-label="' + (isOpen ? "Hide" : "Show") + ' peers" style="padding:4px 8px;min-height:0;">'
+          + '<svg viewBox="0 0 24 24" width="20" height="20"><use href="' + (isOpen ? "#i-chev-down" : "#i-chev-right") + '"/></svg>' + kids.length + '</button>'
+        : "";
+      html += '<div class="list-divider"></div>'
+        + row(ipsecDotCls(t.status), '<span class="mono" style="font-weight:600;">' + escapeHtml(t.tunnelName) + '</span>', [
+          escapeHtml(kindText) + " · " + escapeHtml(t.status || "—"),
+          [deviceHtml(t.matchedAsset, null), addr(t.remoteGateway)].filter(Boolean).join(" · "),
+          via,
+          bytesLine(t.incomingBytes, t.outgoingBytes),
+        ], { trailing: toggle });
+      kids.forEach(function (c) { html += peerRow(c, t.tunnelName, collapsible && !isOpen); });
+    });
+    orphanParents.forEach(function (k) {
+      html += '<div class="list-divider"></div>'
+        + row("unk", '<span class="mono" style="font-weight:600;">' + escapeHtml(k || "(no tunnel reported)") + '</span>', ["tunnel not in the last read"]);
+      byParent[k].forEach(function (c) { html += peerRow(c, null, false); });
+    });
+
+    if (users.length) {
+      html += '<div style="font-weight:500;margin:20px 0 4px;">Remote access</div>';
+      users.forEach(function (c, i) {
+        var up = ipsecUptime(c.connectedSince);
+        html += (i ? '<div class="list-divider"></div>' : '')
+          + row(ipsecDotCls(c.status), escapeHtml(c.userName || c.peerId || c.name || "(user)"), [
+            [escapeHtml(IPSEC_KIND_LABELS[c.kind] || c.kind || ""), c.parentTunnel ? "via " + escapeHtml(c.parentTunnel) : "", up ? "up " + escapeHtml(up) : ""].filter(Boolean).join(" · "),
+            [addr(c.remoteGateway), c.tunnelIp ? "assigned " + addr(c.tunnelIp) : ""].filter(Boolean).join(" · "),
+            bytesLine(c.incomingBytes, c.outgoingBytes),
+          ]);
+      });
+    }
+
+    if (data && typeof data.pollIntervalSec === "number") {
+      html += '<div class="muted" style="font-size:12px;margin:16px 0 8px;">Tunnels and connected peers are re-read every ' + escapeHtml(formatPollInterval(data.pollIntervalSec)) + '.</div>';
+    }
+    el.innerHTML = html;
+
+    el.querySelectorAll(".ipsec-toggle").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var name = b.getAttribute("data-parent");
+        opened[name] = !opened[name];
+        var on = opened[name];
+        b.setAttribute("aria-expanded", String(on));
+        b.setAttribute("aria-label", (on ? "Hide" : "Show") + " peers");
+        var use = b.querySelector("use");
+        if (use) use.setAttribute("href", on ? "#i-chev-down" : "#i-chev-right");
+        el.querySelectorAll(".ipsec-peer").forEach(function (r) {
+          if (r.getAttribute("data-parent") === name) r.style.display = on ? "" : "none";
+        });
+      });
+    });
+  }
+
+  function formatPollInterval(sec) {
+    if (sec % 3600 === 0) return (sec / 3600) + " h";
+    if (sec % 60 === 0) return (sec / 60) + " min";
+    return sec + " s";
+  }
+
+  // ─── Dependency Tree ─────────────────────────────────────────────────────
+  // "View Dependency Tree" (top of the hero, above SD-WAN) opens the desktop
+  // General tab's Dependency Tree as a page: the parents this device hangs
+  // off, the device itself (and its HA peer), and the switches / access
+  // points below it with theirs. Every other device's name opens it a page
+  // forward, so the operator can walk the tree. Read-only: the override and
+  // the Dependency Test are desktop-only. Mirrors renderDependencyTreeBlock.
+  var DEP_TREE_VIA_LABEL = {
+    "switch-port": "last-seen switch port", wireless: "last-seen access point", sighting: "last-seen firewall",
+    subnet: "owning firewall (from IPAM)", hypervisor: "hypervisor placement", manual: "operator override",
+  };
+
+  function wireDepTreeButton(id) {
+    var btn = document.getElementById("asset-deptree-btn");
+    if (btn) btn.onclick = function () { goToPage({ kind: "deptree", assetId: id, title: "Dependency Tree" }); };
+  }
+
+  function renderDepTreePage(el, p) {
+    el.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    var seq = _pageSeq;
+    api.assets.getDependencies(p.assetId).then(function (data) {
+      if (seq !== _pageSeq || currentPage() !== p) return;
+      drawDepTreePage(el, data || {});
+      restoreScroll(p);
+    }).catch(function (err) {
+      if (seq !== _pageSeq || currentPage() !== p) return;
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0 16px;">Couldn’t load the dependency tree: ' + escapeHtml((err && err.message) || "error") + '</div>';
+    });
+  }
+
+  // A tree node's dot: the Dependency Test outranks the rest, then the
+  // asset dot's own order (monitorDotCls). Unmonitored reads unknown.
+  function depNodeDotCls(n) {
+    if (!n || n.monitored === false) return "unk";
+    if (n.dependencyTestUntil && new Date(n.dependencyTestUntil).getTime() > Date.now()) return "dep-down";
+    return monitorDotCls(n) || "unk";
+  }
+
+  function drawDepTreePage(el, data) {
+    var parents = Array.isArray(data.effectiveParents) ? data.effectiveParents : [];
+    var children = Array.isArray(data.children) ? data.children : [];
+    var self = data.asset || {};
+    var haPeer = data.haPeer || null;
+
+    if (!parents.length && !children.length && !haPeer) {
+      var isInfra = ["firewall", "switch", "access_point"].indexOf(self.assetType) !== -1;
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0 16px;">'
+        + (isInfra
+          ? "Standalone — no upstream or downstream switches / access points discovered."
+          : "No upstream device identified — no last-seen switch, access point or FortiGate resolves to a monitored device, so dependency suppression can’t apply to this asset.")
+        + '</div>';
+      return;
+    }
+
+    // Rule 91: two nodes sharing a name get their serial (or address) beside it.
+    var nameCounts = Object.create(null);
+    function countName(n) { if (n && n.hostname) { var k = String(n.hostname).toLowerCase(); nameCounts[k] = (nameCounts[k] || 0) + 1; } }
+    parents.forEach(function (x) { countName(x.parent); });
+    countName(self); countName(haPeer);
+    children.forEach(function (c) { countName(c); (c.grandchildren || []).forEach(countName); });
+    function disambig(n) {
+      if (!n || !n.hostname || (nameCounts[String(n.hostname).toLowerCase()] || 0) < 2) return "";
+      return n.serialNumber || n.ipAddress || "";
+    }
+
+    function nodeRow(n, opts) {
+      opts = opts || {};
+      var name = n.hostname || n.id;
+      var head = opts.self ? '<strong>' + escapeHtml(name) + '</strong>' : linkHtml(n.id, name);
+      var d = disambig(n);
+      if (d) head += ' <span class="muted mono" style="font-size:12px;">' + escapeHtml(d) + '</span>';
+      if (n.activeAlert && window.PolarisMobileAlerts) head += ' ' + PolarisMobileAlerts.dotHTML(n.activeAlert);
+      var bits = [escapeHtml(String(n.assetType || "asset").replace(/_/g, " "))];
+      if (n.dependencyLayer != null) bits.push("level " + escapeHtml(String(n.dependencyLayer)));
+      if (opts.via && DEP_TREE_VIA_LABEL[opts.via]) bits.push("via " + escapeHtml(DEP_TREE_VIA_LABEL[opts.via]));
+      if (opts.override) bits.push("override");
+      if (opts.tag) bits.push(escapeHtml(opts.tag));
+      if (opts.more > 0) bits.push("+" + opts.more + " more below");
+      return ''
+        + '<div class="list-item two-line" style="padding-left:' + (opts.depth ? (opts.depth * 20) + 'px' : '0') + ';padding-right:0;align-items:flex-start;">'
+        + '  <span class="leading" style="margin-top:4px;"><span class="dot ' + depNodeDotCls(n) + '"></span></span>'
+        + '  <div class="content" style="min-width:0;">'
+        + '    <div class="headline">' + head + '</div>'
+        + '    <div class="supporting">' + bits.join(" · ") + '</div>'
+        + '  </div>'
+        + '</div>';
+    }
+    function heading(text, first) {
+      return '<div style="font-weight:500;margin:' + (first ? '8px' : '20px') + ' 0 4px;">' + escapeHtml(text) + '</div>';
+    }
+
+    var subtitle;
+    if (!parents.length) subtitle = "Level 1 — root of the dependency tree";
+    else if (parents.length === 1) subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · directly under " + (parents[0].parent.hostname || parents[0].parent.id);
+    else subtitle = "Level " + (self.dependencyLayer != null ? self.dependencyLayer : "?") + " · " + parents.length + " parents";
+
+    var html = '<div class="muted" style="font-size:13px;margin:4px 0 0;">' + escapeHtml(subtitle) + (data.hasOverride ? " · override active" : "") + '</div>';
+    var testUntil = self.dependencyTestUntil ? new Date(self.dependencyTestUntil) : null;
+    if (testUntil && testUntil.getTime() > Date.now()) {
+      html += '<div class="card-filled" style="padding:10px 12px;margin-top:8px;font-size:13px;"><strong>Dependency Test active</strong>'
+        + (self.dependencyTestStartedBy ? " by " + escapeHtml(self.dependencyTestStartedBy) : "")
+        + " — children are suppressed as if this device were down. Auto-clears " + escapeHtml(testUntil.toLocaleString()) + ".</div>";
+    }
+
+    if (parents.length) {
+      html += heading("Upstream");
+      parents.forEach(function (x, i) {
+        html += (i ? '<div class="list-divider"></div>' : '')
+          + nodeRow(x.parent, { via: x.detectedVia, override: x.source === "override" });
+      });
+    }
+
+    html += heading("This device");
+    html += nodeRow(self, { self: true });
+    if (haPeer) {
+      var peerTag = haPeer.haRole === "secondary" ? "HA standby" : haPeer.haRole === "primary" ? "HA primary (active)" : "HA peer";
+      html += '<div class="list-divider"></div>' + nodeRow(haPeer, { tag: peerTag });
+    }
+
+    if (children.length) {
+      html += heading("Downstream");
+      children.forEach(function (c, i) {
+        var gcs = Array.isArray(c.grandchildren) ? c.grandchildren : [];
+        var more = typeof c.childCount === "number" ? Math.max(0, c.childCount - gcs.length) : 0;
+        html += (i ? '<div class="list-divider"></div>' : '')
+          + nodeRow(c, { via: c.detectedVia, more: more });
+        gcs.forEach(function (gc) { html += nodeRow(gc, { depth: 1, via: gc.detectedVia }); });
+      });
+      if (data.childrenTruncated) {
+        var total = typeof data.childCount === "number" ? data.childCount : 0;
+        html += '<div class="muted" style="font-size:12px;margin-top:8px;">Showing ' + children.length + ' of '
+          + Math.max(total, children.length) + ' downstream switches / access points.</div>';
+      }
+    }
+    el.innerHTML = html;
   }
 
   // ─── Storage ─────────────────────────────────────────────────────────────

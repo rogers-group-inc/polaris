@@ -220,6 +220,26 @@ mounted volumes — Polaris has no physical-drive data for them — and a vCente
 host shows its datastores' type and backing on each volume. The line under the
 button summarises the page, for example *2 arrays · 8 drives · 1 degraded*.
 
+**View Dependency Tree** is the first button under the status pill, on every
+device. It shows the device's place in the dependency tree, as the desktop
+*General* tab does: the devices it hangs off (**Upstream**), the device itself
+and its HA peer (**This device**), and the switches and access points below it
+with theirs (**Downstream**). Each row has its monitor-status dot, type, level
+and how the link was detected. Tapping any other device opens it as the next
+page, so you can walk up or down the tree. A device with no upstream says why
+dependency suppression can't apply to it. The override and the Dependency Test
+are set on the desktop.
+
+**View IPsec**, directly above *Interfaces*, appears on a FortiGate that reports
+IPsec tunnels or VPN connections — the desktop *IPsec* tab. The line under it
+counts them (for example *6 tunnels · 1 down · 42 peers · 3 users*). The page
+lists each tunnel with its status, remote gateway, interface and traffic; under
+a dial-up template, the spokes and peers connected through it, closed until you
+tap the count; then the FortiClient users under **Remote access**. A peer
+matched to a known device links to it. Because the tunnels have their own page,
+*Interfaces* no longer lists their tunnel interfaces; a line there points to the
+IPsec page. Pinning a tunnel and its history are on the desktop.
+
 **A switch, access point or FortiGate can be upgraded from its sheet.** When the
 [Repository](Server-Settings#repository) holds newer firmware for the device,
 its **OS** row under *General* carries **Upgrade to &lt;version&gt;**. Tapping it
