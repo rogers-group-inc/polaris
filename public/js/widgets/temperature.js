@@ -31,7 +31,7 @@
     PolarisTopN.renderRows(el, shown, {
       unit: TU ? TU.celsiusLabel() : "°C",
       thresholds: thresholds, baseColor: "#4fc3f7", emptyText: EMPTY, config: config || {}, fillTo: 20,
-      valueNoun: "temperature",
+      valueNoun: "temperature", valueHeader: "Temperature (" + (TU ? TU.celsiusLabel() : "°C") + ")",
     });
   }
 
