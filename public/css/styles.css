@@ -4917,7 +4917,9 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
    label colour, the label held inside the theme's --hue-label-l lightness band
    (≤ 0.5 daylight, ≥ 0.78 nightfall), the border at 45% of that held label.
    Each class owns only its LABEL colour (and any per-theme override of it);
-   its own background / border-color values no longer show.
+   its own background / border-color values no longer show. One exception:
+   the daylight .widget-pill-orange / -amber / -red ring (see "Widget pills
+   on a daylight ground") outranks this block on purpose.
 
    Excluded from the colour half: .hue-pill (the same recipe from its raw
    --hue), the outline-only Passive monitor state (its empty fill IS its
@@ -8641,30 +8643,47 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    size; nightfall already clears it at 3.9–7.7:1, which is why this is a
    family override and not an edit to the values above.)
 
-   Two changes, because neither alone is enough: the tint goes to 30% so the
-   chip has a body on a light ground, and the ink goes to a dark hued tone
-   rather than the theme accent — the accents are mid-tone and still only
-   reached ~2.8–4.4:1 on these tints. One set serves all three daylight
-   palettes (worst case 5.2:1, on afternoon) rather than three near-identical
-   blocks. Hue is preserved per variant, so the severity vocabulary
-   — green ok, blue watch, amber attention, orange serious, red problem,
-   slate neutral — survives the shift. ───────────────────────────────── */
+   Two answers, by what the pill means.
+
+   ok / watch / neutral (capacity tiers, neutral counts): the tint goes to
+   30% so the chip has a body on a light ground, and the ink goes to a dark
+   hued tone rather than the theme accent — the accents are mid-tone and
+   still only reached ~2.8–4.4:1 on these tints (worst case 5.2:1, on
+   afternoon).
+
+   orange / amber / red (the alert severities Serious / Warning / Critical,
+   and the capacity "amber" / "red" tiers): the nightfall pill, kept as
+   close to nightfall as cream allows — its ink, its 18% tint into
+   transparent, nightfall's label band (L ≥ 0.78) on the pill so the
+   daylight clamp (L ≤ 0.5) cannot darken it, the border at the full ink
+   instead of 45% so each pill is a crisp ring in its own colour, and no
+   pill shadow. Warning alone takes a deeper amber (#a67c00, label clamp
+   released so it is drawn as written): nightfall's #ffd54f scored ~1.1:1
+   on morning. (Operator decision 2026-10-29, chosen from mocks; it
+   replaced dark-hued inks under which Warning #6b4400 and Serious #7a3f00
+   read as one brown on morning.)
+
+   Specificity: :root:is(theme) + two classes beats the pill family's
+   `:root :is(…)` (0,3,0) and the `.recent-item-title .widget-pill-*` ink
+   re-assertions; the ok / watch / neutral inks are plain theme rules, so
+   they are re-stated one level deeper to win inside an alert title. ── */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-ok { background: rgba(76,175,80,0.30); color: #1b5e20; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-watch { background: rgba(79,195,247,0.30); color: #01466f; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-amber { background: rgba(255,193,7,0.30); color: #6b4400; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-orange { background: rgba(255,138,0,0.30); color: #7a3f00; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-neutral { background: rgba(148,163,184,0.30); color: #2b373d; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-red { background: rgba(255,23,68,0.30); color: #8c0d1c; }
-
-/* The .recent-item-title rules above re-assert the dark inks at the same
-   specificity these have, so the daylight set has to be re-stated one level
-   deeper to win inside an alert title. */
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-ok { color: #1b5e20; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-watch { color: #01466f; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-amber { color: #6b4400; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-orange { color: #7a3f00; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-neutral { color: #2b373d; }
-:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-red { color: #8c0d1c; }
+
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill:is(.widget-pill-orange, .widget-pill-amber, .widget-pill-red) {
+  --hue-label-l-min: 0.78;
+  --hue-label-l-max: 1;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  border-color: currentColor;
+  box-shadow: none;
+}
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-orange { color: #ff8a00; }
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-red    { color: #ef5350; }
+:root:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill.widget-pill-amber  { color: #a67c00; --hue-label-l-min: 0; }
 
 /* ─── Site Map widget markers ─────────────────────────────────────────────
  * Lifted from map.css so the siteMap dashboard widget renders correctly on

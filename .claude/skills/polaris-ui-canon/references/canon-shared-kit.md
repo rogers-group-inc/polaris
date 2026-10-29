@@ -103,7 +103,8 @@ unselected page tab).
   `--shadow-panel` floats free over a scrim; `--shadow-md` floats over the page (menus,
   dropdowns, `.table-wrapper`); `--shadow-control` is small chrome resting on it;
   `--shadow-card` is a big opaque box resting on it; `--shadow-pill` is the tightest of
-  them, for `.badge` and `.widget-pill` only. A pill is not a control — it takes far less
+  them, for `.badge` and `.widget-pill` only (except the three daylight severity widget pills,
+  which take no shadow — see § The pill family). A pill is not a control — it takes far less
   lift than `--shadow-control`, because at 0.72rem in a dense table anything blurrier
   reads as a smudge. It is also the one elevation defined per FAMILY rather than per
   theme (`:root` and the daylight base), since separating a tinted chip from the surface
@@ -433,6 +434,13 @@ bright label ("Missed" in `#f57f17`) all but vanished on daylight.
   the element's own colour), and a border at 45% of the clamped label. `:root` + `:not()` lift
   it above every per-class and per-theme rule wherever they sit, so those rules now supply only
   the label colour; their old `background` / `border-color` values no longer paint.
+  **One deliberate exception (operator decision 2026-10-29):** on the daylight themes,
+  `.widget-pill-orange` / `-amber` / `-red` (the dashboard's Serious / Warning / Critical) keep
+  nightfall's label band (≥ 0.78) and draw the border at the FULL label instead of 45%, with no
+  `--shadow-pill`. Warning's label is `#a67c00` with the clamp released. They are outranked only
+  by a `:root:is(theme) .widget-pill.widget-pill-*` block in the widget-pill section of
+  `styles.css`; polaris-ui-canon → canon-charts-widgets.md has the reasoning. Do not fold them
+  back into the shared recipe.
 - **Members:** `.badge` (every `badge-*`), `.capacity-pill`, `.advisor-pill`, `.widget-pill`,
   `.fw-pill` (+ `fw-binding-` / `fw-role-` / `fw-warn-` / `fw-orphan-` / `fw-engine-pill`),
   `.integration-type-badge`, `.vip-badge`, `.dep-tree-source-tag`, `.dep-tree-override-tag`,
