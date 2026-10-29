@@ -111,6 +111,34 @@ first, cold case), and the late row would otherwise survive into the next case's
 And having watched a new test pass, make it FAIL once (comment out the guard it covers) before
 trusting it — a route-level assertion that never saw red has proven nothing.
 
+### Telling a real failure from the known noise
+
+- **CPU-heavy cases carry a 30 s describe timeout** since 2026-10-29 (image renders in
+  `appIconService` / `brandLogoService`, the tree walks in `rootHelperHintsFullPath` /
+  `apiClientReferences` / `panelBundleCollisions`, bash spawns in `rootHelpersHeld`, and the
+  integration `workloadSync` / `mapRegionSubnetTags` blocks). A NEW 5 s timeout elsewhere that
+  passes alone is the same load effect: re-run the file alone, then give that describe a
+  `{ timeout: 30_000 }` rather than logging it again. A fresh `npm ci` tree is slower still on
+  its first run.
+- **Five files fail on the Windows host and pass on Linux CI**: `installerRootFiles`,
+  `nginxConfContentCheck`, `remoteStaging`, `rootHelpersHeld`, `securityPhase8` (they execute
+  deploy shell scripts). Attribute any other failure by running the same files on `main`.
+  When filtering output, collect unique `FAIL` file names — never `tail` / `Select-Object
+  -Last N`, which drops files off the list.
+- **Never `-t` a name filter across integration files.** Later cases in a file (e.g.
+  `llmAssistant`) depend on state an earlier case set up; `-t` skips the setup and the
+  dependants fail. Name whole files instead.
+- **An integration fixture that creates a Fortinet firewall / switch / AP with a serial races
+  the asset-source shadow write** (`shadowWriteAssetSources` in the `db.ts` create hook upserts
+  the same `(sourceKind, externalId)` row): a fixture's own `assetSource.create` then fails
+  P2002, intermittently. Upsert on `sourceKind_externalId` in the fixture.
+- **A new Prisma call on an engine path breaks unit tests with hand-rolled mocks** — the call
+  throws inside a `catch` and the case fails as "expected [] to have a length of 1". Grep
+  `tests/unit` for the model's mock object (`notification: {`) and add the method.
+- **`.catch(() => null)` around a service call hides contract mismatches** a mocked unit test
+  cannot see (`findNextAvailableIps` throws 409 when it cannot return the FULL count asked for).
+  Such a call needs a real-DB test.
+
 ## Tear it down
 
 ```

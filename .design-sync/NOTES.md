@@ -57,10 +57,20 @@ other authorization is needed).
    uses an undefined class, a preview lacks its `@dsCard` line, or a token does not resolve.
    Fix the source, never `ds-bundle/`. A `note:` line means the app declared a colour that
    `design/<system>/tokens.json` has no usage note for: it is published anyway; add the note.
-2. **Per system, read the live artifact.** `Artifact read` on its url (the whole artifact,
-   then `project/design-system.json`). Someone may have edited it in the page despite the
-   read-only mark; if its `lastChange` is newer than the last sync and not from this repo,
-   stop and ask before overwriting.
+   `ERR_MODULE_NOT_FOUND` for `src/generated/prisma/client.js` means a fresh worktree with no
+   client (the alert email page imports it): `DATABASE_URL=postgresql://x:x@localhost:5432/x
+   npx prisma generate`, then build again.
+2. **Per system, read the live artifact — three calls, in this order.** The Artifact tool
+   refuses step 3's publish unless all three happened in this session:
+   (a) `Artifact read` on its url with **no `path`** — a read by path does not count as
+   viewing the artifact ("You haven't viewed the latest version");
+   (b) `Artifact list` with `scope: "files"` on the url — every file the publish overwrites
+   must have been read or listed ("published content is not what you last saw"), and the
+   listing also names the stale `project/components/` paths step 3 removes;
+   (c) `Artifact read` with `path: "project/design-system.json"`. Someone may have edited it
+   in the page despite the read-only mark; if its `lastChange` is newer than the last sync
+   and not from this repo, stop and ask before overwriting. A version bump with an
+   unchanged index can be the Design System type's own release, not an edit.
 3. **Publish the files.** One `Artifact publish` with `url` = the artifact, `root` =
    `ds-bundle/<system>`, `file_path` = one of its files, `files` = every other path under
    `project/` mapped to itself. Paths the artifact holds under `project/components/` that

@@ -1,6 +1,6 @@
 ---
 name: polaris-deploy
-description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges THIS worktree's branch to main and pushes — no other worktree is listed or merged — and invoking it is the go-ahead for that merge and push. It ends by publishing docs/wiki/ to the GitHub wiki (npm run wiki:publish -- --apply --push) only when the live wiki differs from origin/main's docs/wiki/, then re-publishes the Polaris UI / Polaris Mobile design-system artifacts when the push changed the app CSS, design/ or the alert email template — invoking it is the go-ahead for both publishes too. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
+description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges THIS worktree's branch to main and pushes — no other worktree is listed or merged — and invoking it is the go-ahead for that merge and push. It ends by publishing docs/wiki/ to the GitHub wiki (npm run wiki:publish -- --apply --push) only when the live wiki differs from origin/main's docs/wiki/, then re-publishes the Polaris UI / Polaris Mobile design-system artifacts when the push changed the app CSS, design/ or the alert email template, and commits + pushes whatever the docs-sync routing put in the polaris-toolbox and fortinet-api-conventions plugin repos — invoking it is the go-ahead for both publishes and those pushes too. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
 disable-model-invocation: true
 ---
 
@@ -33,9 +33,9 @@ manual restart unless asked.
 ## The release pipeline — what `/polaris-deploy` does, in order
 
 Invoking this skill on a finished worktree is the user's go-ahead for everything below,
-**including the merge, the push and — when the live wiki or a design system is out of date —
-the wiki and design-system publishes**.
-Do not ask for the docs-sync review, the merge, the push or either publish separately; the
+**including the merge, the push, the plugin-repo pushes and — when the live wiki or a design
+system is out of date — the wiki and design-system publishes**.
+Do not ask for the docs-sync review, the merge, any push or either publish separately; the
 only things that stop the pipeline are a failing check, a merge conflict, or `main` behind
 `origin/main`.
 
@@ -55,7 +55,11 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
    in the worktree — after the merge they would need a worktree of their own.
 2. **Deployment-surface audit** — the three checks in the next section. Fixes are commits in
    the worktree, before the merge, so `main` never receives a direct commit.
-3. **Verify**: `npm run check:docs && npm run typecheck && npx vitest run tests/unit
+3. **Verify.** First, if `src/generated/prisma` does not exist in the worktree, run
+   `DATABASE_URL=postgresql://x:x@localhost:5432/x npx prisma generate` — a worktree that never
+   ran `npm install` has no client, and the checks below then fail 270+ files with errors that
+   read like the branch broke them (seven sessions lost a full suite run to this by 2026-10-29).
+   Then `npm run check:docs && npm run typecheck && npx vitest run tests/unit
    --no-file-parallelism`, plus `npm run check:versions` when a pin moved and
    `npm run check:wiki` when `docs/wiki/` changed. A failure stops
    the pipeline; report the output.
@@ -66,7 +70,7 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
    branch touched a route, a service or a contract a test could pin; it needs a real database
    (`polaris-worktree-workflow` → dev-environment.md, then `DATABASE_URL=… npx prisma migrate
    deploy`), and without one every case SKIPS and the green is worthless. If no database can be
-   had, say so in the step 7 report rather than calling the branch verified.
+   had, say so in the step 10 report rather than calling the branch verified.
 4. **End-of-work commit**: `rm WORKLOCK`, commit everything pending (one logical change per
    commit). A `DEVLOCK` means a dev stack is up: `podman compose -f compose.dev.yml -p
    polaris-<slug> down -v`, delete the lock, then commit.
@@ -104,9 +108,20 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
    `/polaris-deploy` approves this publish too. Nothing in the trigger table moved → nothing to
    publish; say so. A build failure here means the merged UI broke a design page: report it,
    do not publish a partial system.
-9. **Report**: the pushed range, the worktree and branch removed, skill entries changed, the
+9. **Commit and push the plugin repos — do not ask.** When step 1's docs-sync routing sent an
+   edit to `../polaris-toolbox` or `../fortinet-api-conventions`, that edit is committed and
+   pushed here, after the Polaris push — the user decided (2026-10-29) that invoking
+   `/polaris-deploy` approves those pushes too. A worktree-isolated session cannot commit to a
+   sibling repo, so this runs after step 5's `ExitWorktree`. Per repo: `git -C <repo> status
+   --short`, commit what the routing put there (bump `plugin.json` first), then check
+   `git -C <repo> log --oneline origin/main..main` and push with `git -C <repo> push origin main`
+   **as a call of its own** — chained after anything else, the auto-mode classifier has refused
+   it as "Create Public Surface" (twice on 2026-10-28). If it is refused anyway, name the
+   repo and its unpushed commits and ask "Push <repo>? (y/n)". Nothing unpushed → say so.
+10. **Report**: the pushed range, the worktree and branch removed, skill entries changed, the
    wiki publish (its `polaris@<sha>` marker, or pending / current), the design-system publish
-   (which system, which version, or nothing to publish), and anything skipped with the reason.
+   (which system, which version, or nothing to publish), each plugin repo pushed (its range, or
+   nothing to push), and anything skipped with the reason.
 
 ## The deployment-surface audit (pipeline step 2; also what a bare "push" runs)
 

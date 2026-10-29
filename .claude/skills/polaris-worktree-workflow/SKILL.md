@@ -38,25 +38,42 @@ description: "Polaris session workflow: start every task in its own git worktree
 
 ## Start of a task (short form)
 
-```
-EnterWorktree name=<slug>                     # branch worktree-<slug>, cwd switches
-printf '%s %s\n' "$(date -u +%FT%TZ)" "<purpose>" > WORKLOCK
-cp <main-checkout>/.env .env                  # gitignored; only needed for prisma generate / tests
-npm install --no-audit --no-fund              # own node_modules + generated Prisma client
-```
+**Each numbered line is its own tool call. Never join them with `&&` / `;`.** Joined, the
+worktree Bash guard refuses the whole call (it contains git, or a `$(…)`), the client never
+gets generated, and the first typecheck fails — eight logged sessions did exactly this.
 
-**The Prisma client is not optional, even when you skip `npm install`.** Node finds the main
-checkout's `node_modules` up-tree, so a worktree runs vitest / tsc / the design build without
-its own install, but `src/generated/prisma` is resolved INSIDE the worktree and a fresh one has
-none. Skipping step 2 is fine for a front-end-only change; skipping the client is not, so run
-this before the first test or typecheck:
+1. `EnterWorktree name=<slug>` — branch `worktree-<slug>`, cwd switches. If it errors with
+   **"core.worktree redirect"**, the worktree WAS created: the session launched from a
+   lowercase `c:\` and git reports `C:/`. Call `EnterWorktree path=<main-checkout with an
+   uppercase drive>/.claude/worktrees/<slug>` straight away; nothing else is wrong.
+2. Write `WORKLOCK` — the Write tool works (the hook exempts the lock itself), or Bash
+   `printf '%s %s\n' "<ISO time>" "<purpose>" > WORKLOCK` alone.
+3. `DATABASE_URL=postgresql://x:x@localhost:5432/x npx prisma generate` — ~1 s, no DB contacted.
+   **Not optional, even when you skip `npm install`.** Node finds the main checkout's
+   `node_modules` up-tree, so vitest / tsc / the design build run without an install, but
+   `src/generated/prisma` is resolved INSIDE the worktree and a fresh one has none. A test
+   that fails in a fresh worktree is the missing client until proved otherwise (the four ways
+   it shows up: worktree-setup.md step 5).
+4. Only when the change needs them: `cp <main-checkout>/.env .env` (tests against a DB), and
+   `npm install --no-audit --no-fund` (a dependency change).
+5. Any git you want (`git log -1`, `npm run rules:next`) — each in its own call.
 
-```
-DATABASE_URL=postgresql://x:x@localhost:5432/x npx prisma generate   # ~1 s; no DB contacted
-```
+## Shell inside a worktree — what the Bash guard refuses
 
-A test that fails in a fresh worktree is the missing client until proved otherwise
-(the four ways it shows up: worktree-setup.md step 5).
+A worktree-isolated session's Bash guard refuses any command it cannot prove stays inside the
+worktree, whatever the command actually does. ~24 logged refusals, all one of these shapes:
+
+| Refused | Do instead |
+|---|---|
+| git in a compound command (`x && git …`, `git … ; y`, `git … \| grep`, `git show … > file`) | git alone, one command per call |
+| any heredoc — `cat >> f <<'EOF'`, `python - <<'EOF'`, `node -e` with a long script | append / replace with **Edit**; for a scripted multi-file edit, **Write** the script to the scratchpad and run `python <script> <args>` as one line |
+| a shell variable or `$(…)` as a path (`S=.claude/skills; sed … $S/x`) | spell every path out literally |
+| `cd` to a computed path; a `cd` out of the worktree | stay at the worktree root; absolute literal paths |
+| a word containing "git" (`.github/…`) or `gh` inside a compound | that command alone |
+
+Multi-line replacements in a script: this checkout has CRLF files (`public/js/*`); normalise
+`\r\n` before matching, or use Edit, which matches either. Non-ASCII text (`—`) does not survive
+a Git Bash heredoc on Windows — another reason for Write + run.
 
 ## End of a task (short form)
 
