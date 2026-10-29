@@ -1707,6 +1707,14 @@ checks each file is really a PNG, JPEG, WebP or GIF, whatever its name says. A
 screenshot tells the assistant what you are asking about. Facts still come from
 a lookup run as you, and when the two disagree the lookup wins.
 
+**An answer with no lookup behind it (95(m)).** If the assistant answers
+without running any lookup but says it checked something, or gives device
+counts, Polaris withdraws that answer and asks the model again, once, telling it
+to look the facts up. If the second answer still has no lookup behind it,
+Polaris keeps it and adds a line saying no lookup was run, so its figures did
+not come from your install. The assistant's own earlier answers in a
+conversation do not count as lookups.
+
 See [AI Assistant](AI-Assistant).
 
 ### Rule 96

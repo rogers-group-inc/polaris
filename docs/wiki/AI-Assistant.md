@@ -425,6 +425,8 @@ See [rule 95](Business-Rules#rule-95).
 | "Thinking…" counts up with no reasoning shown | a non-thinking model loading or working on slow hardware; the first answer after the model loads is the slowest |
 | Answers arrive all at once instead of streaming | a proxy or load balancer in front of Polaris buffers responses; the answer still arrives |
 | "Not permitted" in an answer | your role cannot read that area — the assistant is telling you, not failing |
+| An answer appears, vanishes and is rewritten | it gave facts without looking anything up, and Polaris asked it again to run the lookups ([rule 95(m)](Business-Rules#rule-95)) |
+| "Polaris ran no lookup for this answer" under a reply | asked again, the model still looked nothing up — do not trust its figures; ask again naming the device or list you want |
 | "Help is not available on this install" | the `docs/wiki` folder is missing from this install |
 | Azure: "refused the API key (HTTP 401)" | the key is wrong or was regenerated — paste Key 1 or Key 2 again |
 | Azure: "Entra ID refused the token request … AADSTS…" | the tenant ID, client ID or secret is wrong, or the secret expired; the AADSTS code says which |

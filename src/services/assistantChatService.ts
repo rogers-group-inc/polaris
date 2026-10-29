@@ -262,7 +262,8 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "How to work:",
     "- Talk naturally. Small talk and follow-up questions are fine; earlier turns are context.",
     "- Any fact about THIS install (devices, alerts, networks, events, counts, times) must come from a tool. " +
-      "Never invent hostnames, IPs, counts or timestamps. If the tools return nothing, say so.",
+      "Never invent hostnames, IPs, counts or timestamps. If the tools return nothing, say so. Never say you " +
+      "checked something you did not look up this turn; your earlier answers are not lookups.",
     "- For questions about how to use, configure or troubleshoot Polaris, call search_help first and answer ONLY " +
       "from what it returns, linking the page with the exact url it gave, as [Page — Section](url). Never make up a " +
       "link, a page, a button or a menu. If the help has nothing, say you are not sure.",
@@ -409,6 +410,35 @@ export function reportTitleFromQuestion(text: string): string {
 
 /** What the reply says when, after a report, the model said nothing BUT a table. */
 const REPORT_READY_TEXT = "The report is ready — preview and download it below.";
+
+/**
+ * An answer that reads as looked up: it says it checked, or it counts devices.
+ * Asked of a turn that ran NO lookup (rule 95(m)) — seen live 2026-10-28 on
+ * Foundry Claude Haiku 5.5 with the Efficiency Advisor persona: "214
+ * firewalls", a device's detail and a profile's contents, each said to be
+ * checked, with no tool called. Tuned for that, not for recall: a plain
+ * how-to or small talk must not match. Exported for tests.
+ */
+export function claimsUnlookedFacts(text: string): boolean {
+  return (
+    /\bI(?:'ve| have)?\s+(?:just\s+|already\s+)?(?:checked|looked(?:\s+it)?\s+up|looked\s+at|verified|confirmed|queried|pulled|reviewed|searched)\b/i.test(text) ||
+    /\b\d[\d,]*\s+(?:firewalls?|switch(?:es)?|access\s+points?|APs|devices?|assets?|servers?|networks?|subnets?|reservations?|alerts?)\b/i.test(text) ||
+    /\baccording to (?:Polaris|the inventory|your inventory|the data)\b/i.test(text)
+  );
+}
+
+/**
+ * Sent once, as the user's side of the turn, when an answer claimed facts
+ * without a lookup: the answer is withdrawn and the model asked again.
+ */
+const LOOKUP_NUDGE =
+  "(From Polaris, not the user.) Your reply stated facts about this install, but you ran no lookup this turn, " +
+  "so none of them are verified. Earlier answers in this conversation are not lookups either. Call the tools " +
+  "that answer the question now, then answer only from what they return. If no tool can answer it, say that " +
+  "instead of giving figures.";
+
+/** Added by Polaris under an answer that still claimed facts after the nudge. */
+const UNVERIFIED_NOTE = "\n\n_Polaris ran no lookup for this answer, so its figures are not from your install._";
 
 /**
  * Remove Markdown pipe tables (a header line, a `|---|` separator, its rows)
@@ -746,6 +776,8 @@ export async function streamAssistantTurn(input: {
   };
   let stopped = false;
   let failure: string | null = null;
+  let lookups = 0;
+  let nudged = false;
 
   // Once a report exists in this turn, later rounds are HELD rather than
   // streamed: the model has not seen the report's rows (create_report hands
@@ -815,6 +847,16 @@ export async function streamAssistantTurn(input: {
         if (roundText.trim()) onText(roundText);
       }
       const spoke = Boolean(roundText.trim());
+      // Rule 95(m): an answer that claims facts with no lookup behind it is
+      // withdrawn and asked again, once, with every tool on offer.
+      if (calls.length === 0 && !lastRound && !nudged && lookups === 0 && reports.length === 0 && tools.length > 0 && claimsUnlookedFacts(answer)) {
+        nudged = true;
+        messages.push({ role: "assistant", content: answer });
+        messages.push({ role: "user", content: LOOKUP_NUDGE });
+        answer = "";
+        emit("retract", { from: 0 });
+        continue;
+      }
       if (calls.length === 0 || lastRound) break;
 
       // `raw` (Claude's own blocks, thinking included) is replayed verbatim —
@@ -847,6 +889,7 @@ export async function streamAssistantTurn(input: {
         prefaceOffered = true;
         emit("tool", { name, label: toolLabel(name), status: "running" });
         const result = await runAssistantTool(name, tc.function.arguments, toolCtx);
+        lookups++;
         toolsUsed.push({ name, label: toolLabel(name), ok: result.ok });
         emit("tool", { name, label: toolLabel(name), status: "done", ok: result.ok });
         const content = clipJson(result.data, budget.toolResultChars);
@@ -881,6 +924,12 @@ export async function streamAssistantTurn(input: {
       failure = err instanceof AppError ? err.message : (err as Error)?.message || "The assistant failed";
       logger.warn({ err, integrationId: integration.id }, "assistant: turn failed");
     }
+  }
+
+  // Asked again and still no lookup: the answer stands, and Polaris says so.
+  if (nudged && lookups === 0 && !stopped && failure === null && claimsUnlookedFacts(answer)) {
+    answer += UNVERIFIED_NOTE;
+    emit("token", { text: UNVERIFIED_NOTE });
   }
 
   // Links may only go to a real help page or inside Polaris (sanitizeAnswerLinks).

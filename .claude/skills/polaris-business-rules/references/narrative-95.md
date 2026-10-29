@@ -397,6 +397,35 @@ screenshot told the model WHERE to look. Only a lookup could tell it what was tr
   attaches nothing. An Excel or Word copy carries both a picture and the text, and the text is
   what was meant.
 
+### (m) An answer with no lookup behind it is asked again
+
+2026-10-28, Azure AI Foundry, Claude Haiku 5.5, with the Efficiency Advisor persona in the
+system prompt (k). Asked for a report of firewalls sorted by uptime, the assistant answered
+over several turns with "214 firewalls", a device's detail and the contents of the Fortinet
+profile, each presented as checked. It had run no lookup. When it finally did, it apologised:
+"I said I had checked things when I had not run any lookups." Its next answer was wrong too,
+for a different reason (uptime sat in a section it did not read; fixed the same day in
+`assistantToolService → withUptime`). The system prompt already said "never invent counts".
+A rule written in the prompt is not enforced.
+
+- **Detection.** `claimsUnlookedFacts` asks the answer of a turn that ran NO lookup whether
+  it says it checked (I checked / looked up / verified / confirmed…), counts devices ("214
+  firewalls"), or cites "according to Polaris". It is tuned against false positives (small
+  talk, a how-to, a refusal, "3 polls"), not for recall. A memory write is not a lookup.
+- **Asked again, once.** The answer is retracted (`retract` from 0) and the model is sent its
+  own answer plus `LOOKUP_NUDGE` on the user's side of the turn, with every tool on offer. The
+  nudge says it is from Polaris and that earlier answers are not lookups either. It is never
+  stored: only the question and the final answer are.
+- **Still no lookup.** The second answer stands, with `UNVERIFIED_NOTE` under it, written by
+  Polaris. One retry, not a loop: a model that will not look things up is labelled rather
+  than looped.
+- **Not `tool_choice`.** Forcing a tool call would apply to one provider at a time, and Claude
+  refuses a forced tool choice with thinking on. A second round with the nudge works on every
+  provider (j).
+- **History.** Earlier turns carry only text (d), so a turn that invented a figure hands it to
+  the next turn as if it were known. The prompt's "your earlier answers are not lookups" line
+  is the only answer to that; nothing marks an old answer as unverified.
+
 ### What is deliberately not here
 
 The assistant is not on the Dash wallboard (the phone app gained a Chat tab on 2026-10-09, shown only where the assistant is usable), takes no action

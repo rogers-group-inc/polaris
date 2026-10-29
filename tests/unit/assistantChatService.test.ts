@@ -75,7 +75,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
-  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, sanitizeAnswerLinks,
+  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
   pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS,
 } from "../../src/services/assistantChatService.js";
@@ -169,6 +169,53 @@ describe("streamAssistantTurn", () => {
     await p;
     expect(events.map((e) => e[0])).toEqual(["start", "token", "token", "done"]);
     expect(h.finishTurn).toHaveBeenCalledWith("c1", expect.objectContaining({ content: "Nothing is down.", stopped: false }));
+  });
+
+  it("95(m): an answer claiming facts with no lookup is withdrawn and asked again, with every tool", async () => {
+    const claim = "I checked: you have 214 firewalls.";
+    h.chatCompletionRound
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => {
+        o.onText(claim);
+        return { content: claim, toolCalls: [], finishReason: "stop" };
+      })
+      .mockImplementationOnce(async (_c: any, msgs: any[], tools: any[]) => {
+        expect(msgs.at(-2)).toMatchObject({ role: "assistant", content: claim });
+        expect(msgs.at(-1).role).toBe("user");
+        expect(msgs.at(-1).content).toMatch(/ran no lookup this turn/);
+        expect(tools.length).toBeGreaterThan(1);
+        return { content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "fleet_summary", arguments: "{}" } }], finishReason: "tool_calls" };
+      })
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => {
+        o.onText("You have 12 firewalls.");
+        return { content: "You have 12 firewalls.", toolCalls: [], finishReason: "stop" };
+      });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { firewalls: 12 } });
+    const { p, events } = run();
+    await p;
+    expect(events).toContainEqual(["retract", { from: 0 }]);
+    expect(h.finishTurn).toHaveBeenCalledWith("c1", expect.objectContaining({ content: "You have 12 firewalls." }));
+  });
+
+  it("95(m): asked again and still no lookup, the answer is kept with Polaris's note; asked once only", async () => {
+    const claim = "I verified 214 firewalls.";
+    h.chatCompletionRound.mockImplementation(async (_c: any, _m: any, _t: any, o: any) => {
+      o.onText(claim);
+      return { content: claim, toolCalls: [], finishReason: "stop" };
+    });
+    const { p } = run();
+    await p;
+    h.chatCompletionRound.mockReset();
+    expect(h.finishTurn.mock.calls[0][1].content).toMatch(/^I verified 214 firewalls\.\n\n_Polaris ran no lookup for this answer/);
+  });
+
+  it("95(m): small talk and a plain answer with no claim run once", async () => {
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => {
+      o.onText("Happy to help. What would you like to know?");
+      return { content: "Happy to help. What would you like to know?", toolCalls: [], finishReason: "stop" };
+    });
+    const { p } = run();
+    await p;
+    expect(h.chatCompletionRound).toHaveBeenCalledTimes(1);
   });
 
   it("runs a tool round as the caller, then answers", async () => {
@@ -592,6 +639,23 @@ describe("help questions and links", () => {
     expect(out).toContain("[IPAM](/ipam.html)");
     expect(out).not.toContain("example.com");
     expect(out).toContain(`${wiki}/Integrations`);
+  });
+});
+
+describe("claimsUnlookedFacts", () => {
+  it("matches a claimed check, a device count, and 'according to Polaris'", () => {
+    for (const t of [
+      "I checked and BOONE-201G-1 is up.", "I've looked it up.", "I have verified the profile.",
+      "You have 214 firewalls.", "There are 1,204 devices down.", "According to Polaris it rebooted.",
+    ]) expect(claimsUnlookedFacts(t), t).toBe(true);
+  });
+  it("leaves small talk, how-to and refusals alone", () => {
+    for (const t of [
+      "Happy to help. What would you like to know?",
+      "Open Assets, then + Add Asset.",
+      "I can't change settings; I only read.",
+      "Set the down threshold to 3 polls.",
+    ]) expect(claimsUnlookedFacts(t), t).toBe(false);
   });
 });
 
