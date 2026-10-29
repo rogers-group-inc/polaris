@@ -101,8 +101,8 @@
     subnets:       { label: "Networks",      icon: "#i-subnet",   leading: "tonal" },
     reservations:  { label: "Reservations",  icon: "#i-bookmark", leading: "" },
     blocks:        { label: "Blocks",        icon: "#i-block",    leading: "" },
-    // IPsec tunnels + VPN connections — the desktop IPsec tab's rows. The phone
-    // has no IPsec tab, so a tap opens the gate's detail sheet (hitClick).
+    // IPsec tunnels + VPN connections — the desktop IPsec tab's rows. A tap
+    // opens the gate's detail sheet, whose View IPsec button lists them (hitClick).
     ipsec:         { label: "IPsec / VPN",   icon: "#i-shield",   leading: "tonal" },
   };
 
@@ -307,8 +307,8 @@
           PolarisAssetDetail.open(hit.id);
           return;
         }
-        // An IPsec hit opens the sheet of the gate it lives on (no IPsec tab
-        // on the phone yet); the target string carries the gate's id.
+        // An IPsec hit opens the sheet of the gate it lives on (its View IPsec
+        // button has the tunnel); the target string carries the gate's id.
         if (g === "ipsec" && window.PolarisAssetDetail && PolarisAssetDetail.open) {
           var ipsecTarget = hitTarget(g, hit);
           if (ipsecTarget) { PolarisAssetDetail.open(ipsecTarget.slice("asset/".length)); return; }
