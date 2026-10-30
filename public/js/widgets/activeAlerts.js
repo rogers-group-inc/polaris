@@ -60,6 +60,10 @@
  *     PolarisWidgets.registerAlertFeed, which this file exports so the two
  *     render, sort, export and act on rows identically.
  * The split is client-side, so the two share the one cached feed payload.
+ *
+ * An Automations filter (2026-10) narrows either widget to the alerts of
+ * picked automations — a wallboard for one team's rules, say — matched
+ * client-side on each row's ruleIds like the tag and severity filters.
  */
 
 (function () {
@@ -152,6 +156,24 @@
     return false;
   }
 
+  // The operator's automation pick (config.automationScope "custom" +
+  // config.automations, rule ids), or null when the widget isn't narrowed by
+  // automation. A row matches when ANY automation behind it is picked —
+  // r.ruleIds carries a grouped alert's contributing rules as well as its
+  // primary one. Unlike the tag filter there is no device-less exception:
+  // every alert has an automation, so the pick says something about all of
+  // them. A payload from before ruleIds existed carries none and is kept
+  // rather than emptying the widget until the server catches up.
+  function automationFilterOf(config) {
+    if (!config || config.automationScope !== "custom" || !Array.isArray(config.automations) || !config.automations.length) return null;
+    return config.automations;
+  }
+  function matchesAutomations(r, picked) {
+    if (!picked || !Array.isArray(r.ruleIds)) return true;
+    for (var i = 0; i < r.ruleIds.length; i++) if (picked.indexOf(r.ruleIds[i]) !== -1) return true;
+    return false;
+  }
+
   // The rank floor to display at. Reads config.minSeverity when present, else
   // folds a pre-control `severities` checkbox array into its lowest rank (so a
   // saved ["info","warning","error"] keeps showing info rows) — an unrepresentable
@@ -179,6 +201,7 @@
     var fetched = data && data.rows ? data.rows.length : 0;
     var min = minRankOf(config);
     var pickedTags = tagFilterOf(config);
+    var pickedRules = automationFilterOf(config);
     // Gear "Hide acknowledged alerts" — off by default, since an acknowledged
     // alert is still active and the dimmed row with its owner pill is the
     // default answer. A wallboard that only wants what nobody owns yet opts in.
@@ -187,6 +210,7 @@
     var hideAcked = !!(config && config.hideAcknowledged);
     var ackHidden = 0;
     var filtered = rows.filter(function (r) {
+      if (!matchesAutomations(r, pickedRules)) return false;
       if (!matchesTags(r, pickedTags)) return false;
       if ((RANK[severityOf(r)] || 0) < min) return false;
       if (hideAcked && r.acknowledged) { ackHidden++; return false; }
@@ -228,8 +252,11 @@
       // Name the filter that emptied the widget — "No alerts at or above
       // warning" over a feed the tag pick emptied sends the operator to the
       // wrong control.
+      var noneFromRules = pickedRules && rows.every(function (r) { return !matchesAutomations(r, pickedRules); });
       var allUntagged = pickedTags && rows.length > 0 && rows.every(function (r) { return !matchesTags(r, pickedTags); });
-      var empty = allUntagged
+      var empty = noneFromRules
+        ? kind.none + " from the selected automations"
+        : allUntagged
         ? kind.none + " on assets with the selected tags"
         : ackHidden
           ? (ackHidden === 1 ? "The 1 alert here is acknowledged" : "All " + ackHidden + " alerts here are acknowledged") +
@@ -415,7 +442,7 @@
       description: kind.description,
       defaultSize: { width: 6, height: 1 },
       minSize: { width: 4, height: 1 },
-      defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS, tagScope: "all", tags: [], sortBy: SORTS[0].key, hideAcknowledged: false },
+      defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS, tagScope: "all", tags: [], automationScope: "all", automations: [], sortBy: SORTS[0].key, hideAcknowledged: false },
       // The feed reads Notification rows, so this is alerts:read, not events:read.
       // Every role was seeded that key at read, so no dashboard loses the widget.
       requiredPermission: { key: "alerts", level: "read" },
@@ -500,6 +527,12 @@
         // first change writes `minSeverity` and the legacy key stops mattering.
         var seed = { minSeverity: PolarisWidgets.severityTierForRank(minRankOf(config)) };
         PolarisWidgets.renderMinSeverityConfig(el, seed, onChange, "Only alerts at or above this severity are listed.");
+        // Offered only the automations this widget can show (kind.owns reads
+        // triggerType, which the picker entries carry too).
+        PolarisWidgets.renderAutomationFilterConfig(el, config, onChange, {
+          owns: kind.owns,
+          note: "Shows only alerts raised by a ticked automation (a grouped alert matches if any of its automations is ticked). Nothing ticked = all automations. Filtered rows still count against the row limit.",
+        });
         PolarisWidgets.renderNocFilterConfig(el, config, onChange, true);
         PolarisWidgets.renderTagFilterConfig(el, config, onChange,
           "Shows alerts on assets carrying any ticked tag. Alerts about Polaris itself (no device) stay listed. Filtered rows still count against the row limit.");

@@ -190,6 +190,7 @@ field that reads **All regions**, **All FortiGates**, **All asset types** or
 | **FortiGates** | assets behind the gates you pick; **(No FortiGate)** keeps devices with no gate. The list offers only gates in the regions you picked |
 | **Asset types** | the types you leave ticked. The pills are the types *shown* |
 | **Tags** (Active Alerts and Event Alerts) | alerts on assets carrying **any** of the tags you pick. An alert about Polaris itself, with no device, stays listed |
+| **Automations** (Active Alerts and Event Alerts) | only alerts raised by the automations you pick. Active Alerts offers every automation except event-triggered ones; Event Alerts offers only those. A grouped alert is kept when **any** automation in the group is picked. Disabled automations are listed, marked *(disabled)*, because their alerts can outlive them |
 
 **Hiding acknowledged alerts.** Active Alerts, Event Alerts and Down Assets keep
 an acknowledged alert listed by default, greyed out with an **ack** pill. To show
