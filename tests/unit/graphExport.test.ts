@@ -336,6 +336,20 @@ describe("group pages (Device Map topology: a page per floor / room / rack)", ()
     expect(st.dir.y).toBeCloseTo(1, 6);
   });
 
+  it("names the top-level groups on the overview, with their boxes", () => {
+    const g = G.overviewGroups(siteScene());
+    expect(g.map((x: any) => x.name)).toEqual(["First", "Second"]);
+    expect(g[0].rect).toEqual({ x1: 0, y1: 0, x2: 400, y2: 200 });
+  });
+
+  it("names the level below when everything is in one group (a one-building site names its floors)", () => {
+    const s = siteScene();
+    s.under.unshift({ ...s.under[0], id: "b1", members: ["a", "b", "c", "d", "e"], x1: -20, y1: -20, x2: 420, y2: 520,
+      label: { ...s.under[0].label, lines: ["HQ"] } });
+    expect(G.overviewGroups(s).map((x: any) => x.name)).toEqual(["First", "Second"]);
+    expect(G.overviewGroups(tinyScene())).toEqual([]);
+  });
+
   it("stops a stub halfway when its route never leaves the page", () => {
     const e = { path: [{ type: "M", x: 0, y: 0 }, { type: "L", x: 10, y: 0 }, { type: "L", x: 20, y: 0 }] };
     const r = G.stubRoute(e, true, [{ x1: -100, y1: -100, x2: 100, y2: 100 }]);
