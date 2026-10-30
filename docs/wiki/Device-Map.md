@@ -258,10 +258,12 @@ the next time you edit if you left it on.
 
 - **Grid** draws two weights of line behind the map. The thick lines are
   where devices sit in the automatic layout; the thin lines split each cell
-  in four.
+  in four, and in eight once you zoom in far enough for the finer lines to
+  be readable (about 135%). The thick lines stay where they are.
 - **Snap devices** lands a dragged device on the thick lines, and lines up
   every device on the map when you turn it on.
-- **Snap line points** lands a dragged bend point on any line, thick or thin.
+- **Snap line points** lands a dragged bend point on any line, thick or thin,
+  so zooming in gives you the finer eight-way spacing to place points on.
 
 **Drawing your own connection lines** (while editing). Drag any part of a line and a bend
 point appears where you pressed, selected and following the pointer. Click a
