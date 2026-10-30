@@ -6112,7 +6112,7 @@ async function openViewModal(id, opts) {
     // await, it was the fourth serial barrier in front of first paint.
     var showSnmpWalkTab = canProbeAssets() && _assetUsesSnmpPolling(a, effMonitorSettings);
     if (showSnmpWalkTab) {
-      tabs.push({ key: "snmp", label: "SNMP Walk", html: assetSnmpWalkViewHTML(a) });
+      tabs.push({ key: "snmp", label: "SNMP Walk", html: assetSnmpWalkViewHTML(a, effMonitorSettings) });
     }
     // Sources tab — moved to the end so the operational tabs (Processes /
     // Quarantine / Events) come first; discovery-source provenance lives last.
@@ -23161,25 +23161,27 @@ function _snmpCredentialOptions(selectedId, onlyIds) {
   return opts;
 }
 
-function assetSnmpWalkViewHTML(a) {
+function assetSnmpWalkViewHTML(a, eff) {
   if (!a.ipAddress) {
     return '<div style="padding:1rem 0;color:var(--color-text-secondary)">' +
       'SNMP walks need an IP address — assign one to this asset before running a walk.' +
     '</div>';
   }
-  // Pre-select the asset's stored monitor credential when it's an SNMP one
-  // — the SNMP walk speaks the same protocol so it's the natural default.
-  // Other credential types stay deselected; the operator picks one from
-  // the dropdown.
+  // Pre-select the credential this asset's SNMP polling authenticates with
+  // (`snmpCredentialId` on the effective settings — the server walks each
+  // SNMP stream's own chain: per-stream, default, class override, Fortinet
+  // integration). Falls back to the stored monitor credential when it is an
+  // SNMP one, e.g. when the effective-settings read failed.
   var monCred = a.monitorCredential;
-  var seedCredId = (monCred && monCred.type === "snmp") ? monCred.id : null;
+  var pollCredId = (eff && eff.snmpCredentialId) || null;
+  var seedCredId = pollCredId || ((monCred && monCred.type === "snmp") ? monCred.id : null);
   // Business rule 112(e): without Assets Read-Write a walk may use only the
   // credentials this asset already has; the server refuses any other.
   var walkOnlyIds = null;
   if (typeof canManageAssets === "function" && !canManageAssets()) {
     walkOnlyIds = [a.monitorCredentialId, a.responseTimeCredentialId, a.cpuMemoryCredentialId,
       a.temperatureCredentialId, a.interfacesCredentialId, a.lldpCredentialId,
-      monCred && monCred.id].filter(Boolean);
+      monCred && monCred.id, pollCredId].filter(Boolean);
   }
   // std and uploaded MIBs both use the object-name input + browse tree.
   // No MIB selected → numeric base-OID input + raw walk.

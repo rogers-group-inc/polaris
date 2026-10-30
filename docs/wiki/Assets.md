@@ -389,7 +389,11 @@ The rest are conditional:
 - **Custom MIB** — when the asset's manufacturer profile defines custom widgets
   (Server Settings → Credentials → Manufacturer Profiles).
 - **SNMP Walk** — with the **Asset Probes** permission, **and** only when at
-  least one monitoring stream actually resolves to SNMP for this asset.
+  least one monitoring stream actually resolves to SNMP for this asset. The
+  **Credential** field starts on the credential that SNMP polling uses for
+  this asset: the stream's own credential, the asset's default, a class
+  override, or the FortiManager / FortiGate integration's monitor credential,
+  in that order. Pick another to walk with a different one.
 
 The header also carries **Screenshot** and **Export PDF** (below), **Open HTTPS** /
 **Open RDP** / **Open SSH** where the device has them, and **Edit** for
