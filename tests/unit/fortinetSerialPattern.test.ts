@@ -7,6 +7,7 @@ import {
   parseFortinetPeerInterface,
   serialMatchesPeerInterface,
   hostnameMatchesPeerInterface,
+  hostnameMatchesFullPeerInterface,
 } from "../../src/utils/fortinetSerialPattern.js";
 
 describe("parseFortinetPeerInterface — production examples", () => {
@@ -178,5 +179,44 @@ describe("hostnameMatchesPeerInterface — operator-named aggregates", () => {
     expect(hostnameMatchesPeerInterface(parsed, null)).toBe(false);
     expect(hostnameMatchesPeerInterface(parsed, undefined)).toBe(false);
     expect(hostnameMatchesPeerInterface(parsed, "")).toBe(false);
+  });
+});
+
+describe("hostnameMatchesPeerInterface — numbered sibling hostnames", () => {
+  // An aggregate named after a peer whose hostname ends in a number: the
+  // parser splits the "-1" off as if it were a FortiOS aggregate index, so the
+  // fragment alone would also prefix-match every other device in the family.
+  const parsed = parseFortinetPeerInterface("JEFFERSON-222E-1")!;
+
+  it("does not match a sibling with a different trailing number", () => {
+    expect(hostnameMatchesPeerInterface(parsed, "JEFFERSON-222E-6")).toBe(false);
+    expect(hostnameMatchesPeerInterface(parsed, "JEFFERSON-222E-6.example.com")).toBe(false);
+    expect(hostnameMatchesPeerInterface(parsed, "JEFFERSON-222E-12-OLD")).toBe(false);
+  });
+
+  it("matches the device named exactly as the interface, and its FQDN", () => {
+    expect(hostnameMatchesPeerInterface(parsed, "JEFFERSON-222E-1")).toBe(true);
+    expect(hostnameMatchesPeerInterface(parsed, "jefferson-222e-1.example.com")).toBe(true);
+  });
+
+  it("still matches the bare fragment and a non-numbered suffix", () => {
+    expect(hostnameMatchesPeerInterface(parsed, "JEFFERSON-222E")).toBe(true);
+    expect(hostnameMatchesPeerInterface(parsed, "JEFFERSON-222E-CORE")).toBe(true);
+  });
+
+  it("leaves names without a numeric suffix on the plain prefix rule", () => {
+    const hand = parseFortinetPeerInterface("HILLTOP2-T1024E")!;
+    expect(hostnameMatchesPeerInterface(hand, "HILLTOP2-T1024E-2")).toBe(true);
+  });
+});
+
+describe("hostnameMatchesFullPeerInterface", () => {
+  it("compares against the interface name with its suffix kept", () => {
+    const parsed = parseFortinetPeerInterface("JEFFERSON-222E-1")!;
+    expect(hostnameMatchesFullPeerInterface(parsed, "JEFFERSON-222E-1")).toBe(true);
+    expect(hostnameMatchesFullPeerInterface(parsed, "JEFFERSON-222E-1.example.com")).toBe(true);
+    expect(hostnameMatchesFullPeerInterface(parsed, "JEFFERSON-222E")).toBe(false);
+    expect(hostnameMatchesFullPeerInterface(parsed, "JEFFERSON-222E-10")).toBe(false);
+    expect(hostnameMatchesFullPeerInterface(parsed, null)).toBe(false);
   });
 });

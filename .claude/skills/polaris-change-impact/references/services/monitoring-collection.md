@@ -181,7 +181,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - Reads latest AssetInterfaceSample per (assetId, ifName) from seed asset set within a 1-hour timestamp window; no live discovery queries. The window exists to filter out interfaces that have stopped reporting (asset down/decommissioned, monitoring disabled) — drawing a topology edge from a stale sample would be wrong data. Default system-info cadence is 600s, so 1 hour tolerates ~5 missed scrapes without admitting genuinely-stale interfaces. Without the bound the DISTINCT ON had to scan the entire active hypertable chunk and was observed at 13.5 min / 90M rows / 9 GB I/O on a fleet of ~600 infra assets.
+- The candidate inventory excludes `EXCLUDED_LIFECYCLE_STATUSES`: a retired device keeps its hostname and serial and would otherwise win a match nothing live contests. This also keeps retired assets out of the dependency tree's Phase 12 edges.
 - Serial-match candidates filtered to exact 1 inventory hit (ambiguous matches skipped); hostname-match same rule.
+- Hostname match is two-tier. First the WHOLE interface name (`hostnameMatchesFullPeerInterface`: `NAME-1` → the device called `NAME-1`, or its FQDN); only when that finds nothing, the suffix-stripped fragment (`hostnameMatchesPeerInterface`). When a `-N` suffix was stripped, the fragment rule refuses a numbered sibling (`NAME-6`, `NAME-6.domain`): an aggregate named after `JEFFERSON-222E-1` was being drawn to `JEFFERSON-222E-6`.
 - Self-loops (asset's own serial/hostname) are rejected.
 - Infers both directions when both sides' interface names encode peer identity; targetIfName null when only source side is parseable.
 - Matches via parseFortinetPeerInterface utility; peer IP/MAC/model returned from remoteAssets even if outside seed set (cross-site edges).
