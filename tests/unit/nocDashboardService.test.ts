@@ -485,6 +485,34 @@ describe("getRecentReboots", () => {
   });
 });
 
+describe("alertRuleIds", () => {
+  it("is the raising rule alone on an ungrouped alert", () => {
+    expect(noc.alertRuleIds("r1", null)).toEqual(["r1"]);
+  });
+  it("adds a grouped alert's contributing rules, primary first, de-duplicated", () => {
+    expect(noc.alertRuleIds("r1", [{ ruleId: "r2" }, { ruleId: "r1" }, { ruleId: "r2" }, { ruleId: "" }, {}]))
+      .toEqual(["r1", "r2"]);
+  });
+  it("is empty when the rule is gone and there are no members", () => {
+    expect(noc.alertRuleIds(null, undefined)).toEqual([]);
+  });
+});
+
+describe("getAutomationOptions", () => {
+  it("lists every automation — disabled ones too — with its trigger type", async () => {
+    ruleFindMany.mockReset();
+    ruleFindMany.mockResolvedValueOnce([
+      { id: "r1", name: "Asset down", enabled: true, trigger: { type: "asset_state" } },
+      { id: "r2", name: "Old", enabled: false, trigger: null },
+    ]);
+    expect(await noc.getAutomationOptions()).toEqual([
+      { id: "r1", name: "Asset down", enabled: true, triggerType: "asset_state" },
+      { id: "r2", name: "Old", enabled: false, triggerType: null },
+    ]);
+    expect(ruleFindMany).toHaveBeenCalledWith(expect.not.objectContaining({ where: expect.anything() }));
+  });
+});
+
 describe("getRecentAlerts", () => {
   it("maps UNCLEARED notifications to {assetId, hostname, dimension, message, severity, raisedAt, ruleName, acknowledged}", async () => {
     const t = new Date("2026-06-20T00:00:00Z");
@@ -501,6 +529,8 @@ describe("getRecentAlerts", () => {
       id: "n1", assetId: "asset-1", hostname: "fw-1", dimension: null,
       message: "fw-1 is down", severity: "critical", raisedAt: t,
       ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith", tags: [],
+      // No ruleId on the fixture — the rule was deleted — so nothing to filter on.
+      ruleIds: [],
       // Acknowledged without a note — the ack pill hovers the owner alone.
       acknowledgeNote: null,
       // Business rule 78a — acknowledged directly, not inherited from a root cause.

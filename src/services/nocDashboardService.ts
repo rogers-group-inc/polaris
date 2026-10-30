@@ -1228,6 +1228,12 @@ export interface AlertRow {
    *  automation is where the kind lives — a rule retyped after the alert was
    *  raised is still the rule the alert belongs to. */
   triggerType: string | null;
+  /** Every automation behind the alert — the raising rule, plus each rule
+   *  that contributed a member to a GROUPED alert (business rule 75). Carried
+   *  for the widget's Automations filter, which matches when ANY of these is
+   *  picked: a grouped alert is as much about each contributing automation as
+   *  about the primary one. Empty when the rule has since been deleted. */
+  ruleIds: string[];
   acknowledged: boolean;
   acknowledgedBy: string | null;
   /** The note typed when the alert was acknowledged — the ack pill's hover.
@@ -1330,6 +1336,8 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       // affordance beside it.
       alertGroup: { select: { name: true } },
       dimensionCount: true,
+      // The contributing rules of a grouped alert, for the Automations filter.
+      members: true,
       dependencyDown: true, dependencyBlame: true,
       testRun: true,
       quietHeldAt: true, quietSummarizedAt: true,
@@ -1358,6 +1366,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     // Still the PRIMARY automation's type: the gear's "hide event-triggered
     // alerts" toggle keeps working, and groups cannot contain event triggers.
     triggerType: (n.ruleId && triggerTypeByRule.get(n.ruleId)) || null,
+    ruleIds: alertRuleIds(n.ruleId, n.members),
     acknowledged: n.acknowledged,
     acknowledgedBy: n.acknowledgedBy ?? null,
     acknowledgeNote: n.acknowledged ? n.acknowledgeNote ?? null : null,
@@ -1380,6 +1389,49 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     return compareDimensions(a.dimension, b.dimension);
   });
   return { alerts: limit === null ? out : out.slice(0, limit), total: out.length };
+}
+
+/**
+ * The raising rule plus every rule named in a grouped alert's `members`
+ * snapshot, de-duplicated, primary first. An ungrouped alert's `members` is
+ * null, so it yields just its own rule.
+ */
+export function alertRuleIds(ruleId: string | null, members: unknown): string[] {
+  const out: string[] = ruleId ? [ruleId] : [];
+  if (Array.isArray(members)) {
+    for (const m of members as { ruleId?: unknown }[]) {
+      if (typeof m?.ruleId === "string" && m.ruleId && !out.includes(m.ruleId)) out.push(m.ruleId);
+    }
+  }
+  return out;
+}
+
+/** One entry in the Active Alerts widget's Automations picker. */
+export interface AutomationOption {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** The rule's `trigger.type` — the Active Alerts widget offers every kind
+   *  but `event`, the Event Alerts widget only `event`. Null when unreadable. */
+  triggerType: string | null;
+}
+
+/**
+ * Every automation, for the Active Alerts / Event Alerts widgets'
+ * Automations picker. Disabled ones are included: an alert outlives its rule
+ * being switched off, and a wallboard narrowed to it must still name it.
+ * Fetched once per page (the picker rides the memoized filter-options call),
+ * and an install has tens of rules, so selecting `trigger` whole is cheap.
+ */
+export async function getAutomationOptions(): Promise<AutomationOption[]> {
+  const rules = await prisma.notificationRule.findMany({
+    select: { id: true, name: true, enabled: true, trigger: true },
+    orderBy: { name: "asc" },
+  });
+  return rules.map((r) => {
+    const t = (r.trigger as { type?: unknown } | null)?.type;
+    return { id: r.id, name: r.name, enabled: r.enabled, triggerType: typeof t === "string" ? t : null };
+  });
 }
 
 /**

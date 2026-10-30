@@ -257,17 +257,20 @@ router.get("/noc-summary", async (req, res, next) => {
  * GET /filter-options — available asset types + region tags + FortiGate
  * device names + asset tags for the NOC dashboard's widget filter pickers. Same
  * assets-read gate as /noc-summary (session role or token-bound role);
- * callers without access get empty lists (not 403).
+ * callers without access get empty lists (not 403). `automations` (the alert
+ * widgets' Automations picker) rides the alerts-read gate instead — the same
+ * key that decides whether /noc-summary returns the alert feed at all.
  */
 router.get("/filter-options", async (req, res, next) => {
   try {
     await ensureRoleSnapshot(req);
     const canAssets = hasPermission(req, "assets", "read");
-    if (!canAssets) {
-      res.json({ assetTypes: [], regions: [], fortigates: [], tags: [] });
-      return;
-    }
-    res.json(await nocDashboardService.getFilterOptions());
+    const canAlerts = hasPermission(req, "alerts", "read");
+    const [options, automations] = await Promise.all([
+      canAssets ? nocDashboardService.getFilterOptions() : Promise.resolve({ assetTypes: [], regions: [], fortigates: [], tags: [] }),
+      canAlerts ? nocDashboardService.getAutomationOptions() : Promise.resolve([]),
+    ]);
+    res.json({ ...options, automations });
   } catch (err) {
     next(err);
   }

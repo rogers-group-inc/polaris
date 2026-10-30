@@ -106,6 +106,19 @@ d("GET /api/v1/dashboard/noc-summary — bearer token role gate", () => {
       expect.arrayContaining([{ name: "firewall", label: expect.any(String) }]), // the seeded down-fw-01
     );
     expect(Array.isArray(res.body.regions)).toBe(true);
+    // The alert widgets' Automations picker rides the same call.
+    expect(Array.isArray(res.body.automations)).toBe(true);
+  });
+
+  it("a no-permission token reads /filter-options with no automations", async () => {
+    const raw = await mintToken(NONE_ROLE);
+    const res = await request(app)
+      .get("/api/v1/dashboard/filter-options")
+      .set("Authorization", `Bearer ${raw}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.automations).toEqual([]);
+    expect(res.body.tags).toEqual([]);
   });
 
   it("a token bound to a no-permission role gets the shape but empty sections", async () => {

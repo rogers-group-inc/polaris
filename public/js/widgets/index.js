@@ -999,6 +999,11 @@
   window.PolarisWidgets.getTagOptions = function () {
     return getFilterOptions().then(function (d) { return (d && d.tags) || []; });
   };
+  // Every automation as {id, name, enabled, triggerType} — the alert widgets'
+  // "Automations" picker. Empty for a caller without alerts:read.
+  window.PolarisWidgets.getAutomationOptions = function () {
+    return getFilterOptions().then(function (d) { return (d && d.automations) || []; });
+  };
 
   // The asset-type vocabulary the gear grid offers, as [{value, label}]: every
   // built-in plus every CUSTOM type the asset-type registry carries (one the
@@ -1679,6 +1684,69 @@
         });
       },
     });
+  };
+
+  // The alert widgets' Automations filter (config.automationScope "custom" +
+  // config.automations, rule ids) — the Tags field's pill + picker, offered the
+  // automations `owns` accepts (the widget's own kind: Active Alerts lists every
+  // trigger type but event, Event Alerts only event). Ids are stored, not names,
+  // so renaming an automation keeps the widget narrowed to it; the chips read
+  // their names off the picker list once it answers.
+  window.PolarisWidgets.renderAutomationFilterConfig = function (el, config, onChange, opts) {
+    config = config || {};
+    opts = opts || {};
+    var live = {
+      scope: config.automationScope === "custom" ? "custom" : "all",
+      ids: Array.isArray(config.automations) ? config.automations.slice() : [],
+    };
+    var names = null; // id → label, once the options arrive
+    function labelOf(id) {
+      if (!names) return "…";
+      return names[id] || "Deleted automation";
+    }
+    function save(values) {
+      live.scope = values.length ? "custom" : "all";
+      live.ids = values;
+      onChange("automations", values);
+      onChange("automationScope", live.scope);
+    }
+    var options = window.PolarisWidgets.getAutomationOptions().then(function (list) {
+      var out = list
+        .filter(function (a) { return !opts.owns || opts.owns(a); })
+        .map(function (a) { return { value: a.id, label: a.name + (a.enabled ? "" : " (disabled)") }; });
+      // An empty answer is a failed fetch as often as an empty install, so it
+      // must not relabel every saved pick "Deleted automation".
+      if (list.length) {
+        names = {};
+        out.forEach(function (o) { names[o.value] = o.label; });
+      }
+      return out;
+    });
+    var repaint = renderFilterField(el, {
+      key: "automations",
+      label: "Automations",
+      render: function () {
+        if (live.scope === "custom" && live.ids.length) {
+          return { chips: live.ids.map(function (id) { return { value: id, label: labelOf(id) }; }) };
+        }
+        return { text: "All automations" };
+      },
+      onRemove: function (v) { save(live.ids.filter(function (id) { return id !== v; })); },
+      onEdit: function () {
+        window.PolarisWidgets.openFilterPicker({
+          title: "Automations",
+          options: options,
+          selected: live.scope === "custom" ? live.ids : [],
+          emptyMsg: "No automations found — create one on the Automations page first.",
+          note: opts.note,
+        }).then(function (r) {
+          if (!r) return;
+          save(r.values);
+          repaint();
+        });
+      },
+    });
+    options.then(repaint).catch(function () { /* chips keep their placeholder */ });
   };
 
   // RFC4122 v4 (good-enough; not crypto). Used for widget instance ids.

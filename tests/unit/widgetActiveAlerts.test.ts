@@ -46,8 +46,9 @@ interface AlertRow {
   dependencyUpstream?: string | null;
   testRun?: boolean;
   tags?: string[];
+  ruleIds?: string[];
 }
-interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string; tagScope?: string; tags?: string[]; hideAcknowledged?: boolean }
+interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string; tagScope?: string; tags?: string[]; automationScope?: string; automations?: string[]; hideAcknowledged?: boolean }
 interface WidgetModule {
   type: string;
   defaultConfig: Cfg & Record<string, unknown>;
@@ -516,6 +517,94 @@ describe("tag filter", () => {
   it("ships a defaultConfig that filters by nothing", () => {
     expect(mod.defaultConfig.tagScope).toBe("all");
     expect(mod.defaultConfig.tags).toEqual([]);
+  });
+});
+
+describe("automation filter", () => {
+  const row = (id: string, ruleIds: string[] | undefined, assetId: string | null = "as-" + id): AlertRow =>
+    ({ id, assetId, hostname: id, severity: "critical", message: id, ruleIds });
+  const ids = (el: any) =>
+    Array.from(el.querySelectorAll(".recent-item[data-alert-id]")).map((n: any) => n.getAttribute("data-alert-id"));
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("lists every alert while the scope is All automations, whatever ids are saved", () => {
+    const el = render([row("a", ["r1"]), row("b", ["r2"])], 2, { minSeverity: "warning", automationScope: "all", automations: ["r1"] });
+    expect(ids(el)).toEqual(["a", "b"]);
+  });
+
+  it("keeps only alerts raised by a ticked automation — a device-less one included", () => {
+    const el = render([row("a", ["r1"]), row("b", ["r2"]), row("sys", ["r3"], null), row("gone", [])], 4,
+      { minSeverity: "warning", automationScope: "custom", automations: ["r1", "r3"] });
+    expect(ids(el)).toEqual(["a", "sys"]);
+  });
+
+  it("matches a grouped alert on ANY contributing automation, not only the primary", () => {
+    const el = render([row("grp", ["r1", "r2"]), row("solo", ["r1"])], 2,
+      { minSeverity: "warning", automationScope: "custom", automations: ["r2"] });
+    expect(ids(el)).toEqual(["grp"]);
+  });
+
+  it("keeps a row from a pre-ruleIds payload rather than emptying the widget", () => {
+    const el = render([row("old", undefined)], 1, { minSeverity: "warning", automationScope: "custom", automations: ["r1"] });
+    expect(ids(el)).toEqual(["old"]);
+  });
+
+  it("treats Selected automations with nothing ticked as unfiltered", () => {
+    const el = render([row("a", ["r1"]), row("b", ["r2"])], 2, { minSeverity: "warning", automationScope: "custom", automations: [] });
+    expect(ids(el)).toEqual(["a", "b"]);
+  });
+
+  it("names the automation filter when it is what emptied the widget", () => {
+    const el = render([row("a", ["r1"])], 1, { minSeverity: "warning", automationScope: "custom", automations: ["r9"] });
+    expect(el.textContent).toContain("No active alerts from the selected automations");
+  });
+
+  it("shows an Automations field: All automations, or the saved pick as named, removable pills", async () => {
+    g.api = {
+      dashboard: {
+        filterOptions: () => Promise.resolve({
+          automations: [
+            { id: "r1", name: "Asset down", enabled: true, triggerType: "asset_state" },
+            { id: "r2", name: "Old CPU", enabled: false, triggerType: "asset_metric" },
+            { id: "ev", name: "Agent disconnected", enabled: true, triggerType: "event" },
+          ],
+        }),
+      },
+    };
+    const el = doc.createElement("div") as any;
+    mod.renderConfig(el, {}, () => {});
+    expect(el.querySelector('.widget-filter-field[data-filter="automations"]').textContent).toContain("All automations");
+
+    const el2 = doc.createElement("div") as any;
+    const changes: Array<[string, unknown]> = [];
+    mod.renderConfig(el2, { automationScope: "custom", automations: ["r1", "r2", "deleted"] }, (k, v) => changes.push([k, v]));
+    await flush();
+    const field = el2.querySelector('.widget-filter-field[data-filter="automations"]');
+    expect(Array.from(field.querySelectorAll(".tag-chip")).map((c: any) => c.textContent.replace("×", "")))
+      .toEqual(["Asset down", "Old CPU (disabled)", "Deleted automation"]);
+    field.querySelector('[data-chip="deleted"]').click();
+    expect(changes).toEqual([["automations", ["r1", "r2"]], ["automationScope", "custom"]]);
+  });
+
+  it("offers each widget only the automations of its own kind", async () => {
+    const labels = async (m: WidgetModule) => {
+      const el = doc.createElement("div") as any;
+      doc.body.appendChild(el);
+      m.renderConfig(el, {}, () => {});
+      el.querySelector('.widget-filter-field[data-filter="automations"]').click();
+      await flush();
+      const overlay = doc.querySelector(".widget-filter-picker") as any;
+      const out = Array.from(overlay.querySelectorAll(".wfp-opt span")).map((s: any) => s.textContent);
+      overlay.remove();
+      return out;
+    };
+    expect(await labels(mod)).toEqual(["Asset down", "Old CPU (disabled)"]);
+    expect(await labels(evMod)).toEqual(["Agent disconnected"]);
+  });
+
+  it("ships a defaultConfig that filters by nothing", () => {
+    expect(mod.defaultConfig.automationScope).toBe("all");
+    expect(mod.defaultConfig.automations).toEqual([]);
   });
 });
 

@@ -265,7 +265,9 @@ These are **filter-don't-403** surfaces: a token whose role cannot read
 something gets a narrower payload, not an error.
 
 `/dashboard/filter-options` returns the vocabularies the widget filters accept:
-`assetTypes`, `regions`, `fortigates` and `tags` (the fleet's asset tags, with
+`assetTypes`, `regions`, `fortigates`, `automations` (every automation as
+`{ id, name, enabled, triggerType }`, returned only to a role with
+`alerts:read`) and `tags` (the fleet's asset tags, with
 `region:` tags left out — they are `regions`).
 
 `/dashboard/noc-summary` takes `?feeds=` to select the subset a caller renders.
