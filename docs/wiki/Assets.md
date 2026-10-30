@@ -1459,6 +1459,18 @@ profile that decides these radios, SSIDs and power, the same value as the
 General tab's *AP Profile* row. It appears once a discovery run against the
 controlling FortiGate has recorded it.
 
+A **mesh role** label follows the profile when the AP takes part in wireless
+mesh:
+
+| Label | When |
+|---|---|
+| *Mesh root* | another access point in the inventory is connected to this one as a wireless client; hover for the leaf APs' names |
+| *Mesh leaf* | the controller reports this AP's uplink as wireless mesh rather than Ethernet; hover for the parent AP's serial |
+
+An AP that is both (a hop in a multi-level mesh) shows both labels; a wired AP
+with no AP clients shows neither. These are the same two signals dependency
+suppression and the Device Map use to place a mesh leaf under its root AP.
+
 ### MAC Table (switches)
 
 The switch's layer-2 forwarding database, grouped **interface-first** — the

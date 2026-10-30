@@ -104,3 +104,28 @@ describe("_streamSourceBadgeHTML interval override", () => {
     expect(span.textContent).toContain("every 10m");
   });
 });
+
+// The async rewrite only reaches badges already in the DOM. One drawn after it
+// landed — the Wireless tab waits on the system-info fetch, and every Poll
+// re-renders it — was left with no "every N" at all.
+describe("_streamSourceBadgeHTML drawn after the async rewrite", () => {
+  it("states the cadence from the cached effective settings", async () => {
+    mount(g._streamSourceBadgeHTML(ASSET, "interfaces"));
+    await g._updateStreamSourceBadgesFromEffective("a1", ASSET, Promise.resolve(EFF));
+    // Cached by the rewrite above — exactly what the real open path does.
+    g._effectiveResolvedByAssetId.set("a1", EFF.resolved);
+    const late = mount(g._streamSourceBadgeHTML(ASSET, "interfaces"));
+    expect(late.textContent).toContain("every 10m");
+  });
+
+  it("states no cadence when nothing is cached and no per-asset override is set", () => {
+    const span = mount(g._streamSourceBadgeHTML(ASSET, "interfaces"));
+    expect(span.textContent).not.toContain("every");
+  });
+
+  it("still lets a caller-stated cadence win over the cache", () => {
+    g._effectiveResolvedByAssetId.set("a1", EFF.resolved);
+    const span = mount(g._streamSourceBadgeHTML(ASSET, "interfaces", { intervalSec: 60 }));
+    expect(span.textContent).toContain("every 1m");
+  });
+});

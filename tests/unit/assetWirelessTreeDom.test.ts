@@ -68,6 +68,7 @@ const FN_NAMES = [
   "_freshnessStampHTML",
   "_currentStateStripHTML",
   "_wirelessStripHTML",
+  "_wirelessMeshRoleChipHTML",
 ];
 
 let container: HTMLElement;
@@ -470,5 +471,67 @@ describe("Wireless tab strip", () => {
       apRadios: makeRadios(), wirelessStations: [], lastSystemInfoAt: fresh(),
     }, { ...ASSET, fortinetTopology: { role: "fortiap", profile: null } });
     expect(container.textContent).not.toContain("Profile:");
+  });
+});
+
+// ─── Mesh role chip ────────────────────────────────────────────────────────
+//
+// Root: another AP is associated to this one as a client. Leaf: the controller
+// classifies the uplink as mesh. Neither: no chip — "ethernet" is the ordinary
+// wired value and must not read as a mesh role.
+
+describe("Wireless mesh role chip", () => {
+  const LEAF_AP_STATION = {
+    staMacAddr: "AA:AA:AA:AA:AA:01", ssid: "fmesh", radioId: 2,
+    matchedAsset: { id: "ap-2", hostname: "FAP-LEAF-<2>", assetType: "access_point" },
+  };
+  const LAPTOP_STATION = {
+    staMacAddr: "11:11:11:11:11:11", ssid: "CORP", radioId: 2,
+    matchedAsset: { id: "laptop-1", hostname: "LAPTOP-JD", assetType: "workstation" },
+  };
+
+  it("calls an AP with another AP as a client a mesh root, naming the leaf", () => {
+    const html = g._wirelessMeshRoleChipHTML(ASSET, { wirelessStations: [LEAF_AP_STATION, LAPTOP_STATION] });
+    expect(html).toContain(">Mesh root<");
+    expect(html).not.toContain("Mesh leaf");
+    expect(html).toContain("FAP-LEAF-&lt;2&gt;");
+    expect(html).not.toContain("LAPTOP-JD");
+  });
+
+  it("calls an AP whose uplink is mesh a mesh leaf, naming the parent serial", () => {
+    const html = g._wirelessMeshRoleChipHTML(
+      { ...ASSET, fortinetTopology: { meshUplink: "mesh", parentApSerial: "FP231FTF00000001" } },
+      { wirelessStations: [LAPTOP_STATION] },
+    );
+    expect(html).toContain(">Mesh leaf<");
+    expect(html).not.toContain("Mesh root");
+    expect(html).toContain("FP231FTF00000001");
+  });
+
+  it("shows both on a mesh hop", () => {
+    const html = g._wirelessMeshRoleChipHTML(
+      { ...ASSET, fortinetTopology: { meshUplink: "mesh" } },
+      { wirelessStations: [LEAF_AP_STATION] },
+    );
+    expect(html).toContain("Mesh root");
+    expect(html).toContain("Mesh leaf");
+  });
+
+  it("shows nothing for a wired AP with no AP clients", () => {
+    expect(g._wirelessMeshRoleChipHTML(
+      { ...ASSET, fortinetTopology: { meshUplink: "ethernet" } },
+      { wirelessStations: [LAPTOP_STATION] },
+    )).toBe("");
+    expect(g._wirelessMeshRoleChipHTML(ASSET, null)).toBe("");
+  });
+
+  it("rides the Wireless strip beside the heading", () => {
+    g._renderWirelessStationsCard(container, {
+      apRadios: makeRadios(), wirelessStations: [LEAF_AP_STATION],
+      lastSystemInfoAt: new Date().toISOString(),
+    }, ASSET);
+    const html = container.innerHTML;
+    expect(html.indexOf("Wireless</h4>")).toBeLessThan(html.indexOf("Mesh root"));
+    expect(html.indexOf("Mesh root")).toBeLessThan(html.indexOf("asset-stream-source-badge"));
   });
 });
