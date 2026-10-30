@@ -1042,27 +1042,9 @@
    Cytoscape graph. Cytoscape itself sets the actual node style; this is
    here only for documentation symmetry. */
 
-/* Edge hover tooltip on the topology graph. Single instance appended to
-   <body> so it doesn't clip against the modal overflow and stays visible
-   in fullscreen. The `reason` text uses \n separators from the backend
-   so we keep `white-space: pre-wrap` to render them. */
-#topology-edge-tooltip {
-  position: fixed;
-  display: none;
-  z-index: 9999;
-  max-width: 420px;
-  padding: 8px 10px;
-  background: var(--color-bg-elevated, #1c2029);
-  color: var(--color-text-primary, #eef0f4);
-  border: 1px solid var(--color-border, #303542);
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
-  font-size: 0.78rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  pointer-events: none;
-}
-#topology-edge-tooltip.visible { display: block; }
+/* The topology edge hover tooltip (#topology-edge-tooltip) is styled in
+   styles.css: the Device Map dashboard widget draws it too, and the
+   Dashboard and /dash pages do not load this file. */
 
 /* The region tree rendered INSIDE that same tooltip (it is now the page's
    shared hover tip, not only the topology graph's). The block above keeps

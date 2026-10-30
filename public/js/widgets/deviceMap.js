@@ -84,6 +84,39 @@
     return typeof isLightTheme === "function" ? (isLightTheme() ? "light" : "dark") : undefined;
   }
 
+  // The link hover tooltip — the Device Map page's: one #topology-edge-tooltip
+  // on <body> (styled in styles.css, above a full-screen widget), shared by
+  // every widget instance, its text from topology-render.js → edgeTooltipHtml.
+  function edgeTip() {
+    var el = document.getElementById("topology-edge-tooltip");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "topology-edge-tooltip";
+      el.setAttribute("role", "tooltip");
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+  // Below-right of the cursor, flipped above-left near the viewport edge.
+  function moveEdgeTip(clientX, clientY) {
+    var el = document.getElementById("topology-edge-tooltip");
+    if (!el || !el.classList.contains("visible")) return;
+    var pad = 14;
+    var rect = el.getBoundingClientRect();
+    var maxX = window.innerWidth - rect.width - 6;
+    var maxY = window.innerHeight - rect.height - 6;
+    var x = clientX + pad; if (x > maxX) x = clientX - rect.width - pad;
+    var y = clientY + pad; if (y > maxY) y = clientY - rect.height - pad;
+    if (x < 6) x = 6;
+    if (y < 6) y = 6;
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+  }
+  function hideEdgeTip() {
+    var el = document.getElementById("topology-edge-tooltip");
+    if (el) el.classList.remove("visible");
+  }
+
   // Build a read-only Cytoscape graph of one site's /topology payload into
   // `container`. The shape of mobile/topology-tab.js → renderGraph, flat view
   // only: the column solver's baseline, the operator's saved flat layout over
@@ -164,6 +197,22 @@
     cy.nodes().panify();
     cy.on("add", "node", function (evt) { evt.target.panify(); });
 
+    // Hovering a link names its two ends, their ports and the kind of link.
+    cy.on("mouseover", "edge", function (evt) {
+      var html = R.edgeTooltipHtml(cy, evt.target);
+      if (!html) return;
+      var tip = edgeTip();
+      tip.innerHTML = html; // escaped by edgeTooltipHtml
+      tip.classList.add("visible");
+      var o = evt.originalEvent;
+      if (o) moveEdgeTip(o.clientX, o.clientY);
+    });
+    cy.on("mousemove", "edge", function (evt) {
+      var o = evt.originalEvent;
+      if (o) moveEdgeTip(o.clientX, o.clientY);
+    });
+    cy.on("mouseout", "edge", hideEdgeTip);
+
     if (columns) {
       R.markFanOutEdges(cy, columns, { colSpacing: TOPO_COL_SPACING, orientation: "horizontal" });
     }
@@ -239,6 +288,9 @@
     function render() {
       if (closed || !data) return;
       var view = cy ? { zoom: cy.zoom(), pan: cy.pan() } : null;
+      // A refresh replaces the graph under the cursor, and the old graph
+      // never sends the mouseout that would close its tooltip.
+      hideEdgeTip();
       if (cy) { try { cy.destroy(); } catch (_) {} }
       cy = drawTopology(graph, data, view);
     }
@@ -273,6 +325,7 @@
         clearInterval(timer);
         document.removeEventListener("themechange", onTheme);
         try { ro.disconnect(); } catch (_) {}
+        hideEdgeTip();
         if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
         if (pane.parentNode) pane.parentNode.removeChild(pane);
       },

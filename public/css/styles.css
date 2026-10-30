@@ -8819,6 +8819,30 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .folder-card:has(.sitemap-fullscreen) { isolation: auto; }
 .folder-card-scroll:has(.sitemap-fullscreen) { -webkit-mask-image: none; mask-image: none; }
 
+/* Edge hover tooltip on a topology graph — the Device Map page's modal
+   (map.js) and the Device Map widget's read-only topology. Single instance
+   appended to <body> so it doesn't clip against a modal or a widget card's
+   overflow and stays visible in fullscreen (above the widget's 4000). The
+   `reason` text uses \n separators from the backend, so `white-space:
+   pre-wrap` renders them. */
+#topology-edge-tooltip {
+  position: fixed;
+  display: none;
+  z-index: 9999;
+  max-width: 420px;
+  padding: 8px 10px;
+  background: var(--color-bg-elevated, #1c2029);
+  color: var(--color-text-primary, #eef0f4);
+  border: 1px solid var(--color-border, #303542);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+#topology-edge-tooltip.visible { display: block; }
+
 /* Device Map widget: one gate's read-only topology — the whole body when one
    gate is picked, or over the map (above its controls' 1000) after a gate is
    double-clicked. The graph pane paints the app surface, as the Device Map
