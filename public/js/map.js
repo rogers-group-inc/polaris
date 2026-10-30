@@ -2882,6 +2882,11 @@
     // Save/Reset affordances are per VIEW — re-state them whenever the
     // graph is rebuilt (open, refresh, view switch, reset).
     _refreshLayoutToolbar();
+    // Group boxes are re-built after layout (refreshLocationGroups adds
+    // nodes), so a node added in view-only mode takes the mode's panning.
+    cyInstance.on("add", "node", function (evt) {
+      if (!topoState.editing) evt.target.panify();
+    });
     // View-only unless Edit is on: the fresh graph takes the current mode.
     _applyTopologyEditMode();
   }
@@ -3120,7 +3125,17 @@
   }
   function _applyTopologyEditMode() {
     var on = !!topoState.editing;
-    if (cyInstance) cyInstance.autoungrabify(!on);
+    if (cyInstance) {
+      cyInstance.autoungrabify(!on);
+      // View-only: a drag that starts on a device or a group box pans the
+      // map. Cytoscape pans only from empty background or a `pannable`
+      // element, and an ungrabbable node is neither — so a building box,
+      // which can fill most of the canvas, left nowhere to drag the map
+      // from. Editing turns it off again so boxes and devices grab; Ctrl+drag
+      // (_wireCtrlPan) still pans there. Taps fire on pannable nodes too.
+      if (on) cyInstance.nodes().unpanify();
+      else cyInstance.nodes().panify();
+    }
     if (edgeEditor) edgeEditor.refresh();
     _paintTopologyGrid(); // the grid is an editing aid: drawn only while editing
     var btn = document.getElementById("topology-edit");

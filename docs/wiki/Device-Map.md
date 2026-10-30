@@ -245,7 +245,9 @@ you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
 **Editing the layout.** The topology opens **view-only**: you can click,
-select, pan, zoom, switch location views and export, but nothing moves. Press
+select, pan, zoom, switch location views and export, but nothing moves.
+Dragging anywhere pans the map, including on a device or a location box. While
+editing, dragging moves the device or box instead; hold **Ctrl** to pan. Press
 **Edit** (the pencil at the map's top right, as on the dashboard) to move
 devices and location boxes, draw lines, and use **Save layout**, **Reset
 layout** and the editing tools, which only show while editing. The check mark
