@@ -407,7 +407,9 @@ A different surface: the **Site Map** dashboard widget is a geographic map of
 monitored **sites** with status dots and **live weather radar** (proxied
 server-side, with a direct-CDN fallback).
 
-The **Device Map** widget is the gate-level map with click-through to topology.
+The **Device Map** widget is the gate-level map: double-click a gate for its
+read-only topology, or pick a single gate in the widget's gear to show only
+that gate's topology ([Dashboard → Device Map widget](Dashboard#device-map-widget)).
 
 On both widgets the sun / moon basemap button sits in the map's top-left
 corner, above the zoom buttons, as on this page. The Site Map's **°F**,

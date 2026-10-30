@@ -91,6 +91,15 @@ const API_PATH_ALLOWLIST = new Set<string>([
 const API_PREFIX_ALLOWLIST = ["/weather/", "/saved-dashboards/"];
 
 /**
+ * Whole-path patterns for parameterized reads that a prefix would over-admit.
+ * The Device Map widget draws a FortiGate's topology (a single picked gate, or
+ * a double-clicked one) from GET /map/sites/:id/topology — exactly that path:
+ * the site-scoped endpoint search beside it stays unreachable here, and the
+ * layout writes under it are 405'd regardless.
+ */
+const API_PATTERN_ALLOWLIST = [/^\/map\/sites\/[^/]+\/topology$/];
+
+/**
  * Is this source IP allowed under the current scope? "all" → always; "custom"
  * → matches one of the allow-list CIDRs; "rfc1918" (default) → RFC1918 or
  * loopback. The `enabled` flag is checked separately by the caller.
@@ -219,7 +228,8 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
     res.setHeader("Cache-Control", "no-store");
     if (
       !API_PATH_ALLOWLIST.has(req.path) &&
-      !API_PREFIX_ALLOWLIST.some((prefix) => req.path.startsWith(prefix))
+      !API_PREFIX_ALLOWLIST.some((prefix) => req.path.startsWith(prefix)) &&
+      !API_PATTERN_ALLOWLIST.some((pattern) => pattern.test(req.path))
     ) {
       next(new AppError(404, "Not found"));
       return;

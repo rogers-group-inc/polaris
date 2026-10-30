@@ -1055,7 +1055,7 @@ controls, then severity, then scope:
 renderConfig(el, config, onChange) {
   el.innerHTML = /* this widget's own <label> + <select data-k="…"> */;
   PolarisWidgets.renderMinSeverityConfig(el, config, onChange, hint);
-  PolarisWidgets.renderNocFilterConfig(el, config, onChange, includeAssetTypes);
+  PolarisWidgets.renderNocFilterConfig(el, config, onChange, includeAssetTypes /*, { fortigates: true } */);
 }
 ```
 

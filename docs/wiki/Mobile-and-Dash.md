@@ -424,6 +424,13 @@ cannot read **hide themselves**.
 operators about live incidents, and the wallboard has no login, so its **ack**
 pills name the owner but hovering them shows no note.
 
+The **Device Map** widget's [topology](Dashboard#device-map-widget) works on the
+wallboard too — a widget set to one gate, or a gate double-clicked on its map —
+so anyone in the wallboard's allowed address range can see that site's switches,
+access points, links and the devices behind them. A single click on a gate also
+opens a details popup there, since a wall screen has no hover. The **Open ↗**
+button is left off: the wallboard does not navigate.
+
 Its **Dashboards ▾** menu — shown, as on the Dashboard page, only while
 customizing or while a published dashboard is on screen — offers:
 

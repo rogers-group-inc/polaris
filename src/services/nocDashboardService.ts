@@ -1574,7 +1574,7 @@ export async function getSitesWithIssues(maxSites: number | null = 25, assetIds:
 export interface FilterOptions {
   assetTypes: Array<{ name: string; label: string }>;
   regions: string[];
-  fortigates: Array<{ name: string; regions: string[] }>;
+  fortigates: Array<{ id: string; name: string; regions: string[] }>;
   tags: string[];
 }
 
@@ -1599,13 +1599,16 @@ export interface FilterOptions {
  *     list, so a custom type could not be filtered at all.
  *   - regions: distinct `region:<name>` tag values across the live fleet, the
  *     same tags the `regionTags` filter matches. Sorted.
- *   - fortigates: `{name, regions}` entries for the "Selected FortiGates"
+ *   - fortigates: `{id, name, regions}` entries for the "Selected FortiGates"
  *     picker — name = the `learnedLocation` of a live firewall asset
  *     (Fortinet discovery stamps a firewall's own FMG/device hostname there,
  *     the same name managed switches / APs / endpoints reference), so every
  *     offered option is guaranteed to match at least the gate itself;
  *     regions = the gate's own `region:<name>` tags, letting the picker
- *     narrow its list to the widget's selected regions client-side.
+ *     narrow its list to the widget's selected regions client-side;
+ *     id = the gate's asset id, which the Device Map widget opens a single
+ *     picked gate's topology by (the gate may have no coordinates, so
+ *     /map/sites cannot supply it).
  *     Non-Fortinet operator-typed firewalls carry no learnedLocation and are
  *     naturally excluded. Sorted by name.
  *   - tags: distinct tags across the live fleet, `region:` tags excluded
@@ -1633,7 +1636,7 @@ export async function getFilterOptions(): Promise<FilterOptions> {
         learnedLocation: { not: null },
         status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
       },
-      select: { learnedLocation: true, tags: true },
+      select: { id: true, learnedLocation: true, tags: true },
       distinct: ["learnedLocation"],
     }),
     prisma.$queryRaw<Array<{ tag: string }>>`
@@ -1664,6 +1667,7 @@ export async function getFilterOptions(): Promise<FilterOptions> {
     fortigates: fortigateRows
       .filter((r): r is typeof r & { learnedLocation: string } => Boolean(r.learnedLocation))
       .map((r) => ({
+        id: r.id,
         name: r.learnedLocation,
         regions: (r.tags || [])
           .filter((t) => t.startsWith("region:"))
