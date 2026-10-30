@@ -188,16 +188,25 @@ export function buildHelpIndex(pages: Array<{ page: string; markdown: string }>,
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", rarr: "→", larr: "←", le: "≤", ge: "≥", middot: "·", hellip: "…", mdash: "—", ndash: "–" };
 
+/**
+ * Drop every tag, then any "<" a tag strip leaves behind (an unclosed "<script"),
+ * so the text can never carry markup. A literal "<" in the page is "&lt;" and is
+ * decoded after this, so nothing real is lost.
+ */
+function stripTags(s: string): string {
+  return s.replace(/<[^>]+>/g, "").replace(/</g, "");
+}
+
 /** HTML → readable Markdown-ish text: code kept as `code`, lists as "- ", tags dropped. */
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_m, c: string) => "\n```\n" + c.replace(/<[^>]+>/g, "") + "\n```\n")
-    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, c: string) => "`" + c.replace(/<[^>]+>/g, "") + "`")
+  const withBreaks = html
+    .replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_m, c: string) => "\n```\n" + stripTags(c) + "\n```\n")
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, c: string) => "`" + stripTags(c) + "`")
     .replace(/<li[^>]*>/gi, "\n- ")
     .replace(/<\/li>/gi, "")
     .replace(/<\/(p|div|ul|ol|h\d)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
+    .replace(/<br\s*\/?>/gi, "\n");
+  return stripTags(withBreaks)
     .replace(/&(#\d+|[a-z]+);/gi, (m, e: string) => {
       if (e.startsWith("#")) return String.fromCodePoint(Number(e.slice(1)));
       return ENTITIES[e.toLowerCase()] ?? m;

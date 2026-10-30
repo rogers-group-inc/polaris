@@ -53,6 +53,12 @@ describe("htmlToText", () => {
     expect(htmlToText("<p>a <code>x &gt; 1</code> &amp; b</p><ul><li>one</li><li>two</li></ul>"))
       .toBe("a `x > 1` & b\n\n- one\n- two");
   });
+
+  it("leaves no markup behind an unclosed tag, in prose or in code", () => {
+    expect(htmlToText("a <script alert(1)")).toBe("a script alert(1)");
+    expect(htmlToText("<code>x <script</code>")).toBe("`x script`");
+    expect(htmlToText("<p>&lt;tag&gt;</p>")).toBe("<tag>");
+  });
 });
 
 describe("asksAboutApi", () => {
