@@ -199,7 +199,7 @@ import { basePortToIfName, fdbStatusIsUsable, fdbStatusLabel, resolveFdbIdentity
 import { buildArpNeighbors, arpNeighborsFromFortiosRest, type ArpNeighborEntry } from "../utils/arpNeighbors.js";
 import { persistAssetArpNeighbors } from "./arpTableService.js";
 import { decodePortList, derivePortVlans, isVlanId, type PortVlanConfig, type VlanMembership } from "../utils/portVlans.js";
-import { matchTrunkPeer, parseTrunkPortMap, trunkMemberMap, type TrunkPortEntry } from "../utils/fortiswitchTrunkMap.js";
+import { matchTrunkPeer, parseTrunkPortMap, stripTrunkRoleSuffix, trunkMemberMap, type TrunkPortEntry } from "../utils/fortiswitchTrunkMap.js";
 import { parseFortiosIpsec, parseFortiosSslVpn, type IpsecTunnelSample, type IpsecConnectionSample } from "../utils/fortiosIpsec.js";
 import { persistIpsecConnections } from "./ipsecConnectionService.js";
 import { joinStateRows } from "../utils/stateProbes.js";
@@ -3721,6 +3721,14 @@ async function fetchFortiswitchControllerPortsCmdb(
  * (e.g. the serial-named FortiLink uplink → `port52`). Multi-member LACP
  * bundles keep the trunk name (no single physical port to show).
  *
+ * A trunk row the walk named with a role suffix (`1CD11A4549B7-0(primary)`,
+ * see `stripTrunkRoleSuffix`) is RENAMED to the trunk's own name. Otherwise
+ * the members point at a parent no row carries, so the System tab lists them
+ * flat and the topology layer cannot resolve the trunk to its port; and the
+ * suffix keeps the name out of every other place that names trunks (the
+ * peer-serial inference, FortiLink trunk preservation). Only a row whose
+ * stripped name the trunk map itself lists is renamed.
+ *
  * Mutates `interfaces` in place; returns the number of member links stamped.
  */
 export function overlayFortiswitchTrunkMembers(
@@ -3731,10 +3739,27 @@ export function overlayFortiswitchTrunkMembers(
   if (trunkMembers.size === 0) return 0;
   const byName = new Map<string, InterfaceSample>();
   for (const i of interfaces) byName.set(i.ifName, i);
+  const suffixedByBase = new Map<string, InterfaceSample>();
+  for (const i of interfaces) {
+    const base = stripTrunkRoleSuffix(i.ifName);
+    if (base !== i.ifName && !suffixedByBase.has(base)) suffixedByBase.set(base, i);
+  }
   let links = 0;
   for (const [trunkName, members] of trunkMembers) {
     if (members.length === 0) continue;
-    const trunkRow = byName.get(trunkName);
+    let trunkRow = byName.get(trunkName);
+    if (!trunkRow) {
+      const suffixed = suffixedByBase.get(trunkName);
+      if (suffixed) {
+        const oldName = suffixed.ifName;
+        suffixed.ifName = trunkName;
+        byName.delete(oldName);
+        byName.set(trunkName, suffixed);
+        // A VLAN or member already parented on the suffixed name follows it.
+        for (const i of interfaces) if (i.ifParent === oldName) i.ifParent = trunkName;
+        trunkRow = suffixed;
+      }
+    }
     if (trunkRow && (!trunkRow.ifType || trunkRow.ifType === "physical")) {
       trunkRow.ifType = "aggregate";
     }

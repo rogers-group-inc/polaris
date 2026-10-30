@@ -105,6 +105,22 @@ export function trunkPeerNameTail(ifName: string | null | undefined): string | n
   return tail;
 }
 
+/** A parenthesised role word the IF-MIB name of a trunk can carry. */
+const TRUNK_ROLE_SUFFIX = /\s*\([A-Za-z-]+\)\s*$/;
+
+/**
+ * An interface name with a trailing `(role)` suffix removed, or the name
+ * unchanged when it has none.
+ *
+ * A FortiSwitch's ifTable can list a trunk with its role appended — observed
+ * on an FS-248E: `1CD11A4549B7-0(primary)`, `_FlInK1_ICL0_(primary)` — while
+ * `fsTrunkMember` and the controller CMDB name the same trunk without it. The
+ * trunk-member overlay uses this to find the row a trunk name refers to.
+ */
+export function stripTrunkRoleSuffix(ifName: string): string {
+  return ifName.replace(TRUNK_ROLE_SUFFIX, "");
+}
+
 /**
  * Parse the raw OctetString into entries.
  *
