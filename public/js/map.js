@@ -3534,64 +3534,10 @@
   }
 
 
-  // Humanize an interface speed in bits/sec → "1 Gbps" / "100 Mbps" etc.
-  function _humanizeSpeedBps(bps) {
-    if (bps == null || bps <= 0) return "";
-    if (bps >= 1e9) return (bps % 1e9 === 0 ? (bps / 1e9).toFixed(0) : (bps / 1e9).toFixed(1)) + " Gbps";
-    if (bps >= 1e6) return (bps % 1e6 === 0 ? (bps / 1e6).toFixed(0) : (bps / 1e6).toFixed(1)) + " Mbps";
-    if (bps >= 1e3) return (bps / 1e3).toFixed(0) + " Kbps";
-    return bps + " bps";
-  }
-  // One-line interface detail: "lan1 · 1 Gbps · up · errors ↓3 ↑1" (speed/
-  // status omitted when unknown; errors shown only when nonzero).
-  function _formatIfDetail(d) {
-    if (!d || !d.name) return "";
-    var bits = [d.name];
-    var sp = _humanizeSpeedBps(d.speedBps);
-    if (sp) bits.push(sp);
-    if (d.operStatus) bits.push(d.operStatus);
-    var ie = d.inErrors || 0, oe = d.outErrors || 0;
-    if (ie > 0 || oe > 0) bits.push("errors ↓" + ie + " ↑" + oe);
-    return bits.join(" · ");
-  }
-
-  // Build the concise edge tooltip: "DeviceA  ⇄  DeviceB" on top, the per-side
-  // interface ports next, a one-line connection kind, then per-side interface
-  // details (speed / status / errors) when available. Reads device names from
-  // the endpoint nodes and the port pair from the edge label
-  // ("<srcPort> ↔ <tgtPort>"). Returns null when there's nothing useful.
+  // The edge tooltip's text is shared with the Device Map dashboard widget
+  // (topology-render.js → edgeTooltipHtml), so a link reads the same on both.
   function buildEdgeTooltipHtml(edge) {
-    if (!cyInstance || !edge) return null;
-    var srcId = edge.data("source");
-    var tgtId = edge.data("target");
-    var srcLabel = (cyInstance.getElementById(srcId).data("label")) || srcId || "?";
-    var tgtLabel = (cyInstance.getElementById(tgtId).data("label")) || tgtId || "?";
-    var ports = String(edge.data("label") || "").trim();
-    var kind = edge.data("isMesh")     ? "Wireless mesh backhaul"
-             : edge.data("isBridge")   ? "Switch bridged behind AP (wired)"
-             : edge.data("isWireless") ? "Wireless client"
-             : edge.data("isIface")    ? "Interface-confirmed peer link"
-             : edge.data("isLldp")     ? "LLDP neighbor"
-             : edge.data("isApLink")   ? "AP switch uplink"
-             :                            "FortiLink controller";
-    var html =
-      '<div style="font-weight:600">' + escapeHtml(srcLabel) +
-      ' <span style="opacity:0.7">⇄</span> ' + escapeHtml(tgtLabel) + '</div>';
-    if (ports && ports !== "unknown ↔ unknown") {
-      html += '<div style="font-family:var(--font-mono,monospace);font-size:0.82em;margin-top:2px">' +
-        escapeHtml(ports) + '</div>';
-    }
-    html += '<div style="opacity:0.7;font-size:0.82em;margin-top:2px">' + escapeHtml(kind) + '</div>';
-    // Per-side interface detail, each prefixed with its device so the operator
-    // can tell which end "port14" / "port52" lives on (srcIf belongs to the
-    // source node, tgtIf to the target).
-    var sd = _formatIfDetail(edge.data("srcIf"));
-    var td = _formatIfDetail(edge.data("tgtIf"));
-    if (sd) html += '<div style="font-size:0.78em;opacity:0.85;margin-top:3px">' +
-      '<span style="opacity:0.7">' + escapeHtml(srcLabel) + ':</span> ' + escapeHtml(sd) + '</div>';
-    if (td) html += '<div style="font-size:0.78em;opacity:0.85">' +
-      '<span style="opacity:0.7">' + escapeHtml(tgtLabel) + ':</span> ' + escapeHtml(td) + '</div>';
-    return html;
+    return window.PolarisTopologyRender.edgeTooltipHtml(cyInstance, edge);
   }
 
   // ── Edge hover tooltip ─────────────────────────────────────────────────────

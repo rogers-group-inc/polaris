@@ -186,7 +186,8 @@ brings the map back. Hovering a gate names it and its monitor state.
 The topology here is **read-only**: the same graph as the
 [Device Map](Device-Map) page, laid out the way it was last saved there, but
 nothing can be moved, selected or edited. Drag to pan, scroll to zoom, **Fit**
-to see the whole site again. **Open ↗** opens the gate on the Device Map page,
+to see the whole site again. Hover a link to see the two devices it joins,
+their ports and the kind of link, as on the Device Map page. **Open ↗** opens the gate on the Device Map page,
 where the topology can be edited. The graph refreshes every minute and keeps
 your zoom.
 

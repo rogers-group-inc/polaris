@@ -34,6 +34,8 @@ const GATES = [
 const topology = vi.fn();
 const sites = vi.fn();
 const cyOptions: Array<Record<string, unknown>> = [];
+/** The last fake graph's handlers, keyed "<event> <selector>". */
+let cyHandlers: Record<string, (evt: unknown) => void> = {};
 const editorOpts: Array<{ isEditable: () => boolean }> = [];
 
 let W: Widgets;
@@ -45,10 +47,13 @@ const g = globalThis as Record<string, unknown>;
 function fakeCytoscape(opts: Record<string, unknown>) {
   cyOptions.push(opts);
   const handlers: Record<string, () => void> = {};
+  cyHandlers = {};
   const coll = { forEach: () => {}, panify: () => coll, length: 0 };
   const cy = {
     one: (ev: string, fn: () => void) => { handlers[ev] = fn; },
-    on: () => {},
+    on: (ev: string, sel: unknown, fn?: (evt: unknown) => void) => {
+      if (typeof sel === "string" && fn) cyHandlers[ev + " " + sel] = fn;
+    },
     nodes: () => coll,
     batch: (fn: () => void) => fn(),
     fit: () => {},
@@ -97,6 +102,7 @@ beforeAll(() => {
     routeInterGroupEdges: () => {},
     markFanOutEdges: () => {},
     wireBentEdgeLabels: () => {},
+    edgeTooltipHtml: () => "<div>SW-A ⇄ SW-B</div>",
   };
   w.PolarisTopologyEdgeEditor = { attach: (_cy: unknown, o: { isEditable: () => boolean }) => { editorOpts.push(o); } };
   (0, eval)(readFileSync(resolve(here, "../../public/js/widgets/index.js"), "utf8"));
@@ -188,6 +194,42 @@ describe("Device Map widget — one gate picked", () => {
     const labels = Array.from(el.querySelectorAll(".devmap-topo-bar button")).map((b) => b.textContent);
     expect(labels).not.toContain("← Map");
     expect(labels).toContain("Fit");
+    unmount();
+  });
+
+  it("hovering a link shows the Device Map's link tooltip; leaving hides it", async () => {
+    const { unmount } = renderSolo({ gate: { id: "fg-river", name: "RIVERBEND-FG" } });
+    await vi.waitFor(() => expect(cyHandlers["mouseover edge"]).toBeTypeOf("function"), { timeout: 2000 });
+    cyHandlers["mouseover edge"]({ target: {}, originalEvent: { clientX: 10, clientY: 10 } });
+    const tip = doc.getElementById("topology-edge-tooltip")!;
+    expect(tip.classList.contains("visible")).toBe(true);
+    expect(tip.textContent).toContain("SW-A ⇄ SW-B");
+    cyHandlers["mouseout edge"]({});
+    expect(tip.classList.contains("visible")).toBe(false);
+    // An unmount under the cursor must not strand an open tooltip.
+    cyHandlers["mouseover edge"]({ target: {} });
+    unmount();
+    expect(tip.classList.contains("visible")).toBe(false);
+  });
+
+  it("on the /dash wallboard there is no Open button (the kiosk does not navigate)", () => {
+    const w = win as unknown as Record<string, unknown>;
+    w.POLARIS_DASH_LOCAL = true;
+    try {
+      const { el, unmount } = renderSolo({ gate: { id: "fg-river", name: "RIVERBEND-FG" } });
+      const labels = Array.from(el.querySelectorAll(".devmap-topo-bar button")).map((b) => b.textContent);
+      expect(labels).not.toContain("Open ↗");
+      expect(labels).toContain("Fit");
+      unmount();
+    } finally {
+      delete w.POLARIS_DASH_LOCAL;
+    }
+  });
+
+  it("on the Dashboard the Open button leads to the Device Map page", () => {
+    const { el, unmount } = renderSolo({ gate: { id: "fg-river", name: "RIVERBEND-FG" } });
+    const labels = Array.from(el.querySelectorAll(".devmap-topo-bar button")).map((b) => b.textContent);
+    expect(labels).toContain("Open ↗");
     unmount();
   });
 
