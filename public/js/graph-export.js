@@ -392,7 +392,7 @@
       var name = (scene.names && scene.names[far]) || "another device";
       var page = pageOf[far];
       stubs.push({
-        path: route.path, color: e.color, width: e.width, style: e.style,
+        path: route.path, color: e.color, outline: e.outline, width: e.width, style: e.style,
         arrowTarget: !s && e.arrowTarget ? e.arrowTarget : null,
         arrowSource: s && e.arrowSource ? e.arrowSource : null,
         tip: route.tip, dir: route.dir,
@@ -617,10 +617,14 @@
       var scale = psNum(e, "arrow-scale", 1);
       var sid = null, tid = null;
       try { sid = e.source().id(); tid = e.target().id(); } catch (x) { /* a stub without endpoints */ }
+      // A halo round the line (the topology's physical-loop marker) is drawn
+      // as a wider stroke underneath it.
+      var ow = psNum(e, "line-outline-width", 0);
       scene.edges.push({
         source: sid, target: tid,
         path: path,
         color: color,
+        outline: ow > 0 ? { color: mixWithWhite(psColor(e, "line-outline-color") || "#000000", op), width: ow } : null,
         width: psNum(e, "width", 1.5),
         style: psStr(e, "line-style", "solid"),
         arrowTarget: tShape !== "none"
@@ -959,9 +963,6 @@
     }
 
     function drawEdge(e) {
-      doc.setDrawColor(e.color);
-      doc.setLineWidth(Math.max(0.5, e.width * s));
-      doc.setLineDashPattern(dashFor(e.style, s, e.width), 0);
       var cur = { x: e.path[0].x, y: e.path[0].y };
       var ops = [];
       for (var i = 1; i < e.path.length; i++) {
@@ -974,6 +975,16 @@
         }
         cur = { x: p.x, y: p.y };
       }
+      // The halo is solid even under a dashed line, as Cytoscape draws it.
+      if (e.outline) {
+        doc.setDrawColor(e.outline.color);
+        doc.setLineWidth(Math.max(0.5, e.width * s) + 2 * e.outline.width * s);
+        doc.setLineDashPattern([], 0);
+        doc.lines(ops, X(e.path[0].x), Y(e.path[0].y), [1, 1], "S", false);
+      }
+      doc.setDrawColor(e.color);
+      doc.setLineWidth(Math.max(0.5, e.width * s));
+      doc.setLineDashPattern(dashFor(e.style, s, e.width), 0);
       doc.lines(ops, X(e.path[0].x), Y(e.path[0].y), [1, 1], "S", false);
       doc.setLineDashPattern([], 0);
       if (e.arrowTarget) arrow(e.arrowTarget, e.width);
@@ -1433,6 +1444,17 @@
           cell("TxtLocPinX", num(tw / 2)) + cell("TxtLocPinY", num(th / 2)) + cell("TextBkgnd", lbl.bg || "#FFFFFF");
       }
       var arrowColor = (e.arrowTarget || e.arrowSource || {}).color || e.color;
+      // A halo is its own shape under the connection: the same route, wider,
+      // solid, in the halo colour.
+      if (e.outline) {
+        id++;
+        shapes.push('<Shape ID="' + id + '" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">' +
+          cell("PinX", num(x0 + w / 2)) + cell("PinY", num(y0 + h / 2)) + cell("Width", num(w)) + cell("Height", num(h)) +
+          cell("LocPinX", num(w / 2)) + cell("LocPinY", num(h / 2)) +
+          cell("LineWeight", num((e.width + 2 * e.outline.width) * PT_IN)) + cell("LineColor", e.outline.color) + cell("LinePattern", 1) +
+          '<Section N="Geometry" IX="0">' + cell("NoFill", 1) + cell("NoLine", 0) + geomRows(pts, x0, y0) + "</Section>" +
+          "</Shape>");
+      }
       id++;
       shapes.push('<Shape ID="' + id + '" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">' +
         cell("PinX", num(x0 + w / 2)) + cell("PinY", num(y0 + h / 2)) + cell("Width", num(w)) + cell("Height", num(h)) +

@@ -352,6 +352,18 @@ describe("vsdxPageXml / vsdxParts", () => {
     expect(p.shapeCount).toBe(3);
   });
 
+  it("draws a link's halo (the physical-loop marker) as a wider solid shape under it", () => {
+    const s = tinyScene() as any;
+    s.edges[0].outline = { color: "#a16207", width: 2 };
+    const p = G.vsdxPageXml(s);
+    expect(p.shapeCount).toBe(4);
+    const halo = p.xml.indexOf('<Cell N="LineColor" V="#a16207"');
+    const line = p.xml.indexOf('<Cell N="LineColor" V="#999999"');
+    expect(halo).toBeGreaterThan(-1);
+    expect(halo).toBeLessThan(line);
+    expect(p.xml).toContain('<Cell N="LineWeight" V="' + String(Number((6 / 72).toFixed(4))));
+  });
+
   it("flips y: a node at the top of the drawing sits near the top of the page", () => {
     const p = G.vsdxPageXml(tinyScene());
     // Shapes are written in paint order — the edge (ID 1) before the nodes —
@@ -540,7 +552,8 @@ describe("sceneFromCy (computed style)", () => {
     ]),
     edges: () => coll([
       ele({ "curve-style": val("taxi"), "line-color": val([245, 158, 11]), width: val(2), "line-style": val("dashed"),
-        "target-arrow-shape": val("none"), "source-arrow-shape": val("none"), label: val("port1 ↔ port2"), "font-size": val(8) },
+        "target-arrow-shape": val("none"), "source-arrow-shape": val("none"), label: val("port1 ↔ port2"), "font-size": val(8),
+        "line-outline-width": val(2), "line-outline-color": val([161, 98, 7]) },
         { sourceEndpoint: () => ({ x: 10, y: 10 }), targetEndpoint: () => ({ x: 100, y: 60 }), segmentPoints: () => [{ x: 55, y: 10 }, { x: 55, y: 60 }],
           controlPoints: () => undefined, midpoint: () => ({ x: 55, y: 35 }) }),
     ]),
@@ -559,6 +572,8 @@ describe("sceneFromCy (computed style)", () => {
     expect(s.edges[0].label.pdfLines).toEqual(["port1 <-> port2"]);
     expect(s.edges[0].label.lines).toEqual(["port1 ↔ port2"]);
     expect(s.minFontPx).toBe(8);
+    // The physical-loop halo (line-outline) is read, so the writers can print it.
+    expect(s.edges[0].outline).toEqual({ color: "#a16207", width: 2 });
   });
 });
 
