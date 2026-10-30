@@ -8812,6 +8812,12 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   max-height: none !important;
   background: var(--color-bg-secondary); /* page surface; --color-bg doesn't exist */
 }
+/* ...and out of the Dashboard's folder card while it does. The scroll box's
+   edge-fade mask clips every descendant, position:fixed ones included, so the
+   "full screen" map stayed cut to the panel; the card's isolation kept its
+   4000 under the sidebar and the sticky header. Both come back on exit. */
+.folder-card:has(.sitemap-fullscreen) { isolation: auto; }
+.folder-card-scroll:has(.sitemap-fullscreen) { -webkit-mask-image: none; mask-image: none; }
 
 /* Overlay controls (legend bottom-left, weather/theme top-right, radar clock). */
 .sitemap-controls { position: absolute; inset: 0; pointer-events: none; z-index: 1000; }
