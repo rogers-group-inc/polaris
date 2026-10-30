@@ -176,10 +176,10 @@
     // not a physical port) on those, so the raw label is often
     // "unknown ↔ unknown" — relabel those to "fortilink", and dash-gray the
     // UNVERIFIED ones (no interface/LLDP-backed cable) to read as a
-    // virtual/management link. When the server resolved interface details on
-    // BOTH ends (srcIf/tgtIf — FG side LLDP-confirmed, switch side resolved
-    // through the trunk→physical-member swap), the link is a known physical
-    // cable: keep a real port-pair label like any normal connection.
+    // virtual/management link. A VERIFIED uplink is a known physical cable:
+    // the server has already rewritten each half to a physical port (an
+    // aggregate never reaches a label — physicalLabelHalf), so keep its
+    // port-pair label, with "unknown" on a side it could not resolve.
     var fgId = data.fortigate ? data.fortigate.id : null;
     var switchIdSet = {};
     (data.switches || []).forEach(function (s) { if (s && s.id) switchIdSet[s.id] = true; });
@@ -190,17 +190,10 @@
       var isFgSwitch = fgId && e.source === fgId && switchIdSet[e.target];
       var label = e.label || "";
       var fortilinkFallback = 0;
-      if (isFgSwitch) {
-        var srcPort = e.srcIf && e.srcIf.name;
-        var tgtPort = e.tgtIf && e.tgtIf.name;
-        if (e.verifiedUplink && srcPort && tgtPort) {
-          // srcIf/tgtIf carry the post-swap names (trunk → single physical
-          // member), so this label matches the tooltip's per-side lines.
-          label = srcPort + " ↔ " + tgtPort;
-        } else {
-          label = "fortilink"; // logical FortiLink uplink, not a physical port pair
-          if (!e.verifiedUplink) fortilinkFallback = 1; // unverified → virtual (dashed gray)
-        }
+      var knownCable = e.verifiedUplink && label && label !== "unknown ↔ unknown";
+      if (isFgSwitch && !knownCable) {
+        label = "fortilink"; // logical FortiLink uplink, not a physical port pair
+        if (!e.verifiedUplink) fortilinkFallback = 1; // unverified → virtual (dashed gray)
       }
       // Wired AP↔switch link (a managed AP's switch uplink) — styled solid +
       // colored like the bridge edges so every AP-to-switch cable reads the

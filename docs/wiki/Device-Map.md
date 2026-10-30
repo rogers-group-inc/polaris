@@ -207,6 +207,19 @@ switch's straight link to the next switch along, and lines travel the gutters
 instead of cutting across other devices. Drag anything to override the
 layout; the positions are saved per site.
 
+Decommissioned and disabled devices are never drawn, including as the far end
+of a link that another device still reports (an LLDP neighbor, or an interface
+named after it).
+
+Port labels always name **physical ports**. An aggregate (the FortiGate's
+`fortilink` interface, a FortiSwitch trunk, an LACP bundle) is a virtual
+interface, so each end of a link shows the member port the cable lands on: the
+aggregate's only member, otherwise the port LLDP saw on that link. A side
+neither can resolve reads `unknown`. A switch whose trunk members Polaris
+cannot read shows `unknown` on its side until LLDP reports the port. A
+FortiGate-to-switch link with no confirmed cable is labelled `fortilink`
+and drawn dashed: that is the management relationship, not a port.
+
 Port labels (`port8 ↔ port1`) on a link with bends sit near its ends: with
 one bend, halfway along the part after the bend; with two or more, halfway
 along the first part and again halfway along the last. A label is never put

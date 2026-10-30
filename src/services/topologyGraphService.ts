@@ -181,6 +181,38 @@ function normalizePortName(name: string | null | undefined): string {
   return trimmed;
 }
 
+/**
+ * Names that are a logical interface whatever the ifTable says about them:
+ * the FortiGate's `fortilink` aggregate and the FortiOS auto-built MCLAG /
+ * ISL trunks (`_FlInK1_ICL0_`, `_FlInK1_MLAG0_`). A switch whose trunk
+ * membership was never scraped still reports these, and they are not ports.
+ */
+export function isLogicalInterfaceName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n === "fortilink" || n.startsWith("_flink");
+}
+
+/**
+ * One half of an edge label rewritten to a PHYSICAL port. An aggregate is a
+ * virtual interface — the cable lands on one of its members — so the map never
+ * prints one. In order: the aggregate's only member; else the port LLDP saw on
+ * this side of this very link (picks the right leg of a FortiLink split across
+ * an MCLAG pair, where the aggregate has one member per switch); else
+ * "unknown". A non-aggregate name is returned untouched.
+ */
+export function physicalLabelHalf(
+  name: string,
+  isAggregate: (ifName: string) => boolean,
+  members: readonly string[] | undefined,
+  lldpPort: string | null | undefined,
+): string {
+  if (!name || name === "unknown") return "unknown";
+  if (!isAggregate(name)) return name;
+  if (members && members.length === 1) return members[0];
+  if (lldpPort && !isAggregate(lldpPort)) return lldpPort;
+  return "unknown";
+}
+
 /** One LLDP neighbor row as `lldpOnlySwitchLinks` reads it. */
 export type SwitchLldpRow = {
   assetId: string;
@@ -930,8 +962,18 @@ export async function buildSiteTopology(siteId: string) {
     //     fortinetTopology edges AND interface-inferred edges so a peer
     //     link confirmed by both signals only renders once (the
     //     authoritative one wins).
+    // A row matched to a decommissioned / disabled asset is dropped outright —
+    // neither a cross-site node nor a ghost. The site's own node lists already
+    // exclude retired devices; without this a retired AP still plugged in (or
+    // inside the 48h sticky window) came back as a "remote" node.
     const lldpRows = await prisma.assetLldpNeighbor.findMany({
-      where: { assetId: { in: siteAssetIds } },
+      where: {
+        assetId: { in: siteAssetIds },
+        OR: [
+          { matchedAssetId: null },
+          { matchedAsset: { status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } } },
+        ],
+      },
       include: {
         matchedAsset: {
           select: { id: true, hostname: true, ipAddress: true, assetType: true, manufacturer: true, model: true },
@@ -1353,17 +1395,6 @@ export async function buildSiteTopology(siteId: string) {
       if (!m) return null;
       return { name, ...m };
     };
-    // Swap a single-member aggregate interface name for its physical member so
-    // edge LABELS show the real cabled port, not the logical aggregate (e.g.
-    // the FortiOS auto-ISL trunk "2DPTD23005147-0" → "port24"). Multi-member
-    // aggregates (true LACP bundles) keep the aggregate name — there's no one
-    // "the physical port" to show. Mirrors ifDetail's swap and
-    // interfaceTopologyService.preferPhysical.
-    const preferPhysicalMember = (assetId: string, ifName: string | null): string | null => {
-      if (!assetId || !ifName) return ifName;
-      const members = physicalByParent.get(`${assetId}|${ifName}`);
-      return members && members.length === 1 ? members[0] : ifName;
-    };
     const attachIfDetails = (arr: Array<{ source: string; target: string; label?: string }>) => {
       for (const e of arr) {
         const parts = String(e.label || "").split(" ↔ ");
@@ -1373,9 +1404,8 @@ export async function buildSiteTopology(siteId: string) {
         if (t) (e as Record<string, unknown>).tgtIf = t;
       }
     };
-    attachIfDetails(edges);
-    attachIfDetails(interfaceEdges);
-    attachIfDetails(lldpEdges);
+    // Attached at the end, once every label has been rewritten to physical
+    // ports — see the aggregate pass before the fallback-edge drop.
 
     // MCLAG ICL edges between paired FortiSwitches. Each switch reports the ICL
     // from its own side (one asset_mclag_peers row per local mclag-icl-port), so
@@ -1509,6 +1539,7 @@ export async function buildSiteTopology(siteId: string) {
     const ifTypeByKey = new Map<string, string | null>();
     for (const r of ifMetricRows) ifTypeByKey.set(`${r.assetId}|${r.ifName}`, r.ifType);
     const isAggregateName = (assetId: string, name: string): boolean => {
+      if (isLogicalInterfaceName(name)) return true;
       if (physicalByParent.has(`${assetId}|${name}`)) return true;
       const t = ifTypeByKey.get(`${assetId}|${name}`);
       return !!t && t !== "physical";
@@ -1576,23 +1607,36 @@ export async function buildSiteTopology(siteId: string) {
         });
       }
     }
-    attachIfDetails(memberCableEdges);
     const interfaceEdgesOut = interfaceEdges
       .filter((e) => !isMclagPair(e.source, e.target))
       .filter((e) => !expandedSwitchPairs.has([e.source, e.target].sort().join("|")))
       .concat(memberCableEdges);
-    // Final safety net for the non-expanded edges (switch↔cross-site remote,
-    // etc.): swap any single-member aggregate name for its physical member so
-    // no serial-named ISL trunk leaks through. No-op on physical port names
-    // and on the already-expanded member edges above.
-    for (const e of interfaceEdgesOut) {
-      if (expandedSwitchPairs.has([e.source, e.target].sort().join("|"))) continue;
+    // No aggregate on any label. Runs after the member expansion above, which
+    // still needs the aggregate names to find the members. Every edge class
+    // gets the same rewrite — a controller edge's switch side is often the
+    // FortiLink trunk itself ("_FlInK1_MLAG0_", a serial-named uplink), and
+    // the FortiGate side the `fortilink` aggregate — so a half names its
+    // aggregate's only member, else the port LLDP saw on that side of the
+    // link, else "unknown" (physicalLabelHalf).
+    const toPhysicalLabel = (e: { source: string; target: string; label?: string }) => {
       const parts = String(e.label || "").split(" ↔ ");
-      if (parts.length !== 2) continue;
-      const src = preferPhysicalMember(e.source, parts[0] === "unknown" ? null : parts[0]);
-      const tgt = preferPhysicalMember(e.target, parts[1] === "unknown" ? null : parts[1]);
-      e.label = portLabel(src ?? parts[0], tgt ?? parts[1]);
-    }
+      if (parts.length !== 2) return;
+      const half = (assetId: string, peerId: string, name: string) =>
+        physicalLabelHalf(
+          name,
+          (n) => isAggregateName(assetId, n),
+          physicalByParent.get(`${assetId}|${name}`),
+          siblingLldpPort.get(`${assetId}|${peerId}`)?.value,
+        );
+      e.label = portLabel(half(e.source, e.target, parts[0]), half(e.target, e.source, parts[1]));
+    };
+    for (const e of edges) toPhysicalLabel(e);
+    for (const e of interfaceEdgesOut) toPhysicalLabel(e);
+    for (const e of lldpEdgesOut) toPhysicalLabel(e);
+    for (const e of bridgeEdges) toPhysicalLabel(e);
+    attachIfDetails(edges);
+    attachIfDetails(interfaceEdgesOut);
+    attachIfDetails(lldpEdgesOut);
 
     // Drop redundant FortiLink fallback edges. FortiOS stamps
     // `fgt_peer_intf_name = "fortilink"` on every managed switch — direct or
