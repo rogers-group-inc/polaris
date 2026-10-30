@@ -347,6 +347,12 @@ Two overrides worth knowing: a **mesh-leaf AP** depends on its root AP rather
 than its controller, and a **FortiLink switch bridged behind a FortiAP** depends
 on the AP.
 
+Two switches that report each other over LLDP are joined by a line even when
+neither one's interface names identify the other — a plain fiber link between
+them, for example. The neighbor report must be from the last hour, so a link
+you have unplugged disappears once the switches stop advertising it. Hover the
+line to see which ports LLDP reported.
+
 ### Endpoints under a switch
 
 Each switch's info panel lists the endpoints learned on its ports (a count and

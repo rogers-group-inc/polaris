@@ -166,6 +166,31 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/topologyGraphService.ts
+
+**What it owns:** The Device Map topology payload — `buildSiteTopology(siteId)` builds `GET /map/sites/:id/topology` for one FortiGate: the gate, its sibling FortiSwitches / FortiAPs (resolved by controller stamp, never hostname alone — see `cross-cutting/fortinet-parent-key-resolution.md`), endpoints, wireless stations, subnets, and every edge class. Read-only; it writes nothing.
+
+**Public API:** buildSiteTopology, buildSiteEndpointAttribution, attributeEndpointToSiteSwitch, portOfLastSeenSwitch, lldpOnlySwitchLinks (+ SwitchLldpRow, LldpOnlySwitchLink), monitorStatusToHealth, fetchRecentSampleStats, MonitorHealth, SiteSwitchRef, SiteEndpointAttribution.
+
+**Cross-service deps:** `interfaceTopologyService.inferInterfaceTopology` (interface-name edges), `topologyLayoutService.getLayoutsForSite` (the `savedLayouts` embed), `utils/cableMembers.ts → pairCableMembers` (per-cable expansion), `utils/locationCodes.ts` (node location codes); reads `prisma.asset`, `assetLldpNeighbor`, `assetInterface`, `assetMclagPeer`, `assetWirelessStation`, `subnet`, `assetMonitorSample`.
+
+**Used by:**
+- `src/api/routes/map.ts` — the topology GET delegates to `buildSiteTopology`; `GET /sites` pin health uses `monitorStatusToHealth` + `fetchRecentSampleStats`; the topology search shares `buildSiteEndpointAttribution` / `attributeEndpointToSiteSwitch` (rule 91).
+- `public/js/map.js` + `public/js/topology-render.js` — render the payload (`edges`, `interfaceEdges`, `lldpEdges`, `bridgeEdges`, `mclagEdges`, ghost and remote nodes).
+
+**Invariants:**
+- Edge classes are deduped in a fixed order — controller data, then interface-name inference, then LLDP-only switch↔switch links, then LLDP edges to cross-site assets and ghost nodes. An LLDP row matching another node on the same site is skipped in the LLDP loop: the controller edge covers firewall↔switch and access point↔switch, and `lldpOnlySwitchLinks` covers a switch↔switch pair no other class drew (a plain fiber ISL interface naming cannot see). Its links join `interfaceEdges` with `matchVia: "lldp"`, so chain demotion, per-cable expansion and MCLAG stripping treat them like any inter-switch link.
+- LLDP used as CABLE evidence (`lldpOnlySwitchLinks`, the per-cable expansion) takes a 1 h freshness bound: `persistLldpNeighbors` keeps a vanished neighbor for 48 h, and a line must not outlive its cable.
+- The synthetic `port-<ifIndex>` local name is never a port label, and only name-form LLDP port-id subtypes are printed; `alertDependencyPathService` mirrors that subtype set.
+- An MCLAG pair renders as one `mclagEdges` line; LLDP and interface edges for the pair are stripped.
+
+**When changing this:**
+- A new edge class needs a place in the dedupe order and a `reason` string (the hover tooltip is the operator's audit trail), and `topology-render.js` must know it.
+- Changing which LLDP rows count as a link changes what the map shows but not the dependency tree (`dependencyTreeService` reads LLDP itself) — keep the two consistent or say why they differ.
+- Tests: `tests/unit/topologyEndpointAttribution.test.ts` (rule 91 attribution), `tests/unit/topologyLldpSwitchLinks.test.ts` (LLDP-only switch links).
+
+---
+
 ## services/topologyLayoutService.ts
 
 **What it owns:** Shared Device Map topology layouts — the `TopologyLayout` table (one row per `(siteId, view)`, siteId = the FortiGate Asset the graph is rooted on, `positions` = `{nodeId: {x,y}}` pixel model coords). The server-side half of topology drag persistence; the browser's localStorage layout remains a per-browser fallback. Each row carries TWO blobs: `positions` (the LIVE layout every drag rewrites) and `savedPositions` + `savedBy`/`savedAt` (the operator's RESTORE POINT, written only by the explicit Save).
