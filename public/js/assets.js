@@ -11008,17 +11008,18 @@ function _wirelessBandLabel(band) {
 // tab's AP Profile row) sits between the heading and the badge: it is the
 // controller object that decides these radios and SSIDs, so it belongs next
 // to them. Omitted until a discovery cycle has stamped it.
+// The mesh role chip follows the profile (see _wirelessMeshRoleChipHTML).
 function _wirelessStripHTML(asset, si) {
   var assetId = asset && asset.id;
   var topo = asset && asset.fortinetTopology;
   var profile = topo && typeof topo === "object" && typeof topo.profile === "string" ? topo.profile : "";
   return _currentStateStripHTML({
     title: "Wireless",
-    suffixHTML: profile
+    suffixHTML: (profile
       ? '<span style="font-weight:400;color:var(--color-text-secondary)" ' +
           'title="AP profile this access point is bound to on its controller">' +
           'Profile: ' + escapeHtml(profile) + '</span>'
-      : "",
+      : "") + _wirelessMeshRoleChipHTML(asset, si),
     chipHTML: asset ? _streamSourceBadgeHTML(asset, "interfaces") : "",
     lastAt: (si && si.lastSystemInfoAt) || (asset && asset.lastSystemInfoAt) || null,
     cadenceSec: _resolveStaleStreamSec(assetId, asset, "systemInfo"),
@@ -11026,6 +11027,36 @@ function _wirelessStripHTML(asset, si) {
     refreshId: "asset-wireless-refresh",
     refreshTitle: "Re-read this AP's radios, SSIDs and connected clients from the device now",
   });
+}
+
+// The AP's wireless-mesh role, as a chip on the Wireless strip:
+//   leaf — FortiOS classifies its uplink as mesh (fortinetTopology.meshUplink,
+//          stamped by discovery from the controller's mesh_uplink)
+//   root — another access point is associated to it as a client (the same
+//          signal dependency suppression uses for the root → leaf edge)
+//   neither — no chip. An AP that is both (a mesh hop) shows both.
+// The phone's Wireless sheet carries the same label (wirelessMeshRoleHtml in
+// mobile/asset-detail.js) — change one, change both.
+function _wirelessMeshRoleChipHTML(asset, si) {
+  var topo = asset && asset.fortinetTopology;
+  var isLeaf = !!topo && typeof topo === "object" && topo.meshUplink === "mesh";
+  var parentSerial = isLeaf && typeof topo.parentApSerial === "string" ? topo.parentApSerial : "";
+  var leaves = ((si && si.wirelessStations) || []).filter(function (s) {
+    return s && s.matchedAsset && s.matchedAsset.assetType === "access_point";
+  });
+  var html = "";
+  if (leaves.length > 0) {
+    var names = leaves.map(function (s) { return s.matchedAsset.hostname || s.staMacAddr; });
+    html += _wirelessChip("Mesh root",
+      "Another access point is connected to this one as a wireless client — " +
+      "this AP is a mesh root serving: " + names.join(", "));
+  }
+  if (isLeaf) {
+    html += _wirelessChip("Mesh leaf",
+      "The controller reports this AP's uplink as wireless mesh, not Ethernet" +
+      (parentSerial ? " — parent AP serial " + parentSerial : ""));
+  }
+  return html;
 }
 
 // Re-read the system-info snapshot and repaint just this tab. Narrower than
@@ -15369,13 +15400,20 @@ function _streamSourceBadgeHTML(asset, stream, opts) {
   var resolvedRaw = asset[assetField] || _polarisSourceDefaultPolling(sourceKind, stream);
   if (!resolvedRaw) return "";
   var hasOverride = !!opts && Object.prototype.hasOwnProperty.call(opts, "intervalSec");
-  // Coarse interval guess for the sync render: per-asset override only.
-  // The async path overwrites with the authoritative resolved value from
-  // /effective-monitor-settings (covers class/integration/manual tiers).
+  // Interval for the sync render: the resolved figure when this asset's
+  // /effective-monitor-settings has already been fetched, else the per-asset
+  // override only. The async path overwrites badges that are in the DOM when
+  // it lands — but a badge drawn AFTER it (the Wireless tab, which waits on the
+  // system-info fetch, and every Poll re-render) is never rewritten, so without
+  // the cache it showed no "every N" at all.
   var intervalAssetField = _streamIntervalAssetField(stream);
+  var intervalEffField = _streamIntervalEffectiveField(stream);
+  var effCached = _effectiveResolvedByAssetId.get(asset.id);
   var intervalSeconds = hasOverride
     ? (opts.intervalSec != null ? opts.intervalSec : null)
-    : ((intervalAssetField && asset[intervalAssetField] != null) ? asset[intervalAssetField] : null);
+    : (effCached && intervalEffField && typeof effCached[intervalEffField] === "number")
+      ? effCached[intervalEffField]
+      : ((intervalAssetField && asset[intervalAssetField] != null) ? asset[intervalAssetField] : null);
   var label = _streamBadgeText(asset, stream, resolvedRaw, null, intervalSeconds);
   var titleLabel = "Polling method · Where this setting comes from";
   return '<span class="asset-stream-source-badge" data-asset-id="' + escapeHtml(asset.id) + '" data-stream="' + escapeHtml(stream) + '"' +
