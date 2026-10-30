@@ -55,7 +55,9 @@ gets generated, and the first typecheck fails — eight logged sessions did exac
    that fails in a fresh worktree is the missing client until proved otherwise (the four ways
    it shows up: worktree-setup.md step 5).
 4. Only when the change needs them: `cp <main-checkout>/.env .env` (tests against a DB), and
-   `npm install --no-audit --no-fund` (a dependency change).
+   `DATABASE_URL=postgresql://x:x@localhost:5432/x npm install --no-audit --no-fund` (a
+   dependency change). The placeholder is not optional without a `.env`: postinstall runs
+   `prisma generate`, which fails on an unresolved `DATABASE_URL` and fails the whole install.
 5. Any git you want (`git log -1`, `npm run rules:next`) — each in its own call.
 
 ## Shell inside a worktree — what the Bash guard refuses
