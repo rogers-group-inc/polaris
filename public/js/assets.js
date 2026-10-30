@@ -11035,6 +11035,8 @@ function _wirelessStripHTML(asset, si) {
 //   root — another access point is associated to it as a client (the same
 //          signal dependency suppression uses for the root → leaf edge)
 //   neither — no chip. An AP that is both (a mesh hop) shows both.
+// The phone's Wireless sheet carries the same label (wirelessMeshRoleHtml in
+// mobile/asset-detail.js) — change one, change both.
 function _wirelessMeshRoleChipHTML(asset, si) {
   var topo = asset && asset.fortinetTopology;
   var isLeaf = !!topo && typeof topo === "object" && topo.meshUplink === "mesh";

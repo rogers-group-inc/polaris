@@ -200,7 +200,7 @@ firewall that reports SD-WAN:
 |---|---|---|
 | Firewall | **View ARP Table** | the neighbour cache by interface, with the same **Current / Last hour … Last 30 days** range as the desktop tab (ranges past retention are greyed) and a filter over IP, MAC, interface and hostname |
 | Switch | **View MAC Table** | the forwarding database by port, each port marked access port or uplink / trunk; entries on trunk / LAG pseudo-ports are hidden until you tap **Show** |
-| Monitored access point | **View Wireless** | each radio (band, channel, width), the SSIDs it broadcasts, and the clients on each. Clients that match no broadcast SSID are listed under their own heading, not dropped |
+| Monitored access point | **View Wireless** | each radio (band, channel, width), the SSIDs it broadcasts, and the clients on each. Clients that match no broadcast SSID are listed under their own heading, not dropped. An AP in a wireless mesh is labelled above the radios: **Mesh root** with the leaf APs it serves, **Mesh leaf** with its parent AP's serial (both on a mesh hop) — the desktop Wireless tab's labels |
 
 A client or neighbour Polaris matched to a known device links to it, and tapping
 it opens that asset as the next page. The tables are read-only; the refresh

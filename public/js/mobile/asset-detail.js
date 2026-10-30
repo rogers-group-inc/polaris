@@ -3526,6 +3526,32 @@
     return tableRowHtml(escapeHtml(s.staMacAddr || "—"), sub.join(" · "));
   }
 
+  // The AP's wireless-mesh role — the desktop Wireless strip's label
+  // (_wirelessMeshRoleChipHTML). Root: another inventory AP is associated to
+  // it as a client. Leaf: the controller reports its uplink as mesh
+  // (fortinetTopology.meshUplink). Both on a mesh hop; "" otherwise. No hover
+  // on a phone, so the leaves and the parent serial are spelled out inline.
+  function wirelessMeshRoleHtml(asset, stations) {
+    var topo = asset && asset.fortinetTopology;
+    var isLeaf = !!topo && typeof topo === "object" && topo.meshUplink === "mesh";
+    var parentSerial = isLeaf && typeof topo.parentApSerial === "string" ? topo.parentApSerial : "";
+    var leaves = stations.filter(function (s) {
+      return s && s.matchedAsset && s.matchedAsset.assetType === "access_point";
+    });
+    var lines = [];
+    if (leaves.length) {
+      lines.push('<strong>Mesh root</strong> <span class="muted">· serving ' +
+        escapeHtml(leaves.map(function (s) { return s.matchedAsset.hostname || s.staMacAddr; }).join(", ")) + '</span>');
+    }
+    if (isLeaf) {
+      lines.push('<strong>Mesh leaf</strong>' +
+        (parentSerial ? ' <span class="muted">· parent AP <span class="mono">' + escapeHtml(parentSerial) + '</span></span>' : ""));
+    }
+    return lines.length
+      ? '<div id="wireless-mesh-role" style="font-size:13px;margin-bottom:8px;">' + lines.join("<br>") + '</div>'
+      : "";
+  }
+
   function loadWirelessSheet(assetId, refetch) {
     var current = beginTableLoad("wireless", assetId);
     if (!current) return;
@@ -3547,11 +3573,12 @@
       if (meta) meta.innerHTML = (lastAt ? "read " + escapeHtml(formatTimeAgo(lastAt)) : "never collected")
         + " · " + radios.length + " radio" + (radios.length === 1 ? "" : "s")
         + " · " + stations.length + " client" + (stations.length === 1 ? "" : "s");
+      var meshRole = wirelessMeshRoleHtml(_assetCache[assetId], stations);
 
       if (!radios.length) {
-        body.innerHTML = stations.length
+        body.innerHTML = meshRole + (stations.length
           ? stations.map(wirelessStationRow).join('<div class="list-divider"></div>')
-          : tableMsg("No radios or wireless clients reported for this AP.");
+          : tableMsg("No radios or wireless clients reported for this AP."));
         return;
       }
 
@@ -3582,7 +3609,7 @@
           "· " + tree.unplaced.length + " of " + stations.length,
           tree.unplaced.map(wirelessStationRow).join(""), true);
       }
-      body.innerHTML = html;
+      body.innerHTML = meshRole + html;
     }).catch(function (err) {
       if (!current()) return;
       var body = document.getElementById("table-sheet-body");
