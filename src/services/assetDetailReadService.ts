@@ -25,6 +25,7 @@ import { AppError } from "../utils/errors.js";
 import { hasPermission } from "../api/middleware/permissions.js";
 import { isWorkloadPlatform } from "../utils/workloadSources.js";
 import { resolveMonitorSettingsWithProvenance } from "./monitoringService.js";
+import { snmpPollingCredentialId } from "./assetCredentialScopeService.js";
 import { describeDownDetectionFor, recoveryPollsFor } from "./downDetectionService.js";
 import { deviceUptime } from "../utils/uptime.js";
 
@@ -42,7 +43,9 @@ export async function getEffectiveMonitorSettings(id: string) {
       // workload asset while the monitor pinged.
       ipAddress:                  true,
       discoveredByIntegrationId:  true,
-      discoveredByIntegration:    { select: { name: true, type: true, pollInterval: true } },
+      // config only for the SNMP Walk default's integration fallback below —
+      // never echoed: `integrationInfo` picks its fields by name.
+      discoveredByIntegration:    { select: { name: true, type: true, pollInterval: true, config: true } },
       monitorIntervalSec:         true,
       cpuMemoryIntervalSec:       true,
       temperatureIntervalSec:     true,
@@ -67,6 +70,12 @@ export async function getEffectiveMonitorSettings(id: string) {
       temperatureCredentialId:    true,
       interfacesCredentialId:     true,
       lldpCredentialId:           true,
+      // The remaining slots the SNMP Walk default reads (snmpCredentialId).
+      monitorCredentialId:        true,
+      processesCredentialId:      true,
+      eventLogCredentialId:       true,
+      customWidgetPolling:        true,
+      customWidgetCredentialId:   true,
     },
   });
   if (!asset) throw new AppError(404, "Asset not found");
@@ -144,7 +153,28 @@ export async function getEffectiveMonitorSettings(id: string) {
           : null,
       }
     : null;
-  return { ...result, mibLookup, integration: integrationInfo, downDetection };
+  // The credential this asset's SNMP polling authenticates with — the SNMP
+  // Walk tab's credential picker starts on it. null when nothing polls over
+  // SNMP or no credential chain ends on an SNMP one.
+  const snmpCredentialId = await snmpPollingCredentialId({
+    asset: {
+      monitorCredentialId:      asset.monitorCredentialId,
+      responseTimeCredentialId: asset.responseTimeCredentialId,
+      cpuMemoryCredentialId:    asset.cpuMemoryCredentialId,
+      temperatureCredentialId:  asset.temperatureCredentialId,
+      interfacesCredentialId:   asset.interfacesCredentialId,
+      lldpCredentialId:         asset.lldpCredentialId,
+      processesCredentialId:    asset.processesCredentialId,
+      eventLogCredentialId:     asset.eventLogCredentialId,
+      customWidgetCredentialId: asset.customWidgetCredentialId,
+      customWidgetPolling:      asset.customWidgetPolling,
+    },
+    resolved:    result.resolved as unknown as Record<string, unknown>,
+    integration: asset.discoveredByIntegration
+      ? { type: asset.discoveredByIntegration.type, config: asset.discoveredByIntegration.config }
+      : null,
+  });
+  return { ...result, mibLookup, integration: integrationInfo, downDetection, snmpCredentialId };
 }
 
 // ─── Assistant sections ──────────────────────────────────────────────────────

@@ -252,15 +252,16 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Purpose:** business rule 112(e) — which stored credentials an asset already uses, so a read-level route may aim only those at it.
 
-**Public API:** `credentialIdsAttachedToAsset(assetId)` → Set of credential ids (the asset's `ASSET_CREDENTIAL_SLOTS`, the class-override `*CredentialId`s `resolveMonitorSettings` returns, the discovering integration's `config.monitorCredentialId`); `assertCredentialInAssetScope(assetId, credentialId, mayUseAnyCredential)` — 403 unless the credential is in that set or the caller holds `assets:write`.
+**Public API:** `credentialIdsAttachedToAsset(assetId)` → Set of credential ids (the asset's `ASSET_CREDENTIAL_SLOTS`, the class-override `*CredentialId`s `resolveMonitorSettings` returns, the discovering integration's `config.monitorCredentialId`); `assertCredentialInAssetScope(assetId, credentialId, mayUseAnyCredential)` — 403 unless the credential is in that set or the caller holds `assets:write`; `pickSnmpPollingCredentialId(input)` (pure) / `snmpPollingCredentialId(input)` (one `credential.findMany` for the types) — the credential the first SNMP-polled stream authenticates with, mirroring the collectors' chains (stream credential ?? default monitor credential when SNMP → class-override stream credential → a Fortinet integration's `monitorCredentialId`; custom widgets: widget → temperature → CPU/memory → default → integration); `snmpPollingCredentialCandidates(input)`.
 
 **Reads:** Asset (credential slots, assetType, ipAddress, discoveredByIntegration type + config), the monitor-settings resolver caches. **Writes:** nothing.
 
-**Callers:** `POST /assets/:id/snmp-walk`, `runMibWalk` (both MIB walk routes). The rule 112 audit (`recordCredentialUse`) still runs after the check.
+**Callers:** `POST /assets/:id/snmp-walk`, `runMibWalk` (both MIB walk routes). The rule 112 audit (`recordCredentialUse`) still runs after the check. `snmpPollingCredentialId` → `assetDetailReadService.getEffectiveMonitorSettings` (`snmpCredentialId`, the SNMP Walk tab's default credential).
 
 **When changing this:**
 - A new read-level route that sends a stored credential to an asset MUST call `assertCredentialInAssetScope` with the caller's `assets:write`.
 - A new per-asset credential slot belongs in `ASSET_CREDENTIAL_SLOTS` (credentialUseAuditService), which this reads.
+- A changed SNMP credential chain in a `monitoringService` collector (`resolveSnmpConfigForStream`, the custom-widget candidates) changes `pickSnmpPollingCredentialId` with it — otherwise the walk tab starts on a credential polling no longer uses. `tests/unit/snmpPollingCredential.test.ts` pins each step.
 ## services/sshHostKeyService.ts
 
 **What it owns:** Trust-on-first-use pinning for SSH SERVER host keys — the `SshHostKey` table, the verify/pin decision, the fingerprint + key-type parsers, and the operator list/delete.
