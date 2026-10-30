@@ -58,9 +58,14 @@
   //
   // The GRID has two weights. The thick (major) lines are the column
   // solver's lattice, TOPO_COL_SPACING × TOPO_ROW_SPACING — where devices
-  // land. The thin (minor) lines split each major cell TOPO_GRID_DIV ways;
-  // thin AND thick lines together are the lattice line points snap to.
+  // land. The thin (minor) lines split each major cell TOPO_GRID_DIV ways,
+  // or TOPO_GRID_DIV_FINE ways once zoomed in far enough that a fine cell is
+  // TOPO_GRID_FINE_MIN_PX on screen (_topologyGridDiv); thin AND thick lines
+  // together are the lattice line points snap to, so the snap follows the
+  // split being drawn.
   var TOPO_GRID_DIV = 4;
+  var TOPO_GRID_DIV_FINE = 8;
+  var TOPO_GRID_FINE_MIN_PX = 16;
   var GRID_STORAGE_KEY = "polaris.topology.grid";                 // default off
   // Snap devices: drags land on the MAJOR lattice on release, and turning it
   // on re-snaps every current position. Same key as the old single "Snap"
@@ -2877,6 +2882,11 @@
     // Save/Reset affordances are per VIEW — re-state them whenever the
     // graph is rebuilt (open, refresh, view switch, reset).
     _refreshLayoutToolbar();
+    // Group boxes are re-built after layout (refreshLocationGroups adds
+    // nodes), so a node added in view-only mode takes the mode's panning.
+    cyInstance.on("add", "node", function (evt) {
+      if (!topoState.editing) evt.target.panify();
+    });
     // View-only unless Edit is on: the fresh graph takes the current mode.
     _applyTopologyEditMode();
   }
@@ -3046,9 +3056,9 @@
   // Edit mode only (hidden the moment editing ends). Painted as CSS
   // gradients on the graph container, under Cytoscape's
   // transparent canvas, re-positioned on every pan / zoom: thick lines on
-  // the device lattice, thin ones on its TOPO_GRID_DIV subdivisions. Lines
-  // too dense to read at the current zoom are left out (thin below 6 px
-  // apart, all of it below 8 px).
+  // the device lattice, thin ones on its _topologyGridDiv() subdivisions.
+  // Lines too dense to read at the current zoom are left out (thin below
+  // 6 px apart, all of it below 8 px).
   function _paintTopologyGrid() {
     var graph = document.getElementById("topology-graph");
     if (!graph) return;
@@ -3061,7 +3071,8 @@
     var z = cyInstance.zoom();
     var pan = cyInstance.pan();
     var w = TOPO_COL_SPACING * z, h = TOPO_ROW_SPACING * z;
-    var mw = w / TOPO_GRID_DIV, mh = h / TOPO_GRID_DIV;
+    var div = _topologyGridDiv();
+    var mw = w / div, mh = h / div;
     if (Math.min(w, h) < 8) {
       graph.style.backgroundImage = "";
       return;
@@ -3093,10 +3104,19 @@
     });
     _paintTopologyGrid();
   }
+  // How many ways the thin lines split a major cell at the current zoom: 4,
+  // or 8 once an eighth of the shorter side is TOPO_GRID_FINE_MIN_PX on
+  // screen. The thick lines never move.
+  function _topologyGridDiv() {
+    if (!cyInstance) return TOPO_GRID_DIV;
+    var fineCell = Math.min(TOPO_COL_SPACING, TOPO_ROW_SPACING) * cyInstance.zoom() / TOPO_GRID_DIV_FINE;
+    return fineCell >= TOPO_GRID_FINE_MIN_PX ? TOPO_GRID_DIV_FINE : TOPO_GRID_DIV;
+  }
   // The point a line's bend lands on with "Snap line points" on: the nearest
-  // intersection of the thin + thick lines.
+  // intersection of the thin + thick lines as currently drawn.
   function _snapFine(p) {
-    var sx = TOPO_COL_SPACING / TOPO_GRID_DIV, sy = TOPO_ROW_SPACING / TOPO_GRID_DIV;
+    var div = _topologyGridDiv();
+    var sx = TOPO_COL_SPACING / div, sy = TOPO_ROW_SPACING / div;
     return { x: Math.round(p.x / sx) * sx, y: Math.round(p.y / sy) * sy };
   }
   function _setTopologyEditing(on) {
@@ -3105,7 +3125,17 @@
   }
   function _applyTopologyEditMode() {
     var on = !!topoState.editing;
-    if (cyInstance) cyInstance.autoungrabify(!on);
+    if (cyInstance) {
+      cyInstance.autoungrabify(!on);
+      // View-only: a drag that starts on a device or a group box pans the
+      // map. Cytoscape pans only from empty background or a `pannable`
+      // element, and an ungrabbable node is neither — so a building box,
+      // which can fill most of the canvas, left nowhere to drag the map
+      // from. Editing turns it off again so boxes and devices grab; Ctrl+drag
+      // (_wireCtrlPan) still pans there. Taps fire on pannable nodes too.
+      if (on) cyInstance.nodes().unpanify();
+      else cyInstance.nodes().panify();
+    }
     if (edgeEditor) edgeEditor.refresh();
     _paintTopologyGrid(); // the grid is an editing aid: drawn only while editing
     var btn = document.getElementById("topology-edit");

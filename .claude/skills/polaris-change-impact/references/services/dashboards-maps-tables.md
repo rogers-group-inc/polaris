@@ -170,7 +170,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The Device Map topology payload — `buildSiteTopology(siteId)` builds `GET /map/sites/:id/topology` for one FortiGate: the gate, its sibling FortiSwitches / FortiAPs (resolved by controller stamp, never hostname alone — see `cross-cutting/fortinet-parent-key-resolution.md`), endpoints, wireless stations, subnets, and every edge class. Read-only; it writes nothing.
 
-**Public API:** buildSiteTopology, buildSiteEndpointAttribution, attributeEndpointToSiteSwitch, portOfLastSeenSwitch, lldpOnlySwitchLinks (+ SwitchLldpRow, LldpOnlySwitchLink), monitorStatusToHealth, fetchRecentSampleStats, MonitorHealth, SiteSwitchRef, SiteEndpointAttribution.
+**Public API:** buildSiteTopology, buildSiteEndpointAttribution, attributeEndpointToSiteSwitch, portOfLastSeenSwitch, lldpOnlySwitchLinks (+ SwitchLldpRow, LldpOnlySwitchLink), physicalLabelHalf, isLogicalInterfaceName, monitorStatusToHealth, fetchRecentSampleStats, MonitorHealth, SiteSwitchRef, SiteEndpointAttribution.
 
 **Cross-service deps:** `interfaceTopologyService.inferInterfaceTopology` (interface-name edges), `topologyLayoutService.getLayoutsForSite` (the `savedLayouts` embed), `utils/cableMembers.ts → pairCableMembers` (per-cable expansion), `utils/locationCodes.ts` (node location codes); reads `prisma.asset`, `assetLldpNeighbor`, `assetInterface`, `assetMclagPeer`, `assetWirelessStation`, `subnet`, `assetMonitorSample`.
 
@@ -183,11 +183,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - LLDP used as CABLE evidence (`lldpOnlySwitchLinks`, the per-cable expansion) takes a 1 h freshness bound: `persistLldpNeighbors` keeps a vanished neighbor for 48 h, and a line must not outlive its cable.
 - The synthetic `port-<ifIndex>` local name is never a port label, and only name-form LLDP port-id subtypes are printed; `alertDependencyPathService` mirrors that subtype set.
 - An MCLAG pair renders as one `mclagEdges` line; LLDP and interface edges for the pair are stripped.
+- **A retired device is never a node, at either end.** Every site list filters `EXCLUDED_LIFECYCLE_STATUSES`, and so do the two paths that reach assets outside the site: the LLDP query drops a row whose `matchedAsset` is decommissioned / disabled (no remote node, no ghost), and `interfaceTopologyService` drops them from its candidate inventory. Before both filters a retired AP still on the wire came back as a "remote" node.
+- **No aggregate on a label.** After the per-cable expansion (which still needs aggregate names to find members), every edge class's label halves go through `physicalLabelHalf`: the aggregate's only member, else the port this side's LLDP saw on this link (`siblingLldpPort` — the right leg of a FortiGate `fortilink` split across an MCLAG pair), else `unknown`. "Aggregate" = `isAggregateName`: parents physical members, a non-physical `ifType`, or a FortiOS logical name (`isLogicalInterfaceName`: `fortilink`, `_FlInK*`). `srcIf` / `tgtIf` are attached after this pass, so the tooltip and label name the same port. `topology-render.js` keeps a verified FG→switch uplink's server label (`unknown` on an unresolved side) and prints `fortilink` only for a link with no confirmed cable.
 
 **When changing this:**
 - A new edge class needs a place in the dedupe order and a `reason` string (the hover tooltip is the operator's audit trail), and `topology-render.js` must know it.
 - Changing which LLDP rows count as a link changes what the map shows but not the dependency tree (`dependencyTreeService` reads LLDP itself) — keep the two consistent or say why they differ.
-- Tests: `tests/unit/topologyEndpointAttribution.test.ts` (rule 91 attribution), `tests/unit/topologyLldpSwitchLinks.test.ts` (LLDP-only switch links).
+- Tests: `tests/unit/topologyEndpointAttribution.test.ts` (rule 91 attribution), `tests/unit/topologyLldpSwitchLinks.test.ts` (LLDP-only switch links), `tests/unit/topologyPhysicalLabels.test.ts` (aggregate → physical label halves).
 
 ---
 

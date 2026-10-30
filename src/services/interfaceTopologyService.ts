@@ -22,7 +22,9 @@
  */
 
 import { prisma } from "../db.js";
+import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import {
+  hostnameMatchesFullPeerInterface,
   hostnameMatchesPeerInterface,
   parseFortinetPeerInterface,
   serialMatchesPeerInterface,
@@ -154,10 +156,13 @@ export async function inferInterfaceTopology(
 
   // Pull every Fortinet infrastructure asset's identity once. Inventory
   // is small (hundreds at most) so an in-memory scan per candidate is
-  // cheaper than per-candidate SQL.
+  // cheaper than per-candidate SQL. Decommissioned / disabled assets are not
+  // candidates: a retired device keeps its hostname and serial, so it would
+  // otherwise win a match nothing live contests and be drawn as a peer.
   const inventory = await prisma.asset.findMany({
     where: {
       assetType: { in: ["firewall", "switch", "access_point"] },
+      status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
     },
     select: {
       id: true,
@@ -203,10 +208,16 @@ export async function inferInterfaceTopology(
       matched = serialMatches[0];
       matchVia = "serial";
     } else if (serialMatches.length === 0) {
-      // Operator-named aggregate — fall back to hostname match.
-      const hostnameMatches = inventory.filter((a) =>
-        hostnameMatchesPeerInterface(c.parsed, a.hostname),
+      // Operator-named aggregate — fall back to hostname match. The whole
+      // interface name first: `NAME-1` is the device called `NAME-1` even
+      // when a `NAME` also exists, which the fragment match would call
+      // ambiguous.
+      const fullMatches = inventory.filter((a) =>
+        hostnameMatchesFullPeerInterface(c.parsed, a.hostname),
       );
+      const hostnameMatches = fullMatches.length > 0
+        ? fullMatches
+        : inventory.filter((a) => hostnameMatchesPeerInterface(c.parsed, a.hostname));
       if (hostnameMatches.length === 1) {
         matched = hostnameMatches[0];
         matchVia = "hostname";

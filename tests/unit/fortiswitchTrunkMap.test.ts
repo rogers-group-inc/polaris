@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   matchTrunkPeer,
   parseTrunkPortMap,
+  stripTrunkRoleSuffix,
   trunkMemberMap,
   trunkPeerNameTail,
 } from "../../src/utils/fortiswitchTrunkMap.js";
@@ -194,5 +195,21 @@ describe("operator-named LAGs in the same scalar", () => {
     expect(matchTrunkPeer("Storage Node 2", serials)).toBeNull();
     expect(matchTrunkPeer("_FlInK1_ICL0_", serials)).toBeNull();
     expect(matchTrunkPeer("0967", serials)).toBeNull();
+  });
+});
+
+// FS-248E ifTable: trunks carry a role suffix the trunk scalar does not.
+describe("stripTrunkRoleSuffix", () => {
+  it("removes a trailing parenthesised role", () => {
+    expect(stripTrunkRoleSuffix("1CD11A4549B7-0(primary)")).toBe("1CD11A4549B7-0");
+    expect(stripTrunkRoleSuffix("_FlInK1_ICL0_(primary)")).toBe("_FlInK1_ICL0_");
+    expect(stripTrunkRoleSuffix("trunkA (secondary)")).toBe("trunkA");
+  });
+
+  it("leaves a name without one unchanged", () => {
+    expect(stripTrunkRoleSuffix("1CD11A4549B7-0")).toBe("1CD11A4549B7-0");
+    expect(stripTrunkRoleSuffix("port52")).toBe("port52");
+    expect(stripTrunkRoleSuffix("Storage Node 2")).toBe("Storage Node 2");
+    expect(stripTrunkRoleSuffix("lag(1)")).toBe("lag(1)"); // not a role word
   });
 });

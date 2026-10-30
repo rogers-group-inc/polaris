@@ -207,6 +207,19 @@ switch's straight link to the next switch along, and lines travel the gutters
 instead of cutting across other devices. Drag anything to override the
 layout; the positions are saved per site.
 
+Decommissioned and disabled devices are never drawn, including as the far end
+of a link that another device still reports (an LLDP neighbor, or an interface
+named after it).
+
+Port labels always name **physical ports**. An aggregate (the FortiGate's
+`fortilink` interface, a FortiSwitch trunk, an LACP bundle) is a virtual
+interface, so each end of a link shows the member port the cable lands on: the
+aggregate's only member, otherwise the port LLDP saw on that link. A side
+neither can resolve reads `unknown`. A switch whose trunk members Polaris
+cannot read shows `unknown` on its side until LLDP reports the port. A
+FortiGate-to-switch link with no confirmed cable is labelled `fortilink`
+and drawn dashed: that is the management relationship, not a port.
+
 Port labels (`port8 ↔ port1`) on a link with bends sit near its ends: with
 one bend, halfway along the part after the bend; with two or more, halfway
 along the first part and again halfway along the last. A label is never put
@@ -232,7 +245,9 @@ you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
 **Editing the layout.** The topology opens **view-only**: you can click,
-select, pan, zoom, switch location views and export, but nothing moves. Press
+select, pan, zoom, switch location views and export, but nothing moves.
+Dragging anywhere pans the map, including on a device or a location box. While
+editing, dragging moves the device or box instead; hold **Ctrl** to pan. Press
 **Edit** (the pencil at the map's top right, as on the dashboard) to move
 devices and location boxes, draw lines, and use **Save layout**, **Reset
 layout** and the editing tools, which only show while editing. The check mark
@@ -245,10 +260,12 @@ the next time you edit if you left it on.
 
 - **Grid** draws two weights of line behind the map. The thick lines are
   where devices sit in the automatic layout; the thin lines split each cell
-  in four.
+  in four, and in eight once you zoom in far enough for the finer lines to
+  be readable (about 135%). The thick lines stay where they are.
 - **Snap devices** lands a dragged device on the thick lines, and lines up
   every device on the map when you turn it on.
-- **Snap line points** lands a dragged bend point on any line, thick or thin.
+- **Snap line points** lands a dragged bend point on any line, thick or thin,
+  so zooming in gives you the finer eight-way spacing to place points on.
 
 **Drawing your own connection lines** (while editing). Drag any part of a line and a bend
 point appears where you pressed, selected and following the pointer. Click a

@@ -124,12 +124,34 @@ export function serialMatchesPeerInterface(parsed: ParsedPeerInterface, assetSer
  * The trailing-separator rule prevents `HILLTOP2` from matching an unrelated
  * `HILLTOP21` — operator-typed aggregate names should be a complete
  * hostname or a meaningful prefix, not a substring collision.
+ *
+ * A numbered sibling is not a prefix match. When the parser split a `-N`
+ * suffix off (`JEFFERSON-222E-1` → fragment `JEFFERSON-222E`), the operator
+ * may simply have named the aggregate after a peer whose hostname ends in a
+ * number — so `JEFFERSON-222E-6` is a DIFFERENT device in the same family,
+ * not the peer. Such a hostname matches only when it is the whole interface
+ * name (`hostnameMatchesFullPeerInterface`).
  */
 export function hostnameMatchesPeerInterface(parsed: ParsedPeerInterface, assetHostname: string | null | undefined): boolean {
   if (!assetHostname) return false;
+  if (hostnameMatchesFullPeerInterface(parsed, assetHostname)) return true;
   const h = assetHostname.toUpperCase().trim();
   const f = parsed.peerFragment.toUpperCase();
   if (h.length < f.length) return false;
   if (h === f) return true;
+  if (parsed.aggregateIndex !== null && /^-\d+(?:$|[.-])/.test(h.slice(f.length))) return false;
   return h.startsWith(f + "-") || h.startsWith(f + ".");
+}
+
+/**
+ * True when `assetHostname` is the interface name as reported — suffix
+ * included — exactly or as the short form of an FQDN. The topology service
+ * tries this before the fragment match, so an aggregate named `NAME-1`
+ * resolves to the device called `NAME-1` even when a `NAME` also exists.
+ */
+export function hostnameMatchesFullPeerInterface(parsed: ParsedPeerInterface, assetHostname: string | null | undefined): boolean {
+  if (!assetHostname) return false;
+  const h = assetHostname.toUpperCase().trim();
+  const n = parsed.interfaceName.toUpperCase();
+  return h === n || h.startsWith(n + ".");
 }

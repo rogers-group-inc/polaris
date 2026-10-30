@@ -363,6 +363,51 @@ describe("overlayFortiswitchTrunkMembers", () => {
     expect(overlayFortiswitchTrunkMembers(ifaces, new Map())).toBe(0);
     expect(ifaces).toHaveLength(1);
   });
+
+  // FS-248E: the ifTable lists each trunk with its role appended
+  // ("1CD11A4549B7-0(primary)", ifType 54 → null) while fsTrunkMember names it
+  // bare, so the members pointed at a parent no row carried and the System tab
+  // showed them flat.
+  it("renames a role-suffixed trunk row to the trunk name and nests its member", () => {
+    const ifaces: InterfaceSample[] = [
+      mk("1CD11A4549B7-0(primary)", { ifType: null }),
+      mk("_FlInK1_ICL0_(primary)", { ifType: null }),
+      mk("port51"),
+      mk("port52"),
+    ];
+    const links = overlayFortiswitchTrunkMembers(
+      ifaces,
+      new Map([["_FlInK1_ICL0_", ["port51"]], ["1CD11A4549B7-0", ["port52"]]]),
+      { synthesizeMissing: false },
+    );
+    expect(links).toBe(2);
+    expect(ifaces.map((i) => i.ifName).sort()).toEqual(["1CD11A4549B7-0", "_FlInK1_ICL0_", "port51", "port52"]);
+    expect(ifaces.find((i) => i.ifName === "1CD11A4549B7-0")!.ifType).toBe("aggregate");
+    expect(ifaces.find((i) => i.ifName === "port52")!.ifParent).toBe("1CD11A4549B7-0");
+    expect(ifaces.find((i) => i.ifName === "port51")!.ifParent).toBe("_FlInK1_ICL0_");
+  });
+
+  it("moves a child already parented on the suffixed name along with the rename", () => {
+    const ifaces: InterfaceSample[] = [
+      mk("trunkA(primary)", { ifType: null }),
+      mk("vlan30", { ifType: "vlan", ifParent: "trunkA(primary)" }),
+      mk("port9"),
+    ];
+    overlayFortiswitchTrunkMembers(ifaces, new Map([["trunkA", ["port9"]]]));
+    expect(ifaces.find((i) => i.ifName === "vlan30")!.ifParent).toBe("trunkA");
+  });
+
+  it("leaves a suffixed row alone when the trunk map doesn't name it", () => {
+    const ifaces: InterfaceSample[] = [mk("other(primary)", { ifType: null }), mk("port9")];
+    overlayFortiswitchTrunkMembers(ifaces, new Map([["trunkA", ["port9"]]]), { synthesizeMissing: false });
+    expect(ifaces.find((i) => i.ifName === "other(primary)")).toBeDefined();
+  });
+
+  it("prefers an exact-name row over a suffixed one", () => {
+    const ifaces: InterfaceSample[] = [mk("trunkA", { ifType: null }), mk("trunkA(primary)", { ifType: null }), mk("port9")];
+    overlayFortiswitchTrunkMembers(ifaces, new Map([["trunkA", ["port9"]]]));
+    expect(ifaces.find((i) => i.ifName === "trunkA(primary)")).toBeDefined();
+  });
 });
 
 describe("parseFortiswitchPortDescriptions", () => {
