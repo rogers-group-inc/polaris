@@ -314,6 +314,22 @@
     return u.trail.concat([u.names.join(", ")]).join(" › ");
   }
 
+  // PURE (exposed for tests): the groups the overview names — the top-level
+  // ones or, while there is only one, the level below it (a one-building
+  // site names its floors). [{ name, rect, color }]: the group's box and its
+  // label colour.
+  function overviewGroups(scene) {
+    var T = sceneGroups(scene);
+    if (!T) return [];
+    var level = T.roots;
+    while (level.length === 1 && level[0].children.length) level = level[0].children;
+    return level.map(function (g) {
+      var b = g.item;
+      return { name: g.name, rect: { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 },
+        color: (b.label && b.label.color) || b.stroke || "#333333" };
+    });
+  }
+
   // An edge path as a polyline, quadratics sampled.
   function samplePath(path) {
     var pts = [{ x: path[0].x, y: path[0].y }];
@@ -1249,6 +1265,22 @@
           x2: Math.min(u.rect.x2, sx + secW), y2: Math.min(u.rect.y2, sy + secH) }, "p. " + (u.firstPage + k));
       });
     });
+    // The largest groups by name, centred above their boxes at the page-number
+    // size: the overview's only graph text, so the sheet says which box is
+    // which floor (or building) before the reader turns the page.
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(gridPt);
+    overviewGroups(scene).forEach(function (g) {
+      var text = pdfText(g.name), w = doc.getTextWidth(text);
+      var cx = area.x + ((g.rect.x1 + g.rect.x2) / 2 - oox) * sFit;
+      var top = area.y + (g.rect.y1 - ooy) * sFit;
+      var x = Math.max(area.x, Math.min(area.x + area.w - w, cx - w / 2));
+      var y = Math.max(area.y + gridPt, top - 3);
+      doc.setFillColor("#ffffff");
+      doc.rect(x - 2, y - gridPt * 0.85, w + 4, gridPt * 1.05, "F");
+      doc.setTextColor(g.color);
+      doc.text(text, x, y);
+    });
     drawChrome(doc, L, ctx, "Overview — a page per group; the labels are on the pages that follow", 1, G.sheets, timestamp);
     G.units.forEach(function (u) {
       var sub = unitScene(scene, u, G.pageOf), title = unitTitle(u), p = u.plan;
@@ -1860,6 +1892,7 @@
     sceneGroups: sceneGroups,
     planGroupUnits: planGroupUnits,
     unitTitle: unitTitle,
+    overviewGroups: overviewGroups,
     stubRoute: stubRoute,
     unitScene: unitScene,
     crc32: crc32,

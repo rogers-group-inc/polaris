@@ -336,7 +336,8 @@ To export the whole site, zoom out until all of it is in view first.
   size, orientation and **minimum text size** (7 pt by default): **nothing on
   the printed graph is smaller than that**. A site that fits one sheet at that
   size prints on one. A bigger one prints **a page per location group**
-  after an overview page that outlines each group with its page number: the
+  after an overview page that names the floors (or buildings) and outlines
+  each group with its page number: the
   largest group (a floor, say) that fits one sheet at that size is one page; a
   group too big for a sheet is split into its rooms or racks, and small
   neighbouring groups share a sheet when they fit on it together. A room or
