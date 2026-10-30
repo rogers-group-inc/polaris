@@ -1219,6 +1219,12 @@
   // edges the router can't place (missing boxes) keep the taxi fallback.
   var _ROUTE_MARGIN = 26;   // corridor distance outside a box edge
   var _ROUTE_LABEL_PAD = 22; // extra clearance above a box (its floating label)
+  var _ROUTE_NODE_PAD = 6;   // clearance a bend keeps from an end device's outline
+
+  // Radius around a device's centre that no routed bend may enter.
+  function _nodeClearance(n) {
+    return Math.max(n.outerWidth(), n.outerHeight()) / 2 + _ROUTE_NODE_PAD;
+  }
 
   function _rectsFor(cy) {
     // Top-level hull rects (no ancestor hull present), keyed like topKey.
@@ -1293,7 +1299,14 @@
       var goingRight = T.x >= S.x;
       var srcBox = bs || { x1: S.x, y1: S.y, x2: S.x, y2: S.y };
       var tgtBox = bt || { x1: T.x, y1: T.y, x2: T.x, y2: T.y };
-      var cx = goingRight ? srcBox.x2 + _ROUTE_MARGIN : srcBox.x1 - _ROUTE_MARGIN;
+      // No bend may sit inside either end device: Cytoscape cannot find where
+      // a segment from inside a node leaves it, marks the edge badLine and
+      // silently draws nothing. rS / rT are each device's outer radius + pad.
+      var rS = _nodeClearance(sN);
+      var rT = _nodeClearance(tN);
+      var cx = goingRight
+        ? Math.max(srcBox.x2 + _ROUTE_MARGIN, S.x + rS)
+        : Math.min(srcBox.x1 - _ROUTE_MARGIN, S.x - rS);
       // Candidate horizontal corridors, best-first preference order.
       var canvasTop = Math.min.apply(null, tops.map(function (x) { return x.box.y1; })) - _ROUTE_MARGIN - _ROUTE_LABEL_PAD;
       var canvasBottom = Math.max.apply(null, tops.map(function (x) { return x.box.y2; })) + _ROUTE_MARGIN;
@@ -1329,9 +1342,24 @@
       var pts = [];
       pts.push({ x: cxS, y: S.y });
       if (Math.abs(cyS - S.y) > 0.5) pts.push({ x: cxS, y: cyS });
-      if (Math.abs(cyS - T.y) > 0.5) {
-        pts.push({ x: T.x, y: cyS });
+      var jog = cyS - T.y;
+      if (Math.abs(jog) > 0.5) {
+        if (Math.abs(jog) < rT) {
+          // A fanned-out run only a few px off the target's row would jog
+          // into it INSIDE the device; step back to the target's row just
+          // before its outline instead, then run straight in.
+          var jx = T.x + (cxS <= T.x ? -rT : rT);
+          pts.push({ x: jx, y: cyS });
+          pts.push({ x: jx, y: T.y });
+        } else {
+          pts.push({ x: T.x, y: cyS });
+        }
       }
+      // Last resort (a corridor that happens to cross an end device): drop the
+      // bend rather than lose the whole line.
+      pts = pts.filter(function (p) {
+        return Math.hypot(p.x - S.x, p.y - S.y) >= rS && Math.hypot(p.x - T.x, p.y - T.y) >= rT;
+      });
       // Project bends onto the S→T line for Cytoscape `segments` rendering.
       var dx = T.x - S.x;
       var dy = T.y - S.y;
