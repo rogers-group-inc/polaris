@@ -1157,22 +1157,120 @@
     try { return cyInstance.png(opts); }
     finally { handles.removeStyle("display"); }
   }
+  // The legend on a screenshot: a box in the bottom-left corner of the map
+  // area (mapX, mapY, mapW, mapH, logical px), drawn from the same spec as
+  // the on-screen legend in the current theme — monitor health, links and
+  // location groups side by side, the PDF key's sections. The mouse
+  // controls are the screen's alone. Shrinks to fit a narrow map.
+  function _drawTopologyLegend(ctx, mapX, mapY, mapW, mapH, pick) {
+    var R = window.PolarisTopologyRender;
+    var spec = R && R.topologyLegendSpec ? R.topologyLegendSpec() : null;
+    if (!spec) return;
+    var font = "system-ui,-apple-system,sans-serif";
+    var sections = [
+      { title: "Monitor health", rows: spec.health.map(function (h) { return { kind: "dot", color: h.color, label: h.label }; }) },
+      { title: "Links", rows: spec.edges.map(function (e) { return { kind: "line", color: e.color, dashed: e.style === "dashed", label: e.label }; }) },
+    ];
+    if (spec.locations) {
+      sections.push({ title: "Location groups", rows: spec.locations.map(function (l) { return { kind: "box", color: l.color, dashed: l.style === "dashed", label: l.label }; }) });
+    }
+    var PAD = 8, SW = 22, GAP = 6, COLSEP = 16, ROW = 16, HEAD = 18;
+    ctx.save();
+    var x = PAD, rowsMax = 0;
+    sections.forEach(function (s) {
+      ctx.font = "600 10px " + font;
+      var w = ctx.measureText(s.title.toUpperCase()).width;
+      ctx.font = "11px " + font;
+      s.rows.forEach(function (r) { w = Math.max(w, SW + GAP + ctx.measureText(r.label).width); });
+      s.x = x; x += w + COLSEP;
+      rowsMax = Math.max(rowsMax, s.rows.length);
+    });
+    var boxW = x - COLSEP + PAD, boxH = PAD + HEAD + rowsMax * ROW + PAD / 2;
+    var k = Math.min(1, (mapW - 16) / boxW, (mapH - 16) / boxH);
+    if (k <= 0) { ctx.restore(); return; }
+    ctx.translate(mapX + 8, mapY + mapH - 8 - boxH * k);
+    ctx.scale(k, k);
+    function rrect(rx, ry, rw, rh, r) {
+      ctx.beginPath();
+      ctx.moveTo(rx + r, ry); ctx.lineTo(rx + rw - r, ry); ctx.quadraticCurveTo(rx + rw, ry, rx + rw, ry + r);
+      ctx.lineTo(rx + rw, ry + rh - r); ctx.quadraticCurveTo(rx + rw, ry + rh, rx + rw - r, ry + rh);
+      ctx.lineTo(rx + r, ry + rh); ctx.quadraticCurveTo(rx, ry + rh, rx, ry + rh - r);
+      ctx.lineTo(rx, ry + r); ctx.quadraticCurveTo(rx, ry, rx + r, ry);
+      ctx.closePath();
+    }
+    rrect(0, 0, boxW, boxH, 6);
+    ctx.fillStyle = pick("--color-surface", "#ffffff");
+    ctx.fill();
+    ctx.strokeStyle = pick("--color-border", "#c8c8d4");
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.textBaseline = "middle";
+    sections.forEach(function (s) {
+      ctx.font = "600 10px " + font;
+      ctx.fillStyle = pick("--color-text-tertiary", "#888888");
+      ctx.fillText(s.title.toUpperCase(), s.x, PAD + 6);
+      ctx.font = "11px " + font;
+      s.rows.forEach(function (r, i) {
+        var cy = PAD + HEAD + i * ROW + ROW / 2;
+        ctx.setLineDash(r.dashed ? [4, 3] : []);
+        if (r.kind === "dot") {
+          ctx.beginPath();
+          ctx.arc(s.x + SW / 2, cy, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = r.color;
+          ctx.fill();
+        } else if (r.kind === "line") {
+          ctx.beginPath();
+          ctx.moveTo(s.x + 1, cy); ctx.lineTo(s.x + SW - 1, cy);
+          ctx.strokeStyle = r.color;
+          ctx.lineWidth = 2.4;
+          ctx.stroke();
+        } else {
+          rrect(s.x + 2, cy - 5.5, SW - 4, 11, 2);
+          ctx.globalAlpha = 0.13;
+          ctx.fillStyle = r.color;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = r.color;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.fillStyle = pick("--color-text-primary", "#111111");
+        ctx.fillText(r.label, s.x + SW + GAP, cy);
+      });
+    });
+    ctx.restore();
+  }
+
   function screenshotTopology() {
     if (!cyInstance) {
       if (typeof showToast === "function") showToast("Topology not loaded", "error");
       return;
     }
     var rootCs = getComputedStyle(document.documentElement);
-    var bg = rootCs.getPropertyValue("--color-bg-primary").trim() ||
-             rootCs.getPropertyValue("--color-surface").trim() || "#ffffff";
-    var blob = _topologyPng({ output: "blob", scale: 2, full: false, bg: bg });
-    if (!blob) {
+    var pick = function (n, f) { var v = rootCs.getPropertyValue(n).trim(); return v || f; };
+    var bg = pick("--color-bg-primary", pick("--color-surface", "#ffffff"));
+    var uri = _topologyPng({ output: "base64uri", scale: 2, full: false, bg: bg });
+    var img = new Image();
+    img.onerror = function () {
       if (typeof showToast === "function") showToast("Screenshot failed", "error");
-      return;
-    }
-    copyPngToClipboard(blob).then(function (ok) {
-      if (typeof showToast === "function") showToast(ok ? "Topology copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
-    });
+    };
+    // The map with its legend in the corner, as the operator sees it.
+    img.onload = function () {
+      var canvas = document.createElement("canvas");
+      canvas.width = img.width; canvas.height = img.height;
+      var ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      ctx.scale(2, 2);
+      _drawTopologyLegend(ctx, 0, 0, img.width / 2, img.height / 2, pick);
+      canvas.toBlob(function (blob) {
+        if (!blob) { if (typeof showToast === "function") showToast("Screenshot failed", "error"); return; }
+        copyPngToClipboard(blob).then(function (ok) {
+          if (typeof showToast === "function") showToast(ok ? "Topology copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
+        });
+      }, "image/png");
+    };
+    img.src = uri;
   }
 
   // What the Export menu's PDF / Visio entries draw (graph-export.js): the
@@ -1371,6 +1469,7 @@
     ctx.strokeStyle = clrBorder;
     ctx.lineWidth = 1;
     ctx.strokeRect(pad + 0.5, titleH + 0.5, mapDrawW - 1, mapDrawH - 1);
+    _drawTopologyLegend(ctx, pad, titleH, mapDrawW, mapDrawH, pick);
 
     // Info column.
     var ix = pad + mapDrawW + gap;

@@ -325,9 +325,10 @@ export too; a device cut by the edge of the view is cut at the same place on
 the PDF, and the device and link count above it counts only what is in view.
 To export the whole site, zoom out until all of it is in view first.
 
-- **Copy map as image**: the graph in view alone.
-- **Copy screenshot (map + details)**: the graph and the right-hand details
-  panel as one image. Clipboard first, download as fallback.
+- **Copy map as image**: the graph in view, with the legend (monitor health,
+  link types, location groups) in its bottom-left corner.
+- **Copy screenshot (map + details)**: the graph, with the same legend, and the
+  right-hand details panel as one image. Clipboard first, download as fallback.
 
   Neither screenshot shows a selected line's drag points.
 - **Export PDF**: the graph drawn as vectors on white paper whatever theme you
