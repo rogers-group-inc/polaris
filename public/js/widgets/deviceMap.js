@@ -1,27 +1,310 @@
 /**
  * widgets/deviceMap.js — the Device Map, as a placeable dashboard widget.
  *
- * A faithful embed of the Device Map page (public/js/map.js): FortiGate assets
- * plotted on a theme-aware Leaflet basemap as monitor-health-colored `.fg-marker`
- * dots that roll up into `.fg-cluster` bubbles (worst child health, not child
- * count). Hover names the gate + its monitor line; clicking a marker jumps to the
- * full Device Map page opened on that site's topology (`/map.html#site=…&topology=1`)
- * — except on the /dash wallboard, which is a read-only kiosk with no navigation,
- * where the click just surfaces a details popup.
+ * What it draws follows the widget's FortiGates pick (gear → FortiGates):
+ *   - none picked — the gates of the widget's region scope on a theme-aware
+ *     Leaflet basemap, as monitor-health-colored `.fg-marker` dots that roll
+ *     up into `.fg-cluster` bubbles (worst child health, not child count);
+ *   - several picked — the same map, holding only those gates;
+ *   - ONE picked — no map: that gate's topology, read-only, fills the widget.
+ * On either map, double-clicking a gate swaps the map for its read-only
+ * topology, with a "Map" button back. Hover names the gate + its monitor line;
+ * on the /dash wallboard (a kiosk with no hover) a single click also surfaces
+ * a details popup.
  *
- * Reuses the bundled Leaflet + markercluster stack (loaded by index.html AND
- * dash.html) and the shared `.fg-marker` / `.fg-cluster` / `.sitemap-*` CSS in
- * styles.css, plus the existing GET /map/sites endpoint (mounted on both the main
- * API and the dash listener) — no new backend. Per-instance map + layers + the
- * refresh timer + ResizeObserver live in the render closure and are torn down in
- * ctx.onUnmount (Leaflet throws "Map container is already initialized" if a
- * container is reused without map.remove()).
+ * The topology is the Device Map's own graph (topology-render.js — the shared
+ * element builder, stylesheet and column solver, as the phone's topology tab
+ * uses them) laid over the layout an operator saved on the Device Map page,
+ * with nothing grabbable, selectable or editable. Cytoscape and the renderer
+ * are loaded on first use, not by index.html / dash.html, so a dashboard that
+ * never opens a topology never pays for them. The data is GET
+ * /map/sites/:id/topology, allowlisted on the dash listener for this widget;
+ * a single gate's id comes from /dashboard/filter-options (the gate may have
+ * no coordinates, so /map/sites may not carry it).
+ *
+ * Per-instance map + layers + the refresh timers + ResizeObservers live in the
+ * render closure and are torn down in ctx.onUnmount (Leaflet throws "Map
+ * container is already initialized" if a container is reused without
+ * map.remove(); a Cytoscape instance left alive keeps its listeners).
  */
 
 (function () {
   var _iconPathSet = false;
 
   function isDash() { return typeof window !== "undefined" && window.POLARIS_DASH_LOCAL === true; }
+
+  // The gates the widget's FortiGates field picked ([] = no pick). The
+  // "(No FortiGate)" sentinel the noc-summary widgets use is not a gate.
+  function pickedGates(config) {
+    if (!config || config.fortigateScope !== "custom" || !Array.isArray(config.fortigates)) return [];
+    return config.fortigates.filter(function (g) { return g && g !== "__none__"; });
+  }
+
+  // ── Topology (read-only) ─────────────────────────────────────────────────
+  // Same spacing as the Device Map modal and the phone (map.js,
+  // mobile/topology-tab.js), so a saved layout lands where it was saved.
+  var TOPO_COL_SPACING = 130;
+  var TOPO_ROW_SPACING = 95;
+  // In load order: dagre before its Cytoscape adapter (which registers itself
+  // on window.cytoscape), the renderer before the line editor it is read by.
+  var TOPO_SCRIPTS = [
+    "/js/vendor/cytoscape.min.js",
+    "/js/vendor/dagre.min.js",
+    "/js/vendor/cytoscape-dagre.js",
+    "/js/topology-render.js",
+    "/js/topology-edge-editor.js",
+  ];
+  var _topoLibs = null;
+
+  function loadScript(src) {
+    if (document.querySelector('script[src="' + src + '"]')) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = src;
+      s.onload = function () { resolve(); };
+      s.onerror = function () { s.remove(); reject(new Error("Failed to load " + src)); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function loadTopologyLibs() {
+    if (_topoLibs) return _topoLibs;
+    _topoLibs = TOPO_SCRIPTS.reduce(function (p, src) {
+      return p.then(function () { return loadScript(src); });
+    }, Promise.resolve()).catch(function (err) {
+      _topoLibs = null; // retry on the next open
+      throw err;
+    });
+    return _topoLibs;
+  }
+
+  // The graph follows the APP theme's family, as the Device Map modal's does —
+  // its pane paints an app token, not a basemap.
+  function topoTheme() {
+    return typeof isLightTheme === "function" ? (isLightTheme() ? "light" : "dark") : undefined;
+  }
+
+  // Build a read-only Cytoscape graph of one site's /topology payload into
+  // `container`. The shape of mobile/topology-tab.js → renderGraph, flat view
+  // only: the column solver's baseline, the operator's saved flat layout over
+  // it, location hulls, gutter routing, the operator-drawn lines (not
+  // editable). `view` ({zoom, pan}) restores where a refresh left the viewer.
+  function drawTopology(container, data, view) {
+    var R = window.PolarisTopologyRender;
+    var elements = R.buildTopologyElements(data);
+    // Edges need both ends present — a dangling reference throws in Cytoscape
+    // and kills the whole render.
+    var nodeIds = {};
+    elements.forEach(function (e) {
+      var d = e && e.data;
+      if (d && d.id && !d.source) nodeIds[d.id] = true;
+    });
+    elements = elements.filter(function (e) {
+      var d = e && e.data;
+      if (!d) return false;
+      if (d.source && d.target) return !!(nodeIds[d.source] && nodeIds[d.target]);
+      return true;
+    });
+
+    var layouts = data && data.savedLayouts;
+    var saved = layouts && layouts.flat && layouts.flat.positions;
+    var savedPositions = saved && typeof saved === "object" ? saved : null;
+
+    var columns = R.computeGroupedLayout(elements) || R.computeTopologyColumns(elements);
+    var layoutConfig;
+    if (columns) {
+      var positions = {};
+      Object.keys(columns).forEach(function (id) {
+        positions[id] = { x: columns[id].depth * TOPO_COL_SPACING, y: columns[id].lane * TOPO_ROW_SPACING };
+      });
+      layoutConfig = { name: "preset", positions: positions, fit: false, padding: 30 };
+    } else {
+      layoutConfig = { name: "dagre", rankDir: "LR", nodeSep: 30, rankSep: 160, fit: false, padding: 30 };
+    }
+
+    var cy = window.cytoscape({
+      container: container,
+      elements: elements,
+      boxSelectionEnabled: false,
+      autoungrabify: true,   // read-only: nothing moves
+      autounselectify: true, // ...and nothing is picked
+      wheelSensitivity: 0.2,
+      style: R.topologyStylesheet(topoTheme()),
+    });
+
+    // Registered BEFORE the layout runs: a preset layout is synchronous and
+    // would emit layoutstop before a later listener attached.
+    cy.one("layoutstop", function () {
+      if (savedPositions) {
+        cy.batch(function () {
+          cy.nodes().forEach(function (n) {
+            var p = savedPositions[n.id()];
+            if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
+          });
+        });
+      }
+      R.renderLocationGroups(cy);
+      if (cy.nodes("[isLocGroup]").length > 0) R.routeInterGroupEdges(cy);
+      if (window.PolarisTopologyEdgeEditor) {
+        window.PolarisTopologyEdgeEditor.attach(cy, {
+          positions: savedPositions,
+          isEditable: function () { return false; },
+        });
+      }
+      if (view) {
+        cy.zoom(view.zoom);
+        cy.pan(view.pan);
+      } else {
+        try { cy.fit(undefined, 30); } catch (_) {}
+      }
+    });
+
+    // Nothing is draggable, so a drag anywhere — a hull fills most of a
+    // grouped site — pans the graph.
+    cy.nodes().panify();
+    cy.on("add", "node", function (evt) { evt.target.panify(); });
+
+    if (columns) {
+      R.markFanOutEdges(cy, columns, { colSpacing: TOPO_COL_SPACING, orientation: "horizontal" });
+    }
+    R.wireBentEdgeLabels(cy);
+    cy.layout(layoutConfig).run();
+    return cy;
+  }
+
+  // One gate's read-only topology as a pane over the widget body. gate =
+  // {id, name}; opts.onBack (map modes only) draws the "Map" button,
+  // opts.fullscreen binds the widget's full-screen toggle. Returns
+  // {close, resize}.
+  function openTopologyPane(el, gate, opts) {
+    opts = opts || {};
+    var pane = document.createElement("div");
+    pane.className = "devmap-topo";
+    var graph = document.createElement("div");
+    graph.className = "devmap-topo-graph";
+    pane.appendChild(graph);
+    var msg = document.createElement("p");
+    msg.className = "empty-state devmap-topo-msg";
+    msg.textContent = "Loading topology…";
+    pane.appendChild(msg);
+
+    var bar = document.createElement("div");
+    bar.className = "devmap-topo-bar";
+    var left = document.createElement("div");
+    var right = document.createElement("div");
+    bar.appendChild(left);
+    bar.appendChild(right);
+    if (opts.onBack) {
+      var back = document.createElement("button");
+      back.type = "button";
+      back.textContent = "← Map";
+      back.title = "Back to the map";
+      back.addEventListener("click", function () { opts.onBack(); });
+      left.appendChild(back);
+    }
+    var title = document.createElement("span");
+    title.className = "devmap-topo-title";
+    title.textContent = gate.name || "FortiGate";
+    title.title = (gate.name || "FortiGate") + " — read-only topology";
+    left.appendChild(title);
+    var fit = document.createElement("button");
+    fit.type = "button";
+    fit.textContent = "Fit";
+    fit.title = "Fit the whole site";
+    fit.addEventListener("click", function () { if (cy) try { cy.fit(undefined, 30); } catch (_) {} });
+    right.appendChild(fit);
+    // The full Device Map page, where the topology can be edited. Not on the
+    // /dash kiosk, which has no navigation.
+    if (!isDash()) {
+      var open = document.createElement("button");
+      open.type = "button";
+      open.textContent = "Open ↗";
+      open.title = "Open this topology on the Device Map page";
+      open.addEventListener("click", function () {
+        window.location.href = "/map.html#site=" + encodeURIComponent(gate.id) + "&topology=1";
+      });
+      right.appendChild(open);
+    }
+    if (opts.fullscreen) {
+      var full = document.createElement("button");
+      full.type = "button";
+      full.title = "Fullscreen (Esc to exit)";
+      right.appendChild(full);
+      opts.fullscreen.bind(full);
+    }
+    pane.appendChild(bar);
+    el.appendChild(pane);
+
+    var cy = null, data = null, closed = false;
+    function render() {
+      if (closed || !data) return;
+      var view = cy ? { zoom: cy.zoom(), pan: cy.pan() } : null;
+      if (cy) { try { cy.destroy(); } catch (_) {} }
+      cy = drawTopology(graph, data, view);
+    }
+    function load() {
+      return loadTopologyLibs()
+        .then(function () { return api.map.topology(gate.id); })
+        .then(function (d) {
+          if (closed) return;
+          data = d;
+          msg.hidden = true;
+          render();
+        })
+        .catch(function (err) {
+          if (closed || data) return; // a failed refresh keeps the last graph
+          msg.textContent = "Topology unavailable — " + (err && err.message ? err.message : String(err));
+        });
+    }
+    load();
+
+    // Device health colours move: refresh on the slow widget cadence, keeping
+    // the viewer's zoom and pan.
+    var timer = setInterval(function () { if (!document.hidden) load(); }, PolarisWidgets.REFRESH.slow);
+    function onTheme() { render(); }
+    document.addEventListener("themechange", onTheme);
+    var ro = new ResizeObserver(function () { if (cy) try { cy.resize(); } catch (_) {} });
+    ro.observe(pane);
+
+    return {
+      resize: function () { if (cy) try { cy.resize(); cy.fit(undefined, 30); } catch (_) {} },
+      close: function () {
+        closed = true;
+        clearInterval(timer);
+        document.removeEventListener("themechange", onTheme);
+        try { ro.disconnect(); } catch (_) {}
+        if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
+        if (pane.parentNode) pane.parentNode.removeChild(pane);
+      },
+    };
+  }
+
+  // The widget body's full-screen state, shared by the map's ⛶ button and an
+  // open topology pane's. onChange(on) runs after the layout settles.
+  function fullscreenToggle(el, onChange) {
+    var buttons = [];
+    function isOn() { return el.classList.contains("sitemap-fullscreen"); }
+    function paint(b) {
+      b.innerHTML = isOn() ? "✖" : "⛶";
+      b.classList.toggle("active", isOn());
+    }
+    function set(on) {
+      el.classList.toggle("sitemap-fullscreen", on);
+      buttons = buttons.filter(function (b) { return b.isConnected; });
+      buttons.forEach(paint);
+      setTimeout(function () { onChange(on); }, 60);
+    }
+    function onKeydown(e) { if (e.key === "Escape" && isOn()) set(false); }
+    document.addEventListener("keydown", onKeydown);
+    return {
+      bind: function (b) {
+        buttons.push(b);
+        paint(b);
+        b.addEventListener("click", function () { set(!isOn()); });
+      },
+      dispose: function () { document.removeEventListener("keydown", onKeydown); },
+    };
+  }
 
   // Monitor-health → CSS class, mirroring monitorClass() in map.js. Dependency
   // suppression takes precedence only while the probe itself isn't down (the
@@ -53,10 +336,6 @@
       case "down":     return "Down — " + failures + "/" + samples + " samples failed" + (site.alertAcknowledged === true ? " · acknowledged" : "");
       default:         return "Monitored — no samples yet";
     }
-  }
-
-  function hasIssue(site) {
-    return site.monitored && !site.dependencySuppressed && (site.monitorHealth === "down" || site.monitorHealth === "degraded");
   }
 
   // Cluster bubble color = worst monitor health among children (not the count),
@@ -106,22 +385,52 @@
     type: "deviceMap",
     category: "NOC",
     label: "Device Map",
-    description: "Geographic map of FortiGates — monitor-health dots + clustering, click through to topology.",
+    description: "FortiGates on a map with monitor-health dots — or, with one gate picked, that gate's topology. Double-click a gate for its topology.",
     defaultSize: { width: 6, height: 2 },
     minSize: { width: 4, height: 1 },
-    defaultConfig: { issuesOnly: false, regionScope: "mine" },
+    defaultConfig: { regionScope: "mine" },
     requiredPermission: { key: "deviceMap", level: "read" },
 
+    // One gate picked → { gate: {id, name} } (null id = no longer in the
+    // fleet); otherwise the region scope's /map/sites rows.
     fetchData: function (config) {
+      var gates = pickedGates(config);
+      if (gates.length === 1) {
+        return PolarisWidgets.getFortigateOptions().then(function (opts) {
+          var hit = (opts || []).filter(function (g) { return g.name === gates[0]; })[0];
+          return { gate: { id: hit && hit.id ? hit.id : null, name: gates[0] } };
+        }).catch(function () { return { gate: { id: null, name: gates[0] } }; });
+      }
       return PolarisWidgets.getMapSites(PolarisWidgets.regionNamesForConfig(config)).catch(function () { return []; });
     },
 
     renderInstance: function (el, config, data, ctx) {
+      el.classList.add("sitemap-body");
+      el.style.position = "relative";
+      var gates = pickedGates(config);
+      var pane = null;
+
+      // ── One gate: its topology, no map ──────────────────────────────────
+      if (gates.length === 1) {
+        var gate = data && data.gate;
+        if (!gate || !gate.id) {
+          el.insertAdjacentHTML("beforeend", '<p class="empty-state">FortiGate ' + escapeHtml(gates[0]) + " is no longer in the fleet</p>");
+          ctx.onUnmount(function () { el.classList.remove("sitemap-body"); });
+          return;
+        }
+        var soloFull = fullscreenToggle(el, function () { if (pane) pane.resize(); });
+        pane = openTopologyPane(el, gate, { fullscreen: soloFull });
+        ctx.onUnmount(function () {
+          pane.close();
+          soloFull.dispose();
+          el.classList.remove("sitemap-body", "sitemap-fullscreen");
+        });
+        return;
+      }
+
       if (typeof L === "undefined") { el.innerHTML = '<p class="empty-state">Map library unavailable</p>'; return; }
       if (!_iconPathSet) { L.Icon.Default.imagePath = "/css/vendor/leaflet/images/"; _iconPathSet = true; }
 
-      el.classList.add("sitemap-body");
-      el.style.position = "relative";
       var mapDiv = document.createElement("div");
       mapDiv.style.cssText = "position:absolute;inset:0";
       el.appendChild(mapDiv);
@@ -199,13 +508,18 @@
           "<strong>" + name + "</strong>" +
           (site.model ? '<br><span style="opacity:.8">' + escapeHtml(site.model) + "</span>" : "") +
           '<br><span style="opacity:.8">' + escapeHtml(monitorLine(site)) + "</span>" +
-          (site.subnetCount ? "<br>" + site.subnetCount + " subnet" + (site.subnetCount === 1 ? "" : "s") : ""),
+          (site.subnetCount ? "<br>" + site.subnetCount + " subnet" + (site.subnetCount === 1 ? "" : "s") : "") +
+          '<br><span style="opacity:.6">Double-click for topology</span>',
           { direction: "top", offset: [0, -14] }
         );
-        // On the dashboard, clicking a gate opens the full Device Map page on
-        // its topology — the widget can't host the Cytoscape modal (its vendor
-        // scripts aren't loaded here). On the /dash kiosk there's no navigation,
-        // so bind a details popup with a status line instead.
+        // Double-click swaps the map for the gate's read-only topology (a
+        // marker's events don't bubble to the map, so its double-click zoom
+        // stays out of it). The /dash kiosk has no hover, so a single click
+        // there also surfaces a details popup.
+        marker.on("dblclick", function (e) {
+          if (e && e.originalEvent) L.DomEvent.stop(e.originalEvent);
+          openGate(site);
+        });
         if (isDash()) {
           marker.bindPopup(
             '<div class="sitemap-popup-title" style="color:' + color + '">' + name + "</div>" +
@@ -215,18 +529,26 @@
             (site.subnetCount ? '<div class="sitemap-popup-row">' + site.subnetCount + " subnet" + (site.subnetCount === 1 ? "" : "s") + "</div>" : ""),
             { maxWidth: 280 }
           );
-        } else {
-          marker.on("click", function () {
-            window.location.href = "/map.html#site=" + encodeURIComponent(site.id) + "&topology=1";
-          });
         }
         return marker;
+      }
+
+      function openGate(site) {
+        if (pane) pane.close();
+        pane = openTopologyPane(el, { id: site.id, name: site.learnedLocation || site.hostname }, {
+          fullscreen: full,
+          onBack: function () {
+            if (pane) { pane.close(); pane = null; }
+          },
+        });
       }
 
       function buildMarkers(sites) {
         markerCluster.clearLayers();
         var rows = (sites || []).filter(function (s) { return s.latitude != null && s.longitude != null; });
-        if (config && config.issuesOnly) rows = rows.filter(hasIssue);
+        // Several gates picked: only those (matched on the name the FortiGates
+        // picker offers — the gate's learnedLocation).
+        if (gates.length) rows = rows.filter(function (s) { return gates.indexOf(s.learnedLocation) !== -1; });
         var latlngs = [];
         rows.forEach(function (s) {
           markerCluster.addLayer(makeMarker(s));
@@ -277,17 +599,15 @@
         applyBasemap();
         paintTheme();
       });
-      function setFullscreen(on) {
-        el.classList.toggle("sitemap-fullscreen", on);
-        btnFull.innerHTML = on ? "✖" : "⛶";
-        btnFull.classList.toggle("active", on);
-        // Re-home after the layout change (and invalidateSize) so the fleet
-        // refits to the new viewport instead of keeping the old framing.
-        setTimeout(function () { try { map.invalidateSize(); } catch (_) {} goHome(); }, 60);
-      }
-      btnFull.addEventListener("click", function () { setFullscreen(!el.classList.contains("sitemap-fullscreen")); });
-      function onKeydown(e) { if (e.key === "Escape" && el.classList.contains("sitemap-fullscreen")) setFullscreen(false); }
-      document.addEventListener("keydown", onKeydown);
+      // Re-home after the layout change (and invalidateSize) so the fleet
+      // refits to the new viewport instead of keeping the old framing; an
+      // open topology refits too.
+      var full = fullscreenToggle(el, function () {
+        try { map.invalidateSize(); } catch (_) {}
+        goHome();
+        if (pane) pane.resize();
+      });
+      full.bind(btnFull);
       paintTheme();
 
       // ── Resize + 60s refresh + teardown ──────────────────────────────────
@@ -307,7 +627,8 @@
 
       ctx.onUnmount(function () {
         clearInterval(siteTimer);
-        document.removeEventListener("keydown", onKeydown);
+        if (pane) { pane.close(); pane = null; }
+        full.dispose();
         try { ro.disconnect(); } catch (_) {}
         if (raf) cancelAnimationFrame(raf);
         try { if (controls.parentNode) controls.parentNode.removeChild(controls); } catch (_) {}
@@ -322,12 +643,10 @@
     },
 
     renderConfig: function (el, config, onChange) {
-      el.innerHTML =
-        '<label style="display:flex;gap:6px;align-items:center;font-size:0.85rem;margin:3px 0">' +
-          '<input type="checkbox" data-k="issuesOnly"' + (config.issuesOnly ? " checked" : "") + "> Show only gates with issues" +
-        "</label>";
-      el.querySelector('[data-k="issuesOnly"]').addEventListener("change", function (e) { onChange("issuesOnly", e.target.checked); });
-      PolarisWidgets.renderNocFilterConfig(el, config, onChange, false);
+      PolarisWidgets.renderNocFilterConfig(el, config, onChange, false, {
+        fortigates: true,
+        fortigateNote: "One gate ticked = its topology instead of the map. Several = a map of just those. Nothing ticked = every gate in the regions above.",
+      });
     },
   });
 })();

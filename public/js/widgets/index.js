@@ -1462,8 +1462,14 @@
   // picked is unfiltered, so removing the last pill returns the field to All.
   // onChange(key, value) is the widget's config setter. Appends, so a widget
   // can render its own controls first, then call this.
-  window.PolarisWidgets.renderNocFilterConfig = function (el, config, onChange, includeAssetTypes) {
+  //
+  // opts (optional): { fortigates: true } offers the FortiGates field to a
+  // widget that takes no asset types (the Device Map, whose gate pick decides
+  // between a map and one gate's topology), with `fortigateNote` as its picker
+  // note. Such a widget is offered gates only — no "(No FortiGate)" sentinel.
+  window.PolarisWidgets.renderNocFilterConfig = function (el, config, onChange, includeAssetTypes, opts) {
     config = config || {};
+    opts = opts || {};
     var onDash = window.POLARIS_DASH_LOCAL === true;
     var W = window.PolarisWidgets;
     // Live copy of the keys this popover edits — updateConfig replaces the
@@ -1520,7 +1526,7 @@
       },
     });
 
-    if (!includeAssetTypes) return;
+    if (!includeAssetTypes && !opts.fortigates) return;
 
     // ── FortiGates ──
     // The gates on offer narrow to the widget's CURRENT region scope (a gate
@@ -1541,9 +1547,9 @@
             return false;
           });
         }
-        return [{ value: "__none__", label: "(No FortiGate)" }].concat(
-          offered.map(function (g) { return { value: g.name, label: g.name }; }),
-        );
+        var gateOpts = offered.map(function (g) { return { value: g.name, label: g.name }; });
+        if (!includeAssetTypes) return gateOpts;
+        return [{ value: "__none__", label: "(No FortiGate)" }].concat(gateOpts);
       });
     }
     function gateLabel(v) { return v === "__none__" ? "(No FortiGate)" : v; }
@@ -1580,7 +1586,7 @@
           options: fortigateOptions(),
           selected: live.fortigateScope === "custom" ? live.fortigates : [],
           emptyMsg: "No FortiGates found — run a FortiManager / FortiGate discovery first.",
-          note: "Shows assets behind any ticked FortiGate. Nothing ticked = all FortiGates.",
+          note: opts.fortigateNote || "Shows assets behind any ticked FortiGate. Nothing ticked = all FortiGates.",
         }).then(function (r) {
           if (!r) return;
           setPick("fortigateScope", "fortigates", "custom", r.values);
@@ -1588,6 +1594,8 @@
         });
       },
     });
+
+    if (!includeAssetTypes) return;
 
     // ── Asset types ──
     // Pills are the types SHOWN, once any is switched off; all on reads "All

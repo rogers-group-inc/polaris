@@ -162,13 +162,36 @@ The flapping and compliance figures are worked out together about every two minu
 
 | Widget | Shows |
 |---|---|
-| **Device Map** | geographic map of FortiGates — monitor-health dots, clustering, click through to topology |
+| **Device Map** | geographic map of FortiGates — monitor-health dots, clustering; double-click a gate for its topology. Pick one gate in its gear and it shows that gate's topology instead of a map ([below](#device-map-widget)) |
 | **Site Map** | geographic map of monitored sites — status dots and live weather radar |
 
 On both maps a **down site whose alert has been acknowledged is faded**: it
 stays red, but drops the pulse and its label dims to `DOWN · ACK`. A full-strength
 red dot is an outage nobody has picked up yet. A Device Map cluster fades only
 when every down site inside it is acknowledged.
+
+### Device Map widget
+
+What the Device Map widget draws follows the **FortiGates** field in its gear:
+
+| FortiGates | The widget shows |
+|---|---|
+| **All FortiGates** | a map of every gate in the widget's **Regions** |
+| **several gates** | a map of just those gates |
+| **one gate** | no map — that gate's **topology**, filling the widget |
+
+On either map, **double-click a gate** to swap the map for its topology; **← Map**
+brings the map back. Hovering a gate names it and its monitor state.
+
+The topology here is **read-only**: the same graph as the
+[Device Map](Device-Map) page, laid out the way it was last saved there, but
+nothing can be moved, selected or edited. Drag to pan, scroll to zoom, **Fit**
+to see the whole site again. **Open ↗** opens the gate on the Device Map page,
+where the topology can be edited. The graph refreshes every minute and keeps
+your zoom.
+
+A gate that has no map coordinates can still be picked on its own — its
+topology needs none — but it does not appear on a map of several gates.
 
 ---
 

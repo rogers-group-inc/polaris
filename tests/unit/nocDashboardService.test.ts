@@ -850,8 +850,8 @@ describe("getFilterOptions", () => {
       // 2nd findMany: distinct firewall learnedLocation values (unsorted from
       // the DB) + each gate's tags (region: prefix stripped, others dropped)
       .mockResolvedValueOnce([
-        { learnedLocation: "RIVERBEND-FG", tags: ["region:Central Kentucky", "site:quarry"] },
-        { learnedLocation: "ATLANTA-FG", tags: [] },
+        { id: "fg-river", learnedLocation: "RIVERBEND-FG", tags: ["region:Central Kentucky", "site:quarry"] },
+        { id: "fg-atl", learnedLocation: "ATLANTA-FG", tags: [] },
       ]);
     rawQuery
       .mockResolvedValueOnce([{ region: "East" }, { region: "West" }])
@@ -862,9 +862,10 @@ describe("getFilterOptions", () => {
     // SQL (regions have their own control).
     expect(r.tags).toEqual(["core", "site:quarry"]);
     expect(r.fortigates).toEqual([
-      { name: "ATLANTA-FG", regions: [] },
-      { name: "RIVERBEND-FG", regions: ["Central Kentucky"] },
-    ]); // sorted by name; regions = the gate's own region tags for picker narrowing
+      { id: "fg-atl", name: "ATLANTA-FG", regions: [] },
+      { id: "fg-river", name: "RIVERBEND-FG", regions: ["Central Kentucky"] },
+    ]); // sorted by name; regions = the gate's own region tags for picker narrowing;
+    // id = the asset the Device Map widget opens a single picked gate's topology by
     // The FortiGate list is firewall learnedLocation values (the device name
     // switches/APs/endpoints reference), live assets only.
     expect(findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({

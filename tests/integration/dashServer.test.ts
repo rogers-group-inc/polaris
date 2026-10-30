@@ -166,6 +166,12 @@ describe("API path allowlist", () => {
       // unauthenticated wallboard cannot run the Device Map at all, so exposing
       // it here would be a pure attack-surface increase.
       "/dash/api/v1/map/region-overlay",
+      // Only the topology graph itself is admitted (the Device Map widget's
+      // single-gate / double-click view) — not the endpoint search beside it,
+      // nor anything nested under it.
+      "/dash/api/v1/map/sites/some-id/topology/search",
+      "/dash/api/v1/map/sites/some-id/topology/layout",
+      "/dash/api/v1/map/sites/a/b/topology",
     ]) {
       const res = await request(app).get(path);
       expect(res.status, path).toBe(404);
@@ -183,6 +189,19 @@ describe("API path allowlist", () => {
       // widgets silently render empty on every wallboard.
       const res = await request(buildApp()).get("/dash/api/v1/map/sites");
       expect(res.status).toBe(200);
+    },
+    30_000,
+  );
+
+  // The allowlist lets /map/sites/:id/topology through to the real router:
+  // an unknown id reaches buildSiteTopology, whose 404 names the FortiGate —
+  // not the allowlist's bare "Not found".
+  it.skipIf(!dbReachable)(
+    "lets /map/sites/:id/topology through to the topology route",
+    async () => {
+      const res = await request(buildApp()).get("/dash/api/v1/map/sites/00000000-0000-0000-0000-000000000000/topology");
+      expect(res.status).toBe(404);
+      expect(res.body.error ?? res.text).toMatch(/FortiGate not found/i);
     },
     30_000,
   );

@@ -8819,6 +8819,27 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .folder-card:has(.sitemap-fullscreen) { isolation: auto; }
 .folder-card-scroll:has(.sitemap-fullscreen) { -webkit-mask-image: none; mask-image: none; }
 
+/* Device Map widget: one gate's read-only topology — the whole body when one
+   gate is picked, or over the map (above its controls' 1000) after a gate is
+   double-clicked. The graph pane paints the app surface, as the Device Map
+   page's topology modal does; the toolbar's buttons wear the map buttons. */
+.devmap-topo { position: absolute; inset: 0; z-index: 1001; background: var(--color-bg-secondary); }
+.devmap-topo-graph { position: absolute; inset: 0; }
+.devmap-topo-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; }
+.devmap-topo-msg[hidden] { display: none; }
+.devmap-topo-bar {
+  position: absolute; left: 8px; right: 8px; top: 8px; z-index: 1;
+  display: flex; justify-content: space-between; gap: 8px; pointer-events: none;
+}
+.devmap-topo-bar > div { display: flex; align-items: center; gap: 4px; min-width: 0; pointer-events: auto; }
+.devmap-topo-title {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--color-bg-primary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 3px 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: var(--color-text-primary);
+  box-shadow: var(--map-btn-shadow);
+}
+
 /* Overlay controls (legend bottom-left, weather/theme top-right, radar clock). */
 .sitemap-controls { position: absolute; inset: 0; pointer-events: none; z-index: 1000; }
 .sitemap-legend {
@@ -8842,6 +8863,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   --map-btn-shadow: 0 1px 2px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.25);
 }
 .sitemap-wx button,
+.devmap-topo-bar button,
 .sitemap-theme-control button {
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
@@ -8853,8 +8875,10 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .sitemap-wx button:hover,
+.devmap-topo-bar button:hover,
 .sitemap-theme-control button:hover { background: var(--color-surface); color: var(--color-text-primary); }
-.sitemap-wx button.active {
+.sitemap-wx button.active,
+.devmap-topo-bar button.active {
   background: var(--color-surface);
   color: var(--color-text-primary);
   box-shadow: inset 0 1px 2px rgba(0,0,0,.18), var(--map-btn-shadow);
