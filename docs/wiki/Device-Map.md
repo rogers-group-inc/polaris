@@ -334,8 +334,16 @@ To export the whole site, zoom out until all of it is in view first.
   are using, so it prints sharp and its text is searchable. Choose the paper
   size, orientation and **minimum text size** (7 pt by default): **nothing on
   the printed graph is smaller than that**. A site that fits one sheet at that
-  size prints on one; a bigger one is split into overlapping sections after an
-  overview page with the section grid, and empty sections are skipped. Every
+  size prints on one. A bigger one prints **a page per location group**
+  after an overview page that outlines each group with its page number: the
+  largest group (a floor, say) that fits one sheet at that size is one page; a
+  group too big for a sheet is split into its rooms or racks, and small
+  neighbouring groups share a sheet when they fit on it together. A room or
+  rack that is still too big on its own is cut into overlapping sections. A
+  device in no group prints with the device it links to. A link to a device on
+  another page is drawn as a short stub ending in a tag that names the port
+  pair, the device at the other end and its page, for example
+  `port27 <-> port49 · to METRO-1801F-1 (p. 8)`. Every
   page carries the legend (health colours, link types, location groups) in a
   box at the bottom left.
   Characters the PDF fonts cannot print are simplified: `↔` prints as `<->`.

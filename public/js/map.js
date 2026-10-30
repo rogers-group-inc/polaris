@@ -1216,6 +1216,9 @@
       metaLines: meta,
       keyItems: keyItems,
       viewport: true,
+      // A topology too big for one sheet prints a page per floor / room /
+      // rack (the location hulls), not a grid (graph-export.js planGroupUnits).
+      pageByGroups: true,
       scopeNote: "Exports what is in the viewer now — only the part of the topology on screen at the current zoom and pan — in its current layout.",
     };
   }

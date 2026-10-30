@@ -233,6 +233,117 @@ describe("clipSceneToExtent (export only what is in the viewer)", () => {
   });
 });
 
+// A two-floor site in model px. First holds rooms R1 (a, b) and R2 (c);
+// Second holds R3 (d, e). s is in no group but links to d; z links to nothing.
+function siteScene() {
+  const box = (x1: number, y1: number, x2: number, y2: number, extra: Record<string, unknown> = {}) =>
+    ({ shape: "rect", polygon: null, x1, y1, x2, y2, fill: null, stroke: "#6d28d9", strokeWidth: 2, strokeStyle: "solid", icon: null, label: null, z: 0, ...extra });
+  const node = (id: string, x: number, y: number) => box(x, y, x + 20, y + 20, { id, shape: "ellipse" });
+  const edge = (source: string, target: string, path: Array<{ x: number; y: number }>, label: string | null = null) => ({
+    source, target, color: "#1d4ed8", width: 2, style: "solid", arrowTarget: null, arrowSource: null, mid: path[0], z: 0,
+    path: path.map((p, i) => ({ type: i ? "L" : "M", x: p.x, y: p.y })),
+    label: label ? { lines: [label], pdfLines: [label], fontPx: 9 } : null,
+  });
+  return {
+    under: [
+      box(0, 0, 400, 200, { id: "f1", members: ["a", "b", "c"], label: null }),
+      box(0, 300, 400, 500, { id: "f2", members: ["d", "e"] }),
+      box(10, 10, 110, 80, { id: "r1", members: ["a", "b"] }),
+      box(210, 10, 310, 80, { id: "r2", members: ["c"] }),
+      box(10, 310, 200, 400, { id: "r3", members: ["d", "e"] }),
+    ].map((b, i) => ({ ...b, label: { lines: [["First", "Second", "R1", "R2", "R3"][i]], pdfLines: [], fontPx: 0.01, valign: "center", halign: "center", mx: 0, my: 0 } })),
+    parents: [],
+    nodes: [node("a", 20, 20), node("b", 70, 40), node("c", 250, 30), node("d", 30, 330), node("e", 150, 350), node("s", 250, 340), node("z", 900, 900)],
+    edges: [
+      edge("a", "b", [{ x: 40, y: 30 }, { x: 70, y: 50 }]),
+      edge("a", "c", [{ x: 40, y: 30 }, { x: 250, y: 40 }]),
+      edge("b", "d", [{ x: 80, y: 60 }, { x: 80, y: 250 }, { x: 40, y: 330 }], "port1 ↔ port2"),
+      edge("d", "s", [{ x: 50, y: 340 }, { x: 250, y: 350 }]),
+    ],
+    names: { a: "A", b: "B", c: "C", d: "D", e: "E", s: "S", z: "Z" },
+    minFontPx: 9, icons: [],
+    bbox: { x1: 0, y1: 0, x2: 920, y2: 920, w: 920, h: 920 },
+  };
+}
+const fitsWithin = (w: number, h: number) => (r: { x1: number; y1: number; x2: number; y2: number }) => r.x2 - r.x1 <= w && r.y2 - r.y1 <= h;
+
+describe("group pages (Device Map topology: a page per floor / room / rack)", () => {
+  it("builds the group tree, adopts a linked stray device and leaves an unlinked one loose", () => {
+    const T = G.sceneGroups(siteScene());
+    const byName = (n: string) => T.groups.find((g: any) => g.name === n);
+    expect(byName("R1").parent.name).toBe("First");
+    expect(byName("R3").parent.name).toBe("Second");
+    expect(T.roots.map((g: any) => g.name)).toEqual(["First", "Second"]);
+    expect(byName("First").direct).toEqual([]);
+    // s links to d, so it prints with d's room — and counts towards Second.
+    expect(byName("R3").direct).toContain("s");
+    expect(byName("Second").members).toContain("s");
+    expect(T.loose).toEqual(["z"]);
+  });
+
+  it("nests a room holding every device of its floor inside the floor, not the other way round", () => {
+    const s = siteScene();
+    s.under = s.under.filter((b: any) => b.id !== "r3");
+    s.under.push({ ...s.under[1], id: "r3", members: ["d", "e"], x1: 10, y1: 310, x2: 200, y2: 400, label: { ...s.under[1].label, lines: ["R3"] } });
+    const T = G.sceneGroups(s);
+    expect(T.groups.find((g: any) => g.name === "R3").parent.name).toBe("Second");
+    expect(T.groups.find((g: any) => g.name === "Second").parent).toBeNull();
+  });
+
+  it("prints a floor that fits as one page, in reading order, with the loose device last", () => {
+    const units = G.planGroupUnits(siteScene(), fitsWithin(420, 230));
+    expect(units.map((u: any) => G.unitTitle(u))).toEqual(["First", "Second", "Not in a group"]);
+    expect(units[0].nodeIds.sort()).toEqual(["a", "b", "c"]);
+    expect(units[1].nodeIds.sort()).toEqual(["d", "e", "s"]);
+    expect(units.every((u: any) => !u.grid)).toBe(true);
+  });
+
+  it("splits a floor too big for a sheet into its rooms, under the floor's name", () => {
+    const units = G.planGroupUnits(siteScene(), fitsWithin(200, 230));
+    expect(units.map((u: any) => G.unitTitle(u)).slice(0, 2)).toEqual(["First › R1", "First › R2"]);
+  });
+
+  it("puts sibling rooms on one sheet when they fit on it together", () => {
+    const units = G.planGroupUnits(siteScene(), fitsWithin(320, 230));
+    expect(G.unitTitle(units[0])).toBe("First › R1, R2");
+    expect(units[0].nodeIds.sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("falls back to the grid for a room with no smaller groups that still does not fit", () => {
+    const units = G.planGroupUnits(siteScene(), fitsWithin(150, 230));
+    const r3 = units.find((u: any) => G.unitTitle(u) === "Second › R3");
+    expect(r3.grid).toBe(true);
+  });
+
+  it("returns null for a scene without groups, so the caller keeps the grid", () => {
+    expect(G.planGroupUnits(tinyScene(), () => true)).toBeNull();
+  });
+
+  it("draws a page's devices and boxes, whole links inside it and a tagged stub for a link that leaves", () => {
+    const s = siteScene();
+    const units = G.planGroupUnits(s, fitsWithin(420, 230));
+    const page = G.unitScene(s, units[0], { a: 2, b: 2, c: 2, d: 3, e: 3, s: 3, z: 4 });
+    expect(page.nodes.map((n: any) => n.id).sort()).toEqual(["a", "b", "c"]);
+    expect(page.under.map((b: any) => b.id).sort()).toEqual(["f1", "r1", "r2"]);
+    expect(page.edges.map((e: any) => e.source + e.target).sort()).toEqual(["ab", "ac"]);
+    expect(page.stubs).toHaveLength(1);
+    const st = page.stubs[0];
+    expect(st.text).toBe("port1 ↔ port2 · to D (p. 3)");
+    // It runs from b down to just past the bottom of First (y 200 + 16), and no further.
+    expect(st.path[0]).toMatchObject({ x: 80, y: 60 });
+    expect(st.tip.y).toBeGreaterThan(215);
+    expect(st.tip.y).toBeLessThanOrEqual(216.01);
+    expect(st.dir.y).toBeCloseTo(1, 6);
+  });
+
+  it("stops a stub halfway when its route never leaves the page", () => {
+    const e = { path: [{ type: "M", x: 0, y: 0 }, { type: "L", x: 10, y: 0 }, { type: "L", x: 20, y: 0 }] };
+    const r = G.stubRoute(e, true, [{ x1: -100, y1: -100, x2: 100, y2: 100 }]);
+    expect(r.tip).toEqual({ x: 10, y: 0 });
+    expect(r.dir).toEqual({ x: 1, y: 0 });
+  });
+});
+
 describe("vsdxPageXml / vsdxParts", () => {
   it("sizes the page to the drawing at 1 px = 1 pt plus margins", () => {
     const p = G.vsdxPageXml(tinyScene());

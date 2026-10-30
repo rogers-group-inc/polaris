@@ -22,7 +22,10 @@
 // overlapping sections (empty ones skipped) after an overview page showing the
 // whole graph with the section grid. The overview carries NO graph text — at
 // fit-to-page scale it would print below the minimum, and an unreadable label
-// is worse than none.
+// is worse than none. A page whose boxes are location groups
+// (`ctx.pageByGroups` — the Device Map topology) is cut along its groups
+// instead of a grid: a page per floor / room / rack, links between pages as
+// tagged stubs (planGroupUnits).
 //
 // Visio: one page sized to the graph at 1 model px = 1 pt, every node and
 // connection its own editable shape. Deliberately conservative: connections
@@ -146,6 +149,262 @@
     var out = [];
     for (var r = 0; r < rows; r++) for (var c = 0; c < cols; c++) if (hit[r + "," + c]) out.push({ row: r, col: c });
     return out;
+  }
+
+  // ─── Group pages (ctx.pageByGroups — the Device Map topology) ───────
+  //
+  // A graph whose boxes are LOCATION groups (a node that declares
+  // data.memberIds: the topology's floor / room / rack hulls) prints a page
+  // per group rather than a grid cut wherever the sheet edge happens to fall.
+  // The largest group that fits a sheet at the minimum text size is a page;
+  // one that does not is split into its child groups, with its own loose
+  // devices as one more page, and a group with no children that still does
+  // not fit falls back to the grid inside its own extent. Sibling pages share
+  // a sheet when they fit on it together. A link between two pages prints on
+  // both as a stub ending in a tag that names the far device and its page.
+
+  // Model-px extent of a box, its label included — a device name is often
+  // wider than its device, so the width is estimated too (0.6 em a character,
+  // generous for Helvetica).
+  function boxExtent(b) {
+    var r = { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 };
+    return b.label ? unionRect(r, labelRect(b)) : r;
+  }
+  function labelRect(b) {
+    var blk = nodeLabelBlock(b, b.label, b.label.fontPx * 1.2);
+    var tw = Math.max.apply(null, b.label.lines.map(function (l) { return l.length; })) * b.label.fontPx * 0.6;
+    var x1 = blk.align === "center" ? blk.x - tw / 2 : blk.align === "right" ? blk.x - tw : blk.x;
+    return { x1: x1, y1: blk.top, x2: x1 + tw, y2: blk.top + blk.h };
+  }
+  function edgeExtent(e) {
+    var xs = [], ys = [];
+    e.path.forEach(function (p) { xs.push(p.x); ys.push(p.y); if (p.type === "Q") { xs.push(p.cx); ys.push(p.cy); } });
+    return { x1: Math.min.apply(null, xs), y1: Math.min.apply(null, ys), x2: Math.max.apply(null, xs), y2: Math.max.apply(null, ys) };
+  }
+  function unionRect(a, b) {
+    if (!a) return { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 };
+    return { x1: Math.min(a.x1, b.x1), y1: Math.min(a.y1, b.y1), x2: Math.max(a.x2, b.x2), y2: Math.max(a.y2, b.y2) };
+  }
+  function toSet(ids) { var s = {}; ids.forEach(function (id) { s[id] = true; }); return s; }
+
+  // PURE (exposed for tests): the group tree of a scene. A group's parent is
+  // the smallest other group holding all of its members (ties, as with a
+  // floor whose one room holds every device, go to the larger box). `direct`
+  // are the members no child group holds. A device in no group joins the
+  // group of the first device it links to — a floor-view portal, an AP
+  // parked beside its switch — and only one linked to nothing grouped is
+  // `loose`. Null when the scene has no groups.
+  function sceneGroups(scene) {
+    var nodeById = {};
+    scene.nodes.forEach(function (n) { if (n.id != null) nodeById[n.id] = n; });
+    var groups = [];
+    allBoxes(scene).forEach(function (b) {
+      if (!b.members) return;
+      var m = b.members.filter(function (id) { return nodeById[id]; });
+      if (!m.length) return;
+      groups.push({ item: b, name: (b.label && b.label.lines[0]) || "Group", members: m, set: toSet(m),
+        area: (b.x2 - b.x1) * (b.y2 - b.y1), parent: null, children: [], direct: [] });
+    });
+    if (!groups.length) return null;
+    // (members, area, earlier-in-scene) strictly increases up the tree, so a
+    // tie can never make two groups each other's parent.
+    function above(h, hi, g, gi) {
+      if (h.members.length !== g.members.length) return h.members.length > g.members.length;
+      if (h.area !== g.area) return h.area > g.area;
+      return hi < gi;
+    }
+    groups.forEach(function (g, gi) {
+      var best = null, bestI = -1;
+      groups.forEach(function (h, hi) {
+        if (h === g || !above(h, hi, g, gi)) return;
+        if (!g.members.every(function (id) { return h.set[id]; })) return;
+        if (!best || above(best, bestI, h, hi)) { best = h; bestI = hi; }
+      });
+      g.parent = best;
+      if (best) best.children.push(g);
+    });
+    var home = {};
+    groups.forEach(function (g) {
+      var held = {};
+      g.children.forEach(function (c) { c.members.forEach(function (id) { held[id] = true; }); });
+      g.members.forEach(function (id) { if (!held[id]) { g.direct.push(id); if (!home[id]) home[id] = g; } });
+    });
+    function adopt(g, id) {
+      g.direct.push(id);
+      home[id] = g;
+      for (var a = g; a; a = a.parent) { a.members.push(id); a.set[id] = true; }
+    }
+    for (var changed = true; changed;) {
+      changed = false;
+      scene.edges.forEach(function (e) {
+        var s = e.source, t = e.target;
+        if (!nodeById[s] || !nodeById[t]) return;
+        if (home[s] && !home[t]) { adopt(home[s], t); changed = true; }
+        else if (home[t] && !home[s]) { adopt(home[t], s); changed = true; }
+      });
+    }
+    var loose = Object.keys(nodeById).filter(function (id) { return !home[id]; });
+    return { groups: groups, roots: groups.filter(function (g) { return !g.parent; }), loose: loose, nodeById: nodeById };
+  }
+
+  // PURE (exposed for tests): the pages a grouped scene prints as.
+  // `fits(rect)` says whether a model-px rect fits one sheet at the minimum
+  // text size. Returns [{ trail, names, regions, nodeIds, rect, grid }] in
+  // reading order — `trail` the enclosing groups' names, `names` the groups
+  // the page holds, `regions` their boxes (what a stub runs to the edge of),
+  // `grid` true for a page that must still be cut into sections — or null
+  // when the scene has no groups.
+  function planGroupUnits(scene, fits) {
+    var T = sceneGroups(scene);
+    if (!T) return null;
+    function nodeRect(id) { return boxExtent(T.nodeById[id]); }
+    // A page of devices no smaller group holds has the devices themselves as
+    // its regions (flagged, so the overview outlines them as one box).
+    function deviceRegion(id) { var r = nodeRect(id); r.device = true; return r; }
+    // No room is set aside for the stubs: a page that only just fits keeps
+    // fitting, and a tag past the edge is pulled back onto the sheet.
+    function unit(trail, names, regions, ids) {
+      var r = null;
+      regions.forEach(function (x) { r = unionRect(r, x); });
+      ids.forEach(function (id) { r = unionRect(r, nodeRect(id)); });
+      return { trail: trail, names: names, regions: regions, nodeIds: ids.slice(), rect: r, grid: false };
+    }
+    function readingOrder(a, b) { return a.rect.y1 - b.rect.y1 || a.rect.x1 - b.rect.x1; }
+    // Greedy, in reading order: each page joins the first earlier sibling page
+    // it fits on the same sheet with.
+    function pack(units) {
+      var out = [];
+      units.sort(readingOrder).forEach(function (u) {
+        if (!u.grid) {
+          for (var i = 0; i < out.length; i++) {
+            var p = out[i];
+            if (p.grid || p.trail.join("\u0001") !== u.trail.join("\u0001")) continue;
+            var r = unionRect(p.rect, u.rect);
+            if (!fits(r)) continue;
+            p.names = p.names.concat(u.names); p.regions = p.regions.concat(u.regions);
+            p.nodeIds = p.nodeIds.concat(u.nodeIds); p.rect = r;
+            return;
+          }
+        }
+        out.push(u);
+      });
+      return out;
+    }
+    function build(g, trail) {
+      var whole = unit(trail, [g.name], [boxExtent(g.item)], g.members);
+      if (fits(whole.rect)) return [whole];
+      if (!g.children.length) { whole.grid = true; return [whole]; }
+      var path = trail.concat([g.name]), out = [];
+      g.children.forEach(function (c) { out = out.concat(build(c, path)); });
+      if (g.direct.length) out.push(unit(path, ["other devices"], g.direct.map(deviceRegion), g.direct));
+      return pack(out);
+    }
+    var units = [];
+    T.roots.forEach(function (g) { units = units.concat(build(g, [])); });
+    if (T.loose.length) {
+      var lu = unit([], ["Not in a group"], T.loose.map(deviceRegion), T.loose);
+      lu.grid = !fits(lu.rect);
+      units.push(lu);
+    }
+    // Pages run in reading order of the drawing, top to bottom.
+    return pack(units).sort(readingOrder);
+  }
+
+  function unitTitle(u) {
+    return u.trail.concat([u.names.join(", ")]).join(" › ");
+  }
+
+  // An edge path as a polyline, quadratics sampled.
+  function samplePath(path) {
+    var pts = [{ x: path[0].x, y: path[0].y }];
+    for (var i = 1; i < path.length; i++) {
+      var p = path[i], p0 = pts[pts.length - 1];
+      if (p.type === "Q") {
+        for (var k = 1; k <= 12; k++) {
+          var t = k / 12, u = 1 - t;
+          pts.push({ x: u * u * p0.x + 2 * u * t * p.cx + t * t * p.x, y: u * u * p0.y + 2 * u * t * p.cy + t * t * p.y });
+        }
+      } else {
+        pts.push({ x: p.x, y: p.y });
+      }
+    }
+    return pts;
+  }
+
+  // How far past a page's region a stub runs before its tag, in model px.
+  var STUB_REACH = 16;
+
+  // The on-page part of an edge that leaves the page: from the end on the
+  // page (`fromSource`) along the drawn route until it first leaves every
+  // region (inflated by STUB_REACH). A route that never leaves stops halfway.
+  // Returns { path, tip, dir } — `dir` the unit direction at the tip.
+  function stubRoute(e, fromSource, regions) {
+    var pts = samplePath(e.path);
+    if (!fromSource) pts.reverse();
+    function inside(p) {
+      return regions.some(function (r) {
+        return p.x >= r.x1 - STUB_REACH && p.x <= r.x2 + STUB_REACH && p.y >= r.y1 - STUB_REACH && p.y <= r.y2 + STUB_REACH;
+      });
+    }
+    var keep = [pts[0]], tip = null;
+    for (var i = 1; i < pts.length; i++) {
+      if (inside(pts[i])) { keep.push(pts[i]); continue; }
+      var a = pts[i - 1], b = pts[i];
+      for (var it = 0; it < 14; it++) {
+        var m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        if (inside(m)) a = m; else b = m;
+      }
+      tip = a;
+      break;
+    }
+    if (!tip) {
+      var half = Math.max(1, Math.floor(pts.length / 2));
+      keep = pts.slice(0, half + 1);
+      tip = keep[keep.length - 1];
+    } else {
+      keep.push(tip);
+    }
+    var prev = keep.length > 1 ? keep[keep.length - 2] : pts[0];
+    var dx = tip.x - prev.x, dy = tip.y - prev.y, len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-6) { dx = tip.x - pts[0].x; dy = tip.y - pts[0].y; len = Math.sqrt(dx * dx + dy * dy) || 1; }
+    return {
+      path: keep.map(function (p, j) { return { type: j ? "L" : "M", x: p.x, y: p.y }; }),
+      tip: tip, dir: { x: dx / len, y: dy / len },
+    };
+  }
+
+  // PURE (exposed for tests): what one group page draws. Its devices; the
+  // group boxes holding any of them (enclosing floors included — they are cut
+  // at the sheet edge); links with both ends on the page whole; a link with
+  // one end on it as a stub. `pageOf` maps a node id to the page it prints
+  // on. Links with no end on the page are left out.
+  function unitScene(scene, u, pageOf) {
+    var on = toSet(u.nodeIds);
+    function boxOn(b) { return !b.members || b.members.some(function (id) { return on[id]; }); }
+    function nodeOn(n) { return n.id == null || on[n.id]; }
+    var edges = [], stubs = [];
+    scene.edges.forEach(function (e) {
+      var s = e.source != null && on[e.source], t = e.target != null && on[e.target];
+      if (e.source == null || e.target == null || (s && t)) { edges.push(e); return; }
+      if (!s && !t) return;
+      var route = stubRoute(e, s, u.regions);
+      var far = s ? e.target : e.source;
+      var name = (scene.names && scene.names[far]) || "another device";
+      var page = pageOf[far];
+      stubs.push({
+        path: route.path, color: e.color, width: e.width, style: e.style,
+        arrowTarget: !s && e.arrowTarget ? e.arrowTarget : null,
+        arrowSource: s && e.arrowSource ? e.arrowSource : null,
+        tip: route.tip, dir: route.dir,
+        text: (e.label ? e.label.lines.join(" ") + " · " : "") + "to " + name + (page ? " (p. " + page + ")" : ""),
+        fontPx: e.label ? e.label.fontPx : (scene.minFontPx || 9),
+      });
+    });
+    return {
+      under: scene.under.filter(boxOn), parents: scene.parents.filter(boxOn), nodes: scene.nodes.filter(nodeOn),
+      edges: edges, stubs: stubs, icons: scene.icons, minFontPx: scene.minFontPx, names: scene.names,
+      bbox: scene.bbox, clip: scene.clip,
+    };
   }
 
   // Quadratic Bézier → the cubic control points jsPDF draws.
@@ -298,7 +557,7 @@
   }
 
   function readScene(cy) {
-    var scene = { under: [], parents: [], edges: [], nodes: [], minFontPx: Infinity, bbox: null, icons: [] };
+    var scene = { under: [], parents: [], edges: [], nodes: [], minFontPx: Infinity, bbox: null, icons: [], names: {} };
     var seenIcon = {};
     function noteFont(lbl) { if (lbl && lbl.fontPx < scene.minFontPx) scene.minFontPx = lbl.fontPx; }
 
@@ -328,7 +587,13 @@
         strokeWidth: bw, strokeStyle: psStr(n, "border-style", "solid"),
         icon: icon, label: label,
         z: psNum(n, "z-index", 0),
+        id: typeof n.id === "function" ? n.id() : null,
       };
+      // A node that declares its members (the topology's location hulls) is a
+      // GROUP for group pages (planGroupUnits).
+      var members = typeof n.data === "function" ? n.data("memberIds") : null;
+      if (Array.isArray(members)) item.members = members.slice();
+      if (item.id != null && label) scene.names[item.id] = label.lines[0];
       if (psStr(n, "z-compound-depth", "auto") === "bottom") scene.under.push(item);
       else if (n.isParent && n.isParent()) scene.parents.push(item);
       else scene.nodes.push(item);
@@ -350,7 +615,10 @@
       noteFont(label);
       var tShape = psStr(e, "target-arrow-shape", "none"), sShape = psStr(e, "source-arrow-shape", "none");
       var scale = psNum(e, "arrow-scale", 1);
+      var sid = null, tid = null;
+      try { sid = e.source().id(); tid = e.target().id(); } catch (x) { /* a stub without endpoints */ }
       scene.edges.push({
+        source: sid, target: tid,
         path: path,
         color: color,
         width: psNum(e, "width", 1.5),
@@ -387,24 +655,11 @@
   // null when nothing is in view.
   function clipSceneToExtent(scene, ext) {
     function hits(r) { return r.x2 >= ext.x1 && r.x1 <= ext.x2 && r.y2 >= ext.y1 && r.y1 <= ext.y2; }
-    function boxRect(b) {
-      var r = { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 };
-      if (b.label) {
-        var blk = nodeLabelBlock(b, b.label, b.label.fontPx * 1.2);
-        r.y1 = Math.min(r.y1, blk.top); r.y2 = Math.max(r.y2, blk.top + blk.h);
-      }
-      return r;
-    }
-    function edgeRect(e) {
-      var xs = [], ys = [];
-      e.path.forEach(function (p) { xs.push(p.x); ys.push(p.y); if (p.type === "Q") { xs.push(p.cx); ys.push(p.cy); } });
-      return { x1: Math.min.apply(null, xs), y1: Math.min.apply(null, ys), x2: Math.max.apply(null, xs), y2: Math.max.apply(null, ys) };
-    }
-    function keepBox(b) { return hits(boxRect(b)); }
+    function keepBox(b) { return hits(boxExtent(b)); }
     var out = {
       under: scene.under.filter(keepBox), parents: scene.parents.filter(keepBox), nodes: scene.nodes.filter(keepBox),
-      edges: scene.edges.filter(function (e) { return hits(edgeRect(e)); }),
-      icons: scene.icons, minFontPx: Infinity,
+      edges: scene.edges.filter(function (e) { return hits(edgeExtent(e)); }),
+      icons: scene.icons, minFontPx: Infinity, names: scene.names,
       bbox: { x1: ext.x1, y1: ext.y1, x2: ext.x2, y2: ext.y2, w: ext.x2 - ext.x1, h: ext.y2 - ext.y1 },
       clip: { x1: ext.x1, y1: ext.y1, x2: ext.x2, y2: ext.y2 },
     };
@@ -433,24 +688,7 @@
 
   // Model-px extent of everything a scene draws, labels included, as rects.
   function sceneRects(scene) {
-    var out = [];
-    allBoxes(scene).forEach(function (b) {
-      var r = { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 };
-      if (b.label) {
-        var blk = nodeLabelBlock(b, b.label, b.label.fontPx * 1.2);
-        r.y1 = Math.min(r.y1, blk.top); r.y2 = Math.max(r.y2, blk.top + blk.h);
-      }
-      out.push(r);
-    });
-    scene.edges.forEach(function (e) {
-      var xs = [], ys = [];
-      e.path.forEach(function (p) {
-        xs.push(p.x); ys.push(p.y);
-        if (p.type === "Q") { xs.push(p.cx); ys.push(p.cy); }
-      });
-      out.push({ x1: Math.min.apply(null, xs), y1: Math.min.apply(null, ys), x2: Math.max.apply(null, xs), y2: Math.max.apply(null, ys) });
-    });
-    return out;
+    return allBoxes(scene).map(boxExtent).concat(scene.edges.map(edgeExtent));
   }
 
   // ─── Icons (PDF only) ───────────────────────────────────────────────
@@ -557,13 +795,48 @@
     var sections = plan.single ? [{ row: 0, col: 0 }] : occupiedSections(
       plan.rows, plan.cols, scene.bbox.x1 + plan.offsetX, scene.bbox.y1 + plan.offsetY,
       plan.stepX, plan.stepY, contentW / plan.scale, contentH / plan.scale, sceneRects(scene));
+    var groups = !plan.single && ctx.pageByGroups ? groupPages(scene, opts.minPt, contentW, contentH) : null;
     return {
       orientation: opts.orientation, paper: opts.paper, minPt: opts.minPt, size: size,
       textPt: textPt, titlePt: titlePt, key: key, meta: meta, headerH: headerH,
       content: { x: MARGIN, y: contentTop, w: contentW, h: contentH },
-      plan: plan, sections: sections,
-      sheets: plan.single ? 1 : sections.length + 1,
+      plan: plan, sections: sections, groups: groups,
+      sheets: plan.single ? 1 : groups ? groups.sheets : sections.length + 1,
     };
+  }
+
+  // The group pages for one sheet size: each unit's own plan (one sheet, or
+  // the grid inside its extent), the page it starts on (page 1 is the
+  // overview) and the page every device prints on, for the stub tags. Null
+  // when the scene has no groups — the caller keeps the grid.
+  function groupPages(scene, minPt, contentW, contentH) {
+    function planFor(r) {
+      return planPages(r.x2 - r.x1, r.y2 - r.y1, scene.minFontPx, minPt, contentW, contentH, OVERLAP, MAX_SCALE);
+    }
+    var units = planGroupUnits(scene, function (r) { return planFor(r).single; });
+    if (!units) return null;
+    var nodeById = {};
+    scene.nodes.forEach(function (n) { if (n.id != null) nodeById[n.id] = n; });
+    var page = 2, pageOf = {};
+    units.forEach(function (u) {
+      var p = planFor(u.rect);
+      u.plan = p;
+      u.origin = { x: u.rect.x1 + p.offsetX, y: u.rect.y1 + p.offsetY };
+      var secW = contentW / p.scale, secH = contentH / p.scale;
+      u.sections = p.single ? [{ row: 0, col: 0 }] : occupiedSections(p.rows, p.cols, u.origin.x, u.origin.y,
+        p.stepX, p.stepY, secW, secH, u.nodeIds.map(function (id) { return boxExtent(nodeById[id]); }));
+      u.firstPage = page;
+      u.nodeIds.forEach(function (id) {
+        var n = nodeById[id], cx = (n.x1 + n.x2) / 2, cy = (n.y1 + n.y2) / 2, k = 0;
+        for (var i = 0; i < u.sections.length; i++) {
+          var sx = u.origin.x + u.sections[i].col * p.stepX, sy = u.origin.y + u.sections[i].row * p.stepY;
+          if (cx >= sx && cx <= sx + secW && cy >= sy && cy <= sy + secH) { k = i; break; }
+        }
+        pageOf[id] = page + k;
+      });
+      page += u.sections.length;
+    });
+    return { units: units, pageOf: pageOf, sheets: page - 1 };
   }
 
   function dashFor(style, s, width) {
@@ -738,9 +1011,67 @@
     if (withText) parents.forEach(drawBoxLabel);
     edges.forEach(drawEdge);
     if (withText) edges.forEach(drawEdgeLabel);
+    var stubs = scene.stubs || [];
+    stubs.forEach(drawEdge);
     nodes.forEach(drawBox);
     if (withText) nodes.forEach(drawBoxLabel);
+    // A stub's tag goes on top of everything: it is the only place the far
+    // end of the link is named.
+    if (withText) drawStubTags(stubs);
     doc.restoreGraphicsState();
+
+    // Each tag sits just past its stub's tip, pointing the way the link
+    // leaves; tags that would collide step along (with a hairline back to
+    // the tip), turning back when the sheet ends. A tip at most a stub's
+    // reach past the sheet edge is this sheet's (the page fits its groups,
+    // not their stubs); one further off belongs to another section of a
+    // cut-up group.
+    function drawStubTags(list) {
+      if (!list.length) return;
+      // Devices (with their names) and group titles are in the way too.
+      function toPt(r) { return { x: X(r.x1), y: Y(r.y1), w: (r.x2 - r.x1) * s, h: (r.y2 - r.y1) * s }; }
+      var placed = nodes.map(function (n) { return toPt(boxExtent(n)); });
+      under.concat(parents).forEach(function (b) { if (b.label) placed.push(toPt(labelRect(b))); });
+      list.forEach(function (st) {
+        var tx = X(st.tip.x), ty = Y(st.tip.y), slack = STUB_REACH * s + 1;
+        if (tx < area.x - slack || tx > area.x + area.w + slack || ty < area.y - slack || ty > area.y + area.h + slack) return;
+        tx = Math.max(area.x, Math.min(area.x + area.w, tx));
+        ty = Math.max(area.y, Math.min(area.y + area.h, ty));
+        var pt = st.fontPx * s, padX = 2 * s + 0.5;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(pt);
+        var text = pdfText(st.text);
+        var w = doc.getTextWidth(text) + 2 * padX, h = pt * 1.15 + padX, x, y;
+        var horiz = Math.abs(st.dir.x) >= Math.abs(st.dir.y);
+        if (horiz) { x = st.dir.x >= 0 ? tx : tx - w; y = ty - h / 2; }
+        else { x = tx - w / 2; y = st.dir.y >= 0 ? ty : ty - h; }
+        x = Math.max(area.x, Math.min(area.x + area.w - w, x));
+        y = Math.max(area.y, Math.min(area.y + area.h - h, y));
+        var y0 = y;
+        function clash(r) { return x < r.x + r.w && x + w > r.x && y < r.y + r.h && y + h > r.y; }
+        function onSheet() { return y >= area.y && y + h <= area.y + area.h; }
+        var dirs = !horiz && st.dir.y < 0 ? [-(h + 1), h + 1] : [h + 1, -(h + 1)];
+        for (var d = 0; d < dirs.length && placed.some(clash); d++) {
+          y = y0;
+          for (var guard = 0; guard < 40 && onSheet() && placed.some(clash); guard++) y += dirs[d];
+          if (!onSheet()) y = y0;
+        }
+        placed.push({ x: x, y: y, w: w, h: h });
+        if (y !== y0) {
+          doc.setDrawColor(st.color);
+          doc.setLineWidth(0.4);
+          doc.setLineDashPattern([], 0);
+          doc.line(tx, ty, Math.max(x, Math.min(x + w, tx)), y < ty ? y + h : y);
+        }
+        doc.setFillColor("#ffffff");
+        doc.setDrawColor(st.color);
+        doc.setLineWidth(0.6);
+        doc.setLineDashPattern([], 0);
+        doc.rect(x, y, w, h, "FD");
+        doc.setTextColor("#1a1a1a");
+        doc.text(text, x + padX, y + padX / 2 + pt * 0.85);
+      });
+    }
   }
 
   // The key box, bottom left of the sheet, above the footer.
@@ -822,6 +1153,8 @@
     if (plan.single) {
       drawScene(doc, scene, area, bb.x1 + plan.offsetX, bb.y1 + plan.offsetY, plan.scale, true, icons);
       drawChrome(doc, L, ctx, "", 1, 1, timestamp);
+    } else if (L.groups) {
+      writeGroupPages(doc, ctx, scene, L, icons, timestamp);
     } else {
       // Overview: the whole graph fitted to the sheet with the section grid on
       // top. No graph text — at this scale it would print below the minimum.
@@ -863,6 +1196,58 @@
       });
     }
     doc.save(ctx.fileBase + "-" + now.toISOString().slice(0, 10) + ".pdf");
+  }
+
+  // Group pages: the overview outlines each page's groups with its page
+  // number (a grid-split group, each of its sections), then every page draws
+  // its own scene — devices, their boxes, whole links and stubs.
+  function writeGroupPages(doc, ctx, scene, L, icons, timestamp) {
+    var area = L.content, bb = scene.bbox, G = L.groups, size = L.size;
+    var sFit = Math.min(area.w / bb.w, area.h / bb.h);
+    var oox = bb.x1 - (area.w / sFit - bb.w) / 2, ooy = bb.y1 - (area.h / sFit - bb.h) / 2;
+    drawScene(doc, scene, area, oox, ooy, sFit, false, icons);
+    var gridPt = Math.max(10, L.minPt + 2);
+    function outline(r, label) {
+      var gx = area.x + (r.x1 - oox) * sFit, gy = area.y + (r.y1 - ooy) * sFit;
+      doc.setDrawColor("#0288d1");
+      doc.setLineWidth(0.8);
+      doc.setLineDashPattern([4, 3], 0);
+      doc.rect(gx, gy, (r.x2 - r.x1) * sFit, (r.y2 - r.y1) * sFit, "S");
+      doc.setLineDashPattern([], 0);
+      if (!label) return;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(gridPt);
+      doc.setTextColor("#0288d1");
+      doc.text(label, gx + 4, gy + gridPt);
+    }
+    G.units.forEach(function (u) {
+      var p = u.plan;
+      if (p.single) {
+        // A page of loose devices is outlined as one box round them all.
+        var boxes = u.regions.filter(function (r) { return !r.device; });
+        var devices = null;
+        u.regions.forEach(function (r) { if (r.device) devices = unionRect(devices, r); });
+        if (devices) boxes.push(devices);
+        boxes.forEach(function (r, i) { outline(r, i === 0 ? "p. " + u.firstPage : null); });
+        return;
+      }
+      var secW = area.w / p.scale, secH = area.h / p.scale;
+      u.sections.forEach(function (sec, k) {
+        var sx = u.origin.x + sec.col * p.stepX, sy = u.origin.y + sec.row * p.stepY;
+        outline({ x1: Math.max(u.rect.x1, sx), y1: Math.max(u.rect.y1, sy),
+          x2: Math.min(u.rect.x2, sx + secW), y2: Math.min(u.rect.y2, sy + secH) }, "p. " + (u.firstPage + k));
+      });
+    });
+    drawChrome(doc, L, ctx, "Overview — a page per group; the labels are on the pages that follow", 1, G.sheets, timestamp);
+    G.units.forEach(function (u) {
+      var sub = unitScene(scene, u, G.pageOf), title = unitTitle(u), p = u.plan;
+      u.sections.forEach(function (sec, k) {
+        doc.addPage([Math.min(size.w, size.h), Math.max(size.w, size.h)], L.orientation);
+        drawScene(doc, sub, area, u.origin.x + sec.col * p.stepX, u.origin.y + sec.row * p.stepY, p.scale, true, icons);
+        drawChrome(doc, L, ctx, title + (u.sections.length > 1 ? " — part " + (k + 1) + " of " + u.sections.length : ""),
+          u.firstPage + k, G.sheets, timestamp);
+      });
+    });
   }
 
   // ─── Visio (.vsdx) writer ───────────────────────────────────────────
@@ -1212,6 +1597,14 @@
     if (L.plan.single) {
       return "Fits on one " + paper + " " + L.orientation + " sheet. Smallest text prints at about " + smallest + " pt.";
     }
+    if (L.groups) {
+      var gp = L.groups.sheets - 1;
+      var gtext = "Too big for one sheet at " + L.minPt + " pt: prints as " + gp + " page" + (gp === 1 ? "" : "s") +
+        " plus an overview page, " + paper + " " + L.orientation + " — a page per group, small neighbouring groups sharing one" +
+        " and a group too big for a sheet cut into sections. A link that leaves a page ends in a tag naming the device at its" +
+        " other end and the page it is on.";
+      return gp > LOTS_OF_PAGES ? gtext + " That is a lot of paper — narrowing the " + noun + " first prints only what you need." : gtext;
+    }
     var grid = L.plan.rows * L.plan.cols, n = L.sections.length;
     var text = "Too big for one sheet at " + L.minPt + " pt: prints as " + n + " section page" + (n === 1 ? "" : "s") +
       " plus an overview page, " + paper + " " + L.orientation + " (a " + L.plan.rows + " × " + L.plan.cols + " grid" +
@@ -1224,8 +1617,8 @@
   }
 
   // ctx: { cy, lightStylesheet | scene, title, fileBase, noun, metaLines,
-  //        keyItems, scopeNote, viewport? } — see the header comment and
-  //        sceneOf.
+  //        keyItems, scopeNote, viewport?, pageByGroups? } — see the header
+  //        comment, sceneOf and planGroupUnits.
   function checkCtx(ctx) {
     var empty = !ctx || (ctx.scene ? !ctx.scene.nodes.length : !ctx.cy || ctx.cy.nodes(":visible").length === 0);
     if (empty) {
@@ -1442,6 +1835,11 @@
     shapeKind: shapeKind,
     nodeLabelBlock: nodeLabelBlock,
     clipSceneToExtent: clipSceneToExtent,
+    sceneGroups: sceneGroups,
+    planGroupUnits: planGroupUnits,
+    unitTitle: unitTitle,
+    stubRoute: stubRoute,
+    unitScene: unitScene,
     crc32: crc32,
     zipStore: zipStore,
     vsdxPageXml: vsdxPageXml,
