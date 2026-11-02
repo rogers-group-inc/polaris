@@ -18,7 +18,7 @@
 //   - Hero with status pill + identity bits (name lives in the sheet header)
 //   - Monitor section (response-time chart, status pill, RTT/last poll)
 //   - Telemetry section (CPU+Memory chart, when supported; its own
-//     1h / 24h / 7d range)
+//     1h / 12h / 24h / 7d / 30d range)
 //   - General section (IP/MAC/type/model/OS/location/last seen)
 //   - Temperatures section — current per-sensor reading + 1h min/avg/max
 //   - "View IPsec" — on a Fortinet firewall that reported tunnels or peers;
@@ -98,12 +98,12 @@
 //     full observed key/value table)
 
 (function () {
-  // Response Time chart range — driven by the segmented control on its card.
-  // CPU + Memory and the interface slide-up carry their own shorter control
-  // (CHART_RANGES), so each chart moves on its own.
+  // Chart ranges — every chart's segmented control offers the same five
+  // (Response Time, CPU + Memory, the interface page, a volume's usage, and
+  // SD-WAN), the presets every history endpoint accepts (src/utils/chartRange.ts).
+  // Each chart keeps its own selection, so each moves on its own.
   var DEFAULT_RANGE = "24h";
   var RANGES = ["1h", "12h", "24h", "7d", "30d"];
-  var CHART_RANGES = ["1h", "24h", "7d"];
   var RANGE_MS = {
     "1h": 3600000, "12h": 12 * 3600000, "24h": 24 * 3600000,
     "7d": 7 * 86400000, "30d": 30 * 86400000,
@@ -1115,7 +1115,7 @@
       + sectionHeader("telemetry", "CPU + Memory", "", st.sections.telemetry, "asset-telemetry-sub", "cpuMemory")
       + '<div class="sect-body" data-sect="telemetry"' + (st.sections.telemetry ? '' : ' hidden') + '>'
       + '  <div class="card-filled" style="padding:16px;margin-bottom:8px;">'
-      + '    ' + rangeSegHtml("asset-telemetry-range-seg", CHART_RANGES, st.telemetryRange)
+      + '    ' + rangeSegHtml("asset-telemetry-range-seg", RANGES, st.telemetryRange)
       + '    <div id="asset-telemetry-chart" style="min-height:120px;"></div>'
       + '  </div>'
       + '</div>'
@@ -1899,7 +1899,7 @@
       + (monitored
         ? ''
           + '<div style="font-weight:500;margin:16px 0 8px;">Usage</div>'
-          + rangeSegHtml("iface-range-seg", CHART_RANGES, "1h")
+          + rangeSegHtml("iface-range-seg", RANGES, "1h")
           + '<div id="iface-tput-chart" style="min-height:120px;"></div>'
           + '<div class="muted" id="iface-tput-sub" style="font-size:12px;margin-top:4px;"></div>'
           + '<div style="font-weight:500;margin:16px 0 8px;">Errors</div>'
@@ -2705,7 +2705,7 @@
       { k: "Polled every minute", v: p.pinned ? "Yes" : "No" },
     ])
       + '<div style="font-weight:500;margin:16px 0 8px;">Usage</div>'
-      + rangeSegHtml("vol-range-seg", CHART_RANGES, p.range || "24h")
+      + rangeSegHtml("vol-range-seg", RANGES, p.range || "24h")
       + '<div id="vol-chart" style="min-height:120px;"></div>'
       + '<div class="muted" id="vol-chart-sub" style="font-size:12px;margin-top:4px;"></div>';
     wireRangeSeg("vol-range-seg", function (range) { p.range = range; loadVolumeChart(p, range); });

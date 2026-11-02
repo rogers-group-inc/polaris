@@ -192,10 +192,10 @@ the sheet. An edit form or a confirmation open on top closes first. A sheet you
 shrank by tapping outside it closes on the first Back. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
 **Interfaces** each name the polling method that collects them beside the
 title (**Not collected** when nothing does), and CPU + Memory has its own
-**1h · 24h · 7d** range. On a switch with PoE ports, Interfaces opens with a
+**1h · 12h · 24h · 7d · 30d** range, the same five as Response Time. On a switch with PoE ports, Interfaces opens with a
 count of ports delivering, searching and faulted, naming the faulted ones, and
 each port shows its PoE state. Tapping a monitored interface shows its usage and
-error graphs (**1h · 24h · 7d**) along with its PoE state and class. Under the status pill, a device
+error graphs (**1h · 12h · 24h · 7d · 30d**) along with its PoE state and class. Under the status pill, a device
 with a table to read carries a button for it, below **View SD-WAN** on a
 firewall that reports SD-WAN:
 
@@ -213,7 +213,7 @@ button re-reads what Polaris has stored, not the device itself.
 device stores on. Every device shows its **volumes** — each mount with a usage
 bar (amber from 75 %, red from 90 %, as on the desktop), what is used and free,
 and *Poll 1m* on a volume polled every minute; tapping one shows its usage over
-**1h · 24h · 7d**. An Unraid, TrueNAS or Proxmox host also shows its **arrays**:
+**1h · 12h · 24h · 7d · 30d**. An Unraid, TrueNAS or Proxmox host also shows its **arrays**:
 each pool with its health, usage and last scrub or parity check, and its drives
 by group (data, parity, cache, spare…) with size, temperature and health. A
 degraded array opens by itself; a healthy one stays closed until tapped. Tapping

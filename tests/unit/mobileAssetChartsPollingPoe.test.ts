@@ -95,10 +95,11 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     await flush();
   }
 
-  it("CPU + Memory has its own 1h / 24h / 7d range, independent of Response Time", async () => {
+  it("CPU + Memory has its own range control — Response Time's five presets — moving independently", async () => {
     await openSheet();
-    const ranges = Array.from(document.querySelectorAll("#asset-telemetry-range-seg .seg-item")).map((b) => (b as HTMLElement).dataset.range);
-    expect(ranges).toEqual(["1h", "24h", "7d"]);
+    const ranges = (id: string) => Array.from(document.querySelectorAll("#" + id + " .seg-item")).map((b) => (b as HTMLElement).dataset.range);
+    expect(ranges("asset-telemetry-range-seg")).toEqual(["1h", "12h", "24h", "7d", "30d"]);
+    expect(ranges("asset-telemetry-range-seg")).toEqual(ranges("asset-range-seg"));
     expect(calls.telemetryHistory.at(-1)![1]).toBe("24h");
 
     const monitorBefore = calls.monitorHistory.length;
@@ -186,6 +187,13 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     seg("iface-range-seg", "7d").click();
     await flush();
     expect(calls.interfaceHistory.at(-1)!.slice(1)).toEqual(["port1", { range: "7d" }]);
+    // The same five presets as Response Time.
+    seg("iface-range-seg", "12h").click();
+    await flush();
+    expect(calls.interfaceHistory.at(-1)!.slice(1)).toEqual(["port1", { range: "12h" }]);
+    seg("iface-range-seg", "30d").click();
+    await flush();
+    expect(calls.interfaceHistory.at(-1)!.slice(1)).toEqual(["port1", { range: "30d" }]);
   });
 
   it("an unmonitored interface's slide-up has no charts", async () => {
