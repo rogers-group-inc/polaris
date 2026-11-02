@@ -2004,10 +2004,7 @@
       ["Click", "Select just that device, link or location box"],
       ["Shift + click", "Add to the selection"],
       ["Shift + drag", "Box-select multiple devices"],
-      ["Hover a connection line", "Show how it was found; light up its two devices (or its whole loop)"],
       ["Double-click a device", "Open its asset details"],
-      ["Right-click a device", "Edit its description / grouping codes"],
-      ["Edit Map (pencil, top right)", "Turn on layout editing — its own mouse controls button lists those gestures"],
   ];
   var MOUSE_CONTROLS_EDIT = [
       ["Drag empty space", "Pan the view (scroll wheel zooms)"],
@@ -2021,7 +2018,7 @@
       ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo a layout change (also the arrows under Done Editing)"],
       ["Grid (top right)", "Show the grid — thick lines where devices snap, thin lines in between"],
       ["Snap devices / Snap line points", "Devices land on the thick lines; line points on any line"],
-      ["Done Editing (check mark)", "Back to view-only"],
+      ["Right-click a device", "Edit its description / grouping codes"],
   ];
 
   // The Mouse controls panel: a legend-styled card under the corner tools.
@@ -2792,8 +2789,10 @@
 
     // Right-click on an asset-backed node opens the in-place description
     // editor — the quick path for stamping a:/b:/f:/r:/jb: grouping codes
-    // without opening the full asset slide-over.
+    // without opening the full asset slide-over. Edit mode only: viewing the
+    // map never changes an asset.
     cyInstance.on("cxttap", "node", function (evt) {
+      if (!topoState.editing) return;
       var assetId = _assetIdForNode(evt.target);
       if (assetId) openTopologyDescriptionEditor(assetId);
     });
