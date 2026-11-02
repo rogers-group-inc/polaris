@@ -182,6 +182,33 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/duplicateReservationConflictService.ts
+
+**What it owns:** The `duplicate-reservation` Conflict flavour (business rule 139) — an asset holding two or more DHCP reservations: detection, raise / refresh / auto-close, the dismissal dedup, and the one resolution verb (keep one, release the rest).
+
+**Public API:** pure — `isDhcpBinding(row)`, `groupDuplicateReservations(reservations, owners)`, `reservationSetKey(reservations)`; DB — `reconcileDuplicateReservationConflicts()` (the job's entry point), `keepOneReservation(conflict, keepReservationId, actor, mayRelease)`, `logDuplicateReservationDismissal(conflict, actor)`, `logScanFailure(err)`. Constant `DUPLICATE_RESERVATION_COLLISION_REASON`; shapes `HeldReservation`, `DuplicateReservationGroup`, `ReservationRow`, `MacOwnerRow`, `KeepReservationOutcome`.
+
+**Cross-service deps:** `prisma`, `logEvent`, `releaseReservation` (reservationService — every release goes through it, so the gate unpush, lease release and rule 102(b) detach come with it), `normalizeMacOrNull` / `isAllZeroMac` (utils/mac).
+
+**Used by:** `src/jobs/detectDuplicateReservations.ts` (10-min sweep, scheduler role), `src/api/routes/conflicts.ts` (`POST /:id/keep-reservation`), `src/services/conflictResolutionService.ts` (accept refusal + reject branch). Frontend: `renderDuplicateReservationConflictCard` + the `[data-dupres-keep]` wiring in `public/js/events.js`, the reason label in `public/js/widgets/conflictQueue.js`.
+
+**Invariants:**
+- A DHCP binding is an ACTIVE reservation with `sourceType` `dhcp_reservation` (learned from the gate) or `pushStatus` `synced` (a Polaris row the gate confirmed). A lease, a manual row never pushed, an infra row and a VIP are not.
+- A binding reaches an asset only through a single-MAC `AssetMacAddress` row (`macEnd` null). Every MAC of the asset counts — a wired and a Wi-Fi reservation on one laptop are two, and Reject is the operator's "deliberate". A MAC two assets list is skipped (a duplicate-record problem, not this one), as is the all-zero MAC (rule 97).
+- Decommissioned / disabled assets and Fortinet infra (`firewall` / `switch` / `access_point`) never raise.
+- ONE pending conflict per asset (`Conflict.assetId` = the asset); the oldest wins and extras are closed. Refreshed only when `proposedAssetFields` changed — a steady fleet issues zero writes.
+- A set an operator REJECTED (any `rejected` row whose `resolvedBy` is not `system:auto-resolved`) suppresses re-raise for the same `reservationSetKey`; a changed set raises again.
+- `keepOneReservation` runs `mayRelease` (the route's ownership check) on EVERY row before releasing any, so a refusal releases nothing; it accepts the conflict only when every release succeeded, else leaves it pending with a `conflict.resolve_failed` warning Event.
+- Accept is REFUSED (400) — which reservation stays is the decision, and Accept names none. Auto-close is `status="rejected"`, `resolvedBy="system:auto-resolved"`.
+
+**When changing this:**
+- The `proposedAssetFields` shape (`collisionReason`, `hostname`, `assetIpAddress`, `reservations[]`) is read by `renderDuplicateReservationConflictCard` (events.js), the conflictQueue widget subtitle and `keepOneReservation` — change all three together.
+- `keep-reservation` takes the reservation RELEASE gate (`reservations:write`, below Full RW only rows the caller created) on top of `discoveryConflicts:write`; keep it in step with `DELETE /reservations/:id`.
+- A new `ReservationSourceType` that is a MAC-to-IP binding on a gate belongs in `isDhcpBinding`.
+- Keep the raise Event on `conflict.detected` — the baseline conflict automation subscribes to it.
+
+---
+
 ## services/ipOverrideService.ts
 
 **What it owns:** Side effects of the operator IP pin (`Asset.ipOverride`) around discovery writes — the pin's ONLY writer besides the assets PUT route. The pure decision (release-on-match / reassert-on-mismatch) lives in `applyIpOverride` (`src/utils/assetInvariants.ts`), executed inside the `enforceOperatorOverrides` guard in `src/db.ts`; this service handles what happens next, invoked fire-and-forget AFTER the guarded write lands.
@@ -215,9 +242,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** listReservations, getReservation, createReservation, updateReservation, releaseReservation, findNextAvailableIps, nextAvailableReservation, expireStaleReservations. `findNextAvailableIps(subnetId, count, contiguous)` is the picker BOTH the single auto-allocate and the IP panel's multiple-IP preview go through (`nextAvailableReservation` is now `findNextAvailableIps(id, 1, false)` + `createReservation`), so there is one definition of "next available" and one set of guards. Selection itself is the pure `utils/ipAllocation.ts`; this function owns the subnet guards, the paged walk (256/page, `SCAN_CEILING` 65536 addresses), and the 409 wording. `MAX_BULK_ALLOCATE` (64) is exported and mirrored by `ALLOC_MAX` in `public/js/ip-panel.js` — change one, change both.
 
-**Cross-service deps:** reservationPushService (pushReservation, updatePushedReservation, unpushReservation, releaseDhcpLease, normalizeMac).
+**Cross-service deps:** reservationPushService (pushReservation, updatePushedReservation, unpushReservation, releaseDhcpLease, normalizeMac); assetAddressService (`detachReleasedAddress`, rule 102(b)).
 
-**Used by:** src/api/routes/reservations.ts (all CRUD + next-available), src/jobs/expireReservations.ts (expireStaleReservations every 15 min).
+**Used by:** src/api/routes/reservations.ts (all CRUD + next-available), src/jobs/expireReservations.ts (expireStaleReservations every 15 min), src/services/duplicateReservationConflictService.ts (`keepOneReservation` releases through `releaseReservation`, rule 139).
 
 **Invariants:**
 - MAC address required when push eligible (subnet discovered by FMG/FortiGate with pushReservations=true)
@@ -241,6 +268,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`createReservationFlow` canonicalises an IPv6 `ipAddress`** (`utils/cidr.ts → canonicalIp`, RFC 5952) before anything compares it, because discovery writes the canonical spelling and the collision check + unique index compare strings.
 - **`observed` rows (rule 125) are supersedable by a create** — in `isSupersedableByCreate` and `releaseSupersededDhcpLeaseAt` beside `dhcp_lease`; the release is DB-only (no push pointers, and the lease-expiry branch keys on `dhcp_lease`).
 - Releasing a dhcp_reservation (non-pending) deletes the device-side reserved-address (unpushReservation — pinned ids for Polaris-pushed, resolve-by-CIDR/IP for discovered when pushReservations=true) AND drops the IP's active lease (releaseDhcpLease). Both best-effort; neither blocks the Polaris release.
+- **A release that reached the gate detaches the binding from its asset** (business rule 102(b)). `sentToGate` is set when either unpush branch or the lease-release branch ran (an attempt, not a success); after the transaction commits and the `reservation.released` Event, `assetAddressService.detachReleasedAddress({ ip, gate: subnet.fortigateDevice, macAddress, actor })` drops the asset's discovered address rows at the IP and moves an unpinned endpoint off it. A Polaris-only release (writeback off, or a row with no gate) does NOT detach — the gate still holds the binding and the next read restores it. Best-effort: a failure is logged and never fails the release. Discovery's own VIP release and `releaseInfraReservations` reach it too, and detach nothing (no gate send; infra kept by `judgeReleasedAddress`).
 
 **When changing this:**
 - Test createReservation's push eligibility detection and MAC validation order
@@ -556,7 +584,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Subnet status = "deprecated" rejects new reservations — but it does NOT release the CIDR. A deprecated row still holds `@@unique([blockId, cidr])` and is still counted by `createSubnetRowChecked`'s overlap re-read, while discovery's `subnetByCidr` index skips it: no update path and no create path, so the address space becomes unrecordable rather than reusable. Retiring a subnet so its CIDR can be re-used is `subnetArchiveService.archiveSubnet`, not a status change (business rule 41)
 - Full-subnet reservation (ipAddress=null) sets subnet status → "reserved"
 - **`getSubnetIps`' `toReservationDto` is the ONLY shape the IP panel sees, so a column missing from it is a dead feature in the browser, not a degraded one.** It withheld `vipInfo` and all four push columns until 2026-09: the panel's VIP badge had therefore never rendered for anyone, and its "Queued for push" / "Push failed" rungs and the Retry button they gate could not fire, so a reservation queued against an unreachable gate drew as an ordinary active row. Both were found by reading the DTO, not by anything failing. Adding a Status-column or row-action behaviour to `public/js/ip-panel.js` means checking this function first.
-- **Each `getSubnetIps` row carries `assetId` AND `assetHostname` (the linked asset's own hostname), on both the v4 page path and the v6 all-rows path.** The panel has no View Asset button: the row's hostname IS the link to the asset, rendered from the reservation's hostname, else `assetHostname`. A row linked by `Asset.ipAddress` alone often has no reservation hostname (or no reservation), so dropping `assetHostname` leaves the link reading a bare "Asset". It costs nothing — the asset lookup already selects `hostname`. Pinned by `tests/integration/subnets.test.ts` ("names the linked asset on each row").
+- **Each `getSubnetIps` row carries `assetId` AND `assetHostname` (the linked asset's own hostname), on both the v4 page path and the v6 all-rows path.** The panel has no View Asset button: the row's hostname IS the link to the asset, rendered from the reservation's hostname, else `assetHostname`. A row linked by `Asset.ipAddress` alone often has no reservation hostname (or no reservation), so dropping `assetHostname` leaves the link reading a bare "Asset". It costs nothing — the asset lookup already selects `hostname`. Pinned by `tests/integration/subnets.test.ts` ("names the linked asset on each row"). The link is `Asset.ipAddress` = the address, else the reservation's hostname — and that hostname fallback applies to an ACTIVE reservation only (business rule 102(b)): a released row is history, and linking it by name kept a released address pointing at the asset that used to hold it.
 - Prefix length must be [8, 32] for IPv4
 - **First-claim parity (discovery side, lives in `src/services/discovery/discoveryEngine.ts` syncDhcpSubnets Phase 1):** when a discovery cycle's CIDR matches a manual subnet (`existing.discoveredBy == null`), the row gets brought into parity with a freshly-discovered subnet — `name` rewritten to `DHCP: <scope> (<fortigate>)`, `status` reset to `available`, `tags` union-merged with `["dhcp-discovered", <integrationType>]`, `purpose` stamped only when blank. Subsequent passes see `discoveredBy` set and skip the claim branch (operator can rename/retag after claim and edits survive). One `subnet.claimed` Event per first-claim.
 

@@ -1333,6 +1333,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // recording one IP. Scheduler role only: one grouped scan for the
       // fleet, not one per monitor replica.
       "./jobs/detectDuplicateIpAssets.js",
+      // Duplicate-reservation sweep (business rule 139) — raises/closes the
+      // `duplicate-reservation` flavour for an asset holding two or more DHCP
+      // reservations. Scheduler role only, for the same reason.
+      "./jobs/detectDuplicateReservations.js",
       // Pin-release sweep (business rule 103(a)): drops a primary-address pin
       // the network now backs on its own. Scheduler role only — one pass over
       // the fleet's (few) pins.

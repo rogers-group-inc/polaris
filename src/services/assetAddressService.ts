@@ -24,10 +24,11 @@
  * sweeps those.
  *
  * Between gate reads, IPAM is the fresher record of a DHCP binding: an
- * operator who releases or re-assigns an address there changes `Reservation`,
- * and nothing in that path reaches this table. `reconcileAddressesWithIpam`
- * closes the gap for ONE asset when its details are opened (business rule
- * 102(a)).
+ * operator who releases or re-assigns an address there changes `Reservation`.
+ * A release sent to the gate reaches this table at once through
+ * `detachReleasedAddress` (business rule 102(b)), which also moves the asset
+ * off the address; anything else is caught by `reconcileAddressesWithIpam`
+ * for ONE asset when its details are opened (business rule 102(a)).
  */
 
 import { prisma } from "../db.js";
@@ -37,6 +38,7 @@ import { mostSpecificContaining } from "../utils/cidr.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
 import type { AddressMedium } from "../utils/dhcpClaimFreshness.js";
 import { logEvent } from "./eventLogService.js";
+import { bestListedAddress } from "./primaryAddressService.js";
 
 export const DISCOVERED_ADDRESS_SOURCES = ["dhcp-lease", "dhcp-reservation", "device-inventory", "arp"] as const;
 export type DiscoveredAddressSource = (typeof DISCOVERED_ADDRESS_SOURCES)[number];
@@ -311,6 +313,158 @@ export async function reconcileAddressesWithIpam(
     });
   }
   return result;
+}
+
+// ─── A released DHCP binding leaves the asset (business rule 102(b)) ────────
+
+const INFRA_ASSET_TYPES = new Set(["firewall", "switch", "access_point"]);
+
+export type ReleasedAddressVerdict =
+  | { action: "keep"; reason: "not-primary" | "pinned" | "infra" | "device-reports-it" }
+  | { action: "move" };
+
+/**
+ * What a release does to ONE asset's primary address. Pure.
+ *
+ * The released address stops being the asset's address unless something other
+ * than the gate's DHCP / ARP tables still says it is: an operator pin (any of
+ * the three — the operator chose it, a release does not overrule that), a
+ * Fortinet infra asset (its address is its management IP, not a DHCP binding),
+ * or a row the device itself or an operator wrote (`monitor-system-info`,
+ * `agent-interface`, `manual`) at that address. `remainingSourcesAtIp` is the
+ * sources of the asset's address rows at the released IP AFTER the gate's
+ * discovered rows are gone.
+ */
+export function judgeReleasedAddress(
+  asset: {
+    ipAddress: string | null;
+    assetType: string;
+    ipOverride: string | null;
+    ipBlankPinned: boolean;
+    primaryAddressMac: string | null;
+  },
+  releasedIp: string,
+  remainingSourcesAtIp: readonly string[],
+): ReleasedAddressVerdict {
+  if (asset.ipAddress !== releasedIp) return { action: "keep", reason: "not-primary" };
+  if (asset.ipOverride || asset.ipBlankPinned || asset.primaryAddressMac) return { action: "keep", reason: "pinned" };
+  if (INFRA_ASSET_TYPES.has(asset.assetType)) return { action: "keep", reason: "infra" };
+  if (remainingSourcesAtIp.length > 0) return { action: "keep", reason: "device-reports-it" };
+  return { action: "move" };
+}
+
+export interface DetachedAddress {
+  assetId: string;
+  hostname: string | null;
+  removedRows: number;
+  /** Set when the asset's primary address moved: the new address, or null. */
+  movedTo?: string | null;
+}
+
+/**
+ * Detach a released DHCP binding from the assets that carried it, NOW rather
+ * than on the next gate read or the next time the asset is opened (102(a)).
+ * Called by `releaseReservation` once the release has been sent to the gate.
+ *
+ * The assets are the ones the binding named: an address-list row at the IP on
+ * the releasing gate, or — for an asset whose rows were never written — the
+ * asset whose primary address it is and that either carries the binding's MAC
+ * or is attributed to that gate. Scoped by gate because RFC1918 space repeats
+ * behind different gates. For each: every discovered row at that IP goes (the
+ * DHCP binding and the ARP entry learned from it — the next read restores
+ * whatever the gate still really holds), and when the IP was its primary
+ * address and `judgeReleasedAddress` says move, `ipAddress` moves to the
+ * best-backed address still listed (rule 103(b)'s picker) or is cleared. The
+ * old address stays in AssetIpHistory. One `asset.address_released` Event per
+ * asset. A handful of assets at most, so per-asset writes are fine.
+ */
+export async function detachReleasedAddress(input: {
+  ip: string;
+  gate: string;
+  macAddress: string | null;
+  actor?: string;
+}): Promise<DetachedAddress[]> {
+  const { ip, gate, actor } = input;
+  const mac = normalizeMacOrNull(input.macAddress);
+  const [rowHolders, primaryHolders] = await Promise.all([
+    prisma.assetAssociatedIp.findMany({
+      where: { ip, device: gate, source: { in: [...DISCOVERED_ADDRESS_SOURCES] } },
+      select: { assetId: true },
+    }),
+    prisma.asset.findMany({
+      where: {
+        ipAddress: ip,
+        OR: [
+          { learnedLocation: gate },
+          ...(mac ? [{ macAddressRows: { some: { mac } } }] : []),
+        ],
+      },
+      select: { id: true },
+    }),
+  ]);
+  const assetIds = [...new Set([...rowHolders.map((r) => r.assetId), ...primaryHolders.map((a) => a.id)])];
+  if (assetIds.length === 0) return [];
+
+  const assets = await prisma.asset.findMany({
+    where: { id: { in: assetIds } },
+    select: {
+      id: true, hostname: true, ipAddress: true, ipSource: true, assetType: true,
+      ipOverride: true, ipBlankPinned: true, primaryAddressMac: true,
+      associatedIpRows: { select: { ip: true, source: true, device: true } },
+    },
+  });
+
+  const out: DetachedAddress[] = [];
+  for (const asset of assets) {
+    const removed = await retryOnDeadlock(() =>
+      prisma.assetAssociatedIp.deleteMany({
+        where: { assetId: asset.id, ip, source: { in: [...DISCOVERED_ADDRESS_SOURCES] } },
+      }),
+    );
+    const remaining = asset.associatedIpRows.filter(
+      (r) => !(DISCOVERED_ADDRESS_SOURCES as readonly string[]).includes(r.source) || r.ip !== ip,
+    );
+    const verdict = judgeReleasedAddress(
+      asset, ip, remaining.filter((r) => r.ip === ip).map((r) => r.source),
+    );
+    const result: DetachedAddress = { assetId: asset.id, hostname: asset.hostname, removedRows: removed.count };
+
+    if (verdict.action === "move") {
+      const pick = await bestListedAddress(asset.id, remaining.map((r) => r.ip), null);
+      const nextIp = pick?.ip ?? null;
+      await prisma.asset.update({
+        where: { id: asset.id },
+        data: {
+          ipAddress: nextIp,
+          ipSource: nextIp ? (remaining.find((r) => r.ip === nextIp)?.device || "discovery") : null,
+        },
+      });
+      result.movedTo = nextIp;
+    }
+    if (result.removedRows === 0 && result.movedTo === undefined) continue;
+    out.push(result);
+
+    const name = asset.hostname || asset.ipAddress || asset.id;
+    await logEvent({
+      action: "asset.address_released",
+      resourceType: "asset",
+      resourceId: asset.id,
+      resourceName: name,
+      actor,
+      message:
+        result.movedTo === undefined
+          ? `Released DHCP binding ${ip} on "${gate}" removed from the address list of "${name}"`
+          : `Released DHCP binding ${ip} on "${gate}" is no longer the address of "${name}" — ` +
+            (result.movedTo ? `moved to ${result.movedTo}` : "no other address is listed, so it has none until discovery finds one") +
+            "; the old address stays in its IP history",
+      details: {
+        ip, gate, mac, removedRows: result.removedRows,
+        ...(result.movedTo === undefined ? { kept: verdict.action === "keep" ? verdict.reason : null } : { movedTo: result.movedTo }),
+        previousIpSource: asset.ipSource,
+      },
+    });
+  }
+  return out;
 }
 
 /** Test seam: forget the last age sweep so the next call runs one. */
