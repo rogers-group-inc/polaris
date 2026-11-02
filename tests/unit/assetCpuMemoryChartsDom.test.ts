@@ -1086,4 +1086,26 @@ describe("Memory forecast overlay", () => {
     expect(forecastLine(chart)).toBeNull();
     expect(bar.querySelector("[data-mem-forecast-toggle]")!.textContent).toBe("Forecast");
   });
+
+  it("says nothing about the trend while the forecast is off", () => {
+    const bar = document.createElement("div");
+    bar.id = "asset-mem-forecast";
+    document.body.appendChild(bar);
+    g._setMemoryForecastVisible(ASSET.id, false);
+    setForecast(-1, null);
+    g._renderMemForecastBar(ASSET.id, true);
+    expect(bar.style.display).toBe("flex");
+    expect(bar.textContent).toBe("Forecast");
+
+    setForecast(0.8, 12.4);
+    g._memForecastCache.data.levels = [
+      { severity: "serious", operator: ">=", threshold: 85, ruleId: "r1", ruleName: "High memory" },
+    ];
+    g._renderMemForecastBar(ASSET.id, false);
+    expect(bar.textContent).toBe("Forecast");
+
+    // Switched back on, the headline returns.
+    (bar.querySelector("[data-mem-forecast-toggle]") as HTMLElement).click();
+    expect(bar.textContent).toContain("/day");
+  });
 });

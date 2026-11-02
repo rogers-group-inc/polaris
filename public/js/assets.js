@@ -14520,9 +14520,13 @@ function _renderMemForecastBar(assetId, combined) {
   }
   var on = _getMemoryForecastVisible(assetId);
   var canDraw = _memForecastSignal(fc) !== "insufficient";
+  // Switched off, the bar is the toggle alone: no countdown, no shrinking,
+  // no per-day trend — none of the forecast shows until it is asked for.
+  var headline = canDraw && !on ? '' :
+    (combined ? '<span style="color:var(--color-text-secondary)">Memory — </span>' : '') + _memForecastHeadlineHTML(fc);
   bar.style.display = "flex";
   bar.innerHTML =
-    '<div>' + (combined ? '<span style="color:var(--color-text-secondary)">Memory — </span>' : '') + _memForecastHeadlineHTML(fc) + '</div>' +
+    '<div>' + headline + '</div>' +
     (canDraw
       ? '<button class="btn btn-sm ' + (on ? 'btn-primary' : 'btn-secondary') + '" data-mem-forecast-toggle title="Per asset; default off">' +
           (on ? '✓ Forecast' : 'Forecast') + '</button>'
