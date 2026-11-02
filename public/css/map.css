@@ -732,23 +732,6 @@
    own, which beats the user-agent [hidden] rule. */
 #topology-overlay .btn-icon[hidden] { display: none; }
 
-/* The pill chip — today the location-view switcher's (.topology-floor-chip,
-   below); it was first the device-type show/hide chips', since removed. */
-.topology-type-chip {
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
-  line-height: 1.2;
-  color: var(--color-text-primary);
-  cursor: pointer;
-  opacity: 0.85;
-  white-space: nowrap;
-  box-shadow: var(--topology-btn-shadow);
-}
-.topology-type-chip:hover { opacity: 1; border-color: var(--color-accent); }
-
 /* Location-view switcher, top-left of the graph area: one row per level —
    "Base" alone, then the top level (areas, plus area-less buildings; the
    buildings when no area is tagged), then the selected area's buildings,
@@ -767,20 +750,6 @@
   max-width: calc(100% - 320px);
 }
 .topology-floor-views[hidden] { display: none; }
-.topology-floor-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.topology-floor-row-depth-2 { padding-left: 12px; }
-.topology-floor-row-depth-3 { padding-left: 24px; }
-.topology-floor-chip.is-active {
-  opacity: 1;
-  font-weight: 600;
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
 
 /* Toolbar toggle buttons that carry an on/off state (Legend). */
 .btn-icon.is-active { color: var(--color-accent); background: var(--color-surface); }

@@ -59,6 +59,121 @@
     return hidden;
   }
 
+  // ── Location lock ────────────────────────────────────────────────────────
+  // The gear's Locations pick (config.topologyLock) is a list of location
+  // view keys — computeFloorViews' "a|<area>", "b|<area>|<building>",
+  // "f|<area>|<building>|<floor>". Empty = no lock: the whole site ("Base")
+  // and every view. Locked, the widget shows only those views and what lies
+  // inside them (a locked area's buildings and floors, a locked building's
+  // floors) — never Base, never another area. config.topologyRotateSec > 0
+  // cycles through the locked views (two or more) on that period.
+  var ROTATE_CHOICES = [0, 15, 30, 60, 120, 300];
+
+  function lockKeys(config) {
+    var list = config && Array.isArray(config.topologyLock) ? config.topologyLock : [];
+    return list.filter(function (k) { return typeof k === "string" && k; });
+  }
+
+  // Is view `v` the locked view `k`, or inside it?
+  function viewWithin(v, k) {
+    if (v.key === k) return true;
+    var p = k.split("|");
+    if (p[0] === "a") return v.areaKey === p[1];
+    if (p[0] === "b") return v.kind === "floor" && v.areaKey === p[1] && v.buildingKey === p[2];
+    return false;
+  }
+
+  // The views a viewer may reach: every view, or only the lock's.
+  function allowedViews(views, lock) {
+    if (!lock.length) return views;
+    return views.filter(function (v) {
+      return lock.some(function (k) { return viewWithin(v, k); });
+    });
+  }
+
+  // The locked views that still exist, in the site's display order — what
+  // the rotation steps through.
+  function rotationKeys(views, lock) {
+    return views.filter(function (v) { return lock.indexOf(v.key) !== -1; }).map(function (v) { return v.key; });
+  }
+
+  // The chip rows: the page's switcher (topology-render.js viewSwitcherRows)
+  // over the reachable views. Locked, its "Base" row goes — the whole site is
+  // outside every lock.
+  function viewChipRows(views, lock, activeKey) {
+    var R = window.PolarisTopologyRender;
+    if (!views.length) return [];
+    var rows = R.viewSwitcherRows(allowedViews(views, lock), activeKey);
+    return lock.length ? rows.slice(1) : rows;
+  }
+
+  // The gear's Locations section: the picked gate's areas, buildings and
+  // floors as a tick list (ticked = locked), and the rotation period. A lock
+  // is one site's view keys, so it needs exactly one gate picked; the list
+  // comes from that gate's /topology, read once when the gear opens.
+  function renderLocationsConfig(wrap, config, onChange) {
+    var gates = pickedGates(config);
+    var head = '<label>Locations</label>';
+    if (gates.length !== 1) {
+      wrap.innerHTML = head + '<p class="widget-config-hint">Tick exactly one FortiGate below to lock its topology to some of its locations.</p>';
+      return;
+    }
+    wrap.innerHTML = head + '<p class="widget-config-hint">Loading locations…</p>';
+    var lock = lockKeys(config);
+    PolarisWidgets.getFortigateOptions()
+      .then(function (opts) {
+        var hit = (opts || []).filter(function (g) { return g.name === gates[0]; })[0];
+        if (!hit || !hit.id) throw new Error("FortiGate " + gates[0] + " is no longer in the fleet");
+        return loadTopologyLibs().then(function () { return api.map.topology(hit.id); });
+      })
+      .then(function (data) {
+        if (!wrap.isConnected) return;
+        var R = window.PolarisTopologyRender;
+        var views = R.computeFloorViews(R.buildTopologyElements(data));
+        if (!views.length) {
+          wrap.innerHTML = head + '<p class="widget-config-hint">None of this gate\'s devices carry location codes (a:, b:, f: in their descriptions), so there is nothing to lock to.</p>';
+          return;
+        }
+        var rot = ROTATE_CHOICES.indexOf(config.topologyRotateSec) > 0 ? config.topologyRotateSec : 0;
+        wrap.innerHTML = head +
+          '<div class="devmap-cfg-loclist">' +
+            views.map(function (v) {
+              // Indent by depth: an area, a building (under its area when it
+              // has one), a floor.
+              var depth = v.kind === "area" ? 0 : v.kind === "building" ? (v.areaKey ? 1 : 0) : (v.buildingKey ? (v.areaKey ? 2 : 1) : 1);
+              var label = v.kind === "floor" ? v.floorName : v.kind === "building" ? (v.buildingName || v.label) : v.label;
+              return '<label class="widget-config-typeopt devmap-cfg-loc devmap-cfg-loc-' + depth + '" title="' + escapeHtml(v.label) + '">' +
+                '<input type="checkbox" data-loc="' + escapeHtml(v.key) + '"' + (lock.indexOf(v.key) !== -1 ? " checked" : "") + "> " +
+                escapeHtml(label) + "</label>";
+            }).join("") +
+          "</div>" +
+          '<label>Rotate</label>' +
+          '<select data-k="topologyRotateSec">' +
+            ROTATE_CHOICES.map(function (s) {
+              var text = !s ? "Off" : s < 60 ? "Every " + s + " seconds" : s === 60 ? "Every minute" : "Every " + (s / 60) + " minutes";
+              return '<option value="' + s + '"' + (s === rot ? " selected" : "") + ">" + text + "</option>";
+            }).join("") +
+          "</select>" +
+          '<p class="widget-config-hint">Ticked locations are all the widget shows; viewers can open their buildings and floors but never leave them. Nothing ticked = the whole site. With two or more ticked, Rotate steps through them (⏸ in the widget pauses it).</p>';
+        var sel = wrap.querySelector('[data-k="topologyRotateSec"]');
+        function syncRotate(n) { sel.disabled = n < 2; }
+        syncRotate(lock.length);
+        wrap.querySelectorAll("[data-loc]").forEach(function (cb) {
+          cb.addEventListener("change", function () {
+            var keys = [];
+            wrap.querySelectorAll("[data-loc]").forEach(function (x) { if (x.checked) keys.push(x.getAttribute("data-loc")); });
+            syncRotate(keys.length);
+            onChange("topologyLock", keys);
+          });
+        });
+        sel.addEventListener("change", function () { onChange("topologyRotateSec", parseInt(sel.value, 10) || 0); });
+      })
+      .catch(function (err) {
+        if (!wrap.isConnected) return;
+        wrap.innerHTML = head + '<p class="widget-config-hint">Locations unavailable — ' + escapeHtml(err && err.message ? err.message : String(err)) + "</p>";
+      });
+  }
+
   // ── Topology (read-only) ─────────────────────────────────────────────────
   // Same spacing as the Device Map modal and the phone (map.js,
   // mobile/topology-tab.js), so a saved layout lands where it was saved.
@@ -143,7 +258,12 @@
   // editable). `view` ({zoom, pan}) restores where a refresh left the viewer.
   // `hidden` ({role: true}) drops those device types before anything is laid
   // out; their links go with them (the dangling-edge filter below).
-  function drawTopology(container, data, view, hidden) {
+  // `viewKey` ("flat" or a location view's key — computeFloorViews) cuts the
+  // graph down to that area / building / floor exactly as the Device Map
+  // page does (partitionElementsForFloor), over the layout saved for THAT
+  // view; `onPortal(viewKey)` is called when a portal stub ("→ elsewhere")
+  // is tapped.
+  function drawTopology(container, data, view, hidden, viewKey, onPortal) {
     var R = window.PolarisTopologyRender;
     var elements = R.buildTopologyElements(data);
     if (hidden) {
@@ -165,9 +285,12 @@
       if (d.source && d.target) return !!(nodeIds[d.source] && nodeIds[d.target]);
       return true;
     });
+    var key = viewKey && viewKey !== "flat" ? viewKey : "flat";
+    if (key !== "flat") elements = R.partitionElementsForFloor(elements, key);
 
+    // The page files each view's hand-tuned layout under its own key.
     var layouts = data && data.savedLayouts;
-    var saved = layouts && layouts.flat && layouts.flat.positions;
+    var saved = layouts && layouts[key] && layouts[key].positions;
     var savedPositions = saved && typeof saved === "object" ? saved : null;
 
     var columns = R.computeGroupedLayout(elements) || R.computeTopologyColumns(elements);
@@ -239,6 +362,14 @@
       if (o) moveEdgeTip(o.clientX, o.clientY);
     });
     cy.on("mouseout", "edge", hideEdgeTip);
+    // A portal stub stands for a device in another view; tapping it goes
+    // there (when the caller allows that view).
+    if (onPortal) {
+      cy.on("tap", "node[isPortal]", function (evt) {
+        var target = evt.target.data("targetView");
+        if (target) onPortal(target);
+      });
+    }
 
     if (columns) {
       R.markFanOutEdges(cy, columns, { colSpacing: TOPO_COL_SPACING, orientation: "horizontal" });
@@ -266,9 +397,11 @@
   // One gate's read-only topology as a pane over the widget body. gate =
   // {id, name}; opts.onBack (map modes only) draws the "Map" button,
   // opts.fullscreen binds the widget's full-screen toggle, opts.hidden
-  // ({role: true}) is the gear's Device types. Returns {close, resize}.
+  // ({role: true}) is the gear's Device types, opts.lock (view keys) and
+  // opts.rotateSec the gear's Locations. Returns {close, resize}.
   function openTopologyPane(el, gate, opts) {
     opts = opts || {};
+    var lock = opts.lock || [];
     var pane = document.createElement("div");
     pane.className = "devmap-topo";
     var graph = document.createElement("div");
@@ -298,6 +431,14 @@
     title.textContent = gate.name || "FortiGate";
     title.title = (gate.name || "FortiGate") + " — read-only topology";
     left.appendChild(title);
+    // Rotation through the locked views, when the gear set one: ⏸ pauses it
+    // (so does picking a chip), ▶ resumes. Drawn once the views are known.
+    var rotateBtn = document.createElement("button");
+    rotateBtn.type = "button";
+    rotateBtn.className = "devmap-topo-rotate";
+    rotateBtn.hidden = true;
+    rotateBtn.addEventListener("click", function () { setPaused(!paused); });
+    right.appendChild(rotateBtn);
     var fit = document.createElement("button");
     fit.type = "button";
     fit.textContent = "Fit";
@@ -325,6 +466,13 @@
     }
     pane.appendChild(bar);
 
+    // Location chips under the bar — the Device Map page's switcher, limited
+    // to the lock when there is one.
+    var chips = document.createElement("div");
+    chips.className = "devmap-topo-views";
+    chips.hidden = true;
+    pane.appendChild(chips);
+
     // The legend: bottom-left, collapsed into its button until opened (the
     // graph is small in a widget), open/closed remembered per viewer.
     var legend = document.createElement("div");
@@ -345,14 +493,98 @@
     el.appendChild(pane);
 
     var cy = null, data = null, closed = false;
+    var views = [];          // the site's location views (computeFloorViews)
+    var activeKey = null;    // the view on screen; null until the first load
+    var renderedKey = null;  // the view the current graph was drawn for
+    var paused = false;
+    var rotateTimer = null;
+
+    // A view a viewer may be on: inside the lock, or anything when unlocked.
+    function reachable(key) {
+      if (!lock.length) return key === "flat" || views.some(function (v) { return v.key === key; });
+      return allowedViews(views, lock).some(function (v) { return v.key === key; });
+    }
+    function setView(key, byViewer) {
+      if (!reachable(key)) return;
+      if (byViewer) setPaused(true);
+      if (key === activeKey) return;
+      activeKey = key;
+      render();
+      renderChips();
+    }
+    function setPaused(p) {
+      paused = !!p;
+      rotateBtn.textContent = paused ? "▶" : "⏸";
+      rotateBtn.title = paused ? "Resume rotating through the locked locations" : "Pause the rotation";
+      rotateBtn.setAttribute("aria-pressed", paused ? "true" : "false");
+    }
+    // Step to the locked view after the one on screen (or after the one the
+    // viewer drilled into, counted from the locked view holding it).
+    function rotate() {
+      if (paused || closed || document.hidden || !data) return;
+      var keys = rotationKeys(views, lock);
+      if (keys.length < 2) return;
+      var cur = views.filter(function (v) { return v.key === activeKey; })[0];
+      var at = -1;
+      keys.forEach(function (k, i) { if (at === -1 && cur && viewWithin(cur, k)) at = i; });
+      setView(keys[(at + 1) % keys.length], false);
+    }
+
+    function renderChips() {
+      var rows = viewChipRows(views, lock, activeKey);
+      chips.innerHTML = "";
+      chips.hidden = !rows.length;
+      rows.forEach(function (row, depth) {
+        var r = document.createElement("div");
+        r.className = "topology-floor-row" + (depth ? " topology-floor-row-depth-" + depth : "");
+        row.forEach(function (c) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "topology-type-chip topology-floor-chip" + (c.active ? " is-active" : "");
+          b.setAttribute("aria-pressed", c.active ? "true" : "false");
+          b.title = c.title;
+          b.textContent = c.label;
+          b.addEventListener("click", function () { setView(c.key, true); });
+          r.appendChild(b);
+        });
+        chips.appendChild(r);
+      });
+      fitLegend();
+    }
+    // The open legend stops short of the chips (one to three rows) rather
+    // than running up under them; with no chips the CSS cap applies.
+    function fitLegend() {
+      if (chips.hidden) { legend.style.maxHeight = ""; return; }
+      var room = pane.clientHeight - (chips.offsetTop + chips.offsetHeight) - 24;
+      legend.style.maxHeight = Math.max(room, 60) + "px";
+    }
+
     function render() {
       if (closed || !data) return;
-      var view = cy ? { zoom: cy.zoom(), pan: cy.pan() } : null;
+      // A refresh keeps the viewer's zoom and pan; a new view fits itself.
+      var view = cy && renderedKey === activeKey ? { zoom: cy.zoom(), pan: cy.pan() } : null;
       // A refresh replaces the graph under the cursor, and the old graph
       // never sends the mouseout that would close its tooltip.
       hideEdgeTip();
       if (cy) { try { cy.destroy(); } catch (_) {} }
-      cy = drawTopology(graph, data, view, opts.hidden);
+      renderedKey = activeKey;
+      cy = drawTopology(graph, data, view, opts.hidden, activeKey, function (k) { setView(k, true); });
+    }
+    // Every load: the site's views again (a device may have been re-coded),
+    // and the view on screen kept when it is still reachable — else the first
+    // locked view, or the whole site when nothing is locked (or nothing
+    // locked exists any more).
+    function settleViews() {
+      views = window.PolarisTopologyRender.computeFloorViews(window.PolarisTopologyRender.buildTopologyElements(data));
+      var keys = rotationKeys(views, lock);
+      if (lock.length && !keys.length) lock = []; // every locked location is gone: show the site
+      if (activeKey === null || !reachable(activeKey)) activeKey = lock.length ? keys[0] : "flat";
+      var rotating = (opts.rotateSec || 0) > 0 && keys.length > 1;
+      rotateBtn.hidden = !rotating;
+      if (rotating && !rotateTimer) {
+        setPaused(false);
+        rotateTimer = setInterval(rotate, opts.rotateSec * 1000);
+      }
     }
     function load() {
       return loadTopologyLibs()
@@ -364,7 +596,9 @@
           if (closed) return;
           data = d;
           msg.hidden = true;
+          settleViews();
           render();
+          renderChips();
         })
         .catch(function (err) {
           if (closed || data) return; // a failed refresh keeps the last graph
@@ -379,7 +613,10 @@
     // The legend's swatches are per theme family, like the graph's colours.
     function onTheme() { if (window.PolarisTopologyRender) fillLegend(); render(); }
     document.addEventListener("themechange", onTheme);
-    var ro = new ResizeObserver(function () { if (cy) try { cy.resize(); } catch (_) {} });
+    var ro = new ResizeObserver(function () {
+      if (cy) try { cy.resize(); } catch (_) {}
+      fitLegend();
+    });
     ro.observe(pane);
 
     return {
@@ -387,6 +624,7 @@
       close: function () {
         closed = true;
         clearInterval(timer);
+        if (rotateTimer) clearInterval(rotateTimer);
         document.removeEventListener("themechange", onTheme);
         try { ro.disconnect(); } catch (_) {}
         hideEdgeTip();
@@ -536,7 +774,15 @@
           return;
         }
         var soloFull = fullscreenToggle(el, function () { if (pane) pane.resize(); });
-        pane = openTopologyPane(el, gate, { fullscreen: soloFull, hidden: hiddenRoles(config) });
+        // The Locations lock belongs to this one gate (its view keys are this
+        // site's), so only the one-gate view takes it; a gate double-clicked
+        // on a map drills freely.
+        pane = openTopologyPane(el, gate, {
+          fullscreen: soloFull,
+          hidden: hiddenRoles(config),
+          lock: lockKeys(config),
+          rotateSec: ROTATE_CHOICES.indexOf(config.topologyRotateSec) > 0 ? config.topologyRotateSec : 0,
+        });
         ctx.onUnmount(function () {
           pane.close();
           soloFull.dispose();
@@ -783,6 +1029,10 @@
           onChange("topologyHide", off);
         });
       });
+      var locWrap = document.createElement("div");
+      locWrap.className = "devmap-cfg-locations";
+      el.appendChild(locWrap);
+      renderLocationsConfig(locWrap, config, onChange);
       PolarisWidgets.renderNocFilterConfig(el, config, onChange, false, {
         fortigates: true,
         fortigateNote: "One gate ticked = its topology instead of the map. Several = a map of just those. Nothing ticked = every gate in the regions above.",

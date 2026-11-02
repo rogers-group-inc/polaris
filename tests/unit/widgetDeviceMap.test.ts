@@ -37,6 +37,10 @@ const cyOptions: Array<Record<string, unknown>> = [];
 /** The last fake graph's handlers, keyed "<event> <selector>". */
 let cyHandlers: Record<string, (evt: unknown) => void> = {};
 const editorOpts: Array<{ isEditable: () => boolean }> = [];
+/** The site's location views the fake computeFloorViews reports (none by default). */
+let floorViews: Array<Record<string, string>> = [];
+/** Every view key the widget asked partitionElementsForFloor to cut to. */
+const partitioned: string[] = [];
 
 let W: Widgets;
 let win: Window;
@@ -108,6 +112,13 @@ beforeAll(() => {
     // Records the node rows it was handed, as the real one would draw them.
     topologyLegendHtml: (spec: { nodes: { label: string }[] }) =>
       '<p class="legend-nodes">' + spec.nodes.map((n) => n.label).join("|") + "</p>",
+    computeFloorViews: () => floorViews,
+    // The real switcher's shape: a Base row, then one chip per view handed in.
+    viewSwitcherRows: (views: Array<Record<string, string>>, active: string) => [
+      [{ key: "flat", label: "Base", title: "Whole site", active: active === "flat" }],
+      views.map((v) => ({ key: v.key, label: v.label, title: v.label, active: v.key === active })),
+    ],
+    partitionElementsForFloor: (els: unknown[], key: string) => { partitioned.push(key); return els; },
     computeGroupedLayout: () => null,
     computeTopologyColumns: () => ({ "fg-river": { depth: 0, lane: 0 } }),
     topologyStylesheet: () => [],
@@ -129,6 +140,8 @@ beforeEach(() => {
   sites.mockReset().mockResolvedValue([]);
   cyOptions.length = 0;
   editorOpts.length = 0;
+  floorViews = [];
+  partitioned.length = 0;
 });
 
 const mod = () => W.getByType("deviceMap");
@@ -291,5 +304,121 @@ describe("Device Map widget — one gate picked", () => {
     expect(el.textContent).toContain("no longer in the fleet");
     expect(topology).not.toHaveBeenCalled();
     unmount();
+  });
+});
+
+describe("Device Map widget — location drill-down and lock", () => {
+  const VIEWS = [
+    { key: "a|mine", kind: "area", areaKey: "mine", buildingKey: "", label: "Mine" },
+    { key: "b|mine|b1", kind: "building", areaKey: "mine", buildingKey: "b1", label: "Mine — B1" },
+    { key: "a|yard", kind: "area", areaKey: "yard", buildingKey: "", label: "Yard" },
+    { key: "b|yard|scale", kind: "building", areaKey: "yard", buildingKey: "scale", label: "Yard — Scale" },
+  ];
+  const GATE = { gate: { id: "fg-river", name: "RIVERBEND-FG" } };
+  type El = { querySelectorAll: (s: string) => ArrayLike<unknown>; querySelector: (s: string) => unknown };
+
+  function render(config: Record<string, unknown>) {
+    const el = doc.createElement("div");
+    doc.body.appendChild(el);
+    const unmounts: Array<() => void> = [];
+    mod().renderInstance(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], ...config }, GATE, { onUnmount: (fn) => unmounts.push(fn) });
+    return { el: el as unknown as El, unmount: () => unmounts.forEach((fn) => fn()) };
+  }
+  const chips = (el: El) =>
+    (Array.from(el.querySelectorAll(".devmap-topo-views .topology-floor-chip")) as { textContent: string; classList: { contains: (c: string) => boolean } }[])
+      .map((c) => (c.classList.contains("is-active") ? "*" : "") + c.textContent);
+  const clickChip = (el: El, label: string) =>
+    (Array.from(el.querySelectorAll(".devmap-topo-views .topology-floor-chip")) as { textContent: string; click: () => void }[])
+      .find((c) => c.textContent === label)!.click();
+
+  it("unlocked: Base and every location, the whole site drawn, chips drill in", async () => {
+    floorViews = VIEWS;
+    const { el, unmount } = render({});
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    expect(chips(el)).toEqual(["*Base", "Mine", "Mine — B1", "Yard", "Yard — Scale"]);
+    expect(partitioned).toEqual([]); // the whole site is not partitioned
+    clickChip(el, "Yard");
+    expect(partitioned).toEqual(["a|yard"]);
+    expect(chips(el)).toContain("*Yard");
+    unmount();
+  });
+
+  it("locked: no Base, only the locked locations and what is inside them, opening on the first", async () => {
+    floorViews = VIEWS;
+    const { el, unmount } = render({ topologyLock: ["a|mine"] });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    expect(chips(el)).toEqual(["*Mine", "Mine — B1"]);
+    expect(partitioned).toEqual(["a|mine"]);
+    // No rotation with one locked location.
+    expect((el.querySelector(".devmap-topo-rotate") as { hidden: boolean }).hidden).toBe(true);
+    unmount();
+  });
+
+  it("a lock naming locations the site no longer has falls back to the whole site", async () => {
+    floorViews = VIEWS;
+    const { el, unmount } = render({ topologyLock: ["a|gone"] });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    expect(chips(el)[0]).toBe("*Base");
+    expect(partitioned).toEqual([]);
+    unmount();
+  });
+
+  it("rotates through the locked locations, and ⏸ (or picking a chip) pauses it", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      floorViews = VIEWS;
+      const { el, unmount } = render({ topologyLock: ["a|mine", "a|yard"], topologyRotateSec: 15 });
+      await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+      const btn = el.querySelector(".devmap-topo-rotate") as { hidden: boolean; textContent: string; click: () => void };
+      expect(btn.hidden).toBe(false);
+      expect(btn.textContent).toBe("⏸");
+      vi.advanceTimersByTime(15_000);
+      expect(partitioned.at(-1)).toBe("a|yard");
+      vi.advanceTimersByTime(15_000);
+      expect(partitioned.at(-1)).toBe("a|mine"); // wraps round
+
+      btn.click();
+      expect(btn.textContent).toBe("▶");
+      const n = partitioned.length;
+      vi.advanceTimersByTime(60_000);
+      expect(partitioned).toHaveLength(n);
+
+      btn.click(); // resume
+      vi.advanceTimersByTime(15_000);
+      expect(partitioned.at(-1)).toBe("a|yard");
+
+      clickChip(el, "Mine — B1"); // a viewer's pick pauses it
+      expect(btn.textContent).toBe("▶");
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the gear lists the gate's locations with the lock ticked, and writes ticks and the period", async () => {
+    floorViews = VIEWS;
+    const el = doc.createElement("div");
+    doc.body.appendChild(el);
+    const changes: Array<[string, unknown]> = [];
+    mod().renderConfig(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], topologyLock: ["a|mine"] }, (k, v) => changes.push([k, v]));
+    await vi.waitFor(() => expect(el.querySelectorAll("[data-loc]").length).toBe(4), { timeout: 2000 });
+    const boxes = Array.from(el.querySelectorAll("[data-loc]")) as unknown as { checked: boolean; getAttribute: (a: string) => string; dispatchEvent: (e: unknown) => void }[];
+    expect(boxes.filter((b) => b.checked).map((b) => b.getAttribute("data-loc"))).toEqual(["a|mine"]);
+    const sel = el.querySelector('[data-k="topologyRotateSec"]') as unknown as { disabled: boolean; value: string; dispatchEvent: (e: unknown) => void };
+    expect(sel.disabled).toBe(true); // one location: nothing to rotate through
+    boxes[2].checked = true;
+    boxes[2].dispatchEvent(new win.Event("change"));
+    expect(changes.at(-1)).toEqual(["topologyLock", ["a|mine", "a|yard"]]);
+    expect(sel.disabled).toBe(false);
+    sel.value = "30";
+    sel.dispatchEvent(new win.Event("change"));
+    expect(changes.at(-1)).toEqual(["topologyRotateSec", 30]);
+    el.remove();
+  });
+
+  it("the gear asks for one gate before it can lock", () => {
+    const el = doc.createElement("div");
+    mod().renderConfig(el, { regionScope: "all" }, () => {});
+    expect(el.querySelector(".devmap-cfg-locations")!.textContent).toContain("Tick exactly one FortiGate");
   });
 });
