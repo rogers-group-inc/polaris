@@ -194,7 +194,23 @@ the sheet. An edit form or a confirmation open on top closes first. A sheet you
 shrank by tapping outside it closes on the first Back. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
 **Interfaces** each name the polling method that collects them beside the
 title (**Not collected** when nothing does), and CPU + Memory has its own
-**1h · 12h · 24h · 7d · 30d** range, the same five as Response Time. On a switch with PoE ports, Interfaces opens with a
+**1h · 12h · 24h · 7d · 30d** range, the same five as Response Time.
+
+On a device monitored by the Polaris Agent or vCenter, or an Unraid, TrueNAS or
+Proxmox VE host, CPU + Memory shows two charts, as the desktop does. **CPU** draws
+the average across cores as a thick line over a thin line per core; tap a chip under
+it to hide or show that line, double-tap a core to show only that core, and tap
+**Show all** to bring every line back. At longer ranges, where Polaris keeps
+summarised figures without per-core detail, the chart shows the average alone and
+says so. **Memory**
+stacks what is in use, in bytes, against the installed total: processes, buffers and
+cache (in the device's own terms on TrueNAS, Proxmox and vCenter), with swap as a
+dashed line. **Cache starts hidden**, because the operating system hands cache back
+the moment programs need it, and drawing it makes a healthy device look nearly full;
+tap its chip to show it. The phone remembers which memory bands you show. Every other
+device keeps the single chart of CPU and memory percentages.
+
+On a switch with PoE ports, Interfaces opens with a
 count of ports delivering, searching and faulted, naming the faulted ones, and
 each port shows its PoE state. Tapping a monitored interface shows its usage and
 error graphs (**1h · 12h · 24h · 7d · 30d**) along with its PoE state and class. Under the status pill, a device

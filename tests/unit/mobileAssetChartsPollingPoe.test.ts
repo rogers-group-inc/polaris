@@ -105,6 +105,35 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     expect(document.querySelector('.sect-body[data-sect="temperatures"]')!.hasAttribute("hidden")).toBe(false);
   });
 
+  it("an agent asset gets the split CPU + Memory charts; a REST-polled one keeps the combined chart", async () => {
+    const render = vi.fn();
+    g.PolarisTelemetryCharts = { splits: (m: string) => m === "agent", render };
+    try {
+      // rest_api (the harness default) keeps the combined chart.
+      await openSheet();
+      expect(render).not.toHaveBeenCalled();
+      expect(charts.some((c) => /CPU and memory/.test(c.ariaLabel))).toBe(true);
+
+      eff = { resolved: { ...eff.resolved, cpuMemoryPolling: "agent" } };
+      boot();
+      g.PolarisTelemetryCharts = { splits: (m: string) => m === "agent", render };
+      await openSheet();
+      expect(render).toHaveBeenCalledTimes(1);
+      const [host, ctx] = render.mock.calls[0];
+      expect(host.id).toBe("asset-telemetry-chart");
+      expect(ctx.range).toBe("24h");
+      expect(ctx.asset.id).toBe("a1");
+      expect(charts.some((c) => /CPU and memory/.test(c.ariaLabel))).toBe(false);
+      // A range change re-renders through the same path with the same core picks.
+      seg("asset-telemetry-range-seg", "7d").click();
+      await flush();
+      expect(render.mock.calls.at(-1)![1].range).toBe("7d");
+      expect(render.mock.calls.at(-1)![1].hidden).toBe(ctx.hidden);
+    } finally {
+      delete g.PolarisTelemetryCharts;
+    }
+  });
+
   it("CPU + Memory has its own range control — Response Time's five presets — moving independently", async () => {
     await openSheet();
     const ranges = (id: string) => Array.from(document.querySelectorAll("#" + id + " .seg-item")).map((b) => (b as HTMLElement).dataset.range);

@@ -961,7 +961,7 @@
       // Fire monitor + telemetry + IP history fetches in parallel — these
       // populate their respective sections independently.
       loadMonitor(id, st);
-      loadTelemetry(id, st);
+      loadTelemetry(id, st, asset);
       loadSystemInfo(id, st, asset);
       loadSources(id, st);
       loadSightings(id, st);
@@ -1205,7 +1205,7 @@
     });
     wireRangeSeg("asset-telemetry-range-seg", function (r) {
       st.telemetryRange = r;
-      loadTelemetry(asset.id, st);
+      loadTelemetry(asset.id, st, asset);
     });
     loadPollingChips(asset.id);
     // Quarantine / release action button (hero). The button renders
@@ -1283,9 +1283,21 @@
   // chip names the method that actually runs. A null method means nothing
   // collects that stream for this asset ("Not collected"). Best-effort: on a
   // failed read the chips stay hidden rather than guess.
+  // The resolved per-stream polling methods, one fetch per sheet render:
+  // loadPollingChips refreshes it (it runs first, from renderShell) and the
+  // telemetry loader reuses it to pick the split or combined chart shape.
+  var _effSettings = Object.create(null);
+  function effectiveSettingsFor(id, fresh) {
+    if (!api.assets.effectiveMonitorSettings) return Promise.resolve(null);
+    if (fresh || !_effSettings[id]) {
+      _effSettings[id] = api.assets.effectiveMonitorSettings(id).catch(function () { return null; });
+    }
+    return _effSettings[id];
+  }
+
   function loadPollingChips(id) {
     if (!api.assets.effectiveMonitorSettings) return;
-    api.assets.effectiveMonitorSettings(id).then(function (eff) {
+    effectiveSettingsFor(id, true).then(function (eff) {
       if (_openId !== id || !eff || !eff.resolved) return;
       document.querySelectorAll("#asset-host .sect-poll[data-poll-stream]").forEach(function (chip) {
         var method = eff.resolved[chip.dataset.pollStream + "Polling"];
@@ -1476,16 +1488,19 @@
     });
   }
 
-  function loadTelemetry(id, st) {
+  function loadTelemetry(id, st, asset) {
     var chartHost = document.getElementById("asset-telemetry-chart");
     var sub = document.getElementById("asset-telemetry-sub");
     if (chartHost) chartHost.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
 
     var range = st.telemetryRange;
-    Promise.all([api.assets.telemetryHistory(id, range), maintWindowsFor(id)]).then(function (got) {
-      var resp = got[0], maint = got[1];
+    Promise.all([api.assets.telemetryHistory(id, range), maintWindowsFor(id), effectiveSettingsFor(id)]).then(function (got) {
+      var resp = got[0], maint = got[1], eff = got[2];
       if (_openId !== id || !resp) return;   // bail if a newer asset replaced us
+      if (st.telemetryRange !== range) return; // a range tapped since owns the chart
       var samples = resp.samples || [];
+      var method = eff && eff.resolved ? eff.resolved.cpuMemoryPolling : null;
+
       var cpuSeries = samples
         .filter(function (s) { return s.cpuPct != null; })
         .map(function (s) { return { ts: s.timestamp, v: s.cpuPct }; });
@@ -1504,8 +1519,17 @@
         if (sub) sub.textContent = "Not collected for this monitor type";
         return;
       }
-      if (chartHost) {
-        var bounds = rangeBounds(range);
+      var bounds = rangeBounds(range);
+      // An agent / vCenter asset, or an Unraid / TrueNAS / Proxmox host, gets
+      // the two charts: per-core CPU and memory as a stack in bytes
+      // (telemetry-charts.js). Its core picks live on the mount state, so a
+      // range change keeps them.
+      if (chartHost && window.PolarisTelemetryCharts && PolarisTelemetryCharts.splits(method, asset)) {
+        if (!st.cpuHidden) st.cpuHidden = {};
+        PolarisTelemetryCharts.render(chartHost, {
+          resp: resp, maint: maint, asset: asset, range: range, bounds: bounds, hidden: st.cpuHidden,
+        });
+      } else if (chartHost) {
         chartHost.innerHTML = PolarisCharts.lineChart({
           maintenance: maint,
           from: bounds && bounds.from,
