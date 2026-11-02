@@ -69,6 +69,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A state blocker shared with reboots: `rebootService` refuses while a firmware run is queued / running on the asset (state `blocked`); a new firmware run status that means "in flight" must be added to that read too.
 - A new terminal outcome: `finish`, the Event table (`firmware.upgrade_*`), the card's `_fwRunResultHTML`, and `dropHold` ordering — and `notifyScheduledRunFinished`'s status → outcome mapping plus `utils/firmwareResultEmailTemplate.ts` (a booked run's email).
 - A new image gate goes in `approvedImageFor`, so a booking takes it at booking AND at firing; a new device-STATE gate goes after it in `startFirmwareUpgrade` only (and, if it is a health blocker, `healthBlockers` so the booking modal warns about it).
+- An integration test that inserts a `queued` / `running` `FirmwareUpgradeRun` with no runner behind it must `vi.mock("../../src/jobs/failOrphanedFirmwareRuns.js", () => ({}))`: importing `src/app.ts` fires the boot sweep with nothing to await, and on a cold DB it lands after the fixture and closes the row as orphaned (`tests/integration/firmwareAbortRestartGuard.test.ts` does this; `failOrphanedRebootRuns` has the same shape for `RebootRun`).
 - If a queue ever replaces `setImmediate`, the image must travel with the job (it lives on the web host's disk) and the boot sweep's "this process was driving it" premise changes.
 
 ## services/firmwareScheduleService.ts

@@ -72,6 +72,7 @@ worktree, whatever the command actually does. ~24 logged refusals, all one of th
 | a shell variable or `$(…)` as a path (`S=.claude/skills; sed … $S/x`) | spell every path out literally |
 | `cd` to a computed path; a `cd` out of the worktree | stay at the worktree root; absolute literal paths |
 | a word containing "git" (`.github/…`) or `gh` inside a compound | that command alone |
+| `… \| xargs <cmd>` (the guard cannot prove the appended operands are not options) | list the files first, then one call with every path spelled out |
 
 Multi-line replacements in a script: this checkout has CRLF files (`public/js/*`); normalise
 `\r\n` before matching, or use Edit, which matches either. Non-ASCII text (`—`) does not survive
