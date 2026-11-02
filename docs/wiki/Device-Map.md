@@ -216,9 +216,24 @@ Port labels always name **physical ports**. An aggregate (the FortiGate's
 interface, so each end of a link shows the member port the cable lands on: the
 aggregate's only member, otherwise the port LLDP saw on that link. A side
 neither can resolve reads `unknown`. A switch whose trunk members Polaris
-cannot read shows `unknown` on its side until LLDP reports the port. A
-FortiGate-to-switch link with no confirmed cable is labelled `fortilink`
-and drawn dashed: that is the management relationship, not a port.
+cannot read shows `unknown` on its side until LLDP reports the port.
+
+**Only cables are drawn — the topology is a layer-2 map.** A FortiGate-to-switch
+FortiLink uplink with no physical cable confirmed (by interface naming or
+LLDP) is not drawn, and neither is a FortiGate-to-FortiAP link, which Polaris
+only has when it does not know which switch port the AP is on. Such a device
+stands unconnected in its location until its cable is found. A confirmed
+FortiGate uplink whose ports cannot be resolved reads `fortilink`.
+
+**A switch-to-switch cable is one green line**, whether interface naming or an
+LLDP report found it. An MCLAG inter-chassis link keeps its own style, and an
+AP's switch uplink stays blue. Hover a link to see how it was found ("found by
+interface naming", "found by LLDP"). The legend lists each link and device
+kind by name only.
+
+A link between two location boxes runs in the gutters between boxes and never
+through another device: when a switch sits in the target's column, the line
+comes down a lane beside the target and enters from the side.
 
 Port labels (`port8 ↔ port1`) on a link with bends sit near its ends: with
 one bend, halfway along the part after the bend; with two or more, halfway

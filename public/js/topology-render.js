@@ -171,15 +171,13 @@
         },
       });
     });
-    // FortiGate id + switch id set so we can label/style the FortiGate→switch
-    // FortiLink uplinks. FortiOS reports `fortilink` (a logical meta-interface,
-    // not a physical port) on those, so the raw label is often
-    // "unknown ↔ unknown" — relabel those to "fortilink", and dash-gray the
-    // UNVERIFIED ones (no interface/LLDP-backed cable) to read as a
-    // virtual/management link. A VERIFIED uplink is a known physical cable:
-    // the server has already rewritten each half to a physical port (an
-    // aggregate never reaches a label — physicalLabelHalf), so keep its
-    // port-pair label, with "unknown" on a side it could not resolve.
+    // FortiGate id + switch id set so we can label the FortiGate→switch
+    // FortiLink uplinks. Only VERIFIED ones (an interface/LLDP-backed cable)
+    // are drawn — see the layer-2 rule below. The server has already rewritten
+    // each half of a verified uplink's label to a physical port (an aggregate
+    // never reaches a label — physicalLabelHalf), so its port pair is kept,
+    // with "unknown" on a side it could not resolve; one with neither side
+    // resolved reads "fortilink".
     var fgId = data.fortigate ? data.fortigate.id : null;
     var switchIdSet = {};
     (data.switches || []).forEach(function (s) { if (s && s.id) switchIdSet[s.id] = true; });
@@ -188,13 +186,19 @@
       // already connects it (and from the correct parent AP).
       if (meshLeafIds[e.target]) return;
       var isFgSwitch = fgId && e.source === fgId && switchIdSet[e.target];
+      // A layer-2 map draws cables only (operator decision 2026-11-02). Two
+      // kinds of controller edge are not one: a FortiGate→switch FortiLink
+      // uplink with no physical cable confirmed (no interface / LLDP proof),
+      // and a FortiGate→FortiAP edge — the server draws that only as a
+      // fallback when the AP's switch port is unknown ("real attachment
+      // unknown"); a known port arrives as the switch→AP edge instead. Such a
+      // device stands unconnected rather than on an invented link.
+      if (isFgSwitch && !e.verifiedUplink) return;
+      if (fgId && e.source === fgId && apIdSet[e.target]) return;
       var label = e.label || "";
-      var fortilinkFallback = 0;
-      var knownCable = e.verifiedUplink && label && label !== "unknown ↔ unknown";
-      if (isFgSwitch && !knownCable) {
-        label = "fortilink"; // logical FortiLink uplink, not a physical port pair
-        if (!e.verifiedUplink) fortilinkFallback = 1; // unverified → virtual (dashed gray)
-      }
+      // A confirmed uplink whose ports could not be resolved still reads as
+      // the FortiLink it is rather than "unknown ↔ unknown".
+      if (isFgSwitch && (!label || label === "unknown ↔ unknown")) label = "fortilink";
       // Wired AP↔switch link (a managed AP's switch uplink) — styled solid +
       // colored like the bridge edges so every AP-to-switch cable reads the
       // same regardless of which side is the parent.
@@ -210,7 +214,6 @@
           // LLDP-backed) link — treated as a verified uplink by the column
           // solver so the switch isn't mistaken for a FortiLink fallback.
           isVerifiedUplink: e.verifiedUplink ? 1 : 0,
-          isFortilinkFallback: fortilinkFallback,
           isApLink: isApSwitchLink ? 1 : 0,
           srcIf: e.srcIf || null,
           tgtIf: e.tgtIf || null,
@@ -559,12 +562,18 @@
           "text-rotation": "autorotate",
         },
       },
+      // A switch-to-switch cable reads the same however it was found —
+      // interface naming (isIface) or an LLDP neighbour report (isLldp): one
+      // solid green "Switch ↔ switch" (operator decision 2026-11-02). Which
+      // signal drew it is in the link's tooltip (edgeTooltipHtml). The AP and
+      // MCLAG rules below still win for those links.
       {
         selector: 'edge[isLldp = 1]',
         style: {
-          "line-style": "dashed",
-          "line-color": ec.lldp,
-          "target-arrow-color": ec.lldp,
+          "line-style": "solid",
+          "line-color": ec.iface,
+          "target-arrow-color": ec.iface,
+          width: 2.4,
         },
       },
       {
@@ -628,18 +637,6 @@
           "target-arrow-color": ec.apLink,
           "target-arrow-shape": "triangle",
           width: 2.2,
-        },
-      },
-      // Unverified FortiLink uplink (FortiGate→switch with no interface/LLDP-
-      // confirmed cable): a logical/management link, drawn dashed + dimmed gray
-      // so it reads as virtual versus the solid controller/physical edges.
-      {
-        selector: 'edge[isFortilinkFallback = 1]',
-        style: {
-          "line-style": "dashed",
-          "line-color": ec.fortilink,
-          "target-arrow-color": ec.fortilink,
-          opacity: 0.7,
         },
       },
       // Physical loop membership (stamped by markPhysicalLoops): a wired edge
@@ -924,36 +921,34 @@
     function loc(kind) { return locGroupColor(kind, fam); }
     return {
       nodes: [
-        { label: "FortiGate",         kind: "circle",          size: "lg", fill: "data(nodeColor)", desc: "Color = monitor health" },
+        { label: "FortiGate",         kind: "circle",          size: "lg", fill: "data(nodeColor)" },
         { label: "FortiSwitch",       kind: "circle",          size: "md", fill: "data(nodeColor)" },
         { label: "FortiAP",           kind: "circle",          size: "sm", fill: "data(nodeColor)" },
-        { label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)", desc: "Only via endpoint search" },
-        { label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7", desc: "Infra (FW/switch/AP) at another site" },
+        { label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)" },
+        { label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7" },
       ],
       health: [
         { label: "Up",                color: HEALTH_NODE_COLORS.up },
         { label: "Degraded",          color: HEALTH_NODE_COLORS.degraded },
         { label: "Down",              color: HEALTH_NODE_COLORS.down },
         { label: "Maintenance",       color: HEALTH_NODE_COLORS.maintenance },
-        { label: "Passive",           color: HEALTH_NODE_COLORS.passive, desc: "No down-detection automation covers it — still polled, no verdict" },
+        { label: "Passive",           color: HEALTH_NODE_COLORS.passive },
         { label: "Dep. Down",         color: HEALTH_NODE_COLORS.unknown },
         { label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
       ],
       edges: [
-        { label: "Controller",        color: ec.controller, style: "solid",  desc: "FortiLink / managed-AP authoritative" },
-        { label: "FortiLink (virtual)",color: ec.fortilink, style: "dashed", desc: "Unverified FortiLink uplink — no physical cable confirmed" },
-        { label: "Interface-inferred",color: ec.iface, style: "solid",  desc: "Naming-convention peer link" },
-        { label: "LLDP",              color: ec.lldp, style: "dashed" },
-        { label: "MCLAG ICL",         color: ec.mclag, style: "dashed", desc: "Inter-Chassis Link between MCLAG-peer switches" },
-        { label: "Mesh",              color: ec.mesh, style: "dashed", desc: "Wireless backhaul: root AP → mesh leaf AP" },
-        { label: "AP ↔ switch",       color: ec.apLink, style: "solid",  desc: "Wired: AP's switch uplink / switch bridged behind an AP" },
-        { label: "In physical loop",  color: ec.loop, style: "solid",  desc: "Yellow halo: wired edge on a redundant/ring path" },
+        { label: "FortiGate uplink",  color: ec.controller, style: "solid" },
+        { label: "Switch ↔ switch",   color: ec.iface, style: "solid" },
+        { label: "MCLAG ICL",         color: ec.mclag, style: "dashed" },
+        { label: "Mesh",              color: ec.mesh, style: "dashed" },
+        { label: "AP ↔ switch",       color: ec.apLink, style: "solid" },
+        { label: "In physical loop",  color: ec.loop, style: "solid" },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
       // fixed per-level color).
       locations: [
-        { label: "Area",         shape: "rect", style: "solid",  color: loc("area"), desc: "From a:/b:/f:/r:/jb: codes in the asset description (or the device-side description)" },
+        { label: "Area",         shape: "rect", style: "solid",  color: loc("area") },
         { label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
         { label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
         { label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
@@ -1321,6 +1316,14 @@
       if (b) return "locgroup:b|" + (a || "") + "|" + b;
       return null;
     }
+    // Each device's clearance square (hulls are not devices), measured once.
+    var deviceRects = cy.nodes().filter(function (n) {
+      return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.isParent();
+    }).map(function (n) {
+      var p = n.position();
+      var r = _nodeClearance(n);
+      return { id: n.id(), x1: p.x - r, y1: p.y - r, x2: p.x + r, y2: p.y + r };
+    });
     var corridorUse = {}; // rounded corridor coordinate -> count (fan-out stagger)
     function stagger(kind, coord) {
       var key = kind + ":" + Math.round(coord / 10) * 10;
@@ -1347,6 +1350,10 @@
         .map(function (x) {
           return { x1: x.box.x1 - 8, y1: x.box.y1 - _ROUTE_LABEL_PAD, x2: x.box.x2 + 8, y2: x.box.y2 + 8 };
         });
+      // Every OTHER device is an obstacle too — the boxes alone let a run
+      // into the target pass straight through a neighbour inside the
+      // target's own box (a switch stacked above it in the same column).
+      var devices = deviceRects.filter(function (d) { return d.id !== sN.id() && d.id !== tN.id(); });
       var goingRight = T.x >= S.x;
       var srcBox = bs || { x1: S.x, y1: S.y, x2: S.x, y2: S.y };
       var tgtBox = bt || { x1: T.x, y1: T.y, x2: T.x, y2: T.y };
@@ -1368,19 +1375,33 @@
         canvasTop,
         canvasBottom,
       ];
+      // The run into the target: straight down/up its own column (ax = T.x),
+      // or — when a device sits in that column — down a lane just beside it,
+      // entering from the side. ±rT + a gap keeps the lane's bend outside
+      // the target, and clear of a same-size neighbour above or below it.
+      var sideGap = rT + 18;
+      var approaches = [T.x, T.x - sideGap, T.x + sideGap];
       var best = null;
       candidates.forEach(function (cy0, idx) {
-        var crossings = 0;
-        obstacles.forEach(function (r) {
-          if (_segIntersectsRect(cx, S.y, cx, cy0, r)) crossings++;   // vertical out of source
-          if (_segIntersectsRect(cx, cy0, T.x, cy0, r)) crossings++;  // horizontal corridor
-          if (_segIntersectsRect(T.x, cy0, T.x, T.y, r)) crossings++; // vertical into target
+        approaches.forEach(function (ax, aIdx) {
+          // Segments: out of the source, along the corridor, down the
+          // approach lane, and (side lanes only) across into the target.
+          var segs = [[cx, S.y, cx, cy0], [cx, cy0, ax, cy0], [ax, cy0, ax, T.y]];
+          if (ax !== T.x) segs.push([ax, T.y, T.x, T.y]);
+          var boxHits = 0, deviceHits = 0;
+          segs.forEach(function (s) {
+            obstacles.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) boxHits++; });
+            devices.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) deviceHits++; });
+          });
+          var len = Math.abs(S.y - cy0) + Math.abs(ax - cx) + Math.abs(T.y - cy0) + Math.abs(T.x - ax);
+          // A box crossing costs most, a device crossing next; then length,
+          // then the stable preference order (corridor, then straight-in).
+          var score = boxHits * 100000 + deviceHits * 50000 + len + idx + aIdx * 0.5;
+          if (!best || score < best.score) best = { cy: cy0, ax: ax, score: score };
         });
-        var len = Math.abs(S.y - cy0) + Math.abs(T.x - cx) + Math.abs(T.y - cy0);
-        var score = crossings * 100000 + len + idx; // idx = stable tie-break by preference
-        if (!best || score < best.score) best = { cy: cy0, score: score };
       });
       var cyPick = best.cy;
+      var axPick = best.ax;
       // Fan out edges sharing a corridor — BOTH axes. The horizontal stagger
       // deliberately includes the "straight into the target row" corridor:
       // without it, every edge whose corridor is a target row it shares with
@@ -1394,7 +1415,12 @@
       pts.push({ x: cxS, y: S.y });
       if (Math.abs(cyS - S.y) > 0.5) pts.push({ x: cxS, y: cyS });
       var jog = cyS - T.y;
-      if (Math.abs(jog) > 0.5) {
+      if (axPick !== T.x) {
+        // Side lane: along the corridor to the lane, down it to the target's
+        // row, then straight in from the side.
+        pts.push({ x: axPick, y: cyS });
+        pts.push({ x: axPick, y: T.y });
+      } else if (Math.abs(jog) > 0.5) {
         if (Math.abs(jog) < rT) {
           // A fanned-out run only a few px off the target's row would jog
           // into it INSIDE the device; step back to the target's row just
@@ -2954,13 +2980,16 @@
     var srcLabel = (cy.getElementById(srcId).data("label")) || srcId || "?";
     var tgtLabel = (cy.getElementById(tgtId).data("label")) || tgtId || "?";
     var ports = String(edge.data("label") || "").trim();
+    // The legend shows one "Switch ↔ switch"; HOW a link was found (interface
+    // naming or an LLDP report) is told here.
     var kind = edge.data("isMesh")     ? "Wireless mesh backhaul"
              : edge.data("isBridge")   ? "Switch bridged behind AP (wired)"
              : edge.data("isWireless") ? "Wireless client"
-             : edge.data("isIface")    ? "Interface-confirmed peer link"
-             : edge.data("isLldp")     ? "LLDP neighbor"
+             : edge.data("isMclag")    ? "MCLAG inter-chassis link"
              : edge.data("isApLink")   ? "AP switch uplink"
-             :                            "FortiLink controller";
+             : edge.data("isIface")    ? "Switch ↔ switch — found by interface naming"
+             : edge.data("isLldp")     ? "Switch ↔ switch — found by LLDP"
+             :                            "FortiGate uplink — cable confirmed";
     var html =
       '<div style="font-weight:600">' + _escTip(srcLabel) +
       ' <span style="opacity:0.7">⇄</span> ' + _escTip(tgtLabel) + '</div>';

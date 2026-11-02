@@ -990,8 +990,8 @@ describe("topology palette by theme family", () => {
     const dark = R.topologyLegendSpec("dark");
     const byLabel = (rows: { label: string; color: string }[]) =>
       Object.fromEntries(rows.map((r) => [r.label, r.color]));
-    expect(byLabel(light.edges)["Interface-inferred"]).toBe("#0f766e");
-    expect(byLabel(dark.edges)["Interface-inferred"]).toBe("#14b8a6");
+    expect(byLabel(light.edges)["Switch ↔ switch"]).toBe("#0f766e");
+    expect(byLabel(dark.edges)["Switch ↔ switch"]).toBe("#14b8a6");
     expect(byLabel(light.locations).Building).toBe("#0369a1");
     expect(byLabel(dark.locations).Building).toBe("#4fc3f7");
   });
@@ -1003,14 +1003,42 @@ describe("topology palette by theme family", () => {
         (R.topologyLegendSpec(fam).edges as { label: string; color: string }[]).map((r) => [r.label, r.color]),
       );
       const line = (sel: string) => sheet.find((r) => r.selector === sel)!.style["line-color"];
-      expect(line("edge")).toBe(legend.Controller);
-      expect(line("edge[isIface = 1]")).toBe(legend["Interface-inferred"]);
-      expect(line("edge[isLldp = 1]")).toBe(legend.LLDP);
+      expect(line("edge")).toBe(legend["FortiGate uplink"]);
+      // One green for a switch-to-switch cable, whichever signal found it.
+      expect(line("edge[isIface = 1]")).toBe(legend["Switch ↔ switch"]);
+      expect(line("edge[isLldp = 1]")).toBe(legend["Switch ↔ switch"]);
       expect(line("edge[isMclag = 1]")).toBe(legend["MCLAG ICL"]);
       expect(line("edge[isMesh = 1]")).toBe(legend.Mesh);
       expect(line("edge[isApLink = 1]")).toBe(legend["AP ↔ switch"]);
-      expect(line("edge[isFortilinkFallback = 1]")).toBe(legend["FortiLink (virtual)"]);
+      // No virtual / LLDP / interface-inferred rows any more, and no descriptions.
+      expect(Object.keys(legend)).not.toContain("FortiLink (virtual)");
+      expect(Object.keys(legend)).not.toContain("LLDP");
+      const spec = R.topologyLegendSpec(fam);
+      for (const sec of ["nodes", "health", "edges", "locations"]) {
+        for (const row of spec[sec] as { desc?: string }[]) expect(row.desc).toBeUndefined();
+      }
     }
+  });
+
+  // A layer-2 map draws cables only: no FortiLink uplink without a confirmed
+  // cable, no FortiGate→FortiAP fallback edge.
+  it("buildTopologyElements drops virtual FortiLink uplinks and FortiGate→AP fallback edges", () => {
+    const els = R.buildTopologyElements({
+      fortigate: { id: "fg", hostname: "FG" },
+      switches: [{ id: "sw1", hostname: "SW1" }, { id: "sw2", hostname: "SW2" }],
+      aps: [{ id: "ap1", hostname: "AP1" }, { id: "ap2", hostname: "AP2" }],
+      edges: [
+        { source: "fg", target: "sw1", label: "port1 ↔ port48", verifiedUplink: true },
+        { source: "fg", target: "sw2", label: "unknown ↔ unknown" },
+        { source: "sw1", target: "ap1", label: "port5 ↔ lan1" },
+        { source: "fg", target: "ap2", label: "unknown ↔ lan1" },
+      ],
+    }) as { data: { id: string; source?: string; target?: string; label?: string } }[];
+    const links = els.filter((e) => e.data.source).map((e) => e.data.source + ">" + e.data.target);
+    expect(links).toEqual(["fg>sw1", "sw1>ap1"]);
+    // The unconnected devices are still drawn.
+    const nodes = els.filter((e) => !e.data.source).map((e) => e.data.id);
+    expect(nodes).toEqual(expect.arrayContaining(["sw2", "ap2"]));
   });
 
   // One renderer for the page's legend and the Device Map widget's, so the
