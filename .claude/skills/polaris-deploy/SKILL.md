@@ -59,12 +59,16 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
    `DATABASE_URL=postgresql://x:x@localhost:5432/x npx prisma generate` — a worktree that never
    ran `npm install` has no client, and the checks below then fail 270+ files with errors that
    read like the branch broke them (seven sessions lost a full suite run to this by 2026-10-29).
-   Then `npm run check:docs && npm run typecheck && npx vitest run tests/unit
-   --no-file-parallelism`, plus `npm run check:versions` when a pin moved and
-   `npm run check:wiki` when `docs/wiki/` changed. A failure stops
-   the pipeline; report the output.
-   **The unit suite is not the gate.** `docker-publish.yml` runs `tests/unit` in its `test`
-   job and `npx vitest run tests/integration --no-file-parallelism` in a SEPARATE `integration`
+   Then `npm run check:docs && npm run typecheck`, plus `npm run check:versions` when a pin
+   moved and `npm run check:wiki` when `docs/wiki/` changed. A failure stops the pipeline;
+   report the output.
+   **The pipeline does not run the unit suite** (operator decision 2026-11-02). It runs at the
+   end of every task, before the end-of-work commit (`polaris-worktree-workflow` → End of a
+   task), so re-running it here only repeats a result the branch already has. If the branch
+   reached this pipeline with no green unit run on its tip — a task that never ran it, or
+   commits added since — say so in the step 10 report rather than running it here.
+   `docker-publish.yml` runs `tests/unit` in its `test` job and
+   `npx vitest run tests/integration --no-file-parallelism` in a SEPARATE `integration`
    job, and `build` is `needs: [test, integration]` — so one red integration case publishes no
    image, silently, for every merge that follows. Run the integration suite too whenever the
    branch touched a route, a service or a contract a test could pin; it needs a real database
