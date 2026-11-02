@@ -354,6 +354,21 @@ describe("Device Map widget — location drill-down and lock", () => {
     unmount();
   });
 
+  it("the chips get their own band: the graph starts below them, and fills the pane without them", async () => {
+    const graphTop = (el: El) => (el.querySelector(".devmap-topo-graph") as { style: { top: string } }).style.top;
+    floorViews = VIEWS;
+    const withChips = render({});
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    expect(graphTop(withChips.el)).toMatch(/^\d+px$/);
+    withChips.unmount();
+
+    floorViews = [];
+    const without = render({});
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(2), { timeout: 2000 });
+    expect(graphTop(without.el)).toBe("");
+    without.unmount();
+  });
+
   it("a lock naming locations the site no longer has falls back to the whole site", async () => {
     floorViews = VIEWS;
     const { el, unmount } = render({ topologyLock: ["a|gone"] });

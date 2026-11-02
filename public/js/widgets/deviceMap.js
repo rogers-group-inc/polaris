@@ -509,8 +509,10 @@
       if (byViewer) setPaused(true);
       if (key === activeKey) return;
       activeKey = key;
-      render();
+      // Chips first: drilling in can add a row, which moves the graph down,
+      // and the new view must fit the graph's final size.
       renderChips();
+      render();
     }
     function setPaused(p) {
       paused = !!p;
@@ -549,7 +551,17 @@
         });
         chips.appendChild(r);
       });
+      placeGraph();
       fitLegend();
+    }
+    // With chips showing, the graph starts below them, so no pill sits over a
+    // device or a location box; without chips it keeps the whole pane (the
+    // top bar floats over its corners, as before). Returns whether it moved.
+    function placeGraph() {
+      var top = chips.hidden ? "" : (chips.offsetTop + chips.offsetHeight + 6) + "px";
+      if (graph.style.top === top) return false;
+      graph.style.top = top;
+      return true;
     }
     // The open legend stops short of the chips (one to three rows) rather
     // than running up under them; with no chips the CSS cap applies.
@@ -597,8 +609,8 @@
           data = d;
           msg.hidden = true;
           settleViews();
-          render();
           renderChips();
+          render();
         })
         .catch(function (err) {
           if (closed || data) return; // a failed refresh keeps the last graph
@@ -614,6 +626,9 @@
     function onTheme() { if (window.PolarisTopologyRender) fillLegend(); render(); }
     document.addEventListener("themechange", onTheme);
     var ro = new ResizeObserver(function () {
+      // A narrower pane can wrap the chips onto another row: the graph moves
+      // down with them before it is resized.
+      placeGraph();
       if (cy) try { cy.resize(); } catch (_) {}
       fitLegend();
     });
