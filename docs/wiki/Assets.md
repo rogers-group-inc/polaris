@@ -908,9 +908,12 @@ of the combined CPU & Memory chart (prefixed *Memory —* there).
   chart and an alert never disagree. The dashed line is drawn as wide again as the selected range — an
   hour of forecast beside an hour of history, a week beside a week.
 
-The dashed line is **off by default**: the headline always shows, and the
-**Forecast** button beside it draws the line for that asset (it reads
-**✓ Forecast** while on). Your choice is remembered per asset.
+The forecast is **off by default**: until you switch it on, only the
+**Forecast** button shows — no headline, no countdown, no shrinking or
+per-day trend. The button turns on both the headline and the dashed line for
+that asset (it reads **✓ Forecast** while on). Your choice is remembered per
+asset. Before there are 7 days of history the button is absent and the
+*Forecast needs 7 days* note shows instead.
 
 Below the response-time section sits the **Polaris Agent** card: the installed
 agent's version, platform, last heartbeat, WebSocket state and privilege tier,
