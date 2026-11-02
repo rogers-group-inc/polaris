@@ -215,13 +215,18 @@
     return best;
   }
 
-  // Bends after a drag: moved with the line when both ends travelled the
-  // same distance (the whole line was carried), left in place otherwise.
+  // Bends after a drag: moved with the line when BOTH ends moved in this
+  // gesture (the whole line was carried — a multi-select or box drag), by
+  // the mean of the two moves; left in place when only one end moved. Not
+  // "the same distance": snapping released devices to the grid rounds each
+  // one on its own, so two devices carried together finish a few px apart —
+  // and an exact-match test then put every bend back where it started.
+  function _moved(d) { return Math.abs(d.x) > 1e-6 || Math.abs(d.y) > 1e-6; }
   function carriedBends(bends0, dS, dT) {
-    var together = Math.abs(dS.x - dT.x) < 0.5 && Math.abs(dS.y - dT.y) < 0.5;
-    var move = together && !(Math.abs(dS.x) < 1e-6 && Math.abs(dS.y) < 1e-6);
+    var move = _moved(dS) && _moved(dT);
+    var mx = (dS.x + dT.x) / 2, my = (dS.y + dT.y) / 2;
     return bends0.map(function (b) {
-      return move ? { x: b.x + dS.x, y: b.y + dS.y } : { x: b.x, y: b.y };
+      return move ? { x: b.x + mx, y: b.y + my } : { x: b.x, y: b.y };
     });
   }
 

@@ -172,6 +172,15 @@ describe("geometry", () => {
     expect(api.carriedBends(b, { x: 5, y: 0 }, { x: 0, y: 0 })).toEqual([{ x: 10, y: 10 }]);
     expect(api.carriedBends(b, { x: 0, y: 0 }, { x: 0, y: 0 })).toEqual([{ x: 10, y: 10 }]);
   });
+
+  // The 2026-11-02 report: two devices dragged together, each snapped to the
+  // grid on release, finished a few px apart — and the drawn line's bends
+  // went back to where they started. Both ends moved: the bends follow, by
+  // the mean of the two moves.
+  it("carriedBends: both ends moved but a few px apart (grid snap) → bends still follow, by the mean", () => {
+    const b = [{ x: 10, y: 10 }];
+    expect(api.carriedBends(b, { x: 107, y: 50 }, { x: 97, y: 54 })).toEqual([{ x: 112, y: 62 }]);
+  });
 });
 
 describe("editor on a headless graph", () => {
