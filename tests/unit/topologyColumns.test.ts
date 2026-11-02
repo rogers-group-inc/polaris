@@ -1003,7 +1003,7 @@ describe("topology palette by theme family", () => {
         (R.topologyLegendSpec(fam).edges as { label: string; color: string }[]).map((r) => [r.label, r.color]),
       );
       const line = (sel: string) => sheet.find((r) => r.selector === sel)!.style["line-color"];
-      expect(line("edge")).toBe(legend["FortiGate uplink"]);
+      expect(line("edge")).toBe(legend["Firewall to switch"]);
       // One green for a switch-to-switch cable, whichever signal found it.
       expect(line("edge[isIface = 1]")).toBe(legend["Switch ↔ switch"]);
       expect(line("edge[isLldp = 1]")).toBe(legend["Switch ↔ switch"]);

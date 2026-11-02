@@ -47,9 +47,9 @@
   // topologyLegendSpec().nodes. The gear stores the UNticked types
   // (config.topologyHideTypes), so a type added later shows by default.
   var TOPO_TYPES = [
-    { type: "firewall",     label: "Firewalls",     role: "fortigate",   legend: "FortiGate" },
-    { type: "switch",       label: "Switches",      role: "fortiswitch", legend: "FortiSwitch" },
-    { type: "access_point", label: "Access Points", role: "fortiap",     legend: "FortiAP" },
+    { type: "firewall",     label: "Firewalls",     role: "fortigate",   legend: "Firewall" },
+    { type: "switch",       label: "Switches",      role: "fortiswitch", legend: "Switch" },
+    { type: "access_point", label: "Access Points", role: "fortiap",     legend: "Access Point" },
   ];
 
   function nodeAssetType(d) {

@@ -921,9 +921,9 @@
     function loc(kind) { return locGroupColor(kind, fam); }
     return {
       nodes: [
-        { label: "FortiGate",         kind: "circle",          size: "lg", fill: "data(nodeColor)" },
-        { label: "FortiSwitch",       kind: "circle",          size: "md", fill: "data(nodeColor)" },
-        { label: "FortiAP",           kind: "circle",          size: "sm", fill: "data(nodeColor)" },
+        { label: "Firewall",          kind: "circle",          size: "lg", fill: "data(nodeColor)" },
+        { label: "Switch",            kind: "circle",          size: "md", fill: "data(nodeColor)" },
+        { label: "Access Point",      kind: "circle",          size: "sm", fill: "data(nodeColor)" },
         { label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)" },
         { label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7" },
       ],
@@ -937,7 +937,7 @@
         { label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
       ],
       edges: [
-        { label: "FortiGate uplink",  color: ec.controller, style: "solid" },
+        { label: "Firewall to switch", color: ec.controller, style: "solid" },
         { label: "Switch ↔ switch",   color: ec.iface, style: "solid" },
         { label: "MCLAG ICL",         color: ec.mclag, style: "dashed" },
         { label: "Mesh",              color: ec.mesh, style: "dashed" },
@@ -3085,7 +3085,7 @@
              : edge.data("isApLink")   ? "AP switch uplink"
              : edge.data("isIface")    ? "Switch ↔ switch — found by interface naming"
              : edge.data("isLldp")     ? "Switch ↔ switch — found by LLDP"
-             :                            "FortiGate uplink — cable confirmed";
+             :                            "Firewall to switch — cable confirmed";
     var html =
       '<div style="font-weight:600">' + _escTip(srcLabel) +
       ' <span style="opacity:0.7">⇄</span> ' + _escTip(tgtLabel) + '</div>';

@@ -48,9 +48,9 @@ describe("edgeTooltipHtml", () => {
     expect(html).toContain("Switch ↔ switch — found by interface naming");
   });
 
-  it("falls back to a confirmed FortiGate uplink and drops an unknown port pair", () => {
+  it("falls back to a confirmed firewall-to-switch uplink and drops an unknown port pair", () => {
     const html = tip({ edge: { label: "unknown ↔ unknown" } });
-    expect(html).toContain("FortiGate uplink — cable confirmed");
+    expect(html).toContain("Firewall to switch — cable confirmed");
     expect(html).not.toContain("unknown ↔ unknown");
   });
 

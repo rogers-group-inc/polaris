@@ -109,7 +109,7 @@ beforeAll(() => {
       { data: { id: "e3", source: "sw-1", target: "rm-ap" } },
     ],
     topologyLegendSpec: () => ({
-      nodes: [{ label: "FortiGate" }, { label: "FortiSwitch" }, { label: "FortiAP" }, { label: "Endpoint" }, { label: "Remote asset" }],
+      nodes: [{ label: "Firewall" }, { label: "Switch" }, { label: "Access Point" }, { label: "Endpoint" }, { label: "Remote asset" }],
       health: [], edges: [],
     }),
     // Records the node rows it was handed, as the real one would draw them.
@@ -294,7 +294,7 @@ describe("Device Map widget — one gate picked", () => {
     const legend = el.querySelector(".devmap-topo-legend")!;
     expect(legend).not.toBeNull();
     expect(legend.hasAttribute("hidden")).toBe(false);
-    expect(legend.querySelector(".legend-nodes")!.textContent).toBe("FortiGate|FortiSwitch|FortiAP|Remote asset");
+    expect(legend.querySelector(".legend-nodes")!.textContent).toBe("Firewall|Switch|Access Point|Remote asset");
     unmount();
   });
 
@@ -309,7 +309,7 @@ describe("Device Map widget — one gate picked", () => {
     // The FortiAP AND the other site's access point go, with both their links.
     expect(ids).toEqual(["fg-river", "sw-1", "e1"]);
     // "Remote asset" stays: another site's firewall or switch still draws.
-    expect(el.querySelector(".legend-nodes")!.textContent).toBe("FortiGate|FortiSwitch|Remote asset");
+    expect(el.querySelector(".legend-nodes")!.textContent).toBe("Firewall|Switch|Remote asset");
     unmounts.forEach((fn) => fn());
   });
 
