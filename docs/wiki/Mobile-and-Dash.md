@@ -95,8 +95,11 @@ see. Your choices are remembered on that phone.
 
 Tap a row to open its device; tap **Ack** to acknowledge (`alerts:write`) or
 **Clear** to clear it (`alerts:fullwrite`). Clear asks first: it stops
-escalation and runs the automation's reset actions. The tab loads the newest
-500 active alerts; when more are active, the count under the list says so.
+escalation and runs the automation's reset actions. The list loads more as
+you scroll: it draws 50 rows at a time and fetches the next 500 active alerts
+when you near the bottom (a **Load more** button under the list does the same
+by tap). Sorting and filtering apply to what has been loaded; when more are
+active, the count under the list says so.
 
 ## Assets and Networks
 
@@ -168,7 +171,9 @@ takes any address and finds its network for you.
 **Tapping an asset opens its detail sheet.** Its header stays at the top of the
 sheet in two rows: back and forward on the left with the screenshot, refresh and
 close buttons on the right, and under them the device name, which opens the edit
-menu. The refresh button in its header
+menu. Every section of the sheet (Response Time, CPU + Memory, General,
+Hardware Sensors, Interfaces and the discovery sections) starts collapsed, its
+header carrying a one-line summary; tap a header to open it. The refresh button in its header
 (or pulling the sheet down) re-reads what Polaris has for the device and
 repaints the sheet, keeping the sections you opened; it does not poll the device.
 The sheet does not refresh on its own, so tap it to catch up with the latest
@@ -189,10 +194,27 @@ the sheet. An edit form or a confirmation open on top closes first. A sheet you
 shrank by tapping outside it closes on the first Back. **Response Time**, **CPU + Memory**, **Hardware Sensors** and
 **Interfaces** each name the polling method that collects them beside the
 title (**Not collected** when nothing does), and CPU + Memory has its own
-**1h · 24h · 7d** range. On a switch with PoE ports, Interfaces opens with a
+**1h · 12h · 24h · 7d · 30d** range, the same five as Response Time.
+
+On a device monitored by the Polaris Agent or vCenter, or an Unraid, TrueNAS or
+Proxmox VE host, CPU + Memory shows two charts, as the desktop does. **CPU** draws
+the average across cores as a thick line over a thin line per core. The chips under
+it are one row that scrolls sideways, fading at an end with more past it. Tap a chip
+to hide or show that line, press and hold a core to show only that core, and tap
+**Show all** to bring every line back. At longer ranges, where Polaris keeps
+summarised figures without per-core detail, the chart shows the average alone and
+says so. **Memory**
+stacks what is in use, in bytes, against the installed total: processes, buffers and
+cache (in the device's own terms on TrueNAS, Proxmox and vCenter), with swap as a
+dashed line. **Cache starts hidden**, because the operating system hands cache back
+the moment programs need it, and drawing it makes a healthy device look nearly full;
+tap its chip to show it. The phone remembers which memory bands you show. Every other
+device keeps the single chart of CPU and memory percentages.
+
+On a switch with PoE ports, Interfaces opens with a
 count of ports delivering, searching and faulted, naming the faulted ones, and
 each port shows its PoE state. Tapping a monitored interface shows its usage and
-error graphs (**1h · 24h · 7d**) along with its PoE state and class. Under the status pill, a device
+error graphs (**1h · 12h · 24h · 7d · 30d**) along with its PoE state and class. Under the status pill, a device
 with a table to read carries a button for it, below **View SD-WAN** on a
 firewall that reports SD-WAN:
 
@@ -210,7 +232,7 @@ button re-reads what Polaris has stored, not the device itself.
 device stores on. Every device shows its **volumes** — each mount with a usage
 bar (amber from 75 %, red from 90 %, as on the desktop), what is used and free,
 and *Poll 1m* on a volume polled every minute; tapping one shows its usage over
-**1h · 24h · 7d**. An Unraid, TrueNAS or Proxmox host also shows its **arrays**:
+**1h · 12h · 24h · 7d · 30d**. An Unraid, TrueNAS or Proxmox host also shows its **arrays**:
 each pool with its health, usage and last scrub or parity check, and its drives
 by group (data, parity, cache, spare…) with size, temperature and health. A
 degraded array opens by itself; a healthy one stays closed until tapped. Tapping

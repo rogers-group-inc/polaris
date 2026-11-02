@@ -15,6 +15,7 @@
 //     series: [
 //       { values: [{ts, v}, ...], color: "var(--md-primary)", fill: true, label: "RTT" },
 //     ],
+//     // a series may also set `width` (stroke px, default 1.6) and `opacity`
 //     yMin: 0, yMax: 100,    // optional — auto-derived if absent
 //     yUnit: "%",            // appended to y-axis tick labels
 //     height: 80,            // total px including axis gutters
@@ -231,9 +232,14 @@
   // chart emits them would be thousands of nodes); each OK↔fail transition
   // gets its own userSpaceOnUse linearGradient so the stroke visibly fades
   // between the series color and red instead of jumping.
-  function failureAwareSegments(pts, seriesColor, idPrefix) {
+  // `width` / `opacity` are the series' own stroke (default 1.6, opaque) — a
+  // many-series chart draws its per-core lines thin and translucent under the
+  // one line every threshold reads.
+  function failureAwareSegments(pts, seriesColor, idPrefix, width, opacity) {
     var defs = "";
     var out = "";
+    var sw = width > 0 ? width : 1.6;
+    var op = opacity != null && opacity < 1 ? ' stroke-opacity="' + opacity + '"' : "";
     // Colour, not ok-ness, is what breaks a run: a red outage that runs into a
     // grey dependency stretch (the parent went down part-way through) has to
     // split, or the whole thing takes the first point's stroke.
@@ -241,7 +247,7 @@
     function polyline(slice, p0) {
       if (slice.length < 2) return "";
       return '<polyline points="' + slice.map(function (p) { return p.x.toFixed(1) + "," + p.y.toFixed(1); }).join(" ") +
-        '" fill="none" stroke="' + strokeFor(p0) + '" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+        '" fill="none" stroke="' + strokeFor(p0) + '" stroke-width="' + sw + '"' + op + ' stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
     }
     var runStart = 0;
     for (var i = 1; i <= pts.length; i++) {
@@ -393,22 +399,10 @@
     // Faint y midline so the eye has something to anchor on.
     body.push('<line x1="0" x2="' + viewWidth + '" y1="' + (plotHeight / 2).toFixed(1) + '" y2="' + (plotHeight / 2).toFixed(1) + '" stroke="var(--md-outline-variant)" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.5"/>');
 
-    // Maintenance bands sit under the series so the line stays on top. Their
-    // labels are HTML (see the header note on text in a stretched SVG),
-    // placed by percentage of the plot width.
-    var maintLabels = "";
-    var plotW = viewWidth - 2 * pad;
-    bands.forEach(function (b) {
-      var x0 = x(b.from), x1 = x(b.to);
-      if (x1 - x0 < 1) x1 = x0 + 1;   // a sliver window stays visible
-      body.push('<rect class="maintenance-band" x="' + x0.toFixed(1) + '" y="0" width="' + (x1 - x0).toFixed(1) + '" height="' + plotHeight +
-        '" fill="' + MAINT_FILL + '" stroke="' + MAINT_STROKE + '" stroke-width="1" stroke-dasharray="2,3" vector-effect="non-scaling-stroke"/>');
-      var frac = (x1 - x0) / plotW;
-      if (frac >= MAINT_LABEL_MIN_FRAC) {
-        maintLabels += '<span class="chart-maint-label" style="left:' + ((x0 / viewWidth) * 100).toFixed(2) + '%;max-width:' + (frac * 100).toFixed(2) + '%;">'
-          + escapeAttr(b.name) + '</span>';
-      }
-    });
+    // Maintenance bands sit under the series so the line stays on top.
+    var maint = maintenanceLayer(bands, x, plotHeight, viewWidth, pad);
+    body.push(maint.svg);
+    var maintLabels = maint.labels;
 
     prepared.forEach(function (e, si) {
       var color = e.s.color || "var(--md-primary)";
@@ -425,7 +419,7 @@
         body.push('<polygon points="' + fillPts + '" fill="' + color + '" opacity="0.12"/>');
       }
 
-      var seg = failureAwareSegments(plot, color, idPrefix + "-s" + si);
+      var seg = failureAwareSegments(plot, color, idPrefix + "-s" + si, e.s.width, e.s.opacity);
       defs += seg.defs;
       body.push(seg.segments);
       body.push(failureDots(plot));
@@ -463,6 +457,163 @@
       +   xLabels
       + '</div>'
       + (opts.legend ? stateLegend(prepared, edge, bands.length > 0, opts.legend) : '');
+  }
+
+  // Maintenance bands as SVG rects plus their HTML labels (see the header note
+  // on text in a stretched SVG), placed by percentage of the plot width.
+  function maintenanceLayer(bands, x, plotHeight, viewWidth, pad) {
+    var svg = "", labels = "";
+    var plotW = viewWidth - 2 * pad;
+    bands.forEach(function (b) {
+      var x0 = x(b.from), x1 = x(b.to);
+      if (x1 - x0 < 1) x1 = x0 + 1;   // a sliver window stays visible
+      svg += '<rect class="maintenance-band" x="' + x0.toFixed(1) + '" y="0" width="' + (x1 - x0).toFixed(1) + '" height="' + plotHeight +
+        '" fill="' + MAINT_FILL + '" stroke="' + MAINT_STROKE + '" stroke-width="1" stroke-dasharray="2,3" vector-effect="non-scaling-stroke"/>';
+      var frac = (x1 - x0) / plotW;
+      if (frac >= MAINT_LABEL_MIN_FRAC) {
+        labels += '<span class="chart-maint-label" style="left:' + ((x0 / viewWidth) * 100).toFixed(2) + '%;max-width:' + (frac * 100).toFixed(2) + '%;">'
+          + escapeAttr(b.name) + '</span>';
+      }
+    });
+    return { svg: svg, labels: labels };
+  }
+
+  // ─── Stacked-area chart (parts of a whole, in bytes) ────────────────────
+  // The phone half of the desktop Memory chart (`_renderMemoryChart` in
+  // public/js/assets.js; polaris-ui-canon → canon-charts-widgets.md
+  // § Stacked-area chart). The caller shapes each sample and decides which
+  // bands are switched on; this only draws.
+  //
+  //   PolarisCharts.stackChart({
+  //     samples: [{ ts, total, values: { processes, buffers, cache }, swap }],
+  //     bands:   [{ key, color }],     // the SWITCHED-ON bands, bottom-up
+  //     swapColor: "#9c6ade",          // omit to draw no swap line
+  //     outages, maintenance, from, to, height, ariaLabel,
+  //   })
+  //
+  // The axis ceiling is the WHOLE (the largest total in the window), drawn as
+  // a dashed line, so the gap above the stack is the remainder and is never
+  // painted. Bands stack over what is switched on only: a hidden band's bytes
+  // move into the gap, which is why the caller says so in its legend. Runs
+  // split at the probe's outage record — the same evidence the line charts
+  // dive on (`outageMarkers`) — so a band never paints flat across a window
+  // nothing was collected in; a one-sample run is dropped rather than drawn as
+  // a 1px spike. Swap is not part of the whole and rides as its own line.
+  function stackChart(opts) {
+    opts = opts || {};
+    var totalHeight = opts.height || 120;
+    var viewWidth = opts.width || 600;
+    var pad = opts.padding || 2;
+    var bandDefs = opts.bands || [];
+    var hasRange = opts.from != null && opts.to != null && isFinite(+opts.from) && isFinite(+opts.to);
+    var edge = hasRange ? +opts.from : -Infinity;
+
+    var rows = [];
+    (opts.samples || []).forEach(function (s) {
+      if (!s || s.ts == null) return;
+      var t = +new Date(s.ts);
+      var total = Number(s.total);
+      if (!isFinite(t) || !(total > 0)) return;
+      rows.push({ t: t, total: total, values: s.values || {}, swap: s.swap });
+    });
+    rows.sort(function (a, b) { return a.t - b.t; });
+    var inWin = rows.filter(function (r) { return r.t >= edge; });
+
+    var tMin = Infinity, tMax = -Infinity, yMax = 0;
+    inWin.forEach(function (r) {
+      if (r.t < tMin) tMin = r.t;
+      if (r.t > tMax) tMax = r.t;
+      if (r.total > yMax) yMax = r.total;
+    });
+    if (hasRange && rows.length && rows[0].t < edge) tMin = edge;
+    var nowMs = Date.now();
+    var mspans = hasRange
+      ? maintenanceSpans(opts.maintenance, +opts.from, +opts.to, nowMs)
+      : (inWin.length ? maintenanceSpans(opts.maintenance, tMin, tMax, nowMs) : []);
+    mspans.forEach(function (b) {
+      if (b.from < tMin) tMin = b.from;
+      if (b.to > tMax) tMax = b.to;
+    });
+    if (!inWin.length && !mspans.length) {
+      return '<div class="chart-wrap" style="height:' + totalHeight + 'px;"><div class="chart-empty">No data</div></div>';
+    }
+    if (!(yMax > 0)) yMax = 1;
+    if (tMin === tMax) tMax = tMin + 1;
+
+    var plotHeight = totalHeight - TOP_GUTTER - BOTTOM_GUTTER;
+    function x(t) { return pad + (viewWidth - 2 * pad) * ((t - tMin) / (tMax - tMin)); }
+    function y(v) { return plotHeight - pad - (plotHeight - 2 * pad) * (Math.max(0, v) / yMax); }
+    function xy(px, py) { return px.toFixed(1) + "," + py.toFixed(1); }
+
+    var cuts = outageMarkers(opts.outages, rows.map(function (r) { return r.t; })).map(function (m) { return m.t; });
+    var runs = [], cur = [];
+    rows.forEach(function (r, i) {
+      if (i > 0) {
+        var a = rows[i - 1].t;
+        if (cuts.some(function (c) { return c > a && c < r.t; })) { runs.push(cur); cur = []; }
+      }
+      cur.push(r);
+    });
+    if (cur.length) runs.push(cur);
+
+    var body = [];
+    body.push('<line x1="0" x2="' + viewWidth + '" y1="' + (plotHeight / 2).toFixed(1) + '" y2="' + (plotHeight / 2).toFixed(1) + '" stroke="var(--md-outline-variant)" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.5"/>');
+    var maint = maintenanceLayer(mspans, x, plotHeight, viewWidth, pad);
+    body.push(maint.svg);
+
+    runs.forEach(function (run) {
+      if (run.length < 2) return;
+      var lower = run.map(function () { return 0; });
+      bandDefs.forEach(function (b) {
+        var upper = run.map(function (r, i) {
+          var v = Number(r.values[b.key]);
+          return Math.min(r.total, lower[i] + (isFinite(v) && v > 0 ? v : 0));
+        });
+        var top = run.map(function (r, i) { return xy(x(r.t), y(upper[i])); });
+        var bottom = run.map(function (r, i) { return xy(x(r.t), y(lower[i])); }).reverse();
+        body.push('<polygon class="stack-band" data-band="' + escapeAttr(b.key) + '" points="' + top.concat(bottom).join(" ") +
+          '" fill="' + b.color + '" fill-opacity="0.85"/>');
+        lower = upper;
+      });
+      body.push('<polyline class="stack-total" points="' + run.map(function (r) { return xy(x(r.t), y(r.total)); }).join(" ") +
+        '" fill="none" stroke="var(--md-on-surface-variant)" stroke-width="1" stroke-dasharray="6,4" opacity="0.7" vector-effect="non-scaling-stroke"/>');
+      if (opts.swapColor) {
+        var sw = run.filter(function (r) { return r.swap != null && isFinite(Number(r.swap)); });
+        if (sw.length >= 2) {
+          body.push('<polyline class="stack-swap" points="' + sw.map(function (r) { return xy(x(r.t), y(Number(r.swap))); }).join(" ") +
+            '" fill="none" stroke="' + opts.swapColor + '" stroke-width="1.5" stroke-dasharray="2,2" vector-effect="non-scaling-stroke"/>');
+        }
+      }
+    });
+
+    var aria = (opts.ariaLabel || "Chart") + (mspans.length ? " (includes maintenance — polling paused)" : "");
+    var crossesDay = new Date(tMin).toDateString() !== new Date(tMax).toDateString();
+    return ''
+      + '<div class="chart-wrap" style="height:' + totalHeight + 'px;padding:' + TOP_GUTTER + 'px ' + RIGHT_GUTTER + 'px ' + BOTTOM_GUTTER + 'px ' + LEFT_GUTTER + 'px;">'
+      + '  <div class="chart-y-labels">'
+      + '    <span class="chart-y-tick" style="top:0;">' + formatBytes(yMax) + '</span>'
+      + '    <span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">' + formatBytes(yMax / 2) + '</span>'
+      + '    <span class="chart-y-tick" style="bottom:0;">0</span>'
+      + '  </div>'
+      + '<svg class="chart-svg" viewBox="0 0 ' + viewWidth + ' ' + plotHeight + '" preserveAspectRatio="none" role="img" aria-label="' + escapeAttr(aria) + '">'
+      + body.join("")
+      + '</svg>'
+      + (maint.labels ? '<div class="chart-maint-labels">' + maint.labels + '</div>' : '')
+      + '  <div class="chart-x-labels">'
+      + '    <span class="chart-x-tick">' + formatX(tMin, tMax - tMin, crossesDay) + '</span>'
+      + '    <span class="chart-x-tick">' + formatX(tMax, tMax - tMin, crossesDay) + '</span>'
+      + '  </div>'
+      + '</div>';
+  }
+
+  // Binary units, the way the OS reports memory: 16 GB is 16 × 1024³.
+  function formatBytes(n) {
+    n = Number(n);
+    if (!isFinite(n) || n <= 0) return "0";
+    var units = ["B", "KB", "MB", "GB", "TB"];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (n >= 100 || i === 0 ? String(Math.round(n)) : n.toFixed(1).replace(/\.0$/, "")) + " " + units[i];
   }
 
   // The key under a chart that opts in with `legend: { series: "Up" }` — one
@@ -534,6 +685,8 @@
 
   window.PolarisCharts = {
     lineChart: lineChart,
+    stackChart: stackChart,
+    formatBytes: formatBytes,
     // exported for unit tests
     _outageMarkers: outageMarkers,
     _medianCadenceMs: medianCadenceMs,

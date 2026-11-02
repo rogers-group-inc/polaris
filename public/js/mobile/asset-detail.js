@@ -18,7 +18,7 @@
 //   - Hero with status pill + identity bits (name lives in the sheet header)
 //   - Monitor section (response-time chart, status pill, RTT/last poll)
 //   - Telemetry section (CPU+Memory chart, when supported; its own
-//     1h / 24h / 7d range)
+//     1h / 12h / 24h / 7d / 30d range)
 //   - General section (IP/MAC/type/model/OS/location/last seen)
 //   - Temperatures section — current per-sensor reading + 1h min/avg/max
 //   - "View IPsec" — on a Fortinet firewall that reported tunnels or peers;
@@ -98,12 +98,12 @@
 //     full observed key/value table)
 
 (function () {
-  // Response Time chart range — driven by the segmented control on its card.
-  // CPU + Memory and the interface slide-up carry their own shorter control
-  // (CHART_RANGES), so each chart moves on its own.
+  // Chart ranges — every chart's segmented control offers the same five
+  // (Response Time, CPU + Memory, the interface page, a volume's usage, and
+  // SD-WAN), the presets every history endpoint accepts (src/utils/chartRange.ts).
+  // Each chart keeps its own selection, so each moves on its own.
   var DEFAULT_RANGE = "24h";
   var RANGES = ["1h", "12h", "24h", "7d", "30d"];
-  var CHART_RANGES = ["1h", "24h", "7d"];
   var RANGE_MS = {
     "1h": 3600000, "12h": 12 * 3600000, "24h": 24 * 3600000,
     "7d": 7 * 86400000, "30d": 30 * 86400000,
@@ -202,19 +202,18 @@
       _mounts[id] = {
         range: DEFAULT_RANGE,
         telemetryRange: DEFAULT_RANGE,
-        // Chart sections collapse by default — operators get the summary
-        // (avg/max in the section subtitle) at a glance and can expand for
-        // the full chart when needed.
+        // Every section opens collapsed (operator decision 2026-11-02): the
+        // sheet reads as a list of headers, each subtitle carrying its
+        // summary (avg/max, counts), and a tap expands the one wanted.
+        // Hardware Sensors included. Their loaders run regardless, so an
+        // expand shows content at once.
         sections: {
           monitor: false,
           telemetry: false,
-          general: true,
-          temperatures: true,
-          interfaces: true,
-          // Discovery provenance. Sources expanded by default (the primary
-          // "where did this asset come from" answer); firewall sightings +
-          // IP history collapsed with a count in the header subtitle.
-          sources: true,
+          general: false,
+          temperatures: false,
+          interfaces: false,
+          sources: false,
           sightings: false,
           ipHistory: false,
         },
@@ -962,7 +961,7 @@
       // Fire monitor + telemetry + IP history fetches in parallel — these
       // populate their respective sections independently.
       loadMonitor(id, st);
-      loadTelemetry(id, st);
+      loadTelemetry(id, st, asset);
       loadSystemInfo(id, st, asset);
       loadSources(id, st);
       loadSightings(id, st);
@@ -1115,7 +1114,7 @@
       + sectionHeader("telemetry", "CPU + Memory", "", st.sections.telemetry, "asset-telemetry-sub", "cpuMemory")
       + '<div class="sect-body" data-sect="telemetry"' + (st.sections.telemetry ? '' : ' hidden') + '>'
       + '  <div class="card-filled" style="padding:16px;margin-bottom:8px;">'
-      + '    ' + rangeSegHtml("asset-telemetry-range-seg", CHART_RANGES, st.telemetryRange)
+      + '    ' + rangeSegHtml("asset-telemetry-range-seg", RANGES, st.telemetryRange)
       + '    <div id="asset-telemetry-chart" style="min-height:120px;"></div>'
       + '  </div>'
       + '</div>'
@@ -1206,7 +1205,7 @@
     });
     wireRangeSeg("asset-telemetry-range-seg", function (r) {
       st.telemetryRange = r;
-      loadTelemetry(asset.id, st);
+      loadTelemetry(asset.id, st, asset);
     });
     loadPollingChips(asset.id);
     // Quarantine / release action button (hero). The button renders
@@ -1284,9 +1283,21 @@
   // chip names the method that actually runs. A null method means nothing
   // collects that stream for this asset ("Not collected"). Best-effort: on a
   // failed read the chips stay hidden rather than guess.
+  // The resolved per-stream polling methods, one fetch per sheet render:
+  // loadPollingChips refreshes it (it runs first, from renderShell) and the
+  // telemetry loader reuses it to pick the split or combined chart shape.
+  var _effSettings = Object.create(null);
+  function effectiveSettingsFor(id, fresh) {
+    if (!api.assets.effectiveMonitorSettings) return Promise.resolve(null);
+    if (fresh || !_effSettings[id]) {
+      _effSettings[id] = api.assets.effectiveMonitorSettings(id).catch(function () { return null; });
+    }
+    return _effSettings[id];
+  }
+
   function loadPollingChips(id) {
     if (!api.assets.effectiveMonitorSettings) return;
-    api.assets.effectiveMonitorSettings(id).then(function (eff) {
+    effectiveSettingsFor(id, true).then(function (eff) {
       if (_openId !== id || !eff || !eff.resolved) return;
       document.querySelectorAll("#asset-host .sect-poll[data-poll-stream]").forEach(function (chip) {
         var method = eff.resolved[chip.dataset.pollStream + "Polling"];
@@ -1477,16 +1488,19 @@
     });
   }
 
-  function loadTelemetry(id, st) {
+  function loadTelemetry(id, st, asset) {
     var chartHost = document.getElementById("asset-telemetry-chart");
     var sub = document.getElementById("asset-telemetry-sub");
     if (chartHost) chartHost.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
 
     var range = st.telemetryRange;
-    Promise.all([api.assets.telemetryHistory(id, range), maintWindowsFor(id)]).then(function (got) {
-      var resp = got[0], maint = got[1];
+    Promise.all([api.assets.telemetryHistory(id, range), maintWindowsFor(id), effectiveSettingsFor(id)]).then(function (got) {
+      var resp = got[0], maint = got[1], eff = got[2];
       if (_openId !== id || !resp) return;   // bail if a newer asset replaced us
+      if (st.telemetryRange !== range) return; // a range tapped since owns the chart
       var samples = resp.samples || [];
+      var method = eff && eff.resolved ? eff.resolved.cpuMemoryPolling : null;
+
       var cpuSeries = samples
         .filter(function (s) { return s.cpuPct != null; })
         .map(function (s) { return { ts: s.timestamp, v: s.cpuPct }; });
@@ -1505,8 +1519,17 @@
         if (sub) sub.textContent = "Not collected for this monitor type";
         return;
       }
-      if (chartHost) {
-        var bounds = rangeBounds(range);
+      var bounds = rangeBounds(range);
+      // An agent / vCenter asset, or an Unraid / TrueNAS / Proxmox host, gets
+      // the two charts: per-core CPU and memory as a stack in bytes
+      // (telemetry-charts.js). Its core picks live on the mount state, so a
+      // range change keeps them.
+      if (chartHost && window.PolarisTelemetryCharts && PolarisTelemetryCharts.splits(method, asset)) {
+        if (!st.cpuHidden) st.cpuHidden = {};
+        PolarisTelemetryCharts.render(chartHost, {
+          resp: resp, maint: maint, asset: asset, range: range, bounds: bounds, hidden: st.cpuHidden,
+        });
+      } else if (chartHost) {
         chartHost.innerHTML = PolarisCharts.lineChart({
           maintenance: maint,
           from: bounds && bounds.from,
@@ -1899,7 +1922,7 @@
       + (monitored
         ? ''
           + '<div style="font-weight:500;margin:16px 0 8px;">Usage</div>'
-          + rangeSegHtml("iface-range-seg", CHART_RANGES, "1h")
+          + rangeSegHtml("iface-range-seg", RANGES, "1h")
           + '<div id="iface-tput-chart" style="min-height:120px;"></div>'
           + '<div class="muted" id="iface-tput-sub" style="font-size:12px;margin-top:4px;"></div>'
           + '<div style="font-weight:500;margin:16px 0 8px;">Errors</div>'
@@ -2705,7 +2728,7 @@
       { k: "Polled every minute", v: p.pinned ? "Yes" : "No" },
     ])
       + '<div style="font-weight:500;margin:16px 0 8px;">Usage</div>'
-      + rangeSegHtml("vol-range-seg", CHART_RANGES, p.range || "24h")
+      + rangeSegHtml("vol-range-seg", RANGES, p.range || "24h")
       + '<div id="vol-chart" style="min-height:120px;"></div>'
       + '<div class="muted" id="vol-chart-sub" style="font-size:12px;margin-top:4px;"></div>';
     wireRangeSeg("vol-range-seg", function (range) { p.range = range; loadVolumeChart(p, range); });

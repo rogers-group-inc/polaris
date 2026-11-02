@@ -1,0 +1,101 @@
+<!-- @dsCard group="Assets" page height=960 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CPU + Memory charts</title>
+<style>
+  /* Preview frame only, not part of the component. The phone sheet locks html/body to the
+     viewport; that is undone here; .pv-stage contains the fixed-position sheet inside a
+     box. Glyphs are plain stand-ins; the plotted lines are illustrative. */
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--md-surface);
+              border: 1px solid var(--md-outline-variant); border-radius: var(--shape-md); margin-bottom: 16px; }
+  .pv-stage .sheet { display: block !important; position: absolute; bottom: 0; max-height: none; }
+</style>
+</head>
+<body>
+<div class="pv-stage" style="height:920px">
+<div class="sheet asset-sheet">
+  <div class="sheet-handle"></div>
+  <button class="asset-sect-header" aria-expanded="true">
+    <div style="flex:1;text-align:left;min-width:0;">
+      <div class="sect-title">CPU + Memory <span class="sect-poll">Polaris Agent</span></div>
+      <div class="sect-sub">cpu avg 22% · max 61% · mem avg 66%</div>
+    </div>
+    <svg class="caret" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" style="fill:var(--md-on-surface-variant);flex-shrink:0;"><path d="M7 10l5 5 5-5z"/></svg>
+  </button>
+  <div class="sect-body">
+    <div class="card-filled" style="padding:16px;margin-bottom:8px;">
+      <div class="seg" style="display:inline-flex;border:1px solid var(--md-outline);border-radius:var(--shape-full);overflow:hidden;margin-bottom:8px;">
+        <button class="seg-item">1h</button><button class="seg-item">12h</button><button class="seg-item on">24h</button><button class="seg-item">7d</button><button class="seg-item">30d</button>
+      </div>
+
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;">
+        <span class="ty-title-s">CPU</span><span class="ty-body-s muted">4 cores</span>
+      </div>
+      <div class="chart-wrap" style="height:140px;padding:4px 8px 18px 36px;">
+        <div class="chart-y-labels">
+          <span class="chart-y-tick" style="top:0;">100 %</span>
+          <span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">50.0 %</span>
+          <span class="chart-y-tick" style="bottom:0;">0.00 %</span>
+        </div>
+        <svg class="chart-svg" viewBox="0 0 600 118" preserveAspectRatio="none" role="img" aria-label="CPU over 24h, average and 4 of 4 cores">
+          <line x1="0" x2="600" y1="59" y2="59" stroke="var(--md-outline-variant)" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.5"/>
+          <polyline points="2,98 56,94 110,99 164,92 218,96 272,90 326,95 380,93 434,97 488,91 542,95 598,94" fill="none" stroke="hsl(35,68%,46%)" stroke-width="1.1" stroke-opacity="0.55" vector-effect="non-scaling-stroke"/>
+          <polyline points="2,86 56,90 110,84 164,88 218,82 272,87 326,85 380,80 434,86 488,84 542,88 598,83" fill="none" stroke="hsl(106,68%,63%)" stroke-width="1.1" stroke-opacity="0.55" vector-effect="non-scaling-stroke"/>
+          <polyline points="2,78 56,72 110,80 164,74 218,77 272,70 326,76 380,44 434,40 488,72 542,75 598,73" fill="none" stroke="hsl(178,68%,46%)" stroke-width="1.1" stroke-opacity="0.55" vector-effect="non-scaling-stroke"/>
+          <polyline points="2,92 56,96 110,90 164,95 218,91 272,94 326,89 380,92 434,95 488,90 542,93 598,91" fill="none" stroke="hsl(249,68%,63%)" stroke-width="1.1" stroke-opacity="0.55" vector-effect="non-scaling-stroke"/>
+          <polyline points="2,88 56,88 110,88 164,87 218,86 272,85 326,86 380,77 434,79 488,84 542,87 598,85" fill="none" stroke="var(--md-primary)" stroke-width="2.2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="chart-x-labels"><span>Nov 1, 12:00</span><span>Nov 2, 12:00</span></div>
+      </div>
+      <div class="series-legend-bar">
+      <div class="series-legend" style="--fade-r:28px;">
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:var(--md-primary);"></span>Avg</button>
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(35,68%,46%);"></span>Core 0</button>
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(106,68%,63%);"></span>Core 1</button>
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(178,68%,46%);"></span>Core 2</button>
+        <button class="chip" aria-pressed="false" style="height:32px;padding:0 10px;gap:6px;font-size:13px;opacity:.8;text-decoration:line-through;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(249,68%,63%);opacity:.45;"></span>Core 3</button>
+      </div>
+        <button class="btn btn-text" style="height:32px;padding:0 12px;flex:0 0 auto;">Show all</button>
+      </div>
+      <div class="ty-body-s muted" style="margin-top:8px;">avg 22% · max 61% · busiest Core 2 at 66%</div>
+
+      <div style="height:1px;background:var(--md-outline-variant);margin:16px 0 14px;"></div>
+
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;">
+        <span class="ty-title-s">Memory</span><span class="ty-body-s muted">16 GB installed</span>
+      </div>
+      <div class="chart-wrap" style="height:140px;padding:4px 8px 18px 36px;">
+        <div class="chart-y-labels">
+          <span class="chart-y-tick" style="top:0;">16 GB</span>
+          <span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">8 GB</span>
+          <span class="chart-y-tick" style="bottom:0;">0</span>
+        </div>
+        <svg class="chart-svg" viewBox="0 0 600 118" preserveAspectRatio="none" role="img" aria-label="Memory over 24h, stacked by processes, buffers">
+          <line x1="0" x2="600" y1="59" y2="59" stroke="var(--md-outline-variant)" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.5"/>
+          <polygon points="2,70 110,66 218,62 326,64 434,58 542,63 598,65 598,116 542,116 434,116 326,116 218,116 110,116 2,116" fill="#f4a261" fill-opacity="0.85"/>
+          <polygon points="2,66 110,62 218,58 326,60 434,54 542,59 598,61 598,65 542,63 434,58 326,64 218,62 110,66 2,70" fill="#8ab17d" fill-opacity="0.85"/>
+          <polyline points="2,2 598,2" fill="none" stroke="var(--md-on-surface-variant)" stroke-width="1" stroke-dasharray="6,4" opacity="0.7" vector-effect="non-scaling-stroke"/>
+          <polyline points="2,113 110,113 218,112 326,112 434,113 542,112 598,112" fill="none" stroke="#9c6ade" stroke-width="1.5" stroke-dasharray="2,2" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="chart-x-labels"><span>Nov 1, 12:00</span><span>Nov 2, 12:00</span></div>
+      </div>
+      <div class="series-legend-bar">
+      <div class="series-legend">
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#f4a261;"></span>Processes</button>
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#8ab17d;"></span>Buffers</button>
+        <button class="chip" aria-pressed="false" style="height:32px;padding:0 10px;gap:6px;font-size:13px;opacity:.8;text-decoration:line-through;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#2a9d8f;opacity:.45;"></span>Cache</button>
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#9c6ade;"></span>Swap</button>
+      </div>
+      </div>
+      <div class="ty-body-s muted" style="margin-top:8px;">Cache hidden: counted in the gap, not in the stack.</div>
+      <div class="ty-body-s muted" style="margin-top:8px;">in use 10.5 GB of 16 GB (66%) · peak 11.2 GB</div>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>

@@ -7,12 +7,22 @@
 // app.js sends an old #more/alerts link here, since a push already sitting in
 // a tray keeps the URL it was sent with.
 //
-// Filtering and sorting are client-side over one fetch of up to 500 active
-// alerts (the endpoint's cap). The server can filter and sort too, but its
-// severity order is the column's TEXT order, which puts "warning" above
-// "critical" — severity here ranks by PolarisMobileAlerts.sevRank, the phone's
-// mirror of ALERT_SEVERITY_RANK. When more than 500 are active the count line
-// says so rather than letting the list read as complete.
+// Filtering and sorting are client-side over the active alerts fetched so far,
+// newest first, in pages of 500 (the endpoint's cap). The server can filter
+// and sort too, but its severity order is the column's TEXT order, which puts
+// "warning" above "critical" — severity here ranks by PolarisMobileAlerts.sevRank,
+// the phone's mirror of ALERT_SEVERITY_RANK. When more are active than were
+// fetched the count line says so rather than letting the list read as complete.
+//
+// The list loads more as it is scrolled: rows are drawn SHOW_STEP at a time,
+// and once every fetched row is on screen the next page of 500 is fetched.
+// Both are driven by one footer button (#alerts-load-more) that an
+// IntersectionObserver taps when it nears the viewport — the button stays as
+// the fallback for a browser without the observer. A fetched page can sort
+// into the middle of the list (a Severity or Device sort), so a page landing
+// re-renders the list; drawing the next SHOW_STEP rows only appends. A refresh
+// (pull, Ack, Clear, coming back to the tab) re-fetches as many pages as were
+// loaded, so it never shrinks the list under the operator's thumb.
 //
 // Region scope: a viewer who carries region tags (`user.regions`, the
 // effective set /auth/me reports) picks "My regions" or "All regions" in the
@@ -35,6 +45,9 @@
 
 (function () {
   var FETCH_LIMIT = 500;
+  // Rows drawn per step as the list scrolls — a phone does not need 500
+  // three-line rows built before the first one is read.
+  var SHOW_STEP = 50;
   // Opens on Critical + Serious + Warning — what someone holding the pager
   // acts on; Info and Notice are a tap away (a tile, or "Any" in the sheet).
   // The key gained "-v2" when that default arrived: a viewer who had used the
@@ -80,6 +93,11 @@
     prefs: null,
     user: null,
     seq: 0,
+    showN: SHOW_STEP,  // how many of the filtered rows are drawn
+    shown: [],         // the filtered + sorted rows behind the drawn list
+    loadingMore: false,
+    moreFailed: false, // the last page fetch failed — wait for a tap
+    observer: null,
   };
 
   var _PERM_RANK = { none: 0, read: 1, write: 2, fullwrite: 3 };
@@ -176,7 +194,7 @@
         onFilter: function (text) {
           if (text === _state.filter) return;
           _state.filter = text;
-          renderList();
+          relist();
         },
         onSort: openSortSheet,
       });
@@ -198,17 +216,41 @@
     },
   };
 
-  /** Fetch the active list. `quiet` keeps the rows on screen while it lands. */
+  // Pages are concatenated by id: an alert that fires between two fetches
+  // shifts the offsets by one, and would otherwise be drawn twice.
+  function mergeRows(pages) {
+    var seen = {};
+    var out = [];
+    pages.forEach(function (page) {
+      page.forEach(function (n) {
+        if (n && !seen[n.id]) { seen[n.id] = true; out.push(n); }
+      });
+    });
+    return out;
+  }
+
+  /**
+   * Fetch the active list — as many pages as were loaded, so a refresh never
+   * shortens it. `quiet` keeps the rows on screen while it lands.
+   */
   function load(quiet) {
     var mySeq = ++_state.seq;
+    _state.loadingMore = false; // a load in flight supersedes any page fetch
+    _state.moreFailed = false;
     if (!quiet) {
       var host = document.getElementById("alerts-list-host");
       if (host) host.innerHTML = '<div class="loading-screen" style="padding:48px 0;"><div class="spinner"></div></div>';
     }
-    return api.alerts.list({ limit: FETCH_LIMIT }).then(function (resp) {
+    var pages = Math.max(1, Math.ceil(((_state.rows && _state.rows.length) || 0) / FETCH_LIMIT));
+    var calls = [];
+    for (var i = 0; i < pages; i++) {
+      calls.push(api.alerts.list(i ? { limit: FETCH_LIMIT, offset: i * FETCH_LIMIT } : { limit: FETCH_LIMIT }));
+    }
+    return Promise.all(calls).then(function (resps) {
       if (mySeq !== _state.seq) return;
-      _state.rows = (resp && resp.notifications) || [];
-      _state.total = (resp && typeof resp.total === "number") ? resp.total : _state.rows.length;
+      _state.rows = mergeRows(resps.map(function (r) { return (r && r.notifications) || []; }));
+      var first = resps[0];
+      _state.total = (first && typeof first.total === "number") ? first.total : _state.rows.length;
       _state.error = null;
       renderList();
     }).catch(function (err) {
@@ -217,6 +259,45 @@
       if (!_state.rows) renderList();
       else PolarisTabs.showSnackbar(_state.error, { error: true });
     });
+  }
+
+  /** Fetch the next page of 500 onto the end of what is loaded. */
+  function fetchMore() {
+    if (_state.loadingMore || !_state.rows || _state.rows.length >= _state.total) return;
+    var mySeq = _state.seq;
+    _state.loadingMore = true;
+    refreshFooter();
+    return api.alerts.list({ limit: FETCH_LIMIT, offset: _state.rows.length }).then(function (resp) {
+      if (mySeq !== _state.seq) return; // a refresh replaced the list meanwhile
+      _state.loadingMore = false;
+      var fresh = (resp && resp.notifications) || [];
+      var before = _state.rows.length;
+      _state.rows = mergeRows([_state.rows, fresh]);
+      if (resp && typeof resp.total === "number") _state.total = resp.total;
+      // An empty page means the active set shrank under us; stop asking.
+      if (!fresh.length || _state.rows.length === before) _state.total = _state.rows.length;
+      _state.showN += SHOW_STEP;
+      renderList();
+    }).catch(function (err) {
+      if (mySeq !== _state.seq) return;
+      _state.loadingMore = false;
+      // Held until a tap: the observer would otherwise retry a failing
+      // request for as long as the footer sits on screen.
+      _state.moreFailed = true;
+      refreshFooter();
+      PolarisTabs.showSnackbar((err && err.message) || "Couldn’t load more alerts", { error: true });
+    });
+  }
+
+  /** The footer's one action: draw the next rows, or fetch the next page. */
+  function showMore() {
+    if (_state.showN < _state.shown.length) {
+      var from = _state.showN;
+      _state.showN += SHOW_STEP;
+      appendRows(from);
+      return;
+    }
+    fetchMore();
   }
 
   function renderChips() {
@@ -237,7 +318,7 @@
         _state.prefs.state = btn.dataset.key;
         PolarisListControls.savePrefs(PREFS_KEY, _state.prefs);
         renderChips();
-        renderList();
+        relist();
       });
     });
   }
@@ -264,7 +345,7 @@
         if (choice.filters.region) _state.prefs.region = choice.filters.region;
         PolarisListControls.savePrefs(PREFS_KEY, _state.prefs);
         PolarisListControls.updateSortChip("alerts", sortLabel(), choice.sortDir, sheetNarrows());
-        renderList();
+        relist();
       },
     });
   }
@@ -394,7 +475,7 @@
         _state.prefs.severity = PolarisListControls.toggleValue(prefs().severity, tile.dataset.sev);
         PolarisListControls.savePrefs(PREFS_KEY, _state.prefs);
         PolarisListControls.updateSortChip("alerts", sortLabel(), prefs().sortDir, sheetNarrows());
-        renderList();
+        relist();
       });
     }
   }
@@ -425,30 +506,107 @@
     var regions = activeRegions();
     renderSummary(filterRows(_state.rows, _state.filter, p.state, [], regions));
     var shown = sortRows(filterRows(_state.rows, _state.filter, p.state, p.severity, regions), p.sortKey, p.sortDir);
+    _state.shown = shown;
 
     if (shown.length === 0) {
-      host.innerHTML = regions
+      // Still offer the next page: what the filter wants may be in it.
+      host.innerHTML = (regions
         ? emptyState("No matching alerts in your regions", "Nothing matches here. Pick “All regions” under Sort & filter to see the rest of the fleet.")
-        : emptyState("No matching alerts", "Nothing matches this filter. Clear it or pick “All”.");
+        : emptyState("No matching alerts", "Nothing matches this filter. Clear it or pick “All”."))
+        + (_state.rows.length < _state.total ? '<div id="alerts-list-footer">' + footerHTML() + '</div>' : '');
+      wireListHost(host);
+      observeFooter();
       return;
     }
 
-    var perms = {
+    var perms = rowPerms();
+    var end = Math.min(_state.showN, shown.length);
+    var html = '<div class="alert-list">';
+    for (var i = 0; i < end; i++) {
+      html += (i ? '<div class="list-divider"></div>' : '') + rowHTML(shown[i], perms);
+    }
+    html += '</div><div id="alerts-list-footer">' + footerHTML() + '</div>';
+    host.innerHTML = html;
+    wireListHost(host);
+    observeFooter();
+  }
+
+  function rowPerms() {
+    return {
       ack: permAtLeast(_state.user, "alerts", "write"),
       clear: permAtLeast(_state.user, "alerts", "fullwrite"),
     };
-    var html = '<div class="alert-list">';
-    shown.forEach(function (n, i) {
-      html += rowHTML(n, perms) + (i < shown.length - 1 ? '<div class="list-divider"></div>' : '');
-    });
-    var loaded = _state.rows.length;
+  }
+
+  // A filter, sort or chip change starts the drawn window over at the top.
+  function relist() {
+    _state.showN = SHOW_STEP;
+    renderList();
+  }
+
+  // Draw the next step of already-fetched rows onto the end of the list,
+  // leaving the rows on screen (and the scroll position) alone.
+  function appendRows(from) {
+    var list = document.querySelector("#alerts-list-host .alert-list");
+    if (!list) { renderList(); return; }
+    var shown = _state.shown;
+    var end = Math.min(_state.showN, shown.length);
+    var perms = rowPerms();
+    var html = "";
+    for (var i = from; i < end; i++) {
+      html += (i ? '<div class="list-divider"></div>' : '') + rowHTML(shown[i], perms);
+    }
+    list.insertAdjacentHTML("beforeend", html);
+    refreshFooter();
+  }
+
+  // The Load more button while there is more — rows not yet drawn, or a page
+  // not yet fetched — over the count line.
+  function footerHTML() {
+    var shown = _state.shown;
+    var loaded = _state.rows ? _state.rows.length : 0;
+    var undrawn = Math.max(0, shown.length - _state.showN);
+    var unfetched = Math.max(0, _state.total - loaded);
+    var html = "";
+    if (undrawn || unfetched) {
+      html += ''
+        + '<div style="display:flex;justify-content:center;padding:8px 16px 0;">'
+        + '  <button class="btn btn-tonal" id="alerts-load-more"' + (_state.loadingMore ? ' disabled' : '') + '>'
+        + (_state.loadingMore
+          ? '<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Loading…'
+          : 'Load more (' + (undrawn + unfetched) + ' remaining)')
+        + '</button>'
+        + '</div>';
+    }
+    if (!shown.length) return html;
     var count = shown.length === loaded
       ? shown.length + ' alert' + (shown.length === 1 ? '' : 's')
       : shown.length + ' of ' + loaded + ' alerts';
     if (_state.total > loaded) count += ' · newest ' + loaded + ' of ' + _state.total + ' active';
-    html += '</div><div class="list-count">' + escapeHtml(count) + '</div>';
-    host.innerHTML = html;
-    wireListHost(host);
+    return html + '<div class="list-count">' + escapeHtml(count) + '</div>';
+  }
+
+  function refreshFooter() {
+    var f = document.getElementById("alerts-list-footer");
+    if (!f) return;
+    f.innerHTML = footerHTML();
+    observeFooter();
+  }
+
+  // Tap the Load more button for the operator as it nears the bottom of the
+  // screen. The observer reports at once on observe(), so a list too short to
+  // fill the screen keeps loading until it does (or there is no more).
+  function observeFooter() {
+    if (_state.observer) { _state.observer.disconnect(); _state.observer = null; }
+    var btn = document.getElementById("alerts-load-more");
+    if (!btn || typeof IntersectionObserver !== "function") return;
+    _state.observer = new IntersectionObserver(function (entries) {
+      if (!entries.some(function (e) { return e.isIntersecting; })) return;
+      if (_state.loadingMore || _state.moreFailed) return;
+      if (!document.body.contains(btn)) return;
+      showMore();
+    }, { rootMargin: "0px 0px 300px 0px" });
+    _state.observer.observe(btn);
   }
 
   var ROW_BTN_STYLE = 'padding:8px 12px;border-radius:20px;border:1px solid var(--md-outline);'
@@ -500,6 +658,11 @@
     host.addEventListener("click", function (ev) {
       var t = ev.target && ev.target.closest ? ev.target : null;
       if (!t) return;
+      var more = t.closest("#alerts-load-more");
+      if (more) {
+        if (!more.disabled) { _state.moreFailed = false; showMore(); }
+        return;
+      }
       var ack = t.closest("[data-ack]");
       if (ack) {
         ev.stopPropagation();
@@ -582,6 +745,10 @@
     // Exposed for tests.
     filterRows: filterRows,
     sortRows: sortRows,
-    _reset: function () { _state.rows = null; _state.total = 0; _state.error = null; _state.filter = ""; _state.prefs = null; _state.seq = 0; },
+    _reset: function () {
+      _state.rows = null; _state.total = 0; _state.error = null; _state.filter = ""; _state.prefs = null; _state.seq = 0;
+      _state.showN = SHOW_STEP; _state.shown = []; _state.loadingMore = false; _state.moreFailed = false;
+      if (_state.observer) { _state.observer.disconnect(); _state.observer = null; }
+    },
   };
 })();
