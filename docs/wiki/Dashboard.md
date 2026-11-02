@@ -17,7 +17,7 @@ The canvas is read-only until you press the pencil (**Customize Page**) just abo
 saves and leaves edit mode. The layout is a row of **columns**, each a stack of
 widgets. The circular arrows (**Refresh**) to the left of the pencil reload every
 widget's data now, without waiting for its own refresh interval; they are there
-on the Dash wallboard and on a published dashboard too, and hidden while you are
+on the Dash wallboard and on its linked tabs too, and hidden while you are
 customizing.
 
 | Action | How |
@@ -50,9 +50,9 @@ Your personal layout — every tab — saves automatically to your account
 
 A layout can also be **named and saved** as a `SavedDashboard`, private or
 public, from the **Dashboards ▾** menu → **Save this dashboard…**. The menu
-sits beside the pencil and **shows only while you are customizing** (or while
-a published dashboard is on screen, where it is the way back to your own
-layout). What is saved is the tab you are looking at — its widgets, columns,
+sits beside the pencil and **shows only while you are customizing** (or, on
+the Dash wallboard, while a [linked tab](Mobile-and-Dash#what-it-can-show) is on screen, where
+it holds **Unlink this tab**). What is saved is the tab you are looking at — its widgets, columns,
 sizes and per-widget settings. Saving over one of your own names replaces it.
 
 The same menu lists **My dashboards** and **Shared dashboards** (everyone's

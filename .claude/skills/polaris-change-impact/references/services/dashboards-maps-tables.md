@@ -115,7 +115,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `src/dash/dashServer.ts` — the second mount + the two paths it adds to `API_PATH_ALLOWLIST` / `API_PREFIX_ALLOWLIST`.
 - `src/api/routes/users.ts` — `DELETE /users/:id` drops the doomed user's PRIVATE dashboards before the user row (public ones survive with `ownerId` NULL), same as saved filters.
 - `public/js/dashboard-saved.js` — the "Dashboards ▾" menu on BOTH index.html and dash.html, via `api.savedDashboards.*`.
-- `public/js/dashboard.js` — `window.PolarisDashboard` is the seam: `snapshot()` produces what gets stored, `loadAsNewTab` / `viewPublished` consume it.
+- `public/js/dashboard.js` — `window.PolarisDashboard` is the seam: `snapshot()` produces what gets stored, `loadAsNewTab` / `linkActiveTab` / `applyPublished` (the wallboard's linked tabs) consume it.
 
 **Invariants:**
 - **A session-less caller (`viewerId === null`) sees PUBLIC rows only.** That is the wallboard path, and it is the one thing in this service that must never widen — the listener is unauthenticated. It also means nothing reads as `isOwner` there.

@@ -34,23 +34,27 @@
     saving: false,
     saveTimer: null,
     unmounts: {},  // widget instance id → cleanup fn
-    // A PUBLISHED (public) saved dashboard being viewed instead of the
-    // viewer's own layout — the Dash wallboard's "load a public dashboard"
-    // mode (dashboard-saved.js). While set, the canvas renders THIS and
-    // nothing here may be edited or persisted: the wallboard has no session
-    // to save with, and its own local layout must survive being looked away
-    // from. { id, name, ownerName, columns }.
-    external: null,
+    renderGens: {}, // widget instance id → latest renderWidget call (stale renders don't draw)
   };
+
+  // A LINKED tab (the Dash wallboard only — dashboard-saved.js) shows a
+  // published saved dashboard instead of widgets of its own: the tab carries
+  // `published: { id, name, ownerName, updatedAt }` and, as `columns`, the
+  // last copy of that dashboard read from the server, so a rebooted kiosk
+  // paints at once and dashboard-saved.js's poll swaps in the publisher's
+  // edits. The rest of the layout — other tabs, the pencil — is untouched. A
+  // linked tab is read-only: someone else's dashboard, re-read every few
+  // minutes, so a local edit would be overwritten anyway. Unlinking keeps the
+  // widgets as an ordinary tab of the viewer's own.
+  function linkOf(dash) { return dash && dash.published && dash.published.id ? dash.published : null; }
+  function activeLinked() { return !!linkOf(activeDash()); }
+  // Customizing AND the tab on screen is the viewer's own: edit affordances.
+  function editingActive() { return state.editing && !activeLinked(); }
 
   // The currently-shown dashboard. All column/widget logic operates on its
   // .columns; switching tabs just repoints activeId. Always returns an object
   // (falls back to the first, or a fresh empty one) so callers never null-check.
   function activeDash() {
-    // Viewing a published dashboard: one screen, no tabs, nothing to switch to.
-    if (state.external) {
-      return { id: "published:" + state.external.id, name: state.external.name, columns: state.external.columns };
-    }
     var d = state.layout.dashboards;
     if (!d || !d.length) {
       state.layout.dashboards = [{ id: PolarisWidgets.uuid(), name: "Dashboard 1", columns: [] }];
@@ -153,15 +157,10 @@
   async function bootstrap() {
     var loaded;
     if (window.POLARIS_DASH_LOCAL) {
-      // A wallboard pinned to a published dashboard restores THAT, not its own
-      // layout — a kiosk that reboots must come back to the same screen. The
-      // local layout is still read (it is what "My layout" returns to), and a
-      // published dashboard that has since been deleted or unpublished falls
-      // back to it rather than leaving the wallboard blank.
+      // A linked tab is stored WITH its last copy of the published dashboard,
+      // so a rebooted kiosk paints at once; dashboard-saved.js re-reads the
+      // links after the first paint (restoreLinks, below).
       loaded = readLocalLayout();
-      if (window.PolarisSavedDashboards && typeof window.PolarisSavedDashboards.restorePinned === "function") {
-        try { await window.PolarisSavedDashboards.restorePinned(); } catch (_err) { /* falls back to local */ }
-      }
     } else {
       try {
         loaded = await api.me.dashboard.get();
@@ -184,6 +183,11 @@
 
     setHeaderMode();
     renderRoot();
+
+    if (window.POLARIS_DASH_LOCAL && window.PolarisSavedDashboards &&
+        typeof window.PolarisSavedDashboards.restoreLinks === "function") {
+      try { window.PolarisSavedDashboards.restoreLinks(); } catch (_err) { /* the cached copies stay */ }
+    }
   }
 
   // ─── First-run welcome modal ────────────────────────────────────────────
@@ -312,7 +316,6 @@
   // ─── Edit mode ────────────────────────────────────────────────────────────
 
   function enterEditMode() {
-    if (state.external) return;
     state.editing = true; setHeaderMode(); renderRoot();
   }
   function exitEditMode() {
@@ -323,24 +326,26 @@
     renderRoot();
   }
   function setHeaderMode() {
-    // A published dashboard belongs to whoever published it: the viewer gets
-    // no Customize / Add Widgets / Create, so there is no way to build an edit
-    // that could not be saved.
     // Creating a dashboard is an edit-mode verb like Add Widgets: it is the +
     // after the last tab (renderTabs), drawn only while customizing. The
     // header's old Create New Dashboard button is gone; createBtn stays null.
-    var viewingPublished = !!state.external;
-    if (customizeBtn)   customizeBtn.hidden   = state.editing || viewingPublished;
-    // Refresh is a viewing verb, so a published dashboard keeps it.
+    // A linked tab keeps the pencil: the OTHER tabs are still the viewer's to
+    // edit, and customizing is where a linked tab is unlinked.
+    if (customizeBtn)   customizeBtn.hidden   = state.editing;
     if (refreshBtn)     refreshBtn.hidden     = state.editing;
     // Widgets are added from each block's "+ Add Widget" (or "+ New Widget
     // Block"); the header's Add Widgets button is gone, addWidgetsBtn null.
     if (addWidgetsBtn)  addWidgetsBtn.hidden  = true;
-    if (doneBtn)        doneBtn.hidden        = !state.editing || viewingPublished;
+    if (doneBtn)        doneBtn.hidden        = !state.editing;
     if (createBtn)      createBtn.hidden      = true;
-    canvasEl.classList.toggle("is-editing", state.editing && !viewingPublished);
-    // The Dashboards menu (dashboard-saved.js) shows only while customizing
-    // or viewing a published dashboard; it re-gates on this.
+  }
+
+  // Per-TAB mode, re-stamped on every render because switching tabs can move
+  // between a linked tab and one of the viewer's own: the canvas's is-editing
+  // class (edit affordances) and the Dashboards menu's gate (dashboard-saved.js
+  // shows it while customizing or while a linked tab is on screen).
+  function syncCanvasMode() {
+    canvasEl.classList.toggle("is-editing", editingActive());
     // The document's own realm's constructor: a DOM test evals this file
     // where the global CustomEvent is Node's, which happy-dom rejects.
     var view = document.defaultView || window;
@@ -368,7 +373,8 @@
   // bar (when >1 dashboard) renders above either, independent of empty state.
   function renderRoot() {
     renderTabs();
-    if (!state.editing && totalWidgets() === 0) { showEmpty(); return; }
+    syncCanvasMode();
+    if (!editingActive() && totalWidgets() === 0) { showEmpty(); return; }
     hideEmpty();
     renderCanvas();
   }
@@ -379,7 +385,6 @@
   // switch; in edit mode each tab can be renamed (double-click) and removed (×).
   function renderTabs() {
     if (!tabsEl) return;
-    if (state.external) { tabsEl.hidden = true; tabsEl.innerHTML = ""; return; }
     var dashes = state.layout.dashboards || [];
     // The strip shows even with one dashboard: its tab names the canvas and
     // is the folder tab the page card opens from. Only an empty layout hides it.
@@ -390,13 +395,21 @@
     // holds still.
     tabsEl.innerHTML = '<div class="table-tabs-list dashboard-tabs-list">' + dashes.map(function (d) {
       var active = d.id === state.layout.activeId;
+      var link = linkOf(d);
       // In edit mode the ACTIVE tab's name is an inline text input — click it
-      // and type to rename. Other tabs show a plain name (click to switch).
-      var nameHtml = (state.editing && active)
+      // and type to rename. Other tabs show a plain name (click to switch). A
+      // linked tab's name is the published dashboard's, so it never edits.
+      var nameHtml = (state.editing && active && !link)
         ? '<input type="text" class="dashboard-tab-name-input" data-name="' + escapeHtml(d.id) + '" value="' + escapeHtml(d.name || "") + '" maxlength="60" size="' + Math.max((d.name || "").length, 8) + '" aria-label="Dashboard name">'
         : '<span class="dashboard-tab-name">' + escapeHtml(d.name || "Untitled") + '</span>';
-      return '<div class="dashboard-tab' + (active ? " active" : "") + '" data-dash="' + escapeHtml(d.id) + '" role="button" tabindex="0">' +
-        nameHtml +
+      var linkMark = link
+        ? '<span class="dashboard-tab-link" aria-hidden="true">' + LINK_SVG + '</span>'
+        : "";
+      var title = link
+        ? ' title="' + escapeHtml("Published dashboard" + (link.ownerName ? " by " + link.ownerName : "") + " — follows the publisher's changes") + '"'
+        : "";
+      return '<div class="dashboard-tab' + (active ? " active" : "") + (link ? " linked" : "") + '" data-dash="' + escapeHtml(d.id) + '" role="button" tabindex="0"' + title + '>' +
+        linkMark + nameHtml +
         (state.editing && dashes.length > 1 ? '<button type="button" class="dashboard-tab-remove" data-remove="' + escapeHtml(d.id) + '" title="Delete dashboard">&times;</button>' : '') +
       '</div>';
     }).join("") + "</div>" +
@@ -418,13 +431,13 @@
     // Drag a tab to a new place, in and out of edit mode (folder-tabs.js,
     // shared with the Assets view tabs). The whole tab is the handle; a press
     // on the rename input or the × never starts one. Wired once on the strip,
-    // by delegation, so it survives this innerHTML re-render. Not on a
-    // published dashboard, which is someone else's layout.
+    // by delegation, so it survives this innerHTML re-render. A linked tab
+    // moves like any other: where it sits is the viewer's own layout.
     if (window.PolarisFolderTabs && window.PolarisFolderTabs.wireDrag) {
       window.PolarisFolderTabs.wireDrag(tabsEl, tabsEl.querySelector(".dashboard-tabs-list"), {
         tabSel: ".dashboard-tab",
         idAttr: "data-dash",
-        canStart: function () { return !state.external; },
+        canStart: function () { return true; },
         onDrop: function (ids, moved) { setDashboardOrder(ids, moved); },
       });
     }
@@ -520,7 +533,9 @@
 
   async function deleteDashboard(id) {
     if (state.layout.dashboards.length <= 1) return; // never remove the last
-    if (!(await showConfirm("Delete this dashboard and its widgets?"))) return;
+    // The /dash wallboard has no app.js, so no showConfirm.
+    var msg = "Delete this dashboard and its widgets?";
+    if (!(typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg))) return;
     applyChange(function () {
       state.layout.dashboards = state.layout.dashboards.filter(function (x) { return x.id !== id; });
       if (state.layout.activeId === id) state.layout.activeId = state.layout.dashboards[0].id;
@@ -528,8 +543,9 @@
   }
 
   function showEmpty() {
-    if (state.external) {
-      emptyEl.textContent = 'The published dashboard "' + state.external.name + '" has no widgets on it.';
+    var link = linkOf(activeDash());
+    if (link) {
+      emptyEl.textContent = 'The published dashboard "' + (link.name || activeDash().name) + '" has no widgets on it.';
     } else if (emptyDefaultHTML) {
       emptyEl.innerHTML = emptyDefaultHTML;
     }
@@ -539,6 +555,9 @@
     unmountAll();
   }
   function hideEmpty() {
+    // An empty LINKED tab stamps the prompt with the published name; put the
+    // page's own text back so it is not still there the next time it shows.
+    if (emptyDefaultHTML) emptyEl.innerHTML = emptyDefaultHTML;
     emptyEl.hidden = true;
     canvasEl.hidden = false;
   }
@@ -547,10 +566,13 @@
     unmountAll();
     canvasEl.innerHTML = "";
     _placeholder = null;
+    // Customizing a linked tab: say why it has no edit controls, and offer the
+    // way to make it editable.
+    if (state.editing && activeLinked()) canvasEl.appendChild(buildLinkedNote());
     activeDash().columns.forEach(function (col, ci) {
       canvasEl.appendChild(mountColumnShell(col, ci));
     });
-    if (state.editing) canvasEl.appendChild(buildNewColumnTarget());
+    if (editingActive()) canvasEl.appendChild(buildNewColumnTarget());
     // Mount widget bodies after all shells are in the DOM.
     activeDash().columns.forEach(function (col) { col.widgets.forEach(renderWidget); });
   }
@@ -561,7 +583,7 @@
     colEl.setAttribute("data-col-id", col.id);
     colEl.style.gridColumn = "span " + col.width;
 
-    if (state.editing) {
+    if (editingActive()) {
       var header = document.createElement("div");
       header.className = "dashboard-column-header";
       header.innerHTML = widthCtlHTML(col.width) +
@@ -581,7 +603,7 @@
     // here adds to THIS block, at its bottom. Outside the stack, so the drag
     // placeholder's slot arithmetic (which counts the stack's cards) is
     // untouched.
-    if (state.editing) {
+    if (editingActive()) {
       var add = document.createElement("button");
       add.type = "button";
       add.className = "dashboard-column-add";
@@ -632,8 +654,9 @@
     // In edit mode a dedicated grip is the drag handle — a clear, easy target
     // for dragging the widget to another column (the title alone was too easy
     // to miss). The whole widget can move across columns from here.
-    var grip = state.editing ? '<span class="dashboard-widget-grip" draggable="true" title="Drag to move (to any column)">⠿</span>' : "";
-    var editControls = state.editing
+    var editable = editingActive();
+    var grip = editable ? '<span class="dashboard-widget-grip" draggable="true" title="Drag to move (to any column)">⠿</span>' : "";
+    var editControls = editable
       ? '<button type="button" class="dashboard-widget-height-toggle" data-action="height" title="Height (click to cycle 1×/2×/3×)">' + (Math.min(3, Math.max(1, w.height || 1))) + '×</button>' +
         '<button type="button" class="dashboard-widget-action dashboard-widget-gear" data-action="gear" title="Configure" aria-label="Configure widget">' + GEAR_SVG + '</button>' +
         '<button type="button" class="dashboard-widget-remove" data-action="remove" title="Remove">&times;</button>'
@@ -646,7 +669,7 @@
       '</div>' +
       '<div class="dashboard-widget-body"></div>';
 
-    if (state.editing) {
+    if (editable) {
       var gripEl = article.querySelector(".dashboard-widget-grip");
       gripEl.addEventListener("dragstart", function (e) {
         e.dataTransfer.effectAllowed = "move";
@@ -670,6 +693,25 @@
       article.querySelector('[data-action="remove"]').addEventListener("click", function () { removeWidget(w.id); });
     }
     return article;
+  }
+
+  // Feather's "link" glyph — marks a linked tab in the strip.
+  var LINK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
+
+  // The strip across a linked tab's canvas while customizing: whose it is,
+  // why nothing on it edits, and the one verb that changes that.
+  function buildLinkedNote() {
+    var dash = activeDash();
+    var link = linkOf(dash);
+    var el = document.createElement("div");
+    el.className = "dashboard-linked-note";
+    el.innerHTML =
+      '<span>Shows the published dashboard <strong>' + escapeHtml(link.name || dash.name || "") + "</strong>" +
+        (link.ownerName ? " by " + escapeHtml(link.ownerName) : "") +
+        " and follows the publisher's changes, so it can't be edited here.</span>" +
+      '<button type="button" class="btn btn-secondary btn-sm" data-action="unlink">Unlink to edit a copy</button>';
+    el.querySelector('[data-action="unlink"]').addEventListener("click", function () { unlinkTab(dash.id); });
+    return el;
   }
 
   function buildNewColumnTarget() {
@@ -704,6 +746,15 @@
     var ctx = {
       onUnmount: function (fn) { unmountFns.push(fn); },
     };
+    // A newer render of this widget can start while this one's fetchData is in
+    // flight — the gear's FortiGates picker writes two keys back to back, each
+    // a renderWidget into the SAME body. The unmount above ran before this
+    // render had registered anything, so a stale render that still drew would
+    // stack a second, never-unmounted instance (a map under a topology, two
+    // Cytoscape graphs) in the body. Only the latest render may draw.
+    var gen = (state.renderGens[w.id] || 0) + 1;
+    state.renderGens[w.id] = gen;
+    function superseded() { return state.renderGens[w.id] !== gen || !body.isConnected; }
 
     var module = PolarisWidgets.getByType(w.type);
     if (!module) {
@@ -723,12 +774,14 @@
       dataPromise = Promise.reject(err);
     }
     Promise.resolve(dataPromise).then(function (data) {
+      if (superseded()) return;
       try {
         module.renderInstance(body, w.config || {}, data, ctx);
       } catch (err) {
         body.innerHTML = '<p class="empty-state" style="color:#ef5350">Render failed: ' + escapeHtml(err.message || String(err)) + '</p>';
       }
     }).catch(function (err) {
+      if (superseded()) return;
       body.innerHTML = '<p class="empty-state" style="color:#ef5350">' + escapeHtml(err.message || "Fetch failed") + '</p>';
     });
     state.unmounts[w.id] = function () { unmountFns.forEach(function (fn) { try { fn(); } catch (_) {} }); };
@@ -743,14 +796,11 @@
   }
 
   function queueSave() {
-    // Viewing a published dashboard is not editing one.
-    if (state.external) return;
     if (state.saveTimer) clearTimeout(state.saveTimer);
     state.saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS);
   }
   async function saveNow() {
     state.saveTimer = null;
-    if (state.external) return;
     state.saving = true;
     try {
       if (window.POLARIS_DASH_LOCAL) {
@@ -887,7 +937,7 @@
     var isAdd  = types.indexOf("application/x-polaris-widget") !== -1;
     var isMove = types.indexOf("application/x-polaris-widget-move") !== -1;
     if (!isAdd && !isMove) return;
-    if (!state.editing) return;
+    if (!editingActive()) return;
     ev.preventDefault();
     ev.dataTransfer.dropEffect = isAdd ? "copy" : "move";
     showPlaceholderAt(ev.clientX, ev.clientY);
@@ -899,7 +949,7 @@
   }
 
   function onCanvasDrop(ev) {
-    if (!state.editing) return;
+    if (!editingActive()) return;
     var addType = ev.dataTransfer.getData("application/x-polaris-widget");
     var moveId  = ev.dataTransfer.getData("application/x-polaris-widget-move");
     if (!addType && !moveId) return;
@@ -1159,8 +1209,8 @@
   //   - read  — a snapshot of the canvas on screen, to publish or keep;
   //   - write — load a saved dashboard as a NEW TAB (the signed-in page: a
   //             copy, so editing it never writes back to a preset that may be
-  //             someone else's — the UserTableTabs rule), or VIEW a published
-  //             one read-only (the wallboard, which has nothing to save with).
+  //             someone else's — the UserTableTabs rule), or LINK a tab to a
+  //             published one (the wallboard: the tab follows the publisher).
   //
   // Every layout arriving from the server passes through dropUnknownWidgets:
   // a published dashboard is another operator's blob, and it may name a widget
@@ -1191,9 +1241,9 @@
     /** True on the Dash wallboard (no session, localStorage layout). */
     isWallboard: function () { return !!window.POLARIS_DASH_LOCAL; },
 
-    /** The canvas on screen, as a saved-dashboard payload. Null while viewing a published one. */
+    /** The canvas on screen, as a saved-dashboard payload. Null on a linked tab (someone else's). */
     snapshot: function () {
-      if (state.external) return null;
+      if (activeLinked()) return null;
       var dash = activeDash();
       return { name: dash.name || "", layout: { columns: JSON.parse(JSON.stringify(dash.columns || [])) } };
     },
@@ -1207,21 +1257,21 @@
      * on the widget HEADER rather than in the popover (the ⇅ sort button,
      * PolarisWidgets.setHeaderSort): those are stamped from widgets/index.js,
      * which is handed a body element and a config object and knows nothing
-     * about the canvas. Refuses while viewing a published dashboard — that
-     * layout is someone else's row and this page only renders it.
+     * about the canvas. Refuses on a linked tab — that layout is someone
+     * else's row, re-read from the server, and this page only renders it.
      */
     setWidgetConfig: function (id, key, value) {
-      if (state.external) return false;
+      if (activeLinked()) return false;
       if (!findWidget(id)) return false;
       updateConfig(id, key, value);
       return true;
     },
 
     /** True while customizing (Customize Page clicked, Done not yet). */
-    isEditing: function () { return !!state.editing && !state.external; },
+    isEditing: function () { return !!state.editing; },
 
-    /** Id of the published dashboard being viewed, or null. */
-    publishedId: function () { return state.external ? state.external.id : null; },
+    /** Id of the published dashboard the ACTIVE tab is linked to, or null. */
+    publishedId: function () { var link = linkOf(activeDash()); return link ? link.id : null; },
 
     /**
      * Load a saved dashboard as a new TAB of the viewer's own layout, and
@@ -1232,7 +1282,6 @@
       if (!saved) return false;
       var columns = dropUnknownWidgets(saved.layout && saved.layout.columns);
       var id = PolarisWidgets.uuid();
-      state.external = null;
       state.layout.dashboards.push({ id: id, name: (saved.name || "Dashboard").slice(0, 60), columns: columns });
       state.layout.activeId = id;
       setHeaderMode();
@@ -1241,35 +1290,84 @@
       return true;
     },
 
-    /** Render a published dashboard read-only, in place of the local layout. */
-    viewPublished: function (saved) {
-      if (!saved) return false;
-      state.external = {
-        id: saved.id,
-        name: saved.name || "Published dashboard",
-        ownerName: saved.ownerName || "",
-        columns: dropUnknownWidgets(saved.layout && saved.layout.columns),
-      };
-      state.editing = false;
+    /**
+     * Link the ACTIVE tab to a published dashboard (the wallboard): the tab
+     * takes the published name and widgets and from now on follows the
+     * publisher (applyPublished). Its own widgets are replaced; every other
+     * tab, and edit mode, are left as they are.
+     */
+    linkActiveTab: function (saved) {
+      if (!saved || !saved.id) return false;
+      var dash = activeDash();
+      dash.published = publishedMeta(saved);
+      dash.name = (saved.name || "Published dashboard").slice(0, 60);
+      dash.columns = dropUnknownWidgets(saved.layout && saved.layout.columns);
       closePopover();
       WidgetLibrary.close();
-      setHeaderMode();
       renderRoot();
+      queueSave();
       return true;
     },
 
-    /** Back to the viewer's own layout. */
-    clearPublished: function () {
-      if (!state.external) return false;
-      state.external = null;
-      // Restore the page's own prompt HERE rather than leaving it to
-      // showEmpty: the viewer's layout usually HAS widgets, so the empty state
-      // just hides — and would still be stamped with the published
-      // dashboard's name the next time it showed.
-      if (emptyDefaultHTML) emptyEl.innerHTML = emptyDefaultHTML;
-      setHeaderMode();
-      renderRoot();
-      return true;
+    /** Every linked tab: [{ tabId, publishedId, updatedAt }] — what the poll re-reads. */
+    linkedTabs: function () {
+      return state.layout.dashboards.filter(linkOf).map(function (d) {
+        return { tabId: d.id, publishedId: d.published.id, updatedAt: d.published.updatedAt || null };
+      });
+    },
+
+    /**
+     * A fresh read of a published row: every tab linked to it whose copy is
+     * older takes the new widgets and name. Re-renders only when the tab on
+     * screen changed — a re-render tears every widget down and back up, which
+     * on a wallboard is a visible blink. Returns how many tabs changed.
+     */
+    applyPublished: function (saved) {
+      if (!saved || !saved.id) return 0;
+      var changed = 0, activeChanged = false;
+      state.layout.dashboards.forEach(function (d) {
+        var link = linkOf(d);
+        if (!link || link.id !== saved.id) return;
+        if (saved.updatedAt && link.updatedAt === saved.updatedAt) return;
+        d.published = publishedMeta(saved);
+        d.name = (saved.name || d.name || "Published dashboard").slice(0, 60);
+        d.columns = dropUnknownWidgets(saved.layout && saved.layout.columns);
+        changed++;
+        if (d.id === state.layout.activeId) activeChanged = true;
+      });
+      if (!changed) return 0;
+      if (activeChanged) renderRoot(); else renderTabs();
+      queueSave();
+      return changed;
+    },
+
+    /** Unlink one tab (default: the active one), keeping its widgets as the viewer's own. */
+    unlinkTab: function (tabId) { return unlinkTab(tabId || state.layout.activeId); },
+
+    /** A published row that is gone (deleted / unpublished): unlink every tab that showed it. */
+    unlinkPublished: function (publishedId) {
+      var n = 0;
+      state.layout.dashboards.forEach(function (d) {
+        var link = linkOf(d);
+        if (link && link.id === publishedId) { delete d.published; n++; }
+      });
+      if (n) { renderRoot(); queueSave(); }
+      return n;
     },
   };
+
+  function publishedMeta(saved) {
+    return { id: saved.id, name: saved.name || "", ownerName: saved.ownerName || "", updatedAt: saved.updatedAt || null };
+  }
+
+  // The widgets stay — they become an ordinary tab the viewer can edit, a copy
+  // that no longer follows the publisher.
+  function unlinkTab(tabId) {
+    var d = state.layout.dashboards.find(function (x) { return x.id === tabId; });
+    if (!d || !linkOf(d)) return false;
+    delete d.published;
+    renderRoot();
+    queueSave();
+    return true;
+  }
 })();
