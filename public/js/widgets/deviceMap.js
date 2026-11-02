@@ -295,7 +295,9 @@
         });
       }
       R.renderLocationGroups(cy);
-      if (cy.nodes("[isLocGroup]").length > 0) R.routeInterGroupEdges(cy);
+      // Cross-box links through the gutters, and any straight link bent
+      // around a device it would pass through — with or without boxes.
+      R.routeInterGroupEdges(cy);
       if (window.PolarisTopologyEdgeEditor) {
         window.PolarisTopologyEdgeEditor.attach(cy, {
           positions: savedPositions,

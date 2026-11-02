@@ -233,7 +233,9 @@ kind by name only.
 
 A link between two location boxes runs in the gutters between boxes and never
 through another device: when a switch sits in the target's column, the line
-comes down a lane beside the target and enters from the side.
+comes down a lane beside the target and enters from the side. Any other
+straight link that would cross a device it does not connect (two APs meshed
+across a switch between them, for example) steps sideways around it.
 
 Port labels (`port8 ↔ port1`) on a link with bends sit near its ends: with
 one bend, halfway along the part after the bend; with two or more, halfway

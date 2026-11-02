@@ -2826,6 +2826,10 @@
       );
       // Route cross-group links through the gutters between boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
+    } else {
+      // No boxes: still bend any straight link around a device it would
+      // pass through (the same pass, which finds no boxes to route).
+      window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     }
     // Operator-drawn connection paths — after the router, so a customised
     // line's first edit can keep the routed shape it was drawn with. Edits

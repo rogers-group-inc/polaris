@@ -1304,6 +1304,102 @@
     return lox < r.x2 && hix > r.x1 && loy < r.y2 && hiy > r.y1;
   }
 
+  // A STRAIGHT link (one no router shaped) whose line passes through another
+  // device — two APs meshed across a switch stacked between them in one
+  // column — gets two bends that step it sideways around every device on
+  // the line, on whichever side is clear (fewer devices hit, then the
+  // smaller step). Skipped: operator-drawn paths, cross-box links the
+  // router already shaped, fan-out (taxi) links, parallel bundles (their
+  // bezier spacing is what separates them) and self-loops. Re-run after
+  // every routing pass, so a moved device re-plans it; a link it bent
+  // before (data detoured) is straightened first.
+  var _DETOUR_GAP = 8;
+  function detourStraightEdges(cy) {
+    var devices = cy.nodes().filter(function (n) {
+      return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.isParent();
+    }).map(function (n) {
+      return { id: n.id(), p: n.position(), r: _nodeClearance(n) };
+    });
+    cy.edges().forEach(function (e) {
+      if (e.data("detoured")) {
+        e.removeStyle("curve-style segment-weights segment-distances edge-distances");
+        e.removeData("detoured");
+      }
+      if (e.data("customPath") || e.data("isFanOut") || e.isLoop()) return;
+      if (e.data("isInterGroup") && e.style("curve-style") === "segments") return;
+      if (e.parallelEdges().length > 1) return;
+      var S = e.source().position();
+      var T = e.target().position();
+      var dx = T.x - S.x, dy = T.y - S.y;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1) return;
+      var rS = _nodeClearance(e.source()), rT = _nodeClearance(e.target());
+      // Devices the straight line runs through: t along S→T, signed
+      // perpendicular offset (positive = right of S→T).
+      var hits = [];
+      devices.forEach(function (d) {
+        if (d.id === e.source().id() || d.id === e.target().id()) return;
+        var px = d.p.x - S.x, py = d.p.y - S.y;
+        var t = (px * dx + py * dy) / (len * len);
+        if (t <= 0 || t >= 1) return;
+        var perp = (py * dx - px * dy) / len;
+        if (Math.abs(perp) < d.r) hits.push({ t: t, perp: perp, r: d.r });
+      });
+      if (!hits.length) return;
+      // The span to step around, kept clear of both end devices.
+      var tLo = 1, tHi = 0;
+      hits.forEach(function (h) {
+        tLo = Math.min(tLo, h.t - (h.r + _DETOUR_GAP) / len);
+        tHi = Math.max(tHi, h.t + (h.r + _DETOUR_GAP) / len);
+      });
+      tLo = Math.max(tLo, (rS + 2) / len);
+      tHi = Math.min(tHi, 1 - (rT + 2) / len);
+      if (tHi <= tLo) return; // ends too close together to bend between
+      // The step each side needs to clear every device on the line.
+      function stepFor(side) {
+        var need = 0;
+        hits.forEach(function (h) { need = Math.max(need, side * h.perp + h.r + _DETOUR_GAP); });
+        return need;
+      }
+      // Devices the bent path itself would touch, for a side and step.
+      function crossingsFor(side, step) {
+        var nx = -dy / len * side, ny = dx / len * side; // unit normal, toward `side`
+        var a = { x: S.x + dx * tLo + nx * step, y: S.y + dy * tLo + ny * step };
+        var b = { x: S.x + dx * tHi + nx * step, y: S.y + dy * tHi + ny * step };
+        var segs = [[S, a], [a, b], [b, T]];
+        var n = 0;
+        devices.forEach(function (d) {
+          if (d.id === e.source().id() || d.id === e.target().id()) return;
+          segs.forEach(function (s) { if (_segDist(d.p, s[0], s[1]) < d.r) n++; });
+        });
+        return n;
+      }
+      var options = [1, -1].map(function (side) {
+        var step = stepFor(side);
+        return { side: side, step: step, hits: crossingsFor(side, step) };
+      });
+      options.sort(function (a, b) { return a.hits - b.hits || a.step - b.step; });
+      var pick = options[0];
+      // Cytoscape's segment-distances are + to the right of S→T, which is
+      // the side +1 here (normal (-dy, dx) · screen y-down).
+      var dist = (pick.side * pick.step).toFixed(1);
+      e.style({
+        "curve-style": "segments",
+        "segment-weights": tLo.toFixed(4) + " " + tHi.toFixed(4),
+        "segment-distances": dist + " " + dist,
+        "edge-distances": "node-position",
+      });
+      e.data("detoured", 1);
+    });
+  }
+  // Distance from point p to segment a–b.
+  function _segDist(p, a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var l2 = dx * dx + dy * dy;
+    var t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+    return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+  }
+
   function routeInterGroupEdges(cy) {
     var tops = _rectsFor(cy);
     if (tops.length === 0) return;
@@ -3102,10 +3198,14 @@
     refreshLocationGroups: refreshLocationGroups,
     // Routing changes edge geometry by style bypass (no position event), so
     // the bent-link labels are re-placed after every route pass.
+    // Straight links that would pass through a device are bent around it in
+    // the same pass (detourStraightEdges), on a site with or without boxes.
     routeInterGroupEdges: function (cy) {
       routeInterGroupEdges(cy);
+      detourStraightEdges(cy);
       refreshBentEdgeLabels(cy);
     },
+    detourStraightEdges: detourStraightEdges,
     refreshBentEdgeLabels: refreshBentEdgeLabels,
     wireBentEdgeLabels: wireBentEdgeLabels,
     locationGroupTooltipParts: locationGroupTooltipParts,

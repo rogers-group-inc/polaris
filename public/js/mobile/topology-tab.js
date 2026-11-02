@@ -406,9 +406,9 @@
       }
       var suppress = locSuppressKinds();
       window.PolarisTopologyRender.renderLocationGroups(_cy, suppress ? { suppressKinds: suppress } : undefined);
-      if (_cy.nodes("[isLocGroup]").length > 0) {
-        window.PolarisTopologyRender.routeInterGroupEdges(_cy);
-      }
+      // Cross-box links through the gutters, and any straight link bent
+      // around a device it would pass through — with or without boxes.
+      window.PolarisTopologyRender.routeInterGroupEdges(_cy);
       if (window.PolarisTopologyEdgeEditor) {
         _edgeEditor = window.PolarisTopologyEdgeEditor.attach(_cy, {
           positions: savedPositions,
