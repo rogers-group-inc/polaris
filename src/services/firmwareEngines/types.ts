@@ -142,7 +142,12 @@ export interface FirmwareEngineContext {
   onStage: (stage: FirmwareRunStage) => void;
   onProgress: (progress: FirmwareProgress) => void;
   onLog: (level: "info" | "warn" | "error", msg: string) => void;
-  /** Cooperative cancel — checked between stages; nothing interrupts a flash mid-write. */
+  /**
+   * The run's abort (an operator's Abort, or the updater's — rule 138).
+   * Checked between stages, ends every `sleep`, and tears down the request in
+   * flight through the engine's DeviceHttpClient. It stops POLARIS: a device
+   * that has been told to deploy keeps flashing on its own.
+   */
   signal?: AbortSignal;
 }
 
@@ -164,14 +169,31 @@ export class FirmwareEngineError extends Error {
   }
 }
 
+/**
+ * Wait `ms`, or reject with an `AbortError` the moment `signal` fires. It
+ * used to RESOLVE on abort, which turned every poll loop into a hot spin
+ * against the device until its deadline; rejecting lands in the engine's own
+ * catch, which already reports an AbortError as "cancelled".
+ */
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const t = setTimeout(done, ms);
-    function done(): void {
-      clearTimeout(t);
-      signal?.removeEventListener("abort", done);
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(abortError(signal)); return; }
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
       resolve();
+    }, ms);
+    function onAbort(): void {
+      clearTimeout(t);
+      reject(abortError(signal!));
     }
-    signal?.addEventListener("abort", done, { once: true });
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/** The rejection an aborted wait or request settles with — what the engines' catch turns into "cancelled". */
+export function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error && signal.reason.name === "AbortError") return signal.reason;
+  const err = new Error("aborted");
+  err.name = "AbortError";
+  return err;
 }

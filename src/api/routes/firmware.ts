@@ -52,6 +52,8 @@ import {
   getRun,
   getRunForAsset,
   listRunsForAsset,
+  listActiveFirmwareRuns,
+  abortFirmwareRun,
 } from "../../services/firmwareUpgradeService.js";
 import {
   getPendingSchedule,
@@ -126,6 +128,10 @@ const RunsQuerySchema = z.object({
 
 const StartUpgradeSchema = z.object({
   imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
+});
+
+const AbortRunSchema = z.object({
+  reason: z.string().trim().max(200).optional(),
 });
 
 // An absolute instant (the browser converts its local pick to ISO with an
@@ -342,6 +348,26 @@ firmwareAssetRouter.get("/runs", requirePermission("assets", "read"), handle(asy
 // an assets:read caller cannot read any run by guessing an id.
 firmwareAssetRouter.get("/runs/:runId", requirePermission("assets", "read"), handle(async (req, res) => {
   res.json({ run: await getRunForAsset(String(req.params.id), String(req.params.runId)) });
+}));
+
+// Stop a live flash (business rule 138) — the nav bar's Abort. `assets:write`,
+// the grant that starts one. Answers once the run has ended (or the settle
+// cap passed), with the run as it ended; 409 when it already had.
+firmwareAssetRouter.post("/runs/:runId/abort", requirePermission("assets", "write"), handle(async (req, res) => {
+  const body = AbortRunSchema.safeParse(req.body ?? {});
+  if (!body.success) throw new AppError(400, firstIssue(body.error));
+  const run = await abortFirmwareRun(String(req.params.runId), requestActor(req) ?? "unknown", { assetId: String(req.params.id), reason: body.data.reason });
+  res.json({ run });
+}));
+
+// ─── /assets/firmware-runs (business rule 138) ───────────────────────────────
+
+export const firmwareRunsRouter: Router = Router();
+
+// Every queued / running flash — polled by the nav bar beside the running
+// discoveries. `assets:read`: whoever can open the asset can watch its flash.
+firmwareRunsRouter.get("/active", requirePermission("assets", "read"), handle(async (_req, res) => {
+  res.json({ runs: await listActiveFirmwareRuns() });
 }));
 
 // ─── Scheduled upgrades (business rule 93) ───────────────────────────────────

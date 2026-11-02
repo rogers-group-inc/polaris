@@ -1534,6 +1534,43 @@ function renderNav() {
   window._getServerDiscoveries = function () { return _serverDiscoveries; };
   window._pollDiscoveries = pollDiscoveries;
 
+  // Live firmware flashes (business rule 138) share the discoveries' panel:
+  // asset, who started it, the stage it is on, and an Abort. Whoever can open
+  // an asset (assets:read) can watch its flash; Abort needs assets:write.
+  // Self-paced like the update poller below — 5 s while a flash is live, 15 s
+  // otherwise — and a hidden tab stops asking.
+  var _firmwareRuns = [];
+  var _firmwareTimer = null;
+  async function pollFirmwareRuns() {
+    try {
+      var result = await api.assets.activeFirmwareRuns();
+      _firmwareRuns = (result && result.runs) || [];
+    } catch (_) {
+      _firmwareRuns = [];
+    }
+    renderQueryStatus();
+  }
+  function _scheduleFirmwarePoll() {
+    if (_firmwareTimer) clearTimeout(_firmwareTimer);
+    _firmwareTimer = setTimeout(function () {
+      if (document.hidden) { _scheduleFirmwarePoll(); return; }
+      pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll);
+    }, _firmwareRuns.length ? 5000 : 15000);
+  }
+  if (permAtLeast("assets", "read")) {
+    pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll);
+    });
+  }
+  window._getFirmwareRuns = function () { return _firmwareRuns; };
+  // The card calls this right after a flash starts, so the panel shows it
+  // without sitting out the idle interval.
+  window._pollFirmwareRuns = function () {
+    if (!permAtLeast("assets", "read")) return Promise.resolve();
+    return pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll);
+  };
+
   // ─── New-user role-review notifications ────────────────────────────────
   // Admin-only sidebar panel. Lists users who just completed their first
   // login so an admin can decide whether to promote them off the default
@@ -2738,7 +2775,8 @@ function renderQueryStatus() {
   if (!container) return;
 
   var serverDiscoveries = (window._getServerDiscoveries && window._getServerDiscoveries()) || [];
-  var totalCount = activeQueries.length + serverDiscoveries.length;
+  var firmwareRuns = (window._getFirmwareRuns && window._getFirmwareRuns()) || [];
+  var totalCount = activeQueries.length + serverDiscoveries.length + firmwareRuns.length;
 
   if (!totalCount) {
     container.style.display = "none";
@@ -2748,14 +2786,19 @@ function renderQueryStatus() {
 
   var queryCount = activeQueries.length;
   var discoveryCount = serverDiscoveries.length;
+  var firmwareCount = firmwareRuns.length;
+  var kinds = (queryCount > 0 ? 1 : 0) + (discoveryCount > 0 ? 1 : 0) + (firmwareCount > 0 ? 1 : 0);
   var labelText;
-  if (queryCount > 0 && discoveryCount > 0) {
+  if (kinds > 1) {
     labelText = totalCount + ' operation' + (totalCount === 1 ? '' : 's') + ' running';
+  } else if (firmwareCount > 0) {
+    labelText = firmwareCount + ' firmware upgrade' + (firmwareCount === 1 ? '' : 's') + ' running';
   } else if (discoveryCount > 0) {
     labelText = discoveryCount + ' discover' + (discoveryCount === 1 ? 'y' : 'ies') + ' running';
   } else {
     labelText = queryCount + ' quer' + (queryCount === 1 ? 'y' : 'ies') + ' running';
   }
+  var canAbortFirmware = permAtLeast("assets", "write");
 
   container.style.display = "block";
   container.innerHTML =
@@ -2814,6 +2857,23 @@ function renderQueryStatus() {
           '<button class="query-abort-btn" data-discovery-id="' + escapeHtml(d.id) + '" data-discovery-name="' + escapeHtml(d.name) + '" title="Abort">&#x2715;</button>' +
           '</li>';
       }).join("") +
+      firmwareRuns.map(function (r) {
+        var aborting = !!r.abortRequestedBy || !!_firmwareAborting[r.id];
+        var parts = ['by ' + r.startedBy, aborting ? 'aborting…' : firmwareStageLabel(r.stage)];
+        var pct = !aborting && firmwareFlashPercent(r.progress);
+        if (pct) parts.push(pct);
+        return '<li><div style="min-width:0;flex:1">' +
+          '<span class="query-status-name">Upgrading ' +
+            '<span class="query-status-device-link" role="button" tabindex="0" data-fw-asset-id="' + escapeHtml(r.assetId) + '" title="Open asset details">' + escapeHtml(r.assetName) + '</span>' +
+            ' → ' + escapeHtml(r.toVersion) +
+          '</span>' +
+          '<span class="query-status-progress">' + escapeHtml(parts.join(' · ')) + '</span>' +
+          '</div>' +
+          (canAbortFirmware && !aborting
+            ? '<button class="query-abort-btn" data-fw-run-id="' + escapeHtml(r.id) + '" title="Abort the firmware upgrade">&#x2715;</button>'
+            : '') +
+          '</li>';
+      }).join("") +
     '</ul>' +
     (activeQueries.length > 1
       ? '<button class="query-abort-all-btn" id="abort-all-btn">Abort All</button>'
@@ -2827,6 +2887,12 @@ function renderQueryStatus() {
         var ok = await showConfirm('Abort discovery of "' + discoveryName + '"?');
         if (!ok) return;
         try { await api.integrations.abortDiscover(discoveryId); } catch (_) {}
+        return;
+      }
+      var fwRunId = btn.getAttribute("data-fw-run-id");
+      if (fwRunId) {
+        var run = firmwareRuns.find(function (x) { return x.id === fwRunId; });
+        if (run) await abortFirmwareRunFromPanel(run);
         return;
       }
       var qid = parseFloat(btn.getAttribute("data-qid"));
@@ -2849,17 +2915,91 @@ function renderQueryStatus() {
 
   // Clicking (or Enter/Space on) a FortiGate name in the discovery popup opens
   // that firewall's asset slide-over.
+  // A firmware row's asset name carries the asset id, so it opens directly.
   container.querySelectorAll(".query-status-device-link").forEach(function (el) {
-    el.addEventListener("click", function () {
-      openDiscoveryDevice(el.getAttribute("data-device-name"));
-    });
+    var open = function () {
+      var assetId = el.getAttribute("data-fw-asset-id");
+      if (assetId) openAssetById(assetId);
+      else openDiscoveryDevice(el.getAttribute("data-device-name"));
+    };
+    el.addEventListener("click", open);
     el.addEventListener("keydown", function (e) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openDiscoveryDevice(el.getAttribute("data-device-name"));
+        open();
       }
     });
   });
+}
+
+// ─── Live firmware flashes in the operations panel (business rule 138) ─────
+
+// Runs this tab has asked to abort and is waiting on — the row says
+// "aborting…" at once instead of after the next poll.
+var _firmwareAborting = {};
+
+var FIRMWARE_STAGE_LABELS = {
+  preflight: "checking the device",
+  staging: "uploading the image",
+  compat: "checking compatibility",
+  deploying: "flashing",
+  rebooting: "rebooting",
+  verifying: "verifying the new version",
+  recovering: "waiting for monitoring",
+};
+
+function firmwareStageLabel(stage) {
+  return FIRMWARE_STAGE_LABELS[stage] || (stage ? stage : "starting");
+}
+
+// The flash's own percent (a FortiSwitch reports erase / write / verify /
+// restart), naming the latest phase that has moved; "" when it reports none.
+function firmwareFlashPercent(progress) {
+  if (!progress) return "";
+  var order = ["restart", "verify", "write", "erase"];
+  for (var i = 0; i < order.length; i++) {
+    var v = progress[order[i]];
+    if (typeof v === "number" && v > 0) return order[i] + " " + Math.round(v) + "%";
+  }
+  return "";
+}
+
+// Stages after which the device has been told to flash and carries on by
+// itself — the confirm says so rather than promising the device is untouched.
+var FIRMWARE_FLASHING_STAGES = { deploying: true, rebooting: true, verifying: true, recovering: true };
+
+async function abortFirmwareRunFromPanel(run) {
+  var name = run.assetName;
+  var msg;
+  if (FIRMWARE_FLASHING_STAGES[run.stage]) {
+    msg = name + " has already been told to flash. Aborting stops Polaris following it and ends its maintenance window, " +
+      "but the device keeps flashing and reboots on its own, and alerts may fire while it does.\n\n" +
+      "Verify its version afterwards. Abort the firmware upgrade anyway?";
+  } else if (run.stage === "staging") {
+    msg = "Abort the firmware upgrade of " + name + "?\n\n" +
+      "The image is still uploading. A FortiSwitch is left on its current firmware. A FortiGate or FortiAP starts flashing " +
+      "as soon as the whole image has arrived, so if the upload has just finished it may already be flashing.";
+  } else {
+    msg = "Abort the firmware upgrade of " + name + "?\n\nThe device has not been flashed and keeps its current firmware.";
+  }
+  if (!await showConfirm(msg)) return;
+  _firmwareAborting[run.id] = true;
+  renderQueryStatus();
+  try {
+    var res = await api.assets.abortFirmwareRun(run.assetId, run.id);
+    var ended = res && res.run;
+    showToast(ended && ended.status === "failed" ? "Firmware upgrade of " + name + " aborted" : "Abort sent — the upgrade of " + name + " is stopping", "success");
+  } catch (err) {
+    showToast("Couldn't abort the upgrade of " + name + ": " + ((err && err.message) || "request failed"), "error");
+  } finally {
+    delete _firmwareAborting[run.id];
+    if (typeof window._pollFirmwareRuns === "function") await window._pollFirmwareRuns();
+  }
+}
+
+function openAssetById(assetId) {
+  if (typeof openViewModal === "function") openViewModal(assetId);
+  else window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
 }
 
 // Resolve a discovery "currently querying" FortiGate name to its Asset and open
@@ -2889,11 +3029,7 @@ async function openDiscoveryDevice(name) {
     showToast("No matching asset for " + name, "error");
     return;
   }
-  if (typeof openViewModal === "function") {
-    openViewModal(match.id);
-  } else {
-    window.location.href = "/assets.html#view=asset:" + encodeURIComponent(match.id);
-  }
+  openAssetById(match.id);
 }
 
 // ─── New-user role-review notifications ────────────────────────────────────

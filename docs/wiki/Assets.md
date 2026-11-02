@@ -1084,9 +1084,30 @@ from before the reboot. It waits for the device's old web session to be
 refused (a FortiGate: for the gate to stop answering and answer again), which
 only happens once it has restarted, then signs in afresh and reads the running
 version. That can succeed while the device's monitoring
-still shows missed polls; the two use different services on the device. Polaris does not offer a
-cancel — a flash mid-write must finish — and **you must not power-cycle the
-device while it is writing.**
+still shows missed polls; the two use different services on the device.
+**You must not power-cycle the device while it is writing.**
+
+**Watching and aborting a flash.** While a firmware upgrade runs, it is listed
+in the operations panel at the bottom of the nav bar, beside running
+discoveries, on every page ([rule 138](Business-Rules#rule-138)). The panel
+shows the device (click it to open the asset), the target version, who started
+it, the stage it is on and, on a switch, the flash percentage. Anyone who can
+open the asset sees it. **Read-Write on Assets** also gets an **✕** that aborts
+it. Aborting stops Polaris. It cannot stop a device that has already been told
+to flash:
+
+- **Before the device is flashing** (checking the device, uploading,
+  checking compatibility), the device is left on its current firmware. A switch
+  that already had the image staged has it removed.
+- **Once it is flashing** (from *Flashing* on, or on a FortiGate or FortiAP
+  once the whole image has been uploaded), the device carries on and reboots
+  by itself. Polaris stops following it and ends its maintenance window, so
+  alerts may fire while it reboots. Check its version afterwards.
+
+An aborted run ends *failed*. Its transcript, its error and a
+`firmware.upgrade_aborted` event on the [Events](Events) page say who
+aborted it, at which stage and why. The card's failure line then reads
+*Aborted by … during …*.
 
 A run ends *succeeded* (the device came back reporting the image's version),
 *unverified* (it came back but Polaris could not confirm the version — check

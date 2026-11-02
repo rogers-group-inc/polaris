@@ -66,6 +66,30 @@ const ACTIVE_STATUSES = ["queued", "running"] as const;
 const LOG_CAP = 500;
 const WRITE_THROTTLE_MS = 5_000;
 
+/**
+ * Business rule 138: the runs THIS process is driving, by run id — what an
+ * Abort reaches. Registered in `startFirmwareUpgrade` before the runner is
+ * scheduled, so an abort that lands between the 202 and the `setImmediate`
+ * still finds it; removed when the runner settles. A run in the table that
+ * is not in here has no runner (a restart orphaned it) and is closed directly.
+ */
+interface LiveRun {
+  controller: AbortController;
+  abort: { actor: string; reason: string | null } | null;
+  done: Promise<void>;
+}
+const liveRuns = new Map<string, LiveRun>();
+
+/** How long an Abort waits for the runner to write its terminal row before answering. */
+const ABORT_SETTLE_MS = 30_000;
+
+/**
+ * Stages after which the device has been told to flash and goes on doing so
+ * whatever Polaris does. A FortiGate / FortiAP is told by the upload itself,
+ * so for those `staging` counts once the whole image was sent.
+ */
+const DEVICE_FLASHING_STAGES = new Set<string>(["deploying", "rebooting", "verifying", "recovering"]);
+
 export type UpgradeAvailabilityState =
   | "unsupported"       // no engine for this manufacturer / type / serial
   | "no-serial"
@@ -619,17 +643,23 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     }
   }
 
-  setImmediate(() => {
-    runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides, cluster)
-      .catch((err) => {
-        logger.error({ err, runId: run.id }, "Firmware upgrade runner crashed unexpectedly");
-      })
-      // A booked flash reports its outcome to the booking's recipients (rule
-      // 93) — after the terminal row and Event are written, whatever they say.
-      .finally(() => {
-        if (input.scheduleId) void notifyScheduledRun(run.id);
-        if (input.groupMemberId) void advanceGroupAfterRun(run.id);
-      });
+  const live: LiveRun = { controller: new AbortController(), abort: null, done: Promise.resolve() };
+  liveRuns.set(run.id, live);
+  live.done = new Promise<void>((settled) => {
+    setImmediate(() => {
+      runUpgrade(run.id, a, approved, cred, imagePath, size, input.overrides, cluster, live)
+        .catch((err) => {
+          logger.error({ err, runId: run.id }, "Firmware upgrade runner crashed unexpectedly");
+        })
+        // A booked flash reports its outcome to the booking's recipients (rule
+        // 93) — after the terminal row and Event are written, whatever they say.
+        .finally(() => {
+          liveRuns.delete(run.id);
+          settled();
+          if (input.scheduleId) void notifyScheduledRun(run.id);
+          if (input.groupMemberId) void advanceGroupAfterRun(run.id);
+        });
+    });
   });
   return summarize(run);
 }
@@ -666,8 +696,10 @@ async function runUpgrade(
   imageSize: number,
   overrides?: StartUpgradeInput["overrides"],
   cluster?: ClusterInfo | null,
+  live?: LiveRun,
 ): Promise<void> {
   const engine = engineByKind((await prisma.firmwareUpgradeRun.findUnique({ where: { id: runId }, select: { engine: true } }))?.engine ?? "");
+  const signal = live?.controller.signal;
   // Rule 129: every member's hold opened at start is released with the primary's.
   const memberIds = (cluster?.members ?? []).map((m) => m.assetId).filter((id): id is string => !!id && id !== a.id);
   const dropHolds = async () => {
@@ -681,8 +713,13 @@ async function runUpgrade(
   let dirty = false;
   let lastWrite = 0;
   let writing: Promise<void> | null = null;
+  // The last "upload N%" the engine logged — on a FortiGate / FortiAP the
+  // upload is the trigger, so 100 means the device has the image (rule 138).
+  let uploadPct = 0;
 
   const push = (level: "info" | "warn" | "error", msg: string) => {
+    const pct = /^upload(?: \(base64\))? (\d+)%$/.exec(msg);
+    if (pct) uploadPct = Number(pct[1]);
     log.push({ t: new Date().toISOString(), level, msg });
     if (log.length > LOG_CAP) log.splice(0, log.length - LOG_CAP);
     dirty = true;
@@ -708,6 +745,36 @@ async function runUpgrade(
       where: { id: runId },
       data: { status, result, stage, progress: progress as object | undefined, log: log as object[], error: extra.error ?? null, verifiedVersion: extra.verifiedVersion ?? null, finishedAt: new Date(), heartbeatAt: new Date() },
     }).catch((err) => logger.error({ err, runId }, "firmware run terminal write failed"));
+  };
+
+  // Business rule 138: an Abort ends the run as `failed` / result `aborted`,
+  // names who aborted it in the log, the error and its own Event, and
+  // releases the hold at once — the operator asked Polaris to stop. When the
+  // device had already been told to flash, every one of those says so.
+  const finishAborted = async () => {
+    const by = live?.abort?.actor ?? "unknown";
+    const why = live?.abort?.reason ?? null;
+    const at = stage ?? "start";
+    const deviceFlashing = (stage !== null && DEVICE_FLASHING_STAGES.has(stage))
+      || (stage === "staging" && engine?.kind !== "fortiswitch-https" && uploadPct >= 100);
+    push("warn", `aborted by ${by} during ${at}${why ? ` — ${why}` : ""}`);
+    if (deviceFlashing) push("warn", "the device had already been told to flash and carries on by itself — verify its version by hand");
+    else push("info", "the device was not told to flash; it still runs its old firmware");
+    await dropHolds();
+    await finish("failed", "aborted", {
+      error: `Aborted by ${by} during ${at}${why ? ` (${why})` : ""}${deviceFlashing ? " — the device may still be flashing; verify its version by hand" : ""}`,
+    });
+    await logEvent({
+      action: "firmware.upgrade_aborted",
+      resourceType: "asset",
+      resourceId: a.id,
+      resourceName: assetLabel(a),
+      actor: by,
+      level: "warning",
+      message: `Firmware upgrade to ${image.versionLabel} aborted by ${by} during ${at}${why ? ` (${why})` : ""}`
+        + (deviceFlashing ? " — the device had already been told to flash and may still be flashing" : " — the device was not flashed"),
+      details: { runId, imageId: image.id, stage, abortedBy: by, reason: why, deviceMayBeFlashing: deviceFlashing, durationMs: Date.now() - startedAt },
+    });
   };
 
   try {
@@ -751,8 +818,13 @@ async function runUpgrade(
       },
       onProgress: (p) => { progress = p; dirty = true; },
       onLog: push,
+      ...(signal ? { signal } : {}),
     };
     const res = await engine.run(ctx);
+    if (signal?.aborted) {
+      await finishAborted();
+      return;
+    }
 
     // The engine proved the device back over its WEB UI; Polaris monitors it
     // over SNMP / ICMP / its own collectors, which routinely come up minutes
@@ -766,7 +838,12 @@ async function runUpgrade(
         onWaiting: () => { stage = "recovering"; },
         push,
         flush,
+        ...(signal ? { signal } : {}),
       });
+      if (signal?.aborted) {
+        await finishAborted();
+        return;
+      }
     }
     const durationMs = Date.now() - startedAt;
 
@@ -820,6 +897,10 @@ async function runUpgrade(
       details: { runId, imageId: image.id, stage, error: res.error ?? null, durationMs },
     });
   } catch (err) {
+    if (signal?.aborted) {
+      await finishAborted();
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     push("error", `runner error: ${msg}`);
     await dropHolds();
@@ -895,6 +976,110 @@ export async function getRunForAsset(assetId: string, runId: string): ReturnType
 export async function listRunsForAsset(assetId: string, limit = 20): Promise<RunSummary[]> {
   const rows = await prisma.firmwareUpgradeRun.findMany({ where: { assetId }, orderBy: { startedAt: "desc" }, take: Math.min(Math.max(limit, 1), 100) });
   return rows.map(summarize);
+}
+
+/** A live run as the nav bar's operations panel shows it (rule 138). */
+export interface ActiveFirmwareRun {
+  id: string;
+  assetId: string;
+  assetName: string;
+  toVersion: string;
+  stage: string | null;
+  /** The flash's own percent, when the device reports one (FortiSwitch). */
+  progress: FirmwareProgress | null;
+  startedBy: string;
+  startedAt: Date;
+  /** Set once an Abort has been asked for and the runner has not yet settled. */
+  abortRequestedBy: string | null;
+}
+
+/**
+ * Every queued / running flash, oldest first — the nav bar polls this beside
+ * the running discoveries. Indexed on `status`; a fleet of 2000 has a
+ * handful of live runs at most, and `log` (up to 500 lines) is never read.
+ */
+export async function listActiveFirmwareRuns(): Promise<ActiveFirmwareRun[]> {
+  const rows = await prisma.firmwareUpgradeRun.findMany({
+    where: { status: { in: [...ACTIVE_STATUSES] } },
+    orderBy: { startedAt: "asc" },
+    select: { id: true, assetId: true, toVersion: true, stage: true, progress: true, startedBy: true, startedAt: true, asset: { select: { hostname: true, ipAddress: true } } },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    assetId: r.assetId,
+    assetName: assetLabel(r.asset) ?? r.assetId,
+    toVersion: r.toVersion,
+    stage: r.stage,
+    progress: (r.progress as FirmwareProgress | null) ?? null,
+    startedBy: r.startedBy,
+    startedAt: r.startedAt,
+    abortRequestedBy: liveRuns.get(r.id)?.abort?.actor ?? null,
+  }));
+}
+
+/**
+ * Business rule 138: stop a live flash. Fires the runner's abort — which
+ * ends the engine's wait or tears down its request in flight — and waits (up
+ * to ABORT_SETTLE_MS) for the runner to write the terminal row, so the caller
+ * — the nav bar, or the updater about to restart Polaris — answers with the
+ * run as it ended. A run with no runner in this process (a restart orphaned
+ * it) is closed here with the same wording. `assetId`, when given, must own
+ * the run (404 otherwise, as `getRunForAsset`).
+ */
+export async function abortFirmwareRun(runId: string, actor: string, opts: { assetId?: string; reason?: string } = {}): Promise<RunSummary> {
+  const row = await prisma.firmwareUpgradeRun.findUnique({ where: { id: runId }, include: { asset: { select: { hostname: true, ipAddress: true } } } });
+  if (!row || (opts.assetId && row.assetId !== opts.assetId)) throw new AppError(404, "Firmware upgrade run not found");
+  if (!(ACTIVE_STATUSES as readonly string[]).includes(row.status)) throw new AppError(409, `This firmware upgrade has already ended (${row.status})`);
+  const reason = opts.reason?.trim() || null;
+
+  const live = liveRuns.get(runId);
+  if (live) {
+    if (!live.abort) {
+      live.abort = { actor, reason };
+      live.controller.abort();
+    }
+    const settledInTime = await Promise.race([
+      live.done.then(() => true),
+      new Promise<boolean>((r) => setTimeout(() => r(false), ABORT_SETTLE_MS).unref()),
+    ]);
+    if (!settledInTime) logger.warn({ runId }, "firmware abort: the runner had not settled when the abort answered");
+    return summarize(await prisma.firmwareUpgradeRun.findUniqueOrThrow({ where: { id: runId } }));
+  }
+
+  // No runner here: nothing to stop, only a row to close.
+  const at = row.stage ?? "start";
+  const line = { t: new Date().toISOString(), level: "warn", msg: `aborted by ${actor} during ${at}${reason ? ` — ${reason}` : ""} (no runner was driving this run)` };
+  const msg = `Aborted by ${actor} during ${at}${reason ? ` (${reason})` : ""} — no runner was driving this run; verify the device's version by hand`;
+  const log = [...((row.log as unknown[]) ?? []), line].slice(-LOG_CAP);
+  const updated = await prisma.firmwareUpgradeRun.update({
+    where: { id: runId },
+    data: { status: "failed", result: "aborted", error: msg, log: log as object[], finishedAt: new Date() },
+  });
+  await dropHold(row.assetId);
+  await logEvent({
+    action: "firmware.upgrade_aborted",
+    resourceType: "asset",
+    resourceId: row.assetId,
+    resourceName: assetLabel(row.asset),
+    actor,
+    level: "warning",
+    message: `Firmware upgrade to ${row.toVersion} aborted by ${actor} during ${at}${reason ? ` (${reason})` : ""} — no runner was driving it`,
+    details: { runId, stage: row.stage, abortedBy: actor, reason, orphaned: true },
+  });
+  await notifyScheduledRun(runId);
+  return summarize(updated);
+}
+
+/**
+ * Abort every live flash — what the in-app updater and Restart do when the
+ * operator chose "abort and continue" (rule 138). Parallel: each abort waits
+ * for its own runner, and the restart that follows should not wait for them
+ * one at a time. Returns what was aborted.
+ */
+export async function abortAllFirmwareRuns(actor: string, reason: string): Promise<RunSummary[]> {
+  const active = await prisma.firmwareUpgradeRun.findMany({ where: { status: { in: [...ACTIVE_STATUSES] } }, select: { id: true } });
+  const results = await Promise.allSettled(active.map((r) => abortFirmwareRun(r.id, actor, { reason })));
+  return results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
 }
 
 /**

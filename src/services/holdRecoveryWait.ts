@@ -71,6 +71,8 @@ export interface HoldRecoveryRun {
   onWaiting: () => void;
   push: (level: "info" | "warn" | "error", msg: string) => void;
   flush: (force?: boolean) => Promise<void>;
+  /** The run's abort (rule 138): ends the wait at once, returning false. The caller owns the hold and its release. */
+  signal?: AbortSignal;
 }
 
 /** True when monitoring answered within the cap; false on the cap or with no hold. */
@@ -103,6 +105,7 @@ export async function holdUntilMonitorAnswers(
   let answeredAt: Date | null = null;
   let toldWaiting = false;
   while (Date.now() < deadline) {
+    if (run.signal?.aborted) return false;
     if (rebootSince) {
       const a = await prisma.asset.findUnique({ where: { id: assetId }, select: { lastRebootAt: true, lastUptimeSec: true } }).catch(() => null);
       if (a?.lastRebootAt && a.lastRebootAt > rebootSince) {
@@ -134,7 +137,12 @@ export async function holdUntilMonitorAnswers(
       toldWaiting = true;
       run.push("info", "waiting for monitoring to read the device's uptime and record the reboot");
     }
-    await new Promise((r) => setTimeout(r, Math.max(1, Math.min(timeouts.recoveryPollMs, deadline - Date.now()))));
+    await new Promise<void>((r) => {
+      const t = setTimeout(done, Math.max(1, Math.min(timeouts.recoveryPollMs, deadline - Date.now())));
+      function done(): void { clearTimeout(t); run.signal?.removeEventListener("abort", done); r(); }
+      run.signal?.addEventListener("abort", done, { once: true });
+    });
+    if (run.signal?.aborted) return false;
     await run.flush();
   }
   if (answeredAt) {

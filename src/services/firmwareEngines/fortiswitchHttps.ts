@@ -63,6 +63,7 @@ function client(ctx: FirmwareEngineContext): DeviceHttpClient {
     scheme: ctx.scheme ?? "https",
     commandMs: ctx.timeouts.commandMs,
     uploadIdleMs: ctx.timeouts.uploadIdleMs,
+    signal: ctx.signal,
   });
 }
 
@@ -310,7 +311,9 @@ export async function upgradeFortiSwitch(ctx: FirmwareEngineContext): Promise<Fi
     return { outcome: "unverified", verifiedVersion: lastSeen ?? undefined, deviceSerial, error: `the switch came back reporting ${lastSeen ?? "no version"}, not ${ctx.image.versionLabel}` };
   } catch (err) {
     if (staged && !deployed) {
-      // Un-stage so the next attempt starts clean.
+      // Un-stage so the next attempt starts clean — an aborted run too, so
+      // the request must not be refused by the abort itself.
+      c.releaseSignal();
       await c.postForm(COMPAT_PATH, [{ name: "action", value: "reset" }]).catch(() => undefined);
     }
     if (err instanceof FirmwareEngineError) return { outcome: "failed", error: err.message, deviceSerial };

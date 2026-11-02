@@ -1052,6 +1052,11 @@ const api = {
     startFirmwareUpgrade: (id, body) => _bookingWrite(request("POST", `/assets/${id}/firmware-upgrade`, body)),
     firmwareUpgradeRuns:  (id)       => request("GET",  `/assets/${id}/firmware-upgrade/runs`),
     firmwareUpgradeRun:   (id, runId) => request("GET", `/assets/${id}/firmware-upgrade/runs/${encodeURIComponent(runId)}`),
+    // Business rule 138: stop a live flash (assets:write) — answers once the
+    // run has ended — and every live flash across the fleet (assets:read), the
+    // nav bar's operations panel.
+    abortFirmwareRun:     (id, runId, reason) => request("POST", `/assets/${id}/firmware-upgrade/runs/${encodeURIComponent(runId)}/abort`, reason ? { reason } : {}),
+    activeFirmwareRuns:   ()         => request("GET",  "/assets/firmware-runs/active"),
     // Scheduled upgrades (business rule 93): book (`{ imageId, scheduledFor
     // ISO, notifyEmails }`), change, cancel; `defaults` is the booker's own
     // email for the modal to pre-fill.
@@ -1739,7 +1744,10 @@ const api = {
     getAgentEventLog: () => request("GET", "/server-settings/agent-event-log"),
     setAgentEventLog: (config) => request("PUT", "/server-settings/agent-event-log", config),
     generateSecurityToken: (which) => request("POST", "/server-settings/security-tokens/generate", { which: which }),
-    restart: () => request("POST", "/server-settings/restart"),
+    // abortFirmwareRuns: the operator chose "abort and continue" after a 409
+    // `firmware-upgrade-running` (rule 138) — every live flash is aborted in
+    // their name before the restart.
+    restart: (abortFirmwareRuns) => request("POST", "/server-settings/restart", abortFirmwareRuns ? { abortFirmwareRuns: true } : undefined),
     checkForUpdates: () => request("GET", "/server-settings/updates/check"),
     getUpdateStatus: () => request("GET", "/server-settings/updates/status"),
     // Auth-only, redacted { state, step } — the nav bar's update panel for
@@ -1748,10 +1756,12 @@ const api = {
     // allowWithoutBackup: only sent when the operator ticked the confirmation in
     // the Apply Update modal. Absent/false means the server ABORTS the update if
     // the pre-update backup fails.
-    applyUpdate:     (password, allowWithoutBackup) => {
+    // abortFirmwareRuns: as for restart above (rule 138).
+    applyUpdate:     (password, allowWithoutBackup, abortFirmwareRuns) => {
       const body = {};
       if (password) body.password = password;
       if (allowWithoutBackup) body.allowWithoutBackup = true;
+      if (abortFirmwareRuns) body.abortFirmwareRuns = true;
       return request("POST", "/server-settings/updates/apply", Object.keys(body).length ? body : undefined);
     },
     dismissUpdate:   () => request("POST", "/server-settings/updates/dismiss"),

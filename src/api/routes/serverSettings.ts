@@ -4,7 +4,7 @@
 
 import { ensurePrivateDir } from "../../utils/privateFiles.js";
 import { chunkArray } from "../../utils/chunk.js";
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { X509Certificate, createPrivateKey, randomBytes } from "node:crypto";
@@ -26,6 +26,7 @@ import { getReservationMacSettings, saveReservationMacSettings } from "../../ser
 import { getDashSettings, saveDashSettings } from "../../services/dashSettingsService.js";
 import { getIpv6Status, setIpv6Enabled } from "../../services/ipv6GateService.js";
 import { getRebootSettings, saveRebootSettings } from "../../services/rebootSettingsService.js";
+import { listActiveFirmwareRuns, abortAllFirmwareRuns } from "../../services/firmwareUpgradeService.js";
 import {
   getLoginAccessSettings,
   saveLoginAccessSettings,
@@ -1857,6 +1858,32 @@ router.post("/security-tokens/generate", requirePermission("serverSettingsData",
   }
 });
 
+// ─── Live firmware flashes vs. a restart (business rule 138) ────────────
+//
+// A flash runs inside the web process (rule 87); restarting it orphans the
+// run, and the boot sweep can only call it failed. So Apply Update and
+// Restart refuse 409 while one is live, naming each, unless the operator
+// answered "abort and continue" — `abortFirmwareRuns: true` — in which case
+// every live run is aborted IN THEIR NAME first (the run log, its error and a
+// firmware.upgrade_aborted Event say who and why). The gate is these routes'
+// own: whoever may restart Polaris may stop what the restart would kill.
+// Returns true when the response has been sent.
+async function refuseOrAbortLiveFlashes(req: Request, res: Response, why: string): Promise<boolean> {
+  const live = await listActiveFirmwareRuns();
+  if (live.length === 0) return false;
+  if (req.body?.abortFirmwareRuns !== true) {
+    const names = live.map((r) => `${r.assetName} (${r.stage ?? "queued"}, started by ${r.startedBy})`).join(", ");
+    res.status(409).json({
+      error: `A firmware upgrade is in progress on ${names}. Abort it to continue.`,
+      code: "firmware-upgrade-running",
+      firmwareRuns: live,
+    });
+    return true;
+  }
+  await abortAllFirmwareRuns(requestActor(req) ?? "unknown", why);
+  return false;
+}
+
 // ─── Restart ─────────────────────────────────────────────────────────────
 //
 // Operator-triggered process restart. Used by the Capacity Advisor card
@@ -1878,6 +1905,7 @@ router.post("/restart", requirePermission("serverSettingsData", "write"), async 
         "Polaris runs in a container and does not restart itself. Restart the Polaris container(s) from your container host to apply.",
       );
     }
+    if (await refuseOrAbortLiveFlashes(req, res, "to restart Polaris")) return;
     await logEvent({
       level: "warning",
       action: "server.restart.requested",
@@ -1930,6 +1958,7 @@ router.post("/updates/apply", requirePermission("serverSettingsData", "write"), 
     if (status.state === "applying" || status.state === "restarting") {
       return res.status(409).json({ error: "An update is already in progress" });
     }
+    if (await refuseOrAbortLiveFlashes(req, res, "to apply an in-app update")) return;
     const password: string | null = (req.body && typeof req.body.password === "string" && req.body.password.length > 0)
       ? req.body.password
       : null;

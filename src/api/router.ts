@@ -31,7 +31,7 @@ import serverSettingsRouter from "./routes/serverSettings.js";
 import proxySettingsRouter from "./routes/proxySettings.js";
 import mibsRouter from "./routes/mibs.js";
 import manufacturerProfilesRouter from "./routes/manufacturerProfiles.js";
-import { firmwareRouter, firmwareAssetRouter, firmwareGroupRouter } from "./routes/firmware.js";
+import { firmwareRouter, firmwareAssetRouter, firmwareGroupRouter, firmwareRunsRouter } from "./routes/firmware.js";
 import { workloadAssetRouter } from "./routes/workloads.js";
 import { rebootAssetRouter } from "./routes/reboot.js";
 import deviceIconsRouter from "./routes/deviceIcons.js";
@@ -196,9 +196,12 @@ router.use("/assistant", requirePermission("assistant", "read"), assistantRouter
 router.use("/asset-types", assetTypesRouter);
 // The per-asset firmware upgrade surface (business rule 87) mounted BEFORE
 // /assets so "firmware-upgrade" is never read as a sub-resource of the assets
-// router. Gated on the `firmware` key per route: read for availability and
-// run history, fullwrite to start a flash.
+// router. Gated on `assets` per route (rule 43(g)): read for availability and
+// run history, write to start or abort a flash.
 router.use("/assets/:id/firmware-upgrade", firmwareAssetRouter);
+// Every live flash across the fleet — the nav bar's operations panel (business
+// rule 138). Before /assets so "firmware-runs" is never read as an asset id.
+router.use("/assets/firmware-runs", firmwareRunsRouter);
 // Group firmware upgrades (business rule 122), before /assets so
 // "firmware-groups" is never read as an asset id. assets:read / assets:write
 // per route, like the per-asset surface above.

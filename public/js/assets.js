@@ -7612,6 +7612,8 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
     call.then(function () {
       closeModal();
       showToast(done, "success");
+      // The nav bar's operations panel shows the flash now, not after its idle poll (rule 138).
+      if (!scheduling() && typeof window._pollFirmwareRuns === "function") window._pollFirmwareRuns();
       return api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); });
     }).catch(function (err) {
       btn.disabled = false;
