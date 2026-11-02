@@ -405,7 +405,8 @@ you have unplugged disappears once the switches stop advertising it. Hover the
 line to see which ports LLDP reported.
 
 **Hovering any link** shows its two devices, their ports and the kind of link,
-and lights the link and both devices with a blue glow. A link on a **physical
+and lights it up: both devices get a blue ring, and the link glows in its own
+colour (yellow when it carries a loop halo). A link on a **physical
 loop** (drawn with a yellow halo) lights the **whole loop** instead: every
 looped link reachable from it through the devices they share, and those
 devices, so you can see which switches a ring runs through.
