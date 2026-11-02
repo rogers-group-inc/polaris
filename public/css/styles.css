@@ -8994,11 +8994,25 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 .devmap-topo-views[hidden] { display: none; }
 .devmap-topo-views .topology-floor-chip { pointer-events: auto; }
-/* The gear's Locations list: one tick per area / building / floor, indented
-   by depth, scrolling past a dozen or so. */
-.devmap-cfg-loclist { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
-.devmap-cfg-loc-1 { padding-left: 16px; }
-.devmap-cfg-loc-2 { padding-left: 32px; }
+/* A location chip with its pin: the label, then a small map-pin toggle
+   (signed-in Dashboard, out of edit mode) or mark. Unpinned, the toggle is
+   faint until the chip is hovered; pinned, it wears the accent. */
+.devmap-chip { display: inline-flex; align-items: center; gap: 5px; }
+.devmap-chip-pin {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-right: -4px; padding: 0;
+  background: none; border: 0; border-radius: 50%;
+  color: inherit; opacity: 0.35; cursor: pointer;
+}
+.devmap-chip:hover .devmap-chip-pin { opacity: 0.75; }
+.devmap-chip-pin:hover { opacity: 1; background: var(--color-hover-tint); }
+.devmap-chip.is-pinned .devmap-chip-pin { opacity: 1; color: var(--color-accent); }
+.devmap-chip-pin-mark { cursor: default; }
+.devmap-chip-pin-mark:hover { background: none; }
+/* The rotation toggle in the topology's top bar: icon + "Rotate", lit while
+   it rotates (the bar's shared .active look). */
+.devmap-topo-bar .devmap-topo-rotate { display: inline-flex; align-items: center; gap: 4px; }
+.devmap-topo-bar .devmap-topo-rotate[hidden] { display: none; }
 .devmap-topo-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; }
 .devmap-topo-msg[hidden] { display: none; }
 .devmap-topo-bar {

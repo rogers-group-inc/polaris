@@ -196,11 +196,12 @@ the Device Map page: what each node, health colour, link and location box
 means. Its × folds it back into the button, and your browser remembers whether
 you left it open.
 
-**Device types** in the gear choose which devices a topology shows: FortiGates,
-FortiSwitches, FortiAPs, and devices at other sites. Untick a type to hide those
-devices and their links, both on a one-gate widget and on a topology opened by
-double-clicking a gate on the map. The legend leaves out the hidden types.
-Every type is shown until you untick it.
+**Asset types** in the gear choose which devices a topology shows: Firewalls,
+Switches and Access Points. A device from another site — one this site's
+switches see as a neighbour, drawn with a blue ring — counts as its own asset
+type. Untick a type to hide those devices and their links, both on a one-gate
+widget and on a topology opened by double-clicking a gate on the map. The
+legend leaves out the hidden types. Every type is shown until you untick it.
 
 **Locations.** When the site's devices carry location codes (`a:` area,
 `b:` building, `f:` floor in their descriptions), the topology shows the same
@@ -209,20 +210,26 @@ areas, then the buildings and floors of the one you pick. Each location is
 drawn with the layout saved for it on the Device Map page. A dashed stub
 standing for a device elsewhere opens that location when you click it.
 
-To **lock** a one-gate widget to some of its locations, tick them under
-**Locations** in the gear. Locked, the widget shows only those locations: it
-opens on the first, its chips offer only the locked ones (plus their
-buildings and floors), and **Base** is gone. Anyone can still open a locked
-location's buildings and floors, but nobody can leave the lock. Nothing
-ticked means the whole site. With two or more locked, **Rotate** steps
-through them on a timer. **⏸** in the topology's top bar pauses the rotation
-and **▶** resumes it; picking a chip pauses it too.
+**Pinned locations.** On a one-gate widget, every location chip carries a
+small pin while you are *not* customizing. Click it to pin that location;
+click it again to unpin. While customizing, a pinned chip shows the pin as a
+mark, and pins cannot be changed.
 
-The lock and the rotation are part of the widget's settings. They travel with
-the dashboard: a saved or published dashboard keeps them, and so does a Dash
-wallboard tab [linked](Mobile-and-Dash#what-it-can-show) to it. Locations need
-exactly one FortiGate ticked, because a lock names that site's locations. A
-gate double-clicked on a map shows the chips unlocked.
+With two or more locations pinned, **Rotate** appears at the topology's top
+right. Turned on, it steps through the pinned locations, one every 30
+seconds. Picking a chip turns it off, so the location you chose stays on
+screen.
+
+On the [Dash wallboard](Mobile-and-Dash#what-it-can-show), the pins decide
+what is shown: only the pinned locations, and the buildings and floors inside
+them. **Base** is not offered, and pins cannot be set or cleared there.
+Viewers can click a pinned location to show it (which turns the rotation
+off), and turn **Rotate** on or off for their own screen. With no pins, the
+wallboard offers every location, as the Dashboard does.
+
+Pins and the rotation's on/off are part of the widget's settings. They travel
+with the dashboard: a saved or published dashboard keeps them, and so does a
+Dash wallboard tab linked to it. A gate double-clicked on a map has no pins.
 
 A gate that has no map coordinates can still be picked on its own — its
 topology needs none — but it does not appear on a map of several gates.
