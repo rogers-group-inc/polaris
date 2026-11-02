@@ -202,6 +202,28 @@ devices and their links, both on a one-gate widget and on a topology opened by
 double-clicking a gate on the map. The legend leaves out the hidden types.
 Every type is shown until you untick it.
 
+**Locations.** When the site's devices carry location codes (`a:` area,
+`b:` building, `f:` floor in their descriptions), the topology shows the same
+location chips as the Device Map page: **Base** for the whole site, then its
+areas, then the buildings and floors of the one you pick. Each location is
+drawn with the layout saved for it on the Device Map page. A dashed stub
+standing for a device elsewhere opens that location when you click it.
+
+To **lock** a one-gate widget to some of its locations, tick them under
+**Locations** in the gear. Locked, the widget shows only those locations: it
+opens on the first, its chips offer only the locked ones (plus their
+buildings and floors), and **Base** is gone. Anyone can still open a locked
+location's buildings and floors, but nobody can leave the lock. Nothing
+ticked means the whole site. With two or more locked, **Rotate** steps
+through them on a timer. **⏸** in the topology's top bar pauses the rotation
+and **▶** resumes it; picking a chip pauses it too.
+
+The lock and the rotation are part of the widget's settings. They travel with
+the dashboard: a saved or published dashboard keeps them, and so does a Dash
+wallboard tab [linked](Mobile-and-Dash#what-it-can-show) to it. Locations need
+exactly one FortiGate ticked, because a lock names that site's locations. A
+gate double-clicked on a map shows the chips unlocked.
+
 A gate that has no map coordinates can still be picked on its own — its
 topology needs none — but it does not appear on a map of several gates.
 

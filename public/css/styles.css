@@ -8867,6 +8867,41 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    gate is picked, or over the map (above its controls' 1000) after a gate is
    double-clicked. The graph pane paints the app surface, as the Device Map
    page's topology modal does; the toolbar's buttons wear the map buttons. */
+/* Location-view chips — the Device Map page's switcher (.topology-floor-views,
+   map.css) and the Device Map widget's (.devmap-topo-views). Moved here from
+   map.css, which only the page loads. */
+/* The pill chip — today the location-view switcher's (.topology-floor-chip,
+   below); it was first the device-type show/hide chips', since removed. */
+.topology-type-chip {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  opacity: 0.85;
+  white-space: nowrap;
+  box-shadow: var(--topology-btn-shadow, var(--map-btn-shadow));
+}
+.topology-type-chip:hover { opacity: 1; border-color: var(--color-accent); }
+
+.topology-floor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.topology-floor-row-depth-2 { padding-left: 12px; }
+.topology-floor-row-depth-3 { padding-left: 24px; }
+.topology-floor-chip.is-active {
+  opacity: 1;
+  font-weight: 600;
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
 /* The topology legend — the Device Map page's graph and the Device Map
    widget's read-only topology (moved here from map.css, which only the page
    loads). Bottom-left of the graph, like every map legend; it collapses into its own
@@ -8948,6 +8983,22 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    of the top bar (the gate's name, Fit / Open / full screen) it would
    otherwise grow over; its body scrolls instead. */
 .devmap-topo-legend { width: 230px; max-height: calc(100% - 56px); }
+/* Location chips, under the top bar (the gate's name / Fit / Open). Same
+   rows as the Device Map page's switcher; the strip itself lets drags reach
+   the graph, only the chips take clicks. */
+.devmap-topo-views {
+  position: absolute; left: 8px; top: 42px; z-index: 1;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  max-width: calc(100% - 16px);
+  pointer-events: none;
+}
+.devmap-topo-views[hidden] { display: none; }
+.devmap-topo-views .topology-floor-chip { pointer-events: auto; }
+/* The gear's Locations list: one tick per area / building / floor, indented
+   by depth, scrolling past a dozen or so. */
+.devmap-cfg-loclist { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.devmap-cfg-loc-1 { padding-left: 16px; }
+.devmap-cfg-loc-2 { padding-left: 32px; }
 .devmap-topo-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; }
 .devmap-topo-msg[hidden] { display: none; }
 .devmap-topo-bar {
