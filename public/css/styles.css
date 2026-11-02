@@ -7887,6 +7887,26 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   cursor: text;
   caret-color: currentColor;
 }
+/* A linked tab (the /dash wallboard: a published dashboard that follows its
+   publisher) — a link glyph before the name, in the tab's own text colour. */
+.dashboard-tab-link { display: inline-flex; align-items: center; opacity: 0.75; }
+
+/* Customizing a linked tab: a strip across the canvas saying why it has no
+   edit controls, with the Unlink verb. Spans every grid column. */
+.dashboard-linked-note {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 55%, transparent);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+.dashboard-linked-note strong { color: var(--color-text-primary); }
+.dashboard-linked-note button { flex-shrink: 0; }
 
 /* Column canvas. The dashboard is a 12-col grid of COLUMNS; each column is a
    grid item spanning its width and holding a vertical widget stack. Columns

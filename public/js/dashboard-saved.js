@@ -23,11 +23,13 @@
  *     dashboard-portability.js, offered only where that module is loaded).
  *
  *   Dash wallboard (dash.html, anonymous)
- *     The menu is "My layout (this browser)" plus every published dashboard.
- *     Loading one VIEWS it read-only — no copy, so the wallboard follows what
- *     the publisher changes — and the choice is pinned in localStorage so a
- *     kiosk reboot comes back to the same screen. Saving does not exist here:
- *     that listener is GET-only and has no session to own a row with.
+ *     The menu lists every published dashboard. Loading one LINKS the active
+ *     tab to it: the tab shows that dashboard read-only and follows what the
+ *     publisher changes (re-read every few minutes), while the other tabs and
+ *     the pencil stay. The link is stored with the wallboard's own layout, so
+ *     a kiosk reboot comes back to the same screen; "Unlink this tab" keeps
+ *     the widgets as an ordinary tab. Saving does not exist here: that
+ *     listener is GET-only and has no session to own a row with.
  *
  * Depends on globals from api.js (api / showToast / escapeHtml), dashboard.js
  * (window.PolarisDashboard — the only thing this file knows about the canvas),
@@ -38,18 +40,18 @@
 /* global api, showToast, escapeHtml, openModal, closeModal, showConfirm, permAtLeast */
 
 (function () {
-  // The wallboard's pinned published dashboard. Per-browser, like the local
-  // layout it stands in for — a wallboard is a screen, not an account.
-  var PINNED_KEY = "polaris-dash-published";
-  // How often an unattended wallboard re-reads the dashboard it is showing, so
-  // a publisher's edit reaches the TV without someone walking over to it. Only
-  // ever polled while a published dashboard is on screen.
+  // The wallboard's pin from before tabs could be linked: one published
+  // dashboard shown INSTEAD of the whole layout. Read once at boot and turned
+  // into a link on the active tab (restoreLinks), then removed.
+  var LEGACY_PINNED_KEY = "polaris-dash-published";
+  // How often an unattended wallboard re-reads the dashboards its linked tabs
+  // show, so a publisher's edit reaches the TV without someone walking over
+  // to it. A wallboard with no linked tab sends nothing.
   var PUBLISHED_POLL_MS = 5 * 60 * 1000;
 
   var _cache = [];        // last server list (save-modal name collisions + row lookups)
   var _loaded = false;    // false until the first successful list fetch
   var _pollTimer = null;
-  var _pollStamp = null;  // updatedAt of the published dashboard on screen
 
   function dash() { return window.PolarisDashboard || null; }
   function portability() { return window.PolarisDashboardPortability || null; }
@@ -63,16 +65,13 @@
     return typeof permAtLeast === "function" && permAtLeast("savedDashboards", "fullwrite");
   }
 
-  // ─── Pinned selection (wallboard) ─────────────────────────────────────────
+  // ─── Legacy pin (wallboard) ───────────────────────────────────────────────
 
-  function readPinned() {
-    try { return localStorage.getItem(PINNED_KEY) || null; } catch (_err) { return null; }
+  function readLegacyPin() {
+    try { return localStorage.getItem(LEGACY_PINNED_KEY) || null; } catch (_err) { return null; }
   }
-  function writePinned(id) {
-    try {
-      if (id) localStorage.setItem(PINNED_KEY, id);
-      else localStorage.removeItem(PINNED_KEY);
-    } catch (_err) { /* private mode — the choice just won't survive a reload */ }
+  function dropLegacyPin() {
+    try { localStorage.removeItem(LEGACY_PINNED_KEY); } catch (_err) { /* private mode */ }
   }
 
   // ─── Data ─────────────────────────────────────────────────────────────────
@@ -99,7 +98,7 @@
     var count = d.widgetCount === 1 ? "1 widget" : (d.widgetCount || 0) + " widgets";
     return '<div class="sfl-row' + (active ? " sfl-row-base" : "") + '">' +
       '<button type="button" class="sfl-load" data-sd-load="' + escapeHtml(d.id) + '" title="' +
-        escapeHtml(count + (isWallboard() ? " — show this on the wallboard" : " — load as a new dashboard tab")) + '">' +
+        escapeHtml(count + (isWallboard() ? " — show this on the current tab" : " — load as a new dashboard tab")) + '">' +
         '<span class="sfl-name">' + escapeHtml(d.name) + "</span>" + badge + owner +
       "</button>" + del +
     "</div>";
@@ -111,17 +110,11 @@
     var html = "";
 
     if (isWallboard()) {
-      // The wallboard's own layout is one of the choices, not a mode hidden
-      // behind "close" — it is what an unpinned wallboard shows.
-      var showingLocal = !(dash() && dash().publishedId());
-      html +=
-        '<div class="sfl-row' + (showingLocal ? " sfl-row-base" : "") + '">' +
-          '<button type="button" class="sfl-load" data-sd-act="local" title="The layout saved in this browser">' +
-            '<span class="sfl-name">My layout</span>' +
-            '<span class="sfl-owner">this browser</span>' +
-          "</button>" +
-        "</div>" +
-        '<div class="dropdown-divider"></div>';
+      // A linked tab can be turned back into one of the wallboard's own.
+      if (dash() && dash().publishedId()) {
+        html += '<button type="button" data-sd-act="unlink" title="Keep these widgets as an ordinary tab that no longer follows the publisher">Unlink this tab</button>' +
+          '<div class="dropdown-divider"></div>';
+      }
     } else {
       html += '<button type="button" data-sd-act="save">Save this dashboard&hellip;</button>';
       // File export/import of the tab on screen (dashboard-portability.js) —
@@ -166,70 +159,82 @@
     btn.innerHTML = escapeHtml(row ? row.name : "Published") + " &#9662;";
   }
 
-  // ─── Wallboard: view a published dashboard ────────────────────────────────
+  // ─── Wallboard: linked tabs ───────────────────────────────────────────────
 
-  function stopPoll() {
-    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
-    _pollStamp = null;
-  }
-
-  function startPoll(id) {
-    stopPoll();
-    _pollTimer = setInterval(async function () {
-      if (!dash() || dash().publishedId() !== id) { stopPoll(); return; }
+  /**
+   * Re-read every published dashboard a tab is linked to (each once, however
+   * many tabs show it) and hand the rows to the canvas, which re-renders only
+   * what moved. A row that is gone — deleted or unpublished — unlinks its
+   * tabs, which keep their last widgets rather than freezing on a dead link.
+   */
+  async function refreshLinks() {
+    if (!dash() || !dash().linkedTabs) return;
+    var ids = {};
+    dash().linkedTabs().forEach(function (t) { ids[t.publishedId] = true; });
+    await Promise.all(Object.keys(ids).map(async function (id) {
       try {
         var fresh = await api.savedDashboards.get(id);
-        // Re-render only when the row actually moved: a re-render tears every
-        // widget down and back up, which on a wallboard is a visible blink.
-        if (fresh && fresh.updatedAt !== _pollStamp) {
-          _pollStamp = fresh.updatedAt;
-          dash().viewPublished(fresh);
-          syncButtonLabel();
-        }
+        if (fresh && fresh.id) dash().applyPublished(fresh);
       } catch (err) {
-        // 404 = deleted or unpublished while we were showing it. Fall back to
-        // this browser's own layout rather than freezing on a dead screen.
-        if (err && err.status === 404) { showLocal(); showToast("That published dashboard is no longer available"); }
+        if (err && err.status === 404 && dash().unlinkPublished(id)) {
+          showToast("A published dashboard is no longer available — its tab now keeps the last copy");
+        }
       }
-    }, PUBLISHED_POLL_MS);
-  }
-
-  function showPublished(row) {
-    if (!dash()) return;
-    dash().viewPublished(row);
-    writePinned(row.id);
-    _pollStamp = row.updatedAt || null;
-    startPoll(row.id);
+    }));
     syncButtonLabel();
   }
 
-  function showLocal() {
+  function startPoll() {
+    if (_pollTimer) return;
+    _pollTimer = setInterval(function () {
+      if (document.hidden) return;
+      refreshLinks();
+    }, PUBLISHED_POLL_MS);
+  }
+
+  async function showPublished(row) {
     if (!dash()) return;
-    stopPoll();
-    dash().clearPublished();
-    writePinned(null);
+    // The active tab's own widgets are replaced: ask first, unless there are
+    // none or they are already another published dashboard's.
+    if (!dash().publishedId() && dash().widgetCount() > 0) {
+      var msg = 'Show "' + row.name + '" on this tab? Its widgets will be replaced.';
+      if (!(typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg))) return;
+    }
+    dash().linkActiveTab(row);
+    startPoll();
+    syncButtonLabel();
+  }
+
+  function unlinkActive() {
+    if (!dash()) return;
+    dash().unlinkTab();
     syncButtonLabel();
   }
 
   /**
-   * Restore the pinned published dashboard at boot — awaited by dashboard.js's
-   * bootstrap so the wallboard paints the pinned screen instead of flashing its
-   * local layout first. A pin whose row has gone is dropped, not retried.
+   * Boot (called by dashboard.js after its first paint, which drew the linked
+   * tabs' stored copies): turn a pin from before tabs could be linked into a
+   * link on the active tab, re-read every link once, then poll.
    */
-  async function restorePinned() {
-    if (!isWallboard()) return false;
-    var id = readPinned();
-    if (!id) return false;
-    try {
-      var row = await api.savedDashboards.get(id);
-      if (!row || !row.id) return false;
-      dash().viewPublished(row);
-      _pollStamp = row.updatedAt || null;
-      startPoll(row.id);
-      return true;
-    } catch (err) {
-      if (err && err.status === 404) writePinned(null);
-      return false;
+  async function restoreLinks() {
+    if (!isWallboard() || !dash()) return;
+    var legacy = readLegacyPin();
+    if (legacy) {
+      try {
+        var row = await api.savedDashboards.get(legacy);
+        if (row && row.id && dash().publishedId() !== row.id) dash().linkActiveTab(row);
+        dropLegacyPin();
+      } catch (err) {
+        if (err && err.status === 404) dropLegacyPin(); // gone: nothing to carry over
+      }
+    }
+    startPoll();
+    await refreshLinks();
+    // A linked tab on screen names itself in the header button before the
+    // menu has ever been opened; the list is where that name comes from.
+    if (dash().linkedTabs().length) {
+      await refreshMenu();
+      syncButtonLabel();
     }
   }
 
@@ -423,9 +428,9 @@
     function canUseMenu() {
       return isWallboard() || typeof permAtLeast !== "function" || permAtLeast("savedDashboards", "read");
     }
-    // And only while customizing, or while a published dashboard is on screen
-    // (Customize is withdrawn there, so this menu is the only way back to the
-    // viewer's own layout). dashboard.js announces each mode change.
+    // And only while customizing, or while a linked tab is on screen (its
+    // Unlink lives here). dashboard.js announces each mode change and each
+    // render, since switching tabs can change the second.
     function inMenuMode() {
       var d = dash();
       return !d || (d.isEditing && d.isEditing()) || !!d.publishedId();
@@ -439,6 +444,8 @@
     applyAccessGate();
     document.addEventListener("polaris:user-loaded", applyAccessGate);
     document.addEventListener("polaris:dashboard-mode", applyAccessGate);
+    // The button names the linked tab on screen, which a tab switch changes.
+    if (isWallboard()) document.addEventListener("polaris:dashboard-mode", syncButtonLabel);
 
     renderMenu([], false);   // placeholder, so the first open isn't an empty box
 
@@ -467,7 +474,7 @@
         if (which === "save") openSaveModal();
         else if (which === "export") exportTab();
         else if (which === "import") pickImportFile();
-        else showLocal();
+        else if (which === "unlink") unlinkActive();
         return;
       }
       var load = e.target.closest("[data-sd-load]");
@@ -483,15 +490,11 @@
       if (del) deleteRow(del.getAttribute("data-sd-del"));
     });
 
-    // The pinned wallboard screen needs its name in the button before the menu
-    // has ever been opened; the list is the only place that name comes from.
-    if (isWallboard() && readPinned()) refreshMenu().then(syncButtonLabel);
   });
 
-  // dashboard.js's bootstrap awaits this before painting the wallboard.
+  // dashboard.js's bootstrap calls restoreLinks after the wallboard's first paint.
   window.PolarisSavedDashboards = {
-    restorePinned: restorePinned,
-    pinnedId: readPinned,
+    restoreLinks: restoreLinks,
     refresh: refreshMenu,
   };
 })();

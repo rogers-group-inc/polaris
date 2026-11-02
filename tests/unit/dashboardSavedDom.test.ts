@@ -10,8 +10,8 @@
  *
  *   signed in  — "Save this dashboard…" + My/Shared sections, load = new TAB
  *                (a copy), delete only where permitted.
- *   wallboard  — "My layout (this browser)" + Published section, load = VIEW
- *                (pinned in localStorage), and NO save/delete anywhere.
+ *   wallboard  — Published section (+ "Unlink this tab" on a linked tab),
+ *                load = LINK the active tab, and NO save/delete anywhere.
  *
  * window.PolarisDashboard (dashboard.js's seam) is stubbed, so what's asserted
  * is the contract between the two files, not the canvas itself.
@@ -52,6 +52,9 @@ interface Harness {
   viewed: unknown[];
   tabbed: unknown[];
   cleared: number;
+  applied: unknown[];
+  gone: string[];
+  confirms: string[];
   store: Record<string, string>;
 }
 
@@ -60,17 +63,21 @@ interface Harness {
  * off window.POLARIS_DASH_LOCAL at call time, so the two surfaces are two
  * boots rather than a flag flipped mid-test.
  */
-function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: boolean; pinned?: string; rows?: unknown[]; portable?: boolean; editing?: boolean } = {}): Harness {
+function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: boolean; linked?: string; legacyPin?: string; rows?: unknown[]; portable?: boolean; editing?: boolean; widgets?: number } = {}): Harness {
   const win = new Window();
   const doc = win.document;
   const created: Record<string, unknown>[] = [];
   const deleted: string[] = [];
   const toasts: string[] = [];
-  const viewed: unknown[] = [];
+  const viewed: unknown[] = [];   // rows the active tab was linked to
   const tabbed: unknown[] = [];
+  const applied: unknown[] = [];  // fresh rows handed to the linked tabs
+  const gone: string[] = [];      // published ids whose tabs were unlinked as gone
+  const confirms: string[] = [];
   const store: Record<string, string> = {};
-  let cleared = 0;
-  let published: string | null = opts.pinned ?? null;
+  let cleared = 0;                // tabs unlinked from the menu
+  // The active tab's link — the seam answers per ACTIVE tab.
+  let published: string | null = opts.linked ?? null;
 
   g.window = win;
   g.document = doc;
@@ -80,7 +87,7 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   g.showToast = (msg: string) => { toasts.push(msg); };
-  g.showConfirm = async () => true;
+  g.showConfirm = async (msg: string) => { confirms.push(msg); return true; };
   g.permAtLeast = (_key: string, level: string) => {
     if (level === "read") return true;
     if (level === "write") return opts.canPublish !== false;
@@ -102,26 +109,29 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
     },
   };
   // dashboard.js's seam. Customizing by default: the menu only shows then
-  // (or while a published dashboard is on screen).
+  // (or while a linked tab is on screen).
   (win as unknown as Record<string, unknown>).PolarisDashboard = {
     isWallboard: () => !!opts.wallboard,
     isEditing: () => opts.editing !== false,
     snapshot: () => ({ name: "Dashboard 2", layout: LAYOUT }),
-    widgetCount: () => 4,
+    widgetCount: () => opts.widgets ?? 4,
     publishedId: () => published,
     loadAsNewTab: (row: unknown) => { tabbed.push(row); return true; },
-    viewPublished: (row: unknown) => { viewed.push(row); published = (row as { id: string }).id; return true; },
-    clearPublished: () => { cleared += 1; published = null; return true; },
+    linkActiveTab: (row: unknown) => { viewed.push(row); published = (row as { id: string }).id; return true; },
+    linkedTabs: () => (published ? [{ tabId: "t1", publishedId: published, updatedAt: null }] : []),
+    applyPublished: (row: unknown) => { applied.push(row); return 1; },
+    unlinkTab: () => { cleared += 1; published = null; return true; },
+    unlinkPublished: (id: string) => { gone.push(id); if (published === id) published = null; return 1; },
   };
   // localStorage — the module reads the bare global, and happy-dom's own
   // Window.localStorage is getter-only, so stub the GLOBAL. An explicit store
-  // also keeps the pin assertions independent of happy-dom's implementation.
+  // also keeps the legacy-pin assertions independent of happy-dom's implementation.
   g.localStorage = {
     getItem: (k: string) => (k in store ? store[k] : null),
     setItem: (k: string, v: string) => { store[k] = String(v); },
     removeItem: (k: string) => { delete store[k]; },
   };
-  if (opts.pinned) store["polaris-dash-published"] = opts.pinned;
+  if (opts.legacyPin) store["polaris-dash-published"] = opts.legacyPin;
 
   doc.body.innerHTML = HEADER_HTML;
   if (opts.portable) {
@@ -142,7 +152,7 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
     if (!el) throw new Error(`no element for ${sel}`);
     el.dispatchEvent(new win.Event("click", { bubbles: true }));
   }
-  return { win, doc, menu, open, created, deleted, toasts, viewed, tabbed, get cleared() { return cleared; }, store, click } as unknown as Harness;
+  return { win, doc, menu, open, created, deleted, toasts, viewed, tabbed, applied, gone, confirms, get cleared() { return cleared; }, store, click } as unknown as Harness;
 }
 
 type H = Harness & { click: (sel: string) => void };
@@ -211,7 +221,7 @@ describe("Dashboards menu — signed in", () => {
     expect(h.doc.querySelector(".modal")!.textContent).toContain("Requires saved-dashboard write access");
   });
 
-  it("shows only while customizing or viewing a published dashboard", async () => {
+  it("shows only while customizing or while a linked tab is on screen", async () => {
     const view = boot({ editing: false }) as H;
     const btn = view.doc.getElementById("btn-saved-dashboards")!;
     expect(btn.hasAttribute("hidden")).toBe(true);
@@ -225,10 +235,9 @@ describe("Dashboards menu — signed in", () => {
     view.doc.dispatchEvent(new view.win.CustomEvent("polaris:dashboard-mode"));
     expect(btn.hasAttribute("hidden")).toBe(false);
 
-    // Viewing a published dashboard: no Customize there, so the menu is the
-    // only way back to the viewer's own layout.
-    const pinned = boot({ editing: false, pinned: "d2" }) as H;
-    expect(pinned.doc.getElementById("btn-saved-dashboards")!.hasAttribute("hidden")).toBe(false);
+    // A linked tab on screen: its Unlink lives in the menu.
+    const linked = boot({ editing: false, linked: "d2" }) as H;
+    expect(linked.doc.getElementById("btn-saved-dashboards")!.hasAttribute("hidden")).toBe(false);
   });
 
   it("hides the whole menu for a role with no access at all", () => {
@@ -297,49 +306,92 @@ describe("app.js announces the authoritative user", () => {
 });
 
 describe("Dashboards menu — Dash wallboard", () => {
-  it("offers My layout + published rows, and no way to save or delete", async () => {
+  type Saved = { restoreLinks: () => Promise<void> };
+  const saved = (h: H) => (h.win as unknown as { PolarisSavedDashboards: Saved }).PolarisSavedDashboards;
+
+  it("offers published rows and no way to save or delete; Unlink only on a linked tab", async () => {
     const h = boot({ wallboard: true }) as H;
     await h.open();
     expect(h.menu().querySelector('[data-sd-act="save"]')).toBeNull();
     expect(h.menu().querySelector("[data-sd-del]")).toBeNull();
-    expect(h.menu().querySelector('[data-sd-act="local"]')).toBeTruthy();
+    // The old "My layout" choice is gone: the wallboard's own tabs are
+    // still on screen, so there is nothing to go back to.
+    expect(h.menu().querySelector('[data-sd-act="local"]')).toBeNull();
+    expect(h.menu().querySelector('[data-sd-act="unlink"]')).toBeNull();
     const headings = Array.from(h.menu().querySelectorAll(".dropdown-heading")).map((e) => e.textContent);
     expect(headings).toEqual(["Published dashboards"]);
+
+    const linked = boot({ wallboard: true, linked: "d2" }) as H;
+    await linked.open();
+    expect(linked.menu().querySelector('[data-sd-act="unlink"]')).toBeTruthy();
   });
 
-  it("VIEWS a published dashboard and pins the choice for the next boot", async () => {
+  it("LINKS the active tab to a published dashboard, asking first when the tab has widgets", async () => {
     const h = boot({ wallboard: true }) as H;
     await h.open();
     h.click('[data-sd-load="d2"]');
-    expect(h.viewed).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.confirms).toHaveLength(1);
+    expect(h.confirms[0]).toContain("Shared NOC");
+    expect((h.viewed[0] as { id: string }).id).toBe("d2");
     expect(h.tabbed).toHaveLength(0);
-    expect(h.store["polaris-dash-published"]).toBe("d2");
+    // Nothing pinned outside the layout any more: the link IS the layout.
+    expect(h.store["polaris-dash-published"]).toBeUndefined();
     // The header button names what is on screen — a wallboard is read from
     // across a room, and the menu is shut.
     expect(h.doc.getElementById("btn-saved-dashboards")!.textContent).toContain("Shared NOC");
   });
 
-  it("goes back to the browser's own layout and drops the pin", async () => {
-    const h = boot({ wallboard: true, pinned: "d2" }) as H;
+  it("does not ask when the active tab is empty or already linked", async () => {
+    const empty = boot({ wallboard: true, widgets: 0 }) as H;
+    await empty.open();
+    empty.click('[data-sd-load="d2"]');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(empty.confirms).toHaveLength(0);
+    expect(empty.viewed).toHaveLength(1);
+
+    const relink = boot({ wallboard: true, linked: "d1" }) as H;
+    await relink.open();
+    relink.click('[data-sd-load="d2"]');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(relink.confirms).toHaveLength(0);
+    expect((relink.viewed[0] as { id: string }).id).toBe("d2");
+  });
+
+  it("Unlink this tab hands the active tab back to the viewer", async () => {
+    const h = boot({ wallboard: true, linked: "d2" }) as H;
     await h.open();
-    h.click('[data-sd-act="local"]');
+    h.click('[data-sd-act="unlink"]');
     expect(h.cleared).toBe(1);
+  });
+
+  it("restoreLinks turns a pin from before linked tabs into a link, and drops the key", async () => {
+    const h = boot({ wallboard: true, legacyPin: "d1", widgets: 0 }) as H;
+    await saved(h).restoreLinks();
+    expect((h.viewed[0] as { id: string }).id).toBe("d1");
     expect(h.store["polaris-dash-published"]).toBeUndefined();
   });
 
-  it("restorePinned re-shows the pinned dashboard at boot", async () => {
-    const h = boot({ wallboard: true, pinned: "d1" }) as H;
-    const api = (h.win as unknown as Record<string, unknown>).PolarisSavedDashboards as { restorePinned: () => Promise<boolean> }
-      ?? (g.PolarisSavedDashboards as { restorePinned: () => Promise<boolean> });
-    expect(await api.restorePinned()).toBe(true);
-    expect((h.viewed[0] as { id: string }).id).toBe("d1");
+  it("restoreLinks drops a legacy pin whose dashboard has gone", async () => {
+    const h = boot({ wallboard: true, legacyPin: "gone", rows: [] }) as H;
+    (g.api as { savedDashboards: { get: (id: string) => Promise<unknown> } }).savedDashboards.get =
+      async () => { throw Object.assign(new Error("Not found"), { status: 404 }); };
+    await saved(h).restoreLinks();
+    expect(h.viewed).toHaveLength(0);
+    expect(h.store["polaris-dash-published"]).toBeUndefined();
   });
 
-  it("restorePinned drops a pin whose dashboard has gone", async () => {
-    const h = boot({ wallboard: true, pinned: "gone", rows: [] }) as H;
-    const api = (h.win as unknown as Record<string, unknown>).PolarisSavedDashboards as { restorePinned: () => Promise<boolean> };
-    expect(await api.restorePinned()).toBe(false);
-    expect(h.viewed).toHaveLength(0);
+  it("restoreLinks re-reads every linked dashboard, and unlinks one that is gone", async () => {
+    const h = boot({ wallboard: true, linked: "d2" }) as H;
+    await saved(h).restoreLinks();
+    expect((h.applied[0] as { id: string }).id).toBe("d2");
+
+    const g2 = boot({ wallboard: true, linked: "d2" }) as H;
+    (g.api as { savedDashboards: { get: (id: string) => Promise<unknown> } }).savedDashboards.get =
+      async () => { throw Object.assign(new Error("Not found"), { status: 404 }); };
+    await saved(g2).restoreLinks();
+    expect(g2.gone).toEqual(["d2"]);
+    expect(g2.toasts.at(-1)).toContain("no longer available");
   });
 });
 

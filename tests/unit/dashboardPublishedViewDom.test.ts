@@ -9,12 +9,13 @@
  *   snapshot()       — the canvas on screen as a saved-dashboard payload
  *   loadAsNewTab()   — a saved row becomes a new TAB (a COPY: fresh widget
  *                      instance ids, unknown widget types dropped)
- *   viewPublished()  — a published row renders INSTEAD of the local layout,
- *                      read-only, and nothing about it may be persisted
+ *   linkActiveTab()  — the wallboard: the ACTIVE tab shows a published row,
+ *                      read-only, and follows it (applyPublished) — while the
+ *                      other tabs and the pencil stay
  *
- * The last one is the load-bearing case: the Dash wallboard has no session to
- * save with, and a viewer looking at someone else's screen must not overwrite
- * their own stored layout.
+ * The last one is the load-bearing case: the published layout is someone
+ * else's, so nothing on a linked tab may edit, and the rest of the viewer's
+ * own layout must survive it. Also here: renderWidget's stale-render guard.
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
@@ -42,7 +43,7 @@ const PAGE_HTML =
 let uuidSeq = 0;
 function uuid() { uuidSeq += 1; return "uuid-" + uuidSeq; }
 
-/** A stored layout for the signed-in page: one tab, one column, one widget. */
+/** A stored layout: two tabs (the active one first), one column, one widget each. */
 function localLayout() {
   return {
     version: 3,
@@ -52,6 +53,11 @@ function localLayout() {
         id: "dash-local",
         name: "My screen",
         columns: [{ id: "col-local", width: 6, widgets: [{ id: "w-local", type: "statusSummary", height: 1, config: {} }] }],
+      },
+      {
+        id: "dash-other",
+        name: "Other screen",
+        columns: [{ id: "col-other", width: 6, widgets: [{ id: "w-other", type: "statusSummary", height: 1, config: {} }] }],
       },
     ],
   };
@@ -84,8 +90,12 @@ interface Boot {
     widgetCount: () => number;
     publishedId: () => string | null;
     loadAsNewTab: (row: unknown) => boolean;
-    viewPublished: (row: unknown) => boolean;
-    clearPublished: () => boolean;
+    linkActiveTab: (row: unknown) => boolean;
+    linkedTabs: () => { tabId: string; publishedId: string; updatedAt: string | null }[];
+    applyPublished: (row: unknown) => number;
+    unlinkTab: (tabId?: string) => boolean;
+    unlinkPublished: (id: string) => number;
+    setWidgetConfig: (id: string, key: string, value: unknown) => boolean;
   };
   puts: unknown[];
   store: Record<string, string>;
@@ -226,73 +236,159 @@ describe("PolarisDashboard seam — signed-in page", () => {
   });
 });
 
-describe("PolarisDashboard seam — viewing a published dashboard", () => {
-  it("renders it instead of the local layout, with every edit affordance gone", async () => {
+describe("PolarisDashboard seam — a tab linked to a published dashboard", () => {
+  const click = (b: Boot, id: string) => (b.doc.getElementById(id) as unknown as { click: () => void }).click();
+  const stored = (b: Boot) => JSON.parse(b.store["polaris-dash-layout"]) as {
+    activeId: string;
+    dashboards: { id: string; name: string; published?: { id: string; updatedAt: string | null }; columns: { widgets: { type: string }[] }[] }[];
+  };
+
+  it("shows it on the ACTIVE tab, keeping the other tabs and the pencil", async () => {
     const b = await boot({ wallboard: true });
     expect(b.seam().isWallboard()).toBe(true);
-    // Baseline: the wallboard's own layout is editable. Adding a dashboard is
-    // an edit-mode verb — the + after the last tab — so it appears only once
-    // Customize Page is clicked; the old header Create button stays hidden.
-    expect(hidden(b.doc, "dashboard-customize")).toBe(false);
-    expect(b.doc.getElementById("dashboard-tab-add")).toBeNull();
-    // The single dashboard's tab shows even out of edit mode.
-    expect(hidden(b.doc, "dashboard-tabs")).toBe(false);
-    (b.doc.getElementById("dashboard-customize") as unknown as { click: () => void }).click();
-    expect(b.doc.getElementById("dashboard-tab-add")).not.toBeNull();
-    expect(hidden(b.doc, "dashboard-create")).toBe(true);
-
-    expect(b.seam().viewPublished(PUBLISHED)).toBe(true);
+    expect(b.seam().linkActiveTab(PUBLISHED)).toBe(true);
     expect(b.seam().publishedId()).toBe("pub-1");
-    // Customize / Create / Add Widgets / Done all withdrawn, tab strip hidden
-    // (a published dashboard is one screen), canvas still rendering.
-    expect(hidden(b.doc, "dashboard-customize")).toBe(true);
-    expect(hidden(b.doc, "dashboard-create")).toBe(true);
-    expect(hidden(b.doc, "dashboard-add-widgets")).toBe(true);
-    expect(hidden(b.doc, "dashboard-done")).toBe(true);
-    expect(hidden(b.doc, "dashboard-tabs")).toBe(true);
-    // Refresh is a viewing verb: it stays on a published dashboard.
+
+    // The tab strip stays, the active tab now named for the published
+    // dashboard and marked linked; the other tab is untouched.
+    expect(hidden(b.doc, "dashboard-tabs")).toBe(false);
+    const tabs = Array.from(b.doc.querySelectorAll(".dashboard-tab"));
+    expect(tabs.map((t) => t.textContent!.trim())).toEqual(["NOC overview", "Other screen"]);
+    expect(tabs[0].classList.contains("linked")).toBe(true);
+    expect(tabs[0].classList.contains("active")).toBe(true);
+    expect(tabs[1].classList.contains("linked")).toBe(false);
+    // The pencil stays: the other tabs are still the viewer's to edit.
+    expect(hidden(b.doc, "dashboard-customize")).toBe(false);
     expect(hidden(b.doc, "dashboard-refresh")).toBe(false);
-    expect(b.doc.querySelectorAll("#dashboard-canvas .dashboard-widget")).toHaveLength(1);
-    // Nothing to publish while looking at someone else's screen.
+    // The published widgets, unknown types dropped.
+    const shells = Array.from(b.doc.querySelectorAll("#dashboard-canvas .dashboard-widget"));
+    expect(shells.map((s) => s.getAttribute("data-type"))).toEqual(["downNodes"]);
+    // Nothing to publish from someone else's dashboard.
     expect(b.seam().snapshot()).toBeNull();
   });
 
-  it("cannot be edited into, and never persists over the viewer's own layout", async () => {
+  it("is stored with the layout, link and widgets together, so a reboot paints it", async () => {
     const b = await boot({ wallboard: true });
-    const before = b.store["polaris-dash-layout"];
-    b.seam().viewPublished(PUBLISHED);
-
-    // The button is hidden, but a stale click (or a keyboard path) must not
-    // open edit mode on a dashboard the viewer cannot save.
-    b.doc.getElementById("dashboard-customize")!.dispatchEvent(new b.win.Event("click", { bubbles: true }));
-    expect(b.doc.getElementById("dashboard-canvas")!.classList.contains("is-editing")).toBe(false);
-
-    // Give the 800ms save debounce more than enough time to fire.
-    await new Promise((r) => setTimeout(r, 900));
-    expect(b.store["polaris-dash-layout"]).toBe(before);
-    expect(b.puts).toHaveLength(0);
+    b.seam().linkActiveTab(PUBLISHED);
+    await new Promise((r) => setTimeout(r, 850));
+    const layout = stored(b);
+    expect(layout.dashboards).toHaveLength(2);
+    expect(layout.dashboards[0].published).toMatchObject({ id: "pub-1", updatedAt: "2026-09-02T00:00:00.000Z" });
+    expect(layout.dashboards[0].columns[0].widgets.map((w) => w.type)).toEqual(["downNodes"]);
+    expect(layout.dashboards[1].name).toBe("Other screen");
+    expect(b.puts).toHaveLength(0); // the wallboard saves to this browser only
   }, 10_000);
 
-  it("goes back to the viewer's own layout on clearPublished", async () => {
+  it("customizing a linked tab offers no edit controls on it, but the other tabs still edit", async () => {
     const b = await boot({ wallboard: true });
-    b.seam().viewPublished(PUBLISHED);
-    expect(b.seam().clearPublished()).toBe(true);
+    b.seam().linkActiveTab(PUBLISHED);
+    click(b, "dashboard-customize");
+    const canvas = b.doc.getElementById("dashboard-canvas")!;
+    expect(hidden(b.doc, "dashboard-done")).toBe(false);
+    expect(canvas.classList.contains("is-editing")).toBe(false);
+    expect(canvas.querySelector(".dashboard-linked-note")).not.toBeNull();
+    expect(canvas.querySelector(".dashboard-widget-grip")).toBeNull();
+    expect(canvas.querySelector('[data-action="gear"]')).toBeNull();
+    expect(canvas.querySelector(".dashboard-column-add")).toBeNull();
+    expect(canvas.querySelector(".dashboard-newcol-target")).toBeNull();
+    // Its name follows the publisher, so no inline rename input.
+    expect(b.doc.querySelector(".dashboard-tab-name-input")).toBeNull();
+    // A header control's config write is refused on it.
+    const wid = canvas.querySelector(".dashboard-widget")!.getAttribute("data-id")!;
+    expect(b.seam().setWidgetConfig(wid, "limit", 5)).toBe(false);
+
+    // Switching to the viewer's own tab brings the edit controls back.
+    (b.doc.querySelector('.dashboard-tab[data-dash="dash-other"]') as unknown as { click: () => void }).click();
+    expect(canvas.classList.contains("is-editing")).toBe(true);
+    expect(canvas.querySelector(".dashboard-linked-note")).toBeNull();
+    expect(canvas.querySelector(".dashboard-widget-grip")).not.toBeNull();
     expect(b.seam().publishedId()).toBeNull();
-    expect(b.seam().snapshot()!.name).toBe("My screen");
-    expect(hidden(b.doc, "dashboard-customize")).toBe(false);
+  });
+
+  it("Unlink keeps the widgets as an ordinary, editable tab", async () => {
+    const b = await boot({ wallboard: true });
+    b.seam().linkActiveTab(PUBLISHED);
+    click(b, "dashboard-customize");
+    (b.doc.querySelector('.dashboard-linked-note [data-action="unlink"]') as unknown as { click: () => void }).click();
+    expect(b.seam().publishedId()).toBeNull();
+    const canvas = b.doc.getElementById("dashboard-canvas")!;
+    expect(canvas.classList.contains("is-editing")).toBe(true);
+    expect(canvas.querySelector(".dashboard-widget-grip")).not.toBeNull();
+    expect(b.seam().snapshot()!.name).toBe("NOC overview");
+    expect(b.seam().widgetCount()).toBe(1);
+  });
+
+  it("follows the publisher: a newer row replaces the linked copy, an unchanged one is a no-op", async () => {
+    const b = await boot({ wallboard: true });
+    b.seam().linkActiveTab(PUBLISHED);
+    expect(b.seam().linkedTabs()).toEqual([{ tabId: "dash-local", publishedId: "pub-1", updatedAt: "2026-09-02T00:00:00.000Z" }]);
+    // Same updatedAt: nothing moves (no re-render blink on the wallboard).
+    expect(b.seam().applyPublished(PUBLISHED)).toBe(0);
+
+    const edited = {
+      ...PUBLISHED, name: "NOC overview v2", updatedAt: "2026-09-03T00:00:00.000Z",
+      layout: { columns: [{ id: "c", width: 12, widgets: [{ id: "x", type: "statusSummary", height: 1, config: {} }, { id: "y", type: "downNodes", height: 1, config: {} }] }] },
+    };
+    expect(b.seam().applyPublished(edited)).toBe(1);
+    expect(b.doc.querySelector(".dashboard-tab.active")!.textContent!.trim()).toBe("NOC overview v2");
+    expect(b.doc.querySelectorAll("#dashboard-canvas .dashboard-widget")).toHaveLength(2);
+  });
+
+  it("a published dashboard that is gone unlinks its tab, which keeps the last copy", async () => {
+    const b = await boot({ wallboard: true });
+    b.seam().linkActiveTab(PUBLISHED);
+    expect(b.seam().unlinkPublished("pub-1")).toBe(1);
+    expect(b.seam().publishedId()).toBeNull();
+    expect(b.doc.querySelectorAll("#dashboard-canvas .dashboard-widget")).toHaveLength(1);
   });
 
   it("says an EMPTY published dashboard is empty, then restores the page's own prompt", async () => {
     const b = await boot({ wallboard: true });
-    b.seam().viewPublished({ ...PUBLISHED, name: "Blank screen", layout: { columns: [] } });
+    b.seam().linkActiveTab({ ...PUBLISHED, name: "Blank screen", layout: { columns: [] } });
     const empty = b.doc.getElementById("dashboard-empty-state")!;
     expect(empty.hasAttribute("hidden")).toBe(false);
     expect(empty.textContent).toContain('"Blank screen" has no widgets');
 
-    b.seam().clearPublished();
-    // Back to the shipped prompt — the viewer's own layout has widgets, so the
-    // empty state hides, but its TEXT must not stay stamped with someone
-    // else's dashboard name for the next time it shows.
+    // Switching to the viewer's own tab: back to the shipped prompt — its TEXT
+    // must not stay stamped with someone else's dashboard name for the next
+    // time it shows.
+    (b.doc.querySelector('.dashboard-tab[data-dash="dash-other"]') as unknown as { click: () => void }).click();
     expect(empty.innerHTML).toContain("Customize Page");
   });
+});
+
+describe("renderWidget — only the latest render of a widget draws", () => {
+  // The gear's FortiGates picker writes two config keys back to back: two
+  // renderWidget calls into the SAME body while the first one's fetchData is
+  // still in flight. Both used to draw — a stale instance (a Leaflet map, a
+  // second Cytoscape graph) stacked in the body and never unmounted.
+  it("a superseded render neither draws nor leaks", async () => {
+    const b = await boot();
+    const resolvers: Array<(v: unknown) => void> = [];
+    const drawn: string[] = [];
+    const reg = g.PolarisWidgets as { getByType: (t: string) => unknown };
+    reg.getByType = (type: string) => ({
+      type, title: type,
+      fetchData: (config: { tag?: string }) => new Promise((r) => resolvers.push(() => r(config.tag))),
+      renderInstance: (el: { appendChild: (n: unknown) => void }, _c: unknown, tag: string) => {
+        drawn.push(tag);
+        const p = b.doc.createElement("p");
+        p.className = "drawn";
+        el.appendChild(p);
+      },
+    });
+    click(b, "dashboard-customize");
+    resolvers.length = 0; // the edit-mode render's own fetch is not under test
+    b.seam().setWidgetConfig("w-local", "tag", "first");
+    b.seam().setWidgetConfig("w-local", "tag", "second");
+    expect(resolvers).toHaveLength(2);
+    // The SLOWER, older fetch resolving last is the dangerous order.
+    resolvers[1](null);
+    resolvers[0](null);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(drawn).toEqual(["second"]);
+    expect(b.doc.querySelectorAll(".dashboard-widget-body .drawn")).toHaveLength(1);
+  });
+
+  function click(b: Boot, id: string) { (b.doc.getElementById(id) as unknown as { click: () => void }).click(); }
 });

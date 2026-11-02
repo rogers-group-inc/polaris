@@ -453,23 +453,36 @@ access points, links and the devices behind them. A single click on a gate also
 opens a details popup there, since a wall screen has no hover. The **Open ↗**
 button is left off: the wallboard does not navigate.
 
-Its **Dashboards ▾** menu — shown, as on the Dashboard page, only while
-customizing or while a published dashboard is on screen — offers:
+The wallboard's own layout — every tab — is kept in that browser's storage. Its
+**Dashboards ▾** menu, shown only while customizing or while a linked tab (below)
+is on screen, lists every **public** [saved dashboard](Dashboard#saved-dashboards).
 
-- **"My layout — this browser"**, kept in that browser's storage;
-- every **public** [saved dashboard](Dashboard#saved-dashboards).
+**Loading one shows it on the tab you are on.** That tab becomes a **linked
+tab**: it takes the published dashboard's name and widgets, is marked with a
+link icon, and **follows the publisher** — a 5-minute poll re-reads it and
+re-renders only when it has actually changed. Every other tab, and the pencil,
+stay as they were. If the tab already had widgets of its own, the wallboard asks
+before replacing them.
+
+A linked tab is read-only, because its layout is someone else's. Customizing it
+shows a note and no edit controls; your other tabs still edit as usual. To make
+it yours, choose **Unlink to edit a copy** on that note, or **Unlink this tab**
+in the menu. The widgets stay, as an ordinary tab that no longer follows the
+publisher. A dashboard deleted or unpublished under a live wallboard unlinks its
+tab the same way, with a notice, so the screen keeps its last copy.
 
 The **Refresh** button left of the pencil reloads every widget's data at once,
-as it does on the [Dashboard](Dashboard#working-with-the-canvas) — on the
-wallboard's own layout and on a published one alike.
+as it does on the [Dashboard](Dashboard#working-with-the-canvas), on linked tabs
+and your own alike.
 
 A session-less caller gets **public rows only**, and **every write verb 405s
 app-wide** — so a wallboard viewer can build a local layout or show a published
 one, and can never save either to the server.
 
-The choice is pinned per browser and restored at boot. A 5-minute poll re-reads
-it and re-renders only when it has actually changed. A dashboard deleted or
-unpublished under a live wallboard falls back to the local layout with a notice.
+Links are stored with the layout and restored at boot, so a rebooted kiosk comes
+back to the same screen at once, before the first re-read. A wallboard that was
+set to a published dashboard before linked tabs existed has that dashboard
+linked to its active tab on its first boot after the update.
 
 ## Publishing a dashboard for it
 
