@@ -230,7 +230,8 @@ LLDP report found it. An MCLAG inter-chassis link keeps its own style, and an
 AP's switch uplink stays blue. Hover a link to see how it was found ("found by
 interface naming", "found by LLDP"). The legend lists each link and device
 kind by name only — devices by asset type (Firewall, Switch, Access Point),
-and the FortiGate's uplink as "Firewall to switch".
+and the FortiGate's uplink as "Firewall to switch"; a wireless mesh backhaul
+between two APs is "AP to AP".
 
 A link between two location boxes runs in the gutters between boxes and never
 through another device: when a switch sits in the target's column, the line
@@ -325,7 +326,10 @@ and an undone change is saved like any other edit.
 | **Mouse controls** | the mouse button beside Export: how to pan, select and open devices. While editing it becomes a mouse with a pencil, listing the editing gestures instead (moving devices, bending lines, undo, grid and snap, right-click to edit a description). The panel stays open while you work the map, swaps its list when you start or finish editing, and closes only when you click the button again |
 
 The **legend** sits at the graph's bottom left as a small button; click it to
-open the legend, and its **×** folds it back. The edge between the graph and
+open the legend, and its **×** folds it back. Hover a row of the legend to
+light up what it stands for on the map: every switch, every device in a
+health state, every link of that kind (each glowing in its own colour), or
+every box of that location level. The edge between the graph and
 the details pane hides the pane: hover the edge and click the arrow, and the
 arrow at the right edge brings the pane back. Both remember your choice in
 this browser. The Device Map's own status legend, the Application Map's and

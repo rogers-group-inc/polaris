@@ -1008,7 +1008,7 @@ describe("topology palette by theme family", () => {
       expect(line("edge[isIface = 1]")).toBe(legend["Switch ↔ switch"]);
       expect(line("edge[isLldp = 1]")).toBe(legend["Switch ↔ switch"]);
       expect(line("edge[isMclag = 1]")).toBe(legend["MCLAG ICL"]);
-      expect(line("edge[isMesh = 1]")).toBe(legend.Mesh);
+      expect(line("edge[isMesh = 1]")).toBe(legend["AP to AP"]);
       expect(line("edge[isApLink = 1]")).toBe(legend["AP ↔ switch"]);
       // No virtual / LLDP / interface-inferred rows any more, and no descriptions.
       expect(Object.keys(legend)).not.toContain("FortiLink (virtual)");

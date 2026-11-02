@@ -118,3 +118,79 @@ describe("link hover highlight", () => {
     }
   });
 });
+
+/**
+ * Legend hover: each legend row carries the key of what it stands for, and
+ * legendMatch finds those elements — by device role, by the health colour a
+ * device is painted, by link kind (the tooltip's precedence), loop links,
+ * and location boxes by level.
+ */
+describe("legend hover highlight", () => {
+  function legendGraph() {
+    const H = sb.window.POLARIS_HEALTH_COLORS;
+    const n = (id: string, extra: Record<string, unknown>) => ({ data: { id, ...extra } });
+    const e = (id: string, s: string, t: string, extra: Record<string, unknown> = {}) => ({ data: { id, source: s, target: t, ...extra } });
+    return sb.make(JSON.stringify({
+      headless: true,
+      styleEnabled: true,
+      layout: { name: "preset" },
+      elements: [
+        n("fg", { role: "fortigate", nodeColor: H.up }),
+        n("s1", { role: "fortiswitch", nodeColor: H.down }),
+        n("s2", { role: "fortiswitch", nodeColor: H.up }),
+        n("a1", { role: "fortiap", nodeColor: H.up }),
+        n("a2", { role: "fortiap", nodeColor: H.maintenance }),
+        n("box", { isLocGroup: 1, locKind: "building", nodeColor: H.up }),
+        e("up", "fg", "s1", { isVerifiedUplink: 1, isIface: 0, isApLink: 0, inLoop: 0 }),
+        e("sw", "s1", "s2", { isIface: 1, isApLink: 0, inLoop: 1 }),
+        e("ll", "s2", "s1", { isLldp: 1, inLoop: 1 }),
+        e("ap", "s2", "a1", { isApLink: 1 }),
+        e("me", "a1", "a2", { isMesh: 1, isApLink: 0 }),
+      ],
+    }));
+  }
+
+  it("matches rows to devices, links and boxes", () => {
+    const cy = legendGraph();
+    const m = (k: string) => ids(R.legendMatch(cy, k));
+    expect(m("role:fortiswitch")).toEqual(["s1", "s2"]);
+    expect(m("role:fortiap")).toEqual(["a1", "a2"]);
+    expect(m("health:up")).toEqual(["a1", "fg", "s2"]); // never the location box
+    expect(m("health:maintenance")).toEqual(["a2"]);
+    expect(m("edge:controller")).toEqual(["up"]); // isIface: 0 is not a switch link
+    expect(m("edge:switch")).toEqual(["ll", "sw"]);
+    expect(m("edge:apLink")).toEqual(["ap"]);
+    expect(m("edge:mesh")).toEqual(["me"]);
+    expect(m("edge:loop")).toEqual(["ll", "sw"]);
+    expect(m("loc:building")).toEqual(["box"]);
+    expect(m("loc:floor")).toEqual([]);
+  });
+
+  it("highlights a row's elements, each link in its own colour, and clear drops it", () => {
+    const cy = legendGraph();
+    cy.style([
+      { selector: "edge", style: { "line-color": "#6a7388" } },
+      { selector: "#ap", style: { "line-color": "#3b82f6" } },
+    ]);
+    R.highlightLegendHover(cy, "edge:apLink");
+    expect(ids(cy.elements(".link-hover"))).toEqual(["ap"]);
+    expect(cy.$id("ap").data("hoverGlow")).toBe(cy.$id("ap").style("line-color"));
+    R.highlightLegendHover(cy, "role:fortigate");
+    expect(ids(cy.elements(".link-hover"))).toEqual(["fg"]);
+    R.clearLinkHover(cy);
+    expect(cy.elements(".link-hover").length).toBe(0);
+    expect(cy.$id("ap").data("hoverGlow")).toBeUndefined();
+  });
+
+  it("every legend row carries a key legendMatch understands, and Mesh reads AP to AP", () => {
+    const spec = R.topologyLegendSpec("dark");
+    const html: string = R.topologyLegendHtml(spec);
+    const rows = (html.match(/class="topology-legend-row"/g) || []).length;
+    const keyed = [...html.matchAll(/data-legend-key="([^"]+)"/g)].map((x) => x[1]);
+    expect(keyed.length).toBe(rows);
+    expect(keyed).toContain("edge:mesh");
+    expect(spec.edges.find((r: { key: string }) => r.key === "edge:mesh").label).toBe("AP to AP");
+    const cy = legendGraph();
+    for (const k of keyed) expect(() => R.legendMatch(cy, k)).not.toThrow();
+  });
+});

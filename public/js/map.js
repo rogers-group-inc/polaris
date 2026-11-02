@@ -1982,6 +1982,8 @@
     if (body && !body.dataset.rendered) {
       body.innerHTML = _buildLegendHTML(spec);
       body.dataset.rendered = "1";
+      // Hovering a row lights what it stands for on the map.
+      window.PolarisTopologyRender.wireLegendHover(body, function () { return cyInstance; });
     }
     el.hidden = false;
     // Always the CSS-anchored bottom-left corner, like every map legend: it

@@ -478,6 +478,9 @@
       var html = legendHtml(opts.hidden);
       legendBody.innerHTML = html;
       legend.hidden = !html;
+      // Hovering a row lights what it stands for on the graph.
+      var R = window.PolarisTopologyRender;
+      if (R && R.wireLegendHover) R.wireLegendHover(legendBody, function () { return cy; });
     }
     el.appendChild(pane);
 

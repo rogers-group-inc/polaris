@@ -874,6 +874,13 @@
         "z-index": 998,
       },
     });
+    // A location box lit from the legend: its own border drawn heavier and
+    // its fill tinted a little more. No underlay — a box's fill is nearly
+    // transparent, so one would flood the whole box.
+    style.push({
+      selector: "node.link-hover[isLocGroup]",
+      style: { "underlay-opacity": 0, "border-width": 5, "background-opacity": isDark ? 0.16 : 0.14 },
+    });
     style.push({
       selector: "edge.link-hover[hoverGlow]",
       style: { "underlay-color": "data(hoverGlow)" },
@@ -912,13 +919,13 @@
     // Every lit link — a whole loop included — glows in the colour the link
     // under the mouse is SEEN in: a loop link's yellow outline (markPhysicalLoops
     // halo) when it has one, otherwise its line colour.
-    var glow = null;
-    if (edge && edge.isEdge && edge.isEdge()) {
-      glow = parseFloat(edge.style("line-outline-width")) > 0
-        ? edge.style("line-outline-color") : edge.style("line-color");
-    }
+    var glow = edge && edge.isEdge && edge.isEdge() ? _seenEdgeColor(edge) : null;
     if (glow) lit.edges().data("hoverGlow", glow);
     lit.addClass("link-hover");
+  }
+  function _seenEdgeColor(edge) {
+    return parseFloat(edge.style("line-outline-width")) > 0
+      ? edge.style("line-outline-color") : edge.style("line-color");
   }
   function clearLinkHover(cy) {
     if (!cy || cy.destroyed()) return;
@@ -937,42 +944,115 @@
     var fam = paletteFamily(theme);
     var ec = EDGE_COLORS[fam];
     function loc(kind) { return locGroupColor(kind, fam); }
+    // `key` names what a row stands for on the map (legendMatch): hovering
+    // the row lights those elements.
     return {
       nodes: [
-        { label: "Firewall",          kind: "circle",          size: "lg", fill: "data(nodeColor)" },
-        { label: "Switch",            kind: "circle",          size: "md", fill: "data(nodeColor)" },
-        { label: "Access Point",      kind: "circle",          size: "sm", fill: "data(nodeColor)" },
-        { label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)" },
-        { label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7" },
+        { key: "role:fortigate",    label: "Firewall",          kind: "circle",          size: "lg", fill: "data(nodeColor)" },
+        { key: "role:fortiswitch",  label: "Switch",            kind: "circle",          size: "md", fill: "data(nodeColor)" },
+        { key: "role:fortiap",      label: "Access Point",      kind: "circle",          size: "sm", fill: "data(nodeColor)" },
+        { key: "role:endpoint",     label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)" },
+        { key: "role:remote-asset", label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7" },
       ],
       health: [
-        { label: "Up",                color: HEALTH_NODE_COLORS.up },
-        { label: "Degraded",          color: HEALTH_NODE_COLORS.degraded },
-        { label: "Down",              color: HEALTH_NODE_COLORS.down },
-        { label: "Maintenance",       color: HEALTH_NODE_COLORS.maintenance },
-        { label: "Passive",           color: HEALTH_NODE_COLORS.passive },
-        { label: "Dep. Down",         color: HEALTH_NODE_COLORS.unknown },
-        { label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
+        { key: "health:up",          label: "Up",                color: HEALTH_NODE_COLORS.up },
+        { key: "health:degraded",    label: "Degraded",          color: HEALTH_NODE_COLORS.degraded },
+        { key: "health:down",        label: "Down",              color: HEALTH_NODE_COLORS.down },
+        { key: "health:maintenance", label: "Maintenance",       color: HEALTH_NODE_COLORS.maintenance },
+        { key: "health:passive",     label: "Passive",           color: HEALTH_NODE_COLORS.passive },
+        { key: "health:unknown",     label: "Dep. Down",         color: HEALTH_NODE_COLORS.unknown },
+        { key: "health:unmonitored", label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
       ],
       edges: [
-        { label: "Firewall to switch", color: ec.controller, style: "solid" },
-        { label: "Switch ↔ switch",   color: ec.iface, style: "solid" },
-        { label: "MCLAG ICL",         color: ec.mclag, style: "dashed" },
-        { label: "Mesh",              color: ec.mesh, style: "dashed" },
-        { label: "AP ↔ switch",       color: ec.apLink, style: "solid" },
-        { label: "In physical loop",  color: ec.loop, style: "solid" },
+        { key: "edge:controller", label: "Firewall to switch", color: ec.controller, style: "solid" },
+        { key: "edge:switch",     label: "Switch ↔ switch",   color: ec.iface, style: "solid" },
+        { key: "edge:mclag",      label: "MCLAG ICL",         color: ec.mclag, style: "dashed" },
+        { key: "edge:mesh",       label: "AP to AP",          color: ec.mesh, style: "dashed" },
+        { key: "edge:apLink",     label: "AP ↔ switch",       color: ec.apLink, style: "solid" },
+        { key: "edge:loop",       label: "In physical loop",  color: ec.loop, style: "solid" },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
       // fixed per-level color).
       locations: [
-        { label: "Area",         shape: "rect", style: "solid",  color: loc("area") },
-        { label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
-        { label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
-        { label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
-        { label: "Junction box", shape: "rect", style: "dashed", color: loc("jb") },
+        { key: "loc:area",     label: "Area",         shape: "rect", style: "solid",  color: loc("area") },
+        { key: "loc:building", label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
+        { key: "loc:floor",    label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
+        { key: "loc:room",     label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
+        { key: "loc:jb",       label: "Junction box", shape: "rect", style: "dashed", color: loc("jb") },
       ],
     };
+  }
+
+  // Which legend Edges row a link belongs to — the same precedence as its
+  // tooltip's kind line (edgeTooltipHtml) and the stylesheet's colours: a
+  // switch bridged behind an AP is drawn as an AP link; a wireless client
+  // has no row (null).
+  function edgeLegendKind(edge) {
+    var d = function (k) { return edge.data(k) === 1 || edge.data(k) === true; };
+    if (d("isMesh")) return "mesh";
+    if (d("isBridge")) return "apLink";
+    if (d("isWireless")) return null;
+    if (d("isMclag")) return "mclag";
+    if (d("isApLink")) return "apLink";
+    if (d("isIface") || d("isLldp")) return "switch";
+    return "controller";
+  }
+
+  // The map elements a legend row (its spec `key`) stands for. Health
+  // matches on the colour a device is painted, so it follows exactly what
+  // fortinetNodeColor decided (maintenance over Dep. Down over probe health).
+  function legendMatch(cy, key) {
+    if (!cy || cy.destroyed() || !key) return cy ? cy.collection() : null;
+    var i = key.indexOf(":");
+    var kind = key.slice(0, i), val = key.slice(i + 1);
+    var devices = cy.nodes().filter(function (n) {
+      return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.data("isPortal");
+    });
+    if (kind === "role") return devices.filter(function (n) { return n.data("role") === val; });
+    if (kind === "health") {
+      var color = HEALTH_NODE_COLORS[val];
+      return devices.filter(function (n) { return !!color && n.data("nodeColor") === color; });
+    }
+    if (kind === "edge") {
+      return cy.edges().filter(function (e) {
+        return val === "loop" ? e.data("inLoop") === 1 : edgeLegendKind(e) === val;
+      });
+    }
+    if (kind === "loc") return cy.nodes().filter(function (n) { return !!n.data("isLocGroup") && n.data("locKind") === val; });
+    return cy.collection();
+  }
+
+  // Light what a legend row stands for, in the link-hover style: devices and
+  // boxes get the accent ring, each link a glow in its OWN seen colour.
+  function highlightLegendHover(cy, key) {
+    clearLinkHover(cy);
+    var lit = legendMatch(cy, key);
+    if (!lit || !lit.length) return;
+    lit.edges().forEach(function (e) { e.data("hoverGlow", _seenEdgeColor(e)); });
+    lit.addClass("link-hover");
+  }
+
+  // Hovering a row in a legend body lights its elements on the graph
+  // getCy() returns (the Device Map page's modal and the widget). Bound once
+  // per body element; the rows inside may be re-rendered freely.
+  function wireLegendHover(bodyEl, getCy) {
+    if (!bodyEl || bodyEl.dataset.legendHoverBound) return;
+    bodyEl.dataset.legendHoverBound = "1";
+    var current = null;
+    function apply(key) {
+      if (key === current) return;
+      current = key;
+      var cy = getCy();
+      if (!cy || cy.destroyed()) return;
+      if (key) highlightLegendHover(cy, key);
+      else clearLinkHover(cy);
+    }
+    bodyEl.addEventListener("mouseover", function (e) {
+      var row = e.target && e.target.closest ? e.target.closest("[data-legend-key]") : null;
+      apply(row ? row.getAttribute("data-legend-key") : null);
+    });
+    bodyEl.addEventListener("mouseleave", function () { apply(null); });
   }
 
   // ── Location grouping hulls ─────────────────────────────────────────────
@@ -3096,7 +3176,7 @@
     var ports = String(edge.data("label") || "").trim();
     // The legend shows one "Switch ↔ switch"; HOW a link was found (interface
     // naming or an LLDP report) is told here.
-    var kind = edge.data("isMesh")     ? "Wireless mesh backhaul"
+    var kind = edge.data("isMesh")     ? "AP to AP — wireless mesh backhaul"
              : edge.data("isBridge")   ? "Switch bridged behind AP (wired)"
              : edge.data("isWireless") ? "Wireless client"
              : edge.data("isMclag")    ? "MCLAG inter-chassis link"
@@ -3174,7 +3254,7 @@
     function section(title, rows, swatch) {
       if (!rows || !rows.length) return "";
       return '<div class="topology-legend-section"><div class="topology-legend-section-title">' + _escTip(title) + '</div>' +
-        rows.map(function (r) { return topologyLegendRow(swatch(r), r.label, r.desc); }).join("") +
+        rows.map(function (r) { return topologyLegendRow(swatch(r), r.label, r.desc, r.key); }).join("") +
         '</div>';
     }
     if (!spec) return "";
@@ -3185,9 +3265,11 @@
   }
 
   // One legend row: a swatch (HTML, may be ""), a label and an optional
-  // description line under it. Exported so a caller can add rows of its own.
-  function topologyLegendRow(swatchHtml, label, desc) {
-    var html = '<div class="topology-legend-row">' + swatchHtml +
+  // description line under it, and the optional legendMatch key hovering it
+  // lights (wireLegendHover). Exported so a caller can add rows of its own.
+  function topologyLegendRow(swatchHtml, label, desc, key) {
+    var keyAttr = key ? ' data-legend-key="' + _escTip(key) + '"' : "";
+    var html = '<div class="topology-legend-row"' + keyAttr + '>' + swatchHtml +
                '<span class="topology-legend-label">' + _escTip(label) + '</span></div>';
     if (desc) html += '<div class="topology-legend-desc">' + _escTip(desc) + '</div>';
     return html;
@@ -3198,6 +3280,9 @@
     topologyLegendHtml: topologyLegendHtml,
     linkHoverSet: linkHoverSet,
     highlightLinkHover: highlightLinkHover,
+    legendMatch: legendMatch,
+    highlightLegendHover: highlightLegendHover,
+    wireLegendHover: wireLegendHover,
     clearLinkHover: clearLinkHover,
     topologyLegendRow: topologyLegendRow,
     HEALTH_NODE_COLORS: HEALTH_NODE_COLORS,

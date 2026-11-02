@@ -195,8 +195,8 @@ your zoom.
 
 The legend button in the topology's bottom-left corner opens the same key as
 the Device Map page: what each node, health colour, link and location box
-means. Its × folds it back into the button, and your browser remembers whether
-you left it open.
+means. Hover a row to light up what it stands for on the graph. Its × folds it
+back into the button, and your browser remembers whether you left it open.
 
 **Asset types** in the gear choose which devices a topology shows: Firewalls,
 Switches and Access Points. A device from another site — one this site's
