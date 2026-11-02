@@ -1989,68 +1989,11 @@
     el.style.left = ""; el.style.top = "";
   }
   function _buildLegendHTML(spec) {
-    function nodeSwatch(row) {
-      var size = row.size === "lg" ? 22 : (row.size === "sm" ? 14 : 18);
-      var border = row.border ? row.border : "rgba(255,255,255,0.85)";
-      var borderStyle = row.borderStyle === "dashed" ? "dashed" : "solid";
-      var fill = row.fill === "data(nodeColor)" ? window.PolarisTopologyRender.HEALTH_NODE_COLORS.up : row.fill;
-      var shape = "";
-      if (row.kind === "diamond") {
-        shape = '<div style="width:' + size + 'px;height:' + size + 'px;background:' + fill +
-                ';border:2px ' + borderStyle + ' ' + border + ';transform:rotate(45deg)"></div>';
-      } else if (row.kind === "round-rectangle") {
-        shape = '<div style="width:' + (size + 8) + 'px;height:' + size + 'px;background:' + fill +
-                ';border:2px ' + borderStyle + ' ' + border + ';border-radius:4px"></div>';
-      } else {
-        shape = '<div style="width:' + size + 'px;height:' + size + 'px;background:' + fill +
-                ';border:2px ' + borderStyle + ' ' + border + ';border-radius:50%"></div>';
-      }
-      return '<span class="topology-legend-swatch">' + shape + '</span>';
-    }
-    function edgeSwatch(row) {
-      var dash = row.style === "dashed" ? "4 3" : "0";
-      return '<span class="topology-legend-swatch">' +
-        '<svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true">' +
-          '<line x1="2" y1="6" x2="26" y2="6" stroke="' + row.color +
-          '" stroke-width="2.4" stroke-dasharray="' + dash + '" stroke-linecap="round"/>' +
-        '</svg></span>';
-    }
-    function healthSwatch(row) {
-      return '<span class="topology-legend-swatch">' +
-        '<div style="width:14px;height:14px;background:' + row.color +
-        ';border-radius:50%;border:2px solid rgba(255,255,255,0.85)"></div></span>';
-    }
-    function row(swatchHtml, label, desc) {
-      var html = '<div class="topology-legend-row">' + swatchHtml +
-                 '<span class="topology-legend-label">' + escapeHtml(label) + '</span></div>';
-      if (desc) html += '<div class="topology-legend-desc">' + escapeHtml(desc) + '</div>';
-      return html;
-    }
-    // Location grouping hull swatches — every level is a rounded rectangle
-    // with a FIXED per-level color + solid/dashed border, mirroring
-    // LOC_GROUP_KINDS in topology-render.js.
-    function locationSwatch(rowSpec) {
-      var color = rowSpec.color || "#4fc3f7";
-      var borderStyle = rowSpec.style === "dashed" ? "dashed" : "solid";
-      var shape = '<div style="width:22px;height:16px;background:' + color + '22;border:2px ' +
-        borderStyle + ' ' + color + ';border-radius:4px"></div>';
-      return '<span class="topology-legend-swatch">' + shape + '</span>';
-    }
-    var parts = [];
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Nodes</div>');
-    spec.nodes.forEach(function (n) { parts.push(row(nodeSwatch(n), n.label, n.desc)); });
-    parts.push('</div>');
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Monitor health</div>');
-    spec.health.forEach(function (h) { parts.push(row(healthSwatch(h), h.label)); });
-    parts.push('</div>');
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Edges</div>');
-    spec.edges.forEach(function (e) { parts.push(row(edgeSwatch(e), e.label, e.desc)); });
-    parts.push('</div>');
-    if (spec.locations) {
-      parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Location groups</div>');
-      spec.locations.forEach(function (l) { parts.push(row(locationSwatch(l), l.label, l.desc)); });
-      parts.push('</div>');
-    }
+    // Nodes / Monitor health / Edges / Location groups are the shared key
+    // (topology-render.js, also drawn by the Device Map widget).
+    var R = window.PolarisTopologyRender;
+    var row = R.topologyLegendRow;
+    var parts = [R.topologyLegendHtml(spec)];
     // Mouse controls are a property of THIS desktop modal (cytoscape wiring
     // in map.js), not of the shared render spec — the mobile topology tab
     // has its own touch gestures.
@@ -2530,11 +2473,24 @@
     if (modal) modal.classList.remove("topology-fullscreen");
     overlay.classList.remove("open");
     overlay.setAttribute("aria-hidden", "true");
-    if (cyInstance) {
-      cyInstance.destroy();
-      cyInstance = null;
-    }
+    _destroyGraphKeepingLegend();
     edgeEditor = null;
+  }
+
+  // cy.destroy() empties its container — and the legend overlay is static
+  // markup shipped INSIDE #topology-graph (map.html), never rebuilt. A view
+  // switch (Base → an area) or closing the modal therefore deleted it for the
+  // rest of the page visit. Detach it first and put it back, listeners and
+  // open/closed state intact. (The location chips and corner tools are
+  // rebuilt by their own render paths.)
+  function _destroyGraphKeepingLegend() {
+    if (!cyInstance) return;
+    var graphEl = document.getElementById("topology-graph");
+    var legendEl = document.getElementById("topology-legend-overlay");
+    if (legendEl && legendEl.parentNode) legendEl.parentNode.removeChild(legendEl);
+    try { cyInstance.destroy(); } catch (e) {}
+    cyInstance = null;
+    if (legendEl && graphEl) graphEl.appendChild(legendEl);
   }
 
   // Delegates to PolarisTopologyRender so desktop and mobile share one
@@ -2612,10 +2568,7 @@
     // Refresh path: tear down the previous cytoscape before mounting the
     // new one. Without this, a Refresh click stacks two graphs and the
     // canvas leaks.
-    if (cyInstance) {
-      try { cyInstance.destroy(); } catch (e) {}
-      cyInstance = null;
-    }
+    _destroyGraphKeepingLegend();
     edgeEditor = null;
 
     // Restore manually-dragged node positions from localStorage if any
@@ -3443,7 +3396,7 @@
     }
     wrap.innerHTML = "";
     var views = topoState.floorViews || [];
-    if (views.length === 0) { wrap.hidden = true; return; }
+    if (views.length === 0) { wrap.hidden = true; _fitLegendBelowFloorViews(); return; }
     function chipEl(key, label, title, active) {
       var chip = document.createElement("button");
       chip.type = "button";
@@ -3463,6 +3416,29 @@
       wrap.appendChild(r);
     });
     wrap.hidden = false;
+    _fitLegendBelowFloorViews();
+  }
+
+  // The open legend grows up from the graph's bottom-left corner and the
+  // location-view chips stack down from its top-left (one to three rows), so
+  // a tall legend ran up under the chips. Cap it at the room below them — its
+  // body scrolls — and lift the cap when there are no chips. Re-run whenever
+  // the chips re-render and whenever the graph changes size (full screen, a
+  // resized window), through one ResizeObserver attached on the first fit.
+  var LEGEND_GAP = 12; // the legend's bottom inset, and the gap left under the chips
+  var _legendFitRo = null;
+  function _fitLegendBelowFloorViews() {
+    var graph = document.getElementById("topology-graph");
+    var legend = document.getElementById("topology-legend-overlay");
+    if (!graph || !legend) return;
+    if (!_legendFitRo && typeof ResizeObserver === "function") {
+      _legendFitRo = new ResizeObserver(function () { _fitLegendBelowFloorViews(); });
+      _legendFitRo.observe(graph);
+    }
+    var wrap = document.getElementById("topology-floor-views");
+    if (!wrap || wrap.hidden) { legend.style.maxHeight = ""; return; }
+    var room = graph.clientHeight - (wrap.offsetTop + wrap.offsetHeight) - LEGEND_GAP * 2;
+    legend.style.maxHeight = Math.max(room, 80) + "px";
   }
 
   // ── Snap devices ─────────────────────────────────────────────────────────

@@ -2923,8 +2923,79 @@
     return html;
   }
 
+  // The legend's body from topologyLegendSpec(): Nodes, Monitor health, Edges
+  // and (when the spec has them) Location groups, as .topology-legend-* rows
+  // (styles.css). Shared by the Device Map page — which appends its own Mouse
+  // controls section — and the Device Map widget's read-only topology, so the
+  // two keys cannot drift apart.
+  function topologyLegendHtml(spec) {
+    function nodeSwatch(row) {
+      var size = row.size === "lg" ? 22 : (row.size === "sm" ? 14 : 18);
+      var border = row.border ? row.border : "rgba(255,255,255,0.85)";
+      var borderStyle = row.borderStyle === "dashed" ? "dashed" : "solid";
+      var fill = row.fill === "data(nodeColor)" ? HEALTH_NODE_COLORS.up : row.fill;
+      var shape = "";
+      if (row.kind === "diamond") {
+        shape = '<div style="width:' + size + 'px;height:' + size + 'px;background:' + fill +
+                ';border:2px ' + borderStyle + ' ' + border + ';transform:rotate(45deg)"></div>';
+      } else if (row.kind === "round-rectangle") {
+        shape = '<div style="width:' + (size + 8) + 'px;height:' + size + 'px;background:' + fill +
+                ';border:2px ' + borderStyle + ' ' + border + ';border-radius:4px"></div>';
+      } else {
+        shape = '<div style="width:' + size + 'px;height:' + size + 'px;background:' + fill +
+                ';border:2px ' + borderStyle + ' ' + border + ';border-radius:50%"></div>';
+      }
+      return '<span class="topology-legend-swatch">' + shape + '</span>';
+    }
+    function edgeSwatch(row) {
+      var dash = row.style === "dashed" ? "4 3" : "0";
+      return '<span class="topology-legend-swatch">' +
+        '<svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true">' +
+          '<line x1="2" y1="6" x2="26" y2="6" stroke="' + row.color +
+          '" stroke-width="2.4" stroke-dasharray="' + dash + '" stroke-linecap="round"/>' +
+        '</svg></span>';
+    }
+    function healthSwatch(row) {
+      return '<span class="topology-legend-swatch">' +
+        '<div style="width:14px;height:14px;background:' + row.color +
+        ';border-radius:50%;border:2px solid rgba(255,255,255,0.85)"></div></span>';
+    }
+    // Location grouping hull swatches — every level is a rounded rectangle
+    // with a FIXED per-level color + solid/dashed border, mirroring
+    // LOC_GROUP_KINDS.
+    function locationSwatch(rowSpec) {
+      var color = rowSpec.color || "#4fc3f7";
+      var borderStyle = rowSpec.style === "dashed" ? "dashed" : "solid";
+      var shape = '<div style="width:22px;height:16px;background:' + color + '22;border:2px ' +
+        borderStyle + ' ' + color + ';border-radius:4px"></div>';
+      return '<span class="topology-legend-swatch">' + shape + '</span>';
+    }
+    function section(title, rows, swatch) {
+      if (!rows || !rows.length) return "";
+      return '<div class="topology-legend-section"><div class="topology-legend-section-title">' + _escTip(title) + '</div>' +
+        rows.map(function (r) { return topologyLegendRow(swatch(r), r.label, r.desc); }).join("") +
+        '</div>';
+    }
+    if (!spec) return "";
+    return section("Nodes", spec.nodes, nodeSwatch) +
+      section("Monitor health", spec.health, healthSwatch) +
+      section("Edges", spec.edges, edgeSwatch) +
+      section("Location groups", spec.locations, locationSwatch);
+  }
+
+  // One legend row: a swatch (HTML, may be ""), a label and an optional
+  // description line under it. Exported so a caller can add rows of its own.
+  function topologyLegendRow(swatchHtml, label, desc) {
+    var html = '<div class="topology-legend-row">' + swatchHtml +
+               '<span class="topology-legend-label">' + _escTip(label) + '</span></div>';
+    if (desc) html += '<div class="topology-legend-desc">' + _escTip(desc) + '</div>';
+    return html;
+  }
+
   window.PolarisTopologyRender = {
     edgeTooltipHtml: edgeTooltipHtml,
+    topologyLegendHtml: topologyLegendHtml,
+    topologyLegendRow: topologyLegendRow,
     HEALTH_NODE_COLORS: HEALTH_NODE_COLORS,
     fortinetNodeColor: fortinetNodeColor,
     buildTopologyElements: buildTopologyElements,

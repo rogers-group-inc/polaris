@@ -191,6 +191,17 @@ their ports and the kind of link, as on the Device Map page. **Open ↗** opens 
 where the topology can be edited. The graph refreshes every minute and keeps
 your zoom.
 
+The legend button in the topology's bottom-left corner opens the same key as
+the Device Map page: what each node, health colour, link and location box
+means. Its × folds it back into the button, and your browser remembers whether
+you left it open.
+
+**Device types** in the gear choose which devices a topology shows: FortiGates,
+FortiSwitches, FortiAPs, and devices at other sites. Untick a type to hide those
+devices and their links, both on a one-gate widget and on a topology opened by
+double-clicking a gate on the map. The legend leaves out the hidden types.
+Every type is shown until you untick it.
+
 A gate that has no map coordinates can still be picked on its own — its
 topology needs none — but it does not appear on a map of several gates.
 
