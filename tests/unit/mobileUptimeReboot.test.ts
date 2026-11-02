@@ -9,8 +9,9 @@
  *     the device is down (the desktop System tab's rule), with "since".
  *
  *   • THE VERB — "Reboot…" only when the server says something may reboot the
- *     device and the user holds assets:write; a device that cannot reboot now
- *     but can be booked gets "Schedule reboot…" and the reason; the confirm is
+ *     device and the user holds assets:write; otherwise NOTHING (no reason
+ *     line, no permission note — operator decision 2026-11-02); a device that
+ *     cannot reboot now but can be booked gets "Schedule reboot…" and the reason; the confirm is
  *     a stacked sheet that refuses to proceed until "I understand this device
  *     will go down" is ticked; reboot now POSTs, a booking sends the time and
  *     recipients. The Reason field (rule 115(d)) rides both, and holds the
@@ -120,11 +121,19 @@ describe("the Uptime row", () => {
     expect(rowNamed("Uptime")).toBeUndefined();
   });
 
-  it("stays, with the reason, when the device reports uptime but cannot be rebooted", async () => {
-    reboot = { state: "no-credential", available: false, kind: "fortinet", reason: "Nothing is allowed to reboot this FortiGate." };
-    await openAsset("gate");
-    expect(btn()).toBeNull();
-    expect(text(rowNamed("Uptime"))).toContain("Nothing is allowed to reboot this FortiGate.");
+  it("says nothing about rebooting when reboots are not enabled — the uptime stays", async () => {
+    for (const r of [
+      { state: "no-credential", available: false, kind: "fortinet", reason: "Nothing is allowed to reboot this FortiGate." },
+      { state: "agent-disabled", available: false, kind: "agent", reason: "Reboots are not enabled for this host." },
+      { state: "unsupported", available: false, kind: null, reason: "Polaris can reboot FortiGates, …" },
+    ]) {
+      reboot = r;
+      boot();
+      await openAsset("gate");
+      expect(btn()).toBeNull();
+      expect(text(rowNamed("Uptime"))).toMatch(/^Uptime 2d 1h · since [^]*$/);
+      expect(text(document.getElementById("asset-reboot-slot"))).toBe("");
+    }
   });
 
   it("offers a booking when the device cannot reboot right now but can later", async () => {
@@ -134,11 +143,11 @@ describe("the Uptime row", () => {
     expect(text(rowNamed("Uptime"))).toContain("It can be scheduled for later.");
   });
 
-  it("shows no button at assets:read", async () => {
+  it("shows nothing about rebooting at assets:read", async () => {
     perms = { assets: "read" };
     await openAsset("gate");
     expect(btn()).toBeNull();
-    expect(text(rowNamed("Uptime"))).toContain("Rebooting needs Read-Write on Assets");
+    expect(text(document.getElementById("asset-reboot-slot"))).toBe("");
   });
 });
 

@@ -4279,7 +4279,8 @@
   // General's Uptime row carries the Reboot verb — the desktop Status row's
   // Reboot… button, cut down to a phone: the server decides what may reboot
   // the device (a credential's or integration's Allow reboots, an agent
-  // host's opt-in) and says why not; this row only shows it. Reboot now or
+  // host's opt-in); this row shows the button when it may and nothing when it
+  // may not (no reason line — the desktop says why not). Reboot now or
   // "Schedule for later" in one stacked confirm sheet (never window.confirm —
   // canon-mobile), a pending booking sits on the row with Change / Cancel, and
   // a live run is polled until it ends. Pressing it is assets:write
@@ -4342,13 +4343,15 @@
     var canAct = canFlashFirmware();
     var schedulable = !!RB_SCHEDULABLE[rb.state];
     if (!rb.schedule) {
-      if (!canAct) {
-        if (rb.available) out += '<div class="muted" style="font-size:12px;margin-top:4px;">Rebooting needs Read-Write on Assets</div>';
-      } else if (rb.available || schedulable) {
+      // Says NOTHING unless there is something this viewer can press
+      // (operator decision 2026-11-02): a device nothing may reboot, and a
+      // viewer without assets:write, get no reason line — the desktop Status
+      // row is where the "why not" lives. A device that may reboot but not
+      // right now (blocked, agent offline) keeps its one line, since it
+      // explains why the button only books.
+      if (canAct && (rb.available || schedulable)) {
         out += '<button class="btn btn-tonal" id="asset-reboot-btn" style="margin-top:6px;">' + (rb.available ? "Reboot…" : "Schedule reboot…") + '</button>';
         if (!rb.available) out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(rb.reason || "Not right now.") + ' It can be scheduled for later.</div>';
-      } else {
-        out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(rb.reason || "This device cannot be rebooted from Polaris.") + '</div>';
       }
     } else {
       if (canAct && rb.available) out += '<button class="btn btn-tonal" id="asset-reboot-btn" style="margin-top:6px;">Reboot now…</button>';
