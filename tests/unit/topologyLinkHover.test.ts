@@ -117,6 +117,20 @@ describe("link hover highlight", () => {
       }
     }
   });
+
+  it("an icon device's glow clears its ring — the firewall's 10px border hid a 5px glow", () => {
+    const sheet = R.topologyStylesheet("dark") as { selector: string; style: Record<string, unknown> }[];
+    const base = sheet.find((r) => r.selector === "node.link-hover")!.style["underlay-padding"] as number;
+    const iconRings = sheet.filter((r) => /^node\[hasIcon = 1\]\[role="[^"]+"\]$/.test(r.selector) && "border-width" in r.style);
+    expect(iconRings.length).toBeGreaterThanOrEqual(4);
+    for (const ring of iconRings) {
+      const role = ring.selector.match(/role="([^"]+)"/)![1];
+      const glow = sheet.find((r) => r.selector === `node.link-hover[hasIcon = 1][role="${role}"]`);
+      expect(glow, role).toBeTruthy();
+      // A border draws centred on the node edge: half of it is outside.
+      expect(glow!.style["underlay-padding"], role).toBe(base + (ring.style["border-width"] as number) / 2);
+    }
+  });
 });
 
 /**

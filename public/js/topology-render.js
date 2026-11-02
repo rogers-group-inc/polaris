@@ -865,12 +865,22 @@
         "underlay-shape": "ellipse",
       },
     });
+    // Underlay padding is measured from the node's edge, but a border draws
+    // CENTRED on that edge, so half of an icon ring sits outside it. Pad past
+    // the ring, or the firewall's 10px ring covers the 5px glow entirely.
+    // Mirrors the hasIcon border widths above: 5 + border / 2.
+    [["fortigate", 10], ["fortiswitch", 8.5], ["fortiap", 8], ["remote-asset", 8.5]].forEach(function (r) {
+      style.push({
+        selector: 'node.link-hover[hasIcon = 1][role="' + r[0] + '"]',
+        style: { "underlay-padding": r[1] },
+      });
+    });
     style.push({
       selector: "edge.link-hover",
       style: {
         "underlay-color": hoverGlow,
-        "underlay-opacity": 0.4,
-        "underlay-padding": 3,
+        "underlay-opacity": 0.6,
+        "underlay-padding": 4,
         "z-index": 998,
       },
     });
