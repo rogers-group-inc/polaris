@@ -19,7 +19,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 ```
 Asset
   id              UUID PK
-  ipAddress       String?
+  ipAddress       String?         -- Null on every decommissioned asset (business rule 40(k)): the db.ts extension clears it, ipSource and every pin on the write that decommissions, keeping the address in AssetIpHistory, and drops an address later staged on the row without a status change (migration 20261102120000 cleared the rows decommissioned before).
   ipSource        String?         -- Where ipAddress was last set from: "manual", "fortimanager", "fortigate", etc.
   macAddress      String?         -- Most recently seen MAC (Intune writes prefer Ethernet over Wi-Fi when both are reported)
   -- macAddresses: stored in the AssetMacAddress side table (one row per

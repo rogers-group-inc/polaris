@@ -315,7 +315,17 @@ an alert**.
 
 ### Rule 40
 **Two assets on one address is a conflict; one asset on a stale address is not.**
-Ten lettered clauses, (a) to (j) — see [Conflict resolution](Conflict-Resolution#duplicate-ip--the-long-one).
+Eleven lettered clauses, (a) to (k) — see [Conflict resolution](Conflict-Resolution#duplicate-ip--the-long-one).
+
+**(k) A decommissioned asset holds no address.** Setting an asset to
+*Decommissioned* — by hand, in bulk, or by an integration's decommission sweep —
+clears its IP address and any pin on it, so the replacement device can take the
+address without a conflict. The address stays on the asset's **IP history**,
+and an `asset.ip_released` event records it. While the asset stays
+decommissioned, discovery cannot put an address back on it; reactivating it
+lets the next discovery (or you) set one again. Only the IPv4 address is
+released.
+
 The short version: only network-present assets, only current claims, two
 **devices** not two rows, one card per address, two verbs instead of accept, and
 one claimant must be equipment somebody addressed on purpose **or** the address

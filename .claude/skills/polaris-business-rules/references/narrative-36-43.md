@@ -375,6 +375,40 @@ re-projects the stale lease and undoes the Clear the first time anyone edits the
 blank on a row that is already blank and held is therefore a no-op; typing an address on the
 form or reassigning ends the hold.
 
+### 40(k) — a decommissioned asset holds no address (2026-11-02)
+
+**The incident.** An operator replaced a switch, decommissioned the old record, and got an IP
+conflict between the active replacement and the retired switch. Clause (a) already keeps a
+decommissioned row out of the duplicate-IP sweep, but every other surface that reads
+`Asset.ipAddress` (IP lookup, the asset form's ip-check, the IPAM IP panel, search) still saw
+the retired switch on the address, and a decommissioned record sitting on a live address is a
+claim nobody should have to explain away.
+
+**The decision.** Decommissioning releases the address. The write that moves a row to
+`decommissioned` clears `ipAddress` and every pin on it (`ipOverride`, `ipBlankPinned`,
+`ipCleared`, the rule-102 primary-address pin): a pin left behind would hand the address
+straight back on the next discovery write. The address is not forgotten: it stays in
+`AssetIpHistory`. The hook inserts the row when it is missing and otherwise leaves its
+firstSeen / lastSeen / source alone, because the address was last *seen* when it was last
+seen, not when someone retired the record. An `asset.ip_released` Event names the address
+and the actor (`statusChangedBy`).
+
+**Why in `db.ts`.** Most decommissions are sweeps (FMG roster, directory absence rule 70,
+workload hosts) and they write through `updateMany`, alongside the PUT route, the conflict
+verbs and the AD create path. The extension is the one seam all of them pass, the same reason
+`clampMonitoredForStatus` lives there. Discovery may also keep listing a retired device, so a
+later write that stages an address on a decommissioned row without changing the status is
+dropped. A write that stages a status passes through, because that is a reactivation and the
+device is back.
+
+**Edges.** A re-save of an already-decommissioned row is not a transition: no second Event,
+and an operator may still type an address onto a retired record deliberately. A row CREATED
+decommissioned (an AD-disabled computer) is created without an address, and the staged
+address goes into its history. IPv6 (`ipv6Address`, rule 128) is out of scope: the
+primary-IPv6 job would re-pick it, and it has never raised this conflict. Migration
+`20261102120000_decommissioned_assets_release_ip` applied the rule to rows decommissioned
+before it, with the same history-first, event, then clear order.
+
 ---
 
 <a id="rule-41"></a>
