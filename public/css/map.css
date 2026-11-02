@@ -650,10 +650,17 @@
 @media (prefers-reduced-motion: reduce) {
   .topology-layout, .topology-edge { transition: none; }
 }
+/* overflow: hidden — this is Cytoscape's container, and Cytoscape sizes its
+   inner div in whole pixels from clientWidth/Height, which can round UP past
+   this fractional-height cell (80vh). Unclipped, that sub-pixel overflow put
+   scrollbars on the modal body, which shrank the graph, which dropped them
+   again: a resize loop that flickered. Everything drawn here (chips, corner
+   tools, legend) is positioned inside it, so nothing is meant to spill. */
 .topology-graph {
   position: relative;
   width: 100%;
   height: 100%;
+  overflow: hidden;
   background: var(--color-bg-secondary);
   border-right: 1px solid var(--color-border);
 }
@@ -879,6 +886,19 @@
   color: var(--color-text-tertiary);
   font-family: "Roboto Mono", monospace;
   font-size: 0.75rem;
+}
+
+/* Side by side, the layout asks for 80vh but the windowed modal caps at
+   85vh, header included — so whenever the header is taller than 5vh (a short
+   viewport in CSS pixels, e.g. a 4K screen at 150% scaling) the body
+   overflowed by a few pixels. With classic scrollbars that pinned a vertical
+   scrollbar on, narrowing the graph and feeding Cytoscape's resize loop.
+   As a flex column the body lets the layout shrink into the room it has,
+   down to its 520px floor; 80vh is now the most it takes. The stacked layout
+   below 960px is meant to scroll, so it keeps the plain block body. */
+@media (min-width: 961px) {
+  #topology-overlay .modal-body { display: flex; flex-direction: column; }
+  #topology-overlay .topology-layout { flex: 0 1 auto; }
 }
 
 @media (max-width: 960px) {
