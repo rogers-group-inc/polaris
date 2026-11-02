@@ -60,7 +60,10 @@ import {
   applyIpCleared,
   applyIpOverride,
   applyPrimaryAddressPin,
+  dropAddressOnDecommissioned,
+  releaseAddressOnDecommission,
   stagedIpOf,
+  stagesDecommission,
   statusAllowsMonitoring,
   UNMONITORABLE_STATUSES,
   type IpClearedOutcome,
@@ -292,6 +295,94 @@ async function recordIpHistory(base: PrismaClient, assetId: string, ip: string, 
   }
 }
 
+/** A row whose address a decommissioning write released (business rule 40(k)). */
+interface ReleasedAddress {
+  id: string;
+  hostname: string | null;
+  ipAddress: string | null;
+  ipSource: string | null;
+}
+
+/** Who the decommissioning write names — its staged statusChangedBy, if any. */
+function decommissionActorOf(data: Record<string, unknown>): string {
+  const v = data.statusChangedBy;
+  const raw = v && typeof v === "object" && "set" in (v as Record<string, unknown>) ? (v as Record<string, unknown>).set : v;
+  return typeof raw === "string" && raw ? raw : "system";
+}
+
+/**
+ * Business rule 40(k), before a write that sets status "decommissioned": read
+ * the rows it TRANSITIONS (not already decommissioned) and strip the address
+ * fields from the write. Returns the rows read, for
+ * recordDecommissionRelease once the write lands. A write that transitions no
+ * row (a re-save of an already-decommissioned asset, or a missing row) is left
+ * alone, so an operator may still type an address onto a retired asset. A
+ * failed read strips anyway — the invariant outranks the audit row. One read
+ * per decommission, which is rare at any fleet size.
+ */
+async function releaseAddressForDecommission(
+  base: PrismaClient,
+  where: unknown,
+  data: unknown,
+): Promise<ReleasedAddress[]> {
+  const d = data as Record<string, unknown> | undefined;
+  if (!d || typeof d !== "object" || !stagesDecommission(d)) return [];
+  let rows: ReleasedAddress[];
+  try {
+    rows = await base.asset.findMany({
+      where: { AND: [(where ?? {}) as any, { status: { not: "decommissioned" } }] },
+      select: { id: true, hostname: true, ipAddress: true, ipSource: true },
+    });
+  } catch {
+    releaseAddressOnDecommission(d);
+    return [];
+  }
+  if (rows.length === 0) return [];
+  releaseAddressOnDecommission(d);
+  return rows;
+}
+
+/**
+ * Business rule 40(k), after the write: make sure each released address has
+ * its AssetIpHistory row (insert-if-missing — an existing row keeps its
+ * firstSeen / lastSeen / source) and record one `asset.ip_released` Event per
+ * asset. One statement for the history and one createMany for the events, so a
+ * sweep that decommissions hundreds of assets costs two round-trips. Never
+ * throws.
+ */
+async function recordDecommissionRelease(base: PrismaClient, rows: ReleasedAddress[], actor: string): Promise<void> {
+  const held = rows.filter((r): r is ReleasedAddress & { ipAddress: string } => !!r.ipAddress);
+  if (held.length === 0) return;
+  try {
+    await base.$executeRawUnsafe(
+      `INSERT INTO "asset_ip_history" ("id", "assetId", "ip", "source", "firstSeen", "lastSeen")
+       SELECT gen_random_uuid()::text, r."assetId", r."ip", r."source", $4::timestamp, $4::timestamp
+       FROM unnest($1::text[], $2::text[], $3::text[]) AS r("assetId", "ip", "source")
+       ON CONFLICT ("assetId", "ip") DO NOTHING`,
+      held.map((r) => r.id),
+      held.map((r) => r.ipAddress),
+      held.map((r) => r.ipSource || "manual"),
+      new Date().toISOString(),
+    );
+  } catch {
+    // Best-effort, like recordIpHistory.
+  }
+  try {
+    const { logEventsBatch } = await import("./services/eventLogService.js");
+    await logEventsBatch(held.map((r) => ({
+      action: "asset.ip_released",
+      resourceType: "asset",
+      resourceId: r.id,
+      resourceName: r.hostname ?? undefined,
+      actor,
+      message: `Released ${r.ipAddress} from "${r.hostname ?? r.id}" — a decommissioned asset holds no address; it stays in the IP history`,
+      details: { previousIpAddress: r.ipAddress, previousIpSource: r.ipSource, reason: "decommissioned" },
+    })));
+  } catch {
+    // Best-effort — never fail the write being audited.
+  }
+}
+
 /**
  * Mutate args.data.manufacturer in place if present. Handles both single
  * data shapes ({manufacturer: "x"}) and Prisma's nested set/setNull form
@@ -447,10 +538,13 @@ async function enforceOperatorOverrides(
       where: where as any,
       select: {
         id: true, hostnameOverride: true, ipOverride: true, ipBlankPinned: true, ipCleared: true,
-        primaryAddressMac: true, primaryAddressIp: true,
+        primaryAddressMac: true, primaryAddressIp: true, status: true,
       },
     });
     if (guardHostname) applyHostnameOverride(d, row?.hostnameOverride);
+    // Business rule 40(k): a decommissioned asset holds no address, so a
+    // discovery write re-staging one (without reactivating) is dropped.
+    if (guardIp && dropAddressOnDecommissioned(d, row?.status)) return null;
     if (guardIp) {
       const srcRaw = d.ipSource;
       const stagedIpSource =
@@ -726,12 +820,16 @@ function _buildClient(base: PrismaClient) {
           normalizeManufacturerInData(args?.data);
           normalizeOsInData(args?.data);
           clampMonitoredForStatus(args?.data);
+          // Rule 40(k): an asset created decommissioned holds no address; the
+          // staged one still goes into its IP history below.
+          const createdIp = stagedIpOf(args?.data);
+          const createdSrc = typeof args?.data?.ipSource === "string" ? args.data.ipSource : "manual";
+          releaseAddressOnDecommission(args?.data);
           const result = await query(args);
           const d = args.data as Record<string, unknown> | undefined;
-          const ip = typeof d?.ipAddress === "string" ? d.ipAddress : undefined;
+          const ip = createdIp ?? undefined;
           if (ip) {
-            const src = typeof d?.ipSource === "string" ? d.ipSource : "manual";
-            recordIpHistory(base, (result as any).id, ip, src);
+            recordIpHistory(base, (result as any).id, ip, createdSrc);
           }
           // Shadow-write asset_sources from the new row. Always fires on
           // create; on update we gate by touchesAssetSources() to skip the
@@ -746,9 +844,11 @@ function _buildClient(base: PrismaClient) {
           normalizeOsInData(args?.data);
           clampMonitoredForStatus(args?.data);
           await enforceMonitorableStatus(base, args?.where, args?.data);
+          const released = await releaseAddressForDecommission(base, args?.where, args?.data);
           const overrideOutcome = await enforceOperatorOverrides(base, args?.where, args?.data);
           const hostBefore = await hostnameBeforeWrite(base, args?.where, args?.data);
           const result = await query(args);
+          if (released.length) await recordDecommissionRelease(base, released, decommissionActorOf(args.data));
           if (overrideOutcome) fireIpOverrideFollowUp(overrideOutcome, (result as any)?.id);
           fireAlertRenameFollow(hostBefore, result);
           const d = args.data as Record<string, unknown> | undefined;
@@ -779,10 +879,15 @@ function _buildClient(base: PrismaClient) {
           normalizeOsInData(args?.data);
           clampMonitoredForStatus(args?.data);
           narrowUpdateManyForMonitorable(args);
+          // Rule 40(k): most decommission sweeps (directory absence, FMG
+          // roster, workload hosts) write through updateMany.
+          const released = await releaseAddressForDecommission(base, args?.where, args?.data);
           // updateMany: skip shadow-write. Rare on identity fields, and the
           // backfill job sweeps any drift on next startup. Same logic for the
           // dns_resolved reconcile — the periodic job catches drift.
-          return query(args);
+          const result = await query(args);
+          if (released.length) await recordDecommissionRelease(base, released, decommissionActorOf(args.data));
+          return result;
         },
         async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
           normalizeManufacturerInData(args?.create);
@@ -792,12 +897,17 @@ function _buildClient(base: PrismaClient) {
           clampMonitoredForStatus(args?.create);
           clampMonitoredForStatus(args?.update);
           await enforceMonitorableStatus(base, args?.where, args?.update);
+          // Rule 40(k) on both branches: a row created decommissioned holds no
+          // address either.
+          releaseAddressOnDecommission(args?.create);
+          const released = await releaseAddressForDecommission(base, args?.where, args?.update);
           // Create branch needs no guard — a brand-new row can't carry an
           // override; the read is a no-op miss when the row doesn't exist.
           const overrideOutcome = await enforceOperatorOverrides(base, args?.where, args?.update);
           // A create branch has no previous name: the read misses and nothing follows.
           const hostBefore = await hostnameBeforeWrite(base, args?.where, args?.update);
           const result = await query(args);
+          if (released.length) await recordDecommissionRelease(base, released, decommissionActorOf(args.update));
           if (overrideOutcome) fireIpOverrideFollowUp(overrideOutcome, (result as any)?.id);
           fireAlertRenameFollow(hostBefore, result);
           const updateTouches = touchesAssetSources(args?.update);

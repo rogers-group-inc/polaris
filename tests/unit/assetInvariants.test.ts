@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { clampAcquiredToLastSeen, bumpLastSeen } from "../../src/utils/assetInvariants.js";
+import {
+  clampAcquiredToLastSeen,
+  bumpLastSeen,
+  stagesDecommission,
+  releaseAddressOnDecommission,
+  dropAddressOnDecommissioned,
+  DECOMMISSION_ADDRESS_RELEASE,
+} from "../../src/utils/assetInvariants.js";
 
 const T0 = new Date("2026-01-01T00:00:00Z");
 const T1 = new Date("2026-02-01T00:00:00Z");
@@ -163,5 +170,54 @@ describe("bumpLastSeen — vcenter evidence source", () => {
     expect(bumpLastSeen(data, { lastSeen: T0, monitored: false }, T2, "vcenter")).toBe(true);
     expect(data.lastSeen).toEqual(T2);
     expect(data.lastSeenSource).toBe("vcenter");
+  });
+});
+
+describe("rule 40(k) — a decommissioned asset holds no address", () => {
+  it("stagesDecommission reads the plain and nested shapes", () => {
+    expect(stagesDecommission({ status: "decommissioned" })).toBe(true);
+    expect(stagesDecommission({ status: { set: "decommissioned" } })).toBe(true);
+    expect(stagesDecommission({ status: "disabled" })).toBe(false);
+    expect(stagesDecommission({ ipAddress: "10.0.0.1" })).toBe(false);
+    expect(stagesDecommission(null)).toBe(false);
+  });
+
+  it("releaseAddressOnDecommission clears the address and every pin, whatever the write staged", () => {
+    const data: Record<string, unknown> = {
+      status: "decommissioned",
+      ipAddress: "10.0.0.1",
+      ipOverride: "10.0.0.1",
+      primaryAddressIp: "10.0.0.1",
+    };
+    expect(releaseAddressOnDecommission(data)).toBe(true);
+    expect(data).toMatchObject({ status: "decommissioned", ...DECOMMISSION_ADDRESS_RELEASE });
+    expect(data.ipAddress).toBeNull();
+    expect(data.ipBlankPinned).toBe(false);
+  });
+
+  it("releaseAddressOnDecommission leaves any other status alone", () => {
+    const data: Record<string, unknown> = { status: "active", ipAddress: "10.0.0.1" };
+    expect(releaseAddressOnDecommission(data)).toBe(false);
+    expect(data).toEqual({ status: "active", ipAddress: "10.0.0.1" });
+  });
+
+  it("dropAddressOnDecommissioned drops a re-staged address on a decommissioned row", () => {
+    const data: Record<string, unknown> = { ipAddress: "10.0.0.1", ipSource: "fortimanager", hostname: "sw1" };
+    expect(dropAddressOnDecommissioned(data, "decommissioned")).toBe("10.0.0.1");
+    expect(data).toEqual({ hostname: "sw1" });
+  });
+
+  it("dropAddressOnDecommissioned lets a reactivating write, a live row, or a clear through", () => {
+    const reactivate: Record<string, unknown> = { status: "active", ipAddress: "10.0.0.1" };
+    expect(dropAddressOnDecommissioned(reactivate, "decommissioned")).toBeNull();
+    expect(reactivate.ipAddress).toBe("10.0.0.1");
+
+    const live: Record<string, unknown> = { ipAddress: "10.0.0.1" };
+    expect(dropAddressOnDecommissioned(live, "active")).toBeNull();
+    expect(live.ipAddress).toBe("10.0.0.1");
+
+    const clear: Record<string, unknown> = { ipAddress: null };
+    expect(dropAddressOnDecommissioned(clear, "decommissioned")).toBeNull();
+    expect(clear).toEqual({ ipAddress: null });
   });
 });

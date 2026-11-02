@@ -88,6 +88,12 @@ path. The two operator-facing paths (the edit form and bulk-monitor) **refuse
 with a reason** rather than leaning on the silent clamp — a form that saves and
 comes back unticked reads as a bug.
 
+**Decommissioning also releases the IP address** ([rule 40(k)](Business-Rules#rule-40)):
+the asset's IP and any pin on it are cleared, so a replacement device can take
+the address without a duplicate-IP conflict. The address stays on the asset's
+IP history and is recorded in an `asset.ip_released` event. Discovery does not
+put an address back while the asset stays decommissioned; reactivating it does.
+
 `quarantined` parks the flag so releasing a quarantine restores status *and*
 monitoring together; otherwise releasing would hand the device back to the
 network with nobody watching it. Flipping a status back to `active` does **not**

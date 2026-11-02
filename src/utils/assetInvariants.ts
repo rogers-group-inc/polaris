@@ -381,6 +381,70 @@ export function statusAllowsMonitoring(status: unknown): boolean {
 }
 
 /**
+ * Business rule 40(k): a decommissioned asset holds no address. A write that
+ * sets status "decommissioned" also clears the primary IPv4 address and every
+ * pin on it (override, blank pin, rule-40(j) hold, rule-102 primary-address
+ * pin), so a replacement device can take the address without a conflict. The
+ * address survives in AssetIpHistory — src/db.ts makes sure a row exists
+ * before the write lands.
+ */
+export const DECOMMISSION_ADDRESS_RELEASE = {
+  ipAddress: null,
+  ipSource: null,
+  ipOverride: null,
+  ipBlankPinned: false,
+  ipCleared: null,
+  primaryAddressMac: null,
+  primaryAddressIp: null,
+  primaryAddressPinnedAt: null,
+  primaryAddressPinnedBy: null,
+  primaryAddressContestedAt: null,
+} as const;
+
+/** Does this pending Asset write set status "decommissioned"? Handles the
+ *  plain and Prisma nested (`{ set }`) shapes. */
+export function stagesDecommission(data: Record<string, unknown> | null | undefined): boolean {
+  if (!data || typeof data !== "object" || !("status" in data)) return false;
+  const v = data.status;
+  const raw = v !== null && typeof v === "object" && "set" in (v as Record<string, unknown>)
+    ? (v as Record<string, unknown>).set
+    : v;
+  return raw === "decommissioned";
+}
+
+/**
+ * Rule 40(k), the write that decommissions: overwrite the address fields with
+ * DECOMMISSION_ADDRESS_RELEASE, whatever else the write staged. Returns
+ * whether it did. Mutates `data` in place.
+ */
+export function releaseAddressOnDecommission(data: Record<string, unknown> | null | undefined): boolean {
+  if (!data || !stagesDecommission(data)) return false;
+  Object.assign(data, DECOMMISSION_ADDRESS_RELEASE);
+  return true;
+}
+
+/**
+ * Rule 40(k), every later write: a write that stages an address on a row that
+ * is ALREADY decommissioned, without itself changing the status, has the
+ * address (and its ipSource) dropped — discovery may still list a retired
+ * device, and must not hand it back the address its replacement now holds. A
+ * write that also stages a status (a reactivation) passes through. Returns the
+ * dropped address, or null. Mutates `data` in place.
+ */
+export function dropAddressOnDecommissioned(
+  data: Record<string, unknown> | null | undefined,
+  rowStatus: unknown,
+): string | null {
+  if (!data || typeof data !== "object") return null;
+  if (rowStatus !== "decommissioned" || "status" in data) return null;
+  const staged = stagedIpOf(data);
+  if (!staged) return null;
+  delete data.ipAddress;
+  delete data.ipSource;
+  return staged;
+}
+
+/**
  * How long a pinned primary address may go unreported before the pin is
  * allowed to FOLLOW its card to a new address (business rule 102).
  */
