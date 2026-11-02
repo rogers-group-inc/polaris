@@ -849,17 +849,18 @@
     }
 
     // Link hover (highlightLinkHover): the hovered link and the devices on
-    // its ends — or a whole physical loop — glow in the theme's accent. An
-    // UNDERLAY, behind the element, so a link keeps its own type colour and
-    // dash and a device its health fill.
+    // its ends — or a whole physical loop — glow. Devices glow bright in the
+    // theme's accent; links glow in the HOVERED link's own colour
+    // (data(hoverGlow), stamped by highlightLinkHover). An UNDERLAY, behind
+    // the element, so a link keeps its dash and a device its health fill.
     var hoverGlow = isDark ? "#4fc3f7" : "#0369a1";
     style.push({
       selector: "node.link-hover",
       style: {
         "underlay-color": hoverGlow,
-        "underlay-opacity": 0.35,
-        // Graph units, so it shrinks with the zoom: a thin halo, not a
-        // blob — kept subtle on purpose (operator feedback 2026-11-02).
+        "underlay-opacity": 0.8,
+        // Graph units, so it shrinks with the zoom: a thin bright ring, not
+        // a blob (operator feedback 2026-11-02).
         "underlay-padding": 5,
         "underlay-shape": "ellipse",
       },
@@ -872,6 +873,10 @@
         "underlay-padding": 3,
         "z-index": 998,
       },
+    });
+    style.push({
+      selector: "edge.link-hover[hoverGlow]",
+      style: { "underlay-color": "data(hoverGlow)" },
     });
 
     return style;
@@ -903,10 +908,23 @@
   }
   function highlightLinkHover(cy, edge) {
     clearLinkHover(cy);
-    linkHoverSet(cy, edge).addClass("link-hover");
+    var lit = linkHoverSet(cy, edge);
+    // Every lit link — a whole loop included — glows in the colour the link
+    // under the mouse is SEEN in: a loop link's yellow outline (markPhysicalLoops
+    // halo) when it has one, otherwise its line colour.
+    var glow = null;
+    if (edge && edge.isEdge && edge.isEdge()) {
+      glow = parseFloat(edge.style("line-outline-width")) > 0
+        ? edge.style("line-outline-color") : edge.style("line-color");
+    }
+    if (glow) lit.edges().data("hoverGlow", glow);
+    lit.addClass("link-hover");
   }
   function clearLinkHover(cy) {
-    if (cy && !cy.destroyed()) cy.elements(".link-hover").removeClass("link-hover");
+    if (!cy || cy.destroyed()) return;
+    var lit = cy.elements(".link-hover");
+    lit.removeClass("link-hover");
+    lit.edges().removeData("hoverGlow");
   }
 
   // Legend rows for the topology overlay. Colors here mirror the constants

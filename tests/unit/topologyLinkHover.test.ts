@@ -85,6 +85,28 @@ describe("link hover highlight", () => {
     expect(() => R.clearLinkHover(cy)).not.toThrow(); // a graph torn down under the cursor
   });
 
+  it("every lit link glows in the hovered link's own colour, and clear drops it", () => {
+    const cy = graph();
+    cy.style([
+      { selector: "edge", style: { "line-color": "#22c55e" } },
+      { selector: "#bc", style: { "line-color": "#eab308" } },
+    ]);
+    R.highlightLinkHover(cy, cy.$id("bc"));
+    const glows = ["ab", "bc", "ca"].map((id) => cy.$id(id).data("hoverGlow"));
+    expect(new Set(glows).size).toBe(1);
+    expect(glows[0]).toBe(cy.$id("bc").style("line-color"));
+    expect(glows[0]).not.toBe(cy.$id("ab").style("line-color"));
+    R.clearLinkHover(cy);
+    expect(cy.$id("bc").data("hoverGlow")).toBeUndefined();
+  });
+
+  it("a link drawn with an outline (the loop halo) glows in the outline's colour", () => {
+    const cy = graph();
+    cy.style([{ selector: "edge", style: { "line-color": "#6a7388", "line-outline-width": 2, "line-outline-color": "#eab308" } }]);
+    R.highlightLinkHover(cy, cy.$id("ab"));
+    expect(cy.$id("ab").data("hoverGlow")).toBe(cy.$id("ab").style("line-outline-color"));
+  });
+
   it("the stylesheet draws the highlight as an underlay in both theme families", () => {
     for (const fam of ["light", "dark"]) {
       const sheet = R.topologyStylesheet(fam) as { selector: string; style: Record<string, unknown> }[];
