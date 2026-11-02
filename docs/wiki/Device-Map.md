@@ -321,7 +321,7 @@ and an undone change is saved like any other edit.
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |
-| **Mouse controls** | the mouse button beside Export: how to pan, select, edit and open devices. A click elsewhere, **Esc** or its **×** closes it |
+| **Mouse controls** | the mouse button beside Export: how to pan, select, hover and open devices. While editing it becomes a mouse with a pencil, listing the editing gestures instead (moving devices, bending lines, undo, grid and snap). The panel stays open while you work the map, swaps its list when you start or finish editing, and closes only when you click the button again |
 
 The **legend** sits at the graph's bottom left as a small button; click it to
 open the legend, and its **×** folds it back. The edge between the graph and

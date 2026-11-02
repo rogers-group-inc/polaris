@@ -1997,72 +1997,82 @@
 
   // Mouse controls are a property of THIS desktop modal (cytoscape wiring in
   // map.js), not of the shared render spec — the mobile topology tab has its
-  // own touch gestures. Shown from their own corner button, not the legend.
-  var MOUSE_CONTROLS = [
-      ["Drag empty space", "Pan the view (scroll wheel zooms)"],
+  // own touch gestures. Shown from their own corner button, not the legend:
+  // one button per mode, each listing only what works in that mode.
+  var MOUSE_CONTROLS_VIEW = [
+      ["Drag", "Pan the view, from empty space or over a device (scroll wheel zooms)"],
       ["Click", "Select just that device, link or location box"],
       ["Shift + click", "Add to the selection"],
       ["Shift + drag", "Box-select multiple devices"],
-      ["Ctrl + drag", "Pan from anywhere (even over devices)"],
-      ["Edit (pencil, top right)", "Turn on layout editing — the rows below; the check mark ends it"],
-      ["Drag a selected device", "Edit mode: move the selected devices together"],
-      ["Drag a connection line", "Edit mode: add a bend point there and move it"],
-      ["Click a connection line", "Edit mode: show its points — drag an end point around a device to attach the line there"],
-      ["Delete", "Edit mode: remove the selected bend point (an end point goes back to automatic)"],
-      ["Ctrl + Z / Ctrl + Shift + Z", "Edit mode: undo / redo a layout change (also the arrows under Edit)"],
-      ["Grid (top right)", "Edit mode: show the grid — thick lines where devices snap, thin lines in between"],
-      ["Snap devices / Snap line points", "Edit mode: devices land on the thick lines; line points on any line"],
+      ["Hover a connection line", "Show how it was found; light up its two devices (or its whole loop)"],
       ["Double-click a device", "Open its asset details"],
       ["Right-click a device", "Edit its description / grouping codes"],
+      ["Edit Map (pencil, top right)", "Turn on layout editing — its own mouse controls button lists those gestures"],
+  ];
+  var MOUSE_CONTROLS_EDIT = [
+      ["Drag empty space", "Pan the view (scroll wheel zooms)"],
+      ["Ctrl + drag", "Pan from anywhere (even over devices)"],
+      ["Click", "Select just that device, link or location box"],
+      ["Shift + click / Shift + drag", "Add to the selection / box-select multiple devices"],
+      ["Drag a selected device", "Move the selected devices together — a drawn line between two of them brings its points along"],
+      ["Drag a connection line", "Add a bend point there and move it"],
+      ["Click a connection line", "Show its points — drag an end point around a device to attach the line there"],
+      ["Delete", "Remove the selected bend point (an end point goes back to automatic)"],
+      ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo a layout change (also the arrows under Done Editing)"],
+      ["Grid (top right)", "Show the grid — thick lines where devices snap, thin lines in between"],
+      ["Snap devices / Snap line points", "Devices land on the thick lines; line points on any line"],
+      ["Done Editing (check mark)", "Back to view-only"],
   ];
 
-  // The Mouse controls panel: a legend-styled card under the corner tools,
-  // opened and closed by its button; a click elsewhere or Esc closes it.
-  function _toggleMouseControls(btn) {
+  // The Mouse controls panel: a legend-styled card under the corner tools.
+  // Only its button closes it — a click elsewhere on the map leaves it open,
+  // so the operator can try a gesture while reading it. While open it
+  // follows edit mode: entering or leaving editing swaps its rows and moves
+  // the pressed state to that mode's button (_paintMouseControls).
+  function _mouseControlsButtonId() {
+    return topoState.editing ? "topology-mouse-help-edit" : "topology-mouse-help";
+  }
+  function _toggleMouseControls() {
     var graph = document.getElementById("topology-graph");
     if (!graph) return;
     var panel = document.getElementById("topology-mouse-controls");
     if (panel) { _closeMouseControls(); return; }
-    var row = window.PolarisTopologyRender.topologyLegendRow;
     panel = document.createElement("div");
     panel.id = "topology-mouse-controls";
     panel.className = "topology-legend topology-mouse-controls";
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", "Mouse controls");
-    panel.innerHTML =
-      '<header class="topology-legend-header"><span class="topology-legend-title">Mouse controls</span>' +
-        '<button type="button" class="btn-icon" data-close aria-label="Close mouse controls" title="Close">&times;</button></header>' +
-      '<div class="topology-legend-body">' +
-        MOUSE_CONTROLS.map(function (c) { return row("", c[0], c[1]); }).join("") +
-      "</div>";
     // Clicks inside stay inside — the graph under it must not see them.
     ["mousedown", "pointerdown", "touchstart", "click"].forEach(function (t) {
       panel.addEventListener(t, function (e) { e.stopPropagation(); });
     });
-    panel.querySelector("[data-close]").addEventListener("click", _closeMouseControls);
     graph.appendChild(panel);
-    btn.classList.add("is-on");
-    btn.setAttribute("aria-expanded", "true");
-    setTimeout(function () {
-      document.addEventListener("click", _closeMouseControls);
-      // Capture on window: Esc closes THIS panel only, before the modal's own
-      // Esc handler would close the whole topology.
-      window.addEventListener("keydown", _mouseControlsKey, true);
-    }, 0);
+    _paintMouseControls();
   }
-  function _mouseControlsKey(e) {
-    if (e.key !== "Escape") return;
-    e.stopImmediatePropagation();
-    e.preventDefault();
-    _closeMouseControls();
+  function _paintMouseControls() {
+    var panel = document.getElementById("topology-mouse-controls");
+    var onId = panel ? _mouseControlsButtonId() : null;
+    ["topology-mouse-help", "topology-mouse-help-edit"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (!b) return;
+      b.classList.toggle("is-on", id === onId);
+      b.setAttribute("aria-expanded", id === onId ? "true" : "false");
+    });
+    if (!panel) return;
+    var editing = !!topoState.editing;
+    var title = editing ? "Mouse controls — editing" : "Mouse controls";
+    var row = window.PolarisTopologyRender.topologyLegendRow;
+    panel.setAttribute("aria-label", title);
+    panel.innerHTML =
+      '<header class="topology-legend-header"><span class="topology-legend-title">' + title + "</span></header>" +
+      '<div class="topology-legend-body">' +
+        (editing ? MOUSE_CONTROLS_EDIT : MOUSE_CONTROLS_VIEW)
+          .map(function (c) { return row("", c[0], c[1]); }).join("") +
+      "</div>";
   }
   function _closeMouseControls() {
     var panel = document.getElementById("topology-mouse-controls");
     if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
-    var btn = document.getElementById("topology-mouse-help");
-    if (btn) { btn.classList.remove("is-on"); btn.setAttribute("aria-expanded", "false"); }
-    document.removeEventListener("click", _closeMouseControls);
-    window.removeEventListener("keydown", _mouseControlsKey, true);
+    _paintMouseControls();
   }
 
   // ── Position persistence ───────────────────────────────────────────────────
@@ -3132,17 +3142,27 @@
       _setTopologyEditing(!topoState.editing);
     });
 
-    // Mouse controls (moved out of the legend): a mouse glyph opening its
-    // own panel.
-    var mouseBtn = _cornerButton("topology-mouse-help", "btn-icon topology-tool", function (b) {
-      _toggleMouseControls(b);
-    });
-    mouseBtn.innerHTML = _svg('<rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/>');
-    mouseBtn.setAttribute("aria-haspopup", "dialog");
-    mouseBtn.setAttribute("aria-expanded", "false");
-    _setCornerTip(mouseBtn, "Mouse controls", "How to pan, select, edit and open devices on this map");
+    // Mouse controls (moved out of the legend): one button per mode, in the
+    // same slot — a plain mouse while viewing, a mouse with a pencil while
+    // editing (_applyTopologyEditMode shows the one for the current mode).
+    function mouseHelpButton(id, icon, word, tip) {
+      var b = _cornerButton(id, "btn-icon topology-tool", function () { _toggleMouseControls(); });
+      b.innerHTML = _svg(icon);
+      b.setAttribute("aria-haspopup", "dialog");
+      b.setAttribute("aria-expanded", "false");
+      _setCornerTip(b, word, tip);
+      return b;
+    }
+    var mouseBtn = mouseHelpButton("topology-mouse-help",
+      '<rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/>',
+      "Mouse controls", "How to pan, select and open devices on this map");
+    var mouseEditBtn = mouseHelpButton("topology-mouse-help-edit",
+      '<rect x="3" y="3" width="11" height="17" rx="5.5"/><line x1="8.5" y1="6.5" x2="8.5" y2="10"/><path d="M15 21l-1 0 .5-2.5L20 13l1.5 1.5L16 20z"/>',
+      "Editing mouse controls", "How to move devices, draw and bend lines, undo and snap while editing");
+    mouseEditBtn.hidden = !topoState.editing;
+    mouseBtn.hidden = !!topoState.editing;
 
-    [snapPoints, snapDevices, grid, mouseBtn, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
+    [snapPoints, snapDevices, grid, mouseBtn, mouseEditBtn, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
     graph.appendChild(row);
 
     // Save / Reset layout: a column under the Edit button, edit mode only
@@ -3270,10 +3290,14 @@
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
     ["topology-save-layout", "topology-reset-layout", "topology-undo", "topology-redo",
-     "topology-snap-devices", "topology-snap-points", "topology-grid"].forEach(function (id) {
+     "topology-snap-devices", "topology-snap-points", "topology-grid",
+     "topology-mouse-help-edit"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.hidden = !on;
     });
+    var viewMouse = document.getElementById("topology-mouse-help");
+    if (viewMouse) viewMouse.hidden = on;
+    _paintMouseControls(); // an open panel swaps to this mode's rows
     // Undo history belongs to one edit session in one view: started when
     // editing starts (or the view changes under it), dropped on Done. A
     // re-render while editing (Refresh, Reset, restore) records its result
