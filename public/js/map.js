@@ -1989,68 +1989,11 @@
     el.style.left = ""; el.style.top = "";
   }
   function _buildLegendHTML(spec) {
-    function nodeSwatch(row) {
-      var size = row.size === "lg" ? 22 : (row.size === "sm" ? 14 : 18);
-      var border = row.border ? row.border : "rgba(255,255,255,0.85)";
-      var borderStyle = row.borderStyle === "dashed" ? "dashed" : "solid";
-      var fill = row.fill === "data(nodeColor)" ? window.PolarisTopologyRender.HEALTH_NODE_COLORS.up : row.fill;
-      var shape = "";
-      if (row.kind === "diamond") {
-        shape = '<div style="width:' + size + 'px;height:' + size + 'px;background:' + fill +
-                ';border:2px ' + borderStyle + ' ' + border + ';transform:rotate(45deg)"></div>';
-      } else if (row.kind === "round-rectangle") {
-        shape = '<div style="width:' + (size + 8) + 'px;height:' + size + 'px;background:' + fill +
-                ';border:2px ' + borderStyle + ' ' + border + ';border-radius:4px"></div>';
-      } else {
-        shape = '<div style="width:' + size + 'px;height:' + size + 'px;background:' + fill +
-                ';border:2px ' + borderStyle + ' ' + border + ';border-radius:50%"></div>';
-      }
-      return '<span class="topology-legend-swatch">' + shape + '</span>';
-    }
-    function edgeSwatch(row) {
-      var dash = row.style === "dashed" ? "4 3" : "0";
-      return '<span class="topology-legend-swatch">' +
-        '<svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true">' +
-          '<line x1="2" y1="6" x2="26" y2="6" stroke="' + row.color +
-          '" stroke-width="2.4" stroke-dasharray="' + dash + '" stroke-linecap="round"/>' +
-        '</svg></span>';
-    }
-    function healthSwatch(row) {
-      return '<span class="topology-legend-swatch">' +
-        '<div style="width:14px;height:14px;background:' + row.color +
-        ';border-radius:50%;border:2px solid rgba(255,255,255,0.85)"></div></span>';
-    }
-    function row(swatchHtml, label, desc) {
-      var html = '<div class="topology-legend-row">' + swatchHtml +
-                 '<span class="topology-legend-label">' + escapeHtml(label) + '</span></div>';
-      if (desc) html += '<div class="topology-legend-desc">' + escapeHtml(desc) + '</div>';
-      return html;
-    }
-    // Location grouping hull swatches — every level is a rounded rectangle
-    // with a FIXED per-level color + solid/dashed border, mirroring
-    // LOC_GROUP_KINDS in topology-render.js.
-    function locationSwatch(rowSpec) {
-      var color = rowSpec.color || "#4fc3f7";
-      var borderStyle = rowSpec.style === "dashed" ? "dashed" : "solid";
-      var shape = '<div style="width:22px;height:16px;background:' + color + '22;border:2px ' +
-        borderStyle + ' ' + color + ';border-radius:4px"></div>';
-      return '<span class="topology-legend-swatch">' + shape + '</span>';
-    }
-    var parts = [];
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Nodes</div>');
-    spec.nodes.forEach(function (n) { parts.push(row(nodeSwatch(n), n.label, n.desc)); });
-    parts.push('</div>');
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Monitor health</div>');
-    spec.health.forEach(function (h) { parts.push(row(healthSwatch(h), h.label)); });
-    parts.push('</div>');
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Edges</div>');
-    spec.edges.forEach(function (e) { parts.push(row(edgeSwatch(e), e.label, e.desc)); });
-    parts.push('</div>');
-    if (spec.locations) {
-      parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Location groups</div>');
-      spec.locations.forEach(function (l) { parts.push(row(locationSwatch(l), l.label, l.desc)); });
-      parts.push('</div>');
-    }
+    // Nodes / Monitor health / Edges / Location groups are the shared key
+    // (topology-render.js, also drawn by the Device Map widget).
+    var R = window.PolarisTopologyRender;
+    var row = R.topologyLegendRow;
+    var parts = [R.topologyLegendHtml(spec)];
     // Mouse controls are a property of THIS desktop modal (cytoscape wiring
     // in map.js), not of the shared render spec — the mobile topology tab
     // has its own touch gestures.

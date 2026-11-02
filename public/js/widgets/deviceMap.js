@@ -40,6 +40,25 @@
     return config.fortigates.filter(function (g) { return g && g !== "__none__"; });
   }
 
+  // The device types a topology draws, as the gear's "Device types" offers
+  // them: `role` is the node's role in topology-render.js, `legend` the label
+  // of its row in topologyLegendSpec().nodes. The gear stores the UNticked
+  // ones (config.topologyHide), so a type added later shows by default.
+  var TOPO_TYPES = [
+    { role: "fortigate",    label: "FortiGates",             legend: "FortiGate" },
+    { role: "fortiswitch",  label: "FortiSwitches",          legend: "FortiSwitch" },
+    { role: "fortiap",      label: "FortiAPs",               legend: "FortiAP" },
+    { role: "remote-asset", label: "Devices at other sites", legend: "Remote asset" },
+  ];
+
+  // config.topologyHide → { role: true } for the roles not to draw.
+  function hiddenRoles(config) {
+    var hidden = {};
+    var list = config && Array.isArray(config.topologyHide) ? config.topologyHide : [];
+    TOPO_TYPES.forEach(function (t) { if (list.indexOf(t.role) !== -1) hidden[t.role] = true; });
+    return hidden;
+  }
+
   // ── Topology (read-only) ─────────────────────────────────────────────────
   // Same spacing as the Device Map modal and the phone (map.js,
   // mobile/topology-tab.js), so a saved layout lands where it was saved.
@@ -122,9 +141,17 @@
   // only: the column solver's baseline, the operator's saved flat layout over
   // it, location hulls, gutter routing, the operator-drawn lines (not
   // editable). `view` ({zoom, pan}) restores where a refresh left the viewer.
-  function drawTopology(container, data, view) {
+  // `hidden` ({role: true}) drops those device types before anything is laid
+  // out; their links go with them (the dangling-edge filter below).
+  function drawTopology(container, data, view, hidden) {
     var R = window.PolarisTopologyRender;
     var elements = R.buildTopologyElements(data);
+    if (hidden) {
+      elements = elements.filter(function (e) {
+        var d = e && e.data;
+        return !(d && !d.source && d.role && hidden[d.role]);
+      });
+    }
     // Edges need both ends present — a dangling reference throws in Cytoscape
     // and kills the whole render.
     var nodeIds = {};
@@ -221,10 +248,25 @@
     return cy;
   }
 
+  // The legend's body: the Device Map page's key (topology-render.js) less the
+  // node rows for device types this widget hides, and less "Endpoint" — that
+  // node comes only from the page's endpoint search, which the widget lacks.
+  function legendHtml(hidden) {
+    var R = window.PolarisTopologyRender;
+    var spec = R.topologyLegendSpec ? R.topologyLegendSpec(topoTheme()) : null;
+    if (!spec || !R.topologyLegendHtml) return "";
+    var hiddenLabels = { Endpoint: true };
+    TOPO_TYPES.forEach(function (t) { if (hidden && hidden[t.role]) hiddenLabels[t.legend] = true; });
+    spec = Object.assign({}, spec, {
+      nodes: (spec.nodes || []).filter(function (n) { return !hiddenLabels[n.label]; }),
+    });
+    return R.topologyLegendHtml(spec);
+  }
+
   // One gate's read-only topology as a pane over the widget body. gate =
   // {id, name}; opts.onBack (map modes only) draws the "Map" button,
-  // opts.fullscreen binds the widget's full-screen toggle. Returns
-  // {close, resize}.
+  // opts.fullscreen binds the widget's full-screen toggle, opts.hidden
+  // ({role: true}) is the gear's Device types. Returns {close, resize}.
   function openTopologyPane(el, gate, opts) {
     opts = opts || {};
     var pane = document.createElement("div");
@@ -282,6 +324,24 @@
       opts.fullscreen.bind(full);
     }
     pane.appendChild(bar);
+
+    // The legend: bottom-left, collapsed into its button until opened (the
+    // graph is small in a widget), open/closed remembered per viewer.
+    var legend = document.createElement("div");
+    legend.className = "topology-legend devmap-topo-legend";
+    legend.hidden = true; // until the renderer has loaded and filled it
+    var legendBody = document.createElement("div");
+    legendBody.className = "topology-legend-body";
+    legend.appendChild(legendBody);
+    pane.appendChild(legend);
+    if (window.PolarisLegendToggle) {
+      window.PolarisLegendToggle.attach(legend, { storageKey: "polaris.legend.deviceMapTopology", defaultExpanded: false });
+    }
+    function fillLegend() {
+      var html = legendHtml(opts.hidden);
+      legendBody.innerHTML = html;
+      legend.hidden = !html;
+    }
     el.appendChild(pane);
 
     var cy = null, data = null, closed = false;
@@ -292,11 +352,14 @@
       // never sends the mouseout that would close its tooltip.
       hideEdgeTip();
       if (cy) { try { cy.destroy(); } catch (_) {} }
-      cy = drawTopology(graph, data, view);
+      cy = drawTopology(graph, data, view, opts.hidden);
     }
     function load() {
       return loadTopologyLibs()
-        .then(function () { return api.map.topology(gate.id); })
+        .then(function () {
+          if (!legendBody.innerHTML) fillLegend();
+          return api.map.topology(gate.id);
+        })
         .then(function (d) {
           if (closed) return;
           data = d;
@@ -313,7 +376,8 @@
     // Device health colours move: refresh on the slow widget cadence, keeping
     // the viewer's zoom and pan.
     var timer = setInterval(function () { if (!document.hidden) load(); }, PolarisWidgets.REFRESH.slow);
-    function onTheme() { render(); }
+    // The legend's swatches are per theme family, like the graph's colours.
+    function onTheme() { if (window.PolarisTopologyRender) fillLegend(); render(); }
     document.addEventListener("themechange", onTheme);
     var ro = new ResizeObserver(function () { if (cy) try { cy.resize(); } catch (_) {} });
     ro.observe(pane);
@@ -472,7 +536,7 @@
           return;
         }
         var soloFull = fullscreenToggle(el, function () { if (pane) pane.resize(); });
-        pane = openTopologyPane(el, gate, { fullscreen: soloFull });
+        pane = openTopologyPane(el, gate, { fullscreen: soloFull, hidden: hiddenRoles(config) });
         ctx.onUnmount(function () {
           pane.close();
           soloFull.dispose();
@@ -590,6 +654,7 @@
         if (pane) pane.close();
         pane = openTopologyPane(el, { id: site.id, name: site.learnedLocation || site.hostname }, {
           fullscreen: full,
+          hidden: hiddenRoles(config),
           onBack: function () {
             if (pane) { pane.close(); pane = null; }
           },
@@ -696,6 +761,28 @@
     },
 
     renderConfig: function (el, config, onChange) {
+      // Device types: which kinds of device a topology draws (the one-gate
+      // view, and a gate double-clicked on the map). Stored as the unticked
+      // roles, so a type added later shows by default.
+      var hidden = hiddenRoles(config);
+      el.innerHTML =
+        '<label>Device types</label>' +
+        '<div class="widget-config-typegrid">' +
+          TOPO_TYPES.map(function (t) {
+            return '<label class="widget-config-typeopt"><input type="checkbox" data-topo-role="' + t.role + '"' +
+              (hidden[t.role] ? "" : " checked") + "> " + escapeHtml(t.label) + "</label>";
+          }).join("") +
+        "</div>" +
+        '<p class="widget-config-hint">Which devices a gate\'s topology shows. Their links are hidden with them.</p>';
+      el.querySelectorAll("[data-topo-role]").forEach(function (cb) {
+        cb.addEventListener("change", function () {
+          var off = [];
+          el.querySelectorAll("[data-topo-role]").forEach(function (x) {
+            if (!x.checked) off.push(x.getAttribute("data-topo-role"));
+          });
+          onChange("topologyHide", off);
+        });
+      });
       PolarisWidgets.renderNocFilterConfig(el, config, onChange, false, {
         fortigates: true,
         fortigateNote: "One gate ticked = its topology instead of the map. Several = a map of just those. Nothing ticked = every gate in the regions above.",

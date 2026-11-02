@@ -94,7 +94,20 @@ beforeAll(() => {
   const w = win as unknown as Record<string, unknown>;
   w.cytoscape = fakeCytoscape;
   w.PolarisTopologyRender = {
-    buildTopologyElements: () => [{ data: { id: "fg-river" } }],
+    buildTopologyElements: () => [
+      { data: { id: "fg-river", role: "fortigate" } },
+      { data: { id: "sw-1", role: "fortiswitch" } },
+      { data: { id: "ap-1", role: "fortiap" } },
+      { data: { id: "e1", source: "fg-river", target: "sw-1" } },
+      { data: { id: "e2", source: "sw-1", target: "ap-1" } },
+    ],
+    topologyLegendSpec: () => ({
+      nodes: [{ label: "FortiGate" }, { label: "FortiSwitch" }, { label: "FortiAP" }, { label: "Endpoint" }, { label: "Remote asset" }],
+      health: [], edges: [],
+    }),
+    // Records the node rows it was handed, as the real one would draw them.
+    topologyLegendHtml: (spec: { nodes: { label: string }[] }) =>
+      '<p class="legend-nodes">' + spec.nodes.map((n) => n.label).join("|") + "</p>",
     computeGroupedLayout: () => null,
     computeTopologyColumns: () => ({ "fg-river": { depth: 0, lane: 0 } }),
     topologyStylesheet: () => [],
@@ -126,6 +139,23 @@ describe("Device Map widget — config", () => {
     const el = doc.createElement("div");
     mod().renderConfig(el, { regionScope: "all" }, () => {});
     expect(el.querySelector('[data-k="issuesOnly"]')).toBeNull();
+  });
+
+  it("offers Device types, all ticked by default, and stores the UNticked ones", () => {
+    const el = doc.createElement("div");
+    const changes: Array<[string, unknown]> = [];
+    mod().renderConfig(el, { regionScope: "all" }, (k, v) => changes.push([k, v]));
+    const boxes = Array.from(el.querySelectorAll("[data-topo-role]")) as unknown as { checked: boolean; getAttribute: (a: string) => string; dispatchEvent: (e: unknown) => void }[];
+    expect(boxes.map((b) => b.getAttribute("data-topo-role"))).toEqual(["fortigate", "fortiswitch", "fortiap", "remote-asset"]);
+    expect(boxes.every((b) => b.checked)).toBe(true);
+    boxes[2].checked = false;
+    boxes[2].dispatchEvent(new win.Event("change"));
+    expect(changes.at(-1)).toEqual(["topologyHide", ["fortiap"]]);
+
+    const el2 = doc.createElement("div");
+    mod().renderConfig(el2, { regionScope: "all", topologyHide: ["fortiap"] }, () => {});
+    const ap = el2.querySelector('[data-topo-role="fortiap"]') as unknown as { checked: boolean };
+    expect(ap.checked).toBe(false);
   });
 
   it("offers Regions and FortiGates, but no asset types", () => {
@@ -231,6 +261,29 @@ describe("Device Map widget — one gate picked", () => {
     const labels = Array.from(el.querySelectorAll(".devmap-topo-bar button")).map((b) => b.textContent);
     expect(labels).toContain("Open ↗");
     unmount();
+  });
+
+  it("draws a legend from the Device Map's key, without the endpoint-search row", async () => {
+    const { el, unmount } = renderSolo({ gate: { id: "fg-river", name: "RIVERBEND-FG" } });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    const legend = el.querySelector(".devmap-topo-legend")!;
+    expect(legend).not.toBeNull();
+    expect(legend.hasAttribute("hidden")).toBe(false);
+    expect(legend.querySelector(".legend-nodes")!.textContent).toBe("FortiGate|FortiSwitch|FortiAP|Remote asset");
+    unmount();
+  });
+
+  it("the gear's unticked device types are not drawn, nor their links, nor their legend rows", async () => {
+    const el = doc.createElement("div");
+    doc.body.appendChild(el);
+    const unmounts: Array<() => void> = [];
+    mod().renderInstance(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], topologyHide: ["fortiap", "remote-asset"] },
+      { gate: { id: "fg-river", name: "RIVERBEND-FG" } }, { onUnmount: (fn) => unmounts.push(fn) });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    const ids = (cyOptions[0].elements as { data: { id: string } }[]).map((e) => e.data.id);
+    expect(ids).toEqual(["fg-river", "sw-1", "e1"]);
+    expect(el.querySelector(".legend-nodes")!.textContent).toBe("FortiGate|FortiSwitch");
+    unmounts.forEach((fn) => fn());
   });
 
   it("says so when the picked gate has left the fleet", () => {

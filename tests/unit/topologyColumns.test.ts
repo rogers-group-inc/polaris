@@ -1012,4 +1012,19 @@ describe("topology palette by theme family", () => {
       expect(line("edge[isFortilinkFallback = 1]")).toBe(legend["FortiLink (virtual)"]);
     }
   });
+
+  // One renderer for the page's legend and the Device Map widget's, so the
+  // two keys cannot drift apart.
+  it("topologyLegendHtml draws every spec section, escaped, and skips an empty one", () => {
+    const spec = R.topologyLegendSpec("dark");
+    const html = R.topologyLegendHtml(spec) as string;
+    const titles = Array.from(html.matchAll(/topology-legend-section-title">([^<]+)</g), (m) => m[1]);
+    expect(titles).toEqual(["Nodes", "Monitor health", "Edges", "Location groups"]);
+    for (const n of spec.nodes as { label: string }[]) expect(html).toContain(">" + n.label + "<");
+
+    const hostile = R.topologyLegendHtml({ nodes: [{ label: "<b>x</b>", kind: "circle", fill: "#000" }], health: [], edges: [] }) as string;
+    expect(hostile).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(hostile).not.toContain("Monitor health");
+    expect(R.topologyLegendRow("", "Click", "Select it")).toContain('topology-legend-desc">Select it<');
+  });
 });
