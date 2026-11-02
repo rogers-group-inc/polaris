@@ -85,6 +85,7 @@ function client(ctx: FirmwareEngineContext): DeviceHttpClient {
     uploadIdleMs: ctx.timeouts.uploadIdleMs,
     uploadAnswerMs: ctx.timeouts.uploadAnswerMs,
     verifyTls: ctx.verifyTls === true,
+    signal: ctx.signal,
   });
   if (ctx.bearerToken) c.setHeader("authorization", `Bearer ${ctx.bearerToken}`);
   return c;

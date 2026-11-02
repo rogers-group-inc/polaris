@@ -50,6 +50,7 @@ function client(ctx: FirmwareEngineContext): DeviceHttpClient {
     scheme: ctx.scheme ?? "https",
     commandMs: ctx.timeouts.commandMs,
     uploadIdleMs: ctx.timeouts.uploadIdleMs,
+    signal: ctx.signal,
   });
 }
 

@@ -2972,6 +2972,41 @@ async function warnIfDiscoveryRunning(actionLabel) {
   return true;
 }
 
+// Business rule 138: a firmware flash runs inside Polaris, so an update or a
+// restart would leave it unfinished. Ask before either: resolves
+// { proceed, abort } — abort true means the operator chose "abort and
+// continue", sent to the server as abortFirmwareRuns so the runs are aborted
+// in their name. A caller who cannot list the runs (no assets:read) learns of
+// them from the server's 409 instead — see firmwareRunsFrom409.
+async function warnIfFirmwareRunning(actionLabel) {
+  var runs;
+  try { runs = ((await api.assets.activeFirmwareRuns()) || {}).runs || []; } catch (_) { return { proceed: true, abort: false }; }
+  if (runs.length === 0) return { proceed: true, abort: false };
+  var ok = await confirmAbortFirmwareRuns(runs, actionLabel);
+  return { proceed: ok, abort: ok };
+}
+
+function confirmAbortFirmwareRuns(runs, actionLabel) {
+  var stageOf = typeof firmwareStageLabel === "function" ? firmwareStageLabel : function (s) { return s || "starting"; };
+  var lines = runs.map(function (r) {
+    return "• " + r.assetName + " → " + r.toVersion + " — " + stageOf(r.stage) + ", started by " + r.startedBy;
+  }).join("\n");
+  var one = runs.length === 1;
+  return showConfirm(
+    (one ? "A firmware upgrade is" : runs.length + " firmware upgrades are") + " in progress:\n\n" + lines + "\n\n" +
+    "The " + actionLabel + " restarts Polaris, which would leave " + (one ? "it" : "them") + " unfinished. " +
+    "Abort " + (one ? "it" : "them") + " and continue with the " + actionLabel + "? " +
+    "A device that has already started flashing carries on by itself; verify its version afterwards."
+  );
+}
+
+// The runs a 409 `firmware-upgrade-running` named, or null for any other error.
+function firmwareRunsFrom409(err) {
+  return err && err.status === 409 && err.data && err.data.code === "firmware-upgrade-running"
+    ? (err.data.firmwareRuns || [])
+    : null;
+}
+
 /**
  * Wire click handlers for the action buttons rendered inside capacity
  * reasons. Called from loadDatabaseInfo after the card is in the DOM.
@@ -3012,16 +3047,26 @@ function wireAdvisorRestartBtn(restartBtn) {
   if (!restartBtn) return;
   restartBtn.addEventListener("click", async function () {
     if (!await warnIfDiscoveryRunning("restart")) return;
-    var ok = await showConfirm(
+    var fw = await warnIfFirmwareRunning("restart");
+    if (!fw.proceed) return;
+    // The firmware confirm already said the restart is coming.
+    var ok = fw.abort || await showConfirm(
       "Restart Polaris now?\n\n" +
       "The server will be unreachable for ~30 seconds. Any in-flight operator action " +
       "will fail and must be retried after the restart."
     );
     if (!ok) return;
     restartBtn.disabled = true;
-    restartBtn.textContent = "Restarting...";
+    restartBtn.textContent = fw.abort ? "Aborting firmware upgrade..." : "Restarting...";
     try {
-      await api.serverSettings.restart();
+      try {
+        await api.serverSettings.restart(fw.abort);
+      } catch (err) {
+        var runs = firmwareRunsFrom409(err);
+        if (!runs || !await confirmAbortFirmwareRuns(runs, "restart")) throw err;
+        restartBtn.textContent = "Aborting firmware upgrade...";
+        await api.serverSettings.restart(true);
+      }
       _advisorJustStaged = false;
       pollUntilServerReachable();
     } catch (err) {
@@ -3863,6 +3908,9 @@ function renderUpdateAvailable(result) {
 
 async function applyUpdateUI() {
   if (!await warnIfDiscoveryRunning("update")) return;
+  var fw = await warnIfFirmwareRunning("update");
+  if (!fw.proceed) return;
+  var abortFirmware = fw.abort;
 
   var backupCheckbox = document.getElementById("update-backup-checkbox");
   var backupEnabled = backupCheckbox ? backupCheckbox.checked : true;
@@ -3886,10 +3934,19 @@ async function applyUpdateUI() {
 
   var btn = document.getElementById("btn-apply-update");
   btn.disabled = true;
-  btn.textContent = "Starting update...";
+  btn.textContent = abortFirmware ? "Aborting firmware upgrade..." : "Starting update...";
 
   try {
-    await api.serverSettings.applyUpdate(password, allowWithoutBackup);
+    try {
+      await api.serverSettings.applyUpdate(password, allowWithoutBackup, abortFirmware);
+    } catch (err) {
+      // A flash this browser could not see (no assets:read), or one that
+      // started after the check above — the server names it (rule 138).
+      var runs = firmwareRunsFrom409(err);
+      if (!runs || !await confirmAbortFirmwareRuns(runs, "update")) throw err;
+      btn.textContent = "Aborting firmware upgrade...";
+      await api.serverSettings.applyUpdate(password, allowWithoutBackup, true);
+    }
     renderUpdateProgress();
     startUpdatePolling();
     // Kick the sidebar's own update-progress panel (app.js). It self-paces at

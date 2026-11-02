@@ -32,6 +32,7 @@ import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import type { PeerCertificate } from "node:tls";
 import { pinnedAgentFor, type CertCheckVerdict } from "../../utils/pinnedTlsAgent.js";
+import { abortError } from "./types.js";
 
 export interface DeviceHttpClientOptions {
   host: string;
@@ -60,6 +61,13 @@ export interface DeviceHttpClientOptions {
    * serial; one naming a DIFFERENT serial is refused before the login is sent.
    */
   expectedSerial?: string | null;
+  /**
+   * The run's abort (an operator's Abort, or the updater's). Destroys the
+   * request in flight — an upload included — and rejects with an
+   * `AbortError`, never a `DeviceConnectionError`: the engines read a dropped
+   * connection on deploy as "the flash has started", which an abort is not.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -115,11 +123,22 @@ export class DeviceHttpClient {
   private readonly cookies = new Map<string, string>();
   private legacyTls = false;
   readonly base: string;
+  private signal: AbortSignal | undefined;
 
   constructor(private readonly opts: DeviceHttpClientOptions) {
     const scheme = opts.scheme ?? "https";
     const port = opts.port ?? (scheme === "https" ? 443 : 80);
     this.base = `${scheme}://${urlHost(opts.host)}:${port}`; // IPv6 bracketed (rule 128)
+    this.signal = opts.signal;
+  }
+
+  /**
+   * Stop honouring the run's abort — for the clean-up an aborted engine still
+   * owes the device (the FortiSwitch un-stage), which would otherwise be
+   * refused by the very abort that made it necessary.
+   */
+  releaseSignal(): void {
+    this.signal = undefined;
   }
 
   /** A header value the engine wants echoed on every request (the FortiAP CSRF token). */
@@ -277,6 +296,9 @@ export class DeviceHttpClient {
     if (body) opts.headers = { ...(opts.headers as Record<string, string>), "content-length": String(body.length) };
     const reqFn = opts.protocol === "https:" ? httpsRequest : httpRequest;
     const maxBody = this.opts.maxBodyBytes ?? DEFAULT_MAX_BODY;
+    const signal = this.signal;
+    if (signal?.aborted) throw abortError(signal);
+    let onAbort: (() => void) | null = null;
     try {
       return await new Promise<DeviceHttpResponse>((resolve, reject) => {
         const req = reqFn(opts, (res) => {
@@ -296,15 +318,21 @@ export class DeviceHttpClient {
           res.on("error", (err) => reject(new DeviceConnectionError(err.message, (err as NodeJS.ErrnoException).code)));
         });
         req.setTimeout(timeoutMs, () => req.destroy(new Error(`timed out after ${timeoutMs} ms`)));
-        req.on("error", (err) => reject(new DeviceConnectionError(err.message, (err as NodeJS.ErrnoException).code)));
+        req.on("error", (err) => reject(signal?.aborted ? abortError(signal) : new DeviceConnectionError(err.message, (err as NodeJS.ErrnoException).code)));
+        if (signal) {
+          onAbort = () => { req.destroy(abortError(signal)); reject(abortError(signal)); };
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
         if (body) req.end(body); else req.end();
       });
     } catch (err) {
-      if (!retried && !this.legacyTls && err instanceof Error && LEGACY_RENEGOTIATION.test(err.message)) {
+      if (!retried && !this.legacyTls && !signal?.aborted && err instanceof Error && LEGACY_RENEGOTIATION.test(err.message)) {
         this.legacyTls = true;
         return this.send(method, path, body, headers, timeoutMs, true);
       }
       throw err;
+    } finally {
+      if (signal && onAbort) signal.removeEventListener("abort", onAbort);
     }
   }
 
@@ -321,15 +349,26 @@ export class DeviceHttpClient {
     const reqFn = opts.protocol === "https:" ? httpsRequest : httpRequest;
     const maxBody = this.opts.maxBodyBytes ?? DEFAULT_MAX_BODY;
     const idleMs = this.opts.uploadIdleMs;
+    const signal = this.signal;
+    if (signal?.aborted) return Promise.reject(abortError(signal));
     return new Promise<DeviceHttpResponse>((resolve, reject) => {
       let sent = 0;
       let fullySent = false;
       let settled = false;
       let idleTimer: NodeJS.Timeout | null = null;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        if (idleTimer) clearTimeout(idleTimer);
+        stream?.destroy();
+        req.destroy(abortError(signal!));
+        reject(abortError(signal!));
+      };
       const fail = (message: string, code?: string) => {
         if (settled) return;
         settled = true;
         if (idleTimer) clearTimeout(idleTimer);
+        signal?.removeEventListener("abort", onAbort);
         reject(new DeviceConnectionError(message, code, sent, fullySent));
       };
       const armIdle = () => {
@@ -353,6 +392,7 @@ export class DeviceHttpClient {
           if (settled) return;
           settled = true;
           if (idleTimer) clearTimeout(idleTimer);
+          signal?.removeEventListener("abort", onAbort);
           resolve({
             status: res.statusCode ?? 0,
             headers: res.headers,
@@ -363,23 +403,26 @@ export class DeviceHttpClient {
         res.on("error", (err) => fail(err.message, (err as NodeJS.ErrnoException).code));
       });
       req.on("error", (err) => fail(err.message, (err as NodeJS.ErrnoException).code));
+      let stream: Readable | null = null;
+      signal?.addEventListener("abort", onAbort, { once: true });
       armIdle();
       req.write(head);
       sent += head.length;
-      const stream = openBody();
-      stream.on("error", (err) => { req.destroy(err); });
-      stream.on("data", (chunk: Buffer | string) => {
+      const body = openBody();
+      stream = body;
+      body.on("error", (err) => { req.destroy(err); });
+      body.on("data", (chunk: Buffer | string) => {
         const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
         const ok = req.write(buf);
         sent += buf.length;
         armIdle();
         onProgress?.(sent, total);
         if (!ok) {
-          stream.pause();
-          req.once("drain", () => stream.resume());
+          body.pause();
+          req.once("drain", () => body.resume());
         }
       });
-      stream.on("end", () => {
+      body.on("end", () => {
         req.end(tail, () => {
           sent += tail.length;
           fullySent = true;

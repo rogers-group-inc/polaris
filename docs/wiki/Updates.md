@@ -33,8 +33,21 @@ and the next check tries again.
 
 ## What the updater does
 
-**Check for Updates** fetches and reports what is available. Applying then runs
-seven steps, each shown with its own status:
+**Check for Updates** fetches and reports what is available.
+
+**A firmware upgrade in progress.** An update restarts Polaris, and a
+[firmware upgrade](Assets#firmware) is run by Polaris itself, so restarting
+would leave it unfinished ([rule 138](Business-Rules#rule-138)). If one is
+running when you click **Apply Update**, Polaris names it (device, target
+version, stage and who started it) and asks whether to abort it and continue.
+Choosing abort records you as the person who aborted it, "to apply an in-app
+update", in the run's transcript and in a `firmware.upgrade_aborted` event.
+Cancel leaves both the upgrade and Polaris alone. A device that has already
+started flashing carries on by itself, so check its version afterwards. The
+server enforces this too: an update request sent while a flash is live is
+refused unless it says to abort.
+
+Applying then runs seven steps, each shown with its own status:
 
 1. **Back up database.** A failure **aborts the update** by default —
    see [Backup and restore](Backup-and-Restore). Two deliberate ways past it:
@@ -125,6 +138,7 @@ filenames.
 | `pg_dump` is compatible | the Maintenance tab shows a *"Backups cannot run on this host"* banner when it is not |
 | The platform is supported | **Platform Lifecycle** grades this host |
 | A maintenance window is open | so the restart does not page anyone |
+| No firmware upgrade is running | the operations panel at the bottom of the nav bar; Apply Update asks before aborting one |
 
 That last one is worth doing properly: a
 [maintenance window](Maintenance-Windows) stops polling **and silences

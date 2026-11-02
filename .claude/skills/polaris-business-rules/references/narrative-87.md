@@ -137,7 +137,8 @@ assets-only operator mid-flash. See rule 43(g).
 - *Writing `osVersion` on success.* See above — projection owns it.
 - *A queue.* The image is on the web process's disk (uploads land there) and pg-boss is
   optional; the agent upgrade already runs this way. The cost is a restart mid-flash orphaning
-  the run, which the boot sweep names rather than hides.
+  the run, which the boot sweep names rather than hides. Since 2026-11-02 (rule 138) the
+  in-app update and Restart refuse while a flash is live unless the operator aborts it first.
 - *Deleting the model node when its assets are gone.* The images are still on disk; an
   invisible 100 MiB is worse than an amber row with a delete button.
 

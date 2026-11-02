@@ -2916,3 +2916,21 @@ with ports on a Critical network and a Warning network alerts at Critical under
 the port or the switch is left alone, a tag you take off a switch by hand stays
 off, and ticking an inherited tag in a port's tag editor keeps it there by hand.
 See [IPAM](IPAM#networks).
+
+### Rule 138
+
+**A firmware upgrade in progress can be aborted, and nothing that restarts
+Polaris goes ahead while one is running unless you abort it.** Every running
+firmware upgrade is listed in the operations panel at the bottom of the nav
+bar, beside running discoveries: the device, the target version, who started
+it and the stage it is on. Anyone who can open the asset sees it. Read-Write on
+Assets can abort it. Aborting stops Polaris, not the device. Before the device
+has been told to flash, it keeps its current firmware. After that (from the
+*Flashing* stage, or on a FortiGate or FortiAP once the whole image has been
+uploaded), it carries on and reboots by itself, so check its version
+afterwards. An aborted run ends *failed*. Its transcript, its error and a
+`firmware.upgrade_aborted` event name who aborted it, at which stage and why,
+and its maintenance window ends at once. **Apply Update** and **Restart
+Polaris** are refused while an upgrade is running unless you choose to abort
+it. Polaris then aborts it in your name before continuing. See
+[Assets](Assets#firmware) and [Updates](Updates#what-the-updater-does).

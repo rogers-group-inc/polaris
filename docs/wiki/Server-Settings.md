@@ -512,7 +512,10 @@ The **Capacity Advisor** card beside Updates appears only when it has something
 to recommend: the queue mode, the connection-pool and worker-count variables,
 and PostgreSQL tuning (`max_connections`, `shared_buffers` and friends). Its
 header counts the recommendations only when there is at least one. Tick
-the rows you want, **Stage** them, and **Restart Polaris to apply**. On a
+the rows you want, **Stage** them, and **Restart Polaris to apply**. If a
+[firmware upgrade](Assets#firmware) is running, the restart asks first
+whether to abort it, as an update does ([rule 138](Business-Rules#rule-138)).
+On a
 Docker / podman / Unraid install there is no restart button: the card asks you
 to restart the Polaris container yourself (`docker compose restart` for a
 compose stack, `docker restart <name>`, or Restart on Unraid's Docker page).

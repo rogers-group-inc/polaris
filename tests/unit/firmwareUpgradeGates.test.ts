@@ -13,7 +13,7 @@
  * writes Asset.osVersion.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => {
   const asset = {
@@ -81,6 +81,7 @@ vi.mock("../../src/db.js", () => ({
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { const row = { id: "run-1", ...data, stage: null, progress: null, result: null, error: null, verifiedVersion: null, startedAt: new Date(), finishedAt: null }; h.state.created.push(row); return row; }),
       update: vi.fn(async () => ({})),
       findUnique: vi.fn(async () => ({ engine: "fortiswitch-https" })),
+      findUniqueOrThrow: vi.fn(async () => ({ id: "run-1", assetId: "asset-1", status: "failed", result: "aborted", startedAt: new Date() })),
     },
     assetMclagPeer: { findMany: vi.fn(async () => h.state.mclag) },
     maintenanceHold: {
@@ -110,14 +111,16 @@ vi.mock("../../src/services/monitoringService.js", () => ({
 vi.mock("../../src/services/connectionPathService.js", () => ({ resolveConnectionPath: h.resolveConnectionPath }));
 vi.mock("../../src/services/firmwareEngines/index.js", () => ({
   engineFor: (m: string | null, t: string, s: string | null) => (m === "Fortinet" && t === "switch" && /^S/.test(s ?? "") ? { kind: "fortiswitch-https", label: "FortiSwitch (HTTPS)", run: h.engineRun } : null),
-  engineByKind: () => ({ kind: "fortiswitch-https", label: "FortiSwitch (HTTPS)", run: h.engineRun }),
+  engineByKind: (kind: string) => ({ kind: kind || "fortiswitch-https", label: "FortiSwitch (HTTPS)", run: h.engineRun }),
   engineKindForType: () => "fortiswitch-https",
 }));
 vi.mock("node:fs/promises", async (orig) => ({ ...(await orig<typeof import("node:fs/promises")>()), stat: h.stat }));
 vi.mock("../../src/services/discovery/assetDiscoveryScope.js", () => ({ resolveDiscoveryScopeForAsset: vi.fn(async () => ({ ok: false, reason: "no source" })) }));
 vi.mock("../../src/services/discovery/discoveryEngine.js", () => ({ triggerDiscovery: vi.fn(async () => true) }));
+// An orphaned run's abort emails its booking's recipients (rule 93) — no booking here.
+vi.mock("../../src/services/firmwareScheduleService.js", () => ({ notifyScheduledRunFinished: vi.fn(async () => undefined) }));
 
-import { startFirmwareUpgrade, getUpgradeAvailability, FirmwareRunConflictError } from "../../src/services/firmwareUpgradeService.js";
+import { startFirmwareUpgrade, getUpgradeAvailability, FirmwareRunConflictError, abortFirmwareRun, listActiveFirmwareRuns } from "../../src/services/firmwareUpgradeService.js";
 import { resolveFirmwareCredential } from "../../src/services/firmwareRepositoryService.js";
 
 const bind = (scope: "manufacturer" | "assetType" | "model", credentialId: string | null, name = "cred") => ({
@@ -384,6 +387,114 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     await settle(100);
     expect(h.state.monitorPolls).toBe(0);
     expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
+  });
+});
+
+describe("Abort (business rule 138)", () => {
+  type EngineCtx = { onStage: (s: string) => void; onLog: (l: string, m: string) => void; signal?: AbortSignal };
+  // An engine parked at `stage` until the run's abort fires — what the real
+  // engines do now that sleep and the HTTP client honour the signal.
+  const parkAt = (stage: string, before: string[] = []) => h.engineRun.mockImplementation(((c: EngineCtx) => new Promise((resolve) => {
+    for (const s of before) c.onStage(s);
+    c.onStage(stage);
+    c.signal!.addEventListener("abort", () => resolve({ outcome: "failed", error: "cancelled" }), { once: true });
+  })) as never);
+  const runRow = (over: Record<string, unknown> = {}) => ({
+    id: "run-1", assetId: "asset-1", status: "running", stage: "deploying", toVersion: "7.6.8 build1164", log: [],
+    asset: { hostname: "lab-sw1", ipAddress: "10.0.0.5" }, ...over,
+  });
+  const rowLookup = async (row: Record<string, unknown>) => {
+    const { prisma } = await import("../../src/db.js");
+    vi.mocked(prisma.firmwareUpgradeRun.findUnique).mockImplementation((async (args: { select?: { engine?: boolean } }) => (args.select?.engine ? { engine: "fortiswitch-https" } : row)) as never);
+    return prisma;
+  };
+  const lastWrite = (prisma: Awaited<ReturnType<typeof rowLookup>>) => vi.mocked(prisma.firmwareUpgradeRun.update).mock.calls.at(-1)![0] as { data: { status: string; result: string; error: string; log: Array<{ msg: string }> } };
+  const actions = () => h.logEvent.mock.calls.map((c) => c[0] as { action: string; actor?: string; message: string; details: Record<string, unknown> });
+  // clearAllMocks keeps implementations; put back the defaults these cases replace.
+  afterEach(async () => {
+    const { prisma } = await import("../../src/db.js");
+    h.engineRun.mockImplementation(async () => h.state.engineOutcome);
+    vi.mocked(prisma.firmwareUpgradeRun.findUnique).mockImplementation((async () => ({ engine: "fortiswitch-https" })) as never);
+    vi.mocked(prisma.firmwareUpgradeRun.update).mockImplementation((async () => ({})) as never);
+  });
+
+  it("mid-flash: ends failed / aborted in the aborter's name, says the device may still be flashing, and releases the hold before its Event", async () => {
+    const order: string[] = [];
+    h.releaseMaintenanceHold.mockImplementation(async () => { order.push("release"); return true; });
+    h.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
+    parkAt("deploying", ["preflight", "staging", "compat"]);
+    const prisma = await rowLookup(runRow());
+    await start();
+    await flushRunner();
+    await abortFirmwareRun("run-1", "alice", { assetId: "asset-1", reason: "to apply an in-app update" });
+
+    const w = lastWrite(prisma);
+    expect(w.data).toMatchObject({ status: "failed", result: "aborted" });
+    expect(w.data.error).toMatch(/^Aborted by alice during deploying \(to apply an in-app update\) — the device may still be flashing/);
+    const log = w.data.log.map((l) => l.msg);
+    expect(log).toContain("aborted by alice during deploying — to apply an in-app update");
+    expect(log.some((m) => /already been told to flash/.test(m))).toBe(true);
+    const ev = actions().find((e) => e.action === "firmware.upgrade_aborted")!;
+    expect(ev.actor).toBe("alice");
+    expect(ev.details).toMatchObject({ abortedBy: "alice", reason: "to apply an in-app update", deviceMayBeFlashing: true });
+    expect(actions().map((e) => e.action)).not.toContain("firmware.upgrade_failed");
+    expect(order.indexOf("release")).toBeLessThan(order.indexOf("firmware.upgrade_aborted"));
+  });
+
+  it("before deploy: says the device was not flashed", async () => {
+    parkAt("preflight");
+    const prisma = await rowLookup(runRow({ stage: "preflight" }));
+    await start();
+    await flushRunner();
+    await abortFirmwareRun("run-1", "bob");
+    const w = lastWrite(prisma);
+    expect(w.data.error).toBe("Aborted by bob during preflight");
+    expect(w.data.log.map((l) => l.msg)).toContain("the device was not told to flash; it still runs its old firmware");
+    expect(actions().find((e) => e.action === "firmware.upgrade_aborted")!.details).toMatchObject({ deviceMayBeFlashing: false });
+  });
+
+  it("a FortiGate / FortiAP upload that reached 100% counts as flashing", async () => {
+    h.engineRun.mockImplementation(((c: EngineCtx) => new Promise((resolve) => {
+      c.onStage("staging");
+      c.onLog("info", "upload 100%");
+      c.signal!.addEventListener("abort", () => resolve({ outcome: "failed", error: "cancelled" }), { once: true });
+    })) as never);
+    const { prisma } = await import("../../src/db.js");
+    vi.mocked(prisma.firmwareUpgradeRun.findUnique).mockImplementation((async (args: { select?: { engine?: boolean } }) => (args.select?.engine ? { engine: "fortigate-https" } : runRow({ stage: "staging" }))) as never);
+    await start();
+    await flushRunner();
+    await abortFirmwareRun("run-1", "carol");
+    expect(actions().find((e) => e.action === "firmware.upgrade_aborted")!.details).toMatchObject({ deviceMayBeFlashing: true });
+  });
+
+  it("a run no runner is driving is closed directly, with the aborter and the log line", async () => {
+    const prisma = await rowLookup(runRow({ id: "run-orphan", log: [{ t: "x", level: "info", msg: "earlier" }] }));
+    vi.mocked(prisma.firmwareUpgradeRun.update).mockImplementation((async (args: { data: Record<string, unknown> }) => ({ id: "run-orphan", assetId: "asset-1", startedAt: new Date(), ...args.data })) as never);
+    const run = await abortFirmwareRun("run-orphan", "dave");
+    expect(run).toMatchObject({ status: "failed", result: "aborted" });
+    const w = lastWrite(prisma);
+    expect(w.data.error).toMatch(/^Aborted by dave during deploying — no runner was driving this run/);
+    expect(w.data.log.map((l) => l.msg)).toEqual(["earlier", "aborted by dave during deploying (no runner was driving this run)"]);
+    expect(h.releaseMaintenanceHold).toHaveBeenCalledTimes(1);
+    expect(actions().find((e) => e.action === "firmware.upgrade_aborted")).toMatchObject({ actor: "dave", details: { orphaned: true } });
+  });
+
+  it("answers 409 for a run that already ended and 404 for another asset's run", async () => {
+    await rowLookup(runRow({ status: "succeeded" }));
+    await expect(abortFirmwareRun("run-1", "erin")).rejects.toMatchObject({ httpStatus: 409 });
+    await rowLookup(runRow({ assetId: "asset-2" }));
+    await expect(abortFirmwareRun("run-1", "erin", { assetId: "asset-1" })).rejects.toMatchObject({ httpStatus: 404 });
+  });
+
+  it("listActiveFirmwareRuns names the asset, who started it and the stage", async () => {
+    const { prisma } = await import("../../src/db.js");
+    const startedAt = new Date();
+    vi.mocked(prisma.firmwareUpgradeRun.findMany).mockResolvedValueOnce([
+      { id: "run-9", assetId: "asset-1", toVersion: "7.6.8 build1164", stage: "staging", progress: null, startedBy: "dmoore", startedAt, asset: { hostname: "41A-124E-1", ipAddress: "10.0.0.9" } },
+    ] as never);
+    expect(await listActiveFirmwareRuns()).toEqual([
+      { id: "run-9", assetId: "asset-1", assetName: "41A-124E-1", toVersion: "7.6.8 build1164", stage: "staging", progress: null, startedBy: "dmoore", startedAt, abortRequestedBy: null },
+    ]);
   });
 });
 

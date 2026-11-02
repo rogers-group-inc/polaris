@@ -341,3 +341,42 @@ describe("FortiSwitch HTTPS engine — refusals", () => {
     expect(res.error).toMatch(/reporting 7\.4\.3 build0542, not 7\.6\.8 build1164/);
   }, 20_000);
 });
+
+describe("FortiSwitch HTTPS engine — Abort (business rule 138)", () => {
+  it("an abort mid-flash ends the run at once as cancelled, without spinning on the switch", async () => {
+    const controller = new AbortController();
+    state.pollsBeforeDown = 1_000; // the switch would report progress for the whole budget
+    const c = ctx({ signal: controller.signal });
+    const onStage = c.onStage;
+    c.onStage = (s) => { onStage(s); if (s === "deploying") setTimeout(() => controller.abort(), 600); };
+    const t0 = Date.now();
+    const res = await upgradeFortiSwitch(c);
+    expect(res).toMatchObject({ outcome: "failed", error: "cancelled" });
+    // Well inside switchUpgradeMs (10 s), and polled at heartbeat pace — a
+    // sleep that resolved on abort used to spin here until the deadline.
+    expect(Date.now() - t0).toBeLessThan(3_000);
+    expect(state.progressPolls).toBeLessThan(10);
+    expect(c.stages).not.toContain("rebooting");
+  }, 10_000);
+
+  it("an abort after staging still un-stages the image, and never deploys", async () => {
+    const controller = new AbortController();
+    const c = ctx({ signal: controller.signal });
+    const onStage = c.onStage;
+    c.onStage = (s) => { onStage(s); if (s === "compat") controller.abort(); };
+    const res = await upgradeFortiSwitch(c);
+    expect(res).toMatchObject({ outcome: "failed", error: "cancelled" });
+    expect(state.calls).toContain("compat:reset");
+    expect(state.calls).not.toContain("POST /system/config/firmware/deploy");
+  });
+
+  it("an abort before staging sends nothing to the switch after the login", async () => {
+    const controller = new AbortController();
+    const c = ctx({ signal: controller.signal });
+    const onStage = c.onStage;
+    c.onStage = (s) => { onStage(s); if (s === "staging") controller.abort(); };
+    const res = await upgradeFortiSwitch(c);
+    expect(res).toMatchObject({ outcome: "failed", error: "cancelled" });
+    expect(state.uploads).toHaveLength(0);
+  });
+});
