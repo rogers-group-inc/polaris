@@ -170,6 +170,124 @@ describe("alerts tab filtering", () => {
   });
 });
 
+describe("alerts tab loads more as it scrolls", () => {
+  // `count` active alerts, newest first; the mock honours limit + offset the
+  // way the endpoint does.
+  function many(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      id: "n" + i,
+      severity: "warning",
+      message: "m" + i,
+      assetHostname: "h" + i,
+      triggeredAt: new Date(Date.UTC(2026, 9, 5) - i * 60000).toISOString(),
+      acknowledged: false,
+    }));
+  }
+  async function renderPaged(all: any[], observer?: boolean, failPaged?: boolean) {
+    document.body.innerHTML = '<div id="app"><main class="app-body" id="app-body"></main></div>';
+    const list = vi.fn(async (p: any) => {
+      const off = p.offset || 0;
+      if (failPaged && off) throw new Error("boom");
+      return { notifications: all.slice(off, off + p.limit).map((r) => ({ ...r })), total: all.length };
+    });
+    g.api = { alerts: { list, acknowledge: vi.fn(), clear: vi.fn() } };
+    const watched: any[] = [];
+    if (observer) {
+      g.IntersectionObserver = class {
+        cb: any;
+        constructor(cb: any) { this.cb = cb; watched.push(this); }
+        observe(el: any) { this.cb([{ isIntersecting: true, target: el }]); }
+        disconnect() { /* nothing to release */ }
+      };
+    }
+    const tab = load();
+    tab._reset();
+    await tab.spec.render(document.getElementById("app-body")!, { route: { name: "alerts", parts: [] }, user: { permissions: { alerts: "read" } } });
+    await new Promise((r) => setTimeout(r, 0));
+    return { tab, list, watched };
+  }
+  const rowCount = () => document.querySelectorAll(".alert-row").length;
+  const more = () => document.getElementById("alerts-load-more") as HTMLButtonElement | null;
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  beforeEach(() => { delete g.IntersectionObserver; });
+
+  it("draws 50 rows at first, and Load more draws the next 50 without a fetch", async () => {
+    const { list } = await renderPaged(many(120));
+    expect(rowCount()).toBe(50);
+    expect(more()!.textContent).toContain("70 remaining");
+    more()!.click();
+    expect(rowCount()).toBe(100);
+    more()!.click();
+    expect(rowCount()).toBe(120);
+    expect(more()).toBeNull();
+    expect(document.querySelector(".list-count")!.textContent).toBe("120 alerts");
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches the next page of 500 once every fetched row is drawn", async () => {
+    const { list } = await renderPaged(many(620));
+    for (let i = 0; i < 9; i++) more()!.click();
+    expect(rowCount()).toBe(500);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".list-count")!.textContent).toBe("500 alerts · newest 500 of 620 active");
+    more()!.click();
+    await flush();
+    expect(list).toHaveBeenLastCalledWith({ limit: 500, offset: 500 });
+    expect(rowCount()).toBe(550);
+    expect(document.querySelector(".list-count")!.textContent).toBe("620 alerts");
+  });
+
+  it("a refresh re-fetches every loaded page, so the list does not shrink", async () => {
+    const { tab, list } = await renderPaged(many(620));
+    for (let i = 0; i < 10; i++) { more()!.click(); await flush(); }
+    list.mockClear();
+    await tab.spec.onPullToRefresh();
+    expect(list.mock.calls.map((c: any[]) => c[0])).toEqual([{ limit: 500 }, { limit: 500, offset: 500 }]);
+    expect(document.querySelector(".list-count")!.textContent).toBe("620 alerts");
+  });
+
+  it("drops a row that two pages both returned", async () => {
+    const all = many(520);
+    const { list } = await renderPaged(all);
+    // An alert fired between the fetches: the second page starts one early.
+    list.mockImplementationOnce(async () => ({ notifications: all.slice(499, 520), total: 520 }));
+    for (let i = 0; i < 10; i++) { more()!.click(); await flush(); }
+    expect(document.querySelector(".list-count")!.textContent).toBe("520 alerts");
+  });
+
+  it("a filter change starts the drawn window over", async () => {
+    await renderPaged(many(120));
+    more()!.click();
+    expect(rowCount()).toBe(100);
+    (document.querySelector('#alerts-chips [data-key="unack"]') as HTMLElement).click();
+    expect(rowCount()).toBe(50);
+  });
+
+  it("scrolling the button into view loads more on its own", async () => {
+    // The fake observer reports the button visible on every observe(), as a
+    // short list would — so it keeps going until nothing is left.
+    await renderPaged(many(120), true);
+    expect(rowCount()).toBe(120);
+    expect(more()).toBeNull();
+  });
+
+  it("stops loading on its own after a failed page, until a tap", async () => {
+    // The observer draws all 500 by itself, then asks for page two, which fails.
+    const { list } = await renderPaged(many(520), true, true);
+    for (let i = 0; i < 5; i++) await flush();
+    expect(rowCount()).toBe(500);
+    const paged = () => list.mock.calls.filter((c: any[]) => c[0].offset).length;
+    expect(paged()).toBe(1);
+    expect(g.PolarisTabs.showSnackbar).toHaveBeenCalledWith("boom", { error: true });
+    expect(more()!.disabled).toBe(false);
+    // A tap tries again.
+    more()!.click();
+    await flush();
+    expect(paged()).toBe(2);
+  });
+});
+
 const REGIONAL = [
   { id: "r1", severity: "critical", message: "down", assetId: "a1", assetHostname: "east-fw", triggeredAt: "2026-10-05T10:00:00Z", acknowledged: false, regionTags: ["East"] },
   { id: "r2", severity: "critical", message: "down", assetId: "a2", assetHostname: "west-fw", triggeredAt: "2026-10-05T09:00:00Z", acknowledged: false, regionTags: ["West"] },

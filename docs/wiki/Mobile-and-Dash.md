@@ -95,8 +95,11 @@ see. Your choices are remembered on that phone.
 
 Tap a row to open its device; tap **Ack** to acknowledge (`alerts:write`) or
 **Clear** to clear it (`alerts:fullwrite`). Clear asks first: it stops
-escalation and runs the automation's reset actions. The tab loads the newest
-500 active alerts; when more are active, the count under the list says so.
+escalation and runs the automation's reset actions. The list loads more as
+you scroll: it draws 50 rows at a time and fetches the next 500 active alerts
+when you near the bottom (a **Load more** button under the list does the same
+by tap). Sorting and filtering apply to what has been loaded; when more are
+active, the count under the list says so.
 
 ## Assets and Networks
 
