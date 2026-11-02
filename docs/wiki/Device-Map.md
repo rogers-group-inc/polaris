@@ -223,13 +223,14 @@ FortiLink uplink with no physical cable confirmed (by interface naming or
 LLDP) is not drawn, and neither is a FortiGate-to-FortiAP link, which Polaris
 only has when it does not know which switch port the AP is on. Such a device
 stands unconnected in its location until its cable is found. A confirmed
-FortiGate uplink whose ports cannot be resolved reads `fortilink`.
+firewall-to-switch uplink whose ports cannot be resolved reads `fortilink`.
 
 **A switch-to-switch cable is one green line**, whether interface naming or an
 LLDP report found it. An MCLAG inter-chassis link keeps its own style, and an
 AP's switch uplink stays blue. Hover a link to see how it was found ("found by
 interface naming", "found by LLDP"). The legend lists each link and device
-kind by name only.
+kind by name only — devices by asset type (Firewall, Switch, Access Point),
+and the FortiGate's uplink as "Firewall to switch".
 
 A link between two location boxes runs in the gutters between boxes and never
 through another device: when a switch sits in the target's column, the line
@@ -320,6 +321,7 @@ and an undone change is saved like any other edit.
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |
+| **Mouse controls** | the mouse button beside Export: how to pan, select, edit and open devices. A click elsewhere, **Esc** or its **×** closes it |
 
 The **legend** sits at the graph's bottom left as a small button; click it to
 open the legend, and its **×** folds it back. The edge between the graph and

@@ -1990,15 +1990,15 @@
   }
   function _buildLegendHTML(spec) {
     // Nodes / Monitor health / Edges / Location groups are the shared key
-    // (topology-render.js, also drawn by the Device Map widget).
-    var R = window.PolarisTopologyRender;
-    var row = R.topologyLegendRow;
-    var parts = [R.topologyLegendHtml(spec)];
-    // Mouse controls are a property of THIS desktop modal (cytoscape wiring
-    // in map.js), not of the shared render spec — the mobile topology tab
-    // has its own touch gestures.
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Mouse controls</div>');
-    [
+    // (topology-render.js, also drawn by the Device Map widget). The mouse
+    // controls have their own corner button (_toggleMouseControls).
+    return window.PolarisTopologyRender.topologyLegendHtml(spec);
+  }
+
+  // Mouse controls are a property of THIS desktop modal (cytoscape wiring in
+  // map.js), not of the shared render spec — the mobile topology tab has its
+  // own touch gestures. Shown from their own corner button, not the legend.
+  var MOUSE_CONTROLS = [
       ["Drag empty space", "Pan the view (scroll wheel zooms)"],
       ["Click", "Select just that device, link or location box"],
       ["Shift + click", "Add to the selection"],
@@ -2014,9 +2014,55 @@
       ["Snap devices / Snap line points", "Edit mode: devices land on the thick lines; line points on any line"],
       ["Double-click a device", "Open its asset details"],
       ["Right-click a device", "Edit its description / grouping codes"],
-    ].forEach(function (c) { parts.push(row("", c[0], c[1])); });
-    parts.push('</div>');
-    return parts.join("");
+  ];
+
+  // The Mouse controls panel: a legend-styled card under the corner tools,
+  // opened and closed by its button; a click elsewhere or Esc closes it.
+  function _toggleMouseControls(btn) {
+    var graph = document.getElementById("topology-graph");
+    if (!graph) return;
+    var panel = document.getElementById("topology-mouse-controls");
+    if (panel) { _closeMouseControls(); return; }
+    var row = window.PolarisTopologyRender.topologyLegendRow;
+    panel = document.createElement("div");
+    panel.id = "topology-mouse-controls";
+    panel.className = "topology-legend topology-mouse-controls";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", "Mouse controls");
+    panel.innerHTML =
+      '<header class="topology-legend-header"><span class="topology-legend-title">Mouse controls</span>' +
+        '<button type="button" class="btn-icon" data-close aria-label="Close mouse controls" title="Close">&times;</button></header>' +
+      '<div class="topology-legend-body">' +
+        MOUSE_CONTROLS.map(function (c) { return row("", c[0], c[1]); }).join("") +
+      "</div>";
+    // Clicks inside stay inside — the graph under it must not see them.
+    ["mousedown", "pointerdown", "touchstart", "click"].forEach(function (t) {
+      panel.addEventListener(t, function (e) { e.stopPropagation(); });
+    });
+    panel.querySelector("[data-close]").addEventListener("click", _closeMouseControls);
+    graph.appendChild(panel);
+    btn.classList.add("is-on");
+    btn.setAttribute("aria-expanded", "true");
+    setTimeout(function () {
+      document.addEventListener("click", _closeMouseControls);
+      // Capture on window: Esc closes THIS panel only, before the modal's own
+      // Esc handler would close the whole topology.
+      window.addEventListener("keydown", _mouseControlsKey, true);
+    }, 0);
+  }
+  function _mouseControlsKey(e) {
+    if (e.key !== "Escape") return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    _closeMouseControls();
+  }
+  function _closeMouseControls() {
+    var panel = document.getElementById("topology-mouse-controls");
+    if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+    var btn = document.getElementById("topology-mouse-help");
+    if (btn) { btn.classList.remove("is-on"); btn.setAttribute("aria-expanded", "false"); }
+    document.removeEventListener("click", _closeMouseControls);
+    window.removeEventListener("keydown", _mouseControlsKey, true);
   }
 
   // ── Position persistence ───────────────────────────────────────────────────
@@ -3086,7 +3132,17 @@
       _setTopologyEditing(!topoState.editing);
     });
 
-    [snapPoints, snapDevices, grid, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
+    // Mouse controls (moved out of the legend): a mouse glyph opening its
+    // own panel.
+    var mouseBtn = _cornerButton("topology-mouse-help", "btn-icon topology-tool", function (b) {
+      _toggleMouseControls(b);
+    });
+    mouseBtn.innerHTML = _svg('<rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/>');
+    mouseBtn.setAttribute("aria-haspopup", "dialog");
+    mouseBtn.setAttribute("aria-expanded", "false");
+    _setCornerTip(mouseBtn, "Mouse controls", "How to pan, select, edit and open devices on this map");
+
+    [snapPoints, snapDevices, grid, mouseBtn, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
     graph.appendChild(row);
 
     // Save / Reset layout: a column under the Edit button, edit mode only
