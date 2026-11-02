@@ -198,8 +198,9 @@ title (**Not collected** when nothing does), and CPU + Memory has its own
 
 On a device monitored by the Polaris Agent or vCenter, or an Unraid, TrueNAS or
 Proxmox VE host, CPU + Memory shows two charts, as the desktop does. **CPU** draws
-the average across cores as a thick line over a thin line per core; tap a chip under
-it to hide or show that line, double-tap a core to show only that core, and tap
+the average across cores as a thick line over a thin line per core. The chips under
+it are one row that scrolls sideways, fading at an end with more past it. Tap a chip
+to hide or show that line, press and hold a core to show only that core, and tap
 **Show all** to bring every line back. At longer ranges, where Polaris keeps
 summarised figures without per-core detail, the chart shows the average alone and
 says so. **Memory**

@@ -51,13 +51,15 @@
         </svg>
         <div class="chart-x-labels"><span>Nov 1, 12:00</span><span>Nov 2, 12:00</span></div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
+      <div class="series-legend-bar">
+      <div class="series-legend" style="--fade-r:28px;">
         <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:var(--md-primary);"></span>Avg</button>
         <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(35,68%,46%);"></span>Core 0</button>
         <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(106,68%,63%);"></span>Core 1</button>
         <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(178,68%,46%);"></span>Core 2</button>
         <button class="chip" aria-pressed="false" style="height:32px;padding:0 10px;gap:6px;font-size:13px;opacity:.8;text-decoration:line-through;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(249,68%,63%);opacity:.45;"></span>Core 3</button>
-        <button class="btn btn-text" style="height:32px;padding:0 12px;">Show all</button>
+      </div>
+        <button class="btn btn-text" style="height:32px;padding:0 12px;flex:0 0 auto;">Show all</button>
       </div>
       <div class="ty-body-s muted" style="margin-top:8px;">avg 22% · max 61% · busiest Core 2 at 66%</div>
 
@@ -81,11 +83,13 @@
         </svg>
         <div class="chart-x-labels"><span>Nov 1, 12:00</span><span>Nov 2, 12:00</span></div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
+      <div class="series-legend-bar">
+      <div class="series-legend">
         <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#f4a261;"></span>Processes</button>
         <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#8ab17d;"></span>Buffers</button>
         <button class="chip" aria-pressed="false" style="height:32px;padding:0 10px;gap:6px;font-size:13px;opacity:.8;text-decoration:line-through;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#2a9d8f;opacity:.45;"></span>Cache</button>
         <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:#9c6ade;"></span>Swap</button>
+      </div>
       </div>
       <div class="ty-body-s muted" style="margin-top:8px;">Cache hidden: counted in the gap, not in the stack.</div>
       <div class="ty-body-s muted" style="margin-top:8px;">in use 10.5 GB of 16 GB (66%) · peak 11.2 GB</div>

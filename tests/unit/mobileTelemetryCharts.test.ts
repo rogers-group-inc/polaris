@@ -122,37 +122,93 @@ describe("CPU chart", () => {
     expect(document.body.textContent).toContain("busiest Core 3 at 45%");
   });
 
-  it("a tap switches a core off after the double-tap window; Show all brings it back", () => {
-    vi.useFakeTimers();
-    try {
-      const tc = load();
-      render(tc, agentSamples());
-      tap("cpu", "2");
-      expect(chipOn("cpu", "2")).toBe(true); // deferred
-      vi.advanceTimersByTime(350);
-      expect(chipOn("cpu", "2")).toBe(false);
-      expect(cpuLines()).toBe(4);
-      (document.querySelector("[data-series-all]") as HTMLElement).click();
-      expect(chipOn("cpu", "2")).toBe(true);
-      expect(document.querySelector("[data-series-all]")).toBeNull();
-    } finally { vi.useRealTimers(); }
+  const chipEl = (group: string, key: string) =>
+    document.querySelector(`.series-chip[data-group="${group}"][data-series="${key}"]`) as HTMLElement;
+  const pointer = (el: Element, type: string, x = 0, y = 0) => {
+    const ev = new Event(type, { bubbles: true }) as any;
+    ev.clientX = x; ev.clientY = y;
+    el.dispatchEvent(ev);
+  };
+
+  it("a tap switches a core off at once; Show all, beside the row, brings it back", () => {
+    const tc = load();
+    render(tc, agentSamples());
+    tap("cpu", "2");
+    expect(chipOn("cpu", "2")).toBe(false);
+    expect(cpuLines()).toBe(4);
+    const all = document.querySelector("[data-series-all]") as HTMLElement;
+    // Outside the scrolling row, so a long row never pushes it out of reach.
+    expect(all.closest(".series-legend")).toBeNull();
+    expect(all.closest(".series-legend-bar")).not.toBeNull();
+    all.click();
+    expect(chipOn("cpu", "2")).toBe(true);
+    expect(document.querySelector("[data-series-all]")).toBeNull();
   });
 
-  it("a double tap shows only that core, keeping the average, and offers Show all", () => {
+  it("a long-press shows only that core, keeps the average, and swallows the tap that ends it", () => {
     vi.useFakeTimers();
     try {
       const tc = load();
       const { ctx } = render(tc, agentSamples());
-      tap("cpu", "1");
-      tap("cpu", "1");
-      vi.advanceTimersByTime(350);
+      pointer(chipEl("cpu", "1"), "pointerdown");
+      vi.advanceTimersByTime(550);
+      pointer(chipEl("cpu", "1"), "pointerup");
+      chipEl("cpu", "1").click(); // the click a released press delivers
       expect(["0", "1", "2", "3"].filter((k) => chipOn("cpu", k))).toEqual(["1"]);
       expect(chipOn("cpu", "avg")).toBe(true);
       expect(cpuLines()).toBe(2);
-      expect(document.querySelector("[data-series-all]")).not.toBeNull();
       // The picks live on the caller's state object, so a re-render keeps them.
       expect(ctx.hidden).toEqual({ "0": true, "2": true, "3": true });
+      // The next tap is a tap again.
+      tap("cpu", "0");
+      expect(chipOn("cpu", "0")).toBe(true);
     } finally { vi.useRealTimers(); }
+  });
+
+  it("a finger that drifts (scrolling the row) or lifts early is not a long-press", () => {
+    vi.useFakeTimers();
+    try {
+      const tc = load();
+      render(tc, agentSamples());
+      pointer(chipEl("cpu", "2"), "pointerdown", 100, 10);
+      pointer(chipEl("cpu", "2"), "pointermove", 130, 10);
+      vi.advanceTimersByTime(600);
+      expect(["0", "1", "2", "3"].every((k) => chipOn("cpu", k))).toBe(true);
+      pointer(chipEl("cpu", "3"), "pointerdown");
+      vi.advanceTimersByTime(200);
+      pointer(chipEl("cpu", "3"), "pointerup");
+      vi.advanceTimersByTime(600);
+      expect(["0", "1", "2", "3"].every((k) => chipOn("cpu", k))).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("Avg has no isolate — a long-press on it does nothing", () => {
+    vi.useFakeTimers();
+    try {
+      const tc = load();
+      render(tc, agentSamples());
+      pointer(chipEl("cpu", "avg"), "pointerdown");
+      vi.advanceTimersByTime(600);
+      expect(["0", "1", "2", "3"].every((k) => chipOn("cpu", k))).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("each legend is one scrolling row, fading only at an end with more past it", () => {
+    const tc = load();
+    render(tc, agentSamples());
+    const rows = Array.from(document.querySelectorAll(".series-legend")) as HTMLElement[];
+    expect(rows.map((r) => r.dataset.legend)).toEqual(["cpu", "mem"]);
+    // happy-dom lays nothing out, so nothing overflows: no fade at either end.
+    rows.forEach((r) => {
+      expect(r.style.getPropertyValue("--fade-l")).toBe("0px");
+      expect(r.style.getPropertyValue("--fade-r")).toBe("0px");
+    });
+    const css = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
+    const rule = /\.series-legend \{[^}]*\}/.exec(css)![0];
+    expect(rule).toContain("overflow-x: auto");
+    expect(rule).toContain("scrollbar-width: none");
+    expect(rule).toMatch(/mask-image: linear-gradient\(to right, transparent 0, #000 var\(--fade-l/);
+    expect(css).toContain(".series-legend::-webkit-scrollbar { display: none; }");
   });
 
   it("says per-core detail is not kept on a rollup tier", () => {

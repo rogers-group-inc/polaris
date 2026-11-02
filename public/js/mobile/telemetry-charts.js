@@ -18,10 +18,11 @@
 // source keeps the combined CPU + memory % chart asset-detail.js draws, which
 // is also what a split source falls back to before its method is known.
 //
-// Legend chips toggle a series; a double tap on a core shows only that core
-// (the Avg line stays). A double tap also delivers two taps, so a single tap
-// is deferred past the double-tap window — otherwise an isolate would first
-// switch off the very core it was aimed at. Core visibility lives in the
+// Legend chips toggle a series on a tap; a long-press on a core shows only
+// that core (the Avg line stays), and swallows the tap that ends it. Each
+// legend is one sideways-scrolling row of chips that fades at an end with
+// more past it (`.series-legend` in mobile.css), its scroll position kept
+// across the re-render a toggle causes. Core visibility lives in the
 // caller's per-asset state and is NOT persisted (core 5 of one host has
 // nothing to do with core 5 of another); memory bands are named, so which of
 // them a viewer wants is a standing preference and is persisted on the
@@ -190,6 +191,22 @@
       + '</div>';
   }
 
+  function legendHTML(group, chips, trailing) {
+    return '<div class="series-legend-bar">'
+      + '<div class="series-legend" data-legend="' + group + '">' + chips + '</div>'
+      + (trailing || '')
+      + '</div>';
+  }
+
+  var FADE_PX = "28px";
+  // Fade an end only while there is more past it, so the first chip of a
+  // row at rest is not half-hidden.
+  function updateFade(row) {
+    var max = row.scrollWidth - row.clientWidth;
+    row.style.setProperty("--fade-l", row.scrollLeft > 1 ? FADE_PX : "0px");
+    row.style.setProperty("--fade-r", max > 1 && row.scrollLeft < max - 1 ? FADE_PX : "0px");
+  }
+
   function noteHTML(text) {
     return text ? '<div class="ty-body-s muted" style="margin-top:8px;">' + esc(text) + '</div>' : '';
   }
@@ -227,9 +244,10 @@
 
     var chips = chipHTML("cpu", "avg", "Avg", "var(--md-primary)", !hidden.avg);
     for (var k = 0; k < n; k++) chips += chipHTML("cpu", String(k), "Core " + k, coreColor(k, n), !hidden[String(k)]);
-    if (Object.keys(hidden).some(function (key) { return hidden[key]; })) {
-      chips += '<button type="button" class="btn btn-text" data-series-all="cpu" style="height:32px;padding:0 12px;">Show all</button>';
-    }
+    // Outside the scrolling row, so it is in reach however many cores there are.
+    var showAll = Object.keys(hidden).some(function (key) { return hidden[key]; })
+      ? '<button type="button" class="btn btn-text" data-series-all="cpu" style="height:32px;padding:0 12px;flex:0 0 auto;">Show all</button>'
+      : '';
 
     // Per-core figures live on the detail tier only, so a rollup range has
     // none even on a source that reports them. Said only for a split source
@@ -251,7 +269,7 @@
 
     return headHTML("CPU", n ? n + (n === 1 ? " core" : " cores") : "")
       + '<div id="asset-cpu-chart">' + chart + '</div>'
-      + '<div class="series-legend" data-legend="cpu" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">' + chips + '</div>'
+      + legendHTML("cpu", chips, showAll)
       + noteHTML(note)
       + noteHTML(bits.join(" · "));
   }
@@ -334,29 +352,86 @@
 
     return headHTML("Memory", PolarisCharts.formatBytes(latest) + " installed")
       + '<div id="asset-mem-chart">' + chart + '</div>'
-      + '<div class="series-legend" data-legend="mem" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">' + chips + '</div>'
+      + legendHTML("mem", chips, "")
       + notes.map(noteHTML).join("")
       + noteHTML(stats);
   }
 
+  // A toggle rebuilds the legends; each row keeps where it was scrolled, so a
+  // tap on a chip far along the row does not throw the row back to its start.
   function draw(host) {
     var ctx = host._telemetryCtx;
     if (!ctx) return;
+    var scrolled = {};
+    host.querySelectorAll(".series-legend[data-legend]").forEach(function (row) {
+      scrolled[row.dataset.legend] = row.scrollLeft;
+    });
     host.innerHTML = cpuBlock(ctx)
       + '<div style="height:1px;background:var(--md-outline-variant);margin:16px 0 14px;"></div>'
       + memBlock(ctx);
+    host.querySelectorAll(".series-legend[data-legend]").forEach(function (row) {
+      if (scrolled[row.dataset.legend]) row.scrollLeft = scrolled[row.dataset.legend];
+      updateFade(row);
+      row.addEventListener("scroll", function () { updateFade(row); }, { passive: true });
+    });
   }
 
-  var DOUBLE_TAP_MS = 300;
+  var LONG_PRESS_MS = 500;
+  // A finger that drifts this far is scrolling the row, not pressing a chip.
+  var LONG_PRESS_SLOP_PX = 10;
 
-  // One delegated listener per host, attached once; it reads whatever context
-  // the latest render left on the host, so a range change or refresh never
-  // stacks a second handler.
+  function isolate(ctx, key) {
+    var n = (coreSeries((ctx.resp && ctx.resp.samples) || []) || []).length;
+    Object.keys(ctx.hidden).forEach(function (k) { delete ctx.hidden[k]; });
+    for (var c = 0; c < n; c++) if (String(c) !== key) ctx.hidden[String(c)] = true;
+  }
+
+  // One set of delegated listeners per host, attached once; they read
+  // whatever context the latest render left on the host, so a range change
+  // or refresh never stacks a second handler.
   function wire(host) {
     if (host.dataset.telemetryWired === "1") return;
     host.dataset.telemetryWired = "1";
-    var timer = null, last = null;
+    var press = null;      // { key, x, y, timer } while a finger is down on a core chip
+    var swallowClick = false;
+
+    function cancelPress() {
+      if (press) { clearTimeout(press.timer); press = null; }
+    }
+
+    host.addEventListener("pointerdown", function (ev) {
+      var chip = ev.target && ev.target.closest ? ev.target.closest('.series-chip[data-group="cpu"]') : null;
+      cancelPress();
+      // A press that ended off the chip delivered no click to swallow; a new
+      // press starts clean either way.
+      swallowClick = false;
+      // "Only the average" is what hiding the cores is for — Avg has no isolate.
+      if (!chip || chip.dataset.series === "avg") return;
+      var key = chip.dataset.series;
+      press = { key: key, x: ev.clientX || 0, y: ev.clientY || 0, timer: null };
+      press.timer = setTimeout(function () {
+        var ctx = host._telemetryCtx;
+        press = null;
+        if (!ctx) return;
+        swallowClick = true; // the click that ends this press is not a toggle
+        isolate(ctx, key);
+        if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* no haptics */ } }
+        draw(host);
+      }, LONG_PRESS_MS);
+    });
+    host.addEventListener("pointermove", function (ev) {
+      if (!press) return;
+      if (Math.abs((ev.clientX || 0) - press.x) > LONG_PRESS_SLOP_PX || Math.abs((ev.clientY || 0) - press.y) > LONG_PRESS_SLOP_PX) cancelPress();
+    });
+    host.addEventListener("pointerup", cancelPress);
+    host.addEventListener("pointercancel", cancelPress);
+    // A long-press would otherwise open the browser's own menu on the chip.
+    host.addEventListener("contextmenu", function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest(".series-chip")) ev.preventDefault();
+    });
+
     host.addEventListener("click", function (ev) {
+      if (swallowClick) { swallowClick = false; return; }
       var t = ev.target && ev.target.closest ? ev.target : null;
       if (!t) return;
       var ctx = host._telemetryCtx;
@@ -370,28 +445,10 @@
       var chip = t.closest(".series-chip");
       if (!chip) return;
       var key = chip.dataset.series;
-      if (chip.dataset.group === "mem") {
-        setBandVisible(key, !bandVisible(key));
-        draw(host);
-        return;
-      }
-      var now = Date.now();
-      if (last && last.key === key && now - last.t < DOUBLE_TAP_MS) {
-        clearTimeout(timer); timer = null; last = null;
-        if (key === "avg") return; // "only the average" is what hiding the cores is for
-        var n = (coreSeries((ctx.resp && ctx.resp.samples) || []) || []).length;
-        Object.keys(ctx.hidden).forEach(function (k) { delete ctx.hidden[k]; });
-        for (var c = 0; c < n; c++) if (String(c) !== key) ctx.hidden[String(c)] = true;
-        draw(host);
-        return;
-      }
-      last = { key: key, t: now };
-      clearTimeout(timer);
-      timer = setTimeout(function () {
-        timer = null;
-        if (ctx.hidden[key]) delete ctx.hidden[key]; else ctx.hidden[key] = true;
-        draw(host);
-      }, DOUBLE_TAP_MS);
+      if (chip.dataset.group === "mem") setBandVisible(key, !bandVisible(key));
+      else if (ctx.hidden[key]) delete ctx.hidden[key];
+      else ctx.hidden[key] = true;
+      draw(host);
     });
   }
 
