@@ -297,9 +297,11 @@ the result. The same sheet has **Schedule for later**, exactly as for a firmware
 upgrade, and a pending reboot shows in the row with **Change** and **Cancel**.
 When the device can't be rebooted right now but can be booked (an agent host
 that is offline, say), the row offers **Schedule reboot…** and says why. When
-nothing allows a reboot, the row says what is missing. Pressing it needs
-**Read-Write on Assets**. A device that reports no uptime and can't be rebooted
-from Polaris has no Uptime row.
+reboots are not enabled for the device, the row says nothing about rebooting;
+the desktop's [Reboot](Assets#reboot) control says what is missing. Pressing it
+needs **Read-Write on Assets**, and without that the row shows no button. A
+device that reports no uptime and can't be rebooted from Polaris has no Uptime
+row.
 
 **Tapping the asset's name acts on it or edits it.** The name at the top of
 the detail sheet opens a menu. First come the desktop header's two device verbs:
