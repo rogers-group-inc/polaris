@@ -106,6 +106,7 @@ import { getAdMonitorProtocol, persistManagedApLldpNeighbors, invalidateLldpMatc
 import { persistApRadioInventory } from "../apRadioService.js";
 import { isFortiapStatusOnline } from "../../utils/fortiapMonitorRow.js";
 import { buildGateMacIndex, fortiapGateMac, isFortiapUnauthorized } from "../../utils/fortiapGateMac.js";
+import { buildEndpointGateResolver } from "../../utils/endpointGate.js";
 import * as autoMonitor from "../autoMonitorInterfacesService.js";
 import * as autoMonitorStorage from "../autoMonitorStorageService.js";
 import * as agentAutoDeploy from "../agentAutoDeployService.js";
@@ -7722,13 +7723,20 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     } catch (err: any) {
       syncLog("error", `fortigate-endpoint AssetSource: prior-gate preload failed (${err?.message || "unknown"})`);
     }
+    // Parsed once for the whole flush — one lookup per touched endpoint.
+    const gateForAddress = buildEndpointGateResolver(allSubnets);
     const results = await batchSettled(
       Array.from(fortigateEndpointAssetIds),
       async (assetId: string) => {
         const asset = assetIdx.findById(assetId);
         if (!asset || !asset.macAddress) return false;
-        const gateName = fortigateEndpointDeviceByAsset.get(assetId)
-          ?? priorGateByAsset.get(assetId)
+        // Business rule 101(b): the gate whose network holds the primary
+        // address names it; the pathway's gate only when IPAM cannot say.
+        const pathwayGate = fortigateEndpointDeviceByAsset.get(assetId);
+        const priorGate = priorGateByAsset.get(assetId);
+        const gateName = gateForAddress(asset.ipAddress, [pathwayGate, priorGate])
+          ?? pathwayGate
+          ?? priorGate
           ?? null;
         await upsertFortigateEndpointSource(assetId, integrationId, asset, integrationType, asset.lastSeen ?? flushedAt, integrationName, gateName);
         return true;

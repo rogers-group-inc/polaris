@@ -18,6 +18,7 @@ Queue** dashboard widget. Everyone who can see the queue sees every flavour.
 | `discoveryConflicts:write` | accept / reject / adopt / dismiss |
 | **plus `assets:write`** | **chained**, for the duplicate-IP verbs that change an asset's address (*Apply* a new address, *Clear*), and for accepting a **decommissioned agent** check-in, which reactivates the asset |
 | **plus `assets:fullwrite`** | **chained**, for the duplicate-IP and duplicate-serial merge verbs — they delete a record |
+| **plus `reservations:write`** | **chained**, for *Keep this one* on a duplicate-reservation card — it releases the other reservations, so below Full read-write only reservations you created |
 
 ---
 
@@ -32,6 +33,7 @@ Queue** dashboard widget. Everyone who can see the queue sees every flavour.
 | **Decommissioned agent** | asset | the Polaris Agent on a **decommissioned** asset checks in again |
 | **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
 | **`duplicate-serial`** | asset | two asset records carry the **same serial number** — usually merged automatically, see below |
+| **`duplicate-reservation`** | asset | one device holds **two or more DHCP reservations** |
 | **`chassis-replaced`** | subnet | a network's serving FortiGate answers with a different chassis serial |
 
 ---
@@ -363,6 +365,39 @@ four characters, and any serial shared by **more than three** assets — past th
 
 Both serial conflicts are swept every 30 minutes and are covered by business
 rule [83](Business-Rules#rule-83).
+
+---
+
+## Two DHCP reservations on one device
+
+A DHCP reservation says which address a device gets, so two on one device
+usually means one was left behind: the device was re-addressed and the old
+entry stayed on the FortiGate, or it moved sites and the old site's
+reservation still holds an address. Polaris checks every 10 minutes and raises
+one **Duplicate reservations** card per device.
+
+A reservation counts when it is on a FortiGate: learned from the gate, or made
+in Polaris and confirmed pushed. A lease does not count, and neither does a
+Polaris reservation that was never pushed. It belongs to the device through any
+of the device's MAC addresses, so a wired and a Wi-Fi reservation on one laptop
+are two. Decommissioned and disabled devices, FortiGates, FortiSwitches and
+FortiAPs are never reported, and neither is a MAC two assets both list.
+
+The card lists each reservation: its address (the device's primary address is
+marked), network, FortiGate, MAC, whether it came from the gate or was pushed
+by Polaris, and when it was created.
+
+| Verb | Does |
+|---|---|
+| **Keep this one** | keeps the reservation you clicked and **releases** the others, exactly as *Release* in the network's IP table does: each is deleted from its FortiGate when DHCP Push is on for that integration, and the device stops being linked to the address ([rule 102](Business-Rules#rule-102)) |
+| **Reject** | every reservation is deliberate; the same set will not re-raise, a changed one will |
+
+There is no Accept. *Keep this one* needs read-write on Reservations as well as
+on conflicts. Below Full read-write you can only release reservations you
+created, and Polaris checks every one before releasing any. If a release fails,
+the card stays open and the event log says which one. The card closes itself
+when the device is down to one reservation. Business rule
+[139](Business-Rules#rule-139).
 
 ---
 

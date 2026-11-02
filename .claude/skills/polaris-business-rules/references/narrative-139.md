@@ -1,0 +1,66 @@
+# Business rule 139 — full narrative
+
+> Written 2026-11-02 as its own file (one file per rule from 78 on). Rule numbers are a
+> stable citation key — never renumber. 81 is a deliberate gap.
+
+Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
+
+- [Rule 139](#rule-139) — An asset holding two DHCP reservations is a conflict, and resolving it keeps one and releases the rest
+
+<a id="rule-139"></a>
+
+## Rule 139 — An asset holding two DHCP reservations is a conflict, and resolving it keeps one and releases the rest
+
+**What prompted it (2026-11-02).** The owner released a DHCP reservation from the Networks
+panel and found the asset still linked to it (rule 102(b) is that half). While that was being
+fixed they added, verbatim: "if an asset has two dhcp reservations, then raise a conflict".
+
+A DHCP reservation is a person's statement that this device gets this address. Two on one
+device is almost never intended: the device was re-addressed and the old entry stayed on the
+gate, or it moved sites and the reservation at the old site still holds an address nobody can
+use. Polaris let both stand and linked the asset to both, so releasing one left it answering to
+the other with nothing anywhere saying so.
+
+### What counts
+
+- **A gate binding.** An ACTIVE reservation that is a MAC-to-IP entry on a FortiGate:
+  `sourceType` `dhcp_reservation` (learned from the gate) or a Polaris row the gate confirmed
+  (`pushStatus` `synced`). A lease is a hand-out, not a choice; a manual row never pushed is
+  Polaris bookkeeping with nothing on the gate; infra rows (`fortiswitch` / `fortinap`) belong
+  to the controller (rules 23, 45); a VIP describes an address (rule 77).
+- **Reached through the MAC list.** A reservation names a MAC, not an asset, so it reaches one
+  through `AssetMacAddress` (single-MAC rows; a range row is an interface fold, not a card). A
+  MAC two assets both list is skipped — which asset holds the reservation is then a
+  duplicate-record question (rules 40, 83), not this one. The all-zero MAC is no one's (rule 97).
+- **Every MAC of the asset.** The owner said "an asset", so a wired and a Wi-Fi reservation on
+  one laptop are two. That case is often deliberate, and Reject is how the operator says so —
+  the same set never re-raises.
+- **Not** decommissioned / disabled assets (nothing to address) and not Fortinet infra.
+
+### Why a sweep
+
+Both sides of the join have many writers: discovery's reservation sync, reserve / release from
+the IP panel, the push queue, and every MAC writer. One fleet pass — the active gate bindings,
+then the MAC rows naming them — answers it for every asset, as the duplicate-IP sweep (rule 40)
+does for addresses. 10 minutes, scheduler role, writes only on change.
+
+### The verb
+
+Accept would name nothing, so it is refused. The card's per-row **Keep this one** posts
+`/conflicts/:id/keep-reservation` with that reservation's id, and every other reservation in
+the set is released through `releaseReservation` — the same path as Release in the IP panel:
+deleted from the gate when DHCP writeback is on, and detached from the asset by rule 102(b).
+It takes the release gate (`reservations:write`, and below Full RW only rows the caller
+created), checked on every row before any is released, because a resolution that releases two
+rows and then refuses the third leaves the operator with neither the old state nor the new.
+The conflict is accepted only when every release succeeded; a release that failed leaves it
+open for the sweep to refresh.
+
+### Rejected
+
+- **Raising per MAC instead of per asset.** It would keep the laptop wired + Wi-Fi case quiet,
+  but the owner's words were per asset, and Reject already covers the deliberate pair.
+- **Auto-releasing the older reservation.** Which one is stale is a fact about the network the
+  operator knows and Polaris does not; a reservation on another site's gate may be the live one.
+- **Raising at write time.** The writers are too many to hook, and a duplicate is a property of
+  the fleet — the rule 40 reasoning.

@@ -959,6 +959,44 @@ function getAlertsFormData() {
         });
       });
 
+      // Duplicate-reservation "Keep this one" (business rule 139): confirm
+      // which reservations go, then release them through the conflict.
+      body.querySelectorAll("[data-dupres-keep]").forEach(function (el) {
+        var conflictId = el.getAttribute("data-conflict-id");
+        var keepId = el.getAttribute("data-reservation-id");
+        el.addEventListener("click", async function () {
+          var card = el.closest(".conflict-card");
+          var others = (card ? Array.prototype.slice.call(card.querySelectorAll("[data-dupres-keep]")) : [])
+            .filter(function (b) { return b.getAttribute("data-reservation-id") !== keepId; })
+            .map(function (b) { return b.getAttribute("data-label"); });
+          var msg = [
+            'Keep ' + el.getAttribute("data-label") + '?',
+            "",
+            "These reservations will be RELEASED:",
+            others.map(function (o) { return "  • " + o; }).join("\n"),
+            "",
+            "A released reservation is deleted from the FortiGate when DHCP Push is on for its integration, " +
+              "and the device stops being linked to the address.",
+          ].join("\n");
+          var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
+          if (!ok) return;
+          el.disabled = true;
+          try {
+            var out = await api.conflicts.keepReservation(conflictId, { reservationId: keepId });
+            showToast(out && out.resolved
+              ? "Released " + ((out && out.released && out.released.length) || 0) + " reservation(s)"
+              : ((out && out.failed && out.failed.length) || 0) + " release(s) failed — the conflict stays open", out && out.resolved ? undefined : "error");
+            var scrollTop = body.scrollTop;
+            await loadConflicts(true);
+            body.scrollTop = scrollTop;
+            refreshBadge();
+          } catch (err) {
+            showToast(err.message, "error");
+            el.disabled = false;
+          }
+        });
+      });
+
       // Duplicate-IP / duplicate-serial "Review & merge" — the same merge
       // engine the row verb uses, reached through the full comparison modal so
       // the operator sees polling history, sources and dependency edges and
@@ -1844,8 +1882,86 @@ function getAlertsFormData() {
     '</div>';
   }
 
+  // One asset, two or more DHCP reservations (business rule 139). The verb is
+  // per row: keep this one, and every other reservation in the set is released
+  // — off the gate when DHCP writeback is on, and off the asset.
+  function renderDuplicateReservationConflictCard(c) {
+    var proposed = c.proposedAssetFields || {};
+    var held = Array.isArray(proposed.reservations) ? proposed.reservations : [];
+    var isResolved = c.status !== "pending";
+    var canKeep = typeof permAtLeast === "function" && permAtLeast("reservations", "write");
+    var assetLabel = proposed.hostname || proposed.assetIpAddress || c.assetId || "(unnamed)";
+
+    var rows = held.map(function (r) {
+      var network = r.subnetName ? (escapeHtml(r.subnetName) + ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(r.subnetCidr || "") + '</span>') : escapeHtml(r.subnetCidr || "—");
+      var kind = r.sourceType === "dhcp_reservation" ? "On the gate" : "Pushed by Polaris";
+      var primary = r.isPrimary
+        ? ' <span class="badge badge-conflict" style="font-size:0.65rem">primary address</span>'
+        : "";
+      var keepCell = (isResolved || !canKeep)
+        ? '<td></td>'
+        : '<td class="conflict-action-cell">' +
+            '<button class="btn btn-secondary btn-sm" data-dupres-keep data-conflict-id="' + c.id + '" ' +
+              'data-reservation-id="' + escapeHtml(r.reservationId || "") + '" ' +
+              'data-label="' + escapeHtml((r.ipAddress || "") + (r.gate ? " on " + r.gate : "")) + '" ' +
+              'title="Keep this reservation and release the other' + (held.length > 2 ? 's' : '') + '">Keep this one</button>' +
+          '</td>';
+      return '<tr class="conflict-changed">' +
+        '<td class="conflict-field mono">' + escapeHtml(r.ipAddress || "—") + primary + '</td>' +
+        '<td style="font-size:0.75rem">' + network + '</td>' +
+        '<td style="font-size:0.75rem">' + escapeHtml(r.gate || "—") + '</td>' +
+        '<td class="mono" style="font-size:0.75rem">' + escapeHtml(r.macAddress || "—") + '</td>' +
+        '<td style="font-size:0.75rem">' + kind + '</td>' +
+        '<td style="font-size:0.75rem">' + (r.createdAt ? timeAgo(r.createdAt) : "—") + '</td>' +
+        keepCell +
+        '</tr>';
+    }).join("");
+
+    var explainer =
+      '<strong>' + escapeHtml(assetLabel) + '</strong> holds ' + held.length + ' DHCP reservations. ' +
+      'A reservation says which address a device gets, so two usually means one was left behind when the ' +
+      'device was re-addressed or moved sites. Use <em>Keep this one</em> on the reservation to keep — the ' +
+      'other' + (held.length > 2 ? 's are' : ' is') + ' released, taken off the FortiGate when DHCP Push is on, ' +
+      'and the device stops being linked to ' + (held.length > 2 ? 'them' : 'it') + '. ' +
+      '<strong>Reject</strong> if every reservation is deliberate (a wired and a Wi-Fi card, say); the same ' +
+      'set will not re-raise.';
+
+    var actions = isResolved
+      ? resolvedActionsHtml(c)
+      : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" ' +
+          'title="Keep every reservation — they are deliberate">Reject (dismiss)</button>';
+
+    var assetLink = c.assetId
+      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(c.assetId) + '">' + escapeHtml(assetLabel) + '</a>'
+      : escapeHtml(assetLabel);
+
+    return '<div class="conflict-card">' +
+      '<div class="conflict-card-header">' +
+        '<span class="badge badge-conflict">Duplicate reservations</span>' +
+        '<strong>' + assetLink + '</strong>' +
+        '<span class="conflict-card-subnet" style="font-size:0.78rem">' + held.length + ' reservations</span>' +
+      '</div>' +
+      '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
+      '<div class="conflict-table conflict-table-dupres" style="padding:0">' +
+        '<table><thead><tr>' +
+          '<th class="conflict-field">Address</th>' +
+          '<th>Network</th>' +
+          '<th>FortiGate</th>' +
+          '<th>MAC</th>' +
+          '<th>Kind</th>' +
+          '<th>Created</th>' +
+          '<th>' + (isResolved ? '' : 'Keep') + '</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+      '<div class="conflict-card-actions">' + actions + '</div>' +
+    '</div>';
+  }
+
   function renderAssetConflictCard(c) {
     var proposedKind = c.proposedAssetFields || {};
+    if (proposedKind.collisionReason === "duplicate-reservation") return renderDuplicateReservationConflictCard(c);
     if (proposedKind.collisionReason === "ip-override") return renderIpOverrideConflictCard(c);
     if (proposedKind.collisionReason === "decommissioned-agent-checkin") return renderDecommissionedAgentConflictCard(c);
     if (proposedKind.collisionReason === "duplicate-ip") return renderDuplicateIpConflictCard(c);

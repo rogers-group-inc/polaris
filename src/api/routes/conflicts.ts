@@ -14,7 +14,10 @@
  * Access rides the discoveryConflicts permission alone: read = list both
  * entity types, write = resolve both — with exceptions, `/:id/reassign-ip`,
  * `/:id/clear-ip` and `/:id/merge` on a duplicate-IP conflict, which additionally require
- * `assets:write` because they edit (and, for merge, delete) inventory.
+ * `assets:write` because they edit (and, for merge, delete) inventory, and
+ * `/:id/keep-reservation` on a duplicate-reservation conflict (business rule
+ * 139, src/services/duplicateReservationConflictService.ts), which takes the
+ * reservation release gate because it releases the others.
  * (The historical networkadmin↔
  * reservation / assetsadmin↔asset role-NAME partition was dropped 2026-08 —
  * it silently stopped applying when the seeded roles were renamed and never
@@ -52,6 +55,12 @@ import {
   DUPLICATE_SERIAL_COLLISION_REASON,
 } from "../../services/duplicateSerialConflictService.js";
 import { DECOMMISSIONED_AGENT_COLLISION_REASON } from "../../services/agentHostPinService.js";
+import {
+  keepOneReservation,
+  DUPLICATE_RESERVATION_COLLISION_REASON,
+} from "../../services/duplicateReservationConflictService.js";
+
+const KeepReservationSchema = z.object({ reservationId: z.string().min(1) });
 
 // One FortiGate swap = one decision across every subnet it raised (rule 41(a)).
 const ChassisSwapSchema = z.object({
@@ -394,6 +403,39 @@ router.post("/:id/reassign-ip", async (req, res, next) => {
     );
 
     res.json({ ok: true, ...outcome });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/conflicts/:id/keep-reservation — duplicate-reservation
+// conflicts only (business rule 139). Body: { reservationId }. Keeps that
+// reservation and releases every other one in the set — off the gate when
+// DHCP writeback is on, and off the asset (rule 102(b)). Releasing is what
+// DELETE /reservations/:id does, so it takes the same gate: reservations
+// write, and below Full RW only the rows the caller created — every row is
+// checked before any is released.
+router.post("/:id/keep-reservation", async (req, res, next) => {
+  try {
+    const conflict = await loadPendingConflict(req.params.id);
+    if (!canResolve(req)) {
+      throw new AppError(403, "You do not have permission to resolve this conflict");
+    }
+    const kind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
+    if (kind.collisionReason !== DUPLICATE_RESERVATION_COLLISION_REASON) {
+      throw new AppError(400, "Only a duplicate DHCP reservation conflict is resolved by keeping one reservation");
+    }
+    if (!hasPermission(req, "reservations", "write")) {
+      throw new AppError(403, "Releasing reservations requires read-write on Reservations");
+    }
+    const parsed = KeepReservationSchema.parse(req.body ?? {});
+    const fullwrite = hasPermission(req, "reservations", "fullwrite");
+    const outcome = await keepOneReservation(conflict, parsed.reservationId, requestActor(req), (row) => {
+      if (fullwrite) return;
+      if (row.createdBy !== null && row.createdBy === req.session?.username) return;
+      throw new AppError(403, "Forbidden — you can only release reservations you created");
+    });
+    res.json({ ok: true, resolved: outcome.failed.length === 0, ...outcome });
   } catch (err) {
     next(err);
   }

@@ -60,6 +60,20 @@ The owner was offered a live gate read on open and declined it: "you don't have 
 
 Removals write one `asset.addresses_ipam_reconciled` Event. A read grant is enough: the check only drops or re-labels rows discovery wrote, the same rows the next gate read would settle. It never adds a row from IPAM — a reservation nobody holds is configuration, not an address (see Rejected), and adding one would flap against the next gate read. It does not touch ARP, detected-device, interface-scrape or manual rows, `Asset.ipAddress`, or a pin (a pinned pair whose row is removed shows the panel's "no longer on the list" warning, as for any quiet pin). A failure is logged and the stored list served. Order is safe against a run in flight: Phase 5 writes reservations before the address reconcile after Phase 7.5.
 
+### (b) A release sent to the gate leaves the asset (2026-11-02)
+
+The owner, verbatim: "when i release a dhcp reservation from the network, the asset remains linked to that reservation." Two things kept the link. The Networks IP panel (`subnetService → getSubnetIps`) links a row to an asset by `Asset.ipAddress` = the address OR by the reservation's hostname, and a released row stays in that table as history — so after a release the row still named the asset twice over. And 102(a) only touches the address list, and only when the asset is opened; it never moves `Asset.ipAddress`, which is the link the panel reads.
+
+Offered three choices for the asset's address — move off it, move only when the gate confirmed the lease release, never touch it — the owner chose **move off it**:
+
+- **The hostname fallback is for a live reservation only.** A released row links by address, never by name. The fallback exists for one host with a reservation per MAC; a released row is not one of those.
+- **`releaseReservation` → `assetAddressService.detachReleasedAddress`**, once the transaction commits, only when the release was SENT to the gate (either unpush branch or the lease release ran — an attempt, not a confirmed success, so an unreachable gate still detaches; its next read restores whatever it really holds). A Polaris-only release is left alone: with writeback off the gate still serves the binding and discovery re-creates the row on its next pass, so moving the asset would flap.
+- **Which assets:** a discovered row at the address on the releasing gate, or an asset whose primary address it is and that carries the binding's MAC or is attributed to that gate. Gate-scoped for the RFC1918 reason 102(a) is.
+- **What goes:** every discovered row at (asset, address) — there is one per pair, the DHCP binding or the ARP entry learned from it.
+- **The address moves** only when `judgeReleasedAddress` says so: not for an operator pin of any of the three kinds (a release does not overrule a choice the operator made on the asset), not for Fortinet infra (its address is its management IP), not while an interface-scrape, agent or manual row still holds the address (the device itself says it has it). It moves to the best-scored remaining listed address (rule 103(b)'s picker, now exported) or to none, as rule 40(k) does for decommissioning; `AssetIpHistory` keeps the old one. One `asset.address_released` Event per asset.
+
+Rejected: moving only on a confirmed lease release (the owner's choice was the broader one, and FortiOS's release-lease answer does not prove the client stopped using the address either); clearing `ipAddress` on a Polaris-only release (flaps against discovery).
+
 ### Rejected
 
 - **Per-MAC IP columns on `AssetMacAddress`.** One IP per card — wrong as soon as a card has a secondary address.

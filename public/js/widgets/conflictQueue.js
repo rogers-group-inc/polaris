@@ -28,6 +28,9 @@
           var gates = Array.isArray(f.claimants) ? f.claimants.length : 2;
           reason = "serial claimed by " + gates + " FortiGates";
         } else if (reason === "duplicate-serial") reason = "duplicate serial " + (f.serialNumber || "");
+        else if (reason === "duplicate-reservation") {
+          reason = (Array.isArray(f.reservations) ? f.reservations.length : 2) + " DHCP reservations";
+        }
         subtitle = (f.hostname || "(unnamed)") + ' · ' + reason;
       } else {
         subtitle = (c.proposedHostname || c.proposedOwner || "—") + ' · ' + (c.proposedSourceType || "reservation");

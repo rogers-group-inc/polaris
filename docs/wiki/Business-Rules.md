@@ -1951,6 +1951,14 @@ it (a FortiSwitch or FortiAP attribution, or an ARP entry). A user connecting
 *through* a gate over ZTNA never sets the address. FortiGates, FortiSwitches
 and FortiAPs keep their management IP and are not ranked this way.
 
+**The FortiGate a device is last seen on follows its primary address.** The
+gate shown for a device (the Sources column) is the one whose network, in
+IPAM, holds the device's primary IP. Where two gates have the same network
+(the same private range at two sites), the gate that reported the device
+decides. A device whose MAC also shows up on another site's FortiSwitch no
+longer reads as being at that site. When no IPAM network holds the address,
+the gate that last reported the device is used, as before.
+
 ### Rule 102
 
 **An address belongs to a network card, a card can have several, and you
@@ -1987,6 +1995,14 @@ The **primary** pair is the one monitoring probes. Polaris picks it
 - FortiGates, FortiSwitches and FortiAPs are monitored on their management IP
   and cannot be pinned. Port MACs from a device's interface table are shown
   collapsed and are never a primary.
+- **Releasing a DHCP reservation or lease takes it off the device.** When the
+  release is sent to the FortiGate (DHCP Push on), the address leaves the
+  device's Addresses list straight away. If it was the device's primary IP,
+  the device moves to its best remaining address, or has none until discovery
+  finds one. The old address stays in its IP history. A pinned address, a
+  FortiGate / FortiSwitch / FortiAP, and an address the device itself reports
+  (its interface table or agent) keep the address. A released row in the
+  network's IP table no longer links to the device by name.
 
 ### Rule 103
 
@@ -2944,3 +2960,20 @@ and its maintenance window ends at once. **Apply Update** and **Restart
 Polaris** are refused while an upgrade is running unless you choose to abort
 it. Polaris then aborts it in your name before continuing. See
 [Assets](Assets#firmware) and [Updates](Updates#what-the-updater-does).
+
+### Rule 139
+
+**A device holding two DHCP reservations is a conflict, and resolving it keeps
+one and releases the rest.** A DHCP reservation counts when it is on a
+FortiGate: learned from the gate, or made in Polaris and confirmed pushed. It
+belongs to a device through the device's MAC addresses, and every MAC counts,
+so a wired and a Wi-Fi reservation on one laptop are two. Polaris checks every
+10 minutes and raises one **Duplicate reservations** card per device. Pick
+**Keep this one** on the reservation to keep. The others are released, which
+takes them off the FortiGate when DHCP Push is on and off the device (rule
+[102](Business-Rules#rule-102)). **Reject** if every reservation is deliberate;
+the same set does not come back. The card closes itself once the device holds
+one reservation. Keeping one needs read-write on Reservations, and below Full
+read-write only reservations you created. Decommissioned and disabled devices,
+FortiGates, FortiSwitches and FortiAPs are never reported. See
+[Conflict Resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).

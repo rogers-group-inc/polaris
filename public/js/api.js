@@ -1203,6 +1203,8 @@ const api = {
     // duplicate-IP conflicts only — body { assetId, ipAddress }
     reassignIp: (id, body) => request("POST", `/conflicts/${id}/reassign-ip`, body),
     clearIp: (id, body) => request("POST", `/conflicts/${id}/clear-ip`, body),
+    // duplicate-reservation conflicts only (business rule 139)
+    keepReservation: (id, body) => request("POST", `/conflicts/${id}/keep-reservation`, body),
     // subnet chassis-replacement conflicts only (business rule 41)
     chassisDiff: (id) => request("GET", `/conflicts/${id}/chassis-diff`),
     migrateReservations: (id, body) => request("POST", `/conflicts/${id}/migrate-reservations`, body),

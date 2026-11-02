@@ -191,7 +191,7 @@ export async function unpinPrimaryAddress(input: { assetId: string; actor: strin
  * credit). Ties keep the current address, then the lowest IP string, so a
  * re-run picks the same one. Null when the list is empty.
  */
-async function bestListedAddress(
+export async function bestListedAddress(
   assetId: string,
   listed: string[],
   current: string | null,

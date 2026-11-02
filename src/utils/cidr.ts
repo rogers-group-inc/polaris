@@ -454,6 +454,47 @@ export function buildCidrMatcher(cidrs: string[]): (ip: string) => string | null
 }
 
 /**
+ * Pre-compile items carrying a CIDR into a reusable longest-prefix lookup: the
+ * returned function gives every item whose CIDR contains the IP AND has the
+ * longest prefix among those that do (several when equal ranges repeat — the
+ * same private network behind two gates), or [] when none contains it. The
+ * `buildCidrMatcher` reasoning: parse once, so a per-asset loop is integer
+ * comparisons rather than a Netmask per (asset, item). Unparseable CIDRs are
+ * skipped; both IP versions, an address only matching its own.
+ */
+export function buildLongestPrefixMatcher<T extends { cidr: string }>(items: readonly T[]): (ip: string) => T[] {
+  const blocks: Array<{ item: T; block: Netmask }> = [];
+  for (const item of items) {
+    try {
+      blocks.push({ item, block: new Netmask(item.cidr) });
+    } catch {
+      /* skip unparseable */
+    }
+  }
+  return (ip: string): T[] => {
+    if (!ip) return [];
+    let best = -1;
+    let out: T[] = [];
+    for (const b of blocks) {
+      let hit = false;
+      try {
+        hit = b.block.contains(ip);
+      } catch {
+        /* not an address this block can evaluate */
+      }
+      if (!hit) continue;
+      if (b.block.bitmask > best) {
+        best = b.block.bitmask;
+        out = [b.item];
+      } else if (b.block.bitmask === best) {
+        out.push(b.item);
+      }
+    }
+    return out;
+  };
+}
+
+/**
  * One IPv4 "network" term from a list filter, reduced to what a string column
  * can be matched against: exact addresses and dotted prefixes (each prefix
  * ends in "." so "10.1." never matches 10.10.x.x). `endsWith` is set only for a

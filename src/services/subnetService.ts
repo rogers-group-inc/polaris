@@ -1137,7 +1137,7 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
       .map(r => {
         const assetId =
           assetByIpV6.get(r.ipAddress!) ??
-          (r.hostname ? assetByHostnameV6.get(r.hostname) ?? null : null);
+          (r.hostname && r.status === "active" ? assetByHostnameV6.get(r.hostname) ?? null : null);
         return {
           address: r.ipAddress!,
           type: "host" as const,
@@ -1204,9 +1204,12 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
 
   const ips = addresses.map(addr => {
     const r = reservationMap.get(addr.address);
+    // The hostname fallback is for a LIVE reservation only: a released row is
+    // history, and linking it by name kept a released address pointing at
+    // the asset it used to belong to (business rule 102(b)).
     const assetId =
       assetByIp.get(addr.address) ??
-      (r?.hostname ? assetByHostname.get(r.hostname) ?? null : null);
+      (r?.hostname && r.status === "active" ? assetByHostname.get(r.hostname) ?? null : null);
     return {
       address: addr.address,
       type: addr.type,

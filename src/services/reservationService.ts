@@ -28,6 +28,7 @@ import {
 import { logEvent, buildChanges } from "./eventLogService.js";
 import { isAllZeroMac } from "../utils/mac.js";
 import { releaseDnsResolvedAt } from "./dnsResolvedReservationService.js";
+import { detachReleasedAddress } from "./assetAddressService.js";
 
 export interface CreateReservationInput {
   subnetId: string;
@@ -996,10 +997,15 @@ export async function releaseReservation(id: string, actor?: string) {
     !!reservation.subnet.fortigateDevice &&
     writebackEnabled;
 
+  // Whether the release reached the gate — the condition for detaching the
+  // binding from its asset below (business rule 102(b)).
+  let sentToGate = false;
+
   if (!isQueued && (pinnedUnpush || discoveredUnpush)) {
     const integration = (pinnedUnpush ? reservation.pushedTo : reservation.subnet.integration)!;
     const deviceName = reservation.subnet.fortigateDevice || "";
     if (deviceName) {
+      sentToGate = true;
       try {
         const result = await unpushReservation({
           reservationId: id,
@@ -1080,6 +1086,7 @@ export async function releaseReservation(id: string, actor?: string) {
     reservation.subnet.fortigateDevice &&
     integrationConfig?.pushReservations === true
   ) {
+    sentToGate = true;
     await releaseLeaseBestEffort({
       integration: reservation.subnet.integration,
       deviceName: reservation.subnet.fortigateDevice,
@@ -1148,6 +1155,24 @@ export async function releaseReservation(id: string, actor?: string) {
     actor,
     message: `Reservation released`,
   });
+
+  // Business rule 102(b): a binding released on the gate is no longer the
+  // asset's — off its address list, and off its primary address unless a pin
+  // or the device itself says otherwise. Only when the gate was told: a
+  // Polaris-only release of a row the gate still holds comes straight back on
+  // the next read. Never fails the release.
+  if (sentToGate && reservation.ipAddress && reservation.subnet.fortigateDevice) {
+    try {
+      await detachReleasedAddress({
+        ip: reservation.ipAddress,
+        gate: reservation.subnet.fortigateDevice,
+        macAddress: reservation.macAddress,
+        actor,
+      });
+    } catch (err) {
+      logger.warn({ err, reservationId: id }, "detaching the released address from its asset failed");
+    }
+  }
   return releasedRow;
 }
 

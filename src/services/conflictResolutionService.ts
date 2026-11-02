@@ -105,6 +105,10 @@ import {
   logDuplicateSerialDismissal,
 } from "./duplicateSerialConflictService.js";
 import {
+  DUPLICATE_RESERVATION_COLLISION_REASON,
+  logDuplicateReservationDismissal,
+} from "./duplicateReservationConflictService.js";
+import {
   acceptChassisReplacement,
   rejectChassisReplacement,
   chassisSwapKey,
@@ -446,6 +450,14 @@ async function acceptAssetConflict(
     throw new AppError(
       400,
       "A duplicate serial conflict is resolved by merging the records into one asset, or dismissed with Reject",
+    );
+  }
+  // Business rule 139: the verb is POST /conflicts/:id/keep-reservation —
+  // which reservation stays is the whole decision, and Accept names none.
+  if (proposed.collisionReason === DUPLICATE_RESERVATION_COLLISION_REASON) {
+    throw new AppError(
+      400,
+      "A duplicate DHCP reservation conflict is resolved by keeping one reservation (the others are released), or dismissed with Reject",
     );
   }
   if (!conflict.proposedDeviceId) {
@@ -804,6 +816,13 @@ async function rejectAssetConflict(conflict: any, actor?: string) {
   // devices that report one serial. Same dedup model, keyed on the member set.
   if (proposedForKind.collisionReason === DUPLICATE_SERIAL_COLLISION_REASON) {
     logDuplicateSerialDismissal(conflict, actor);
+    return;
+  }
+  // Duplicate DHCP reservations, dismissed (rule 139): the asset keeps every
+  // reservation — a wired and a Wi-Fi binding on one laptop, say. The rejected
+  // row is the dedup marker, keyed on the reservation set.
+  if (proposedForKind.collisionReason === DUPLICATE_RESERVATION_COLLISION_REASON) {
+    logDuplicateReservationDismissal(conflict, actor);
     return;
   }
   if (!conflict.proposedDeviceId) {
