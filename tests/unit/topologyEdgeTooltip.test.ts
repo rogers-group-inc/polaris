@@ -44,13 +44,18 @@ describe("edgeTooltipHtml", () => {
     expect(html).toContain("SW-A");
     expect(html).toContain("SW-B");
     expect(html).toContain("port1 ↔ port48");
-    expect(html).toContain("Interface-confirmed peer link");
+    // The legend draws one "Switch ↔ switch"; the tooltip says how it was found.
+    expect(html).toContain("Switch ↔ switch — found by interface naming");
   });
 
-  it("falls back to FortiLink controller and drops an unknown port pair", () => {
+  it("falls back to a confirmed firewall-to-switch uplink and drops an unknown port pair", () => {
     const html = tip({ edge: { label: "unknown ↔ unknown" } });
-    expect(html).toContain("FortiLink controller");
+    expect(html).toContain("Firewall to switch — cable confirmed");
     expect(html).not.toContain("unknown ↔ unknown");
+  });
+
+  it("names an MCLAG inter-chassis link as such", () => {
+    expect(tip({ edge: { label: "MCLAG", isMclag: 1, isIface: 1 } })).toContain("MCLAG inter-chassis link");
   });
 
   it("adds each side's interface detail, prefixed by its device", () => {
@@ -61,7 +66,7 @@ describe("edgeTooltipHtml", () => {
         tgtIf: { name: "port52", speedBps: 1e8 },
       },
     });
-    expect(html).toContain("LLDP neighbor");
+    expect(html).toContain("Switch ↔ switch — found by LLDP");
     expect(html).toContain("lan1 · 1 Gbps · up · errors ↓3 ↑1");
     expect(html).toContain("port52 · 100 Mbps");
   });

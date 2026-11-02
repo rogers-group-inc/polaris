@@ -216,9 +216,28 @@ Port labels always name **physical ports**. An aggregate (the FortiGate's
 interface, so each end of a link shows the member port the cable lands on: the
 aggregate's only member, otherwise the port LLDP saw on that link. A side
 neither can resolve reads `unknown`. A switch whose trunk members Polaris
-cannot read shows `unknown` on its side until LLDP reports the port. A
-FortiGate-to-switch link with no confirmed cable is labelled `fortilink`
-and drawn dashed: that is the management relationship, not a port.
+cannot read shows `unknown` on its side until LLDP reports the port.
+
+**Only cables are drawn — the topology is a layer-2 map.** A FortiGate-to-switch
+FortiLink uplink with no physical cable confirmed (by interface naming or
+LLDP) is not drawn, and neither is a FortiGate-to-FortiAP link, which Polaris
+only has when it does not know which switch port the AP is on. Such a device
+stands unconnected in its location until its cable is found. A confirmed
+firewall-to-switch uplink whose ports cannot be resolved reads `fortilink`.
+
+**A switch-to-switch cable is one green line**, whether interface naming or an
+LLDP report found it. An MCLAG inter-chassis link keeps its own style, and an
+AP's switch uplink stays blue. Hover a link to see how it was found ("found by
+interface naming", "found by LLDP"). The legend lists each link and device
+kind by name only — devices by asset type (Firewall, Switch, Access Point),
+and the FortiGate's uplink as "Firewall to switch"; a wireless mesh backhaul
+between two APs is "AP to AP".
+
+A link between two location boxes runs in the gutters between boxes and never
+through another device: when a switch sits in the target's column, the line
+comes down a lane beside the target and enters from the side. Any other
+straight link that would cross a device it does not connect (two APs meshed
+across a switch between them, for example) steps sideways around it.
 
 Port labels (`port8 ↔ port1`) on a link with bends sit near its ends: with
 one bend, halfway along the part after the bend; with two or more, halfway
@@ -235,7 +254,8 @@ When devices carry location codes, the details pane lists the switches and APs i
 nesting as the location boxes (area › building › floor › room › junction box),
 under a heading per group, with devices that have no location last.
 
-Right-click a device to edit its description in place: that is the quick way
+While editing the map (**Edit Map**), right-click a device to edit its
+description in place; viewing the map never changes an asset. That is the quick way
 to put it into a location box. The codes are `a:` area, `b:` building, `f:`
 floor, `r:` room and `jb:` junction box, written anywhere in the description
 (`a:Mine b:Shop f:2 r:North Closet jb:112-305`); each value runs until the
@@ -303,9 +323,13 @@ and an undone change is saved like any other edit.
 | **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in; elsewhere a dashed **→ Base** stub stands in for it, and tapping the stub takes you there. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |
+| **Mouse controls** | the mouse button beside Export: how to pan, select and open devices. While editing it becomes a mouse with a pencil, listing the editing gestures instead (moving devices, bending lines, undo, grid and snap, right-click to edit a description). The panel stays open while you work the map, swaps its list when you start or finish editing, and closes only when you click the button again |
 
 The **legend** sits at the graph's bottom left as a small button; click it to
-open the legend, and its **×** folds it back. The edge between the graph and
+open the legend, and its **×** folds it back. Hover a row of the legend to
+light up what it stands for on the map: every switch, every device in a
+health state, every link of that kind (each glowing in its own colour), or
+every box of that location level. The edge between the graph and
 the details pane hides the pane: hover the edge and click the arrow, and the
 arrow at the right edge brings the pane back. Both remember your choice in
 this browser. The Device Map's own status legend, the Application Map's and
@@ -379,6 +403,12 @@ neither one's interface names identify the other — a plain fiber link between
 them, for example. The neighbor report must be from the last hour, so a link
 you have unplugged disappears once the switches stop advertising it. Hover the
 line to see which ports LLDP reported.
+
+**Hovering any link** shows its two devices, their ports and the kind of link,
+and lights the link and both devices with a blue glow. A link on a **physical
+loop** (drawn with a yellow halo) lights the **whole loop** instead: every
+looped link reachable from it through the devices they share, and those
+devices, so you can see which switches a ring runs through.
 
 ### Endpoints under a switch
 

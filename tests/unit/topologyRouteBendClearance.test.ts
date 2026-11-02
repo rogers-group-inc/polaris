@@ -31,7 +31,9 @@ beforeAll(() => {
     "function route(j) {" +
     "  var R = window.PolarisTopologyRender; var spec = JSON.parse(j);" +
     "  var els = spec.nodes.map(function (n) { return { data: Object.assign({ role: 'fortiswitch', hasIcon: 1, nodeColor: '#2e7d32' }, n.data), position: n.position }; })" +
-    "    .concat(spec.edges.map(function (e) { return { data: Object.assign({ isIface: 1, isInterGroup: 1, taxiTurn: 40, label: '' }, e) }; }));" +
+    // isInterGroup: 0 means the flag is ABSENT, as on a real link inside one
+    // box — Cytoscape's [isInterGroup] matches any defined value, 0 included.
+    "    .concat(spec.edges.map(function (e) { var d = Object.assign({ isIface: 1, isInterGroup: 1, taxiTurn: 40, label: '' }, e); if (!d.isInterGroup) delete d.isInterGroup; return { data: d }; }));" +
     "  var cy = cytoscape({ headless: true, styleEnabled: true, elements: els, layout: { name: 'preset' }, style: R.topologyStylesheet('dark', {}) });" +
     // The exported router re-places bent-edge labels AFTER routing, which
     // needs the renderer headless Cytoscape lacks — the routing is done by then.
@@ -107,6 +109,75 @@ describe("routeInterGroupEdges keeps every bend outside both end devices", () =>
       ],
     });
     routed.forEach(expectClear);
+  });
+
+  // The 2026-11-02 Device Map report: the FortiGate (no location box) linked
+  // to D1, and the run into D1 came straight down D1's column — through A1,
+  // stacked directly above it in the same building. Devices are obstacles
+  // now, so the run takes a lane beside D1 and enters from the side.
+  it("never runs a link through another device in the target's own box", () => {
+    const [r] = route({
+      nodes: [
+        node("fg", 1170, 0, {}),
+        node("a1", 0, 0, { locA: "mine", locAName: "Mine", locB: "b1", locBName: "B1" }),
+        node("d1", 0, 95, { locA: "mine", locAName: "Mine", locB: "b1", locBName: "B1" }),
+        // Scale House between the gate and D1's row, as on the reported site:
+        // it blocks the straight-across corridor, so the run comes over the
+        // top of Mine and down into D1.
+        node("b1", 650, 95, { locA: "scale", locAName: "Scale House", locB: "office", locBName: "Office" }),
+        node("d2", 650, 190, { locA: "scale", locAName: "Scale House", locB: "office", locBName: "Office" }),
+      ],
+      edges: [{ id: "ie0", source: "fg", target: "d1" }],
+    });
+    expectClear(r);
+    const path = [r.S, ...bends(r), r.T];
+    const a1 = { x: 0, y: 0 };
+    // Distance from A1's centre to each drawn segment beats A1's radius.
+    for (let i = 1; i < path.length; i++) {
+      const p = path[i - 1], q = path[i];
+      const dx = q.x - p.x, dy = q.y - p.y;
+      const t = Math.max(0, Math.min(1, ((a1.x - p.x) * dx + (a1.y - p.y) * dy) / (dx * dx + dy * dy || 1)));
+      const dist = Math.hypot(p.x + t * dx - a1.x, p.y + t * dy - a1.y);
+      expect(dist, `segment ${i} passes through a1`).toBeGreaterThan(r.rT);
+    }
+  });
+
+  // The second 2026-11-02 report: a mesh link between two APs drawn straight
+  // down one column, through the switch between them. Not a cross-box link,
+  // so the gutter router never touched it; detourStraightEdges bends it.
+  function clearOf(r: Routed, p: Pt, radius: number) {
+    const path = [r.S, ...(r.curve === "segments" ? bends(r) : []), r.T];
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1], b = path[i];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      expect(Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y), `segment ${i} passes through the device`).toBeGreaterThan(radius);
+    }
+  }
+  for (const boxed of [false, true]) {
+    it(`bends a straight link around a device it would pass through (${boxed ? "inside a box" : "no boxes"})`, () => {
+      const loc = boxed ? { locA: "mine", locAName: "Mine" } : {};
+      const routed = route({
+        nodes: [
+          node("ap1", 0, 0, loc),
+          node("sw", 0, 200, loc),
+          node("ap2", 0, 400, loc),
+        ],
+        edges: [{ id: "mesh", source: "ap1", target: "ap2", isIface: 0, isMesh: 1, isInterGroup: 0 }],
+      });
+      const r = routed.find((x) => x.id === "mesh")!;
+      expect(r.curve).toBe("segments");
+      expectClear(r);
+      clearOf(r, { x: 0, y: 200 }, r.rT);
+    });
+  }
+
+  it("leaves a straight link with nothing in its way straight", () => {
+    const [r] = route({
+      nodes: [node("a", 0, 0, {}), node("b", 400, 0, {})],
+      edges: [{ id: "ab", source: "a", target: "b", isInterGroup: 0 }],
+    });
+    expect(r.curve).not.toBe("segments");
   });
 
   it("a source with no area or building box (room code only)", () => {

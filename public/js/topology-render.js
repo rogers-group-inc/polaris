@@ -171,15 +171,13 @@
         },
       });
     });
-    // FortiGate id + switch id set so we can label/style the FortiGate→switch
-    // FortiLink uplinks. FortiOS reports `fortilink` (a logical meta-interface,
-    // not a physical port) on those, so the raw label is often
-    // "unknown ↔ unknown" — relabel those to "fortilink", and dash-gray the
-    // UNVERIFIED ones (no interface/LLDP-backed cable) to read as a
-    // virtual/management link. A VERIFIED uplink is a known physical cable:
-    // the server has already rewritten each half to a physical port (an
-    // aggregate never reaches a label — physicalLabelHalf), so keep its
-    // port-pair label, with "unknown" on a side it could not resolve.
+    // FortiGate id + switch id set so we can label the FortiGate→switch
+    // FortiLink uplinks. Only VERIFIED ones (an interface/LLDP-backed cable)
+    // are drawn — see the layer-2 rule below. The server has already rewritten
+    // each half of a verified uplink's label to a physical port (an aggregate
+    // never reaches a label — physicalLabelHalf), so its port pair is kept,
+    // with "unknown" on a side it could not resolve; one with neither side
+    // resolved reads "fortilink".
     var fgId = data.fortigate ? data.fortigate.id : null;
     var switchIdSet = {};
     (data.switches || []).forEach(function (s) { if (s && s.id) switchIdSet[s.id] = true; });
@@ -188,13 +186,19 @@
       // already connects it (and from the correct parent AP).
       if (meshLeafIds[e.target]) return;
       var isFgSwitch = fgId && e.source === fgId && switchIdSet[e.target];
+      // A layer-2 map draws cables only (operator decision 2026-11-02). Two
+      // kinds of controller edge are not one: a FortiGate→switch FortiLink
+      // uplink with no physical cable confirmed (no interface / LLDP proof),
+      // and a FortiGate→FortiAP edge — the server draws that only as a
+      // fallback when the AP's switch port is unknown ("real attachment
+      // unknown"); a known port arrives as the switch→AP edge instead. Such a
+      // device stands unconnected rather than on an invented link.
+      if (isFgSwitch && !e.verifiedUplink) return;
+      if (fgId && e.source === fgId && apIdSet[e.target]) return;
       var label = e.label || "";
-      var fortilinkFallback = 0;
-      var knownCable = e.verifiedUplink && label && label !== "unknown ↔ unknown";
-      if (isFgSwitch && !knownCable) {
-        label = "fortilink"; // logical FortiLink uplink, not a physical port pair
-        if (!e.verifiedUplink) fortilinkFallback = 1; // unverified → virtual (dashed gray)
-      }
+      // A confirmed uplink whose ports could not be resolved still reads as
+      // the FortiLink it is rather than "unknown ↔ unknown".
+      if (isFgSwitch && (!label || label === "unknown ↔ unknown")) label = "fortilink";
       // Wired AP↔switch link (a managed AP's switch uplink) — styled solid +
       // colored like the bridge edges so every AP-to-switch cable reads the
       // same regardless of which side is the parent.
@@ -210,7 +214,6 @@
           // LLDP-backed) link — treated as a verified uplink by the column
           // solver so the switch isn't mistaken for a FortiLink fallback.
           isVerifiedUplink: e.verifiedUplink ? 1 : 0,
-          isFortilinkFallback: fortilinkFallback,
           isApLink: isApSwitchLink ? 1 : 0,
           srcIf: e.srcIf || null,
           tgtIf: e.tgtIf || null,
@@ -559,12 +562,18 @@
           "text-rotation": "autorotate",
         },
       },
+      // A switch-to-switch cable reads the same however it was found —
+      // interface naming (isIface) or an LLDP neighbour report (isLldp): one
+      // solid green "Switch ↔ switch" (operator decision 2026-11-02). Which
+      // signal drew it is in the link's tooltip (edgeTooltipHtml). The AP and
+      // MCLAG rules below still win for those links.
       {
         selector: 'edge[isLldp = 1]',
         style: {
-          "line-style": "dashed",
-          "line-color": ec.lldp,
-          "target-arrow-color": ec.lldp,
+          "line-style": "solid",
+          "line-color": ec.iface,
+          "target-arrow-color": ec.iface,
+          width: 2.4,
         },
       },
       {
@@ -628,18 +637,6 @@
           "target-arrow-color": ec.apLink,
           "target-arrow-shape": "triangle",
           width: 2.2,
-        },
-      },
-      // Unverified FortiLink uplink (FortiGate→switch with no interface/LLDP-
-      // confirmed cable): a logical/management link, drawn dashed + dimmed gray
-      // so it reads as virtual versus the solid controller/physical edges.
-      {
-        selector: 'edge[isFortilinkFallback = 1]',
-        style: {
-          "line-style": "dashed",
-          "line-color": ec.fortilink,
-          "target-arrow-color": ec.fortilink,
-          opacity: 0.7,
         },
       },
       // Physical loop membership (stamped by markPhysicalLoops): a wired edge
@@ -851,7 +848,90 @@
       });
     }
 
+    // Link hover (highlightLinkHover): the hovered link and the devices on
+    // its ends — or a whole physical loop — glow. Devices glow bright in the
+    // theme's accent; links glow in the HOVERED link's own colour
+    // (data(hoverGlow), stamped by highlightLinkHover). An UNDERLAY, behind
+    // the element, so a link keeps its dash and a device its health fill.
+    var hoverGlow = isDark ? "#4fc3f7" : "#0369a1";
+    style.push({
+      selector: "node.link-hover",
+      style: {
+        "underlay-color": hoverGlow,
+        "underlay-opacity": 0.8,
+        // Graph units, so it shrinks with the zoom: a thin bright ring, not
+        // a blob (operator feedback 2026-11-02).
+        "underlay-padding": 5,
+        "underlay-shape": "ellipse",
+      },
+    });
+    style.push({
+      selector: "edge.link-hover",
+      style: {
+        "underlay-color": hoverGlow,
+        "underlay-opacity": 0.4,
+        "underlay-padding": 3,
+        "z-index": 998,
+      },
+    });
+    // A location box lit from the legend: its own border drawn heavier and
+    // its fill tinted a little more. No underlay — a box's fill is nearly
+    // transparent, so one would flood the whole box.
+    style.push({
+      selector: "node.link-hover[isLocGroup]",
+      style: { "underlay-opacity": 0, "border-width": 5, "background-opacity": isDark ? 0.16 : 0.14 },
+    });
+    style.push({
+      selector: "edge.link-hover[hoverGlow]",
+      style: { "underlay-color": "data(hoverGlow)" },
+    });
+
     return style;
+  }
+
+  // What a link hover lights up: the link and the devices on its two ends; a
+  // link on a physical loop (inLoop, markPhysicalLoops) lights the WHOLE loop —
+  // every loop link reachable from it through the devices they share, and
+  // those devices. Location boxes are never part of it.
+  function linkHoverSet(cy, edge) {
+    if (!edge || !edge.isEdge || !edge.isEdge()) return cy.collection();
+    if (!edge.data("inLoop")) return edge.union(edge.connectedNodes());
+    var edges = cy.collection().union(edge);
+    var nodes = cy.collection();
+    var queue = edge.connectedNodes().toArray();
+    var seen = {};
+    while (queue.length) {
+      var n = queue.shift();
+      if (seen[n.id()]) continue;
+      seen[n.id()] = true;
+      nodes = nodes.union(n);
+      n.connectedEdges("[inLoop = 1]").forEach(function (e) {
+        if (edges.contains(e)) return;
+        edges = edges.union(e);
+        e.connectedNodes().forEach(function (m) { if (!seen[m.id()]) queue.push(m); });
+      });
+    }
+    return edges.union(nodes.filter(function (n) { return !n.data("isLocGroup"); }));
+  }
+  function highlightLinkHover(cy, edge) {
+    clearLinkHover(cy);
+    var lit = linkHoverSet(cy, edge);
+    // Every lit link — a whole loop included — glows in the colour the link
+    // under the mouse is SEEN in: a loop link's yellow outline (markPhysicalLoops
+    // halo) when it has one, otherwise its line colour.
+    var glow = edge && edge.isEdge && edge.isEdge() ? _seenEdgeColor(edge) : null;
+    if (glow) lit.edges().data("hoverGlow", glow);
+    lit.addClass("link-hover");
+  }
+  function _seenEdgeColor(edge) {
+    return parseFloat(edge.style("line-outline-width")) > 0
+      ? edge.style("line-outline-color") : edge.style("line-color");
+  }
+  function clearLinkHover(cy) {
+    if (!cy || cy.destroyed()) return;
+    var lit = cy.elements(".link-hover");
+    lit.removeClass("link-hover");
+    lit.edges().removeData("hoverGlow");
   }
 
   // Legend rows for the topology overlay. Colors here mirror the constants
@@ -864,44 +944,115 @@
     var fam = paletteFamily(theme);
     var ec = EDGE_COLORS[fam];
     function loc(kind) { return locGroupColor(kind, fam); }
+    // `key` names what a row stands for on the map (legendMatch): hovering
+    // the row lights those elements.
     return {
       nodes: [
-        { label: "FortiGate",         kind: "circle",          size: "lg", fill: "data(nodeColor)", desc: "Color = monitor health" },
-        { label: "FortiSwitch",       kind: "circle",          size: "md", fill: "data(nodeColor)" },
-        { label: "FortiAP",           kind: "circle",          size: "sm", fill: "data(nodeColor)" },
-        { label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)", desc: "Only via endpoint search" },
-        { label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7", desc: "Infra (FW/switch/AP) at another site" },
+        { key: "role:fortigate",    label: "Firewall",          kind: "circle",          size: "lg", fill: "data(nodeColor)" },
+        { key: "role:fortiswitch",  label: "Switch",            kind: "circle",          size: "md", fill: "data(nodeColor)" },
+        { key: "role:fortiap",      label: "Access Point",      kind: "circle",          size: "sm", fill: "data(nodeColor)" },
+        { key: "role:endpoint",     label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)" },
+        { key: "role:remote-asset", label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7" },
       ],
       health: [
-        { label: "Up",                color: HEALTH_NODE_COLORS.up },
-        { label: "Degraded",          color: HEALTH_NODE_COLORS.degraded },
-        { label: "Down",              color: HEALTH_NODE_COLORS.down },
-        { label: "Maintenance",       color: HEALTH_NODE_COLORS.maintenance },
-        { label: "Passive",           color: HEALTH_NODE_COLORS.passive, desc: "No down-detection automation covers it — still polled, no verdict" },
-        { label: "Dep. Down",         color: HEALTH_NODE_COLORS.unknown },
-        { label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
+        { key: "health:up",          label: "Up",                color: HEALTH_NODE_COLORS.up },
+        { key: "health:degraded",    label: "Degraded",          color: HEALTH_NODE_COLORS.degraded },
+        { key: "health:down",        label: "Down",              color: HEALTH_NODE_COLORS.down },
+        { key: "health:maintenance", label: "Maintenance",       color: HEALTH_NODE_COLORS.maintenance },
+        { key: "health:passive",     label: "Passive",           color: HEALTH_NODE_COLORS.passive },
+        { key: "health:unknown",     label: "Dep. Down",         color: HEALTH_NODE_COLORS.unknown },
+        { key: "health:unmonitored", label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
       ],
       edges: [
-        { label: "Controller",        color: ec.controller, style: "solid",  desc: "FortiLink / managed-AP authoritative" },
-        { label: "FortiLink (virtual)",color: ec.fortilink, style: "dashed", desc: "Unverified FortiLink uplink — no physical cable confirmed" },
-        { label: "Interface-inferred",color: ec.iface, style: "solid",  desc: "Naming-convention peer link" },
-        { label: "LLDP",              color: ec.lldp, style: "dashed" },
-        { label: "MCLAG ICL",         color: ec.mclag, style: "dashed", desc: "Inter-Chassis Link between MCLAG-peer switches" },
-        { label: "Mesh",              color: ec.mesh, style: "dashed", desc: "Wireless backhaul: root AP → mesh leaf AP" },
-        { label: "AP ↔ switch",       color: ec.apLink, style: "solid",  desc: "Wired: AP's switch uplink / switch bridged behind an AP" },
-        { label: "In physical loop",  color: ec.loop, style: "solid",  desc: "Yellow halo: wired edge on a redundant/ring path" },
+        { key: "edge:controller", label: "Firewall to switch", color: ec.controller, style: "solid" },
+        { key: "edge:switch",     label: "Switch ↔ switch",   color: ec.iface, style: "solid" },
+        { key: "edge:mclag",      label: "MCLAG ICL",         color: ec.mclag, style: "dashed" },
+        { key: "edge:mesh",       label: "AP to AP",          color: ec.mesh, style: "dashed" },
+        { key: "edge:apLink",     label: "AP ↔ switch",       color: ec.apLink, style: "solid" },
+        { key: "edge:loop",       label: "In physical loop",  color: ec.loop, style: "solid" },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
       // fixed per-level color).
       locations: [
-        { label: "Area",         shape: "rect", style: "solid",  color: loc("area"), desc: "From a:/b:/f:/r:/jb: codes in the asset description (or the device-side description)" },
-        { label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
-        { label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
-        { label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
-        { label: "Junction box", shape: "rect", style: "dashed", color: loc("jb") },
+        { key: "loc:area",     label: "Area",         shape: "rect", style: "solid",  color: loc("area") },
+        { key: "loc:building", label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
+        { key: "loc:floor",    label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
+        { key: "loc:room",     label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
+        { key: "loc:jb",       label: "Junction box", shape: "rect", style: "dashed", color: loc("jb") },
       ],
     };
+  }
+
+  // Which legend Edges row a link belongs to — the same precedence as its
+  // tooltip's kind line (edgeTooltipHtml) and the stylesheet's colours: a
+  // switch bridged behind an AP is drawn as an AP link; a wireless client
+  // has no row (null).
+  function edgeLegendKind(edge) {
+    var d = function (k) { return edge.data(k) === 1 || edge.data(k) === true; };
+    if (d("isMesh")) return "mesh";
+    if (d("isBridge")) return "apLink";
+    if (d("isWireless")) return null;
+    if (d("isMclag")) return "mclag";
+    if (d("isApLink")) return "apLink";
+    if (d("isIface") || d("isLldp")) return "switch";
+    return "controller";
+  }
+
+  // The map elements a legend row (its spec `key`) stands for. Health
+  // matches on the colour a device is painted, so it follows exactly what
+  // fortinetNodeColor decided (maintenance over Dep. Down over probe health).
+  function legendMatch(cy, key) {
+    if (!cy || cy.destroyed() || !key) return cy ? cy.collection() : null;
+    var i = key.indexOf(":");
+    var kind = key.slice(0, i), val = key.slice(i + 1);
+    var devices = cy.nodes().filter(function (n) {
+      return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.data("isPortal");
+    });
+    if (kind === "role") return devices.filter(function (n) { return n.data("role") === val; });
+    if (kind === "health") {
+      var color = HEALTH_NODE_COLORS[val];
+      return devices.filter(function (n) { return !!color && n.data("nodeColor") === color; });
+    }
+    if (kind === "edge") {
+      return cy.edges().filter(function (e) {
+        return val === "loop" ? e.data("inLoop") === 1 : edgeLegendKind(e) === val;
+      });
+    }
+    if (kind === "loc") return cy.nodes().filter(function (n) { return !!n.data("isLocGroup") && n.data("locKind") === val; });
+    return cy.collection();
+  }
+
+  // Light what a legend row stands for, in the link-hover style: devices and
+  // boxes get the accent ring, each link a glow in its OWN seen colour.
+  function highlightLegendHover(cy, key) {
+    clearLinkHover(cy);
+    var lit = legendMatch(cy, key);
+    if (!lit || !lit.length) return;
+    lit.edges().forEach(function (e) { e.data("hoverGlow", _seenEdgeColor(e)); });
+    lit.addClass("link-hover");
+  }
+
+  // Hovering a row in a legend body lights its elements on the graph
+  // getCy() returns (the Device Map page's modal and the widget). Bound once
+  // per body element; the rows inside may be re-rendered freely.
+  function wireLegendHover(bodyEl, getCy) {
+    if (!bodyEl || bodyEl.dataset.legendHoverBound) return;
+    bodyEl.dataset.legendHoverBound = "1";
+    var current = null;
+    function apply(key) {
+      if (key === current) return;
+      current = key;
+      var cy = getCy();
+      if (!cy || cy.destroyed()) return;
+      if (key) highlightLegendHover(cy, key);
+      else clearLinkHover(cy);
+    }
+    bodyEl.addEventListener("mouseover", function (e) {
+      var row = e.target && e.target.closest ? e.target.closest("[data-legend-key]") : null;
+      apply(row ? row.getAttribute("data-legend-key") : null);
+    });
+    bodyEl.addEventListener("mouseleave", function () { apply(null); });
   }
 
   // ── Location grouping hulls ─────────────────────────────────────────────
@@ -1251,6 +1402,102 @@
     return lox < r.x2 && hix > r.x1 && loy < r.y2 && hiy > r.y1;
   }
 
+  // A STRAIGHT link (one no router shaped) whose line passes through another
+  // device — two APs meshed across a switch stacked between them in one
+  // column — gets two bends that step it sideways around every device on
+  // the line, on whichever side is clear (fewer devices hit, then the
+  // smaller step). Skipped: operator-drawn paths, cross-box links the
+  // router already shaped, fan-out (taxi) links, parallel bundles (their
+  // bezier spacing is what separates them) and self-loops. Re-run after
+  // every routing pass, so a moved device re-plans it; a link it bent
+  // before (data detoured) is straightened first.
+  var _DETOUR_GAP = 8;
+  function detourStraightEdges(cy) {
+    var devices = cy.nodes().filter(function (n) {
+      return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.isParent();
+    }).map(function (n) {
+      return { id: n.id(), p: n.position(), r: _nodeClearance(n) };
+    });
+    cy.edges().forEach(function (e) {
+      if (e.data("detoured")) {
+        e.removeStyle("curve-style segment-weights segment-distances edge-distances");
+        e.removeData("detoured");
+      }
+      if (e.data("customPath") || e.data("isFanOut") || e.isLoop()) return;
+      if (e.data("isInterGroup") && e.style("curve-style") === "segments") return;
+      if (e.parallelEdges().length > 1) return;
+      var S = e.source().position();
+      var T = e.target().position();
+      var dx = T.x - S.x, dy = T.y - S.y;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1) return;
+      var rS = _nodeClearance(e.source()), rT = _nodeClearance(e.target());
+      // Devices the straight line runs through: t along S→T, signed
+      // perpendicular offset (positive = right of S→T).
+      var hits = [];
+      devices.forEach(function (d) {
+        if (d.id === e.source().id() || d.id === e.target().id()) return;
+        var px = d.p.x - S.x, py = d.p.y - S.y;
+        var t = (px * dx + py * dy) / (len * len);
+        if (t <= 0 || t >= 1) return;
+        var perp = (py * dx - px * dy) / len;
+        if (Math.abs(perp) < d.r) hits.push({ t: t, perp: perp, r: d.r });
+      });
+      if (!hits.length) return;
+      // The span to step around, kept clear of both end devices.
+      var tLo = 1, tHi = 0;
+      hits.forEach(function (h) {
+        tLo = Math.min(tLo, h.t - (h.r + _DETOUR_GAP) / len);
+        tHi = Math.max(tHi, h.t + (h.r + _DETOUR_GAP) / len);
+      });
+      tLo = Math.max(tLo, (rS + 2) / len);
+      tHi = Math.min(tHi, 1 - (rT + 2) / len);
+      if (tHi <= tLo) return; // ends too close together to bend between
+      // The step each side needs to clear every device on the line.
+      function stepFor(side) {
+        var need = 0;
+        hits.forEach(function (h) { need = Math.max(need, side * h.perp + h.r + _DETOUR_GAP); });
+        return need;
+      }
+      // Devices the bent path itself would touch, for a side and step.
+      function crossingsFor(side, step) {
+        var nx = -dy / len * side, ny = dx / len * side; // unit normal, toward `side`
+        var a = { x: S.x + dx * tLo + nx * step, y: S.y + dy * tLo + ny * step };
+        var b = { x: S.x + dx * tHi + nx * step, y: S.y + dy * tHi + ny * step };
+        var segs = [[S, a], [a, b], [b, T]];
+        var n = 0;
+        devices.forEach(function (d) {
+          if (d.id === e.source().id() || d.id === e.target().id()) return;
+          segs.forEach(function (s) { if (_segDist(d.p, s[0], s[1]) < d.r) n++; });
+        });
+        return n;
+      }
+      var options = [1, -1].map(function (side) {
+        var step = stepFor(side);
+        return { side: side, step: step, hits: crossingsFor(side, step) };
+      });
+      options.sort(function (a, b) { return a.hits - b.hits || a.step - b.step; });
+      var pick = options[0];
+      // Cytoscape's segment-distances are + to the right of S→T, which is
+      // the side +1 here (normal (-dy, dx) · screen y-down).
+      var dist = (pick.side * pick.step).toFixed(1);
+      e.style({
+        "curve-style": "segments",
+        "segment-weights": tLo.toFixed(4) + " " + tHi.toFixed(4),
+        "segment-distances": dist + " " + dist,
+        "edge-distances": "node-position",
+      });
+      e.data("detoured", 1);
+    });
+  }
+  // Distance from point p to segment a–b.
+  function _segDist(p, a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var l2 = dx * dx + dy * dy;
+    var t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+    return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+  }
+
   function routeInterGroupEdges(cy) {
     var tops = _rectsFor(cy);
     if (tops.length === 0) return;
@@ -1263,6 +1510,14 @@
       if (b) return "locgroup:b|" + (a || "") + "|" + b;
       return null;
     }
+    // Each device's clearance square (hulls are not devices), measured once.
+    var deviceRects = cy.nodes().filter(function (n) {
+      return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.isParent();
+    }).map(function (n) {
+      var p = n.position();
+      var r = _nodeClearance(n);
+      return { id: n.id(), x1: p.x - r, y1: p.y - r, x2: p.x + r, y2: p.y + r };
+    });
     var corridorUse = {}; // rounded corridor coordinate -> count (fan-out stagger)
     function stagger(kind, coord) {
       var key = kind + ":" + Math.round(coord / 10) * 10;
@@ -1289,6 +1544,10 @@
         .map(function (x) {
           return { x1: x.box.x1 - 8, y1: x.box.y1 - _ROUTE_LABEL_PAD, x2: x.box.x2 + 8, y2: x.box.y2 + 8 };
         });
+      // Every OTHER device is an obstacle too — the boxes alone let a run
+      // into the target pass straight through a neighbour inside the
+      // target's own box (a switch stacked above it in the same column).
+      var devices = deviceRects.filter(function (d) { return d.id !== sN.id() && d.id !== tN.id(); });
       var goingRight = T.x >= S.x;
       var srcBox = bs || { x1: S.x, y1: S.y, x2: S.x, y2: S.y };
       var tgtBox = bt || { x1: T.x, y1: T.y, x2: T.x, y2: T.y };
@@ -1310,19 +1569,33 @@
         canvasTop,
         canvasBottom,
       ];
+      // The run into the target: straight down/up its own column (ax = T.x),
+      // or — when a device sits in that column — down a lane just beside it,
+      // entering from the side. ±rT + a gap keeps the lane's bend outside
+      // the target, and clear of a same-size neighbour above or below it.
+      var sideGap = rT + 18;
+      var approaches = [T.x, T.x - sideGap, T.x + sideGap];
       var best = null;
       candidates.forEach(function (cy0, idx) {
-        var crossings = 0;
-        obstacles.forEach(function (r) {
-          if (_segIntersectsRect(cx, S.y, cx, cy0, r)) crossings++;   // vertical out of source
-          if (_segIntersectsRect(cx, cy0, T.x, cy0, r)) crossings++;  // horizontal corridor
-          if (_segIntersectsRect(T.x, cy0, T.x, T.y, r)) crossings++; // vertical into target
+        approaches.forEach(function (ax, aIdx) {
+          // Segments: out of the source, along the corridor, down the
+          // approach lane, and (side lanes only) across into the target.
+          var segs = [[cx, S.y, cx, cy0], [cx, cy0, ax, cy0], [ax, cy0, ax, T.y]];
+          if (ax !== T.x) segs.push([ax, T.y, T.x, T.y]);
+          var boxHits = 0, deviceHits = 0;
+          segs.forEach(function (s) {
+            obstacles.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) boxHits++; });
+            devices.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) deviceHits++; });
+          });
+          var len = Math.abs(S.y - cy0) + Math.abs(ax - cx) + Math.abs(T.y - cy0) + Math.abs(T.x - ax);
+          // A box crossing costs most, a device crossing next; then length,
+          // then the stable preference order (corridor, then straight-in).
+          var score = boxHits * 100000 + deviceHits * 50000 + len + idx + aIdx * 0.5;
+          if (!best || score < best.score) best = { cy: cy0, ax: ax, score: score };
         });
-        var len = Math.abs(S.y - cy0) + Math.abs(T.x - cx) + Math.abs(T.y - cy0);
-        var score = crossings * 100000 + len + idx; // idx = stable tie-break by preference
-        if (!best || score < best.score) best = { cy: cy0, score: score };
       });
       var cyPick = best.cy;
+      var axPick = best.ax;
       // Fan out edges sharing a corridor — BOTH axes. The horizontal stagger
       // deliberately includes the "straight into the target row" corridor:
       // without it, every edge whose corridor is a target row it shares with
@@ -1336,7 +1609,12 @@
       pts.push({ x: cxS, y: S.y });
       if (Math.abs(cyS - S.y) > 0.5) pts.push({ x: cxS, y: cyS });
       var jog = cyS - T.y;
-      if (Math.abs(jog) > 0.5) {
+      if (axPick !== T.x) {
+        // Side lane: along the corridor to the lane, down it to the target's
+        // row, then straight in from the side.
+        pts.push({ x: axPick, y: cyS });
+        pts.push({ x: axPick, y: T.y });
+      } else if (Math.abs(jog) > 0.5) {
         if (Math.abs(jog) < rT) {
           // A fanned-out run only a few px off the target's row would jog
           // into it INSIDE the device; step back to the target's row just
@@ -2896,13 +3174,16 @@
     var srcLabel = (cy.getElementById(srcId).data("label")) || srcId || "?";
     var tgtLabel = (cy.getElementById(tgtId).data("label")) || tgtId || "?";
     var ports = String(edge.data("label") || "").trim();
-    var kind = edge.data("isMesh")     ? "Wireless mesh backhaul"
+    // The legend shows one "Switch ↔ switch"; HOW a link was found (interface
+    // naming or an LLDP report) is told here.
+    var kind = edge.data("isMesh")     ? "AP to AP — wireless mesh backhaul"
              : edge.data("isBridge")   ? "Switch bridged behind AP (wired)"
              : edge.data("isWireless") ? "Wireless client"
-             : edge.data("isIface")    ? "Interface-confirmed peer link"
-             : edge.data("isLldp")     ? "LLDP neighbor"
+             : edge.data("isMclag")    ? "MCLAG inter-chassis link"
              : edge.data("isApLink")   ? "AP switch uplink"
-             :                            "FortiLink controller";
+             : edge.data("isIface")    ? "Switch ↔ switch — found by interface naming"
+             : edge.data("isLldp")     ? "Switch ↔ switch — found by LLDP"
+             :                            "Firewall to switch — cable confirmed";
     var html =
       '<div style="font-weight:600">' + _escTip(srcLabel) +
       ' <span style="opacity:0.7">⇄</span> ' + _escTip(tgtLabel) + '</div>';
@@ -2973,7 +3254,7 @@
     function section(title, rows, swatch) {
       if (!rows || !rows.length) return "";
       return '<div class="topology-legend-section"><div class="topology-legend-section-title">' + _escTip(title) + '</div>' +
-        rows.map(function (r) { return topologyLegendRow(swatch(r), r.label, r.desc); }).join("") +
+        rows.map(function (r) { return topologyLegendRow(swatch(r), r.label, r.desc, r.key); }).join("") +
         '</div>';
     }
     if (!spec) return "";
@@ -2984,9 +3265,11 @@
   }
 
   // One legend row: a swatch (HTML, may be ""), a label and an optional
-  // description line under it. Exported so a caller can add rows of its own.
-  function topologyLegendRow(swatchHtml, label, desc) {
-    var html = '<div class="topology-legend-row">' + swatchHtml +
+  // description line under it, and the optional legendMatch key hovering it
+  // lights (wireLegendHover). Exported so a caller can add rows of its own.
+  function topologyLegendRow(swatchHtml, label, desc, key) {
+    var keyAttr = key ? ' data-legend-key="' + _escTip(key) + '"' : "";
+    var html = '<div class="topology-legend-row"' + keyAttr + '>' + swatchHtml +
                '<span class="topology-legend-label">' + _escTip(label) + '</span></div>';
     if (desc) html += '<div class="topology-legend-desc">' + _escTip(desc) + '</div>';
     return html;
@@ -2995,6 +3278,12 @@
   window.PolarisTopologyRender = {
     edgeTooltipHtml: edgeTooltipHtml,
     topologyLegendHtml: topologyLegendHtml,
+    linkHoverSet: linkHoverSet,
+    highlightLinkHover: highlightLinkHover,
+    legendMatch: legendMatch,
+    highlightLegendHover: highlightLegendHover,
+    wireLegendHover: wireLegendHover,
+    clearLinkHover: clearLinkHover,
     topologyLegendRow: topologyLegendRow,
     HEALTH_NODE_COLORS: HEALTH_NODE_COLORS,
     fortinetNodeColor: fortinetNodeColor,
@@ -3012,10 +3301,14 @@
     refreshLocationGroups: refreshLocationGroups,
     // Routing changes edge geometry by style bypass (no position event), so
     // the bent-link labels are re-placed after every route pass.
+    // Straight links that would pass through a device are bent around it in
+    // the same pass (detourStraightEdges), on a site with or without boxes.
     routeInterGroupEdges: function (cy) {
       routeInterGroupEdges(cy);
+      detourStraightEdges(cy);
       refreshBentEdgeLabels(cy);
     },
+    detourStraightEdges: detourStraightEdges,
     refreshBentEdgeLabels: refreshBentEdgeLabels,
     wireBentEdgeLabels: wireBentEdgeLabels,
     locationGroupTooltipParts: locationGroupTooltipParts,

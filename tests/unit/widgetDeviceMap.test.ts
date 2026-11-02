@@ -13,7 +13,7 @@
  * means here: nothing grabbable, nothing selectable, no editable lines.
  */
 
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -102,11 +102,14 @@ beforeAll(() => {
       { data: { id: "fg-river", role: "fortigate" } },
       { data: { id: "sw-1", role: "fortiswitch" } },
       { data: { id: "ap-1", role: "fortiap" } },
+      // A device from another site: an access point, by its own asset type.
+      { data: { id: "rm-ap", role: "remote-asset", assetType: "access_point" } },
       { data: { id: "e1", source: "fg-river", target: "sw-1" } },
       { data: { id: "e2", source: "sw-1", target: "ap-1" } },
+      { data: { id: "e3", source: "sw-1", target: "rm-ap" } },
     ],
     topologyLegendSpec: () => ({
-      nodes: [{ label: "FortiGate" }, { label: "FortiSwitch" }, { label: "FortiAP" }, { label: "Endpoint" }, { label: "Remote asset" }],
+      nodes: [{ label: "Firewall" }, { label: "Switch" }, { label: "Access Point" }, { label: "Endpoint" }, { label: "Remote asset" }],
       health: [], edges: [],
     }),
     // Records the node rows it was handed, as the real one would draw them.
@@ -154,21 +157,30 @@ describe("Device Map widget — config", () => {
     expect(el.querySelector('[data-k="issuesOnly"]')).toBeNull();
   });
 
-  it("offers Device types, all ticked by default, and stores the UNticked ones", () => {
+  it("offers Asset types, all ticked by default, stores the UNticked ones, and reads the old vendor list", () => {
     const el = doc.createElement("div");
     const changes: Array<[string, unknown]> = [];
     mod().renderConfig(el, { regionScope: "all" }, (k, v) => changes.push([k, v]));
-    const boxes = Array.from(el.querySelectorAll("[data-topo-role]")) as unknown as { checked: boolean; getAttribute: (a: string) => string; dispatchEvent: (e: unknown) => void }[];
-    expect(boxes.map((b) => b.getAttribute("data-topo-role"))).toEqual(["fortigate", "fortiswitch", "fortiap", "remote-asset"]);
+    const boxes = Array.from(el.querySelectorAll("[data-topo-type]")) as unknown as { checked: boolean; getAttribute: (a: string) => string; dispatchEvent: (e: unknown) => void }[];
+    expect(boxes.map((b) => b.getAttribute("data-topo-type"))).toEqual(["firewall", "switch", "access_point"]);
     expect(boxes.every((b) => b.checked)).toBe(true);
     boxes[2].checked = false;
     boxes[2].dispatchEvent(new win.Event("change"));
-    expect(changes.at(-1)).toEqual(["topologyHide", ["fortiap"]]);
+    expect(changes.at(-1)).toEqual(["topologyHideTypes", ["access_point"]]);
 
+    // A widget saved before asset types: its unticked FortiAPs read as Access Points.
     const el2 = doc.createElement("div");
-    mod().renderConfig(el2, { regionScope: "all", topologyHide: ["fortiap"] }, () => {});
-    const ap = el2.querySelector('[data-topo-role="fortiap"]') as unknown as { checked: boolean };
+    mod().renderConfig(el2, { regionScope: "all", topologyHide: ["fortiap", "remote-asset"] }, () => {});
+    const ap = el2.querySelector('[data-topo-type="access_point"]') as unknown as { checked: boolean };
     expect(ap.checked).toBe(false);
+  });
+
+  it("has no Locations or Rotate in the gear — they live on the topology", () => {
+    const el = doc.createElement("div");
+    mod().renderConfig(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"] }, () => {});
+    expect(el.querySelector("[data-loc]")).toBeNull();
+    expect(el.querySelector('[data-k="topologyRotateSec"]')).toBeNull();
+    expect(el.textContent).not.toContain("Locations");
   });
 
   it("offers Regions and FortiGates, but no asset types", () => {
@@ -282,20 +294,22 @@ describe("Device Map widget — one gate picked", () => {
     const legend = el.querySelector(".devmap-topo-legend")!;
     expect(legend).not.toBeNull();
     expect(legend.hasAttribute("hidden")).toBe(false);
-    expect(legend.querySelector(".legend-nodes")!.textContent).toBe("FortiGate|FortiSwitch|FortiAP|Remote asset");
+    expect(legend.querySelector(".legend-nodes")!.textContent).toBe("Firewall|Switch|Access Point|Remote asset");
     unmount();
   });
 
-  it("the gear's unticked device types are not drawn, nor their links, nor their legend rows", async () => {
+  it("an unticked asset type is not drawn — at this site or another — nor its links, nor its legend row", async () => {
     const el = doc.createElement("div");
     doc.body.appendChild(el);
     const unmounts: Array<() => void> = [];
-    mod().renderInstance(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], topologyHide: ["fortiap", "remote-asset"] },
+    mod().renderInstance(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], topologyHideTypes: ["access_point"] },
       { gate: { id: "fg-river", name: "RIVERBEND-FG" } }, { onUnmount: (fn) => unmounts.push(fn) });
     await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
     const ids = (cyOptions[0].elements as { data: { id: string } }[]).map((e) => e.data.id);
+    // The FortiAP AND the other site's access point go, with both their links.
     expect(ids).toEqual(["fg-river", "sw-1", "e1"]);
-    expect(el.querySelector(".legend-nodes")!.textContent).toBe("FortiGate|FortiSwitch");
+    // "Remote asset" stays: another site's firewall or switch still draws.
+    expect(el.querySelector(".legend-nodes")!.textContent).toBe("Firewall|Switch|Remote asset");
     unmounts.forEach((fn) => fn());
   });
 
@@ -307,7 +321,7 @@ describe("Device Map widget — one gate picked", () => {
   });
 });
 
-describe("Device Map widget — location drill-down and lock", () => {
+describe("Device Map widget — location chips, pins and rotation", () => {
   const VIEWS = [
     { key: "a|mine", kind: "area", areaKey: "mine", buildingKey: "", label: "Mine" },
     { key: "b|mine|b1", kind: "building", areaKey: "mine", buildingKey: "b1", label: "Mine — B1" },
@@ -316,41 +330,101 @@ describe("Device Map widget — location drill-down and lock", () => {
   ];
   const GATE = { gate: { id: "fg-river", name: "RIVERBEND-FG" } };
   type El = { querySelectorAll: (s: string) => ArrayLike<unknown>; querySelector: (s: string) => unknown };
+  const w = () => win as unknown as Record<string, unknown>;
 
+  /**
+   * The widget in a dashboard article, as dashboard.js mounts it. A fresh id
+   * each time: the widget remembers each id's last view (so a pin change's
+   * re-render keeps the viewer's place), which would carry between cases.
+   */
+  let seq = 0;
+  let wid = "";
   function render(config: Record<string, unknown>) {
+    const article = doc.createElement("article");
+    article.className = "dashboard-widget";
+    wid = "w" + ++seq;
+    article.setAttribute("data-id", wid);
     const el = doc.createElement("div");
-    doc.body.appendChild(el);
+    article.appendChild(el);
+    doc.body.appendChild(article);
     const unmounts: Array<() => void> = [];
     mod().renderInstance(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], ...config }, GATE, { onUnmount: (fn) => unmounts.push(fn) });
-    return { el: el as unknown as El, unmount: () => unmounts.forEach((fn) => fn()) };
+    return { el: el as unknown as El, unmount: () => { unmounts.forEach((fn) => fn()); article.remove(); } };
   }
+  const chipEls = (el: El) =>
+    Array.from(el.querySelectorAll(".devmap-topo-views .topology-floor-chip")) as { textContent: string; classList: { contains: (c: string) => boolean }; click: () => void; querySelector: (s: string) => { click: () => void } | null }[];
   const chips = (el: El) =>
-    (Array.from(el.querySelectorAll(".devmap-topo-views .topology-floor-chip")) as { textContent: string; classList: { contains: (c: string) => boolean } }[])
-      .map((c) => (c.classList.contains("is-active") ? "*" : "") + c.textContent);
-  const clickChip = (el: El, label: string) =>
-    (Array.from(el.querySelectorAll(".devmap-topo-views .topology-floor-chip")) as { textContent: string; click: () => void }[])
-      .find((c) => c.textContent === label)!.click();
+    chipEls(el).map((c) => (c.classList.contains("is-active") ? "*" : "") + c.textContent + (c.querySelector("button.devmap-chip-pin") ? "[pin]" : c.querySelector(".devmap-chip-pin-mark") ? "[mark]" : ""));
+  const chip = (el: El, label: string) => chipEls(el).find((c) => c.textContent === label)!;
+  const rotateBtn = (el: El) => el.querySelector(".devmap-topo-rotate") as { hidden: boolean; classList: { contains: (c: string) => boolean }; click: () => void };
 
-  it("unlocked: Base and every location, the whole site drawn, chips drill in", async () => {
+  let stored: Array<[string, string, unknown]> = [];
+  let editing = false;
+  beforeEach(() => {
+    stored = [];
+    editing = false;
+    w().PolarisDashboard = {
+      isEditing: () => editing,
+      setWidgetConfig: (id: string, key: string, value: unknown) => { stored.push([id, key, value]); return true; },
+    };
+  });
+  afterEach(() => {
+    delete w().PolarisDashboard;
+    delete w().POLARIS_DASH_LOCAL;
+  });
+
+  it("signed in: Base and every location, each location chip with a pin toggle; a chip drills in", async () => {
     floorViews = VIEWS;
     const { el, unmount } = render({});
     await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
-    expect(chips(el)).toEqual(["*Base", "Mine", "Mine — B1", "Yard", "Yard — Scale"]);
+    expect(chips(el)).toEqual(["*Base", "Mine[pin]", "Mine — B1[pin]", "Yard[pin]", "Yard — Scale[pin]"]);
     expect(partitioned).toEqual([]); // the whole site is not partitioned
-    clickChip(el, "Yard");
+    chip(el, "Yard").click();
     expect(partitioned).toEqual(["a|yard"]);
-    expect(chips(el)).toContain("*Yard");
+    // No pins, nothing to rotate through.
+    expect(rotateBtn(el).hidden).toBe(true);
     unmount();
   });
 
-  it("locked: no Base, only the locked locations and what is inside them, opening on the first", async () => {
+  it("a pin toggle stores the widget's pins; unpinning takes it out", async () => {
+    floorViews = VIEWS;
+    const { el, unmount } = render({ topologyLock: ["a|mine"] });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    chip(el, "Yard").querySelector("button.devmap-chip-pin")!.click();
+    expect(stored.at(-1)).toEqual([wid, "topologyLock", ["a|mine", "a|yard"]]);
+    chip(el, "Mine").querySelector("button.devmap-chip-pin")!.click();
+    expect(stored.at(-1)).toEqual([wid, "topologyLock", []]);
+    // The pin click is not a chip click.
+    expect(partitioned).toEqual([]);
+    unmount();
+  });
+
+  it("customizing: no pin toggles — a pinned chip wears a mark", async () => {
+    editing = true;
+    floorViews = VIEWS;
+    const { el, unmount } = render({ topologyLock: ["a|mine"] });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    expect(chips(el)).toEqual(["*Base", "Mine[mark]", "Mine — B1", "Yard", "Yard — Scale"]);
+    unmount();
+  });
+
+  it("the wallboard: only the pinned locations and what is inside them, no Base, no pin toggles", async () => {
+    w().POLARIS_DASH_LOCAL = true;
     floorViews = VIEWS;
     const { el, unmount } = render({ topologyLock: ["a|mine"] });
     await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
     expect(chips(el)).toEqual(["*Mine", "Mine — B1"]);
     expect(partitioned).toEqual(["a|mine"]);
-    // No rotation with one locked location.
-    expect((el.querySelector(".devmap-topo-rotate") as { hidden: boolean }).hidden).toBe(true);
+    unmount();
+  });
+
+  it("the wallboard with pins the site no longer has shows the whole site", async () => {
+    w().POLARIS_DASH_LOCAL = true;
+    floorViews = VIEWS;
+    const { el, unmount } = render({ topologyLock: ["a|gone"] });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    expect(chips(el)[0]).toBe("*Base");
+    expect(partitioned).toEqual([]);
     unmount();
   });
 
@@ -369,71 +443,58 @@ describe("Device Map widget — location drill-down and lock", () => {
     without.unmount();
   });
 
-  it("a lock naming locations the site no longer has falls back to the whole site", async () => {
-    floorViews = VIEWS;
-    const { el, unmount } = render({ topologyLock: ["a|gone"] });
-    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
-    expect(chips(el)[0]).toBe("*Base");
-    expect(partitioned).toEqual([]);
-    unmount();
-  });
-
-  it("rotates through the locked locations, and ⏸ (or picking a chip) pauses it", async () => {
+  it("Rotate steps through the pins; picking a chip turns it off; the button turns it back on and stores it", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       floorViews = VIEWS;
-      const { el, unmount } = render({ topologyLock: ["a|mine", "a|yard"], topologyRotateSec: 15 });
+      const { el, unmount } = render({ topologyLock: ["a|mine", "a|yard"], topologyRotate: true });
       await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
-      const btn = el.querySelector(".devmap-topo-rotate") as { hidden: boolean; textContent: string; click: () => void };
+      const btn = rotateBtn(el);
       expect(btn.hidden).toBe(false);
-      expect(btn.textContent).toBe("⏸");
-      vi.advanceTimersByTime(15_000);
+      expect(btn.classList.contains("active")).toBe(true);
+      vi.advanceTimersByTime(30_000);
+      expect(partitioned.at(-1)).toBe("a|mine");
+      vi.advanceTimersByTime(30_000);
       expect(partitioned.at(-1)).toBe("a|yard");
-      vi.advanceTimersByTime(15_000);
+      vi.advanceTimersByTime(30_000);
       expect(partitioned.at(-1)).toBe("a|mine"); // wraps round
 
-      btn.click();
-      expect(btn.textContent).toBe("▶");
+      chip(el, "Mine — B1").click(); // a viewer's pick turns it off — not stored
+      expect(btn.classList.contains("active")).toBe(false);
+      expect(stored.filter((s) => s[1] === "topologyRotate")).toEqual([]);
       const n = partitioned.length;
-      vi.advanceTimersByTime(60_000);
+      vi.advanceTimersByTime(90_000);
       expect(partitioned).toHaveLength(n);
 
-      btn.click(); // resume
-      vi.advanceTimersByTime(15_000);
-      expect(partitioned.at(-1)).toBe("a|yard");
-
-      clickChip(el, "Mine — B1"); // a viewer's pick pauses it
-      expect(btn.textContent).toBe("▶");
+      btn.click();
+      expect(btn.classList.contains("active")).toBe(true);
+      expect(stored.at(-1)).toEqual([wid, "topologyRotate", true]);
       unmount();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("the gear lists the gate's locations with the lock ticked, and writes ticks and the period", async () => {
+  it("the wallboard's rotation toggle is the viewer's own: it changes the screen, never the widget", async () => {
+    w().POLARIS_DASH_LOCAL = true;
     floorViews = VIEWS;
-    const el = doc.createElement("div");
-    doc.body.appendChild(el);
-    const changes: Array<[string, unknown]> = [];
-    mod().renderConfig(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], topologyLock: ["a|mine"] }, (k, v) => changes.push([k, v]));
-    await vi.waitFor(() => expect(el.querySelectorAll("[data-loc]").length).toBe(4), { timeout: 2000 });
-    const boxes = Array.from(el.querySelectorAll("[data-loc]")) as unknown as { checked: boolean; getAttribute: (a: string) => string; dispatchEvent: (e: unknown) => void }[];
-    expect(boxes.filter((b) => b.checked).map((b) => b.getAttribute("data-loc"))).toEqual(["a|mine"]);
-    const sel = el.querySelector('[data-k="topologyRotateSec"]') as unknown as { disabled: boolean; value: string; dispatchEvent: (e: unknown) => void };
-    expect(sel.disabled).toBe(true); // one location: nothing to rotate through
-    boxes[2].checked = true;
-    boxes[2].dispatchEvent(new win.Event("change"));
-    expect(changes.at(-1)).toEqual(["topologyLock", ["a|mine", "a|yard"]]);
-    expect(sel.disabled).toBe(false);
-    sel.value = "30";
-    sel.dispatchEvent(new win.Event("change"));
-    expect(changes.at(-1)).toEqual(["topologyRotateSec", 30]);
-    el.remove();
+    const { el, unmount } = render({ topologyLock: ["a|mine", "a|yard"] });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    const btn = rotateBtn(el);
+    expect(btn.classList.contains("active")).toBe(false);
+    btn.click();
+    expect(btn.classList.contains("active")).toBe(true);
+    expect(stored).toEqual([]);
+    chip(el, "Yard").click();
+    expect(btn.classList.contains("active")).toBe(false);
+    unmount();
   });
 
-  it("the gear asks for one gate before it can lock", () => {
-    const el = doc.createElement("div");
-    mod().renderConfig(el, { regionScope: "all" }, () => {});
-    expect(el.querySelector(".devmap-cfg-locations")!.textContent).toContain("Tick exactly one FortiGate");
+  it("an older widget whose gear set a rotation period opens rotating", async () => {
+    floorViews = VIEWS;
+    const { el, unmount } = render({ topologyLock: ["a|mine", "a|yard"], topologyRotateSec: 15 });
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    expect(rotateBtn(el).classList.contains("active")).toBe(true);
+    unmount();
   });
 });

@@ -707,6 +707,18 @@
 }
 /* Save / Reset layout, edit mode only: a column directly under the Edit
    button at the row's right end, centred on it. */
+/* The Mouse controls panel (map.js _toggleMouseControls): the legend's card,
+   but top right under the tool row and left of the edit-mode column of
+   buttons beneath Edit, instead of the legend's bottom-left corner. */
+.topology-legend.topology-mouse-controls {
+  top: 44px;
+  right: 56px;
+  bottom: auto;
+  left: auto;
+  width: 320px;
+  max-height: calc(100% - 56px);
+  z-index: 7;
+}
 .topology-corner-stack {
   position: absolute;
   top: 44px;

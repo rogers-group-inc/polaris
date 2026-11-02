@@ -1982,6 +1982,8 @@
     if (body && !body.dataset.rendered) {
       body.innerHTML = _buildLegendHTML(spec);
       body.dataset.rendered = "1";
+      // Hovering a row lights what it stands for on the map.
+      window.PolarisTopologyRender.wireLegendHover(body, function () { return cyInstance; });
     }
     el.hidden = false;
     // Always the CSS-anchored bottom-left corner, like every map legend: it
@@ -1990,33 +1992,86 @@
   }
   function _buildLegendHTML(spec) {
     // Nodes / Monitor health / Edges / Location groups are the shared key
-    // (topology-render.js, also drawn by the Device Map widget).
-    var R = window.PolarisTopologyRender;
-    var row = R.topologyLegendRow;
-    var parts = [R.topologyLegendHtml(spec)];
-    // Mouse controls are a property of THIS desktop modal (cytoscape wiring
-    // in map.js), not of the shared render spec — the mobile topology tab
-    // has its own touch gestures.
-    parts.push('<div class="topology-legend-section"><div class="topology-legend-section-title">Mouse controls</div>');
-    [
-      ["Drag empty space", "Pan the view (scroll wheel zooms)"],
+    // (topology-render.js, also drawn by the Device Map widget). The mouse
+    // controls have their own corner button (_toggleMouseControls).
+    return window.PolarisTopologyRender.topologyLegendHtml(spec);
+  }
+
+  // Mouse controls are a property of THIS desktop modal (cytoscape wiring in
+  // map.js), not of the shared render spec — the mobile topology tab has its
+  // own touch gestures. Shown from their own corner button, not the legend:
+  // one button per mode, each listing only what works in that mode.
+  var MOUSE_CONTROLS_VIEW = [
+      ["Drag", "Pan the view, from empty space or over a device (scroll wheel zooms)"],
       ["Click", "Select just that device, link or location box"],
       ["Shift + click", "Add to the selection"],
       ["Shift + drag", "Box-select multiple devices"],
-      ["Ctrl + drag", "Pan from anywhere (even over devices)"],
-      ["Edit (pencil, top right)", "Turn on layout editing — the rows below; the check mark ends it"],
-      ["Drag a selected device", "Edit mode: move the selected devices together"],
-      ["Drag a connection line", "Edit mode: add a bend point there and move it"],
-      ["Click a connection line", "Edit mode: show its points — drag an end point around a device to attach the line there"],
-      ["Delete", "Edit mode: remove the selected bend point (an end point goes back to automatic)"],
-      ["Ctrl + Z / Ctrl + Shift + Z", "Edit mode: undo / redo a layout change (also the arrows under Edit)"],
-      ["Grid (top right)", "Edit mode: show the grid — thick lines where devices snap, thin lines in between"],
-      ["Snap devices / Snap line points", "Edit mode: devices land on the thick lines; line points on any line"],
       ["Double-click a device", "Open its asset details"],
+  ];
+  var MOUSE_CONTROLS_EDIT = [
+      ["Drag empty space", "Pan the view (scroll wheel zooms)"],
+      ["Ctrl + drag", "Pan from anywhere (even over devices)"],
+      ["Click", "Select just that device, link or location box"],
+      ["Shift + click / Shift + drag", "Add to the selection / box-select multiple devices"],
+      ["Drag a selected device", "Move the selected devices together — a drawn line between two of them brings its points along"],
+      ["Drag a connection line", "Add a bend point there and move it"],
+      ["Click a connection line", "Show its points — drag an end point around a device to attach the line there"],
+      ["Delete", "Remove the selected bend point (an end point goes back to automatic)"],
+      ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo a layout change (also the arrows under Done Editing)"],
+      ["Grid (top right)", "Show the grid — thick lines where devices snap, thin lines in between"],
+      ["Snap devices / Snap line points", "Devices land on the thick lines; line points on any line"],
       ["Right-click a device", "Edit its description / grouping codes"],
-    ].forEach(function (c) { parts.push(row("", c[0], c[1])); });
-    parts.push('</div>');
-    return parts.join("");
+  ];
+
+  // The Mouse controls panel: a legend-styled card under the corner tools.
+  // Only its button closes it — a click elsewhere on the map leaves it open,
+  // so the operator can try a gesture while reading it. While open it
+  // follows edit mode: entering or leaving editing swaps its rows and moves
+  // the pressed state to that mode's button (_paintMouseControls).
+  function _mouseControlsButtonId() {
+    return topoState.editing ? "topology-mouse-help-edit" : "topology-mouse-help";
+  }
+  function _toggleMouseControls() {
+    var graph = document.getElementById("topology-graph");
+    if (!graph) return;
+    var panel = document.getElementById("topology-mouse-controls");
+    if (panel) { _closeMouseControls(); return; }
+    panel = document.createElement("div");
+    panel.id = "topology-mouse-controls";
+    panel.className = "topology-legend topology-mouse-controls";
+    panel.setAttribute("role", "dialog");
+    // Clicks inside stay inside — the graph under it must not see them.
+    ["mousedown", "pointerdown", "touchstart", "click"].forEach(function (t) {
+      panel.addEventListener(t, function (e) { e.stopPropagation(); });
+    });
+    graph.appendChild(panel);
+    _paintMouseControls();
+  }
+  function _paintMouseControls() {
+    var panel = document.getElementById("topology-mouse-controls");
+    var onId = panel ? _mouseControlsButtonId() : null;
+    ["topology-mouse-help", "topology-mouse-help-edit"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (!b) return;
+      b.classList.toggle("is-on", id === onId);
+      b.setAttribute("aria-expanded", id === onId ? "true" : "false");
+    });
+    if (!panel) return;
+    var editing = !!topoState.editing;
+    var title = editing ? "Mouse controls — editing" : "Mouse controls";
+    var row = window.PolarisTopologyRender.topologyLegendRow;
+    panel.setAttribute("aria-label", title);
+    panel.innerHTML =
+      '<header class="topology-legend-header"><span class="topology-legend-title">' + title + "</span></header>" +
+      '<div class="topology-legend-body">' +
+        (editing ? MOUSE_CONTROLS_EDIT : MOUSE_CONTROLS_VIEW)
+          .map(function (c) { return row("", c[0], c[1]); }).join("") +
+      "</div>";
+  }
+  function _closeMouseControls() {
+    var panel = document.getElementById("topology-mouse-controls");
+    if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+    _paintMouseControls();
   }
 
   // ── Position persistence ───────────────────────────────────────────────────
@@ -2736,8 +2791,10 @@
 
     // Right-click on an asset-backed node opens the in-place description
     // editor — the quick path for stamping a:/b:/f:/r:/jb: grouping codes
-    // without opening the full asset slide-over.
+    // without opening the full asset slide-over. Edit mode only: viewing the
+    // map never changes an asset.
     cyInstance.on("cxttap", "node", function (evt) {
+      if (!topoState.editing) return;
       var assetId = _assetIdForNode(evt.target);
       if (assetId) openTopologyDescriptionEditor(assetId);
     });
@@ -2769,6 +2826,9 @@
     cyInstance.on("mouseover", "edge", function (evt) {
       var html = buildEdgeTooltipHtml(evt.target);
       if (!html) return;
+      // Light the link and the devices on its ends — a whole loop when the
+      // link is on one (topology-render.js → highlightLinkHover).
+      window.PolarisTopologyRender.highlightLinkHover(cyInstance, evt.target);
       var orig = evt.originalEvent;
       var x = orig && typeof orig.clientX === "number" ? orig.clientX : 0;
       var y = orig && typeof orig.clientY === "number" ? orig.clientY : 0;
@@ -2781,7 +2841,10 @@
       if (!orig) return;
       moveEdgeTooltip(orig.clientX, orig.clientY);
     });
-    cyInstance.on("mouseout", "edge", function () { hideEdgeTooltip(); });
+    cyInstance.on("mouseout", "edge", function () {
+      hideEdgeTooltip();
+      window.PolarisTopologyRender.clearLinkHover(cyInstance);
+    });
 
     // Location-hull hover tooltip: the hovered shape's label plus every
     // shape it nests inside (hit-testing hands the hover to the innermost
@@ -2819,6 +2882,10 @@
         supKinds ? { suppressKinds: supKinds } : undefined
       );
       // Route cross-group links through the gutters between boxes.
+      window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
+    } else {
+      // No boxes: still bend any straight link around a device it would
+      // pass through (the same pass, which finds no boxes to route).
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     }
     // Operator-drawn connection paths — after the router, so a customised
@@ -3076,7 +3143,27 @@
       _setTopologyEditing(!topoState.editing);
     });
 
-    [snapPoints, snapDevices, grid, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
+    // Mouse controls (moved out of the legend): one button per mode, in the
+    // same slot — a plain mouse while viewing, a mouse with a pencil while
+    // editing (_applyTopologyEditMode shows the one for the current mode).
+    function mouseHelpButton(id, icon, word, tip) {
+      var b = _cornerButton(id, "btn-icon topology-tool", function () { _toggleMouseControls(); });
+      b.innerHTML = _svg(icon);
+      b.setAttribute("aria-haspopup", "dialog");
+      b.setAttribute("aria-expanded", "false");
+      _setCornerTip(b, word, tip);
+      return b;
+    }
+    var mouseBtn = mouseHelpButton("topology-mouse-help",
+      '<rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/>',
+      "Mouse controls", "How to pan, select and open devices on this map");
+    var mouseEditBtn = mouseHelpButton("topology-mouse-help-edit",
+      '<rect x="3" y="3" width="11" height="17" rx="5.5"/><line x1="8.5" y1="6.5" x2="8.5" y2="10"/><path d="M15 21l-1 0 .5-2.5L20 13l1.5 1.5L16 20z"/>',
+      "Editing mouse controls", "How to move devices, draw and bend lines, undo and snap while editing");
+    mouseEditBtn.hidden = !topoState.editing;
+    mouseBtn.hidden = !!topoState.editing;
+
+    [snapPoints, snapDevices, grid, mouseBtn, mouseEditBtn, exportBtn, editBtn].forEach(function (b) { row.appendChild(b); });
     graph.appendChild(row);
 
     // Save / Reset layout: a column under the Edit button, edit mode only
@@ -3204,10 +3291,14 @@
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
     ["topology-save-layout", "topology-reset-layout", "topology-undo", "topology-redo",
-     "topology-snap-devices", "topology-snap-points", "topology-grid"].forEach(function (id) {
+     "topology-snap-devices", "topology-snap-points", "topology-grid",
+     "topology-mouse-help-edit"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.hidden = !on;
     });
+    var viewMouse = document.getElementById("topology-mouse-help");
+    if (viewMouse) viewMouse.hidden = on;
+    _paintMouseControls(); // an open panel swaps to this mode's rows
     // Undo history belongs to one edit session in one view: started when
     // editing starts (or the view changes under it), dropped on Done. A
     // re-render while editing (Refresh, Reset, restore) records its result
