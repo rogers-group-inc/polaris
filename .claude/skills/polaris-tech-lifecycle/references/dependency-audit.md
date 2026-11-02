@@ -192,6 +192,14 @@ version to retreat to — the lowest release carrying a given fix already carrie
 build on the host GOOS and fail on another: `GOOS=… GOARCH=… go build ./...` over
 linux/darwin/windows × amd64/arm64.
 
+**A Go Dependabot PR is never mergeable as it stands.** It edits `agent/go.mod` + `go.sum`
+and nothing else, so it lacks the three things every agent-side bump needs: the target in
+`src/data/dependencyTargets.json` (without it `check:deps` fails, which turns Check docs red on
+`main`), `agent/VERSION`, and the regenerated `rsrc_windows_{amd64,arm64}.syso` (`make -C agent
+winres`). Dependabot #178 (x/sys v0.48.0 → v0.49.0) was merged bare on 2026-11-02 and broke
+`main` until a follow-up commit (agent 0.28.1) added all three. Put them on the PR branch
+before merging, the way #134's follow-up did for 0.17.3.
+
 ## Dependabot
 
 `.github/dependabot.yml`, four ecosystems.
