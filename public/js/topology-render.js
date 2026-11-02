@@ -857,10 +857,10 @@
       selector: "node.link-hover",
       style: {
         "underlay-color": hoverGlow,
-        "underlay-opacity": 0.55,
-        // Graph units, so it shrinks with the zoom: wide enough to read on a
-        // whole-site fit in a dashboard widget.
-        "underlay-padding": 14,
+        "underlay-opacity": 0.35,
+        // Graph units, so it shrinks with the zoom: a thin halo, not a
+        // blob — kept subtle on purpose (operator feedback 2026-11-02).
+        "underlay-padding": 5,
         "underlay-shape": "ellipse",
       },
     });
@@ -868,8 +868,8 @@
       selector: "edge.link-hover",
       style: {
         "underlay-color": hoverGlow,
-        "underlay-opacity": 0.6,
-        "underlay-padding": 8,
+        "underlay-opacity": 0.4,
+        "underlay-padding": 3,
         "z-index": 998,
       },
     });
