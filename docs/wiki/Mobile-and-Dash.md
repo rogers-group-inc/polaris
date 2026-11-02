@@ -171,7 +171,9 @@ takes any address and finds its network for you.
 **Tapping an asset opens its detail sheet.** Its header stays at the top of the
 sheet in two rows: back and forward on the left with the screenshot, refresh and
 close buttons on the right, and under them the device name, which opens the edit
-menu. The refresh button in its header
+menu. Every section of the sheet (Response Time, CPU + Memory, General,
+Hardware Sensors, Interfaces and the discovery sections) starts collapsed, its
+header carrying a one-line summary; tap a header to open it. The refresh button in its header
 (or pulling the sheet down) re-reads what Polaris has for the device and
 repaints the sheet, keeping the sections you opened; it does not poll the device.
 The sheet does not refresh on its own, so tap it to catch up with the latest

@@ -95,6 +95,16 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     await flush();
   }
 
+  it("opens with every section collapsed, Hardware Sensors included, and a tap expands one", async () => {
+    await openSheet();
+    const bodies = Array.from(document.querySelectorAll(".sect-body[data-sect]")) as HTMLElement[];
+    expect(bodies.length).toBeGreaterThan(0);
+    expect(bodies.filter((b) => !b.hasAttribute("hidden")).map((b) => b.dataset.sect)).toEqual([]);
+    expect(bodies.map((b) => b.dataset.sect)).toContain("temperatures");
+    (document.querySelector('.asset-sect-header[data-key="temperatures"]') as HTMLElement).click();
+    expect(document.querySelector('.sect-body[data-sect="temperatures"]')!.hasAttribute("hidden")).toBe(false);
+  });
+
   it("CPU + Memory has its own range control — Response Time's five presets — moving independently", async () => {
     await openSheet();
     const ranges = (id: string) => Array.from(document.querySelectorAll("#" + id + " .seg-item")).map((b) => (b as HTMLElement).dataset.range);

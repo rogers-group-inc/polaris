@@ -202,19 +202,18 @@
       _mounts[id] = {
         range: DEFAULT_RANGE,
         telemetryRange: DEFAULT_RANGE,
-        // Chart sections collapse by default — operators get the summary
-        // (avg/max in the section subtitle) at a glance and can expand for
-        // the full chart when needed.
+        // Every section opens collapsed (operator decision 2026-11-02): the
+        // sheet reads as a list of headers, each subtitle carrying its
+        // summary (avg/max, counts), and a tap expands the one wanted.
+        // Hardware Sensors included. Their loaders run regardless, so an
+        // expand shows content at once.
         sections: {
           monitor: false,
           telemetry: false,
-          general: true,
-          temperatures: true,
-          interfaces: true,
-          // Discovery provenance. Sources expanded by default (the primary
-          // "where did this asset come from" answer); firewall sightings +
-          // IP history collapsed with a count in the header subtitle.
-          sources: true,
+          general: false,
+          temperatures: false,
+          interfaces: false,
+          sources: false,
           sightings: false,
           ipHistory: false,
         },
