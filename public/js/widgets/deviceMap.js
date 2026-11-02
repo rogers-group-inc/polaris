@@ -319,6 +319,9 @@
     cy.on("mouseover", "edge", function (evt) {
       var html = R.edgeTooltipHtml(cy, evt.target);
       if (!html) return;
+      // Light the link and the devices on its ends — a whole loop when the
+      // link is on one — as the Device Map page does.
+      if (R.highlightLinkHover) R.highlightLinkHover(cy, evt.target);
       var tip = edgeTip();
       tip.innerHTML = html; // escaped by edgeTooltipHtml
       tip.classList.add("visible");
@@ -329,7 +332,10 @@
       var o = evt.originalEvent;
       if (o) moveEdgeTip(o.clientX, o.clientY);
     });
-    cy.on("mouseout", "edge", hideEdgeTip);
+    cy.on("mouseout", "edge", function () {
+      hideEdgeTip();
+      if (R.clearLinkHover) R.clearLinkHover(cy);
+    });
     // A portal stub stands for a device in another view; tapping it goes
     // there (when the caller allows that view).
     if (onPortal) {

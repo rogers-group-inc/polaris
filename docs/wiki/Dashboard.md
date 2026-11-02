@@ -187,7 +187,9 @@ The topology here is **read-only**: the same graph as the
 [Device Map](Device-Map) page, laid out the way it was last saved there, but
 nothing can be moved, selected or edited. Drag to pan, scroll to zoom, **Fit**
 to see the whole site again. Hover a link to see the two devices it joins,
-their ports and the kind of link, as on the Device Map page. **Open ↗** opens the gate on the Device Map page,
+their ports and the kind of link, with the link and both devices lit — or the
+whole loop when the link is on one — as on the
+[Device Map page](Device-Map). **Open ↗** opens the gate on the Device Map page,
 where the topology can be edited. The graph refreshes every minute and keeps
 your zoom.
 

@@ -380,6 +380,12 @@ them, for example. The neighbor report must be from the last hour, so a link
 you have unplugged disappears once the switches stop advertising it. Hover the
 line to see which ports LLDP reported.
 
+**Hovering any link** shows its two devices, their ports and the kind of link,
+and lights the link and both devices with a blue glow. A link on a **physical
+loop** (drawn with a yellow halo) lights the **whole loop** instead: every
+looped link reachable from it through the devices they share, and those
+devices, so you can see which switches a ring runs through.
+
 ### Endpoints under a switch
 
 Each switch's info panel lists the endpoints learned on its ports (a count and

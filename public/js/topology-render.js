@@ -851,7 +851,65 @@
       });
     }
 
+    // Link hover (highlightLinkHover): the hovered link and the devices on
+    // its ends — or a whole physical loop — glow in the theme's accent. An
+    // UNDERLAY, behind the element, so a link keeps its own type colour and
+    // dash and a device its health fill.
+    var hoverGlow = isDark ? "#4fc3f7" : "#0369a1";
+    style.push({
+      selector: "node.link-hover",
+      style: {
+        "underlay-color": hoverGlow,
+        "underlay-opacity": 0.55,
+        // Graph units, so it shrinks with the zoom: wide enough to read on a
+        // whole-site fit in a dashboard widget.
+        "underlay-padding": 14,
+        "underlay-shape": "ellipse",
+      },
+    });
+    style.push({
+      selector: "edge.link-hover",
+      style: {
+        "underlay-color": hoverGlow,
+        "underlay-opacity": 0.6,
+        "underlay-padding": 8,
+        "z-index": 998,
+      },
+    });
+
     return style;
+  }
+
+  // What a link hover lights up: the link and the devices on its two ends; a
+  // link on a physical loop (inLoop, markPhysicalLoops) lights the WHOLE loop —
+  // every loop link reachable from it through the devices they share, and
+  // those devices. Location boxes are never part of it.
+  function linkHoverSet(cy, edge) {
+    if (!edge || !edge.isEdge || !edge.isEdge()) return cy.collection();
+    if (!edge.data("inLoop")) return edge.union(edge.connectedNodes());
+    var edges = cy.collection().union(edge);
+    var nodes = cy.collection();
+    var queue = edge.connectedNodes().toArray();
+    var seen = {};
+    while (queue.length) {
+      var n = queue.shift();
+      if (seen[n.id()]) continue;
+      seen[n.id()] = true;
+      nodes = nodes.union(n);
+      n.connectedEdges("[inLoop = 1]").forEach(function (e) {
+        if (edges.contains(e)) return;
+        edges = edges.union(e);
+        e.connectedNodes().forEach(function (m) { if (!seen[m.id()]) queue.push(m); });
+      });
+    }
+    return edges.union(nodes.filter(function (n) { return !n.data("isLocGroup"); }));
+  }
+  function highlightLinkHover(cy, edge) {
+    clearLinkHover(cy);
+    linkHoverSet(cy, edge).addClass("link-hover");
+  }
+  function clearLinkHover(cy) {
+    if (cy && !cy.destroyed()) cy.elements(".link-hover").removeClass("link-hover");
   }
 
   // Legend rows for the topology overlay. Colors here mirror the constants
@@ -2995,6 +3053,9 @@
   window.PolarisTopologyRender = {
     edgeTooltipHtml: edgeTooltipHtml,
     topologyLegendHtml: topologyLegendHtml,
+    linkHoverSet: linkHoverSet,
+    highlightLinkHover: highlightLinkHover,
+    clearLinkHover: clearLinkHover,
     topologyLegendRow: topologyLegendRow,
     HEALTH_NODE_COLORS: HEALTH_NODE_COLORS,
     fortinetNodeColor: fortinetNodeColor,

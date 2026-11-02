@@ -2769,6 +2769,9 @@
     cyInstance.on("mouseover", "edge", function (evt) {
       var html = buildEdgeTooltipHtml(evt.target);
       if (!html) return;
+      // Light the link and the devices on its ends — a whole loop when the
+      // link is on one (topology-render.js → highlightLinkHover).
+      window.PolarisTopologyRender.highlightLinkHover(cyInstance, evt.target);
       var orig = evt.originalEvent;
       var x = orig && typeof orig.clientX === "number" ? orig.clientX : 0;
       var y = orig && typeof orig.clientY === "number" ? orig.clientY : 0;
@@ -2781,7 +2784,10 @@
       if (!orig) return;
       moveEdgeTooltip(orig.clientX, orig.clientY);
     });
-    cyInstance.on("mouseout", "edge", function () { hideEdgeTooltip(); });
+    cyInstance.on("mouseout", "edge", function () {
+      hideEdgeTooltip();
+      window.PolarisTopologyRender.clearLinkHover(cyInstance);
+    });
 
     // Location-hull hover tooltip: the hovered shape's label plus every
     // shape it nests inside (hit-testing hands the hover to the innermost
