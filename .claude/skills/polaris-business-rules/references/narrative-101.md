@@ -7,6 +7,7 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 
 - [Rule 101](#rule-101) — An address is ranked by how directly it is known: a reservation the device holds, then what the gate sees online, then a held lease, then ARP — and a detection the gate's ARP contradicts decides nothing
 - [Rule 101(a)](#rule-101a) — ARP on the ladder, untrusted detection, and the reservation above it
+- [Rule 101(b)](#rule-101b) — the endpoint's gate follows its primary address
 
 <a id="rule-101"></a>
 
@@ -86,3 +87,15 @@ Among a card's several ARP addresses the claims tie, so the pass works per asset
 ARP only overrules an address this run's DHCP or detected-device claims decided. An address that came from vCenter, Arc or an operator has no claim on the ladder and is not ARP's to take — without that limit every VM with a secondary address in some gate's ARP table would flap between the two.
 
 The sections above this one describe the ladder as first shipped (detection on top, three tiers); the tier order in the invariant is the current one.
+
+<a id="rule-101b"></a>
+
+### 101(b) — the endpoint's gate follows its primary address (2026-11-02)
+
+The owner, verbatim: "the primary ip or the ip of highest confidence, should inform which firewall is the last seen firewall." Offered the two, they chose the **primary IP**: it is already this rule's winner (or the operator's pin), and rule 103 says the confidence score only informs.
+
+The ladder decided the ADDRESS, but not the GATE. `learnedLocation` for an endpoint is projected from the fortigate-endpoint blob, whose gate was whichever pathway called `noteEndpointGate` last: the winning DHCP claim, a strictly fresher local detected-device row, then the Phase 7.5 switch-port attribution — unconditionally, with the controller of the FortiSwitch the MAC was learned on — then an ARP fill. A laptop leased an address by gate A whose MAC also showed on gate B's switch read "gate B" while monitored on an address only A serves. FortiManager mode makes the pathway answer unfixable where it is made: each managed gate is its own `syncDhcpSubnets` call, so the call for gate B cannot see that gate A's call decided the address.
+
+So the Phase 10 flush decides, from IPAM, which every call reads whole (`allSubnets` is every subnet): `utils/endpointGate.ts → gateServingAddress(asset.ipAddress, allSubnets, [pathwayGate, priorGate])` returns the gate of the narrowest non-deprecated gate-owned network holding the primary address. RFC1918 space repeats behind gates, so an equally narrow overlap is settled by the pathway's gate, then the gate the blob named before, and otherwise there is no answer rather than a guess between sites. With no answer the pathway's gate stands, then the prior blob's — the behaviour before this clause.
+
+Rejected: scoring every listed address and taking the top one's gate (the owner's second option — it can name a gate other than the one the device is monitored through whenever a pin is set); making the pathways themselves conditional (FMG mode's per-gate calls cannot see each other, so no per-pathway rule can be right).

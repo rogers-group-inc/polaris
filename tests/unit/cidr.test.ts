@@ -28,6 +28,7 @@ import {
   isRfc1918Cidr,
   normalizeAllowlistCidr,
   buildCidrMatcher,
+  buildLongestPrefixMatcher,
   bareInterfaceIp,
   interfaceIpIsUnaddressed,
   unwrapMappedIpv4,
@@ -143,6 +144,28 @@ describe("cidrContains", () => {
     // Straddles the boundary: .254-.255 of one /24 vs the next.
     expect(cidrContains("10.88.1.0/24", "10.88.1.254/31")).toBe(true);
     expect(cidrContains("10.88.1.0/24", "10.88.2.0/31")).toBe(false);
+  });
+});
+
+describe("buildLongestPrefixMatcher", () => {
+  const items = [
+    { cidr: "10.0.0.0/16", id: "wide" },
+    { cidr: "10.0.5.0/24", id: "a" },
+    { cidr: "10.0.5.0/24", id: "b" },
+    { cidr: "not-a-cidr", id: "bad" },
+    { cidr: "2001:db8::/32", id: "v6" },
+  ];
+  const match = buildLongestPrefixMatcher(items);
+
+  it("returns every item tied at the longest containing prefix", () => {
+    expect(match("10.0.5.9").map((i) => i.id)).toEqual(["a", "b"]);
+    expect(match("10.0.6.9").map((i) => i.id)).toEqual(["wide"]);
+  });
+
+  it("returns [] for a miss or a blank, skips unparseable CIDRs, and keeps IP versions apart", () => {
+    expect(match("192.168.0.1")).toEqual([]);
+    expect(match("")).toEqual([]);
+    expect(match("2001:db8::1").map((i) => i.id)).toEqual(["v6"]);
   });
 });
 
