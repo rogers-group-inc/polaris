@@ -1896,7 +1896,13 @@ function renderGlobalSearch() {
       ' aria-keyshortcuts="' + (mac ? "Meta+K" : "Control+K") + '">' +
     '<kbd class="global-search-kbd" aria-hidden="true">' + (mac ? "⌘ K" : "Ctrl K") + '</kbd>' +
     '<span id="global-search-spinner" class="global-search-spinner" hidden aria-hidden="true"></span>' +
-    '<div id="global-search-dropdown" class="global-search-dropdown" style="display:none"></div>';
+    '<button type="button" id="global-search-gear" class="global-search-gear" title="Search settings" aria-label="Search settings" aria-haspopup="dialog" aria-expanded="false">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="3"/>' +
+      '<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>' +
+      '</svg></button>' +
+    '<div id="global-search-dropdown" class="global-search-dropdown" style="display:none"></div>' +
+    '<div id="global-search-settings" class="global-search-settings" role="dialog" aria-label="Search settings" hidden></div>';
 
   // Insert between h2 and page-header-actions (if present)
   var actions = pageHeader.querySelector(".page-header-actions");
@@ -1908,6 +1914,7 @@ function renderGlobalSearch() {
 
   input.addEventListener("input", function () {
     var q = input.value.trim();
+    saveSearchDraft(input.value);
     clearTimeout(_searchDebounceTimer);
     if (q.length < 2) {
       // Empty input → fall back to the focus-state shortcut hints so
@@ -1931,13 +1938,41 @@ function renderGlobalSearch() {
     }
   });
 
+  // An empty box always opens on the shortcuts (and the recent searches
+  // above them) — never on an earlier query's results, which would be
+  // results for text no longer in the box. Text still in the box (the
+  // operator clicked away without picking) brings its results back; text
+  // restored from the draft on a new page has none cached yet, so it is
+  // searched again. Focus never selects the text — the operator clicks to
+  // place the cursor, and Ctrl/⌘+A (native; nothing intercepts it in a
+  // field — see _rowSelectKeyTbody) selects it all to overwrite.
   input.addEventListener("focus", function () {
-    if (_searchActiveResults) dropdown.style.display = "block";
-    else if (!input.value.trim()) _showSearchShortcutHints();
+    _hideSearchSettings();
+    var q = input.value.trim();
+    if (!q) _showSearchShortcutHints();
+    else if (_searchActiveResults) dropdown.style.display = "block";
+    // A bare scope prefix (a shortcut hint just clicked) is not a query yet:
+    // leave the hints up.
+    else if (q.length >= 2 && !/^\w+:$/.test(q)) _performSearch(q);
   });
+  _restoreSearchDraft(input);
+
+  var gear = document.getElementById("global-search-gear");
+  gear.addEventListener("click", function (e) {
+    e.stopPropagation();
+    var panel = document.getElementById("global-search-settings");
+    if (panel.hidden) { _showSearchSettings(); return; }
+    _hideSearchSettings();
+    if (input.value.trim() && _searchActiveResults) dropdown.style.display = "block";
+  });
+  _syncSearchGear();
 
   document.addEventListener("click", function (e) {
-    if (!wrap.contains(e.target)) _hideSearchDropdown();
+    if (!wrap.contains(e.target)) { _hideSearchDropdown(); _hideSearchSettings(); }
+  });
+  document.addEventListener("keydown", function (e) {
+    var panel = document.getElementById("global-search-settings");
+    if (e.key === "Escape" && panel && !panel.hidden) { _hideSearchSettings(); gear.focus(); }
   });
 
   // Ctrl+K / Cmd+K — focus the search globally
@@ -1948,6 +1983,123 @@ function renderGlobalSearch() {
       input.select();
     }
   });
+}
+
+// ─── Global search settings (the gear) ──────────────────────────────────────
+// Which assets the box returns: monitored and/or unmonitored, and which
+// lifecycle states. Per user, kept in this browser under the same
+// "polaris-prefs-<name>-<username>" shape as the asset panel's chart prefs.
+// Narrows the Assets and Device Map groups only — blocks, networks,
+// reservations, IPs and IPsec hits are not assets and are never filtered.
+// The server applies it (searchService's SearchAssetFilter), so a scoped
+// `a:` search's 200-row budget is spent on rows that will be shown.
+
+var SEARCH_MONITORED_OPTIONS = [
+  { value: "monitored",   label: "Monitored" },
+  { value: "unmonitored", label: "Unmonitored" },
+];
+var SEARCH_STATUS_OPTIONS = [
+  { value: "active",         label: "Active" },
+  { value: "maintenance",    label: "Maintenance" },
+  { value: "storage",        label: "Storage" },
+  { value: "decommissioned", label: "Decommissioned" },
+  { value: "disabled",       label: "Disabled" },
+  { value: "quarantined",    label: "Quarantined" },
+];
+var SEARCH_DEFAULT_PREFS = { monitored: ["monitored", "unmonitored"], status: ["active", "maintenance"] };
+
+function _searchPrefsKey() {
+  return "polaris-prefs-search-" + (typeof currentUsername === "string" && currentUsername ? currentUsername : "");
+}
+
+/** The signed-in user's search filter, { monitored: [...], status: [...] }. */
+function loadSearchPrefs() {
+  var stored = null;
+  try { stored = JSON.parse(localStorage.getItem(_searchPrefsKey()) || "null"); } catch (_) {}
+  // Unknown values are dropped (an option renamed since it was saved); a
+  // missing or malformed list falls back to its default, an empty one stays.
+  function pick(list, options, fallback) {
+    if (!Array.isArray(list)) return fallback.slice();
+    return options.map(function (o) { return o.value; }).filter(function (v) { return list.indexOf(v) !== -1; });
+  }
+  return {
+    monitored: pick(stored && stored.monitored, SEARCH_MONITORED_OPTIONS, SEARCH_DEFAULT_PREFS.monitored),
+    status: pick(stored && stored.status, SEARCH_STATUS_OPTIONS, SEARCH_DEFAULT_PREFS.status),
+  };
+}
+
+function saveSearchPrefs(p) {
+  try { localStorage.setItem(_searchPrefsKey(), JSON.stringify(p)); } catch (_) {}
+}
+
+function _searchPrefsAreDefault(p) {
+  return p.monitored.join(",") === SEARCH_DEFAULT_PREFS.monitored.join(",") &&
+    p.status.join(",") === SEARCH_DEFAULT_PREFS.status.join(",");
+}
+
+// The gear takes the accent colour while the filter differs from the
+// default, so a search that "can't find" a device points at the reason.
+function _syncSearchGear() {
+  var gear = document.getElementById("global-search-gear");
+  if (!gear) return;
+  var custom = !_searchPrefsAreDefault(loadSearchPrefs());
+  gear.classList.toggle("is-custom", custom);
+  gear.title = custom ? "Search settings (changed from the default)" : "Search settings";
+}
+
+function _showSearchSettings() {
+  var panel = document.getElementById("global-search-settings");
+  var gear = document.getElementById("global-search-gear");
+  if (!panel) return;
+  _hideSearchDropdown();
+  var p = loadSearchPrefs();
+  function boxes(key, options) {
+    return options.map(function (o) {
+      return '<label class="gs-setting"><input type="checkbox" data-pref="' + key + '" value="' + o.value + '"' +
+        (p[key].indexOf(o.value) !== -1 ? " checked" : "") + '> ' + escapeHtml(o.label) + '</label>';
+    }).join("");
+  }
+  panel.innerHTML =
+    '<div class="gs-group-label">Assets</div>' +
+    '<div class="gs-settings-grid">' + boxes("monitored", SEARCH_MONITORED_OPTIONS) + '</div>' +
+    '<div class="gs-group-label">Device states</div>' +
+    '<div class="gs-settings-grid">' + boxes("status", SEARCH_STATUS_OPTIONS) + '</div>' +
+    '<div class="gs-settings-foot">' +
+      '<span>Applies to asset and Device Map results</span>' +
+      '<button type="button" class="btn btn-sm btn-secondary" id="global-search-settings-reset">Reset to defaults</button>' +
+    '</div>';
+  panel.hidden = false;
+  if (gear) gear.setAttribute("aria-expanded", "true");
+
+  function onChange() {
+    var next = { monitored: [], status: [] };
+    panel.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+      if (cb.checked) next[cb.getAttribute("data-pref")].push(cb.value);
+    });
+    saveSearchPrefs(next);
+    _syncSearchGear();
+    // A query already in the box is re-run under the new filter, so the
+    // results are current the moment the panel closes.
+    var input = document.getElementById("global-search-input");
+    var q = input ? input.value.trim() : "";
+    if (q.length >= 2) _performSearch(q);
+  }
+  panel.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+    cb.addEventListener("change", onChange);
+  });
+  document.getElementById("global-search-settings-reset").addEventListener("click", function () {
+    panel.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
+      cb.checked = SEARCH_DEFAULT_PREFS[cb.getAttribute("data-pref")].indexOf(cb.value) !== -1;
+    });
+    onChange();
+  });
+}
+
+function _hideSearchSettings() {
+  var panel = document.getElementById("global-search-settings");
+  var gear = document.getElementById("global-search-gear");
+  if (panel) panel.hidden = true;
+  if (gear) gear.setAttribute("aria-expanded", "false");
 }
 
 // Toggle the in-flight spinner on the right edge of the search bar.
@@ -1961,10 +2113,13 @@ async function _performSearch(q) {
   _searchLastQuery = q;
   _setSearchBusy(true);
   try {
-    var results = await api.search.query(q);
+    var results = await api.search.query(q, loadSearchPrefs());
     if (results.query !== _searchLastQuery) return; // stale response — a newer query owns the spinner
     _searchActiveResults = results;
     _renderSearchDropdown(results);
+    // Re-run from the gear panel: the results wait behind it until it closes.
+    var settings = document.getElementById("global-search-settings");
+    if (settings && !settings.hidden) _hideSearchDropdown();
     _setSearchBusy(false);
   } catch (err) {
     if (q !== _searchLastQuery) return; // stale failure — don't clear a newer query's spinner
@@ -2079,7 +2234,10 @@ function _renderSearchDropdown(results) {
   var ipsecHits = results.ipsec || [];
   var total = results.blocks.length + results.subnets.length + results.reservations.length + results.assets.length + results.ips.length + allSites.length + ipsecHits.length;
   if (total === 0) {
-    dropdown.innerHTML = '<div class="global-search-empty">No matches for "' + escapeHtml(results.query) + '"</div>';
+    // The gear's filter is always narrowing something (the default leaves out
+    // four device states), so an empty result says where else to look.
+    dropdown.innerHTML = '<div class="global-search-empty">No matches for "' + escapeHtml(results.query) + '"' +
+      '<div class="global-search-empty-hint">Assets outside the search settings (the gear) are not shown.</div></div>';
     dropdown.style.display = "block";
     return;
   }
@@ -2165,12 +2323,91 @@ function _hideSearchDropdown() {
   if (dropdown) dropdown.style.display = "none";
 }
 
+// ─── Recent searches ────────────────────────────────────────────────────────
+// The last RECENT_SEARCH_LIMIT queries the operator picked a result from,
+// newest first, shown above the shortcuts. "Made a search" means opened a
+// hit (openSearchResult) — recording every debounced keystroke would fill
+// the list with "co", "cor", "core". sessionStorage, so the list lives as
+// long as the browser TAB: it survives the page navigation a hit often
+// causes, and a new tab starts empty. Keyed by username like the gear's
+// settings, so a sign-out and sign-in as someone else in the same tab does
+// not show them the previous user's searches.
+
+var RECENT_SEARCH_LIMIT = 5;
+
+function _recentSearchKey() {
+  return "polaris-search-recent-" + (typeof currentUsername === "string" && currentUsername ? currentUsername : "");
+}
+
+/** This tab's recent searches, newest first. */
+function loadRecentSearches() {
+  var list = null;
+  try { list = JSON.parse(sessionStorage.getItem(_recentSearchKey()) || "null"); } catch (_) {}
+  if (!Array.isArray(list)) return [];
+  return list.filter(function (q) { return typeof q === "string" && q.trim(); }).slice(0, RECENT_SEARCH_LIMIT);
+}
+
+/** Put `q` at the head of the list; an earlier copy (any case) moves up instead of repeating. */
+function rememberRecentSearch(q) {
+  q = String(q || "").trim();
+  if (!q) return;
+  var lower = q.toLowerCase();
+  var next = [q].concat(loadRecentSearches().filter(function (r) { return r.toLowerCase() !== lower; }))
+    .slice(0, RECENT_SEARCH_LIMIT);
+  try { sessionStorage.setItem(_recentSearchKey(), JSON.stringify(next)); } catch (_) {}
+}
+
+// ─── Search draft ───────────────────────────────────────────────────────────
+// What the operator typed and has not finished — no result opened yet. Kept
+// while they click away (the input simply keeps it) and across a page load in
+// the same tab (sessionStorage, written on every keystroke), so leaving a
+// page mid-search costs nothing. Cleared by openSearchResult, and by emptying
+// the box. Per user, like the recent searches.
+
+function _searchDraftKey() {
+  return "polaris-search-draft-" + (typeof currentUsername === "string" && currentUsername ? currentUsername : "");
+}
+
+function saveSearchDraft(text) {
+  try {
+    if (String(text || "").trim()) sessionStorage.setItem(_searchDraftKey(), String(text));
+    else sessionStorage.removeItem(_searchDraftKey());
+  } catch (_) {}
+}
+
+function loadSearchDraft() {
+  try { return sessionStorage.getItem(_searchDraftKey()) || ""; } catch (_) { return ""; }
+}
+
+// Put this tab's draft back into a freshly mounted box. The username keys
+// it, and on a first sign-in there is no cached user yet at mount — then
+// wait for /auth/me. Never over text the operator typed in the meantime.
+function _restoreSearchDraft(input) {
+  function apply() {
+    if (input.value) return;
+    var draft = loadSearchDraft();
+    if (draft) input.value = draft;
+  }
+  if (typeof currentUsername === "string" && currentUsername) apply();
+  else if (typeof userReady !== "undefined" && userReady && typeof userReady.then === "function") userReady.then(apply);
+}
+
 // Show the scope-shortcut help panel when the search bar is focused with
 // no query in flight. Clicking a hint pre-fills the input with the scope
-// prefix and a trailing space so the operator can keep typing.
+// prefix and a trailing space so the operator can keep typing. This tab's
+// recent searches sit above it; clicking one re-runs it.
 function _showSearchShortcutHints() {
   var dropdown = document.getElementById("global-search-dropdown");
   if (!dropdown) return;
+  var recent = loadRecentSearches();
+  var recentHtml = recent.length
+    ? '<div class="gs-group gs-recent-group">' +
+      '  <div class="gs-group-label">Recent searches</div>' +
+      recent.map(function (q) {
+        return '<div class="gs-recent" data-query="' + escapeHtml(q) + '" title="Search again">' + escapeHtml(q) + '</div>';
+      }).join("") +
+      '</div>'
+    : "";
   var hints = [
     { prefix: "block:",       short: "b:", label: "Search IP blocks only" },
     { prefix: "network:",     short: "n:", label: "Search networks (subnets) only" },
@@ -2188,7 +2425,7 @@ function _showSearchShortcutHints() {
       '<div class="gs-hint-label">' + escapeHtml(h.label) + '</div>' +
     '</div>';
   }).join("");
-  dropdown.innerHTML =
+  dropdown.innerHTML = recentHtml +
     '<div class="gs-group gs-hint-group">' +
     '  <div class="gs-group-label">Search shortcuts — scoped searches return up to 200 results (no top-8 cap)</div>' +
     rows +
@@ -2201,8 +2438,27 @@ function _showSearchShortcutHints() {
       var input = document.getElementById("global-search-input");
       if (!input) return;
       input.value = el.getAttribute("data-prefix") + " ";
+      saveSearchDraft(input.value);
       input.focus();
       // Keep the hint panel up — the operator hasn't typed a query yet.
+    });
+  });
+  dropdown.querySelectorAll(".gs-recent").forEach(function (el) {
+    el.addEventListener("click", function () {
+      var input = document.getElementById("global-search-input");
+      if (!input) return;
+      var q = el.getAttribute("data-query");
+      input.value = q;
+      saveSearchDraft(q);
+      clearTimeout(_searchDebounceTimer);
+      _searchActiveResults = null;
+      // Focusing runs the search (the focus handler searches text it has no
+      // results for) — the same search typing runs, minus the debounce, and
+      // under the gear's CURRENT settings. Only when the box already held
+      // focus does no focus event fire, so search directly.
+      var hadFocus = document.activeElement === input;
+      input.focus();
+      if (hadFocus) _performSearch(q);
     });
   });
 }
@@ -2236,7 +2492,16 @@ function _handleSearchKeyNav(e) {
 function openSearchResult(hit) {
   _hideSearchDropdown();
   var input = document.getElementById("global-search-input");
-  if (input) input.value = "";
+  if (input) {
+    rememberRecentSearch(input.value);
+    input.value = "";
+  }
+  saveSearchDraft(""); // a finished search leaves no draft behind
+  // The box is empty now, so the results it held describe nothing in it:
+  // drop them, or the next focus would show them again instead of the
+  // shortcuts and recent searches.
+  _searchLastQuery = "";
+  _searchActiveResults = null;
 
   var target = _searchTargetFor(hit);
   if (!target) return;

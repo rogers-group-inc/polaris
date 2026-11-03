@@ -92,6 +92,10 @@ function setup(url = "https://polaris.test/events.html"): void {
   g.window = win;
   g.document = doc;
   g._hideSearchDropdown = () => {};
+  // openSearchResult's bookkeeping (recent searches, the kept draft) — pinned
+  // in globalSearchRecent / globalSearchDraft; here only the dispatch matters.
+  g.rememberRecentSearch = () => {};
+  g.saveSearchDraft = () => {};
   g.api = { subnets: { get: vi.fn(async () => ({ cidr: "10.4.12.0/24" })) } };
   // happy-dom fetches (or, with file loading disabled, fails) every <script src>
   // the moment it is appended and fires load / error on its own schedule. The

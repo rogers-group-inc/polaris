@@ -68,6 +68,29 @@ Press **Ctrl**+**K** (**⌘**+**K** on a Mac) on any page to jump straight into
 the box, with whatever was there selected so you can type over it. The box
 shows the shortcut at its right end until you click into it.
 
+Clicking into the empty box lists the prefixes below. Above them are your
+**recent searches**: the last five searches you opened a result from in this
+browser tab, newest first. Click one to run it again. The list belongs to the
+tab: other tabs keep their own, and closing the tab clears it.
+
+**A search you haven't finished is kept.** If you type something and then click
+elsewhere, or move to another page in the same tab, the text is still in the
+box when you come back, and clicking into it shows its results again. To clear
+it or type over it, click into the box and press **Ctrl**+**A** (**⌘**+**A** on
+a Mac) to select it all. Opening a result clears the box.
+
+**The gear at the box's right end sets which assets it finds.** Under
+**Assets**, tick **Monitored**, **Unmonitored** or both. Under **Device
+states**, tick the states to include: **Active**, **Maintenance**, **Storage**,
+**Decommissioned**, **Disabled**, **Quarantined**. By default both monitored
+and unmonitored assets are searched, in the Active and Maintenance states only,
+so a decommissioned or stored device is not found until you tick its state.
+The settings apply to the Assets and Device Map results; IPs, blocks, networks,
+reservations and IPsec hits are never filtered. They are saved for your account
+in this browser, and **Reset to defaults** puts them back. The gear takes the
+theme's accent colour while your settings differ from the default. A pasted certificate or host-key
+thumbprint still finds its asset whatever the settings say.
+
 Prefixes narrow it:
 
 | Prefix | Short | Searches |

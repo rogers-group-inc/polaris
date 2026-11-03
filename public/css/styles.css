@@ -2182,7 +2182,7 @@ html[data-page-top-curtain]::after {
 }
 .global-search input[type="search"] {
   width: 100%;
-  padding: 0.45rem 2rem 0.45rem 0.75rem;
+  padding: 0.45rem 3.5rem 0.45rem 0.75rem;
   font-size: 0.85rem;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
@@ -2200,7 +2200,7 @@ html[data-page-top-curtain]::after {
 .global-search-kbd {
   position: absolute;
   top: 50%;
-  right: 0.6rem;
+  right: 2.25rem;
   transform: translateY(-50%);
   padding: 1px 6px;
   font-family: inherit;
@@ -2214,11 +2214,80 @@ html[data-page-top-curtain]::after {
 }
 .global-search input[type="search"]:focus ~ .global-search-kbd,
 .global-search input[type="search"]:not(:placeholder-shown) ~ .global-search-kbd { display: none; }
-.global-search input[type="search"]:placeholder-shown:not(:focus) { padding-right: 4.25rem; }
+.global-search input[type="search"]:placeholder-shown:not(:focus) { padding-right: 5.75rem; }
+/* The search settings gear (renderGlobalSearch → _showSearchSettings), at the
+   box's far right end, always visible: right of the Ctrl+K hint while that
+   shows, right of the clear button and the spinner once the box is in use.
+   Accent-coloured while the filter differs from the default. */
+.global-search-gear {
+  position: absolute;
+  top: 50%;
+  right: 0.35rem;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.global-search-gear:hover,
+.global-search-gear[aria-expanded="true"] { color: var(--color-text-primary); background: var(--color-bg-secondary); }
+.global-search-gear.is-custom { color: var(--color-accent); }
+.global-search-gear:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.global-search-settings {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 340px;
+  max-width: 100%;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 900;
+  padding: 4px 0 8px;
+}
+.global-search-settings[hidden] { display: none; }
+.gs-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 12px;
+  padding: 4px 12px 6px;
+}
+.gs-setting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: 3px 0;
+}
+.gs-settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 0;
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border-light);
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
+}
+.global-search-empty-hint {
+  margin-top: 4px;
+  font-size: 0.76rem;
+}
 .global-search-spinner {
   position: absolute;
   top: 50%;
-  right: 0.6rem;
+  right: 2.1rem;
   width: 14px;
   height: 14px;
   margin-top: -7px;
@@ -2306,6 +2375,23 @@ html[data-page-top-curtain]::after {
   border-left: 2px solid transparent;
 }
 .gs-hint:hover {
+  background: var(--color-bg-secondary);
+  border-left-color: var(--color-accent);
+}
+/* This tab's last five picked searches, above the shortcuts
+   (app.js _showSearchShortcutHints). Same row hover as a hint; the query
+   is shown as typed, scope prefix included. */
+.gs-recent {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gs-recent:hover {
   background: var(--color-bg-secondary);
   border-left-color: var(--color-accent);
 }

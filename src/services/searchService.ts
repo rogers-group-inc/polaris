@@ -9,6 +9,7 @@
 
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
+import type { AssetStatus } from "../generated/prisma/enums.js";
 import { isValidIpAddress, normalizeCidr, ipInCidr } from "../utils/cidr.js";
 import { macColonUpperOrNull } from "../utils/mac.js";
 import { MONITOR_STATUS_LABELS } from "../utils/monitorStatus.js";
@@ -194,11 +195,46 @@ const ALLOW_ALL: SearchAllowed = {
   blocks: true, subnets: true, reservations: true, assets: true, sites: true, ipsec: true, pins: true,
 };
 
+/**
+ * Which assets the search may return — the global search box's gear settings
+ * (per user, kept in the browser). Each field narrows only when present: an
+ * absent field is "every value", so the API and the phone, which send
+ * neither, keep the unfiltered search. An EMPTY list is a real choice and
+ * matches nothing (every box unticked), not "no filter".
+ *
+ * Applies to the `assets` and `sites` groups (a Device Map pin IS an asset),
+ * across every way an asset can match — columns, sources, MAC / IP side
+ * tables, JSON blobs, discovered hostnames and the `tag:` scope. A
+ * thumbprint match is exempt: pasting a pin's fingerprint is an identity
+ * lookup, and the archived pins it finds (rule 123) belong to decommissioned
+ * assets by definition — the default filter would otherwise hide every one.
+ */
+export interface SearchAssetFilter {
+  /** `true` = monitored assets, `false` = unmonitored; both = no narrowing. */
+  monitored?: boolean[];
+  statuses?: AssetStatus[];
+}
+
+/** The Prisma `where` fragment a filter adds to every asset lookup. */
+export function assetFilterWhere(filter: SearchAssetFilter): Prisma.AssetWhereInput {
+  const where: Prisma.AssetWhereInput = {};
+  if (filter.monitored) {
+    const wantOn = filter.monitored.includes(true);
+    const wantOff = filter.monitored.includes(false);
+    // Neither side ticked: an empty OR, which Prisma reads as "matches nothing".
+    if (!wantOn && !wantOff) where.OR = [];
+    else if (wantOn !== wantOff) where.monitored = wantOn;
+  }
+  if (filter.statuses) where.status = { in: filter.statuses };
+  return where;
+}
+
 export async function searchAll(
   rawQuery: string,
   allowed: SearchAllowed = ALLOW_ALL,
+  assetFilter: SearchAssetFilter = {},
 ): Promise<SearchResults> {
-  return withAlertSummaries(await runSearch(rawQuery, allowed));
+  return withAlertSummaries(await runSearch(rawQuery, allowed, assetFilter));
 }
 
 /**
@@ -229,7 +265,9 @@ async function withAlertSummaries(results: SearchResults): Promise<SearchResults
 async function runSearch(
   rawQuery: string,
   allowed: SearchAllowed = ALLOW_ALL,
+  assetFilter: SearchAssetFilter = {},
 ): Promise<SearchResults> {
+  const assetWhere = assetFilterWhere(assetFilter);
   const trimmed = rawQuery.trim();
   // Always echo the original query back to the client; the dropdown
   // stale-response check compares against what was typed, not the
@@ -284,13 +322,13 @@ async function runSearch(
   }
   if (scope === "map") {
     if (!allowed.sites) return empty;
-    const sites = await searchPinnedFirewalls(terms, mac, SCOPED_LIMIT, discovered);
+    const sites = await searchPinnedFirewalls(terms, mac, SCOPED_LIMIT, discovered, assetWhere);
     return { ...empty, sites: sites.map(siteHit) };
   }
   if (scope === "asset") {
     if (!allowed.assets) return empty;
     const [assetRows, pinMatches] = await Promise.all([
-      searchAssets(terms, mac, SCOPED_LIMIT, discovered),
+      searchAssets(terms, mac, SCOPED_LIMIT, discovered, assetWhere),
       allowed.pins === true ? findAssetsByPinFingerprint(q, SCOPED_LIMIT) : Promise.resolve([]),
     ]);
     const originBySrcId = await resolveOriginFortigates(assetRows);
@@ -309,7 +347,7 @@ async function runSearch(
     const [blocks, subnets, assetRows] = await Promise.all([
       allowed.blocks ? searchBlocksByTag(terms, SCOPED_LIMIT) : Promise.resolve([]),
       allowed.subnets ? searchSubnetsByTag(terms, SCOPED_LIMIT) : Promise.resolve([]),
-      allowed.assets ? searchAssetsByTag(terms, SCOPED_LIMIT) : Promise.resolve([]),
+      allowed.assets ? searchAssetsByTag(terms, SCOPED_LIMIT, assetWhere) : Promise.resolve([]),
     ]);
     const originBySrcId = await resolveOriginFortigates(assetRows);
     return {
@@ -328,8 +366,8 @@ async function runSearch(
     allowed.blocks       ? searchBlocks(terms)                          : Promise.resolve([]),
     allowed.subnets      ? searchSubnets(terms, isCidr ? q : null)      : Promise.resolve([]),
     allowed.reservations ? searchReservations(terms, isIp ? q : null)   : Promise.resolve([]),
-    allowed.assets       ? searchAssets(terms, mac, PER_GROUP_LIMIT, discovered)          : Promise.resolve([]),
-    allowed.sites        ? searchPinnedFirewalls(terms, mac, PER_GROUP_LIMIT, discovered) : Promise.resolve([]),
+    allowed.assets       ? searchAssets(terms, mac, PER_GROUP_LIMIT, discovered, assetWhere)          : Promise.resolve([]),
+    allowed.sites        ? searchPinnedFirewalls(terms, mac, PER_GROUP_LIMIT, discovered, assetWhere) : Promise.resolve([]),
     isIp && allowed.subnets && allowed.reservations ? resolveIp(q) : Promise.resolve(null),
     ipsecAllowed         ? searchIpsec(terms, PER_GROUP_LIMIT)          : Promise.resolve([]),
     // The whole query, not the terms: a thumbprint pasted with spaces
@@ -660,8 +698,9 @@ async function searchAssets(
   mac: string | null,
   limit = PER_GROUP_LIMIT,
   discovered?: DiscoveredHostnameLookup,
+  assetWhere: Prisma.AssetWhereInput = {},
 ) {
-  return runAssetSearch(terms, mac, {}, limit, discovered);
+  return runAssetSearch(terms, mac, assetWhere, limit, discovered);
 }
 
 // ─── Tag-scope helpers (`tag:` / `t:`) ─────────────────────────────────────────
@@ -679,14 +718,22 @@ function tagExistsAnd(terms: string[]): Prisma.Sql {
   );
 }
 
-async function searchAssetsByTag(terms: string[], limit = PER_GROUP_LIMIT) {
-  const where = tagExistsAnd(terms);
+async function searchAssetsByTag(terms: string[], limit = PER_GROUP_LIMIT, assetWhere: Prisma.AssetWhereInput = {}) {
+  // The gear filter has to narrow the raw id scan too, or the LIMIT would
+  // spend its budget on rows the findMany below then drops.
+  const clauses: Prisma.Sql[] = [tagExistsAnd(terms)];
+  const statuses = (assetWhere.status as { in?: string[] } | undefined)?.in;
+  if (Array.isArray(assetWhere.OR) && assetWhere.OR.length === 0) return [];
+  if (statuses?.length === 0) return [];
+  if (typeof assetWhere.monitored === "boolean") clauses.push(Prisma.sql`monitored = ${assetWhere.monitored}`);
+  if (statuses) clauses.push(Prisma.sql`status::text IN (${Prisma.join(statuses)})`);
+  const where = Prisma.join(clauses, " AND ");
   const rows = await prisma.$queryRaw<{ id: string }[]>`
     SELECT id FROM assets WHERE ${where} ORDER BY hostname ASC NULLS LAST LIMIT ${limit}
   `;
   if (rows.length === 0) return [];
   const assets = await prisma.asset.findMany({
-    where: { id: { in: rows.map((r) => r.id) } },
+    where: { ...assetWhere, id: { in: rows.map((r) => r.id) } },
     orderBy: { hostname: "asc" },
   });
   return assets;
@@ -721,8 +768,10 @@ async function searchPinnedFirewalls(
   mac: string | null,
   limit = PER_GROUP_LIMIT,
   discovered?: DiscoveredHostnameLookup,
+  assetWhere: Prisma.AssetWhereInput = {},
 ) {
   return runAssetSearch(terms, mac, {
+    ...assetWhere,
     assetType: "firewall",
     latitude: { not: null },
     longitude: { not: null },
