@@ -104,6 +104,12 @@ Discover button is disabled and the details panel reads *Disabled until a
 successful connection test* — and a row whose last test failed stays skipped by
 the scheduler until a manual test passes again.
 
+**The scheduler waits five minutes after a restart.** After a service restart or
+an in-app update, no scheduled discovery starts for the first five minutes, so
+Polaris can finish starting up first. A discovery that is due in that window runs
+when it ends, and the next one is still timed from its last run. The **Discover**
+button is not delayed.
+
 The **Discovery Activity** dashboard widget shows in-flight runs with per-run
 progress and amber telemetry for slow ones; the sidebar carries a status panel
 for the same thing.

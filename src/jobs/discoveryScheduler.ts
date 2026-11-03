@@ -3,7 +3,8 @@
  *
  * Scheduled job: runs DHCP discovery for integrations that have autoDiscover
  * enabled, respecting each integration's configured pollInterval (hours).
- * Checks every 15 minutes. Import from app.ts to activate.
+ * Checks every 15 minutes, starting 5 minutes after the process starts (see
+ * STARTUP_GRACE_MS). Import from app.ts to activate.
  *
  * Gate state is persisted on Integration.lastDiscoveryAt so the interval is
  * honoured across application restarts.
@@ -15,6 +16,13 @@ import { triggerDiscovery, isDiscoveryRunning } from "../services/discovery/disc
 import { runInstrumentedJob } from "./_metrics.js";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+
+// Startup grace: the first check waits this long after the process starts, so
+// a service reload or in-app update never lands a discovery on top of boot work
+// (migrations, cache warm-up, the first monitor passes, pg-boss start). A
+// discovery that is due at startup, or comes due inside the window, simply runs
+// at the end of it; lastDiscoveryAt is untouched, so the interval is not reset.
+export const STARTUP_GRACE_MS = 5 * 60 * 1000;
 
 async function runScheduledDiscoveries(): Promise<void> {
   await runInstrumentedJob("discoveryScheduler", async () => {
@@ -58,7 +66,8 @@ async function runScheduledDiscoveries(): Promise<void> {
 
 /**
  * Start the discovery scheduler (singleton — runs only in roles with
- * runsSchedulers, i.e. web/all). Fires once immediately, then every 15 min.
+ * runsSchedulers, i.e. web/all). Fires once STARTUP_GRACE_MS after startup,
+ * then every 15 min from there.
  */
 export function startDiscoveryScheduler(): void {
   const kick = () => {
@@ -66,6 +75,8 @@ export function startDiscoveryScheduler(): void {
       logger.error(err, "Discovery scheduler tick failed");
     });
   };
-  kick();
-  setInterval(kick, CHECK_INTERVAL_MS);
+  setTimeout(() => {
+    kick();
+    setInterval(kick, CHECK_INTERVAL_MS);
+  }, STARTUP_GRACE_MS);
 }
