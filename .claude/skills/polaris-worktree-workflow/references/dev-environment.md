@@ -19,8 +19,15 @@ printf '%s %s\n' "$(date -u +%FT%TZ)" "dev stack polaris-<slug> pg=<pgport> app=
 # pick the lowest free pair starting at 5433 / 3100 (podman ps -a shows what is taken)
 export POLARIS_DEV_PG_PORT=<pgport> POLARIS_DEV_APP_PORT=<appport>
 podman compose -f compose.dev.yml -p polaris-<slug> up -d postgres
+# On Windows, BUILD THE DEV IMAGE BY HAND FIRST: podman-compose ignores `dockerfile:` there
+# and builds the PRODUCTION image, whose tini entrypoint swallows `run --rm app npm install`
+# ("Cannot find module '/app/dist/index.js'"). The tag is <project>_<service>, underscores.
+podman build -f Dockerfile.dev -t polaris-<slug>_app .
 podman compose -f compose.dev.yml -p polaris-<slug> run --rm app npm install
 ```
+
+Container names from podman-compose use **underscores** (`polaris-<slug>_postgres_1`,
+`polaris-<slug>_app_1`), not the dashes some lines below spell.
 
 Then either let the first-run wizard run (open `http://127.0.0.1:<appport>`, host `postgres`,
 port `5432`, user/password/db `polaris` — it writes `.env` and `.setup-complete` into the
@@ -39,7 +46,11 @@ vitest suite) it is `postgresql://polaris:polaris@127.0.0.1:<pgport>/polaris`.
 ```
 podman compose -f compose.dev.yml -p polaris-<slug> run --rm app npx prisma migrate deploy
 podman compose -f compose.dev.yml -p polaris-<slug> run --rm app npm run db:seed
-podman compose -f compose.dev.yml -p polaris-<slug> up -d app
+# NOT `up -d app`: its `npm run dev` (node --watch) dies silently in the podman container on
+# Windows and nothing listens. Run the entry without --watch (public/ needs no restart; a
+# src/ change needs `podman restart polaris-<slug>_web`):
+podman compose -f compose.dev.yml -p polaris-<slug> run -d --service-ports \
+  --name polaris-<slug>_web app node --env-file=.env --import tsx/esm src/index.ts
 ```
 
 `db:seed` creates `admin` / `admin` and some IP space but **no assets**; for device-filter
@@ -142,6 +153,7 @@ trusting it — a route-level assertion that never saw red has proven nothing.
 ## Tear it down
 
 ```
+podman rm -f polaris-<slug>_web                                  # the `run -d` web container, if started
 podman compose -f compose.dev.yml -p polaris-<slug> down -v      # containers + volumes
 rm DEVLOCK
 ```
