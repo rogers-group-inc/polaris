@@ -2001,8 +2001,13 @@ The **primary** pair is the one monitoring probes. Polaris picks it
   the device moves to its best remaining address, or has none until discovery
   finds one. The old address stays in its IP history. A pinned address, a
   FortiGate / FortiSwitch / FortiAP, and an address the device itself reports
-  (its interface table or agent) keep the address. A released row in the
-  network's IP table no longer links to the device by name.
+  (its interface table or agent) keep the address.
+- **A reservation belongs to a device by its MAC address, never its
+  hostname.** Polaris finds the device whose MAC list holds the reservation's
+  MAC. A reservation with no MAC, or a MAC two devices both list, belongs to
+  no device. In a network's IP table, a row links to the device whose IP it
+  is, or else to the device holding a live reservation's MAC. A released row
+  links only by IP.
 
 ### Rule 103
 

@@ -146,6 +146,23 @@ d("a released DHCP binding leaves the asset (business rule 102(b))", () => {
     expect(await rowsOf(scraped)).toEqual([{ ip: "10.97.6.14", source: "monitor-system-info" }]);
   });
 
+  it("identifies the asset by the binding's MAC only", async () => {
+    // Attributed to the releasing gate and on the released address, but its
+    // card is not the binding's: left alone (no gate / hostname guessing).
+    const other = await asset("same-gate-other-card", "10.97.6.16", {
+      macAddress: WIFI, learnedLocation: GATE, macAddressRows: { create: [{ mac: WIFI, source: "dhcp_lease" }] },
+    });
+    expect(await detachReleasedAddress({ ip: "10.97.6.16", gate: GATE, macAddress: ETH })).toEqual([]);
+    expect(await ipOf(other)).toBe("10.97.6.16");
+
+    // No MAC on the binding, or a MAC two assets list: nothing is detached.
+    const a = await asset("shared-a", "10.97.6.17");
+    const b = await asset("shared-b", "10.97.6.17");
+    expect(await detachReleasedAddress({ ip: "10.97.6.17", gate: GATE, macAddress: ETH })).toEqual([]);
+    expect(await detachReleasedAddress({ ip: "10.97.6.17", gate: GATE, macAddress: null })).toEqual([]);
+    expect([await ipOf(a), await ipOf(b)]).toEqual(["10.97.6.17", "10.97.6.17"]);
+  });
+
   it("does not touch the same address behind another gate", async () => {
     const id = await asset("elsewhere", "10.97.6.15", {
       macAddress: WIFI, learnedLocation: OTHER_GATE, macAddressRows: { create: [{ mac: WIFI, source: "dhcp_lease" }] },

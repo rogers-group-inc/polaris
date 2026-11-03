@@ -389,6 +389,39 @@ d("GET /api/v1/subnets/:id/ips", () => {
       await prisma.asset.deleteMany({ where: { id: { in: [withRes.id, bare.id] } } });
     }
   });
+
+  // Business rule 102(b): a row the asset's IP does not name links through the
+  // reservation's MAC — never its hostname, and never for a released row.
+  it("links a live reservation by its MAC, never by hostname", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const subnetId = await seed(agent, csrf);
+    const MAC = "AA:BB:CC:70:00:01";
+    await prisma.reservation.create({
+      data: { subnetId, ipAddress: "10.70.0.1", hostname: "PANEL-NAME", macAddress: MAC.toLowerCase(), status: "active", sourceType: "dhcp_reservation", createdBy: "t" },
+    });
+    await prisma.reservation.create({
+      data: { subnetId, ipAddress: "10.70.0.3", hostname: "PANEL-NAME", macAddress: MAC, status: "released", sourceType: "dhcp_reservation", createdBy: "t" },
+    });
+    // Same name, other card: must not be linked.
+    const sameName = await prisma.asset.create({
+      data: { hostname: "PANEL-NAME", assetType: "workstation", status: "active", macAddress: "AA:BB:CC:70:00:99",
+        macAddressRows: { create: [{ mac: "AA:BB:CC:70:00:99", source: "manual" }] } },
+    });
+    // The card the reservation names, on another address.
+    const byCard = await prisma.asset.create({
+      data: { hostname: "PANEL-CARD", assetType: "workstation", status: "active", macAddress: MAC,
+        macAddressRows: { create: [{ mac: MAC, source: "dhcp_reservation" }] } },
+    });
+    try {
+      const resp = await agent.get(`/api/v1/subnets/${subnetId}/ips?page=1&pageSize=4`);
+      expect(resp.status).toBe(200);
+      const byIp = new Map(resp.body.ips.map((i: any) => [i.address, i]));
+      expect(byIp.get("10.70.0.1")).toMatchObject({ assetId: byCard.id, assetHostname: "PANEL-CARD" });
+      expect(byIp.get("10.70.0.3")).toMatchObject({ assetId: null });
+    } finally {
+      await prisma.asset.deleteMany({ where: { id: { in: [sameName.id, byCard.id] } } });
+    }
+  });
 });
 
 // ─── GET /api/v1/subnets/:id ──────────────────────────────────────────────────

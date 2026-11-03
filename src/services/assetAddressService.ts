@@ -35,7 +35,7 @@ import { prisma } from "../db.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
 import { chunkArray } from "../utils/chunk.js";
 import { mostSpecificContaining } from "../utils/cidr.js";
-import { normalizeMacOrNull } from "../utils/mac.js";
+import { isAllZeroMac, normalizeMacOrNull } from "../utils/mac.js";
 import type { AddressMedium } from "../utils/dhcpClaimFreshness.js";
 import { logEvent } from "./eventLogService.js";
 import { bestListedAddress } from "./primaryAddressService.js";
@@ -366,11 +366,13 @@ export interface DetachedAddress {
  * than on the next gate read or the next time the asset is opened (102(a)).
  * Called by `releaseReservation` once the release has been sent to the gate.
  *
- * The assets are the ones the binding named: an address-list row at the IP on
- * the releasing gate, or — for an asset whose rows were never written — the
- * asset whose primary address it is and that either carries the binding's MAC
- * or is attributed to that gate. Scoped by gate because RFC1918 space repeats
- * behind different gates. For each: every discovered row at that IP goes (the
+ * The asset is the one the binding's MAC names, and only that: the ONE asset
+ * whose MAC list (`AssetMacAddress`, single-MAC rows) holds it, and only when
+ * that asset carries the address — a discovered row at the IP on the releasing
+ * gate (gate-scoped because RFC1918 space repeats behind gates), or its primary
+ * address. Never by hostname or by which gate the asset is attributed to: a
+ * binding with no usable MAC, or a MAC two assets list, detaches nothing, the
+ * same refusal rule 139 makes. For that asset: every discovered row at that IP goes (the
  * DHCP binding and the ARP entry learned from it — the next read restores
  * whatever the gate still really holds), and when the IP was its primary
  * address and `judgeReleasedAddress` says move, `ipAddress` moves to the
@@ -386,27 +388,22 @@ export async function detachReleasedAddress(input: {
 }): Promise<DetachedAddress[]> {
   const { ip, gate, actor } = input;
   const mac = normalizeMacOrNull(input.macAddress);
-  const [rowHolders, primaryHolders] = await Promise.all([
-    prisma.assetAssociatedIp.findMany({
-      where: { ip, device: gate, source: { in: [...DISCOVERED_ADDRESS_SOURCES] } },
-      select: { assetId: true },
-    }),
-    prisma.asset.findMany({
-      where: {
-        ipAddress: ip,
-        OR: [
-          { learnedLocation: gate },
-          ...(mac ? [{ macAddressRows: { some: { mac } } }] : []),
-        ],
-      },
-      select: { id: true },
-    }),
-  ]);
-  const assetIds = [...new Set([...rowHolders.map((r) => r.assetId), ...primaryHolders.map((a) => a.id)])];
-  if (assetIds.length === 0) return [];
+  if (!mac || isAllZeroMac(mac)) return [];
+  const owners = await prisma.assetMacAddress.findMany({
+    where: { mac, macEnd: null },
+    select: { assetId: true },
+  });
+  const ownerIds = [...new Set(owners.map((o) => o.assetId))];
+  if (ownerIds.length !== 1) return [];
 
   const assets = await prisma.asset.findMany({
-    where: { id: { in: assetIds } },
+    where: {
+      id: ownerIds[0],
+      OR: [
+        { ipAddress: ip },
+        { associatedIpRows: { some: { ip, device: gate, source: { in: [...DISCOVERED_ADDRESS_SOURCES] } } } },
+      ],
+    },
     select: {
       id: true, hostname: true, ipAddress: true, ipSource: true, assetType: true,
       ipOverride: true, ipBlankPinned: true, primaryAddressMac: true,

@@ -38,7 +38,7 @@
 import type { Prisma, SubnetStatus } from "../generated/prisma/client.js";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
-import { DEFAULT_PLACEHOLDER_MAC_PREFIX } from "../utils/mac.js";
+import { DEFAULT_PLACEHOLDER_MAC_PREFIX, isAllZeroMac, normalizeMacOrNull } from "../utils/mac.js";
 import { getPlaceholderPrefix } from "./reservationMacService.js";
 import { isFortinetIntegrationType } from "../utils/pollingCompatibility.js";
 import { integrationPushEnabled } from "./reservationPushService.js";
@@ -986,6 +986,56 @@ export async function moveSubnet(id: string, targetBlockId: string, actor?: stri
 /** One full Reservation row, as the IP panel's DTO builder takes it. */
 type SubnetIpReservationRow = Awaited<ReturnType<typeof prisma.reservation.findMany>>[number];
 
+/**
+ * The asset an ACTIVE reservation belongs to by its MAC, for the IP panel's
+ * link (business rule 102(b)). Pure: `owners` are `AssetMacAddress` rows
+ * (single-MAC, `macEnd` null) for the reservations' MACs. A MAC two assets
+ * list links nothing — which device holds the reservation is then a
+ * duplicate-record question — and neither does the all-zero MAC (rule 97), a
+ * reservation with no MAC, or a released / expired row.
+ */
+export function linkReservationsByMac(
+  owners: ReadonlyArray<{ mac: string; asset: { id: string; hostname: string | null } }>,
+): { assetFor: (r: Pick<SubnetIpReservationRow, "status" | "macAddress">) => string | null; hostnames: Map<string, string | null> } {
+  const byMac = new Map<string, Set<string>>();
+  const hostnames = new Map<string, string | null>();
+  for (const o of owners) {
+    const mac = normalizeMacOrNull(o.mac);
+    if (!mac) continue;
+    const set = byMac.get(mac) ?? new Set<string>();
+    set.add(o.asset.id);
+    byMac.set(mac, set);
+    hostnames.set(o.asset.id, o.asset.hostname);
+  }
+  return {
+    assetFor: (r) => {
+      if (r.status !== "active") return null;
+      const mac = normalizeMacOrNull(r.macAddress);
+      if (!mac || isAllZeroMac(mac)) return null;
+      const ids = byMac.get(mac);
+      return ids && ids.size === 1 ? [...ids][0] : null;
+    },
+    hostnames,
+  };
+}
+
+/** `linkReservationsByMac` over the MAC rows for these reservations — one read. */
+async function reservationAssetsByMac(reservations: ReadonlyArray<SubnetIpReservationRow>) {
+  const macs = [...new Set(
+    reservations
+      .filter((r) => r.status === "active")
+      .map((r) => normalizeMacOrNull(r.macAddress))
+      .filter((m): m is string => !!m && !isAllZeroMac(m)),
+  )];
+  const owners = macs.length
+    ? await prisma.assetMacAddress.findMany({
+        where: { mac: { in: macs }, macEnd: null },
+        select: { mac: true, asset: { select: { id: true, hostname: true } } },
+      })
+    : [];
+  return linkReservationsByMac(owners);
+}
+
 export async function getSubnetIps(id: string, page: number, pageSize: number) {
   // Reservations are NOT included here. This endpoint answers ONE page of
   // addresses (50-256), and an actively-leased /20 or /21 carries thousands of
@@ -1102,42 +1152,35 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
   // DHCP discovery commonly produces multiple reservations for the same host
   // (one per interface MAC), but Asset.ipAddress only points at the most
   // recent primary IP — so direct ipAddress lookup links just one row to the
-  // asset. Fall back to hostname matching for the remaining rows so every
-  // reservation that came from the same asset gets the Asset button.
+  // asset. The remaining rows link through their MAC (`reservationAssetsByMac`)
+  // so every reservation of the same device gets its link. Never by hostname
+  // (business rule 102(b)): a name is not an identity (rule 91), and a
+  // reservation's hostname is whatever the client or an operator typed.
   if (isIpv6) {
     // A v6 subnet is not enumerable, so the reservations ARE the result —
     // every row is returned and there is nothing to narrow to.
     const allReservations = await prisma.reservation.findMany({ where: { subnetId: id } });
     const ipv6Addrs = allReservations.filter(r => r.ipAddress).map(r => r.ipAddress!);
-    const ipv6Hostnames = Array.from(new Set(
-      allReservations.map(r => r.hostname).filter((h): h is string => !!h),
-    ));
-    const v6Assets = (ipv6Addrs.length > 0 || ipv6Hostnames.length > 0)
-      ? await prisma.asset.findMany({
-          where: {
-            OR: [
-              ...(ipv6Addrs.length > 0 ? [{ ipAddress: { in: ipv6Addrs } }] : []),
-              ...(ipv6Hostnames.length > 0 ? [{ hostname: { in: ipv6Hostnames } }] : []),
-            ],
-          },
-          select: { id: true, ipAddress: true, hostname: true },
-        })
-      : [];
+    const [v6Assets, v6ByMac] = await Promise.all([
+      ipv6Addrs.length > 0
+        ? prisma.asset.findMany({
+            where: { ipAddress: { in: ipv6Addrs } },
+            select: { id: true, ipAddress: true, hostname: true },
+          })
+        : Promise.resolve([]),
+      reservationAssetsByMac(allReservations),
+    ]);
     const assetByIpV6 = new Map<string, string>();
-    const assetByHostnameV6 = new Map<string, string>();
-    const assetHostnameByIdV6 = new Map<string, string | null>();
+    const assetHostnameByIdV6 = new Map<string, string | null>(v6ByMac.hostnames);
     for (const a of v6Assets) {
       if (a.ipAddress) assetByIpV6.set(a.ipAddress, a.id);
-      if (a.hostname && !assetByHostnameV6.has(a.hostname)) assetByHostnameV6.set(a.hostname, a.id);
       assetHostnameByIdV6.set(a.id, a.hostname);
     }
 
     const ips = allReservations
       .filter(r => r.ipAddress)
       .map(r => {
-        const assetId =
-          assetByIpV6.get(r.ipAddress!) ??
-          (r.hostname && r.status === "active" ? assetByHostnameV6.get(r.hostname) ?? null : null);
+        const assetId = assetByIpV6.get(r.ipAddress!) ?? v6ByMac.assetFor(r);
         return {
           address: r.ipAddress!,
           type: "host" as const,
@@ -1177,39 +1220,28 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
       }
     }
   }
-  const pageHostnames = Array.from(new Set(
-    pageAddrs
-      .map(a => reservationMap.get(a)?.hostname)
-      .filter((h): h is string => !!h),
-  ));
-  const pageAssets = (pageAddrs.length > 0 || pageHostnames.length > 0)
-    ? await prisma.asset.findMany({
-        where: {
-          OR: [
-            ...(pageAddrs.length > 0 ? [{ ipAddress: { in: pageAddrs } }] : []),
-            ...(pageHostnames.length > 0 ? [{ hostname: { in: pageHostnames } }] : []),
-          ],
-        },
-        select: { id: true, ipAddress: true, hostname: true },
-      })
-    : [];
+  const [pageAssets, byMac] = await Promise.all([
+    pageAddrs.length > 0
+      ? prisma.asset.findMany({
+          where: { ipAddress: { in: pageAddrs } },
+          select: { id: true, ipAddress: true, hostname: true },
+        })
+      : Promise.resolve([]),
+    reservationAssetsByMac([...reservationMap.values()]),
+  ]);
   const assetByIp = new Map<string, string>();
-  const assetByHostname = new Map<string, string>();
-  const assetHostnameById = new Map<string, string | null>();
+  const assetHostnameById = new Map<string, string | null>(byMac.hostnames);
   for (const a of pageAssets) {
     if (a.ipAddress) assetByIp.set(a.ipAddress, a.id);
-    if (a.hostname && !assetByHostname.has(a.hostname)) assetByHostname.set(a.hostname, a.id);
     assetHostnameById.set(a.id, a.hostname);
   }
 
   const ips = addresses.map(addr => {
     const r = reservationMap.get(addr.address);
-    // The hostname fallback is for a LIVE reservation only: a released row is
-    // history, and linking it by name kept a released address pointing at
-    // the asset it used to belong to (business rule 102(b)).
-    const assetId =
-      assetByIp.get(addr.address) ??
-      (r?.hostname && r.status === "active" ? assetByHostname.get(r.hostname) ?? null : null);
+    // The MAC fallback is for a LIVE reservation only: a released row is
+    // history, and linking it kept a released address pointing at the asset
+    // it used to belong to (business rule 102(b)).
+    const assetId = assetByIp.get(addr.address) ?? (r ? byMac.assetFor(r) : null);
     return {
       address: addr.address,
       type: addr.type,

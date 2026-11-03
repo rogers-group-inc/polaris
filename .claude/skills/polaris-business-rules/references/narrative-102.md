@@ -74,6 +74,13 @@ Offered three choices for the asset's address — move off it, move only when th
 
 Rejected: moving only on a confirmed lease release (the owner's choice was the broader one, and FortiOS's release-lease answer does not prove the client stopped using the address either); clearing `ipAddress` on a Polaris-only release (flaps against discovery).
 
+**MAC only (2026-11-03).** The owner, the next day, verbatim: "I don't want to identify duplicate reservations by hostname, i believe MAC is the only thing we can use." Rule 139's grouping already matched by MAC alone, but two places of this clause still named a reservation's asset some other way, and both were changed the same day:
+
+- **The IP panel's fallback is the MAC, not the hostname.** A row the asset's own IP does not name links to the ONE asset whose `AssetMacAddress` rows hold the live reservation's MAC (`subnetService → linkReservationsByMac`). Before, it took the first asset with the reservation's hostname — a name the client or an operator typed, which rule 91 already says is not an identity; a laptop renamed, or two devices sharing a default name, put the link on the wrong asset. A MAC two assets list links nothing, the same refusal rule 139 makes.
+- **The release detach finds its asset by the binding's MAC alone.** The 2026-11-02 version also took an asset whose primary address was the released one and whose `learnedLocation` was the releasing gate — no MAC needed. That arm is gone: the asset is the one owner of the binding's MAC, and only when it carries the address (a discovered row on the gate, or its primary). A binding with no MAC, the all-zero MAC, or a MAC two assets list detaches nothing.
+
+Rejected: keeping hostname as a last resort for MAC-less reservations (a full-subnet or manual row with no MAC is exactly where a typed name is least trustworthy); detaching from every owner of a shared MAC (which device held the binding is then a duplicate-record question — rules 40, 83).
+
 ### Rejected
 
 - **Per-MAC IP columns on `AssetMacAddress`.** One IP per card — wrong as soon as a card has a secondary address.
