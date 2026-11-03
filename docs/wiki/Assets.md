@@ -1528,6 +1528,13 @@ learned address is an access port, many are an uplink or trunk. Only `learned`
 entries count toward that; the bridge's own address and static entries render
 but say nothing about what is reachable through the port.
 
+Each port's row also says what the port is **configured** to carry: its
+**Native** VLAN and its **Tagged** VLANs, as pills (more than six tagged show
+as *+N more*, with the full list on hover; a port allowed every VLAN reads
+*Tagged all*). That is the port's setting, read from the switch's interface
+table. The **VLAN** column on each entry is different: it is the VLAN that
+address was learned in.
+
 Entries on ports Polaris could not resolve to an interface are **hidden behind a
 count and a Show link**, not dropped. On a FortiSwitch these are the trunk/LAG
 pseudo-ports, which publish no port-to-interface mapping, so every address
@@ -1602,8 +1609,9 @@ Table tab shows:
 
 - **Wireless:** each client's MAC, SSID, IP, matched device, band and signal.
   An AP with no clients still appears, marked *No clients connected*.
-- **MAC Table:** each entry's MAC, port, VLAN (filled in on access ports as on a
-  switch's own tab), status and matched device. Trunk / LAG pseudo-port entries
+- **MAC Table:** each entry's MAC, port (with the port's configured **Native**
+  and **Tagged** VLANs under its name), the VLAN it was learned in (filled in
+  on access ports as on a switch's own tab), status and matched device. Trunk / LAG pseudo-port entries
   are hidden behind **Show**. A switch reporting no entries, or one that is not
   monitored, says so.
 

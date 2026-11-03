@@ -61,6 +61,11 @@ const macTable = vi.fn(async () => ({
   ],
   collectedAt: new Date().toISOString(),
   pollIntervalSec: 300,
+  vlanNames: { "10": "Users_VL10" },
+  portVlans: {
+    port7:  { nativeVlan: 10, taggedVlans: [], trunksAllVlans: false },
+    port32: { nativeVlan: 1, taggedVlans: [10, 20], trunksAllVlans: false },
+  },
 }));
 
 const systemInfo = vi.fn(async () => ({
@@ -104,6 +109,7 @@ const childMacTable = vi.fn(async () => ({
     { switchAssetId: "sw", macAddress: "02:5A:C0:00:00:01", vlanId: 30, ifName: null, basePort: 32768, status: "learned", matchedAsset: null },
   ],
   vlanNames: { "30": "Users_VL30" },
+  portVlans: { sw: { port3: { nativeVlan: 30, taggedVlans: [40], trunksAllVlans: false } } },
 }));
 
 // The filter boxes debounce 150 ms.
@@ -236,6 +242,9 @@ describe("MAC Table sheet", () => {
     expect(sheetText()).toContain("port7");
     expect(sheetText()).toContain("access port");
     expect(sheetText()).toContain("uplink / trunk");
+    // Each port's configured VLANs lead its group.
+    expect(sheetText()).toContain("Native Users_VL10");
+    expect(sheetText()).toContain("Native VLAN 1 · Tagged Users_VL10, VLAN 20");
     expect(sheetText()).not.toContain("aa:bb:cc:00:00:05");
     (document.getElementById("mac-unattributed-toggle") as HTMLElement).click();
     expect(sheetText()).toContain("aa:bb:cc:00:00:05");
@@ -338,6 +347,8 @@ describe("a FortiGate's Wireless / MAC Table buttons", () => {
     await flush();
     expect(childMacTable).toHaveBeenCalledWith("fw");
     expect(sheetText()).toContain("Users_VL30");
+    // The entry's port carries its configured VLANs.
+    expect(sheetText()).toContain("port3 (Native Users_VL30 · Tagged VLAN 40)");
     expect(sheetText()).toContain("Not monitored");
     expect(sheetText()).not.toContain("02:5A:C0:00:00:01");
     (document.getElementById("childmac-unattributed-toggle") as HTMLElement).click();

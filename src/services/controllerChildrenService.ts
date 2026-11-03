@@ -24,7 +24,7 @@ import { AppError } from "../utils/errors.js";
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import { controllerStampWhereOr, readFirewallDeviceName } from "../utils/fortinetParentKey.js";
 import { fillAccessPortVlans, type PortVlanState } from "../utils/macForwarding.js";
-import { getVlanNamesForAsset } from "./vlanNameService.js";
+import { getVlanNamesForAsset, portVlansFor, readPortVlans } from "./vlanNameService.js";
 
 export type ControllerChildType = "access_point" | "switch";
 
@@ -136,7 +136,7 @@ export async function getControllerWireless(gateId: string) {
 export async function getControllerMacTable(gateId: string) {
   const switches = await listControllerChildren(gateId, "switch");
   if (switches.length === 0) {
-    return { switches: [], entries: [], vlanNames: await getVlanNamesForAsset(gateId) };
+    return { switches: [], entries: [], vlanNames: await getVlanNamesForAsset(gateId), portVlans: {} };
   }
   const ids = switches.map((s) => s.id);
   const rows = await prisma.assetMacTableEntry.findMany({
@@ -148,25 +148,13 @@ export async function getControllerMacTable(gateId: string) {
       matchedAsset: { select: MATCHED_SELECT },
     },
   });
-  // Port VLAN state only for the switches that have a VLAN-less row to fill.
-  const needFill = [...new Set(rows.filter((r) => r.vlanId == null && r.ifName).map((r) => r.assetId))];
-  const [ifaces, vlanNames] = await Promise.all([
-    needFill.length === 0 ? Promise.resolve([]) : prisma.assetInterface.findMany({
-      where: { assetId: { in: needFill } },
-      select: { assetId: true, ifName: true, nativeVlan: true, taggedVlans: true, trunksAllVlans: true },
-    }),
+  // Port VLAN state for every switch with rows, in one query: it fills the
+  // VLAN-less rows AND is each port's configured native / tagged line.
+  const withRows = [...new Set(rows.map((r) => r.assetId))];
+  const [portsBySwitch, vlanNames] = await Promise.all([
+    readPortVlans(withRows),
     getVlanNamesForAsset(gateId),
   ]);
-  const portsBySwitch = new Map<string, Map<string, PortVlanState>>();
-  for (const i of ifaces) {
-    let ports = portsBySwitch.get(i.assetId);
-    if (!ports) { ports = new Map(); portsBySwitch.set(i.assetId, ports); }
-    ports.set(i.ifName, {
-      nativeVlan: i.nativeVlan,
-      taggedVlans: i.taggedVlans ?? [],
-      trunksAllVlans: i.trunksAllVlans === true,
-    });
-  }
   // fillAccessPortVlans decides "is there a tagged dimension" across ONE
   // switch's ports, so it runs per switch, never over the merged set.
   const bySwitch = new Map<string, typeof rows>();
@@ -175,9 +163,15 @@ export async function getControllerMacTable(gateId: string) {
     if (list) list.push(r); else bySwitch.set(r.assetId, [r]);
   }
   const entries = [];
+  // switch id → ifName → { nativeVlan, taggedVlans, trunksAllVlans }, for the
+  // ports that carry entries and state something.
+  const portVlans: Record<string, Record<string, PortVlanState>> = {};
   for (const [switchId, list] of bySwitch) {
-    const filled = fillAccessPortVlans(list, portsBySwitch.get(switchId) ?? new Map());
+    const ports = portsBySwitch.get(switchId);
+    const filled = fillAccessPortVlans(list, ports ?? new Map());
     for (const { assetId, ...e } of filled) entries.push({ switchAssetId: assetId, ...e });
+    const own = portVlansFor(ports, list.map((r) => r.ifName));
+    if (Object.keys(own).length) portVlans[switchId] = own;
   }
-  return { switches, entries, vlanNames };
+  return { switches, entries, vlanNames, portVlans };
 }

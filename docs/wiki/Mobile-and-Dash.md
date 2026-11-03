@@ -221,9 +221,9 @@ firewall that reports SD-WAN:
 | Device | Button | What it shows |
 |---|---|---|
 | Firewall managing FortiAPs | **View Wireless** | every managed AP's clients, one group per AP (name, IP, model, last poll and an **Open access point** link), as the desktop firewall's Wireless tab. The filter also matches an AP's hostname, IP or model |
-| Firewall managing FortiSwitches | **View MAC Table** | every managed switch's forwarding database, one group per switch, trunk / LAG pseudo-port entries hidden until you tap **Show**. The filter also matches a switch's hostname, IP or model |
+| Firewall managing FortiSwitches | **View MAC Table** | every managed switch's forwarding database, one group per switch, each entry's port followed by its configured Native / Tagged VLANs, trunk / LAG pseudo-port entries hidden until you tap **Show**. The filter also matches a switch's hostname, IP or model |
 | Firewall | **View ARP Table** | the neighbour cache by interface, with the same **Current / Last hour … Last 30 days** range as the desktop tab (ranges past retention are greyed) and a filter over IP, MAC, interface and hostname |
-| Switch | **View MAC Table** | the forwarding database by port, each port marked access port or uplink / trunk; entries on trunk / LAG pseudo-ports are hidden until you tap **Show** |
+| Switch | **View MAC Table** | the forwarding database by port, each port marked access port or uplink / trunk, with the port's configured **Native** / **Tagged** VLANs as its first line; entries on trunk / LAG pseudo-ports are hidden until you tap **Show** |
 | Monitored access point | **View Wireless** | each radio (band, channel, width), the SSIDs it broadcasts, and the clients on each. Clients that match no broadcast SSID are listed under their own heading, not dropped. An AP in a wireless mesh is labelled above the radios: **Mesh root** with the leaf APs it serves, **Mesh leaf** with its parent AP's serial (both on a mesh hop) — the desktop Wireless tab's labels |
 
 Every one of these pages has a **filter box**, even when its table is empty. It matches

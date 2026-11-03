@@ -100,7 +100,7 @@ import { getCredential } from "../../services/credentialService.js";
 import { resolveConnectionPath } from "../../services/connectionPathService.js";
 import { resolveAssetUpstream } from "../../services/assetUpstreamService.js";
 import { resolveAssetVips } from "../../services/assetVipService.js";
-import { fillMacTableVlans, getVlanNamesForAsset } from "../../services/vlanNameService.js";
+import { fillMacTableVlans, getVlanNamesForAsset, portVlansFor, readPortVlans } from "../../services/vlanNameService.js";
 import { countControllerChildren, getControllerMacTable, getControllerWireless } from "../../services/controllerChildrenService.js";
 import { listInterfaceTags, setInterfaceTags } from "../../services/interfaceTagService.js";
 import { shapeManagementAccessForClient } from "../../services/fortinetManagementAccessService.js";
@@ -2936,6 +2936,10 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
     // A FortiSwitch answers only the VLAN-less BRIDGE-MIB table, so its rows
     // arrive with no VLAN; an access port's native VLAN fills them in
     // (`vlanInferred` marks those). vlanNames labels the pills.
+    // Every port's VLAN config, read once: it fills the VLAN-less rows AND is
+    // the per-port native / tagged line (`portVlans`) the tab prints beside
+    // the VLAN each entry was learned in.
+    const ports = (await readPortVlans([id])).get(id);
     const [entries, vlanNames] = await Promise.all([
       fillMacTableVlans(id, rows.map((r) => ({
         macAddress: r.macAddress,
@@ -2946,12 +2950,13 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
         firstSeen:  r.firstSeen,
         lastSeen:   r.lastSeen,
         matchedAsset: r.matchedAsset,
-      }))),
+      })), ports),
       getVlanNamesForAsset(id),
     ]);
     res.json({
       entries,
       vlanNames,
+      portVlans: portVlansFor(ports, rows.map((r) => r.ifName)),
       portCounts,
       collectedAt,
       lastSystemInfoAt: passAsset?.lastSystemInfoAt ?? null,

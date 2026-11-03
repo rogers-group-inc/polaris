@@ -17,7 +17,7 @@ const { prisma } = vi.hoisted(() => ({
 }));
 vi.mock("../../src/db.js", () => ({ prisma }));
 
-import { fillMacTableVlans, getVlanNamesForAsset } from "../../src/services/vlanNameService.js";
+import { fillMacTableVlans, getVlanNamesForAsset, portVlansFor, readPortVlans } from "../../src/services/vlanNameService.js";
 
 const GATE = { id: "GATE", hostname: "fw-site1", serialNumber: "FGT60F0001", assetType: "firewall", fortinetTopology: { deviceName: "site1-fgt" } };
 
@@ -58,8 +58,8 @@ describe("getVlanNamesForAsset", () => {
 describe("fillMacTableVlans", () => {
   it("fills access-port rows and skips the port query when nothing needs it", async () => {
     prisma.assetInterface.findMany.mockResolvedValue([
-      { ifName: "port1", nativeVlan: 30, taggedVlans: [], trunksAllVlans: false },
-      { ifName: "port24", nativeVlan: 1, taggedVlans: [30], trunksAllVlans: false },
+      { assetId: "SW", ifName: "port1", nativeVlan: 30, taggedVlans: [], trunksAllVlans: false },
+      { assetId: "SW", ifName: "port24", nativeVlan: 1, taggedVlans: [30], trunksAllVlans: false },
     ]);
     const out = await fillMacTableVlans("SW", [
       { macAddress: "AA:BB:CC:00:00:01", ifName: "port1", vlanId: null },
@@ -71,5 +71,51 @@ describe("fillMacTableVlans", () => {
     const reported = await fillMacTableVlans("SW", [{ macAddress: "AA:BB:CC:00:00:03", ifName: "port1", vlanId: 40 }]);
     expect(reported[0]).toMatchObject({ vlanId: 40, vlanInferred: false });
     expect(prisma.assetInterface.findMany).not.toHaveBeenCalled();
+  });
+
+  it("uses preloaded ports instead of querying", async () => {
+    const ports = new Map([["port1", { nativeVlan: 30, taggedVlans: [], trunksAllVlans: false }],
+      ["port24", { nativeVlan: 1, taggedVlans: [30], trunksAllVlans: false }]]);
+    const out = await fillMacTableVlans("SW", [{ macAddress: "AA:BB:CC:00:00:01", ifName: "port1", vlanId: null }], ports);
+    expect(out[0]).toMatchObject({ vlanId: 30, vlanInferred: true });
+    expect(prisma.assetInterface.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("readPortVlans", () => {
+  it("groups every port by asset from one IN query", async () => {
+    prisma.assetInterface.findMany.mockResolvedValue([
+      { assetId: "S1", ifName: "port1", nativeVlan: 30, taggedVlans: null, trunksAllVlans: false },
+      { assetId: "S2", ifName: "port48", nativeVlan: 1, taggedVlans: [30, 40], trunksAllVlans: true },
+    ]);
+    const out = await readPortVlans(["S1", "S2"]);
+    expect(prisma.assetInterface.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.assetInterface.findMany.mock.calls[0][0].where).toEqual({ assetId: { in: ["S1", "S2"] } });
+    expect(out.get("S1")!.get("port1")).toEqual({ nativeVlan: 30, taggedVlans: [], trunksAllVlans: false });
+    expect(out.get("S2")!.get("port48")).toEqual({ nativeVlan: 1, taggedVlans: [30, 40], trunksAllVlans: true });
+  });
+
+  it("skips the query for no assets", async () => {
+    expect((await readPortVlans([])).size).toBe(0);
+    expect(prisma.assetInterface.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("portVlansFor", () => {
+  const ports = new Map([
+    ["port1", { nativeVlan: 30, taggedVlans: [], trunksAllVlans: false }],
+    ["port2", { nativeVlan: null, taggedVlans: [], trunksAllVlans: false }],
+    ["port48", { nativeVlan: 1, taggedVlans: [30, 40], trunksAllVlans: false }],
+  ]);
+
+  it("keeps only the named ports that state something", () => {
+    expect(portVlansFor(ports, ["port1", "port2", "port48", null, "port9"])).toEqual({
+      port1: { nativeVlan: 30, taggedVlans: [], trunksAllVlans: false },
+      port48: { nativeVlan: 1, taggedVlans: [30, 40], trunksAllVlans: false },
+    });
+  });
+
+  it("is empty with no port data", () => {
+    expect(portVlansFor(undefined, ["port1"])).toEqual({});
   });
 });

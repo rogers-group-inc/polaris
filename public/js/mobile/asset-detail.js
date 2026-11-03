@@ -3318,6 +3318,20 @@
     });
   }
 
+  // A port's CONFIGURED VLANs as text — "Native Users_VL30 · Tagged VLAN 40,
+  // VLAN 50" (or "Tagged all") — the desktop's _portVlansHTML in words: the
+  // MAC Table rows otherwise say only the VLAN each entry was learned in.
+  // `state` is a portVlans value; "" when the port states nothing.
+  function portVlansText(state, vlanLabel) {
+    if (!state) return "";
+    var bits = [];
+    if (state.nativeVlan != null) bits.push("Native " + escapeHtml(vlanLabel(state.nativeVlan)));
+    var tagged = Array.isArray(state.taggedVlans) ? state.taggedVlans : [];
+    if (state.trunksAllVlans === true) bits.push("Tagged all");
+    else if (tagged.length) bits.push("Tagged " + tagged.map(function (v) { return escapeHtml(vlanLabel(v)); }).join(", "));
+    return bits.join(" · ");
+  }
+
   function tableFilter() {
     return ((_tableSheet && _tableSheet.filterText) || "").trim().toLowerCase();
   }
@@ -3491,6 +3505,8 @@
       // VLAN id -> name (vlanNameService); an unnamed id stays "VLAN 30".
       var vlanNames = (data && data.vlanNames) || {};
       function vlanLabel(id) { return vlanNames[String(id)] || ("VLAN " + id); }
+      // ifName → the port's configured native / tagged VLANs.
+      var portVlans = (data && data.portVlans) || {};
       var controls = document.getElementById("table-sheet-controls");
       var meta = document.getElementById("table-sheet-meta");
       var body = document.getElementById("table-sheet-body");
@@ -3561,6 +3577,10 @@
               if (dev) sub.push(dev);
               return tableRowHtml(escapeHtml(e.macAddress), sub.join(" · "));
             }).join("");
+            // The port's configured VLANs lead its group: a phone-width
+            // header would truncate them. Resolved ports only.
+            var cfg = g.resolved ? portVlansText(portVlans[g.key], vlanLabel) : "";
+            if (cfg) rows = '<div class="muted" style="padding:2px 0 6px 24px;font-size:13px;">' + cfg + '</div>' + rows;
             return tableGroupHtml(g.key, summary, rows, expanded);
           }).join("");
         }
@@ -3866,6 +3886,8 @@
       var entries = (data && data.entries) || [];
       var vlanNames = (data && data.vlanNames) || {};
       function vlanLabel(id) { return vlanNames[String(id)] || ("VLAN " + id); }
+      // switch id → ifName → the port's configured native / tagged VLANs.
+      var portVlans = (data && data.portVlans) || {};
       function portOf(e) { return e.ifName || ("base port " + (e.basePort != null ? e.basePort : "?")); }
       var bySw = {};
       entries.forEach(function (e) { (bySw[e.switchAssetId] = bySw[e.switchAssetId] || []).push(e); });
@@ -3918,7 +3940,8 @@
             var portCount = Object.keys(ports).length;
             var rows = childOpenRowHtml(g.sw, "switch") + (g.shown.length
               ? g.shown.map(function (e) {
-                  var sub = [escapeHtml(portOf(e))];
+                  var cfg = e.ifName && portVlans[e.switchAssetId] ? portVlansText(portVlans[e.switchAssetId][e.ifName], vlanLabel) : "";
+                  var sub = [escapeHtml(portOf(e)) + (cfg ? " (" + cfg + ")" : "")];
                   if (e.vlanId != null) sub.push(escapeHtml(vlanLabel(e.vlanId)) + (e.vlanInferred ? " (inferred)" : ""));
                   if (e.status) sub.push(escapeHtml(e.status));
                   var dev = matchedDeviceHtml(e.matchedAsset);
