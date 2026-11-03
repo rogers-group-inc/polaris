@@ -1,0 +1,128 @@
+<!-- @dsCard group="Actions" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Saved folder tree</title>
+<style>
+  body { padding: 24px; }
+  .demo { padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--color-border); }
+  .demo:last-of-type { border-bottom: none; }
+  .row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  /* The menus are drawn open, in place, rather than dropped from a button. */
+  .static-menu { position: static; display: block; width: 360px; max-height: none; }
+  .static-modal { position: static; transform: none; opacity: 1; width: 480px; }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Saved folder tree</h2></div>
+
+  <div class="demo">
+    <div class="card-title">Filters ▾ / Dashboards ▾ — folders, owners, drag and drop</div>
+    <div class="row">
+      <div class="btn-dropdown-menu sfl-menu static-menu">
+        <button type="button">Save current filters…</button>
+        <button type="button">New folder</button>
+        <div class="dropdown-divider"></div>
+        <div class="dropdown-heading">My filters</div>
+        <div class="sft-folder" draggable="true">
+          <button type="button" class="sft-toggle" aria-expanded="true">
+            <svg class="sft-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            <svg class="sft-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span class="sfl-name">Firewalls</span><span class="sft-count">2</span>
+          </button>
+          <button type="button" class="sft-more" aria-label="Folder actions for Firewalls"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+        </div>
+        <div class="sfl-row sft-dragging" draggable="true" style="padding-left:20px">
+          <button type="button" class="sfl-load"><span class="sfl-name">Down firewalls</span><span class="sfl-badge">Public</span></button>
+          <button type="button" class="sfl-del" aria-label="Delete">&times;</button>
+        </div>
+        <div class="sft-folder sft-drop" draggable="true" style="padding-left:20px">
+          <button type="button" class="sft-toggle" aria-expanded="false">
+            <svg class="sft-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            <svg class="sft-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span class="sfl-name">HQ</span><span class="sft-count">1</span>
+          </button>
+          <button type="button" class="sft-more" aria-label="Folder actions for HQ"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+        </div>
+        <div class="dropdown-heading">Shared filters</div>
+        <div class="sft-folder">
+          <button type="button" class="sft-toggle" aria-expanded="false">
+            <svg class="sft-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            <svg class="sft-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span class="sfl-name">NOC</span><span class="sft-count">5</span><span class="sfl-badge">Public</span><span class="sfl-owner">Role · NOC Operators</span>
+          </button>
+        </div>
+        <div class="dropdown-heading">Ownerless</div>
+        <div class="sfl-row" draggable="true">
+          <button type="button" class="sfl-load"><span class="sfl-name">Old ISP circuits</span><span class="sfl-badge">Public</span><span class="sfl-owner">was rlee</span></button>
+          <button type="button" class="sfl-del" aria-label="Delete">&times;</button>
+        </div>
+      </div>
+      <div class="btn-dropdown-menu row-context-menu static-menu" style="width:220px">
+        <button type="button">New subfolder</button>
+        <button type="button">Rename</button>
+        <button type="button">Make public</button>
+        <button type="button">Change owner</button>
+        <button type="button">Make private to me</button>
+        <div class="dropdown-divider"></div>
+        <button type="button" class="danger">Delete folder</button>
+      </div>
+    </div>
+    <p class="hint">
+      One tree for both menus (<code>public/js/saved-tree.js</code>, business rule 140). A folder
+      row is <code>.sft-folder</code>: a <code>.sft-toggle</code> (chevron, folder icon, name,
+      <code>.sft-count</code>, Public badge, owner) and a <code>.sft-more</code> ⋯ that opens the
+      ordinary row menu. Children indent 20px per level with an inline <code>padding-left</code>.
+      While dragging, the row dims (<code>.sft-dragging</code>) and the folder or section heading it
+      would land in takes a dashed accent outline (<code>.sft-drop</code>). The owner label reads
+      <em>Role · …</em>, <em>Region · …</em>, a username, or <em>was …</em> when ownerless; it is
+      omitted on what is simply yours. Rename edits in place (<code>.sft-rename</code>).
+    </p>
+  </div>
+
+  <div class="demo">
+    <div class="card-title">Change owner — and the warning every hand-over carries</div>
+    <div class="modal static-modal">
+      <div class="modal-header"><h3>Change owner</h3></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>New owner</label>
+          <div class="sfo-kind">
+            <label class="sfl-vis"><input type="radio" name="k"><span>A user</span></label>
+            <select disabled aria-label="User"><option>Choose a user</option></select>
+            <label class="sfl-vis"><input type="radio" name="k" checked><span>A role</span></label>
+            <select aria-label="Role"><option>NOC Operators</option></select>
+            <label class="sfl-vis"><input type="radio" name="k"><span>A region</span></label>
+            <select disabled aria-label="Region"><option>Choose a region</option></select>
+          </div>
+        </div>
+        <div class="sfo-warn" role="alert">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>
+          <div>
+            <p><strong>You will no longer own this folder.</strong> Only members of the NOC Operators role will be able to rename, move, publish, delete or hand it on.</p>
+            <p>You can’t undo this yourself; the new owner would have to give it back.</p>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:12px">
+          <label for="pk">Folder (the Save modals' picker)</label>
+          <div class="sft-picker-row">
+            <select id="pk"><option>Top level</option><option>Firewalls</option><option selected>&#160;&#160;&#160;&#160;HQ</option></select>
+            <button type="button" class="btn btn-secondary btn-sm">New folder</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary">Cancel</button>
+        <button type="button" class="btn btn-warning">Change owner</button>
+      </div>
+    </div>
+    <p class="hint">
+      <code>.sfo-kind</code> is the owner grid (a radio column, a picker column);
+      <code>.sfo-warn</code> is the warning callout Change owner and Make private to me both use —
+      a warning-tinted box with its icon, never a toast, because the reader must see it BEFORE
+      confirming. The confirm button is <code>.btn-warning</code>, not danger: nothing is deleted.
+    </p>
+  </div>
+</body>
+</html>

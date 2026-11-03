@@ -50,15 +50,25 @@ Your personal layout — every tab — saves automatically to your account
 
 A layout can also be **named and saved** as a `SavedDashboard`, private or
 public, from the **Dashboards ▾** menu → **Save this dashboard…**. The menu
-sits beside the pencil and **shows only while you are customizing** (or, on
-the Dash wallboard, while a [linked tab](Mobile-and-Dash#what-it-can-show) is on screen, where
-it holds **Unlink this tab**). What is saved is the tab you are looking at — its widgets, columns,
+sits beside the pencil, whether or not you are customizing (on the Dash
+wallboard it shows only while customizing or while a
+[linked tab](Mobile-and-Dash#what-it-can-show) is on screen, where it holds
+**Unlink this tab**). What is saved is the tab you are looking at — its widgets, columns,
 sizes and per-widget settings. Saving over one of your own names replaces it.
 
 The same menu lists **My dashboards** and **Shared dashboards** (everyone's
-published ones). Loading one adds it as a **new tab of your own layout — a
-copy**, so editing it never writes back to someone else's row, and later
-edits by its owner do not follow it.
+published ones). **Click a row to load it into the tab you are on**, replacing
+that tab's widgets (Polaris asks first if the tab has any); its **⊞** adds it as
+a **new tab** instead. Either way it is **a copy of your own**, so editing it
+never writes back to someone else's row, and later edits by its owner do not
+follow it.
+
+Saved dashboards go into **folders** and have **owners** exactly like
+[saved filters](Assets#view-tabs-and-saved-filters): **New folder**, a **Folder**
+field when saving, drag and drop between folders, a folder's **⋯** menu,
+**Change owner** to a user, role or region, and **Make private to me**. Only the
+owner can rename, publish, delete or hand one on, public ones included
+([rule 140](Business-Rules#rule-140)).
 
 | Level | Grants |
 |---|---|

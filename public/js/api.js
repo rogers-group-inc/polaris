@@ -753,11 +753,25 @@ const api = {
     get: ()    => request("GET", "/me/hidden-map-regions"),
     set: (ids) => request("PUT", "/me/hidden-map-regions", { regionIds: ids }),
   },
+  // list → { filters, folders }. Folders, ownership and Make private to me
+  // are business rule 140 (public/js/saved-tree.js draws the tree).
   savedFilters: {
     list:   (scope)   => request("GET",    "/saved-filters" + toQuery({ scope })),
     create: (body)    => request("POST",   "/saved-filters", body),
     update: (id, b)   => request("PUT",    `/saved-filters/${id}`, b),
     delete: (id)      => request("DELETE", `/saved-filters/${id}`),
+    move:   (id, folderId) => request("PATCH", `/saved-filters/${id}/folder`, { folderId }),
+    setOwner: (id, owner) => request("POST", `/saved-filters/${id}/owner`, { owner }),
+    takePrivate: (id) => request("POST",   `/saved-filters/${id}/make-private`, {}),
+    ownerOptions: (scope) => request("GET", "/saved-filters/owner-options" + toQuery({ scope })),
+    folders: {
+      create:   (body)       => request("POST",   "/saved-filters/folders", body),
+      update:   (id, b)      => request("PUT",    `/saved-filters/folders/${id}`, b),
+      move:     (id, parentId) => request("PATCH", `/saved-filters/folders/${id}/parent`, { parentId }),
+      delete:   (id)         => request("DELETE", `/saved-filters/folders/${id}`),
+      setOwner: (id, owner, includeContents) => request("POST", `/saved-filters/folders/${id}/owner`, { owner, includeContents: !!includeContents }),
+      takePrivate: (id, includeContents) => request("POST", `/saved-filters/folders/${id}/make-private`, { includeContents: !!includeContents }),
+    },
   },
   // Saved dashboards (Dashboard page → Dashboards ▾). The two reads are the
   // only ones the Dash wallboard mounts — it is session-less, so they answer
@@ -768,6 +782,18 @@ const api = {
     create: (body)    => request("POST",   "/saved-dashboards", body),
     update: (id, b)   => request("PUT",    `/saved-dashboards/${id}`, b),
     delete: (id)      => request("DELETE", `/saved-dashboards/${id}`),
+    move:   (id, folderId) => request("PATCH", `/saved-dashboards/${id}/folder`, { folderId }),
+    setOwner: (id, owner) => request("POST", `/saved-dashboards/${id}/owner`, { owner }),
+    takePrivate: (id) => request("POST",   `/saved-dashboards/${id}/make-private`, {}),
+    ownerOptions: ()  => request("GET",    "/saved-dashboards/owner-options"),
+    folders: {
+      create:   (body)       => request("POST",   "/saved-dashboards/folders", body),
+      update:   (id, b)      => request("PUT",    `/saved-dashboards/folders/${id}`, b),
+      move:     (id, parentId) => request("PATCH", `/saved-dashboards/folders/${id}/parent`, { parentId }),
+      delete:   (id)         => request("DELETE", `/saved-dashboards/folders/${id}`),
+      setOwner: (id, owner, includeContents) => request("POST", `/saved-dashboards/folders/${id}/owner`, { owner, includeContents: !!includeContents }),
+      takePrivate: (id, includeContents) => request("POST", `/saved-dashboards/folders/${id}/make-private`, { includeContents: !!includeContents }),
+    },
   },
   assets: {
     list:      (params) => request("GET", "/assets" + toQuery(params)),

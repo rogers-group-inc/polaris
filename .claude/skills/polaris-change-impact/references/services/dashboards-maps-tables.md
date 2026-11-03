@@ -167,7 +167,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `src/api/routes/savedDashboards.ts` — the whole surface, mounted TWICE: `/api/v1/saved-dashboards` (main router) and `/dash/api/v1/saved-dashboards` (the wallboard listener). The `savedDashboards:read` floor lives in the route file so both mounts carry it; `write` is checked per request from the payload's `visibility`.
 - `src/dash/dashServer.ts` — the second mount + the two paths it adds to `API_PATH_ALLOWLIST` / `API_PREFIX_ALLOWLIST`.
 - `src/api/routes/users.ts` — `DELETE /users/:id` (and Disable) runs `savedOwnershipService.releaseUserOwnership`: the user's PRIVATE dashboards go, public ones survive OWNERLESS (`ownerId` NULL, `ownerName` kept), same as saved filters and folders.
-- `public/js/dashboard-saved.js` — the "Dashboards ▾" menu on BOTH index.html and dash.html, via `api.savedDashboards.*`.
+- `public/js/dashboard-saved.js` — the "Dashboards ▾" menu on BOTH index.html and dash.html, via `api.savedDashboards.*`; its folder tree, owner verbs and Folder picker are `public/js/saved-tree.js` (business rule 140).
 - `public/js/dashboard.js` — `window.PolarisDashboard` is the seam: `snapshot()` produces what gets stored, `loadAsNewTab` / `linkActiveTab` / `applyPublished` (the wallboard's linked tabs) consume it.
 
 **Invariants:**
@@ -199,7 +199,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:**
 - `src/api/routes/savedFilters.ts` — the whole `/api/v1/saved-filters` surface. The route resolves the gate PER REQUEST (`functionKeyForScope(scope)` + `ensureRoleSnapshot` + `hasPermission`) because the key depends on the payload, then enforces ownership on PUT/DELETE.
 - `src/api/routes/users.ts` — `DELETE /users/:id` (and Disable) runs `savedOwnershipService.releaseUserOwnership`: the user's PRIVATE presets go, their public ones survive OWNERLESS.
-- `public/js/assets-filters.js` — the only frontend consumer today (Assets header → Filters ▾), via `api.savedFilters.*` in `public/js/api.js`.
+- `public/js/assets-filters.js` — the only frontend consumer today (Assets header → Filters ▾), via `api.savedFilters.*` in `public/js/api.js`; its folder tree, owner verbs and Folder picker are `public/js/saved-tree.js` (business rule 140).
 - `public/js/table-sf.js` — `TableSF.prototype.getPrefs` produces the stored `state`; `applyState` consumes it (wholesale replace, unlike `setPrefs`'s merge).
 - `src/services/savedDashboardService.ts` — imports `normalizeName`, so both lists of named presets share ONE name rule (trim + collapse whitespace, no control characters, 60 chars). Changing it changes both.
 

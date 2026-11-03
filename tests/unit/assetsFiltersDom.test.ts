@@ -166,16 +166,19 @@ describe("saved filters menu", () => {
     expect(menu.querySelector('[data-sfl-load="f2"] .sfl-badge')!.textContent).toBe("Public");
   });
 
-  it("offers delete on your own preset, and on someone else's only with fullwrite", async () => {
-    await openMenu();
-    expect(doc.querySelector('[data-sfl-del="f1"]')).toBeTruthy();
-    expect(doc.querySelector('[data-sfl-del="f2"]')).toBeTruthy();
-
-    canWrite = false;                      // permAtLeast(..., "fullwrite") now false
-    fire("#btn-saved-filters");             // close
+  it("offers delete only where the server says the caller manages the row (rule 140)", async () => {
+    // Fullwrite no longer deletes someone else's OWNED preset: the × follows
+    // the server's canManage, not the caller's level.
     await openMenu();
     expect(doc.querySelector('[data-sfl-del="f1"]')).toBeTruthy();
     expect(doc.querySelector('[data-sfl-del="f2"]')).toBeFalsy();
+
+    // An OWNERLESS preset is a fullwrite holder's to manage.
+    (listResponse.filters[1] as Record<string, unknown>).canManage = true;
+    (listResponse.filters[1] as Record<string, unknown>).ownerKind = "none";
+    fire("#btn-saved-filters");             // close
+    await openMenu();
+    expect(doc.querySelector('[data-sfl-del="f2"]')).toBeTruthy();
   });
 
   it("shows an empty state when nothing is saved", async () => {

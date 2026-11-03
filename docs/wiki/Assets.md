@@ -169,10 +169,35 @@ tab and each tab's **✕** show only in edit mode.
 Every visit opens out of edit mode.
 
 **Filters ▾** saves the current column filters + sort as a named preset, loads
-one back into the current tab or a new one, and deletes them. Presets are
-server-side. Private is the default; publishing needs `assets:write`. Only a
-filter's owner can change or delete it, public ones included; `assets:fullwrite`
-manages filters that have no owner ([rule 140](Business-Rules#rule-140)).
+one back into the current tab (click the row) or a new one (its **⊞**), and
+deletes them. Presets are server-side. Private is the default; publishing needs
+`assets:write`.
+
+**Folders.** **New folder** in the menu, or the **Folder** field and its **New
+folder** button when saving, files presets into folders, and folders nest. A
+folder opens and closes in place and the menu remembers which are open. Drag a
+preset or a folder onto another folder to move it there, or onto a section
+heading (**My filters**, **Shared filters**) to move it back to the top level.
+A folder's **⋯** offers **New subfolder**, **Rename**, **Make public** /
+**Make private**, **Change owner**, **Make private to me** and **Delete
+folder**; right-click a preset for its **Change owner** and **Make private to
+me**. Deleting a folder moves what it held up a level; nothing inside is
+deleted. Each folder and preset keeps its own Private / Public setting, so a
+public preset inside someone's private folder still shows for everyone, at the
+top level.
+
+**Owners.** A preset or folder belongs to a user, to a **role** (everyone
+holding it) or to a **region** (everyone whose region scope names it). The menu
+shows *Role · …* or *Region · …* beside it, *was …* when it has no owner, and
+nothing when it is simply yours. Only the owner can rename, move, publish,
+delete or hand it on, public ones included. **Change owner** gives it to a
+user, role or region, and warns that you will no longer own it. **Make private
+to me** takes it as your own private item: the owner can do that, and so can
+anyone with `assets:fullwrite`, even on someone else's, which is recorded in
+Events with the previous owner. `assets:fullwrite` otherwise manages only the
+presets that have no owner, listed under **Ownerless**: those of a deleted or
+disabled account, a deleted role or a deleted region
+([rule 140](Business-Rules#rule-140)).
 
 ---
 
