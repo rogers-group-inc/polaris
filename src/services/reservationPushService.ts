@@ -777,11 +777,25 @@ export interface ReleaseDhcpLeaseResult {
  * Note: FortiOS only forgets the *current* lease; the same client can DHCP
  * back the same IP on its next request. This is "expire now," not a block.
  *
- * Endpoint: POST /api/v2/monitor/system/dhcp/release-lease  body: {ip}
+ * Endpoint: POST /api/v2/monitor/system/dhcp/revoke  body: { ip: [ip] }
+ *
+ * The path and the body shape were confirmed against a FortiOS 7.6.8 gate
+ * (2026-11-03): `dhcp/revoke` with an `ip` ARRAY answers `status: "success"`;
+ * the `dhcp/release-lease` path this function used until then does not exist
+ * on any FortiOS build and answered 404 "Endpoint not found", so every lease
+ * release on a push-enabled integration failed device-side and was recorded
+ * only as a `reservation.lease_release.failed` warning. Pinned by
+ * tests/unit/releaseDhcpLease.test.ts.
+ *
+ * `ip` must never be omitted or empty: the FortiOS REST reference describes
+ * a `revoke` with no `ip` list as revoking every lease the server holds. The
+ * validity check below is that guard — it throws before any transport call.
  *
  * Throws AppError on transport / auth / device-side failure. Callers should
  * treat this as best-effort and not block the Polaris release on failure.
  */
+export const DHCP_LEASE_REVOKE_PATH = "/api/v2/monitor/system/dhcp/revoke";
+
 export async function releaseDhcpLease(
   params: ReleaseDhcpLeaseParams,
 ): Promise<ReleaseDhcpLeaseResult> {
@@ -799,8 +813,8 @@ export async function releaseDhcpLease(
   await callFortiOs<unknown>(
     t,
     "POST",
-    "/api/v2/monitor/system/dhcp/release-lease",
-    { ip: params.ip },
+    DHCP_LEASE_REVOKE_PATH,
+    { ip: [params.ip] },
   );
   return { released: true };
 }

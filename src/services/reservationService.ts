@@ -895,7 +895,7 @@ async function releaseLeaseBestEffort(opts: {
   failureContext: string;
 }): Promise<void> {
   const { integration, deviceName, ip } = opts;
-  // release-lease is the IPv4 DHCP server's verb; a DHCPv6 lease is released
+  // dhcp/revoke is the IPv4 DHCP server's verb; a DHCPv6 lease is released
   // in Polaris only (business rule 125) rather than sent where its effect on
   // the gate is unverified.
   if (isIpv6Address(ip)) return;
@@ -1053,7 +1053,7 @@ export async function releaseReservation(id: string, actor?: string) {
 
       // Deleting the reserved-address only unbinds the MAC→IP reservation; a
       // client currently holding the IP keeps its lease until expiry. Drop it
-      // too via the monitor `release-lease` endpoint so the address is fully
+      // too via the monitor `dhcp/revoke` endpoint so the address is fully
       // freed on the device. Independent best-effort step — a lease-release
       // failure doesn't undo the unpush or block the Polaris release.
       if (reservation.ipAddress) {
@@ -1074,7 +1074,7 @@ export async function releaseReservation(id: string, actor?: string) {
   // tab) — both halves of the Polaris-to-FortiGate DHCP write path live
   // under that single toggle. The lease exists on the FortiGate's DHCP
   // server, not in any Polaris-pushed CMDB entry, so we hit the monitor
-  // `release-lease` endpoint to expire it now. Device-side failure does not
+  // `dhcp/revoke` endpoint to expire it now. Device-side failure does not
   // block the Polaris release — the operator's intent has been recorded and
   // the next discovery pass will rediscover the lease if FortiOS still
   // holds it.
