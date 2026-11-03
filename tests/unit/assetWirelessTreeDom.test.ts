@@ -57,6 +57,7 @@ const FN_NAMES = [
   "_wirelessVapRow",
   "_wirelessHaystackHas",
   "_wirelessStationMatches",
+  "_childFilterMatches",
   "_filterWirelessTree",
   "_renderWirelessTree",
   "_wirelessBandLabel",
@@ -533,5 +534,35 @@ describe("Wireless mesh role chip", () => {
     const html = container.innerHTML;
     expect(html.indexOf("Wireless</h4>")).toBeLessThan(html.indexOf("Mesh root"));
     expect(html.indexOf("Mesh root")).toBeLessThan(html.indexOf("asset-stream-source-badge"));
+  });
+});
+
+// The partial-match rule every MAC / IP filter box on the slide-over shares
+// (the Wireless, MAC Table and ARP Table tabs, a FortiGate's included).
+describe("_childFilterMatches", () => {
+  const m = (text: string[], macs: string[], f: string) => (globalThis as any)._childFilterMatches(text, macs, f);
+  const MAC = "02:5A:BA:01:A0:12";
+
+  it("matches middle fragments of an IP or a colon-separated MAC as typed", () => {
+    expect(m(["10.41.30.105"], [], "41.30")).toBe(true);
+    expect(m([], [MAC], "a0:12")).toBe(true);
+  });
+
+  it("matches a MAC fragment typed without separators, or with dashes / dots", () => {
+    expect(m([], [MAC], "a012")).toBe(true);
+    expect(m([], [MAC], "a0-12")).toBe(true);
+    expect(m([], [MAC], "a0.12")).toBe(true);
+    expect(m([], [MAC], "ba01a0")).toBe(true);
+  });
+
+  it("starts a separator-free match on an octet, never across one", () => {
+    // "ba:01" compacts to "ba01", which contains "a0" one character in.
+    expect(m([], ["02:5A:BA:01:00:00"], "a0")).toBe(false);
+    expect(m([], ["02:5A:BA:01:00:00"], "a010")).toBe(false);
+  });
+
+  it("does not compact-match non-hex text or text fields", () => {
+    expect(m(["port12"], [MAC], "zz")).toBe(false);
+    expect(m(["10.41.30.105"], [], "4130")).toBe(false);
   });
 });

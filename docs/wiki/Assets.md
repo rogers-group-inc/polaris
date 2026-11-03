@@ -374,7 +374,10 @@ Software · Quarantine · Events · Alerts · Custom MIB · SNMP Walk · Sources
 System and Sources are always there.
 
 Three are device-type specific: **Wireless** on a monitored access point, **MAC
-Table** on a switch, **ARP Table** on a firewall.
+Table** on a switch, **ARP Table** on a firewall. A firewall also gets
+**Wireless** and **MAC Table** when it manages FortiAPs or FortiSwitches: they
+gather its children's clients and forwarding databases in one place (see
+[A firewall's Wireless and MAC Table](#a-firewalls-wireless-and-mac-table)).
 
 The rest are conditional:
 
@@ -1530,7 +1533,7 @@ trunk's VLANs they were learned in.
 
 A **filter box**, like the ARP Table's, matches a MAC, interface name, VLAN
 number or name, status or matched hostname, and the count in the heading becomes *N of M
-entries*. It filters whatever is shown, so the unresolved-port entries are only
+entries*. It matches partial text (see [Filtering by part of a MAC or IP](#filtering-by-part-of-a-mac-or-ip)). It filters whatever is shown, so the unresolved-port entries are only
 searched once you have clicked **Show**. The filter stays put across
 **Poll**.
 
@@ -1554,7 +1557,8 @@ cadence · freshness · **Poll** row described above, plus:
   retention is **disabled rather than hidden**, so you can see it exists and is
   not being kept.
 - A filter over IP / MAC / interface / matched hostname — what brings an
-  operator here is a lookup, not a survey.
+  operator here is a lookup, not a survey. It matches partial text (see
+  [Filtering by part of a MAC or IP](#filtering-by-part-of-a-mac-or-ip)).
 - A **disclaimer** that each read is a snapshot of a cache the gate ages out in
   roughly 1–5 minutes. Short-lived entries can be missing entirely, and an
   absent address was not necessarily absent from the network.
@@ -1572,6 +1576,51 @@ row to select it. Click its **address**, or double-click the row, to open the
 device the entry matched. Right-click the row for **Open device**, **Copy IP
 address** and **Copy MAC address**. An entry that matched no device has
 nothing to open, so a click on its address shows the copy menu.
+
+### A firewall's Wireless and MAC Table
+
+A FortiGate that manages FortiAPs gets a **Wireless** tab, and one that manages
+FortiSwitches gets a **MAC Table** tab. Each gathers what its children already
+hold, so "where is this device on the site" can be answered from the gate
+without opening every switch and AP. A gate that manages neither has neither
+tab.
+
+Each tab has **one group per access point or switch**. The group row names the
+device (click it to open that device), with its address, model, count and when
+it was last polled. Inside are the same rows that device's own Wireless or MAC
+Table tab shows:
+
+- **Wireless:** each client's MAC, SSID, IP, matched device, band and signal.
+  An AP with no clients still appears, marked *No clients connected*.
+- **MAC Table:** each entry's MAC, port, VLAN (filled in on access ports as on a
+  switch's own tab), status and matched device. Trunk / LAG pseudo-port entries
+  are hidden behind **Show**. A switch reporting no entries, or one that is not
+  monitored, says so.
+
+A device counts as this firewall's child when its controller stamp names the
+gate, the same rule the [Device Map](Device-Map) uses to draw the gate's
+switches and APs.
+
+The **filter box** matches the rows (client or entry MAC, IP, SSID, port, VLAN
+or matched hostname) **and the access points or switches themselves**: their
+hostname, IP or model. Typing a device's name, address or model shows that device with
+all its rows. Typing a model such as `FortiAP-231G`, or just `231g`, shows every AP of
+that model.
+
+There is **no Poll button**. Every row belongs to the AP or switch that
+reported it, and polling the firewall re-reads none of them. Each group states
+its own age, and the heading shows the newest.
+
+### Filtering by part of a MAC or IP
+
+Every filter box on the Wireless, MAC Table and ARP Table tabs, on a firewall,
+switch or access point, matches **partial text**:
+
+- **An IP:** any fragment, including middle octets. `41.30` finds `10.41.30.105`.
+- **A MAC, with separators:** `a0:12`, `a0-12` and `a0.12` all find
+  `02:5A:A0:12:00:01`.
+- **A MAC without separators:** `a012` finds it too. A fragment typed without
+  separators must line up with whole octets, so `a0` does not match `BA:01`.
 
 ### IPsec (FortiGate firewalls)
 

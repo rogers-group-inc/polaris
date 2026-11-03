@@ -101,6 +101,7 @@ import { resolveConnectionPath } from "../../services/connectionPathService.js";
 import { resolveAssetUpstream } from "../../services/assetUpstreamService.js";
 import { resolveAssetVips } from "../../services/assetVipService.js";
 import { fillMacTableVlans, getVlanNamesForAsset } from "../../services/vlanNameService.js";
+import { countControllerChildren, getControllerMacTable, getControllerWireless } from "../../services/controllerChildrenService.js";
 import { listInterfaceTags, setInterfaceTags } from "../../services/interfaceTagService.js";
 import { shapeManagementAccessForClient } from "../../services/fortinetManagementAccessService.js";
 import { propagateAfterStatusChange, FORTINET_INFRA_ASSET_TYPES } from "../../services/dependencyTreeService.js";
@@ -2956,6 +2957,36 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
   } catch (err) {
     next(err);
   }
+});
+
+/**
+ * GET /assets/:id/child-counts — how many FortiAPs / FortiSwitches a
+ * FortiGate controls; decides whether its Wireless / MAC Table tabs show.
+ */
+router.get("/:id/child-counts", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await countControllerChildren(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /assets/:id/child-wireless — a FortiGate's Wireless tab: the wireless
+ * clients of every FortiAP it controls, plus the AP list itself.
+ */
+router.get("/:id/child-wireless", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getControllerWireless(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /assets/:id/child-mac-table — a FortiGate's MAC Table tab: the
+ * forwarding database of every FortiSwitch it controls, plus the switch list.
+ */
+router.get("/:id/child-mac-table", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getControllerMacTable(req.params.id as string));
+  } catch (err) { next(err); }
 });
 
 /**

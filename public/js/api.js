@@ -888,6 +888,9 @@ const api = {
     // so threw on every open — `request` is module-scope here, never a member
     // of `api`.
     macTable:             (id)  => request("GET", `/assets/${id}/mac-table`),
+    childCounts:          (id)  => request("GET", `/assets/${id}/child-counts`),
+    childWireless:        (id)  => request("GET", `/assets/${id}/child-wireless`),
+    childMacTable:        (id)  => request("GET", `/assets/${id}/child-mac-table`),
     arpTable:             (id, range) => request("GET", `/assets/${id}/arp-table${range ? `?range=${encodeURIComponent(range)}` : ""}`),
     processes:            (id)  => request("GET", `/assets/${id}/processes`),
     processHistory:       (id, name, opts) => {

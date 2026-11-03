@@ -5902,6 +5902,14 @@ async function openViewModal(id, opts) {
       if (!(asset.assetType === "firewall" && (sk === "fortimanager" || sk === "fortigate"))) return null;
       return api.assets.ipsec(asset.id).catch(function (err) { console.warn("Failed to load IPsec", err); return null; });
     });
+    // A FortiGate's managed FortiAP / FortiSwitch counts — decide whether its
+    // Wireless and MAC Table tabs (the children's clients and forwarding
+    // databases) are drawn. Awaited beside the wave rather than given a slot
+    // in it: every wave index is read positionally.
+    var childCountsP = assetP.then(function (asset) {
+      if (asset.assetType !== "firewall") return null;
+      return api.assets.childCounts(asset.id).catch(function () { return null; });
+    });
 
     var wave = await Promise.all([
       assetP,
@@ -5962,6 +5970,7 @@ async function openViewModal(id, opts) {
     var pathPayload  = wave[13];
     var ipsecPayload = wave[14];
     var inventoryPresence = wave[15] || { services: true, software: true };
+    var childCounts = await childCountsP;
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -6007,6 +6016,11 @@ async function openViewModal(id, opts) {
     if (a.assetType === "access_point" && a.monitored) {
       tabs.push({ key: "stations", label: "Wireless", html: _assetStationsTabHTML(a) });
     }
+    // A FortiGate's Wireless tab — the clients of every FortiAP it controls,
+    // grouped by AP. Only when it controls at least one; lazy-loaded.
+    if (a.assetType === "firewall" && childCounts && childCounts.accessPoints > 0) {
+      tabs.push({ key: "childwireless", label: "Wireless", html: _assetChildMountHTML("childwireless", a.id) });
+    }
     // SD-WAN tab — shown only when the device actually reported SD-WAN data
     // (rules or health-check links exist); the trio was prefetched in the wave
     // above so the tab is present + pre-populated on first paint.
@@ -6028,6 +6042,11 @@ async function openViewModal(id, opts) {
     // first click since it can carry a few thousand rows.
     if (a.assetType === "switch") {
       tabs.push({ key: "mactable", label: "MAC Table", html: _assetMacTableTabHTML(a.id) });
+    }
+    // A FortiGate's MAC Table tab — the forwarding database of every
+    // FortiSwitch it controls, grouped by switch. Only when it controls one.
+    if (a.assetType === "firewall" && childCounts && childCounts.switches > 0) {
+      tabs.push({ key: "childmactable", label: "MAC Table", html: _assetChildMountHTML("childmactable", a.id) });
     }
     // ARP Table tab — the FortiGate's layer-3 neighbour cache, the L3 sibling
     // of MAC Table. Firewall-class only, mirroring where discovery reads it;
@@ -6199,6 +6218,7 @@ async function openViewModal(id, opts) {
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
+    if (a.assetType === "firewall") _wireAssetChildTabs(a.id);
     if (showIpsecTab) _renderAssetIpsec(a.id, ipsecPayload, a);
     if (showServicesTab) _wireAssetServicesTab(a);
     if (showSoftwareTab) _wireAssetSoftwareTab(a);
@@ -10868,9 +10888,8 @@ function _wirelessHaystackHas(parts, filter) {
 function _wirelessStationMatches(s, filter) {
   if (!filter) return true;
   var m = s.matchedAsset || {};
-  return _wirelessHaystackHas([
-    s.staMacAddr, s.staIpAddr, s.bssid, s.ssid, m.hostname, m.ipAddress,
-  ], filter);
+  // MAC fragments match with or without separators (_childFilterMatches).
+  return _childFilterMatches([s.staIpAddr, s.ssid, m.hostname, m.ipAddress], [s.staMacAddr, s.bssid], filter);
 }
 
 /**
@@ -28043,16 +28062,15 @@ async function _loadAssetMacTable(assetId) {
     // rule, so "where is that MAC", "what is on port 32" and "which port is
     // PRINTER-4 on" are all one box. The interface name is the group key for
     // an unresolved row too, so "base port 32768" finds the trunk's entries.
+    // A MAC fragment matches with or without separators (_childFilterMatches).
     function matches(e) {
-      if (!filter) return true;
-      var hay = [
-        e.macAddress, e.ifName || ("base port " + (e.basePort != null ? e.basePort : "?")),
+      return _childFilterMatches([
+        e.ifName || ("base port " + (e.basePort != null ? e.basePort : "?")),
         e.vlanId != null ? "vlan " + e.vlanId : "",
         e.vlanId != null ? (vlanNames[String(e.vlanId)] || "") : "", e.status || "",
         e.matchedAsset ? (e.matchedAsset.hostname || "") : "",
         e.matchedAsset ? (e.matchedAsset.ipAddress || "") : "",
-      ].join(" ").toLowerCase();
-      return hay.indexOf(filter) !== -1;
+      ], [e.macAddress], filter);
     }
 
     // The shell (strip + filter box) renders ONCE and only the counts, the
@@ -28176,6 +28194,306 @@ async function _loadAssetMacTable(assetId) {
     }
 
     render();
+  } catch (err) {
+    mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml(err.message || "failed to load") + '</span>';
+  }
+}
+
+
+// ─── FortiGate Wireless / MAC Table tabs (managed children) ────────────────
+//
+// A FortiGate's view of what its FortiAPs and FortiSwitches already hold: the
+// clients of every AP (GET /assets/:id/child-wireless) and the forwarding
+// database of every switch (GET /assets/:id/child-mac-table), one group per
+// child. The rows are each child's own — the same ones its own Wireless / MAC
+// Table tab shows — so freshness is stated per child on its group row, not
+// once for the gate. No Poll button: polling the gate re-reads none of them.
+
+// Per-asset filter text, keyed by "<tab>:<gate id>" like the per-device tabs'.
+var _assetChildFilter = {};
+
+function _assetChildMountHTML(kind, assetId) {
+  return '<div id="asset-' + kind + '-mount-' + escapeHtml(assetId) + '">' +
+    '<span class="empty-state">Loading…</span></div>';
+}
+
+function _wireAssetChildTabs(assetId) {
+  [["childwireless", _loadAssetChildWireless], ["childmactable", _loadAssetChildMacTable]].forEach(function (pair) {
+    var btn = document.querySelector('#asset-view-tabs .page-tab[data-tab="' + pair[0] + '"]');
+    if (!btn) return;
+    var loaded = false;
+    function load() {
+      if (loaded) return;
+      loaded = true;
+      pair[1](assetId);
+    }
+    btn.addEventListener("click", load);
+    // Opened straight onto this tab (opts.tab) — the click already happened.
+    if (btn.classList.contains("active")) load();
+  });
+}
+
+// One child's group header: name (opens the child), its address and model,
+// the caller's count text, and the child's own freshness stamp.
+function _childGroupHeadHTML(child, countText, colspan) {
+  var name = child.hostname || child.ipAddress || child.serialNumber || child.id;
+  var sub = [child.ipAddress, child.model].filter(Boolean).join(" · ");
+  return '<tr class="childtab-group"><td colspan="' + colspan + '" style="padding:5px 8px;font-weight:600;' +
+      'background:var(--color-bg-primary);color:var(--color-text-secondary)">' +
+    '<button type="button" class="childtab-group-toggle" data-group="' + escapeHtml(child.id) + '" ' +
+      'style="background:none;border:none;cursor:pointer;color:var(--color-text-secondary);' +
+      'padding:0 3px 0 0;font-size:0.75rem;vertical-align:middle;line-height:1" ' +
+      'title="Collapse">▼</button>' +
+    '<a href="#" class="asset-link" data-asset-id="' + escapeHtml(child.id) + '">' + escapeHtml(name) + '</a> ' +
+    '<span style="font-weight:400">' +
+      (sub ? '· <span class="mono">' + escapeHtml(sub) + '</span> ' : "") +
+      '· ' + escapeHtml(countText) + ' · ' +
+    '</span>' +
+    (child.monitored
+      ? _freshnessStampHTML(child.lastSystemInfoAt, null, "never collected")
+      : '<span style="font-size:0.72rem;color:var(--color-text-tertiary)">not monitored</span>') +
+  '</td></tr>';
+}
+
+// Shared shell: heading + counts, filter box, an optional note line and the
+// table body. Rendered ONCE; only the counts / note / body re-render as the
+// operator types (rebuilding the box loses the caret).
+// The heading's stamp is the NEWEST child poll — the gate itself writes none of
+// these rows — and each group row states its own child's age beside it.
+function _childTabShell(mount, kind, assetId, title, placeholder, children, renderBody) {
+  var stateKey = kind + ":" + assetId;
+  var filter = _assetChildFilter[stateKey] || "";
+  var newest = null;
+  children.forEach(function (c) {
+    if (c.lastSystemInfoAt && (!newest || c.lastSystemInfoAt > newest)) newest = c.lastSystemInfoAt;
+  });
+  mount.innerHTML =
+    _currentStateStripHTML({
+      title: title,
+      suffixHTML: '<span id="' + kind + '-counts-' + escapeHtml(assetId) + '" style="font-weight:400;color:var(--color-text-secondary)"></span>',
+      lastAt: newest,
+      neverText: "no child polled yet",
+    }) +
+    '<div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin:0 0 0.5rem">' +
+      '<input type="text" id="' + kind + '-filter-' + escapeHtml(assetId) + '" class="form-input" ' +
+        'placeholder="' + escapeHtml(placeholder) + '" ' +
+        'style="max-width:22rem;font-size:0.82rem;flex:1 1 14rem" value="' + escapeHtml(filter) + '">' +
+    '</div>' +
+    '<div id="' + kind + '-note-' + escapeHtml(assetId) + '"></div>' +
+    '<div id="' + kind + '-body-' + escapeHtml(assetId) + '"></div>';
+  var countsEl = document.getElementById(kind + "-counts-" + assetId);
+  var noteEl   = document.getElementById(kind + "-note-" + assetId);
+  var bodyEl   = document.getElementById(kind + "-body-" + assetId);
+  function rerender() {
+    renderBody(filter, bodyEl, countsEl, noteEl, rerender);
+    _wireAssetPivotLinks(bodyEl);
+    bodyEl.querySelectorAll(".childtab-group-toggle").forEach(function (tog) {
+      tog.addEventListener("click", function () {
+        var key = tog.getAttribute("data-group");
+        var expanded = tog.textContent.trim() === "▼";
+        tog.textContent = expanded ? "▶" : "▼";
+        tog.title = expanded ? "Expand" : "Collapse";
+        bodyEl.querySelectorAll('.childtab-entry[data-group="' + CSS.escape(key) + '"]')
+          .forEach(function (row) { row.style.display = expanded ? "none" : ""; });
+      });
+    });
+  }
+  var box = document.getElementById(kind + "-filter-" + assetId);
+  if (box) {
+    box.addEventListener("input", debounce(function () {
+      filter = box.value.trim().toLowerCase();
+      _assetChildFilter[stateKey] = filter;
+      rerender();
+    }, 150));
+  }
+  rerender();
+}
+
+// Partial match for the filter box. Plain substring over every field, so a
+// middle fragment of an IP ("41.30") or a colon-separated MAC ("a0:12") hits;
+// MAC fields are ALSO compared with separators stripped from both sides, so
+// "a012", "a0-12" and "a0.12" (Cisco-style dotted) find AA:BB:A0:12:… too.
+// That separator-free match must START ON AN OCTET (an even offset): without
+// the rule "a0" would hit BA:01 through "ba01", which no one typing a0 means.
+// `filter` is already lower-cased.
+function _childFilterMatches(textParts, macParts, filter) {
+  if (!filter) return true;
+  if (textParts.concat(macParts).join(" ").toLowerCase().indexOf(filter) !== -1) return true;
+  var compact = filter.replace(/[\s:.\-]/g, "");
+  if (compact.length < 2 || !/^[0-9a-f]+$/.test(compact)) return false;
+  return macParts.some(function (m) {
+    if (!m) return false;
+    var hex = String(m).toLowerCase().replace(/[:.\-]/g, "");
+    for (var at = hex.indexOf(compact); at !== -1; at = hex.indexOf(compact, at + 1)) {
+      if (at % 2 === 0) return true;
+    }
+    return false;
+  });
+}
+
+async function _loadAssetChildWireless(assetId) {
+  var mount = document.getElementById("asset-childwireless-mount-" + assetId);
+  if (!mount) return;
+  try {
+    var data = await api.assets.childWireless(assetId);
+    var aps = (data && data.accessPoints) || [];
+    var stations = (data && data.stations) || [];
+    var byAp = {};
+    stations.forEach(function (s) { (byAp[s.apAssetId] = byAp[s.apAssetId] || []).push(s); });
+    var dash = '<span style="color:var(--color-text-secondary)">—</span>';
+
+    _childTabShell(mount, "childwireless", assetId, "Wireless clients",
+      "Filter by client MAC, IP, SSID or hostname, or access point name, IP or model", aps,
+      function (filter, bodyEl, countsEl) {
+        var shownTotal = 0;
+        var rows = aps.map(function (ap) {
+          var own = byAp[ap.id] || [];
+          // An AP whose own name or address matches keeps all its clients.
+          var apHit = filter && _childFilterMatches([ap.hostname, ap.ipAddress, ap.serialNumber, ap.model], [], filter);
+          var shown = (!filter || apHit) ? own : own.filter(function (s) {
+            var m = s.matchedAsset || {};
+            return _childFilterMatches([s.staIpAddr, s.ssid, m.hostname, m.ipAddress], [s.staMacAddr, s.bssid], filter);
+          });
+          if (filter && !apHit && shown.length === 0) return "";
+          shownTotal += shown.length;
+          var head = _childGroupHeadHTML(ap,
+            own.length + (own.length === 1 ? " client" : " clients"), 6);
+          if (shown.length === 0) {
+            return head + '<tr class="childtab-entry" data-group="' + escapeHtml(ap.id) + '">' +
+              '<td colspan="6" style="padding-left:1.4rem;color:var(--color-text-tertiary);font-size:0.78rem">' +
+              'No clients connected.</td></tr>';
+          }
+          return head + shown.map(function (s, i) {
+            var signal = (s.signalStrength != null) ? (s.signalStrength + " dBm") : "—";
+            return '<tr class="childtab-entry" data-group="' + escapeHtml(ap.id) + '">' +
+              '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(i === shown.length - 1) + escapeHtml(s.staMacAddr) + '</td>' +
+              '<td style="white-space:nowrap">' + (s.ssid ? escapeHtml(s.ssid) : dash) + '</td>' +
+              '<td class="mono" style="white-space:nowrap">' + (s.staIpAddr ? escapeHtml(s.staIpAddr) : dash) + '</td>' +
+              '<td>' + (s.matchedAsset
+                ? '<a href="#" class="asset-link" data-asset-id="' + escapeHtml(s.matchedAsset.id) + '">' +
+                    escapeHtml(s.matchedAsset.hostname || s.matchedAsset.ipAddress || s.matchedAsset.id) + '</a>'
+                : '<span style="color:var(--color-text-tertiary);white-space:nowrap">(not in inventory)</span>') + '</td>' +
+              '<td>' + escapeHtml(_wirelessBandLabel(s.band)) + '</td>' +
+              '<td style="text-align:right;white-space:nowrap">' + escapeHtml(signal) + '</td>' +
+            '</tr>';
+          }).join("");
+        }).join("");
+        if (countsEl) {
+          countsEl.textContent = filter
+            ? "(" + shownTotal + " of " + stations.length + " clients match)"
+            : "(" + stations.length + " client" + (stations.length === 1 ? "" : "s") + " on " +
+              aps.length + " access point" + (aps.length === 1 ? "" : "s") + ")";
+        }
+        bodyEl.innerHTML = !rows
+          ? '<div class="empty-state">No access points or clients match that filter.</div>'
+          : '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
+              '<th>Access point / Client</th><th>SSID</th><th>IP</th><th>Endpoint</th><th style="white-space:nowrap">Band</th>' +
+              '<th style="text-align:right;white-space:nowrap">Signal</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      });
+  } catch (err) {
+    mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml(err.message || "failed to load") + '</span>';
+  }
+}
+
+async function _loadAssetChildMacTable(assetId) {
+  var mount = document.getElementById("asset-childmactable-mount-" + assetId);
+  if (!mount) return;
+  try {
+    var data = await api.assets.childMacTable(assetId);
+    var switches = (data && data.switches) || [];
+    var entries = (data && data.entries) || [];
+    var vlanNames = (data && data.vlanNames) || {};
+    var bySw = {};
+    entries.forEach(function (e) { (bySw[e.switchAssetId] = bySw[e.switchAssetId] || []).push(e); });
+    var dash = '<span style="color:var(--color-text-secondary)">—</span>';
+    // Trunk / LAG pseudo-port rows hidden by default, as on a switch's own
+    // MAC Table tab: every MAC behind the trunk lands there, unattributable.
+    var showUnattributed = false;
+    var unattributedTotal = entries.filter(function (e) { return !e.ifName; }).length;
+
+    function portOf(e) {
+      return e.ifName || ("base port " + (e.basePort != null ? e.basePort : "?"));
+    }
+    function matches(e, filter) {
+      return _childFilterMatches([
+        portOf(e),
+        e.vlanId != null ? "vlan " + e.vlanId : "",
+        e.vlanId != null ? (vlanNames[String(e.vlanId)] || "") : "", e.status || "",
+        e.matchedAsset ? (e.matchedAsset.hostname || "") : "",
+        e.matchedAsset ? (e.matchedAsset.ipAddress || "") : "",
+      ], [e.macAddress], filter);
+    }
+
+    _childTabShell(mount, "childmactable", assetId, "Forwarding databases",
+      "Filter by MAC, port, VLAN or hostname, or switch name, IP or model", switches,
+      function (filter, bodyEl, countsEl, noteEl, rerender) {
+        var pool = 0, shownTotal = 0;
+        var rows = switches.map(function (sw) {
+          var own = (bySw[sw.id] || []).filter(function (e) { return showUnattributed || !!e.ifName; });
+          pool += own.length;
+          var swHit = filter && _childFilterMatches([sw.hostname, sw.ipAddress, sw.serialNumber, sw.model], [], filter);
+          var shown = (!filter || swHit) ? own : own.filter(function (e) { return matches(e, filter); });
+          if (filter && !swHit && shown.length === 0) return "";
+          shownTotal += shown.length;
+          shown.sort(function (a, b) {
+            var pa = portOf(a), pb = portOf(b);
+            if (!!a.ifName !== !!b.ifName) return a.ifName ? -1 : 1;
+            var c = pa.localeCompare(pb, undefined, { numeric: true, sensitivity: "base" });
+            return c !== 0 ? c : String(a.macAddress).localeCompare(String(b.macAddress));
+          });
+          var ports = {};
+          own.forEach(function (e) { if (e.ifName) ports[e.ifName] = true; });
+          var portCount = Object.keys(ports).length;
+          var head = _childGroupHeadHTML(sw,
+            own.length + " MAC" + (own.length === 1 ? "" : "s") + " on " + portCount + " port" + (portCount === 1 ? "" : "s"), 5);
+          if (shown.length === 0) {
+            return head + '<tr class="childtab-entry" data-group="' + escapeHtml(sw.id) + '">' +
+              '<td colspan="5" style="padding-left:1.4rem;color:var(--color-text-tertiary);font-size:0.78rem">' +
+              (sw.monitored
+                ? "No forwarding-database entries. This is collected over SNMP on the system-info cadence; a switch polled via its parent FortiGate reports none."
+                : "Not monitored — enable monitoring on this switch to collect its forwarding database.") +
+              '</td></tr>';
+          }
+          return head + shown.map(function (e, i) {
+            var dev = e.matchedAsset
+              ? '<a href="#" class="asset-link" data-asset-id="' + escapeHtml(e.matchedAsset.id) + '">' +
+                  escapeHtml(e.matchedAsset.hostname || e.matchedAsset.ipAddress || e.matchedAsset.id) + '</a>'
+              : dash;
+            return '<tr class="childtab-entry" data-group="' + escapeHtml(sw.id) + '">' +
+              '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(i === shown.length - 1) + escapeHtml(e.macAddress) + '</td>' +
+              '<td class="mono" style="white-space:nowrap">' + escapeHtml(portOf(e)) + '</td>' +
+              '<td>' + (e.vlanId != null ? _vlanPillHTML(e.vlanId, vlanNames, e.vlanInferred === true) : dash) + '</td>' +
+              '<td>' + escapeHtml(e.status) + '</td>' +
+              '<td>' + dev + '</td>' +
+            '</tr>';
+          }).join("");
+        }).join("");
+        if (countsEl) {
+          countsEl.textContent = '(' + shownTotal + (filter ? " of " + pool : "") + ' entries on ' +
+            switches.length + ' switch' + (switches.length === 1 ? "" : "es") + ')';
+        }
+        if (noteEl) {
+          noteEl.innerHTML = unattributedTotal === 0 ? "" :
+            '<div style="margin:0 0 0.5rem;font-size:0.82rem;color:var(--color-text-secondary)">' +
+              unattributedTotal + ' entr' + (unattributedTotal === 1 ? "y" : "ies") +
+              ' on ports Polaris could not resolve (trunk / LAG pseudo-ports). ' +
+              '<button type="button" class="mactable-toggle-link" id="childmactable-toggle-' + escapeHtml(assetId) + '">' +
+                (showUnattributed ? "Hide" : "Show") +
+              '</button>' +
+            '</div>';
+          var toggle = document.getElementById("childmactable-toggle-" + assetId);
+          if (toggle) toggle.addEventListener("click", function () {
+            showUnattributed = !showUnattributed;
+            rerender();
+          });
+        }
+        bodyEl.innerHTML = !rows
+          ? '<div class="empty-state">No switches or entries match that filter.</div>'
+          : '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
+              '<th>Switch / MAC</th><th>Port</th><th>VLAN</th><th>Status</th><th>Device</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      });
   } catch (err) {
     mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml(err.message || "failed to load") + '</span>';
   }
@@ -28395,15 +28713,16 @@ async function _loadAssetArpTable(assetId, range) {
       });
     }
 
-    // Substring match across every identifying field, so one box answers
-    // "what is at .63", "where is that MAC" and "which port is PRINTER-4 on".
+    // Partial match across every identifying field, so one box answers
+    // "what is at .63", "where is that MAC" and "which port is PRINTER-4 on" —
+    // a MAC fragment matches with or without separators (_childFilterMatches,
+    // shared with the gate's Wireless / MAC Table tabs).
     function matches(e) {
-      if (!filter) return true;
-      var hay = [
-        e.ipAddress, e.macAddress, e.ifName || "",
+      return _childFilterMatches([
+        e.ipAddress, e.ifName || "",
         e.matchedAsset ? (e.matchedAsset.hostname || "") : "",
-      ].join(" ").toLowerCase();
-      return hay.indexOf(filter) !== -1;
+        e.matchedAsset ? (e.matchedAsset.ipAddress || "") : "",
+      ], [e.macAddress], filter);
     }
 
     // On a historical range the newest read is not "now", so every row carries
