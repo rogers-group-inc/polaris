@@ -1972,8 +1972,9 @@ function getAlertsFormData() {
         ? '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.macAddress) + '">' + escapeHtml(r.macAddress) + '</span>'
         : "—";
       var kind = isLease ? "Lease" : (r.sourceType === "dhcp_reservation" ? "Reservation (on the gate)" : "Reservation (pushed by Polaris)");
+      // The asset panel's own Primary pill (styles.css .address-primary-badge).
       var primary = r.isPrimary
-        ? '<div><span class="badge badge-conflict" style="font-size:0.65rem">primary address</span></div>'
+        ? '<div><span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span></div>'
         : "";
       var label = (isLease ? "lease " : "reservation ") + (r.ipAddress || "") + (r.gate ? " on " + r.gate : "");
       var actionCell = (isResolved || !canKeep)

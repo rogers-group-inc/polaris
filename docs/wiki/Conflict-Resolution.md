@@ -385,8 +385,8 @@ belongs to the device through any of the device's MAC addresses, so a wired
 and a Wi-Fi reservation on one laptop are two. Decommissioned and disabled devices, FortiGates, FortiSwitches and
 FortiAPs are never reported, and neither is a MAC two assets both list.
 
-The card lists each one: its address (the device's primary address is marked
-under it), network (click it to open the network), FortiGate (click it to open
+The card lists each one: its address (the device's primary address carries the
+same **★ Primary** pill as the asset's address list, under it), network (click it to open the network), FortiGate (click it to open
 the gate), MAC (click it to copy), its kind (a reservation from the gate, one
 pushed by Polaris, or a lease), and when it was created.
 
