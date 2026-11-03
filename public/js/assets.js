@@ -9774,6 +9774,34 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
  * FortiGate's). An id nothing names reads "VLAN 30" so it still reads as a
  * VLAN. `inferred` marks a MAC-table VLAN filled from the access port.
  */
+/**
+ * A port's CONFIGURED VLANs — native and tagged — for the MAC Table tabs,
+ * which otherwise show only the VLAN each entry was learned in. `state` is a
+ * `portVlans` value ({ nativeVlan, taggedVlans, trunksAllVlans }); "" when the
+ * port states nothing. Pills as on the Interfaces table's two VLAN columns,
+ * capped at six tagged with "+N more" (the full list on hover).
+ */
+function _portVlansHTML(state, names) {
+  if (!state) return "";
+  var bits = [];
+  if (state.nativeVlan != null) {
+    bits.push('<span style="font-weight:400;color:var(--color-text-secondary);font-size:0.75rem">Native</span> ' + _vlanPillHTML(state.nativeVlan, names));
+  }
+  var tagged = Array.isArray(state.taggedVlans) ? state.taggedVlans : [];
+  if (state.trunksAllVlans === true) {
+    bits.push('<span style="font-weight:400;color:var(--color-text-secondary);font-size:0.75rem">Tagged</span> <span class="hue-pill vlan-pill" title="allowed-vlans=all' +
+      (tagged.length ? " (explicit: " + escapeHtml(tagged.join(",")) + ")" : "") + '">all</span>');
+  } else if (tagged.length) {
+    var shown = tagged.slice(0, 6).map(function (v) { return _vlanPillHTML(v, names); }).join("");
+    var more = tagged.length > 6
+      ? ' <span style="opacity:0.7" title="' + escapeHtml(tagged.map(function (v) { return _vlanOptionLabel(v, names); }).join(", ")) + '">+' +
+        (tagged.length - 6) + ' more</span>'
+      : "";
+    bits.push('<span style="font-weight:400;color:var(--color-text-secondary);font-size:0.75rem">Tagged</span> <span class="vlan-pills">' + shown + '</span>' + more);
+  }
+  return bits.join(' <span style="opacity:0.6">·</span> ');
+}
+
 function _vlanPillHTML(vlanId, names, inferred) {
   var id = String(vlanId);
   var name = names && names[id];
@@ -27982,6 +28010,8 @@ async function _loadAssetMacTable(assetId) {
     var data = await api.assets.macTable(assetId);
     var entries = (data && data.entries) || [];
     var vlanNames = (data && data.vlanNames) || {};
+    // ifName → the port's configured native / tagged VLANs.
+    var portVlans = (data && data.portVlans) || {};
 
     // Cadence · freshness · Refresh, on the server's fully-walked
     // pollIntervalSec so the chip and the amber threshold are the same figure.
@@ -28130,7 +28160,7 @@ async function _loadAssetMacTable(assetId) {
       bodyEl.innerHTML = groups.length === 0
         ? '<div class="empty-state">' + (filter ? "No entries match that filter." : "No entries on a resolved port.") + '</div>'
         : '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
-            '<th>Interface / MAC</th><th>VLAN</th><th>Status</th><th>Device</th>' +
+            '<th>Interface / MAC</th><th title="The VLAN the entry was learned in; the port\'s configured native / tagged VLANs are on its row">VLAN</th><th>Status</th><th>Device</th>' +
           '</tr></thead><tbody>' + groups.map(groupHtml).join("") + '</tbody></table></div>';
       var toggle = document.getElementById("mactable-toggle-" + assetId);
       if (toggle) toggle.addEventListener("click", function () {
@@ -28162,6 +28192,12 @@ async function _loadAssetMacTable(assetId) {
         '<span class="mono" style="color:var(--color-text-primary)">' + escapeHtml(g.key) + '</span> ' +
         '<span style="font-weight:400">· ' + g.entries.length + ' MAC' + (g.entries.length === 1 ? "" : "s") +
           (reads ? " · " + escapeHtml(reads) : "") + '</span>' +
+        // What the port is configured to carry, beside the VLAN column's
+        // learned-in VLAN per entry. Resolved ports only: an unresolved
+        // pseudo-port has no interface row to read.
+        (g.resolved && portVlans[g.key]
+          ? ' <span style="font-weight:400;margin-left:0.5rem">' + _portVlansHTML(portVlans[g.key], vlanNames) + '</span>'
+          : "") +
         '</td></tr>';
       return head + g.entries.map(function (e, i) {
         return entryHtml(e, g.key, i === g.entries.length - 1);
@@ -28410,6 +28446,8 @@ async function _loadAssetChildMacTable(assetId) {
     var switches = (data && data.switches) || [];
     var entries = (data && data.entries) || [];
     var vlanNames = (data && data.vlanNames) || {};
+    // switch id → ifName → the port's configured native / tagged VLANs.
+    var portVlans = (data && data.portVlans) || {};
     var bySw = {};
     entries.forEach(function (e) { (bySw[e.switchAssetId] = bySw[e.switchAssetId] || []).push(e); });
     var dash = '<span style="color:var(--color-text-secondary)">—</span>';
@@ -28468,9 +28506,16 @@ async function _loadAssetChildMacTable(assetId) {
               : dash;
             return '<tr class="childtab-entry" data-group="' + escapeHtml(sw.id) + '">' +
               '<td class="mono" style="padding-left:1.4rem;white-space:nowrap">' + _treeElbow(i === shown.length - 1) + escapeHtml(e.macAddress) + '</td>' +
-              '<td class="mono" style="white-space:nowrap">' + escapeHtml(portOf(e)) + '</td>' +
+              // The port's configured VLANs under its name, not a column of
+              // their own: a sixth column squeezed Status and Device to a
+              // letter per line in the panel's width.
+              '<td><span class="mono" style="white-space:nowrap">' + escapeHtml(portOf(e)) + '</span>' +
+                ((e.ifName && portVlans[sw.id] && portVlans[sw.id][e.ifName])
+                  ? '<div style="margin-top:2px">' + _portVlansHTML(portVlans[sw.id][e.ifName], vlanNames) + '</div>'
+                  : "") +
+              '</td>' +
               '<td>' + (e.vlanId != null ? _vlanPillHTML(e.vlanId, vlanNames, e.vlanInferred === true) : dash) + '</td>' +
-              '<td>' + escapeHtml(e.status) + '</td>' +
+              '<td style="white-space:nowrap">' + escapeHtml(e.status) + '</td>' +
               '<td>' + dev + '</td>' +
             '</tr>';
           }).join("");
@@ -28497,7 +28542,8 @@ async function _loadAssetChildMacTable(assetId) {
         bodyEl.innerHTML = !rows
           ? '<div class="empty-state">No switches or entries match that filter.</div>'
           : '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
-              '<th>Switch / MAC</th><th>Port</th><th>VLAN</th><th>Status</th><th>Device</th>' +
+              '<th>Switch / MAC</th><th title="The port, and the native / tagged VLANs it is configured to carry">Port</th>' +
+              '<th title="The VLAN the entry was learned in">VLAN</th><th style="white-space:nowrap">Status</th><th style="white-space:nowrap">Device</th>' +
             '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       });
   } catch (err) {

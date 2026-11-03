@@ -561,7 +561,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** VLAN NAMES for one asset — what lets the Interfaces table's Native / Tagged VLAN columns, the interface slide-over's VLAN card and the MAC Table show `Users_VL30` as a pill instead of `30` (the number rides the pill's hover). And the MAC Table's VLAN fill for rows the switch reported without one.
 
-**Public API:** `getVlanNamesForAsset(assetId)` → `Record<string, string>` (id as string → name; an unnamed id is absent), `fillMacTableVlans(assetId, entries)` → the entries with `vlanId` filled where it can be and `vlanInferred` on each.
+**Public API:** `getVlanNamesForAsset(assetId)` → `Record<string, string>` (id as string → name; an unnamed id is absent), `fillMacTableVlans(assetId, entries, ports?)` → the entries with `vlanId` filled where it can be and `vlanInferred` on each (`ports` = preloaded port state, so a caller that already read it costs no second query), `readPortVlans(assetIds)` → asset id → ifName → `PortVlanState` in ONE `IN` query (every port — the fill's tagged-dimension test needs all of them), `portVlansFor(ports, ifNames)` → the MAC Table's per-port configured-VLAN line, for the named ports that state something.
 
 **Cross-service deps:** `utils/vlanNames` (`vlanNamesFromInterfaces`, `mergeVlanNames`), `utils/macForwarding` (`fillAccessPortVlans`), `utils/fortinetParentKey` (`readControllerStamp` + `parentAssetWhereOr` + `buildInfraParentIndex` + `resolveInfraParentAsset`).
 
@@ -570,8 +570,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Writes:** nothing — read-only, per request.
 
 **Used by:**
-- `src/api/routes/assets.ts → GET /api/v1/assets/:id/system-info` (`vlanNames`) and `GET /api/v1/assets/:id/mac-table` (`vlanNames` + the filled `entries`).
-- `services/controllerChildrenService.ts → getControllerMacTable` (the GATE's names for the gate's merged MAC Table; it does its own per-switch fill with `fillAccessPortVlans` rather than calling `fillMacTableVlans` once per switch).
+- `src/api/routes/assets.ts → GET /api/v1/assets/:id/system-info` (`vlanNames`) and `GET /api/v1/assets/:id/mac-table` (`vlanNames` + the filled `entries` + `portVlans`).
+- `services/controllerChildrenService.ts → getControllerMacTable` (the GATE's names for the gate's merged MAC Table; `readPortVlans` once for every switch, then its own per-switch fill with `fillAccessPortVlans` and `portVlansFor` per switch, rather than calling `fillMacTableVlans` once per switch).
 - `public/js/assets.js → _vlanPillHTML` / `_vlanOptionLabel` (Interfaces columns + filter options, `_ifaceVlanBlockHTML`, the MAC Table cell), `public/js/mobile/asset-detail.js → loadMacSheet`.
 
 **Invariants:**
@@ -580,6 +580,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **A tie is never guessed.** One id under several parents with different names (VLAN 30 on the FortiLink and on port5) takes the FortiLink-parented name, and otherwise stays unnamed — the UI shows "VLAN 30".
 - **The MAC fill is access-ports-only.** The BRIDGE-MIB forwarding table (the only one a FortiSwitch answers) has no VLAN at all; an access port carries exactly its native VLAN, so its rows take it, marked `vlanInferred` (dashed pill, "(inferred)" on mobile). A trunk's rows stay null. And a switch where NO port reports a tagged VLAN or trunk-all fills nothing: that is a switch whose member bitmaps were not read, where every uplink would look like an access port.
 - **Stored rows are never rewritten** — the fill is presentation-time, so `persistMacTable`'s `(asset, mac, vlan)` keying is untouched.
+- **Two different VLANs on a MAC Table, never merged:** the entry's VLAN (what the address was LEARNED in, possibly `vlanInferred`) and the port's CONFIGURED native / tagged set (`portVlans`, from `AssetInterface`). The UI prints the second on the port (`public/js/assets.js → _portVlansHTML`, the phone's `portVlansText`) and the first in the VLAN column; a surface that collapsed them would show a trunk's tagged list as if every MAC behind it were in all of those VLANs.
 
 **When changing this:** a new VLAN-name source (Q-BRIDGE `dot1qVlanStaticName` for a non-Fortinet switch, IPAM `Subnet.name` by `vlan`) is a new layer passed to `mergeVlanNames` — decide its precedence against the two here. A new surface that prints a VLAN id should take the same map and `_vlanPillHTML`, not print the number.
 
@@ -593,9 +594,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `listControllerChildren(gateId, "access_point" | "switch")` → `ControllerChild[]` (hostname-ordered, natural sort); `countControllerChildren(gateId)` → `{ accessPoints, switches }`; `getControllerWireless(gateId)` → `{ accessPoints, stations }`; `getControllerMacTable(gateId)` → `{ switches, entries, vlanNames }`.
 
-**Cross-service deps:** `utils/fortinetParentKey` (`controllerStampWhereOr` + `readFirewallDeviceName`), `utils/assetInvariants.EXCLUDED_LIFECYCLE_STATUSES`, `utils/macForwarding.fillAccessPortVlans`, `vlanNameService.getVlanNamesForAsset` (the gate's names).
+**Cross-service deps:** `utils/fortinetParentKey` (`controllerStampWhereOr` + `readFirewallDeviceName`), `utils/assetInvariants.EXCLUDED_LIFECYCLE_STATUSES`, `utils/macForwarding.fillAccessPortVlans`, `vlanNameService.getVlanNamesForAsset` (the gate's names), `vlanNameService.readPortVlans` + `portVlansFor`.
 
-**Reads:** `Asset` (the gate's identity; the children by stamp), `AssetWirelessStation`, `AssetMacTableEntry`, `AssetInterface` (port VLAN state, only for switches with a VLAN-less row).
+**Reads:** `Asset` (the gate's identity; the children by stamp), `AssetWirelessStation`, `AssetMacTableEntry`, `AssetInterface` (port VLAN state for every switch with rows, via `vlanNameService.readPortVlans` — the fill AND the per-port `portVlans` line).
 
 **Writes:** nothing — read-only, per request.
 

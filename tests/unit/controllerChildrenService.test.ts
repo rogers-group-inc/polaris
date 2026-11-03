@@ -19,7 +19,12 @@ const { prisma, getVlanNamesForAsset } = vi.hoisted(() => ({
   getVlanNamesForAsset: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => ({ prisma }));
-vi.mock("../../src/services/vlanNameService.js", () => ({ getVlanNamesForAsset }));
+// The real readPortVlans / portVlansFor (they run on the mocked prisma above);
+// only the gate's VLAN names are stubbed.
+vi.mock("../../src/services/vlanNameService.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/services/vlanNameService.js")>()),
+  getVlanNamesForAsset,
+}));
 
 import {
   countControllerChildren,
@@ -122,6 +127,13 @@ describe("getControllerMacTable", () => {
     expect(s2).toMatchObject({ vlanId: null, vlanInferred: false });
     expect(s1).not.toHaveProperty("assetId");
     expect(prisma.assetMacTableEntry.findMany.mock.calls[0][0].where).toEqual({ assetId: { in: ["s1", "s2"] } });
+    // Each port's configured VLANs, per switch, only for ports carrying entries
+    // (s1's trunk port48 has none, so it is absent).
+    expect(out.portVlans).toEqual({
+      s1: { port7: { nativeVlan: 30, taggedVlans: [], trunksAllVlans: false } },
+      s2: { port7: { nativeVlan: 30, taggedVlans: [], trunksAllVlans: false } },
+    });
+    expect(prisma.assetInterface.findMany).toHaveBeenCalledTimes(1);
   });
 
   it("skips the row and port queries when the gate controls no switch", async () => {

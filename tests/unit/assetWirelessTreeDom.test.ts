@@ -58,6 +58,9 @@ const FN_NAMES = [
   "_wirelessHaystackHas",
   "_wirelessStationMatches",
   "_childFilterMatches",
+  "_portVlansHTML",
+  "_vlanPillHTML",
+  "_vlanOptionLabel",
   "_filterWirelessTree",
   "_renderWirelessTree",
   "_wirelessBandLabel",
@@ -564,5 +567,35 @@ describe("_childFilterMatches", () => {
   it("does not compact-match non-hex text or text fields", () => {
     expect(m(["port12"], [MAC], "zz")).toBe(false);
     expect(m(["10.41.30.105"], [], "4130")).toBe(false);
+  });
+});
+
+// The MAC Table tabs' per-port line: what the port is CONFIGURED to carry.
+describe("_portVlansHTML", () => {
+  const h = (state: any) => {
+    const div = document.createElement("div");
+    div.innerHTML = (globalThis as any)._portVlansHTML(state, { "30": "Users_VL30" });
+    return div;
+  };
+
+  it("names the native VLAN and lists the tagged ones as pills", () => {
+    const el = h({ nativeVlan: 30, taggedVlans: [40, 50], trunksAllVlans: false });
+    expect(el.textContent).toContain("Native");
+    expect(el.textContent).toContain("Users_VL30");
+    expect(el.textContent).toContain("Tagged");
+    expect(Array.from(el.querySelectorAll(".vlan-pill")).map((p) => p.textContent)).toEqual(["Users_VL30", "VLAN 40", "VLAN 50"]);
+  });
+
+  it("says Tagged all on a trunk-all port, and caps a long tagged list", () => {
+    expect(h({ nativeVlan: 1, taggedVlans: [], trunksAllVlans: true }).textContent).toContain("all");
+    const long = h({ nativeVlan: null, taggedVlans: [2, 3, 4, 5, 6, 7, 8, 9], trunksAllVlans: false });
+    expect(long.querySelectorAll(".vlan-pill").length).toBe(6);
+    expect(long.textContent).toContain("+2 more");
+    expect(long.textContent).not.toContain("Native");
+  });
+
+  it("is empty for a port that states nothing", () => {
+    expect((globalThis as any)._portVlansHTML(undefined, {})).toBe("");
+    expect((globalThis as any)._portVlansHTML({ nativeVlan: null, taggedVlans: [], trunksAllVlans: false }, {})).toBe("");
   });
 });
