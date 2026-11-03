@@ -248,6 +248,22 @@ describe("Address pills", () => {
     expect(tipRows(pill(el, /IPs$/))).toHaveLength(6);
   });
 
+  it("tags an interface's primary address and leaves its secondaries untagged", () => {
+    const ips = [
+      { ip: "10.1.1.1", mac: ETH, source: "monitor-system-info", interfaceName: "port2", interfaceRole: "primary", lastSeen: now },
+      { ip: "10.2.2.1", mac: ETH, source: "monitor-system-info", interfaceName: "port2", interfaceRole: "secondary", lastSeen: now },
+      { ip: "10.6.6.1", mac: WIFI, source: "monitor-system-info", interfaceName: "eth0", lastSeen: now },
+    ];
+    const rows = tipRows(pill(render(g.addressPillsHTML(hmi({ ipAddress: "10.6.6.1", associatedIps: ips }))), /IPs$/));
+    const byIp = (ip: string) => rows.find((r) => firstMono(r) === ip)!;
+    expect(byIp("10.1.1.1").querySelector(".address-iface-role")!.textContent).toBe("primary");
+    expect(byIp("10.1.1.1").textContent).toContain("port2");
+    expect(byIp("10.2.2.1").querySelector(".address-iface-role")).toBeNull();
+    expect(byIp("10.2.2.1").textContent).toContain("port2");
+    // Role unknown (not FortiOS) = no tag either.
+    expect(byIp("10.6.6.1").querySelector(".address-iface-role")).toBeNull();
+  });
+
   it("keeps a MAC with no address, and an address with no MAC", () => {
     const el = render(g.addressPillsHTML(hmi({ associatedIps: [{ ip: "10.0.0.9", source: "manual", lastSeen: now }] })));
     const macRows = tipRows(pill(el, /MACs$/));

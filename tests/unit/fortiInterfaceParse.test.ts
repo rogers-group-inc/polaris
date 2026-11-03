@@ -18,6 +18,7 @@ import {
   backfillFortiCmdbOnlyBundles,
   fortiIfSubtype,
   normalizeFortiIfType,
+  buildMonitorAssocIpEntries,
 } from "../../src/services/monitoringService.js";
 
 describe("parseFortiCmdbInterfaceTable", () => {
@@ -368,5 +369,61 @@ describe("FortiGate hardware and software switches", () => {
     const cmdb = parseFortiCmdbInterfaceTable([{ name: "lan-sw", type: "switch" }]);
     applyFortiSoftwareSwitchMembers(cmdb, null);
     expect(cmdb.get("lan-sw")!.members).toEqual([]);
+  });
+});
+
+// Secondary IPs: the CMDB `secondary-ip` child table is the only place a
+// FortiGate says which of an interface's addresses are secondary. They land on
+// the asset's address list tagged by role so the panel can mark the primary.
+describe("interface secondary IPs", () => {
+  it("parses secondary-ip in both shapes, dropping 0.0.0.0, the primary and repeats", () => {
+    const map = parseFortiCmdbInterfaceTable([
+      {
+        name: "port2", type: "physical", ip: "10.1.1.1 255.255.255.0",
+        "secondary-ip": [
+          { id: 1, ip: "10.2.2.1 255.255.255.0" },
+          { id: 2, ip: ["10.3.3.1", "255.255.255.0"] },
+          { id: 3, ip: "0.0.0.0 0.0.0.0" },
+          { id: 4, ip: "10.1.1.1 255.255.255.0" },
+          { id: 5, ip: "10.2.2.1 255.255.255.0" },
+          { id: 6 },
+        ],
+      },
+      { name: "port3", type: "physical", ip: "10.4.4.1 255.255.255.0" },
+    ]);
+    expect(map.get("port2")!.secondaryIps).toEqual(["10.2.2.1", "10.3.3.1"]);
+    expect(map.get("port3")!.secondaryIps).toEqual([]);
+  });
+
+  it("carries the CMDB secondaries onto the sample; unknown without a CMDB entry", () => {
+    const cmdb = parseFortiCmdbInterfaceTable([
+      { name: "port2", type: "physical", "secondary-ip": [{ ip: "10.2.2.1 255.255.255.0" }, { ip: "10.9.9.9 255.255.255.0" }] },
+    ]);
+    const rows = buildFortiInterfaceSamples(
+      { port2: { link: true, ip: "10.9.9.9" }, port9: { link: true, ip: "10.5.5.1" } },
+      cmdb,
+    );
+    // A monitor-reported primary that the CMDB also lists as secondary stays the primary.
+    expect(rows.find((r) => r.ifName === "port2")!.secondaryIps).toEqual(["10.2.2.1"]);
+    expect(rows.find((r) => r.ifName === "port9")!.secondaryIps).toBeUndefined();
+  });
+
+  it("writes the primary and each secondary as address rows on the interface's MAC, tagged by role", () => {
+    const now = new Date("2026-11-03T12:00:00Z");
+    const rows = buildMonitorAssocIpEntries([
+      { ifName: "port2", ipAddress: "10.1.1.1", macAddress: "aa:bb:cc:dd:ee:01", secondaryIps: ["10.2.2.1", "10.3.3.1 255.255.255.0"] },
+      { ifName: "port3", ipAddress: "10.4.4.1", macAddress: "aa:bb:cc:dd:ee:02", secondaryIps: [] },
+      { ifName: "eth0",  ipAddress: "10.6.6.1", macAddress: "aa:bb:cc:dd:ee:03" },
+      // A secondary another interface already reported is not written twice.
+      { ifName: "port4", ipAddress: null, macAddress: "aa:bb:cc:dd:ee:04", secondaryIps: ["10.1.1.1", "0.0.0.0"] },
+    ], now);
+    expect(rows.map((r) => [r.ip, r.interfaceName, r.mac, r.interfaceRole])).toEqual([
+      ["10.1.1.1", "port2", "AA:BB:CC:DD:EE:01", "primary"],
+      ["10.2.2.1", "port2", "AA:BB:CC:DD:EE:01", "secondary"],
+      ["10.3.3.1", "port2", "AA:BB:CC:DD:EE:01", "secondary"],
+      ["10.4.4.1", "port3", "AA:BB:CC:DD:EE:02", "primary"],
+      // No secondary list from the collector = role not known.
+      ["10.6.6.1", "eth0",  "AA:BB:CC:DD:EE:03", null],
+    ]);
   });
 });

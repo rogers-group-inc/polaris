@@ -1835,6 +1835,10 @@ model AssetAssociatedIp {
   // primary MAC) — many devices have one MAC per interface, and one MAC may
   // carry several IPs (secondary addresses), one row each.
   mac           String?
+  // Interface-scrape rows only, and only where the device says which address
+  // is which (FortiOS CMDB `secondary-ip`): "primary" | "secondary". Null =
+  // not known (SNMP, agent, discovered, manual) or an IPv6 row.
+  interfaceRole String?
   // Discovery-written rows only (business rule 102): the FortiGate whose
   // DHCP / detected-device / ARP read reported this binding, and the medium
   // it rode in on ("wired" | "wireless"; null = not known).

@@ -5997,6 +5997,10 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
+/* The interface's own primary address (FortiOS names its secondaries) — a
+ * neutral pill beside the interface name, so it never reads as the accent
+ * "★ Primary" the asset is monitored on. Secondaries carry no pill. */
+:root .mac-tooltip-row .address-iface-role { padding: 0 5px; font-size: 0.62rem; margin-left: 4px; vertical-align: 1px; }
 .mac-tooltip-row .primary-address-set,
 .mac-tooltip-row .primary-ipv6-set { padding: 0 6px; font-size: 0.68rem; white-space: nowrap; }
 /* With IPv6 on for the install (business rule 128) the Address row is two

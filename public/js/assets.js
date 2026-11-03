@@ -21264,7 +21264,13 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
     bits.push(netBits);
   }
   if (r.device) bits.push(escapeHtml(r.device));
-  if (r.interfaceName) bits.push(escapeHtml(r.interfaceName));
+  // The interface's primary address gets a pill; its secondary addresses get
+  // none (FortiOS names them; other collectors leave the role unknown).
+  if (r.interfaceName) {
+    bits.push(escapeHtml(r.interfaceName) + (r.interfaceRole === "primary"
+      ? '<span class="badge badge-type address-iface-role" title="The primary address of ' + escapeHtml(r.interfaceName) + '; any others on it are secondary addresses">primary</span>'
+      : ''));
+  }
   if (r.medium) bits.push(r.medium === "wired" ? "wired" : r.medium === "wireless" ? "wireless" : escapeHtml(r.medium));
   if (r.lastSeen) bits.push(formatDate(r.lastSeen));
   // An IPv6 row carries the primary-IPv6 marker or its own pin button
