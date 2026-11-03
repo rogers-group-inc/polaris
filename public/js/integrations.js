@@ -581,7 +581,7 @@ async function loadIntegrations() {
 //   1. Manual reservation creates → POST /cmdb/system.dhcp/server/<id>/
 //      reserved-address. Verified on read-back; failures abort the create.
 //   2. Freeing a discovered dhcp_lease row → POST /monitor/system/dhcp/
-//      release-lease {ip}. Best-effort; device failure does not block the
+//      dhcp/revoke { ip: [ip] }. Best-effort; device failure does not block the
 //      Polaris release.
 //
 // `pushReservations` is the current toggle value; `useProxy` is the current
@@ -636,7 +636,7 @@ function reservationPushFormHTML(pushReservations, useProxy, arpPresenceSweep, a
       '</div>' +
       '<ul class="hint" style="margin:0.25rem 0 0 1.2rem;padding:0">' +
         '<li><strong>Reservation create.</strong> Every manual IP reservation is written to the FortiGate at create time as a <code>reserved-address</code> entry. The Polaris reservation only commits if the device write succeeds and the entry verifies on read-back; any failure aborts the create.</li>' +
-        '<li><strong>DHCP lease revoke.</strong> Freeing a discovered <code>dhcp_lease</code> row tells the FortiGate to forget the current lease via <code>release-lease</code>. Best-effort &mdash; a device-side failure is logged as a warning but does not block the Polaris release. The same client can still DHCP-acquire the IP back on its next request; this is "expire now," not a block.</li>' +
+        '<li><strong>DHCP lease revoke.</strong> Freeing a discovered <code>dhcp_lease</code> row tells the FortiGate to forget the current lease via <code>dhcp/revoke</code>. Best-effort &mdash; a device-side failure is logged as a warning but does not block the Polaris release. The same client can still DHCP-acquire the IP back on its next request; this is "expire now," not a block.</li>' +
       '</ul>' +
       '<div class="form-group" style="display:flex;align-items:flex-start;gap:8px;margin:1rem 0 0.5rem;padding-left:1.2rem;border-left:2px solid var(--color-border)">' +
         '<input type="checkbox" id="f-autoReserveFortinetInfra" ' + autoChecked + autoDisabled + ' style="width:auto;margin-top:3px">' +

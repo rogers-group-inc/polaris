@@ -72,7 +72,7 @@ Offered three choices for the asset's address — move off it, move only when th
 - **What goes:** every discovered row at (asset, address) — there is one per pair, the DHCP binding or the ARP entry learned from it.
 - **The address moves** only when `judgeReleasedAddress` says so: not for an operator pin of any of the three kinds (a release does not overrule a choice the operator made on the asset), not for Fortinet infra (its address is its management IP), not while an interface-scrape, agent or manual row still holds the address (the device itself says it has it). It moves to the best-scored remaining listed address (rule 103(b)'s picker, now exported) or to none, as rule 40(k) does for decommissioning; `AssetIpHistory` keeps the old one. One `asset.address_released` Event per asset.
 
-Rejected: moving only on a confirmed lease release (the owner's choice was the broader one, and FortiOS's release-lease answer does not prove the client stopped using the address either); clearing `ipAddress` on a Polaris-only release (flaps against discovery).
+Rejected: moving only on a confirmed lease release (the owner's choice was the broader one, and FortiOS's dhcp/revoke answer does not prove the client stopped using the address either); clearing `ipAddress` on a Polaris-only release (flaps against discovery).
 
 **MAC only (2026-11-03).** The owner, the next day, verbatim: "I don't want to identify duplicate reservations by hostname, i believe MAC is the only thing we can use." Rule 139's grouping already matched by MAC alone, but two places of this clause still named a reservation's asset some other way, and both were changed the same day:
 
