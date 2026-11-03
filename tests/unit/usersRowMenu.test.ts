@@ -119,12 +119,23 @@ describe("_userMenuItems", () => {
     expect(self).not.toContain("Two-factor auth");
   });
 
-  it("puts Delete last, marked destructive, behind a separator", () => {
+  it("puts Disable account and Delete last, both destructive, behind a separator", () => {
     const items = userMenuItems(local());
     const last = items[items.length - 1]!;
     expect(last.label).toBe("Delete");
     expect(last.danger).toBe(true);
-    expect(items[items.length - 2]!.separator).toBe(true);
+    expect(items[items.length - 2]!.label).toBe("Disable account");
+    expect(items[items.length - 2]!.danger).toBe(true);
+    expect(items[items.length - 3]!.separator).toBe(true);
+  });
+
+  it("offers Enable account on a disabled account, and neither on yourself (rule 140)", () => {
+    const disabled = labels(userMenuItems({ ...local(), disabledAt: "2026-11-03T00:00:00Z" } as UserRow));
+    expect(disabled).toContain("Enable account");
+    expect(disabled).not.toContain("Disable account");
+    const self = labels(userMenuItems(local({ username: "alice" })));
+    expect(self).not.toContain("Disable account");
+    expect(self).not.toContain("Enable account");
   });
 
   it("never returns an empty menu, whatever the account shape", () => {

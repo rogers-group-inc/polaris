@@ -3006,4 +3006,5 @@ Deleting a folder moves what it held up a level. When an account is
 **disabled** or deleted, its private folders, filters and dashboards are
 deleted and its public ones lose their owner. A disabled account cannot sign
 in by any method and is signed out everywhere. See
-[Assets](Assets#view-tabs-and-saved-filters) and [Dashboard](Dashboard#saved-dashboards).
+[Assets](Assets#view-tabs-and-saved-filters), [Dashboard](Dashboard#saved-dashboards)
+and [Users, Roles and Permissions](Users-Roles-and-Permissions#disabling-an-account).

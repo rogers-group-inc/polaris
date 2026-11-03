@@ -694,6 +694,10 @@ const api = {
     resetTotp:     (id)     => request("DELETE", `/users/${id}/totp`),
     passkeys:      (id)     => request("GET", `/users/${id}/passkeys`),
     revokePasskeys:(id)     => request("DELETE", `/users/${id}/passkeys`),
+    // Business rule 140 — Disable account / Enable account.
+    disablePreview:(id)     => request("GET", `/users/${id}/disable-preview`),
+    disable:       (id)     => request("POST", `/users/${id}/disable`, {}),
+    enable:        (id)     => request("POST", `/users/${id}/enable`, {}),
     roleReviewNotifications: ()   => request("GET", "/users/role-review-notifications"),
     dismissRoleReview:       (id) => request("DELETE", `/users/${id}/role-review`),
   },
