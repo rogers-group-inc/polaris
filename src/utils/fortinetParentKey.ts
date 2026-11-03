@@ -347,7 +347,8 @@ export interface ControllerIdentity {
 /**
  * The `OR` branches selecting the children of ONE controller FortiGate. Shared
  * by the Prisma consumers (Device Map topology, the map route's per-site switch
- * list, peer-inferred LLDP) so their filters can't drift apart.
+ * list, peer-inferred LLDP, a gate's Wireless / MAC Table tabs) so their
+ * filters can't drift apart.
  *
  * Order matches `resolveInfraParentAsset`: definitive serial, then the FMG
  * device name, then the hostname. All three are OR'd in one query — the order is

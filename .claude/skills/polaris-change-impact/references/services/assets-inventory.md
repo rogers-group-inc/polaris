@@ -571,6 +571,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Used by:**
 - `src/api/routes/assets.ts → GET /api/v1/assets/:id/system-info` (`vlanNames`) and `GET /api/v1/assets/:id/mac-table` (`vlanNames` + the filled `entries`).
+- `services/controllerChildrenService.ts → getControllerMacTable` (the GATE's names for the gate's merged MAC Table; it does its own per-switch fill with `fillAccessPortVlans` rather than calling `fillMacTableVlans` once per switch).
 - `public/js/assets.js → _vlanPillHTML` / `_vlanOptionLabel` (Interfaces columns + filter options, `_ifaceVlanBlockHTML`, the MAC Table cell), `public/js/mobile/asset-detail.js → loadMacSheet`.
 
 **Invariants:**
@@ -583,6 +584,34 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:** a new VLAN-name source (Q-BRIDGE `dot1qVlanStaticName` for a non-Fortinet switch, IPAM `Subnet.name` by `vlan`) is a new layer passed to `mergeVlanNames` — decide its precedence against the two here. A new surface that prints a VLAN id should take the same map and `_vlanPillHTML`, not print the number.
 
 **Tests:** `tests/unit/vlanNameService.test.ts` (own-rows-first, firewall-only gate lookup, no stamp, unknown asset, the fill skipping its query), `tests/unit/vlanNames.test.ts`, `tests/unit/macForwarding.test.ts` (`fillAccessPortVlans`), `tests/unit/assetInterfacesTableDom.test.ts` (the pills + option labels).
+
+---
+
+## services/controllerChildrenService.ts
+
+**What it owns:** A FortiGate's view of its managed children — the wireless clients of every FortiAP it controls and the forwarding database of every FortiSwitch it controls, read back from the rows each child already holds. Feeds the firewall slide-over's **Wireless** / **MAC Table** tabs and the phone's **View Wireless** / **View MAC Table** pages, so "where is this MAC on the site" is answerable from the gate without opening each switch and AP.
+
+**Public API:** `listControllerChildren(gateId, "access_point" | "switch")` → `ControllerChild[]` (hostname-ordered, natural sort); `countControllerChildren(gateId)` → `{ accessPoints, switches }`; `getControllerWireless(gateId)` → `{ accessPoints, stations }`; `getControllerMacTable(gateId)` → `{ switches, entries, vlanNames }`.
+
+**Cross-service deps:** `utils/fortinetParentKey` (`controllerStampWhereOr` + `readFirewallDeviceName`), `utils/assetInvariants.EXCLUDED_LIFECYCLE_STATUSES`, `utils/macForwarding.fillAccessPortVlans`, `vlanNameService.getVlanNamesForAsset` (the gate's names).
+
+**Reads:** `Asset` (the gate's identity; the children by stamp), `AssetWirelessStation`, `AssetMacTableEntry`, `AssetInterface` (port VLAN state, only for switches with a VLAN-less row).
+
+**Writes:** nothing — read-only, per request.
+
+**Used by:**
+- `src/api/routes/assets.ts → GET /api/v1/assets/:id/child-counts`, `/child-wireless`, `/child-mac-table`.
+- `public/js/assets.js → _loadAssetChildWireless` / `_loadAssetChildMacTable` (via `childCountsP` in the panel open, which decides whether the tabs are drawn), `public/js/mobile/asset-detail.js → loadChildTablesGate` / `loadChildWirelessSheet` / `loadChildMacSheet`.
+
+**Invariants:**
+- **Children are found by the controller stamp, never by matching `controllerFortigate` against `Asset.hostname`** — `controllerStampWhereOr` (serial, FMG device name, hostname), the same filter the Device Map and peer-inferred LLDP use, so the three cannot disagree about who a gate's children are. An empty OR (a gate with no identity) returns no children without querying.
+- **A fixed number of queries per request, however many children** — the children, one `IN (…)` over their rows, one port-state read, the gate's VLAN names. No per-child loop. Bounded by one gate's FortiLink / CAPWAP fan-out.
+- **The VLAN fill runs PER SWITCH.** `fillAccessPortVlans` decides whether a switch reports a tagged dimension across that switch's ports; over the merged set one switch's trunks would license filling another switch's uplink rows.
+- **No gate freshness stamp.** The rows are the children's; each carries its own `lastSystemInfoAt`, and polling the gate re-reads none of them (so neither surface offers a Poll button).
+
+**When changing this:** a new child kind (a FortiExtender) is a new `ControllerChildType` and a new row source. A new column the tables show goes in the `select` here AND in the matchers of both UIs (`_childFilterMatches` in `assets.js`, `tableFilterMatches` in `mobile/asset-detail.js` — one rule, two copies).
+
+**Tests:** `tests/unit/controllerChildrenService.test.ts` (stamp OR + live-only + sort, 404, no-identity short-circuit, one-query counts, one IN query per table, the per-switch fill), `tests/unit/mobileAssetTableSheets.test.ts` (the phone buttons + pages), `tests/unit/assetWirelessTreeDom.test.ts` (`_childFilterMatches`).
 
 ---
 
