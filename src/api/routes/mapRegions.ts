@@ -27,6 +27,7 @@ import {
   principalsScopedToRegion,
   type PrincipalScopeMoves,
 } from "../../services/regionScopeService.js";
+import { releaseRegionOwner, renameRegionOwner } from "../../services/savedOwnershipService.js";
 // The rename rewrites User/Role/GroupMapping region tags, which is exactly the
 // index notificationRecipientService caches for 30s — bumped from here because
 // that module imports regionScopeService and could not import it back.
@@ -292,6 +293,9 @@ router.put("/:id", requirePermission("mapRegions", "write"), async (req, res, ne
       try {
         scopeMoves = await renameRegionInPrincipalScopes(result.previousName, result.region.name);
         if (scopeMoves.total > 0) bumpRecipientIndex();
+        // Saved folders / filters / dashboards a region OWNS follow it too
+        // (business rule 140) — the same access consequence, one level down.
+        await renameRegionOwner(result.previousName, result.region.name);
       } catch (err) {
         scopeErr = err;
       }
@@ -440,6 +444,10 @@ router.delete("/:id", requirePermission("mapRegions", "write"), async (req, res,
     // left in place (the Users page renders it as removable) and the operators
     // now holding a tag that matches no region are named here instead.
     const stranded = await principalsScopedToRegion(removed.name);
+    // Unlike a principal's scope tag, a region's OWNERSHIP of saved items does
+    // not wait for a redraw: they become ownerless now (business rule 140), so
+    // a fullwrite holder can reassign them.
+    const savedReleased = await releaseRegionOwner(removed.name);
     logEvent({
       action: "region.deleted",
       resourceType: "map-region",
@@ -449,7 +457,7 @@ router.delete("/:id", requirePermission("mapRegions", "write"), async (req, res,
       message:
         `Map region "${removed.name}" deleted (${summary.removed} asset${summary.removed === 1 ? "" : "s"}, ` +
         `${summary.subnetsRemoved} network${summary.subnetsRemoved === 1 ? "" : "s"} untagged)`,
-      details: { ...summary, scopedPrincipalsStranded: stranded.total },
+      details: { ...summary, scopedPrincipalsStranded: stranded.total, savedItemsNowOwnerless: savedReleased },
     });
     if (stranded.total > 0) {
       logEvent({

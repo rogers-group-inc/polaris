@@ -64,7 +64,7 @@ edits by its owner do not follow it.
 |---|---|
 | `savedDashboards:read` | list them, and keep your own private ones |
 | `savedDashboards:write` | **publish** one — which reaches every operator *and* the unauthenticated Dash wallboard |
-| `savedDashboards:fullwrite` | delete anyone's |
+| `savedDashboards:fullwrite` | manage dashboards that have no owner, and take any one as your own (**Make private to me**). Only the owner deletes an owned one, public included ([rule 140](Business-Rules#rule-140)) |
 
 A role with `savedDashboards` at **None** does not see the **Dashboards ▾**
 menu at all. Custom roles created before saved dashboards existed were given

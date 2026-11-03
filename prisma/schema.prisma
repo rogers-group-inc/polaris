@@ -3897,6 +3897,16 @@ model User {
   // admins; cleared globally by Dismiss.
   needsRoleReview Boolean @default(false) @map("needs_role_review")
 
+  // Account disabled by an administrator (Users page → Disable account). Set =
+  // no sign-in by any path (password, TOTP, passkey, SAML, OIDC, LDAP, Entra
+  // App Proxy — refused where every path stamps its session), every live
+  // session ended, and the account's saved folders / filters / dashboards
+  // released exactly as a delete releases them (business rule 140). Null =
+  // active. An SSO sign-in never clears it; only Enable does. `disabledBy` is
+  // the acting username, for the Users page and the audit trail.
+  disabledAt DateTime? @map("disabled_at")
+  disabledBy String?   @map("disabled_by")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3905,6 +3915,7 @@ model User {
   networkScans      NetworkScan[]
   savedDashboards   SavedDashboard[]
   savedTableFilters SavedTableFilter[]
+  savedFolders           SavedFolder[]
   tableTabs         UserTableTabs[]
   passkeys          UserPasskey[]
   assistantConversations AssistantConversation[]
@@ -4008,21 +4019,71 @@ model UserTableTabs {
 // unreachable — they match no viewer — and are dropped alongside the user by
 // the users DELETE handler). ownerName is a display snapshot for the same
 // reason.
+//
+// OWNERSHIP (business rule 140) — the same four columns on SavedFolder,
+// SavedTableFilter and SavedDashboard. At most one of ownerId / ownerRoleId /
+// ownerRegion is set: a USER owns it, every holder of a ROLE does, or every
+// user whose effective region scope NAMES a region does (an unrestricted user
+// does not count). None set = OWNERLESS: only a fullwrite holder of the page's
+// key manages it. `ownerName` is the display snapshot of the CURRENT owner and
+// is kept when the owner goes away, so an ownerless row can read "was <name>".
+// `folderId` files it in a SavedFolder of the same kind + scope (SetNull: a
+// folder delete re-parents first, so SetNull only ever fires as a backstop).
 model SavedTableFilter {
   id         String   @id @default(uuid())
   scope      String // which table the preset applies to ("assets")
   name       String
   ownerId    String?
   owner      User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
-  ownerName  String // username snapshot; survives owner deletion
+  ownerRoleId String?
+  ownerRole   Role?        @relation("SavedFilterOwnerRole", fields: [ownerRoleId], references: [id], onDelete: SetNull)
+  ownerRegion String? // bare region name, as User.regionTags holds it
+  ownerName   String // display snapshot of the current (or last) owner
   visibility String   @default("private") // "private" | "public"
   state      Json // { sfFilters, sortKey, sortDir }
+  folderId    String?
+  folder      SavedFolder? @relation("SavedFolderFilters", fields: [folderId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@unique([scope, ownerId, name])
   @@index([scope, visibility])
+  @@index([folderId])
   @@map("saved_table_filters")
+}
+
+// A folder of saved filters (kind "filter", scope = the table, "assets") or of
+// saved dashboards (kind "dashboard", scope "dashboards"). Folders nest through
+// `parentId` (depth capped in savedFolderService, cycles refused); a folder and
+// the items in it each keep their OWN visibility and owner, so a viewer sees
+// exactly the rows visible to them, and an item whose folder they cannot see is
+// drawn at the top level. Deleting a folder moves its contents up one level —
+// nothing inside is deleted (business rule 140). Ownership columns: see
+// SavedTableFilter above.
+model SavedFolder {
+  id          String        @id @default(uuid())
+  kind        String // "filter" | "dashboard"
+  scope       String // the filter table ("assets"), or "dashboards"
+  name        String
+  parentId    String?       @map("parent_id")
+  parent      SavedFolder?  @relation("SavedFolderTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    SavedFolder[] @relation("SavedFolderTree")
+  ownerId     String?       @map("owner_id")
+  owner       User?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  ownerRoleId String?       @map("owner_role_id")
+  ownerRole   Role?         @relation("SavedFolderOwnerRole", fields: [ownerRoleId], references: [id], onDelete: SetNull)
+  ownerRegion String?       @map("owner_region")
+  ownerName   String        @map("owner_name")
+  visibility  String        @default("private") // "private" | "public"
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  filters    SavedTableFilter[] @relation("SavedFolderFilters")
+  dashboards SavedDashboard[]   @relation("SavedFolderDashboards")
+
+  @@index([kind, scope])
+  @@index([parentId])
+  @@map("saved_folders")
 }
 
 // Per-user dashboard layout. One row per user; absent row = "empty
@@ -4057,19 +4118,28 @@ model UserDashboard {
 // ownerId is SetNull (the SavedTableFilter rule, not UserDashboard's Cascade) —
 // a public dashboard outlives the account that published it, and `ownerName` is
 // the username snapshot that survives it.
+//
+// Ownership + `folderId`: the SavedTableFilter columns, same meaning
+// (business rule 140).
 model SavedDashboard {
   id         String   @id @default(uuid())
   name       String
   ownerId    String?
   owner      User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
-  ownerName  String // username snapshot; survives owner deletion
+  ownerRoleId String?
+  ownerRole   Role?        @relation("SavedDashboardOwnerRole", fields: [ownerRoleId], references: [id], onDelete: SetNull)
+  ownerRegion String?
+  ownerName   String // display snapshot of the current (or last) owner
   visibility String   @default("private") // "private" | "public"
   layout     Json // { columns: [ { id, width, widgets: [ { id, type, height, config } ] } ] }
+  folderId    String?
+  folder      SavedFolder? @relation("SavedFolderDashboards", fields: [folderId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@unique([ownerId, name])
   @@index([visibility])
+  @@index([folderId])
   @@map("saved_dashboards")
 }
 
@@ -4237,6 +4307,13 @@ model Role {
   users         User[]
   groupMappings GroupMapping[]
   apiTokens     ApiToken[]
+
+  // Saved folders / filters / dashboards a ROLE owns (business rule 140):
+  // every holder of the role manages them. SetNull on the far side, so a
+  // deleted role leaves its items ownerless rather than taking them with it.
+  ownedSavedFolders    SavedFolder[]      @relation("SavedFolderOwnerRole")
+  ownedSavedFilters    SavedTableFilter[] @relation("SavedFilterOwnerRole")
+  ownedSavedDashboards SavedDashboard[]   @relation("SavedDashboardOwnerRole")
 
   @@map("roles")
 }

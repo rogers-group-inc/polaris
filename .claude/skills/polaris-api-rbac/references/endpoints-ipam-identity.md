@@ -126,20 +126,38 @@ The Assets page's view tabs. Same scope→key resolution as saved filters below,
 
 ### Saved dashboards — `savedDashboards`
 Named dashboard canvases (Dashboard → Dashboards ▾). Unlike saved filters this has its OWN function key, because the Dashboard page has no key to inherit — it is gated per WIDGET. The `savedDashboards:read` floor is declared INSIDE the route file, so the SECOND mount (the Dash wallboard listener, session-less and GET-only) shares it; publishing is checked per request from the payload's `visibility`. Mutations are session callers only — a dashboard has an owner, and the wallboard mount 405s every write verb.
-- `GET    /saved-dashboards`             *(`savedDashboards:read`)* — `{ dashboards: [{ id, name, visibility, ownerId, ownerName, isOwner, widgetCount, layout, createdAt, updatedAt }] }` — everything the caller owns plus every other user's `public` one, name-ascending. **Also mounted on the Dash wallboard listener**, where there is no session: that caller gets PUBLIC rows only and nothing reads as owned.
+- `GET    /saved-dashboards`             *(`savedDashboards:read`)* — `{ dashboards: [{ id, name, visibility, folderId, ownerKind, ownerId, ownerRoleId, ownerRegion, ownerName, isOwner, canManage, canTake, widgetCount, layout, createdAt, updatedAt }], folders: [...] }` — every row the caller can see (business rule 140: public, owned through user / role / region, or — at fullwrite — ownerless), name-ascending; `folderId` / `parentId` are null when that folder is not visible to the caller. **Also mounted on the Dash wallboard listener**, where there is no session: that caller gets PUBLIC rows only and nothing reads as owned.
 - `GET    /saved-dashboards/:id`         *(`savedDashboards:read`)* — one row. **404, not 403**, when the caller can't see it (the `GET /alerts/:id` posture — that an id exists is itself something an anonymous wallboard viewer shouldn't learn). Declared LAST on the mount. The wallboard re-reads its pinned screen through this.
 - `POST   /saved-dashboards`             *(read; `write` when `visibility:"public"`)* — Body `{ name, visibility, layout }`. Keeping a PRIVATE dashboard needs only read, because the ungated `/me/dashboard` already stores the same layout; PUBLISHING is what reaches other operators and the unauthenticated wallboard. A same-(owner, name) POST **updates** instead of duplicating. 201 with the saved DTO. Session callers only (the wallboard mount is GET-only app-wide, so this doesn't exist there).
-- `PUT    /saved-dashboards/:id`         *(owner only, same level rules)* — Rename / change visibility / replace the layout.
-- `DELETE /saved-dashboards/:id`         *(owner: read; someone else's: `fullwrite`)* — 204. The fullwrite branch is housekeeping (a departed colleague's published screen).
+- `GET    /saved-dashboards/owner-options` *(read, signed in — 401 on the wallboard)* — `{ users, roles, regions }` for the Change owner dialog; disabled accounts are left out.
+- `PUT    /saved-dashboards/:id`         *(owner — ownerless: fullwrite; same publish rule)* — Rename / change visibility / replace the layout; optional `folderId`.
+- `PATCH  /saved-dashboards/:id/folder`  *(owner)* — `{ folderId | null }` — file it (drag and drop); the folder must be one the caller can see. 204.
+- `POST   /saved-dashboards/:id/owner`   *(owner)* — `{ owner: { kind: "user", userId } | { kind: "role", roleId } | { kind: "region", region } }` — give it away; 400 for a disabled user / unknown role / region, 409 when the new owner already has that name. Writes `saved_dashboard.owner_changed`.
+- `POST   /saved-dashboards/:id/make-private` *(owner, or `fullwrite` on ANY row)* — the caller becomes the user owner and it turns private. Someone else's: `saved_dashboard.taken` at warning, naming the previous owner.
+- `…/saved-dashboards/folders/*`          — the folder routes (below).
+- `DELETE /saved-dashboards/:id`         *(owner only — `fullwrite` only for an OWNERLESS row)* — 204. Since business rule 140 fullwrite no longer deletes someone's OWNED public dashboard; a departed colleague's rows are ownerless, which is what fullwrite manages.
 
 `layout` is validated by `sanitizeDashboardLayout` over the same `utils/dashboardLayout.ts` schema `/me/dashboard` uses — this blob is replayed into other operators' browsers and onto unauthenticated wallboards.
 
 ### Saved table filters — scope-resolved function key
 Named filter+sort presets for a list page (Assets → Filters ▾). There is no dedicated function key: the request's `scope` resolves to the key that already gates that page (`assets` → `assets`), checked inline with `ensureRoleSnapshot` + `hasPermission` because the key isn't known until the body/query is read. Session callers only — a preset has an owner, and bearer tokens have no user identity (401).
-- `GET    /saved-filters?scope=assets`   *(scope key: read)* — `{ filters: [{ id, scope, name, visibility, ownerId, ownerName, isOwner, state, createdAt, updatedAt }] }` — everything the caller owns plus every other user's `public` preset, name-ascending. Orphaned private rows (owner deleted) match nobody and are invisible.
+- `GET    /saved-filters?scope=assets`   *(scope key: read)* — `{ filters: [{ id, scope, name, visibility, folderId, ownerKind, ownerId, ownerRoleId, ownerRegion, ownerName, isOwner, canManage, canTake, state, createdAt, updatedAt }], folders: [...] }` — every row the caller can see (business rule 140), name-ascending. Ownerless PRIVATE rows (a deleted role / region's) are seen by fullwrite holders only.
+- `GET    /saved-filters/owner-options?scope=assets` *(scope key: read)* — `{ users, roles, regions }` for the Change owner dialog; disabled accounts are left out.
 - `POST   /saved-filters`                *(scope key: read; `write` when `visibility:"public"`)* — Body `{ scope, name, visibility, state }`. Publishing to everyone is a write to shared state; keeping a private preset only needs the read the page already required. A same-(scope, owner, name) POST **updates** the existing row instead of duplicating, so the client's "save over this name" flow is one call. 201 with the saved DTO.
-- `PUT    /saved-filters/:id`            *(owner only, same level rules)* — Rename / re-scope visibility / replace state. `scope` cannot be changed.
-- `DELETE /saved-filters/:id`            *(owner: read; someone else's: `fullwrite`)* — 204. The fullwrite branch is housekeeping (a departed colleague's shared preset).
+- `PUT    /saved-filters/:id`            *(owner — ownerless: fullwrite; same publish rule)* — Rename / re-scope visibility / replace state; optional `folderId`. `scope` cannot be changed.
+- `PATCH  /saved-filters/:id/folder`     *(owner)* — `{ folderId | null }` — file it (drag and drop). 204.
+- `POST   /saved-filters/:id/owner`      *(owner)* — the Change owner body as for dashboards; writes `saved_filter.owner_changed`.
+- `POST   /saved-filters/:id/make-private` *(owner, or `fullwrite` on ANY row)* — Make private to me; someone else's writes `saved_filter.taken` at warning.
+- `DELETE /saved-filters/:id`            *(owner only — `fullwrite` only for an OWNERLESS row)* — 204 (business rule 140).
+
+### Saved folders — the list's own key (business rule 140)
+`buildSavedFolderRouter` (routes/savedFolders.ts) is mounted at `/folders` inside BOTH item routers, so `/saved-filters/folders/*` gates on the body's / folder's scope key and `/saved-dashboards/folders/*` on `savedDashboards`. No list route — folders ride in the item list. Session callers only; the wallboard's GET-only listener never reaches one.
+- `POST   …/folders`                     *(read; `write` when `visibility:"public"`)* — `{ scope (filters only), name, parentId?, visibility }`; ≤8 deep, 200 per user. 201.
+- `PUT    …/folders/:id`                 *(owner; publish needs write)* — `{ name, visibility }`.
+- `PATCH  …/folders/:id/parent`          *(owner)* — `{ parentId | null }`; 400 on a cycle or over-deep tree. 204.
+- `DELETE …/folders/:id`                 *(owner — ownerless: fullwrite)* — its folders and items move UP a level; nothing inside is deleted. 204.
+- `POST   …/folders/:id/owner`           *(owner)* — `{ owner, includeContents? }`; with `includeContents` the subtree rows the caller manages move too → `{ folder, moved }`.
+- `POST   …/folders/:id/make-private`    *(owner or fullwrite)* — `{ includeContents? }`; `saved_folder.taken` when it was someone else's.
 `state` is validated by `sanitizeFilterState` on every write — see the service entry; anything table-sf.js can't itself produce is a 400 rather than stored.
 
 ### Users — `users` function key

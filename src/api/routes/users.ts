@@ -31,6 +31,17 @@ import { normalizeTags } from "../../utils/tagNormalize.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import { logEvent } from "./events.js";
 import { deleteUserAndTombstoneOwnership, assertUsernameNotReserved } from "../../services/userOwnershipService.js";
+import { releaseUserOwnership, type ReleasedOwnership } from "../../services/savedOwnershipService.js";
+
+/** "3 private filters deleted; 2 public items now ownerless" — for the audit Event. */
+function releasedSummary(r: ReleasedOwnership): string {
+  const del = r.deleted.folders + r.deleted.filters + r.deleted.dashboards;
+  const orphan = r.ownerless.folders + r.ownerless.filters + r.ownerless.dashboards;
+  const parts: string[] = [];
+  if (del) parts.push(`${del} private saved folder(s) / filter(s) / dashboard(s) deleted`);
+  if (orphan) parts.push(`${orphan} public one(s) now ownerless`);
+  return parts.join("; ");
+}
 
 const router = Router();
 
@@ -467,19 +478,18 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
       }
     }
 
-    // Saved table filters are ownerId-SetNull so this user's PUBLIC presets
-    // survive them (other operators are using those). Their private ones would
-    // be orphaned rows nobody can ever see, so drop those first.
-    await prisma.savedTableFilter.deleteMany({ where: { ownerId: id, visibility: "private" } });
-    // Same rule for saved dashboards, for the same reason — a published one may
-    // be on a wallboard right now, a private one is unreachable once its owner
-    // is gone.
-    await prisma.savedDashboard.deleteMany({ where: { ownerId: id, visibility: "private" } });
+    // Business rule 140: their PRIVATE saved folders / filters / dashboards go
+    // with them (nobody else could ever see them), their PUBLIC ones stay —
+    // others are using them, and a published dashboard may be on a wallboard
+    // right now — but become OWNERLESS, manageable only at fullwrite. The same
+    // release a disable makes.
+    const released = await releaseUserOwnership(id);
 
     // Rule 48(e), re-scan F85: their rows' ownership goes with the account.
     const tomb = await deleteUserAndTombstoneOwnership(user);
     const owned = tomb.subnets + tomb.reservations + tomb.credentials + tomb.contacts;
     await endSessionsOf(req, id);
+    const savedNote = releasedSummary(released);
     logEvent({
       action: "user.deleted",
       resourceType: "user",
@@ -487,8 +497,9 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
       resourceName: user.username,
       actor: req.session?.username,
       message: `User "${user.username}" deleted (was role "${user.role.name}")` +
-        (owned ? `; ${owned} row(s) they owned are now owned by no account (Full Read-Write holders can still change them)` : ""),
-      ...(owned ? { details: { ownedRowsTombstoned: tomb } } : {}),
+        (owned ? `; ${owned} row(s) they owned are now owned by no account (Full Read-Write holders can still change them)` : "") +
+        (savedNote ? `; ${savedNote}` : ""),
+      details: { ...(owned ? { ownedRowsTombstoned: tomb } : {}), savedItems: released },
     });
     res.status(204).send();
   } catch (err) {

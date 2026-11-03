@@ -9,7 +9,7 @@ knows about a device is reachable from here.
 |---|---|
 | `assets:read` | see the page |
 | `assets:write` | add and edit rows, the bulk Type / State / Monitoring / Tags / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
-| `assets:fullwrite` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), delete others' saved filters |
+| `assets:fullwrite` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), manage saved filters and folders that have no owner, and take any one as your own (**Make private to me**) |
 
 Agent deployment sits at `fullwrite` on purpose ([rule 43](Business-Rules#rule-43)):
 it runs an installer on someone else's host over a stored credential and leaves
@@ -170,8 +170,9 @@ Every visit opens out of edit mode.
 
 **Filters ▾** saves the current column filters + sort as a named preset, loads
 one back into the current tab or a new one, and deletes them. Presets are
-server-side. Private is the default; publishing needs `assets:write`, deleting
-someone else's needs `assets:fullwrite`.
+server-side. Private is the default; publishing needs `assets:write`. Only a
+filter's owner can change or delete it, public ones included; `assets:fullwrite`
+manages filters that have no owner ([rule 140](Business-Rules#rule-140)).
 
 ---
 
