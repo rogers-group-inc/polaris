@@ -1,6 +1,7 @@
 /**
  * src/services/duplicateReservationConflictService.ts — business rule 139:
- * an asset holding two or more DHCP reservations is a conflict.
+ * an asset holding two or more DHCP bindings, at least one a reservation, is a
+ * conflict.
  *
  * A DHCP reservation is a person's statement that THIS device gets THIS
  * address. Two of them on one device is almost never what anyone meant: the
@@ -10,9 +11,11 @@
  * releasing one left the device still answering to the other.
  *
  * What counts:
- *   - an ACTIVE reservation that is a binding on a gate: `sourceType`
+ *   - an ACTIVE row that is a binding on a gate: a reservation — `sourceType`
  *     `dhcp_reservation` (learned from the gate), or a Polaris row the gate
- *     confirmed (`pushStatus` `synced`);
+ *     confirmed (`pushStatus` `synced`) — or a held lease (`dhcp_lease`);
+ *   - a group needs two or more bindings AND at least one reservation: two
+ *     leases on one device (a wired and a Wi-Fi card) are DHCP working;
  *   - matched to an asset through its MAC list (`AssetMacAddress`, single-MAC
  *     rows; the all-zero MAC is never anyone's — rule 97);
  *   - on an asset that is not decommissioned / disabled and not Fortinet infra
@@ -23,10 +26,15 @@
  * One pending Conflict per asset (`entityType` asset, `collisionReason`
  * `duplicate-reservation`), refreshed while the set holds, closed by the sweep
  * when the asset is down to one, and never re-raised for a set the operator
- * dismissed (keyed on the reservation ids). The resolution is
- * `keepOneReservation`: every other reservation in the set is released through
- * `releaseReservation`, which takes it off the gate when DHCP writeback is on
- * and, through rule 102(b), off the asset.
+ * dismissed (keyed on the reservation ids). Two resolutions, both through
+ * `releaseReservation` (off the gate when DHCP writeback is on — a lease is
+ * revoked — and, through rule 102(b), off the asset): `keepOneReservation`
+ * releases every other binding in the set; `releaseOneReservation` releases
+ * one and resolves the conflict once what is left no longer qualifies.
+ *
+ * The gate of each binding is resolved to its firewall asset at sweep time
+ * (`utils/fortinetParentKey.ts` — `Subnet.fortigateDevice` is FortiManager's
+ * device name, never matched against a hostname) so the card can link it.
  */
 
 import { prisma } from "../db.js";
@@ -34,6 +42,7 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { chunkArray } from "../utils/chunk.js";
 import { isAllZeroMac, normalizeMacOrNull } from "../utils/mac.js";
+import { buildInfraParentIndex, parentAssetWhereOr, resolveInfraParentAsset } from "../utils/fortinetParentKey.js";
 import { logEvent } from "./eventLogService.js";
 import { releaseReservation } from "./reservationService.js";
 
@@ -47,9 +56,11 @@ const DUPLICATE_RESERVATION_CONFLICT_WHERE = {
 const EXCLUDED_STATUSES = ["decommissioned", "disabled"];
 const INFRA_ASSET_TYPES = new Set(["firewall", "switch", "access_point"]);
 
-/** One reservation in a group, as stored on the conflict. */
+/** One binding in a group, as stored on the conflict. */
 export interface HeldReservation {
   reservationId: string;
+  /** A reservation (configured MAC-to-IP) or a held lease. */
+  kind: "reservation" | "lease";
   ipAddress: string | null;
   macAddress: string;
   hostname: string | null;
@@ -59,6 +70,8 @@ export interface HeldReservation {
   subnetCidr: string;
   subnetName: string | null;
   gate: string | null;
+  /** The gate's firewall asset, when it resolves (utils/fortinetParentKey). */
+  gateAssetId: string | null;
   createdAt: string;
   createdBy: string | null;
   /** The asset's primary address is this reservation's address. */
@@ -89,19 +102,31 @@ export interface MacOwnerRow {
   asset: { id: string; hostname: string | null; ipAddress: string | null; assetType: string; status: string };
 }
 
-/** A reservation that is a MAC-to-IP binding on a gate. */
-export function isDhcpBinding(r: Pick<ReservationRow, "sourceType" | "pushStatus">): boolean {
+/** A reservation that is a MAC-to-IP entry on a gate. */
+export function isDhcpReservation(r: Pick<ReservationRow, "sourceType" | "pushStatus">): boolean {
   return r.sourceType === "dhcp_reservation" || r.pushStatus === "synced";
+}
+
+/** A binding on a gate: a reservation, or a held lease. */
+export function isDhcpBinding(r: Pick<ReservationRow, "sourceType" | "pushStatus">): boolean {
+  return isDhcpReservation(r) || r.sourceType === "dhcp_lease";
+}
+
+/** Whether a set of bindings is still a conflict: two or more, one a reservation. */
+export function bindingsConflict(rows: ReadonlyArray<{ kind: HeldReservation["kind"] }>): boolean {
+  return rows.length >= 2 && rows.some((r) => r.kind === "reservation");
 }
 
 /**
  * Group the gate bindings by the asset their MAC belongs to and keep the
- * assets holding two or more. Pure. Reservations ordered by address so a
- * refresh writes the same blob for the same set.
+ * assets whose set conflicts (`bindingsConflict`). Pure. Ordered by address so
+ * a refresh writes the same blob for the same set. `gateAssetIds` maps a
+ * gate's device name to its firewall asset (absent = unresolved).
  */
 export function groupDuplicateReservations(
   reservations: readonly ReservationRow[],
   owners: readonly MacOwnerRow[],
+  gateAssetIds: ReadonlyMap<string, string> = new Map(),
 ): DuplicateReservationGroup[] {
   const ownersByMac = new Map<string, MacOwnerRow["asset"][]>();
   for (const o of owners) {
@@ -130,10 +155,10 @@ export function groupDuplicateReservations(
 
   const groups: DuplicateReservationGroup[] = [];
   for (const { asset, rows } of byAsset.values()) {
-    if (rows.length < 2) continue;
     const held = rows
       .map(({ r, mac }): HeldReservation => ({
         reservationId: r.id,
+        kind: isDhcpReservation(r) ? "reservation" : "lease",
         ipAddress: r.ipAddress,
         macAddress: mac,
         hostname: r.hostname,
@@ -143,11 +168,13 @@ export function groupDuplicateReservations(
         subnetCidr: r.subnet.cidr,
         subnetName: r.subnet.name,
         gate: r.subnet.fortigateDevice,
+        gateAssetId: (r.subnet.fortigateDevice && gateAssetIds.get(r.subnet.fortigateDevice)) || null,
         createdAt: r.createdAt.toISOString(),
         createdBy: r.createdBy,
         isPrimary: !!r.ipAddress && r.ipAddress === asset.ipAddress,
       }))
       .sort((a, b) => (a.ipAddress ?? "").localeCompare(b.ipAddress ?? "") || a.reservationId.localeCompare(b.reservationId));
+    if (!bindingsConflict(held)) continue;
     groups.push({ assetId: asset.id, hostname: asset.hostname, assetIpAddress: asset.ipAddress, reservations: held });
   }
   return groups.sort((a, b) => a.assetId.localeCompare(b.assetId));
@@ -168,7 +195,7 @@ async function loadGroups(): Promise<DuplicateReservationGroup[]> {
     where: {
       status: "active",
       macAddress: { not: null },
-      OR: [{ sourceType: "dhcp_reservation" }, { pushStatus: "synced" }],
+      OR: [{ sourceType: "dhcp_reservation" }, { sourceType: "dhcp_lease" }, { pushStatus: "synced" }],
     },
     select: {
       id: true, ipAddress: true, macAddress: true, hostname: true, sourceType: true, pushStatus: true,
@@ -189,7 +216,36 @@ async function loadGroups(): Promise<DuplicateReservationGroup[]> {
       },
     })) as MacOwnerRow[]);
   }
-  return groupDuplicateReservations(reservations as ReservationRow[], owners);
+  return withGateAssets(groupDuplicateReservations(reservations as ReservationRow[], owners));
+}
+
+/**
+ * Resolve each grouped binding's gate to its firewall asset — one candidate
+ * query for the distinct gate names, through the shared parent-key resolver
+ * (the VIP rows' pattern), never a hostname match.
+ */
+async function withGateAssets(groups: DuplicateReservationGroup[]): Promise<DuplicateReservationGroup[]> {
+  const names = [...new Set(groups.flatMap((g) => g.reservations.map((r) => r.gate)).filter((n): n is string => !!n))];
+  if (names.length === 0) return groups;
+  const branches: Array<Record<string, unknown>> = [];
+  for (const name of names) {
+    const or = parentAssetWhereOr({ name });
+    if (or.length > 0) branches.push({ assetType: "firewall", OR: or });
+  }
+  const candidates = branches.length
+    ? await prisma.asset.findMany({
+        where: { OR: branches },
+        select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true },
+      })
+    : [];
+  const index = buildInfraParentIndex(candidates);
+  const byName = new Map<string, string>();
+  for (const name of names) {
+    const hit = resolveInfraParentAsset(index, { name }, "firewall");
+    if (hit) byName.set(name, hit.id);
+  }
+  for (const g of groups) for (const r of g.reservations) r.gateAssetId = (r.gate && byName.get(r.gate)) || null;
+  return groups;
 }
 
 export interface DuplicateReservationReconcileResult {
@@ -280,8 +336,8 @@ export async function reconcileDuplicateReservationConflicts(): Promise<Duplicat
       resourceId: group.assetId,
       resourceName: name,
       actor: "system",
-      message: `"${name}" holds ${group.reservations.length} DHCP reservations: ` +
-        group.reservations.map((r) => `${r.ipAddress ?? "?"}${r.gate ? ` on ${r.gate}` : ""}`).join(", "),
+      message: `"${name}" holds ${group.reservations.length} DHCP bindings: ` +
+        group.reservations.map((r) => `${r.ipAddress ?? "?"} (${r.kind})${r.gate ? ` on ${r.gate}` : ""}`).join(", "),
       details: {
         collisionReason: DUPLICATE_RESERVATION_COLLISION_REASON,
         reservationIds: group.reservations.map((r) => r.reservationId),
@@ -303,7 +359,7 @@ export async function reconcileDuplicateReservationConflicts(): Promise<Duplicat
       resourceId: assetId,
       resourceName: ((row.proposedAssetFields || {}) as Record<string, unknown>).hostname as string || assetId,
       actor: "system",
-      message: "Duplicate DHCP reservation conflict auto-resolved — the asset holds one reservation or none now",
+      message: "Duplicate DHCP reservation conflict auto-resolved — the asset no longer holds two DHCP bindings with a reservation among them",
       details: { collisionReason: DUPLICATE_RESERVATION_COLLISION_REASON },
     });
   }
@@ -369,7 +425,7 @@ export async function keepOneReservation(
     resourceId: conflict.assetId ?? undefined,
     resourceName: name,
     actor,
-    message: `Duplicate DHCP reservations on "${name}": kept ${kept.ipAddress ?? keepReservationId}` +
+    message: `Duplicate DHCP bindings on "${name}": kept the ${kept.kind ?? "reservation"} ${kept.ipAddress ?? keepReservationId}` +
       (kept.gate ? ` on ${kept.gate}` : "") +
       `, released ${outcome.released.length}` +
       (outcome.failed.length ? `, ${outcome.failed.length} failed — the conflict stays open` : ""),
@@ -378,9 +434,64 @@ export async function keepOneReservation(
   return outcome;
 }
 
+export interface ReleaseOneOutcome {
+  released: string;
+  resolved: boolean;
+  remaining: number;
+}
+
+/**
+ * Release ONE binding of the set (a reservation, or a lease — revoked on the
+ * gate when DHCP writeback is on). `mayRelease` is the route's ownership check.
+ * The conflict is accepted when what is still active no longer conflicts
+ * (`bindingsConflict`); otherwise it stays pending with the released row
+ * dropped from its set.
+ */
+export async function releaseOneReservation(
+  conflict: { id: string; assetId: string | null; proposedAssetFields: unknown },
+  reservationId: string,
+  actor: string | undefined,
+  mayRelease: (row: { createdBy: string | null }) => void,
+): Promise<ReleaseOneOutcome> {
+  const stored = conflictReservationsOf(conflict);
+  const target = stored.find((r) => r.reservationId === reservationId);
+  if (!target) throw new AppError(400, "That reservation is not one of this conflict's reservations");
+  const row = await prisma.reservation.findUnique({ where: { id: reservationId }, select: { status: true, createdBy: true } });
+  if (!row || row.status !== "active") throw new AppError(409, "That reservation is no longer active");
+  mayRelease(row);
+  await releaseReservation(reservationId, actor);
+
+  const stillActive = new Set((await prisma.reservation.findMany({
+    where: { id: { in: stored.map((r) => r.reservationId) }, status: "active" },
+    select: { id: true },
+  })).map((r) => r.id));
+  const remaining = stored.filter((r) => stillActive.has(r.reservationId));
+  const resolved = !bindingsConflict(remaining.map((r) => ({ kind: r.kind ?? "reservation" })));
+  const proposed = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
+  await prisma.conflict.update({
+    where: { id: conflict.id },
+    data: resolved
+      ? { status: "accepted", resolvedBy: actor ?? "unknown", resolvedAt: new Date() }
+      : { proposedAssetFields: { ...proposed, reservations: remaining } as any },
+  });
+  const name = (proposed.hostname as string) || conflict.assetId || conflict.id;
+  logEvent({
+    action: resolved ? "conflict.accepted" : "conflict.updated",
+    resourceType: "asset",
+    resourceId: conflict.assetId ?? undefined,
+    resourceName: name,
+    actor,
+    message: `Duplicate DHCP bindings on "${name}": ${target.kind === "lease" ? "revoked the lease" : "released the reservation"} ${target.ipAddress ?? reservationId}` +
+      (target.gate ? ` on ${target.gate}` : "") +
+      (resolved ? " — resolved" : ` — ${remaining.length} still held`),
+    details: { collisionReason: DUPLICATE_RESERVATION_COLLISION_REASON, reservationId, kind: target.kind ?? "reservation", resolved },
+  });
+  return { released: reservationId, resolved, remaining: remaining.length };
+}
+
 function duplicateReservationRejectMessage(conflict: { proposedAssetFields: unknown }): string {
   const n = conflictReservationsOf(conflict).length;
-  return `Duplicate DHCP reservation conflict dismissed — the asset keeps all ${n} reservations; the same set will not re-raise`;
+  return `Duplicate DHCP reservation conflict dismissed — the asset keeps all ${n} bindings; the same set will not re-raise`;
 }
 
 export function logDuplicateReservationDismissal(

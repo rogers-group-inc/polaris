@@ -18,7 +18,7 @@ Queue** dashboard widget. Everyone who can see the queue sees every flavour.
 | `discoveryConflicts:write` | accept / reject / adopt / dismiss |
 | **plus `assets:write`** | **chained**, for the duplicate-IP verbs that change an asset's address (*Apply* a new address, *Clear*), and for accepting a **decommissioned agent** check-in, which reactivates the asset |
 | **plus `assets:fullwrite`** | **chained**, for the duplicate-IP and duplicate-serial merge verbs — they delete a record |
-| **plus `reservations:write`** | **chained**, for *Keep this one* on a duplicate-reservation card — it releases the other reservations, so below Full read-write only reservations you created |
+| **plus `reservations:write`** | **chained**, for *Keep* and *Release* / *Revoke lease* on a duplicate-reservation card — they release reservations and leases, so below Full read-write only ones you created |
 
 ---
 
@@ -33,7 +33,7 @@ Queue** dashboard widget. Everyone who can see the queue sees every flavour.
 | **Decommissioned agent** | asset | the Polaris Agent on a **decommissioned** asset checks in again |
 | **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
 | **`duplicate-serial`** | asset | two asset records carry the **same serial number** — usually merged automatically, see below |
-| **`duplicate-reservation`** | asset | one device holds **two or more DHCP reservations** |
+| **`duplicate-reservation`** | asset | one device holds **two or more DHCP reservations, or a reservation and a lease** |
 | **`chassis-replaced`** | subnet | a network's serving FortiGate answers with a different chassis serial |
 
 ---
@@ -377,26 +377,30 @@ reservation still holds an address. Polaris checks every 10 minutes and raises
 one **Duplicate reservations** card per device.
 
 A reservation counts when it is on a FortiGate: learned from the gate, or made
-in Polaris and confirmed pushed. A lease does not count, and neither does a
-Polaris reservation that was never pushed. It belongs to the device through any
-of the device's MAC addresses, so a wired and a Wi-Fi reservation on one laptop
-are two. Decommissioned and disabled devices, FortiGates, FortiSwitches and
+in Polaris and confirmed pushed. A lease the device holds counts too, but only
+beside a reservation: the card needs two or more of these with at least one
+reservation, so a device holding two leases (a wired and a Wi-Fi card) is never
+reported. A Polaris reservation that was never pushed does not count. Each
+belongs to the device through any of the device's MAC addresses, so a wired
+and a Wi-Fi reservation on one laptop are two. Decommissioned and disabled devices, FortiGates, FortiSwitches and
 FortiAPs are never reported, and neither is a MAC two assets both list.
 
-The card lists each reservation: its address (the device's primary address is
-marked), network, FortiGate, MAC, whether it came from the gate or was pushed
-by Polaris, and when it was created.
+The card lists each one: its address (the device's primary address is marked
+under it), network (click it to open the network), FortiGate (click it to open
+the gate), MAC (click it to copy), its kind (a reservation from the gate, one
+pushed by Polaris, or a lease), and when it was created.
 
 | Verb | Does |
 |---|---|
-| **Keep this one** | keeps the reservation you clicked and **releases** the others, exactly as *Release* in the network's IP table does: each is deleted from its FortiGate when DHCP Push is on for that integration, and the device stops being linked to the address ([rule 102](Business-Rules#rule-102)) |
+| **Keep** | keeps the row you clicked and **releases** every other one, exactly as *Release* in the network's IP table does: a reservation is deleted from its FortiGate, and a lease revoked, when DHCP Push is on for that integration, and the device stops being linked to the address ([rule 102](Business-Rules#rule-102)). *Keep* on a lease keeps the lease and removes the reservations |
+| **Release** / **Revoke lease** | removes just that reservation or lease the same way and keeps the others; the card closes once what is left is no longer a conflict |
 | **Reject** | every reservation is deliberate; the same set will not re-raise, a changed one will |
 
-There is no Accept. *Keep this one* needs read-write on Reservations as well as
-on conflicts. Below Full read-write you can only release reservations you
+There is no Accept. *Keep* and *Release* need read-write on Reservations as
+well as on conflicts. Below Full read-write you can only release reservations you
 created, and Polaris checks every one before releasing any. If a release fails,
 the card stays open and the event log says which one. The card closes itself
-when the device is down to one reservation. Business rule
+when what the device holds is no longer a conflict. Business rule
 [139](Business-Rules#rule-139).
 
 ---

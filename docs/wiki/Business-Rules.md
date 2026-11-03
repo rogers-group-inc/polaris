@@ -2969,16 +2969,20 @@ it. Polaris then aborts it in your name before continuing. See
 ### Rule 139
 
 **A device holding two DHCP reservations is a conflict, and resolving it keeps
-one and releases the rest.** A DHCP reservation counts when it is on a
-FortiGate: learned from the gate, or made in Polaris and confirmed pushed. It
-belongs to a device through the device's MAC addresses, and every MAC counts,
-so a wired and a Wi-Fi reservation on one laptop are two. Polaris checks every
-10 minutes and raises one **Duplicate reservations** card per device. Pick
-**Keep this one** on the reservation to keep. The others are released, which
-takes them off the FortiGate when DHCP Push is on and off the device (rule
-[102](Business-Rules#rule-102)). **Reject** if every reservation is deliberate;
-the same set does not come back. The card closes itself once the device holds
-one reservation. Keeping one needs read-write on Reservations, and below Full
-read-write only reservations you created. Decommissioned and disabled devices,
+one and releases the rest.** A reservation counts when it is on a FortiGate:
+learned from the gate, or made in Polaris and confirmed pushed. A lease the
+device holds counts too, beside a reservation: the card needs two or more of
+these and at least one reservation, so two leases alone are never reported.
+They belong to a device through the device's MAC addresses, and every MAC
+counts, so a wired and a Wi-Fi reservation on one laptop are two. Polaris
+checks every 10 minutes and raises one **Duplicate reservations** card per
+device. **Keep** keeps that row and releases the others; on a lease that means
+keeping the lease and removing the reservations. **Release** (or **Revoke
+lease** on a lease) removes just that one. Each is taken off the FortiGate when
+DHCP Push is on and off the device (rule [102](Business-Rules#rule-102)).
+**Reject** if every one is deliberate; the same set does not come back. The
+card closes itself once what is left is no longer a conflict. Keep and Release
+need read-write on Reservations, and below Full read-write only reservations
+you created. Decommissioned and disabled devices,
 FortiGates, FortiSwitches and FortiAPs are never reported. See
 [Conflict Resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).

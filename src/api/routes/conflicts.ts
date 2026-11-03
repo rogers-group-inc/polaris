@@ -57,6 +57,7 @@ import {
 import { DECOMMISSIONED_AGENT_COLLISION_REASON } from "../../services/agentHostPinService.js";
 import {
   keepOneReservation,
+  releaseOneReservation,
   DUPLICATE_RESERVATION_COLLISION_REASON,
 } from "../../services/duplicateReservationConflictService.js";
 
@@ -421,25 +422,57 @@ router.post("/:id/keep-reservation", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
-    const kind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
-    if (kind.collisionReason !== DUPLICATE_RESERVATION_COLLISION_REASON) {
-      throw new AppError(400, "Only a duplicate DHCP reservation conflict is resolved by keeping one reservation");
-    }
-    if (!hasPermission(req, "reservations", "write")) {
-      throw new AppError(403, "Releasing reservations requires read-write on Reservations");
-    }
+    assertDuplicateReservationRelease(req, conflict);
     const parsed = KeepReservationSchema.parse(req.body ?? {});
-    const fullwrite = hasPermission(req, "reservations", "fullwrite");
-    const outcome = await keepOneReservation(conflict, parsed.reservationId, requestActor(req), (row) => {
-      if (fullwrite) return;
-      if (row.createdBy !== null && row.createdBy === req.session?.username) return;
-      throw new AppError(403, "Forbidden — you can only release reservations you created");
-    });
+    const outcome = await keepOneReservation(conflict, parsed.reservationId, requestActor(req), releaseOwnershipCheck(req));
     res.json({ ok: true, resolved: outcome.failed.length === 0, ...outcome });
   } catch (err) {
     next(err);
   }
 });
+
+// POST /api/v1/conflicts/:id/release-reservation — duplicate-reservation
+// conflicts only (business rule 139). Body: { reservationId }. Releases that
+// ONE binding — a reservation, or a lease (revoked on the gate when DHCP
+// writeback is on) — through releaseReservation. The conflict resolves once
+// what is left no longer holds two bindings with a reservation among them.
+// Same gate as /keep-reservation.
+router.post("/:id/release-reservation", async (req, res, next) => {
+  try {
+    const conflict = await loadPendingConflict(req.params.id);
+    if (!canResolve(req)) {
+      throw new AppError(403, "You do not have permission to resolve this conflict");
+    }
+    assertDuplicateReservationRelease(req, conflict);
+    const parsed = KeepReservationSchema.parse(req.body ?? {});
+    const outcome = await releaseOneReservation(conflict, parsed.reservationId, requestActor(req), releaseOwnershipCheck(req));
+    res.json({ ok: true, ...outcome });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Both duplicate-reservation verbs release reservations, so they take what
+// DELETE /reservations/:id takes: reservations write, and below Full RW only
+// the rows the caller created.
+function assertDuplicateReservationRelease(req: Request, conflict: { proposedAssetFields?: unknown }): void {
+  const kind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
+  if (kind.collisionReason !== DUPLICATE_RESERVATION_COLLISION_REASON) {
+    throw new AppError(400, "Only a duplicate DHCP reservation conflict is resolved by keeping or releasing a reservation");
+  }
+  if (!hasPermission(req, "reservations", "write")) {
+    throw new AppError(403, "Releasing reservations requires read-write on Reservations");
+  }
+}
+
+function releaseOwnershipCheck(req: Request): (row: { createdBy: string | null }) => void {
+  const fullwrite = hasPermission(req, "reservations", "fullwrite");
+  return (row) => {
+    if (fullwrite) return;
+    if (row.createdBy !== null && row.createdBy === req.session?.username) return;
+    throw new AppError(403, "Forbidden — you can only release reservations you created");
+  };
+}
 
 // POST /api/v1/conflicts/:id/clear-ip — duplicate-IP conflicts only.
 // Body: { assetId }. Blanks ONE member's address — the device is offline, so
