@@ -421,7 +421,7 @@ curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: applica
 ### Search
 
 ```
-GET    /search?q=
+GET    /search?q=[&monitored=][&status=]
 ```
 
 Seven groups in one response — `blocks`, `subnets`, `reservations`, `assets`, `ips`,
@@ -435,6 +435,11 @@ the far-end device when known). Supports the same
 A query that reads as a TLS or SSH thumbprint (8+ characters) also returns the
 asset that pin belongs to, archived pins included, first in `assets` with
 `context.pinMatch` — for a caller with `serverSettingsSystem` read.
+`monitored` (comma list of `monitored` / `unmonitored`) and `status` (comma list
+of asset states: `active`, `maintenance`, `storage`, `decommissioned`,
+`disabled`, `quarantined`) narrow `assets` and `sites` the way the search box's
+gear does. Leave one out and it narrows nothing; send it empty and no asset
+matches; an unknown value is a 400. Thumbprint hits are not filtered.
 
 ### IPAM — blocks
 

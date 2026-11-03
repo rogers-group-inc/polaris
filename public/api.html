@@ -1268,6 +1268,13 @@
                 to, live or archived on decommission, first in <code>assets</code>, with
                 <code>context.pinMatch</code> <code>{ kind: "ssh"|"tls", host, port, archived }</code>.
                 Needs <code>serverSettingsSystem</code> read as well as <code>assets</code>.</li>
+            <li>Optional asset filter (the search box's gear): <code>monitored</code> — a comma
+                list of <code>monitored</code> / <code>unmonitored</code>; <code>status</code> — a
+                comma list of <code>active</code>, <code>maintenance</code>, <code>storage</code>,
+                <code>decommissioned</code>, <code>disabled</code>, <code>quarantined</code>. They
+                narrow <code>assets</code> and <code>sites</code> only. An absent parameter narrows
+                nothing; a present-but-empty one (<code>status=</code>) matches no asset; an unknown
+                value is a <code>400</code>. Thumbprint hits are not filtered.</li>
             <li>Caps: 8 hits per group unscoped; 200 for a scoped query. No paging — scope the
                 query instead.</li>
           </ul>

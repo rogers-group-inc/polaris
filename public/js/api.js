@@ -1791,7 +1791,11 @@ const api = {
     teardownScript: ()  => request("GET",  "/ha/teardown-script"),
   },
   search: {
-    query: (q) => request("GET", `/search?q=${encodeURIComponent(q)}`),
+    // `filter` = the global search gear's { monitored: [...], status: [...] }
+    // (each a list; omitted = no narrowing, [] = match no asset).
+    query: (q, filter) => request("GET", `/search?q=${encodeURIComponent(q)}` +
+      (filter && filter.monitored ? "&monitored=" + encodeURIComponent(filter.monitored.join(",")) : "") +
+      (filter && filter.status ? "&status=" + encodeURIComponent(filter.status.join(",")) : "")),
   },
   map: {
     sites:    (regionNames) => request("GET", "/map/sites" + (regionNames && regionNames.length ? "?regionTags=" + encodeURIComponent(regionNames.slice().sort().join(",")) : "")),
