@@ -566,6 +566,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/subnetService.ts
 
+**Address → network for the asset panel (2026-11-03):** `networksForAddresses(entries, fallbackGate)` (one raw query: every non-deprecated subnet with `cidr >>= ip` for the batch) and its pure pick `pickAddressNetwork(candidates, gate, fallbackGate)` → `AddressNetwork { subnetId, cidr, name, vlan, gate }` — narrowest containing network; a range that repeats behind several gates goes to the row's gate, then the asset's, else no answer. Gate-aware where `buildIpContexts` is not. Read by `GET /assets/:id` (`associatedIps[].network`) and `GET /assets/:id/ip-history` (`vlan`, `network`). Pinned by `tests/unit/addressNetworkPick.test.ts` and `tests/integration/assetAddressNetworks.test.ts`.
+
 **What it owns:** Subnet creation, allocation, bulk templates, and lifecycle (manual vs discovered), plus the `subnet.created` / `subnet.updated` / `subnet.deleted` / `subnet.moved` / `subnet.bulk-allocated` audit Events (emitted in-service; inputs carry `actor?`, and `via: "auto-allocate"` discriminates the allocateNextSubnet message from a manual create).
 
 **Public API:** listSubnets, getSubnet, createSubnet, allocateNextSubnet, bulkAllocate, previewBulkAllocate, resolveBlockForCidr (most specific containing block, same IP version, via `utils/cidr.ts → mostSpecificContaining()`), updateSubnet, listMoveTargets + moveSubnet (re-parent onto another block), getSubnetIps, deleteSubnet, buildIpContexts + IpContext (batched IP → most-specific containing subnet — id, cidr, name — + active-reservation summary; THE single implementation of the `cidr >>= ip` / `masklen DESC` containment SQL).

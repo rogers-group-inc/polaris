@@ -542,7 +542,8 @@ reservation the device is holding, the address a FortiGate sees it using, ARP
 entries (a card's secondary addresses), the interface table of a monitored
 device, the interfaces the device's own Polaris Agent reports (source *Agent*),
 and anything typed by hand. Each address names where it came from, the
-gate that reported it, wired or wireless when known, and when it was last seen.
+network it sits in (its name, range and VLAN), the gate that reported it, wired
+or wireless when known, and when it was last seen.
 A FortiGate's addresses for a card leave the list once that gate stops
 reporting them ([rule 102](Business-Rules#rule-102)). Opening the details also
 checks the DHCP leases and reservations against IPAM: an address IPAM has
@@ -1730,6 +1731,10 @@ and one line naming which two sources decided it. Two rules outrank the order:
 **an empty value never overwrites a filled one**, and for Type the `other`
 catch-all counts as empty — so a specific type on either side wins, and no merge
 path writes `other` over a real type.
+
+Below the source cards, **IP History** lists every address the device has held,
+with the **VLAN** of the network each one sits in (hover it for the network's
+name and range) and when it was first and last seen.
 
 The inverse is **Split**, shown to the admin role on each non-manual source
 card of an asset with more than one source: it detaches that

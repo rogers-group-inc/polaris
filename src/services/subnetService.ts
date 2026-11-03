@@ -226,6 +226,74 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
   return out;
 }
 
+/** The IPAM network an address belongs to, as the asset panel shows it. */
+export interface AddressNetwork {
+  subnetId: string;
+  cidr: string;
+  name: string;
+  vlan: number | null;
+  gate: string | null;
+}
+
+/**
+ * The network each address sits in — the asset panel's address hover and IP
+ * history VLAN column. Gate-aware where `buildIpContexts` is not: RFC1918
+ * space repeats behind different gates, so among the narrowest non-deprecated
+ * networks containing the address the one on the row's own gate wins, then the
+ * asset's gate (`fallbackGate`), else the narrowest when it is the only one —
+ * an overlap neither settles has no answer rather than another site's network.
+ * Pure over `candidates` (every containing network, any order).
+ */
+export function pickAddressNetwork(
+  candidates: ReadonlyArray<AddressNetwork & { masklen: number }>,
+  gate: string | null | undefined,
+  fallbackGate: string | null | undefined,
+): AddressNetwork | null {
+  if (candidates.length === 0) return null;
+  const best = Math.max(...candidates.map((c) => c.masklen));
+  const narrowest = candidates.filter((c) => c.masklen === best);
+  for (const g of [gate, fallbackGate]) {
+    const hit = g ? narrowest.find((c) => c.gate === g) : undefined;
+    if (hit) return strip(hit);
+  }
+  return narrowest.length === 1 ? strip(narrowest[0]) : null;
+  function strip(c: AddressNetwork & { masklen: number }): AddressNetwork {
+    return { subnetId: c.subnetId, cidr: c.cidr, name: c.name, vlan: c.vlan, gate: c.gate };
+  }
+}
+
+/**
+ * `pickAddressNetwork` for a set of addresses, keyed `${ip}|${gate ?? ""}`.
+ * One query: every non-deprecated network containing any of the addresses.
+ */
+export async function networksForAddresses(
+  entries: ReadonlyArray<{ ip: string; gate?: string | null }>,
+  fallbackGate?: string | null,
+): Promise<Map<string, AddressNetwork | null>> {
+  const ips = [...new Set(entries.map((e) => e.ip).filter((ip) => !!ip && isValidIpAddress(ip)))];
+  const out = new Map<string, AddressNetwork | null>();
+  if (ips.length === 0) return out;
+  const rows = await prisma.$queryRaw<Array<{
+    ip: string; subnet_id: string; cidr: string; name: string; vlan: number | null; gate: string | null; masklen: number;
+  }>>`
+    WITH input_ips(ip) AS (SELECT unnest(${ips}::text[]))
+    SELECT i.ip AS ip, s.id AS subnet_id, s.cidr AS cidr, s.name AS name, s.vlan AS vlan,
+           s."fortigateDevice" AS gate, masklen(s.cidr::cidr) AS masklen
+    FROM input_ips i
+    JOIN subnets s ON s.status <> 'deprecated' AND s.cidr::cidr >>= i.ip::inet
+  `;
+  const byIp = new Map<string, Array<AddressNetwork & { masklen: number }>>();
+  for (const r of rows) {
+    const list = byIp.get(r.ip) ?? [];
+    list.push({ subnetId: r.subnet_id, cidr: r.cidr, name: r.name, vlan: r.vlan, gate: r.gate, masklen: Number(r.masklen) });
+    byIp.set(r.ip, list);
+  }
+  for (const e of entries) {
+    out.set(`${e.ip}|${e.gate ?? ""}`, pickAddressNetwork(byIp.get(e.ip) ?? [], e.gate, fallbackGate));
+  }
+  return out;
+}
+
 export interface CreateSubnetInput {
   /**
    * Omit to place the network in the most specific block containing its CIDR
