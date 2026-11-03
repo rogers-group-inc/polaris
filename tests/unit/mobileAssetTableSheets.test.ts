@@ -78,6 +78,42 @@ const systemInfo = vi.fn(async () => ({
   ],
 }));
 
+// A FortiGate's managed children. childCounts decides whether the gate's
+// Wireless / MAC Table buttons show at all; null = the gate manages nothing.
+let childCountsResult: any = null;
+const childCounts = vi.fn(async () => childCountsResult);
+const childWireless = vi.fn(async () => ({
+  accessPoints: [
+    { id: "ap", hostname: "AP-1", ipAddress: "10.90.2.48", model: "FortiAP-23JF", monitored: true, lastSystemInfoAt: new Date().toISOString() },
+    { id: "ap9", hostname: "AP-9", ipAddress: "10.90.2.62", model: "FortiAP-231G", monitored: true, lastSystemInfoAt: null },
+  ],
+  stations: [
+    { apAssetId: "ap", staMacAddr: "02:5A:A0:12:00:01", staIpAddr: "10.41.30.105", ssid: "CORP", band: "5GHz", signalStrength: -61,
+      matchedAsset: { id: "pc", hostname: "PRINTER-4" } },
+    { apAssetId: "ap", staMacAddr: "02:5A:BA:01:00:00", staIpAddr: "10.41.40.66", ssid: "GUEST", band: "2.4GHz", signalStrength: -70, matchedAsset: null },
+  ],
+}));
+const childMacTable = vi.fn(async () => ({
+  switches: [
+    { id: "sw", hostname: "SWITCH-1", ipAddress: "10.90.1.11", model: "FortiSwitch-248E", monitored: true, lastSystemInfoAt: new Date().toISOString() },
+    { id: "sw2", hostname: "SWITCH-2", ipAddress: "10.90.1.12", model: "FortiSwitch-108E", monitored: false, lastSystemInfoAt: null },
+  ],
+  entries: [
+    { switchAssetId: "sw", macAddress: "02:5A:EE:00:00:07", vlanId: 30, ifName: "port1", basePort: 1, status: "learned", matchedAsset: { id: "pc", hostname: "PRINTER-4" } },
+    { switchAssetId: "sw", macAddress: "02:5A:EE:00:00:08", vlanId: null, ifName: "port3", basePort: 3, status: "learned", matchedAsset: null },
+    { switchAssetId: "sw", macAddress: "02:5A:C0:00:00:01", vlanId: 30, ifName: null, basePort: 32768, status: "learned", matchedAsset: null },
+  ],
+  vlanNames: { "30": "Users_VL30" },
+}));
+
+// The filter boxes debounce 150 ms.
+async function typeFilter(id: string, text: string) {
+  const box = document.getElementById(id) as HTMLInputElement;
+  box.value = text;
+  box.dispatchEvent(new Event("input"));
+  await new Promise((r) => setTimeout(r, 200));
+}
+
 function boot() {
   document.body.innerHTML = '<div id="app"></div>';
   g.escapeHtml = (s: any) =>
@@ -91,7 +127,7 @@ function boot() {
   // resolves empty; the three table endpoints and get() are real stubs.
   const known: Record<string, any> = {
     get: async (id: string) => ASSETS[id],
-    arpTable, macTable, systemInfo,
+    arpTable, macTable, systemInfo, childCounts, childWireless, childMacTable,
   };
   g.api = {
     assets: new Proxy(known, {
@@ -116,6 +152,10 @@ beforeEach(() => {
   arpTable.mockClear();
   macTable.mockClear();
   systemInfo.mockClear();
+  childCounts.mockClear();
+  childWireless.mockClear();
+  childMacTable.mockClear();
+  childCountsResult = null;
   delete g.PolarisAssetDetail;
   boot();
 });
@@ -225,5 +265,143 @@ describe("Wireless sheet", () => {
     (document.getElementById("asset-sheet-refresh") as HTMLElement).click();   // the header's Refresh
     await flush();
     expect(systemInfo.mock.calls.length).toBe(calls + 1);
+  });
+});
+
+describe("Wireless sheet filter box", () => {
+  it("narrows the tree to matching clients, MAC fragments with or without separators", async () => {
+    await openAsset("ap");
+    btn("wireless")!.click();
+    await flush();
+    await typeFilter("wireless-filter", "beef0001");
+    expect(sheetText()).toContain("de:ad:be:ef:00:01");
+    expect(sheetText()).not.toContain("de:ad:be:ef:00:02");
+    expect(sheetText()).toContain("Radio 1");
+    await typeFilter("wireless-filter", "10.9.0");
+    expect(sheetText()).toContain("de:ad:be:ef:00:01");
+    await typeFilter("wireless-filter", "zzzz");
+    expect(sheetText()).toContain("No radios, SSIDs or clients match that filter.");
+  });
+
+  it("an SSID that matches keeps its whole subtree", async () => {
+    await openAsset("ap");
+    btn("wireless")!.click();
+    await flush();
+    await typeFilter("wireless-filter", "corp");
+    expect(sheetText()).toContain("de:ad:be:ef:00:01");
+    expect(sheetText()).not.toContain("Not matched to an SSID");
+  });
+});
+
+describe("a FortiGate's Wireless / MAC Table buttons", () => {
+  it("are hidden until the gate is known to manage an AP / a switch", async () => {
+    childCountsResult = { accessPoints: 2, switches: 0 };
+    await openAsset("fw");
+    expect(childCounts).toHaveBeenCalledWith("fw");
+    const shown = (key: string) => document.getElementById("asset-" + key + "-btn-wrap")!.style.display !== "none";
+    expect(shown("childwireless")).toBe(true);
+    expect(shown("childmac")).toBe(false);
+    // Desktop tab order: Wireless, MAC Table, then ARP Table.
+    expect(btn("childwireless")!.compareDocumentPosition(btn("arp")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("are not drawn on anything but a firewall", async () => {
+    childCountsResult = { accessPoints: 2, switches: 2 };
+    await openAsset("sw");
+    expect(btn("childwireless")).toBeNull();
+    expect(childCounts).not.toHaveBeenCalled();
+  });
+
+  it("Wireless groups clients by AP, filters by AP name / IP / model and client MAC", async () => {
+    childCountsResult = { accessPoints: 2, switches: 2 };
+    await openAsset("fw");
+    btn("childwireless")!.click();
+    await flush();
+    expect(childWireless).toHaveBeenCalledWith("fw");
+    const heads = Array.from(document.querySelectorAll("#asset-host .asset-page .tbl-group-head .mono")).map((e) => e.textContent);
+    expect(heads).toEqual(["AP-1", "AP-9"]);
+    expect(sheetText()).toContain("No clients connected.");
+    await typeFilter("childwireless-filter", "a012");
+    expect(sheetText()).toContain("02:5A:A0:12:00:01");
+    expect(sheetText()).not.toContain("02:5A:BA:01:00:00");   // "a0" across the BA:01 octet boundary
+    await typeFilter("childwireless-filter", "231g");
+    expect(sheetText()).toContain("AP-9");
+    expect(sheetText()).not.toContain("AP-1");
+    await typeFilter("childwireless-filter", "10.90.2.48");
+    expect(sheetText()).toContain("02:5A:BA:01:00:00");      // an AP hit keeps all its clients
+  });
+
+  it("MAC Table groups entries by switch, hides trunk pseudo-ports until shown, filters", async () => {
+    childCountsResult = { accessPoints: 0, switches: 2 };
+    await openAsset("fw");
+    btn("childmac")!.click();
+    await flush();
+    expect(childMacTable).toHaveBeenCalledWith("fw");
+    expect(sheetText()).toContain("Users_VL30");
+    expect(sheetText()).toContain("Not monitored");
+    expect(sheetText()).not.toContain("02:5A:C0:00:00:01");
+    (document.getElementById("childmac-unattributed-toggle") as HTMLElement).click();
+    expect(sheetText()).toContain("02:5A:C0:00:00:01");
+    await typeFilter("childmac-filter", "ee-00-00-08");
+    expect(sheetText()).toContain("02:5A:EE:00:00:08");
+    expect(sheetText()).not.toContain("02:5A:EE:00:00:07");
+    await typeFilter("childmac-filter", "fortiswitch-108e");
+    expect(sheetText()).toContain("SWITCH-2");
+    expect(sheetText()).not.toContain("SWITCH-1");
+  });
+});
+
+describe("every table page has its filter box", () => {
+  it("even over an empty table (ARP, MAC Table, Wireless)", async () => {
+    arpTable.mockResolvedValueOnce({ entries: [], collectedAt: null, pollIntervalSec: null, retentionDays: 7, range: "current" } as any);
+    await openAsset("fw");
+    btn("arp")!.click();
+    await flush();
+    expect(document.getElementById("arp-filter")).not.toBeNull();
+    await typeFilter("arp-filter", "zz");
+    expect(sheetText()).toContain("No ARP entries.");            // not "nothing matches"
+
+    macTable.mockResolvedValueOnce({ entries: [], collectedAt: null, pollIntervalSec: 300 } as any);
+    await openAsset("sw");
+    btn("mac")!.click();
+    await flush();
+    expect(document.getElementById("mac-filter")).not.toBeNull();
+
+    systemInfo.mockResolvedValueOnce({ interfaces: [], hardwareSensors: [], apRadios: [], wirelessStations: [], lastSystemInfoAt: null } as any);
+    delete g.PolarisAssetDetail;
+    boot();
+    await openAsset("ap");
+    btn("wireless")!.click();
+    await flush();
+    expect(document.getElementById("wireless-filter")).not.toBeNull();
+    expect(sheetText()).toContain("No radios or wireless clients reported for this AP.");
+  });
+
+  it("keeps the typed filter across the header's Refresh", async () => {
+    await openAsset("sw");
+    btn("mac")!.click();
+    await flush();
+    await typeFilter("mac-filter", "0003");
+    expect(sheetText()).not.toContain("aa:bb:cc:00:00:01");
+    (document.getElementById("asset-sheet-refresh") as HTMLElement).click();
+    await flush();
+    expect(macTable).toHaveBeenCalledTimes(2);
+    expect((document.getElementById("mac-filter") as HTMLInputElement).value).toBe("0003");
+    expect(sheetText()).toContain("aa:bb:cc:00:00:03");
+    expect(sheetText()).not.toContain("aa:bb:cc:00:00:01");
+  });
+
+  it("keeps the typed filter across an ARP range change", async () => {
+    await openAsset("fw");
+    btn("arp")!.click();
+    await flush();
+    await typeFilter("arp-filter", "12.63");
+    const sel = document.getElementById("arp-range-select") as HTMLSelectElement;
+    sel.value = "24h";
+    sel.dispatchEvent(new Event("change"));
+    await flush();
+    expect((document.getElementById("arp-filter") as HTMLInputElement).value).toBe("12.63");
+    expect(sheetText()).toContain("10.4.12.63");
+    expect(sheetText()).not.toContain("10.4.12.7 ");
   });
 });

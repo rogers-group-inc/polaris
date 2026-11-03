@@ -220,9 +220,17 @@ firewall that reports SD-WAN:
 
 | Device | Button | What it shows |
 |---|---|---|
+| Firewall managing FortiAPs | **View Wireless** | every managed AP's clients, one group per AP (name, IP, model, last poll and an **Open access point** link), as the desktop firewall's Wireless tab. The filter also matches an AP's hostname, IP or model |
+| Firewall managing FortiSwitches | **View MAC Table** | every managed switch's forwarding database, one group per switch, trunk / LAG pseudo-port entries hidden until you tap **Show**. The filter also matches a switch's hostname, IP or model |
 | Firewall | **View ARP Table** | the neighbour cache by interface, with the same **Current / Last hour … Last 30 days** range as the desktop tab (ranges past retention are greyed) and a filter over IP, MAC, interface and hostname |
 | Switch | **View MAC Table** | the forwarding database by port, each port marked access port or uplink / trunk; entries on trunk / LAG pseudo-ports are hidden until you tap **Show** |
 | Monitored access point | **View Wireless** | each radio (band, channel, width), the SSIDs it broadcasts, and the clients on each. Clients that match no broadcast SSID are listed under their own heading, not dropped. An AP in a wireless mesh is labelled above the radios: **Mesh root** with the leaf APs it serves, **Mesh leaf** with its parent AP's serial (both on a mesh hop) — the desktop Wireless tab's labels |
+
+Every one of these pages has a **filter box**, even when its table is empty. It matches
+partial text: middle octets of an IP (`41.30`), and part of a MAC with or
+without separators (`a0:12`, `a0-12`, `a012`). The filter is kept when you tap
+refresh or change the ARP range. The firewall's View Wireless / View MAC Table
+buttons appear only when it manages at least one AP / switch.
 
 A client or neighbour Polaris matched to a known device links to it, and tapping
 it opens that asset as the next page. The tables are read-only; the refresh
