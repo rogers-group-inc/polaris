@@ -63,7 +63,7 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   │       ├── apiTokens.ts         # Bearer API token CRUD; mounted with `apiTokens=read`, writes escalate to `apiTokens=write`.
 │   │       ├── deviceIcons.ts       # Device Map topology icon upload/list/delete + image serve (`/device-icons/:id/image`).
 │   │       ├── monitorSettings.ts   # Monitor-settings hierarchy routes: manual tier, integration tier, class overrides, asset-override reverse lookup. Thin — Zod schemas + permission gates only; handler bodies live in `monitorSettingsService.ts`.
-│   │       ├── roles.ts             # Dynamic-role CRUD + `/roles/functions` (25-key catalogue).
+│   │       ├── roles.ts             # Dynamic-role CRUD + `/roles/functions` (35-key catalogue, grouped by page section).
 │   │       ├── groupMappings.ts     # IdP group → role + tags mapping CRUD, mounted at `/group-mappings` gated `users:fullwrite`. Thin over groupMappingService.
 │   │       ├── userDashboard.ts     # Per-user dashboard layout GET/PUT at `/me/dashboard`.
 │   │       ├── notificationPreference.ts # The caller's OWN alert delivery preference at `GET|PUT /me/notification-preference` (`email` | `push` | `any`). The third `/me/*` route — strictly per-caller, gated `alerts:read` on BOTH verbs (the push-subscription gate: choosing a delivery method is not an alert-management privilege). GET also returns `options` (value+label) so the desktop account menu and the mobile More tab render the server's vocabulary instead of each hardcoding labels. Thin over notificationPreferenceService; business rule 39.

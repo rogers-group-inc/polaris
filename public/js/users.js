@@ -1830,7 +1830,29 @@ function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
   var protectedBadge = isProtected ? ' <span class="badge" style="background:rgba(239,68,68,0.15);color:var(--color-danger);font-size:0.7em">Locked</span>' : "";
   var userCountMeta = role ? (role.userCount + " user(s) hold this role") : "Not yet assigned";
 
+  // Section headers name the page each function is managed on, in sidebar
+  // order (FUNCTION_SECTIONS in src/api/middleware/permissions.ts — the
+  // catalogue arrives already grouped). A header row is emitted whenever the
+  // section changes; a spec without sections renders the flat table.
+  var sectionLabels = {};
+  (_matrixSpec.sections || []).forEach(function (s) { sectionLabels[s.id] = s.label; });
+  var lastSection = null;
   var matrixRows = _matrixSpec.functions.map(function (f) {
+    var sectionRow = "";
+    if (f.section && f.section !== lastSection && sectionLabels[f.section]) {
+      sectionRow = '<tr class="role-perm-section" data-section="' + escapeHtml(f.section) + '">' +
+        '<th colspan="' + (_PERM_LEVELS.length + 1) + '" style="text-align:left;padding:0.9rem 0.5rem 0.3rem;' +
+          'font-size:0.75em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;' +
+          'color:var(--color-text-secondary);border-bottom:1px solid var(--color-border)">' +
+          escapeHtml(sectionLabels[f.section]) +
+        '</th>' +
+      '</tr>';
+    }
+    lastSection = f.section || lastSection;
+    var alsoOn = (f.alsoOn || []).map(function (id) { return sectionLabels[id]; }).filter(Boolean);
+    var alsoOnNote = alsoOn.length
+      ? '<div class="role-perm-also-on" style="font-size:0.75em;color:var(--color-text-tertiary);margin-top:0.15rem">Also used on: ' + escapeHtml(alsoOn.join(", ")) + '</div>'
+      : '';
     // Clamp into the key's ladder HERE rather than only in the caller: a
     // role stored before a key narrowed (assetsProbe=write) would otherwise
     // select no radio in its row, and the save would collect that as "none" —
@@ -1854,10 +1876,11 @@ function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
     var ownershipNote = f.hasOwnershipDimension
       ? ' <span title="Read-Write = create/edit/delete your own rows only; Full Read-Write = create/edit/delete any row" style="color:var(--color-text-tertiary);font-size:0.85em">(Read-Write = own · Full Read-Write = any)</span>'
       : '';
-    return '<tr>' +
+    return sectionRow + '<tr>' +
       '<td>' +
         '<div style="font-weight:600">' + escapeHtml(f.label) + ownershipNote + '</div>' +
         '<div style="font-size:0.78em;color:var(--color-text-tertiary)">' + escapeHtml(f.description) + '</div>' +
+        alsoOnNote +
       '</td>' +
       cells +
     '</tr>';
