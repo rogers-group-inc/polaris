@@ -146,6 +146,23 @@ d("a released DHCP binding leaves the asset (business rule 102(b))", () => {
     expect(await rowsOf(scraped)).toEqual([{ ip: "10.97.6.14", source: "monitor-system-info" }]);
   });
 
+  it("identifies the asset by the binding's MAC only", async () => {
+    // Attributed to the releasing gate and on the released address, but its
+    // card is not the binding's: left alone (no gate / hostname guessing).
+    const other = await asset("same-gate-other-card", "10.97.6.16", {
+      macAddress: WIFI, learnedLocation: GATE, macAddressRows: { create: [{ mac: WIFI, source: "dhcp_lease" }] },
+    });
+    expect(await detachReleasedAddress({ ip: "10.97.6.16", gate: GATE, macAddress: ETH })).toEqual([]);
+    expect(await ipOf(other)).toBe("10.97.6.16");
+
+    // No MAC on the binding, or a MAC two assets list: nothing is detached.
+    const a = await asset("shared-a", "10.97.6.17");
+    const b = await asset("shared-b", "10.97.6.17");
+    expect(await detachReleasedAddress({ ip: "10.97.6.17", gate: GATE, macAddress: ETH })).toEqual([]);
+    expect(await detachReleasedAddress({ ip: "10.97.6.17", gate: GATE, macAddress: null })).toEqual([]);
+    expect([await ipOf(a), await ipOf(b)]).toEqual(["10.97.6.17", "10.97.6.17"]);
+  });
+
   it("does not touch the same address behind another gate", async () => {
     const id = await asset("elsewhere", "10.97.6.15", {
       macAddress: WIFI, learnedLocation: OTHER_GATE, macAddressRows: { create: [{ mac: WIFI, source: "dhcp_lease" }] },
@@ -226,5 +243,36 @@ d("an asset holding two DHCP reservations is a conflict (business rule 139)", ()
     const row = await prisma.conflict.findFirstOrThrow({ where: { ...DUP_WHERE, assetId } });
     expect(row.status).toBe("rejected");
     expect(row.resolvedBy).toBe("system:auto-resolved");
+  });
+
+  it("a reservation beside a held lease raises; Revoke lease releases just that one and resolves", async () => {
+    const res = await prisma.reservation.create({
+      data: { subnetId, ipAddress: "10.97.6.30", macAddress: ETH, sourceType: "dhcp_reservation", status: "active" },
+    });
+    const lease = await prisma.reservation.create({
+      data: { subnetId: subnet2Id, ipAddress: "10.97.7.30", macAddress: ETH, sourceType: "dhcp_lease", status: "active" },
+    });
+
+    const assetId = await asset("leased", "10.97.7.30");
+    await reconcileDuplicateReservationConflicts();
+    const conflict = await prisma.conflict.findFirstOrThrow({ where: { ...DUP_WHERE, assetId, status: "pending" } });
+    const held = (conflict.proposedAssetFields as any).reservations as Array<{ reservationId: string; kind: string }>;
+    expect(held.map((r) => [r.reservationId, r.kind]).sort()).toEqual([[lease.id, "lease"], [res.id, "reservation"]].sort());
+
+    const { agent, csrf } = await authedAgent(app);
+    const out = await agent.post(`/api/v1/conflicts/${conflict.id}/release-reservation`).set("X-CSRF-Token", csrf).send({ reservationId: lease.id });
+    expect(out.status).toBe(200);
+    expect(out.body).toMatchObject({ released: lease.id, resolved: true, remaining: 1 });
+    expect((await prisma.reservation.findUniqueOrThrow({ where: { id: lease.id } })).status).toBe("released");
+    expect((await prisma.reservation.findUniqueOrThrow({ where: { id: res.id } })).status).toBe("active");
+    expect((await prisma.conflict.findUniqueOrThrow({ where: { id: conflict.id } })).status).toBe("accepted");
+  });
+
+  it("two leases with no reservation never raise", async () => {
+    await prisma.reservation.create({ data: { subnetId, ipAddress: "10.97.6.31", macAddress: ETH, sourceType: "dhcp_lease", status: "active" } });
+    await prisma.reservation.create({ data: { subnetId: subnet2Id, ipAddress: "10.97.7.31", macAddress: ETH, sourceType: "dhcp_lease", status: "active" } });
+    const assetId = await asset("two-leases", "10.97.6.31");
+    await reconcileDuplicateReservationConflicts();
+    expect(await prisma.conflict.count({ where: { ...DUP_WHERE, assetId } })).toBe(0);
   });
 });

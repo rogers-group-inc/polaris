@@ -1957,7 +1957,9 @@ IPAM, holds the device's primary IP. Where two gates have the same network
 (the same private range at two sites), the gate that reported the device
 decides. A device whose MAC also shows up on another site's FortiSwitch no
 longer reads as being at that site. When no IPAM network holds the address,
-the gate that last reported the device is used, as before.
+the gate that last reported the device is used, as before. Pinning an address
+(from the Addresses list, or typing one in Edit) moves the FortiGate shown at
+the same time, without waiting for discovery.
 
 ### Rule 102
 
@@ -2001,8 +2003,13 @@ The **primary** pair is the one monitoring probes. Polaris picks it
   the device moves to its best remaining address, or has none until discovery
   finds one. The old address stays in its IP history. A pinned address, a
   FortiGate / FortiSwitch / FortiAP, and an address the device itself reports
-  (its interface table or agent) keep the address. A released row in the
-  network's IP table no longer links to the device by name.
+  (its interface table or agent) keep the address.
+- **A reservation belongs to a device by its MAC address, never its
+  hostname.** Polaris finds the device whose MAC list holds the reservation's
+  MAC. A reservation with no MAC, or a MAC two devices both list, belongs to
+  no device. In a network's IP table, a row links to the device whose IP it
+  is, or else to the device holding a live reservation's MAC. A released row
+  links only by IP.
 
 ### Rule 103
 
@@ -2964,16 +2971,20 @@ it. Polaris then aborts it in your name before continuing. See
 ### Rule 139
 
 **A device holding two DHCP reservations is a conflict, and resolving it keeps
-one and releases the rest.** A DHCP reservation counts when it is on a
-FortiGate: learned from the gate, or made in Polaris and confirmed pushed. It
-belongs to a device through the device's MAC addresses, and every MAC counts,
-so a wired and a Wi-Fi reservation on one laptop are two. Polaris checks every
-10 minutes and raises one **Duplicate reservations** card per device. Pick
-**Keep this one** on the reservation to keep. The others are released, which
-takes them off the FortiGate when DHCP Push is on and off the device (rule
-[102](Business-Rules#rule-102)). **Reject** if every reservation is deliberate;
-the same set does not come back. The card closes itself once the device holds
-one reservation. Keeping one needs read-write on Reservations, and below Full
-read-write only reservations you created. Decommissioned and disabled devices,
+one and releases the rest.** A reservation counts when it is on a FortiGate:
+learned from the gate, or made in Polaris and confirmed pushed. A lease the
+device holds counts too, beside a reservation: the card needs two or more of
+these and at least one reservation, so two leases alone are never reported.
+They belong to a device through the device's MAC addresses, and every MAC
+counts, so a wired and a Wi-Fi reservation on one laptop are two. Polaris
+checks every 10 minutes and raises one **Duplicate reservations** card per
+device. **Keep** keeps that row and releases the others; on a lease that means
+keeping the lease and removing the reservations. **Release** (or **Revoke
+lease** on a lease) removes just that one. Each is taken off the FortiGate when
+DHCP Push is on and off the device (rule [102](Business-Rules#rule-102)).
+**Reject** if every one is deliberate; the same set does not come back. The
+card closes itself once what is left is no longer a conflict. Keep and Release
+need read-write on Reservations, and below Full read-write only reservations
+you created. Decommissioned and disabled devices,
 FortiGates, FortiSwitches and FortiAPs are never reported. See
 [Conflict Resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).

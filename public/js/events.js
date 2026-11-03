@@ -959,8 +959,8 @@ function getAlertsFormData() {
         });
       });
 
-      // Duplicate-reservation "Keep this one" (business rule 139): confirm
-      // which reservations go, then release them through the conflict.
+      // Duplicate-reservation Keep (business rule 139): confirm which bindings
+      // go, then release them through the conflict.
       body.querySelectorAll("[data-dupres-keep]").forEach(function (el) {
         var conflictId = el.getAttribute("data-conflict-id");
         var keepId = el.getAttribute("data-reservation-id");
@@ -972,11 +972,11 @@ function getAlertsFormData() {
           var msg = [
             'Keep ' + el.getAttribute("data-label") + '?',
             "",
-            "These reservations will be RELEASED:",
+            "These will be RELEASED:",
             others.map(function (o) { return "  • " + o; }).join("\n"),
             "",
-            "A released reservation is deleted from the FortiGate when DHCP Push is on for its integration, " +
-              "and the device stops being linked to the address.",
+            "A released reservation is deleted from the FortiGate, and a lease revoked, when DHCP Push is on for " +
+              "its integration; the device stops being linked to the address.",
           ].join("\n");
           var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
           if (!ok) return;
@@ -984,7 +984,7 @@ function getAlertsFormData() {
           try {
             var out = await api.conflicts.keepReservation(conflictId, { reservationId: keepId });
             showToast(out && out.resolved
-              ? "Released " + ((out && out.released && out.released.length) || 0) + " reservation(s)"
+              ? "Released " + ((out && out.released && out.released.length) || 0) + " binding(s)"
               : ((out && out.failed && out.failed.length) || 0) + " release(s) failed — the conflict stays open", out && out.resolved ? undefined : "error");
             var scrollTop = body.scrollTop;
             await loadConflicts(true);
@@ -994,6 +994,65 @@ function getAlertsFormData() {
             showToast(err.message, "error");
             el.disabled = false;
           }
+        });
+      });
+
+      // Duplicate-reservation Release / Revoke lease: just this one binding.
+      body.querySelectorAll("[data-dupres-release]").forEach(function (el) {
+        el.addEventListener("click", async function () {
+          var isLease = el.getAttribute("data-lease") === "1";
+          var msg = (isLease ? "Revoke the " : "Release the ") + el.getAttribute("data-label") + "?\n\n" +
+            (isLease
+              ? "The lease is revoked on the FortiGate when DHCP Push is on for its integration; the device asks for a new address."
+              : "The reservation is deleted from the FortiGate when DHCP Push is on for its integration.") +
+            " The device stops being linked to the address.";
+          var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
+          if (!ok) return;
+          el.disabled = true;
+          try {
+            var out = await api.conflicts.releaseReservation(el.getAttribute("data-conflict-id"), { reservationId: el.getAttribute("data-reservation-id") });
+            showToast((isLease ? "Lease revoked" : "Reservation released") + (out && out.resolved ? " — conflict resolved" : ""));
+            var scrollTop = body.scrollTop;
+            await loadConflicts(true);
+            body.scrollTop = scrollTop;
+            refreshBadge();
+          } catch (err) {
+            showToast(err.message, "error");
+            el.disabled = false;
+          }
+        });
+      });
+
+      // The network opens its slide-in at the address; the FortiGate opens its
+      // asset — both in place over this panel.
+      body.querySelectorAll(".dupres-network-link").forEach(function (el) {
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          if (typeof PolarisPanels === "undefined") return;
+          PolarisPanels.openNetwork(el.getAttribute("data-subnet-id"), {
+            focusIp: el.getAttribute("data-ip") || undefined,
+            subnetCidr: el.getAttribute("data-cidr") || undefined,
+          });
+        });
+      });
+      body.querySelectorAll(".dupres-gate-link").forEach(function (el) {
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          if (typeof PolarisPanels !== "undefined") PolarisPanels.openAsset(el.getAttribute("data-asset-id"));
+        });
+      });
+
+      // Click-to-copy (the MAC on a duplicate-reservation row).
+      body.querySelectorAll(".conflict-table-dupres .copy-cell").forEach(function (el) {
+        el.addEventListener("click", function () {
+          var text = el.getAttribute("data-copy");
+          if (!text || typeof copyTextToClipboard !== "function") return;
+          copyTextToClipboard(text).then(function (ok) {
+            if (!ok) return;
+            el.classList.add("copy-cell-flash");
+            setTimeout(function () { el.classList.remove("copy-cell-flash"); }, 600);
+            showToast("Copied " + text);
+          });
         });
       });
 
@@ -1882,9 +1941,12 @@ function getAlertsFormData() {
     '</div>';
   }
 
-  // One asset, two or more DHCP reservations (business rule 139). The verb is
-  // per row: keep this one, and every other reservation in the set is released
-  // — off the gate when DHCP writeback is on, and off the asset.
+  // One asset, two or more DHCP bindings with a reservation among them
+  // (business rule 139). Two verbs per row: Keep (release every other binding)
+  // and Release / Revoke lease (just this one) — off the gate when DHCP
+  // writeback is on, and off the asset. The network opens its slide-in, the
+  // FortiGate its asset (resolved server-side, never by hostname), the MAC
+  // copies on click.
   function renderDuplicateReservationConflictCard(c) {
     var proposed = c.proposedAssetFields || {};
     var held = Array.isArray(proposed.reservations) ? proposed.reservations : [];
@@ -1893,38 +1955,59 @@ function getAlertsFormData() {
     var assetLabel = proposed.hostname || proposed.assetIpAddress || c.assetId || "(unnamed)";
 
     var rows = held.map(function (r) {
-      var network = r.subnetName ? (escapeHtml(r.subnetName) + ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(r.subnetCidr || "") + '</span>') : escapeHtml(r.subnetCidr || "—");
-      var kind = r.sourceType === "dhcp_reservation" ? "On the gate" : "Pushed by Polaris";
+      var isLease = r.kind === "lease";
+      var netText = escapeHtml(r.subnetName || r.subnetCidr || "—");
+      var network = r.subnetId
+        ? '<a href="#" class="dupres-network-link" data-subnet-id="' + escapeHtml(r.subnetId) + '" ' +
+            'data-ip="' + escapeHtml(r.ipAddress || "") + '" data-cidr="' + escapeHtml(r.subnetCidr || "") + '" ' +
+            'title="Open ' + escapeHtml(r.subnetCidr || "this network") + '">' + netText + '</a>'
+        : netText;
+      if (r.subnetName && r.subnetCidr) network += ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(r.subnetCidr) + '</span>';
+      var gate = r.gate
+        ? (r.gateAssetId
+          ? '<a href="#" class="dupres-gate-link" data-asset-id="' + escapeHtml(r.gateAssetId) + '" title="Open this FortiGate">' + escapeHtml(r.gate) + '</a>'
+          : escapeHtml(r.gate))
+        : "—";
+      var mac = r.macAddress
+        ? '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.macAddress) + '">' + escapeHtml(r.macAddress) + '</span>'
+        : "—";
+      var kind = isLease ? "Lease" : (r.sourceType === "dhcp_reservation" ? "Reservation (on the gate)" : "Reservation (pushed by Polaris)");
+      // The asset panel's own Primary pill (styles.css .address-primary-badge).
       var primary = r.isPrimary
-        ? ' <span class="badge badge-conflict" style="font-size:0.65rem">primary address</span>'
+        ? '<div><span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span></div>'
         : "";
-      var keepCell = (isResolved || !canKeep)
+      var label = (isLease ? "lease " : "reservation ") + (r.ipAddress || "") + (r.gate ? " on " + r.gate : "");
+      var actionCell = (isResolved || !canKeep)
         ? '<td></td>'
-        : '<td class="conflict-action-cell">' +
+        : '<td class="conflict-action-cell" style="white-space:nowrap">' +
             '<button class="btn btn-secondary btn-sm" data-dupres-keep data-conflict-id="' + c.id + '" ' +
-              'data-reservation-id="' + escapeHtml(r.reservationId || "") + '" ' +
-              'data-label="' + escapeHtml((r.ipAddress || "") + (r.gate ? " on " + r.gate : "")) + '" ' +
-              'title="Keep this reservation and release the other' + (held.length > 2 ? 's' : '') + '">Keep this one</button>' +
+              'data-reservation-id="' + escapeHtml(r.reservationId || "") + '" data-label="' + escapeHtml(label) + '" ' +
+              'title="Keep this ' + (isLease ? 'lease' : 'reservation') + ' and release every other binding">Keep</button> ' +
+            '<button class="btn btn-secondary btn-sm" data-dupres-release data-conflict-id="' + c.id + '" ' +
+              'data-reservation-id="' + escapeHtml(r.reservationId || "") + '" data-label="' + escapeHtml(label) + '" ' +
+              'data-lease="' + (isLease ? '1' : '') + '" ' +
+              'title="' + (isLease ? 'Revoke this lease' : 'Release this reservation') + ' and keep the others">' +
+              (isLease ? 'Revoke lease' : 'Release') + '</button>' +
           '</td>';
       return '<tr class="conflict-changed">' +
-        '<td class="conflict-field mono">' + escapeHtml(r.ipAddress || "—") + primary + '</td>' +
+        '<td class="conflict-field mono" style="white-space:nowrap">' + escapeHtml(r.ipAddress || "—") + primary + '</td>' +
         '<td style="font-size:0.75rem">' + network + '</td>' +
-        '<td style="font-size:0.75rem">' + escapeHtml(r.gate || "—") + '</td>' +
-        '<td class="mono" style="font-size:0.75rem">' + escapeHtml(r.macAddress || "—") + '</td>' +
+        '<td style="font-size:0.75rem">' + gate + '</td>' +
+        '<td class="mono" style="font-size:0.75rem;white-space:nowrap">' + mac + '</td>' +
         '<td style="font-size:0.75rem">' + kind + '</td>' +
         '<td style="font-size:0.75rem">' + (r.createdAt ? timeAgo(r.createdAt) : "—") + '</td>' +
-        keepCell +
+        actionCell +
         '</tr>';
     }).join("");
 
     var explainer =
-      '<strong>' + escapeHtml(assetLabel) + '</strong> holds ' + held.length + ' DHCP reservations. ' +
-      'A reservation says which address a device gets, so two usually means one was left behind when the ' +
-      'device was re-addressed or moved sites. Use <em>Keep this one</em> on the reservation to keep — the ' +
-      'other' + (held.length > 2 ? 's are' : ' is') + ' released, taken off the FortiGate when DHCP Push is on, ' +
-      'and the device stops being linked to ' + (held.length > 2 ? 'them' : 'it') + '. ' +
-      '<strong>Reject</strong> if every reservation is deliberate (a wired and a Wi-Fi card, say); the same ' +
-      'set will not re-raise.';
+      '<strong>' + escapeHtml(assetLabel) + '</strong> holds ' + held.length + ' DHCP bindings, at least one a ' +
+      'reservation. A reservation says which address a device gets, so a second binding usually means one was ' +
+      'left behind when the device was re-addressed or moved sites, or the device is not using its reservation. ' +
+      '<em>Keep</em> keeps that binding and releases every other one; <em>Release</em> / <em>Revoke lease</em> ' +
+      'removes just that one. Each is taken off the FortiGate when DHCP Push is on, and the device stops being ' +
+      'linked to it. <strong>Reject</strong> if every binding is deliberate (a wired and a Wi-Fi card, say); the ' +
+      'same set will not re-raise.';
 
     var actions = isResolved
       ? resolvedActionsHtml(c)
@@ -1939,7 +2022,7 @@ function getAlertsFormData() {
       '<div class="conflict-card-header">' +
         '<span class="badge badge-conflict">Duplicate reservations</span>' +
         '<strong>' + assetLink + '</strong>' +
-        '<span class="conflict-card-subnet" style="font-size:0.78rem">' + held.length + ' reservations</span>' +
+        '<span class="conflict-card-subnet" style="font-size:0.78rem">' + held.length + ' bindings</span>' +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
       '<div class="conflict-table conflict-table-dupres" style="padding:0">' +
@@ -1950,7 +2033,7 @@ function getAlertsFormData() {
           '<th>MAC</th>' +
           '<th>Kind</th>' +
           '<th>Created</th>' +
-          '<th>' + (isResolved ? '' : 'Keep') + '</th>' +
+          '<th></th>' +
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
         '</table>' +

@@ -21256,6 +21256,13 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
     : 'no MAC');
   var label = formatAddressSource(r.source);
   if (label) bits.push(escapeHtml(label));
+  // The IPAM network the address sits in (server-resolved, gate-aware).
+  if (r.network && (r.network.name || r.network.cidr)) {
+    var netBits = escapeHtml(r.network.name || r.network.cidr) +
+      (r.network.name && r.network.cidr ? ' <span class="mono">' + escapeHtml(r.network.cidr) + '</span>' : '');
+    if (r.network.vlan != null) netBits += ' VLAN ' + escapeHtml(String(r.network.vlan));
+    bits.push(netBits);
+  }
   if (r.device) bits.push(escapeHtml(r.device));
   if (r.interfaceName) bits.push(escapeHtml(r.interfaceName));
   if (r.medium) bits.push(r.medium === "wired" ? "wired" : r.medium === "wireless" ? "wireless" : escapeHtml(r.medium));
@@ -24156,11 +24163,15 @@ function _ipHistoryTableHTML(rows) {
   if (!Array.isArray(rows) || !rows.length) {
     return '<p class="empty-state" style="margin:0">No IP history recorded for this asset.</p>';
   }
-  return '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>IP Address</th><th>Source</th><th>First Seen</th><th>Last Seen</th></tr></thead><tbody>' +
+  // VLAN of the network the address sits in (server-resolved per row); the
+  // network's name rides the tooltip.
+  return '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>IP Address</th><th>VLAN</th><th>First Seen</th><th>Last Seen</th></tr></thead><tbody>' +
     rows.map(function (h) {
+      var net = h.network || null;
+      var vlanTitle = net ? ' title="' + escapeHtml((net.name || "") + (net.cidr ? " " + net.cidr : "")) + '"' : '';
       return '<tr>' +
         '<td class="mono">' + escapeHtml(h.ip || "-") + '</td>' +
-        '<td>' + escapeHtml(h.source || "-") + '</td>' +
+        '<td' + vlanTitle + '>' + (h.vlan != null ? escapeHtml(String(h.vlan)) : "-") + '</td>' +
         '<td>' + (h.firstSeen ? escapeHtml(formatDate(h.firstSeen)) : "-") + '</td>' +
         '<td>' + (h.lastSeen ? escapeHtml(formatDate(h.lastSeen)) : "-") + '</td>' +
       '</tr>';

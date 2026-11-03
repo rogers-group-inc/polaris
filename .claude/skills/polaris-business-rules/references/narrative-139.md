@@ -64,3 +64,13 @@ open for the sweep to refresh.
   operator knows and Polaris does not; a reservation on another site's gate may be the live one.
 - **Raising at write time.** The writers are too many to hook, and a duplicate is a property of
   the fleet — the rule 40 reasoning.
+
+### Leases, and releasing one at a time (2026-11-03)
+
+The owner, verbatim: "perhaps we expand duplicate reservation to also include leases with the ability to revoke a lease or keep the lease and remove the reservations". The common case it names: a device with a reservation it is not using, holding a lease elsewhere — the gate hands the device one address while IPAM promises it another.
+
+- **A held `dhcp_lease` is a binding beside the reservations** (`isDhcpBinding`; `isDhcpReservation` keeps the old meaning). A set conflicts only with two or more bindings AND at least one reservation (`bindingsConflict`). Without that guard every laptop holding a wired and a Wi-Fi lease would raise a card — that is DHCP working, not two promises.
+- **Two verbs per row.** *Keep* (the old *Keep this one*, renamed at the owner's request) releases every other binding — on a lease row that is "keep the lease and remove the reservations". *Release* / *Revoke lease* (`POST /conflicts/:id/release-reservation`, `releaseOneReservation`) removes just that one through the same `releaseReservation` path, which revokes a lease on the gate when DHCP writeback is on; the card resolves (accepted, by the operator) once the still-active rest no longer conflicts, and otherwise stays open with the row dropped.
+- **The card links out.** The network opens its slide-in at the address; the FortiGate opens its asset, resolved at sweep time through `utils/fortinetParentKey.ts` (`gateAssetId`) because `Subnet.fortigateDevice` is FortiManager's device name and never a hostname match; the MAC copies on click; the address no longer wraps (the primary badge sits under it).
+
+Rejected: counting two leases alone (DHCP working); a lease-only "Revoke all leases" card verb (Keep on a reservation already does it, and one more verb was not asked for).

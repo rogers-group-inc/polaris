@@ -166,10 +166,11 @@ export function computeFreshestGateChanges(
  * Batch-upsert sightings. Uses INSERT ... ON CONFLICT to bump lastSeen +
  * source + integrationId on the existing row, or insert a fresh one.
  *
- * Empty input → no-op. Inputs are deduped on (assetId, fortigateDevice)
- * keeping the latest seenAt per pair so a single discovery run that records
- * the same asset on the same FortiGate via both lease and reservation only
- * results in one update.
+ * Empty input → no-op. Inputs are deduped on (assetId, fortigateDevice,
+ * source) keeping the latest seenAt per key: a gate that holds both a lease
+ * and a reservation for the device keeps a row for each (2026-11-03 — before,
+ * the reservation won the tie and the lease, often the address the device is
+ * actually using, never showed).
  *
  * Also emits `asset.gateway_firewall.changed` for any asset whose freshest
  * sighting moves to a different gate — see computeFreshestGateChanges.
@@ -177,26 +178,13 @@ export function computeFreshestGateChanges(
 export async function recordSightings(rows: SightingInput[]): Promise<void> {
   if (rows.length === 0) return;
 
-  // Dedupe by (assetId, fortigateDevice). Keep the entry with the latest
-  // seenAt; on tie, prefer dhcp_reservation over dhcp_lease (a static
-  // reservation is the more durable signal).
+  // Dedupe by (assetId, fortigateDevice, source), keeping the latest seenAt.
   const dedupedMap = new Map<string, SightingInput>();
   for (const row of rows) {
     if (!row.assetId || !row.fortigateDevice) continue;
-    const key = `${row.assetId}\u0000${row.fortigateDevice}`;
+    const key = `${row.assetId}\u0000${row.fortigateDevice}\u0000${row.source}`;
     const existing = dedupedMap.get(key);
-    if (!existing) {
-      dedupedMap.set(key, row);
-      continue;
-    }
-    const existingTime = (existing.seenAt ?? new Date()).getTime();
-    const candidateTime = (row.seenAt ?? new Date()).getTime();
-    if (
-      candidateTime > existingTime ||
-      (candidateTime === existingTime &&
-        row.source === "dhcp_reservation" &&
-        existing.source !== "dhcp_reservation")
-    ) {
+    if (!existing || (row.seenAt ?? new Date()).getTime() > (existing.seenAt ?? new Date()).getTime()) {
       dedupedMap.set(key, row);
     }
   }
@@ -234,14 +222,14 @@ export async function recordSightings(rows: SightingInput[]): Promise<void> {
     const seen = row.seenAt ?? new Date();
     return prisma.assetFortigateSighting.upsert({
       where: {
-        assetId_fortigateDevice: {
+        assetId_fortigateDevice_source: {
           assetId: row.assetId,
           fortigateDevice: row.fortigateDevice,
+          source: row.source,
         },
       },
       update: {
         lastSeen: seen,
-        source: row.source,
         ...(row.integrationId !== undefined
           ? { integrationId: row.integrationId }
           : {}),
@@ -315,7 +303,13 @@ export async function getQuarantineCandidates(
   assetId: string,
 ): Promise<AssetSighting[]> {
   const settings = await getSightingSettings();
-  const all = await getSightingsForAsset(assetId);
+  // One candidate per GATE — the freshest of its rows (a gate holding both a
+  // lease and a reservation has two), so a quarantine pushes once per gate.
+  const byGate = new Map<string, AssetSighting>();
+  for (const s of await getSightingsForAsset(assetId)) {
+    if (!byGate.has(s.fortigateDevice)) byGate.set(s.fortigateDevice, s); // ordered lastSeen desc
+  }
+  const all = [...byGate.values()];
   if (settings.sightingMaxAgeDays <= 0) return all;
   const cutoff = Date.now() - settings.sightingMaxAgeDays * 86_400_000;
   return all.filter((s) => s.lastSeen.getTime() >= cutoff);

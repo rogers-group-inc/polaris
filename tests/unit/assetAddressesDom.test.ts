@@ -342,4 +342,15 @@ describe("address confidence chips (business rule 103)", () => {
     const el = render(g.addressPillsHTML(hmi({ addressConfidence: {} })));
     expect(el.querySelector(".addr-conf")).toBeNull();
   });
+
+  it("the IPs hover names the network each address sits in", () => {
+    const asset = hmi();
+    const row = { ...asset.associatedIps[1], network: { name: "Office-Data", cidr: "172.23.6.0/24", vlan: 6, subnetId: "s1", gate: "ARCHMAT-101F-1" } };
+    const text = render(g._addressTooltipRowHTML(asset, row, false, true)).textContent || "";
+    expect(text).toContain("Office-Data");
+    expect(text).toContain("172.23.6.0/24");
+    expect(text).toContain("VLAN 6");
+    const bare = render(g._addressTooltipRowHTML(asset, asset.associatedIps[1], false, true)).textContent || "";
+    expect(bare).not.toContain("VLAN");
+  });
 });

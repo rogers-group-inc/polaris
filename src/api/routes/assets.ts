@@ -56,7 +56,7 @@ import {
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
 import { descriptionSyncEnabledForRole } from "../../utils/descriptionSyncFlags.js";
 import { cidrContains, isIpv6Address, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
-import { buildIpContexts } from "../../services/subnetService.js";
+import { buildIpContexts, networksForAddresses } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
@@ -172,7 +172,7 @@ import {
 import { triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
 import { resolveDiscoveryScopeForAsset } from "../../services/discovery/assetDiscoveryScope.js";
 import { isRunActive } from "../../services/discoveryRunState.js";
-import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } from "../../services/primaryAddressService.js";
+import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN, gateForPinnedAddress } from "../../services/primaryAddressService.js";
 import { pinPrimaryIpv6, unpinPrimaryIpv6 } from "../../services/primaryIpv6Service.js";
 import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../services/assetAddressService.js";
 import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
@@ -1791,10 +1791,17 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
       : null;
     // Business rule 103 — every address's confidence with its breakdown.
     const addressConfidence = confidenceToJson((await buildAddressConfidence([asset.id])).get(asset.id));
+    // The IPAM network each address sits in, for the address hover — the
+    // narrowest containing network, on the row's own gate where ranges repeat.
+    const shapedIps = shapeAssociatedIps(associatedIpRows);
+    const networks = await networksForAddresses(
+      shapedIps.map((r) => ({ ip: r.ip, gate: r.device ?? null })),
+      asset.learnedLocation,
+    );
     const safeAsset = {
       ...assetRest,
       addressConfidence,
-      associatedIps: shapeAssociatedIps(associatedIpRows),
+      associatedIps: shapedIps.map((r) => ({ ...r, network: networks.get(`${r.ip}|${r.device ?? ""}`) ?? null })),
       macAddresses:  shapeMacRows(macAddressRows),
       hostnameDiscovered,
       discoveredByIntegration: asset.discoveredByIntegration
@@ -1824,9 +1831,21 @@ router.get("/:id/effective-monitor-settings", requirePermission("assets", "read"
 // GET /api/v1/assets/:id/ip-history — IP address history for an asset (all authenticated users)
 router.get("/:id/ip-history", requirePermission("assets", "read"), async (req, res, next) => {
   try {
-    const asset = await prisma.asset.findUnique({ where: { id: req.params.id as string }, select: { id: true } });
+    const asset = await prisma.asset.findUnique({ where: { id: req.params.id as string }, select: { id: true, learnedLocation: true } });
     if (!asset) throw new AppError(404, "Asset not found");
-    res.json(await getIpHistory(req.params.id as string));
+    const history = await getIpHistory(req.params.id as string);
+    // Each row's network (the IP History table's VLAN column): a source of
+    // "<gate>" or "<gate>:arp" names the gate that settles a repeated range,
+    // then the asset's own gate.
+    const gateOf = (source: string | null) => (source ? source.split(":")[0].trim() || null : null);
+    const networks = await networksForAddresses(
+      history.map((h) => ({ ip: h.ip, gate: gateOf(h.source) })),
+      asset.learnedLocation,
+    );
+    res.json(history.map((h) => {
+      const network = networks.get(`${h.ip}|${gateOf(h.source) ?? ""}`) ?? null;
+      return { ...h, vlan: network?.vlan ?? null, network };
+    }));
   } catch (err) {
     next(err);
   }
@@ -4533,6 +4552,12 @@ async function buildAssetUpdatePatch(
       data.ipCleared = null; // a typed address ends any rule 40(j) blank hold
       Object.assign(data, CLEAR_PRIMARY_ADDRESS_PIN); // pins are mutually exclusive (rule 102)
       ipOverrideTouched = true;
+      // Business rule 101(b): the last-seen FortiGate follows the pinned
+      // address. Fortinet infra keeps its own (its learnedLocation is itself).
+      if (!["firewall", "switch", "access_point"].includes(existing.assetType)) {
+        const gate = await gateForPinnedAddress(trimmed, [existing.learnedLocation]);
+        if (gate && gate !== existing.learnedLocation) data.learnedLocation = gate;
+      }
     } else {
       delete data.ipAddress;
     }

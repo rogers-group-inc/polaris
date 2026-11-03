@@ -1,6 +1,6 @@
 /**
  * tests/unit/duplicateReservationGroups.test.ts — business rule 139: which
- * assets hold two or more DHCP reservations
+ * assets hold two or more DHCP bindings with a reservation among them
  * (services/duplicateReservationConflictService.ts → groupDuplicateReservations).
  */
 
@@ -8,6 +8,8 @@ import { describe, it, expect } from "vitest";
 import {
   groupDuplicateReservations,
   isDhcpBinding,
+  isDhcpReservation,
+  bindingsConflict,
   reservationSetKey,
   type ReservationRow,
   type MacOwnerRow,
@@ -26,12 +28,19 @@ const owner = (mac: string, over: Partial<MacOwnerRow["asset"]> = {}): MacOwnerR
   mac, asset: { id: "a1", hostname: "laptop-1", ipAddress: "10.1.0.1", assetType: "workstation", status: "active", ...over },
 });
 
-describe("isDhcpBinding", () => {
-  it("counts a gate-learned reservation and a Polaris row the gate confirmed, nothing else", () => {
+describe("isDhcpBinding / isDhcpReservation / bindingsConflict", () => {
+  it("counts a gate-learned reservation, a Polaris row the gate confirmed and a held lease, nothing else", () => {
     expect(isDhcpBinding({ sourceType: "dhcp_reservation", pushStatus: null })).toBe(true);
     expect(isDhcpBinding({ sourceType: "manual", pushStatus: "synced" })).toBe(true);
+    expect(isDhcpBinding({ sourceType: "dhcp_lease", pushStatus: null })).toBe(true);
     expect(isDhcpBinding({ sourceType: "manual", pushStatus: null })).toBe(false);
-    expect(isDhcpBinding({ sourceType: "dhcp_lease", pushStatus: null })).toBe(false);
+    expect(isDhcpReservation({ sourceType: "dhcp_lease", pushStatus: null })).toBe(false);
+  });
+
+  it("needs two or more bindings with a reservation among them", () => {
+    expect(bindingsConflict([{ kind: "reservation" }, { kind: "lease" }])).toBe(true);
+    expect(bindingsConflict([{ kind: "lease" }, { kind: "lease" }])).toBe(false);
+    expect(bindingsConflict([{ kind: "reservation" }])).toBe(false);
   });
 });
 
@@ -54,9 +63,22 @@ describe("groupDuplicateReservations", () => {
     expect(groups[0].reservations).toHaveLength(2);
   });
 
-  it("leaves an asset with one reservation, and rows that are not gate bindings", () => {
+  it("leaves an asset with one reservation, rows that are not gate bindings, and leases alone", () => {
     expect(groupDuplicateReservations([res(), res({ sourceType: "manual" })], [owner(MAC)])).toEqual([]);
-    expect(groupDuplicateReservations([res(), res({ sourceType: "dhcp_lease" })], [owner(MAC)])).toEqual([]);
+    expect(groupDuplicateReservations([res({ sourceType: "dhcp_lease" }), res({ sourceType: "dhcp_lease", macAddress: WIFI })], [owner(MAC), owner(WIFI)])).toEqual([]);
+  });
+
+  it("groups a reservation with a lease the device holds elsewhere, naming each kind and the gate's asset", () => {
+    const groups = groupDuplicateReservations(
+      [res({ ipAddress: "10.1.0.50" }), res({ ipAddress: "10.1.0.90", sourceType: "dhcp_lease" })],
+      [owner(MAC)],
+      new Map([["FGT-A", "gate-asset-1"]]),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].reservations.map((r) => [r.ipAddress, r.kind, r.gateAssetId])).toEqual([
+      ["10.1.0.50", "reservation", "gate-asset-1"],
+      ["10.1.0.90", "lease", "gate-asset-1"],
+    ]);
   });
 
   it("skips decommissioned / disabled assets and Fortinet infra", () => {

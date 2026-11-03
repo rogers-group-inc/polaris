@@ -29,7 +29,7 @@
           reason = "serial claimed by " + gates + " FortiGates";
         } else if (reason === "duplicate-serial") reason = "duplicate serial " + (f.serialNumber || "");
         else if (reason === "duplicate-reservation") {
-          reason = (Array.isArray(f.reservations) ? f.reservations.length : 2) + " DHCP reservations";
+          reason = (Array.isArray(f.reservations) ? f.reservations.length : 2) + " DHCP bindings";
         }
         subtitle = (f.hostname || "(unnamed)") + ' · ' + reason;
       } else {

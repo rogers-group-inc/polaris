@@ -4993,7 +4993,12 @@ model AssetFortigateSighting {
   firstSeen       DateTime     @default(now())
   lastSeen        DateTime     @default(now())
 
-  @@unique([assetId, fortigateDevice])
+  // One row per binding KIND per gate (2026-11-03): a gate that holds both a
+  // lease and a reservation for the device keeps both, so the Firewall
+  // Sightings panel shows each. Readers that want "the gate" take the freshest
+  // row per gate (quarantine collapses by gate; every other reader already
+  // orders by lastSeen).
+  @@unique([assetId, fortigateDevice, source])
   @@index([assetId])
   @@index([assetId, lastSeen])
   @@index([integrationId])

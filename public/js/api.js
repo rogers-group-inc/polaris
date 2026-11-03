@@ -1205,6 +1205,7 @@ const api = {
     clearIp: (id, body) => request("POST", `/conflicts/${id}/clear-ip`, body),
     // duplicate-reservation conflicts only (business rule 139)
     keepReservation: (id, body) => request("POST", `/conflicts/${id}/keep-reservation`, body),
+    releaseReservation: (id, body) => request("POST", `/conflicts/${id}/release-reservation`, body),
     // subnet chassis-replacement conflicts only (business rule 41)
     chassisDiff: (id) => request("GET", `/conflicts/${id}/chassis-diff`),
     migrateReservations: (id, body) => request("POST", `/conflicts/${id}/migrate-reservations`, body),
