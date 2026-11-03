@@ -72,7 +72,8 @@ beforeAll(async () => {
   usersFull = await createRoleUser("usersfull", matrix("read", { users: "fullwrite" }));
   rolesWriter = await createRoleUser("roles", matrix("read", { roles: "write" }));
   assetsWriter = await createRoleUser("assets", matrix("read", { assets: "write" }));
-  settingsReader = await createRoleUser("settings", matrix("none", { serverSettingsSystem: "read" }));
+  // The tag registry rides its own key from 2026-11-03; preview-criteria is tags:read.
+  settingsReader = await createRoleUser("settings", matrix("none", { serverSettingsSystem: "read", tags: "read" }));
   automationsWriter = await createRoleUser("autos", matrix("read", { automationManagement: "write" }));
   adminRoleId = (await createRole("adminish", matrix("fullwrite"))).id;
   lowRoleId = (await createRole("low", matrix("read"))).id;

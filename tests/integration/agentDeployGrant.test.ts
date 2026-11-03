@@ -1,8 +1,8 @@
 /**
  * tests/integration/agentDeployGrant.test.ts
  *
- * Deploying the Polaris Agent is `assets=fullwrite` (2026-09-04), not
- * `assets=write`: it runs an installer on someone else's machine over a
+ * Deploying the Polaris Agent is its own key, `agentDeploy` (2026-11-03; it
+ * was `assets=fullwrite` from 2026-09-04 until then), not `assets=write`: it runs an installer on someone else's machine over a
  * stored SSH / WinRM credential and leaves a service behind, which is a
  * different act from editing an inventory record. Two halves are pinned here
  * because they are two different doors onto the same capability:
@@ -119,7 +119,7 @@ afterAll(async () => {
   await prisma.role.deleteMany({ where: { name: { startsWith: PFX + "-role-" } } });
 });
 
-d("Polaris Agent deployment needs assets=fullwrite", () => {
+d("Polaris Agent deployment needs the agentDeploy key", () => {
   it("assets=write cannot install the agent on one asset", async () => {
     const s = await loginAs(assetsWriteUser);
     const res = await s.agent
@@ -159,7 +159,7 @@ d("Polaris Agent deployment needs assets=fullwrite", () => {
         },
       });
     expect(res.status).toBe(403);
-    expect(String(res.body.error ?? res.body.message ?? "")).toMatch(/Full Read-Write on Assets/i);
+    expect(String(res.body.error ?? res.body.message ?? "")).toMatch(/Agent Deploy/i);
 
     const after = await prisma.integration.findUnique({ where: { id: integrationId } });
     expect(((after?.config as any)?.serverMonitor?.agentDeploy?.enabled) ?? false).toBe(false);
@@ -174,7 +174,7 @@ d("Polaris Agent deployment needs assets=fullwrite", () => {
     expect(res.status).toBe(200);
   });
 
-  it("assets=fullwrite may turn auto-deploy on, and a write-level role may then turn it OFF", async () => {
+  it("agentDeploy may turn auto-deploy on, and a write-level role may then turn it OFF", async () => {
     const su = await loginAs(fullUser);
     const on = await su.agent
       .put("/api/v1/integrations/" + integrationId)

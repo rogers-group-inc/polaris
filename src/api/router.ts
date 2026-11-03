@@ -28,6 +28,7 @@ import notificationChannelsRouter from "./routes/notificationChannels.js";
 import pushSubscriptionsRouter from "./routes/pushSubscriptions.js";
 import conflictsRouter from "./routes/conflicts.js";
 import serverSettingsRouter from "./routes/serverSettings.js";
+import tagsRouter from "./routes/tags.js";
 import proxySettingsRouter from "./routes/proxySettings.js";
 import mibsRouter from "./routes/mibs.js";
 import manufacturerProfilesRouter from "./routes/manufacturerProfiles.js";
@@ -310,6 +311,11 @@ router.use("/api-tokens", requirePermission("apiTokens", "read"), apiTokensRoute
 // of /server-settings. Express first-match routing handles the rest — any
 // path under /server-settings that doesn't start with /server-settings/mibs
 // falls through to the serverSettingsRouter below.
+// The tag registry rides its own `tags` key (read on the list and the
+// filter vocabulary, write on every change). Mounted before the blanket so a
+// role holding tags=read — every built-in — reaches the registry the pickers
+// colour themselves from without holding Server Settings at all.
+router.use("/server-settings/tags", requirePermission("tags", "read"), tagsRouter);
 router.use("/server-settings/mibs", mibsRouter);
 // Same precedent — per-route guards (manufacturerProfiles read on browse,
 // write on edits). Mounted before the blanket so reads reach roles that

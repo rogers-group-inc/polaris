@@ -5,7 +5,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import * as blockService from "../../services/blockService.js";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, assertTagChangeAllowed } from "../middleware/permissions.js";
 
 const router = Router();
 
@@ -46,6 +46,7 @@ router.get("/:id", requirePermission("ipBlocks", "read"), async (req, res, next)
 router.post("/", requirePermission("ipBlocks", "write"), async (req, res, next) => {
   try {
     const input = CreateBlockSchema.parse(req.body);
+    assertTagChangeAllowed(req, [], input.tags);
     const block = await blockService.createBlock({ ...input, actor: req.session?.username });
     res.status(201).json(block);
   } catch (err) {
@@ -57,6 +58,10 @@ router.put("/:id", requirePermission("ipBlocks", "write"), async (req, res, next
   try {
     const id = req.params.id as string;
     const input = UpdateBlockSchema.parse(req.body);
+    if (input.tags !== undefined) {
+      const before = await blockService.getBlock(id);
+      assertTagChangeAllowed(req, before.tags, input.tags);
+    }
     const block = await blockService.updateBlock(id, { ...input, actor: req.session?.username });
     res.json(block);
   } catch (err) {

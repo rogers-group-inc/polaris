@@ -25,7 +25,7 @@ import {
   countAdminEquivalentUsers,
   isAdminEquivalentRole,
 } from "../../services/roleService.js";
-import { requirePermission, assertNoPrivilegeEscalation, assertGrantWithinCaller } from "../middleware/permissions.js";
+import { requirePermission, assertNoPrivilegeEscalation, assertGrantWithinCaller, assertTagChangeAllowed } from "../middleware/permissions.js";
 import { revokeUserSessions } from "../../services/sessionRevocationService.js";
 import { normalizeTags } from "../../utils/tagNormalize.js";
 import * as mfaPending from "../../utils/mfaPending.js";
@@ -353,6 +353,10 @@ router.put("/:id/regions", requirePermission("users", "write"), async (req, res,
     const { regionTags, otherTags } = UpdateRegionsSchema.parse(req.body);
     const before = await prisma.user.findUnique({ where: { id }, select: { id: true, username: true, regionTags: true, otherTags: true } });
     if (!before) throw new AppError(404, "User not found");
+    // A user's tags are their write reach (rule 141): the Tags key's grant,
+    // chained on the user edit.
+    assertTagChangeAllowed(req, before.regionTags, regionTags);
+    assertTagChangeAllowed(req, before.otherTags, otherTags);
 
     const data: { regionTags?: string[]; otherTags?: string[] } = {};
     const details: Record<string, unknown> = {};

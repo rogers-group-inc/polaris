@@ -251,7 +251,17 @@ export async function updateRole(id: string, input: UpdateRoleInput, actor?: str
     }
   }
   if (input.permissions !== undefined) {
-    const next = normalizePermissions(input.permissions);
+    // A key ABSENT from the posted matrix keeps its stored level. The role
+    // editor posts every key it knows, and a browser holding a users.js cached
+    // from before a migration added a key would otherwise post a matrix without
+    // it — which `normalizePermissions` defaults to `none`, so an administrator
+    // editing an unrelated cell silently revoked the new grant (first seen with
+    // 20261103170000_dangerous_act_keys). Revoking is still a statement: post
+    // the key at "none".
+    const stored = (before.permissions && typeof before.permissions === "object")
+      ? (before.permissions as Record<string, unknown>)
+      : {};
+    const next = normalizePermissions({ ...stored, ...input.permissions });
     const prev = normalizePermissions(before.permissions);
     const changed: Record<string, { from: AccessLevel; to: AccessLevel }> = {};
     for (const def of FUNCTION_KEYS) {

@@ -19,6 +19,7 @@ import {
   ACCESS_LEVELS,
   requirePermission,
   assertGrantWithinCaller,
+  assertTagChangeAllowed,
   callerIsAdminEquivalent,
   isAdminEquivalentPermissions,
   normalizePermissions,
@@ -83,6 +84,9 @@ router.post("/", requirePermission("roles", "write"), async (req, res, next) => 
     // Rules 48 / 114(g): roles:write may only grant what the caller holds —
     // never an admin-equivalent role, nor any single key above its own level.
     assertGrantWithinCaller(req, input.permissions, `the role "${input.name}"`);
+    // A role's tags are every holder's write reach (rule 141): the Tags key's
+    // grant, chained on the role edit.
+    assertTagChangeAllowed(req, [], input.regionTags);
     const created = await roleService.createRole(
       {
         name:        input.name,
@@ -100,6 +104,10 @@ router.post("/", requirePermission("roles", "write"), async (req, res, next) => 
 router.put("/:id", requirePermission("roles", "write"), async (req, res, next) => {
   try {
     const input = UpdateRoleSchema.parse(req.body);
+    if (input.regionTags !== undefined) {
+      const cur = await roleService.getRole(req.params.id as string) as { regionTags?: string[] };
+      assertTagChangeAllowed(req, cur.regionTags ?? [], input.regionTags);
+    }
     // Rule 48: nor to promote an existing role — including the caller's own —
     // into one. A partial update that leaves `permissions` alone is untouched.
     if (input.permissions !== undefined) {
@@ -108,10 +116,18 @@ router.put("/:id", requirePermission("roles", "write"), async (req, res, next) =
       const current = await roleService.getRole(req.params.id as string);
       assertGrantWithinCaller(req, input.permissions, "this permission set", (current as { permissions?: unknown }).permissions);
       // Rule 48 the other way (re-scan F76): taking admin-equivalence away.
+      // Judged on the matrix as it will be STORED — a key absent from the
+      // posted matrix keeps its stored level (roleService.updateRole), so a
+      // partial post that omits `users` / `roles` is not a demotion.
+      const currentPerms = (current as { permissions?: unknown }).permissions;
+      const merged = {
+        ...((currentPerms && typeof currentPerms === "object") ? (currentPerms as Record<string, unknown>) : {}),
+        ...input.permissions,
+      };
       await roleService.assertRoleDemotionAllowed(
         req.params.id as string,
-        (current as { permissions?: unknown }).permissions,
-        isAdminEquivalentPermissions(normalizePermissions(input.permissions)),
+        currentPerms,
+        isAdminEquivalentPermissions(normalizePermissions(merged)),
         callerIsAdminEquivalent(req),
       );
     }

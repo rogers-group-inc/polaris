@@ -12,6 +12,7 @@ import {
   requirePermission,
   requireOwnership,
   assertOwnership,
+  assertTagChangeAllowed,
   callerIsAdminEquivalent,
 } from "../middleware/permissions.js";
 import { AppError } from "../../utils/errors.js";
@@ -105,6 +106,7 @@ router.get("/", requirePermission("subnets", "read"), async (req, res, next) => 
 router.post("/next-available", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const { blockId, prefixLength, ...metadata } = AllocateNextSchema.parse(req.body);
+    assertTagChangeAllowed(req, [], metadata.tags);
     const subnet = await subnetService.allocateNextSubnet(blockId, prefixLength, {
       ...metadata,
       createdBy: req.session?.username ?? undefined,
@@ -144,6 +146,7 @@ router.post("/bulk-allocate/preview", requireOwnership("subnets"), async (req, r
 router.post("/bulk-allocate", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const input = BulkAllocateSchema.parse(req.body);
+    assertTagChangeAllowed(req, [], input.tags);
     const result = await subnetService.bulkAllocate({
       ...input,
       createdBy: req.session?.username ?? undefined,
@@ -332,6 +335,9 @@ router.get("/:id", requirePermission("subnets", "read"), async (req, res, next) 
 router.post("/", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const input = CreateSubnetSchema.parse(req.body);
+    // A network's tags reach its reservations, switches and ports (rules 137,
+    // 141): the Tags key's grant, chained on the network edit.
+    assertTagChangeAllowed(req, [], input.tags);
     const subnet = await subnetService.createSubnet({
       ...input,
       createdBy: req.session?.username ?? undefined,
@@ -350,6 +356,7 @@ router.put("/:id", requireOwnership("subnets"), async (req, res, next) => {
     const input = UpdateSubnetSchema.parse(req.body);
     const before = await subnetService.getSubnet(id);
     assertOwnership(req, before.createdBy, "edit networks");
+    assertTagChangeAllowed(req, before.tags, input.tags);
     const subnet = await subnetService.updateSubnet(id, {
       ...input,
       vlan: input.vlan ?? undefined,

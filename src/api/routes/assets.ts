@@ -12,7 +12,7 @@ import { AppError } from "../../utils/errors.js";
 import { assetDialAddress } from "../../utils/assetDialAddress.js";
 import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
-import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
+import { requirePermission, hasPermission, credentialUseActor, assertTagChangeAllowed } from "../middleware/permissions.js";
 import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
 import {
   recordCredentialUse, assetCredentialUses, assetCredentialDestination,
@@ -1513,6 +1513,9 @@ const BulkTagsSchema = z.object({
 router.post("/bulk-tags", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const body = BulkTagsSchema.parse(req.body);
+    // The whole verb is a tag change, so it is the Tags key's grant chained
+    // on the asset edit it also is.
+    assertTagChangeAllowed(req, [], body.tags.length ? body.tags : ["(any)"]);
     const result = await bulkEditAssetTags(body);
     const verb = body.mode === "add" ? "Added" : body.mode === "remove" ? "Removed" : "Replaced";
     const tagList = result.tags.length ? result.tags.join(", ") : "(none)";
@@ -1715,7 +1718,9 @@ router.get("/ip-check", requirePermission("assets", "read"), async (req, res, ne
       // All-zero → null: no incoming device is identified by "no MAC".
       macAddress: q.macAddress && !isAllZeroMac(q.macAddress) ? q.macAddress.toUpperCase().replace(/-/g, ":") : null,
     });
-    res.json({ ...result, canMerge: hasPermission(req, "assets", "fullwrite") });
+    // Merging any two assets is its own key from 2026-11-03; release 2 of the
+    // write-scope change adds "or you own both" at assets:write.
+    res.json({ ...result, canMerge: hasPermission(req, "assetMerge", "write") });
   } catch (err) {
     next(err);
   }
@@ -3607,6 +3612,12 @@ router.put("/:id/interfaces/:ifName/tags", requirePermission("assets", "write"),
     const ifName = String(req.params.ifName || "");
     if (!ifName) throw new AppError(400, "ifName path parameter is required");
     const { tags } = InterfaceTagsSchema.parse(req.body || {});
+    // A port's tags are tags: the same administrator's grant as a device's,
+    // judged on the change against what the port carries today.
+    // Manual rows only: the auto / network rows are the engines' and the form
+    // never posts them, so counting them would make every save look like a change.
+    const current = await prisma.assetInterfaceTag.findMany({ where: { assetId: id, ifName, source: "manual" }, select: { tag: true } });
+    assertTagChangeAllowed(req, current.map((t) => t.tag), tags);
     const result = await setInterfaceTags(id, ifName, tags, requestActor(req));
     res.json({ ok: true, ifName, tags: result });
   } catch (err) { next(err); }
@@ -4179,10 +4190,10 @@ router.put("/:id/processes/:name/config", requirePermission("assets", "write"), 
       if ((existing?.logPathGlob ?? null) !== newGlob) {
         const problem = logPathGlobProblem(newGlob);
         if (problem) throw new AppError(400, problem);
-        if (!hasPermission(req, "assets", "fullwrite")) {
+        if (!hasPermission(req, "agentDeploy", "write")) {
           throw new AppError(
             403,
-            "Setting a log path needs Assets Full Read-Write: the agent reads that path as a privileged user.",
+            "Setting a log path needs Agent Deploy: the agent reads that path as a privileged user.",
           );
         }
       }
@@ -4257,7 +4268,9 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     const coordErr = manualCoordPatchError(input.latitude, input.longitude);
     if (coordErr) throw new AppError(400, coordErr);
     // Nothing to round-trip on a create, so every region tag in the body is an
-    // addition and must name a real region.
+    // addition and must name a real region — and any tag at all is the Tags
+    // key's grant, not this one's.
+    assertTagChangeAllowed(req, [], input.tags);
     if (input.tags) await assertAddedRegionTagsNameARegion([], input.tags);
     const data: Record<string, unknown> = { ...input };
     // `azure:` tags are the Arc sync's alone; an operator cannot mint one.
@@ -4841,6 +4854,7 @@ router.put("/:id", requirePermission("assets", "write"), async (req, res, next) 
     if (!existing) throw new AppError(404, "Asset not found");
     const input = UpdateAssetSchema.parse(req.body);
     assertIpChangeMayRetargetIntegrationToken(req, existing, input.ipAddress);
+    assertTagChangeAllowed(req, existing.tags, input.tags);
     await validateAssetUpdate(id, existing, input);
     const actor = requestActor(req);
     const { data, ipOverrideTouched, coordChanged } = await buildAssetUpdatePatch(id, existing, input, actor);
@@ -6038,11 +6052,13 @@ const mergeBodySchema = z.object({
   fieldWinners: z.record(z.enum(["this", "other"])).optional(),
   dependencyWinner: z.enum(["this", "other"]).optional(),
 });
-// Merging is editing one asset AND deleting another, which is why it takes the
-// assets key's destructive tier rather than the `write` that create/edit use.
-// The merge modal (asset-merge-modal.js) and the conflict card's merge verbs
-// gate on the same level, so what the UI offers is what the API allows.
-router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, res, next) => {
+// Merging is editing one asset AND deleting another, which is why it is its
+// own key (`assetMerge`, 2026-11-03) rather than the `write` that create/edit
+// use — and no longer the assets key's Full Read-Write rung, which release 2
+// of the write-scope change turns into reach alone (business rule 141). The
+// merge modal (asset-merge-modal.js) and the conflict card's merge verbs gate
+// on the same key, so what the UI offers is what the API allows.
+router.post("/:id/merge", requirePermission("assetMerge", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const { otherAssetId, survivor, fieldWinners, dependencyWinner } = mergeBodySchema.parse(req.body);
@@ -7014,7 +7030,7 @@ const BulkAgentInstallSchema = z.object({
 // still see what is installed. The client hides these controls behind
 // canDeployAgent() in public/js/app.js; keep the two in lockstep.
 
-router.post("/bulk-agent-install", requirePermission("assets", "fullwrite"), async (req, res, next) => {
+router.post("/bulk-agent-install", requirePermission("agentDeploy", "write"), async (req, res, next) => {
   try {
     const input = BulkAgentInstallSchema.parse(req.body);
     const actor = requestActor(req) || "unknown";
@@ -7085,7 +7101,7 @@ router.get("/:id/agent", requirePermission("assets", "read"), async (req, res, n
   } catch (err) { next(err); }
 });
 
-router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), async (req, res, next) => {
+router.post("/:id/agent/install", requirePermission("agentDeploy", "write"), async (req, res, next) => {
   try {
     const assetId = req.params.id as string;
     const body = AgentInstallSchema.parse(req.body);
@@ -7234,7 +7250,7 @@ router.post("/:id/agent/install", requirePermission("assets", "fullwrite"), asyn
   } catch (err) { next(err); }
 });
 
-router.post("/:id/agent/retry", requirePermission("assets", "fullwrite"), async (req, res, next) => {
+router.post("/:id/agent/retry", requirePermission("agentDeploy", "write"), async (req, res, next) => {
   try {
     const assetId = req.params.id as string;
     const actor = requestActor(req) || "unknown";
@@ -7294,7 +7310,7 @@ router.post("/:id/agent/retry", requirePermission("assets", "fullwrite"), async 
 // which re-pushes the binary + agent.conf and re-runs the installer. The
 // ManagedAgent row and the asset's per-stream *Polling config are kept — an
 // operator wanting a truly clean slate uses force-remove + a fresh install.
-router.post("/:id/agent/reinstall", requirePermission("assets", "fullwrite"), async (req, res, next) => {
+router.post("/:id/agent/reinstall", requirePermission("agentDeploy", "write"), async (req, res, next) => {
   try {
     const assetId = req.params.id as string;
     const actor = requestActor(req) || "unknown";
@@ -7371,7 +7387,7 @@ const AgentUpgradeSchema = z.object({
   credentialId: z.string().uuid().optional(),
 });
 
-router.post("/:id/agent/upgrade", requirePermission("assets", "fullwrite"), async (req, res, next) => {
+router.post("/:id/agent/upgrade", requirePermission("agentDeploy", "write"), async (req, res, next) => {
   try {
     const assetId = req.params.id as string;
     const body = AgentUpgradeSchema.parse(req.body ?? {});
@@ -7398,7 +7414,7 @@ router.post("/:id/agent/upgrade", requirePermission("assets", "fullwrite"), asyn
   } catch (err) { next(err); }
 });
 
-router.delete("/:id/agent", requirePermission("assets", "fullwrite"), async (req, res, next) => {
+router.delete("/:id/agent", requirePermission("agentDeploy", "write"), async (req, res, next) => {
   try {
     const assetId = req.params.id as string;
     const actor = requestActor(req) || "unknown";

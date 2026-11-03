@@ -2,10 +2,11 @@
  * src/api/routes/notifications.ts — triggered notifications (View tab).
  *
  * Mounted at /api/v1/notifications. Gates:
- *   GET  /            notifications:read   (view; region-scoped to the caller unless admin-equivalent)
- *   POST /acknowledge notifications:write  (user and up; readonly cannot)
- *   POST /clear       alerts:fullwrite (admin + assetsadmin)
- *   GET  /:id         alerts:read          (one alert, for the acknowledge page)
+ *   GET  /            alerts:read   (view; region-scoped to the caller unless admin-equivalent)
+ *   POST /acknowledge alerts:write  (every built-in that holds any write; readonly cannot)
+ *   POST /clear       alertClear:write (its own key from 2026-11-03 — seeded onto the roles
+ *                     that held alerts:fullwrite, admin + assetsadmin among the built-ins)
+ *   GET  /:id         alerts:read   (one alert, for the acknowledge page)
  *
  * Rule CRUD lives in notificationRules.ts. Business logic in
  * notificationService; region scope via regionScopeService.
@@ -91,7 +92,7 @@ const ClearSchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(2000),
 });
 
-notificationsRouter.post("/clear", requirePermission("alerts", "fullwrite"), async (req, res, next) => {
+notificationsRouter.post("/clear", requirePermission("alertClear", "write"), async (req, res, next) => {
   try {
     const { ids } = ClearSchema.parse(req.body);
     const count = await clearNotifications(ids, req.session?.username ?? "unknown");

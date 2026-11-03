@@ -144,7 +144,9 @@ rebootAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "
 // An agent host's opt-in (rule 115): installs or removes the host-side
 // permission over the agent's install credential, and answers once the host
 // has (seconds — one short script over SSH / WinRM).
-rebootAssetRouter.put("/agent", requirePermission("assets", "fullwrite"), handle(async (req, res) => {
+// Agent Deploy, not Assets: the opt-in is about the agent's install
+// credential, the same grant as putting the agent there in the first place.
+rebootAssetRouter.put("/agent", requirePermission("agentDeploy", "write"), handle(async (req, res) => {
   const body = AgentPermissionSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   res.json(await setAgentRebootEnabled({ assetId: String(req.params.id), enabled: body.data.enabled, actor: requestActor(req) ?? "unknown" }));
