@@ -359,33 +359,31 @@ export async function transferAssetSideTables(
   fromAssetId: string,
   toAssetId: string,
 ): Promise<SideTableTransferCounts> {
-  const moveUnique = async (delegate: any, keyField: string): Promise<number> => {
-    const cur = await delegate.findMany({
-      where: { assetId: toAssetId },
-      select: { [keyField]: true },
-    });
-    const curSet = new Set(cur.map((r: any) => r[keyField]));
-    const incoming = await delegate.findMany({
-      where: { assetId: fromAssetId },
-      select: { id: true, [keyField]: true },
-    });
+  // `keyFields` is the table's unique key minus assetId — a row whose key the
+  // survivor already holds is dropped (the survivor's wins), the rest move.
+  const moveUnique = async (delegate: any, keyFields: string[]): Promise<number> => {
+    const select = Object.fromEntries(keyFields.map((f) => [f, true]));
+    const keyOf = (r: any) => keyFields.map((f) => String(r[f])).join("\u0000");
+    const cur = await delegate.findMany({ where: { assetId: toAssetId }, select });
+    const curSet = new Set(cur.map(keyOf));
+    const incoming = await delegate.findMany({ where: { assetId: fromAssetId }, select: { id: true, ...select } });
     let moved = 0;
     for (const r of incoming) {
-      if (curSet.has(r[keyField])) {
+      if (curSet.has(keyOf(r))) {
         await delegate.delete({ where: { id: r.id } });
       } else {
         await delegate.update({ where: { id: r.id }, data: { assetId: toAssetId } });
-        curSet.add(r[keyField]);
+        curSet.add(keyOf(r));
         moved++;
       }
     }
     return moved;
   };
   return {
-    movedMacs: await moveUnique(tx.assetMacAddress, "mac"),
-    movedIps: await moveUnique(tx.assetAssociatedIp, "ip"),
-    movedIpHistory: await moveUnique(tx.assetIpHistory, "ip"),
-    movedSightings: await moveUnique(tx.assetFortigateSighting, "fortigateDevice"),
+    movedMacs: await moveUnique(tx.assetMacAddress, ["mac"]),
+    movedIps: await moveUnique(tx.assetAssociatedIp, ["ip"]),
+    movedIpHistory: await moveUnique(tx.assetIpHistory, ["ip"]),
+    movedSightings: await moveUnique(tx.assetFortigateSighting, ["fortigateDevice", "source"]),
   };
 }
 

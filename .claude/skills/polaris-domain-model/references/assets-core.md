@@ -315,7 +315,7 @@ AssetFortigateSighting          -- DHCP-only sightings: tracks which FortiGate e
   source            String          -- "dhcp_lease" | "dhcp_reservation" | "interface_ip" | "vip"
   ipAddress         String?         -- IP last seen on this FortiGate. Bumped on every re-sighting alongside lastSeen. Nullable for rows recorded before this column existed; the Quarantine tab joins it against Subnet.cidr (filtered by fortigateDevice) at read time to surface subnet name + VLAN.
   lastSeen          DateTime
-  @@unique([assetId, fortigateDevice]) -- one row per (asset, FortiGate); updated on re-sighting
+  @@unique([assetId, fortigateDevice, source]) -- one row per (asset, FortiGate, binding kind) since 2026-11-03 (migration 20261103090000_sightings_per_binding_kind); a gate holding a lease AND a reservation keeps both. Updated on re-sighting. "Which gate" readers take the freshest row per gate.
 
 AssetControllerClaim            -- Which controller FortiGate(s) claim a managed device, by SERIAL (business rule 83)
   id                UUID PK       -- Written by discovery's FortiSwitch/FortiAP loops through

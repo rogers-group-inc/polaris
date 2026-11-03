@@ -1732,7 +1732,10 @@ and one line naming which two sources decided it. Two rules outrank the order:
 catch-all counts as empty — so a specific type on either side wins, and no merge
 path writes `other` over a real type.
 
-Below the source cards, **IP History** lists every address the device has held,
+Below the source cards, **Firewall Sightings** lists each FortiGate that has
+handed the device an address: one row per gate and kind, so a gate that holds
+both a DHCP reservation and a lease for the device shows both, each with its
+address, network and VLAN. **IP History** lists every address the device has held,
 with the **VLAN** of the network each one sits in (hover it for the network's
 name and range) and when it was first and last seen.
 
