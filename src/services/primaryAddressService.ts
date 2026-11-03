@@ -32,6 +32,7 @@ import { resolvePendingIpOverrideConflicts } from "./ipOverrideService.js";
 import { buildAddressConfidence } from "./addressConfidenceService.js";
 import { pinReleaseVerdict } from "../utils/addressConfidence.js";
 import { PIN_CONTEST_WINDOW_MS } from "../utils/assetInvariants.js";
+import { gateServingAddress } from "../utils/endpointGate.js";
 
 const INFRA_TYPES = new Set(["firewall", "switch", "access_point"]);
 
@@ -66,7 +67,7 @@ export async function pinPrimaryAddress(input: {
     select: {
       id: true, hostname: true, assetType: true, fortinetTopology: true,
       ipAddress: true, ipOverride: true, ipBlankPinned: true,
-      primaryAddressMac: true, primaryAddressIp: true,
+      primaryAddressMac: true, primaryAddressIp: true, learnedLocation: true,
     },
   });
   if (!asset) throw new AppError(404, "Asset not found");
@@ -77,11 +78,14 @@ export async function pinPrimaryAddress(input: {
   }
   const row = await prisma.assetAssociatedIp.findFirst({
     where: { assetId: asset.id, ip, mac },
-    select: { id: true },
+    select: { id: true, device: true },
   });
   if (!row) {
     throw new AppError(409, `${ip} is not an address of ${mac} on this asset — pick a pair from its address list, or type the address in Edit`);
   }
+  // Business rule 101(b): the last-seen FortiGate follows the primary
+  // address, so it moves with the pin rather than waiting for discovery.
+  const gate = await gateForPinnedAddress(ip, [row.device, asset.learnedLocation]);
 
   await prisma.asset.update({
     where: { id: asset.id },
@@ -96,6 +100,7 @@ export async function pinPrimaryAddress(input: {
       ipOverride: null,
       ipBlankPinned: false,
       ipCleared: null,
+      ...(gate && gate !== asset.learnedLocation ? { learnedLocation: gate } : {}),
     },
   });
   const resolved = (asset.ipOverride || asset.ipBlankPinned)
@@ -116,9 +121,28 @@ export async function pinPrimaryAddress(input: {
       ...(asset.ipOverride ? { releasedIpOverride: asset.ipOverride } : {}),
       ...(asset.ipBlankPinned ? { releasedBlankPin: true } : {}),
       ...(resolved > 0 ? { autoResolvedConflicts: resolved } : {}),
+      ...(gate && gate !== asset.learnedLocation ? { learnedLocation: { from: asset.learnedLocation, to: gate } } : {}),
     },
   });
   return { assetId: asset.id, mac, ip };
+}
+
+/**
+ * The FortiGate whose IPAM network holds an operator-pinned address (business
+ * rule 101(b)) — the gate the next discovery flush would name — or null when
+ * IPAM cannot say, in which case the caller leaves `learnedLocation` alone.
+ * `candidates` settle an overlap (the address row's gate, the current one).
+ * Reads only the gate-owned networks: an operator action, not a hot path.
+ */
+export async function gateForPinnedAddress(
+  ip: string,
+  candidates: ReadonlyArray<string | null | undefined>,
+): Promise<string | null> {
+  const subnets = await prisma.subnet.findMany({
+    where: { fortigateDevice: { not: null }, status: { not: "deprecated" } },
+    select: { cidr: true, status: true, fortigateDevice: true },
+  });
+  return gateServingAddress(ip, subnets, candidates);
 }
 
 export async function unpinPrimaryAddress(input: { assetId: string; actor: string }): Promise<{ ipAddress: string | null }> {

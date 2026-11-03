@@ -172,7 +172,7 @@ import {
 import { triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
 import { resolveDiscoveryScopeForAsset } from "../../services/discovery/assetDiscoveryScope.js";
 import { isRunActive } from "../../services/discoveryRunState.js";
-import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN } from "../../services/primaryAddressService.js";
+import { pinPrimaryAddress, unpinPrimaryAddress, CLEAR_PRIMARY_ADDRESS_PIN, gateForPinnedAddress } from "../../services/primaryAddressService.js";
 import { pinPrimaryIpv6, unpinPrimaryIpv6 } from "../../services/primaryIpv6Service.js";
 import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../services/assetAddressService.js";
 import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
@@ -4533,6 +4533,12 @@ async function buildAssetUpdatePatch(
       data.ipCleared = null; // a typed address ends any rule 40(j) blank hold
       Object.assign(data, CLEAR_PRIMARY_ADDRESS_PIN); // pins are mutually exclusive (rule 102)
       ipOverrideTouched = true;
+      // Business rule 101(b): the last-seen FortiGate follows the pinned
+      // address. Fortinet infra keeps its own (its learnedLocation is itself).
+      if (!["firewall", "switch", "access_point"].includes(existing.assetType)) {
+        const gate = await gateForPinnedAddress(trimmed, [existing.learnedLocation]);
+        if (gate && gate !== existing.learnedLocation) data.learnedLocation = gate;
+      }
     } else {
       delete data.ipAddress;
     }

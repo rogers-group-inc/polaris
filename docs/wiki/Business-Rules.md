@@ -1957,7 +1957,9 @@ IPAM, holds the device's primary IP. Where two gates have the same network
 (the same private range at two sites), the gate that reported the device
 decides. A device whose MAC also shows up on another site's FortiSwitch no
 longer reads as being at that site. When no IPAM network holds the address,
-the gate that last reported the device is used, as before.
+the gate that last reported the device is used, as before. Pinning an address
+(from the Addresses list, or typing one in Edit) moves the FortiGate shown at
+the same time, without waiting for discovery.
 
 ### Rule 102
 
