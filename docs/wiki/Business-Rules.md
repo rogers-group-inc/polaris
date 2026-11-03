@@ -383,7 +383,8 @@ refusal**, and it **destroys nothing**.
 
 ### Rule 43
 **A grant is only as narrow as the act it names.** Deploying the agent is
-`assets:fullwrite`, not `write`. `assetsProbe` is a **read-only key**.
+its own key, `agentDeploy` (it was `assets:fullwrite` until 2026-11-03), not
+`assets:write`. `assetsProbe` is a **read-only key**.
 `credentials` carries the ownership dimension, testing a stored row included.
 
 Across the whole catalogue, **a level exists only where it grants something the

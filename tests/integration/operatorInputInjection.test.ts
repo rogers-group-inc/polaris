@@ -50,7 +50,9 @@ beforeAll(async () => {
   await ensureTestUser();
   await cleanup();
   writeRoleId = (await createRole({ name: WRITE_ROLE, permissions: { assets: "write" } })).id;
-  fullRoleId = (await createRole({ name: FULL_ROLE, permissions: { assets: "fullwrite" } })).id;
+  // The log-path glob is the agent's privileged read, so it rides agentDeploy
+  // (its own key since 2026-11-03) rather than assets=fullwrite.
+  fullRoleId = (await createRole({ name: FULL_ROLE, permissions: { assets: "fullwrite", agentDeploy: "write" } })).id;
   writeToken = (await createToken({ name: `${TOKEN_PREFIX}write`, roleId: writeRoleId, createdBy: "integration-test" })).rawToken;
   fullToken = (await createToken({ name: `${TOKEN_PREFIX}full`, roleId: fullRoleId, createdBy: "integration-test" })).rawToken;
   assetId = (await prisma.asset.create({ data: { hostname: HOSTNAME, assetType: "server", status: "active", ipAddress: "10.0.0.77" } })).id;

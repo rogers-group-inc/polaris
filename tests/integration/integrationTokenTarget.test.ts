@@ -78,7 +78,7 @@ beforeAll(async () => {
   await prisma.integration.deleteMany({ where: { name: { startsWith: PFX } } });
   // The built-in assetsadmin shape: assets full + conflicts write, no integrations.
   assetsAdmin = await createRoleUser("assets", matrix("read", { assets: "fullwrite", assetMerge: "write", discoveryConflicts: "write", integrations: "none" }));
-  integrationsAdmin = await createRoleUser("integ", matrix("read", { assets: "fullwrite", discoveryConflicts: "write", integrations: "write" }));
+  integrationsAdmin = await createRoleUser("integ", matrix("read", { assets: "fullwrite", assetMerge: "write", discoveryConflicts: "write", integrations: "write" }));
   const fgt = await prisma.integration.create({
     data: { name: PFX + "-fgt", type: "fortigate", enabled: false, config: { host: "10.99.242.1", port: 443, apiToken: "fgt-token-real" } as never } as never,
   });

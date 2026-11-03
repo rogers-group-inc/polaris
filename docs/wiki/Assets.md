@@ -8,10 +8,13 @@ knows about a device is reachable from here.
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |
-| `assets:write` | add and edit rows, the bulk Type / State / Monitoring / Tags / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
-| `assets:fullwrite` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), manage saved filters and folders that have no owner, and take any one as your own (**Make private to me**) |
+| `assets:write` | add and edit rows, the bulk Type / State / Monitoring / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
+| `assets:fullwrite` | manage saved filters and folders that have no owner, and take any one as your own (**Make private to me**) |
+| `agentDeploy:write` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), bulk deploy, the agent host's reboot opt-in, a process's log path |
+| `assetMerge:write` | **merge** two records into one |
+| `tags:write` | put a tag on a device or a port, or take one off — the edit form's tag field, the bulk **Tags** action and a port's **Edit tags**. Tags grant write reach, so this is an [administrator's grant](Users-Roles-and-Permissions#tags-are-an-administrators-grant) |
 
-Agent deployment sits at `fullwrite` on purpose ([rule 43](Business-Rules#rule-43)):
+Agent deployment is its own key on purpose ([rule 43](Business-Rules#rule-43)):
 it runs an installer on someone else's host over a stored credential and leaves
 a service behind. That is not the act `assets:write` — fix a hostname, retype a
 serial — describes.
@@ -289,11 +292,11 @@ selection stays in the menu, greyed, with the reason on hover.
 | Action | Needs | Does |
 |---|---|---|
 | **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; greyed with more than ten selected |
-| **Merge** | Assets **full read-write** (shown to the admin role), exactly **two** selected | opens the merge modal with the target pre-selected |
+| **Merge** | **Merge Assets** (`assetMerge:write`), exactly **two** selected | opens the merge modal with the target pre-selected |
 | **Change type** / **Change state** | `assets:write` | opens a second menu of types or states and sets the one you pick on every selected row. A state that cannot carry monitoring turns monitoring off ([rule 10](Business-Rules#rule-10)) |
 | **Monitoring** | `assets:write` | **Enable** or **Disable** monitoring on the selection. Assets in a state that cannot be monitored are refused with a reason |
-| **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
-| **Deploy agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
+| **Tags** | `tags:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
+| **Deploy agent** | `agentDeploy:write` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
 | **Upgrade firmware** | `assets:write`, FortiGates / FortiSwitches / FortiAPs under **one** FortiGate | schedules a group firmware upgrade in dependency order — see [Group firmware upgrades](#group-firmware-upgrades). When the selection spans more than one FortiGate, choosing it explains why instead |
 | **Quarantine** / **Release quarantine** | `assetsQuarantine:write` | pushes or lifts the MAC block on every FortiGate that has seen each asset |
@@ -961,7 +964,7 @@ with Upgrade / Uninstall. On a **server** or **workstation** with no agent yet
 the card is the deploy surface — an **Install Agent** button that pushes the
 agent over a stored SSH or WinRM credential
 ([Polaris Agent](Polaris-Agent#installing)). Deploying needs
-`assets:fullwrite`; at `assets:read` the card still shows what is installed,
+`agentDeploy:write`; at `assets:read` the card still shows what is installed,
 without the buttons. Its **Reboots** row says whether Polaris may reboot the
 host, with **Enable…** / **Disable** ([Polaris Agent](Polaris-Agent#reboots)).
 
@@ -1404,7 +1407,7 @@ Equal timestamps order by dimension **numerically**, so `port2` precedes
 `port10`.
 
 **Actions** carries **Acknowledge** (`alerts:write`) and **Clear**
-(`alerts:fullwrite`). Clearing ends the alert, stops escalation and runs the
+(`alertClear:write`). Clearing ends the alert, stops escalation and runs the
 automation's reset actions, so it is confirmed.
 
 The rows work like every other table ([The row menu](#the-row-menu)); there is

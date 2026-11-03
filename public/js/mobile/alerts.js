@@ -22,7 +22,7 @@
 //
 //   3. THE SHEET (openForAsset): a generic bottom sheet listing that device's
 //      active alerts, each with the verbs the operator's role actually
-//      allows — Acknowledge at alerts:write, Clear at alerts:fullwrite. The
+//      allows — Acknowledge at alerts:write, Clear at alertClear:write. The
 //      phone is where an alert is usually READ; leaving both verbs on desktop
 //      is what left the person holding the pager unable to stop an escalation
 //      chain from where they were standing. (The More tab's fleet-wide alerts
@@ -39,7 +39,7 @@
 (function () {
   // ─── Permissions ────────────────────────────────────────────────────────
   // Mirrors permAtLeast() in app.js. The routes gate acknowledge on
-  // `alerts:write` and clear on `alerts:fullwrite`, so a control that could
+  // `alerts:write` and clear on `alertClear:write`, so a control that could
   // only ever 403 is not drawn at all.
   var _PERM_RANK = { none: 0, read: 1, write: 2, fullwrite: 3 };
   function permAtLeast(key, level) {
@@ -48,7 +48,7 @@
     return (_PERM_RANK[have] || 0) >= (_PERM_RANK[level] || 0);
   }
   function canAck()   { return permAtLeast("alerts", "write"); }
-  function canClear() { return permAtLeast("alerts", "fullwrite"); }
+  function canClear() { return permAtLeast("alertClear", "write"); }
 
   // ─── Severity vocabulary ────────────────────────────────────────────────
   var SEV_TOKEN = {

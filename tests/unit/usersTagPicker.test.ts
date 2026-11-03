@@ -247,7 +247,9 @@ describe("tag creation category", () => {
     // providers having moved to `authentication` and left the old fullwrite
     // routes to come down onto write. Stubbing the retired level here would
     // pass the gate and silently stop testing anything.
-    g.permAtLeast = (key: string, level: string) => !(key === "serverSettingsSystem" && level === "write");
+    // The registry is the Tags key's since 2026-11-03 (its own key, `write`
+    // top rung), so that is the grant withheld here.
+    g.permAtLeast = (key: string, level: string) => !(key === "tags" && level === "write");
     try {
       mount([]);
       expect(g.document.querySelector(".other-tags-category")).toBeNull();

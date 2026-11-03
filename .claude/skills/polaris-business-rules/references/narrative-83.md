@@ -116,7 +116,7 @@ guards stop the Fortinet paths from producing this, which is why the assumption 
 Here there is no ambiguity to preserve: a serial identifies one physical unit, so two
 records of it are one device recorded twice, and the card's only verb is the merge —
 through `assetMergeService.mergeAssets`, the same engine the asset page's Merge modal and
-the duplicate-IP card use, at `assets:fullwrite` because it deletes a row (rule 40's
+the duplicate-IP card use, at `assetMerge:write` (its own key from 2026-11-03; `assets:fullwrite` before) because it deletes a row (rule 40's
 level, for the same reason).
 
 Whichever door the merge comes through, the card closes with it. *Review & merge...*

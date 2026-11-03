@@ -735,6 +735,12 @@ keys to the install is `serverSettingsSystem:write` — the key's top rung.
 
 ## Tags
 
+> The registry — and putting a tag on anything — is the **Tags** permission
+> key, not Server Settings: a tag on a device is write reach for everyone who
+> holds that tag, so tagging is an administrator's act. Every built-in role
+> may *read* the registry (the pickers need its colours); only `admin` may
+> change it. See [Tags are an administrator's grant](Users-Roles-and-Permissions#tags-are-an-administrators-grant).
+
 The last card on the **Identification** tab, gated `serverSettingsSystem` with
 mutations at `write`.
 

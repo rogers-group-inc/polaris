@@ -17,7 +17,7 @@ Queue** dashboard widget. Everyone who can see the queue sees every flavour.
 | `discoveryConflicts:read` | see the queue |
 | `discoveryConflicts:write` | accept / reject / adopt / dismiss |
 | **plus `assets:write`** | **chained**, for the duplicate-IP verbs that change an asset's address (*Apply* a new address, *Clear*), and for accepting a **decommissioned agent** check-in, which reactivates the asset |
-| **plus `assets:fullwrite`** | **chained**, for the duplicate-IP and duplicate-serial merge verbs — they delete a record |
+| **plus `assetMerge:write`** | **chained**, for the duplicate-IP and duplicate-serial merge verbs and a chassis swap's *merge the old asset* — they delete a record |
 | **plus `reservations:write`** | **chained**, for *Keep* and *Release* / *Revoke lease* on a duplicate-reservation card — they release reservations and leases, so below Full read-write only ones you created |
 
 ---

@@ -365,7 +365,7 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
   down automation after the device's outage was already acknowledged keeps
   that acknowledgement, and its hover says it was carried over
   ([rule 78b](Business-Rules#rule-78b)).
-- **Clear** (`alerts:fullwrite`) — ends the alert. This stops escalation and
+- **Clear** (`alertClear:write`) — ends the alert. This stops escalation and
   runs the automation's reset actions, so it is confirmed first.
 
 Both report the **server's** count back, so a no-op says "already cleared"

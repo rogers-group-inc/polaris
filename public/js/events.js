@@ -1246,7 +1246,7 @@ function getAlertsFormData() {
     var dash = '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>';
     var val = function (v) { return v ? escapeHtml(String(v)) : dash; };
     var gateName = p.newDeviceName || p.oldDeviceName || "FortiGate";
-    var canMerge = typeof permAtLeast === "function" && permAtLeast("assets", "fullwrite");
+    var canMerge = typeof permAtLeast === "function" && permAtLeast("assetMerge", "write");
 
     var identity = [
       ["Chassis serial", val(p.oldSerial), "<strong>" + val(p.newSerial) + "</strong>"],
@@ -1640,7 +1640,7 @@ function getAlertsFormData() {
     // assets key's full read-write level — the level the endpoints behind them
     // require. Reassign (the "New IP address" column) is an edit and stays
     // available to anyone who may resolve conflicts and write assets.
-    var canMerge = typeof permAtLeast === "function" && permAtLeast("assets", "fullwrite");
+    var canMerge = typeof permAtLeast === "function" && permAtLeast("assetMerge", "write");
 
     var rows = members.map(function (m) {
       var name = m.hostname || m.assetId || "(unnamed)";
@@ -1866,7 +1866,7 @@ function getAlertsFormData() {
     var serial = proposed.serialNumber || "—";
     var members = Array.isArray(proposed.members) ? proposed.members : [];
     var isResolved = c.status !== "pending";
-    var canMerge = typeof permAtLeast === "function" && permAtLeast("assets", "fullwrite");
+    var canMerge = typeof permAtLeast === "function" && permAtLeast("assetMerge", "write");
 
     var rows = members.map(function (m) {
       var name = m.hostname || m.assetId || "(unnamed)";

@@ -2,17 +2,20 @@
  * tests/unit/tagPickerNonAdminRole.test.ts — the shared tag picker for a role
  * that holds NO serverSettingsSystem grant.
  *
- * The bug: `_ensureTagCache` read the tag registry through
- * `GET /server-settings/tags` + `/tags/settings`, both of which sit behind the
+ * The original bug: `_ensureTagCache` read the tag registry through
+ * `GET /server-settings/tags` + `/tags/settings`, both of which sat behind the
  * blanket `serverSettingsSystem: read` floor on that mount. Every non-admin
- * built-in role (`user`, `assetsadmin`, `networkadmin`, `readonly`) is seeded
- * `serverSettingsSystem: "none"`, so both calls 403'd, the cache's `.catch()`
- * swallowed it, and the asset edit form's tag picker rendered "No tags defined
- * yet. Use the form below to add one." at an install with a full registry —
- * with an "+ Add Tag" button whose only possible outcome was another 403.
+ * built-in role is seeded `serverSettingsSystem: "none"`, so both calls 403'd,
+ * the cache's `.catch()` swallowed it, and the asset edit form's tag picker
+ * rendered "No tags defined yet" at an install with a full registry — with an
+ * "+ Add Tag" button whose only possible outcome was another 403.
  *
- * The picker now reads the auth-only catalogue route, and the add-row is gated
- * on the same `serverSettingsSystem: fullwrite` that `POST /tags` requires.
+ * The picker reads the auth-only catalogue route. Since 2026-11-03 the
+ * registry AND assigning a tag to any record ride one key, `tags` (business
+ * rule 141: a tag is write reach for everyone who holds it, so putting one on
+ * a device is an administrator's act): below `tags: write` the field is
+ * static — the record's own tags as fixed chips that still post back
+ * unchanged, plus a hint — and the add-row is gated on the same level.
  *
  * app.js is a classic browser script, so it's eval'd into a happy-dom Window —
  * the tagPickerRegionTags.test.ts idiom.
@@ -49,6 +52,7 @@ function exported<T>(name: string): T {
 async function boot(opts: {
   perms: Record<string, string>;
   catalog: { enforce: boolean; tags: typeof TAGS } | null;
+  selected?: string[];
 }): Promise<{ calls: string[] }> {
   win = new Window();
   doc = win.document;
@@ -83,12 +87,15 @@ async function boot(opts: {
 
   await exported<() => Promise<void>>("_ensureTagCache")();
   const host = doc.getElementById("host") as unknown as HTMLElement;
-  host.innerHTML = exported<(s: string[]) => string>("tagFieldHTML")([]);
+  host.innerHTML = exported<(s: string[]) => string>("tagFieldHTML")(opts.selected ?? []);
   return { calls };
 }
 
-const USER_ROLE = { assets: "read", subnets: "write", serverSettingsSystem: "none" };
-const ADMIN_ROLE = { assets: "fullwrite", subnets: "fullwrite", serverSettingsSystem: "fullwrite" };
+// May edit assets and networks, may look at the registry, may not tag.
+const USER_ROLE = { assets: "write", subnets: "write", serverSettingsSystem: "none", tags: "read" };
+// May tag — and still holds no Server Settings grant at all.
+const TAGGER_ROLE = { assets: "write", subnets: "write", serverSettingsSystem: "none", tags: "write" };
+const ADMIN_ROLE = { assets: "fullwrite", subnets: "fullwrite", serverSettingsSystem: "write", tags: "write" };
 
 function chipValues(): string[] {
   return Array.from(doc.querySelectorAll('input[name="f-tags-cb"]')).map(
@@ -106,15 +113,26 @@ describe("tag picker — a role with no serverSettingsSystem grant", () => {
     expect(calls).not.toContain("getTagSettings");
   });
 
-  it("renders the existing tags as selectable chips", async () => {
-    await boot({ perms: USER_ROLE, catalog: { enforce: false, tags: TAGS } });
-    expect(chipValues().sort()).toEqual(["Nashville", "Production"]);
+  it("without Tags write the field is static: the record's own tags, posted back unchanged, and the hint", async () => {
+    await boot({ perms: USER_ROLE, catalog: { enforce: false, tags: TAGS }, selected: ["Production"] });
+    expect(doc.getElementById("f-tags-picker"), "a live picker for a role that cannot tag").toBeNull();
+    // The hidden checked box is what keeps the save from posting an empty
+    // array — which the server would refuse as a tag change.
+    expect(chipValues()).toEqual(["Production"]);
+    expect(doc.body.textContent).toContain("Changing tags needs Read-Write on Tags");
     expect(doc.body.innerHTML).not.toContain("No tags defined yet");
   });
 
-  it("withholds the + Add Tag row — creating a registry row needs fullwrite", async () => {
+  it("withholds the + Add Tag row — creating a registry row needs Tags write", async () => {
     await boot({ perms: USER_ROLE, catalog: { enforce: false, tags: TAGS } });
     expect(doc.getElementById("f-tag-add-btn"), "a button whose only outcome is a 403").toBeNull();
+  });
+
+  it("renders the existing tags as selectable chips for a Tags Read-Write caller", async () => {
+    await boot({ perms: TAGGER_ROLE, catalog: { enforce: false, tags: TAGS } });
+    expect(doc.getElementById("f-tags-picker")).toBeTruthy();
+    expect(chipValues().sort()).toEqual(["Nashville", "Production"]);
+    expect(doc.body.innerHTML).not.toContain("No tags defined yet");
   });
 
   it("still offers + Add Tag to a caller who holds the grant", async () => {
@@ -122,15 +140,15 @@ describe("tag picker — a role with no serverSettingsSystem grant", () => {
     expect(doc.getElementById("f-tag-add-btn")).toBeTruthy();
   });
 
-  it("enforce=true withholds the add row even from a fullwrite caller", async () => {
+  it("enforce=true withholds the add row even from a Tags write caller", async () => {
     await boot({ perms: ADMIN_ROLE, catalog: { enforce: true, tags: TAGS } });
     expect(doc.getElementById("f-tag-add-btn")).toBeNull();
     expect(chipValues().sort()).toEqual(["Nashville", "Production"]);
   });
 
-  it("an empty registry points a non-admin at who can populate it", async () => {
+  it("an empty registry still renders the static field for a role that cannot tag", async () => {
     await boot({ perms: USER_ROLE, catalog: { enforce: false, tags: [] } });
-    expect(doc.body.textContent).toContain("An administrator adds them");
+    expect(doc.body.textContent).toContain("Changing tags needs Read-Write on Tags");
     expect(doc.body.textContent, "there is no form below for this role").not.toContain("Use the form below");
   });
 
@@ -138,7 +156,7 @@ describe("tag picker — a role with no serverSettingsSystem grant", () => {
     await boot({ perms: ADMIN_ROLE, catalog: null });
     expect(doc.body.textContent).toContain("Could not load the tag list");
     expect(doc.body.textContent).not.toContain("No tags defined yet");
-    // Nothing to add TO — the add row is withheld even from a fullwrite caller.
+    // Nothing to add TO — the add row is withheld even from a Tags write caller.
     expect(doc.getElementById("f-tag-add-btn")).toBeNull();
   });
 });

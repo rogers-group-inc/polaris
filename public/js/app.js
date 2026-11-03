@@ -627,11 +627,20 @@ function canQuarantineAssets() { return permAtLeast("assetsQuarantine", "write")
 // OUTSIDE Polaris to change a host: it runs an installer over a stored SSH /
 // WinRM credential and leaves a service behind. Every agent
 // install / retry / reinstall / upgrade / uninstall route (and the bulk
-// deploy) is gated `assets=fullwrite`, so anything OFFERING those verbs must
+// deploy) is its own key, `agentDeploy`, so anything OFFERING those verbs must
 // check this and not canManageAssets() — an assets:write operator keeps full
 // inventory editing and gets no dead Install button. Reads (what version is
 // installed, which scripts exist) stay at `assets=read`.
-function canDeployAgent() { return permAtLeast("assets", "fullwrite"); }
+function canDeployAgent() { return permAtLeast("agentDeploy", "write"); }
+// The other two dangerous acts split off assets / alerts the same day
+// (2026-11-03): merging any two records, and clearing an alert.
+function canMergeAssets() { return permAtLeast("assetMerge", "write"); }
+function canClearAlerts() { return permAtLeast("alertClear", "write"); }
+// The tag registry AND putting a tag on any record ride one key, Tags: a
+// tag is write reach for everyone who holds it (business rule 141), so
+// assigning one is an administrator's act, not part of editing the record.
+// Every picker that edits tags asks this; without it the picker is static.
+function canManageTags() { return permAtLeast("tags", "write"); }
 // Probing is its own key and — since 2026-09-04 — a READ-ONLY one: a probe
 // dials the device and writes nothing in Polaris, so `read` IS the grant
 // (business rule 43). Anything offering Poll Now / SNMP Walk / a DNS lookup
@@ -5982,7 +5991,8 @@ function _tagChipHue(color, checked) {
 // couldn't show).
 function _canCreateRegistryTags() {
   if (_tagCache.failed) return false;
-  return typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
+  // The registry is the Tags key's (2026-11-03) — the same grant as assigning.
+  return typeof permAtLeast === "function" && permAtLeast("tags", "write");
 }
 
 /**
@@ -6072,20 +6082,36 @@ function tagFieldHTML(selected, opts) {
   selected = selected || [];
   opts = opts || {};
 
+  // Putting a tag on a record is the Tags key's grant, whatever the record's
+  // own key says (business rule 141: a tag is write reach for everyone who
+  // holds it). Without it the field is the static read-only rendering below,
+  // and the form posts the tags back unchanged — which the server's
+  // tag-change check lets through.
+  var mayEditTags = typeof canManageTags !== "function" || canManageTags();
+
   // Read-only: render selected tags as static badges, no checkboxes or "add new" row.
-  if (opts.readOnly) {
+  if (opts.readOnly || !mayEditTags) {
     var visibleSelected = selected;
+    var roHint = (!opts.readOnly && !mayEditTags)
+      ? '<p class="hint">Changing tags needs Read-Write on Tags.</p>'
+      : '';
     if (visibleSelected.length === 0) {
-      return '<div class="form-group"><label>Tags</label><p style="color:var(--color-text-tertiary);margin:0">—</p></div>';
+      return '<div class="form-group"><label>Tags</label><p style="color:var(--color-text-tertiary);margin:0">—</p>' + roHint + '</div>';
     }
     var tagsByName = {};
     _tagCache.tags.forEach(function (t) { tagsByName[t.name] = t; });
     var chips = visibleSelected.map(function (name) {
       var t = tagsByName[name];
       var hue = _tagChipHue(t && t.color ? t.color : '', true);
-      return '<span class="tag-picker-chip selected' + hue.cls + '" style="' + hue.style + '">' + escapeHtml(name) + '</span>';
+      // The hidden checked box keeps the collector (collectTagField) posting
+      // the tags the record already carries, so a save from a form that may
+      // not edit tags is "unchanged", not "cleared".
+      return '<span class="tag-picker-chip selected' + hue.cls + '" style="' + hue.style + '">' +
+        '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '" checked hidden>' +
+        escapeHtml(name) +
+      '</span>';
     }).join('');
-    return '<div class="form-group"><label>Tags</label><div class="tag-picker" style="pointer-events:none">' + chips + '</div></div>';
+    return '<div class="form-group"><label>Tags</label><div class="tag-picker" style="pointer-events:none">' + chips + '</div>' + roHint + '</div>';
   }
 
   var html = '<div class="form-group"><label>Tags</label>' +
@@ -6231,8 +6257,13 @@ function hideAdminOnlyElements() {
   document.querySelectorAll("[data-manage-assets]").forEach(function (el) {
     if (!canManageAssets()) el.style.display = "none";
   });
+  // Tagging is the Tags key's grant, not asset editing's (rule 141): the
+  // bulk Tags button must not ride data-manage-assets.
+  document.querySelectorAll("[data-manage-tags]").forEach(function (el) {
+    if (!canManageTags()) el.style.display = "none";
+  });
   // Separate from data-manage-assets for the same reason quarantine is:
-  // deploying the Polaris Agent is gated `assets=fullwrite`, so a control
+  // deploying the Polaris Agent is its own key (`agentDeploy`), so a control
   // that pushes an installer onto a host must not ride the asset-editing
   // gate (an assets:write role would see a button that can only 403).
   document.querySelectorAll("[data-deploy-agent]").forEach(function (el) {
