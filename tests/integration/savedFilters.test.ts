@@ -7,7 +7,8 @@
  *   - publishing needs assets:write — a readonly caller can keep a private
  *     preset but is 403 on a public one
  *   - re-saving the same name overwrites instead of duplicating
- *   - edit/delete are owner-only; an admin may delete someone else's
+ *   - edit/delete are owner-only; fullwrite deletes only an OWNERLESS preset
+ *     (business rule 140 — ownership and folders: savedFolderOwnership.test.ts)
  *   - unknown scope + malformed state are rejected
  *
  * Skips cleanly when DATABASE_URL isn't reachable; see _helpers.ts.
@@ -169,7 +170,7 @@ d("saved filters — edit + delete", () => {
     expect(resp.body.visibility).toBe("public");
   });
 
-  it("lets the owner delete, and an admin delete someone else's", async () => {
+  it("lets the owner delete; a fullwrite holder deletes only an OWNERLESS one (rule 140)", async () => {
     const own = await post(readonly, { scope: "assets", name: "RO own", visibility: "private", state: STATE });
     const delOwn = await readonly.agent
       .delete(`/api/v1/saved-filters/${own.body.id}`)
@@ -182,11 +183,22 @@ d("saved filters — edit + delete", () => {
       .set("X-CSRF-Token", readonly.csrf);
     expect(roDelete.status).toBe(403);
 
-    const adminDelete = await admin.agent
-      .delete(`/api/v1/saved-filters/${other.body.id}`)
+    // Someone else's OWNED public preset: fullwrite no longer deletes it.
+    const ro = await prisma.user.findUnique({ where: { username: RO_USERNAME } });
+    const theirs = await prisma.savedTableFilter.create({
+      data: { scope: "assets", name: "RO public", ownerId: ro!.id, ownerName: RO_USERNAME, visibility: "public", state: STATE },
+    });
+    const adminOnOwned = await admin.agent
+      .delete(`/api/v1/saved-filters/${theirs.id}`)
       .set("X-CSRF-Token", admin.csrf);
-    expect(adminDelete.status).toBe(204);
-    expect(await prisma.savedTableFilter.count()).toBe(0);
+    expect(adminOnOwned.status).toBe(403);
+
+    // An OWNERLESS one is exactly what fullwrite is for.
+    await prisma.savedTableFilter.update({ where: { id: theirs.id }, data: { ownerId: null } });
+    const adminOnOwnerless = await admin.agent
+      .delete(`/api/v1/saved-filters/${theirs.id}`)
+      .set("X-CSRF-Token", admin.csrf);
+    expect(adminOnOwnerless.status).toBe(204);
   });
 
   it("keeps a deleted user's public preset but drops their private one", async () => {

@@ -8,9 +8,14 @@
  *
  * Access model (no new RBAC function key — each scope rides the key that
  * already gates its page, see SAVED_FILTER_SCOPES):
- *   read the list / create + edit + delete YOUR OWN presets  → <key>:read
+ *   read the list / create + edit + delete what you OWN       → <key>:read
  *   create or edit a PUBLIC preset (publishing to everyone)  → <key>:write
- *   delete SOMEONE ELSE'S preset (housekeeping)              → <key>:fullwrite
+ *   manage an OWNERLESS preset; "Make private to me" on any  → <key>:fullwrite
+ *
+ * Ownership (a user, a role, a region, or nobody), folders and the take-over
+ * verb are business rule 140 — savedOwnershipService decides them for all
+ * three saved tables, savedFolderService owns the folders. Nobody but its
+ * owner deletes an OWNED public preset, fullwrite included.
  *
  * A preset holds only the query (`sfFilters` + sort). Column widths /
  * visibility deliberately stay per-browser in localStorage — they describe the
@@ -24,6 +29,23 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import type { Prisma } from "../generated/prisma/client.js";
+import {
+  assertCanManage,
+  assertCanTake,
+  canSee,
+  isUniqueViolation,
+  ownerLabel,
+  ownershipDto,
+  resolveOwnerTarget,
+  takenColumns,
+  visibleWhere,
+  type OwnerTargetInput,
+  type OwnershipDto,
+  type SavedViewer,
+} from "./savedOwnershipService.js";
+// A cycle by design (savedFolderService reuses normalizeName): both sides only
+// call the other at request time, never while their module is evaluating.
+import { assertFolderTarget, listVisibleFolders, type SavedFolderDto } from "./savedFolderService.js";
 
 /**
  * scope → the RBAC function key that gates it. A scope absent from this map is
@@ -57,15 +79,17 @@ export interface SavedFilterState {
   sortDir: "asc" | "desc" | null;
 }
 
-export interface SavedFilterDto {
+/**
+ * A preset as the menu sees it. The ownership half (`ownerKind`, `isOwner`,
+ * `canManage`, `canTake`, …) is the caller's view, from savedOwnershipService.
+ */
+export interface SavedFilterDto extends OwnershipDto {
   id: string;
   scope: string;
   name: string;
   visibility: SavedFilterVisibility;
-  ownerId: string | null;
-  ownerName: string;
-  /** True when the CALLER owns this preset (drives the UI's edit/delete affordances). */
-  isOwner: boolean;
+  /** Null at the top level, or when the folder is not visible to the caller. */
+  folderId: string | null;
   state: SavedFilterState;
   createdAt: string;
   updatedAt: string;
@@ -189,27 +213,34 @@ function sanitizeFilterValue(key: string, value: unknown): unknown {
   throw new AppError(400, `${where} is not a recognized filter shape`);
 }
 
+
 type Row = {
   id: string;
   scope: string;
   name: string;
   ownerId: string | null;
+  ownerRoleId: string | null;
+  ownerRegion: string | null;
   ownerName: string;
   visibility: string;
   state: Prisma.JsonValue;
+  folderId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  ownerRole?: { name: string } | null;
 };
 
-function toDto(row: Row, viewerId: string | null): SavedFilterDto {
+const withRole = { ownerRole: { select: { name: true } } } as const;
+const NOUN = "saved filter";
+
+function toDto(row: Row, viewer: SavedViewer | null, visibleFolderIds: Set<string>): SavedFilterDto {
   return {
     id: row.id,
     scope: row.scope,
     name: row.name,
     visibility: row.visibility === "public" ? "public" : "private",
-    ownerId: row.ownerId,
-    ownerName: row.ownerName,
-    isOwner: row.ownerId != null && row.ownerId === viewerId,
+    ...ownershipDto(row, viewer),
+    folderId: row.folderId && visibleFolderIds.has(row.folderId) ? row.folderId : null,
     state: row.state as unknown as SavedFilterState,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -217,22 +248,41 @@ function toDto(row: Row, viewerId: string | null): SavedFilterDto {
 }
 
 /**
- * Presets visible to one user in one scope: everything they own (private and
- * public) plus every OTHER user's public preset. Orphaned private rows (owner
- * deleted) match nothing and are therefore invisible.
+ * The presets and folders one caller sees in one scope (business rule 140):
+ * public rows, rows they own (as the user, through their role or a region in
+ * their scope), and — for a fullwrite holder — ownerless rows. An item whose
+ * folder they cannot see comes back with `folderId` null (top level).
  */
-export async function listSavedFilters(scope: string, viewerId: string): Promise<SavedFilterDto[]> {
-  const rows = await prisma.savedTableFilter.findMany({
-    where: { scope, OR: [{ ownerId: viewerId }, { visibility: "public" }] },
-    orderBy: [{ name: "asc" }],
-  });
-  return rows.map((r) => toDto(r, viewerId));
+export async function listSavedFilters(
+  scope: string,
+  viewer: SavedViewer | null,
+): Promise<{ filters: SavedFilterDto[]; folders: SavedFolderDto[] }> {
+  const [{ folders, visibleIds }, rows] = await Promise.all([
+    listVisibleFolders("filter", scope, viewer),
+    prisma.savedTableFilter.findMany({
+      where: { scope, ...visibleWhere(viewer) },
+      include: withRole,
+      orderBy: [{ name: "asc" }],
+    }),
+  ]);
+  return { filters: rows.map((r) => toDto(r, viewer, visibleIds)), folders };
 }
 
 async function loadOwned(id: string): Promise<Row> {
-  const row = await prisma.savedTableFilter.findUnique({ where: { id } });
+  const row = await prisma.savedTableFilter.findUnique({ where: { id }, include: withRole });
   if (!row) throw new AppError(404, "Saved filter not found");
   return row;
+}
+
+/** One preset, 404 when the caller can't see it. */
+async function loadVisible(id: string, viewer: SavedViewer | null): Promise<Row> {
+  const row = await loadOwned(id);
+  if (!canSee(row, viewer)) throw new AppError(404, "Saved filter not found");
+  return row;
+}
+
+function oneFolder(folderId: string | null): Set<string> {
+  return new Set(folderId ? [folderId] : []);
 }
 
 export interface SaveFilterInput {
@@ -240,6 +290,8 @@ export interface SaveFilterInput {
   name: string;
   visibility: SavedFilterVisibility;
   state: SavedFilterState;
+  /** undefined = leave where it is (an update) / top level (a create). */
+  folderId?: string | null;
 }
 
 /**
@@ -247,10 +299,7 @@ export interface SaveFilterInput {
  * instead of duplicated — the UI's "save over an existing name" flow — so the
  * caller never has to choose between POST and PUT.
  */
-export async function createSavedFilter(
-  input: SaveFilterInput,
-  user: { id: string; username: string },
-): Promise<SavedFilterDto> {
+export async function createSavedFilter(input: SaveFilterInput, user: SavedViewer): Promise<SavedFilterDto> {
   const existing = await prisma.savedTableFilter.findFirst({
     where: { scope: input.scope, ownerId: user.id, name: input.name },
   });
@@ -260,6 +309,8 @@ export async function createSavedFilter(
   if (count >= MAX_PRESETS_PER_USER) {
     throw new AppError(400, `You already have ${MAX_PRESETS_PER_USER} saved filters for this page — delete one first`);
   }
+  const folderId = input.folderId ?? null;
+  await assertFolderTarget("filter", input.scope, folderId, user);
 
   const row = await prisma.savedTableFilter.create({
     data: {
@@ -269,7 +320,9 @@ export async function createSavedFilter(
       ownerName: user.username,
       visibility: input.visibility,
       state: input.state as unknown as Prisma.InputJsonValue,
+      folderId,
     },
+    include: withRole,
   });
   void logEvent({
     action: "saved_filter.created",
@@ -278,26 +331,32 @@ export async function createSavedFilter(
     resourceName: row.name,
     actor: user.username,
     message: `Saved ${row.visibility} filter "${row.name}" on ${row.scope}`,
-    details: { scope: row.scope, visibility: row.visibility },
+    details: { scope: row.scope, visibility: row.visibility, folderId },
   });
-  return toDto(row, user.id);
+  return toDto(row, user, oneFolder(folderId));
 }
 
-/** Update a preset. Ownership is enforced by the route (owner only). */
-export async function updateSavedFilter(
-  id: string,
-  input: SaveFilterInput,
-  user: { id: string; username: string },
-): Promise<SavedFilterDto> {
-  const before = await loadOwned(id);
-  const row = await prisma.savedTableFilter.update({
-    where: { id },
-    data: {
-      name: input.name,
-      visibility: input.visibility,
-      state: input.state as unknown as Prisma.InputJsonValue,
-    },
-  });
+/** Update a preset — its owner's (or, ownerless, a fullwrite holder's) alone. */
+export async function updateSavedFilter(id: string, input: SaveFilterInput, user: SavedViewer): Promise<SavedFilterDto> {
+  const before = await loadVisible(id, user);
+  assertCanManage(before, user, NOUN);
+  if (input.folderId !== undefined) await assertFolderTarget("filter", before.scope, input.folderId, user);
+  let row: Row;
+  try {
+    row = await prisma.savedTableFilter.update({
+      where: { id },
+      data: {
+        name: input.name,
+        visibility: input.visibility,
+        state: input.state as unknown as Prisma.InputJsonValue,
+        ...(input.folderId !== undefined ? { folderId: input.folderId } : {}),
+      },
+      include: withRole,
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new AppError(409, `There is already a saved filter named "${input.name}" with this owner`);
+    throw err;
+  }
   void logEvent({
     action: "saved_filter.updated",
     resourceType: "saved_filter",
@@ -312,25 +371,93 @@ export async function updateSavedFilter(
       previousVisibility: before.visibility !== row.visibility ? before.visibility : undefined,
     },
   });
-  return toDto(row, user.id);
+  return toDto(row, user, oneFolder(row.folderId));
 }
 
-/** Delete a preset. Ownership / admin override is enforced by the route. */
-export async function deleteSavedFilter(id: string, actor: string): Promise<void> {
-  const row = await loadOwned(id);
+/**
+ * Delete a preset. Its owner only — a fullwrite holder may delete an OWNERLESS
+ * one, never someone's owned public preset (business rule 140).
+ */
+export async function deleteSavedFilter(id: string, user: SavedViewer): Promise<void> {
+  const row = await loadVisible(id, user);
+  assertCanManage(row, user, NOUN);
   await prisma.savedTableFilter.delete({ where: { id } });
   void logEvent({
     action: "saved_filter.deleted",
     resourceType: "saved_filter",
     resourceId: row.id,
     resourceName: row.name,
-    actor,
+    actor: user.username,
     message: `Deleted ${row.visibility} filter "${row.name}" on ${row.scope}`,
-    details: { scope: row.scope, visibility: row.visibility, owner: row.ownerName },
+    details: { scope: row.scope, visibility: row.visibility, owner: ownerLabel(row) },
   });
 }
 
-/** Load one preset for the route's ownership check. */
+/** File a preset in a folder (drag and drop), or at the top level with null. */
+export async function moveSavedFilter(id: string, folderId: string | null, user: SavedViewer): Promise<void> {
+  const row = await loadVisible(id, user);
+  assertCanManage(row, user, NOUN);
+  await assertFolderTarget("filter", row.scope, folderId, user);
+  if (row.folderId === folderId) return;
+  await prisma.savedTableFilter.update({ where: { id }, data: { folderId } });
+}
+
+/** Give a preset to a user, role or region. */
+export async function changeSavedFilterOwner(
+  id: string,
+  target: OwnerTargetInput,
+  user: SavedViewer,
+): Promise<SavedFilterDto> {
+  const row = await loadVisible(id, user);
+  assertCanManage(row, user, NOUN);
+  const { columns, label } = await resolveOwnerTarget(target);
+  let after: Row;
+  try {
+    after = await prisma.savedTableFilter.update({ where: { id }, data: columns, include: withRole });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new AppError(409, `${label} already has a saved filter named "${row.name}" — rename one first`);
+    throw err;
+  }
+  void logEvent({
+    action: "saved_filter.owner_changed",
+    resourceType: "saved_filter",
+    resourceId: row.id,
+    resourceName: row.name,
+    actor: user.username,
+    message: `Gave filter "${row.name}" on ${row.scope} from ${ownerLabel(row)} to ${label}`,
+    details: { scope: row.scope, previousOwner: ownerLabel(row), newOwner: label },
+  });
+  return toDto(after, user, oneFolder(after.folderId));
+}
+
+/** "Make private to me" — the caller becomes the user owner; it turns private. */
+export async function takeSavedFilter(id: string, user: SavedViewer): Promise<SavedFilterDto> {
+  const row = await loadVisible(id, user);
+  assertCanTake(row, user, NOUN);
+  let after: Row;
+  try {
+    after = await prisma.savedTableFilter.update({ where: { id }, data: takenColumns(user), include: withRole });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new AppError(409, `You already have a saved filter named "${row.name}" — rename one first`);
+    throw err;
+  }
+  const wasMine = row.ownerId === user.id;
+  void logEvent({
+    action: wasMine ? "saved_filter.updated" : "saved_filter.taken",
+    resourceType: "saved_filter",
+    resourceId: row.id,
+    resourceName: row.name,
+    actor: user.username,
+    level: wasMine ? "info" : "warning",
+    message: wasMine
+      ? `Made filter "${row.name}" on ${row.scope} private`
+      : `${user.username} took filter "${row.name}" on ${row.scope} from ${ownerLabel(row)} and made it private`,
+    details: { scope: row.scope, previousOwner: ownerLabel(row), previousVisibility: row.visibility },
+  });
+  return toDto(after, user, oneFolder(after.folderId));
+}
+
+/** The raw row, for a route that must learn the preset's scope before gating. */
 export async function getSavedFilter(id: string): Promise<Row> {
   return loadOwned(id);
 }

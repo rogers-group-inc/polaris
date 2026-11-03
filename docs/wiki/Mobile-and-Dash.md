@@ -465,9 +465,11 @@ button is left off: the wallboard does not navigate.
 
 The wallboard's own layout — every tab — is kept in that browser's storage. Its
 **Dashboards ▾** menu, shown only while customizing or while a linked tab (below)
-is on screen, lists every **public** [saved dashboard](Dashboard#saved-dashboards).
+is on screen, lists every **public** [saved dashboard](Dashboard#saved-dashboards),
+inside any public folders they were filed in.
 
-**Loading one shows it on the tab you are on.** That tab becomes a **linked
+**Loading one shows it on the tab you are on**; its **⊞** shows it in a **new**
+linked tab instead, leaving the tab you are on as it is. That tab becomes a **linked
 tab**: it takes the published dashboard's name and widgets, is marked with a
 link icon, and **follows the publisher** — a 5-minute poll re-reads it and
 re-renders only when it has actually changed. Every other tab, and the pencil,

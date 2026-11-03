@@ -202,6 +202,12 @@ function renderUsersBody() {
       ? '<span title="' + escapeHtml(new Date(u.lastLogin).toLocaleString()) + '">' + timeAgo(u.lastLogin) + '</span>'
       : '<span style="color:var(--color-text-tertiary)">Never</span>';
     var displayName = u.displayName ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(' + escapeHtml(u.displayName) + ')</span>' : '';
+    // Business rule 140: a disabled account cannot sign in by any path.
+    if (u.disabledAt) {
+      displayName += ' <span class="badge badge-disabled" title="' +
+        escapeHtml("Disabled " + new Date(u.disabledAt).toLocaleString() + (u.disabledBy ? " by " + u.disabledBy : "") + " — cannot sign in") +
+        '">Disabled</span>';
+    }
     var onlineDot = u.isOnline
       ? '<span class="ip-status-dot ip-dot-available" title="Currently logged in" style="vertical-align:middle"></span>'
       : '';
@@ -318,8 +324,74 @@ function _userMenuItems(u) {
     }
   }
   items.push({ separator: true });
+  // Business rule 140. Never on yourself — the server refuses that too.
+  if (!isSelf) {
+    if (u.disabledAt) {
+      items.push({ label: "Enable account", title: "Let this account sign in again", onSelect: function () { confirmEnableUser(u.id, u.username); } });
+    } else {
+      items.push({ label: "Disable account", danger: true, title: "Sign them out everywhere and block every sign-in", onSelect: function () { confirmDisableUser(u.id, u.username); } });
+    }
+  }
   items.push({ label: "Delete", danger: true, onSelect: function () { confirmDeleteUser(u.id, u.username); } });
   return items;
+}
+
+/** "3 private filters, 1 private dashboard" from a disable preview's counts. */
+function _savedCountsText(c, adjective) {
+  var parts = [];
+  function add(n, one, many) { if (n) parts.push(n + " " + adjective + " " + (n === 1 ? one : many)); }
+  add(c.filters, "filter", "filters");
+  add(c.dashboards, "dashboard", "dashboards");
+  add(c.folders, "folder", "folders");
+  return parts.join(", ");
+}
+
+/**
+ * Disable an account (business rule 140): sessions end, every sign-in is
+ * refused, private saved items are deleted and public ones lose their owner.
+ * The dialog states the numbers first, from GET /users/:id/disable-preview.
+ */
+async function confirmDisableUser(id, username) {
+  var preview = { deleted: {}, ownerless: {} };
+  try { preview = await api.users.disablePreview(id); } catch (_err) { /* numbers are a courtesy */ }
+  var gone = _savedCountsText(preview.deleted || {}, "private");
+  var orphan = _savedCountsText(preview.ownerless || {}, "public");
+  var body =
+    '<p style="margin:0 0 0.75rem">Disable <strong>' + escapeHtml(username) + "</strong>?</p>" +
+    '<ul style="margin:0;padding-left:1.1rem;font-size:0.85rem;color:var(--color-text-secondary);line-height:1.5">' +
+      "<li>They are signed out everywhere and can’t sign in — by password, passkey or SSO — until re-enabled.</li>" +
+      (gone ? "<li>Their " + escapeHtml(gone) + " are <strong>deleted</strong>.</li>" : "") +
+      (orphan ? "<li>Their " + escapeHtml(orphan) + " become <strong>ownerless</strong>: only holders of full read-write can edit, reassign or delete them.</li>" : "") +
+      "<li>Re-enabling the account does not give any of them back.</li>" +
+    "</ul>";
+  openModal("Disable account", body,
+    '<button class="btn btn-secondary" id="ud-cancel">Cancel</button><button class="btn btn-danger" id="ud-ok">Disable account</button>');
+  document.getElementById("ud-cancel").addEventListener("click", closeModal);
+  var ok = document.getElementById("ud-ok");
+  ok.addEventListener("click", async function () {
+    ok.disabled = true;
+    try {
+      await api.users.disable(id);
+      closeModal();
+      showToast('Disabled "' + username + '"');
+      loadUsers();
+    } catch (err) {
+      showToast(err.message || "Could not disable the account", "error");
+      ok.disabled = false;
+    }
+  });
+}
+
+async function confirmEnableUser(id, username) {
+  var ok = await showConfirm('Enable "' + username + '"? They can sign in again.\n\nAnything released when the account was disabled stays as it is.');
+  if (!ok) return;
+  try {
+    await api.users.enable(id);
+    showToast('Enabled "' + username + '"');
+    loadUsers();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 }
 
 // Build a <select> of roles. `selectedId` pre-selects a row; `defaultName`

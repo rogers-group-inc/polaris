@@ -51,6 +51,8 @@ interface Harness {
   toasts: string[];
   viewed: unknown[];
   tabbed: unknown[];
+  replaced: unknown[];
+  linkedNew: unknown[];
   cleared: number;
   applied: unknown[];
   gone: string[];
@@ -71,6 +73,8 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
   const toasts: string[] = [];
   const viewed: unknown[] = [];   // rows the active tab was linked to
   const tabbed: unknown[] = [];
+  const replaced: unknown[] = [];   // rows loaded INTO the active tab (rule 140's row click)
+  const linkedNew: unknown[] = [];  // rows the wallboard's ⊞ opened as a new linked tab
   const applied: unknown[] = [];  // fresh rows handed to the linked tabs
   const gone: string[] = [];      // published ids whose tabs were unlinked as gone
   const confirms: string[] = [];
@@ -117,6 +121,8 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
     widgetCount: () => opts.widgets ?? 4,
     publishedId: () => published,
     loadAsNewTab: (row: unknown) => { tabbed.push(row); return true; },
+    replaceActiveTab: (row: unknown) => { replaced.push(row); return true; },
+    linkNewTab: (row: unknown) => { linkedNew.push(row); return true; },
     linkActiveTab: (row: unknown) => { viewed.push(row); published = (row as { id: string }).id; return true; },
     linkedTabs: () => (published ? [{ tabId: "t1", publishedId: published, updatedAt: null }] : []),
     applyPublished: (row: unknown) => { applied.push(row); return 1; },
@@ -152,7 +158,7 @@ function boot(opts: { wallboard?: boolean; canPublish?: boolean; canDeleteAny?: 
     if (!el) throw new Error(`no element for ${sel}`);
     el.dispatchEvent(new win.Event("click", { bubbles: true }));
   }
-  return { win, doc, menu, open, created, deleted, toasts, viewed, tabbed, applied, gone, confirms, get cleared() { return cleared; }, store, click } as unknown as Harness;
+  return { win, doc, menu, open, created, deleted, toasts, viewed, tabbed, replaced, linkedNew, applied, gone, confirms, get cleared() { return cleared; }, store, click } as unknown as Harness;
 }
 
 type H = Harness & { click: (sel: string) => void };
@@ -175,24 +181,46 @@ describe("Dashboards menu — signed in", () => {
     expect(shared.querySelector(".sfl-badge")).toBeTruthy();
   });
 
-  it("loads a row as a new TAB — a copy, never a live view", async () => {
+  it("loads a row INTO the current tab after asking, and ⊞ into a new one (rule 140)", async () => {
     const h = boot() as H;
     await h.open();
     h.click('[data-sd-load="d2"]');
+    await new Promise((r) => setTimeout(r, 0));
+    // The tab has widgets (4), so it asks first.
+    expect(h.confirms).toHaveLength(1);
+    expect(h.confirms[0]).toContain("Shared NOC");
+    expect(h.replaced).toHaveLength(1);
+    expect((h.replaced[0] as { id: string }).id).toBe("d2");
+    expect(h.tabbed).toHaveLength(0);
+    expect(h.viewed).toHaveLength(0);
+
+    await h.open();
+    h.click('[data-sd-newtab="d2"]');
     expect(h.tabbed).toHaveLength(1);
     expect((h.tabbed[0] as { id: string }).id).toBe("d2");
-    expect(h.viewed).toHaveLength(0);
   });
 
-  it("shows the delete × on your own row and on someone else's only with fullwrite", async () => {
-    const own = boot() as H;
-    await own.open();
-    expect(own.menu().querySelector('[data-sd-del="d1"]')).toBeTruthy();
-    expect(own.menu().querySelector('[data-sd-del="d2"]')).toBeNull();
+  it("does not ask before loading into an empty tab", async () => {
+    const h = boot({ widgets: 0 }) as H;
+    await h.open();
+    h.click('[data-sd-load="d1"]');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.confirms).toHaveLength(0);
+    expect(h.replaced).toHaveLength(1);
+  });
 
-    const admin = boot({ canDeleteAny: true }) as H;
+  it("shows the delete × only where the server says the caller manages the row (rule 140)", async () => {
+    const rows = [
+      { ...ROWS[0], canManage: true },
+      { ...ROWS[1], canManage: false },
+      { id: "d3", name: "Left behind", visibility: "public", ownerKind: "none", ownerName: "rlee", isOwner: false, canManage: true, widgetCount: 1, layout: LAYOUT },
+    ];
+    // Even with fullwrite, someone's OWNED dashboard has no ×; an ownerless one does.
+    const admin = boot({ canDeleteAny: true, rows }) as H;
     await admin.open();
-    expect(admin.menu().querySelector('[data-sd-del="d2"]')).toBeTruthy();
+    expect(admin.menu().querySelector('[data-sd-del="d1"]')).toBeTruthy();
+    expect(admin.menu().querySelector('[data-sd-del="d2"]')).toBeNull();
+    expect(admin.menu().querySelector('[data-sd-del="d3"]')).toBeTruthy();
   });
 
   it("posts the canvas snapshot with the chosen visibility", async () => {
@@ -221,23 +249,12 @@ describe("Dashboards menu — signed in", () => {
     expect(h.doc.querySelector(".modal")!.textContent).toContain("Requires saved-dashboard write access");
   });
 
-  it("shows only while customizing or while a linked tab is on screen", async () => {
+  it("shows in view mode too — opening a saved dashboard needs no Customize Page (rule 140)", async () => {
     const view = boot({ editing: false }) as H;
     const btn = view.doc.getElementById("btn-saved-dashboards")!;
-    expect(btn.hasAttribute("hidden")).toBe(true);
-    // A stale click while hidden opens nothing.
-    await view.open();
-    expect(view.menu().classList.contains("open")).toBe(false);
-
-    // Customize Page: dashboard.js announces the mode change.
-    const seam = (view.win as unknown as { PolarisDashboard: { isEditing: () => boolean } }).PolarisDashboard;
-    seam.isEditing = () => true;
-    view.doc.dispatchEvent(new view.win.CustomEvent("polaris:dashboard-mode"));
     expect(btn.hasAttribute("hidden")).toBe(false);
-
-    // A linked tab on screen: its Unlink lives in the menu.
-    const linked = boot({ editing: false, linked: "d2" }) as H;
-    expect(linked.doc.getElementById("btn-saved-dashboards")!.hasAttribute("hidden")).toBe(false);
+    await view.open();
+    expect(view.menu().classList.contains("open")).toBe(true);
   });
 
   it("hides the whole menu for a role with no access at all", () => {
@@ -324,6 +341,15 @@ describe("Dashboards menu — Dash wallboard", () => {
     const linked = boot({ wallboard: true, linked: "d2" }) as H;
     await linked.open();
     expect(linked.menu().querySelector('[data-sd-act="unlink"]')).toBeTruthy();
+  });
+
+  it("⊞ opens a published dashboard as a NEW linked tab, leaving the current one (rule 140)", async () => {
+    const h = boot({ wallboard: true, editing: true }) as H;
+    await h.open();
+    h.click('[data-sd-newtab="d2"]');
+    expect(h.linkedNew).toHaveLength(1);
+    expect((h.linkedNew[0] as { id: string }).id).toBe("d2");
+    expect(h.viewed).toHaveLength(0);
   });
 
   it("LINKS the active tab to a published dashboard, asking first when the tab has widgets", async () => {

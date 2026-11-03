@@ -24,10 +24,16 @@
  * hands the fresh presets to refreshDefaultsFromPresets so an edited preset
  * reaches the tabs based on it.
  *
+ * Folders (business rule 140): the list renders as a tree through
+ * saved-tree.js (PolarisSavedTree) — nested folders, drag and drop between
+ * them, the folder ⋯ menu, Change owner and Make private to me. Every row's
+ * ownership (`canManage` / `canTake`) comes from the server; only a row's
+ * owner (or, for an ownerless row, an assets:fullwrite holder) gets its ×.
+ *
  * Depends on globals from app.js (openModal/closeModal/showConfirm/permAtLeast),
- * api.js (api/showToast/escapeHtml), table-sf.js (TableSF.prototype.applyState)
- * and assets.js (_assetsSF, assetsApplyFilterState) — all loaded before this
- * file on assets.html.
+ * api.js (api/showToast/escapeHtml), table-sf.js (TableSF.prototype.applyState),
+ * saved-tree.js (PolarisSavedTree) and assets.js (_assetsSF,
+ * assetsApplyFilterState) — all loaded before this file on assets.html.
  */
 
 /* global api, openModal, closeModal, showToast, showConfirm, escapeHtml,
@@ -36,14 +42,44 @@
 var SFL_SCOPE = "assets";
 
 var _sflCache = [];          // last server list, for the save-modal name collision check
+var _sflFolders = [];        // last server folder list (business rule 140)
 var _sflLoaded = false;      // false until the first successful list fetch
+var _sflTree = null;         // PolarisSavedTree instance, built on first use
+
+/** The folder tree (saved-tree.js), or null when that module isn't loaded. */
+function _sflTreeOf() {
+  if (_sflTree || !window.PolarisSavedTree) return _sflTree;
+  _sflTree = window.PolarisSavedTree.create({
+    storageKey: "polaris-saved-tree-filters-" + SFL_SCOPE,
+    labels: { mine: "My filters", shared: "Shared filters", ownerless: "Ownerless", one: "filter", many: "filters" },
+    itemRowHtml: function (f, attrs) { return _sflRowHtml(f, _sflActiveBase(), attrs); },
+    canPublish: function () { return permAtLeast("assets", "write"); },
+    ops: {
+      createFolder: function (b) { return api.savedFilters.folders.create(Object.assign({ scope: SFL_SCOPE }, b)); },
+      updateFolder: function (id, b) { return api.savedFilters.folders.update(id, b); },
+      moveFolder: function (id, parentId) { return api.savedFilters.folders.move(id, parentId); },
+      deleteFolder: function (id) { return api.savedFilters.folders.delete(id); },
+      setFolderOwner: function (id, owner, inc) { return api.savedFilters.folders.setOwner(id, owner, inc); },
+      takeFolder: function (id, inc) { return api.savedFilters.folders.takePrivate(id, inc); },
+      moveItem: function (id, folderId) { return api.savedFilters.move(id, folderId); },
+      setItemOwner: function (id, owner) { return api.savedFilters.setOwner(id, owner); },
+      takeItem: function (id) { return api.savedFilters.takePrivate(id); },
+      ownerOptions: function () { return api.savedFilters.ownerOptions(SFL_SCOPE); },
+    },
+    refresh: function () { return _sflRefreshMenu(); },
+    rerender: function () { _sflRenderMenu(_sflCache, false); },
+  });
+  return _sflTree;
+}
 
 // ─── Data ───────────────────────────────────────────────────────────────────
 
 async function _sflFetch() {
   var data = await api.savedFilters.list(SFL_SCOPE);
   _sflCache = (data && data.filters) || [];
+  _sflFolders = (data && data.folders) || [];
   _sflLoaded = true;
+  if (_sflTreeOf()) _sflTree.setData(_sflCache, _sflFolders);
   // The presets a tab is based on may have been edited (or published) since the
   // last look — this is the only moment we hold the current ones. Feature-tested
   // rather than assumed: a browser holding a cached pre-base assets-tabs.js
@@ -137,14 +173,25 @@ function _sflDescribeState(state) {
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
 
+/**
+ * The server's answer (business rule 140): the owner — or, for an ownerless
+ * preset, an assets:fullwrite holder. A row from a server that predates
+ * ownership falls back to the old isOwner test.
+ */
 function _sflCanDelete(f) {
-  return f.isOwner || permAtLeast("assets", "fullwrite");
+  return typeof f.canManage === "boolean" ? f.canManage : !!f.isOwner;
 }
 
-function _sflRowHtml(f, base) {
+/**
+ * One preset row. `attrs` is the tree's (saved-tree.js): its id, drag flag
+ * and indent, put on the row's root element.
+ */
+function _sflRowHtml(f, base, attrs) {
   var badge = f.visibility === "public"
     ? '<span class="sfl-badge" title="Shared with everyone">Public</span>' : "";
-  var owner = f.isOwner ? "" : '<span class="sfl-owner">' + escapeHtml(f.ownerName) + "</span>";
+  var owner = window.PolarisSavedTree
+    ? window.PolarisSavedTree.ownerBadgeHtml(f)
+    : (f.isOwner ? "" : '<span class="sfl-owner">' + escapeHtml(f.ownerName) + "</span>");
   // Base filter toggle — only where the tab strip exists (assets.html), since a
   // base belongs to a tab.
   var isBase = !!(base && base.id === f.id);
@@ -168,7 +215,7 @@ function _sflRowHtml(f, base) {
     ? '<button type="button" class="sfl-del" data-sfl-del="' + escapeHtml(f.id) +
       '" title="Delete this saved filter" aria-label="Delete ' + escapeHtml(f.name) + '">&times;</button>'
     : "";
-  return '<div class="sfl-row' + (isBase ? " sfl-row-base" : "") + '">' +
+  return '<div class="sfl-row' + (isBase ? " sfl-row-base" : "") + '"' + (attrs || "") + ">" +
     '<button type="button" class="sfl-load" data-sfl-load="' + escapeHtml(f.id) + '" title="' +
       escapeHtml(_sflDescribeState(f.state)) + '">' +
       '<span class="sfl-name">' + escapeHtml(f.name) + "</span>" + badge + owner +
@@ -196,12 +243,15 @@ function _sflRenderMenu(list, error) {
     (base
       ? '<button type="button" data-sfl-act="unbase">Remove base filter from this tab</button>'
       : "") +
+    (_sflTreeOf() ? '<button type="button" data-sfl-act="newfolder">New folder</button>' : "") +
     '<div class="dropdown-divider"></div>';
 
   if (error) {
     html += '<div class="sfl-empty">Could not load saved filters</div>';
   } else if (!_sflLoaded) {
     html += '<div class="sfl-empty">Loading&hellip;</div>';
+  } else if (_sflTreeOf()) {
+    html += _sflTree.html() || '<div class="sfl-empty">No saved filters yet</div>';
   } else {
     var mine = list.filter(function (f) { return f.isOwner; });
     var shared = list.filter(function (f) { return !f.isOwner; });
@@ -217,6 +267,7 @@ function _sflRenderMenu(list, error) {
     }
   }
   menu.innerHTML = html;
+  if (_sflTree) _sflTree.focusRename(menu);
 }
 
 async function _sflRefreshMenu() {
@@ -279,7 +330,8 @@ async function _sflDelete(id) {
   if (!f) return;
   var extra = f.isOwner
     ? (f.visibility === "public" ? "\n\nIt is shared — everyone loses it." : "")
-    : "\n\nIt belongs to " + f.ownerName + " and is shared with everyone.";
+    : "\n\nIt has no owner" + (f.ownerName ? " (it was " + f.ownerName + "'s)" : "") +
+      (f.visibility === "public" ? " and is shared with everyone." : ".");
   var ok = await showConfirm('Delete the saved filter "' + f.name + '"?' + extra);
   if (!ok) return;
   try {
@@ -316,6 +368,7 @@ function _sflOpenSaveModal() {
       "</datalist>" +
       '<div class="hint">Saving over one of your existing names replaces it.</div>' +
     "</div>" +
+    (_sflTreeOf() ? _sflTree.pickerHtml(null) : "") +
     '<div class="form-group">' +
       "<label>Visibility</label>" +
       '<label class="sfl-vis"><input type="radio" name="sfl-vis" value="private" checked>' +
@@ -341,6 +394,7 @@ function _sflOpenSaveModal() {
 
   openModal("Save current filters", body, footer);
   document.getElementById("sfl-cancel").addEventListener("click", closeModal);
+  if (_sflTree) _sflTree.wirePicker();
 
   var nameInput = document.getElementById("sfl-name");
   var saveBtn = document.getElementById("sfl-save");
@@ -363,7 +417,9 @@ function _sflOpenSaveModal() {
     try {
       // The server treats a same-(scope, owner, name) POST as an update, so
       // one call covers both create and overwrite.
-      await api.savedFilters.create({ scope: SFL_SCOPE, name: name, visibility: visibility, state: state });
+      var payload = { scope: SFL_SCOPE, name: name, visibility: visibility, state: state };
+      if (_sflTree) payload.folderId = _sflTree.pickerValue();
+      await api.savedFilters.create(payload);
       closeModal();
       showToast('Saved filter "' + name + '"');
       await _sflRefreshMenu();
@@ -403,8 +459,14 @@ document.addEventListener("DOMContentLoaded", function () {
       _sflRefreshMenu();
     }
   });
-  document.addEventListener("click", function () { menu.classList.remove("open"); });
+  // A click inside a body-mounted row menu (the folder ⋯, a row's right-click
+  // menu — saved-tree.js) is still "inside" this menu: Rename edits in place.
+  document.addEventListener("click", function (e) {
+    if (e.target && e.target.closest && e.target.closest(".row-context-menu")) return;
+    menu.classList.remove("open");
+  });
   menu.addEventListener("click", function (e) { e.stopPropagation(); });
+  if (_sflTreeOf()) _sflTree.wire(menu);
 
   menu.addEventListener("click", function (e) {
     var act = e.target.closest("[data-sfl-act]");
@@ -415,6 +477,8 @@ document.addEventListener("DOMContentLoaded", function () {
         _sflOpenSaveModal();
       } else if (which === "reset") {
         if (_sflTabs("resetToDefault")) window.PolarisAssetTabs.resetToDefault();
+      } else if (which === "newfolder") {
+        if (_sflTree) _sflTree.newFolder(null);
       } else if (which === "unbase") {
         if (_sflTabs("clearDefaultFilter") && window.PolarisAssetTabs.clearDefaultFilter()) {
           showToast("Base filter removed from this tab");

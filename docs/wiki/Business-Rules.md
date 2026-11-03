@@ -2988,3 +2988,23 @@ need read-write on Reservations, and below Full read-write only reservations
 you created. Decommissioned and disabled devices,
 FortiGates, FortiSwitches and FortiAPs are never reported. See
 [Conflict Resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).
+
+### Rule 140
+
+**A saved folder, filter or dashboard belongs to its owner, and only the
+owner manages it.** The owner is a user, a role (everyone holding it), a
+region (everyone whose region scope names it; users with no region
+restriction do not count), or nobody. Only the owner may rename, publish,
+move, delete or hand on an item, and that includes public ones: Full
+read-write on the page no longer deletes someone else's public filter or
+dashboard. Full read-write manages items that have **no owner**, and anyone
+holding it, like the owner, can use **Make private to me** to take an item as
+their own private one; that is recorded in Events with the previous owner.
+Folders nest, and each folder and item keeps its own Private or Public
+setting; an item whose folder you cannot see appears at the top level.
+Deleting a folder moves what it held up a level. When an account is
+**disabled** or deleted, its private folders, filters and dashboards are
+deleted and its public ones lose their owner. A disabled account cannot sign
+in by any method and is signed out everywhere. See
+[Assets](Assets#view-tabs-and-saved-filters), [Dashboard](Dashboard#saved-dashboards)
+and [Users, Roles and Permissions](Users-Roles-and-Permissions#disabling-an-account).

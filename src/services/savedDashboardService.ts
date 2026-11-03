@@ -11,11 +11,15 @@
  * unauthenticated Dash wallboard can load** (src/dash/dashServer.ts mounts the
  * list + read routes, GET-only, and passes no session). So:
  *
- *   list (own u public) / create + edit + delete YOUR OWN  -> savedDashboards:read
+ *   list (owned u public) / create + edit + delete OWNED   -> savedDashboards:read
  *   create or edit a PUBLIC one (publishing to everyone,
  *   the wallboard included)                                -> savedDashboards:write
- *   delete SOMEONE ELSE'S (housekeeping)                   -> savedDashboards:fullwrite
+ *   manage an OWNERLESS one; "Make private to me" on any   -> savedDashboards:fullwrite
  *   list from the wallboard (no session at all)            -> public rows ONLY
+ *
+ * Ownership (a user, a role, a region, or nobody) and folders are business
+ * rule 140 (savedOwnershipService / savedFolderService). Nobody but its owner
+ * deletes an OWNED public dashboard, fullwrite included.
  *
  * It gets its OWN function key rather than riding a page's gate the way
  * SAVED_FILTER_SCOPES does, because the Dashboard page has no function key to
@@ -39,6 +43,21 @@ import { ColumnsSchema, type DashboardColumnInput } from "../utils/dashboardLayo
 // two name rules for two lists of named presets is a difference operators feel.
 import { normalizeName } from "./savedFilterService.js";
 import type { Prisma } from "../generated/prisma/client.js";
+import {
+  assertCanManage,
+  assertCanTake,
+  canSee,
+  isUniqueViolation,
+  ownerLabel,
+  ownershipDto,
+  resolveOwnerTarget,
+  takenColumns,
+  visibleWhere,
+  type OwnerTargetInput,
+  type OwnershipDto,
+  type SavedViewer,
+} from "./savedOwnershipService.js";
+import { assertFolderTarget, listVisibleFolders, type SavedFolderDto } from "./savedFolderService.js";
 
 export { normalizeName };
 
@@ -52,14 +71,13 @@ export interface SavedDashboardLayout {
   columns: DashboardColumnInput[];
 }
 
-export interface SavedDashboardDto {
+/** A dashboard as the menu sees it; the ownership half is the caller's view. */
+export interface SavedDashboardDto extends OwnershipDto {
   id: string;
   name: string;
   visibility: SavedDashboardVisibility;
-  ownerId: string | null;
-  ownerName: string;
-  /** True when the CALLER owns it (drives the UI's edit/delete affordances). */
-  isOwner: boolean;
+  /** Null at the top level, or when the folder is not visible to the caller. */
+  folderId: string | null;
   /** Widget count — the menu labels a row without parsing the layout. */
   widgetCount: number;
   layout: SavedDashboardLayout;
@@ -91,27 +109,36 @@ export function countWidgets(layout: SavedDashboardLayout): number {
   return layout.columns.reduce((n, c) => n + c.widgets.length, 0);
 }
 
+
 type Row = {
   id: string;
   name: string;
   ownerId: string | null;
+  ownerRoleId: string | null;
+  ownerRegion: string | null;
   ownerName: string;
   visibility: string;
   layout: Prisma.JsonValue;
+  folderId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  ownerRole?: { name: string } | null;
 };
 
-function toDto(row: Row, viewerId: string | null): SavedDashboardDto {
+const withRole = { ownerRole: { select: { name: true } } } as const;
+const NOUN = "saved dashboard";
+/** The folder scope every saved-dashboard folder lives in. */
+export const DASHBOARD_FOLDER_SCOPE = "dashboards";
+
+function toDto(row: Row, viewer: SavedViewer | null, visibleFolderIds: Set<string>): SavedDashboardDto {
   const stored = (row.layout as unknown as SavedDashboardLayout) || { columns: [] };
   const columns = Array.isArray(stored.columns) ? stored.columns : [];
   return {
     id: row.id,
     name: row.name,
     visibility: row.visibility === "public" ? "public" : "private",
-    ownerId: row.ownerId,
-    ownerName: row.ownerName,
-    isOwner: row.ownerId != null && viewerId != null && row.ownerId === viewerId,
+    ...ownershipDto(row, viewer),
+    folderId: row.folderId && visibleFolderIds.has(row.folderId) ? row.folderId : null,
     widgetCount: countWidgets({ columns }),
     layout: { columns },
     createdAt: row.createdAt.toISOString(),
@@ -119,48 +146,64 @@ function toDto(row: Row, viewerId: string | null): SavedDashboardDto {
   };
 }
 
+function oneFolder(folderId: string | null): Set<string> {
+  return new Set(folderId ? [folderId] : []);
+}
+
 /**
- * Dashboards visible to one caller: everything they own (private and public)
- * plus every OTHER user's public one. `viewerId === null` is the wallboard —
- * no session, so public rows ONLY, and nothing reads as owned.
+ * Dashboards and folders visible to one caller (business rule 140): public
+ * rows, rows they own (as the user, through their role or a region in their
+ * scope) and, at fullwrite, ownerless rows. A null viewer is the wallboard —
+ * public rows ONLY, and nothing reads as owned.
  */
-export async function listSavedDashboards(viewerId: string | null): Promise<SavedDashboardDto[]> {
-  const rows = await prisma.savedDashboard.findMany({
-    where: viewerId ? { OR: [{ ownerId: viewerId }, { visibility: "public" }] } : { visibility: "public" },
-    orderBy: [{ name: "asc" }],
-  });
-  return rows.map((r) => toDto(r, viewerId));
+export async function listSavedDashboards(
+  viewer: SavedViewer | null,
+): Promise<{ dashboards: SavedDashboardDto[]; folders: SavedFolderDto[] }> {
+  const [{ folders, visibleIds }, rows] = await Promise.all([
+    listVisibleFolders("dashboard", DASHBOARD_FOLDER_SCOPE, viewer),
+    prisma.savedDashboard.findMany({
+      where: visibleWhere(viewer),
+      include: withRole,
+      orderBy: [{ name: "asc" }],
+    }),
+  ]);
+  return { dashboards: rows.map((r) => toDto(r, viewer, visibleIds)), folders };
 }
 
 async function load(id: string): Promise<Row> {
-  const row = await prisma.savedDashboard.findUnique({ where: { id } });
+  const row = await prisma.savedDashboard.findUnique({ where: { id }, include: withRole });
   if (!row) throw new AppError(404, "Saved dashboard not found");
   return row;
 }
 
-/** Load one row for the route's ownership check. */
+async function loadVisible(id: string, viewer: SavedViewer | null): Promise<Row> {
+  const row = await load(id);
+  if (!canSee(row, viewer)) throw new AppError(404, "Saved dashboard not found");
+  return row;
+}
+
+/** Load one row (no visibility check). */
 export async function getSavedDashboard(id: string): Promise<Row> {
   return load(id);
 }
 
 /**
  * One saved dashboard by id, as a DTO — the wallboard's re-read of the screen
- * it is pinned to, and the Dashboard page's refresh of a loaded tab. A PRIVATE
- * row answers 404, not 403, to a caller who can't see it (the GET /alerts/:id
- * posture): that an id exists is itself something an anonymous viewer shouldn't
- * learn.
+ * it is pinned to, and the Dashboard page's refresh of a loaded tab. A row the
+ * caller can't see answers 404, not 403 (the GET /alerts/:id posture): that an
+ * id exists is itself something an anonymous viewer shouldn't learn.
  */
-export async function readSavedDashboard(id: string, viewerId: string | null): Promise<SavedDashboardDto> {
-  const row = await load(id);
-  const own = row.ownerId != null && viewerId != null && row.ownerId === viewerId;
-  if (row.visibility !== "public" && !own) throw new AppError(404, "Saved dashboard not found");
-  return toDto(row, viewerId);
+export async function readSavedDashboard(id: string, viewer: SavedViewer | null): Promise<SavedDashboardDto> {
+  const row = await loadVisible(id, viewer);
+  return toDto(row, viewer, oneFolder(row.folderId));
 }
 
 export interface SaveDashboardInput {
   name: string;
   visibility: SavedDashboardVisibility;
   layout: SavedDashboardLayout;
+  /** undefined = leave where it is (an update) / top level (a create). */
+  folderId?: string | null;
 }
 
 /**
@@ -168,10 +211,7 @@ export interface SaveDashboardInput {
  * duplicated — the UI's "save over an existing name" flow — so the caller never
  * has to choose between POST and PUT.
  */
-export async function createSavedDashboard(
-  input: SaveDashboardInput,
-  user: { id: string; username: string },
-): Promise<SavedDashboardDto> {
+export async function createSavedDashboard(input: SaveDashboardInput, user: SavedViewer): Promise<SavedDashboardDto> {
   const existing = await prisma.savedDashboard.findFirst({ where: { ownerId: user.id, name: input.name } });
   if (existing) return updateSavedDashboard(existing.id, input, user);
 
@@ -182,6 +222,8 @@ export async function createSavedDashboard(
       `You already have ${MAX_SAVED_DASHBOARDS_PER_USER} saved dashboards — delete one first`,
     );
   }
+  const folderId = input.folderId ?? null;
+  await assertFolderTarget("dashboard", DASHBOARD_FOLDER_SCOPE, folderId, user);
 
   const row = await prisma.savedDashboard.create({
     data: {
@@ -190,7 +232,9 @@ export async function createSavedDashboard(
       ownerName: user.username,
       visibility: input.visibility,
       layout: input.layout as unknown as Prisma.InputJsonValue,
+      folderId,
     },
+    include: withRole,
   });
   void logEvent({
     action: "saved_dashboard.created",
@@ -199,26 +243,36 @@ export async function createSavedDashboard(
     resourceName: row.name,
     actor: user.username,
     message: `Saved ${row.visibility} dashboard "${row.name}"`,
-    details: { visibility: row.visibility, widgetCount: countWidgets(input.layout) },
+    details: { visibility: row.visibility, widgetCount: countWidgets(input.layout), folderId },
   });
-  return toDto(row, user.id);
+  return toDto(row, user, oneFolder(folderId));
 }
 
-/** Update one. Ownership is enforced by the route (owner only). */
+/** Update one — its owner's (or, ownerless, a fullwrite holder's) alone. */
 export async function updateSavedDashboard(
   id: string,
   input: SaveDashboardInput,
-  user: { id: string; username: string },
+  user: SavedViewer,
 ): Promise<SavedDashboardDto> {
-  const before = await load(id);
-  const row = await prisma.savedDashboard.update({
-    where: { id },
-    data: {
-      name: input.name,
-      visibility: input.visibility,
-      layout: input.layout as unknown as Prisma.InputJsonValue,
-    },
-  });
+  const before = await loadVisible(id, user);
+  assertCanManage(before, user, NOUN);
+  if (input.folderId !== undefined) await assertFolderTarget("dashboard", DASHBOARD_FOLDER_SCOPE, input.folderId, user);
+  let row: Row;
+  try {
+    row = await prisma.savedDashboard.update({
+      where: { id },
+      data: {
+        name: input.name,
+        visibility: input.visibility,
+        layout: input.layout as unknown as Prisma.InputJsonValue,
+        ...(input.folderId !== undefined ? { folderId: input.folderId } : {}),
+      },
+      include: withRole,
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new AppError(409, `There is already a saved dashboard named "${input.name}" with this owner`);
+    throw err;
+  }
   void logEvent({
     action: "saved_dashboard.updated",
     resourceType: "saved_dashboard",
@@ -233,20 +287,88 @@ export async function updateSavedDashboard(
       previousVisibility: before.visibility !== row.visibility ? before.visibility : undefined,
     },
   });
-  return toDto(row, user.id);
+  return toDto(row, user, oneFolder(row.folderId));
 }
 
-/** Delete one. Ownership / admin override is enforced by the route. */
-export async function deleteSavedDashboard(id: string, actor: string): Promise<void> {
-  const row = await load(id);
+/**
+ * Delete one. Its owner only — a fullwrite holder may delete an OWNERLESS one,
+ * never someone's owned public dashboard (business rule 140).
+ */
+export async function deleteSavedDashboard(id: string, user: SavedViewer): Promise<void> {
+  const row = await loadVisible(id, user);
+  assertCanManage(row, user, NOUN);
   await prisma.savedDashboard.delete({ where: { id } });
   void logEvent({
     action: "saved_dashboard.deleted",
     resourceType: "saved_dashboard",
     resourceId: row.id,
     resourceName: row.name,
-    actor,
+    actor: user.username,
     message: `Deleted ${row.visibility} dashboard "${row.name}"`,
-    details: { visibility: row.visibility, owner: row.ownerName },
+    details: { visibility: row.visibility, owner: ownerLabel(row) },
   });
+}
+
+/** File one in a folder (drag and drop), or at the top level with null. */
+export async function moveSavedDashboard(id: string, folderId: string | null, user: SavedViewer): Promise<void> {
+  const row = await loadVisible(id, user);
+  assertCanManage(row, user, NOUN);
+  await assertFolderTarget("dashboard", DASHBOARD_FOLDER_SCOPE, folderId, user);
+  if (row.folderId === folderId) return;
+  await prisma.savedDashboard.update({ where: { id }, data: { folderId } });
+}
+
+/** Give one to a user, role or region. */
+export async function changeSavedDashboardOwner(
+  id: string,
+  target: OwnerTargetInput,
+  user: SavedViewer,
+): Promise<SavedDashboardDto> {
+  const row = await loadVisible(id, user);
+  assertCanManage(row, user, NOUN);
+  const { columns, label } = await resolveOwnerTarget(target);
+  let after: Row;
+  try {
+    after = await prisma.savedDashboard.update({ where: { id }, data: columns, include: withRole });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new AppError(409, `${label} already has a saved dashboard named "${row.name}" — rename one first`);
+    throw err;
+  }
+  void logEvent({
+    action: "saved_dashboard.owner_changed",
+    resourceType: "saved_dashboard",
+    resourceId: row.id,
+    resourceName: row.name,
+    actor: user.username,
+    message: `Gave dashboard "${row.name}" from ${ownerLabel(row)} to ${label}`,
+    details: { previousOwner: ownerLabel(row), newOwner: label },
+  });
+  return toDto(after, user, oneFolder(after.folderId));
+}
+
+/** "Make private to me" — the caller becomes the user owner; it turns private. */
+export async function takeSavedDashboard(id: string, user: SavedViewer): Promise<SavedDashboardDto> {
+  const row = await loadVisible(id, user);
+  assertCanTake(row, user, NOUN);
+  let after: Row;
+  try {
+    after = await prisma.savedDashboard.update({ where: { id }, data: takenColumns(user), include: withRole });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new AppError(409, `You already have a saved dashboard named "${row.name}" — rename one first`);
+    throw err;
+  }
+  const wasMine = row.ownerId === user.id;
+  void logEvent({
+    action: wasMine ? "saved_dashboard.updated" : "saved_dashboard.taken",
+    resourceType: "saved_dashboard",
+    resourceId: row.id,
+    resourceName: row.name,
+    actor: user.username,
+    level: wasMine ? "info" : "warning",
+    message: wasMine
+      ? `Made dashboard "${row.name}" private`
+      : `${user.username} took dashboard "${row.name}" from ${ownerLabel(row)} and made it private`,
+    details: { previousOwner: ownerLabel(row), previousVisibility: row.visibility },
+  });
+  return toDto(after, user, oneFolder(after.folderId));
 }

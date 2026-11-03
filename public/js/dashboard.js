@@ -1291,6 +1291,48 @@
     },
 
     /**
+     * Load a saved dashboard INTO the active tab, replacing its widgets — the
+     * row click of Dashboards ▾, matching Filters ▾ (the ⊞ is loadAsNewTab).
+     * Still a copy. The tab adopts the dashboard's name only while it carries
+     * an untouched default name, the way a filter tab does. Refuses a linked
+     * tab (the wallboard's, someone else's row): unlink it first.
+     */
+    replaceActiveTab: function (saved) {
+      if (!saved || activeLinked()) return false;
+      var dash = activeDash();
+      dash.columns = dropUnknownWidgets(saved.layout && saved.layout.columns);
+      if (!dash.name || /^Dashboard \d+$/.test(dash.name)) dash.name = (saved.name || "Dashboard").slice(0, 60);
+      closePopover();
+      WidgetLibrary.close();
+      renderRoot();
+      queueSave();
+      return true;
+    },
+
+    /**
+     * The wallboard's ⊞: a NEW tab linked to a published dashboard, leaving
+     * the active one as it is. The new tab follows the publisher exactly like
+     * one linked in place (applyPublished / the poll).
+     */
+    linkNewTab: function (saved) {
+      if (!saved || !saved.id) return false;
+      var id = PolarisWidgets.uuid();
+      state.layout.dashboards.push({
+        id: id,
+        name: (saved.name || "Published dashboard").slice(0, 60),
+        columns: dropUnknownWidgets(saved.layout && saved.layout.columns),
+        published: publishedMeta(saved),
+      });
+      state.layout.activeId = id;
+      closePopover();
+      WidgetLibrary.close();
+      setHeaderMode();
+      renderRoot();
+      queueSave();
+      return true;
+    },
+
+    /**
      * Link the ACTIVE tab to a published dashboard (the wallboard): the tab
      * takes the published name and widgets and from now on follows the
      * publisher (applyPublished). Its own widgets are replaced; every other

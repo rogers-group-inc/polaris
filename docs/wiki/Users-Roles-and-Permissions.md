@@ -36,6 +36,11 @@ Five keys carry an **ownership dimension**: `subnets`, `reservations`,
 networks have no creator, which is why archiving one is `fullwrite` — retiring a
 site's address space is not an own-rows action.
 
+Saved filters, saved dashboards and their folders have an owner of their own,
+which can be a user, a role or a region, and `fullwrite` does **not** reach
+someone else's owned one. It manages only those with no owner
+([rule 140](Business-Rules#rule-140)).
+
 ### Short ladders
 
 A key declares **only the levels it can actually hold**, and most hold fewer
@@ -224,7 +229,8 @@ to any API token refuses deletion.
 ### The last-admin guard
 
 Nothing may leave Polaris with **zero** users holding `users:fullwrite` **and**
-`roles:fullwrite`. Enforced on role change and on user delete.
+`roles:fullwrite`. Enforced on role change, on user delete and on disabling an
+account. A disabled account never counts toward it.
 
 ### No escalation
 
@@ -344,6 +350,27 @@ map colour, then tags in their registry colour.
 > **Never fix a login-adjacent bug for the provider you happen to run.** The
 > five have different transport semantics, and the SAML/OIDC difference above is
 > the one that bites.
+
+### Disabling an account
+
+A user's row menu on the Users page has **Disable account** (and, on a disabled
+account, **Enable account**). It needs `users:write`, and you cannot disable
+yourself. Disabling:
+
+- signs the user out everywhere at once;
+- refuses every way of signing in — password, passkey, SAML, OIDC, LDAP and
+  Entra App Proxy. The refusal comes only after the password or sign-in checks
+  out, so someone guessing passwords does not learn that the account is
+  disabled. Signing in through SSO does not re-enable it;
+- deletes the account's **private** saved filters, saved dashboards and folders,
+  and leaves its **public** ones in place with no owner, so the people using
+  them keep them. Full read-write holders can then reassign, take or delete them
+  ([rule 140](Business-Rules#rule-140)).
+
+The dialog shows how many items each of those will affect before you confirm.
+Deleting a user does the same to their saved items. **Enable account** lets the
+user sign in again; nothing that was deleted or released comes back. A disabled
+account shows a **Disabled** badge beside its name.
 
 ### Sessions
 

@@ -205,7 +205,7 @@ d("saved dashboards — edit + delete", () => {
     expect(resp.body.visibility).toBe("public");
   });
 
-  it("lets the owner delete, and an admin delete someone else's", async () => {
+  it("lets the owner delete; a fullwrite holder deletes only an OWNERLESS one (rule 140)", async () => {
     const own = await post(readonly, { name: "RO own", visibility: "private", layout: LAYOUT });
     const delOwn = await readonly.agent
       .delete(`/api/v1/saved-dashboards/${own.body.id}`)
@@ -218,11 +218,20 @@ d("saved dashboards — edit + delete", () => {
       .set("X-CSRF-Token", readonly.csrf);
     expect(roDelete.status).toBe(403);
 
-    const adminDelete = await admin.agent
-      .delete(`/api/v1/saved-dashboards/${other.body.id}`)
+    const ro = await prisma.user.findUnique({ where: { username: RO_USERNAME } });
+    const theirs = await prisma.savedDashboard.create({
+      data: { name: "RO public", ownerId: ro!.id, ownerName: RO_USERNAME, visibility: "public", layout: LAYOUT },
+    });
+    const adminOnOwned = await admin.agent
+      .delete(`/api/v1/saved-dashboards/${theirs.id}`)
       .set("X-CSRF-Token", admin.csrf);
-    expect(adminDelete.status).toBe(204);
-    expect(await prisma.savedDashboard.count()).toBe(0);
+    expect(adminOnOwned.status).toBe(403);
+
+    await prisma.savedDashboard.update({ where: { id: theirs.id }, data: { ownerId: null } });
+    const adminOnOwnerless = await admin.agent
+      .delete(`/api/v1/saved-dashboards/${theirs.id}`)
+      .set("X-CSRF-Token", admin.csrf);
+    expect(adminOnOwnerless.status).toBe(204);
   });
 
   it("keeps a deleted user's public dashboard, orphaned rather than gone", async () => {

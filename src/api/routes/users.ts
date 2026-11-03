@@ -31,6 +31,17 @@ import { normalizeTags } from "../../utils/tagNormalize.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import { logEvent } from "./events.js";
 import { deleteUserAndTombstoneOwnership, assertUsernameNotReserved } from "../../services/userOwnershipService.js";
+import { releaseUserOwnership, type ReleasedOwnership } from "../../services/savedOwnershipService.js";
+
+/** "3 private filters deleted; 2 public items now ownerless" — for the audit Event. */
+function releasedSummary(r: ReleasedOwnership): string {
+  const del = r.deleted.folders + r.deleted.filters + r.deleted.dashboards;
+  const orphan = r.ownerless.folders + r.ownerless.filters + r.ownerless.dashboards;
+  const parts: string[] = [];
+  if (del) parts.push(`${del} private saved folder(s) / filter(s) / dashboard(s) deleted`);
+  if (orphan) parts.push(`${orphan} public one(s) now ownerless`);
+  return parts.join("; ");
+}
 
 const router = Router();
 
@@ -75,6 +86,8 @@ const USER_LIST_SELECT = {
   needsRoleReview: true,
   regionTags: true,
   otherTags: true,
+  disabledAt: true,
+  disabledBy: true,
   role: { select: { id: true, name: true, color: true, isProtected: true, isBuiltIn: true } },
 } as const;
 
@@ -446,6 +459,104 @@ router.delete("/:id/passkeys", requirePermission("users", "write"), async (req, 
   }
 });
 
+// GET /api/v1/users/:id/disable-preview — what a disable would release, for
+// the confirm dialog's numbers. Read-only.
+router.get("/:id/disable-preview", requirePermission("users", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const mine = { ownerId: id };
+    const priv = { ...mine, visibility: "private" };
+    const pub = { ...mine, visibility: "public" };
+    const [pf, pfi, pd, uf, ufi, ud] = await Promise.all([
+      prisma.savedFolder.count({ where: priv }),
+      prisma.savedTableFilter.count({ where: priv }),
+      prisma.savedDashboard.count({ where: priv }),
+      prisma.savedFolder.count({ where: pub }),
+      prisma.savedTableFilter.count({ where: pub }),
+      prisma.savedDashboard.count({ where: pub }),
+    ]);
+    res.json({
+      deleted: { folders: pf, filters: pfi, dashboards: pd },
+      ownerless: { folders: uf, filters: ufi, dashboards: ud },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/users/:id/disable — business rule 140. The account can no
+// longer sign in by ANY path (auth.ts refuses where every path stamps its
+// session), every live session ends now, and its saved items are released
+// exactly as a delete releases them. Enabling does not give them back.
+router.post("/:id/disable", requirePermission("users", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const user = await prisma.user.findUnique({ where: { id }, include: { role: true } });
+    if (!user) throw new AppError(404, "User not found");
+    if (req.session?.userId === user.id) throw new AppError(400, "You cannot disable your own account");
+    assertMayActOnAccount(req, user);
+    if (user.disabledAt) throw new AppError(409, `"${user.username}" is already disabled`);
+    // lastAdminEquivalent invariant: a disabled admin controls nothing.
+    if (await isAdminEquivalentRole(user.roleId)) {
+      const remaining = await countAdminEquivalentUsers(user.id);
+      if (remaining === 0) {
+        throw new AppError(409, "Cannot disable — this is the last active admin-equivalent account. Promote another user first.");
+      }
+    }
+
+    // Stamp FIRST, so a sign-in racing the release is already refused.
+    await prisma.user.update({
+      where: { id },
+      data: { disabledAt: new Date(), disabledBy: req.session?.username ?? null },
+    });
+    await revokeUserSessions(id);
+    // A password step already passed must not finish into a session.
+    mfaPending.revokeForUser(id);
+    const released = await releaseUserOwnership(id);
+    const savedNote = releasedSummary(released);
+    logEvent({
+      action: "user.disabled",
+      resourceType: "user",
+      resourceId: user.id,
+      resourceName: user.username,
+      actor: req.session?.username,
+      level: "warning",
+      message: `User "${user.username}" disabled — signed out everywhere and can no longer sign in` +
+        (savedNote ? `; ${savedNote}` : ""),
+      details: { savedItems: released },
+    });
+    res.json({ ok: true, released });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/users/:id/enable — lets the account sign in again. Nothing the
+// disable released comes back.
+router.post("/:id/enable", requirePermission("users", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const user = await prisma.user.findUnique({ where: { id }, include: { role: true } });
+    if (!user) throw new AppError(404, "User not found");
+    assertMayActOnAccount(req, user);
+    if (!user.disabledAt) throw new AppError(409, `"${user.username}" is not disabled`);
+    await prisma.user.update({ where: { id }, data: { disabledAt: null, disabledBy: null } });
+    // A lockout earned before the disable should not greet the returning user.
+    clearLockout(user.username);
+    logEvent({
+      action: "user.enabled",
+      resourceType: "user",
+      resourceId: user.id,
+      resourceName: user.username,
+      actor: req.session?.username,
+      message: `User "${user.username}" enabled — can sign in again`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/v1/users/:id
 router.delete("/:id", requirePermission("users", "write"), async (req, res, next) => {
   try {
@@ -467,19 +578,18 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
       }
     }
 
-    // Saved table filters are ownerId-SetNull so this user's PUBLIC presets
-    // survive them (other operators are using those). Their private ones would
-    // be orphaned rows nobody can ever see, so drop those first.
-    await prisma.savedTableFilter.deleteMany({ where: { ownerId: id, visibility: "private" } });
-    // Same rule for saved dashboards, for the same reason — a published one may
-    // be on a wallboard right now, a private one is unreachable once its owner
-    // is gone.
-    await prisma.savedDashboard.deleteMany({ where: { ownerId: id, visibility: "private" } });
+    // Business rule 140: their PRIVATE saved folders / filters / dashboards go
+    // with them (nobody else could ever see them), their PUBLIC ones stay —
+    // others are using them, and a published dashboard may be on a wallboard
+    // right now — but become OWNERLESS, manageable only at fullwrite. The same
+    // release a disable makes.
+    const released = await releaseUserOwnership(id);
 
     // Rule 48(e), re-scan F85: their rows' ownership goes with the account.
     const tomb = await deleteUserAndTombstoneOwnership(user);
     const owned = tomb.subnets + tomb.reservations + tomb.credentials + tomb.contacts;
     await endSessionsOf(req, id);
+    const savedNote = releasedSummary(released);
     logEvent({
       action: "user.deleted",
       resourceType: "user",
@@ -487,8 +597,9 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
       resourceName: user.username,
       actor: req.session?.username,
       message: `User "${user.username}" deleted (was role "${user.role.name}")` +
-        (owned ? `; ${owned} row(s) they owned are now owned by no account (Full Read-Write holders can still change them)` : ""),
-      ...(owned ? { details: { ownedRowsTombstoned: tomb } } : {}),
+        (owned ? `; ${owned} row(s) they owned are now owned by no account (Full Read-Write holders can still change them)` : "") +
+        (savedNote ? `; ${savedNote}` : ""),
+      details: { ...(owned ? { ownedRowsTombstoned: tomb } : {}), savedItems: released },
     });
     res.status(204).send();
   } catch (err) {

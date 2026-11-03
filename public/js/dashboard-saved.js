@@ -16,20 +16,29 @@
  * ONE file serves both surfaces, because they are the same list read two ways:
  *
  *   Dashboard page (index.html, signed in)
- *     Loading a dashboard adds it as a NEW TAB of your own layout — a COPY, so
- *     editing it never writes back to a row that may be someone else's (the
- *     UserTableTabs rule). Save / delete live here, and so do Export this tab
- *     / Import tab from file (a .dashboard.json; the format is in
- *     dashboard-portability.js, offered only where that module is loaded).
+ *     A row click loads the dashboard INTO the current tab (asking first when
+ *     the tab has widgets); its ⊞ adds it as a NEW TAB — the Filters ▾
+ *     behaviour, business rule 140's ask. Either way it is a COPY, so editing
+ *     it never writes back to a row that may be someone else's (the
+ *     UserTableTabs rule). The menu shows in view mode too. Save / delete live
+ *     here, and so do Export this tab / Import tab from file (a
+ *     .dashboard.json; the format is in dashboard-portability.js, offered only
+ *     where that module is loaded).
  *
  *   Dash wallboard (dash.html, anonymous)
- *     The menu lists every published dashboard. Loading one LINKS the active
- *     tab to it: the tab shows that dashboard read-only and follows what the
- *     publisher changes (re-read every few minutes), while the other tabs and
- *     the pencil stay. The link is stored with the wallboard's own layout, so
- *     a kiosk reboot comes back to the same screen; "Unlink this tab" keeps
- *     the widgets as an ordinary tab. Saving does not exist here: that
- *     listener is GET-only and has no session to own a row with.
+ *     The menu lists every published dashboard. A row click LINKS the active
+ *     tab to it; its ⊞ adds a NEW linked tab. A linked tab shows that
+ *     dashboard read-only and follows what the publisher changes (re-read
+ *     every few minutes), while the other tabs and the pencil stay. The link
+ *     is stored with the wallboard's own layout, so a kiosk reboot comes back
+ *     to the same screen; "Unlink this tab" keeps the widgets as an ordinary
+ *     tab. Saving does not exist here: that listener is GET-only and has no
+ *     session to own a row with.
+ *
+ * Folders (business rule 140) come from saved-tree.js (PolarisSavedTree): the
+ * same tree as Filters ▾ — nested folders, drag and drop, the folder ⋯ menu,
+ * Change owner, Make private to me. Read-only on the wallboard, which shows
+ * published folders only.
  *
  * Depends on globals from api.js (api / showToast / escapeHtml), dashboard.js
  * (window.PolarisDashboard — the only thing this file knows about the canvas),
@@ -50,8 +59,39 @@
   var PUBLISHED_POLL_MS = 5 * 60 * 1000;
 
   var _cache = [];        // last server list (save-modal name collisions + row lookups)
+  var _folders = [];      // last server folder list (business rule 140)
   var _loaded = false;    // false until the first successful list fetch
   var _pollTimer = null;
+  var _tree = null;       // PolarisSavedTree instance, built on first use
+
+  /** The folder tree (saved-tree.js), or null when that module isn't loaded. */
+  function tree() {
+    if (_tree || !window.PolarisSavedTree) return _tree;
+    var wall = isWallboard();
+    _tree = window.PolarisSavedTree.create({
+      storageKey: "polaris-saved-tree-dashboards" + (wall ? "-dash" : ""),
+      labels: { mine: "My dashboards", shared: "Shared dashboards", ownerless: "Ownerless", one: "dashboard", many: "dashboards" },
+      single: wall ? "Published dashboards" : null,
+      interactive: !wall,
+      itemRowHtml: function (d, attrs) { return rowHtml(d, attrs); },
+      canPublish: canPublish,
+      ops: {
+        createFolder: function (b) { return api.savedDashboards.folders.create(b); },
+        updateFolder: function (id, b) { return api.savedDashboards.folders.update(id, b); },
+        moveFolder: function (id, parentId) { return api.savedDashboards.folders.move(id, parentId); },
+        deleteFolder: function (id) { return api.savedDashboards.folders.delete(id); },
+        setFolderOwner: function (id, owner, inc) { return api.savedDashboards.folders.setOwner(id, owner, inc); },
+        takeFolder: function (id, inc) { return api.savedDashboards.folders.takePrivate(id, inc); },
+        moveItem: function (id, folderId) { return api.savedDashboards.move(id, folderId); },
+        setItemOwner: function (id, owner) { return api.savedDashboards.setOwner(id, owner); },
+        takeItem: function (id) { return api.savedDashboards.takePrivate(id); },
+        ownerOptions: function () { return api.savedDashboards.ownerOptions(); },
+      },
+      refresh: function () { return refreshMenu(); },
+      rerender: function () { renderMenu(_cache, false); },
+    });
+    return _tree;
+  }
 
   function dash() { return window.PolarisDashboard || null; }
   function portability() { return window.PolarisDashboardPortability || null; }
@@ -79,28 +119,48 @@
   async function fetchList() {
     var data = await api.savedDashboards.list();
     _cache = (data && data.dashboards) || [];
+    _folders = (data && data.folders) || [];
     _loaded = true;
+    if (tree()) _tree.setData(_cache, _folders);
     return _cache;
   }
 
   // ─── Menu ─────────────────────────────────────────────────────────────────
 
-  function rowHtml(d) {
+  /** May the caller delete this row? The server's answer (business rule 140). */
+  function canDelete(d) {
+    return typeof d.canManage === "boolean" ? d.canManage : (d.isOwner || canDeleteAny());
+  }
+
+  /**
+   * One saved-dashboard row. `attrs` is the tree's (saved-tree.js): its id,
+   * drag flag and indent, put on the row's root element. The ⊞ opens it in a
+   * NEW tab (a new linked tab on the wallboard); the row itself loads it into
+   * the current one.
+   */
+  function rowHtml(d, attrs) {
     var badge = d.visibility === "public"
       ? '<span class="sfl-badge" title="Published — everyone, including the Dash wallboard, can load it">Public</span>'
       : "";
-    var owner = d.isOwner || !d.ownerName ? "" : '<span class="sfl-owner">' + escapeHtml(d.ownerName) + "</span>";
+    var owner = window.PolarisSavedTree
+      ? (isWallboard() ? "" : window.PolarisSavedTree.ownerBadgeHtml(d))
+      : (d.isOwner || !d.ownerName ? "" : '<span class="sfl-owner">' + escapeHtml(d.ownerName) + "</span>");
     var active = isWallboard() && dash() && dash().publishedId() === d.id;
-    var del = !isWallboard() && (d.isOwner || canDeleteAny())
+    var newTab = '<button type="button" class="sfl-newtab" data-sd-newtab="' + escapeHtml(d.id) +
+      '" title="' + (isWallboard() ? "Show in a new tab" : "Open in a new tab") +
+      '" aria-label="Open ' + escapeHtml(d.name) + ' in a new tab">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" aria-hidden="true">' +
+      '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/></svg></button>';
+    var del = !isWallboard() && canDelete(d)
       ? '<button type="button" class="sfl-del" data-sd-del="' + escapeHtml(d.id) +
         '" title="Delete this saved dashboard" aria-label="Delete ' + escapeHtml(d.name) + '">&times;</button>'
       : "";
     var count = d.widgetCount === 1 ? "1 widget" : (d.widgetCount || 0) + " widgets";
-    return '<div class="sfl-row' + (active ? " sfl-row-base" : "") + '">' +
+    return '<div class="sfl-row' + (active ? " sfl-row-base" : "") + '"' + (attrs || "") + ">" +
       '<button type="button" class="sfl-load" data-sd-load="' + escapeHtml(d.id) + '" title="' +
-        escapeHtml(count + (isWallboard() ? " — show this on the current tab" : " — load as a new dashboard tab")) + '">' +
+        escapeHtml(count + " — show this on the current tab") + '">' +
         '<span class="sfl-name">' + escapeHtml(d.name) + "</span>" + badge + owner +
-      "</button>" + del +
+      "</button>" + newTab + del +
     "</div>";
   }
 
@@ -117,6 +177,7 @@
       }
     } else {
       html += '<button type="button" data-sd-act="save">Save this dashboard&hellip;</button>';
+      if (tree()) html += '<button type="button" data-sd-act="newfolder">New folder</button>';
       // File export/import of the tab on screen (dashboard-portability.js) —
       // local to this browser, so no permission beyond being on the page.
       if (portability()) {
@@ -130,18 +191,23 @@
       html += '<div class="sfl-empty">Could not load saved dashboards</div>';
     } else if (!_loaded) {
       html += '<div class="sfl-empty">Loading&hellip;</div>';
+    } else if (tree()) {
+      html += _tree.html() || (isWallboard()
+        ? '<div class="sfl-empty">No published dashboards yet</div>'
+        : '<div class="sfl-empty">No saved dashboards yet</div>');
     } else if (isWallboard()) {
       html += list.length
-        ? '<div class="dropdown-heading">Published dashboards</div>' + list.map(rowHtml).join("")
+        ? '<div class="dropdown-heading">Published dashboards</div>' + list.map(function (d) { return rowHtml(d); }).join("")
         : '<div class="sfl-empty">No published dashboards yet</div>';
     } else {
       var mine = list.filter(function (d) { return d.isOwner; });
       var shared = list.filter(function (d) { return !d.isOwner; });
       if (!mine.length && !shared.length) html += '<div class="sfl-empty">No saved dashboards yet</div>';
-      if (mine.length) html += '<div class="dropdown-heading">My dashboards</div>' + mine.map(rowHtml).join("");
-      if (shared.length) html += '<div class="dropdown-heading">Shared dashboards</div>' + shared.map(rowHtml).join("");
+      if (mine.length) html += '<div class="dropdown-heading">My dashboards</div>' + mine.map(function (d) { return rowHtml(d); }).join("");
+      if (shared.length) html += '<div class="dropdown-heading">Shared dashboards</div>' + shared.map(function (d) { return rowHtml(d); }).join("");
     }
     menu.innerHTML = html;
+    if (_tree) _tree.focusRename(menu);
   }
 
   async function refreshMenu() {
@@ -192,6 +258,13 @@
     }, PUBLISHED_POLL_MS);
   }
 
+  /** The wallboard's ⊞: a NEW tab linked to the published dashboard. */
+  function showPublishedInNewTab(row) {
+    if (!dash() || !dash().linkNewTab || !dash().linkNewTab(row)) return;
+    startPoll();
+    syncButtonLabel();
+  }
+
   async function showPublished(row) {
     if (!dash()) return;
     // The active tab's own widgets are replaced: ask first, unless there are
@@ -240,9 +313,27 @@
 
   // ─── Signed-in page: save + load + delete ─────────────────────────────────
 
+  /** The ⊞: a new tab of your own layout, a copy. */
   function loadAsTab(row) {
     if (!dash() || !dash().loadAsNewTab(row)) return;
     showToast('Loaded dashboard "' + row.name + '" as a new tab');
+  }
+
+  /**
+   * The row click: load INTO the current tab, replacing its widgets — asking
+   * first when it has any. A server or page that predates replaceActiveTab
+   * falls back to a new tab rather than doing nothing.
+   */
+  async function loadIntoTab(row) {
+    if (!dash()) return;
+    if (!dash().replaceActiveTab) { loadAsTab(row); return; }
+    var n = dash().widgetCount();
+    if (n > 0) {
+      var msg = 'Replace this tab\'s ' + (n === 1 ? "widget" : n + " widgets") + ' with "' + row.name + '"?' +
+        "\n\nUse ⊞ to open it in a new tab instead.";
+      if (!(await showConfirm(msg))) return;
+    }
+    if (dash().replaceActiveTab(row)) showToast('Loaded dashboard "' + row.name + '"');
   }
 
   async function deleteRow(id) {
@@ -250,8 +341,9 @@
     if (!row) return;
     var ok = await showConfirm(
       row.isOwner
-        ? 'Delete the saved dashboard "' + row.name + '"?'
-        : 'Delete "' + row.name + '", published by ' + row.ownerName + "?",
+        ? 'Delete the saved dashboard "' + row.name + '"?' +
+          (row.visibility === "public" ? "\n\nIt is published — everyone loses it, and any wallboard showing it stops following it." : "")
+        : 'Delete "' + row.name + '"? It has no owner' + (row.ownerName ? " (it was " + row.ownerName + "'s)" : "") + ".",
     );
     if (!ok) return;
     try {
@@ -284,6 +376,7 @@
         "</datalist>" +
         '<div class="hint">Saving over one of your existing names replaces it.</div>' +
       "</div>" +
+      (tree() ? _tree.pickerHtml(null) : "") +
       '<div class="form-group">' +
         "<label>Visibility</label>" +
         '<label class="sfl-vis"><input type="radio" name="sd-vis" value="private" checked>' +
@@ -310,6 +403,7 @@
 
     openModal("Save this dashboard", body, footer);
     document.getElementById("sd-cancel").addEventListener("click", closeModal);
+    if (_tree) _tree.wirePicker();
 
     var nameInput = document.getElementById("sd-name");
     var saveBtn = document.getElementById("sd-save");
@@ -329,7 +423,9 @@
       try {
         // The server treats a same-(owner, name) POST as an update, so one
         // call covers both create and overwrite.
-        await api.savedDashboards.create({ name: name, visibility: visibility, layout: snap.layout });
+        var payload = { name: name, visibility: visibility, layout: snap.layout };
+        if (_tree) payload.folderId = _tree.pickerValue();
+        await api.savedDashboards.create(payload);
         closeModal();
         showToast('Saved dashboard "' + name + '"');
         await refreshMenu();
@@ -428,10 +524,14 @@
     function canUseMenu() {
       return isWallboard() || typeof permAtLeast !== "function" || permAtLeast("savedDashboards", "read");
     }
-    // And only while customizing, or while a linked tab is on screen (its
-    // Unlink lives here). dashboard.js announces each mode change and each
-    // render, since switching tabs can change the second.
+    // The signed-in page shows it in view mode too (business rule 140's ask:
+    // opening a saved dashboard should not need Customize Page). The
+    // wallboard keeps it to customizing, or a linked tab on screen (its
+    // Unlink lives here) — a TV shows as little chrome as it can.
+    // dashboard.js announces each mode change and each render, since
+    // switching tabs can change the second.
     function inMenuMode() {
+      if (!isWallboard()) return true;
       var d = dash();
       return !d || (d.isEditing && d.isEditing()) || !!d.publishedId();
     }
@@ -463,8 +563,14 @@
         refreshMenu().then(syncButtonLabel);
       }
     });
-    document.addEventListener("click", function () { menu.classList.remove("open"); });
+    // A click inside a body-mounted row menu (the folder ⋯, a row's right-click
+    // menu — saved-tree.js) is still "inside" this menu: Rename edits in place.
+    document.addEventListener("click", function (e) {
+      if (e.target && e.target.closest && e.target.closest(".row-context-menu")) return;
+      menu.classList.remove("open");
+    });
     menu.addEventListener("click", function (e) { e.stopPropagation(); });
+    if (tree()) _tree.wire(menu);
 
     menu.addEventListener("click", function (e) {
       var act = e.target.closest("[data-sd-act]");
@@ -475,6 +581,16 @@
         else if (which === "export") exportTab();
         else if (which === "import") pickImportFile();
         else if (which === "unlink") unlinkActive();
+        else if (which === "newfolder" && _tree) _tree.newFolder(null);
+        return;
+      }
+      var nt = e.target.closest("[data-sd-newtab]");
+      if (nt) {
+        menu.classList.remove("open");
+        var ntRow = _cache.find(function (d) { return d.id === nt.getAttribute("data-sd-newtab"); });
+        if (!ntRow) return;
+        if (isWallboard()) showPublishedInNewTab(ntRow);
+        else loadAsTab(ntRow);
         return;
       }
       var load = e.target.closest("[data-sd-load]");
@@ -483,7 +599,7 @@
         var row = _cache.find(function (d) { return d.id === load.getAttribute("data-sd-load"); });
         if (!row) return;
         if (isWallboard()) showPublished(row);
-        else loadAsTab(row);
+        else loadIntoTab(row);
         return;
       }
       var del = e.target.closest("[data-sd-del]");

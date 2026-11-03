@@ -7,19 +7,30 @@
  *   - /dash/api/v1/saved-dashboards on the Dash wallboard listener, which is
  *     GET-only app-wide and carries NO session: a wallboard can therefore load
  *     a published dashboard and can never save one, structurally rather than by
- *     a check here. Its two reads answer with PUBLIC rows only.
+ *     a check here. Its reads answer with PUBLIC rows (and public folders) only,
+ *     and /owner-options refuses it (401) — it names accounts.
  *
  * The mount carries a `savedDashboards:read` floor for both, so the wallboard's
  * synthetic readonly identity is gated by the same matrix an operator's is.
  * Per route on top of that:
  *
- *   GET    /       — own + public (public only with no session)   read
- *   GET    /:id    — one, 404 (not 403) when not visible          read
- *   POST   /       — create/overwrite own by name                 read
- *                    (visibility "public" also needs             write)
- *   PUT    /:id    — edit own                                     same as POST
- *   DELETE /:id    — delete own                                   read
- *                    (someone else's needs                    fullwrite)
+ *   GET    /                  visible dashboards + folders          read
+ *                             (public only with no session)
+ *   GET    /owner-options     Change owner pickers                  read, signed in
+ *   GET    /:id               one, 404 (not 403) when not visible   read
+ *   POST   /                  create/overwrite own by name          read
+ *                             (visibility "public" also needs      write)
+ *   PUT    /:id               edit                                  owner; same publish rule
+ *   PATCH  /:id/folder        file in a folder (drag and drop)      owner
+ *   DELETE /:id               delete                                owner
+ *   POST   /:id/owner         give to a user / role / region        owner
+ *   POST   /:id/make-private  take as your own, private             owner or fullwrite
+ *   …/folders/*               the folder routes (savedFolders.ts)
+ *
+ * "owner" (business rule 140) = the dashboard's owner — the user, any holder
+ * of the owning role, any user whose region scope names the owning region —
+ * or, for an OWNERLESS dashboard, a fullwrite holder. Fullwrite no longer
+ * deletes someone's OWNED public dashboard.
  *
  * Keeping a PRIVATE dashboard needs only the read level because the ungated
  * per-user /me/dashboard already lets any caller store the same layout;
@@ -27,25 +38,35 @@
  * which is the write. See services/savedDashboardService.ts for the model.
  */
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
-import type { Request } from "express";
 import { AppError } from "../../utils/errors.js";
 import { hasPermission, requirePermission } from "../middleware/permissions.js";
 import {
+  changeSavedDashboardOwner,
   createSavedDashboard,
   deleteSavedDashboard,
-  getSavedDashboard,
   listSavedDashboards,
+  moveSavedDashboard,
   normalizeName,
   readSavedDashboard,
   sanitizeDashboardLayout,
+  takeSavedDashboard,
   updateSavedDashboard,
+  DASHBOARD_FOLDER_SCOPE,
   type SavedDashboardVisibility,
 } from "../../services/savedDashboardService.js";
+import {
+  listOwnerOptions,
+  requireViewer,
+  viewerFromRequest,
+  type OwnerTargetInput,
+} from "../../services/savedOwnershipService.js";
 import { MAX_DASHBOARD_NAME_LEN } from "../../utils/dashboardLayout.js";
+import { buildSavedFolderRouter, ChangeOwnerSchema } from "./savedFolders.js";
 
 const router = Router();
+const KEY = "savedDashboards";
 
 const BodySchema = z.object({
   name:       z.string().min(1).max(MAX_DASHBOARD_NAME_LEN),
@@ -53,25 +74,11 @@ const BodySchema = z.object({
   // Shape-validated by sanitizeDashboardLayout (the unit-tested contract);
   // Zod only guarantees it's an object here.
   layout:     z.record(z.unknown()),
+  // Omitted = leave it where it is (PUT) / top level (POST).
+  folderId:   z.string().min(1).max(64).nullable().optional(),
 });
 
-/**
- * The signed-in user, or null on the wallboard mount. Unlike scopeAccess's
- * sessionUser this must NOT throw: a session-less caller is the whole point of
- * the dash mount, and it reads public rows.
- */
-function viewer(req: Request): { id: string; username: string } | null {
-  const id = req.session?.userId;
-  const username = req.session?.username;
-  return id && username ? { id, username } : null;
-}
-
-/** A caller that can only ever read (the wallboard) may not mutate anything. */
-function requireViewer(req: Request): { id: string; username: string } {
-  const user = viewer(req);
-  if (!user) throw new AppError(401, "This endpoint requires a signed-in user");
-  return user;
-}
+const FolderSchema = z.object({ folderId: z.string().min(1).max(64).nullable() });
 
 /**
  * Publishing to everyone (and to the wallboard) is a write to shared state;
@@ -79,19 +86,43 @@ function requireViewer(req: Request): { id: string; username: string } {
  * mount because the level depends on the payload's `visibility`.
  */
 function assertMayPublish(req: Request, visibility: SavedDashboardVisibility): void {
-  if (visibility === "public" && !hasPermission(req, "savedDashboards", "write")) {
+  if (visibility === "public" && !hasPermission(req, KEY, "write")) {
     throw new AppError(403, "Forbidden — publishing a public dashboard requires savedDashboards:write");
   }
 }
 
 // Read floor for every route on both mounts. requirePermission refreshes the
 // role snapshot, so hasPermission checks below read a fresh matrix.
-router.use(requirePermission("savedDashboards", "read"));
+router.use(requirePermission(KEY, "read"));
+
+router.use(
+  "/folders",
+  buildSavedFolderRouter({
+    kind: "dashboard",
+    scopeForCreate: () => DASHBOARD_FOLDER_SCOPE,
+    // The read floor above already ran; only the publish level is left.
+    assertAccess: async (req, _scope, level) => {
+      if (level === "write" && !hasPermission(req, KEY, "write")) {
+        throw new AppError(403, `Forbidden — requires ${KEY}:write`);
+      }
+      return KEY;
+    },
+  }),
+);
 
 router.get("/", async (req, res, next) => {
   try {
-    const user = viewer(req);
-    res.json({ dashboards: await listSavedDashboards(user ? user.id : null) });
+    res.json(await listSavedDashboards(await viewerFromRequest(req, KEY)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/owner-options", async (req, res, next) => {
+  try {
+    // Signed-in only: it lists accounts, and the wallboard reaches this router.
+    await requireViewer(req, KEY);
+    res.json(await listOwnerOptions());
   } catch (err) {
     next(err);
   }
@@ -100,15 +131,16 @@ router.get("/", async (req, res, next) => {
 router.post("/", async (req, res, next) => {
   try {
     const body = BodySchema.parse(req.body);
-    const user = requireViewer(req);
+    const viewer = await requireViewer(req, KEY);
     assertMayPublish(req, body.visibility);
     const saved = await createSavedDashboard(
       {
         name:       normalizeName(body.name),
         visibility: body.visibility as SavedDashboardVisibility,
         layout:     sanitizeDashboardLayout(body.layout),
+        folderId:   body.folderId,
       },
-      user,
+      viewer,
     );
     res.status(201).json(saved);
   } catch (err) {
@@ -119,20 +151,17 @@ router.post("/", async (req, res, next) => {
 router.put("/:id", async (req, res, next) => {
   try {
     const body = BodySchema.parse(req.body);
-    const user = requireViewer(req);
-    const row = await getSavedDashboard(req.params.id);
-    if (row.ownerId !== user.id) {
-      throw new AppError(403, "Forbidden — you can only edit saved dashboards you created");
-    }
+    const viewer = await requireViewer(req, KEY);
     assertMayPublish(req, body.visibility);
     const saved = await updateSavedDashboard(
-      row.id,
+      req.params.id,
       {
         name:       normalizeName(body.name),
         visibility: body.visibility as SavedDashboardVisibility,
         layout:     sanitizeDashboardLayout(body.layout),
+        folderId:   body.folderId,
       },
-      user,
+      viewer,
     );
     res.json(saved);
   } catch (err) {
@@ -140,16 +169,42 @@ router.put("/:id", async (req, res, next) => {
   }
 });
 
+router.patch("/:id/folder", async (req, res, next) => {
+  try {
+    const body = FolderSchema.parse(req.body);
+    const viewer = await requireViewer(req, KEY);
+    await moveSavedDashboard(req.params.id, body.folderId, viewer);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/owner", async (req, res, next) => {
+  try {
+    const body = ChangeOwnerSchema.parse(req.body);
+    const viewer = await requireViewer(req, KEY);
+    res.json(await changeSavedDashboardOwner(req.params.id, body.owner as OwnerTargetInput, viewer));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/make-private", async (req, res, next) => {
+  try {
+    const viewer = await requireViewer(req, KEY);
+    res.json(await takeSavedDashboard(req.params.id, viewer));
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete("/:id", async (req, res, next) => {
   try {
-    const user = requireViewer(req);
-    const row = await getSavedDashboard(req.params.id);
-    // Someone else's dashboard (including an orphan left by a deleted account)
-    // is housekeeping — fullwrite.
-    if (row.ownerId !== user.id && !hasPermission(req, "savedDashboards", "fullwrite")) {
-      throw new AppError(403, "Forbidden — deleting someone else's dashboard requires savedDashboards:fullwrite");
-    }
-    await deleteSavedDashboard(row.id, user.username);
+    // Ownership (or, ownerless, fullwrite) is decided in the service — the
+    // owner of a PUBLIC dashboard is the only one who may delete it.
+    const viewer = await requireViewer(req, KEY);
+    await deleteSavedDashboard(req.params.id, viewer);
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -159,8 +214,7 @@ router.delete("/:id", async (req, res, next) => {
 // Declared LAST so the literal paths above can never be captured by :id.
 router.get("/:id", async (req, res, next) => {
   try {
-    const user = viewer(req);
-    res.json(await readSavedDashboard(req.params.id, user ? user.id : null));
+    res.json(await readSavedDashboard(req.params.id, await viewerFromRequest(req, KEY)));
   } catch (err) {
     next(err);
   }

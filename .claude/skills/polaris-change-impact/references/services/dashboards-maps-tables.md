@@ -102,25 +102,78 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/savedOwnershipService.ts
+
+**What it owns:** Business rule 140's decisions for all three saved tables (`SavedFolder`, `SavedTableFilter`, `SavedDashboard`): who OWNS a row (a user, every holder of a role, every user whose effective region scope names a region, or nobody), who may SEE, MANAGE and TAKE it, and what happens when an owner goes away. It writes only on an owner's departure; every other write is the item / folder service's.
+
+**Public API:** OwnedRow, SavedViewer, OwnershipDto, SavedOwnerKind, OwnerTargetInput, OwnerColumns, ReleasedOwnership; pure `ownerKindOf`, `isOwnerless`, `isOwner`, `canSee`, `canManage`, `canTake`, `ownerDisplayName`, `ownerLabel`, `ownershipDto`, `assertCanManage`, `assertCanTake`, `visibleWhere`, `takenColumns`, `isUniqueViolation`, `survivingAncestor`, `descendantFolderIds`; DB-bound `viewerFromRequest`, `requireViewer`, `resolveOwnerTarget`, `listOwnerOptions`, `deleteFoldersReparenting`, `releaseUserOwnership`, `renameRegionOwner`, `releaseRegionOwner`.
+
+**Cross-service deps:** `regionScopeService.getEffectiveRegionTags` (the viewer's region scope), `mapRegionService.listRegions` (a region owner must be on the map), `api/middleware/permissions` (`ensureRoleSnapshot` / `hasPermission` for write + fullwrite on the page's key).
+
+**Used by:**
+- `src/services/savedFilterService.ts`, `src/services/savedDashboardService.ts`, `src/services/savedFolderService.ts` — every visibility filter, ownership check, DTO and take / re-own write.
+- `src/api/routes/savedFilters.ts`, `src/api/routes/savedDashboards.ts`, `src/api/routes/savedFolders.ts` — `requireViewer` / `viewerFromRequest`, `listOwnerOptions`.
+- `src/api/routes/users.ts` — `releaseUserOwnership` on DELETE and on `POST /users/:id/disable`.
+- `src/api/routes/mapRegions.ts` — `renameRegionOwner` beside `renameRegionInPrincipalScopes`; `releaseRegionOwner` on delete.
+
+**Invariants:**
+- `canSee` = public, or owner, or (ownerless AND fullwrite). `canManage` = owner, or (ownerless AND fullwrite). `canTake` = owner OR fullwrite. **Fullwrite never manages an OWNED row** — that is the point of the rule; its only reach into someone's owned row is the logged take-over.
+- `visibleWhere` is `canSee` in SQL and must change with it; a list must never load a row it would drop, nor drop one `canSee` admits.
+- An UNRESTRICTED user (empty region scope) owns no region's rows. Region matching is case-insensitive everywhere, like every region consumer.
+- A null viewer (the wallboard, a bearer token) sees public rows and owns nothing.
+- Nothing inside a folder is ever deleted with it: `deleteFoldersReparenting` moves contents to the nearest SURVIVING ancestor (several nested folders can die at once — a disabled user's private ones).
+- `ownerName` is kept when an owner goes, so an ownerless row still says whose it was.
+
+**When changing this:**
+- A new owner kind is a column on all THREE tables, a clause in `isOwner` and `visibleWhere`, a branch in `resolveOwnerTarget`, a departure hook, and a picker in the Change owner dialog.
+- A new place an owner can disappear (a role, a region, a user) needs a hook here, or its rows silently keep an owner nobody can be.
+- Tests: `tests/unit/savedOwnershipService.test.ts` (the predicates + tree helpers), `tests/integration/savedFolderOwnership.test.ts` (over the routes), `tests/integration/userDisable.test.ts` (the release on disable).
+
+---
+
+## services/savedFolderService.ts
+
+**What it owns:** The `SavedFolder` table (business rule 140) — nested folders of saved filters (`kind: "filter"`, `scope` = the table) and saved dashboards (`kind: "dashboard"`, `scope: "dashboards"`).
+
+**Public API:** SavedFolderKind, SavedVisibility, SavedFolderDto, CreateFolderInput, SubtreeCounts, MAX_FOLDER_DEPTH (8), MAX_FOLDERS_PER_USER (200), `listVisibleFolders`, `getFolderForViewer`, `getFolderScope`, `assertFolderTarget`, `createFolder`, `updateFolder`, `moveFolder`, `deleteFolder`, `changeFolderOwner`, `takeFolder`.
+
+**Cross-service deps:** `savedOwnershipService` (every decision + `deleteFoldersReparenting`), `savedFilterService.normalizeName` (one name rule for presets, dashboards and folders — an import cycle by design, both sides call each other only at request time), `eventLogService.logEvent`.
+
+**Used by:**
+- `src/api/routes/savedFolders.ts` — every folder write, under both item routers.
+- `src/services/savedFilterService.ts` / `src/services/savedDashboardService.ts` — `listVisibleFolders` (the list response and item placement), `assertFolderTarget` (create / update / move).
+
+**Invariants:**
+- Each row keeps its OWN visibility and owner. A visible folder or item whose parent the caller cannot see is reported with `parentId` / `folderId` null — the menu draws it at the top level, and no invisible folder's id leaks.
+- Filing is open, management is not: you may put a row you MANAGE into any folder you can SEE; only the folder's owner (fullwrite, ownerless) renames, publishes, moves, deletes or re-owns the folder itself.
+- A move refuses a cycle and a tree deeper than `MAX_FOLDER_DEPTH` (depth of the target + height of the moved subtree).
+- Change owner / take with "include contents" act only on the subtree rows the caller could act on one by one — never a back door to someone else's row.
+
+**When changing this:**
+- A third kind of saved list needs a `kind`, a scope, item columns (`folderId` + the ownership four), a router mount of `buildSavedFolderRouter`, and the frontend tree.
+- Tests: `tests/integration/savedFolderOwnership.test.ts`.
+
+---
+
 ## services/savedDashboardService.ts
 
 **What it owns:** Saved dashboards — the `SavedDashboard` table (one row per named canvas: `name` + owner + `visibility` + a `layout` blob holding ONE dashboard's column stack). The server-side half of "keep the dashboard I built, and let others use it". `savedFilterService`'s model applied to the dashboard, with one consequence that has no parallel there: a `public` row is also what the UNAUTHENTICATED Dash wallboard reads, so publishing is gated a level above keeping.
 
-**Public API:** MAX_SAVED_DASHBOARDS_PER_USER, SavedDashboardVisibility, SavedDashboardLayout, SavedDashboardDto, SaveDashboardInput, sanitizeDashboardLayout, countWidgets, normalizeName (RE-EXPORTED from savedFilterService), listSavedDashboards, readSavedDashboard, createSavedDashboard, updateSavedDashboard, deleteSavedDashboard, getSavedDashboard.
+**Public API:** MAX_SAVED_DASHBOARDS_PER_USER, SavedDashboardVisibility, SavedDashboardLayout, SavedDashboardDto, SaveDashboardInput, sanitizeDashboardLayout, countWidgets, normalizeName (RE-EXPORTED from savedFilterService), DASHBOARD_FOLDER_SCOPE, listSavedDashboards (→ `{ dashboards, folders }`), readSavedDashboard, createSavedDashboard, updateSavedDashboard, deleteSavedDashboard, moveSavedDashboard, changeSavedDashboardOwner, takeSavedDashboard, getSavedDashboard.
 
 **Cross-service deps:** `prisma.savedDashboard`, `eventLogService.logEvent`, `savedFilterService.normalizeName`, `utils/dashboardLayout.ts` (`ColumnsSchema` — shared with `routes/userDashboard.ts`).
 
 **Used by:**
 - `src/api/routes/savedDashboards.ts` — the whole surface, mounted TWICE: `/api/v1/saved-dashboards` (main router) and `/dash/api/v1/saved-dashboards` (the wallboard listener). The `savedDashboards:read` floor lives in the route file so both mounts carry it; `write` is checked per request from the payload's `visibility`.
 - `src/dash/dashServer.ts` — the second mount + the two paths it adds to `API_PATH_ALLOWLIST` / `API_PREFIX_ALLOWLIST`.
-- `src/api/routes/users.ts` — `DELETE /users/:id` drops the doomed user's PRIVATE dashboards before the user row (public ones survive with `ownerId` NULL), same as saved filters.
-- `public/js/dashboard-saved.js` — the "Dashboards ▾" menu on BOTH index.html and dash.html, via `api.savedDashboards.*`.
+- `src/api/routes/users.ts` — `DELETE /users/:id` (and Disable) runs `savedOwnershipService.releaseUserOwnership`: the user's PRIVATE dashboards go, public ones survive OWNERLESS (`ownerId` NULL, `ownerName` kept), same as saved filters and folders.
+- `public/js/dashboard-saved.js` — the "Dashboards ▾" menu on BOTH index.html and dash.html, via `api.savedDashboards.*`; its folder tree, owner verbs and Folder picker are `public/js/saved-tree.js` (business rule 140).
 - `public/js/dashboard.js` — `window.PolarisDashboard` is the seam: `snapshot()` produces what gets stored, `loadAsNewTab` / `linkActiveTab` / `applyPublished` (the wallboard's linked tabs) consume it.
 
 **Invariants:**
 - **A session-less caller (`viewerId === null`) sees PUBLIC rows only.** That is the wallboard path, and it is the one thing in this service that must never widen — the listener is unauthenticated. It also means nothing reads as `isOwner` there.
 - **The stored `layout` is untrusted input replayed into other operators' browsers and onto wallboards.** Every write goes through `sanitizeDashboardLayout`, which accepts only `utils/dashboardLayout.ts`'s column/widget shape. That schema is SHARED with `/me/dashboard` on purpose: whichever surface accepted the wider blob would decide what the other has to render.
-- Level split: read = list + keep your own (private); `write` = publish or keep public; `fullwrite` = delete someone else's. Keeping a PRIVATE dashboard is deliberately only `read`, because the ungated `/me/dashboard` already stores the same layout — there would be nothing to withhold.
+- Level split: read = list + keep what you own (private); `write` = publish or keep public; `fullwrite` = manage an OWNERLESS row, and Make private to me on any. Only the OWNER (a user, a role's holders, a region's scoped users) edits, files, deletes or re-owns an owned row — fullwrite included (business rule 140, savedOwnershipService). Keeping a PRIVATE dashboard is deliberately only `read`, because the ungated `/me/dashboard` already stores the same layout — there would be nothing to withhold.
 - `readSavedDashboard` answers **404, not 403**, for a row the caller can't see (the `GET /alerts/:id` posture): an anonymous wallboard viewer must not learn that an id exists.
 - Mutations are session callers only; the wallboard mount is GET-only app-wide, so a wallboard's inability to save is STRUCTURAL rather than a check in here.
 - Same `(owner, name)` POST **updates** — the UI's overwrite flow depends on it, and the unique index makes a duplicate impossible anyway.
@@ -139,21 +192,21 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Saved table-filter presets — the `SavedTableFilter` table (one row per named preset: `scope` + `name` + owner + `visibility` + the `state` blob). The server-side half of "save the filters I use on this table"; unlike the per-browser `polaris-prefs-assets-<user>` localStorage blob (which holds the LIVE filter state), a preset is named, durable, and optionally shared with everyone.
 
-**Public API:** SAVED_FILTER_SCOPES, MAX_NAME_LEN, MAX_FILTER_KEYS, MAX_FILTER_VALUES, MAX_VALUE_LEN, MAX_PRESETS_PER_USER, SavedFilterVisibility, SavedFilterState, SavedFilterDto, isValidScope, functionKeyForScope, normalizeName, sanitizeFilterState, listSavedFilters, createSavedFilter, updateSavedFilter, deleteSavedFilter, getSavedFilter.
+**Public API:** SAVED_FILTER_SCOPES, MAX_NAME_LEN, MAX_FILTER_KEYS, MAX_FILTER_VALUES, MAX_VALUE_LEN, MAX_PRESETS_PER_USER, SavedFilterVisibility, SavedFilterState, SavedFilterDto, isValidScope, functionKeyForScope, normalizeName, sanitizeFilterState, listSavedFilters (→ `{ filters, folders }`), createSavedFilter, updateSavedFilter, deleteSavedFilter, moveSavedFilter, changeSavedFilterOwner, takeSavedFilter, getSavedFilter.
 
 **Cross-service deps:** `prisma.savedTableFilter`, `eventLogService.logEvent`.
 
 **Used by:**
 - `src/api/routes/savedFilters.ts` — the whole `/api/v1/saved-filters` surface. The route resolves the gate PER REQUEST (`functionKeyForScope(scope)` + `ensureRoleSnapshot` + `hasPermission`) because the key depends on the payload, then enforces ownership on PUT/DELETE.
-- `src/api/routes/users.ts` — `DELETE /users/:id` deletes the doomed user's PRIVATE presets before the user row (their public ones survive with `ownerId` NULL).
-- `public/js/assets-filters.js` — the only frontend consumer today (Assets header → Filters ▾), via `api.savedFilters.*` in `public/js/api.js`.
+- `src/api/routes/users.ts` — `DELETE /users/:id` (and Disable) runs `savedOwnershipService.releaseUserOwnership`: the user's PRIVATE presets go, their public ones survive OWNERLESS.
+- `public/js/assets-filters.js` — the only frontend consumer today (Assets header → Filters ▾), via `api.savedFilters.*` in `public/js/api.js`; its folder tree, owner verbs and Folder picker are `public/js/saved-tree.js` (business rule 140).
 - `public/js/table-sf.js` — `TableSF.prototype.getPrefs` produces the stored `state`; `applyState` consumes it (wholesale replace, unlike `setPrefs`'s merge).
 - `src/services/savedDashboardService.ts` — imports `normalizeName`, so both lists of named presets share ONE name rule (trim + collapse whitespace, no control characters, 60 chars). Changing it changes both.
 
 **Invariants:**
 - **The stored `state` is untrusted input replayed into other operators' browsers.** Every write goes through `sanitizeFilterState`, which accepts only the shapes `table-sf.js` emits (string, array, `{op: contains|not-contains, q}`, `{op: empty|notempty}`, `{op: "in-networks", terms[]}`, `{op: "pick", mode: any|all, values[], none}` from the pick filter (the Assets Tags column) from the ipnet filter, `{type: "date"}`) and bounds size (60 columns × 200 values × 300 chars). Widening what the table can filter by means widening this in lockstep, or presets silently 400.
 - `scope` must be in `SAVED_FILTER_SCOPES`; each maps to an EXISTING function key. This is the whole authorization model — there is no `savedFilters` RBAC key, so a new scope inherits its page's gate for free.
-- Level split: read = list + own/private writes; `write` = publish or keep public; `fullwrite` = delete someone else's. A readonly operator can keep private presets — that's the point of storing them server-side.
+- Level split: read = list + writes to what you own; `write` = publish or keep public; `fullwrite` = manage an OWNERLESS preset, and Make private to me on any. Only the OWNER edits, files, deletes or re-owns an owned preset — fullwrite included (business rule 140, savedOwnershipService). A readonly operator can keep private presets — that's the point of storing them server-side.
 - Session callers only (`sessionUser` 401s bearer tokens): a preset has an owner, and a token has no user identity.
 - Same `(scope, owner, name)` POST **updates** — the UI's overwrite flow depends on that, and the DB unique index makes a duplicate impossible anyway.
 - `ownerId` is `SET NULL`, never cascade: deleting a user must not yank shared presets out of everyone else's menu. `ownerName` is a display snapshot for exactly that case.

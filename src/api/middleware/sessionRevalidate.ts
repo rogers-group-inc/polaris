@@ -11,9 +11,10 @@
  *
  * The routes that change an account now revoke its sessions directly
  * (sessionRevocationService). This is the backstop for everything else: once per
- * RECHECK_MS per session it confirms the user row exists and carries the role
- * the session believes it does. A missing user ends the session; a changed role
- * is adopted, which makes the snapshot resolver reload the new matrix.
+ * RECHECK_MS per session it confirms the user row exists, is not disabled
+ * (business rule 140), and carries the role the session believes it does. A
+ * missing or disabled user ends the session; a changed role is adopted, which
+ * makes the snapshot resolver reload the new matrix.
  *
  * One indexed primary-key read per session per minute, not per request. A
  * database error fails OPEN — an outage must not log everybody out.
@@ -34,9 +35,11 @@ export async function revalidateSessionUser(req: Request, _res: Response, next: 
     const checkedAt = session.checkedAt ?? 0;
     if (now - checkedAt < SESSION_RECHECK_MS) return next();
 
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, roleId: true } });
-    if (!user) {
-      // The account is gone: start over with an empty, unauthenticated session.
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, roleId: true, disabledAt: true } });
+    // Gone, or disabled (business rule 140 — the disable route revokes sessions
+    // itself; this catches anything that slipped past it): start over with an
+    // empty, unauthenticated session.
+    if (!user || user.disabledAt) {
       await new Promise<void>((resolve) => session.regenerate(() => resolve()));
       return next();
     }

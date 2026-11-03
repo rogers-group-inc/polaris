@@ -419,7 +419,7 @@ export async function assertRoleDemotionAllowed(
     .filter((r) => { const p = normalizePermissions(r.permissions); return p.users === "fullwrite" && p.roles === "fullwrite"; })
     .map((r) => r.id);
   const remaining = otherAdminRoleIds.length
-    ? await prisma.user.count({ where: { roleId: { in: otherAdminRoleIds } } })
+    ? await prisma.user.count({ where: { roleId: { in: otherAdminRoleIds }, disabledAt: null } })
     : 0;
   if (remaining === 0) {
     throw new AppError(409, "This edit would leave no account with admin-equivalent control. Give another account an admin-equivalent role first.");
@@ -437,9 +437,12 @@ export async function countAdminEquivalentUsers(excludeUserId?: string): Promise
     })
     .map(r => r.id);
   if (adminEquivRoleIds.length === 0) return 0;
+  // A disabled account controls nothing (business rule 140), so it never
+  // counts toward the last-admin guard.
   return prisma.user.count({
     where: {
       roleId: { in: adminEquivRoleIds },
+      disabledAt: null,
       ...(excludeUserId ? { NOT: { id: excludeUserId } } : {}),
     },
   });
