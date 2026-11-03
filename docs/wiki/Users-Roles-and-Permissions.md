@@ -63,86 +63,116 @@ silently revoke.
 Read-Write, the last column says what it buys over Read-Write — because that is
 the only thing that justifies the rung existing.
 
-### Address space
+The keys are grouped by **the page where you manage what they gate**, in the
+sidebar's order, and the role editor's permission table uses the same headers.
+Server Settings, which opens from the account menu, follows the sidebar pages.
+A key whose grant also reaches other pages, such as a credential picker or a
+tab in the asset panel, says **Also used on** in both places.
+
+### Dashboard
+
+| Key | Top rung | |
+|---|---|---|
+| `savedDashboards` | Full RW | named layouts; Read-Write **publishes**, Full RW deletes anyone's |
+
+### Device Map
+
+| Key | Top rung | |
+|---|---|---|
+| `deviceMap` | Read-Write | the geographic map and topology graphs; Read-Write saves a site's layout |
+| `mapRegions` | Read-Write | draw / edit / delete region polygons |
+
+### Application Map
+
+| Key | Top rung | |
+|---|---|---|
+| `applicationMap` | Read-Write | the connectivity graph; Read-Write saves the shared layout |
+
+### Path Monitor
+
+| Key | Top rung | |
+|---|---|---|
+| `pathChecks` | Read-Write | [path checks](Path-Monitor). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Running a check **from the Polaris server** also needs Read-Write on `networkScan` (Network Discovery), because the server probes from its own network. Gates the **Path Monitor** page (sidebar, under Application Map). Starts at each role's **Application Map** level, so the built-in roles read the same on both |
+
+### IP Management
 
 | Key | Top rung | |
 |---|---|---|
 | `ipBlocks` | Read-Write | top-level CIDR blocks |
 | `subnets` | Full RW | networks — **ownership**; Full RW also covers exclusions and archive |
-| `reservations` | Full RW | including DHCP push — **ownership** |
 | `allocationTemplates` | Read-Write | saved multi-network allocation templates |
-| `staleReservations` | Read-Write | snooze / ignore stale DHCP reservation alerts + the threshold |
+| `reservations` | Full RW | including DHCP push — **ownership**. *Also used on: Assets, Events.* |
 
-### Devices
+### Assets
 
 | Key | Top rung | |
 |---|---|---|
 | `assets` | Full RW | inventory CRUD and export. **Read-Write also starts a firmware upgrade** on a switch, access point or FortiGate, or schedules, changes and cancels one for later. **Full RW = deploy the agent, and merge assets** (a merge edits one record and deletes another). A new address on a device a FortiManager or FortiGate integration manages also needs `integrations` Read-Write ([rule 111](Business-Rules#rule-111)) |
 | `assetsQuarantine` | Read-Write | push MAC quarantine to FortiGates, release, verify |
 | `assetsProbe` | **Read-Only** | probe-now, SNMP walk, DNS lookup — a probe writes nothing here |
-| `assetMonitorSettings` | Full RW | monitor cadence and retention overrides at every tier, plus the auto-decommission thresholds. **Full RW = the outage simulation** |
 | `networkScan` | Full RW | [active-scan Discoveries](Network-Discovery) — **ownership** |
+| `assetMonitorSettings` | Full RW | monitor cadence and retention overrides at every tier, plus the auto-decommission thresholds. **Full RW = the outage simulation**. *Also used on: Integrations.* |
+| `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear. *Also used on: Dashboard.* |
+| `maintenanceManagement` | Read-Write | maintenance windows; Read-Write is schedule CRUD. *Also used on: Events, Path Monitor.* |
 
-### Monitoring configuration
-
-| Key | Top rung | |
-|---|---|---|
-| `mibDatabase` | Read-Write | upload / browse / walk SNMP MIBs |
-| `manufacturerProfiles` | Read-Write | per-vendor telemetry profiles — CPU/memory/temperature OIDs, custom widgets — **and the manufacturer alias map**, which decides which profile a device gets |
-| `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership** |
-| `firmware` | RW | the firmware repository for switches, access points and FortiGates. Read = see the Repository tab; Read-Write = upload / delete images, choose the primary and bind device logins (or, for FortiGates, an API token — including the discovering integration's). **Starting an upgrade is not on this key** — it needs Read-Write on **Assets** ([rule 87](Business-Rules#rule-87)) |
-| `deviceIcons` | Read-Write | operator-uploaded topology icons |
-
-> The manufacturer alias map sits on **`manufacturerProfiles`**, not a key of
-> its own. An alias rewrites the manufacturer on every matching asset, and that
-> is what picks the device's profile — so editing aliases is editing which
-> profile applies. See [Rule 43](Business-Rules#rule-43).
-
-### Discovery
-
-| Key | Top rung | |
-|---|---|---|
-| `integrations` | Full RW | integration CRUD + discovery. **Full RW = abort a discovery in flight** |
-| `discoveryConflicts` | Read-Write | accept / reject / merge conflicts |
-
-### Maps
-
-| Key | Top rung | |
-|---|---|---|
-| `deviceMap` | Read-Write | the geographic map and topology graphs; Read-Write saves a site's layout |
-| `applicationMap` | Read-Write | the connectivity graph; Read-Write saves the shared layout |
-| `mapRegions` | Read-Write | draw / edit / delete region polygons |
-
-### Alerting
+### Events
 
 | Key | Top rung | |
 |---|---|---|
 | `events` | Read-Write | the audit log, its retention, and syslog / SFTP archival; the Events page's [Calendar](Events#calendar), which also shows maintenance windows only with `maintenanceManagement` Read and reboots and firmware upgrades only with `assets` Read |
-| `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear |
-| `automationManagement` | Read-Write | automations and delivery channels |
-| `automationScripts` | Read-Write | **RCE-equivalent** — see [Automation scripts](Automation-Scripts) |
-| `pathChecks` | Read-Write | [path checks](Path-Monitor). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Running a check **from the Polaris server** also needs Read-Write on `networkScan` (Network Discovery), because the server probes from its own network. Gates the **Path Monitor** page (sidebar, under Application Map). Starts at each role's **Application Map** level, so the built-in roles read the same on both |
-| `maintenanceManagement` | Read-Write | maintenance windows; Read-Write is schedule CRUD |
-| `contacts` | Full RW | the address book — **ownership** |
+| `discoveryConflicts` | Read-Write | accept / reject / merge conflicts |
+| `staleReservations` | Read-Write | snooze / ignore stale DHCP reservation alerts + the threshold |
 
-### Platform
+### Automations
 
 | Key | Top rung | |
 |---|---|---|
-| `apiTokens` | Read-Write | long-lived bearer tokens |
+| `automationManagement` | Read-Write | automations and delivery channels |
+| `automationScripts` | Read-Write | **RCE-equivalent** — see [Automation scripts](Automation-Scripts) |
+| `contacts` | Full RW | the address book — **ownership** |
+
+### Integrations
+
+| Key | Top rung | |
+|---|---|---|
+| `integrations` | Full RW | integration CRUD + discovery. **Full RW = abort a discovery in flight** |
+
+### Users
+
+| Key | Top rung | |
+|---|---|---|
 | `users` | Full RW | user CRUD, role assignment, TOTP and passkey reset. **Full RW = IdP group mappings** |
 | `roles` | Full RW | **the matrix itself** — Full RW here plus Full RW on Users is admin-equivalent |
 | `authentication` | Read-Write | how operators sign in: the SAML / OIDC / LDAP / App Proxy providers, the passkey policy and the password policy |
-| `assistant` | Read | the [AI assistant](AI-Assistant) chat button. It cannot widen a role — every lookup it makes uses **your own** permissions — so every built-in role has it, `readonly` included |
-| `savedDashboards` | Full RW | named layouts; Read-Write **publishes**, Full RW deletes anyone's |
+
+### Server Settings
+
+| Key | Top rung | |
+|---|---|---|
 | `serverSettingsSystem` | Read-Write | HTTPS, branding, DNS, NTP, certificates, capacity, tags, HA, the agent fleet |
 | `serverSettingsData` | **Read-Write** (no Read) | backup, restore, **download**, queue mode, security tokens, restart, in-app updates |
+| `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership**. *Also used on: Assets, Integrations, Path Monitor.* |
+| `firmware` | RW | the firmware repository for switches, access points and FortiGates. Read = see the Repository tab; Read-Write = upload / delete images, choose the primary and bind device logins (or, for FortiGates, an API token — including the discovering integration's). **Starting an upgrade is not on this key** — it needs Read-Write on **Assets** ([rule 87](Business-Rules#rule-87)). *Also used on: Assets.* |
+| `mibDatabase` | Read-Write | upload / browse / walk SNMP MIBs. *Also used on: Assets.* |
+| `manufacturerProfiles` | Read-Write | per-vendor telemetry profiles — CPU/memory/temperature OIDs, custom widgets — **and the manufacturer alias map**, which decides which profile a device gets. *Also used on: Assets.* |
+| `deviceIcons` | Read-Write | operator-uploaded topology icons. *Also used on: Device Map.* |
+| `apiTokens` | Read-Write | long-lived bearer tokens |
 
 > `serverSettingsData` has no Read rung because **downloading a backup is not a
 > read** — the archive is the entire database. A Read rung would make "may look
 > at the Data tab" and "may walk off with the database" the same grant. Every
 > other read on that tab rides the System key's floor.
 
+> The manufacturer alias map sits on **`manufacturerProfiles`**, not a key of
+> its own. An alias rewrites the manufacturer on every matching asset, and that
+> is what picks the device's profile — so editing aliases is editing which
+> profile applies. See [Rule 43](Business-Rules#rule-43).
+
+### Every page
+
+| Key | Top rung | |
+|---|---|---|
+| `assistant` | Read | the [AI assistant](AI-Assistant) chat button. It cannot widen a role — every lookup it makes uses **your own** permissions — so every built-in role has it, `readonly` included |
 ### Who may change how people log in
 
 `authentication` is **its own key, separate from `serverSettingsSystem`**, and

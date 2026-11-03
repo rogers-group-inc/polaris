@@ -15,6 +15,7 @@ import { z } from "zod";
 import * as roleService from "../../services/roleService.js";
 import {
   FUNCTION_KEYS,
+  FUNCTION_SECTIONS,
   ACCESS_LEVELS,
   requirePermission,
   assertGrantWithinCaller,
@@ -57,6 +58,7 @@ const UpdateRoleSchema = z.object({
 router.get("/functions", requirePermission("roles", "read"), (_req, res) => {
   res.json({
     accessLevels: ACCESS_LEVELS,
+    sections: FUNCTION_SECTIONS,
     functions: FUNCTION_KEYS,
   });
 });

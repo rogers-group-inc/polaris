@@ -21,7 +21,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
-import { FUNCTION_KEYS, ACCESS_LEVELS } from "../../src/api/middleware/permissions.js";
+import { FUNCTION_KEYS, FUNCTION_SECTIONS, ACCESS_LEVELS } from "../../src/api/middleware/permissions.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -40,6 +40,7 @@ function exported<T>(name: string): T {
 /** The catalogue as GET /roles/functions serves it — levels included. */
 const matrixSpec = {
   accessLevels: ACCESS_LEVELS,
+  sections: FUNCTION_SECTIONS.map(s => ({ ...s })),
   functions: FUNCTION_KEYS.map(f => ({ ...f })),
 };
 
@@ -124,5 +125,47 @@ describe("role matrix — per-key access ladders", () => {
       expect(levels, `${f.key} lost a level the ownership dimension needs`).toContain("write");
       expect(levels).toContain("fullwrite");
     }
+  });
+});
+
+describe("role matrix — page section headers", () => {
+  it("draws one header per section, in sidebar order, each spanning every column", () => {
+    renderMatrix(allPermissions("read"));
+    const headers = Array.from(doc.querySelectorAll("tr.role-perm-section")) as unknown as HTMLElement[];
+    expect(headers.map(h => h.getAttribute("data-section"))).toEqual(FUNCTION_SECTIONS.map(s => s.id));
+    expect(headers.map(h => (h.textContent ?? "").trim())).toEqual(FUNCTION_SECTIONS.map(s => s.label));
+    const th = headers[0].querySelector("th");
+    expect(th?.getAttribute("colspan")).toBe(String(ACCESS_LEVELS.length + 1));
+  });
+
+  it("files each function under its own section's header", () => {
+    renderMatrix(allPermissions("read"));
+    const rows = Array.from(doc.querySelectorAll("tbody tr")) as unknown as HTMLElement[];
+    let current: string | null = null;
+    for (const row of rows) {
+      if (row.classList.contains("role-perm-section")) { current = row.getAttribute("data-section"); continue; }
+      const key = (row.querySelector('input[type="radio"]')?.getAttribute("name") ?? "").replace(/^perm-/, "");
+      const def = FUNCTION_KEYS.find(f => f.key === key);
+      expect(def, `row for unknown key ${key}`).toBeTruthy();
+      expect(current, `${key} sits under the wrong header`).toBe(def!.section);
+    }
+  });
+
+  it("names the other pages a shared key reaches", () => {
+    renderMatrix(allPermissions("read"));
+    const radio = doc.querySelector('input[name="perm-credentials"]') as unknown as { closest: (s: string) => Element | null };
+    const note = radio.closest("tr")?.querySelector(".role-perm-also-on");
+    expect((note?.textContent ?? "").trim()).toBe("Also used on: Assets, Integrations, Path Monitor");
+    const plain = doc.querySelector('input[name="perm-ipBlocks"]') as unknown as { closest: (s: string) => Element | null };
+    expect(plain.closest("tr")?.querySelector(".role-perm-also-on")).toBeNull();
+  });
+
+  it("renders the flat table when the spec carries no sections", () => {
+    const flat = { accessLevels: ACCESS_LEVELS, functions: FUNCTION_KEYS.map(f => ({ ...f })) };
+    (win as unknown as Record<string, unknown>)._matrixSpec = flat;
+    g._matrixSpec = flat;
+    renderMatrix(allPermissions("read"));
+    expect(doc.querySelectorAll("tr.role-perm-section").length).toBe(0);
+    expect(doc.querySelectorAll('input[name="perm-assets"]').length).toBe(4);
   });
 });

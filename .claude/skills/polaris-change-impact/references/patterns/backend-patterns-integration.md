@@ -113,7 +113,7 @@ Verbatim from TOUCHES.md → Canonical backend patterns.
 - Frontend capability checks go through `permAtLeast(functionKey, level)` from `public/js/app.js`; legacy `isAdmin()` / `canManageNetworks()` / `canManageAssets()` shims have been rewritten to consult the matrix, but new call sites should use `permAtLeast` directly so the code is self-documenting at a grep.
 
 **When adding a new function key:**
-- Append the row to `FUNCTION_KEYS` in `permissions.ts`. Pick a stable camelCase `key`; set `hasOwnershipDimension: true` only when "Read-Write" really means "edit/delete own only."
+- Add the row to `FUNCTION_KEYS` in `permissions.ts` INSIDE its page's group, not at the end: set `section` to the page the key is managed on (one of `FUNCTION_SECTIONS`, which follow the sidebar) and `alsoOn` to the other pages its grant reaches. The role editor draws a header per section, so a row appended at the end splits a page into two headers (`tests/unit/permissionSections.test.ts` fails it). A new sidebar page needs a new section in the same position. Pick a stable camelCase `key`; set `hasOwnershipDimension: true` only when "Read-Write" really means "edit/delete own only."
 - Write a migration that adds the new key to every existing `Role.permissions` JSON (admin → fullwrite, readonly → read for readable-by-non-admin surfaces else none, the three editable built-ins → match the closest existing routes' behavior).
 - Wire the route layer guards using `requirePermission(newKey, level)`.
 - Add a CLAUDE.md "Function-key catalogue" entry. The frontend matrix UI picks the new row up automatically via `GET /roles/functions`.

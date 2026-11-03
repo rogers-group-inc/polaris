@@ -42,9 +42,14 @@ import { prisma } from "../../db.js";
 // ─── Function-key catalogue ────────────────────────────────────────────
 //
 // One row per top-level functional area an operator can grant/revoke.
-// Order is the order the UI matrix renders. Adding a key requires a
-// migration to seed it on every existing Role + a corresponding guard
-// on whatever routes the key covers.
+// Order is the order the UI matrix renders: grouped by FUNCTION_SECTIONS,
+// which follow the sidebar's page order (NAV_ITEMS in public/js/app.js),
+// so the role editor reads top to bottom the way the app does. A key is
+// filed under the page where it is MANAGED — where an operator goes to
+// change the thing it gates — and `alsoOn` names the other pages its
+// grant reaches. Adding a key requires a migration to seed it on every
+// existing Role + a corresponding guard on whatever routes the key covers,
+// and a `section` (tests/unit/permissionSections.test.ts holds the order).
 
 export type AccessLevel = "none" | "read" | "write" | "fullwrite";
 
@@ -57,10 +62,35 @@ const ACCESS_RANK: Record<AccessLevel, number> = {
   fullwrite: 3,
 };
 
+// The role editor's section headers, in sidebar order. Server Settings is
+// opened from the account menu rather than the sidebar, so it follows the
+// last sidebar page; "everywhere" holds a key with no page of its own.
+export const FUNCTION_SECTIONS = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "deviceMap", label: "Device Map" },
+  { id: "applicationMap", label: "Application Map" },
+  { id: "pathMonitor", label: "Path Monitor" },
+  { id: "ipManagement", label: "IP Management" },
+  { id: "assets", label: "Assets" },
+  { id: "events", label: "Events" },
+  { id: "automations", label: "Automations" },
+  { id: "integrations", label: "Integrations" },
+  { id: "users", label: "Users" },
+  { id: "serverSettings", label: "Server Settings" },
+  { id: "everywhere", label: "Every page" },
+] as const;
+
+export type FunctionSectionId = (typeof FUNCTION_SECTIONS)[number]["id"];
+
 export interface FunctionKeyDef {
   key: string;
+  // The page the key is managed on — its header in the role editor.
+  section: FunctionSectionId;
   label: string;
   description: string;
+  // Other pages the grant reaches (a picker, a panel tab, a shared editor).
+  // Rendered as an "Also used on" line under the description.
+  alsoOn?: readonly FunctionSectionId[];
   // Functions where the "write" level applies an ownership filter
   // (createdBy === username) and "fullwrite" bypasses it — subnets,
   // reservations, address-book contacts, credentials and networkScan.
@@ -110,55 +140,17 @@ const UP_TO_WRITE = ["none", "read", "write"] as const;
 const WRITE_ONLY = ["none", "write"] as const;
 
 export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
-  { key: "ipBlocks", label: "IP Blocks", description: "Top-level CIDR blocks the address registry hangs from. Read-Write = create / edit / delete.", levels: UP_TO_WRITE },
-  { key: "subnets", label: "Subnets", description: "Networks inside a block. Read-Write = your own rows; Full Read-Write = any row, plus exclusions and archiving.", hasOwnershipDimension: true },
-  { key: "reservations", label: "Reservations", description: "Reserved IPs, including DHCP push to FortiGate. Read-Write = your own rows; Full Read-Write = any row.", hasOwnershipDimension: true },
-  { key: "allocationTemplates", label: "Allocation Templates", description: "Saved multi-network templates the bulk-allocate modal offers.", levels: UP_TO_WRITE },
-  { key: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Full Read-Write also deploys the agent and merges two assets." },
-  { key: "assetsQuarantine", label: "Asset Quarantine", description: "Push MAC quarantine to FortiGates, release it, verify it.", levels: UP_TO_WRITE },
-  // Read-only by nature: a probe dials the device and writes nothing in
-  // Polaris, so `read` IS the grant and there is no higher level to offer.
-  // The outage SIMULATION that used to sit here (POST/DELETE
-  // /assets/:id/dependency-test) does write — and can mask a real outage —
-  // so it moved to `assetMonitorSettings=fullwrite`, which is the
-  // admin-only level its own code comment always claimed for it.
-  { key: "assetsProbe", label: "Asset Probes", description: "Probe-now, SNMP walk and DNS lookup on one asset. A probe changes nothing here, so Read-Only is the whole grant.", levels: READ_ONLY },
-  // Its own key rather than part of `assetsProbe` (probe-now / SNMP walk on
-  // ONE existing asset) because an unannounced sweep is IDS-visible, and is
-  // exactly the capability an admin may want to withhold from someone who may
-  // still edit inventory. PUBLISHING a Discovery needs only Read-Write —
-  // sharing is what the feature is for, and the roles that author Discoveries
-  // hold write, not fullwrite (business rule 34g). ADOPTING the responders as
-  // assets is chained at the route on `assets` Read-Write, so "may scan" and
-  // "may create assets" stay separable.
-  { key: "networkScan", label: "Network Discovery", description: "Active sweeps of operator-supplied IP ranges. Read-Write = run and manage your own; Full Read-Write = anyone's.", hasOwnershipDimension: true },
-  { key: "assetMonitorSettings", label: "Asset Monitor Settings", description: "Monitor cadence and retention overrides per asset, class, integration or manual. Full Read-Write = outage simulation." },
-  { key: "mibDatabase", label: "MIB Database", description: "Upload, browse and walk SNMP MIB modules.", levels: UP_TO_WRITE },
-  // Also gates the manufacturer ALIAS map (`/manufacturer-aliases`), which had
-  // its own key until 2026-09-23. An alias rewrites Asset.manufacturer across
-  // the fleet, and that value is what picks a device's profile — so editing an
-  // alias IS editing which profile applies, and the two could not sensibly be
-  // granted apart (business rule 43(f)).
-  { key: "manufacturerProfiles", label: "Manufacturer Profiles", description: "Per-vendor telemetry profiles (CPU / memory / temperature OIDs, custom widgets) and the vendor-name alias map that decides which profile a device gets.", levels: UP_TO_WRITE },
-  { key: "credentials", label: "Credentials", description: "Stored SNMP / WinRM / SSH / REST / HTTP probe credentials. Read-Only lists them masked; Read-Write = your own rows.", hasOwnershipDimension: true },
-  // The firmware repository for switches and access points (business rule 87)
-  // — the REPOSITORY only. Read = see the Repository tab and its runs;
-  // Read-Write = upload / delete / make-primary / purge images and bind the
-  // device-admin login at a manufacturer, device-type or model node. Flashing
-  // a device is NOT on this key: POST /assets/:id/firmware-upgrade is gated at
-  // `assets:write`, by the operator's decision (2026-09-26) that whoever may
-  // edit an asset may upgrade it — so the key has no Full Read-Write rung.
-  { key: "firmware", label: "Firmware Repository", description: "Firmware images for switches and access points and the device-admin login bound to each model, type or manufacturer. Read sees the repository; Read-Write uploads and manages images. Starting an upgrade is Assets Read-Write.", levels: UP_TO_WRITE },
-  { key: "integrations", label: "Integrations", description: "The source integrations and their discovery runs. Full Read-Write also aborts a discovery in flight." },
-  { key: "discoveryConflicts", label: "Discovery Conflicts", description: "Accept / reject / merge the reservation and asset conflicts discovery raises.", levels: UP_TO_WRITE },
-  { key: "deviceMap", label: "Device Map", description: "The geographic device map and its topology graphs. Read-Write saves a site's topology layout.", levels: UP_TO_WRITE },
-  { key: "applicationMap", label: "Application Map", description: "Application connectivity graph from mapped process connections. Read-Write saves the shared layout.", levels: UP_TO_WRITE },
-  { key: "mapRegions", label: "Map Regions", description: "Region polygons that auto-tag the devices they enclose.", levels: UP_TO_WRITE },
-  { key: "deviceIcons", label: "Device Icons", description: "Custom icons overlaid on the topology graphs.", levels: UP_TO_WRITE },
-  { key: "events", label: "Events / Audit Log", description: "Audit log plus syslog / SFTP archival and retention. Read-Only views the log; Read-Write edits the settings.", levels: UP_TO_WRITE },
-  { key: "alerts", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges; Full Read-Write clears." },
-  { key: "automationManagement", label: "Automations", description: "Automations and their delivery channels. Read-Write = create / edit / delete both.", levels: UP_TO_WRITE },
-  { key: "automationScripts", label: "Automation Scripts", description: "The script registry and script actions. Read-Write is remote code execution on the Polaris host and agent hosts.", levels: UP_TO_WRITE },
+  // ── Dashboard ─────────────────────────────────────────────────────────────
+  { key: "savedDashboards", section: "dashboard", label: "Saved Dashboards", description: "Named dashboard canvases. Read-Only keeps your own private ones; Read-Write publishes one to everyone." },
+
+  // ── Device Map ────────────────────────────────────────────────────────────
+  { key: "deviceMap", section: "deviceMap", label: "Device Map", description: "The geographic device map and its topology graphs. Read-Write saves a site's topology layout.", levels: UP_TO_WRITE },
+  { key: "mapRegions", section: "deviceMap", label: "Map Regions", description: "Region polygons that auto-tag the devices they enclose.", levels: UP_TO_WRITE },
+
+  // ── Application Map ───────────────────────────────────────────────────────
+  { key: "applicationMap", section: "applicationMap", label: "Application Map", description: "Application connectivity graph from mapped process connections. Read-Write saves the shared layout.", levels: UP_TO_WRITE },
+
+  // ── Path Monitor ──────────────────────────────────────────────────────────
   // Its own key rather than a rung of `automationManagement` for the reason
   // `networkScan` is its own key: a check directs every matching Polaris Agent
   // to send traffic at an operator-chosen destination on a schedule, which is
@@ -167,13 +159,53 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // `automationScripts`. Seeded from applicationMap (the page beside it in
   // the sidebar — the same level on both) by migration
   // 20260923030000_path_checks.
-  { key: "pathChecks", label: "Path Monitor", description: "Agent-run reachability checks (HTTP / HTTPS / TCP / ICMP + traceroute). Read-Write directs every matching agent to send traffic at the target.", levels: UP_TO_WRITE },
-  { key: "maintenanceManagement", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = schedule CRUD.", levels: UP_TO_WRITE },
-  { key: "contacts", label: "Address Book", description: "The address book alerts route to, each entry optionally owning devices. Read-Write = your own rows.", hasOwnershipDimension: true },
-  { key: "staleReservations", label: "Stale Reservations", description: "Snooze, ignore and un-ignore stale DHCP reservation alerts, and set the staleness threshold.", levels: UP_TO_WRITE },
-  { key: "apiTokens", label: "API Tokens", description: "Long-lived bearer tokens for external callers such as a SIEM.", levels: UP_TO_WRITE },
-  { key: "users", label: "Users", description: "User accounts, role assignment, TOTP and passkey reset. Full Read-Write also manages IdP group mappings." },
-  { key: "roles", label: "Roles", description: "This permission matrix itself. Full Read-Write, together with Users Full Read-Write, is admin-equivalent." },
+  { key: "pathChecks", section: "pathMonitor", label: "Path Monitor", description: "Agent-run reachability checks (HTTP / HTTPS / TCP / ICMP + traceroute). Read-Write directs every matching agent to send traffic at the target.", levels: UP_TO_WRITE },
+
+  // ── IP Management ─────────────────────────────────────────────────────────
+  { key: "ipBlocks", section: "ipManagement", label: "IP Blocks", description: "Top-level CIDR blocks the address registry hangs from. Read-Write = create / edit / delete.", levels: UP_TO_WRITE },
+  { key: "subnets", section: "ipManagement", label: "Subnets", description: "Networks inside a block. Read-Write = your own rows; Full Read-Write = any row, plus exclusions and archiving.", hasOwnershipDimension: true },
+  { key: "allocationTemplates", section: "ipManagement", label: "Allocation Templates", description: "Saved multi-network templates the bulk-allocate modal offers.", levels: UP_TO_WRITE },
+  { key: "reservations", section: "ipManagement", label: "Reservations", description: "Reserved IPs, including DHCP push to FortiGate. Read-Write = your own rows; Full Read-Write = any row.", hasOwnershipDimension: true, alsoOn: ["assets", "events"] },
+
+  // ── Assets ────────────────────────────────────────────────────────────────
+  { key: "assets", section: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Full Read-Write also deploys the agent and merges two assets." },
+  { key: "assetsQuarantine", section: "assets", label: "Asset Quarantine", description: "Push MAC quarantine to FortiGates, release it, verify it.", levels: UP_TO_WRITE },
+  // Read-only by nature: a probe dials the device and writes nothing in
+  // Polaris, so `read` IS the grant and there is no higher level to offer.
+  // The outage SIMULATION that used to sit here (POST/DELETE
+  // /assets/:id/dependency-test) does write — and can mask a real outage —
+  // so it moved to `assetMonitorSettings=fullwrite`, which is the
+  // admin-only level its own code comment always claimed for it.
+  { key: "assetsProbe", section: "assets", label: "Asset Probes", description: "Probe-now, SNMP walk and DNS lookup on one asset. A probe changes nothing here, so Read-Only is the whole grant.", levels: READ_ONLY },
+  // Its own key rather than part of `assetsProbe` (probe-now / SNMP walk on
+  // ONE existing asset) because an unannounced sweep is IDS-visible, and is
+  // exactly the capability an admin may want to withhold from someone who may
+  // still edit inventory. PUBLISHING a Discovery needs only Read-Write —
+  // sharing is what the feature is for, and the roles that author Discoveries
+  // hold write, not fullwrite (business rule 34g). ADOPTING the responders as
+  // assets is chained at the route on `assets` Read-Write, so "may scan" and
+  // "may create assets" stay separable.
+  { key: "networkScan", section: "assets", label: "Network Discovery", description: "Active sweeps of operator-supplied IP ranges. Read-Write = run and manage your own; Full Read-Write = anyone's.", hasOwnershipDimension: true },
+  { key: "assetMonitorSettings", section: "assets", label: "Asset Monitor Settings", description: "Monitor cadence and retention overrides per asset, class, integration or manual. Full Read-Write = outage simulation.", alsoOn: ["integrations"] },
+  { key: "alerts", section: "assets", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges; Full Read-Write clears.", alsoOn: ["dashboard"] },
+  { key: "maintenanceManagement", section: "assets", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = schedule CRUD.", levels: UP_TO_WRITE, alsoOn: ["events", "pathMonitor"] },
+
+  // ── Events ────────────────────────────────────────────────────────────────
+  { key: "events", section: "events", label: "Events / Audit Log", description: "Audit log plus syslog / SFTP archival and retention. Read-Only views the log; Read-Write edits the settings.", levels: UP_TO_WRITE },
+  { key: "discoveryConflicts", section: "events", label: "Discovery Conflicts", description: "Accept / reject / merge the reservation and asset conflicts discovery raises.", levels: UP_TO_WRITE },
+  { key: "staleReservations", section: "events", label: "Stale Reservations", description: "Snooze, ignore and un-ignore stale DHCP reservation alerts, and set the staleness threshold.", levels: UP_TO_WRITE },
+
+  // ── Automations ───────────────────────────────────────────────────────────
+  { key: "automationManagement", section: "automations", label: "Automations", description: "Automations and their delivery channels. Read-Write = create / edit / delete both.", levels: UP_TO_WRITE },
+  { key: "automationScripts", section: "automations", label: "Automation Scripts", description: "The script registry and script actions. Read-Write is remote code execution on the Polaris host and agent hosts.", levels: UP_TO_WRITE },
+  { key: "contacts", section: "automations", label: "Address Book", description: "The address book alerts route to, each entry optionally owning devices. Read-Write = your own rows.", hasOwnershipDimension: true },
+
+  // ── Integrations ──────────────────────────────────────────────────────────
+  { key: "integrations", section: "integrations", label: "Integrations", description: "The source integrations and their discovery runs. Full Read-Write also aborts a discovery in flight." },
+
+  // ── Users ─────────────────────────────────────────────────────────────────
+  { key: "users", section: "users", label: "Users", description: "User accounts, role assignment, TOTP and passkey reset. Full Read-Write also manages IdP group mappings." },
+  { key: "roles", section: "users", label: "Roles", description: "This permission matrix itself. Full Read-Write, together with Users Full Read-Write, is admin-equivalent." },
   // Split out of `serverSettingsSystem` on 2026-09-23 (migration
   // 20260923000000_authentication_function_key). Every route it gates used to
   // sit on that key's `write` rung while the other ~54 — TLS, HA, tags, DNS,
@@ -192,17 +224,38 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // restriction (`serverSettingsSystem`), which is network-level reachability
   // of a page rather than a statement about identity, and lives under the
   // /server-settings mount whose floor is that key anyway.
-  { key: "authentication", label: "Authentication", description: "How operators sign in: the SAML / OIDC / LDAP / App Proxy providers, passkey policy and password policy.", levels: UP_TO_WRITE },
+  { key: "authentication", section: "users", label: "Authentication", description: "How operators sign in: the SAML / OIDC / LDAP / App Proxy providers, passkey policy and password policy.", levels: UP_TO_WRITE },
+
+  // ── Server Settings ───────────────────────────────────────────────────────
+  { key: "serverSettingsSystem", section: "serverSettings", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, tags, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
+  { key: "serverSettingsData", section: "serverSettings", label: "Server Settings — Data", description: "Database backup, restore and download, queue mode, security tokens, restart, in-app updates.", levels: WRITE_ONLY },
+  { key: "credentials", section: "serverSettings", label: "Credentials", description: "Stored SNMP / WinRM / SSH / REST / HTTP probe credentials. Read-Only lists them masked; Read-Write = your own rows.", hasOwnershipDimension: true, alsoOn: ["assets", "integrations", "pathMonitor"] },
+  // The firmware repository for switches and access points (business rule 87)
+  // — the REPOSITORY only. Read = see the Repository tab and its runs;
+  // Read-Write = upload / delete / make-primary / purge images and bind the
+  // device-admin login at a manufacturer, device-type or model node. Flashing
+  // a device is NOT on this key: POST /assets/:id/firmware-upgrade is gated at
+  // `assets:write`, by the operator's decision (2026-09-26) that whoever may
+  // edit an asset may upgrade it — so the key has no Full Read-Write rung.
+  { key: "firmware", section: "serverSettings", label: "Firmware Repository", description: "Firmware images for switches and access points and the device-admin login bound to each model, type or manufacturer. Read sees the repository; Read-Write uploads and manages images. Starting an upgrade is Assets Read-Write.", levels: UP_TO_WRITE, alsoOn: ["assets"] },
+  { key: "mibDatabase", section: "serverSettings", label: "MIB Database", description: "Upload, browse and walk SNMP MIB modules.", levels: UP_TO_WRITE, alsoOn: ["assets"] },
+  // Also gates the manufacturer ALIAS map (`/manufacturer-aliases`), which had
+  // its own key until 2026-09-23. An alias rewrites Asset.manufacturer across
+  // the fleet, and that value is what picks a device's profile — so editing an
+  // alias IS editing which profile applies, and the two could not sensibly be
+  // granted apart (business rule 43(f)).
+  { key: "manufacturerProfiles", section: "serverSettings", label: "Manufacturer Profiles", description: "Per-vendor telemetry profiles (CPU / memory / temperature OIDs, custom widgets) and the vendor-name alias map that decides which profile a device gets.", levels: UP_TO_WRITE, alsoOn: ["assets"] },
+  { key: "deviceIcons", section: "serverSettings", label: "Device Icons", description: "Custom icons overlaid on the topology graphs.", levels: UP_TO_WRITE, alsoOn: ["deviceMap"] },
+  { key: "apiTokens", section: "serverSettings", label: "API Tokens", description: "Long-lived bearer tokens for external callers such as a SIEM.", levels: UP_TO_WRITE },
+
+  // ── Every page ────────────────────────────────────────────────────────────
   // The floating AI assistant (business rule 95). Read-only by nature: every
   // lookup the assistant makes runs as the CALLER, through the same per-key
   // gates the pages use (rule 95(a)), so this key only decides whether the
   // widget is offered at all — it can never widen what a role may see. The
   // conversations it stores are the caller's own. Seeded `read` on every role
   // except the api-* / llm-* token roles (migration 20261007020000_assistant).
-  { key: "assistant", label: "AI Assistant", description: "The chat assistant in the bottom-right corner, when an AI Assistant integration is configured. Every lookup it makes uses your own permissions, so it can never show more than your role already can.", levels: READ_ONLY },
-  { key: "savedDashboards", label: "Saved Dashboards", description: "Named dashboard canvases. Read-Only keeps your own private ones; Read-Write publishes one to everyone." },
-  { key: "serverSettingsSystem", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, tags, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
-  { key: "serverSettingsData", label: "Server Settings — Data", description: "Database backup, restore and download, queue mode, security tokens, restart, in-app updates.", levels: WRITE_ONLY },
+  { key: "assistant", section: "everywhere", label: "AI Assistant", description: "The chat assistant in the bottom-right corner, when an AI Assistant integration is configured. Every lookup it makes uses your own permissions, so it can never show more than your role already can.", levels: READ_ONLY },
 ] as const;
 
 const FUNCTION_KEY_SET = new Set(FUNCTION_KEYS.map(f => f.key));
