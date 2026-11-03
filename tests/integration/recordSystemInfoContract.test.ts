@@ -203,6 +203,22 @@ d("recordSystemInfoResult", () => {
     expect(rows.map((r) => r.ip).sort()).toEqual(["10.97.0.9", "10.97.10.1"]);
   });
 
+  it("assoc-IP mirror writes an interface's secondary IPs beside its primary, each with its role", async () => {
+    await recordSystemInfoResult(assetId, ok({
+      interfaces: [
+        { ifName: "port2", ipAddress: "10.97.20.1", macAddress: "AA:BB:CC:00:00:20", secondaryIps: ["10.97.21.1", "10.97.22.1"] },
+        { ifName: "eth0", ipAddress: "10.97.30.1", macAddress: "AA:BB:CC:00:00:30" },
+      ],
+    }));
+    const rows = await prisma.assetAssociatedIp.findMany({ where: { assetId }, orderBy: { ip: "asc" } });
+    expect(rows.map((r) => [r.ip, r.interfaceName, r.mac, r.interfaceRole])).toEqual([
+      ["10.97.20.1", "port2", "AA:BB:CC:00:00:20", "primary"],
+      ["10.97.21.1", "port2", "AA:BB:CC:00:00:20", "secondary"],
+      ["10.97.22.1", "port2", "AA:BB:CC:00:00:20", "secondary"],
+      ["10.97.30.1", "eth0", "AA:BB:CC:00:00:30", null],
+    ]);
+  });
+
   it("LLDP: undefined leaves stored neighbors alone; [] keeps recently-seen rows (48h stickiness)", async () => {
     await recordSystemInfoResult(assetId, ok({
       lldpNeighbors: [{ localIfName: "port1", systemName: "peer-sw" }],

@@ -4768,6 +4768,8 @@ export interface InterfaceSample {
   duplex?:      string | null;
   /** The interface's IPv4 address (one bare address). IPv6 rides `ipv6Address` (business rule 126). */
   ipAddress?:   string | null;
+  /** The interface's secondary IPv4 addresses, bare. FortiOS REST only (CMDB `secondary-ip`); undefined everywhere else, which means "not known", not "none". When it is an array, `ipAddress` is the interface's primary. */
+  secondaryIps?: string[] | null;
   /** First reportable IPv6 on the interface — never loopback / link-local (utils/interfaceAddress.ts). Listed and kept in history; never the asset's primary address (business rule 126). */
   ipv6Address?: string | null;
   macAddress?:  string | null;
@@ -6169,6 +6171,11 @@ export interface FortiCmdbInterfaceEntry {
    *  see `backfillFortiCmdbOnlyTunnels`; the monitor's runtime IP wins
    *  everywhere else. */
   ipAddress: string | null;
+  /** The interface's configured secondary IPv4 addresses (CMDB `secondary-ip`
+   *  child table), bare, in CMDB order; empty when there are none. The
+   *  monitor endpoint does not say which of an interface's addresses is the
+   *  secondary, so this is the only source of that distinction. */
+  secondaryIps: string[];
   /** The CMDB's configured IPv6 (`ipv6.ip6-address`, else the first
    *  `ip6-extra-addr`), via utils/fortiosIpv6.ts → parseInterfaceIpv6;
    *  null when unset / link-local. The monitor endpoint carries no IPv6 at
@@ -6232,6 +6239,16 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
     const ipAddress = typeof rawIp === "string" && !interfaceIpIsUnaddressed(rawIp)
       ? bareInterfaceIp(rawIp)
       : null;
+    // `secondary-ip` rows carry their own `ip` in the same two shapes.
+    const secondaryIps: string[] = [];
+    if (Array.isArray(c["secondary-ip"])) {
+      for (const sec of c["secondary-ip"]) {
+        const rawSec = Array.isArray(sec?.ip) ? sec.ip[0] : sec?.ip;
+        if (typeof rawSec !== "string" || interfaceIpIsUnaddressed(rawSec)) continue;
+        const bare = bareInterfaceIp(rawSec);
+        if (bare !== ipAddress && !secondaryIps.includes(bare)) secondaryIps.push(bare);
+      }
+    }
     cmdbByName.set(c.name, {
       type:    t,
       parent:  t === "vlan" && typeof c.interface === "string" ? c.interface : null,
@@ -6242,6 +6259,7 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
       addressingMode,
       adminStatus,
       ipAddress,
+      secondaryIps,
       ipv6Address: parseInterfaceIpv6(c).addresses[0]?.ipAddress ?? null,
       tunnelUnderlay: t === "tunnel" && typeof c.interface === "string" && c.interface.trim() ? c.interface.trim() : null,
     });
@@ -6333,6 +6351,9 @@ export function buildFortiInterfaceSamples(
       speedBps:    speedMbps != null ? Math.round(speedMbps * 1_000_000) : null,
       duplex:      fortiMonitorDuplex(i.link, i.duplex),
       ipAddress:   ip,
+      // Only the CMDB knows which addresses are secondary; without it the
+      // field stays undefined ("not known") rather than claiming "none".
+      secondaryIps: cmdbEntry ? cmdbEntry.secondaryIps.filter((s) => s !== ip) : undefined,
       ipv6Address: cmdbEntry?.ipv6Address ?? null,
       macAddress:  typeof i.mac === "string" ? i.mac.toUpperCase() : null,
       inOctets:    pickFiniteNumber(i.rx_bytes),
@@ -6447,6 +6468,7 @@ export function backfillFortiCmdbOnlyBundles(
       operStatus:  null,
       speedBps:    null,
       ipAddress:   c.ipAddress,
+      secondaryIps: c.secondaryIps,
       ipv6Address: c.ipv6Address,
       macAddress:  null,
       inOctets:    null,
@@ -6503,6 +6525,7 @@ export function backfillFortiCmdbOnlyTunnels(
       operStatus:  null,
       speedBps:    null,
       ipAddress:   c.ipAddress,
+      secondaryIps: c.secondaryIps,
       ipv6Address: c.ipv6Address,
       macAddress:  null,
       inOctets:    null,
@@ -12007,7 +12030,7 @@ async function buildLldpAssetMatchIndex(): Promise<LldpMatchIndex> {
  * entirely so a transient "scrape returned no interface IPs" doesn't wipe
  * an existing monitor-source set.
  */
-function buildMonitorAssocIpEntries(
+export function buildMonitorAssocIpEntries(
   interfaces: InterfaceSample[],
   now: Date,
   source: InterfaceAddressSource = "monitor-system-info",
@@ -12016,12 +12039,13 @@ function buildMonitorAssocIpEntries(
   source: string;
   interfaceName: string | null;
   mac: string | null;
+  interfaceRole: string | null;
   lastSeen: Date;
   firstSeen: Date;
 }> {
   const out: Array<{
     ip: string; source: string; interfaceName: string | null;
-    mac: string | null; lastSeen: Date; firstSeen: Date;
+    mac: string | null; interfaceRole: string | null; lastSeen: Date; firstSeen: Date;
   }> = [];
   const seenIps = new Set<string>();
   for (const i of interfaces) {
@@ -12030,7 +12054,20 @@ function buildMonitorAssocIpEntries(
     // agent used to report `lo` as 127.0.0.1 and an IPv6-only NIC as fe80::,
     // and this list feeds IP history, path-check hop resolution and search.
     const addr = splitInterfaceAddresses(i.ipAddress, i.ipv6Address, ipv6Enabled());
-    for (const ip of [addr.ipAddress, addr.ipv6Address]) {
+    // A collector that names the interface's secondary addresses (FortiOS)
+    // also tells us the IPv4 above is the primary; one that doesn't leaves
+    // the role unknown. Secondaries are informational — they ride the
+    // interface's MAC and nothing else (no network, DHCP or binding).
+    const rolesKnown = Array.isArray(i.secondaryIps);
+    const secondaries = rolesKnown
+      ? (i.secondaryIps as string[]).filter((s) => !interfaceIpIsUnaddressed(s))
+      : [];
+    const candidates: Array<{ ip: string | null; role: string | null }> = [
+      { ip: addr.ipAddress, role: rolesKnown ? "primary" : null },
+      ...secondaries.map((s) => ({ ip: bareInterfaceIp(s), role: "secondary" })),
+      { ip: addr.ipv6Address, role: null },
+    ];
+    for (const { ip, role } of candidates) {
       if (!ip || seenIps.has(ip)) continue; // dedupe within a single scrape
       seenIps.add(ip);
       out.push({
@@ -12041,6 +12078,7 @@ function buildMonitorAssocIpEntries(
         // groups addresses under the MAC list by exact string, and REST / agent
         // / WinRM collectors report lowercase or dashed MACs.
         mac:           normalizeMacOrNull(i.macAddress),
+        interfaceRole: role,
         lastSeen:      now,
         firstSeen:     now,
       });

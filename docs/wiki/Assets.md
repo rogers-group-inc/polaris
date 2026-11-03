@@ -551,6 +551,16 @@ released, or now gives to a different MAC, is removed from the list, and a
 lease IPAM records as a reservation is shown as one. Addresses IPAM has no
 subnet for are left as they are.
 
+A FortiGate's interface addresses include each interface's secondary IPs
+(FortiManager and standalone FortiGate alike). The interface's own primary
+address carries a small **primary** tag beside the interface name; its
+secondary addresses carry none. A secondary address is there for information
+and to help identify the device: it has no DHCP lease or reservation of its
+own, and it is never the address monitoring probes. The tag
+is about the interface, not the asset: **★ Primary** still marks the one
+address monitoring uses. Devices read any other way (SNMP, the Polaris Agent)
+show their interface addresses without the tag.
+
 A MAC labelled *Not on MAC list* appears only because addresses name it — an
 interface of a monitored device, or an address typed by hand — so it has no
 **×**. A MAC with many addresses names its first three in the MACs list; the

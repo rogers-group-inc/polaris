@@ -195,6 +195,8 @@ interface AssociatedIpJson {
   source: string;
   interfaceName?: string;
   mac?: string;
+  /** Interface-scrape rows where the device says: "primary" | "secondary". */
+  interfaceRole?: string;
   /** Discovered rows: the gate that reported the binding, and its medium (rule 102). */
   device?: string;
   medium?: string;
@@ -210,6 +212,7 @@ interface AssociatedIpRow {
   source: string;
   interfaceName: string | null;
   mac: string | null;
+  interfaceRole: string | null;
   device: string | null;
   medium: string | null;
   ptrName: string | null;
@@ -225,7 +228,8 @@ function shapeAssociatedIps(rows: AssociatedIpRow[] | null | undefined): Associa
     const out: AssociatedIpJson = { ip: r.ip, source: r.source };
     if (r.interfaceName) out.interfaceName = r.interfaceName;
     if (r.mac)           out.mac           = r.mac;
-    if (r.device)        out.device        = r.device;
+    if (r.interfaceRole) out.interfaceRole = r.interfaceRole;
+    if (r.device)       out.device        = r.device;
     if (r.medium)        out.medium        = r.medium;
     if (r.ptrName)       out.ptrName       = r.ptrName;
     if (r.ptrTtl != null) out.ptrTtl       = r.ptrTtl;
@@ -237,7 +241,7 @@ function shapeAssociatedIps(rows: AssociatedIpRow[] | null | undefined): Associa
 }
 
 const ASSOCIATED_IP_SELECT = {
-  ip: true, source: true, interfaceName: true, mac: true, device: true, medium: true,
+  ip: true, source: true, interfaceName: true, mac: true, interfaceRole: true, device: true, medium: true,
   ptrName: true, ptrTtl: true, ptrFetchedAt: true,
   lastSeen: true, firstSeen: true,
 } as const;
