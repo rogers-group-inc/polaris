@@ -80,6 +80,16 @@ per commit. The pre-commit hook runs `check:docs` against the filesystem, so an 
 source file left by someone else in this worktree fails it — that is the one case for
 `--no-verify`, and say so in the hand-off.
 
+**Splitting ONE file's changes across two commits** (no `git add -p` here): never rewrite the
+WORKING file to stage a subset and then restore it. On 2026-11-03 the working `users.ts` was
+rewritten in the moment between the strip and the `git add` — something watching the file
+(an editor buffer is the likeliest) merged two versions and every route came out duplicated.
+Build the first commit's version of the file in the scratchpad, then put it straight into the
+index: `git hash-object -w <scratch-file>` and
+`git update-index --cacheinfo 100644,<sha>,<repo/path>` — each its own call. The working tree
+keeps the full version and goes into the next commit with a plain `git add`. Read the staged
+`git diff --cached --stat` per file before committing.
+
 If you ever must land a commit in the SHARED main checkout while another session is
 force-pushing over it (do not — that is what worktrees are for), the recipes are:
 `git worktree add --detach <scratch> origin/main` + `git cherry-pick <mine>` +
