@@ -19,7 +19,6 @@ import {
   ACCESS_LEVELS,
   requirePermission,
   assertGrantWithinCaller,
-  assertTagChangeAllowed,
   callerIsAdminEquivalent,
   isAdminEquivalentPermissions,
   normalizePermissions,
@@ -33,8 +32,6 @@ const AccessLevelSchema = z.enum(ACCESS_LEVELS as unknown as [string, ...string[
 // inside normalizePermissions. Unknown keys are dropped server-side.
 const PermissionsSchema = z.record(z.string(), AccessLevelSchema);
 
-const RegionTagsSchema = z.array(z.string().max(64)).max(64);
-
 // `#rrggbb` hex string; empty string / null clears the color.
 const ColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Color must be a #rrggbb hex string");
 
@@ -42,7 +39,6 @@ const CreateRoleSchema = z.object({
   name:        z.string().min(2).max(32),
   description: z.string().max(200).optional().nullable(),
   permissions: PermissionsSchema,
-  regionTags:  RegionTagsSchema.optional(),
   color:       ColorSchema.optional().nullable(),
 });
 
@@ -50,7 +46,6 @@ const UpdateRoleSchema = z.object({
   name:        z.string().min(2).max(32).optional(),
   description: z.string().max(200).optional().nullable(),
   permissions: PermissionsSchema.optional(),
-  regionTags:  RegionTagsSchema.optional(),
   color:       ColorSchema.optional().nullable(),
 });
 
@@ -84,15 +79,11 @@ router.post("/", requirePermission("roles", "write"), async (req, res, next) => 
     // Rules 48 / 114(g): roles:write may only grant what the caller holds —
     // never an admin-equivalent role, nor any single key above its own level.
     assertGrantWithinCaller(req, input.permissions, `the role "${input.name}"`);
-    // A role's tags are every holder's write reach (rule 141): the Tags key's
-    // grant, chained on the role edit.
-    assertTagChangeAllowed(req, [], input.regionTags);
     const created = await roleService.createRole(
       {
         name:        input.name,
         description: input.description ?? null,
         permissions: input.permissions as Parameters<typeof roleService.createRole>[0]["permissions"],
-        ...(input.regionTags !== undefined && { regionTags: input.regionTags }),
         ...(input.color !== undefined && { color: input.color }),
       },
       req.session?.username,
@@ -104,10 +95,6 @@ router.post("/", requirePermission("roles", "write"), async (req, res, next) => 
 router.put("/:id", requirePermission("roles", "write"), async (req, res, next) => {
   try {
     const input = UpdateRoleSchema.parse(req.body);
-    if (input.regionTags !== undefined) {
-      const cur = await roleService.getRole(req.params.id as string) as { regionTags?: string[] };
-      assertTagChangeAllowed(req, cur.regionTags ?? [], input.regionTags);
-    }
     // Rule 48: nor to promote an existing role — including the caller's own —
     // into one. A partial update that leaves `permissions` alone is untouched.
     if (input.permissions !== undefined) {
@@ -139,7 +126,6 @@ router.put("/:id", requirePermission("roles", "write"), async (req, res, next) =
         ...(input.permissions !== undefined && {
           permissions: input.permissions as Parameters<typeof roleService.updateRole>[1]["permissions"],
         }),
-        ...(input.regionTags !== undefined && { regionTags: input.regionTags }),
         ...(input.color !== undefined && { color: input.color }),
       },
       req.session?.username,

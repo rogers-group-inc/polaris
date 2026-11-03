@@ -17,7 +17,6 @@
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
-import { normalizeTags } from "../utils/tagNormalize.js";
 import {
   bumpRoleVersion,
   normalizePermissions,
@@ -32,9 +31,6 @@ export interface RoleSummary {
   permissions: Record<string, AccessLevel>;
   // Region scope inherited by users holding this role. Empty = unrestricted.
   // Effective scope for a session is union(role, user, group-derived).
-  regionTags: string[];
-  // Free-form ("other") tag scope — a second dimension parallel to regionTags.
-  otherTags: string[];
   // Badge color as `#rrggbb`, or null to fall back to the legacy name-keyed
   // badge classes in the frontend.
   color: string | null;
@@ -51,8 +47,6 @@ export interface CreateRoleInput {
   name: string;
   description?: string | null;
   permissions: Record<string, AccessLevel>;
-  regionTags?: string[];
-  otherTags?: string[];
   color?: string | null;
 }
 
@@ -60,16 +54,8 @@ export interface UpdateRoleInput {
   name?: string;
   description?: string | null;
   permissions?: Record<string, AccessLevel>;
-  regionTags?: string[];
-  otherTags?: string[];
   color?: string | null;
 }
-
-// Tag values are operator-typed strings, normalized by the shared
-// utils/tagNormalize helper (trim, drop empties, dedupe case-insensitively,
-// cap length + count). Neither dimension is FK'd to a registry.
-const normalizeRegionTags = (input: unknown): string[] => normalizeTags(input, "region tag");
-const normalizeOtherTags = (input: unknown): string[] => normalizeTags(input, "tag");
 
 const NAME_RE = /^[A-Za-z0-9_-]{2,32}$/;
 const DESCRIPTION_MAX = 200;
@@ -118,8 +104,6 @@ function summarize(role: {
   name: string;
   description: string | null;
   permissions: unknown;
-  regionTags: string[];
-  otherTags: string[];
   color: string | null;
   isBuiltIn: boolean;
   isProtected: boolean;
@@ -133,8 +117,6 @@ function summarize(role: {
     name: role.name,
     description: role.description,
     permissions: normalizePermissions(role.permissions),
-    regionTags: [...role.regionTags],
-    otherTags: [...role.otherTags],
     color: role.color,
     isBuiltIn: role.isBuiltIn,
     isProtected: role.isProtected,
@@ -183,8 +165,6 @@ export async function createRole(input: CreateRoleInput, actor?: string): Promis
   }
   const description = normalizeDescription(input.description);
   const permissions = normalizePermissions(input.permissions);
-  const regionTags = normalizeRegionTags(input.regionTags);
-  const otherTags = normalizeOtherTags(input.otherTags);
   const color = normalizeColor(input.color);
 
   const created = await prisma.role.create({
@@ -192,8 +172,6 @@ export async function createRole(input: CreateRoleInput, actor?: string): Promis
       name,
       description,
       permissions,
-      regionTags,
-      otherTags,
       color,
       isBuiltIn: false,
       isProtected: false,
@@ -209,7 +187,7 @@ export async function createRole(input: CreateRoleInput, actor?: string): Promis
     resourceName: created.name,
     actor,
     message: `Role "${created.name}" created`,
-    details: { permissions, description, regionTags, otherTags, color },
+    details: { permissions, description, color },
   });
 
   return summarize(created);
@@ -226,8 +204,6 @@ export async function updateRole(id: string, input: UpdateRoleInput, actor?: str
     name?: string;
     description?: string | null;
     permissions?: Record<string, AccessLevel>;
-    regionTags?: string[];
-    otherTags?: string[];
     color?: string | null;
     grantReviewNeeded?: boolean;
   } = {};
@@ -280,24 +256,6 @@ export async function updateRole(id: string, input: UpdateRoleInput, actor?: str
     if (before.grantReviewNeeded) {
       data.grantReviewNeeded = false;
       diff.grantReviewNeeded = { from: true, to: false };
-    }
-  }
-  if (input.regionTags !== undefined) {
-    const next = normalizeRegionTags(input.regionTags);
-    const prev = [...before.regionTags];
-    const same = next.length === prev.length && next.every((v, i) => v === prev[i]);
-    if (!same) {
-      data.regionTags = next;
-      diff.regionTags = { from: prev, to: next };
-    }
-  }
-  if (input.otherTags !== undefined) {
-    const next = normalizeOtherTags(input.otherTags);
-    const prev = [...before.otherTags];
-    const same = next.length === prev.length && next.every((v, i) => v === prev[i]);
-    if (!same) {
-      data.otherTags = next;
-      diff.otherTags = { from: prev, to: next };
     }
   }
   if (input.color !== undefined) {

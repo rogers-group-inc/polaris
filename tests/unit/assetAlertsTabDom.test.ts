@@ -118,6 +118,9 @@ async function mount(opts?: { perm?: string; alerts?: any[]; downDetection?: any
   const perm = opts?.perm ?? "fullwrite";
   const RANK: Record<string, number> = { none: 0, read: 1, write: 2, fullwrite: 3 };
   g.permAtLeast = (_key: string, level: string) => RANK[perm] >= RANK[level];
+  // "fullwrite" is this harness's shorthand for "may also clear": clearing is
+  // its own key (alertClear) since 2026-11-03, read through canClearAlerts().
+  g.canClearAlerts = () => perm === "fullwrite";
   g.escapeHtml = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   g.showToast = (msg: string, type?: string) => ctx.toasts.push({ msg, type: type || "success" });
   g.showConfirm = vi.fn(async () => true);

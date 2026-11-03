@@ -46,13 +46,13 @@ someone else's owned one. It manages only those with no owner
 A tag on a device is **write reach**: release 2 of the write-scope change
 (rule 141) makes Read-Write on the asset-side keys reach the rows you own *or
 that carry one of your tags*. So whoever may put a tag on a record is handing
-out access, and that is the **Tags** key's grant — not Assets, Subnets, Users or
-Roles write:
+out access, and that is the **Tags** key's grant — not Assets, Subnets or
+Users write:
 
 | `tags` level | May |
 |---|---|
 | `read` | see the registry (every built-in has it — the pickers draw their colours from it) |
-| `write` | manage the registry (create, rename, recolour, delete, auto-assign filters, the *force predefined tags* setting) **and** put a tag on, or take one off, any record: a device, a port, a network, a block, a user, a role, an IdP group mapping |
+| `write` | manage the registry (create, rename, recolour, delete, auto-assign filters, the *force predefined tags* setting) **and** put a tag on, or take one off, any record: a device, a port, a network, a block, a user, an IdP group mapping |
 
 A form that may not edit tags still shows the record's tags, as fixed chips,
 and posts them back unchanged. Only the built-in `admin` holds Tags Read-Write
@@ -320,18 +320,22 @@ save the role or choose **Mark reviewed** from its menu
 
 ## Tags and region scope
 
-`Role`, `User` and `GroupMapping` each carry two operator-typed tag dimensions:
-**region tags** and **other tags**. Empty means **unrestricted**.
+`User` and `GroupMapping` each carry two operator-typed tag dimensions:
+**region tags** and **other tags**. Empty means **unrestricted**. **A role
+carries no tags** (since 2026-11-03): a role says what a person may *do*, a tag
+says *which records* — so tags live on assets, on users and on IdP group
+mappings, and a role is the permission matrix alone. Tags a role carried before
+the update were dropped, not moved; assign them on the account or the group.
 
-A session's effective scope is the **union** of role, user and group-derived
+A session's effective scope is the **union** of user and group-derived
 tags, per dimension. Group-derived tags are re-resolved live on every
 `/auth/me`, never persisted onto the user's own columns — so operator-set tags
 survive a re-login.
 
-**Assign Tags edits both dimensions through one picker.** A map region already
-*is* a registry tag (`region:<name>` in a locked category), so a separate region
-control listed the same names twice in the same dialog. The prefix carries the
-split instead.
+**Assign Tags (users) and the group-mapping editor edit both dimensions through
+one picker.** A map region already *is* a registry tag (`region:<name>` in a
+locked category), so a separate region control listed the same names twice in
+the same dialog. The prefix carries the split instead.
 
 Two behaviours that exist because the columns hold **bare names with no foreign
 key**:
@@ -351,7 +355,7 @@ key**:
 
 **Region scope never narrows an administrator's alerts.** An admin-equivalent
 role (Full Read-Write on both `users` and `roles`) sees and can acknowledge
-every alert, whatever region tags its user, role or SSO group carry. An admin
+every alert, whatever region tags its user or SSO group carry. An admin
 in a regional IdP group picks up that group's tags without anyone meaning to
 narrow them, and the Active Alerts widget and the device's Alerts tab are not
 region-scoped — so a scoped admin would see an alert there and then be told it

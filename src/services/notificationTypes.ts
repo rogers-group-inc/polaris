@@ -1982,7 +1982,7 @@ export const deliveryTargetSchema = z.object({
   // save). recipientAllUsers = every user account; recipientAllRegions = every
   // user carrying at least one region tag; recipientRegions = users in the
   // NAMED regions. Names are stored BARE ("Atlanta"), matching how
-  // User/Role/GroupMapping.regionTags are stored — the `region:` prefix only
+  // User/GroupMapping.regionTags are stored — the `region:` prefix only
   // exists on ASSET tags.
   recipientAllUsers: z.boolean().optional(),
   recipientAllRegions: z.boolean().optional(),

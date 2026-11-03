@@ -25651,7 +25651,7 @@ function openLogFlagRulesModal(asset, processName, onChange) {
  */
 function _assetAlertTableShape() {
   var canAck = permAtLeast("alerts", "write");
-  var canClear = canClearAlerts();
+  var canClear = typeof canClearAlerts === "function" ? canClearAlerts() : false;
   var canSelect = canAck || canClear;
   return {
     canAck: canAck,

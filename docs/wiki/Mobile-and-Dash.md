@@ -51,7 +51,7 @@ preference**; **Add to Home Screen** when the app is not installed yet; the
 **theme strip** (tap to move through the day, as the desktop's theme band
 does; on Android the phone's status bar takes the theme's colour too); your **Account**; **Desktop view**; and **Sign out**. Its **Account** row shows your name, your
 role and, under them, the regions and tags your account is scoped to — the ones
-from your role, your user and your sign-in groups together, regions first. An
+on your user and from your sign-in groups together, regions first. An
 account with no tag scope shows no tags there.
 
 The app works whichever way you hold the phone, upright or sideways, and turns

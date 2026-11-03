@@ -30,7 +30,6 @@ const READONLY_ROLE = {
   isProtected: true,
   permissions: { assets: "read", events: "read", integrations: "none" },
   updatedAt: new Date("2026-01-01T00:00:00Z"),
-  regionTags: ["hq"],
 };
 
 beforeEach(() => {
@@ -41,7 +40,7 @@ beforeEach(() => {
 describe("getReadonlyRoleIdentity", () => {
   it("builds a stampable snapshot from the seeded readonly role", async () => {
     findUnique.mockResolvedValue(READONLY_ROLE);
-    const { snapshot, regionTags } = await getReadonlyRoleIdentity();
+    const { snapshot } = await getReadonlyRoleIdentity();
     expect(findUnique).toHaveBeenCalledWith({ where: { name: "readonly" } });
     expect(snapshot.id).toBe("role-readonly-id");
     expect(snapshot.name).toBe("readonly");
@@ -49,7 +48,6 @@ describe("getReadonlyRoleIdentity", () => {
     expect(snapshot.permissions.assets).toBe("read");
     expect(snapshot.permissions.integrations).toBe("none");
     expect(typeof snapshot.updatedAt).toBe("string");
-    expect(regionTags).toEqual(["hq"]);
   });
 
   it("throws AppError 500 when the readonly role row is missing", async () => {
@@ -71,9 +69,4 @@ describe("getReadonlyRoleIdentity", () => {
     expect(findUnique).toHaveBeenCalledTimes(2);
   });
 
-  it("normalizes a missing regionTags column to an empty array", async () => {
-    findUnique.mockResolvedValue({ ...READONLY_ROLE, regionTags: undefined });
-    const { regionTags } = await getReadonlyRoleIdentity();
-    expect(regionTags).toEqual([]);
-  });
 });

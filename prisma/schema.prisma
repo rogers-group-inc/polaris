@@ -4287,13 +4287,10 @@ model Role {
   // are seeded with their historical colors by the role_color migration.
   color       String?
   permissions Json     @default("{}")
-  // Region scope inherited by every user holding this role. Empty =
-  // unrestricted. Effective regions for a session are
-  // `union(role.regionTags, user.regionTags, group-derived)`.
-  regionTags  String[] @default([]) @map("region_tags")
-  // Free-form ("other") tag scope inherited by every user holding this role —
-  // a second dimension parallel to regionTags, same union semantics.
-  otherTags   String[] @default([]) @map("other_tags")
+  // A role carries NO tag scope (region_tags / other_tags dropped by migration
+  // 20261103180000_role_tags_dropped): tags live on assets, users and IdP
+  // group mappings, and a session's scope is `union(user, group-derived)`.
+  // A role is the permission matrix alone.
   isBuiltIn   Boolean  @default(false) @map("is_built_in")
   isProtected Boolean  @default(false) @map("is_protected")
   // Business rule 114(i): set by the 2026-10 corrective migration on a custom

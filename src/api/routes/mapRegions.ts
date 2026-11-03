@@ -88,7 +88,8 @@ function scopeMovesMessage(m: PrincipalScopeMoves): string {
     const rest = names.length - NAMED;
     return `${label} ${shown}${rest > 0 ? ` and ${rest} more` : ""}`;
   };
-  return [list("users", m.users), list("roles", m.roles), list("group mappings", m.groupMappings)]
+  // Users and group mappings only — a role carries no tags since 2026-11-03.
+  return [list("users", m.users), list("group mappings", m.groupMappings)]
     .filter(Boolean)
     .join("; ");
 }

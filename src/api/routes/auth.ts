@@ -800,7 +800,7 @@ router.post("/logout", (req, res, next) => {
 
 // GET /api/v1/auth/me — returns the caller's identity + the full role
 // snapshot (id, name, isProtected, permissions matrix) plus the effective
-// region tag set (union of role.regionTags and user.regionTags). The
+// region tag set (union of user.regionTags and group-derived tags). The
 // frontend uses the snapshot to gate menu items / buttons without per-call
 // API checks. Returns 200 + `authenticated: false` for unauthenticated
 // callers — never 401 — so the login page can probe state.
@@ -810,10 +810,8 @@ router.get("/me", async (req, res, next) => {
       return res.json({ authenticated: false });
     }
     const snapshot = req.session.roleSnapshot ?? null;
-    // Load the user's own regionTags (and re-load role.regionTags from DB
-    // so a recent role edit is reflected without waiting for the snapshot
-    // version-cache refresh path). One indexed PK lookup per /auth/me
-    // call — same cost as the legacy implementation.
+    // Load the user's own tags with the role joined for the snapshot. One
+    // indexed PK lookup per /auth/me call.
     const u = await prisma.user.findUnique({
       where: { id: req.session.userId },
       include: { role: true },
@@ -823,7 +821,7 @@ router.get("/me", async (req, res, next) => {
       // best-effort response so the frontend can re-login cleanly.
       return res.json({ authenticated: false });
     }
-    // Effective region/other tag scope — union(role, user, group). Group
+    // Effective region/other tag scope — union(user, group). Group
     // tags are re-resolved live from the user's last-seen SSO groups, so a
     // GroupMapping edit takes effect on next page load without re-login.
     // Shared with the notifications region-scope filter via regionScopeService.

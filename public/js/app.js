@@ -513,7 +513,6 @@ var currentUserRoleColor = null;     // role.color (#rrggbb) or null
 var currentRolePermissions = {};     // { [functionKey]: "none"|"read"|"write"|"fullwrite" }
 var currentEffectiveRegions = [];    // string[]
 var currentUserRegions = [];         // user.regionTags
-var currentRoleRegions = [];         // role.regionTags
 var currentUsername = null;
 var currentUserAuthProvider = "local"; // "local" | "azure" | "oidc" | "ldap"
 // What "auto" resolves to in a server-rendered surface (an alert email), so
@@ -539,7 +538,6 @@ async function fetchCurrentUser() {
       currentUsername = data.username;
       currentUserAuthProvider = data.authProvider || "local";
       currentUserRegions = (data.regionTags && data.regionTags.user) || [];
-      currentRoleRegions = (data.regionTags && data.regionTags.role) || [];
       currentEffectiveRegions = (data.regionTags && data.regionTags.effective) || [];
       currentServerTimezone = data.serverTimezone || null;
       polarisIpv6Enabled = data.ipv6Enabled === true;
@@ -6091,6 +6089,10 @@ function tagFieldHTML(selected, opts) {
 
   // Read-only: render selected tags as static badges, no checkboxes or "add new" row.
   if (opts.readOnly || !mayEditTags) {
+    // Every tag the record carries is SHOWN, `azure:` ones included (the
+    // read-only view is the one place they are visible). What is POSTED back
+    // leaves them out, as the editable picker does: they are the Arc sync's
+    // and `withArcOwnedTags` keeps them server-side.
     var visibleSelected = selected;
     var roHint = (!opts.readOnly && !mayEditTags)
       ? '<p class="hint">Changing tags needs Read-Write on Tags.</p>'
@@ -6107,7 +6109,7 @@ function tagFieldHTML(selected, opts) {
       // the tags the record already carries, so a save from a form that may
       // not edit tags is "unchanged", not "cleared".
       return '<span class="tag-picker-chip selected' + hue.cls + '" style="' + hue.style + '">' +
-        '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '" checked hidden>' +
+        (isPickerHiddenTag(name) ? '' : '<input type="checkbox" name="f-tags-cb" value="' + escapeHtml(name) + '" checked hidden>') +
         escapeHtml(name) +
       '</span>';
     }).join('');

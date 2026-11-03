@@ -2,7 +2,10 @@
  * src/services/regionScopeService.ts
  *
  * Shared resolver for a user's effective region/other tag scope —
- * union(role tags, user tags, group-derived tags). Extracted from the
+ * union(user tags, group-derived tags). A ROLE carries no tags since
+ * 2026-11-03 (migration 20261103180000_role_tags_dropped): tags live on
+ * assets, users and IdP group mappings, and a role is the permission matrix
+ * alone. Extracted from the
  * GET /auth/me handler so the notifications list (and any future
  * region-scoped surface) computes scope identically.
  *
@@ -22,7 +25,6 @@ import { unionTags, renameTagInList } from "../utils/tagNormalize.js";
 
 export interface TagScope {
   user: string[];
-  role: string[];
   group: string[];
   effective: string[];
 }
@@ -33,24 +35,20 @@ export interface UserTagScopes {
 }
 
 /**
- * A user row already loaded with its role. Accepts the minimal shape so
- * callers that already hold a `prisma.user.findUnique({ include: { role } })`
- * result (e.g. /auth/me) don't pay a second query.
+ * A user row. Accepts the minimal shape so callers that already hold a
+ * `prisma.user.findUnique(...)` result (e.g. /auth/me) don't pay a second query.
  */
-interface UserWithRoleTags {
+interface UserWithTags {
   regionTags: string[] | null;
   otherTags: string[] | null;
   ssoGroups: string[] | null;
   authProvider: string;
-  role: { regionTags: string[] | null; otherTags: string[] | null };
 }
 
-/** Compute both tag-scope dimensions for an already-loaded user+role. */
-export async function resolveTagScopesForUser(u: UserWithRoleTags): Promise<UserTagScopes> {
+/** Compute both tag-scope dimensions for an already-loaded user. */
+export async function resolveTagScopesForUser(u: UserWithTags): Promise<UserTagScopes> {
   const userRegions = Array.isArray(u.regionTags) ? u.regionTags : [];
-  const roleRegions = Array.isArray(u.role.regionTags) ? u.role.regionTags : [];
   const userOther = Array.isArray(u.otherTags) ? u.otherTags : [];
-  const roleOther = Array.isArray(u.role.otherTags) ? u.role.otherTags : [];
 
   let groupRegions: string[] = [];
   let groupOther: string[] = [];
@@ -65,15 +63,13 @@ export async function resolveTagScopesForUser(u: UserWithRoleTags): Promise<User
   return {
     regionTags: {
       user: userRegions,
-      role: roleRegions,
       group: groupRegions,
-      effective: unionTags(roleRegions, userRegions, groupRegions),
+      effective: unionTags(userRegions, groupRegions),
     },
     otherTags: {
       user: userOther,
-      role: roleOther,
       group: groupOther,
-      effective: unionTags(roleOther, userOther, groupOther),
+      effective: unionTags(userOther, groupOther),
     },
   };
 }
@@ -86,7 +82,7 @@ export async function resolveTagScopesForUser(u: UserWithRoleTags): Promise<User
 export async function getEffectiveRegionTags(userId: string): Promise<string[]> {
   const u = await prisma.user.findUnique({
     where: { id: userId },
-    include: { role: true },
+    select: { regionTags: true, otherTags: true, ssoGroups: true, authProvider: true },
   });
   if (!u) return [];
   const scopes = await resolveTagScopesForUser(u);
@@ -101,7 +97,7 @@ export async function getEffectiveRegionTags(userId: string): Promise<string[]> 
  * an admin with regions assigned still has regions of their own.
  */
 export async function getEffectiveTagScopes(userId: string): Promise<{ regions: string[]; tags: string[] }> {
-  const u = await prisma.user.findUnique({ where: { id: userId }, include: { role: true } });
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { regionTags: true, otherTags: true, ssoGroups: true, authProvider: true } });
   if (!u) return { regions: [], tags: [] };
   const scopes = await resolveTagScopesForUser(u);
   return { regions: scopes.regionTags.effective, tags: scopes.otherTags.effective };
@@ -109,8 +105,8 @@ export async function getEffectiveTagScopes(userId: string): Promise<{ regions: 
 
 // ─── The write side: a region's name changing, or going away ────────────────
 //
-// The three principal scope columns (`User.regionTags`, `Role.regionTags`,
-// `GroupMapping.regionTags`) hold BARE region names and are deliberately not
+// The two principal scope columns (`User.regionTags`, `GroupMapping.regionTags`)
+// hold BARE region names and are deliberately not
 // FK'd to any registry, so nothing in the database ties them to the region they
 // name. `mapRegionService` rewrites asset tags, subnet tags and the `Tag`
 // registry on a rename and never touched these — which meant a rename revoked
@@ -119,22 +115,20 @@ export async function getEffectiveTagScopes(userId: string): Promise<{ regions: 
 // longer in the map)".
 //
 // They live HERE rather than in mapRegionService because this module already
-// owns the principal side of region scope (it is the one place that reads all
-// three columns), and because mapRegionService is imported by jobs that have no
+// owns the principal side of region scope (it is the one place that reads both
+// columns), and because mapRegionService is imported by jobs that have no
 // business pulling in group-mapping resolution.
 
 /** What a rename moved, named for the audit Event. */
 export interface PrincipalScopeMoves {
   /** Usernames whose own scope was rewritten. */
   users: string[];
-  /** Role names whose scope was rewritten. */
-  roles: string[];
   /** `provider:groupKey` for each IdP mapping rewritten. */
   groupMappings: string[];
   total: number;
 }
 
-const emptyMoves = (): PrincipalScopeMoves => ({ users: [], roles: [], groupMappings: [], total: 0 });
+const emptyMoves = (): PrincipalScopeMoves => ({ users: [], groupMappings: [], total: 0 });
 
 /**
  * Carry a region rename into every principal's region scope.
@@ -144,7 +138,7 @@ const emptyMoves = (): PrincipalScopeMoves => ({ users: [], roles: [], groupMapp
  * `key()` in regionHierarchyService, the Users page picker), so a tag differing
  * only in case is a live assignment and must move too.
  *
- * Scale: three `findMany`s over principal tables — users, roles and IdP group
+ * Scale: two `findMany`s over principal tables — users and IdP group
  * mappings are operator-created and number in the tens to low hundreds even on
  * a 2000-asset install, so this reads them whole and filters in memory rather
  * than pushing a case-insensitive array predicate into SQL. Only rows that
@@ -162,9 +156,8 @@ export async function renameRegionInPrincipalScopes(
   const to = String(nextName ?? "").trim();
   if (!from || !to || from.toLowerCase() === to.toLowerCase()) return emptyMoves();
 
-  const [users, roles, mappings] = await Promise.all([
+  const [users, mappings] = await Promise.all([
     prisma.user.findMany({ select: { id: true, username: true, regionTags: true } }),
-    prisma.role.findMany({ select: { id: true, name: true, regionTags: true } }),
     prisma.groupMapping.findMany({ select: { id: true, provider: true, groupKey: true, regionTags: true } }),
   ]);
 
@@ -177,12 +170,6 @@ export async function renameRegionInPrincipalScopes(
     moves.users.push(u.username);
     writes.push(prisma.user.update({ where: { id: u.id }, data: { regionTags: next } }));
   }
-  for (const r of roles) {
-    const next = renameTagInList(r.regionTags, from, to);
-    if (!next) continue;
-    moves.roles.push(r.name);
-    writes.push(prisma.role.update({ where: { id: r.id }, data: { regionTags: next } }));
-  }
   for (const m of mappings) {
     const next = renameTagInList(m.regionTags, from, to);
     if (!next) continue;
@@ -191,7 +178,7 @@ export async function renameRegionInPrincipalScopes(
   }
 
   if (writes.length > 0) await prisma.$transaction(writes);
-  moves.total = moves.users.length + moves.roles.length + moves.groupMappings.length;
+  moves.total = moves.users.length + moves.groupMappings.length;
   return moves;
 }
 
@@ -212,18 +199,16 @@ export async function principalsScopedToRegion(name: string): Promise<PrincipalS
   const holds = (tags: string[] | null) =>
     Array.isArray(tags) && tags.some((t) => String(t ?? "").trim().toLowerCase() === key);
 
-  const [users, roles, mappings] = await Promise.all([
+  const [users, mappings] = await Promise.all([
     prisma.user.findMany({ select: { username: true, regionTags: true } }),
-    prisma.role.findMany({ select: { name: true, regionTags: true } }),
     prisma.groupMapping.findMany({ select: { provider: true, groupKey: true, regionTags: true } }),
   ]);
 
   const moves = emptyMoves();
   moves.users = users.filter((u) => holds(u.regionTags)).map((u) => u.username);
-  moves.roles = roles.filter((r) => holds(r.regionTags)).map((r) => r.name);
   moves.groupMappings = mappings
     .filter((m) => holds(m.regionTags))
     .map((m) => `${m.provider}:${m.groupKey}`);
-  moves.total = moves.users.length + moves.roles.length + moves.groupMappings.length;
+  moves.total = moves.users.length + moves.groupMappings.length;
   return moves;
 }

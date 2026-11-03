@@ -6,7 +6,7 @@
  * from a single field. Role assignment goes through PUT /:id/role with
  * `{ roleId }`. Region tag assignment goes through PUT /:id/regions with
  * `{ regionTags }` (admin operator-driven; effective region set for a
- * session is union(role.regionTags, user.regionTags)).
+ * session is union(user.regionTags, group-derived)).
  *
  * `lastAdminEquivalent` invariant: any operation that would leave Polaris
  * with zero users holding an admin-equivalent role (`users=fullwrite` AND

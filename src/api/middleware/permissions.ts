@@ -248,7 +248,7 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // access. Assigning therefore rides THIS key, not the record's own — a role
   // with Assets Read-Write edits a device but cannot tag it. Read is the floor
   // for every built-in (pickers need the registry's names and colours).
-  { key: "tags", section: "serverSettings", label: "Tags", description: "The tag registry (names, colours, categories, auto-assign filters) AND putting a tag on, or taking one off, any record — a device, port, network, user, role or group mapping. Tags grant write reach, so this is an administrator's grant.", levels: UP_TO_WRITE, alsoOn: ["assets", "ipManagement", "users"] },
+  { key: "tags", section: "serverSettings", label: "Tags", description: "The tag registry (names, colours, categories, auto-assign filters) AND putting a tag on, or taking one off, any record — a device, port, network, user or IdP group mapping. Tags grant write reach, so this is an administrator's grant.", levels: UP_TO_WRITE, alsoOn: ["assets", "ipManagement", "users"] },
   { key: "credentials", section: "serverSettings", label: "Credentials", description: "Stored SNMP / WinRM / SSH / REST / HTTP probe credentials. Read-Only lists them masked; Read-Write = your own rows.", hasOwnershipDimension: true, alsoOn: ["assets", "integrations", "pathMonitor"] },
   // The firmware repository for switches and access points (business rule 87)
   // — the REPOSITORY only. Read = see the Repository tab and its runs;
@@ -849,7 +849,7 @@ export function assertOwnership(req: Request, createdBy: string | null, action: 
  * user who holds that tag (business rule 141, release 2), so whoever may tag
  * is handing out access — and the operator decided that is an administrator's
  * act. Chained at every route that accepts a tags array for a device, port,
- * network, block, user, role or IdP group mapping.
+ * network, block, user or IdP group mapping (a role carries no tags since 2026-11-03).
  *
  * `after === undefined` means the body left the tags alone. The comparison is
  * the set, case-insensitive and trimmed, with `azure:` tags left out: those

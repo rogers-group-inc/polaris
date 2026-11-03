@@ -458,7 +458,7 @@ export async function listScopeOptions(): Promise<{
     nativeVlans,
     subnets,
     ipBlocks,
-    // Bare names — how User/Role/GroupMapping.regionTags store them. The
+    // Bare names — how User/GroupMapping.regionTags store them. The
     // `region:` prefix exists only on ASSET tags.
     regions: regions.map((r) => r.name).filter((n) => !!n && n.trim() !== "").sort(),
     regionLevels: regionLevelsOut,

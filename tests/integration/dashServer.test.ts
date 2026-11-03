@@ -56,7 +56,6 @@ const READONLY_IDENTITY: DashRoleIdentity = {
     },
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
-  regionTags: [],
 };
 
 function buildApp(opts: { settings?: Partial<DashSettings>; proxyMode?: boolean } = {}) {
@@ -222,8 +221,9 @@ describe("synthetic /auth/me", () => {
         color: null,
       },
     });
-    expect(res.body.regionTags).toEqual({ user: [], role: [], group: [], effective: [] });
-    expect(res.body.otherTags).toEqual({ user: [], role: [], group: [], effective: [] });
+    // A role carries no tags (2026-11-03): the wallboard's scope is unrestricted.
+    expect(res.body.regionTags).toEqual({ user: [], group: [], effective: [] });
+    expect(res.body.otherTags).toEqual({ user: [], group: [], effective: [] });
   });
 });
 

@@ -2,7 +2,7 @@
  * tests/unit/regionScopeRename.test.ts — a region rename carries the principal
  * scope columns; a region delete reports instead of stripping them.
  *
- * `User.regionTags` / `Role.regionTags` / `GroupMapping.regionTags` hold BARE
+ * `User.regionTags` / `GroupMapping.regionTags` hold BARE
  * region names and are deliberately not FK'd to a registry, so the name is the
  * only thing tying an assignment to the region it means. mapRegionService
  * rewrote asset tags, subnet tags and the `Tag` registry on a rename and left
@@ -20,12 +20,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renameTagInList } from "../../src/utils/tagNormalize.js";
 
 interface UserRow { id: string; username: string; regionTags: string[] }
-interface RoleRow { id: string; name: string; regionTags: string[] }
 interface MapRow { id: string; provider: string; groupKey: string; regionTags: string[] }
 
-const store: { users: UserRow[]; roles: RoleRow[]; mappings: MapRow[] } = {
+const store: { users: UserRow[]; mappings: MapRow[] } = {
   users: [],
-  roles: [],
   mappings: [],
 };
 
@@ -90,10 +88,6 @@ beforeEach(() => {
     { id: "u3", username: "tech-lower", regionTags: ["southeast", "Midwest"] },
     { id: "u4", username: "unscoped", regionTags: [] },
   ];
-  store.roles = [
-    { id: "r1", name: "se-oncall", regionTags: ["Southeast"] },
-    { id: "r2", name: "global", regionTags: [] },
-  ];
   store.mappings = [
     { id: "g1", provider: "oidc", groupKey: "SE-Ops", regionTags: ["Southeast"] },
     { id: "g2", provider: "ldap", groupKey: "MW-Ops", regionTags: ["Midwest"] },
@@ -130,16 +124,14 @@ describe("renameTagInList (pure)", () => {
 });
 
 describe("renameRegionInPrincipalScopes", () => {
-  it("rewrites users, roles and group mappings that name the region", async () => {
+  it("rewrites users and group mappings that name the region", async () => {
     const moves = await renameRegionInPrincipalScopes("Southeast", "SE Division");
     expect(moves.users).toEqual(["tech-se", "tech-lower"]);
-    expect(moves.roles).toEqual(["se-oncall"]);
     expect(moves.groupMappings).toEqual(["oidc:SE-Ops"]);
-    expect(moves.total).toBe(4);
+    expect(moves.total).toBe(3);
 
     expect(store.users.find((u) => u.id === "u1")!.regionTags).toEqual(["SE Division"]);
     expect(store.users.find((u) => u.id === "u3")!.regionTags).toEqual(["SE Division", "Midwest"]);
-    expect(store.roles.find((r) => r.id === "r1")!.regionTags).toEqual(["SE Division"]);
     expect(store.mappings.find((m) => m.id === "g1")!.regionTags).toEqual(["SE Division"]);
   });
 
@@ -169,9 +161,8 @@ describe("principalsScopedToRegion", () => {
   it("names every principal holding the region, case-insensitively", async () => {
     const held = await principalsScopedToRegion("southeast");
     expect(held.users).toEqual(["tech-se", "tech-lower"]);
-    expect(held.roles).toEqual(["se-oncall"]);
     expect(held.groupMappings).toEqual(["oidc:SE-Ops"]);
-    expect(held.total).toBe(4);
+    expect(held.total).toBe(3);
   });
 
   it("reports without stripping — the assignment survives the delete", async () => {

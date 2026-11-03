@@ -158,7 +158,7 @@ User
   roleId        String         -- FK Role; onDelete: Restrict (cannot delete a role that has users)
   role          Role           -- joined Role row, joined on every list/get response
   -- Per-user region scope. Empty = unrestricted (matches pre-cutover default).
-  -- Effective regions for a session are `union(role, user, group-derived)`.
+  -- Effective regions for a session are `union(user, group-derived)` (a Role carries none since 2026-11-03).
   -- Operator-set; group-derived tags are NEVER written here.
   regionTags    String[]       @default([])
   otherTags     String[]       @default([]) -- Per-user free-form ("other") tag scope; second dimension parallel to regionTags, same union semantics.
@@ -215,11 +215,8 @@ Role                            -- Dynamic role + permission matrix; replaces th
   name          String @unique  -- 2-32 chars, alphanumeric + dash/underscore. Case-insensitive uniqueness enforced at service layer.
   description   String?
   permissions   Json            -- { [functionKey]: "none" | "read" | "write" | "fullwrite" } per the 25-key catalogue in `src/api/middleware/permissions.ts`. Missing keys default to "none" at read.
-  -- Region scope inherited by every user holding this role. Empty =
-  -- unrestricted. Effective regions for a session are
-  -- `union(role, user, group-derived)`.
-  regionTags    String[]       @default([])
-  otherTags     String[]       @default([]) -- Free-form ("other") tag scope inherited by users with this role; second dimension parallel to regionTags.
+  -- No tag scope: `region_tags` / `other_tags` dropped by 20261103180000_role_tags_dropped.
+  -- Tags live on assets, users and group mappings; a role is the permission matrix alone.
   color         String?         -- Badge pill color as `#rrggbb`; null falls back to the legacy name-keyed `.badge-*` CSS classes in the frontend. Drives the sidebar user-badge, the users-table role column, and the Manage Roles list. Built-ins seeded by the `20260601000000_role_color` migration (admin red / networkadmin orange / assetsadmin blue / readonly gray / user green); new roles get a random color from the add-role color picker.
   isBuiltIn     Boolean        @default(false) -- true for the five seeded rows (admin / readonly / networkadmin / assetsadmin / user)
   isProtected   Boolean        @default(false) -- true for admin + readonly only; blocks edit/delete/rename + hides the row from the editable UI
