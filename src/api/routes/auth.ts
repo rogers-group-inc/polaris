@@ -126,13 +126,40 @@ function regenerateSession(req: Request): Promise<void> {
  * `mfaVerified` is true for every SSO/directory provider (the IdP owns MFA)
  * and for the post-TOTP step; false only on the local password step of a
  * TOTP-enrolled account.
+ *
+ * It is also the ONE gate for a disabled account (business rule 140): every
+ * sign-in path — password, the TOTP and password-change steps, both passkey
+ * ceremonies, SAML, OIDC, LDAP, Entra App Proxy — reaches its session through
+ * here, so refusing here refuses them all, and only after the credential
+ * checked out (a wrong password never learns the account is disabled). The
+ * session was already regenerated, so the refusal leaves it empty.
+ * `disabledAt` is required in the type so a path that loads the user without
+ * it fails to compile rather than skipping the check.
  */
 function stampLoginSession(
   req: Request,
-  user: { id: string; username: string; roleId: string; role: Parameters<typeof snapshotFromRole>[0] & { name: string } },
+  user: {
+    id: string;
+    username: string;
+    roleId: string;
+    disabledAt: Date | null;
+    role: Parameters<typeof snapshotFromRole>[0] & { name: string };
+  },
   authProvider: string,
   mfaVerified: boolean,
 ): void {
+  if (user.disabledAt) {
+    logEvent({
+      action: "auth.login.disabled",
+      resourceType: "user",
+      resourceId: user.id,
+      resourceName: user.username,
+      level: "warning",
+      message: `Sign-in refused for disabled account "${user.username}" (${authProvider})`,
+      details: { ip: req.ip, authProvider },
+    });
+    throw new AppError(403, "This account is disabled. Ask an administrator to enable it.");
+  }
   req.session.userId = user.id;
   req.session.username = user.username;
   req.session.roleId = user.roleId;

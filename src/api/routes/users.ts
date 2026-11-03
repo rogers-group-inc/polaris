@@ -86,6 +86,8 @@ const USER_LIST_SELECT = {
   needsRoleReview: true,
   regionTags: true,
   otherTags: true,
+  disabledAt: true,
+  disabledBy: true,
   role: { select: { id: true, name: true, color: true, isProtected: true, isBuiltIn: true } },
 } as const;
 
@@ -452,6 +454,104 @@ router.delete("/:id/passkeys", requirePermission("users", "write"), async (req, 
       message: `${removed} passkey${removed === 1 ? "" : "s"} revoked for user "${user.username}" by an administrator`,
     });
     res.json({ ok: true, removed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/users/:id/disable-preview — what a disable would release, for
+// the confirm dialog's numbers. Read-only.
+router.get("/:id/disable-preview", requirePermission("users", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const mine = { ownerId: id };
+    const priv = { ...mine, visibility: "private" };
+    const pub = { ...mine, visibility: "public" };
+    const [pf, pfi, pd, uf, ufi, ud] = await Promise.all([
+      prisma.savedFolder.count({ where: priv }),
+      prisma.savedTableFilter.count({ where: priv }),
+      prisma.savedDashboard.count({ where: priv }),
+      prisma.savedFolder.count({ where: pub }),
+      prisma.savedTableFilter.count({ where: pub }),
+      prisma.savedDashboard.count({ where: pub }),
+    ]);
+    res.json({
+      deleted: { folders: pf, filters: pfi, dashboards: pd },
+      ownerless: { folders: uf, filters: ufi, dashboards: ud },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/users/:id/disable — business rule 140. The account can no
+// longer sign in by ANY path (auth.ts refuses where every path stamps its
+// session), every live session ends now, and its saved items are released
+// exactly as a delete releases them. Enabling does not give them back.
+router.post("/:id/disable", requirePermission("users", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const user = await prisma.user.findUnique({ where: { id }, include: { role: true } });
+    if (!user) throw new AppError(404, "User not found");
+    if (req.session?.userId === user.id) throw new AppError(400, "You cannot disable your own account");
+    assertMayActOnAccount(req, user);
+    if (user.disabledAt) throw new AppError(409, `"${user.username}" is already disabled`);
+    // lastAdminEquivalent invariant: a disabled admin controls nothing.
+    if (await isAdminEquivalentRole(user.roleId)) {
+      const remaining = await countAdminEquivalentUsers(user.id);
+      if (remaining === 0) {
+        throw new AppError(409, "Cannot disable — this is the last active admin-equivalent account. Promote another user first.");
+      }
+    }
+
+    // Stamp FIRST, so a sign-in racing the release is already refused.
+    await prisma.user.update({
+      where: { id },
+      data: { disabledAt: new Date(), disabledBy: req.session?.username ?? null },
+    });
+    await revokeUserSessions(id);
+    // A password step already passed must not finish into a session.
+    mfaPending.revokeForUser(id);
+    const released = await releaseUserOwnership(id);
+    const savedNote = releasedSummary(released);
+    logEvent({
+      action: "user.disabled",
+      resourceType: "user",
+      resourceId: user.id,
+      resourceName: user.username,
+      actor: req.session?.username,
+      level: "warning",
+      message: `User "${user.username}" disabled — signed out everywhere and can no longer sign in` +
+        (savedNote ? `; ${savedNote}` : ""),
+      details: { savedItems: released },
+    });
+    res.json({ ok: true, released });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/users/:id/enable — lets the account sign in again. Nothing the
+// disable released comes back.
+router.post("/:id/enable", requirePermission("users", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const user = await prisma.user.findUnique({ where: { id }, include: { role: true } });
+    if (!user) throw new AppError(404, "User not found");
+    assertMayActOnAccount(req, user);
+    if (!user.disabledAt) throw new AppError(409, `"${user.username}" is not disabled`);
+    await prisma.user.update({ where: { id }, data: { disabledAt: null, disabledBy: null } });
+    // A lockout earned before the disable should not greet the returning user.
+    clearLockout(user.username);
+    logEvent({
+      action: "user.enabled",
+      resourceType: "user",
+      resourceId: user.id,
+      resourceName: user.username,
+      actor: req.session?.username,
+      message: `User "${user.username}" enabled — can sign in again`,
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
