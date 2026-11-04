@@ -208,3 +208,22 @@ Found alongside: FortiManager direct mode remapped every gate-keyed result array
 Rejected alternatives: matching on address alone (the factory-default collision above); matching on address + "FortiAP OS" / Fortinet vendor (still cross-site); waiting for authorization (the AP may never be authorized, and the duplicate is what the operator sees meanwhile).
 
 Same change, outside this rule: an AP whose controller state is `discovered` / `unauthorized` is `storage` (as an Unauthorized FortiSwitch already was), moved only between `active` and `storage` so an operator-set status survives.
+
+### 91(f) — a DHCP hostname is never a match, and a shared name never merges (2026-11-04)
+
+Prod 2026-11-04: the operator reported "many devices with the same hostname that are being merged together" — `KRONOS-INTOUCH-DX` (a time-clock model that names itself that), `espressif` (the ESP32 SDK default), `iPhone` — each showing as one asset holding, in places, a hundred IPs and MACs.
+
+Two mechanisms, both treating the name as identity:
+
+- **Phases 6 and 7 of `syncDhcpSubnets`.** A lease or detected-device row whose MAC no asset knew fell back to `AssetIndex.findByEntryWithRung`'s `hostname` rung. 91(b) had closed that rung for monitored and credentialed assets only; for any other asset the new MAC was added — usually as primary — and the address claimed. The MAC was then indexed as identity, so the next run matched by MAC and the fusion was permanent. One run per new device added one more card.
+- **`mergeDuplicateHostnameAssets` pass 3.** `decideDuplicateHostnameGroup` skipped a group only when two rows were tied at the SAME source tier and both carried a primary MAC that disagreed. Across tiers — an Intune `iPhone` (tier 1) beside forty `fortigate-endpoint` `iPhone`s (tier 5) — or with a MAC-less row anywhere in the group, it merged everything into the canonical, and there was no cap on the group's size.
+
+Owner decision (asked with three options: an automatic shared-name count, the count plus an operator list, or never match on hostname): **never match on hostname**, and **prevention only** — no automatic split of assets already fused.
+
+What was built: `findByEntryWithRung` takes `allowHostname` (default `true`, so the FortiGate / FortiSwitch / FortiAP name fallbacks elsewhere are unchanged), and the three Phase 6 / 7 call sites pass `false`. The `serial` rung (c) stays — it is corroborated by the device's recorded address, not by the name alone. The merge policy compares primary MACs across every pair at every tier (a MAC-less canonical must not become the bridge that fuses two cards), and refuses a group of more than `MAX_PLAUSIBLE_HOSTNAME_DUPLICATES` (3) rows before ranking — the serial pass's figure and reasoning, a separate constant because the two may diverge. A MAC-less directory record beside ONE MAC-carrying endpoint still merges, which is the workstation-ghost case the job was written for.
+
+The accepted cost, stated to the owner before the choice: a phone rotating a private MAC, or a docked laptop's wired and Wi-Fi cards, now appear as two assets until something with real evidence (a directory MAC, the agent, an operator merge) links them.
+
+Not changed: the 91(b) `adoptRefused` branches in Phases 6 and 7 are unreachable from those phases now (nothing there matches on the rung they test) and were left in place as the backstop; removing them is a separate cleanup. The directory, vCenter, workload and Generic API hostname matches (`lookupHostname`) raise a Conflict, never a silent merge, and are out of scope. Assets already fused keep their MACs; the MAC rung will keep matching those cards to them until an operator removes the MACs (rule 79) or deletes the asset so discovery re-creates one per device.
+
+Rejected alternatives: counting the distinct MACs that report a hostname in each run and disabling the rung only for names seen on more than three (keeps the docked-laptop match, but a shared name is fused for its first three devices and the count is per-run, so a fleet that sights devices on different runs never trips it); an operator list of names that are never identities (a setting to maintain, and it is always one product line behind); an automatic split of fused assets (nothing records which MAC was the asset's first, so a split would guess).

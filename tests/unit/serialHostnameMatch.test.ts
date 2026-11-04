@@ -117,3 +117,36 @@ describe("AssetIndex serial rung (rule 91(c))", () => {
     expect(idx.findByEntryWithRung(undefined, SERIAL, MGMT_IP, { allowIpFallback: false })).toBeUndefined();
   });
 });
+
+/**
+ * Rule 91(f): the DHCP lease and detected-device paths pass
+ * `allowHostname: false`, because a client's DHCP hostname is whatever it
+ * sent and whole product lines send the same one.
+ */
+describe("AssetIndex hostname rung off (rule 91(f))", () => {
+  const espressif = { id: "esp-1", hostname: "espressif", macAddress: "AA:BB:CC:00:00:01", macAddresses: [], ipAddress: "10.1.1.5", assetType: "other" };
+
+  it("a second device sending the same DHCP hostname matches nothing", () => {
+    const idx = new AssetIndex([espressif]);
+    const hit = idx.findByEntryWithRung("AA:BB:CC:00:00:02", "espressif", "10.1.1.6", { allowIpFallback: false, serialHostname: true, allowHostname: false });
+    expect(hit).toBeUndefined();
+  });
+
+  it("the device's own MAC still matches", () => {
+    const idx = new AssetIndex([espressif]);
+    const hit = idx.findByEntryWithRung("aa-bb-cc-00-00-01", "espressif", "10.1.1.5", { allowIpFallback: false, serialHostname: true, allowHostname: false });
+    expect(hit?.asset.id).toBe("esp-1");
+    expect(hit?.rung).toBe("mac");
+  });
+
+  it("the serial rung survives — it is corroborated by address", () => {
+    const idx = new AssetIndex([managedSwitch()]);
+    const hit = idx.findByEntryWithRung(undefined, SERIAL, MGMT_IP, { allowIpFallback: false, serialHostname: true, allowHostname: false });
+    expect(hit?.rung).toBe("serial");
+  });
+
+  it("other callers keep the hostname rung by default", () => {
+    const idx = new AssetIndex([espressif]);
+    expect(idx.findByEntryWithRung(undefined, "ESPRESSIF", undefined, { allowIpFallback: false })?.rung).toBe("hostname");
+  });
+});

@@ -2026,11 +2026,19 @@ export class AssetIndex {
    * resolves to that device (business rule 91(c), `serialHostnameCorroborated`).
    * It sits above "hostname" so an endpoint ghost a past run minted under the
    * serial no longer outranks the device it duplicates.
+   *
+   * `allowHostname: false` (the DHCP lease and detected-device paths, business
+   * rule 91(f)) drops the bare "hostname" rung. A DHCP client's hostname is
+   * option 12 — whatever the device sent — and whole product lines send the
+   * same one ("iPhone", "espressif", a time clock's fixed name), so the rung
+   * stapled every such device's MAC and address onto whichever asset first
+   * took the name. The serial rung stays: it is corroborated by address.
    */
   findByEntryWithRung(
-    mac?: string, hostname?: string, ip?: string, opts: { allowIpFallback?: boolean; serialHostname?: boolean } = {},
+    mac?: string, hostname?: string, ip?: string,
+    opts: { allowIpFallback?: boolean; serialHostname?: boolean; allowHostname?: boolean } = {},
   ): { asset: any; rung: AssetIndexRung } | undefined {
-    const { allowIpFallback = true, serialHostname = false } = opts;
+    const { allowIpFallback = true, serialHostname = false, allowHostname = true } = opts;
     if (mac) {
       const norm = mac.toUpperCase().replace(/-/g, ":");
       const hit = this.byMac.get(norm);
@@ -2040,7 +2048,7 @@ export class AssetIndex {
       const hit = this.bySerial.get(normalizeSerialKey(hostname));
       if (hit && serialHostnameCorroborated(hit, hostname, ip)) return { asset: hit, rung: "serial" };
     }
-    if (hostname) {
+    if (hostname && allowHostname) {
       const hit = this.byHostname.get(hostname.toLowerCase());
       if (hit) return { asset: hit, rung: "hostname" };
     }
@@ -6199,6 +6207,12 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // warnings are collected across Phases 6 and 7 and written in one batch
   // after Phase 7; `claims.hostnameAdoptRefused` keeps it to one per
   // (asset, MAC) per run.
+  //
+  // Since rule 91(f) (2026-11-04) Phases 6 and 7 look entries up with
+  // `allowHostname: false`, so no match here rests on the hostname and this
+  // guard does not fire on any asset, protected or not. It is kept as the
+  // backstop should a hostname rung ever be re-enabled on these paths; removing
+  // it and its ~25 `adoptRefused` branches is a separate cleanup.
   const hostnameAdoptRefusedEvents: LogEventInput[] = [];
   const hostnameAdoptRefused = (
     asset: any, rung: AssetIndexRung | undefined,
@@ -6308,7 +6322,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
       // DHCP IPs recycle across devices, so IP-only matches would staple
       // a new device's MAC onto the previous lease-holder's asset.
-      const match = assetIdx.findByEntryWithRung(entry.macAddress, entry.hostname, entry.ipAddress, { allowIpFallback: false, serialHostname: true });
+      const match = assetIdx.findByEntryWithRung(entry.macAddress, entry.hostname, entry.ipAddress, { allowIpFallback: false, serialHostname: true, allowHostname: false });
       if (!match) continue;
       const asset = match.asset;
       // Business rule 91(b) (re-scan F2): the lease's hostname is the client's
@@ -6725,8 +6739,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // In-memory asset lookup. Inventory IPs are the device's last-seen DHCP
       // IP, so they recycle just like lease IPs — skip the IP fallback.
       const invMatch = normalizedMac
-        ? assetIdx.findByEntryWithRung(inv.macAddress, inv.hostname, inv.ipAddress, { allowIpFallback: false, serialHostname: true })
-        : assetIdx.findByEntryWithRung(undefined, inv.hostname, inv.ipAddress, { allowIpFallback: false, serialHostname: true });
+        ? assetIdx.findByEntryWithRung(inv.macAddress, inv.hostname, inv.ipAddress, { allowIpFallback: false, serialHostname: true, allowHostname: false })
+        : assetIdx.findByEntryWithRung(undefined, inv.hostname, inv.ipAddress, { allowIpFallback: false, serialHostname: true, allowHostname: false });
       const existingAsset = invMatch?.asset;
       // Business rule 91(b) (re-scan F2) — the same guard as the Phase 6 lease
       // path: the row's hostname is the client's own claim, so on a protected
