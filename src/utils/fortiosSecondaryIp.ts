@@ -8,10 +8,12 @@
  *   FortiOS REST (/api/v2/cmdb/system/interface, 7.6.8 / 8.0.1)
  *       "secondaryip":  [ { id, q_origin_key, ip: "10.0.0.1 255.255.255.0", ... } ]
  *       "secondary-IP": "enable" | "disable"      ← the FLAG, not the table
- *   FortiManager device DB — not observed; assumed to follow the CLI the same
- *       way, possibly with `ip` as an [ip, mask] array and the flag as 0 | 1.
+ *   FortiManager device DB (/pm/config/device/<d>/vdom/root/system/interface)
+ *       "secondaryip":  [ { id, oid, ip: ["10.0.0.1", "255.255.255.0"], ... } ]
+ *       "secondary-IP": 1 | 0                     ← the flag, an integer
  *
- * Read off HUB1-a (7.6.8) with two real secondaries on 2026-11-04. An earlier
+ * Read off HUB1-a (7.6.8) with two real secondaries, and off a production
+ * FortiManager, on 2026-11-04. An earlier
  * note here had the two REVERSED: it was written from gates with no
  * secondaries, where both keys looked like scalars. Earlier code read only
  * `secondary-ip`, which no transport sends, so secondaries were silently

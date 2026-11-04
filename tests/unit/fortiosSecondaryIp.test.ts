@@ -18,7 +18,16 @@ describe("fortiosSecondaryIpRows", () => {
     expect(fortiosSecondaryIpRows({ secondaryip: "enable", "secondary-IP": rows })).toBe(rows);
   });
 
-  it("reads an [ip, mask] array table and ignores an integer flag (FortiManager, assumed)", () => {
+  it("reads FortiManager's `secondaryip` table of [ip, mask] rows beside the integer `secondary-IP` flag (prod FMG shape)", () => {
+    // Shape read off a production FortiManager device DB, 2026-11-04 (address replaced).
+    const iface = { name: "port5", "secondary-IP": 1, secondaryip: [
+      { allowaccess: 16386, detectprotocol: 1, detectserver: null, gwdetect: 0, "ha-priority": 1, id: 1,
+        ip: ["192.0.2.1", "255.255.255.0"], oid: 286, "ping-serv-status": 0, "secip-relay-ip": null },
+    ] };
+    expect(fortiosSecondaryIpStrings(iface)).toEqual(["192.0.2.1"]);
+  });
+
+  it("reads an [ip, mask] array table under either spelling", () => {
     const rows = [{ id: 1, ip: ["10.2.2.1", "255.255.255.0"] }];
     expect(fortiosSecondaryIpRows({ "secondary-IP": 1, secondaryip: rows })).toBe(rows);
   });

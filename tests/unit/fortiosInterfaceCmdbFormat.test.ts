@@ -77,6 +77,16 @@ describe("FORTIOS_INTERFACE_CMDB_FORMAT carries everything the interface readers
     expect(KEEP).toContain("secondaryip");
   });
 
+  it("FortiManager's device-DB interface read asks for the `secondaryip` table, not the dead `secondary-ip` key", () => {
+    // Prod FMG answers the table as `secondaryip` and the flag as `secondary-IP`;
+    // `secondary-ip` is not a key it has, so a fields list naming only it drops every secondary.
+    const src = readFileSync(join(process.cwd(), "src", "services", "fortimanagerService.ts"), "utf-8");
+    const read = src.match(/url: `\/pm\/config\/device\/\$\{deviceName\}\/vdom\/root\/system\/interface`, fields: \[[^\]]*\]/);
+    expect(read).not.toBeNull();
+    expect(read![0]).toContain('"secondaryip"');
+    expect(read![0]).not.toContain('"secondary-ip"');
+  });
+
   it("is passed by every reader of the endpoint", () => {
     const read = (p: string) => readFileSync(join(process.cwd(), "src", "services", p), "utf-8");
     for (const [file, expected] of [["fortigateService.ts", 1], ["monitoringService.ts", 2]] as const) {

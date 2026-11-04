@@ -2073,13 +2073,16 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
       const ifacePayload: JsonRpcRequest = {
         id: 3,
         method: "get",
-        // secondary-ip is a child mkey table on system/interface — each row
-        // carries its own `ip` (in "x.x.x.x y.y.y.y" form). Asking for the
-        // parent field returns the whole nested array as embedded JSON.
+        // The secondary addresses are the child table `secondaryip` — each
+        // row { id, ip: [addr, mask], … }; `secondary-IP` is only the 0 / 1
+        // flag (read off a production FortiManager 2026-11-04). Asking for
+        // the table field returns the whole nested array. This list named
+        // only `secondary-ip`, a key FortiManager does not have, so the table
+        // never came back and every gate's secondaries were dropped.
         // `ipv6` is the interface's IPv6 sub-object (addresses, RA prefixes —
-        // business rule 125), returned whole like secondary-ip.
-        // `type` + `interface` give a VLAN interface's parent (rule 137).
-        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip", "ipv6"] }],
+        // business rule 125), returned whole; unset child tables in it are
+        // null, not []. `type` + `interface` give a VLAN's parent (rule 137).
+        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondaryip", "ipv6"] }],
       };
       const ifaceRes = await rpc(baseUrl, ifacePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       const ifaceData = ifaceRes.result?.[0]?.data;
