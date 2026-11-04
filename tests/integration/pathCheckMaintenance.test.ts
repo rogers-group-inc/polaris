@@ -61,7 +61,9 @@ beforeAll(async () => {
       bearerPrefix: "pcmaint", bearerHash: "x",
     },
   });
-  const maintRole = await createRole({ name: MAINT_ROLE, permissions: { maintenanceManagement: "write", pathChecks: "read" } });
+  // fullwrite: a window over path checks the token did not create is out of a Read-Write
+  // caller's reach (rule 141 (e)); the subject here is rule 135, not scope.
+  const maintRole = await createRole({ name: MAINT_ROLE, permissions: { maintenanceManagement: "fullwrite", pathChecks: "read" } });
   maintToken = (await createToken({ name: MAINT_ROLE, roleId: maintRole.id, createdBy: "integration-test" })).rawToken;
   const pathRole = await createRole({ name: PATH_ONLY_ROLE, permissions: { pathChecks: "write" } });
   pathOnlyToken = (await createToken({ name: PATH_ONLY_ROLE, roleId: pathRole.id, createdBy: "integration-test" })).rawToken;

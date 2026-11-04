@@ -38,6 +38,7 @@ import {
   parseDhcpMonitorAddress,
   parseInterfaceIpv6,
 } from "../utils/fortiosIpv6.js";
+import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import type {
   DiscoveredSubnet,
   DiscoveredDevice,
@@ -53,10 +54,23 @@ import type {
   DiscoveryProgressCallback,
 } from "./fortimanagerService.js";
 import { parseVipServerInfo } from "./fortimanagerService.js";
-import { findFortiswitchUplinkPorts } from "../utils/fortiswitchCmdb.js";
+import { findFortiswitchUplinkPorts, FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
-import { fortiosVlanParentOf } from "../utils/fortiosInterfaceRef.js";
+import { fortiosVlanParentOf, FORTIOS_INTERFACE_CMDB_FORMAT } from "../utils/fortiosInterfaceRef.js";
+
+// `format=` filters for the standalone discovery CMDB reads below. Each names
+// exactly the attributes its reader uses; FortiOS returns a listed child table
+// (`reserved-address`, `mappedip`, `realservers`, `ports`) whole, and simply
+// leaves an unlisted attribute out — no error — so a field a reader starts
+// using must be added here first. Field-for-field checked against the lab
+// gates (7.6.8 + 8.0.1); pinned by tests/unit/fortiosDiscoveryFormats.test.ts.
+/** system.dhcp/server: the scope (interface, netmask, ip-range) + its static reservations. */
+export const DHCP_SERVER_DISCOVERY_FORMAT = ["id", "interface", "netmask", "ip-range", "reserved-address"].join("|");
+/** firewall/vip: the same six attributes FortiManager's native VIP read asks for. */
+export const FIREWALL_VIP_DISCOVERY_FORMAT = ["name", "extip", "mappedip", "extintf", "type", "realservers"].join("|");
+/** wireless-controller/wtp: the AP serial and its description (`location`, legacy `comment`). */
+export const FORTIAP_WTP_DISCOVERY_FORMAT = ["wtp-id", "location", "comment"].join("|");
 
 export interface FortiGateConfig {
   host: string;
@@ -486,8 +500,10 @@ async function fetchFortiswitchCmdbMeta(
   // dependency membership constraint has to tell those apart.
   let ok = false;
   try {
+    // No `datasource=1`: it annotates every reference inside each port row
+    // (~18% of the response) and nothing here reads the annotations.
     const rows = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/switch-controller/managed-switch", {
-      query: { ...queryBase, datasource: "1" },
+      query: { ...queryBase, format: FORTISWITCH_DISCOVERY_CMDB_FORMAT },
       signal,
     });
     if (!Array.isArray(rows)) return { ok, meta: out };
@@ -530,7 +546,7 @@ async function fetchFortiapDescriptions(
   let ok = false;
   try {
     const rows = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/wireless-controller/wtp", {
-      query: { ...queryBase, datasource: "1" },
+      query: { ...queryBase, format: FORTIAP_WTP_DISCOVERY_FORMAT },
       signal,
     });
     if (!Array.isArray(rows)) return { ok, descriptions: out, serials };
@@ -566,11 +582,12 @@ interface FgtChainCtx {
   queryBase: Record<string, string>;
   signal: AbortSignal | undefined;
   log: DiscoveryProgressCallback;
-  skipGeoLog: boolean;
   deviceName: string;
   deviceHostname: string;
   deviceSerial: string;
   mgmtIfaceName: string;
+  /** Step 2's `/api/v2/cmdb/system/interface` read, shared with Step 3b. */
+  interfaceListPromise: Promise<any[]>;
   discovered: DiscoveredSubnet[];
   devices: DiscoveredDevice[];
   interfaceIps: DiscoveredInterfaceIp[];
@@ -607,10 +624,10 @@ interface FgtChainCtx {
 
 // Chain A: DHCP CMDB (Step 3) → live DHCP monitor (3a) + interface IPs (3b) in parallel.
 async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
-  const { config, queryBase, signal, log, deviceName, deviceHostname, deviceSerial, mgmtIfaceName, discovered, interfaceIps, dhcpEntries, dhcpInterfaceNames, flags } = ctx;
+  const { config, queryBase, signal, log, deviceName, deviceHostname, deviceSerial, mgmtIfaceName, interfaceListPromise, discovered, interfaceIps, dhcpEntries, dhcpInterfaceNames, flags } = ctx;
       // Step 3: DHCP server configuration
       try {
-        const dhcpData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system.dhcp/server", { query: queryBase, signal });
+        const dhcpData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system.dhcp/server", { query: { ...queryBase, format: DHCP_SERVER_DISCOVERY_FORMAT }, signal });
     // CMDB query succeeded — used by syncDhcpSubnets Phase 5b to scope
     // the stale dhcp_reservation sweep. Empty-result success (no DHCP
     // servers configured) still counts: that's the gate saying it has
@@ -796,7 +813,8 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         // proxy path applies, and lands as role:"interface".
         (async () => {
           try {
-            const ifaceData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", { query: queryBase, signal });
+            // The interface table Step 2 already requested — not a second call.
+            const ifaceData = await interfaceListPromise;
     const ifaceVlanMap = new Map<string, number>();
     const ifaceVlanParent = new Map<string, string>();
     let ifaceIpCount = 0;
@@ -850,21 +868,17 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         // its own `ip` in either "x.x.x.x y.y.y.y" string form or as a [ip,
         // mask] array. Push one DiscoveredInterfaceIp per entry with
         // role="secondary" so Phase 4 labels the reservation appropriately.
-        const secondaries = iface["secondary-ip"];
-        if (Array.isArray(secondaries)) {
-          for (const sec of secondaries) {
-            const rawSec = Array.isArray(sec?.ip)
-              ? (sec.ip[0] || "")
-              : (typeof sec?.ip === "string" ? sec.ip.split(" ")[0] : "");
-            if (rawSec && rawSec !== "0.0.0.0" && isValidIpv4(rawSec)) {
-              interfaceIps.push({
-                device: deviceName,
-                interfaceName: ifaceName,
-                ipAddress: rawSec,
-                role: "secondary",
-              });
-              secondaryIpCount++;
-            }
+        // FortiOS REST spells the table `secondary-IP` — see utils/fortiosSecondaryIp.ts.
+        for (const sec of fortiosSecondaryIpStrings(iface)) {
+          const rawSec = sec.split(" ")[0];
+          if (rawSec && rawSec !== "0.0.0.0" && isValidIpv4(rawSec)) {
+            interfaceIps.push({
+              device: deviceName,
+              interfaceName: ifaceName,
+              ipAddress: rawSec,
+              role: "secondary",
+            });
+            secondaryIpCount++;
           }
         }
         // The gate's own IPv6 addresses (business rule 125), under the same
@@ -1030,7 +1044,6 @@ async function fgtChainSwitchesAps(ctx: FgtChainCtx): Promise<void> {
         deviceName,
         displayName: deviceHostname,
         aps: fortiAps,
-        switches: fortiSwitches,
         macTable: switchMacTable,
         log,
       });
@@ -1077,47 +1090,17 @@ async function fgtChainArp(ctx: FgtChainCtx): Promise<void> {
   }
 }
 
-// Chain E: geo coordinates from CMDB system/global (Step 3e.6).
-async function fgtChainGeo(ctx: FgtChainCtx): Promise<void> {
-  const { config, queryBase, signal, log, deviceHostname, devices, skipGeoLog } = ctx;
-      // Step 3e.6: Geo coordinates from `config system global`.
-      // CMDB endpoints use `?fields=` (not `?format=`, which is monitor-only).
-      // Dropping the filter entirely — the full system/global object is small,
-      // and pulling every key means we log them when lat/lng are absent so the
-      // operator can see exactly where the gate does (or doesn't) store coords.
-      try {
-        const sysGlobal = await fgRequest<any>(config, "GET", "/api/v2/cmdb/system/global", {
-          query: queryBase,
-      signal,
-    });
-    const globalObj = sysGlobal && typeof sysGlobal === "object" && !Array.isArray(sysGlobal)
-      ? sysGlobal
-      : null;
-    if (globalObj && devices[0]) {
-      const lat = parseFloat(String(globalObj["gui-device-latitude"] ?? globalObj.latitude ?? ""));
-      const lng = parseFloat(String(globalObj["gui-device-longitude"] ?? globalObj.longitude ?? ""));
-      if (Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)) {
-        devices[0].latitude = lat;
-        devices[0].longitude = lng;
-        if (!skipGeoLog) {
-          log("discover.geo", "info", `${deviceHostname}: Resolved coordinates ${lat.toFixed(4)}, ${lng.toFixed(4)}`, deviceHostname);
-        }
-      } else {
-        const keys = Object.keys(globalObj).slice(0, 30).join(", ");
-        log("discover.geo", "info", `${deviceHostname}: No latitude/longitude in system/global (keys: ${keys || "(empty)"})`, deviceHostname);
-      }
-    }
-  } catch (err: any) {
-    log("discover.geo", "info", `${deviceHostname}: Geo lookup skipped — ${err.message || "Unknown error"}`, deviceHostname);
-  }
-}
+// (There is no Chain E any more. It re-read the whole `system/global` object
+// for the gate's coordinates, which Step 2 had already read — with `format=`,
+// which CMDB endpoints DO honour — and written onto the device. Coordinates
+// come from Step 2 only; do not add a second read.)
 
 // Chain F: firewall VIPs (Step 3f).
 async function fgtChainVips(ctx: FgtChainCtx): Promise<void> {
   const { config, queryBase, signal, log, deviceName, deviceHostname, vips, flags } = ctx;
       // Step 3f: Firewall VIPs
       try {
-        const vipData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/firewall/vip", { query: queryBase, signal });
+        const vipData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/firewall/vip", { query: { ...queryBase, format: FIREWALL_VIP_DISCOVERY_FORMAT }, signal });
     flags.didVipQuery = true;
     let vipCount = 0;
     if (Array.isArray(vipData)) {
@@ -1312,11 +1295,19 @@ export async function discoverDhcpSubnets(
   // normalizeMacsDistinct.
   let mgmtMac: string | null = null;
   let interfaceMacs: string[] = [];
+  // ONE read of the gate's interface table per discovery run: this step takes
+  // the mgmt IP / MACs from it, and Chain A's Step 3b awaits the SAME promise
+  // for interface IPs, VLANs, secondaries and IPv6 (ctx.interfaceListPromise).
+  // Awaited here inside the try, so a rejection is always handled; Step 3b's
+  // own await re-raises it into its catch and its "Failed to query interfaces"
+  // log, as when it made its own call. Only the attributes Polaris reads are
+  // asked for (a field missing from the list is silently absent — add it there first).
+  const interfaceListPromise = fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", {
+    query: { ...queryBase, format: FORTIOS_INTERFACE_CMDB_FORMAT },
+    signal,
+  });
   try {
-    const ifaceList = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", {
-      query: { ...queryBase },
-      signal,
-    });
+    const ifaceList = await interfaceListPromise;
     if (Array.isArray(ifaceList) && ifaceList.length > 0) {
       const mgmtIface = ifaceList.find((i) => i?.name === mgmtIfaceName);
       if (mgmtIface) {
@@ -1420,25 +1411,25 @@ export async function discoverDhcpSubnets(
     switches: [], aps: [], switchDevices: [], apDevices: [],
   };
   const ctx: FgtChainCtx = {
-    config, queryBase, signal, log, skipGeoLog,
-    deviceName, deviceHostname, deviceSerial, mgmtIfaceName,
+    config, queryBase, signal, log,
+    deviceName, deviceHostname, deviceSerial, mgmtIfaceName, interfaceListPromise,
     discovered, devices, interfaceIps, dhcpEntries, deviceInventory, inventoryDevices,
     fortiSwitches, fortiAps, vips, switchMacTable, arpTable, dhcpInterfaceNames,
     membership,
     flags,
   };
 
-  // Fan out the seven independent per-FortiGate query chains in parallel.
+  // Fan out the six independent per-FortiGate query chains in parallel.
   // Inside each chain, steps stay sequential where they share state:
   //   Chain A:  Step 3 (DHCP CMDB) → Promise.all(Step 3a + Step 3b)
   //   Chain B:  Step 3c    (device inventory)
   //   Chain C:  Step 3d (managed switches) → Step 3e (APs) → Step 3e.5 (port map)
   //   Chain D:  Step 3e.55 (ARP table)
-  //   Chain E:  Step 3e.6  (geo coordinates)
+  //   (no Chain E — the gate's coordinates come from Step 2's system/global read)
   //   Chain F:  Step 3f    (firewall VIPs)
   //   Chain G:  Step 3g    (HA peer roster)
   // Per-FortiGate wall-clock drops from sum-of-all to max(any chain). Peak
-  // intra-device REST concurrency is ~7 simultaneous calls; small-branch
+  // intra-device REST concurrency is ~6 simultaneous calls; small-branch
   // FortiGates (60F/61F class) handle this in practice, and the existing
   // per-step try/catch isolates a slow individual query from tanking the
   // whole device's discovery.
@@ -1447,7 +1438,6 @@ export async function discoverDhcpSubnets(
     fgtChainInventory(ctx),
     fgtChainSwitchesAps(ctx),
     fgtChainArp(ctx),
-    fgtChainGeo(ctx),
     fgtChainVips(ctx),
     fgtChainHa(ctx),
   ]);

@@ -499,7 +499,9 @@ parent, never move one, and every surface says which answer it got.** (The
 write side, where an address actually places a device, is [rule 45](#rule-45).)
 It can only ever **add** a parent, never move one, so the failure mode is a missed
 alert and never a false one. An inference has no moment, so the row prints no
-timestamp.
+timestamp. On the Last Seen Firewall row it is consulted only when no reporting
+gate is still in Polaris. A managed FortiSwitch or FortiAP never reaches it,
+because its row shows its controller gate.
 
 ### Rule 56
 **What ignoring an alert costs is answered where the thing that costs it lives:
@@ -1616,6 +1618,32 @@ Assets merged together before this change keep the MACs and addresses they
 collected. To separate one, remove the extra MACs from the asset
 ([Rule 79](#rule-79)) or delete it. The next discovery run then creates one
 asset per device.
+
+**91(g) A managed FortiSwitch is matched by the MAC its own FortiGate sees at
+its management address.** FortiOS reports no MAC for a managed switch, but the
+switch takes its management address from its FortiGate by DHCP. That gate's
+client list, DHCP leases and ARP table therefore show the switch's management
+MAC at that address, and discovery gives the switch that MAC. The FortiGate
+client-list asset that used to appear beside the switch (same name, same
+address, OS "FortiSwitch OS") is merged into the switch on the next run. As in
+91(e), discovery reads only the switch's own FortiGate, and does not match when
+the gate's sources name two different MACs for the address, or when two
+switches or access points on the gate report the same address.
+
+A switch that takes DHCP addresses on several VLANs can still show one extra
+asset per additional interface, each with the switch's name and a different MAC
+and address. Merge those by hand (select them with the switch on the Assets
+page and choose **Merge**).
+
+**91(h) A FortiSwitch in a FortiGate's client list is not an endpoint.** The
+FortiGate's client list also reports each managed switch's own management
+traffic, with the switch's name, address and MAC. Discovery used to turn that
+into a second asset beside the switch, which then showed as a duplicate-IP
+conflict. Discovery now ignores a client-list entry whose hardware family is
+FortiSwitch; the switch itself is still discovered from the FortiGate's managed
+switch list. A duplicate created before this change is not refreshed again:
+the next discovery run merges it into the switch when the gate's lease or ARP
+entry gives the switch the same MAC, and otherwise you can delete it.
 
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
@@ -3048,5 +3076,26 @@ administrator's act. Every role may read the registry; only `admin` changes
 it after the update, which means `assetsadmin` and `networkadmin` no longer
 tag devices until granted Tags. A form that may not tag still shows a
 record's tags and saves them unchanged. A role carries no tags: tags live on
-users and on group mappings, and a user's scope is the two together. See
-[Users, Roles and Permissions](Users-Roles-and-Permissions#tags-are-an-administrators-grant).
+users and on group mappings, and a user's scope is the two together.
+
+**Read-Write reaches what you own or what carries your tags.** On Assets,
+Asset Quarantine, Alerts, Maintenance Schedules, Discovery Conflicts, Stale
+Reservations, Device Map, Subnets and Reservations, Read-Write changes only
+the records you added or adopted yourself, plus — once you hold tags — every
+record carrying one of them; Full Read-Write changes any record. A device
+integration discovery brought in has no owner and no tags, so only Full
+Read-Write reaches it until someone tags it. Verbs that act on the whole
+fleet (a filter-based maintenance window, an automation's reboot action, the
+imports, the fleet-wide lookups and settings) are Full Read-Write. The update
+raised every existing Read-Write on those keys to Full Read-Write, so nobody
+lost reach the day it landed; an administrator opts a role in by lowering it
+to Read-Write and assigning tags. Lists and details say per row what you may
+change, so a verb is only offered where it will succeed.
+
+**A duplicate-reservation conflict is a reservations task.** Anyone with Read
+on Discovery Conflicts sees it; Read-Write on Reservations resolves it when at
+least one of its bindings is yours or sits on a network or device carrying
+your tag — and then every binding in it may be released or revoked, on any
+FortiGate. See
+[Users, Roles and Permissions](Users-Roles-and-Permissions#tags-are-an-administrators-grant)
+and [Conflict resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).

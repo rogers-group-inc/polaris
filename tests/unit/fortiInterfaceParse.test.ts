@@ -372,15 +372,17 @@ describe("FortiGate hardware and software switches", () => {
   });
 });
 
-// Secondary IPs: the CMDB `secondary-ip` child table is the only place a
+// Secondary IPs: the CMDB `secondary-IP` child table is the only place a
 // FortiGate says which of an interface's addresses are secondary. They land on
 // the asset's address list tagged by role so the panel can mark the primary.
 describe("interface secondary IPs", () => {
-  it("parses secondary-ip in both shapes, dropping 0.0.0.0, the primary and repeats", () => {
+  it("parses secondary-IP in both shapes, dropping 0.0.0.0, the primary and repeats", () => {
     const map = parseFortiCmdbInterfaceTable([
       {
-        name: "port2", type: "physical", ip: "10.1.1.1 255.255.255.0",
-        "secondary-ip": [
+        // FortiOS REST's real shape (7.6.7 / 7.6.8 / 8.0.1): the table is
+        // `secondary-IP`, while `secondaryip` is the enable FLAG.
+        name: "port2", type: "physical", ip: "10.1.1.1 255.255.255.0", secondaryip: "enable",
+        "secondary-IP": [
           { id: 1, ip: "10.2.2.1 255.255.255.0" },
           { id: 2, ip: ["10.3.3.1", "255.255.255.0"] },
           { id: 3, ip: "0.0.0.0 0.0.0.0" },
@@ -389,7 +391,7 @@ describe("interface secondary IPs", () => {
           { id: 6 },
         ],
       },
-      { name: "port3", type: "physical", ip: "10.4.4.1 255.255.255.0" },
+      { name: "port3", type: "physical", ip: "10.4.4.1 255.255.255.0", secondaryip: "disable", "secondary-IP": [] },
     ]);
     expect(map.get("port2")!.secondaryIps).toEqual(["10.2.2.1", "10.3.3.1"]);
     expect(map.get("port3")!.secondaryIps).toEqual([]);
@@ -397,7 +399,7 @@ describe("interface secondary IPs", () => {
 
   it("carries the CMDB secondaries onto the sample; unknown without a CMDB entry", () => {
     const cmdb = parseFortiCmdbInterfaceTable([
-      { name: "port2", type: "physical", "secondary-ip": [{ ip: "10.2.2.1 255.255.255.0" }, { ip: "10.9.9.9 255.255.255.0" }] },
+      { name: "port2", type: "physical", "secondary-IP": [{ ip: "10.2.2.1 255.255.255.0" }, { ip: "10.9.9.9 255.255.255.0" }] },
     ]);
     const rows = buildFortiInterfaceSamples(
       { port2: { link: true, ip: "10.9.9.9" }, port9: { link: true, ip: "10.5.5.1" } },

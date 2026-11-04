@@ -8,7 +8,7 @@ knows about a device is reachable from here.
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |
-| `assets:write` | add and edit rows, the bulk Type / State / Monitoring / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
+| `assets:write` | add and edit **the devices you added or adopted, or that carry one of your tags** ([rule 141](Business-Rules#rule-141)) — the bulk Type / State / Monitoring / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
 | `assets:fullwrite` | manage saved filters and folders that have no owner, and take any one as your own (**Make private to me**) |
 | `agentDeploy:write` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), bulk deploy, the agent host's reboot opt-in, a process's log path |
 | `assetMerge:write` | **merge** two records into one |
@@ -542,6 +542,21 @@ being text you re-find by hand. When several switches share the stored name
 (a per-site "IDF-1"), the row links the one this device actually sits behind —
 by its MAC table, then by the FortiGate that last saw the device — and stays
 plain text when nothing settles it ([rule 91](Business-Rules#rule-91)).
+
+**Last Seen Firewall** is answered in this order:
+
+1. **A managed FortiSwitch or FortiAP** shows its **controller** FortiGate, the
+   one holding its FortiLink session or CAPWAP tunnel. This is the same gate
+   its Location shows, and it moves as soon as discovery sees a new
+   controller.
+2. **Any other device** shows the newest FortiGate that reported it through a
+   DHCP lease or reservation, as long as that FortiGate is still in Polaris.
+   A report from a firewall you deleted or decommissioned is skipped, so a
+   replaced gate stops being named.
+3. If no reporting gate is still in Polaris, the row shows the gate that
+   **owns the network** the device's address is in, marked
+   "(owns 10.x.x.x/24)" ([rule 55](Business-Rules#rule-55)).
+4. If there is none, it shows the newest reported name as plain text.
 
 The tag picker in the edit form shows every tag the asset carries except its
 `azure:` tags, which it leaves out. Tags with no
@@ -1692,8 +1707,11 @@ when the gate was last read.
 tunnels and dial-up templates — with its status, remote gateway, the interface
 it rides (with the tunnel interface's own address under it) and its byte
 counters. A site-to-site tunnel's **Device** column links to the gate at its
-far end when Polaris knows an asset at that remote gateway. Under each tunnel,
-marked with the tree line, are the peers connected through it:
+far end when Polaris knows an asset at that remote gateway. When the far end
+is an HA pair, both members carry the cluster's addresses; the link goes to
+the active member, never the standby (the same holds for a peer's **Device**
+below). Under each tunnel, marked with the tree line, are the peers connected
+through it:
 
 - On an **ADVPN hub**, each spoke dialled into the hub's template, shown as
   **ADVPN spoke**. A dial-up template's status reads **dynamic** (it is

@@ -427,6 +427,15 @@ export async function listSubnets(filter: ListSubnetsFilter = {}) {
 
 // ─── Get ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The two columns a network — and, through its tags, its reservations — is
+ * judged on for write scope (business rule 141 (e)). Null for an unknown id;
+ * the caller's own read answers the 404.
+ */
+export async function getSubnetScopeRow(id: string): Promise<{ createdBy: string | null; tags: string[] } | null> {
+  return prisma.subnet.findUnique({ where: { id }, select: { createdBy: true, tags: true } });
+}
+
 export async function getSubnet(id: string) {
   const subnet = await prisma.subnet.findUnique({
     where: { id },

@@ -617,14 +617,19 @@
     // it — nesting a <button> inside a <button> is invalid and swallows the
     // tap that opens the device. Stacked, so two of them still leave the
     // message its width.
-    var showAck = perms.ack && !n.acknowledged;
+    // Rule 141 (e), as on the desktop: the role grants the verb, the row's
+    // server verdict (canAcknowledge / canClear — the alert's device is one
+    // the viewer added or that carries their tag) says whether it reaches THIS
+    // alert. A row without the flag counts as reachable.
+    var showAck = perms.ack && !n.acknowledged && n.canAcknowledge !== false;
+    var showClear = perms.clear && n.canClear !== false;
     var actions = '';
     if (showAck) {
       actions += '<button class="ack-btn" data-ack="' + escapeHtml(n.id) + '" aria-label="Acknowledge alert"'
         + (n.requireAckNote ? ' data-note-required="1"' : "")
         + ' style="' + ROW_BTN_STYLE + 'color:var(--md-primary);">Ack</button>';
     }
-    if (perms.clear) {
+    if (showClear) {
       actions += '<button class="clear-btn" data-clear="' + escapeHtml(n.id) + '" aria-label="Clear alert"'
         + ' style="' + ROW_BTN_STYLE + 'color:var(--md-error);">Clear</button>';
     }

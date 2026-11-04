@@ -18,6 +18,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { requirePermission, credentialUseActor } from "../middleware/permissions.js";
+import { scopeAssetParam } from "../middleware/writeScope.js";
 import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
 import { getRebootAvailability, startReboot, getRebootRunForAsset, listRebootRunsForAsset, recordRebootCredentialUse } from "../../services/rebootService.js";
@@ -77,7 +78,7 @@ rebootAssetRouter.get("/", requirePermission("assets", "read"), handle(async (re
 }));
 
 // Reboot now. 202 — the run is watched, not awaited.
-rebootAssetRouter.post("/", requirePermission("assets", "write"), handle(async (req, res) => {
+rebootAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetParam("assets", "reboot devices"), handle(async (req, res) => {
   const body = RebootNowSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, body.error.issues[0]?.code === "unrecognized_keys" ? "A reboot takes only a note" : firstIssue(body.error));
   const run = await startReboot({ assetId: String(req.params.id), actor: requestActor(req) ?? "unknown", note: body.data.note });
@@ -108,7 +109,7 @@ rebootAssetRouter.get("/schedules/defaults", requirePermission("assets", "write"
   res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
 }));
 
-rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), handle(async (req, res) => {
+rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), scopeAssetParam("assets", "book reboots of devices"), handle(async (req, res) => {
   const body = CreateScheduleSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const schedule = await createRebootSchedule({
@@ -123,7 +124,7 @@ rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), handl
   res.status(201).json({ schedule });
 }));
 
-rebootAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "write"), handle(async (req, res) => {
+rebootAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "write"), scopeAssetParam("assets", "change booked reboots of devices"), handle(async (req, res) => {
   const body = UpdateScheduleSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const schedule = await updateRebootSchedule({
@@ -137,7 +138,7 @@ rebootAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "w
   res.json({ schedule });
 }));
 
-rebootAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "write"), handle(async (req, res) => {
+rebootAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "write"), scopeAssetParam("assets", "cancel booked reboots of devices"), handle(async (req, res) => {
   res.json({ schedule: await cancelRebootSchedule(String(req.params.id), String(req.params.scheduleId), requestActor(req) ?? "unknown") });
 }));
 

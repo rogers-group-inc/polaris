@@ -81,7 +81,7 @@ beforeAll(async () => {
   ownCredId = own.id;
   othersCredId = others.id;
   const a = await prisma.asset.create({
-    data: { hostname: PFX + "-srv", assetType: "server", status: "active", ipAddress: "10.99.242.10", monitored: false } as never,
+    data: { hostname: PFX + "-srv", assetType: "server", status: "active", ipAddress: "10.99.242.10", monitored: false, createdBy: operator } as never,
   });
   assetId = a.id;
 });

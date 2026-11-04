@@ -30,6 +30,8 @@ import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { requireAuth, requestActor } from "../middleware/auth.js";
 import { hasPermission, ensureRoleSnapshot } from "../middleware/permissions.js";
+import { prisma } from "../../db.js";
+import { resolveWriteScope, inWriteScope, assertInWriteScope, assertFleetWide, reservationScopeRecord, type ScopeRecord } from "../../services/writeScopeService.js";
 import {
   listConflicts,
   countPendingConflicts,
@@ -102,12 +104,134 @@ function canResolve(req: Request): boolean {
   return hasPermission(req, "discoveryConflicts", "write");
 }
 
+/**
+ * Business rule 141 (e): a Read-Write resolver reaches a conflict when ANY
+ * member record is one they own or that carries one of their tags — the
+ * conflicted asset, the conflicted reservation (its creator, its network's
+ * tags), the chassis-swap subnet's tags, every member of a duplicate-IP /
+ * duplicate-serial group, every binding of a duplicate-reservation group.
+ * A conflict with no member record at all is Full Read-Write only. Loads only
+ * the owner / tag columns, in one read per member kind.
+ */
+async function assertConflictInScope(req: Request, conflict: any, verb: string): Promise<void> {
+  const scope = await resolveWriteScope(req, "discoveryConflicts");
+  if (scope.kind === "all") return;
+  const fields = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
+  const candidates: ScopeRecord[] = [];
+  if (conflict.asset) candidates.push({ createdBy: conflict.asset.createdBy ?? null, tags: conflict.asset.tags ?? [] });
+  if (conflict.reservation) {
+    const subnet = conflict.reservation.subnetId
+      ? await prisma.subnet.findUnique({ where: { id: conflict.reservation.subnetId }, select: { tags: true } })
+      : null;
+    candidates.push(reservationScopeRecord({ createdBy: conflict.reservation.createdBy ?? null, subnet }, conflict.asset));
+  }
+  if (conflict.subnetId) {
+    const subnet = await prisma.subnet.findUnique({ where: { id: conflict.subnetId }, select: { createdBy: true, tags: true } });
+    if (subnet) candidates.push(subnet);
+  }
+  const memberIds = Array.isArray(fields.members)
+    ? (fields.members as { assetId?: unknown }[]).map((m) => (m && typeof m.assetId === "string" ? m.assetId : "")).filter(Boolean)
+    : [];
+  if (memberIds.length) {
+    const assets = await prisma.asset.findMany({ where: { id: { in: memberIds } }, select: { createdBy: true, tags: true } });
+    candidates.push(...assets);
+  }
+  const bindingIds = Array.isArray(fields.reservations)
+    ? (fields.reservations as { reservationId?: unknown }[]).map((r) => (r && typeof r.reservationId === "string" ? r.reservationId : "")).filter(Boolean)
+    : [];
+  if (bindingIds.length) {
+    const rows = await prisma.reservation.findMany({ where: { id: { in: bindingIds } }, select: { createdBy: true, subnet: { select: { tags: true } } } });
+    candidates.push(...rows.map((r) => reservationScopeRecord(r, conflict.asset)));
+  }
+  if (candidates.length === 0) assertFleetWide(scope, `${verb} a conflict that names no record`);
+  if (!candidates.some((c) => inWriteScope(scope, c))) {
+    throw new AppError(403, `Forbidden — you can only ${verb} conflicts with a member you created or that carries one of your tags`);
+  }
+}
+
+/**
+ * Rule 141 (e) / (f) for the LIST: `canResolve` per conflict and, on a
+ * duplicate-reservation card, `inScope` per binding — so the page offers only
+ * the verbs that will succeed. Batched: three reads over the page's member
+ * assets, bindings and subnets (the list allows 5000 rows), then in-memory
+ * set lookups. Full Read-Write callers — most — skip all of it.
+ */
+async function decorateConflictScope(req: Request, rows: any[]): Promise<any[]> {
+  const resolveScope = await resolveWriteScope(req, "discoveryConflicts");
+  const reservationsScope = await resolveWriteScope(req, "reservations");
+  const mayRelease = hasPermission(req, "reservations", "write");
+  if (resolveScope.kind === "all" && reservationsScope.kind === "all") {
+    return rows.map((c) => ({ ...c, canResolve: true, canRelease: mayRelease }));
+  }
+  const assetIds = new Set<string>();
+  const bindingIds = new Set<string>();
+  const subnetIds = new Set<string>();
+  for (const c of rows) {
+    const f = (c.proposedAssetFields || {}) as Record<string, unknown>;
+    if (Array.isArray(f.members)) for (const m of f.members as { assetId?: unknown }[]) if (m && typeof m.assetId === "string") assetIds.add(m.assetId);
+    if (Array.isArray(f.reservations)) for (const r of f.reservations as { reservationId?: unknown }[]) if (r && typeof r.reservationId === "string") bindingIds.add(r.reservationId);
+    if (c.subnetId) subnetIds.add(c.subnetId);
+    if (c.reservation?.subnetId && !c.reservation?.subnet) subnetIds.add(c.reservation.subnetId);
+  }
+  const [assets, bindings, subnets] = await Promise.all([
+    assetIds.size ? prisma.asset.findMany({ where: { id: { in: [...assetIds] } }, select: { id: true, createdBy: true, tags: true } }) : [],
+    bindingIds.size ? prisma.reservation.findMany({ where: { id: { in: [...bindingIds] } }, select: { id: true, createdBy: true, subnet: { select: { tags: true } } } }) : [],
+    subnetIds.size ? prisma.subnet.findMany({ where: { id: { in: [...subnetIds] } }, select: { id: true, createdBy: true, tags: true } }) : [],
+  ]);
+  const assetById = new Map(assets.map((a) => [a.id, a]));
+  const bindingById = new Map(bindings.map((b) => [b.id, b]));
+  const subnetById = new Map(subnets.map((s) => [s.id, s]));
+  return rows.map((c) => {
+    const f = (c.proposedAssetFields || {}) as Record<string, unknown>;
+    const assetRec: ScopeRecord | null = c.asset ? { createdBy: c.asset.createdBy ?? null, tags: c.asset.tags ?? [] } : null;
+    const candidates: ScopeRecord[] = [];
+    if (assetRec) candidates.push(assetRec);
+    if (c.reservation) candidates.push(reservationScopeRecord({ createdBy: c.reservation.createdBy ?? null, subnet: c.reservation.subnet ?? subnetById.get(c.reservation.subnetId) ?? null }, assetRec));
+    if (c.subnetId) { const s = subnetById.get(c.subnetId); if (s) candidates.push(s); }
+    if (Array.isArray(f.members)) for (const m of f.members as { assetId?: unknown }[]) { const a = typeof m?.assetId === "string" ? assetById.get(m.assetId) : null; if (a) candidates.push(a); }
+    let bindingsOut: unknown = f.reservations;
+    let anyBinding = false;
+    if (Array.isArray(f.reservations)) {
+      bindingsOut = (f.reservations as { reservationId?: unknown }[]).map((r) => {
+        const b = typeof r?.reservationId === "string" ? bindingById.get(r.reservationId) : null;
+        const rec = b ? reservationScopeRecord(b, assetRec) : null;
+        const ok = reservationsScope.kind === "all" || (!!rec && inWriteScope(reservationsScope, rec)) || (!!assetRec && inWriteScope(reservationsScope, assetRec));
+        if (ok) anyBinding = true;
+        if (rec) candidates.push(rec);
+        return { ...(r as object), inScope: ok };
+      });
+    }
+    const canResolve = resolveScope.kind === "all" || (candidates.length > 0 && candidates.some((r) => inWriteScope(resolveScope, r)));
+    const isDhcp = f.collisionReason === DUPLICATE_RESERVATION_COLLISION_REASON;
+    return {
+      ...c,
+      proposedAssetFields: isDhcp ? { ...f, reservations: bindingsOut } : c.proposedAssetFields,
+      canResolve,
+      // The DHCP flavour is resolved at reservations:write with a binding in scope (rule 141 (f)).
+      canRelease: isDhcp ? mayRelease && anyBinding : mayRelease,
+    };
+  });
+}
+
+/** The asset a duplicate-IP verb NAMES in its body — judged itself, not "any member". */
+async function assertNamedAssetInScope(req: Request, assetId: string): Promise<void> {
+  const scope = await resolveWriteScope(req, "assets");
+  if (scope.kind === "all") return;
+  const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { createdBy: true, tags: true } });
+  if (asset) assertInWriteScope(scope, asset, "change the address of devices");
+}
+
 // Business rule 123: accepting a decommissioned-agent check-in changes the
-// asset's status, so it also takes what the asset edit form takes.
-function assertCanReactivate(req: Request, conflict: { proposedAssetFields?: unknown }): void {
+// asset's status, so it also takes what the asset edit form takes — and, per
+// rule 141 (e), the asset itself must be in the caller's write scope.
+async function assertCanReactivate(req: Request, conflict: { proposedAssetFields?: unknown; asset?: { createdBy?: string | null; tags?: string[] } | null }): Promise<void> {
   const kind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
-  if (kind.collisionReason === DECOMMISSIONED_AGENT_COLLISION_REASON && !hasPermission(req, "assets", "write")) {
+  if (kind.collisionReason !== DECOMMISSIONED_AGENT_COLLISION_REASON) return;
+  if (!hasPermission(req, "assets", "write")) {
     throw new AppError(403, "Reactivating a decommissioned asset requires read-write on Assets");
+  }
+  if (conflict.asset) {
+    assertInWriteScope(await resolveWriteScope(req, "assets"), { createdBy: conflict.asset.createdBy ?? null, tags: conflict.asset.tags ?? [] }, "reactivate devices");
   }
 }
 
@@ -125,8 +249,7 @@ router.get("/", async (req, res, next) => {
     }
 
     const { conflicts, total } = await listConflicts(entityTypes, status, limit, offset);
-
-    res.json({ conflicts, total, limit, offset });
+    res.json({ conflicts: await decorateConflictScope(req, conflicts as any[]), total, limit, offset });
   } catch (err) {
     next(err);
   }
@@ -199,6 +322,7 @@ router.post("/:id/migrate-reservations", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
+    await assertConflictInScope(req, conflict, "resolve");
     if (!hasPermission(req, "reservations", "write")) {
       throw new AppError(403, "You do not have permission to create reservations");
     }
@@ -227,6 +351,7 @@ router.post("/chassis-swap/adopt", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
+    assertFleetWide(await resolveWriteScope(req, "discoveryConflicts"), "adopting a replacement FortiGate");
     const parsed = ChassisSwapSchema.safeParse(req.body ?? {});
     if (!parsed.success) throw new AppError(400, "oldSerial and newSerial are required");
     const { oldSerial, newSerial, mergeOldAsset } = parsed.data;
@@ -251,6 +376,7 @@ router.post("/chassis-swap/reject", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
+    assertFleetWide(await resolveWriteScope(req, "discoveryConflicts"), "rejecting a FortiGate replacement");
     const parsed = ChassisSwapSchema.safeParse(req.body ?? {});
     if (!parsed.success) throw new AppError(400, "oldSerial and newSerial are required");
     const outcome = await rejectChassisSwap(parsed.data.oldSerial, parsed.data.newSerial, requestActor(req));
@@ -267,8 +393,9 @@ router.post("/:id/accept", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
+    await assertConflictInScope(req, conflict, "resolve");
 
-    assertCanReactivate(req, conflict);
+    await assertCanReactivate(req, conflict);
     await acceptConflict(conflict, requestActor(req));
 
     res.json({ ok: true });
@@ -360,7 +487,7 @@ router.post("/:id/merge", async (req, res, next) => {
       return;
     }
 
-    assertCanReactivate(req, conflict);
+    await assertCanReactivate(req, conflict);
     const raw = (req.body && req.body.fieldWinners) || {};
     const fieldWinners: Record<string, "existing" | "proposed"> = {};
     for (const [k, v] of Object.entries(raw)) {
@@ -389,12 +516,14 @@ router.post("/:id/reassign-ip", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
+    await assertConflictInScope(req, conflict, "resolve");
     if (!hasPermission(req, "assets", "write")) {
       throw new AppError(403, "You do not have permission to change an asset's IP address");
     }
     const assetId = typeof req.body?.assetId === "string" ? req.body.assetId : "";
     const ipAddress = typeof req.body?.ipAddress === "string" ? req.body.ipAddress : "";
     if (!assetId) throw new AppError(400, "assetId is required");
+    await assertNamedAssetInScope(req, assetId);
 
     const outcome = await reassignDuplicateIpAsset(
       conflict,
@@ -420,12 +549,16 @@ router.post("/:id/reassign-ip", async (req, res, next) => {
 router.post("/:id/keep-reservation", async (req, res, next) => {
   try {
     const conflict = await loadPendingConflict(req.params.id);
-    if (!canResolve(req)) {
-      throw new AppError(403, "You do not have permission to resolve this conflict");
+    // Rule 141 (e) / (f): this flavour is a reservations task — Read on
+    // Discovery Conflicts to see it, Read-Write on Reservations (with a binding
+    // in scope) to resolve it; discoveryConflicts:write is not required.
+    if (!hasPermission(req, "discoveryConflicts", "read")) {
+      throw new AppError(403, "You do not have permission to view discovery conflicts");
     }
     assertDuplicateReservationRelease(req, conflict);
+    await assertDhcpBindingInScope(req, conflict);
     const parsed = KeepReservationSchema.parse(req.body ?? {});
-    const outcome = await keepOneReservation(conflict, parsed.reservationId, requestActor(req), releaseOwnershipCheck(req));
+    const outcome = await keepOneReservation(conflict, parsed.reservationId, requestActor(req), () => {});
     res.json({ ok: true, resolved: outcome.failed.length === 0, ...outcome });
   } catch (err) {
     next(err);
@@ -441,12 +574,16 @@ router.post("/:id/keep-reservation", async (req, res, next) => {
 router.post("/:id/release-reservation", async (req, res, next) => {
   try {
     const conflict = await loadPendingConflict(req.params.id);
-    if (!canResolve(req)) {
-      throw new AppError(403, "You do not have permission to resolve this conflict");
+    // Rule 141 (e) / (f): this flavour is a reservations task — Read on
+    // Discovery Conflicts to see it, Read-Write on Reservations (with a binding
+    // in scope) to resolve it; discoveryConflicts:write is not required.
+    if (!hasPermission(req, "discoveryConflicts", "read")) {
+      throw new AppError(403, "You do not have permission to view discovery conflicts");
     }
     assertDuplicateReservationRelease(req, conflict);
+    await assertDhcpBindingInScope(req, conflict);
     const parsed = KeepReservationSchema.parse(req.body ?? {});
-    const outcome = await releaseOneReservation(conflict, parsed.reservationId, requestActor(req), releaseOwnershipCheck(req));
+    const outcome = await releaseOneReservation(conflict, parsed.reservationId, requestActor(req), () => {});
     res.json({ ok: true, ...outcome });
   } catch (err) {
     next(err);
@@ -454,8 +591,11 @@ router.post("/:id/release-reservation", async (req, res, next) => {
 });
 
 // Both duplicate-reservation verbs release reservations, so they take what
-// DELETE /reservations/:id takes: reservations write, and below Full RW only
-// the rows the caller created.
+// DELETE /reservations/:id takes: reservations write. Below Full RW the
+// conflict must hold at least one binding in the caller's scope (rule 141
+// (f)); once it does, EVERY binding in it may be released — including on a
+// gate in another region — which is why the per-row ownership callback the
+// services accept is a no-op here.
 function assertDuplicateReservationRelease(req: Request, conflict: { proposedAssetFields?: unknown }): void {
   const kind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
   if (kind.collisionReason !== DUPLICATE_RESERVATION_COLLISION_REASON) {
@@ -466,13 +606,26 @@ function assertDuplicateReservationRelease(req: Request, conflict: { proposedAss
   }
 }
 
-function releaseOwnershipCheck(req: Request): (row: { createdBy: string | null }) => void {
-  const fullwrite = hasPermission(req, "reservations", "fullwrite");
-  return (row) => {
-    if (fullwrite) return;
-    if (row.createdBy !== null && row.createdBy === req.session?.username) return;
-    throw new AppError(403, "Forbidden — you can only release reservations you created");
-  };
+/**
+ * Rule 141 (f): at least one binding of the duplicate-reservation group is in
+ * the caller's reservations write scope — the reservation is theirs, or its
+ * network or the conflicted device carries one of their tags.
+ */
+async function assertDhcpBindingInScope(req: Request, conflict: any): Promise<void> {
+  const scope = await resolveWriteScope(req, "reservations");
+  if (scope.kind === "all") return;
+  const fields = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
+  const ids = Array.isArray(fields.reservations)
+    ? (fields.reservations as { reservationId?: unknown }[]).map((r) => (r && typeof r.reservationId === "string" ? r.reservationId : "")).filter(Boolean)
+    : [];
+  const rows = ids.length
+    ? await prisma.reservation.findMany({ where: { id: { in: ids } }, select: { createdBy: true, subnet: { select: { tags: true } } } })
+    : [];
+  const records = rows.map((r) => reservationScopeRecord(r, conflict.asset));
+  if (conflict.asset) records.push({ createdBy: conflict.asset.createdBy ?? null, tags: conflict.asset.tags ?? [] });
+  if (!records.some((r) => inWriteScope(scope, r))) {
+    throw new AppError(403, "Forbidden — you can only resolve a duplicate-reservation conflict that holds a reservation you created or a network / device carrying one of your tags");
+  }
 }
 
 // POST /api/v1/conflicts/:id/clear-ip — duplicate-IP conflicts only.
@@ -486,11 +639,13 @@ router.post("/:id/clear-ip", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
+    await assertConflictInScope(req, conflict, "resolve");
     if (!hasPermission(req, "assets", "write")) {
       throw new AppError(403, "You do not have permission to change an asset's IP address");
     }
     const assetId = typeof req.body?.assetId === "string" ? req.body.assetId : "";
     if (!assetId) throw new AppError(400, "assetId is required");
+    await assertNamedAssetInScope(req, assetId);
 
     const outcome = await clearDuplicateIpAsset(conflict, assetId, requestActor(req));
 
@@ -507,6 +662,7 @@ router.post("/:id/reject", async (req, res, next) => {
     if (!canResolve(req)) {
       throw new AppError(403, "You do not have permission to resolve this conflict");
     }
+    await assertConflictInScope(req, conflict, "resolve");
 
     await rejectConflict(conflict, requestActor(req));
 

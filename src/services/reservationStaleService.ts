@@ -115,6 +115,9 @@ async function getDetectionStartedAt(): Promise<Date> {
 }
 
 export interface ReservationAlertEntry {
+  // Rule 141 (e): what the stale verbs are judged on (the route adds `canEdit`).
+  createdBy: string | null;
+  subnetTags: string[];
   id: string;
   ipAddress: string | null;
   hostname: string | null;
@@ -361,12 +364,13 @@ interface StaleCandidateRow {
   hostname: string | null;
   macAddress: string | null;
   subnetId: string;
+  createdBy: string | null;
   createdAt: Date;
   lastSeenLeased: Date | null;
   lastSeenArp: Date | null;
   staleNotifiedAt: Date | null;
   pushedToId: string | null;
-  subnet: { cidr: string; name: string; fortigateDevice: string | null };
+  subnet: { cidr: string; name: string; fortigateDevice: string | null; tags?: string[] };
   pushedTo: { name: string } | null;
 }
 
@@ -382,6 +386,9 @@ function toAlertEntry(
     hostname: r.hostname,
     macAddress: r.macAddress,
     subnetId: r.subnetId,
+    // Rule 141 (e): what the stale verbs are judged on.
+    createdBy: r.createdBy ?? null,
+    subnetTags: r.subnet.tags ?? [],
     subnetCidr: r.subnet.cidr,
     subnetName: r.subnet.name,
     createdAt: r.createdAt,
@@ -409,7 +416,7 @@ export async function listStaleReservations(
     const rows = await prisma.reservation.findMany({
       where: { status: "active", sourceType: "dhcp_reservation", staleIgnored: true },
       include: {
-        subnet: { select: { id: true, cidr: true, name: true, fortigateDevice: true } },
+        subnet: { select: { id: true, cidr: true, name: true, fortigateDevice: true, tags: true } },
         pushedTo: { select: { id: true, name: true } },
       },
       orderBy: [{ lastSeenLeased: "asc" }, { createdAt: "asc" }],
@@ -453,7 +460,7 @@ export async function listStaleReservations(
       subnet: { status: { not: "deprecated" } },
     },
     include: {
-      subnet: { select: { id: true, cidr: true, name: true, fortigateDevice: true } },
+      subnet: { select: { id: true, cidr: true, name: true, fortigateDevice: true, tags: true } },
       pushedTo: { select: { id: true, name: true } },
     },
     orderBy: [{ lastSeenLeased: "asc" }, { createdAt: "asc" }],

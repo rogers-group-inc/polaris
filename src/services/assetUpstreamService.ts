@@ -7,16 +7,26 @@
  * rows can carry verbs (open the device, open its HTTPS UI, SSH to it) instead
  * of being dead text an operator has to re-find by hand in the Assets list.
  *
- * Four inputs, all of them already written by something else — nothing new is
+ * Five inputs, all of them already written by something else — nothing new is
  * collected:
  *   - `Asset.lastSeenSwitch` — "<switch-id-or-hostname>/<port>"
  *   - `Asset.lastSeenAp`     — the FortiAP's name
- *   - the freshest `AssetFortigateSighting.fortigateDevice` — FortiManager's
+ *   - FIREWALL, managed FortiSwitch / FortiAP: the controller gate stamped on
+ *     `fortinetTopology` (`controllerSerial` / `controllerFortigate`) — the
+ *     gate holding its FortiLink session / CAPWAP tunnel, the same value its
+ *     Location shows. Answers the row outright (`source: "controller"`);
+ *     sightings and IPAM are not consulted for such a device. Before this, a
+ *     statically-addressed AP whose gate was replaced and deleted named the
+ *     deleted gate forever: sightings come only from DHCP bindings, and
+ *     nothing prunes them.
+ *   - every other device: the newest `AssetFortigateSighting.fortigateDevice`
+ *     whose gate still resolves to a firewall Polaris holds — FortiManager's
  *     DEVICE NAME for the gate, which is under no obligation to match the
- *     gate's own hostname.
+ *     gate's own hostname. A sighting naming a gate that is gone (deleted,
+ *     decommissioned) is passed over.
  *   - FALLBACK, firewall only: the gate that owns the network the asset's
  *     address sits in, per IPAM (`resolveOwningGateContexts`). Consulted only
- *     when NO gate has ever sighted the device, and reported as
+ *     when no gate Polaris still holds has sighted the device, and reported as
  *     `source: "subnet"` so it can never be read as a sighting: a sighting
  *     records a gate seeing the device, this infers the gate from the address,
  *     and the two are not the same claim. It carries no `lastSeen` for exactly
@@ -35,11 +45,11 @@
  * discovered yet, a decommissioned AP. Unresolved is reported as the NAME with
  * no asset, never as an error, and the UI keeps rendering it as plain text.
  *
- * The displayed NAME never changes: the firewall half reports the most recent
- * sighting's device and resolves exactly that one, rather than walking down the
- * list for the first name that happens to match something (which is right for
- * `resolveEndpointParent`, whose job is to find *a* parent — this one annotates
- * a value already on screen).
+ * The firewall half walks the sightings newest first and stops at the first
+ * gate that resolves — a newer sighting always outranks an older one, and an
+ * unresolved name is passed over only because the alternative is naming a
+ * gate that no longer exists. When none resolve and IPAM has no answer either,
+ * the newest name is reported unresolved, as before (`pickFirewallEntry`).
  *
  * Read-only. Management access rides along per resolved device, reduced through
  * the same `shapeManagementAccessForClient` the Assets list uses.
@@ -78,14 +88,18 @@ interface UpstreamEntry {
    *  `source: "sighting"` and never for `"subnet"`, which has no moment. */
   lastSeen?: string;
   /**
-   * Firewall only — which of the two answers this is:
+   * Firewall only — which of the three answers this is:
+   *   `"controller"` — a managed FortiSwitch / FortiAP: the gate holding its
+   *                  FortiLink session / CAPWAP tunnel, per discovery's
+   *                  `fortinetTopology` stamp. Current state, no moment.
    *   `"sighting"` — a gate REPORTED this device (AssetFortigateSighting).
-   *   `"subnet"`   — nothing has; this is the gate that owns the network the
-   *                  asset's address sits in. An inference about where the
-   *                  device must be, not a record of it being seen, so the UI
-   *                  labels it and never prints a "last seen" time for it.
+   *   `"subnet"`   — no gate Polaris still holds has; this is the gate that
+   *                  owns the network the asset's address sits in. An
+   *                  inference about where the device must be, not a record
+   *                  of it being seen, so the UI labels it and never prints a
+   *                  "last seen" time for it.
    */
-  source?: "sighting" | "subnet";
+  source?: "controller" | "sighting" | "subnet";
   /** Firewall, `source: "subnet"` only — the network that named the gate. */
   subnetCidr?: string;
   /** Null when the name resolves to no asset (see the module note). */
@@ -181,33 +195,58 @@ export async function resolveAssetUpstream(
   const includeSubnetGate = opts.includeSubnetGate !== false;
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { id: true, assetType: true, lastSeenSwitch: true, lastSeenAp: true, ipAddress: true },
+    select: {
+      id: true, assetType: true, lastSeenSwitch: true, lastSeenAp: true, ipAddress: true,
+      fortinetTopology: true,
+    },
   });
   if (!asset) return null;
 
   const sw = splitLastSeenSwitch(asset.lastSeenSwitch);
   const apName = typeof asset.lastSeenAp === "string" ? asset.lastSeenAp.trim() : "";
 
+  // A managed FortiSwitch / FortiAP: the gate holding its FortiLink session /
+  // CAPWAP tunnel is the firewall that sees it, rewritten every discovery run —
+  // the same value its Location column shows. Sightings only exist for a
+  // device a gate's DHCP leases or reserves for, so a statically-addressed AP
+  // under a replacement gate kept naming the deleted gate forever. Read off
+  // the asset itself (no sighting table), so it needs no assetsQuarantine
+  // grant.
+  const controller = isControllerManagedType(asset.assetType)
+    ? readControllerStamp(asset.fortinetTopology)
+    : {};
+  const controllerName = typeof controller.name === "string" ? controller.name.trim() : "";
+  const controllerSerial = typeof controller.serial === "string" ? controller.serial.trim() : "";
+  const useController = !!(controllerName || controllerSerial);
+
   // A firewall is the thing doing the sighting, not the thing sighted — the
   // General tab hides all three rows for one, so don't pay for the lookups.
-  const wantSighting = includeFirewall && asset.assetType !== "firewall";
-  const sighting = wantSighting
-    ? await prisma.assetFortigateSighting.findFirst({
+  // Every sighting row, newest first: a gate that was replaced and deleted
+  // leaves its rows behind (nothing prunes them), so the row names the newest
+  // sighting whose gate Polaris still holds, not merely the newest one. A
+  // handful of rows per asset (one per gate × binding kind).
+  const wantSighting = includeFirewall && asset.assetType !== "firewall" && !useController;
+  const sightings = wantSighting
+    ? await prisma.assetFortigateSighting.findMany({
         where: { assetId, NOT: { fortigateDevice: "" } },
         orderBy: { lastSeen: "desc" },
         select: { fortigateDevice: true, lastSeen: true },
+        take: SIGHTING_SCAN_LIMIT,
       })
-    : null;
-  const fwName = sighting?.fortigateDevice?.trim() || "";
+    : [];
+  const sightingNames = [...new Set(sightings.map((s) => s.fortigateDevice.trim()).filter(Boolean))];
 
-  // No gate has ever reported this device — fall back to the gate that owns
-  // the network its address sits in (business rule 55). Strictly a fallback: a sighting is a
-  // record of the device being seen, this is an inference from IPAM, and the
-  // entry says which it is so the row can never read as evidence it isn't.
-  // Skipped for a firewall (same reason the sighting half is) and for an
-  // asset with no address to place.
+  // IPAM is consulted whenever no sighting is SETTLED until the candidates
+  // are loaded — i.e. any time there are sightings at all it may still be
+  // needed (every sighted gate could be gone), so it rides along when there's
+  // an address to place. The ROW still prefers a live sighting (business rule
+  // 55): a sighting is a record of the device being seen, this is an
+  // inference from IPAM, and the entry says which it is so the row can never
+  // read as evidence it isn't. Skipped for a firewall (same reason the
+  // sighting half is), for a controller-managed device, and for an asset with
+  // no address to place.
   const ip = typeof asset.ipAddress === "string" ? asset.ipAddress.trim() : "";
-  const wantSubnetGate = includeSubnetGate && asset.assetType !== "firewall" && !fwName && !!ip;
+  const wantSubnetGate = includeSubnetGate && asset.assetType !== "firewall" && !useController && !!ip;
   const owning = wantSubnetGate ? (await resolveOwningGateContexts([ip])).get(ip) : undefined;
   const subnetGateAssetId = owning?.gateAssetId ?? null;
 
@@ -218,7 +257,11 @@ export async function resolveAssetUpstream(
   };
   if (sw) pushBranches(sw.name, "switch");
   if (apName) pushBranches(apName, "access_point");
-  if (fwName) pushBranches(fwName, "firewall");
+  for (const n of sightingNames) pushBranches(n, "firewall");
+  if (useController) {
+    const or = parentAssetWhereOr({ serial: controllerSerial || null, name: controllerName || null });
+    if (or.length > 0) branches.push({ assetType: "firewall", OR: or });
+  }
   // The IPAM answer is already an asset id — it needs no name resolution, just
   // the same row shape, so fetch it in the one candidate query rather than a
   // second round-trip.
@@ -262,9 +305,10 @@ export async function resolveAssetUpstream(
     ]);
     for (const c of controllers) if (!candidates.some((x) => x.id === c.id)) candidates.push(c);
     const gateIds: string[] = [];
-    if (fwName) {
-      const sighted = resolveInfraParentAsset(buildInfraParentIndex(candidates), { name: fwName }, "firewall");
-      if (sighted) gateIds.push(sighted.id);
+    const preIndex = buildInfraParentIndex(candidates);
+    for (const n of sightingNames) {
+      const sighted = resolveInfraParentAsset(preIndex, { name: n }, "firewall");
+      if (sighted) { gateIds.push(sighted.id); break; }
     }
     const ipamGate = owningForScope?.gateAssetId;
     if (ipamGate && !gateIds.includes(ipamGate)) gateIds.push(ipamGate);
@@ -303,14 +347,78 @@ export async function resolveAssetUpstream(
       ? { name: sw.name, ...(sw.port ? { port: sw.port } : {}), asset: resolve(sw.name, "switch") }
       : null,
     ap: apName ? { name: apName, asset: resolve(apName, "access_point") } : null,
-    firewall: fwName
-      ? {
-          name: fwName,
-          source: "sighting" as const,
-          ...(sighting?.lastSeen ? { lastSeen: sighting.lastSeen.toISOString() } : {}),
-          asset: resolve(fwName, "firewall"),
-        }
-      : subnetGate,
-    visibility: { firewall: includeFirewall, subnetGate: wantSubnetGate },
+    firewall: useController
+      ? controllerEntry(index, candidates, controllerName, controllerSerial)
+      : pickFirewallEntry(sightings, (name) => resolve(name, "firewall"), subnetGate),
+    // `firewall` reports whether the SIGHTING half was consulted; a
+    // controller-managed device's row is answered without it.
+    visibility: { firewall: includeFirewall || useController, subnetGate: wantSubnetGate },
   };
+}
+
+/**
+ * Asset types whose upstream gate is their FortiLink / CAPWAP controller,
+ * stamped on `fortinetTopology` by FortiManager / FortiGate discovery.
+ */
+function isControllerManagedType(assetType: string): boolean {
+  return assetType === "access_point" || assetType === "switch";
+}
+
+/**
+ * Sightings scanned for a live gate. An asset carries one row per gate ×
+ * binding kind, so this is a ceiling against a pathological roaming history,
+ * not a page size anyone should reach.
+ */
+const SIGHTING_SCAN_LIMIT = 50;
+
+/** The controller gate's row: the stamped name, resolved serial-first. */
+function controllerEntry(
+  index: ReturnType<typeof buildInfraParentIndex>,
+  candidates: CandidateRow[],
+  name: string,
+  serial: string,
+): UpstreamEntry {
+  const hit = resolveInfraParentAsset(index, { serial: serial || null, name: name || null }, "firewall");
+  const row = hit ? candidates.find((c) => c.id === hit.id) : undefined;
+  return {
+    name: name || row?.hostname || serial,
+    source: "controller",
+    asset: row ? toRef(row) : null,
+  };
+}
+
+/**
+ * The Last Seen Firewall answer for a device with no controller, from its
+ * sightings (newest first) and the IPAM fallback:
+ *
+ *   1. the newest sighting whose gate resolves to a firewall Polaris holds;
+ *   2. else the gate that owns the device's network (`source: "subnet"`) —
+ *      every sighted gate is gone, which is what replacing a firewall and
+ *      deleting the old one leaves behind;
+ *   3. else the newest sighting's name, unresolved — no gate in inventory and
+ *      no IPAM answer; a name is still better than a blank (an install whose
+ *      gates aren't assets at all lands here, exactly as before).
+ *
+ * Exported for the unit test; pure.
+ */
+export function pickFirewallEntry(
+  sightings: Array<{ fortigateDevice: string; lastSeen: Date | null }>,
+  resolve: (name: string) => UpstreamAssetRef | null,
+  subnetGate: UpstreamEntry | null,
+): UpstreamEntry | null {
+  const entryFor = (s: { fortigateDevice: string; lastSeen: Date | null }, asset: UpstreamAssetRef | null): UpstreamEntry => ({
+    name: s.fortigateDevice.trim(),
+    source: "sighting",
+    ...(s.lastSeen ? { lastSeen: s.lastSeen.toISOString() } : {}),
+    asset,
+  });
+  for (const s of sightings) {
+    const name = s.fortigateDevice.trim();
+    if (!name) continue;
+    const asset = resolve(name);
+    if (asset && asset.status !== "decommissioned") return entryFor(s, asset);
+  }
+  if (subnetGate) return subnetGate;
+  const newest = sightings.find((s) => s.fortigateDevice.trim());
+  return newest ? entryFor(newest, resolve(newest.fortigateDevice.trim())) : null;
 }

@@ -31,6 +31,8 @@ function varLine(name: string): string {
 }
 
 const FNS = [
+  // The per-device shim (rule 141 (e)) falls back to the role helper this harness stubs.
+  "_canEditAsset",
   "_assetAddressRows", "_addressMacKey", "primaryAddressMac", "_assetAddressPinnable", "primaryAddressPinHTML",
   "formatAddressSource", "formatMacSource", "_addressTooltipRowHTML", "_macTooltipRowHTML", "_addressPillHTML", "addressPillsHTML",
   "macDeleteButtonHTML", "macEntryText", "macEntryCount", "macEntriesTotal", "ipViewRow", "ipCellHTML",

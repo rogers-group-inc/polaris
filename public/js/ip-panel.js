@@ -198,7 +198,10 @@ function _renderPanelHeader(data) {
     // Re-reads this page of addresses from Polaris — no device is queried,
     // so it shows for every reader, unlike Discover beside it.
     '<button type="button" class="btn btn-glyph btn-glyph-refresh btn-sm btn-secondary" id="ip-panel-reload-btn" title="Reload this network\'s addresses">Refresh</button>' +
-    (s.refreshEligible && canReserveIps() ? '<button class="btn btn-sm btn-primary" id="ip-panel-refresh-btn" title="Query the FortiGate and update Polaris">Discover</button>' : '') +
+    // Discover rewrites the network's rows: the server judges it on the
+    // NETWORK (subnets:write, own-or-tagged — rule 141 (e)), so the button
+    // reads the network's own verdict, not the reservations grant.
+    (s.refreshEligible && canEditSubnet(s) ? '<button class="btn btn-sm btn-primary" id="ip-panel-refresh-btn" title="Query the FortiGate and update Polaris">Discover</button>' : '') +
     (canReserveIps() && !data.ipv6 ? '<button class="btn btn-sm btn-secondary" id="ip-panel-auto-alloc-btn">Auto-Allocate Next</button>' : '') +
     (canReserveIps() ? '<button class="btn btn-sm btn-primary" id="ip-panel-reserve-btn">+ Reserve IP</button>' : '') +
     '</span>';

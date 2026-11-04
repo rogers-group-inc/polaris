@@ -75,9 +75,11 @@ describe("quarantine UI gates", () => {
 
   it("the Quarantine tab's visibility and wiring both use it", () => {
     // Visibility: the tabs.push condition.
-    expect(assetsSrc).toMatch(/if \(canQuarantineAssets\(\) && \(a\.status === "quarantined"/);
+    // Per-device since 2026-11-04 (rule 141 (e)): the shim reads the row's
+    // `canQuarantine` verdict and falls back to the role helper.
+    expect(assetsSrc).toMatch(/if \(_canQuarantineAsset\(a\) && \(a\.status === "quarantined"/);
     // Wiring: without this the tab renders but its buttons do nothing.
-    expect(assetsSrc).toMatch(/if \(canQuarantineAssets\(\)\) _wireQuarantineTab\(a\);/);
+    expect(assetsSrc).toMatch(/if \(_canQuarantineAsset\(a\)\) _wireQuarantineTab\(a\);/);
     expect(assetsSrc).not.toMatch(/if \(canManageAssets\(\)\) _wireQuarantineTab\(a\);/);
   });
 
@@ -138,7 +140,7 @@ describe("quarantine push availability gates", () => {
     // ...so Release and the recorded push targets stay reachable after an
     // operator turns the toggle off.
     expect(assetsSrc).toMatch(
-      /if \(canQuarantineAssets\(\) && \(a\.status === "quarantined" \|\| \(hasMac && !isInfraQ && _quarantinePushAvailable\(\)\)\)\)/,
+      /if \(_canQuarantineAsset\(a\) && \(a\.status === "quarantined" \|\| \(hasMac && !isInfraQ && _quarantinePushAvailable\(\)\)\)\)/,
     );
   });
 
@@ -189,8 +191,11 @@ describe("quarantine RBAC defaults", () => {
     // admin's EFFECTIVE level today is `write`. Both are "the top of the
     // ladder"; the seed text below is history and is asserted as such.
     expect(matrixFor("admin")).toContain('"assetsQuarantine":"fullwrite"');
-    expect(levelsFor("assetsQuarantine")).toEqual(["none", "read", "write"]);
-    expect(clampLevelToKey("assetsQuarantine", "fullwrite")).toBe("write");
+    // 2026-11-04 (rule 141 (e)) widened it back to all four: Read-Write now
+    // reaches owned-or-tagged devices and Full Read-Write any — the lift
+    // migration 20261104100000 carried every stored write up with it.
+    expect(levelsFor("assetsQuarantine")).toEqual(["none", "read", "write", "fullwrite"]);
+    expect(clampLevelToKey("assetsQuarantine", "fullwrite")).toBe("fullwrite");
     for (const role of ["readonly", "networkadmin", "user"]) {
       expect(matrixFor(role), role).toContain('"assetsQuarantine":"read"');
     }

@@ -74,3 +74,11 @@ a folder list route, so the Dash wallboard — a GET-only, allowlisted listener 
 path; folder writes are mounted under each item router and never reachable from it. The Change
 owner pickers (`/owner-options`) name accounts, so that route refuses a session-less caller even
 though the wallboard reaches the dashboards router.
+
+**Rule 141 (e)'s lift widened who manages ownerless rows (2026-11-04).** Migration
+`20261104100000_write_scope_lift` turned every stored `write` on the seven newly tag-scoped
+keys into `fullwrite` so that nobody's reach narrowed on update day. A side effect this rule
+feels: a role lifted on `assets` or `alerts` now also manages that surface's ownerless folders,
+filters and dashboards (see = manage = ownerless + fullwrite above). Deliberate and documented
+rather than special-cased — the lift is the honest reading of what those roles could already do,
+and an administrator who wants the narrower role lowers it to Read-Write and assigns tags.

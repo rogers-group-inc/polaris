@@ -55,7 +55,8 @@ beforeAll(async () => {
   fullRoleId = (await createRole({ name: FULL_ROLE, permissions: { assets: "fullwrite", agentDeploy: "write" } })).id;
   writeToken = (await createToken({ name: `${TOKEN_PREFIX}write`, roleId: writeRoleId, createdBy: "integration-test" })).rawToken;
   fullToken = (await createToken({ name: `${TOKEN_PREFIX}full`, roleId: fullRoleId, createdBy: "integration-test" })).rawToken;
-  assetId = (await prisma.asset.create({ data: { hostname: HOSTNAME, assetType: "server", status: "active", ipAddress: "10.0.0.77" } })).id;
+  // Rule 141 (e): the Read-Write token reaches the devices it owns (a token's actor is api:<name>).
+  assetId = (await prisma.asset.create({ data: { hostname: HOSTNAME, assetType: "server", status: "active", ipAddress: "10.0.0.77", createdBy: `api:${TOKEN_PREFIX}write` } })).id;
 });
 
 afterAll(async () => {

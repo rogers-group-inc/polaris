@@ -865,6 +865,17 @@ Ordering last is also what bounds the blast radius on the alerting side. The tie
 
 The sighting half reads `AssetFortigateSighting`, gated `assetsQuarantine:read` on its own endpoint; the fallback reads `Subnet`, gated `subnets:read`. Two different grants, so `visibility` reports them separately — a caller holding one and not the other has to be able to tell "no gate owns this address" from "you were not shown that half", the `/ip-context` precedent.
 
+### 2026-11-04 — a sighting from a gate that is gone, and the controller-managed device
+
+Reported on a FortiAP: its gate was replaced and the old firewall deleted. Discovery rewrote the AP's controller stamp to the new gate at once (its Location column named it), but Last Seen Firewall kept naming the deleted gate. Two facts combined: a sighting is written only for a DHCP lease or reservation (`discoveryEngine` Phase 3's DHCP pass), and the AP was statically addressed, so the new gate never wrote one; and nothing prunes sighting rows — deleting a firewall Asset leaves every row naming its FMG device name, and `sightingMaxAgeDays` only filters quarantine candidates.
+
+Two changes in `services/assetUpstreamService.ts`:
+
+- **A managed FortiSwitch / FortiAP is answered by its controller** — `fortinetTopology.controllerSerial` / `controllerFortigate`, resolved through `utils/fortinetParentKey.ts` serial-first, `source: "controller"`. That gate holds the device's FortiLink session / CAPWAP tunnel and is rewritten every discovery run, so it is both the most direct answer to "which firewall sees this" and the one that cannot go stale. Neither sightings nor IPAM are consulted for such a device, and because the stamp lives on the asset row itself the half needs no `assetsQuarantine` grant. A switch or AP with no controller stamp (a non-Fortinet switch, a standalone FortiAP) falls through to the sighting path unchanged.
+- **The sighting half walks newest first and stops at the first gate Polaris still holds** (resolves to a firewall Asset that is not `decommissioned`). When none do, this rule's IPAM fallback answers; only when that has nothing either is the newest name reported unresolved, as before — so an install whose gates are not Assets at all reads exactly as it did. The cost is accepted: a current gate that is not an Asset now loses to the IPAM gate when IPAM has one. `pickFirewallEntry` is the pure ranking, pinned by `tests/unit/assetUpstream.test.ts`; the controller and deleted-gate cases by `tests/integration/assetUpstream.test.ts`.
+
+Nothing else that reads sightings changed: quarantine fan-out, the gateway-changed event, tag and automation matching and dependency suppression's third tier still read the table as before. The rows themselves are still never pruned.
+
 <a id="rule-56"></a>
 
 ### Rule 55 — the invariant as stated in full until 2026-09-22

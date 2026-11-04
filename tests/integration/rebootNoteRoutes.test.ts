@@ -74,7 +74,7 @@ beforeAll(async () => {
   rebooter = await createRoleUser("rebooter", matrix("read", { serverSettingsSystem: "none", assets: "write" }));
   // Not rebootable (rule 115 refuses a printer) — what the tests below need
   // is which refusal comes FIRST.
-  const asset = await prisma.asset.create({ data: { hostname: PFX + "-printer", assetType: "printer", status: "active" } });
+  const asset = await prisma.asset.create({ data: { hostname: PFX + "-printer", assetType: "printer", status: "active", createdBy: rebooter } });
   assetId = asset.id;
 });
 

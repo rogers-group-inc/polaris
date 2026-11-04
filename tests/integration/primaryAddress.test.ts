@@ -109,7 +109,7 @@ beforeEach(async () => {
   const seen = new Date();
   assetId = (await prisma.asset.create({
     data: {
-      hostname: PFX + "-hmi", macAddress: ETH, assetType: "workstation", status: "active", ipAddress: IP_RES, ipSource: GATE,
+      hostname: PFX + "-hmi", macAddress: ETH, assetType: "workstation", status: "active", ipAddress: IP_RES, ipSource: GATE, createdBy: writeUser,
       macAddressRows: {
         create: [
           { mac: ETH, source: "intune-ethernet", lastSeen: seen, firstSeen: seen },

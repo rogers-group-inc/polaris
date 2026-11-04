@@ -40,6 +40,15 @@
   function canWrite(user) {
     return permAtLeast(user, "reservations", "write");
   }
+  // Discover (POST /subnets/:id/refresh) rewrites the network's rows, so the
+  // server judges it on the NETWORK (subnets:write, own-or-tagged — business
+  // rule 141 (e)), not on reservations. `canEdit` on the payload's subnet is
+  // that verdict; a payload without it counts as reachable.
+  function canRefresh(user, subnet) {
+    if (permAtLeast(user, "subnets", "fullwrite")) return true;
+    if (!permAtLeast(user, "subnets", "write")) return false;
+    return !subnet || subnet.canEdit !== false;
+  }
 
   // The one open network sheet's state. `seq` drops a response that lands
   // after the sheet was closed or re-opened on another network.
@@ -116,8 +125,8 @@
   }
 
   // Header verbs: Reserve (reservations:write) and, for FortiGate-discovered
-  // networks, Refresh from the gate — the `fortigateDevice` + write pairing
-  // matches the backend's guard on POST /subnets/:id/refresh. Refresh
+  // networks, Refresh from the gate — the `fortigateDevice` + canRefresh
+  // pairing matches the backend's guard on POST /subnets/:id/refresh. Refresh
   // reconciles that one scope's CMDB reservations + live leases against
   // Polaris, then re-fetches the IP list so the result shows without closing.
   function mountSheetActions(st) {
@@ -125,9 +134,11 @@
     if (!slot) return;
     slot.innerHTML = "";
     var user = st.user;
-    if (!st.subnet || !canWrite(user)) return;
+    if (!st.subnet) return;
+    var mayReserve = canWrite(user);
+    var mayRefresh = canRefresh(user, st.subnet);
 
-    if (st.subnet.fortigateDevice) {
+    if (st.subnet.fortigateDevice && mayRefresh) {
       var btn = document.createElement("button");
       btn.className = "icon-btn";
       btn.id = "subnet-refresh-btn";
@@ -146,6 +157,7 @@
       });
     }
 
+    if (!mayReserve) return;
     var reserve = document.createElement("button");
     reserve.className = "btn btn-tonal";
     reserve.id = "subnet-reserve-btn";

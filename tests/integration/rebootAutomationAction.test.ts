@@ -3,8 +3,9 @@
  *
  * Business rule 115(c), end to end against a real database: an automation
  * (or alert group) carrying a `reboot` action saves only for a caller holding
- * assets:write — the grant that reboots a device by hand — and a reboot is
- * refused on the reset list. A memory-utilization trigger is the shape the
+ * assets:fullwrite — it reboots every device the automation matches, so the
+ * owned-or-tagged reach of plain assets:write (rule 141 (e)) is not enough —
+ * and a reboot is refused on the reset list. A memory-utilization trigger is the shape the
  * action exists for.
  *
  * Skips cleanly when DATABASE_URL isn't reachable; see _helpers.ts.
@@ -66,6 +67,7 @@ const memRule = (name: string, extra: Record<string, unknown> = {}) => ({
 
 let noReboot = "";
 let canReboot = "";
+let writeOnly = "";
 
 beforeAll(async () => {
   if (!dbReachable) return;
@@ -74,7 +76,8 @@ beforeAll(async () => {
   await prisma.notificationRule.deleteMany({ where: { name: { startsWith: PFX } } });
   await prisma.alertGroup.deleteMany({ where: { name: { startsWith: PFX } } });
   noReboot = await createRoleUser("noreboot", matrix("read", { automationManagement: "write" }));
-  canReboot = await createRoleUser("reboot", matrix("read", { automationManagement: "write", assets: "write" }));
+  writeOnly = await createRoleUser("writeonly", matrix("read", { automationManagement: "write", assets: "write" }));
+  canReboot = await createRoleUser("reboot", matrix("read", { automationManagement: "write", assets: "fullwrite" }));
 });
 
 afterAll(async () => {
@@ -87,14 +90,21 @@ afterAll(async () => {
 });
 
 d("the reboot automation action (115(c))", () => {
-  it("refuses an automation with a reboot action from a caller without assets:write", async () => {
+  it("refuses an automation with a reboot action from a caller without any Assets write", async () => {
     const { agent, csrf } = await loginAs(noReboot);
     const res = await agent.post("/api/v1/automations").set("X-CSRF-Token", csrf).send(memRule("refused"));
     expect(res.status).toBe(403);
-    expect(JSON.stringify(res.body)).toMatch(/reboot action requires Read-Write on Assets/);
+    expect(JSON.stringify(res.body)).toMatch(/reboot action requires Full Read-Write on Assets/);
   });
 
-  it("saves it for a caller with assets:write, and reads it back intact", async () => {
+  it("refuses it at assets:write — the action reaches every matched device, so it needs Full Read-Write", async () => {
+    const { agent, csrf } = await loginAs(writeOnly);
+    const res = await agent.post("/api/v1/automations").set("X-CSRF-Token", csrf).send(memRule("writeonly"));
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).toMatch(/Full Read-Write on Assets/);
+  });
+
+  it("saves it for a caller with assets:fullwrite, and reads it back intact", async () => {
     const { agent, csrf } = await loginAs(canReboot);
     const res = await agent.post("/api/v1/automations").set("X-CSRF-Token", csrf).send(memRule("saved"));
     expect(res.status, JSON.stringify(res.body)).toBe(201);

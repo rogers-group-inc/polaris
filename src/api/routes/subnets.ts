@@ -12,10 +12,12 @@ import * as subnetExclusionService from "../../services/subnetExclusionService.j
 import {
   requirePermission,
   requireOwnership,
-  assertOwnership,
   assertTagChangeAllowed,
   callerIsAdminEquivalent,
 } from "../middleware/permissions.js";
+import { inWriteScope } from "../../services/writeScopeService.js";
+import { resolveWriteScope, assertInWriteScope, reservationScopeRecord } from "../../services/writeScopeService.js";
+import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
 
 const router = Router();
@@ -97,7 +99,10 @@ router.get("/", requirePermission("subnets", "read"), async (req, res, next) => 
     const limit = intQuery(req.query.limit);
     const offset = intQuery(req.query.offset);
     const resolvedCreatedBy = createdBy === "me" ? (req.session?.username ?? undefined) : (createdBy || undefined);
-    res.json(await subnetService.listSubnets({ blockId, status: status as any, tag, createdBy: resolvedCreatedBy, limit, offset }));
+    const page = await subnetService.listSubnets({ blockId, status: status as any, tag, createdBy: resolvedCreatedBy, limit, offset });
+    // Rule 141 (e): `canEdit` per network — own, or carrying one of the caller's tags.
+    const scope = await resolveWriteScope(req, "subnets");
+    res.json({ ...page, subnets: (page as { subnets: Array<{ createdBy: string | null; tags: string[] }> }).subnets.map((s) => ({ ...s, canEdit: inWriteScope(scope, s) })) });
   } catch (err) {
     next(err);
   }
@@ -110,7 +115,7 @@ router.post("/next-available", requireOwnership("subnets"), async (req, res, nex
     assertTagChangeAllowed(req, [], metadata.tags);
     const subnet = await subnetService.allocateNextSubnet(blockId, prefixLength, {
       ...metadata,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(subnet);
@@ -150,7 +155,7 @@ router.post("/bulk-allocate", requireOwnership("subnets"), async (req, res, next
     assertTagChangeAllowed(req, [], input.tags);
     const result = await subnetService.bulkAllocate({
       ...input,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(result);
@@ -188,7 +193,7 @@ router.post("/exclusions", requirePermission("subnets", "fullwrite"), async (req
     const input = CreateExclusionSchema.parse(req.body);
     const created = await subnetExclusionService.createExclusion({
       ...input,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(created);
@@ -304,6 +309,9 @@ router.post("/:id/archive", requirePermission("subnets", "fullwrite"), async (re
 router.post("/:id/refresh", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
+    // Rule 141 (e): a refresh rewrites the network's rows, so it takes the
+    // same own-or-tagged check as an edit (it took none until 2026-11-04).
+    assertInWriteScope(await resolveWriteScope(req, "subnets"), await subnetService.getSubnet(id), "refresh networks");
     const result = await refreshSubnet(id, req.session?.username ?? null);
     res.json(result);
   } catch (err) {
@@ -317,7 +325,24 @@ router.get("/:id/ips", requirePermission("subnets", "read"), async (req, res, ne
     const id = req.params.id as string;
     const page = intQuery(req.query.page, { fallback: 1, min: 1 })!;
     const pageSize = intQuery(req.query.pageSize, { fallback: 256, min: 1, max: 65536 })!;
-    res.json(await subnetService.getSubnetIps(id, page, pageSize));
+    const [result, resScope, netScope, net] = await Promise.all([
+      subnetService.getSubnetIps(id, page, pageSize),
+      resolveWriteScope(req, "reservations"),
+      resolveWriteScope(req, "subnets"),
+      subnetService.getSubnetScopeRow(id),
+    ]);
+    // Rule 141 (e): `canEdit` per reservation — the caller's own, or on a
+    // network carrying one of their tags (reservationScopeRecord) — and on the
+    // network itself (what its Discover / refresh needs). The desktop network
+    // panel and the phone's network sheet read them, so Edit, Free and
+    // Discover are offered only where the click succeeds.
+    const netTags = net?.tags ?? [];
+    const ips = (result.ips as Array<{ reservation: { createdBy?: string | null } | null }>).map((ip) =>
+      ip.reservation
+        ? { ...ip, reservation: { ...ip.reservation, canEdit: inWriteScope(resScope, reservationScopeRecord({ createdBy: ip.reservation.createdBy ?? null, subnet: { tags: netTags } })) } }
+        : ip);
+    const subnet = result.subnet ? { ...result.subnet, canEdit: !!net && inWriteScope(netScope, net) } : result.subnet;
+    res.json({ ...result, subnet, ips });
   } catch (err) {
     next(err);
   }
@@ -341,7 +366,7 @@ router.post("/", requireOwnership("subnets"), async (req, res, next) => {
     assertTagChangeAllowed(req, [], input.tags);
     const subnet = await subnetService.createSubnet({
       ...input,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(subnet);
@@ -356,7 +381,7 @@ router.put("/:id", requireOwnership("subnets"), async (req, res, next) => {
     const id = req.params.id as string;
     const input = UpdateSubnetSchema.parse(req.body);
     const before = await subnetService.getSubnet(id);
-    assertOwnership(req, before.createdBy, "edit networks");
+    assertInWriteScope(await resolveWriteScope(req, "subnets"), before, "edit networks");
     assertTagChangeAllowed(req, before.tags, input.tags);
     const subnet = await subnetService.updateSubnet(id, {
       ...input,
@@ -386,7 +411,7 @@ router.post("/:id/move", requireOwnership("subnets"), async (req, res, next) => 
     const id = req.params.id as string;
     const { blockId } = MoveSubnetSchema.parse(req.body);
     const before = await subnetService.getSubnet(id);
-    assertOwnership(req, before.createdBy, "move networks");
+    assertInWriteScope(await resolveWriteScope(req, "subnets"), before, "move networks");
     res.json(await subnetService.moveSubnet(id, blockId, req.session?.username));
   } catch (err) {
     next(err);
@@ -406,7 +431,7 @@ router.delete("/:id", requireOwnership("subnets"), async (req, res, next) => {
     }
     if (req.permissionLevel !== "fullwrite") {
       const existing = await subnetService.getSubnet(id);
-      assertOwnership(req, existing.createdBy, "delete networks");
+      assertInWriteScope(await resolveWriteScope(req, "subnets"), existing, "delete networks");
     }
     await subnetService.deleteSubnet(id, req.session?.username, { force });
     res.status(204).send();

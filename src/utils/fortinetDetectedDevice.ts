@@ -5,13 +5,20 @@
  * The FMG-proxied and direct-REST discovery paths fetch the table over
  * different transports, then ran byte-identical ~85-line processing loops
  * (2026-08 audit). This owns the post-fetch half: the per-row parse into the
- * switch MAC table, the AP→switch-port uplink pairing, and the FortiSwitch
- * base-MAC stamping. Type-only imports from fortimanagerService (the shared
- * Discovered* shapes' home) — no runtime dependency.
+ * switch MAC table and the AP→switch-port uplink pairing. Type-only imports
+ * from fortimanagerService (the shared Discovered* shapes' home) — no runtime
+ * dependency.
+ *
+ * It does NOT give a managed FortiSwitch its own MAC. The table lists what
+ * each switch LEARNED on its ports; a row flagged `is_fortilink_peer` is the
+ * device at the far end of that switch's FortiLink (the gate, or the switch
+ * upstream of it in a chain), so stamping it as the switch's MAC handed a
+ * switch its neighbour's identity. The switch's MAC comes from its
+ * controller's lease / ARP / inventory at `connecting_from` (business rule
+ * 91(g), `utils/fortiapGateMac.ts → fortiswitchGateMac`).
  */
 
 import type {
-  DiscoveredFortiSwitch,
   DiscoveredFortiAP,
   DiscoveredSwitchMacEntry,
   DiscoveredArpEntry,
@@ -26,17 +33,12 @@ export function processDetectedDeviceRows(opts: {
   /** Display label for log lines (the direct-REST path uses the resolved hostname). */
   displayName: string;
   aps: DiscoveredFortiAP[];
-  switches: DiscoveredFortiSwitch[];
   macTable: DiscoveredSwitchMacEntry[];
   log: DiscoveryProgressCallback;
 }): void {
-  const { rows, deviceName, displayName, aps, switches, macTable, log } = opts;
+  const { rows, deviceName, displayName, aps, macTable, log } = opts;
 
   const macMap = new Map<string, { switchId: string; portName: string; vlan?: number }>();
-  // FortiLink-peer rows carry each managed FortiSwitch's own management MAC,
-  // keyed on switch_id. Used below to stamp baseMac onto every
-  // DiscoveredFortiSwitch.
-  const switchMacByName = new Map<string, string>();
   for (const raw of rows) {
     const d = raw as Record<string, unknown>;
     const mac = String(d.mac || "").toUpperCase().replace(/-/g, ":");
@@ -45,9 +47,6 @@ export function processDetectedDeviceRows(opts: {
     const portName = String(d.port_name || "");
     const vlanId = Number.isFinite(d.vlan_id) ? Number(d.vlan_id) : undefined;
     const isFortilinkPeer = d.is_fortilink_peer === true || d.is_fortilink_peer === 1;
-    if (isFortilinkPeer && switchId && !switchMacByName.has(switchId)) {
-      switchMacByName.set(switchId, mac);
-    }
     // Surface every learned MAC to the sync layer for endpoint-asset
     // attribution. FortiLink-peer rows are flagged so the consumer can skip
     // the FortiGate's own MAC seen on managed-switch uplinks.
@@ -103,23 +102,6 @@ export function processDetectedDeviceRows(opts: {
   }
   const totalResolved = pairedCount + lldpAlreadyCount;
   log("discover.ap-uplinks", "info", `${displayName}: Resolved ${totalResolved}/${aps.length} AP→switch-port uplinks (${lldpAlreadyCount} via LLDP, ${pairedCount} via detected-device)`, displayName);
-
-  // Stamp each managed FortiSwitch's management MAC onto its
-  // DiscoveredFortiSwitch entry using the FortiLink-peer rows collected
-  // above. Lets the sync layer dedup against DHCP/ARP-discovered orphan
-  // endpoint assets at the switch's mgmt IP.
-  let switchMacResolved = 0;
-  for (const sw of switches) {
-    if (sw.device !== deviceName || !sw.name) continue;
-    const mac = switchMacByName.get(sw.name);
-    if (mac) {
-      sw.baseMac = mac;
-      switchMacResolved++;
-    }
-  }
-  if (switchMacByName.size > 0) {
-    log("discover.fortiswitches.mac", "info", `${displayName}: Resolved ${switchMacResolved} FortiSwitch base MAC(s) from detected-device fortilink-peer rows`, displayName);
-  }
 }
 
 /**

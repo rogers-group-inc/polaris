@@ -305,13 +305,22 @@
               <code>api:&lt;token name&gt;</code>.</li>
         </ul>
         <div class="docs-note">
-          <strong>Ownership-scoped resources need <code>fullwrite</code>.</strong> Networks
-          (subnets), reservations, and contacts carry an ownership dimension: <code>write</code>
-          lets a caller edit only rows they created, identified by the session username. A bearer
-          token has no username, so a token bound to a role with plain <code>write</code> on those
-          keys can <em>create</em> rows but gets <code>403</code> on every edit/delete of an
-          existing row. Bind tokens that must manage IPAM rows to a role granting
-          <code>fullwrite</code> on <code>subnets</code> / <code>reservations</code>.
+          <strong>Read-Write reaches what you own or what carries your tags.</strong> On
+          <code>assets</code>, <code>assetsQuarantine</code>, <code>alerts</code>,
+          <code>maintenanceManagement</code>, <code>discoveryConflicts</code>,
+          <code>staleReservations</code>, <code>deviceMap</code>, <code>subnets</code> and
+          <code>reservations</code>, <code>write</code> changes only records whose
+          <code>createdBy</code> is the caller — a username, or <code>api:&lt;token name&gt;</code>
+          for a bearer token, which owns what it creates — plus every record carrying one of the
+          caller's tags; <code>fullwrite</code> changes any record. A record integration discovery
+          created has no owner and no tags. A bulk verb refuses the whole list when one id is out of
+          reach (<code>403</code> naming it). Fleet-wide verbs on those keys need
+          <code>fullwrite</code>. Lists and details carry the verdict per row
+          (<code>canEdit</code>, <code>canQuarantine</code>, <code>canMaintain</code>,
+          <code>canAcknowledge</code> / <code>canClear</code>, <code>canResolve</code> /
+          <code>canRelease</code>, <code>canEditLayout</code>). Bind a token that must manage
+          everything to a role granting <code>fullwrite</code>. On <code>contacts</code>,
+          <code>credentials</code> and <code>networkScan</code> the rule is owner-only.
           <strong>Tags are their own key.</strong> A request that changes the <code>tags</code>
           array of an asset, port, network, block, user, role or group mapping needs
           <code>tags:write</code> as well as write on the record&rsquo;s own key; posting the
@@ -1366,7 +1375,10 @@
           <p>The per-address map: <code>{ subnet, ips, ipv6, totalIps, page, pageSize }</code>,
             each <code>ips[]</code> entry <code>{ address, type, reservation, assetId }</code>.
             Paged via <code>page</code> (default 1) + <code>pageSize</code> (default 256, max
-            65536). IPv6 networks list only reservation-backed addresses.</p>
+            65536). IPv6 networks list only reservation-backed addresses. <code>subnet.canEdit</code>
+            says whether the caller may change the network (and run its Discover), and each
+            <code>reservation.canEdit</code> whether they may edit or release that reservation —
+            the per-row verdicts described under Ownership and tags.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets

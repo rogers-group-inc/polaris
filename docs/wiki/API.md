@@ -44,16 +44,28 @@ custom header — while authentication is fully enforced downstream.
 
 ### The ownership trap
 
-Networks, reservations, contacts, credentials and Discoveries carry an
-[ownership dimension](Users-Roles-and-Permissions#ownership): `write` reaches
-only rows whose creator matches the caller.
+Nine keys are tag-scoped: Assets, Asset Quarantine, Alerts, Maintenance,
+Discovery Conflicts, Stale Reservations, Device Map, Networks and Reservations.
+On them `write` reaches only the records the caller created plus every record
+carrying one of the caller's tags. `fullwrite` reaches every record. Contacts,
+credentials and Discoveries are owner-only: `write` reaches only rows the caller
+created. See [Ownership and tags](Users-Roles-and-Permissions#ownership-and-tags).
 
-**A token has no username.** So a token bound to a role with plain `write` on
-those keys can **create** rows but gets `403` on every edit or delete of an
-existing one.
+**A token owns what it creates.** Its rows record it as `api:<token name>`, so
+renaming the token orphans them. A record integration discovery created has no
+owner and no tags, so only `fullwrite` reaches it.
+
+**A bulk call is all or nothing.** One id out of reach refuses the whole list
+with a `403` naming it, before anything is written.
+
+**Lists say what you may change.** Rows carry the verdict: `canEdit`,
+`canQuarantine`, `canMaintain`, `canAcknowledge` / `canClear`, `canResolve` /
+`canRelease` and `canEditLayout`. `GET /assets/:id/maintenance-info` carries
+`canMaintain` and each covering schedule's `canEdit`. `GET /subnets/:id/ips`
+carries the network's `canEdit` and each reservation's.
 
 **Bind integration tokens to a role holding `fullwrite`** on the keys they need
-to modify.
+to modify everywhere.
 
 ---
 

@@ -99,7 +99,7 @@ beforeEach(async () => {
   const seen = new Date();
   assetId = (await prisma.asset.create({
     data: {
-      hostname: PFX + "-sensor", macAddress: MAC, assetType: "other", status: "active", ipAddress: null,
+      hostname: PFX + "-sensor", macAddress: MAC, assetType: "other", status: "active", ipAddress: null, createdBy: writeUser,
       associatedIpRows: {
         create: [
           { ip: V6_A, source: "monitor-system-info", interfaceName: "eth0", mac: MAC, lastSeen: new Date(seen.getTime() - 60_000) },
@@ -156,7 +156,7 @@ d("primary IPv6 (rule 128)", () => {
   it("with IPv6 off: a pin is refused, unpinned values clear, a pin is kept", async () => {
     await reconcilePrimaryIpv6();
     const pinned = await prisma.asset.create({
-      data: { hostname: PFX + "-pinned", assetType: "other", status: "active", ipv6Address: V6_A, ipv6Pinned: true },
+      data: { hostname: PFX + "-pinned", assetType: "other", status: "active", ipv6Address: V6_A, ipv6Pinned: true, createdBy: writeUser },
     });
     await setIpv6Enabled(false, "test");
 

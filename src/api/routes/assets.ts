@@ -14,6 +14,8 @@ import { assetDialAddress } from "../../utils/assetDialAddress.js";
 import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission, credentialUseActor, assertTagChangeAllowed } from "../middleware/permissions.js";
+import { resolveWriteScope, inWriteScope, scheduleCanEditByIds } from "../../services/writeScopeService.js";
+import { scopeAssetParam, scopeAssetIds, requireFleetWide, idsFromBody } from "../middleware/writeScope.js";
 import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
 import {
   recordCredentialUse, assetCredentialUses, assetCredentialDestination,
@@ -756,6 +758,8 @@ function monitorClause(v: string): Record<string, unknown> | null {
 // GET /:id below still returns the full record for the view/edit modal.
 const ASSET_LIST_SELECT = {
   id: true,
+  // Rule 141 (e): the list computes `canEdit` / `canQuarantine` per row.
+  createdBy: true,
   hostname: true,
   // Operator hostname pin. The list needs it to mark the cell as overridden and
   // to know which rows to look up a discovered hostname for (enrichAssetList).
@@ -1258,7 +1262,17 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     }
 
     const enriched = await enrichAssetList(assets as never);
-    res.json({ assets: enriched, total, limit, offset });
+    // Rule 141 (e): what THIS caller may change, per row — server-computed so
+    // the page never re-derives tag matching. Pure set lookups over columns
+    // already selected; nothing more at 2000 rows.
+    const [editScope, quarantineScope, maintScope] = await Promise.all([resolveWriteScope(req, "assets"), resolveWriteScope(req, "assetsQuarantine"), resolveWriteScope(req, "maintenanceManagement")]);
+    const flagged = (enriched as Array<Record<string, unknown>>).map((a) => ({
+      ...a,
+      canEdit: inWriteScope(editScope, a as { createdBy: string | null; tags?: string[] }),
+      canQuarantine: inWriteScope(quarantineScope, a as { createdBy: string | null; tags?: string[] }),
+      canMaintain: inWriteScope(maintScope, a as { createdBy: string | null; tags?: string[] }),
+    }));
+    res.json({ assets: flagged, total, limit, offset });
   } catch (err) {
     next(err);
   }
@@ -1334,7 +1348,7 @@ router.get("/source-priority", requirePermission("assets", "read"), async (_req,
 // PUT /api/v1/assets/source-priority — reorder / toggle the integration-name
 // prefix. assets:write, matching the other settings on the Assets → Settings
 // modal; the service audits the change with the previous order.
-router.put("/source-priority", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/source-priority", requirePermission("assets", "write"), requireFleetWide("assets", "the source priority"), async (req, res, next) => {
   try {
     const body = z.object({
       order: z.array(z.string()).optional(),
@@ -1377,7 +1391,7 @@ router.get("/ip-context", requirePermission("assets", "read"), async (req, res, 
 });
 
 // PUT /api/v1/assets/ip-history-settings — update retention settings (assets admin)
-router.put("/ip-history-settings", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/ip-history-settings", requirePermission("assets", "write"), requireFleetWide("assets", "the IP-history settings"), async (req, res, next) => {
   try {
     const { retentionDays } = z.object({ retentionDays: z.number().int().min(0).max(3650) }).parse(req.body);
     await updateHistorySettings({ retentionDays });
@@ -1407,7 +1421,7 @@ router.put("/ip-history-settings", requirePermission("assets", "write"), async (
 // fits a heterogeneous batch. Operators picking a method per-asset use the
 // asset edit modal's Monitoring tab.
 // Returns per-id error list for any rejected rows.
-router.post("/bulk-monitor", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/bulk-monitor", requirePermission("assets", "write"), scopeAssetIds("assets", "change monitoring on devices", idsFromBody), async (req, res, next) => {
   try {
     const body = z.object({
       ids:                 z.array(z.string().uuid()).min(1),
@@ -1511,7 +1525,7 @@ const BulkTagsSchema = z.object({
   tags: z.array(z.string().max(128)).max(200),
 });
 
-router.post("/bulk-tags", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/bulk-tags", requirePermission("assets", "write"), scopeAssetIds("assets", "tag devices", idsFromBody), async (req, res, next) => {
   try {
     const body = BulkTagsSchema.parse(req.body);
     // The whole verb is a tag change, so it is the Tags key's grant chained
@@ -1612,7 +1626,7 @@ router.post("/pin-inventory", requirePermission("assets", "read"), async (req, r
 // final arrays) so a concurrent hand-pin of an unrelated name on the same
 // asset is never clobbered; the 64-per-array cap is re-enforced per asset in
 // the service (overflow = per-asset skip with reason, never a batch 400).
-router.post("/mass-pins", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/mass-pins", requirePermission("assets", "write"), scopeAssetIds("assets", "pin interfaces on devices", (r) => [...((r.body && r.body.pin) || []), ...((r.body && r.body.unpin) || [])].map((d: { assetId?: unknown }) => (d && typeof d.assetId === "string" ? d.assetId : ""))), async (req, res, next) => {
   try {
     const DeltaSchema = z.object({
       assetId: z.string().uuid(),
@@ -1672,7 +1686,7 @@ router.get("/sighting-settings", requirePermission("assetsQuarantine", "read"), 
   }
 });
 
-router.put("/sighting-settings", requirePermission("assetsQuarantine", "write"), async (req, res, next) => {
+router.put("/sighting-settings", requirePermission("assetsQuarantine", "write"), requireFleetWide("assetsQuarantine", "the sighting settings"), async (req, res, next) => {
   try {
     const Schema = z.object({ sightingMaxAgeDays: z.number().int().min(0).max(3650) });
     const input = Schema.parse(req.body);
@@ -1825,7 +1839,9 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
       integrationMonitorCredential,
     };
 
-    res.json({ ...safeAsset, ipContext: ipCtx });
+    const [editScope, quarantineScope, maintScope] = await Promise.all([resolveWriteScope(req, "assets"), resolveWriteScope(req, "assetsQuarantine"), resolveWriteScope(req, "maintenanceManagement")]);
+    const scopeRec = { createdBy: (asset as { createdBy?: string | null }).createdBy ?? null, tags: (asset as { tags?: string[] }).tags ?? [] };
+    res.json({ ...safeAsset, ipContext: ipCtx, canEdit: inWriteScope(editScope, scopeRec), canQuarantine: inWriteScope(quarantineScope, scopeRec), canMaintain: inWriteScope(maintScope, scopeRec) });
   } catch (err) {
     next(err);
   }
@@ -1871,9 +1887,15 @@ router.get("/:id/ip-history", requirePermission("assets", "read"), async (req, r
 // pre-rename /:id/notifications path stays as a deprecated alias.
 router.get(["/:id/alerts", "/:id/notifications"], requirePermission("assets", "read"), async (req, res, next) => {
   try {
-    const asset = await prisma.asset.findUnique({ where: { id: req.params.id as string }, select: { id: true } });
+    const asset = await prisma.asset.findUnique({ where: { id: req.params.id as string }, select: { id: true, createdBy: true, tags: true } });
     if (!asset) throw new AppError(404, "Asset not found");
-    res.json(maskActionHeaders(await getAssetNotifications(req.params.id as string, { fullRules: hasPermission(req, "automationManagement", "read") })));
+    // Rule 141 (e): the tab's verbs for THIS caller — every alert here is on
+    // this device, so one judgement covers the list.
+    const ackReach = inWriteScope(await resolveWriteScope(req, "alerts"), asset);
+    const clearReach = ackReach && hasPermission(req, "alertClear", "write");
+    const payload = maskActionHeaders(await getAssetNotifications(req.params.id as string, { fullRules: hasPermission(req, "automationManagement", "read") })) as { active?: Array<Record<string, unknown>> } & Record<string, unknown>;
+    if (Array.isArray(payload.active)) payload.active = payload.active.map((n) => ({ ...n, canAcknowledge: ackReach, canClear: clearReach }));
+    res.json(payload);
   } catch (err) {
     next(err);
   }
@@ -2323,7 +2345,7 @@ router.post("/:id/refresh-system-info", requirePermission("assetsProbe", "read")
 // dhcp_reservation rows.
 // HA note: fortinetTopology.deviceName resolves to the FMG cluster device, so
 // re-discovering a standby member's asset re-discovers the whole cluster.
-router.post("/:id/rediscover", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/:id/rediscover", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const resolution = await resolveDiscoveryScopeForAsset(id);
@@ -2505,10 +2527,28 @@ router.get("/:id/maintenance-windows", requirePermission("assets", "read"), asyn
 });
 
 // GET /assets/:id/maintenance-info — current windows + covering schedules for
-// the edit-modal Monitoring tab / slide-over.
+// the edit-modal Maintenance tab / slide-over / phone sheet. Rule 141 (e):
+// `canMaintain` says whether the caller may put THIS asset into maintenance or
+// take it off a window's device list; each schedule's `canEdit` whether they
+// may delete it (its creator, or every explicit device in scope). Both screens
+// grey those verbs from these, never from the role alone.
 router.get("/:id/maintenance-info", requirePermission("assets", "read"), async (req, res, next) => {
   try {
-    res.json(await getAssetMaintenanceInfo(req.params.id as string));
+    const id = req.params.id as string;
+    const info = await getAssetMaintenanceInfo(id);
+    const scope = await resolveWriteScope(req, "maintenanceManagement");
+    const [asset, canEdit] = await Promise.all([
+      scope.kind === "scoped"
+        ? prisma.asset.findUnique({ where: { id }, select: { createdBy: true, tags: true } })
+        : Promise.resolve(null),
+      scheduleCanEditByIds(scope, info.schedules.map((s) => s.id)),
+    ]);
+    const canMaintain = scope.kind === "all" || (scope.kind === "scoped" && !!asset && inWriteScope(scope, asset));
+    res.json({
+      ...info,
+      canMaintain,
+      schedules: info.schedules.map((s) => ({ ...s, canEdit: canEdit.get(s.id) === true })),
+    });
   } catch (err) { next(err); }
 });
 
@@ -3392,7 +3432,7 @@ router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (re
 
 // PUT /assets/:id/custom-widgets/:widgetId/enabled — the per-card switch on the
 // Custom MIB tab (business rule 130). Writes an asset.custom_widget.* Event.
-router.put("/:id/custom-widgets/:widgetId/enabled", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id/custom-widgets/:widgetId/enabled", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const parsed = CustomWidgetEnabledSchema.safeParse(req.body);
     if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));
@@ -3550,7 +3590,7 @@ router.get("/:id/interface-history", requirePermission("assets", "read"), async 
 const InterfaceCommentSchema = z.object({
   description: z.string().max(255, "Interface Comments may be at most 255 characters").nullable().optional(),
 });
-router.put("/:id/interfaces/:ifName/comment", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id/interfaces/:ifName/comment", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const ifName = String(req.params.ifName || "");
@@ -3611,7 +3651,7 @@ router.put("/:id/interfaces/:ifName/comment", requirePermission("assets", "write
 const InterfaceTagsSchema = z.object({
   tags: z.array(z.string().max(200)).max(200),
 });
-router.put("/:id/interfaces/:ifName/tags", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id/interfaces/:ifName/tags", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const ifName = String(req.params.ifName || "");
@@ -4171,7 +4211,7 @@ router.get("/:id/service-logs", requirePermission("assets", "read"), async (req,
 
 // PUT /assets/:id/processes/:name/config — operator log-path config for a
 // pinned program (log source + wildcard glob). Upserts AssetProcessConfig.
-router.put("/:id/processes/:name/config", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id/processes/:name/config", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const name = String(req.params.name);
@@ -4852,7 +4892,7 @@ function assertIpChangeMayRetargetIntegrationToken(
   assertIpChangeMayRetargetIntegrationTokenUtil(hasPermission(req, "integrations", "write"), existing, nextIp);
 }
 
-router.put("/:id", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const existing = await loadAssetForUpdate(id);
@@ -4887,7 +4927,7 @@ router.put("/:id", requirePermission("assets", "write"), async (req, res, next) 
 // and `monitorOverride = false`, so discovery resumes auto-managing the asset
 // on the next cycle. This is the operator's escape hatch for an asset that
 // shows the "Asset Override" badge but shouldn't be pinned.
-router.post("/:id/monitor-override/reset", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/:id/monitor-override/reset", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const existing = await prisma.asset.findUnique({
@@ -5000,7 +5040,7 @@ async function applyDnsUpdatesChunked(
 }
 
 // POST /api/v1/assets/dns-lookup — bulk PTR lookup; skips IPs whose cached result is within TTL
-router.post("/dns-lookup", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/dns-lookup", requirePermission("assets", "write"), requireFleetWide("assets", "a fleet-wide DNS lookup"), async (req, res, next) => {
   try {
     const now = Date.now();
     const resolver = await getConfiguredResolver();
@@ -5095,7 +5135,7 @@ router.post("/dns-lookup", requirePermission("assets", "write"), async (req, res
 });
 
 // POST /api/v1/assets/:id/dns-lookup — PTR lookup for a single asset; always queries (user-triggered)
-router.post("/:id/dns-lookup", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/:id/dns-lookup", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: req.params.id as string },
@@ -5172,7 +5212,7 @@ router.post("/:id/dns-lookup", requirePermission("assets", "write"), async (req,
 });
 
 // POST /api/v1/assets/:id/forward-lookup — A/AAAA lookup from hostname/dnsName → fills ipAddress
-router.post("/:id/forward-lookup", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/:id/forward-lookup", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: req.params.id as string },
@@ -5205,7 +5245,7 @@ router.post("/:id/forward-lookup", requirePermission("assets", "write"), async (
 });
 
 // POST /api/v1/assets/oui-lookup — bulk OUI manufacturer lookup
-router.post("/oui-lookup", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/oui-lookup", requirePermission("assets", "write"), requireFleetWide("assets", "a fleet-wide OUI lookup"), async (req, res, next) => {
   try {
     const assets = await prisma.asset.findMany({
       where: { macAddress: { not: null }, manufacturer: null, status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } },
@@ -5251,7 +5291,7 @@ router.post("/oui-lookup", requirePermission("assets", "write"), async (req, res
 });
 
 // POST /api/v1/assets/:id/oui-lookup — OUI manufacturer lookup for a single asset
-router.post("/:id/oui-lookup", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/:id/oui-lookup", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const asset = await prisma.asset.findUnique({ where: { id: req.params.id as string } });
     if (!asset) throw new AppError(404, "Asset not found");
@@ -5277,7 +5317,7 @@ router.post("/:id/oui-lookup", requirePermission("assets", "write"), async (req,
 });
 
 // POST /api/v1/assets/import — CSV import: backdate createdAt from serial+date rows (assets admin)
-router.post("/import", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/import", requirePermission("assets", "write"), requireFleetWide("assets", "an import that edits devices by serial"), async (req, res, next) => {
   try {
     const { rows, dryRun } = req.body as { rows?: unknown; dryRun?: boolean };
     if (!Array.isArray(rows) || rows.length === 0) throw new AppError(400, "rows must be a non-empty array");
@@ -5358,7 +5398,7 @@ router.post("/import", requirePermission("assets", "write"), async (req, res, ne
 });
 
 // POST /api/v1/assets/import-pdf — create/update assets from extracted PDF invoice data (assets admin)
-router.post("/import-pdf", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/import-pdf", requirePermission("assets", "write"), requireFleetWide("assets", "an import that edits devices by serial"), async (req, res, next) => {
   try {
     const { assets: rows, dryRun } = req.body as { assets?: unknown; dryRun?: boolean };
     if (!Array.isArray(rows) || rows.length === 0) throw new AppError(400, "assets must be a non-empty array");
@@ -5427,7 +5467,8 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
         assertQuarantineStatusUntouched(updateData.status, null);
         preview.push({ action: "create", serialNumber: serial, hostname: row.hostname || null, fields });
         if (!dryRun) {
-          await prisma.asset.create({ data: { assetType: "other", status: "storage", statusChangedAt: new Date(), statusChangedBy: requestActor(req) ?? "manual", ...updateData } as any });
+          // A row the import CREATES is the importer's (business rule 141 (e)), like a hand-added device.
+          await prisma.asset.create({ data: { assetType: "other", status: "storage", statusChangedAt: new Date(), statusChangedBy: requestActor(req) ?? "manual", createdBy: requestActor(req) ?? null, ...updateData } as any });
           created++;
         }
       }
@@ -5454,7 +5495,7 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
 // permanently wrong asset record that looks correct. `:mac` names the row's
 // START key, so removing an interface-scrape RANGE row removes the whole
 // [mac, macEnd] block.
-router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req, res, next) => {
+router.delete("/:id/macs/:mac", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const normalized = String(req.params.mac || "").toUpperCase().replace(/-/g, ":");
@@ -5578,7 +5619,7 @@ router.post("/decommission-preview", requirePermission("assets", "read"), async 
 // monitored on, chosen from its address list (business rule 102). Replaces the
 // typed IP override and the blank pin if either is set. assets:write, the same
 // grant as editing the IP in the form.
-router.put("/:id/primary-address", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id/primary-address", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const input = PrimaryAddressSchema.parse(req.body);
     // The IPv4 pin is the address monitoring dials; an IPv6 has its own
@@ -5616,7 +5657,7 @@ router.post("/:id/address-check", requirePermission("assets", "write"), async (r
 // DELETE /api/v1/assets/:id/primary-address — release the pin; the asset moves
 // to the listed address with the highest evidence score (business rule
 // 103(b)), or to the projection only when the list is empty.
-router.delete("/:id/primary-address", requirePermission("assets", "write"), async (req, res, next) => {
+router.delete("/:id/primary-address", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const result = await unpinPrimaryAddress({ assetId: req.params.id as string, actor: requestActor(req) ?? "unknown" });
     res.json(result);
@@ -5630,7 +5671,7 @@ router.delete("/:id/primary-address", requirePermission("assets", "write"), asyn
 // assets:write, like the IPv4 pin. Refused (409) while IPv6 is off for the
 // install. An asset with no IPv4 is polled on this address, so the same
 // integration-token guard as an IPv4 change applies (rule 111).
-router.put("/:id/primary-ipv6", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id/primary-ipv6", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const input = PrimaryIpv6Schema.parse(req.body);
     const pinTarget = await prisma.asset.findUnique({
@@ -5646,7 +5687,7 @@ router.put("/:id/primary-ipv6", requirePermission("assets", "write"), async (req
 
 // DELETE /api/v1/assets/:id/primary-ipv6 — remove the pin; the automatic
 // choice (or none) takes over straight away.
-router.delete("/:id/primary-ipv6", requirePermission("assets", "write"), async (req, res, next) => {
+router.delete("/:id/primary-ipv6", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     res.json(await unpinPrimaryIpv6({ assetId: req.params.id as string, actor: requestActor(req) ?? "unknown" }));
   } catch (err) {
@@ -5655,7 +5696,7 @@ router.delete("/:id/primary-ipv6", requirePermission("assets", "write"), async (
 });
 
 // DELETE /api/v1/assets — bulk delete (assets admin)
-router.delete("/", requirePermission("assets", "write"), async (req, res, next) => {
+router.delete("/", requirePermission("assets", "write"), scopeAssetIds("assets", "delete devices", idsFromBody), async (req, res, next) => {
   try {
     const { ids } = req.body as { ids?: unknown };
     if (!Array.isArray(ids) || ids.length === 0) throw new AppError(400, "ids must be a non-empty array");
@@ -5695,7 +5736,7 @@ router.delete("/", requirePermission("assets", "write"), async (req, res, next) 
 });
 
 // DELETE /api/v1/assets/:id — delete (assets admin)
-router.delete("/:id", requirePermission("assets", "write"), async (req, res, next) => {
+router.delete("/:id", requirePermission("assets", "write"), scopeAssetParam("assets", "delete assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const existing = await prisma.asset.findUnique({ where: { id } });
@@ -5872,7 +5913,7 @@ const splitSourceParamsSchema = z.object({
   id: z.string().min(1),
   sourceId: z.string().min(1),
 });
-router.post("/:id/sources/:sourceId/split", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/:id/sources/:sourceId/split", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const { id, sourceId } = splitSourceParamsSchema.parse(req.params);
     const originalAsset = await prisma.asset.findUnique({ where: { id }, select: { id: true, hostname: true } });
@@ -6575,7 +6616,7 @@ router.get("/:id/dependencies", requirePermission("assets", "read"), async (req,
   }
 });
 
-router.put("/:id/dependencies/override", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id/dependencies/override", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const body = dependencyOverrideBodySchema.parse(req.body);
@@ -6684,7 +6725,7 @@ router.put("/:id/dependencies/override", requirePermission("assets", "write"), a
   }
 });
 
-router.delete("/:id/dependencies/override", requirePermission("assets", "write"), async (req, res, next) => {
+router.delete("/:id/dependencies/override", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const asset = await prisma.asset.findUnique({ where: { id }, select: { id: true, hostname: true } });
@@ -6863,7 +6904,7 @@ router.get("/:id/quarantine-status", requirePermission("assetsQuarantine", "read
 });
 
 // POST /api/v1/assets/:id/quarantine — admin, assets admin, or token with assets:quarantine scope
-router.post("/:id/quarantine", requirePermission("assetsQuarantine", "write"), async (req, res, next) => {
+router.post("/:id/quarantine", requirePermission("assetsQuarantine", "write"), scopeAssetParam("assetsQuarantine", "quarantine devices"), async (req, res, next) => {
   try {
     const Schema = z.object({ reason: z.string().max(500).optional() });
     const input = Schema.parse(req.body ?? {});
@@ -6882,7 +6923,7 @@ router.post("/:id/quarantine", requirePermission("assetsQuarantine", "write"), a
 });
 
 // DELETE /api/v1/assets/:id/quarantine — admin, assets admin, or token with assets:quarantine scope
-router.delete("/:id/quarantine", requirePermission("assetsQuarantine", "write"), async (req, res, next) => {
+router.delete("/:id/quarantine", requirePermission("assetsQuarantine", "write"), scopeAssetParam("assetsQuarantine", "release devices"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const actor = requestActor(req) || "unknown";
@@ -6898,7 +6939,7 @@ router.delete("/:id/quarantine", requirePermission("assetsQuarantine", "write"),
 });
 
 // POST /api/v1/assets/:id/quarantine/verify — read-back drift check (admin, assets admin, or token)
-router.post("/:id/quarantine/verify", machineApiLimiter, requirePermission("assetsQuarantine", "write"), async (req, res, next) => {
+router.post("/:id/quarantine/verify", machineApiLimiter, requirePermission("assetsQuarantine", "write"), scopeAssetParam("assetsQuarantine", "quarantine devices"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const verifyResult = await verifyAssetQuarantine(id, req.apiToken?.integrationIds);
@@ -6944,7 +6985,7 @@ const BULK_QUARANTINE_MAX_IDS = 500;
 const BULK_QUARANTINE_POOL = 8;
 
 // POST /api/v1/assets/bulk-quarantine — admin, assets admin, or token with assets:quarantine scope
-router.post("/bulk-quarantine", requirePermission("assetsQuarantine", "write"), async (req, res, next) => {
+router.post("/bulk-quarantine", requirePermission("assetsQuarantine", "write"), scopeAssetIds("assetsQuarantine", "quarantine devices", idsFromBody), async (req, res, next) => {
   try {
     const Schema = z.object({
       ids: z.array(z.string()).min(1).max(BULK_QUARANTINE_MAX_IDS),
@@ -6969,7 +7010,7 @@ router.post("/bulk-quarantine", requirePermission("assetsQuarantine", "write"), 
 });
 
 // POST /api/v1/assets/bulk-quarantine/release — admin, assets admin, or token with assets:quarantine scope
-router.post("/bulk-quarantine/release", requirePermission("assetsQuarantine", "write"), async (req, res, next) => {
+router.post("/bulk-quarantine/release", requirePermission("assetsQuarantine", "write"), scopeAssetIds("assetsQuarantine", "release devices", idsFromBody), async (req, res, next) => {
   try {
     const Schema = z.object({ ids: z.array(z.string()).min(1).max(BULK_QUARANTINE_MAX_IDS) });
     const input = Schema.parse(req.body);

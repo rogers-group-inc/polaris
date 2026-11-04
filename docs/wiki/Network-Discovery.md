@@ -103,7 +103,10 @@ saved with the Discovery.
 
 **New addresses only.** A run skips every address an asset already carries
 before sending a packet, and adoption re-checks at the moment you add, so a
-device created in the meantime is skipped rather than duplicated. A re-run
+device created in the meantime is skipped rather than duplicated. **An adopted
+device is yours**: it records you as its creator, which is what Read-Write on
+Assets reaches ([rule 141](Business-Rules#rule-141)); a device Polaris already
+had keeps whatever owner it had. A re-run
 **enriches nothing** — which is deliberate, so that *"nothing new"* stays
 distinguishable from *"nothing there"*.
 

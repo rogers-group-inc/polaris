@@ -2100,7 +2100,11 @@
     return POSITION_STORAGE_PREFIX + siteId + (view !== "flat" ? ":" + view : "");
   }
   function _canWriteServerLayout() {
-    return typeof permAtLeast === "function" && permAtLeast("deviceMap", "write");
+    if (typeof permAtLeast !== "function" || !permAtLeast("deviceMap", "write")) return false;
+    // Rule 141 (e): Read-Write saves only a site whose FortiGate the caller
+    // added or that carries one of their tags; the topology payload says.
+    if (permAtLeast("deviceMap", "fullwrite")) return true;
+    return !(topoState.data && topoState.data.canEditLayout === false);
   }
   // Views whose positions changed via an actual operator gesture (drag /
   // hull drag / snap-all) since their last queued server save. Keyed by

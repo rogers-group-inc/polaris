@@ -1159,6 +1159,7 @@ const api = {
     discover:(id, name) => trackedRequest("Discovering " + (name || "DHCP"), "POST", `/integrations/${id}/discover`),
     testNew:(body)   => trackedRequest("Testing connection", "POST", "/integrations/test", body),
     query:         (id, body) => request("POST", `/integrations/${id}/query`, body),
+    fortigates:    (id) => request("GET", `/integrations/${id}/fortigates`),
     discoveries:   ()    => request("GET", "/integrations/discoveries"),
     healthSummary: ()    => request("GET", "/integrations/health-summary"),
     fmgActivity:   (id)  => request("GET", `/integrations/${id}/fmg-activity`),

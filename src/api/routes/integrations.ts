@@ -11,6 +11,7 @@ import { hasNoControlChars } from "../../utils/safeText.js";
 import { purgeDirectoryContacts } from "../../services/directorySyncService.js";
 import { bumpDirectoryCache } from "../../services/directorySearchService.js";
 import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
+import { requestActor } from "../middleware/auth.js";
 import { recordCredentialUse, changedCredentialRefs } from "../../services/credentialUseAuditService.js";
 import * as fortimanager from "../../services/fortimanagerService.js";
 import { getFmgActivityForIntegration } from "../../services/fmgActivityService.js";
@@ -54,6 +55,7 @@ import {
   applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
 import { checkForSlowRuns, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
+import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
 const router = Router();
 
@@ -2191,6 +2193,17 @@ router.post("/test/fortigate-sample", async (req, res, next) => {
   }
 });
 
+// GET /api/v1/integrations/:id/fortigates — the FortiGates this integration has
+// discovered, by FortiManager device name: the Query API window's FortiGate
+// picker. Same gate as the Query API itself (the router-level integrations:write).
+router.get("/:id/fortigates", async (req, res, next) => {
+  try {
+    res.json({ fortigates: await listIntegrationFortigates(req.params.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/integrations/:id/query — proxy a manual API call to a FortiManager or FortiGate
 router.post("/:id/query", async (req, res, next) => {
   try {
@@ -3031,7 +3044,7 @@ async function registerFortinetHost(integrationType: string, host: string, integ
         // Read-Write for the caller's own. Integrations Read-Write alone
         // never let anyone rewrite someone else's reservation.
         if (req) {
-          const own = !!existingRes.createdBy && existingRes.createdBy === req.session?.username;
+          const own = !!existingRes.createdBy && existingRes.createdBy === requestActor(req);
           const may = hasPermission(req, "reservations", "fullwrite") || (own && hasPermission(req, "reservations", "write"));
           if (!may) {
             throw new AppError(
@@ -3076,7 +3089,7 @@ async function registerFortinetHost(integrationType: string, host: string, integ
       // caller without it saves the integration but gets no reservation.
       await releaseDnsResolvedAt(matchingSubnet.id, host);
       await prisma.reservation.create({
-        data: { subnetId: matchingSubnet.id, ...proposedReservation, ...(req?.session?.username ? { createdBy: req.session.username } : {}) },
+        data: { subnetId: matchingSubnet.id, ...proposedReservation, ...(req && requestActor(req) ? { createdBy: requestActor(req) } : {}) },
       });
       created.push("reservation");
     }

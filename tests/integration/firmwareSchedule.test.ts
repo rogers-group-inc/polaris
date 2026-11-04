@@ -74,7 +74,7 @@ d("scheduled firmware upgrade routes", () => {
     // Unmonitored: the health gate has nothing to refuse, so the fire-time
     // refusal below comes from the image file, the start's last gate.
     const a = await prisma.asset.create({
-      data: { hostname: "fwsched-sw1", assetType: "switch", model: MODEL, serialNumber: "S108FFTF23009991", manufacturer: MFR, ipAddress: "192.0.2.91", osVersion: "7.4.3 build0542", monitored: false },
+      data: { hostname: "fwsched-sw1", assetType: "switch", model: MODEL, serialNumber: "S108FFTF23009991", manufacturer: MFR, ipAddress: "192.0.2.91", osVersion: "7.4.3 build0542", monitored: false, createdBy: flasherU },
     });
     assetId = a.id;
     const img = await prisma.firmwareImage.create({

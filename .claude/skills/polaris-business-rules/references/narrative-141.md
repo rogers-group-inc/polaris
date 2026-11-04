@@ -5,11 +5,11 @@
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 141](#rule-141) — A dangerous act is its own key, a tag is an administrator's grant, and a role carries no tags
+- [Rule 141](#rule-141) — A dangerous act is its own key, a tag is an administrator's grant, a role carries no tags, and Read-Write reaches what you own or what carries your tags
 
 <a id="rule-141"></a>
 
-## Rule 141 — A dangerous act is its own key, a tag is an administrator's grant, and a role carries no tags
+## Rule 141 — A dangerous act is its own key, a tag is an administrator's grant, a role carries no tags, and Read-Write reaches what you own or what carries your tags
 
 **What prompted it (2026-11-03).** The owner asked whether resolving a DHCP
 duplicate-reservation conflict had RBAC, and whether it could be regional: "could we say
@@ -77,14 +77,77 @@ role's tags onto its users at drop time — rejected by the owner. "Only tags yo
 assignment guard — the owner chose the simpler and stricter rule above. Per-record keys for
 the acts stayed as few as three because each names one act and nothing else.
 
-**What release 2 adds (planned, `~/.claude/plans/i-feel-like-we-imperative-lemon.md`):** the
-`tagScoped` dimension on the asset-side keys, `writeScopeService`, the lift migration,
-per-row `canEdit` flags, the UI's out-of-scope states, and the DHCP conflict rule (visible at
-`discoveryConflicts:read`, resolvable at `reservations:write` when at least one binding is
-in scope). Those land as further lettered clauses of this rule.
+**(e) Read-Write reaches what you own or what carries your tags (release 2, 2026-11-04).**
+The owner's three tiers, stated in the first session and corrected once: "a user in a role
+with write permission should have less privileges than one with tags. so they should only
+have access to things they own and that's going to severely limit them. if they run a
+network discovery then new assets they discover that way or through adding an individual
+asset will give them write access to those things." Tags only widen; an unowned, untagged
+record is Full Read-Write only; a scan that hits a device Polaris already has never changes
+that device's owner (adoption skips known addresses). `services/writeScopeService.ts` is
+the one judge, consumed by `middleware/writeScope.ts` on the asset routers and inline on
+alerts, maintenance, conflicts, reservations, subnets and the map; every list and detail
+payload carries the verdict per row so the pages offer only the verbs that will succeed.
+The two tag dimensions are compared separately — the recipient index's own comment admits
+the "Atlanta" collision a pooled set invites. Posture B for existing installs: migration
+`20261104100000_write_scope_lift` raised every stored `write` on the seven newly scoped
+keys to `fullwrite`, so the day the update lands nobody can do less than the day before;
+an administrator opts a role into the model by lowering it to Read-Write and assigning
+tags on the account or its group mapping. That lift is only safe because release 1 moved
+merge, deploy and clear off that rung first — the updater runs the migration before
+restarting and keeps the OLD process on a failed install, and old code reading a lifted
+`fullwrite` would otherwise have handed every write role those acts.
+
+Reviewer findings folded in before implementation: the automation `reboot` action and
+a maintenance window with a device FILTER act on whatever matches later, so there is no
+record to be "in" — both Full Read-Write; the conflict verbs that NAME an asset in their
+body (`reassign-ip`, `clear-ip`, reactivating a decommissioned agent) judge that asset,
+not "any member"; a bulk verb checks every row before writing any; a grouped alert is
+reachable through any member device (the owner's call); an alert with no device is Full
+Read-Write only (`Notification` has no path-check column); `POST /subnets/:id/refresh`
+had no row check at all and now takes the same one as an edit.
+
+**(f) The DHCP duplicate-reservation conflict is a reservations task.** Where the whole
+session began: "a user can see the conflict and resolve the conflicts as long as at
+least 1 entry is in their region ... they can still see the entries for the other region
+and push dhcp revoke or release to other gates that aren't necessarily part of their
+region." The card is visible at `discoveryConflicts:read` (the built-in `user` role holds
+that, and `reservations:write`, so it can finally act); Keep / Release / Revoke lease take
+`reservations:write` with at least one binding in scope, and the per-row ownership
+callback the services accept is a no-op once that holds — every binding may go, on any
+gate. The owner chose `reservations:write` over `assets:write` for the act because
+releasing a reservation is what `DELETE /reservations/:id` does and that rides the
+reservations key everywhere else.
+
+**Known limitations, by design:** email / push Acknowledge buttons are rendered on the
+ROLE's level (`notificationRecipientService.canAcknowledge`), so a recipient outside the
+device's scope sees the button and gets a 403 — a per-recipient render is a follow-up;
+alert READS stay regions-only with the admin bypass (reads untouched by this rule, other
+tags do not filter the list); a token owns rows under its NAME (`api:<name>`), so renaming
+a token orphans them; the stale-reservation Snooze / Free buttons stay at role level
+(their click 403s on an out-of-scope record rather than hiding); lifted roles gained
+ownerless saved-filter housekeeping (rule 140).
+
+**The phone matches the desktop (2026-11-04).** The phone's asset sheet and edit menu
+(`public/js/mobile/asset-detail.js`, `asset-edit.js`) read the same per-device verdicts
+through a local `scopedVerb` mirroring app.js `_scopedVerb`: General / Monitoring /
+Discover Now / Reboot / firmware on `canEdit`, Release Quarantine on `canQuarantine`,
+Enter maintenance on `canMaintain`; the alert lists (`alerts-tab.js`, `alerts.js`) on each
+row's `canAcknowledge` / `canClear` (the asset sheet's "Acknowledge all" batches only the
+reachable ones, since the route refuses a batch with one out-of-reach id); reservation
+Edit / Free on the row's `canEdit` (`reservation-actions.js → canModify`). Two payloads
+gained verdicts for both screens: `GET /assets/:id/maintenance-info` carries
+`canMaintain` and each covering schedule's `canEdit` (`writeScopeService →
+scheduleCanEditByIds`, the same rule `GET /maintenance-schedules` uses through
+`scheduleCanEditMap`), and `GET /subnets/:id/ips` carries the network's `canEdit` and each
+reservation's. The network's Discover (`POST /subnets/:id/refresh`, `requireOwnership("subnets")`)
+was offered on `reservations:write` on both screens — a button that only 403'd for a
+reservations-only role; it now reads the network's verdict (`canEditSubnet` on the desktop
+panel, `canRefresh` on the phone).
 
 Pinned by `tests/unit/dangerousActKeysRbacLockstep.test.ts`,
 `tests/unit/roleUpdateAbsentKeys.test.ts`, `tests/unit/tagPickerNonAdminRole.test.ts`,
 `tests/unit/dashRoleSnapshotService.test.ts`, `tests/unit/regionScopeRename.test.ts`,
-`tests/integration/agentDeployGrant.test.ts`, `tests/integration/integrationTokenTarget.test.ts`
-and `tests/integration/operatorInputInjection.test.ts`.
+`tests/unit/writeScopeService.test.ts`, `tests/unit/writeScopeLiftRbacLockstep.test.ts`,
+`tests/integration/agentDeployGrant.test.ts`, `tests/integration/integrationTokenTarget.test.ts`,
+`tests/integration/operatorInputInjection.test.ts` and `tests/integration/writeScope.test.ts`.

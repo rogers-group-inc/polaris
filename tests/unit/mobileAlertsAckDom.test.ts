@@ -27,7 +27,7 @@ const ALERTS = [
   { id: "n2", severity: "warning", message: "cpu high", assetId: null, assetHostname: "sw-2", triggeredAt: "2026-08-12T09:00:00Z", acknowledged: true, acknowledgedBy: "jsmith" },
 ];
 
-async function render(opts?: { perm?: string; ackFails?: boolean; alerts?: any[] }) {
+async function render(opts?: { perm?: string; ackFails?: boolean; alerts?: any[]; perms?: Record<string, string> }) {
   document.body.innerHTML = '<div id="app"><main class="app-body" id="app-body"></main></div>';
   const snacks: string[] = [];
   const acked: any[] = [];
@@ -63,7 +63,7 @@ async function render(opts?: { perm?: string; ackFails?: boolean; alerts?: any[]
   const body = document.getElementById("app-body")!;
   await (g.PolarisAlertsTab.spec.render(body, {
     route: { name: "alerts", parts: [] },
-    user: { username: "u", permissions: { alerts: opts?.perm ?? "write" } },
+    user: { username: "u", permissions: { alerts: opts?.perm ?? "write", ...(opts?.perms ?? {}) } },
   }) as any);
   await new Promise((r) => setTimeout(r, 0));
   return { body, snacks, acked };
@@ -86,6 +86,32 @@ describe("mobile alerts acknowledge", () => {
   it("names who acknowledged the ones already handled", async () => {
     await render();
     expect(document.body.textContent).toContain("acknowledged by jsmith");
+  });
+
+  it("withholds Ack from an alert whose device is out of the viewer's reach (rule 141 (e))", async () => {
+    const rows = [
+      { ...ALERTS[0], id: "mine", canAcknowledge: true },
+      { ...ALERTS[0], id: "theirs", canAcknowledge: false },
+      { ...ALERTS[0], id: "older-payload" },
+    ];
+    await render({ alerts: rows });
+    expect(ackButtons().map((b) => b.dataset.ack)).toEqual(["mine", "older-payload"]);
+  });
+
+  it("withholds Clear the same way, and only offers it with the alertClear key", async () => {
+    const rows = [
+      { ...ALERTS[0], id: "mine", canClear: true },
+      { ...ALERTS[0], id: "theirs", canClear: false },
+    ];
+    await render({ alerts: rows });
+    expect(document.querySelectorAll("[data-clear]")).toHaveLength(0);   // no alertClear key
+    await render({ alerts: rows, perms: { alertClear: "write" } });
+    expect((Array.from(document.querySelectorAll("[data-clear]")) as HTMLElement[]).map((b) => b.dataset.clear)).toEqual(["mine"]);
+  });
+
+  it("Full Read-Write on Alerts still follows the row's verdict the server computed (it says true)", async () => {
+    await render({ perm: "fullwrite", alerts: [{ ...ALERTS[0], id: "any", canAcknowledge: true }] });
+    expect(ackButtons().map((b) => b.dataset.ack)).toEqual(["any"]);
   });
 
   it("hides the control from a viewer who can only read alerts", async () => {

@@ -93,12 +93,17 @@ export interface FunctionKeyDef {
   // Rendered as an "Also used on" line under the description.
   alsoOn?: readonly FunctionSectionId[];
   // Functions where the "write" level applies an ownership filter
-  // (createdBy === username) and "fullwrite" bypasses it — subnets,
-  // reservations, address-book contacts, credentials and networkScan.
-  // Such a key MUST keep both write and fullwrite: that pair IS the
-  // dimension (pinned by tests/unit/permissionLevelLadders.test.ts), so it
-  // can never take one of the short ladders below.
+  // (createdBy === the actor) and "fullwrite" bypasses it. Such a key MUST
+  // keep both write and fullwrite: that pair IS the dimension (pinned by
+  // tests/unit/permissionLevelLadders.test.ts), so it can never take one of
+  // the short ladders below.
   hasOwnershipDimension?: boolean;
+  // Business rule 141 (e): on these keys Read-Write ALSO reaches every record
+  // carrying one of the caller's tags (user + group scope, per dimension —
+  // services/writeScopeService.ts). Implies hasOwnershipDimension. The keys
+  // WITHOUT it keep owner-only Read-Write: contacts, credentials, networkScan
+  // — their records carry no tags.
+  tagScoped?: boolean;
   // The access levels this key can actually hold. Omitted = the full
   // ladder (none < read < write < fullwrite). A key declares a SHORTER
   // ladder when the levels above the top one it supports would be
@@ -145,7 +150,7 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "savedDashboards", section: "dashboard", label: "Saved Dashboards", description: "Named dashboard canvases. Read-Only keeps your own private ones; Read-Write publishes one to everyone." },
 
   // ── Device Map ────────────────────────────────────────────────────────────
-  { key: "deviceMap", section: "deviceMap", label: "Device Map", description: "The geographic device map and its topology graphs. Read-Write saves a site's topology layout.", levels: UP_TO_WRITE },
+  { key: "deviceMap", section: "deviceMap", label: "Device Map", description: "The geographic device map and its topology graphs. Read-Write saves the topology layout of a site whose FortiGate you added or that carries one of your tags; Full Read-Write = any site.", hasOwnershipDimension: true, tagScoped: true },
   { key: "mapRegions", section: "deviceMap", label: "Map Regions", description: "Region polygons that auto-tag the devices they enclose.", levels: UP_TO_WRITE },
 
   // ── Application Map ───────────────────────────────────────────────────────
@@ -164,12 +169,12 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
 
   // ── IP Management ─────────────────────────────────────────────────────────
   { key: "ipBlocks", section: "ipManagement", label: "IP Blocks", description: "Top-level CIDR blocks the address registry hangs from. Read-Write = create / edit / delete.", levels: UP_TO_WRITE },
-  { key: "subnets", section: "ipManagement", label: "Subnets", description: "Networks inside a block. Read-Write = your own rows; Full Read-Write = any row, plus exclusions and archiving.", hasOwnershipDimension: true },
+  { key: "subnets", section: "ipManagement", label: "Subnets", description: "Networks inside a block. Read-Write = networks you created or that carry one of your tags; Full Read-Write = any network, plus exclusions and archiving.", hasOwnershipDimension: true, tagScoped: true },
   { key: "allocationTemplates", section: "ipManagement", label: "Allocation Templates", description: "Saved multi-network templates the bulk-allocate modal offers.", levels: UP_TO_WRITE },
-  { key: "reservations", section: "ipManagement", label: "Reservations", description: "Reserved IPs, including DHCP push to FortiGate. Read-Write = your own rows; Full Read-Write = any row.", hasOwnershipDimension: true, alsoOn: ["assets", "events"] },
+  { key: "reservations", section: "ipManagement", label: "Reservations", description: "Reserved IPs, including DHCP push to FortiGate. Read-Write = reservations you created or on a network / device carrying one of your tags; Full Read-Write = any reservation.", hasOwnershipDimension: true, tagScoped: true, alsoOn: ["assets", "events"] },
 
   // ── Assets ────────────────────────────────────────────────────────────────
-  { key: "assets", section: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Full Read-Write also merges two assets you own and manages ownerless saved filters." },
+  { key: "assets", section: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Read-Write = devices you added or adopted, or that carry one of your tags; Full Read-Write = any device, the fleet-wide settings, merging two devices you own, and ownerless saved filters.", hasOwnershipDimension: true, tagScoped: true },
   // The three dangerous acts that used to be the Full Read-Write rung of
   // `assets` / `alerts` (merge, agent deploy, clear) are their own keys from
   // 2026-11-03 (migration 20261103170000_dangerous_act_keys). Full Read-Write
@@ -180,7 +185,7 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // on update day; no read rung, there is nothing on them to look at.
   { key: "assetMerge", section: "assets", label: "Merge Assets", description: "Merge any two asset records into one (one record is deleted). Without it, Assets Read-Write may merge only two assets you own.", levels: WRITE_ONLY },
   { key: "agentDeploy", section: "assets", label: "Agent Deploy", description: "Install, upgrade, reinstall and remove the Polaris Agent on a device, bulk deploy, an integration's auto-deploy, an agent host's reboot opt-in and the agent log-path glob.", levels: WRITE_ONLY, alsoOn: ["integrations"] },
-  { key: "assetsQuarantine", section: "assets", label: "Asset Quarantine", description: "Push MAC quarantine to FortiGates, release it, verify it.", levels: UP_TO_WRITE },
+  { key: "assetsQuarantine", section: "assets", label: "Asset Quarantine", description: "Push MAC quarantine to FortiGates, release it, verify it. Read-Write = devices you added or that carry one of your tags; Full Read-Write = any device and the sighting settings.", hasOwnershipDimension: true, tagScoped: true },
   // Read-only by nature: a probe dials the device and writes nothing in
   // Polaris, so `read` IS the grant and there is no higher level to offer.
   // The outage SIMULATION that used to sit here (POST/DELETE
@@ -198,14 +203,14 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // "may create assets" stay separable.
   { key: "networkScan", section: "assets", label: "Network Discovery", description: "Active sweeps of operator-supplied IP ranges. Read-Write = run and manage your own; Full Read-Write = anyone's.", hasOwnershipDimension: true },
   { key: "assetMonitorSettings", section: "assets", label: "Asset Monitor Settings", description: "Monitor cadence and retention overrides per asset, class, integration or manual. Full Read-Write = outage simulation.", alsoOn: ["integrations"] },
-  { key: "alerts", section: "assets", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges. Clearing is its own key.", alsoOn: ["dashboard"] },
+  { key: "alerts", section: "assets", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges alerts on devices you added or that carry one of your tags; Full Read-Write acknowledges any. Clearing is its own key.", hasOwnershipDimension: true, tagScoped: true, alsoOn: ["dashboard"] },
   { key: "alertClear", section: "assets", label: "Clear Alerts", description: "Clear (dismiss) triggered alerts. Acknowledging stays on Alerts Read-Write.", levels: WRITE_ONLY, alsoOn: ["dashboard"] },
-  { key: "maintenanceManagement", section: "assets", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = schedule CRUD.", levels: UP_TO_WRITE, alsoOn: ["events", "pathMonitor"] },
+  { key: "maintenanceManagement", section: "assets", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = windows you created, or on explicitly chosen devices you added or that carry one of your tags; Full Read-Write = any window and filter-based windows.", hasOwnershipDimension: true, tagScoped: true, alsoOn: ["events", "pathMonitor"] },
 
   // ── Events ────────────────────────────────────────────────────────────────
   { key: "events", section: "events", label: "Events / Audit Log", description: "Audit log plus syslog / SFTP archival and retention. Read-Only views the log; Read-Write edits the settings.", levels: UP_TO_WRITE },
-  { key: "discoveryConflicts", section: "events", label: "Discovery Conflicts", description: "Accept / reject / merge the reservation and asset conflicts discovery raises.", levels: UP_TO_WRITE },
-  { key: "staleReservations", section: "events", label: "Stale Reservations", description: "Snooze, ignore and un-ignore stale DHCP reservation alerts, and set the staleness threshold.", levels: UP_TO_WRITE },
+  { key: "discoveryConflicts", section: "events", label: "Discovery Conflicts", description: "Accept / reject / merge the reservation and asset conflicts discovery raises. Read-Only sees them; Read-Write resolves a conflict with a member you added or that carries one of your tags; Full Read-Write resolves any.", hasOwnershipDimension: true, tagScoped: true },
+  { key: "staleReservations", section: "events", label: "Stale Reservations", description: "Snooze, ignore and un-ignore stale DHCP reservation alerts. Read-Write = reservations you created or whose network carries one of your tags; Full Read-Write = any, and the staleness threshold.", hasOwnershipDimension: true, tagScoped: true },
 
   // ── Automations ───────────────────────────────────────────────────────────
   { key: "automationManagement", section: "automations", label: "Automations", description: "Automations and their delivery channels. Read-Write = create / edit / delete both.", levels: UP_TO_WRITE },

@@ -205,6 +205,48 @@ d("GET /assets/:id/upstream", () => {
     expect(out!.switch!.asset).toBeNull();
   });
 
+  it("answers a managed AP with its controller gate, not a sighting its deleted gate left", async () => {
+    // The reported bug: an AP's old gate was replaced and deleted. Discovery
+    // rewrote the AP's controller stamp to the new gate (its Location showed
+    // it), but the AP is statically addressed, so only the old gate's DHCP
+    // sighting existed — and the row named the deleted gate forever.
+    await prisma.asset.update({
+      where: { id: ap },
+      data: { fortinetTopology: { controllerFortigate: FMG_DEVICE_NAME } as any },
+    });
+    await prisma.assetFortigateSighting.create({
+      data: { assetId: ap, integrationId, fortigateDevice: "REPLACED-FGT", source: "dhcp_lease", lastSeen: new Date() },
+    });
+    const out = await resolveAssetUpstream(ap);
+    expect(out!.firewall).toMatchObject({ name: FMG_DEVICE_NAME, source: "controller" });
+    expect(out!.firewall!.asset!.id).toBe(gate);
+    // Read off the asset, not the sighting table — no quarantine grant needed.
+    const noGrant = await resolveAssetUpstream(ap, { includeFirewall: false });
+    expect(noGrant!.firewall!.name).toBe(FMG_DEVICE_NAME);
+  });
+
+  it("resolves the controller by serial when the stamp carries one", async () => {
+    await prisma.asset.update({ where: { id: gate }, data: { serialNumber: "FGT60F0000000001" } });
+    await prisma.asset.update({
+      where: { id: sw },
+      data: { fortinetTopology: { controllerSerial: "FGT60F0000000001", controllerFortigate: "RENAMED-IN-FMG" } as any },
+    });
+    const out = await resolveAssetUpstream(sw);
+    expect(out!.firewall).toMatchObject({ name: "RENAMED-IN-FMG", source: "controller" });
+    expect(out!.firewall!.asset!.id).toBe(gate);
+  });
+
+  it("passes over the newest sighting when its gate no longer exists", async () => {
+    // A newer sighting on a gate Polaris no longer holds: the endpoint must
+    // name the live gate rather than the deleted one.
+    await prisma.assetFortigateSighting.create({
+      data: { assetId: endpoint, integrationId, fortigateDevice: "DELETED-FGT", source: "dhcp_reservation", lastSeen: new Date("2026-10-01T12:00:00Z") },
+    });
+    const out = await resolveAssetUpstream(endpoint);
+    expect(out!.firewall).toMatchObject({ name: FMG_DEVICE_NAME, source: "sighting" });
+    expect(out!.firewall!.asset!.id).toBe(gate);
+  });
+
   it("withholds the firewall half when the caller can't read sightings", async () => {
     // The route passes this from hasPermission(assetsQuarantine, read) — the
     // same gate GET /:id/sightings carries. "not shown" must be

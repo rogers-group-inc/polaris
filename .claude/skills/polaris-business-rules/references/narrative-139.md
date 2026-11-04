@@ -74,3 +74,17 @@ The owner, verbatim: "perhaps we expand duplicate reservation to also include le
 - **The card links out.** The network opens its slide-in at the address; the FortiGate opens its asset, resolved at sweep time through `utils/fortinetParentKey.ts` (`gateAssetId`) because `Subnet.fortigateDevice` is FortiManager's device name and never a hostname match; the MAC copies on click; the address no longer wraps (the primary badge sits under it).
 
 Rejected: counting two leases alone (DHCP working); a lease-only "Revoke all leases" card verb (Keep on a reservation already does it, and one more verb was not asked for).
+
+### Who resolves it (2026-11-04)
+
+Rule 141 (f). The question that started the write-scope review was whether this conflict has
+RBAC of its own and whether a region could resolve its own. It does, and it is a
+**reservations** task, not a conflicts one: the list is visible at `discoveryConflicts:read`,
+and Keep / Release / Revoke lease need `reservations:write` (`assertDuplicateReservationRelease`
++ `assertDhcpBindingInScope` in `routes/conflicts.ts`) with at least ONE binding in the caller's
+reservations write scope — the reservation theirs, or its network or the conflicted device
+carrying one of their tags. Once in, EVERY binding in that conflict may be released, including
+on a gate in another region: the conflict is one device's, and half-resolving it would leave
+the device with two bindings on purpose. `discoveryConflicts:write` is not consulted for this
+flavour. `GET /conflicts` carries `canResolve` / `canRelease` and, per binding, `inScope`, so
+the card hides Release on a binding out of reach and the whole action cell below the gate.

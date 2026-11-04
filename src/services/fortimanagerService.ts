@@ -21,10 +21,11 @@ import {
   parseDhcpMonitorAddress,
   parseInterfaceIpv6,
 } from "../utils/fortiosIpv6.js";
+import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
 import type { ApLldpNeighborSample } from "../utils/fortiapLldp.js";
-import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial } from "../utils/fortiswitchCmdb.js";
+import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial, FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { getFmgWorker } from "./fmgWorker.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
@@ -1102,13 +1103,13 @@ export interface DiscoveredFortiSwitch {
   joinTime?: number;    // join_time (Unix timestamp — when first authorized)
   state: string;        // "Authorized" | "Unauthorized"
   connected: boolean;   // status === "Connected"
-  // Management MAC of the switch's FortiLink-peer interface, normalized to
-  // colon-uppercase. Cross-joined from the detected-device MAC table where
-  // `is_fortilink_peer===true` and `switch_id === <this switch's switch-id>`.
-  // Used by the sync layer to dedup against DHCP/ARP-discovered orphan
-  // endpoint assets at the switch's mgmt IP — without it, the switch's own
-  // management MAC creates a phantom "fortigate-endpoint" asset alongside
-  // the authoritative "fortiswitch" asset.
+  // Management MAC of the switch, normalized to colon-uppercase. FortiOS
+  // reports none for a managed switch, so the transports never set it: the
+  // sync layer fills it from the controller's own lease / ARP / online
+  // inventory row at `connecting_from` (business rule 91(g),
+  // utils/fortiapGateMac.ts → fortiswitchGateMac) before the switch is
+  // matched. It is what lets the switch absorb — and stop minting — the
+  // "fortigate-endpoint" twin the gate's client tables create for it.
   baseMac?: string;
   // The switch's PHYSICAL uplink port to its controller FortiGate (e.g.
   // "port47"), resolved from the switch-controller managed-switch CMDB
@@ -2064,13 +2065,16 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
       const ifacePayload: JsonRpcRequest = {
         id: 3,
         method: "get",
-        // secondary-ip is a child mkey table on system/interface — each row
-        // carries its own `ip` (in "x.x.x.x y.y.y.y" form). Asking for the
-        // parent field returns the whole nested array as embedded JSON.
+        // The secondary addresses are the child table `secondaryip` — each
+        // row { id, ip: [addr, mask], … }; `secondary-IP` is only the 0 / 1
+        // flag (read off a production FortiManager 2026-11-04). Asking for
+        // the table field returns the whole nested array. This list named
+        // only `secondary-ip`, a key FortiManager does not have, so the table
+        // never came back and every gate's secondaries were dropped.
         // `ipv6` is the interface's IPv6 sub-object (addresses, RA prefixes —
-        // business rule 125), returned whole like secondary-ip.
-        // `type` + `interface` give a VLAN interface's parent (rule 137).
-        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip", "ipv6"] }],
+        // business rule 125), returned whole; unset child tables in it are
+        // null, not []. `type` + `interface` give a VLAN's parent (rule 137).
+        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondaryip", "ipv6"] }],
       };
       const ifaceRes = await rpc(baseUrl, ifacePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       const ifaceData = ifaceRes.result?.[0]?.data;
@@ -2118,12 +2122,11 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
           // `ip` in either "x.x.x.x y.y.y.y" (IP + mask) string form or as a
           // [ip, mask] array. Strip to the dotted-quad and push as
           // role="secondary" so Phase 4 can label the reservation appropriately.
-          const secondaries = iface["secondary-ip"];
-          if (Array.isArray(secondaries)) {
-            for (const sec of secondaries) {
-              const rawSec = Array.isArray(sec?.ip)
-                ? (sec.ip[0] || "")
-                : (typeof sec?.ip === "string" ? sec.ip.split(" ")[0] : "");
+          // The device DB spells the table `secondaryip` (the CLI's name) —
+          // see utils/fortiosSecondaryIp.ts.
+          {
+            for (const sec of fortiosSecondaryIpStrings(iface)) {
+              const rawSec = sec.split(" ")[0];
               if (rawSec && rawSec !== "0.0.0.0" && isValidIpv4(rawSec)) {
                 localInterfaceIps.push({ device: deviceName, interfaceName: ifaceName, ipAddress: rawSec, role: "secondary" });
                 secondaryIpCount++;
@@ -2242,7 +2245,11 @@ async function fmgStepSwitches(ctx: FmgDeviceCtx): Promise<void> {
               data: {
                 target: [`/adom/${adom}/device/${deviceName}`],
                 action: "get",
-                resource: "/api/v2/cmdb/switch-controller/managed-switch?datasource=1",
+                // Only what discovery reads (serials, description, the ports
+                // table) — utils/fortiswitchCmdb.ts → FORTISWITCH_DISCOVERY_CMDB_FORMAT.
+                // No `datasource=1`: its per-reference annotations are ~18% of
+                // the response and nothing reads them.
+                resource: `/api/v2/cmdb/switch-controller/managed-switch?format=${FORTISWITCH_DISCOVERY_CMDB_FORMAT}`,
               },
             }],
           };
@@ -2437,7 +2444,7 @@ async function fmgStepApCmdbRoster(ctx: FmgDeviceCtx): Promise<void> {
 
 // Step 3d.5: FortiAP -> FortiSwitch port mapping via the detected-device MAC table. Offline gates skip.
 async function fmgStepApPortMap(ctx: FmgDeviceCtx): Promise<void> {
-  const { adom, baseUrl, apiUser, apiToken, verifySsl, signal, integrationId, log, deviceName, offline, localAps, localSwitches, localSwitchMacTable } = ctx;
+  const { adom, baseUrl, apiUser, apiToken, verifySsl, signal, integrationId, log, deviceName, offline, localAps, localSwitchMacTable } = ctx;
     // Step 3d.5: FortiAP → FortiSwitch port mapping via detected-device MAC table
     // Pulls all switch port MAC learnings in one shot and matches each AP's base_mac
     // to its switch + port. APs not seen on any managed switch stay un-peered and
@@ -2470,7 +2477,6 @@ async function fmgStepApPortMap(ctx: FmgDeviceCtx): Promise<void> {
           deviceName,
           displayName: deviceName,
           aps: localAps,
-          switches: localSwitches,
           macTable: localSwitchMacTable,
           log,
         });

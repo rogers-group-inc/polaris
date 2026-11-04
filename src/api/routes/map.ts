@@ -53,6 +53,8 @@ import {
 } from "../../services/topologyLayoutService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { resolveWriteScope, inWriteScope } from "../../services/writeScopeService.js";
+import { scopeAssetParam } from "../middleware/writeScope.js";
 
 const router = Router();
 
@@ -149,6 +151,9 @@ router.get("/sites", async (req, res, next) => {
       select: {
         id: true,
         hostname: true,
+        // Rule 141 (e): `canEditLayout` per site is judged on these.
+        createdBy: true,
+        tags: true,
         serialNumber: true,
         model: true,
         ipAddress: true,
@@ -191,10 +196,13 @@ router.get("/sites", async (req, res, next) => {
       if (row.fortigateDevice) countByName.set(row.fortigateDevice, row._count._all);
     }
 
+    // Rule 141 (e): may THIS caller save the site's topology layout?
+    const layoutScope = await resolveWriteScope(req, "deviceMap");
     res.json(
       sites.map((s) => {
         const stats = s.monitored ? monitorStats.get(s.id) : null;
         return {
+          canEditLayout: inWriteScope(layoutScope, { createdBy: s.createdBy, tags: s.tags }),
           ...s,
           subnetCount: s.hostname ? countByName.get(s.hostname) ?? 0 : 0,
           // Derive the dot's health from Asset.monitorStatus (the five-state
@@ -225,7 +233,14 @@ router.get("/sites", async (req, res, next) => {
 // asset, so error responses are unchanged. Auth-only, like the other reads.
 router.get("/sites/:id/topology", async (req, res, next) => {
   try {
-    res.json(await buildSiteTopology(req.params.id));
+    // Rule 141 (e): whether THIS caller may save the site's layout rides with
+    // the topology, so the page need not cross-reference the sites list.
+    const [topo, site] = await Promise.all([
+      buildSiteTopology(req.params.id),
+      prisma.asset.findUnique({ where: { id: req.params.id as string }, select: { createdBy: true, tags: true } }),
+    ]);
+    const canEditLayout = site ? inWriteScope(await resolveWriteScope(req, "deviceMap"), site) : false;
+    res.json({ ...(topo as object), canEditLayout });
   } catch (err) {
     next(err);
   }
@@ -335,7 +350,7 @@ router.get("/sites/:id/topology/search", async (req, res, next) => {
 // the client per drag session, so volume is low; every save is audited. Gated
 // deviceMap=write — reads stay open (the layout rides the topology GET above)
 // so readonly viewers see the shared map without being able to move it.
-router.put("/sites/:id/topology/layout", requirePermission("deviceMap", "write"), async (req, res, next) => {
+router.put("/sites/:id/topology/layout", requirePermission("deviceMap", "write"), scopeAssetParam("deviceMap", "save topology layouts for sites"), async (req, res, next) => {
   try {
     const siteId = req.params.id as string;
     const input = SaveLayoutSchema.parse(req.body);
@@ -362,7 +377,7 @@ router.put("/sites/:id/topology/layout", requirePermission("deviceMap", "write")
 // layout AND `savedPositions` in one statement, so the checkpoint can never be
 // of a layout the server has not stored. Declared before the DELETE for
 // readability only — no path capture is in play.
-router.post("/sites/:id/topology/layout/checkpoint", requirePermission("deviceMap", "write"), async (req, res, next) => {
+router.post("/sites/:id/topology/layout/checkpoint", requirePermission("deviceMap", "write"), scopeAssetParam("deviceMap", "save topology layouts for sites"), async (req, res, next) => {
   try {
     const siteId = req.params.id as string;
     const input = SaveLayoutSchema.parse(req.body);
@@ -390,7 +405,7 @@ router.post("/sites/:id/topology/layout/checkpoint", requirePermission("deviceMa
 // emptied rather than deleted so the operator can still go back to their last
 // save; one without is removed. Idempotent 204 so the client's reset flow is
 // unconditional.
-router.delete("/sites/:id/topology/layout", requirePermission("deviceMap", "write"), async (req, res, next) => {
+router.delete("/sites/:id/topology/layout", requirePermission("deviceMap", "write"), scopeAssetParam("deviceMap", "save topology layouts for sites"), async (req, res, next) => {
   try {
     const siteId = req.params.id as string;
     const view = String(req.query.view ?? "");

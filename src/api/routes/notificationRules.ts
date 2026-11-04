@@ -279,8 +279,11 @@ export function assertScriptActionPermission(req: Request, input: RuleActionCarr
   // (assets:write — the Status row's Reboot). Same shape as the script gate:
   // removing one never needs it.
   const hasReboot = allRuleActionRefs(input).some((r) => r.action.type === "reboot");
-  if (hasReboot && !hasPermission(req, "assets", "write")) {
-    throw new AppError(403, "Attaching a reboot action requires Read-Write on Assets (assets) — the permission that reboots a device");
+  // Full Read-Write, not write: the rule reboots whatever devices it matches,
+  // now and later, so there is no record for a scoped caller to be "in"
+  // (business rule 141 (e)).
+  if (hasReboot && !hasPermission(req, "assets", "fullwrite")) {
+    throw new AppError(403, "Attaching a reboot action requires Full Read-Write on Assets — it reboots every device the automation matches");
   }
 }
 

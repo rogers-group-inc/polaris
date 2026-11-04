@@ -4107,11 +4107,24 @@
   // switch / access_point) can't be newly quarantined but keeps Release so a
   // misclassified push can still be undone.
   var _PERM_RANK = { none: 0, read: 1, write: 2, fullwrite: 3 };
-  function canQuarantine() {
+  // Business rule 141 (e), as on the desktop (app.js → _scopedVerb): at
+  // Read-Write only the devices the caller added or that carry one of their
+  // tags — the server's per-device verdict is `canQuarantine` / `canEdit` on
+  // GET /assets/:id. Full Read-Write reaches every device; a device without
+  // the flag (an older payload, the open asset not painted yet) counts as
+  // reachable — the server decides either way.
+  function scopedVerb(key, flag, asset) {
     var user = (window.PolarisMobile && PolarisMobile.user && PolarisMobile.user()) || null;
-    var have = (user && user.permissions && user.permissions.assetsQuarantine) || "none";
-    return (_PERM_RANK[have] || 0) >= _PERM_RANK.write;
+    var have = (user && user.permissions && user.permissions[key]) || "none";
+    var rank = _PERM_RANK[have] || 0;
+    if (rank >= _PERM_RANK.fullwrite) return true;
+    if (rank < _PERM_RANK.write) return false;
+    var a = asset || _openAsset;
+    return !a || a[flag] !== false;
   }
+  /** Role-level only: may this viewer quarantine ANY device (the probe warm-up). */
+  function canQuarantineAny() { return scopedVerb("assetsQuarantine", "canQuarantine", { canQuarantine: true }); }
+  function canQuarantine(asset) { return scopedVerb("assetsQuarantine", "canQuarantine", asset); }
 
   // Quarantine push is per-integration (`config.pushQuarantine`, off by
   // default) — with it off on every enabled Fortinet integration the push
@@ -4124,7 +4137,7 @@
   var _qtnPushProbe = null;
   function quarantinePushAvailable() { return _qtnPushEnabled !== false; }
   function warmQuarantinePushAvailability() {
-    if (_qtnPushProbe || !canQuarantine()) return _qtnPushProbe;
+    if (_qtnPushProbe || !canQuarantineAny()) return _qtnPushProbe;
     _qtnPushProbe = api.assets.quarantineAvailability().then(function (r) {
       _qtnPushEnabled = !!(r && r.pushEnabled);
     }).catch(function () { _qtnPushEnabled = null; });
@@ -4132,7 +4145,7 @@
   }
 
   function quarantineButtonHtml(asset) {
-    if (!asset || !canQuarantine()) return "";
+    if (!asset || !canQuarantine(asset)) return "";
     if (asset.status === "quarantined") {
       return '<button class="btn btn-tonal btn-block" style="margin-top:12px;" id="asset-quarantine-btn" data-q="release"><svg viewBox="0 0 24 24"><use href="#i-shield"/></svg>Release Quarantine</button>';
     }
@@ -4220,11 +4233,9 @@
   };
   var _fwPoll = null;   // { assetId, runId, timer } while a run is being watched
 
-  function canFlashFirmware() {
-    var user = (window.PolarisMobile && PolarisMobile.user && PolarisMobile.user()) || null;
-    var have = (user && user.permissions && user.permissions.assets) || "none";
-    return (_PERM_RANK[have] || 0) >= _PERM_RANK.write;
-  }
+  // Flashing and rebooting are assets:write on THIS device (rule 141 (e)):
+  // the open asset's `canEdit`, read through scopedVerb above.
+  function canFlashFirmware() { return scopedVerb("assets", "canEdit", null); }
 
   /** The OS row's value: the version text, plus a slot the firmware loader fills. */
   function osRowValue(asset) {
@@ -4288,7 +4299,12 @@
     var offered = fw.image && (fw.state === "available" || fw.state === "blocked");
     if (offered && !fw.schedule) {
       if (!canFlashFirmware()) {
-        out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.image.versionLabel) + ' available — upgrading needs Read-Write on Assets</div>';
+        // Two reasons, each with its own words: the role lacks the key, or
+        // the key does not reach this device (rule 141 (e)).
+        var fwWhy = scopedVerb("assets", "canEdit", { canEdit: true })
+          ? "only the devices you added, or that carry one of your tags, can be upgraded by you"
+          : "upgrading needs Read-Write on Assets";
+        out += '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.image.versionLabel) + ' available — ' + fwWhy + '</div>';
       } else {
         out += '<button class="btn btn-tonal" id="asset-fw-upgrade-btn" style="margin-top:6px;">Upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
         if (fw.cluster) out += '<div class="muted" style="font-size:12px;margin-top:4px;">Upgrades the whole HA cluster — every member reboots, about 10 minutes</div>';

@@ -93,6 +93,7 @@ export async function listReservations(filter: ListReservationsFilter = {}) {
             cidr: true,
             name: true,
             fortigateDevice: true,
+            tags: true,
             integration: { select: { type: true, config: true } },
           },
         },
