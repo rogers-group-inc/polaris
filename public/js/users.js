@@ -1242,13 +1242,13 @@ function buildEntraProxyTab(s) {
  * Settings now points here rather than keeping a second editor for one row.
  */
 function buildSettingsTab(s, policy, loginAccess, passkeys) {
-  return sectionHeading("Session", true) + buildSessionSection(s) +
-    sectionHeading("Password Complexity") + buildPasswordPolicySection(policy) +
-    sectionHeading("Trusted Networks for Login") + buildLoginAccessSection(loginAccess) +
-    sectionHeading("Passkeys") + buildPasskeySection(passkeys);
+  return usersSettingsHeading("Session", true) + buildSessionSection(s) +
+    usersSettingsHeading("Password Complexity") + buildPasswordPolicySection(policy) +
+    usersSettingsHeading("Trusted Networks for Login") + buildLoginAccessSection(loginAccess) +
+    usersSettingsHeading("Passkeys") + buildPasskeySection(passkeys);
 }
 
-function sectionHeading(text, first) {
+function usersSettingsHeading(text, first) {
   return '<h4 style="font-size:0.88rem;font-weight:600;margin:' + (first ? "0" : "1.75rem") + ' 0 0.75rem;color:var(--color-text-primary);' +
     'border-bottom:1px solid var(--color-border);padding-bottom:0.4rem">' + escapeHtml(text) + '</h4>';
 }
