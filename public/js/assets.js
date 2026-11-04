@@ -28,6 +28,10 @@ function _canQuarantineAsset(a) {
   if (typeof canQuarantineAsset === "function") return canQuarantineAsset(a);
   return typeof canQuarantineAssets === "function" && canQuarantineAssets();
 }
+function _canMaintainAsset(a) {
+  if (typeof canMaintainAsset === "function") return canMaintainAsset(a);
+  return typeof canManageMaintenance === "function" && canManageMaintenance();
+}
 // Selection can span pages, but _assetsData only holds the current page, so we
 // remember a little metadata (status, assetType) for every selected asset to
 // drive the bulk-bar button visibility even after the operator pages away.
@@ -4463,7 +4467,9 @@ function assetMaintenanceFormHTML(asset) {
   // control without it is how a save reported "maintenance mode active"
   // while creating nothing.
   var mayMaint = typeof canManageMaintenance === "function" && canManageMaintenance();
-  var canMaint = mayMaint && typeof window.maintCreateAdhoc === "function";
+  // Rule 141 (e): the role may hold the key and still not reach THIS device.
+  var reachMaint = mayMaint && _canMaintainAsset(asset);
+  var canMaint = reachMaint && typeof window.maintCreateAdhoc === "function";
   var unmonitored = asset.monitored === false;
   return (
     '<div class="form-group" id="f-maint-wrap">' +
@@ -4492,9 +4498,11 @@ function assetMaintenanceFormHTML(asset) {
             '<span>Mark dependent devices as down</span>' +
           '</label>' +
           '<p class="hint" id="f-maint-tz">Creates a one-time maintenance schedule for this asset starting now (listed under Assets &rarr; Maintenance). Polling and notifications pause until the end time. Both the date AND the time are required, in the Polaris server&rsquo;s timezone.</p>'
-        : mayMaint
+        : reachMaint
           ? '<p class="hint">Maintenance scheduling isn’t loaded on this page — use Assets &rarr; Maintenance.</p>'
-          : '<p class="hint">You don’t have permission to change maintenance windows.</p>') +
+          : mayMaint
+            ? '<p class="hint">You can put only the devices you added, or that carry one of your tags, into maintenance.</p>'
+            : '<p class="hint">You don’t have permission to change maintenance windows.</p>') +
     '</div>'
   );
 }
@@ -4649,17 +4657,28 @@ function _maintenanceInfoHTML(info) {
       : (s.nextStart ? "next: " + new Date(s.nextStart).toLocaleString() : "no upcoming window");
     var actions = "";
     if (canManage) {
+      // Rule 141 (e): Remove needs THIS device in reach (info.canMaintain),
+      // Delete the whole window (s.canEdit). A payload without the flags
+      // (an older server) is treated as reachable — the server decides.
+      var mayRemove = info.canMaintain !== false;
+      var mayDelete = s.canEdit !== false;
       // A filter-matched asset has no per-asset removal: dropping it from the
       // device list leaves the filter matching it and the next reconcile puts
       // it straight back. Say that where the button would have been rather
       // than shipping a button that lies (the server refuses it too).
-      actions += s.removable
-        ? '<button type="button" class="btn btn-secondary btn-sm" data-maint-act="remove" ' +
+      if (!s.removable) {
+        actions += '<span class="hint" style="margin:0">Matched by this schedule’s filter — edit the filter to exclude it</span>';
+      } else if (mayRemove) {
+        actions += '<button type="button" class="btn btn-secondary btn-sm" data-maint-act="remove" ' +
             'data-schedule-id="' + escapeHtml(s.id) + '" data-schedule-name="' + escapeHtml(s.name) + '"' +
-            (s.lastTarget ? ' data-last-target="true"' : "") + '>Remove this asset</button>'
-        : '<span class="hint" style="margin:0">Matched by this schedule’s filter — edit the filter to exclude it</span>';
-      actions += '<button type="button" class="btn btn-danger btn-sm" data-maint-act="delete" ' +
-        'data-schedule-id="' + escapeHtml(s.id) + '" data-schedule-name="' + escapeHtml(s.name) + '">Delete schedule</button>';
+            (s.lastTarget ? ' data-last-target="true"' : "") + '>Remove this asset</button>';
+      }
+      if (mayDelete) {
+        actions += '<button type="button" class="btn btn-danger btn-sm" data-maint-act="delete" ' +
+          'data-schedule-id="' + escapeHtml(s.id) + '" data-schedule-name="' + escapeHtml(s.name) + '">Delete schedule</button>';
+      } else if (!mayRemove || !s.removable) {
+        actions += '<span class="hint" style="margin:0" title="Not created by you, on devices you did not add and that carry none of your tags">Not yours to change</span>';
+      }
     }
     lines.push(
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0">' +

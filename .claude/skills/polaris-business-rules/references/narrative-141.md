@@ -124,9 +124,26 @@ ROLE's level (`notificationRecipientService.canAcknowledge`), so a recipient out
 device's scope sees the button and gets a 403 — a per-recipient render is a follow-up;
 alert READS stay regions-only with the admin bypass (reads untouched by this rule, other
 tags do not filter the list); a token owns rows under its NAME (`api:<name>`), so renaming
-a token orphans them; the phone's edit sheet and the stale-reservation Snooze / Free
-buttons stay at role level (their click 403s on an out-of-scope record rather than
-hiding); lifted roles gained ownerless saved-filter housekeeping (rule 140).
+a token orphans them; the stale-reservation Snooze / Free buttons stay at role level
+(their click 403s on an out-of-scope record rather than hiding); lifted roles gained
+ownerless saved-filter housekeeping (rule 140).
+
+**The phone matches the desktop (2026-11-04).** The phone's asset sheet and edit menu
+(`public/js/mobile/asset-detail.js`, `asset-edit.js`) read the same per-device verdicts
+through a local `scopedVerb` mirroring app.js `_scopedVerb`: General / Monitoring /
+Discover Now / Reboot / firmware on `canEdit`, Release Quarantine on `canQuarantine`,
+Enter maintenance on `canMaintain`; the alert lists (`alerts-tab.js`, `alerts.js`) on each
+row's `canAcknowledge` / `canClear` (the asset sheet's "Acknowledge all" batches only the
+reachable ones, since the route refuses a batch with one out-of-reach id); reservation
+Edit / Free on the row's `canEdit` (`reservation-actions.js → canModify`). Two payloads
+gained verdicts for both screens: `GET /assets/:id/maintenance-info` carries
+`canMaintain` and each covering schedule's `canEdit` (`writeScopeService →
+scheduleCanEditByIds`, the same rule `GET /maintenance-schedules` uses through
+`scheduleCanEditMap`), and `GET /subnets/:id/ips` carries the network's `canEdit` and each
+reservation's. The network's Discover (`POST /subnets/:id/refresh`, `requireOwnership("subnets")`)
+was offered on `reservations:write` on both screens — a button that only 403'd for a
+reservations-only role; it now reads the network's verdict (`canEditSubnet` on the desktop
+panel, `canRefresh` on the phone).
 
 Pinned by `tests/unit/dangerousActKeysRbacLockstep.test.ts`,
 `tests/unit/roleUpdateAbsentKeys.test.ts`, `tests/unit/tagPickerNonAdminRole.test.ts`,

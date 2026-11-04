@@ -290,3 +290,55 @@ d("site layouts and the subnet refresh", () => {
     expect((await s.agent.post("/api/v1/subnets/" + subnetA + "/refresh").set("X-CSRF-Token", s.csrf).send({})).status).not.toBe(403);
   });
 });
+
+// The verdicts the desktop asset Maintenance tab, the phone's Maintenance
+// sheet and both network address views read (2026-11-04, mobile parity).
+d("per-row verdicts on maintenance-info and the network address list", () => {
+  it("maintenance-info says whether THIS device is in reach and which covering windows the caller may delete", async () => {
+    // Covering schedules are reported for monitored devices only.
+    const m1 = await mkAsset("maint-mine", { createdBy: alice, monitored: true });
+    const m2 = await mkAsset("maint-orphan", { monitored: true });
+    const r = await loginAs(root);
+    const mixed = await r.agent.post("/api/v1/maintenance-schedules").set("X-CSRF-Token", r.csrf)
+      .send({ name: PFX + "-mixed", assetIds: [m1, m2], schedule: activeOneshot() });
+    expect(mixed.status).toBe(201);
+    const s = await loginAs(alice);
+    const own = await s.agent.post("/api/v1/maintenance-schedules").set("X-CSRF-Token", s.csrf)
+      .send({ name: PFX + "-own", assetIds: [m1], schedule: activeOneshot() });
+    expect(own.status).toBe(201);
+
+    const mineInfo = (await s.agent.get("/api/v1/assets/" + m1 + "/maintenance-info")).body;
+    expect(mineInfo.canMaintain).toBe(true);
+    const byName = (info: any) => Object.fromEntries(info.schedules.map((x: any) => [x.name, x.canEdit]));
+    // alice did not create the mixed window and cannot reach its orphan.
+    expect(byName(mineInfo)).toEqual({ [PFX + "-mixed"]: false, [PFX + "-own"]: true });
+
+    const orphanInfo = (await s.agent.get("/api/v1/assets/" + m2 + "/maintenance-info")).body;
+    expect(orphanInfo.canMaintain).toBe(false);
+
+    const rootInfo = (await r.agent.get("/api/v1/assets/" + m2 + "/maintenance-info")).body;
+    expect(rootInfo.canMaintain).toBe(true);
+    expect(byName(rootInfo)[PFX + "-mixed"]).toBe(true);
+
+    // The list route reads the same verdict (shared helper).
+    const list = (await s.agent.get("/api/v1/maintenance-schedules")).body.schedules as any[];
+    expect(list.find((x) => x.name === PFX + "-mixed").canEdit).toBe(false);
+    expect(list.find((x) => x.name === PFX + "-own").canEdit).toBe(true);
+  });
+
+  it("the address list carries the network's verdict and each reservation's", async () => {
+    await prisma.reservation.create({ data: { subnetId: subnetA, ipAddress: "10.98.6.40", sourceType: "manual", status: "active", createdBy: "someone-else" } });
+    await prisma.reservation.create({ data: { subnetId: subnetB, ipAddress: "10.98.7.40", sourceType: "manual", status: "active", createdBy: "someone-else" } });
+    const s = await loginAs(alice);
+    const a = (await s.agent.get("/api/v1/subnets/" + subnetA + "/ips")).body;
+    expect(a.subnet.canEdit).toBe(true);    // carries her region
+    expect(a.ips.find((ip: any) => ip.address === "10.98.6.40").reservation.canEdit).toBe(true);
+    const b = (await s.agent.get("/api/v1/subnets/" + subnetB + "/ips")).body;
+    expect(b.subnet.canEdit).toBe(false);   // no owner, no tags
+    expect(b.ips.find((ip: any) => ip.address === "10.98.7.40").reservation.canEdit).toBe(false);
+    const r = await loginAs(root);
+    const rb = (await r.agent.get("/api/v1/subnets/" + subnetB + "/ips")).body;
+    expect(rb.subnet.canEdit).toBe(true);
+    expect(rb.ips.find((ip: any) => ip.address === "10.98.7.40").reservation.canEdit).toBe(true);
+  });
+});

@@ -60,6 +60,8 @@ const ROWS = [
 
 let ipsCalls: string[] = [];
 let IPS: any[] = [];
+/** The network's own write-scope verdict on GET /subnets/:id/ips (rule 141 (e)); undefined = an older payload. */
+let SUBNET_CAN_EDIT: boolean | undefined = undefined;
 
 function load(user: any = { username: "u", permissions: { reservations: "fullwrite", subnets: "read" } }) {
   document.body.innerHTML =
@@ -73,7 +75,7 @@ function load(user: any = { username: "u", permissions: { reservations: "fullwri
       ips: vi.fn(async (id: string) => {
         ipsCalls.push(id);
         return {
-          subnet: { id, name: "Branch", cidr: "10.0.10.0/24", fortigateDevice: "FGT-BR1", pushEligible: false },
+          subnet: { id, name: "Branch", cidr: "10.0.10.0/24", fortigateDevice: "FGT-BR1", pushEligible: false, canEdit: SUBNET_CAN_EDIT },
           ips: IPS,
           page: 1,
           totalIps: IPS.length,
@@ -219,9 +221,9 @@ describe("network IP sheet", () => {
     ];
   });
 
-  async function openSheet() {
-    const user = load();
-    g.PolarisNetworkSheet.open("s1", user, { title: "Branch" });
+  async function openSheet(user?: any) {
+    const u = load(user);
+    g.PolarisNetworkSheet.open("s1", u, { title: "Branch" });
     await flush();
   }
 
@@ -234,7 +236,37 @@ describe("network IP sheet", () => {
     expect(rows.length).toBe(3);
     expect(document.getElementById("network-sheet-title")!.textContent).toBe("Branch");
     expect(document.getElementById("subnet-reserve-btn")).not.toBeNull();
-    expect(document.getElementById("subnet-refresh-btn")).not.toBeNull(); // FortiGate-discovered + write
+    // Discover is judged on the NETWORK (POST /subnets/:id/refresh is
+    // subnets:write, own-or-tagged), so reservations access alone no longer
+    // shows it — it only ever 403'd.
+    expect(document.getElementById("subnet-refresh-btn")).toBeNull();
+  });
+
+  it("offers Discover on a FortiGate network at subnets:write when the network is in reach", async () => {
+    SUBNET_CAN_EDIT = true;
+    try {
+      await openSheet({ username: "u", permissions: { reservations: "read", subnets: "write" } });
+      expect(document.getElementById("subnet-refresh-btn")).not.toBeNull();
+      // Reserve still rides reservations:write.
+      expect(document.getElementById("subnet-reserve-btn")).toBeNull();
+    } finally { SUBNET_CAN_EDIT = undefined; }
+  });
+
+  it("withholds Discover when the network is out of the caller's write scope (rule 141 (e))", async () => {
+    SUBNET_CAN_EDIT = false;
+    try {
+      await openSheet({ username: "u", permissions: { reservations: "write", subnets: "write" } });
+      expect(document.getElementById("subnet-refresh-btn")).toBeNull();
+      expect(document.getElementById("subnet-reserve-btn")).not.toBeNull();
+    } finally { SUBNET_CAN_EDIT = undefined; }
+  });
+
+  it("offers Discover at subnets:fullwrite whatever the network's verdict", async () => {
+    SUBNET_CAN_EDIT = false;
+    try {
+      await openSheet({ username: "u", permissions: { reservations: "read", subnets: "fullwrite" } });
+      expect(document.getElementById("subnet-refresh-btn")).not.toBeNull();
+    } finally { SUBNET_CAN_EDIT = undefined; }
   });
 
   it("offers no Edit or Release on a device-owned VIP row", async () => {

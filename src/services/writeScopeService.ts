@@ -176,3 +176,50 @@ export function reservationScopeRecord(
   const tags = [...(r.subnet?.tags ?? []), ...(asset?.tags ?? [])];
   return { createdBy: r.createdBy, tags };
 }
+
+/** The four columns a maintenance window's scope is judged on. */
+export interface ScheduleScopeRow {
+  id: string;
+  createdBy?: string | null;
+  criteria?: unknown;
+  assetIds?: readonly string[] | null;
+  pathCheckIds?: readonly string[] | null;
+}
+
+/**
+ * Rule 141 (e): whether the caller may edit / delete each maintenance window —
+ * its creator, or (no device filter, no path checks) every explicit device in
+ * scope; anything else is Full Read-Write. The verdict
+ * `routes/maintenanceSchedules.ts → assertScheduleInScope` enforces, computed
+ * with ONE asset read for the whole list.
+ */
+export async function scheduleCanEditMap(scope: WriteScope, rows: readonly ScheduleScopeRow[]): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>();
+  if (scope.kind !== "scoped") {
+    for (const s of rows) out.set(s.id, scope.kind === "all");
+    return out;
+  }
+  const ids = Array.from(new Set(rows.flatMap((s) => s.assetIds ?? [])));
+  const assets = ids.length
+    ? await prisma.asset.findMany({ where: { id: { in: ids } }, select: { id: true, createdBy: true, tags: true } })
+    : [];
+  const byId = new Map(assets.map((a) => [a.id, a]));
+  for (const s of rows) {
+    const own = s.createdBy != null && s.createdBy === scope.actor;
+    const hasCriteria = s.criteria != null && !(typeof s.criteria === "object" && Object.keys(s.criteria as object).length === 0);
+    const targets = (s.assetIds ?? []).map((id) => byId.get(id)).filter((a): a is NonNullable<typeof a> => !!a);
+    const explicitOk = !hasCriteria && (s.pathCheckIds ?? []).length === 0 && targets.length > 0 && targets.every((a) => inWriteScope(scope, a));
+    out.set(s.id, own || explicitOk);
+  }
+  return out;
+}
+
+/** `scheduleCanEditMap` for windows named by id (an asset's covering schedules). */
+export async function scheduleCanEditByIds(scope: WriteScope, scheduleIds: readonly string[]): Promise<Map<string, boolean>> {
+  if (scheduleIds.length === 0 || scope.kind !== "scoped") return scheduleCanEditMap(scope, scheduleIds.map((id) => ({ id })));
+  const rows = await prisma.maintenanceSchedule.findMany({
+    where: { id: { in: [...scheduleIds] } },
+    select: { id: true, createdBy: true, criteria: true, assetIds: true, pathCheckIds: true },
+  });
+  return scheduleCanEditMap(scope, rows);
+}
