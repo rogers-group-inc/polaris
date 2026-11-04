@@ -103,7 +103,7 @@ Verbatim from TOUCHES.md → Canonical backend patterns.
 - Function-key catalogue: `FUNCTION_KEYS` constant in `permissions.ts`.
 - CRUD service template: `src/services/roleService.ts` (built-in protection + cache-version bump + per-field diff Event).
 - Route layer template: `src/api/routes/roles.ts` (per-method `requirePermission` gates; Zod schema for permission shape).
-- Frontend matrix consumer: `public/js/users.js` `openRoleSlideover` + `regionPickerHtml`.
+- Frontend matrix consumer: `public/js/users.js` `openRoleSlideover`.
 
 **Key conventions:**
 - Reads + writes are gated per-route, not per-mount. Reads use `requirePermission(key, "read")`; writes use `requirePermission(key, "write")`. Mount-level guards exist only where a coarser gate is correct (the legacy `/server-settings` blanket is the last hold-out).

@@ -23,7 +23,7 @@
  *    touched.
  *
  * users.js is a classic browser script; an indirect eval puts its top-level
- * declarations on globalThis — the usersRegionPicker.test.ts idiom.
+ * declarations on globalThis — the usersRowMenu.test.ts idiom.
  */
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
