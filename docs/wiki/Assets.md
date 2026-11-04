@@ -1692,8 +1692,11 @@ when the gate was last read.
 tunnels and dial-up templates — with its status, remote gateway, the interface
 it rides (with the tunnel interface's own address under it) and its byte
 counters. A site-to-site tunnel's **Device** column links to the gate at its
-far end when Polaris knows an asset at that remote gateway. Under each tunnel,
-marked with the tree line, are the peers connected through it:
+far end when Polaris knows an asset at that remote gateway. When the far end
+is an HA pair, both members carry the cluster's addresses; the link goes to
+the active member, never the standby (the same holds for a peer's **Device**
+below). Under each tunnel, marked with the tree line, are the peers connected
+through it:
 
 - On an **ADVPN hub**, each spoke dialled into the hub's template, shown as
   **ADVPN spoke**. A dial-up template's status reads **dynamic** (it is

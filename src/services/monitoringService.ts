@@ -81,6 +81,7 @@ import {
   addressesByIfIndexFromIpAddrTable,
 } from "../utils/snmpIpAddressTable.js";
 import { parseInterfaceIpv6 } from "../utils/fortiosIpv6.js";
+import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -6239,15 +6240,13 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
     const ipAddress = typeof rawIp === "string" && !interfaceIpIsUnaddressed(rawIp)
       ? bareInterfaceIp(rawIp)
       : null;
-    // `secondary-ip` rows carry their own `ip` in the same two shapes.
+    // Secondary rows carry their own `ip` in the same two shapes. FortiOS REST
+    // spells the table `secondary-IP` — see utils/fortiosSecondaryIp.ts.
     const secondaryIps: string[] = [];
-    if (Array.isArray(c["secondary-ip"])) {
-      for (const sec of c["secondary-ip"]) {
-        const rawSec = Array.isArray(sec?.ip) ? sec.ip[0] : sec?.ip;
-        if (typeof rawSec !== "string" || interfaceIpIsUnaddressed(rawSec)) continue;
-        const bare = bareInterfaceIp(rawSec);
-        if (bare !== ipAddress && !secondaryIps.includes(bare)) secondaryIps.push(bare);
-      }
+    for (const rawSec of fortiosSecondaryIpStrings(c)) {
+      if (interfaceIpIsUnaddressed(rawSec)) continue;
+      const bare = bareInterfaceIp(rawSec);
+      if (bare !== ipAddress && !secondaryIps.includes(bare)) secondaryIps.push(bare);
     }
     cmdbByName.set(c.name, {
       type:    t,
