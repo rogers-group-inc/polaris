@@ -383,7 +383,8 @@ refusal**, and it **destroys nothing**.
 
 ### Rule 43
 **A grant is only as narrow as the act it names.** Deploying the agent is
-`assets:fullwrite`, not `write`. `assetsProbe` is a **read-only key**.
+its own key, `agentDeploy` (it was `assets:fullwrite` until 2026-11-03), not
+`assets:write`. `assetsProbe` is a **read-only key**.
 `credentials` carries the ownership dimension, testing a stored row included.
 
 Across the whole catalogue, **a level exists only where it grants something the
@@ -3008,3 +3009,21 @@ deleted and its public ones lose their owner. A disabled account cannot sign
 in by any method and is signed out everywhere. See
 [Assets](Assets#view-tabs-and-saved-filters), [Dashboard](Dashboard#saved-dashboards)
 and [Users, Roles and Permissions](Users-Roles-and-Permissions#disabling-an-account).
+
+### Rule 141
+
+**A dangerous act is its own key, a tag is an administrator's grant, and a
+role carries no tags.** Merging two asset records (**Merge Assets**),
+deploying the Polaris Agent (**Agent Deploy**) and clearing an alert
+(**Clear Alerts**) are permissions of their own rather than the Full
+read-write rung of Assets and Alerts; the update gave each one to exactly the
+roles that held that rung, so nobody gained or lost an act. Putting a tag on
+anything — a device, a port, a network, a block, a user, a group mapping — or
+taking one off is the **Tags** permission, the same one that manages the
+registry: a tag is write reach for everyone who holds it, so tagging is an
+administrator's act. Every role may read the registry; only `admin` changes
+it after the update, which means `assetsadmin` and `networkadmin` no longer
+tag devices until granted Tags. A form that may not tag still shows a
+record's tags and saves them unchanged. A role carries no tags: tags live on
+users and on group mappings, and a user's scope is the two together. See
+[Users, Roles and Permissions](Users-Roles-and-Permissions#tags-are-an-administrators-grant).

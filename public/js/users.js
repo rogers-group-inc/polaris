@@ -301,8 +301,12 @@ function _userMenuItems(u) {
   var isSelf = currentUsername === u.username;
   var items = [
     { label: "Change Role", onSelect: function () { openChangeRoleModal(u.id, u.username, u.role ? u.role.id : ""); } },
-    { label: "Assign Tags", title: "Per-user tag scope (regions included)", onSelect: function () { openUserTagScopeModal(u.id, u.username); } },
   ];
+  // A user's tags are their write reach (business rule 141): the Tags key's
+  // grant, so the verb is offered only to a caller who holds it.
+  if (_mayEditTagScope()) {
+    items.push({ label: "Assign Tags", title: "Per-user tag scope (regions included)", onSelect: function () { openUserTagScopeModal(u.id, u.username); } });
+  }
   if (!isIdpManaged(u)) {
     items.push({ label: "Reset password", onSelect: function () { openResetPasswordModal(u.id, u.username); } });
   }
@@ -527,9 +531,8 @@ function openUserTagScopeModal(id, username) {
   var help =
     '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
       'Per-user tag scope for <strong>' + escapeHtml(username) + '</strong>. ' +
-      'Empty = unrestricted. Effective scope is the union of the tags on the ' +
-      'user&rsquo;s role, these per-user tags, and any granted by the ' +
-      'user&rsquo;s IdP groups. Map regions appear as ' +
+      'Empty = unrestricted. Effective scope is the union of these per-user ' +
+      'tags and any granted by the user&rsquo;s IdP groups. Map regions appear as ' +
       '<code>region:&lt;name&gt;</code> under the <strong>Map Regions</strong> group.' +
     '</p>';
   var body = help +
@@ -1691,12 +1694,9 @@ async function openGroupMappingSlideover(id) {
       '<p class="hint">Highest-privilege role wins when a user is in multiple mapped groups.</p>' +
     '</div>' +
     '<div class="form-group">' +
-      '<label>Region Scope</label>' +
-      regionPickerHtml("f-gm-regions", m ? (m.regionTags || []) : []) +
-    '</div>' +
-    '<div class="form-group">' +
       '<label>Tags</label>' +
-      otherTagsPickerHtml("f-gm-other", m ? (m.otherTags || []) : []) +
+      '<p class="hint" style="margin-top:0">Tag scope granted to every member of the group. Map regions appear as <code>region:&lt;name&gt;</code>. Empty = unrestricted.</p>' +
+      _tagScopePickerHtml("f-gm-tags", _seedTagScope(m ? m.regionTags : [], m ? m.otherTags : [])) +
     '</div>' +
     '<div class="form-group">' +
       '<label>Description</label>' +
@@ -1718,11 +1718,14 @@ async function openGroupMappingSlideover(id) {
     var payload = {
       groupKey: groupKey,
       roleId: document.getElementById("f-gm-role").value || null,
-      regionTags: collectRegionPicker("f-gm-regions"),
-      otherTags: collectOtherTags("f-gm-other"),
       description: (document.getElementById("f-gm-description").value || "").trim() || null,
       enabled: document.getElementById("f-gm-enabled").checked,
     };
+    if (_mayEditTagScope()) {
+      var gmScope = _splitUserTagScope(collectOtherTags("f-gm-tags"));
+      payload.regionTags = gmScope.regionTags;
+      payload.otherTags = gmScope.otherTags;
+    }
     btn.disabled = true;
     try {
       if (isCreate) {
@@ -1862,17 +1865,15 @@ async function openRoleSlideover(roleId) {
       var checked = document.querySelector('input[type="radio"][name="perm-' + f.key + '"]:checked');
       perms[f.key] = checked ? checked.value : "none";
     });
-    var regionTags = collectRegionPicker("f-role-regions");
-    var otherTags = collectOtherTags("f-role-other");
     var colorEl = document.getElementById("f-role-color");
     var color = colorEl ? colorEl.value : null;
     btn.disabled = true;
     try {
       if (isCreate) {
-        await api.roles.create({ name: name, description: description, permissions: perms, regionTags: regionTags, otherTags: otherTags, color: color });
+        await api.roles.create({ name: name, description: description, permissions: perms, color: color });
         showToast('Role "' + name + '" created');
       } else {
-        await api.roles.update(role.id, { name: name, description: description, permissions: perms, regionTags: regionTags, otherTags: otherTags, color: color });
+        await api.roles.update(role.id, { name: name, description: description, permissions: perms, color: color });
         showToast('Role "' + name + '" saved');
       }
       closeRoleSlideover();
@@ -1996,17 +1997,6 @@ function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
     '</div>' +
     '<p class="hint">Pill color shown in the sidebar, the users list, and this list.</p>' +
   '</div>';
-  var regionsRow = '<div class="form-group">' +
-    '<label>Region Scope</label>' +
-    '<p class="hint" style="margin-top:0">Empty = unrestricted. Combined with each user\'s own region tags at session time.</p>' +
-    regionPickerHtml("f-role-regions", role ? (role.regionTags || []) : []) +
-  '</div>' +
-  '<div class="form-group">' +
-    '<label>Tags</label>' +
-    '<p class="hint" style="margin-top:0">Tag scope, a second dimension alongside region tags. Empty = unrestricted.</p>' +
-    otherTagsPickerHtml("f-role-other", role ? (role.otherTags || []) : []) +
-  '</div>';
-
   var footerHtml = isProtected
     ? '<button class="btn btn-secondary" id="role-slideover-cancel">Close</button>'
     : '<button class="btn btn-secondary" id="role-slideover-cancel">Cancel</button>' +
@@ -2028,7 +2018,6 @@ function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
             nameRow +
             descRow +
             colorRow +
-            regionsRow +
             '<hr style="border:none;border-top:1px solid var(--color-border);margin:1rem 0">' +
             '<h4 style="margin:0 0 0.5rem;font-size:0.95rem">Permissions</h4>' +
             bulkSet +
@@ -2069,26 +2058,36 @@ async function loadRegionList() {
 function regionColorFor(name)  { return window.PolarisRegionPills.colorFor(name); }
 function regionPillsHtml(names, titleFor) { return window.PolarisRegionPills.html(names, titleFor); }
 
-// Render every map-region as a clickable pill colored by the region's stored
-// color. Selected pills are filled; deselected pills are an outline of the
-// same color. Click toggles. Region tags previously assigned by hand that no
-// longer exist in the catalogue are shown at the top in gray with a remove ×
-// so admins can clean them up without losing the assignment data.
-//
-// Two things this must NOT do, both of which read to an operator as "my
-// assignments were wiped":
-//
-//  - Call a tag unknown on a CASE difference. The catalogue is keyed by the
-//    region's stored name, and every matcher on both sides of the wire
-//    compares case-insensitively (selSet here, `normalizeNeedle` in
-//    notificationRecipientService, `key()` in regionHierarchyService), so a
-//    user tagged "southeast" against a region named "Southeast" is scoped
-//    correctly and was being listed as an orphan AND as a selected pill.
-//  - Call a tag unknown when the CATALOGUE never loaded. `GET /map/regions`
-//    needs mapRegions=read, so a user administrator without it gets an empty
-//    map -- which is not evidence about any tag. Absent a catalogue the
-//    assignments render as neutral chips under a note saying so, because
-//    "no longer in the map" would be a claim we cannot support.
+// ─── Tag scope on a group mapping: ONE picker, or pills ─────────────────────
+// The Users -> Assign Tags shape: a map region already IS a registry tag
+// (`region:<name>`), so the picker is seeded with each region under that name
+// and `_splitUserTagScope` routes the prefixed ones back to `regionTags` on
+// save. (A role carries no tags since 2026-11-03 — scope is user + group.)
+// A mapping's tags are every member's write reach (business rule 141), so
+// changing them is the Tags key's grant: a caller without it still opens the
+// editor and sees the scope as static pills, and the save leaves both
+// dimensions out of the payload so the server's tag-change check never fires
+// on a form that did not touch them.
+function _mayEditTagScope() {
+  return typeof canManageTags !== "function" || canManageTags();
+}
+function _seedTagScope(regionTags, otherTags) {
+  var regions = Array.isArray(regionTags) ? regionTags : [];
+  var other = Array.isArray(otherTags) ? otherTags : [];
+  return regions.map(function (n) { return "region:" + n; }).concat(other);
+}
+function _tagScopePickerHtml(idPrefix, seeded) {
+  var sel = Array.isArray(seeded) ? seeded : [];
+  if (_mayEditTagScope()) return otherTagsPickerHtml(idPrefix, sel);
+  var pills = sel.map(function (t) {
+    return '<span class="badge hue-pill" style="' + tagHueStyle(tagColorFor(t)) + '">' + escapeHtml(t) + '</span>';
+  }).join("");
+  return '<div style="display:flex;flex-wrap:wrap;gap:0.25rem;align-items:center">' +
+      (pills || '<span style="color:var(--color-text-tertiary)">&mdash;</span>') +
+    '</div>' +
+    '<p class="hint">Changing tags needs Read-Write on Tags.</p>';
+}
+
 function regionPickerHtml(idPrefix, selected) {
   var sel = Array.isArray(selected) ? selected.slice() : [];
   var selSet = {};
@@ -2238,7 +2237,7 @@ function tagCategoryFor(name) {
 // to this assignment alone and the hint says so, instead of the click landing
 // on a 403.
 function canCreateRegistryTags() {
-  return _tagCatalogLoaded && typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
+  return _tagCatalogLoaded && typeof permAtLeast === "function" && permAtLeast("tags", "write");
 }
 
 function otherTagChipHtml(t) {

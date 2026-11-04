@@ -98,7 +98,13 @@ function mount(assets: any[], opts: { alerts?: string; alertRows?: AlertRow[] } 
   g.PolarisRouter = { go: (r: string) => opened.push(r) };
   g.PolarisTabs = { showSnackbar: vi.fn(), attachSwipeToDismiss: vi.fn() };
   g.PolarisAssetDetail = { open: (id: string) => opened.push("detail:" + id) };
-  g.PolarisMobile = { user: () => ({ permissions: { alerts: opts.alerts ?? "read", assets: "read" } }) };
+  // "fullwrite" is the test's shorthand for "may also clear": clearing is its
+  // own key (alertClear) since 2026-11-03, acknowledging stays alerts:write.
+  g.PolarisMobile = { user: () => ({ permissions: {
+    alerts: opts.alerts === "fullwrite" ? "write" : (opts.alerts ?? "read"),
+    alertClear: opts.alerts === "fullwrite" ? "write" : "none",
+    assets: "read",
+  } }) };
 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(ALERTS_SRC)();
@@ -272,7 +278,7 @@ describe("the alerts sheet's verbs", () => {
     expect(sheetItems()[1].textContent).toContain("dave");
   });
 
-  it("offers Clear only at alerts:fullwrite, on every row", async () => {
+  it("offers Clear only at alertClear:write, on every row", async () => {
     await openSheet("fullwrite");
     expect(document.querySelectorAll(".alert-clear").length).toBe(2);
     expect(document.querySelectorAll(".alert-ack").length).toBe(1);

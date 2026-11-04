@@ -273,7 +273,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `agentInstallService.applyRebootPermissionOnHost` (the host script over the agent's stored install credential + transport, exactly as an upgrade reaches the host); `credentialService.getCredential`; `agentCommandWake.publishConfigRefresh`; `eventLogService.logEvent`; `prisma.managedAgent`.
 
-**Used by:** `src/api/routes/reboot.ts` — `PUT /agent` (`assets:fullwrite`); `public/js/assets.js` (`_toggleAgentReboot`).
+**Used by:** `src/api/routes/reboot.ts` — `PUT /agent` (`agentDeploy:write`); `public/js/assets.js` (`_toggleAgentReboot`).
 
 **Invariants:**
 - **Enable: host first, then flag.** The script must succeed before `rebootEnabled` is set; `rebootCapable` is reset to null and a refresh-config nudge asks the agent to report again — the button stays off until the HOST says it can.

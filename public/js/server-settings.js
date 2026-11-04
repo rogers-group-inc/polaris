@@ -5108,6 +5108,9 @@ function renderIdentificationTab() {
   var catNames = Object.keys(categories).sort();
   // GET /assets/by-tag is gated assets:read, which this tab does not imply.
   var canOpenTagAssets = typeof permAtLeast === "function" && permAtLeast("assets", "read");
+  // Writes to the registry are the Tags key's; a caller here without it
+  // (Server Settings read) sees the registry and no verbs.
+  var canEditRegistry = typeof canManageTags !== "function" || canManageTags();
 
   html +=
     '<div class="settings-card">' +
@@ -5117,14 +5120,16 @@ function renderIdentificationTab() {
       '</p>' +
       '<div class="form-group" style="margin-bottom:1rem">' +
         '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
-          '<input type="checkbox" id="f-enforce-tags"' + (_tagSettings.enforce ? ' checked' : '') + '>' +
+          '<input type="checkbox" id="f-enforce-tags"' + (_tagSettings.enforce ? ' checked' : '') + (canEditRegistry ? '' : ' disabled') + '>' +
           '<span>Force predefined tags</span>' +
         '</label>' +
         '<p class="hint">When enabled, users can only select from predefined tags when creating or editing networks and assets. Free-text tag entry will be disabled.</p>' +
       '</div>' +
-      '<div style="display:flex;gap:8px;margin-bottom:1rem">' +
-        '<button class="btn btn-primary" id="btn-add-tag">+ Add Tag</button>' +
-      '</div>';
+      (canEditRegistry
+        ? '<div style="display:flex;gap:8px;margin-bottom:1rem">' +
+            '<button class="btn btn-primary" id="btn-add-tag">+ Add Tag</button>' +
+          '</div>'
+        : '<p class="hint" style="margin-bottom:1rem">Adding, editing and assigning tags needs Read-Write on Tags.</p>');
 
   if (_tagsData.length === 0 && _emptyCategories.length === 0) {
     html += '<p class="empty-state">No tags defined yet. Add one to get started.</p>';
@@ -5216,7 +5221,8 @@ function renderIdentificationTab() {
   wireManufacturerAliasControls();
 
   // Tags events
-  document.getElementById("btn-add-tag").addEventListener("click", openAddTagModal);
+  var addTagBtn = document.getElementById("btn-add-tag");   // withheld without Tags write
+  if (addTagBtn) addTagBtn.addEventListener("click", openAddTagModal);
 
   container.querySelectorAll(".tag-chip-edit").forEach(function (btn) {
     btn.addEventListener("click", function (e) {
@@ -8083,7 +8089,8 @@ function _tagRegistryChipHTML(t, canOpenTagAssets) {
   // refuses PUT / DELETE), and removed automatically once no asset
   // carries it — so it offers neither verb.
   var mirrored = /^azure:/i.test(t.name);
-  var canEdit = isAdmin() && !mirrored;
+  // The registry is the Tags key's (2026-11-03), not the role name's.
+  var canEdit = (typeof canManageTags !== "function" || canManageTags()) && !mirrored;
   var chipTitle = [
     canOpenTagAssets ? "Show the assets with this tag" : "",
     mirrored ? "Mirrored from Azure by the Azure Arc integration — change it in Azure; Polaris removes it once no asset carries it" : "",

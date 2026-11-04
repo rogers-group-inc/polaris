@@ -241,7 +241,7 @@ function loadUserIndex(): Promise<IndexedUser[]> {
       authProvider: true,
       roleId: true,
       notificationPreference: true,
-      role: { select: { regionTags: true, otherTags: true, permissions: true } },
+      role: { select: { permissions: true } },
     },
   });
 

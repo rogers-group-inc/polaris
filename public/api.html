@@ -312,6 +312,11 @@
           keys can <em>create</em> rows but gets <code>403</code> on every edit/delete of an
           existing row. Bind tokens that must manage IPAM rows to a role granting
           <code>fullwrite</code> on <code>subnets</code> / <code>reservations</code>.
+          <strong>Tags are their own key.</strong> A request that changes the <code>tags</code>
+          array of an asset, port, network, block, user, role or group mapping needs
+          <code>tags:write</code> as well as write on the record&rsquo;s own key; posting the
+          tags back unchanged needs nothing extra. Merging two assets is <code>assetMerge:write</code>,
+          deploying the agent <code>agentDeploy:write</code>, clearing an alert <code>alertClear:write</code>.
         </div>
       </section>
 
@@ -473,7 +478,7 @@
             network-present asset already recording the address (each with
             <code>claimCurrent</code> &mdash; a stale record is listed but does not collide),
             whether saving would raise a Duplicate IP conflict, and whether the caller may merge
-            assets (<code>assets:fullwrite</code>). The answer is computed with the same rules the
+            assets (<code>assetMerge:write</code>). The answer is computed with the same rules the
             save applies, so a <code>wouldConflict: true</code> here is a conflict the write will
             raise. <code>400</code> on an invalid address.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN"   "<span class="js-base-url">/api/v1</span>/assets/ip-check?ip=10.20.30.4&amp;assetType=switch"</code></pre>

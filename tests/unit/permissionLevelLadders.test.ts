@@ -116,8 +116,14 @@ describe("no dead top rung", () => {
   // rest of the key. Everything else tops out at Read-Write. Adding a key
   // here is a deliberate act: say which route reads the fourth rung.
   const FULLWRITE_IS_MEANINGFUL: Record<string, string> = {
-    assets: "agent deployment (POST /assets/:id/agent/install and siblings), and merging two assets (POST /assets/:id/merge) — a merge edits one record and deletes another",
-    alerts: "clearing an alert, vs. acknowledging it at write",
+    // Until 2026-11-03 these two excused themselves with agent deploy + merge
+    // and with clear. Those acts are their own keys now (assetMerge,
+    // agentDeploy, alertClear — migration 20261103170000_dangerous_act_keys);
+    // what the fourth rung still buys is REACH, which release 2 of the
+    // write-scope change (business rule 141) turns into an ownership
+    // dimension. Until that lands, the rung is excused by what it still gates.
+    assets: "managing ownerless saved filters / folders (savedOwnershipService, rule 140) and merging two assets you own without the assetMerge key",
+    alerts: "nothing beyond write yet — placeholder until release 2 marks the key tagScoped (hasOwnershipDimension); kept so a stored fullwrite is not clamped away in between",
     assetMonitorSettings: "the outage simulation (POST /assets/:id/dependency-test)",
     integrations: "aborting a discovery in flight (DELETE /integrations/:id/discover)",
     users: "IdP group-mapping CRUD (the /group-mappings mount)",

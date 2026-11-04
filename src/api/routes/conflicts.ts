@@ -220,7 +220,7 @@ router.post("/:id/migrate-reservations", async (req, res, next) => {
 // pending subnet of one (oldSerial, newSerial) swap (business rule 41(a)).
 // Body: { oldSerial, newSerial, mergeOldAsset? }. mergeOldAsset folds the old
 // gate's asset into the new gate's, which deletes an asset row, so it takes the
-// same chained `assets:fullwrite` gate as every other merge verb here.
+// same chained `assetMerge` gate as every other merge verb here.
 router.post("/chassis-swap/adopt", async (req, res, next) => {
   try {
     if (!canResolve(req)) {
@@ -229,8 +229,8 @@ router.post("/chassis-swap/adopt", async (req, res, next) => {
     const parsed = ChassisSwapSchema.safeParse(req.body ?? {});
     if (!parsed.success) throw new AppError(400, "oldSerial and newSerial are required");
     const { oldSerial, newSerial, mergeOldAsset } = parsed.data;
-    if (mergeOldAsset && !hasPermission(req, "assets", "fullwrite")) {
-      throw new AppError(403, "Merging assets requires full read-write on Assets");
+    if (mergeOldAsset && !hasPermission(req, "assetMerge", "write")) {
+      throw new AppError(403, "Merging assets requires the Merge Assets permission");
     }
     const outcome = await adoptChassisSwap(oldSerial, newSerial, {
       mergeOldAsset: mergeOldAsset === true,
@@ -311,8 +311,8 @@ router.post("/:id/merge", async (req, res, next) => {
       // assets key's destructive tier — the same level `POST /assets/:id/merge`
       // requires, and the level the merge modal is gated on client-side. The
       // reassign verb below stays at `write`: it edits, it deletes nothing.
-      if (!hasPermission(req, "assets", "fullwrite")) {
-        throw new AppError(403, "Merging assets requires full read-write on Assets");
+      if (!hasPermission(req, "assetMerge", "write")) {
+        throw new AppError(403, "Merging assets requires the Merge Assets permission");
       }
       const survivorAssetId =
         typeof req.body?.survivorAssetId === "string" ? req.body.survivorAssetId : "";
@@ -335,10 +335,10 @@ router.post("/:id/merge", async (req, res, next) => {
 
     // Duplicate-serial conflicts take the same body for the same reason: one
     // device recorded twice, and the operator names which record survives.
-    // Same chained `assets:fullwrite` gate — it deletes asset rows.
+    // Same chained `assetMerge` gate — it deletes asset rows.
     if (proposedKind.collisionReason === DUPLICATE_SERIAL_COLLISION_REASON) {
-      if (!hasPermission(req, "assets", "fullwrite")) {
-        throw new AppError(403, "Merging assets requires full read-write on Assets");
+      if (!hasPermission(req, "assetMerge", "write")) {
+        throw new AppError(403, "Merging assets requires the Merge Assets permission");
       }
       const survivorAssetId =
         typeof req.body?.survivorAssetId === "string" ? req.body.survivorAssetId : "";

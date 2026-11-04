@@ -16,7 +16,7 @@ import { snapshotFromRole, type SessionRoleSnapshot } from "../api/middleware/pe
 import { AppError } from "../utils/errors.js";
 
 const CACHE_TTL_MS = 60_000;
-let cache: { snapshot: SessionRoleSnapshot; regionTags: string[]; fetchedAt: number } | null = null;
+let cache: { snapshot: SessionRoleSnapshot; fetchedAt: number } | null = null;
 
 export function invalidateDashRoleSnapshotCache(): void {
   cache = null;
@@ -24,22 +24,22 @@ export function invalidateDashRoleSnapshotCache(): void {
 
 export interface DashRoleIdentity {
   snapshot: SessionRoleSnapshot;
-  /** The readonly Role's region tags — surfaced by the synthetic /auth/me. */
-  regionTags: string[];
 }
 
 /** The seeded `readonly` role as a request-stampable snapshot (60s TTL). */
 export async function getReadonlyRoleIdentity(): Promise<DashRoleIdentity> {
   const now = Date.now();
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return { snapshot: cache.snapshot, regionTags: cache.regionTags };
+    return { snapshot: cache.snapshot };
   }
   const role = await prisma.role.findUnique({ where: { name: "readonly" } });
   if (!role) {
     throw new AppError(500, "Built-in 'readonly' role not found — Polaris is mis-seeded");
   }
+  // The wallboard has no user and a role carries no tags (2026-11-03), so its
+  // scope is unrestricted — which is what the protected readonly role, whose
+  // tags nobody could edit, always amounted to.
   const snapshot = snapshotFromRole(role);
-  const regionTags = Array.isArray(role.regionTags) ? role.regionTags : [];
-  cache = { snapshot, regionTags, fetchedAt: now };
-  return { snapshot, regionTags };
+  cache = { snapshot, fetchedAt: now };
+  return { snapshot };
 }

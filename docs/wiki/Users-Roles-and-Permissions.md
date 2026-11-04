@@ -10,7 +10,7 @@ that opens the sign-in configuration (tabs **SAML**, **OIDC**, **LDAP**,
 ## The model
 
 Every route declares a **function key** plus a required **level**. A role is a
-matrix over the 35 keys:
+matrix over the 39 keys:
 
 ```
 none  <  read  <  write  <  fullwrite
@@ -41,6 +41,24 @@ which can be a user, a role or a region, and `fullwrite` does **not** reach
 someone else's owned one. It manages only those with no owner
 ([rule 140](Business-Rules#rule-140)).
 
+### Tags are an administrator's grant
+
+A tag on a device is **write reach**: release 2 of the write-scope change
+(rule 141) makes Read-Write on the asset-side keys reach the rows you own *or
+that carry one of your tags*. So whoever may put a tag on a record is handing
+out access, and that is the **Tags** key's grant — not Assets, Subnets or
+Users write:
+
+| `tags` level | May |
+|---|---|
+| `read` | see the registry (every built-in has it — the pickers draw their colours from it) |
+| `write` | manage the registry (create, rename, recolour, delete, auto-assign filters, the *force predefined tags* setting) **and** put a tag on, or take one off, any record: a device, a port, a network, a block, a user, an IdP group mapping |
+
+A form that may not edit tags still shows the record's tags, as fixed chips,
+and posts them back unchanged. Only the built-in `admin` holds Tags Read-Write
+after the update: `assetsadmin` and `networkadmin`, who could tag devices at
+`assets:write` before, cannot until an administrator grants them Tags.
+
 ### Short ladders
 
 A key declares **only the levels it can actually hold**, and most hold fewer
@@ -51,8 +69,8 @@ decision the operator did not really make.
 | Ladder | Keys | Why |
 |---|---|---|
 | `none \| read` | `assetsProbe` | A probe dials the device and writes nothing in Polaris, so Read *is* the whole grant |
-| `none \| read \| write` | 20 keys — see the tables below | No route asks for Full Read-Write on them. It means something only where it lifts an ownership filter or reserves a more dangerous act |
-| `none \| write` | `serverSettingsData` | Nothing on the key is merely viewable. Its reads sit on the System key's floor, and everything it gates changes the database or hands over a copy of it |
+| `none \| read \| write` | 21 keys — see the tables below | No route asks for Full Read-Write on them. It means something only where it lifts an ownership filter or reserves a more dangerous act |
+| `none \| write` | `serverSettingsData`, `assetMerge`, `agentDeploy`, `alertClear` | Nothing on them is merely viewable. The Data key's reads sit on the System key's floor and everything it gates changes the database or hands over a copy of it; each of the three act keys names one dangerous act and nothing else |
 | all four | the 5 ownership keys and 7 named exceptions | Marked in the tables below |
 
 The UI renders a dash instead of a radio for an unsupported cell. Stored values
@@ -62,7 +80,7 @@ silently revoke.
 
 ---
 
-## The 35 function keys
+## The 39 function keys
 
 **Top rung** names the highest level the key offers. Where that is Full
 Read-Write, the last column says what it buys over Read-Write — because that is
@@ -112,12 +130,15 @@ tab in the asset panel, says **Also used on** in both places.
 
 | Key | Top rung | |
 |---|---|---|
-| `assets` | Full RW | inventory CRUD and export. **Read-Write also starts a firmware upgrade** on a switch, access point or FortiGate, or schedules, changes and cancels one for later. **Full RW = deploy the agent, and merge assets** (a merge edits one record and deletes another). A new address on a device a FortiManager or FortiGate integration manages also needs `integrations` Read-Write ([rule 111](Business-Rules#rule-111)) |
+| `assets` | Full RW | inventory CRUD and export. **Read-Write also starts a firmware upgrade** on a switch, access point or FortiGate, or schedules, changes and cancels one for later. **Full RW** today = manage ownerless saved filters and folders ([rule 140](Business-Rules#rule-140)); deploying the agent and merging are their own keys, below. Putting a tag on a device is **Tags** Read-Write, not this key. A new address on a device a FortiManager or FortiGate integration manages also needs `integrations` Read-Write ([rule 111](Business-Rules#rule-111)) |
+| `assetMerge` | Read-Write (no Read) | **merge any two asset records** into one — one record is deleted. Every merge path: the asset panel, the selection menu, the duplicate-IP / duplicate-serial / chassis-swap conflict cards |
+| `agentDeploy` | Read-Write (no Read) | **deploy the Polaris Agent**: install / retry / reinstall / upgrade / uninstall, bulk deploy, an integration's auto-deploy toggle, an agent host's reboot opt-in, a process's log-path glob. *Also used on: Integrations.* |
 | `assetsQuarantine` | Read-Write | push MAC quarantine to FortiGates, release, verify |
 | `assetsProbe` | **Read-Only** | probe-now, SNMP walk, DNS lookup — a probe writes nothing here |
 | `networkScan` | Full RW | [active-scan Discoveries](Network-Discovery) — **ownership** |
 | `assetMonitorSettings` | Full RW | monitor cadence and retention overrides at every tier, plus the auto-decommission thresholds. **Full RW = the outage simulation**. *Also used on: Integrations.* |
-| `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear. *Also used on: Dashboard.* |
+| `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge. Clearing is `alertClear`; the Full RW rung is kept for the write-scope change (rule 141, release 2). *Also used on: Dashboard.* |
+| `alertClear` | Read-Write (no Read) | **clear** (dismiss) an alert — it ends the alert, stops escalation and runs the automation's reset actions. *Also used on: Dashboard.* |
 | `maintenanceManagement` | Read-Write | maintenance windows; Read-Write is schedule CRUD. *Also used on: Events, Path Monitor.* |
 
 ### Events
@@ -154,7 +175,8 @@ tab in the asset panel, says **Also used on** in both places.
 
 | Key | Top rung | |
 |---|---|---|
-| `serverSettingsSystem` | Read-Write | HTTPS, branding, DNS, NTP, certificates, capacity, tags, HA, the agent fleet |
+| `serverSettingsSystem` | Read-Write | HTTPS, branding, DNS, NTP, certificates, capacity, HA, the agent fleet |
+| `tags` | Read-Write | the **tag registry** and **assigning tags to any record** — see [Tags are an administrator's grant](#tags-are-an-administrators-grant). *Also used on: Assets, IP Management, Users.* |
 | `serverSettingsData` | **Read-Write** (no Read) | backup, restore, **download**, queue mode, security tokens, restart, in-app updates |
 | `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership**. *Also used on: Assets, Integrations, Path Monitor.* |
 | `firmware` | RW | the firmware repository for switches, access points and FortiGates. Read = see the Repository tab; Read-Write = upload / delete images, choose the primary and bind device logins (or, for FortiGates, an API token — including the discovering integration's). **Starting an upgrade is not on this key** — it needs Read-Write on **Assets** ([rule 87](Business-Rules#rule-87)). *Also used on: Assets.* |
@@ -210,8 +232,14 @@ are.
 | **`admin`** | **protected** — cannot be edited or deleted, and is hidden from the list | every key at its **top rung** |
 | **`readonly`** | protected — like `admin`, hidden from the Roles list | `read` on everything non-admin, `none` on admin-only keys |
 | **`networkadmin`** | editable, not deletable | IP space / integrations / map regions / conflicts at write; `subnets` + `reservations` at **Full RW**; assets, topology layouts and maintenance windows at write |
-| **`assetsadmin`** | editable, not deletable | assets / quarantine / monitor settings / maintenance / automations at write; own-row write on networks, reservations and **credentials**; integrations readable |
+| **`assetsadmin`** | editable, not deletable | assets / quarantine / monitor settings / maintenance / automations at write; **Clear Alerts**; own-row write on networks, reservations and **credentials**; integrations readable |
 | **`user`** | editable, not deletable | own-network / own-reservation write; read elsewhere |
+
+Only **`admin`** holds **Merge Assets**, **Agent Deploy** and **Tags** Read-Write;
+`admin` and `assetsadmin` hold **Clear Alerts**. The update of 2026-11-03 seeded
+each act key onto exactly the roles that held the rung it used to live on, so
+nobody gained or lost an act — except tagging, which left `assets:write` on
+purpose (above).
 
 **`readonly` is the floor.** No built-in role reaches *less* of Polaris than the
 look-only role does — a role that exists to do more than look should never see
@@ -292,18 +320,22 @@ save the role or choose **Mark reviewed** from its menu
 
 ## Tags and region scope
 
-`Role`, `User` and `GroupMapping` each carry two operator-typed tag dimensions:
-**region tags** and **other tags**. Empty means **unrestricted**.
+`User` and `GroupMapping` each carry two operator-typed tag dimensions:
+**region tags** and **other tags**. Empty means **unrestricted**. **A role
+carries no tags** (since 2026-11-03): a role says what a person may *do*, a tag
+says *which records* — so tags live on assets, on users and on IdP group
+mappings, and a role is the permission matrix alone. Tags a role carried before
+the update were dropped, not moved; assign them on the account or the group.
 
-A session's effective scope is the **union** of role, user and group-derived
+A session's effective scope is the **union** of user and group-derived
 tags, per dimension. Group-derived tags are re-resolved live on every
 `/auth/me`, never persisted onto the user's own columns — so operator-set tags
 survive a re-login.
 
-**Assign Tags edits both dimensions through one picker.** A map region already
-*is* a registry tag (`region:<name>` in a locked category), so a separate region
-control listed the same names twice in the same dialog. The prefix carries the
-split instead.
+**Assign Tags (users) and the group-mapping editor edit both dimensions through
+one picker.** A map region already *is* a registry tag (`region:<name>` in a
+locked category), so a separate region control listed the same names twice in
+the same dialog. The prefix carries the split instead.
 
 Two behaviours that exist because the columns hold **bare names with no foreign
 key**:
@@ -323,7 +355,7 @@ key**:
 
 **Region scope never narrows an administrator's alerts.** An admin-equivalent
 role (Full Read-Write on both `users` and `roles`) sees and can acknowledge
-every alert, whatever region tags its user, role or SSO group carry. An admin
+every alert, whatever region tags its user or SSO group carry. An admin
 in a regional IdP group picks up that group's tags without anyone meaning to
 narrow them, and the Active Alerts widget and the device's Alerts tab are not
 region-scoped — so a scoped admin would see an alert there and then be told it

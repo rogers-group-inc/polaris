@@ -185,7 +185,7 @@ describe("which verbs a row offers", () => {
 
   it("withholds a verb the role cannot perform", () => {
     // A courtesy, not the control — both routes gate server-side either way.
-    (win as unknown as Record<string, unknown>).permAtLeast = (_k: string, level: string) => level !== "fullwrite";
+    (win as unknown as Record<string, unknown>).permAtLeast = (k: string, _level: string) => k !== "alertClear";
     const { teardown } = mountAndClick([alert({ id: "n1" })]);
     expect(labels()).toEqual(["Acknowledge alert"]);
     teardown();

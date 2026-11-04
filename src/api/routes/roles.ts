@@ -32,8 +32,6 @@ const AccessLevelSchema = z.enum(ACCESS_LEVELS as unknown as [string, ...string[
 // inside normalizePermissions. Unknown keys are dropped server-side.
 const PermissionsSchema = z.record(z.string(), AccessLevelSchema);
 
-const RegionTagsSchema = z.array(z.string().max(64)).max(64);
-
 // `#rrggbb` hex string; empty string / null clears the color.
 const ColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Color must be a #rrggbb hex string");
 
@@ -41,7 +39,6 @@ const CreateRoleSchema = z.object({
   name:        z.string().min(2).max(32),
   description: z.string().max(200).optional().nullable(),
   permissions: PermissionsSchema,
-  regionTags:  RegionTagsSchema.optional(),
   color:       ColorSchema.optional().nullable(),
 });
 
@@ -49,7 +46,6 @@ const UpdateRoleSchema = z.object({
   name:        z.string().min(2).max(32).optional(),
   description: z.string().max(200).optional().nullable(),
   permissions: PermissionsSchema.optional(),
-  regionTags:  RegionTagsSchema.optional(),
   color:       ColorSchema.optional().nullable(),
 });
 
@@ -88,7 +84,6 @@ router.post("/", requirePermission("roles", "write"), async (req, res, next) => 
         name:        input.name,
         description: input.description ?? null,
         permissions: input.permissions as Parameters<typeof roleService.createRole>[0]["permissions"],
-        ...(input.regionTags !== undefined && { regionTags: input.regionTags }),
         ...(input.color !== undefined && { color: input.color }),
       },
       req.session?.username,
@@ -108,10 +103,18 @@ router.put("/:id", requirePermission("roles", "write"), async (req, res, next) =
       const current = await roleService.getRole(req.params.id as string);
       assertGrantWithinCaller(req, input.permissions, "this permission set", (current as { permissions?: unknown }).permissions);
       // Rule 48 the other way (re-scan F76): taking admin-equivalence away.
+      // Judged on the matrix as it will be STORED — a key absent from the
+      // posted matrix keeps its stored level (roleService.updateRole), so a
+      // partial post that omits `users` / `roles` is not a demotion.
+      const currentPerms = (current as { permissions?: unknown }).permissions;
+      const merged = {
+        ...((currentPerms && typeof currentPerms === "object") ? (currentPerms as Record<string, unknown>) : {}),
+        ...input.permissions,
+      };
       await roleService.assertRoleDemotionAllowed(
         req.params.id as string,
-        (current as { permissions?: unknown }).permissions,
-        isAdminEquivalentPermissions(normalizePermissions(input.permissions)),
+        currentPerms,
+        isAdminEquivalentPermissions(normalizePermissions(merged)),
         callerIsAdminEquivalent(req),
       );
     }
@@ -123,7 +126,6 @@ router.put("/:id", requirePermission("roles", "write"), async (req, res, next) =
         ...(input.permissions !== undefined && {
           permissions: input.permissions as Parameters<typeof roleService.updateRole>[1]["permissions"],
         }),
-        ...(input.regionTags !== undefined && { regionTags: input.regionTags }),
         ...(input.color !== undefined && { color: input.color }),
       },
       req.session?.username,

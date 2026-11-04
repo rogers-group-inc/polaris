@@ -243,10 +243,10 @@ function assertAgentDeployGrant(req: Request, prevConfig: unknown, nextConfig: u
     k => agentDeployEnabledIn(nextConfig, k) && !agentDeployEnabledIn(prevConfig, k),
   );
   if (turnedOn.length === 0) return;
-  if (hasPermission(req, "assets", "fullwrite")) return;
+  if (hasPermission(req, "agentDeploy", "write")) return;
   throw new AppError(
     403,
-    "Forbidden — enabling Polaris Agent auto-deploy requires Full Read-Write on Assets " +
+    "Forbidden — enabling Polaris Agent auto-deploy requires the Agent Deploy permission " +
     "(the same grant as deploying the agent to a single device).",
   );
 }

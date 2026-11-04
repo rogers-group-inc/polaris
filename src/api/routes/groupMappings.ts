@@ -10,7 +10,7 @@ import { Router } from "express";
 import { z } from "zod";
 import * as groupMappingService from "../../services/groupMappingService.js";
 import { GROUP_MAPPING_PROVIDERS } from "../../services/groupMappingService.js";
-import { assertGrantWithinCaller, assertNoPrivilegeEscalation } from "../middleware/permissions.js";
+import { assertGrantWithinCaller, assertNoPrivilegeEscalation, assertTagChangeAllowed } from "../middleware/permissions.js";
 import type { Request } from "express";
 
 const router = Router();
@@ -77,6 +77,10 @@ router.post("/", async (req, res, next) => {
     const input = CreateSchema.parse(req.body);
     // Checked even when created disabled: it is one toggle away from granting.
     await assertMappingWithinCaller(req, input.roleId);
+    // A mapping's tags are every member's write reach (rule 141): the Tags
+    // key's grant, chained on users:fullwrite.
+    assertTagChangeAllowed(req, [], input.regionTags);
+    assertTagChangeAllowed(req, [], input.otherTags);
     const created = await groupMappingService.createGroupMapping(input, req.session?.username);
     res.status(201).json(created);
   } catch (err) { next(err); }
@@ -85,6 +89,11 @@ router.post("/", async (req, res, next) => {
 router.put("/:id", async (req, res, next) => {
   try {
     const input = UpdateSchema.parse(req.body);
+    if (input.regionTags !== undefined || input.otherTags !== undefined) {
+      const cur = await groupMappingService.getGroupMapping(req.params.id as string);
+      assertTagChangeAllowed(req, cur.regionTags, input.regionTags);
+      assertTagChangeAllowed(req, cur.otherTags, input.otherTags);
+    }
     const before = await groupMappingService.mappingGrantState(req.params.id as string);
     if (before) {
       const nextRoleId = input.roleId === undefined ? before.roleId : input.roleId || null;

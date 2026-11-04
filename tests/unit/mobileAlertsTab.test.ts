@@ -332,17 +332,17 @@ describe("alerts tab region scope", () => {
 describe("alerts tab clear", () => {
   const clearButtons = () => Array.from(document.querySelectorAll("[data-clear]")) as HTMLElement[];
 
-  it("draws Clear only at alerts:fullwrite, outside the row button", async () => {
+  it("draws Clear only at alertClear:write, outside the row button", async () => {
     await render(ROWS);
     expect(clearButtons()).toHaveLength(0);
-    await render(ROWS, undefined, { permissions: { alerts: "fullwrite" } });
+    await render(ROWS, undefined, { permissions: { alerts: "write", alertClear: "write" } });
     // Every active alert can be cleared, acknowledged or not.
     expect(clearButtons().map((b) => b.dataset.clear)).toEqual(["c", "a", "b", "d"]);
     expect(document.querySelector(".list-item [data-clear]")).toBeNull();
   });
 
   it("asks first, then clears and drops the row", async () => {
-    await render(ROWS, undefined, { permissions: { alerts: "fullwrite" } });
+    await render(ROWS, undefined, { permissions: { alerts: "write", alertClear: "write" } });
     clearButtons()[0]!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(g.api.alerts.clear).not.toHaveBeenCalled();
@@ -355,7 +355,7 @@ describe("alerts tab clear", () => {
   });
 
   it("sends nothing when the confirm is cancelled", async () => {
-    await render(ROWS, undefined, { permissions: { alerts: "fullwrite" } });
+    await render(ROWS, undefined, { permissions: { alerts: "write", alertClear: "write" } });
     clearButtons()[0]!.click();
     await new Promise((r) => setTimeout(r, 0));
     (document.getElementById("alert-clear-cancel") as HTMLElement).click();

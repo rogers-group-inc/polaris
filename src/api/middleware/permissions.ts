@@ -38,6 +38,7 @@
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "../../utils/errors.js";
 import { prisma } from "../../db.js";
+import { isAzureTag } from "../../utils/tagNormalize.js";
 
 // ─── Function-key catalogue ────────────────────────────────────────────
 //
@@ -168,7 +169,17 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "reservations", section: "ipManagement", label: "Reservations", description: "Reserved IPs, including DHCP push to FortiGate. Read-Write = your own rows; Full Read-Write = any row.", hasOwnershipDimension: true, alsoOn: ["assets", "events"] },
 
   // ── Assets ────────────────────────────────────────────────────────────────
-  { key: "assets", section: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Full Read-Write also deploys the agent and merges two assets." },
+  { key: "assets", section: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Full Read-Write also merges two assets you own and manages ownerless saved filters." },
+  // The three dangerous acts that used to be the Full Read-Write rung of
+  // `assets` / `alerts` (merge, agent deploy, clear) are their own keys from
+  // 2026-11-03 (migration 20261103170000_dangerous_act_keys). Full Read-Write
+  // on a scoped key is about REACH (every record, not just your own or your
+  // tags' — business rule 141, release 2); a dangerous act is a different
+  // grant, and an admin may want to hand out one without the other. Seeded
+  // write wherever the source key held fullwrite, so nobody gains or loses
+  // on update day; no read rung, there is nothing on them to look at.
+  { key: "assetMerge", section: "assets", label: "Merge Assets", description: "Merge any two asset records into one (one record is deleted). Without it, Assets Read-Write may merge only two assets you own.", levels: WRITE_ONLY },
+  { key: "agentDeploy", section: "assets", label: "Agent Deploy", description: "Install, upgrade, reinstall and remove the Polaris Agent on a device, bulk deploy, an integration's auto-deploy, an agent host's reboot opt-in and the agent log-path glob.", levels: WRITE_ONLY, alsoOn: ["integrations"] },
   { key: "assetsQuarantine", section: "assets", label: "Asset Quarantine", description: "Push MAC quarantine to FortiGates, release it, verify it.", levels: UP_TO_WRITE },
   // Read-only by nature: a probe dials the device and writes nothing in
   // Polaris, so `read` IS the grant and there is no higher level to offer.
@@ -187,7 +198,8 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // "may create assets" stay separable.
   { key: "networkScan", section: "assets", label: "Network Discovery", description: "Active sweeps of operator-supplied IP ranges. Read-Write = run and manage your own; Full Read-Write = anyone's.", hasOwnershipDimension: true },
   { key: "assetMonitorSettings", section: "assets", label: "Asset Monitor Settings", description: "Monitor cadence and retention overrides per asset, class, integration or manual. Full Read-Write = outage simulation.", alsoOn: ["integrations"] },
-  { key: "alerts", section: "assets", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges; Full Read-Write clears.", alsoOn: ["dashboard"] },
+  { key: "alerts", section: "assets", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges. Clearing is its own key.", alsoOn: ["dashboard"] },
+  { key: "alertClear", section: "assets", label: "Clear Alerts", description: "Clear (dismiss) triggered alerts. Acknowledging stays on Alerts Read-Write.", levels: WRITE_ONLY, alsoOn: ["dashboard"] },
   { key: "maintenanceManagement", section: "assets", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = schedule CRUD.", levels: UP_TO_WRITE, alsoOn: ["events", "pathMonitor"] },
 
   // ── Events ────────────────────────────────────────────────────────────────
@@ -227,8 +239,16 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "authentication", section: "users", label: "Authentication", description: "How operators sign in: the SAML / OIDC / LDAP / App Proxy providers, passkey policy and password policy.", levels: UP_TO_WRITE },
 
   // ── Server Settings ───────────────────────────────────────────────────────
-  { key: "serverSettingsSystem", section: "serverSettings", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, tags, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
+  { key: "serverSettingsSystem", section: "serverSettings", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
   { key: "serverSettingsData", section: "serverSettings", label: "Server Settings — Data", description: "Database backup, restore and download, queue mode, security tokens, restart, in-app updates.", levels: WRITE_ONLY },
+  // Split out of `serverSettingsSystem` on 2026-11-03 (migration
+  // 20261103170000_dangerous_act_keys), and deliberately an ADMIN-tier grant:
+  // a tag on a device is write reach for everyone who holds that tag (business
+  // rule 141, release 2), so whoever may put a tag on a record is handing out
+  // access. Assigning therefore rides THIS key, not the record's own — a role
+  // with Assets Read-Write edits a device but cannot tag it. Read is the floor
+  // for every built-in (pickers need the registry's names and colours).
+  { key: "tags", section: "serverSettings", label: "Tags", description: "The tag registry (names, colours, categories, auto-assign filters) AND putting a tag on, or taking one off, any record — a device, port, network, user or IdP group mapping. Tags grant write reach, so this is an administrator's grant.", levels: UP_TO_WRITE, alsoOn: ["assets", "ipManagement", "users"] },
   { key: "credentials", section: "serverSettings", label: "Credentials", description: "Stored SNMP / WinRM / SSH / REST / HTTP probe credentials. Read-Only lists them masked; Read-Write = your own rows.", hasOwnershipDimension: true, alsoOn: ["assets", "integrations", "pathMonitor"] },
   // The firmware repository for switches and access points (business rule 87)
   // — the REPOSITORY only. Read = see the Repository tab and its runs;
@@ -821,6 +841,40 @@ export function assertOwnership(req: Request, createdBy: string | null, action: 
   if (req.permissionLevel === "fullwrite") return;
   if (createdBy !== null && createdBy === req.session?.username) return;
   throw new AppError(403, `Forbidden — you can only ${action} you created`);
+}
+
+/**
+ * Putting a tag on a record, or taking one off, is the Tags key's grant, not
+ * the record's own (2026-11-03): a tag on a device is write reach for every
+ * user who holds that tag (business rule 141, release 2), so whoever may tag
+ * is handing out access — and the operator decided that is an administrator's
+ * act. Chained at every route that accepts a tags array for a device, port,
+ * network, block, user or IdP group mapping (a role carries no tags since 2026-11-03).
+ *
+ * `after === undefined` means the body left the tags alone. The comparison is
+ * the set, case-insensitive and trimmed, with `azure:` tags left out: those
+ * are the Arc sync's, the edit form never posts them and
+ * `withArcOwnedTags` keeps them either way. Only a CHANGE is judged, so a
+ * role without the grant still round-trips a form that posts the array back
+ * untouched.
+ */
+export function assertTagChangeAllowed(
+  req: Request,
+  before: readonly string[] | null | undefined,
+  after: readonly string[] | null | undefined,
+): void {
+  if (after === undefined || after === null) return;
+  if (hasPermission(req, "tags", "write")) return;
+  const norm = (list: readonly string[] | null | undefined): Set<string> =>
+    new Set(
+      (list ?? [])
+        .map((t) => String(t ?? "").trim().toLowerCase())
+        .filter((t) => t.length > 0 && !isAzureTag(t)),
+    );
+  const a = norm(before);
+  const b = norm(after);
+  if (a.size === b.size && [...a].every((t) => b.has(t))) return;
+  throw new AppError(403, "Forbidden — assigning or removing tags requires Read-Write on Tags");
 }
 
 /**

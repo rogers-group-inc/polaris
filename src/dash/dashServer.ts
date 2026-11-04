@@ -247,14 +247,14 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
   // parses the real endpoint. The "user" is the readonly role itself.
   api.get("/auth/me", (req: Request, res: Response, next: NextFunction) => {
     identityProvider()
-      .then(({ snapshot, regionTags }) => {
+      .then(({ snapshot }) => {
         res.json({
           authenticated: true,
           username: "dash",
           authProvider: "local",
           role: { ...snapshot, color: null },
-          regionTags: { user: [], role: regionTags, group: [], effective: regionTags },
-          otherTags: { user: [], role: [], group: [], effective: [] },
+          regionTags: { user: [], group: [], effective: [] },
+          otherTags: { user: [], group: [], effective: [] },
         });
       })
       .catch(next);

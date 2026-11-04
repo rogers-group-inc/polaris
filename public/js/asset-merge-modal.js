@@ -137,7 +137,7 @@ async function openAssetMergeModal(assetId, preselectOtherId, opts) {
   // Read off the permission MATRIX rather than the role name, so a custom role
   // granted that level gets the modal and an admin-named role without it does
   // not; the two used to disagree (UI: admin-only, API: any assets:write).
-  if (typeof permAtLeast !== "function" || !permAtLeast("assets", "fullwrite")) return;
+  if (typeof permAtLeast !== "function" || !permAtLeast("assetMerge", "write")) return;
   _mergeThisAsset = null; _mergeOtherAsset = null;
   _mergeThisSources = []; _mergeOtherSources = [];
   _mergeThisHistory = null; _mergeOtherHistory = null;

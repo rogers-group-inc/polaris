@@ -121,7 +121,7 @@ Verbatim from TOUCHES.md → Canonical backend patterns.
 **When renaming a function key:** model on the Automations cutover (`notifications`→`alerts` / `notificationManagement`→`automationManagement`, migration `20260721000000_automations_rbac_rename`). Three coordinated pieces, all required: (1) a migration that rewrites every stored `Role.permissions` JSON (old key removed, value carried onto the new key); (2) the old→new pair in `LEGACY_KEY_ALIASES` in `permissions.ts` so `permissionOf` resolves pre-deploy session snapshots without forcing re-login (the cold `roleVersionMap` trusts snapshots at boot); (3) `normalizePermissions`'s legacy fold so matrices posted by stale clients / imported role JSON keep their access. Update every `requirePermission`/`hasPermission` call site to the new name — the alias layer is for stored data, not for code.
 
 **When adding a new region-scoped column:**
-- Mirror the existing `Role.regionTags` / `User.regionTags` shape: `String[] @default([])` + comment `Empty = unrestricted`.
+- Mirror the existing `User.regionTags` / `GroupMapping.regionTags` shape: `String[] @default([])` + comment `Empty = unrestricted`.
 - Validation lives in the service layer (`normalizeRegionTags` in `roleService.ts` is the template): trim, drop empties, dedupe case-insensitively, cap length + count.
 - The consumer (filter / list scoping) consults `auth.me.regionTags.effective` from the frontend or `req.session.roleSnapshot` + `req.session.userId → user.regionTags` on the backend — never branch on role NAME for region semantics.
 

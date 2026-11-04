@@ -40,7 +40,7 @@
 // Acknowledging happens here (alerts:write): the phone is where an alert is
 // usually READ, so making it desktop-only meant the person holding the pager
 // couldn't stop an escalation chain. Clearing is here too, at
-// alerts:fullwrite, behind the same confirm sheet the per-asset alerts sheet
+// alertClear:write, behind the same confirm sheet the per-asset alerts sheet
 // uses (PolarisMobileAlerts.confirmClear).
 
 (function () {
@@ -534,7 +534,7 @@
   function rowPerms() {
     return {
       ack: permAtLeast(_state.user, "alerts", "write"),
-      clear: permAtLeast(_state.user, "alerts", "fullwrite"),
+      clear: permAtLeast(_state.user, "alertClear", "write"),
     };
   }
 
@@ -713,7 +713,7 @@
       });
   }
 
-  // Clear — the destructive half (alerts:fullwrite): it stops escalation and
+  // Clear — the destructive half (alertClear:write): it stops escalation and
   // runs the automation's reset actions, so it always asks first, through the
   // sheet the per-asset alerts sheet uses (never window.confirm, which some
   // installed PWAs suppress). A cleared alert leaves this list, so the reload

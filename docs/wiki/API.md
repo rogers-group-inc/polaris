@@ -199,7 +199,7 @@ closes that conflict in the same call. Ask before writing with
 `GET /assets/ip-check?ip=&excludeAssetId=&assetType=&macAddress=`
 (`assets:read`): it returns every current holder (`holders[]`, each with
 `claimCurrent` — a stale record is listed but does not collide),
-`wouldConflict`, and `canMerge` (whether the caller holds `assets:fullwrite`,
+`wouldConflict`, and `canMerge` (whether the caller holds `assetMerge:write`,
 which merging requires). The answer uses the same rules the write applies, so a
 `wouldConflict: true` is a conflict the save will raise. See
 [Conflict Resolution](Conflict-Resolution#checked-when-you-save-not-just-every-ten-minutes).

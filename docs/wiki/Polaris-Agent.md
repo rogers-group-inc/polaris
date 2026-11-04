@@ -68,7 +68,7 @@ opted in ([rule 115](Business-Rules#rule-115)). Off by default. Turn it on
 with **Allow Polaris to reboot this host** in the install modal (or *these
 hosts* in the bulk Deploy Agent modal), or later with **Enable…** on the
 **Reboots** row of the agent card; **Disable** turns it off. Both need
-`assets:fullwrite`, and both sign in with the agent's stored install
+`agentDeploy:write`, and both sign in with the agent's stored install
 credential to change the host itself:
 
 | Platform | What the opt-in installs |
@@ -103,7 +103,7 @@ book a reboot of an opted-in host too.
 
 ## Installing
 
-Three routes, all needing **`assets:fullwrite`**
+Three routes, all needing **`agentDeploy:write`**
 ([rule 43](Business-Rules#rule-43)) — deploying runs an installer on someone
 else's host over a stored credential and leaves a service behind.
 

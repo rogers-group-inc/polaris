@@ -51,7 +51,7 @@ preference**; **Add to Home Screen** when the app is not installed yet; the
 **theme strip** (tap to move through the day, as the desktop's theme band
 does; on Android the phone's status bar takes the theme's colour too); your **Account**; **Desktop view**; and **Sign out**. Its **Account** row shows your name, your
 role and, under them, the regions and tags your account is scoped to — the ones
-from your role, your user and your sign-in groups together, regions first. An
+on your user and from your sign-in groups together, regions first. An
 account with no tag scope shows no tags there.
 
 The app works whichever way you hold the phone, upright or sideways, and turns
@@ -94,7 +94,7 @@ named on the sort chip, so the list is never filtered by something you can't
 see. Your choices are remembered on that phone.
 
 Tap a row to open its device; tap **Ack** to acknowledge (`alerts:write`) or
-**Clear** to clear it (`alerts:fullwrite`). Clear asks first: it stops
+**Clear** to clear it (`alertClear:write`). Clear asks first: it stops
 escalation and runs the automation's reset actions. The list loads more as
 you scroll: it draws 50 rows at a time and fetches the next 500 active alerts
 when you near the bottom (a **Load more** button under the list does the same
@@ -389,7 +389,7 @@ the reason above: add Polaris to your Home Screen first and the offer follows.
 | Surface | |
 |---|---|
 | **The Assets tab** | a device with live alerts carries a strobing **Alerts** control beside its hostname, coloured by the worst one. **It goes steady once everything on it is acknowledged** |
-| **The per-asset alerts sheet** | one card per active alert, with **Acknowledge** (`alerts:write`) per row plus one batched control, and **Clear** (`alerts:fullwrite`) |
+| **The per-asset alerts sheet** | one card per active alert, with **Acknowledge** (`alerts:write`) per row plus one batched control, and **Clear** (`alertClear:write`) |
 | **The asset detail sheet** | the same flag on its hero, beside the monitor pill |
 | **The Alerts tab** | the fleet-wide list, filterable and sortable, and where a push notification opens. Acknowledges in place |
 

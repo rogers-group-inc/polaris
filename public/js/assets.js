@@ -2108,7 +2108,7 @@ function _assetsUpdateBulkBar() {
   // Merge is pairwise — show only when exactly two assets are selected, and
   // only to admins (same gate as the Sources-tab "Merge asset..." button).
   var bMerge = document.getElementById("assets-bulk-merge-btn");
-  if (bMerge) bMerge.style.display = count === 2 && isAdmin() ? "" : "none";
+  if (bMerge) bMerge.style.display = count === 2 && canMergeAssets() ? "" : "none";
 
   // Show quarantine/release buttons only to roles holding assetsQuarantine —
   // its own function key, NOT `assets` (see canQuarantineAssets() in app.js).
@@ -2642,7 +2642,7 @@ async function releaseAssetQuarantine(id) {
 // the gate here for UX so non-admins never see the trigger button. Default
 // duration matches the backend default (30 min); the prompt accepts 1..240.
 async function startDependencyTestPrompt(id) {
-  if (typeof isAdmin !== "function" || !isAdmin()) return;
+  if (typeof canSimulateDependencyDown !== "function" || !canSimulateDependencyDown()) return;
   var raw = window.prompt(
     "Simulate this asset going DOWN for how many minutes? (1–240)\n\n" +
     "Children with this asset in their dependency chain will be marked Dep. Suppressed " +
@@ -2669,7 +2669,7 @@ async function startDependencyTestPrompt(id) {
 }
 
 async function clearDependencyTestNow(id) {
-  if (typeof isAdmin !== "function" || !isAdmin()) return;
+  if (typeof canSimulateDependencyDown !== "function" || !canSimulateDependencyDown()) return;
   var ok = await showConfirm("Clear the Dependency Test on this asset now? Children will resume normal monitoring within ~60 seconds.");
   if (!ok) return;
   try {
@@ -2735,7 +2735,7 @@ function openAssetMergeFromAssetsPage(assetId, preselectOtherId) {
 // skipped and the comparison renders immediately. The button only shows when
 // exactly two assets are selected (see _assetsUpdateBulkBar).
 function bulkMergeSelectedAssets() {
-  if (!isAdmin()) return;
+  if (!canMergeAssets()) return;
   var ids = Array.from(_assetsSelected);
   if (ids.length !== 2) {
     showToast("Select exactly two assets to merge", "error");
@@ -17191,7 +17191,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
             '</div>'
           : '') +
       '</div>' +
-      '<div id="iface-tags-block" style="margin-bottom:0.75rem">' + _ifaceTagsBlockHTML(ifaceRow, canEditComment) + '</div>' +
+      '<div id="iface-tags-block" style="margin-bottom:0.75rem">' + _ifaceTagsBlockHTML(ifaceRow, canEditComment && canManageTags()) + '</div>' +
       _ifaceAddressBlockHTML(ifaceRow) +
       _ifaceVlanBlockHTML(ifaceRow, _assetVlanNames[asset.id]) +
       '<div id="iface-lldp-block" style="margin-bottom:0.75rem"></div>' +
@@ -17233,7 +17233,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
         row.tags = tags;
         _ifacePanelRow = row;
         var block = document.getElementById("iface-tags-block");
-        if (block) block.innerHTML = _ifaceTagsBlockHTML(row, canEditComment);
+        if (block) block.innerHTML = _ifaceTagsBlockHTML(row, canEditComment && canManageTags());
         wireIfaceTagsEdit();
       });
     });
@@ -25882,7 +25882,7 @@ function openLogFlagRulesModal(asset, processName, onChange) {
  */
 function _assetAlertTableShape() {
   var canAck = permAtLeast("alerts", "write");
-  var canClear = permAtLeast("alerts", "fullwrite");
+  var canClear = typeof canClearAlerts === "function" ? canClearAlerts() : false;
   var canSelect = canAck || canClear;
   return {
     canAck: canAck,
@@ -26927,7 +26927,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
   // inverse of the per-source Split below). Asset-level, so it's offered
   // regardless of source count (a manually-created single-source asset can
   // still be merged with a discovered duplicate).
-  var mergeToolbar = isAdmin()
+  var mergeToolbar = canMergeAssets()
     ? '<div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem">' +
         '<button class="btn btn-sm btn-secondary" onclick="openAssetMergeFromAssetsPage(' + jsArg(assetId) + ')" ' +
         'title="Merge a duplicate asset into this one (combines discovery sources; the inverse of Split)">Merge asset...</button>' +
@@ -26957,7 +26957,8 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
   // Split is admin-only and only meaningful when there's more than one
   // source on the asset (the backend rejects splitting the only source).
   // Manual sources can never be split (backend also rejects those).
-  var canSplit = isAdmin() && sources.length > 1;
+  // Splitting creates a record and detaches a source: an edit, not a merge.
+  var canSplit = canManageAssets() && sources.length > 1;
   var tlsPinsPlaced = false;
   var sourceCards = sources.map(function (s) {
     var label = _assetSourceLabels[s.sourceKind] || s.sourceKind;

@@ -1142,7 +1142,7 @@
   // you can't perform isn't offered, which is a COURTESY (both routes are the
   // control, and a refusal still renders as a state/toast):
   //   • Acknowledge… — `alerts:write`, and only on an unacknowledged alert
-  //   • Clear        — `alerts:fullwrite`, confirmed first (it ends the alert,
+  //   • Clear        — `alertClear:write`, confirmed first (it ends the alert,
   //                    runs the automation's reset actions and stops
   //                    escalation — the same sentence the asset tab confirms
   //                    with, because it is the same act)
@@ -1200,7 +1200,7 @@
         },
       });
     }
-    if (dialogs && opts.alertId && at("fullwrite") && typeof window.showConfirm === "function") {
+    if (dialogs && opts.alertId && (typeof window.permAtLeast !== "function" || window.permAtLeast("alertClear", "write")) && typeof window.showConfirm === "function") {
       items.push({
         label: "Clear alert",
         title: "End this alert — it stops escalation and runs the automation's reset actions",
