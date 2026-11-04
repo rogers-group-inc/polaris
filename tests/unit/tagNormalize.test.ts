@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags, normalizeTagColor, TAG_COLOR_SEVERITIES } from "../../src/utils/tagNormalize.js";
+import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags, appendMissingTags, normalizeTagColor, TAG_COLOR_SEVERITIES } from "../../src/utils/tagNormalize.js";
 import { SEVERITIES } from "../../src/services/notificationTypes.js";
 import { AppError } from "../../src/utils/errors.js";
 
@@ -77,6 +77,29 @@ describe("withArcOwnedTags", () => {
 
   it("a create (no existing tags) strips every azure: tag", () => {
     expect(withArcOwnedTags([], ["azure:x", "azurearc"])).toEqual(["azurearc"]);
+  });
+});
+
+describe("appendMissingTags", () => {
+  it("keeps base in order and appends only the tags it lacks", () => {
+    expect(appendMissingTags(["prev-ad:x", "lab"], ["auto-discovered", "lab", "entra"]))
+      .toEqual(["prev-ad:x", "lab", "auto-discovered", "entra"]);
+  });
+
+  it("is exact: no case-folding, no trimming, no sorting (unlike unionTags)", () => {
+    expect(appendMissingTags(["Lab"], ["lab", " lab", "a"])).toEqual(["Lab", "lab", " lab", "a"]);
+  });
+
+  it("keeps a duplicate that sits inside the fresh set, as the inline copies did", () => {
+    expect(appendMissingTags([], ["x", "x"])).toEqual(["x", "x"]);
+  });
+
+  it("does not mutate either input", () => {
+    const base = ["a"];
+    const extra = ["b"];
+    appendMissingTags(base, extra);
+    expect(base).toEqual(["a"]);
+    expect(extra).toEqual(["b"]);
   });
 });
 

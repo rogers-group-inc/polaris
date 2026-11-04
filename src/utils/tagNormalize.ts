@@ -59,6 +59,20 @@ export function withArcOwnedTags(existing: readonly string[], posted: readonly s
   return [...existing.filter(isAzureTag), ...posted.filter((t) => !isAzureTag(t))];
 }
 
+/**
+ * `base` followed by every tag of `extra` that `base` does not already hold —
+ * the "keep what the writer preserves, add the fresh set" step every discovery
+ * sync and the bulk-tag add mode take. EXACT and ORDER-PRESERVING on purpose:
+ * no trim, no case-folding, no sort, and a duplicate inside `extra` is kept.
+ * That is what the ten inline copies it replaced did, so every array they
+ * write stays byte-identical. `unionTags` is the wrong tool here: it trims,
+ * case-folds and sorts, which would rewrite every discovered asset's tags.
+ */
+export function appendMissingTags(base: readonly string[], extra: readonly string[]): string[] {
+  const have = new Set(base);
+  return [...base, ...extra.filter((t) => !have.has(t))];
+}
+
 /** Strip the `region:` prefix from a map-region tag (case-insensitive). */
 export function stripRegionPrefix(tag: string): string {
   return tag.toLowerCase().startsWith(REGION_TAG_PREFIX)

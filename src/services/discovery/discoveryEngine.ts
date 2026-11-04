@@ -118,7 +118,7 @@ import { collectManagementAccess, type DeviceAccessGroup } from "../fortinetMana
 import { runDescriptionSyncForIntegration } from "../descriptionSyncService.js";
 import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
 import { reconcileMapRegions } from "../mapRegionService.js";
-import { isAzureTag } from "../../utils/tagNormalize.js";
+import { isAzureTag, appendMissingTags } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
@@ -8711,7 +8711,7 @@ async function syncArcClusters(
         Object.assign(updateData, buildMonitoredSweep(addAs, existing));
 
         const preserved = ((existing.tags as string[]) || []).filter((t) => !isArcManagedTag(t));
-        updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+        updateData.tags = appendMissingTags(preserved, tags);
 
         clampAcquiredToLastSeen(updateData, existing);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData as any });
@@ -9138,7 +9138,7 @@ export async function syncArcDevices(
       );
 
       const preserved = ((existing.tags as string[]) || []).filter((t) => !isArcManagedTag(t));
-      updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, tags);
 
       clampAcquiredToLastSeen(updateData, existing);
       pendingAssetUpdates.push({ id: existing.id, data: updateData });
@@ -9891,7 +9891,7 @@ export async function syncEntraDevices(
       // Cross-integration identity tags (sid:*, ad-guid:*) and user-set tags
       // pass through untouched.
       const preserved = ((existing.tags as string[]) || []).filter((t) => !isEntraManagedTag(t));
-      updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, tags);
 
       try {
         clampAcquiredToLastSeen(updateData, existing);
@@ -10029,7 +10029,7 @@ export async function syncEntraDevices(
             const { projected: dupProjected } = projectAssetFromSources(sourcesByAssetId.get(dupEntra.asset.id) ?? []);
 
             const preserved = ((dupEntra.asset.tags as string[]) || []).filter((t) => !isEntraManagedTag(t));
-            const newTags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+            const newTags = appendMissingTags(preserved, tags);
             const updateFields: Record<string, unknown> = {
               // Phase 4d: assetTag write retired — AssetSource.externalId on
               // the upserted entra source row above is the authoritative
@@ -10656,7 +10656,7 @@ export async function syncActiveDirectoryDevices(
       const preserved = ((existing.tags as string[]) || []).filter(
         (t) => !isAdManagedTag(t) && !t.startsWith(SID_TAG_PREFIX),
       );
-      updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, tags);
 
       // Stamp the AD source link so the polling-method resolver picks AD's
       // source default (ICMP for response-time, null for the other streams)
@@ -11213,7 +11213,7 @@ export async function syncVcenterDevices(
       ));
       const preserved = ((existing.tags as string[]) || []).filter((t) => !isVcenterManagedTag(t));
       const freshTags = ["vcenter", "auto-discovered"];
-      updateData.tags = [...preserved, ...freshTags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, freshTags);
       clampAcquiredToLastSeen(updateData, existing);
       await prisma.asset.update({ where: { id: existing.id }, data: updateData });
       logDiscoveryAssetUpdated(hostBefore, updateData, existing.id, host.name || host.moref, {
@@ -11387,7 +11387,7 @@ export async function syncVcenterDevices(
         Object.assign(updateData, buildMonitoredSweep(vmClassed ? vmAddAs : null, existing));
         const preserved = ((existing.tags as string[]) || []).filter((t) => !isVcenterManagedTag(t));
         const freshTags = ["vcenter", "auto-discovered"];
-        updateData.tags = [...preserved, ...freshTags.filter((t) => !preserved.includes(t))];
+        updateData.tags = appendMissingTags(preserved, freshTags);
         clampAcquiredToLastSeen(updateData, existing);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData });
         logDiscoveryAssetUpdated(vmBefore, updateData, existing.id, displayName, {

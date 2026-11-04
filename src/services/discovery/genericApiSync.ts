@@ -40,6 +40,7 @@
  * OTHER integration owns it.
  */
 
+import { appendMissingTags } from "../../utils/tagNormalize.js";
 import { prisma } from "../../db.js";
 import { logEvent, logDiscoveryAssetCreated, logDiscoveryAssetUpdated, snapshotMaterialAssetFields } from "../eventLogService.js";
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
@@ -328,7 +329,7 @@ export async function syncGenericApiDevices(
   const mergeTags = (existing: any, priorFeedTags: string[], feedTags: string[]): string[] => {
     const preserved = ((existing?.tags as string[]) || []).filter((t) => !isGenericManagedTag(t));
     const withFeed = mergeGenericFeedTags(preserved, priorFeedTags, feedTags.filter((t) => !isGenericManagedTag(t)));
-    return [...withFeed, ...freshTags.filter((t) => !withFeed.includes(t))];
+    return appendMissingTags(withFeed, freshTags);
   };
   const obsTags = (o: Record<string, unknown> | null | undefined): string[] =>
     Array.isArray(o?.tags) ? (o!.tags as unknown[]).filter((t): t is string => typeof t === "string") : [];

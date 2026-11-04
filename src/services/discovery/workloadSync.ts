@@ -35,6 +35,7 @@
  * gate saw the new MAC before this sync recorded it.
  */
 
+import { appendMissingTags } from "../../utils/tagNormalize.js";
 import { lookup as systemLookup } from "node:dns/promises";
 import { prisma } from "../../db.js";
 import { isValidIpAddress } from "../../utils/cidr.js";
@@ -655,7 +656,7 @@ export async function syncWorkloadDevices(
   const freshTags = [platform, "auto-discovered"];
   const mergeTags = (existing: any): string[] => {
     const preserved = ((existing?.tags as string[]) || []).filter((t) => !isWorkloadManagedTag(platform, t));
-    return [...preserved, ...freshTags.filter((t) => !preserved.includes(t))];
+    return appendMissingTags(preserved, freshTags);
   };
 
   /**
