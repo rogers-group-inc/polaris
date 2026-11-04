@@ -96,6 +96,23 @@ let a pin return without the never-overwrite check of `reinstateAgentHostPins`.
 The search half is gated `serverSettingsSystem:read`, the list's own gate, on top
 of `assets:read`.
 
+**The address 40(k) released (g).** Added 2026-11-04. Rule 40(k) (2026-11-02) made
+the `db.ts` extension clear `ipAddress` on the very write that decommissions an
+asset. Both archive writers run AFTER that write — the PUT hook post-write, the
+reconcile job up to 10 minutes later — so `assetPinHosts` no longer saw the IP, and
+the pins keyed on it (nearly all of them: the install dials `ipAddress` first)
+stayed live while the archive recorded nothing. The decommissioned host's address,
+now free for a replacement, kept refusing it: the incident this rule exists for.
+The archive therefore reads the released address back from that write's
+`asset.ip_released` Event (`details.previousIpAddress`, the newest for the asset,
+`releasedAddressOf`) when a decommissioned asset has none. The Event, not
+`AssetIpHistory`, because the history holds every address the asset ever had and
+only the Event names the one just released. Archiving before the write in `db.ts`
+was rejected: it would put agent-pin knowledge in the persistence layer, and the
+reconcile job would still need the address for every writer it catches. Rule (a)
+still applies: a replacement already recorded on that address keeps the pin.
+Pinned by `tests/integration/agentHostPinArchive.test.ts`.
+
 **Rejected alternatives.**
 - *An Asset FK on `SshHostKey`.* The table's own comment says why not: a host is often
   pinned before it exists as an asset, and the key is the address dialed.
