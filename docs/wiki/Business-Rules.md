@@ -1617,6 +1617,22 @@ collected. To separate one, remove the extra MACs from the asset
 ([Rule 79](#rule-79)) or delete it. The next discovery run then creates one
 asset per device.
 
+**91(g) A managed FortiSwitch is matched by the MAC its own FortiGate sees at
+its management address.** FortiOS reports no MAC for a managed switch, but the
+switch takes its management address from its FortiGate by DHCP. That gate's
+client list, DHCP leases and ARP table therefore show the switch's management
+MAC at that address, and discovery gives the switch that MAC. The FortiGate
+client-list asset that used to appear beside the switch (same name, same
+address, OS "FortiSwitch OS") is merged into the switch on the next run. As in
+91(e), discovery reads only the switch's own FortiGate, and does not match when
+the gate's sources name two different MACs for the address, or when two
+switches or access points on the gate report the same address.
+
+A switch that takes DHCP addresses on several VLANs can still show one extra
+asset per additional interface, each with the switch's name and a different MAC
+and address. Merge those by hand (select them with the switch on the Assets
+page and choose **Merge**).
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time

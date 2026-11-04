@@ -106,7 +106,7 @@ import { recordDiscovery, observeDiscoveryPhase } from "../../metrics.js";
 import { getAdMonitorProtocol, persistManagedApLldpNeighbors, invalidateLldpMatchCache } from "../monitoringService.js";
 import { persistApRadioInventory } from "../apRadioService.js";
 import { isFortiapStatusOnline } from "../../utils/fortiapMonitorRow.js";
-import { buildGateMacIndex, fortiapGateMac, isFortiapUnauthorized } from "../../utils/fortiapGateMac.js";
+import { buildGateMacIndex, fortiapGateMac, fortiswitchGateMac, isFortiapUnauthorized } from "../../utils/fortiapGateMac.js";
 import { buildEndpointGateResolver } from "../../utils/endpointGate.js";
 import * as autoMonitor from "../autoMonitorInterfacesService.js";
 import * as autoMonitorStorage from "../autoMonitorStorageService.js";
@@ -1766,9 +1766,10 @@ function buildFortiswitchObservedBlob(
     // location codes (utils/locationCodes.ts). Sources-tab truth; the
     // projected copy lives on fortinetTopology.deviceDescription.
     description: sw.description || null,
-    // Management MAC of the switch (FortiLink-peer interface). Cross-joined
-    // at discovery time from the detected-device MAC table. Cleared to null
-    // when the switch wasn't represented in any is_fortilink_peer row.
+    // Management MAC of the switch: the MAC its controller sees at
+    // `connecting_from` (business rule 91(g), stamped by the FortiSwitch loop
+    // before this blob is built). Null when the gate's lease / ARP / online
+    // inventory had no single answer for that address.
     baseMac: sw.baseMac || null,
     controllerFortigate: sw.device || null,
     controllerSerial: sw.deviceSerial || null,
@@ -4507,15 +4508,33 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     });
   };
 
+  // Business rules 91(e) / 91(g): the MAC a managed switch's or AP's OWN
+  // controller sees on the address the device reports (its online inventory
+  // row, dynamic lease or ARP entry there). One index for both loops, so an
+  // address a switch and an AP on one gate both report identifies neither.
+  const gateMacIndex = buildGateMacIndex({
+    leases: result.dhcpEntries || [],
+    inventory: result.deviceInventory || [],
+    arp: result.arpTable || [],
+    aps: result.fortiAps || [],
+    switches: result.fortiSwitches || [],
+  });
+
   for (const sw of result.fortiSwitches || []) {
     const swStatus = sw.state === "Unauthorized" ? "storage" : "active";
     const swJoinDate = sw.joinTime && Number.isFinite(sw.joinTime) && sw.joinTime > 0
       ? new Date(sw.joinTime * 1000) : null;
     const swNotes = `Auto-discovered from FortiGate ${sw.device}${sw.fgtInterface ? ` via ${sw.fgtInterface}` : ""} via ${integrationLabel}`;
-    // Management MAC cross-joined from the detected-device fortilink-peer
-    // rows at discovery time. Used for the orphan-endpoint dedup lookup
-    // below and to seed Asset.macAddress / macAddressRows on create.
+    // Management MAC: what the switch's own controller sees at its
+    // `connecting_from` address (rule 91(g)). Stamped onto `sw` so the
+    // fortiswitch source blob records it. Used for the orphan-endpoint dedup
+    // lookup below and to seed Asset.macAddress / macAddressRows.
+    sw.baseMac = fortiswitchGateMac(gateMacIndex, sw) ?? undefined;
     const normalizedSwMac = normalizeMacOrNull(sw.baseMac);
+    // The endpoint twin holding that MAC, looked up BEFORE this loop
+    // reindexes the switch — reindexing re-points the MAC at the switch, and
+    // a lookup afterwards finds only the switch itself.
+    const swMacTwin = normalizedSwMac ? assetIdx.findByMac(normalizedSwMac) : undefined;
     try {
       let existingAsset: any = sw.serial ? assetIdx.findBySerial(sw.serial) : null;
       // MAC fallback before name/IP fallback — adopts an orphan
@@ -4674,7 +4693,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         if (existingAsset.discoveredByIntegrationId !== integrationId) existingAsset.discoveredByIntegrationId = integrationId;
         assetIdx.reindex(existingAsset);
         await sweepEndpointGhostsInto(existingAsset, [
-          normalizedSwMac ? assetIdx.findByMac(normalizedSwMac) : undefined,
+          swMacTwin,
           sw.serial ? assetIdx.findByEntry(undefined, sw.serial) : undefined,
         ], sw.name || sw.serial);
         assetNames.push(`${sw.name} (updated${reactivate ? " — reactivated" : ""})`);
@@ -4737,7 +4756,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         });
         assetIdx.add(newAsset);
         await sweepEndpointGhostsInto(newAsset, [
-          normalizedSwMac ? assetIdx.findByMac(normalizedSwMac) : undefined,
+          swMacTwin,
           sw.serial ? assetIdx.findByEntry(undefined, sw.serial) : undefined,
         ], sw.name || sw.serial);
         assetNames.push(sw.name || sw.serial);
@@ -4811,17 +4830,12 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   }
   // Business rule 91(e): an AP with no base MAC (unauthorized — named by its
   // serial, while the gate's lease knows it by its own hostname) is paired
-  // with the MAC its OWN controller sees on its reported address.
-  const apGateMacIndex = buildGateMacIndex({
-    leases: result.dhcpEntries || [],
-    inventory: result.deviceInventory || [],
-    arp: result.arpTable || [],
-    aps: result.fortiAps || [],
-  });
+  // with the MAC its OWN controller sees on its reported address
+  // (`gateMacIndex`, built before the FortiSwitch loop).
   for (const ap of result.fortiAps || []) {
     const dhcpFallback = dhcpByHostname.get(ap.name.toLowerCase()) ?? dhcpByHostname.get(ap.serial.toLowerCase()) ?? null;
     const resolvedIp = ap.ipAddress || dhcpFallback?.ip || null;
-    const rawMac = ap.baseMac || dhcpFallback?.mac || fortiapGateMac(apGateMacIndex, ap) || "";
+    const rawMac = ap.baseMac || dhcpFallback?.mac || fortiapGateMac(gateMacIndex, ap) || "";
     // Unauthorized on its controller → the asset sits in storage, like an
     // Unauthorized FortiSwitch. Blank state (older firmware) decides nothing.
     const apUnauthorized = isFortiapUnauthorized(ap.authorizationState);
