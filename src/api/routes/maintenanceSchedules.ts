@@ -39,7 +39,7 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { requirePermission } from "../middleware/permissions.js";
-import { inWriteScope } from "../../services/writeScopeService.js";
+import { scheduleCanEditMap } from "../../services/writeScopeService.js";
 import { resolveWriteScope, assertAllInWriteScope, assertFleetWide } from "../../services/writeScopeService.js";
 import { prisma } from "../../db.js";
 import { requestActor } from "../middleware/auth.js";
@@ -89,21 +89,8 @@ maintenanceSchedulesRouter.get("/", requirePermission("maintenanceManagement", "
     // Rule 141 (e): `canEdit` per window — the creator's, or every explicit
     // device in scope; a filter-based window only at Full Read-Write.
     const scope = await resolveWriteScope(req, "maintenanceManagement");
-    let flagged: unknown[] = schedules;
-    if (scope.kind === "all") flagged = schedules.map((s) => ({ ...s, canEdit: true }));
-    else {
-      const ids = Array.from(new Set(schedules.flatMap((s) => s.assetIds ?? [])));
-      const assets = ids.length ? await prisma.asset.findMany({ where: { id: { in: ids } }, select: { id: true, createdBy: true, tags: true } }) : [];
-      const byId = new Map(assets.map((a) => [a.id, a]));
-      flagged = schedules.map((s) => {
-        const own = scope.kind === "scoped" && s.createdBy != null && s.createdBy === scope.actor;
-        const hasCriteria = s.criteria != null && !(typeof s.criteria === "object" && Object.keys(s.criteria as object).length === 0);
-        const targets = (s.assetIds ?? []).map((id) => byId.get(id)).filter((a): a is NonNullable<typeof a> => !!a);
-        const explicitOk = !hasCriteria && (s.pathCheckIds ?? []).length === 0 && targets.length > 0 && targets.every((a) => inWriteScope(scope, a));
-        return { ...s, canEdit: own || explicitOk };
-      });
-    }
-    res.json({ schedules: flagged });
+    const canEdit = await scheduleCanEditMap(scope, schedules);
+    res.json({ schedules: schedules.map((s) => ({ ...s, canEdit: canEdit.get(s.id) === true })) });
   } catch (err) { next(err); }
 });
 

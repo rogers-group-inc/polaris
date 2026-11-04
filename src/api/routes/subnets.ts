@@ -15,7 +15,7 @@ import {
   callerIsAdminEquivalent,
 } from "../middleware/permissions.js";
 import { inWriteScope } from "../../services/writeScopeService.js";
-import { resolveWriteScope, assertInWriteScope } from "../../services/writeScopeService.js";
+import { resolveWriteScope, assertInWriteScope, reservationScopeRecord } from "../../services/writeScopeService.js";
 import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
 
@@ -324,7 +324,24 @@ router.get("/:id/ips", requirePermission("subnets", "read"), async (req, res, ne
     const id = req.params.id as string;
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
     const pageSize = Math.min(65536, Math.max(1, parseInt(req.query.pageSize as string, 10) || 256));
-    res.json(await subnetService.getSubnetIps(id, page, pageSize));
+    const [result, resScope, netScope, net] = await Promise.all([
+      subnetService.getSubnetIps(id, page, pageSize),
+      resolveWriteScope(req, "reservations"),
+      resolveWriteScope(req, "subnets"),
+      subnetService.getSubnetScopeRow(id),
+    ]);
+    // Rule 141 (e): `canEdit` per reservation — the caller's own, or on a
+    // network carrying one of their tags (reservationScopeRecord) — and on the
+    // network itself (what its Discover / refresh needs). The desktop network
+    // panel and the phone's network sheet read them, so Edit, Free and
+    // Discover are offered only where the click succeeds.
+    const netTags = net?.tags ?? [];
+    const ips = (result.ips as Array<{ reservation: { createdBy?: string | null } | null }>).map((ip) =>
+      ip.reservation
+        ? { ...ip, reservation: { ...ip.reservation, canEdit: inWriteScope(resScope, reservationScopeRecord({ createdBy: ip.reservation.createdBy ?? null, subnet: { tags: netTags } })) } }
+        : ip);
+    const subnet = result.subnet ? { ...result.subnet, canEdit: !!net && inWriteScope(netScope, net) } : result.subnet;
+    res.json({ ...result, subnet, ips });
   } catch (err) {
     next(err);
   }

@@ -4,7 +4,7 @@
  * when the gate's evidence is not single-valued.
  */
 import { describe, it, expect } from "vitest";
-import { buildGateMacIndex, fortiapGateMac, isFortiapUnauthorized } from "../../src/utils/fortiapGateMac.js";
+import { buildGateMacIndex, fortiapGateMac, fortiswitchGateMac, isFortiapUnauthorized } from "../../src/utils/fortiapGateMac.js";
 
 const lease = (device: string, ipAddress: string, macAddress: string, type: "dhcp-lease" | "dhcp-reservation" = "dhcp-lease") =>
   ({ device, ipAddress, macAddress, type });
@@ -59,6 +59,68 @@ describe("fortiapGateMac", () => {
     expect(fortiapGateMac(idx, ap("G1", "0.0.0.0"))).toBeNull();
     expect(fortiapGateMac(idx, ap("G1", "10.0.0.6"))).toBeNull();
     expect(fortiapGateMac(idx, ap("", "10.0.0.5"))).toBeNull();
+  });
+});
+
+// Business rule 91(g): FortiOS reports no MAC for a managed switch, so its
+// controller's view of `connecting_from` is the switch's management MAC.
+describe("fortiswitchGateMac", () => {
+  const sw = (device: string, ipAddress: string) => ({ device, ipAddress });
+
+  it("takes the MAC the switch's own gate sees online at connecting_from", () => {
+    const idx = buildGateMacIndex({
+      leases: [], arp: [], aps: [],
+      inventory: [inv("GAINESBORO-61F", "172.22.58.129", "d4:b4:c0:78:60:7e")],
+      switches: [sw("GAINESBORO-61F", "172.22.58.129")],
+    });
+    expect(fortiswitchGateMac(idx, sw("GAINESBORO-61F", "172.22.58.129"))).toBe("D4:B4:C0:78:60:7E");
+  });
+
+  it("agrees across lease, ARP and inventory naming one MAC", () => {
+    const idx = buildGateMacIndex({
+      leases: [lease("G1", "10.255.1.2", "d4-b4-c0-78-60-7e")],
+      inventory: [inv("G1", "10.255.1.2", "D4:B4:C0:78:60:7E")],
+      arp: [arp("G1", "10.255.1.2", "d4:b4:c0:78:60:7e")],
+      aps: [], switches: [sw("G1", "10.255.1.2")],
+    });
+    expect(fortiswitchGateMac(idx, sw("G1", "10.255.1.2"))).toBe("D4:B4:C0:78:60:7E");
+  });
+
+  it("refuses when the gate's tables name two MACs at the address", () => {
+    const idx = buildGateMacIndex({
+      leases: [lease("G1", "10.255.1.2", "D4:B4:C0:00:00:01")], inventory: [],
+      arp: [arp("G1", "10.255.1.2", "D4:B4:C0:00:00:02")], aps: [], switches: [],
+    });
+    expect(fortiswitchGateMac(idx, sw("G1", "10.255.1.2"))).toBeNull();
+  });
+
+  it("never reads another gate's tables", () => {
+    const idx = buildGateMacIndex({
+      leases: [lease("G2", "10.255.1.2", "D4:B4:C0:00:00:01")], inventory: [], arp: [], aps: [], switches: [],
+    });
+    expect(fortiswitchGateMac(idx, sw("G1", "10.255.1.2"))).toBeNull();
+  });
+
+  it("refuses an address a switch and an AP on one gate both report", () => {
+    const idx = buildGateMacIndex({
+      leases: [lease("G1", "10.255.1.2", "D4:B4:C0:00:00:01")], inventory: [], arp: [],
+      aps: [ap("G1", "10.255.1.2")], switches: [sw("G1", "10.255.1.2")],
+    });
+    expect(fortiswitchGateMac(idx, sw("G1", "10.255.1.2"))).toBeNull();
+    expect(fortiapGateMac(idx, ap("G1", "10.255.1.2"))).toBeNull();
+  });
+
+  it("refuses an address two switches on one gate report", () => {
+    const idx = buildGateMacIndex({
+      leases: [lease("G1", "10.255.1.2", "D4:B4:C0:00:00:01")], inventory: [], arp: [], aps: [],
+      switches: [sw("G1", "10.255.1.2"), sw("G1", "10.255.1.2")],
+    });
+    expect(fortiswitchGateMac(idx, sw("G1", "10.255.1.2"))).toBeNull();
+  });
+
+  it("returns null for a switch with no connecting_from", () => {
+    const idx = buildGateMacIndex({ leases: [], inventory: [], arp: [], aps: [], switches: [] });
+    expect(fortiswitchGateMac(idx, sw("G1", ""))).toBeNull();
   });
 });
 

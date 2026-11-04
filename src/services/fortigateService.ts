@@ -1044,7 +1044,6 @@ async function fgtChainSwitchesAps(ctx: FgtChainCtx): Promise<void> {
         deviceName,
         displayName: deviceHostname,
         aps: fortiAps,
-        switches: fortiSwitches,
         macTable: switchMacTable,
         log,
       });

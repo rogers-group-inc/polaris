@@ -20,6 +20,17 @@
  * who held the address, not who is on it. An unauthorized AP often has no
  * lease at all — it sits on its static factory default — so the detected-
  * device row is usually the evidence that exists.
+ *
+ * Business rule 91(g): a managed FortiSwitch is paired the same way, and
+ * ALWAYS — FortiOS reports no MAC for a managed switch anywhere
+ * (`managed-switch/status` has none; `switch-controller/detected-device`
+ * lists only what each switch LEARNED on its ports, so its
+ * `is_fortilink_peer` row is the device at the far end of the FortiLink —
+ * the gate or the upstream switch — never the switch itself). The switch
+ * pulls `connecting_from` from its controller by DHCP and talks to it from
+ * there, so the controller's lease / ARP / online inventory row at that
+ * address is the switch's management MAC. Switches and APs share the
+ * "two devices on one address identify neither" refusal.
  */
 
 import { normalizeMacOrNull } from "./mac.js";
@@ -64,8 +75,10 @@ export function buildGateMacIndex(input: {
   inventory: readonly GateInventoryRow[];
   arp: readonly GateArpRow[];
   aps: readonly GateApRow[];
+  /** Managed FortiSwitches (gate + `connecting_from`) — rule 91(g). */
+  switches?: readonly GateApRow[];
 }): GateMacIndex {
-  const { leases, inventory, arp, aps } = input;
+  const { leases, inventory, arp, aps, switches = [] } = input;
   const index: GateMacIndex = new Map();
   const put = (gate: string, ip: string | null, rawMac: string) => {
     const mac = normalizeMacOrNull(rawMac);
@@ -78,14 +91,15 @@ export function buildGateMacIndex(input: {
   for (const l of leases) if (l.type === "dhcp-lease") put(l.device, usableIp(l.ipAddress), l.macAddress);
   for (const a of arp) put(a.fortigateDevice, usableIp(a.ip), a.mac);
 
-  // An address two APs on one gate both report identifies neither.
-  const apCount = new Map<string, number>();
-  for (const ap of aps) {
-    const ip = usableIp(ap.ipAddress);
-    if (!ap.device || !ip) continue;
-    apCount.set(key(ap.device, ip), (apCount.get(key(ap.device, ip)) ?? 0) + 1);
+  // An address two managed devices (APs or switches) on one gate both report
+  // identifies neither.
+  const deviceCount = new Map<string, number>();
+  for (const d of [...aps, ...switches]) {
+    const ip = usableIp(d.ipAddress);
+    if (!d.device || !ip) continue;
+    deviceCount.set(key(d.device, ip), (deviceCount.get(key(d.device, ip)) ?? 0) + 1);
   }
-  for (const [k, n] of apCount) if (n > 1 && index.has(k)) index.set(k, null);
+  for (const [k, n] of deviceCount) if (n > 1 && index.has(k)) index.set(k, null);
   return index;
 }
 
@@ -94,6 +108,15 @@ export function fortiapGateMac(index: GateMacIndex, ap: GateApRow): string | nul
   const ip = usableIp(ap.ipAddress);
   if (!ap.device || !ip) return null;
   return index.get(key(ap.device, ip)) ?? null;
+}
+
+/**
+ * The MAC a managed FortiSwitch's own controller saw on the switch's
+ * `connecting_from` address, or null (rule 91(g)). Same lookup as
+ * `fortiapGateMac`; named apart so each call site says which rule it applies.
+ */
+export function fortiswitchGateMac(index: GateMacIndex, sw: GateApRow): string | null {
+  return fortiapGateMac(index, sw);
 }
 
 /**

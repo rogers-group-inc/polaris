@@ -1375,7 +1375,10 @@
           <p>The per-address map: <code>{ subnet, ips, ipv6, totalIps, page, pageSize }</code>,
             each <code>ips[]</code> entry <code>{ address, type, reservation, assetId }</code>.
             Paged via <code>page</code> (default 1) + <code>pageSize</code> (default 256, max
-            65536). IPv6 networks list only reservation-backed addresses.</p>
+            65536). IPv6 networks list only reservation-backed addresses. <code>subnet.canEdit</code>
+            says whether the caller may change the network (and run its Discover), and each
+            <code>reservation.canEdit</code> whether they may edit or release that reservation —
+            the per-row verdicts described under Ownership and tags.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets

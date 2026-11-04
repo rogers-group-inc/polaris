@@ -1110,13 +1110,13 @@ export interface DiscoveredFortiSwitch {
   joinTime?: number;    // join_time (Unix timestamp — when first authorized)
   state: string;        // "Authorized" | "Unauthorized"
   connected: boolean;   // status === "Connected"
-  // Management MAC of the switch's FortiLink-peer interface, normalized to
-  // colon-uppercase. Cross-joined from the detected-device MAC table where
-  // `is_fortilink_peer===true` and `switch_id === <this switch's switch-id>`.
-  // Used by the sync layer to dedup against DHCP/ARP-discovered orphan
-  // endpoint assets at the switch's mgmt IP — without it, the switch's own
-  // management MAC creates a phantom "fortigate-endpoint" asset alongside
-  // the authoritative "fortiswitch" asset.
+  // Management MAC of the switch, normalized to colon-uppercase. FortiOS
+  // reports none for a managed switch, so the transports never set it: the
+  // sync layer fills it from the controller's own lease / ARP / online
+  // inventory row at `connecting_from` (business rule 91(g),
+  // utils/fortiapGateMac.ts → fortiswitchGateMac) before the switch is
+  // matched. It is what lets the switch absorb — and stop minting — the
+  // "fortigate-endpoint" twin the gate's client tables create for it.
   baseMac?: string;
   // The switch's PHYSICAL uplink port to its controller FortiGate (e.g.
   // "port47"), resolved from the switch-controller managed-switch CMDB
@@ -2485,7 +2485,6 @@ async function fmgStepApPortMap(ctx: FmgDeviceCtx): Promise<void> {
           deviceName,
           displayName: deviceName,
           aps: localAps,
-          switches: localSwitches,
           macTable: localSwitchMacTable,
           log,
         });

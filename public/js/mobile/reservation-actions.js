@@ -26,13 +26,14 @@
   function canCreate(user) {
     return permAtLeast(user, "reservations", "write");
   }
-  // Edit / Free: fullwrite passes unconditionally; write passes only when
-  // the caller created the row (ownership model). Mirrors the backend's
-  // requireOwnership("reservations") + req.permissionLevel branch and the
-  // desktop canEditReservation().
+  // Edit / Free: fullwrite passes unconditionally; write passes when the
+  // server's per-row verdict says so (`canEdit` — the caller's own, or on a
+  // network carrying one of their tags, business rule 141 (e)), else only
+  // when the caller created the row. Mirrors the desktop canEditReservation().
   function canModify(user, row) {
     if (permAtLeast(user, "reservations", "fullwrite")) return true;
     if (!permAtLeast(user, "reservations", "write")) return false;
+    if (row && typeof row.canEdit === "boolean") return row.canEdit;
     return !!(row && row.createdBy && user.username && row.createdBy === user.username);
   }
 
