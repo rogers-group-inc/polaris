@@ -20,6 +20,7 @@ import {
   parseDhcpMonitorAddress,
   parseInterfaceIpv6,
 } from "../utils/fortiosIpv6.js";
+import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
 import type { ApLldpNeighborSample } from "../utils/fortiapLldp.js";
@@ -2126,12 +2127,11 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
           // `ip` in either "x.x.x.x y.y.y.y" (IP + mask) string form or as a
           // [ip, mask] array. Strip to the dotted-quad and push as
           // role="secondary" so Phase 4 can label the reservation appropriately.
-          const secondaries = iface["secondary-ip"];
-          if (Array.isArray(secondaries)) {
-            for (const sec of secondaries) {
-              const rawSec = Array.isArray(sec?.ip)
-                ? (sec.ip[0] || "")
-                : (typeof sec?.ip === "string" ? sec.ip.split(" ")[0] : "");
+          // The device DB spells the table `secondaryip` (the CLI's name) —
+          // see utils/fortiosSecondaryIp.ts.
+          {
+            for (const sec of fortiosSecondaryIpStrings(iface)) {
+              const rawSec = sec.split(" ")[0];
               if (rawSec && rawSec !== "0.0.0.0" && isValidIpv4(rawSec)) {
                 localInterfaceIps.push({ device: deviceName, interfaceName: ifaceName, ipAddress: rawSec, role: "secondary" });
                 secondaryIpCount++;

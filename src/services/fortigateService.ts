@@ -38,6 +38,7 @@ import {
   parseDhcpMonitorAddress,
   parseInterfaceIpv6,
 } from "../utils/fortiosIpv6.js";
+import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import type {
   DiscoveredSubnet,
   DiscoveredDevice,
@@ -850,21 +851,17 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         // its own `ip` in either "x.x.x.x y.y.y.y" string form or as a [ip,
         // mask] array. Push one DiscoveredInterfaceIp per entry with
         // role="secondary" so Phase 4 labels the reservation appropriately.
-        const secondaries = iface["secondary-ip"];
-        if (Array.isArray(secondaries)) {
-          for (const sec of secondaries) {
-            const rawSec = Array.isArray(sec?.ip)
-              ? (sec.ip[0] || "")
-              : (typeof sec?.ip === "string" ? sec.ip.split(" ")[0] : "");
-            if (rawSec && rawSec !== "0.0.0.0" && isValidIpv4(rawSec)) {
-              interfaceIps.push({
-                device: deviceName,
-                interfaceName: ifaceName,
-                ipAddress: rawSec,
-                role: "secondary",
-              });
-              secondaryIpCount++;
-            }
+        // FortiOS REST spells the table `secondary-IP` — see utils/fortiosSecondaryIp.ts.
+        for (const sec of fortiosSecondaryIpStrings(iface)) {
+          const rawSec = sec.split(" ")[0];
+          if (rawSec && rawSec !== "0.0.0.0" && isValidIpv4(rawSec)) {
+            interfaceIps.push({
+              device: deviceName,
+              interfaceName: ifaceName,
+              ipAddress: rawSec,
+              role: "secondary",
+            });
+            secondaryIpCount++;
           }
         }
         // The gate's own IPv6 addresses (business rule 125), under the same

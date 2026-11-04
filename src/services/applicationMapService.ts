@@ -244,17 +244,28 @@ const RESOLVABLE_ASSET_WHERE = { status: { not: "decommissioned" } } as const;
 export async function resolveIpsToAssets(ips: string[]): Promise<Map<string, ResolvedAssetLite>> {
   const out = new Map<string, ResolvedAssetLite>();
   if (ips.length === 0) return out;
+  // Every holder of each IP, primary-address holders before associated ones.
+  const candidates = new Map<string, ResolvedAssetLite[]>();
+  const add = (ip: string, a: ResolvedAssetLite) => {
+    const list = candidates.get(ip);
+    if (!list) candidates.set(ip, [a]);
+    else if (!list.some((x) => x.id === a.id)) list.push(a);
+  };
   const primary = await prisma.asset.findMany({
     where: { ipAddress: { in: ips }, ...RESOLVABLE_ASSET_WHERE },
     select: ASSET_LITE_SELECT,
   });
-  for (const a of primary) {
-    if (a.ipAddress && !out.has(a.ipAddress)) out.set(a.ipAddress, a);
-  }
-  const remaining = ips.filter((ip) => !out.has(ip));
-  if (remaining.length > 0) {
+  for (const a of primary) if (a.ipAddress) add(a.ipAddress, a);
+  // The associated-IP pass covers the unresolved IPs, plus any IP a FIREWALL
+  // already claims: an HA pair's members both carry the cluster's synced
+  // interface addresses, so the active member may hold it only here.
+  const assocIps = ips.filter((ip) => {
+    const list = candidates.get(ip);
+    return !list || list.some((a) => a.assetType === "firewall");
+  });
+  if (assocIps.length > 0) {
     const assoc = await prisma.assetAssociatedIp.findMany({
-      where: { ip: { in: remaining } },
+      where: { ip: { in: assocIps } },
       select: { ip: true, assetId: true },
     });
     if (assoc.length > 0) {
@@ -266,11 +277,37 @@ export async function resolveIpsToAssets(ips: string[]): Promise<Map<string, Res
       );
       for (const r of assoc) {
         const a = byId.get(r.assetId);
-        if (a && !out.has(r.ip)) out.set(r.ip, a);
+        if (a) add(r.ip, a);
       }
     }
   }
+  // An HA standby never answers for an address its pair shares: traffic, a
+  // tunnel's remote gateway, a hop — all land on the active member. Only
+  // contested IPs with a firewall among their holders need the role lookup.
+  const contestedFirewallIds = new Set<string>();
+  for (const list of candidates.values()) {
+    if (list.length < 2) continue;
+    for (const a of list) if (a.assetType === "firewall") contestedFirewallIds.add(a.id);
+  }
+  const standby = contestedFirewallIds.size > 0
+    ? new Set((await prisma.asset.findMany({
+        where: { id: { in: [...contestedFirewallIds] }, fortinetTopology: { path: ["haRole"], equals: "secondary" } },
+        select: { id: true },
+      })).map((a) => a.id))
+    : new Set<string>();
+  for (const [ip, list] of candidates) {
+    out.set(ip, pickIpHolder(list, standby));
+  }
   return out;
+}
+
+/**
+ * The holder an IP resolves to when several assets claim it: the first one
+ * that is not an HA standby, else the first. `list` is in preference order
+ * (primary-address holders first). PURE — exported for tests.
+ */
+export function pickIpHolder<T extends { id: string }>(list: T[], standbyIds: ReadonlySet<string>): T {
+  return list.find((a) => !standbyIds.has(a.id)) ?? list[0];
 }
 
 // ─── Time-scoped AssetIpHistory fallback ──────────────────────────────
