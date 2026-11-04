@@ -2054,6 +2054,14 @@ code {
   margin-top: -2rem;
   margin-bottom: 1.5rem;
 }
+/* …but never above an open dialog. The bar's 1050 outranks .modal-overlay's
+   1000, and the bar is transparent, so a tall dialog whose title row reached
+   the bar's band LOOKED fine while every click there landed on the bar: the X
+   and the lock were dead on each page that has the bar (Dashboard, /dash,
+   Integrations, Server Settings). While any modal overlay is open the bar goes
+   under it; the page behind a dialog takes no clicks anyway. Pinned by
+   tests/unit/modalAboveStickyBar.test.ts. */
+body:has(.modal-overlay.open) .page-top-sticky { z-index: 999; }
 /* The bar draws no shadow of its own: a box-shadow on it — even one cast
    only from the bottom edge — outlined the bar as a faint box over the glow
    (tried and dropped 2026-10-08). Its CONTENTS cast the shadows instead. The
