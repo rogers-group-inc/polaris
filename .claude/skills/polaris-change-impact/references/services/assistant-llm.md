@@ -34,7 +34,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 - src/api/routes/assistant.ts → POST /conversations/:id/messages — acceptsImages, the 409 before an image is stored
 - src/services/llmIntegrationService.ts → checkLlmToolCalling — listModels / matchModelId / pickDefaultModel / probeToolCalling
 - src/api/routes/integrations.ts → POST /:id/test, POST /test — the llm branch of Test Connection
-- src/services/discovery/discoveryEngine.ts → runPreflightTest — the 10-minute integrationConnectionTester re-test
+- src/services/discovery/discoveryEngine.ts → runPreflightTest — the stored-integration Test Connection (`POST /:id/test`)
 
 **Invariants:**
 - Speaks ONE dialect (OpenAI-compatible). Ollama-native `/api/chat` is not supported; Ollama's `/v1` is.
@@ -42,7 +42,6 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 - A 401/403 from the model server becomes "refused the API key" (Azure: worded by auth mode); nothing upstream is echoed beyond 300 characters.
 - `apiToken` is sent as `Authorization: Bearer` only when set (most local servers need none); on Azure it is the `api-key` header and is never sent in Entra mode.
 - The Entra access token and the client secret are never logged or put in an error message (`tests/unit/llmAzureFoundry.test.ts`).
-- Every `integrationConnectionTester` tick (10 min) re-runs `testConnection`, so an enabled Azure integration makes one tiny billed chat call per tick.
 
 **When changing this:**
 - A new provider dialect is a new branch HERE, not in the chat service — the orchestrator only sees `chatCompletionRound`. Azure (rule 95(j)) is the worked example: path, auth headers, model discovery, Test Connection and error wording all dispatch on `isAzureProvider`.

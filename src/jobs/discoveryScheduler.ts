@@ -53,8 +53,7 @@ async function runScheduledDiscoveries(): Promise<void> {
 
       // .catch(() => false): a throw here would propagate through
       // runInstrumentedJob (which re-throws) into the bare setInterval kick
-      // below — an unhandled rejection in the scheduler process. Same guard
-      // the integrationConnectionTester uses on the identical call.
+      // below — an unhandled rejection in the scheduler process.
       if (await isDiscoveryRunning(intg.id).catch(() => false)) continue;
 
       triggerDiscovery(intg.id, "auto-discovery").catch((err) => {

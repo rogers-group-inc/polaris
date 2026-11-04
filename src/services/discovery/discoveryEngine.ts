@@ -577,7 +577,13 @@ async function buildArpSweepTargets(
   }
 }
 
-export async function runPreflightTest(integration: { id: string; type: string; config: unknown }): Promise<{ ok: boolean; message: string }> {
+/**
+ * Test a STORED integration's connection: the per-type `testConnection`
+ * dispatch behind POST /integrations/:id/test. Nothing calls it on a timer —
+ * the periodic tester was removed on 2026-11-04 (disabled since 2026-06-02),
+ * so `lastTestOk` changes only when an operator tests.
+ */
+export async function runPreflightTest(integration: { id: string; type: string; config: unknown }): Promise<{ ok: boolean; message: string; version?: string }> {
   const config = integration.config as Record<string, unknown>;
   if (integration.type === "fortimanager") return fortimanager.testConnection(config as any, integration.id);
   if (integration.type === "fortigate") return fortigate.testConnection(config as any);
@@ -738,11 +744,12 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
   // Scoped runs label every start/complete/abort/error Event with the device.
   const kindLabel = scopeDeviceName ? `${baseKindLabel} (device "${scopeDeviceName}")` : baseKindLabel;
 
-  // No inline preflight — `integrationConnectionTester` refreshes lastTestOk
-  // every 10 min, and the discovery scheduler filters on `lastTestOk: true`,
-  // so a broken integration won't reach this point under auto-discovery. A
-  // manual trigger still proceeds: the operator chose to force a run, and the
-  // discovery error surface is the right place for them to see it fail.
+  // No inline preflight — the discovery scheduler filters on `lastTestOk:
+  // true`, which only an operator's Test Connection writes (nothing re-tests
+  // on a timer), so an integration whose last test failed won't reach this
+  // point under auto-discovery. A manual trigger still proceeds: the operator
+  // chose to force a run, and the discovery error surface is where they see
+  // it fail.
 
   // Pull the operator's Sources-column priority into this process before any
   // projection runs. Discovery is a SEPARATE process in the split-role layout,

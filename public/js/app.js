@@ -1603,7 +1603,7 @@ function renderNav() {
 
   // ─── Failed-integration notice ────────────────────────────────────────
   // Sidebar panel surfacing integrations whose most recent credential test
-  // failed. `integrationConnectionTester` refreshes lastTestOk every 10 min,
+  // failed. lastTestOk changes only when an operator runs Test Connection,
   // so polling at 30 s is plenty — the underlying state changes slowly.
   // Silently degrades on permission denial (the route requires
   // integrations=read; users without it just see nothing).

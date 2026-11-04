@@ -270,13 +270,6 @@ const discoveryTotal = new Counter({
   registers: [registry],
 });
 
-const integrationTestTotal = new Counter({
-  name: "polaris_integration_test_total",
-  help: "Number of integrationConnectionTester ticks for each integration by outcome (success | failure | skipped). `skipped` is the in-discovery branch where the tester preserves prior lastTestAt/Ok to avoid stamping a false-positive failure on a healthy FMG during a discovery run; `failure` and `success` mirror the lastTestOk write. Watch sustained failures on one integration_type to spot a wedged credential or unreachable endpoint that the per-tick logger.info line in journalctl explains.",
-  labelNames: ["integration_type", "outcome"] as const,
-  registers: [registry],
-});
-
 const discoveryPhaseDuration = new Histogram({
   name: "polaris_discovery_phase_duration_seconds",
   help: "Wall-clock duration of one phase inside a discovery run. Observed at every phaseMark() transition in syncDhcpSubnets (FMG + standalone FortiGate). `phase` is the marker name used in code (e.g. '1', '2', '2a', '3b', '7.5', '13.5'). Always-on regardless of the integration's verboseLogging flag — the verbose log is the per-line journalctl story; this histogram is the bucketed-distribution story across many runs.",
@@ -595,15 +588,6 @@ export function recordDiscovery(
     discoveryDuration.observe({ integration_type: integrationType }, durationSeconds);
   }
   discoveryTotal.inc({ integration_type: integrationType, outcome });
-}
-
-export type IntegrationTestOutcome = "success" | "failure" | "skipped";
-
-export function recordIntegrationTest(
-  integrationType: string,
-  outcome: IntegrationTestOutcome,
-): void {
-  integrationTestTotal.inc({ integration_type: integrationType, outcome });
 }
 
 export function observeDiscoveryPhase(
