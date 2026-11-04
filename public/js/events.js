@@ -757,6 +757,68 @@ function getAlertsFormData() {
     deactivate: function () { status = null; },
   };
 
+  // Every address on a conflict card copies on click (the shared .copy-cell
+  // affordance — hover tint, flash, toast).
+  function copyIpHtml(ip, strong) {
+    if (!ip) return "";
+    var tag = strong ? "strong" : "span";
+    return "<" + tag + ' class="copy-cell mono" title="Click to copy" data-copy="' + escapeHtml(ip) + '">' +
+      escapeHtml(ip) + "</" + tag + ">";
+  }
+
+  // Every asset name on a conflict card is a row-menu trigger: a left click
+  // opens the asset slide-over in place over this panel, a right click shows
+  // the same menu the asset's row has on the Assets list (_assetMenuItems).
+  // A name with no asset behind it stays text.
+  function assetNameHtml(assetId, name) {
+    if (!assetId) return escapeHtml(name);
+    return '<button type="button" class="row-menu-trigger" data-conflict-asset="' + escapeHtml(assetId) + '" ' +
+      'aria-haspopup="menu" aria-expanded="false" title="Open this asset — right-click for its menu">' +
+      escapeHtml(name) + "</button>";
+  }
+
+  // The menu needs the full asset record (its verbs depend on type, MAC,
+  // status and management access) and assets.js, which this page loads only
+  // with the asset slide-over — so only the right click pays for the fetch;
+  // a left click opens the panel straight away. The gesture is read
+  // synchronously: the forced-menu flag lives only for the replayed click.
+  function openConflictAsset(trigger) {
+    var id = trigger.getAttribute("data-conflict-asset");
+    var at = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
+    if (!id || typeof PolarisPanels === "undefined") return;
+    if (!at) { PolarisPanels.openAsset(id); return; }
+    PolarisPanels.ensure("asset").then(function () {
+      return api.assets.get(id);
+    }).then(function (a) {
+      if (!a || typeof window._assetMenuItems !== "function" || !document.body.contains(trigger)) return;
+      showRowMenu(trigger, window._assetMenuItems(a), { label: "Actions for " + (a.hostname || "asset"), menuAt: at });
+    }).catch(function (err) {
+      showToast((err && err.message) || "Couldn't load this asset", "error");
+    });
+  }
+
+  // Bound once: the body is repainted on every load, the listener survives it.
+  body.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || typeof t.closest !== "function") return;
+    var copy = t.closest(".conflict-card [data-copy]");
+    if (copy && body.contains(copy)) {
+      var text = copy.getAttribute("data-copy");
+      if (!text || typeof copyTextToClipboard !== "function") return;
+      copyTextToClipboard(text).then(function (ok) {
+        if (!ok) return;
+        copy.classList.add("copy-cell-flash");
+        setTimeout(function () { copy.classList.remove("copy-cell-flash"); }, 600);
+        showToast("Copied " + text);
+      });
+      return;
+    }
+    var trigger = t.closest("[data-conflict-asset]");
+    if (!trigger || !body.contains(trigger)) return;
+    e.preventDefault();
+    openConflictAsset(trigger);
+  });
+
   async function loadConflicts(silent) {
     if (status === null) return;
     if (!silent) body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
@@ -1023,8 +1085,8 @@ function getAlertsFormData() {
         });
       });
 
-      // The network opens its slide-in at the address; the FortiGate opens its
-      // asset — both in place over this panel.
+      // The network opens its slide-in at the address, in place over this
+      // panel. (The FortiGate is an asset-name trigger, wired above.)
       body.querySelectorAll(".dupres-network-link").forEach(function (el) {
         el.addEventListener("click", function (e) {
           e.preventDefault();
@@ -1032,26 +1094,6 @@ function getAlertsFormData() {
           PolarisPanels.openNetwork(el.getAttribute("data-subnet-id"), {
             focusIp: el.getAttribute("data-ip") || undefined,
             subnetCidr: el.getAttribute("data-cidr") || undefined,
-          });
-        });
-      });
-      body.querySelectorAll(".dupres-gate-link").forEach(function (el) {
-        el.addEventListener("click", function (e) {
-          e.preventDefault();
-          if (typeof PolarisPanels !== "undefined") PolarisPanels.openAsset(el.getAttribute("data-asset-id"));
-        });
-      });
-
-      // Click-to-copy (the MAC on a duplicate-reservation row).
-      body.querySelectorAll(".conflict-table-dupres .copy-cell").forEach(function (el) {
-        el.addEventListener("click", function () {
-          var text = el.getAttribute("data-copy");
-          if (!text || typeof copyTextToClipboard !== "function") return;
-          copyTextToClipboard(text).then(function (ok) {
-            if (!ok) return;
-            el.classList.add("copy-cell-flash");
-            setTimeout(function () { el.classList.remove("copy-cell-flash"); }, 600);
-            showToast("Copied " + text);
           });
         });
       });
@@ -1432,7 +1474,7 @@ function getAlertsFormData() {
           escapeHtml(CHASSIS_REFUSAL_LABEL[l.notMigratableReason] || "—") + "</span>";
       var oldSide = l.old ? escapeHtml(l.old.hostname || l.old.ipAddress || "") : "—";
       var newSide = l.new ? escapeHtml(l.new.hostname || l.new.ipAddress || "") : "—";
-      return "<tr><td>" + pick + "</td><td><strong>" + escapeHtml(ip) + "</strong></td>" +
+      return "<tr><td>" + pick + "</td><td>" + (l.ip ? copyIpHtml(l.ip, true) : "<strong>" + escapeHtml(ip) + "</strong>") + "</td>" +
         "<td>" + oldSide + "</td><td>" + newSide + "</td>" +
         '<td style="font-size:0.75rem;color:var(--color-text-secondary)">' +
         escapeHtml(verdictLabel[l.verdict] || l.verdict) + "</td></tr>";
@@ -1478,7 +1520,7 @@ function getAlertsFormData() {
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +
         '<span class="badge ' + sourceBadgeClass(c.proposedSourceType) + '">' + escapeHtml(sourceLabel(c.proposedSourceType)) + '</span>' +
-        '<strong>' + escapeHtml(ip) + '</strong>' +
+        (res.ipAddress ? copyIpHtml(res.ipAddress, true) : '<strong>' + escapeHtml(ip) + '</strong>') +
         '<span class="conflict-card-subnet">' + escapeHtml(subnetLabel) + '</span>' +
       '</div>' +
       '<div class="conflict-table" style="padding:0">' +
@@ -1511,17 +1553,15 @@ function getAlertsFormData() {
     // The hostname opens the asset, so the operator can review the discovery
     // (sources, IP history) before choosing Accept or Reject.
     var assetId = c.assetId || existing.id || null;
-    var hostLink = assetId
-      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(assetId) + '" title="Open this asset">' + escapeHtml(hostLabel) + '</a>'
-      : escapeHtml(hostLabel);
+    var hostLink = assetNameHtml(assetId, hostLabel);
 
     var rows =
       '<tr class="conflict-changed">' +
         '<td class="conflict-field">IP Address</td>' +
-        '<td>' + (pinned ? '<span class="mono">' + escapeHtml(pinned) + '</span>'
+        '<td>' + (pinned ? copyIpHtml(pinned)
           : blankPinned ? '<span style="font-style:italic">no address (cleared)</span>'
           : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
-        '<td>' + (discovered ? '<strong class="mono">' + escapeHtml(discovered) + '</strong>' : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
+        '<td>' + (discovered ? copyIpHtml(discovered, true) : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
       '</tr>';
 
     var explainer = blankPinned
@@ -1541,7 +1581,7 @@ function getAlertsFormData() {
       '<div class="conflict-card-header">' +
         '<span class="badge badge-warning">IP Override</span>' +
         '<strong>' + hostLink + '</strong>' +
-        (pinned ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">pinned ' + escapeHtml(pinned) + '</span>'
+        (pinned ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">pinned ' + copyIpHtml(pinned) + '</span>'
           : blankPinned ? '<span class="conflict-card-subnet" style="font-size:0.78rem">address cleared</span>' : '') +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
@@ -1570,9 +1610,7 @@ function getAlertsFormData() {
     var isResolved = c.status !== "pending";
     var hostLabel = existing.hostname || proposed.hostname || "(asset)";
     var assetId = c.assetId || null;
-    var hostLink = assetId
-      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(assetId) + '" title="Open this asset">' + escapeHtml(hostLabel) + '</a>'
-      : escapeHtml(hostLabel);
+    var hostLink = assetNameHtml(assetId, hostLabel);
     var pins = Array.isArray(proposed.pins) ? proposed.pins : [];
     var muted = function (t) { return '<span style="color:var(--color-text-tertiary);font-style:italic">' + escapeHtml(t) + '</span>'; };
 
@@ -1583,7 +1621,7 @@ function getAlertsFormData() {
       '</td></tr>' +
       '<tr class="conflict-changed"><td class="conflict-field">Agent checked in</td><td>' +
         (proposed.lastCheckinAt ? escapeHtml(formatDateTime(proposed.lastCheckinAt)) : muted("—")) +
-        (proposed.checkinIp ? ' from <span class="mono">' + escapeHtml(proposed.checkinIp) + '</span>' : '') +
+        (proposed.checkinIp ? ' from ' + copyIpHtml(proposed.checkinIp) : '') +
         (proposed.agentVersion ? ' <span style="color:var(--color-text-secondary)">(agent v' + escapeHtml(proposed.agentVersion) + ')</span>' : '') +
       '</td></tr>' +
       (pins.length
@@ -1610,7 +1648,7 @@ function getAlertsFormData() {
       '<div class="conflict-card-header">' +
         '<span class="badge badge-warning">Decommissioned Agent</span>' +
         '<strong>' + hostLink + '</strong>' +
-        (existing.ipAddress ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">' + escapeHtml(existing.ipAddress) + '</span>' : '') +
+        (existing.ipAddress ? '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">' + copyIpHtml(existing.ipAddress) + '</span>' : '') +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' +
         'This asset is decommissioned, but its Polaris Agent checked in. Decommissioning archived the SSH thumbprint' +
@@ -1644,9 +1682,7 @@ function getAlertsFormData() {
 
     var rows = members.map(function (m) {
       var name = m.hostname || m.assetId || "(unnamed)";
-      var link = m.assetId
-        ? '<a href="/assets.html#view=asset:' + encodeURIComponent(m.assetId) + '">' + escapeHtml(name) + '</a>'
-        : escapeHtml(name);
+      var link = assetNameHtml(m.assetId, name);
       var claimBits = [];
       if (m.pinned) claimBits.push("pinned by operator");
       else if (m.ipSource) claimBits.push("via " + m.ipSource);
@@ -1706,16 +1742,16 @@ function getAlertsFormData() {
     // choice did.
     var operatorAddressed = proposed.qualifiedBy === "operator-addressed";
     var lead = crossSource
-      ? '<strong class="mono">' + escapeHtml(ip) + '</strong> is recorded on ' + members.length +
+      ? copyIpHtml(ip, true) + ' is recorded on ' + members.length +
         ' assets that were discovered by <strong>different integrations</strong>, and IPAM says the address ' +
         'was assigned on purpose rather than leased from a pool. That is usually ONE device recorded twice ' +
         'because nothing cross-linked the records. '
       : operatorAddressed
-      ? '<strong class="mono">' + escapeHtml(ip) + '</strong> was <strong>typed onto one of these ' +
+      ? copyIpHtml(ip, true) + ' was <strong>typed onto one of these ' +
         members.length + ' assets by an operator</strong> while another network-present asset already ' +
         'recorded it. A chosen address held by two devices is a fault whatever the devices are; if the ' +
         'records are one device, merge them instead. '
-      : '<strong class="mono">' + escapeHtml(ip) + '</strong> is recorded on ' +
+      : copyIpHtml(ip, true) + ' is recorded on ' +
         members.length + ' assets that are all in a network-present status. Two devices, or one device ' +
         'recorded twice — resolve it whichever way it actually is. ';
     var explainer = lead +
@@ -1758,7 +1794,7 @@ function getAlertsFormData() {
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +
         '<span class="badge badge-conflict">Duplicate IP</span>' +
-        '<strong>' + escapeHtml(ip) + '</strong>' +
+        (proposed.ipAddress ? copyIpHtml(ip, true) : '<strong>' + escapeHtml(ip) + '</strong>') +
         '<span class="conflict-card-subnet" style="font-size:0.78rem">' + members.length + ' assets</span>' +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
@@ -1794,9 +1830,7 @@ function getAlertsFormData() {
 
     var rows = claimants.map(function (g, i) {
       var name = g.controllerDevice || g.controllerSerial || "(unnamed gate)";
-      var link = g.controllerAssetId
-        ? '<a href="/assets.html#view=asset:' + encodeURIComponent(g.controllerAssetId) + '">' + escapeHtml(name) + '</a>'
-        : escapeHtml(name);
+      var link = assetNameHtml(g.controllerAssetId, name);
       // The claim list arrives newest-first, so the first row is the gate whose
       // stamp the asset is carrying right now — which is the single most useful
       // thing on this card and the only reason the order matters.
@@ -1830,9 +1864,7 @@ function getAlertsFormData() {
       : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-kind="contested-serial" data-conflict-id="' + c.id + '" ' +
           'title="Dismiss — both gates keep the device on their roster">Acknowledge</button>';
 
-    var deviceLink = c.assetId
-      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(c.assetId) + '">' + escapeHtml(deviceLabel) + '</a>'
-      : escapeHtml(deviceLabel);
+    var deviceLink = assetNameHtml(c.assetId, deviceLabel);
 
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +
@@ -1870,9 +1902,7 @@ function getAlertsFormData() {
 
     var rows = members.map(function (m) {
       var name = m.hostname || m.assetId || "(unnamed)";
-      var link = m.assetId
-        ? '<a href="/assets.html#view=asset:' + encodeURIComponent(m.assetId) + '">' + escapeHtml(name) + '</a>'
-        : escapeHtml(name);
+      var link = assetNameHtml(m.assetId, name);
       var mergeCell = (isResolved || !canMerge)
         ? '<td></td>'
         : '<td class="conflict-action-cell">' +
@@ -1885,7 +1915,7 @@ function getAlertsFormData() {
         '<td class="conflict-field">' + link + '</td>' +
         '<td>' + escapeHtml(m.assetType || "—") + '</td>' +
         '<td>' + escapeHtml(m.status || "—") + '</td>' +
-        '<td class="mono" style="font-size:0.75rem">' + escapeHtml(m.ipAddress || "—") + '</td>' +
+        '<td class="mono" style="font-size:0.75rem">' + (m.ipAddress ? copyIpHtml(m.ipAddress) : "—") + '</td>' +
         '<td style="font-size:0.75rem">' + (m.lastSeen ? timeAgo(m.lastSeen) : "—") + '</td>' +
         mergeCell +
         '</tr>';
@@ -1964,9 +1994,7 @@ function getAlertsFormData() {
         : netText;
       if (r.subnetName && r.subnetCidr) network += ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(r.subnetCidr) + '</span>';
       var gate = r.gate
-        ? (r.gateAssetId
-          ? '<a href="#" class="dupres-gate-link" data-asset-id="' + escapeHtml(r.gateAssetId) + '" title="Open this FortiGate">' + escapeHtml(r.gate) + '</a>'
-          : escapeHtml(r.gate))
+        ? assetNameHtml(r.gateAssetId, r.gate)
         : "—";
       var mac = r.macAddress
         ? '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.macAddress) + '">' + escapeHtml(r.macAddress) + '</span>'
@@ -1990,7 +2018,7 @@ function getAlertsFormData() {
               (isLease ? 'Revoke lease' : 'Release') + '</button>' +
           '</td>';
       return '<tr class="conflict-changed">' +
-        '<td class="conflict-field mono" style="white-space:nowrap">' + escapeHtml(r.ipAddress || "—") + primary + '</td>' +
+        '<td class="conflict-field mono" style="white-space:nowrap">' + (r.ipAddress ? copyIpHtml(r.ipAddress) : "—") + primary + '</td>' +
         '<td style="font-size:0.75rem">' + network + '</td>' +
         '<td style="font-size:0.75rem">' + gate + '</td>' +
         '<td class="mono" style="font-size:0.75rem;white-space:nowrap">' + mac + '</td>' +
@@ -2014,9 +2042,7 @@ function getAlertsFormData() {
       : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" ' +
           'title="Keep every reservation — they are deliberate">Reject (dismiss)</button>';
 
-    var assetLink = c.assetId
-      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(c.assetId) + '">' + escapeHtml(assetLabel) + '</a>'
-      : escapeHtml(assetLabel);
+    var assetLink = assetNameHtml(c.assetId, assetLabel);
 
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +
@@ -2119,9 +2145,9 @@ function getAlertsFormData() {
       }
       return '<tr class="' + (differs ? "conflict-changed" : "") + '"' + rowAttrs + '>' +
         '<td class="conflict-field">' + escapeHtml(label) + (autoUpdate ? ' <span style="color:var(--color-text-tertiary);font-size:0.7rem">(auto)</span>' : '') + '</td>' +
-        '<td class="' + (readOnly || isResolvedForRows ? '' : existingCellClass) + '">' + (existingVal ? escapeHtml(existingVal) : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
+        '<td class="' + (readOnly || isResolvedForRows ? '' : existingCellClass) + '">' + (existingVal ? (key === "ipAddress" ? copyIpHtml(String(existingVal)) : escapeHtml(existingVal)) : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
         pickerCell +
-        '<td class="' + (readOnly || isResolvedForRows ? '' : proposedCellClass) + '">' + (proposedVal ? (differs ? '<strong>' + escapeHtml(proposedVal) + '</strong>' : escapeHtml(proposedVal)) : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
+        '<td class="' + (readOnly || isResolvedForRows ? '' : proposedCellClass) + '">' + (proposedVal ? (key === "ipAddress" ? copyIpHtml(String(proposedVal), differs) : differs ? '<strong>' + escapeHtml(proposedVal) + '</strong>' : escapeHtml(proposedVal)) : '<span style="color:var(--color-text-tertiary);font-style:italic">—</span>') + '</td>' +
         '</tr>';
     }).join("");
 
@@ -2186,7 +2212,7 @@ function getAlertsFormData() {
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +
         '<span class="badge" style="background:rgba(79,195,247,0.12);color:var(--color-accent);border:1px solid rgba(79,195,247,0.3)">' + escapeHtml(sourceLabel) + '</span>' +
-        '<strong>' + escapeHtml(existing.hostname || proposed.hostname || "(asset)") + '</strong>' +
+        '<strong>' + assetNameHtml(c.assetId || existing.id || null, existing.hostname || proposed.hostname || "(asset)") + '</strong>' +
         '<span class="conflict-card-subnet" style="font-family:var(--font-mono);font-size:0.78rem">' + escapeHtml(c.proposedDeviceId || "") + '</span>' +
         (badges.length ? '<span style="margin-left:auto;display:flex;gap:4px">' + badges.join("") + '</span>' : '') +
       '</div>' +
