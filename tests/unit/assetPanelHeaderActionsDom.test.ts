@@ -47,7 +47,8 @@ function fnSrc(name: string): string {
   return assetsLines.slice(start, end + 1).join("\n");
 }
 
-const FN_NAMES = ["_renderAssetPanelNav", "_assetPanelGo", "_ensureAssetPanelDOM"];
+// `_canEditAsset` is the per-device shim (rule 141 (e)); it falls back to the role helper this harness stubs.
+const FN_NAMES = ["_canEditAsset", "_renderAssetPanelNav", "_assetPanelGo", "_ensureAssetPanelDOM"];
 const SRC =
   FN_NAMES.map(fnSrc).join("\n") + "\n" + FN_NAMES.map((n) => `globalThis.${n} = ${n};`).join("\n");
 

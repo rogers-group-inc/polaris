@@ -45,7 +45,7 @@ function fnSrc(name: string): string {
 }
 
 const SRC =
-  APP_SHELL_STUBS + "\n" + fnSrc("openEditModal") + "\nglobalThis.openEditModal = openEditModal;";
+  APP_SHELL_STUBS + "\n" + fnSrc("_canEditAsset") + "\n" + fnSrc("openEditModal") + "\nglobalThis.openEditModal = openEditModal;";
 
 interface Ctx {
   deleted: string[];

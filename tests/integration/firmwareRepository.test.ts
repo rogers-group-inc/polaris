@@ -91,7 +91,7 @@ d("firmware repository routes", () => {
       ["fwrepo-ap1", "access_point", "FortiAP 231K", "FP231KTF24000001"],
       ["fwrepo-fg1", "firewall", "FortiGate 60F", "FGT60FTK20000001"],
     ] as const) {
-      const a = await prisma.asset.create({ data: { hostname, assetType, model, serialNumber, manufacturer: MFR, ipAddress: null, osVersion: "7.4.3 build0542" } });
+      const a = await prisma.asset.create({ data: { hostname, assetType, model, serialNumber, manufacturer: MFR, ipAddress: null, osVersion: "7.4.3 build0542", createdBy: flasherU } });
       createdAssetIds.push(a.id);
     }
     const cred = await prisma.credential.create({ data: { name: PFX + "-login", type: "http", config: { authMode: "form", username: "admin", password: "pw" }, createdBy: writerU } });

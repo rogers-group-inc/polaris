@@ -102,6 +102,8 @@ async function seedAsset(primary: string) {
       ipAddress: "10.99.241.5",
       monitored: false,
       macAddress: primary,
+      // Rule 141 (e): assets:write reaches the devices the caller owns.
+      createdBy: assetsWriteUser,
       macAddressRows: {
         create: [
           // Freshest of the three, but a SIGHTING — the dock case.

@@ -3025,5 +3025,26 @@ administrator's act. Every role may read the registry; only `admin` changes
 it after the update, which means `assetsadmin` and `networkadmin` no longer
 tag devices until granted Tags. A form that may not tag still shows a
 record's tags and saves them unchanged. A role carries no tags: tags live on
-users and on group mappings, and a user's scope is the two together. See
-[Users, Roles and Permissions](Users-Roles-and-Permissions#tags-are-an-administrators-grant).
+users and on group mappings, and a user's scope is the two together.
+
+**Read-Write reaches what you own or what carries your tags.** On Assets,
+Asset Quarantine, Alerts, Maintenance Schedules, Discovery Conflicts, Stale
+Reservations, Device Map, Subnets and Reservations, Read-Write changes only
+the records you added or adopted yourself, plus — once you hold tags — every
+record carrying one of them; Full Read-Write changes any record. A device
+integration discovery brought in has no owner and no tags, so only Full
+Read-Write reaches it until someone tags it. Verbs that act on the whole
+fleet (a filter-based maintenance window, an automation's reboot action, the
+imports, the fleet-wide lookups and settings) are Full Read-Write. The update
+raised every existing Read-Write on those keys to Full Read-Write, so nobody
+lost reach the day it landed; an administrator opts a role in by lowering it
+to Read-Write and assigning tags. Lists and details say per row what you may
+change, so a verb is only offered where it will succeed.
+
+**A duplicate-reservation conflict is a reservations task.** Anyone with Read
+on Discovery Conflicts sees it; Read-Write on Reservations resolves it when at
+least one of its bindings is yours or sits on a network or device carrying
+your tag — and then every binding in it may be released or revoked, on any
+FortiGate. See
+[Users, Roles and Permissions](Users-Roles-and-Permissions#tags-are-an-administrators-grant)
+and [Conflict resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).

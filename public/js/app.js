@@ -614,6 +614,20 @@ function isAdminEquivalent() { return permAtLeast("users", "fullwrite") && permA
 // controls that could only 403, and an ipBlocks:write role never saw them).
 function canManageBlocks() { return permAtLeast("ipBlocks", "write"); }
 function canManageAssets() { return permAtLeast("assets", "write"); }
+// Business rule 141 (e): Read-Write reaches the devices you added or that
+// carry one of your tags; Full Read-Write every device. The server says
+// which, per row (`canEdit` / `canQuarantine` / `canMaintain` on GET /assets
+// and GET /assets/:id), so a verb is offered only where its click succeeds.
+// A row without the flag (an older payload, a partial object) is treated as
+// reachable — the server is the control either way.
+function _scopedVerb(key, flag, a) {
+  if (permAtLeast(key, "fullwrite")) return true;
+  if (!permAtLeast(key, "write")) return false;
+  return !a || a[flag] !== false;
+}
+function canEditAsset(a) { return _scopedVerb("assets", "canEdit", a); }
+function canQuarantineAsset(a) { return _scopedVerb("assetsQuarantine", "canQuarantine", a); }
+function canMaintainAsset(a) { return _scopedVerb("maintenanceManagement", "canMaintain", a); }
 // Quarantine is its OWN function key, not part of `assets` — a role can manage
 // asset records without being allowed to push MAC blocks to FortiGates, and
 // (per the built-in matrix) vice versa. Every server route under
@@ -653,7 +667,11 @@ function canProbeAssets() { return permAtLeast("assetsProbe", "read"); }
 function canSimulateDependencyDown() { return permAtLeast("assetMonitorSettings", "fullwrite"); }
 function canManageMaintenance() { return permAtLeast("maintenanceManagement", "write"); }
 function isUserOrAbove() { return permAtLeast("subnets", "write") || permAtLeast("reservations", "write"); }
-function canReviewConflicts() { return permAtLeast("discoveryConflicts", "write"); }
+// Rule 141 (f): the Conflicts view is visible at READ — a duplicate-reservation
+// conflict is resolved at reservations:write, not discoveryConflicts:write —
+// and each card says what THIS caller may do (`canResolve` / `canRelease`).
+function canReviewConflicts() { return permAtLeast("discoveryConflicts", "read"); }
+function canResolveConflicts() { return permAtLeast("discoveryConflicts", "write"); }
 function canReserveIps() { return permAtLeast("reservations", "write"); }
 function canCreateNetworks() { return permAtLeast("subnets", "write"); }
 // Add Network dialogs: the operator never picks a block — the server places a
@@ -692,6 +710,9 @@ function wireResolvedBlockField(cidrInputId, blockFieldId) {
 function canEditSubnet(subnet) {
   if (permAtLeast("subnets", "fullwrite")) return true;
   if (!permAtLeast("subnets", "write")) return false;
+  // Rule 141 (e): the server judges own-or-tagged per row (`canEdit`); the
+  // creator comparison is the fallback for a row that lacks the flag.
+  if (subnet && typeof subnet.canEdit === "boolean") return subnet.canEdit;
   return !!(subnet && subnet.createdBy && subnet.createdBy === currentUsername);
 }
 // Credentials carry the ownership dimension: write = your own rows only,
@@ -706,6 +727,7 @@ function canEditCredential(cred) {
 function canEditReservation(reservation) {
   if (permAtLeast("reservations", "fullwrite")) return true;
   if (!permAtLeast("reservations", "write")) return false;
+  if (reservation && typeof reservation.canEdit === "boolean") return reservation.canEdit;
   return !!(reservation && reservation.createdBy && reservation.createdBy === currentUsername);
 }
 

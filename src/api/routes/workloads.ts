@@ -15,6 +15,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { requirePermission } from "../middleware/permissions.js";
+import { scopeAssetParam } from "../middleware/writeScope.js";
 import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
 import {
@@ -43,11 +44,11 @@ workloadAssetRouter.get("/", requirePermission("assets", "read"), handle(async (
   res.json(await getWorkloadStatus(String(req.params.id)));
 }));
 
-workloadAssetRouter.post("/check-updates", requirePermission("assets", "write"), handle(async (req, res) => {
+workloadAssetRouter.post("/check-updates", requirePermission("assets", "write"), scopeAssetParam("assets", "manage workloads on devices"), handle(async (req, res) => {
   res.json(await checkWorkloadUpdates(String(req.params.id), requestActor(req) ?? "unknown"));
 }));
 
-workloadAssetRouter.post("/:verb", requirePermission("assets", "write"), handle(async (req, res) => {
+workloadAssetRouter.post("/:verb", requirePermission("assets", "write"), scopeAssetParam("assets", "manage workloads on devices"), handle(async (req, res) => {
   const verb = VerbSchema.safeParse(req.params.verb);
   if (!verb.success) throw new AppError(404, `Unknown workload action "${req.params.verb}"`);
   const body = ActionBodySchema.safeParse(req.body ?? {});

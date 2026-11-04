@@ -14,12 +14,14 @@
  * the lease can still reserve the IP.
  */
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import * as reservationService from "../../services/reservationService.js";
 import * as staleService from "../../services/reservationStaleService.js";
 import { AppError } from "../../utils/errors.js";
-import { requirePermission, requireOwnership, assertOwnership } from "../middleware/permissions.js";
+import { requirePermission, requireOwnership } from "../middleware/permissions.js";
+import { inWriteScope } from "../../services/writeScopeService.js";
+import { resolveWriteScope, assertInWriteScope, assertFleetWide, reservationScopeRecord } from "../../services/writeScopeService.js";
 import { requestActor } from "../middleware/auth.js";
 
 const router = Router();
@@ -99,8 +101,17 @@ router.get("/stale-settings", requirePermission("staleReservations", "read"), as
   } catch (err) { next(err); }
 });
 
+// Rule 141 (e): the stale verbs reach a reservation the caller owns or whose
+// network carries one of their tags; the threshold is fleet-wide.
+async function assertStaleReservationInScope(req: Request, id: string, verb: string): Promise<void> {
+  const scope = await resolveWriteScope(req, "staleReservations");
+  if (scope.kind === "all") return;
+  assertInWriteScope(scope, reservationScopeRecord(await reservationService.getReservation(id)), verb);
+}
+
 router.put("/stale-settings", requirePermission("staleReservations", "write"), async (req, res, next) => {
   try {
+    assertFleetWide(await resolveWriteScope(req, "staleReservations"), "the staleness threshold");
     const input = StaleSettingsSchema.parse(req.body);
     const updated = await staleService.updateStaleSettings(input, req.session?.username);
     res.json(updated);
@@ -111,7 +122,9 @@ router.get("/alerts", requirePermission("staleReservations", "read"), async (req
   try {
     const show = req.query.show === "ignored" ? "ignored" : "active";
     const alerts = await staleService.listStaleReservations(show);
-    res.json({ alerts, total: alerts.length, show });
+    const scope = await resolveWriteScope(req, "staleReservations");
+    const flagged = alerts.map((a) => ({ ...a, canEdit: inWriteScope(scope, { createdBy: (a as { createdBy?: string | null }).createdBy ?? null, tags: (a as { subnetTags?: string[] }).subnetTags ?? [] }) }));
+    res.json({ alerts: flagged, total: alerts.length, show });
   } catch (err) { next(err); }
 });
 
@@ -131,6 +144,7 @@ router.get("/alerts/count", requirePermission("staleReservations", "read"), asyn
 // Open to any user-or-above so operators can quiet noise without admin escalation.
 router.post("/:id/snooze", requirePermission("staleReservations", "write"), async (req, res, next) => {
   try {
+    await assertStaleReservationInScope(req, req.params.id as string, "snooze stale reservations");
     const result = await staleService.snoozeReservation(req.params.id as string, req.session?.username);
     res.json(result);
   } catch (err) { next(err); }
@@ -142,6 +156,7 @@ router.post("/:id/snooze", requirePermission("staleReservations", "write"), asyn
 // intent is durable. Reachable via the admin filter view in the Alerts panel.
 router.post("/:id/stale-ignore", requirePermission("staleReservations", "write"), async (req, res, next) => {
   try {
+    await assertStaleReservationInScope(req, req.params.id as string, "ignore stale reservations");
     const result = await staleService.setStaleIgnored(req.params.id as string, true, req.session?.username);
     res.json(result);
   } catch (err) { next(err); }
@@ -149,6 +164,7 @@ router.post("/:id/stale-ignore", requirePermission("staleReservations", "write")
 
 router.delete("/:id/stale-ignore", requirePermission("staleReservations", "write"), async (req, res, next) => {
   try {
+    await assertStaleReservationInScope(req, req.params.id as string, "un-ignore stale reservations");
     const result = await staleService.setStaleIgnored(req.params.id as string, false, req.session?.username);
     res.json(result);
   } catch (err) { next(err); }
@@ -186,7 +202,7 @@ router.post("/:id/retry-push", requireOwnership("reservations"), async (req, res
   try {
     const id = req.params.id as string;
     const before = await reservationService.getReservation(id);
-    assertOwnership(req, before.createdBy, "retry reservations");
+    assertInWriteScope(await resolveWriteScope(req, "reservations"), reservationScopeRecord(before), "retry reservations");
     const { outcome, reservation } = await reservationService.retryReservationNow(id, req.session?.username ?? null);
     res.json({ outcome, reservation });
   } catch (err) { next(err); }
@@ -228,14 +244,24 @@ router.get("/", requirePermission("reservations", "read"), async (req, res, next
     const { subnetId, owner, projectRef, status } = req.query as Record<string, string>;
     const limit = parseInt(req.query.limit as string, 10) || undefined;
     const offset = parseInt(req.query.offset as string, 10) || undefined;
-    res.json(await reservationService.listReservations({
+    const scope = await resolveWriteScope(req, "reservations");
+    const page = await reservationService.listReservations({
       subnetId,
       owner,
       projectRef,
       status: status as any,
       limit,
       offset,
-    }));
+    });
+    // Rule 141 (e): `canEdit` per reservation — own, or on a network carrying
+    // one of the caller's tags.
+    res.json({
+      ...page,
+      reservations: page.reservations.map((r) => ({
+        ...r,
+        canEdit: inWriteScope(scope, reservationScopeRecord(r as { createdBy: string | null; subnet?: { tags?: string[] } | null })),
+      })),
+    });
   } catch (err) {
     next(err);
   }
@@ -293,7 +319,7 @@ router.put("/:id", requireOwnership("reservations"), async (req, res, next) => {
     const id = req.params.id as string;
     const before = await reservationService.getReservation(id);
     assertNotDeviceOwned(before, "edited");
-    assertOwnership(req, before.createdBy, "edit reservations");
+    assertInWriteScope(await resolveWriteScope(req, "reservations"), reservationScopeRecord(before), "edit reservations");
     const input = UpdateReservationSchema.parse(req.body);
     const reservation = await reservationService.updateReservation(id, input, {
       actor: req.session?.username ?? null,
@@ -310,7 +336,7 @@ router.delete("/:id", requireOwnership("reservations"), async (req, res, next) =
     const existing = await reservationService.getReservation(id);
     assertNotDeviceOwned(existing, "released");
     if (req.permissionLevel !== "fullwrite") {
-      assertOwnership(req, existing.createdBy, "release reservations");
+      assertInWriteScope(await resolveWriteScope(req, "reservations"), reservationScopeRecord(existing), "release reservations");
     }
     await reservationService.releaseReservation(id, req.session?.username);
     res.status(204).send();

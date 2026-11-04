@@ -18,11 +18,14 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { prisma } from "../../db.js";
 import multer from "multer";
 import { mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { requirePermission, credentialUseActor } from "../middleware/permissions.js";
+import { resolveWriteScope, assertInWriteScope } from "../../services/writeScopeService.js";
+import { scopeAssetParam, scopeAssetIds } from "../middleware/writeScope.js";
 import { recordCredentialUse } from "../../services/credentialUseAuditService.js";
 import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
@@ -329,7 +332,7 @@ firmwareAssetRouter.get("/", requirePermission("assets", "read"), handle(async (
 }));
 
 // Flashing a device. 202 — the run is watched, not awaited.
-firmwareAssetRouter.post("/", requirePermission("assets", "write"), handle(async (req, res) => {
+firmwareAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetParam("assets", "upgrade the firmware of devices"), handle(async (req, res) => {
   const body = StartUpgradeSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown" });
@@ -353,7 +356,7 @@ firmwareAssetRouter.get("/runs/:runId", requirePermission("assets", "read"), han
 // Stop a live flash (business rule 138) — the nav bar's Abort. `assets:write`,
 // the grant that starts one. Answers once the run has ended (or the settle
 // cap passed), with the run as it ended; 409 when it already had.
-firmwareAssetRouter.post("/runs/:runId/abort", requirePermission("assets", "write"), handle(async (req, res) => {
+firmwareAssetRouter.post("/runs/:runId/abort", requirePermission("assets", "write"), scopeAssetParam("assets", "abort firmware upgrades on devices"), handle(async (req, res) => {
   const body = AbortRunSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const run = await abortFirmwareRun(String(req.params.runId), requestActor(req) ?? "unknown", { assetId: String(req.params.id), reason: body.data.reason });
@@ -385,7 +388,7 @@ firmwareAssetRouter.get("/schedules/defaults", requirePermission("assets", "writ
   res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
 }));
 
-firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), handle(async (req, res) => {
+firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), scopeAssetParam("assets", "schedule firmware upgrades on devices"), handle(async (req, res) => {
   const body = CreateScheduleSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const schedule = await createSchedule({
@@ -399,7 +402,7 @@ firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), han
   res.status(201).json({ schedule });
 }));
 
-firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "write"), handle(async (req, res) => {
+firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "write"), scopeAssetParam("assets", "change firmware schedules on devices"), handle(async (req, res) => {
   const body = UpdateScheduleSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const schedule = await updateSchedule({
@@ -413,7 +416,7 @@ firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", 
   res.json({ schedule });
 }));
 
-firmwareAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "write"), handle(async (req, res) => {
+firmwareAssetRouter.delete("/schedules/:scheduleId", requirePermission("assets", "write"), scopeAssetParam("assets", "cancel firmware schedules on devices"), handle(async (req, res) => {
   const schedule = await cancelSchedule(String(req.params.id), String(req.params.scheduleId), requestActor(req) ?? "unknown");
   res.json({ schedule });
 }));
@@ -434,7 +437,7 @@ firmwareGroupRouter.post("/sources", requirePermission("assets", "read"), handle
   res.json(await resolveGroupSources(body.data.assetIds));
 }));
 
-firmwareGroupRouter.post("/preview", requirePermission("assets", "write"), handle(async (req, res) => {
+firmwareGroupRouter.post("/preview", requirePermission("assets", "write"), scopeAssetIds("assets", "upgrade the firmware of devices", (r) => ((r.body && r.body.assetIds) || [])), handle(async (req, res) => {
   const body = GroupSelectionSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   res.json({
@@ -449,7 +452,7 @@ firmwareGroupRouter.get("/", requirePermission("assets", "read"), handle(async (
   res.json({ groups: await listGroupSchedules(q.data) });
 }));
 
-firmwareGroupRouter.post("/", requirePermission("assets", "write"), handle(async (req, res) => {
+firmwareGroupRouter.post("/", requirePermission("assets", "write"), scopeAssetIds("assets", "upgrade the firmware of devices", (r) => ((r.body && r.body.assetIds) || [])), handle(async (req, res) => {
   const body = CreateGroupSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const { group, plan } = await createGroupSchedule({
@@ -470,6 +473,12 @@ firmwareGroupRouter.get("/:groupId", requirePermission("assets", "read"), handle
 
 // Cancel a pending group, or stop a running one (in-flight flashes finish).
 firmwareGroupRouter.delete("/:groupId", requirePermission("assets", "write"), handle(async (req, res) => {
+  // Business rule 141 (e): a group booking is its creator's (or Full Read-Write's).
+  const scope = await resolveWriteScope(req, "assets");
+  if (scope.kind !== "all") {
+    const group = await prisma.firmwareGroupSchedule.findUnique({ where: { id: String(req.params.groupId) }, select: { createdBy: true } });
+    if (group) assertInWriteScope(scope, { createdBy: group.createdBy, tags: [] }, "cancel group upgrades");
+  }
   res.json({ group: await cancelGroupSchedule(String(req.params.groupId), requestActor(req) ?? "unknown") });
 }));
 

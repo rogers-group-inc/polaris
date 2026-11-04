@@ -75,9 +75,11 @@ describe("quarantine UI gates", () => {
 
   it("the Quarantine tab's visibility and wiring both use it", () => {
     // Visibility: the tabs.push condition.
-    expect(assetsSrc).toMatch(/if \(canQuarantineAssets\(\) && \(a\.status === "quarantined"/);
+    // Per-device since 2026-11-04 (rule 141 (e)): the shim reads the row's
+    // `canQuarantine` verdict and falls back to the role helper.
+    expect(assetsSrc).toMatch(/if \(_canQuarantineAsset\(a\) && \(a\.status === "quarantined"/);
     // Wiring: without this the tab renders but its buttons do nothing.
-    expect(assetsSrc).toMatch(/if \(canQuarantineAssets\(\)\) _wireQuarantineTab\(a\);/);
+    expect(assetsSrc).toMatch(/if \(_canQuarantineAsset\(a\)\) _wireQuarantineTab\(a\);/);
     expect(assetsSrc).not.toMatch(/if \(canManageAssets\(\)\) _wireQuarantineTab\(a\);/);
   });
 
@@ -138,7 +140,7 @@ describe("quarantine push availability gates", () => {
     // ...so Release and the recorded push targets stay reachable after an
     // operator turns the toggle off.
     expect(assetsSrc).toMatch(
-      /if \(canQuarantineAssets\(\) && \(a\.status === "quarantined" \|\| \(hasMac && !isInfraQ && _quarantinePushAvailable\(\)\)\)\)/,
+      /if \(_canQuarantineAsset\(a\) && \(a\.status === "quarantined" \|\| \(hasMac && !isInfraQ && _quarantinePushAvailable\(\)\)\)\)/,
     );
   });
 

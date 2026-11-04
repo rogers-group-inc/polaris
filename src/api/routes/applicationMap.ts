@@ -42,6 +42,7 @@ import { listScopeOptions } from "../../services/notificationRuleService.js";
 import { listAssetTypes } from "../../services/assetTypeService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { requireFleetWide } from "../middleware/writeScope.js";
 import { requestActor } from "../middleware/auth.js";
 
 const router = Router();
@@ -108,6 +109,9 @@ router.delete("/layout", requirePermission("applicationMap", "write"), async (re
 const requireDiscoveryWrite = [
   requirePermission("applicationMap", "write"),
   requirePermission("assets", "write"),
+  // A discovery rule pins fields on whatever devices it matches, now and
+  // later — no record to be "in", so Full Read-Write (business rule 141 (e)).
+  requireFleetWide("assets", "application-map discovery rules"),
 ];
 
 // GET /application-map/discovery — the stored rule set, plus the asset types a

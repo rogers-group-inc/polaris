@@ -153,15 +153,21 @@ describe("a Test button never books a reboot", () => {
   });
 });
 
-describe("saving a reboot action needs assets:write", () => {
+// Full Read-Write since 2026-11-04 (business rule 141 (e)): the rule reboots
+// whatever devices it matches, now and later, so there is no record for a
+// Read-Write caller — who reaches only owned or tagged devices — to be "in".
+describe("saving a reboot action needs assets:fullwrite", () => {
   const req = (assets: string | null) => ({
     roleSnapshot: { permissions: { automationManagement: "write", ...(assets ? { assets } : {}) } },
   });
   it("refuses a saver without it", () => {
-    expect(() => assertScriptActionPermission(req("read") as never, { actions: [reboot] } as never)).toThrow(/reboot action requires Read-Write on Assets/);
+    expect(() => assertScriptActionPermission(req("read") as never, { actions: [reboot] } as never)).toThrow(/reboot action requires Full Read-Write on Assets/);
+  });
+  it("refuses Read-Write — it reaches only owned or tagged devices, the rule reaches any", () => {
+    expect(() => assertScriptActionPermission(req("write") as never, { actions: [reboot] } as never)).toThrow(/Full Read-Write on Assets/);
   });
   it("allows a saver with it", () => {
-    expect(() => assertScriptActionPermission(req("write") as never, { actions: [reboot] } as never)).not.toThrow();
+    expect(() => assertScriptActionPermission(req("fullwrite") as never, { actions: [reboot] } as never)).not.toThrow();
   });
   it("is not asked for when the automation has no reboot action", () => {
     expect(() => assertScriptActionPermission(req(null) as never, { actions: [{ type: "event" }] } as never)).not.toThrow();
