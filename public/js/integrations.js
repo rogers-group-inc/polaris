@@ -6885,10 +6885,6 @@ function _productForType(type) {
   return _INTEGRATION_PRODUCTS[type] || "FortiManager";
 }
 
-function _titleForType(type, action) {
-  return action + " " + _productForType(type) + " Integration";
-}
-
 // What a Test Connection request actually needs, as [fieldId, label] so the
 // toast can NAME what is missing instead of firing a doomed request and
 // reporting the server's error as if it were news.
