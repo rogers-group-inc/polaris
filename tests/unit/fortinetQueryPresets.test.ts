@@ -22,6 +22,13 @@ import vm from "node:vm";
 import { DHCP_MONITOR_FORMAT } from "../../src/utils/fortiosIpv6.js";
 import { INVENTORY_QUERY_FORMAT } from "../../src/utils/inventoryLocality.js";
 import { FORTIAP_MONITOR_FORMAT } from "../../src/utils/fortiapMonitorRow.js";
+import { FORTIOS_INTERFACE_CMDB_FORMAT } from "../../src/utils/fortiosInterfaceRef.js";
+import { FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../../src/utils/fortiswitchCmdb.js";
+import {
+  DHCP_SERVER_DISCOVERY_FORMAT,
+  FIREWALL_VIP_DISCOVERY_FORMAT,
+  FORTIAP_WTP_DISCOVERY_FORMAT,
+} from "../../src/services/fortigateService.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => readFileSync(resolve(here, "../..", p), "utf8");
@@ -119,6 +126,25 @@ describe("FortiManager presets cover every discovery query", () => {
     }
   });
 
+  it("asks for the same fields as discovery's native interface read (the `secondaryip` table)", () => {
+    const fieldsOf = (s: string, url: string) => {
+      const at = s.indexOf(url);
+      expect(at, url).toBeGreaterThan(-1);
+      const m = /fields: (\[[^\]]*\])/.exec(s.slice(at, at + 400));
+      return m ? JSON.parse(m[1]) : null;
+    };
+    const discovery = fieldsOf(src, "/vdom/root/system/interface`");
+    const preset = fmgProxy.flatMap((q) => (q.params ? JSON.parse(q.params) : []))
+      .find((p: any) => p.url === "/pm/config/device/<device-name>/vdom/root/system/interface");
+    expect(preset?.fields).toEqual(discovery);
+    expect(discovery).toContain("secondaryip");
+  });
+
+  it("uses discovery's format constant on the proxied switch-config read", () => {
+    const { resources } = fmgPresetTargets();
+    expect(resources).toContain(`/api/v2/cmdb/switch-controller/managed-switch?format=${FORTISWITCH_DISCOVERY_CMDB_FORMAT}`);
+  });
+
   it("uses the server's format constants for the leases, inventory and FortiAP reads", () => {
     const { resources } = fmgPresetTargets();
     expect(resources).toContain(`/api/v2/monitor/system/dhcp?format=${DHCP_MONITOR_FORMAT}`);
@@ -139,12 +165,19 @@ describe("FortiManager presets cover every discovery query", () => {
 
 describe("FortiGate presets cover every discovery query", () => {
   const src = read("src/services/fortigateService.ts");
-  const CONSTANTS: Record<string, string> = { DHCP_MONITOR_FORMAT, INVENTORY_QUERY_FORMAT, FORTIAP_MONITOR_FORMAT };
+  const CONSTANTS: Record<string, string> = {
+    DHCP_MONITOR_FORMAT, INVENTORY_QUERY_FORMAT, FORTIAP_MONITOR_FORMAT,
+    FORTIOS_INTERFACE_CMDB_FORMAT, FORTISWITCH_DISCOVERY_CMDB_FORMAT,
+    DHCP_SERVER_DISCOVERY_FORMAT, FIREWALL_VIP_DISCOVERY_FORMAT, FORTIAP_WTP_DISCOVERY_FORMAT,
+  };
 
+  // A `format:` naming a constant this map lacks resolves to null and FAILS the
+  // format check below — it used to resolve to undefined and be skipped, so a
+  // new constant left its preset showing the unfiltered query unnoticed.
   const calls = [...src.matchAll(/fgRequest<[^>]*>\(config, "GET", "([^"]+)",\s*\{\s*query:\s*(\{[^}]*\}|\w+)/g)]
     .map((m) => {
       const fmt = /format:\s*(?:"([^"]+)"|(\w+))/.exec(m[2]);
-      return { path: m[1], format: fmt ? (fmt[1] ?? CONSTANTS[fmt[2]]) : undefined };
+      return { path: m[1], format: fmt ? (fmt[1] ?? CONSTANTS[fmt[2]] ?? null) : undefined };
     });
 
   it("finds the queries it is meant to check", () => {
@@ -158,7 +191,7 @@ describe("FortiGate presets cover every discovery query", () => {
   });
 
   it("carries discovery's format string on the preset for that path", () => {
-    for (const c of calls.filter((x) => x.format)) {
+    for (const c of calls.filter((x) => x.format !== undefined)) {
       expect(c.format, `format constant unresolved for ${c.path}`).toBeTruthy();
       const presets = fgt.filter((q) => q.path === c.path);
       expect(presets.some((q) => q.query.split("\n").includes(`format=${c.format}`)), c.path).toBe(true);
