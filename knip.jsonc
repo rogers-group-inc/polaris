@@ -1,0 +1,65 @@
+{
+  // knip — the dead-code guard (`npm run check:dead`). Finds files nothing
+  // imports, exports nothing references, and dependencies nothing uses.
+  //
+  // `name!` marks a PRODUCTION entry/project file: `knip --production`
+  // (`npm run check:dead:prod`, report-only) ignores tests and devDependencies
+  // and so lists the exports that only a test reaches — the "test-only" rows
+  // of docs/CODE-QUALITY-LEDGER.md. The plain run treats tests as consumers.
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // src/index.ts is a default production entry and needs no listing. public/
+  // is deliberately absent from `project`: it has no module system (plain
+  // <script> tags sharing one global scope), so every file there would read
+  // as unused — frontend dead code is found by grep + the happy-dom tests.
+  // src/generated and dist are gitignored, which knip honours.
+  "entry": [
+    // src/app.ts loads every job through `importJob(p)` over a string array,
+    // a dynamic import knip cannot follow — each job must be its own entry.
+    "src/jobs/*.ts!",
+    "scripts/**/*.{mjs,ts}",
+    "prisma/*.ts",
+    ".design-sync/build.mjs"
+  ],
+  "project": ["src/**/*.ts!", "scripts/**/*.{mjs,ts}", "prisma/**/*.ts", "tests/**/*.ts"],
+  "ignoreDependencies": [
+    // Vendored under public/js/vendor and public/css/vendor; the npm range is
+    // kept only as the version record Dependabot watches
+    // (polaris-tech-lifecycle -> dependency-audit.md).
+    "cytoscape",
+    "cytoscape-dagre",
+    "dagre",
+    "leaflet",
+    "leaflet.markercluster",
+    "jspdf",
+    "jspdf-autotable",
+    // Reached only through the generated client under src/generated (ignored
+    // above), and as the `pino-pretty` transport-target string in logger.ts.
+    "@prisma/client",
+    "pino-pretty",
+    // scripts/capture-screenshots.mjs imports playwright on purpose without
+    // listing it (its header says why); tests/unit/routerBoots.test.ts imports
+    // path-to-regexp TRANSITIVELY from express on purpose, so the regression
+    // test asserts against the exact copy express routes with.
+    "playwright",
+    "path-to-regexp"
+  ],
+  "vitest": { "config": ["vitest.config.ts"] },
+  // prisma.config.ts resolves env("DATABASE_URL") at load time; the plugin is
+  // off so a checkout with no .env (CI, a fresh worktree) can run the guard.
+  "prisma": false,
+  "ignoreBinaries": ["openssl", "go", "java", "fping", "ping"],
+  "rules": {
+    "files": "error",
+    "dependencies": "error",
+    "unlisted": "error",
+    "unresolved": "error",
+    // exports/types start as warnings so CI can gate on day one; they flip to
+    // "error" once the un-export batch of the code-quality ledger has landed.
+    "exports": "warn",
+    "types": "warn",
+    "nsExports": "warn",
+    "nsTypes": "warn",
+    "enumMembers": "warn",
+    "duplicates": "warn"
+  }
+}

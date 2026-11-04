@@ -1,0 +1,22 @@
+{
+  "_comment": "jscpd - the duplication REPORT (npm run check:dup). Never a gate: no `threshold` key, so it always exits 0; the console summary and audit-reports/jscpd/jscpd-report.json (gitignored) feed docs/CODE-QUALITY-LEDGER.md. maxSize/maxLines are raised on purpose - the defaults (100kb / 1000 lines) silently skip public/js/assets.js, integrations.js and src/services/monitoringService.ts, which are most of what the report is for.",
+  "path": ["src", "public/js", "scripts", "prisma"],
+  "format": ["typescript", "javascript"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "src/generated/**",
+    "public/js/vendor/**",
+    "tests/**",
+    "**/*.d.ts"
+  ],
+  "minTokens": 70,
+  "minLines": 8,
+  "maxLines": 60000,
+  "maxSize": "3mb",
+  "mode": "mild",
+  "gitignore": true,
+  "absolute": false,
+  "reporters": ["console", "json"],
+  "output": "./audit-reports/jscpd"
+}
