@@ -107,13 +107,16 @@ import { burstPing, pingTargets, detectFping } from "../utils/burstPing.js";
 import { stampsRecoveryAnchor } from "../utils/probeLossAnchor.js";
 import { pollingRunStart } from "../utils/addressConfidence.js";
 import {
-  fortiosBool,
   parseFortiosMemberList,
   buildFortiswitchTrunkMembers,
   findFortiswitchUplinkPorts,
   parseFortiswitchMclagPeers,
   parseFortiswitchPortDescriptions,
+  parseFortiswitchPortVlan,
+  fortiosVlanIdByName,
+  FORTISWITCH_MONITOR_PORT_FORMAT,
   type FortiswitchMclagPeer,
+  type FortiswitchPortVlan,
 } from "../utils/fortiswitchCmdb.js";
 // Re-exported so existing import sites (unit tests, etc.) keep resolving these
 // from monitoringService; implementations live in utils/fortiswitchCmdb.ts.
@@ -3522,17 +3525,12 @@ async function fetchFortinetWifiClients(
 // Managed FortiSwitches expose interface counters via SNMP IF-MIB, but the
 // per-port VLAN config (native PVID + tagged allow-list) lives only on the
 // parent FortiGate's CMDB at /api/v2/cmdb/switch-controller/managed-switch.
-// One CMDB call per controller carries every managed switch's ports, so we
-// cache it per (integration, controller) with the same 30s TTL the inventory
-// fetcher uses. Best-effort — overlay failures never break the interface
-// scrape. SNMP-monitored non-Fortinet switches don't get VLAN data here
-// (Q-BRIDGE-MIB would be the cross-vendor path; out of scope for v1).
-
-interface FortiswitchPortVlan {
-  nativeVlan: number | null;
-  taggedVlans: number[];
-  trunksAllVlans: boolean;
-}
+// Read per controller as: the switch list (serials only), each switch's
+// `ports` child table with only the parsed attributes, and the gate's VLAN
+// interfaces (name → id). Cached per (integration, controller) with the same
+// 30s TTL the inventory fetcher uses. Best-effort — overlay failures never
+// break the interface scrape. SNMP-monitored non-Fortinet switches don't get
+// VLAN data here (they get Q-BRIDGE-MIB, collectPortVlansSnmp).
 
 // Per-switch view of the controller's managed-switch CMDB: per-port VLAN
 // config plus the trunk → physical-member-ports map. The trunk map is the
@@ -3571,57 +3569,47 @@ function fortiswitchPortsCacheKey(integrationId: string, deviceName: string): st
   return `${integrationId}::${deviceName}::fsw-ports`;
 }
 
-// "all"-sentinel detector for FortiOS VLAN list fields. Older FortiOS
-// versions return the literal string "all" instead of an empty array +
-// sibling allowed-vlans-all="enable". Either form must map to "this port
-// trunks every VLAN."
-function isFortiosVlanListAll(raw: unknown): boolean {
-  if (typeof raw === "string") return raw.trim().toLowerCase() === "all";
-  return false;
-}
+// VLAN parsing (names → ids, ranges, the "all" sentinel) lives in
+// utils/fortiswitchCmdb.ts → parseFortiswitchPortVlan.
 
-// FortiOS reports allowed-vlans / untagged-vlans in several shapes depending
-// on version + datasource flag: array of objects with vlan-id / id, array of
-// raw numbers, or a comma-separated string with "10-20" ranges. The "all"
-// sentinel is detected separately by `isFortiosVlanListAll` + the sibling
-// `allowed-vlans-all` field (see fetchFortiswitchControllerPortsCmdb); here
-// it's dropped to `[]` because we can't surface "every VLAN" as a finite
-// int list.
-function parseFortiosVlanList(raw: unknown): number[] {
-  const out = new Set<number>();
-  const push = (n: unknown): void => {
-    const v = typeof n === "number" ? n : Number(n);
-    if (Number.isFinite(v) && Number.isInteger(v) && v >= 1 && v <= 4094) out.add(v);
-  };
-  if (raw == null) return [];
-  if (Array.isArray(raw)) {
-    for (const entry of raw) {
-      if (entry == null) continue;
-      if (typeof entry === "number" || typeof entry === "string") {
-        push(entry);
-        continue;
-      }
-      const obj = entry as Record<string, unknown>;
-      const id = obj["vlan-id"] ?? obj.vlanid ?? obj.id ?? obj.vlan;
-      if (id !== undefined) push(id);
+/**
+ * Turn the per-switch reads into the per-switch ports view. Pure, exported for
+ * tests: `switches` are the managed-switch rows (serial keys only), `portsBySwitchId`
+ * each switch's `ports` child table, keyed by its `switch-id`, and
+ * `vlanIdByName` the controller's VLAN interfaces (fortiosVlanIdByName). A
+ * switch whose ports read failed is absent from `portsBySwitchId` and is left
+ * out of the result, as a switch with no `ports` always was.
+ */
+export function buildFortiswitchControllerPortsMap(
+  switches: unknown[],
+  portsBySwitchId: ReadonlyMap<string, unknown[]>,
+  vlanIdByName: ReadonlyMap<string, number>,
+): FortiswitchControllerPortsMap {
+  const map: FortiswitchControllerPortsMap = new Map();
+  for (const row of switches) {
+    const r = (row ?? {}) as Record<string, unknown>;
+    const serial = String(r.sn || r["switch-id"] || r.name || "").trim();
+    const portsRaw = portsBySwitchId.get(String(r["switch-id"] ?? ""));
+    if (!serial || !Array.isArray(portsRaw)) continue;
+    const portMap = new Map<string, FortiswitchPortVlan>();
+    for (const p of portsRaw) {
+      const portName = String((p as Record<string, unknown>)?.["port-name"] ?? "").trim();
+      if (!portName) continue;
+      portMap.set(portName, parseFortiswitchPortVlan(p, vlanIdByName));
     }
-  } else if (typeof raw === "string") {
-    const s = raw.trim();
-    if (!s || s.toLowerCase() === "all") return [];
-    for (const part of s.split(",")) {
-      const p = part.trim();
-      if (!p) continue;
-      if (p.includes("-")) {
-        const [a, b] = p.split("-").map((x) => Number(x.trim()));
-        if (Number.isFinite(a) && Number.isFinite(b) && a <= b) {
-          for (let i = a; i <= b; i++) push(i);
-        }
-      } else {
-        push(p);
-      }
-    }
+    // Trunk → physical-member map: operator LACP bundles (`members`) +
+    // FortiLink auto-ISL uplinks (`isl-local-trunk-name` on each physical
+    // member). The interface overlay uses this to back-fill ifParent so
+    // the topology renderer swaps the opaque trunk name for the real
+    // physical port. See buildFortiswitchTrunkMembers. (The child read lists
+    // trunk rows first rather than last; physical ports keep their order, and
+    // the ISL members are physical ports, so the map is unchanged.)
+    const trunkMembers = buildFortiswitchTrunkMembers(portsRaw);
+    const mclagPeers = parseFortiswitchMclagPeers(portsRaw);
+    const descriptionByPort = parseFortiswitchPortDescriptions(portsRaw);
+    map.set(serial.toUpperCase(), { vlanByPort: portMap, trunkMembers, mclagPeers, descriptionByPort });
   }
-  return Array.from(out).sort((a, b) => a - b);
+  return map;
 }
 
 async function fetchFortiswitchControllerPortsCmdb(
@@ -3639,49 +3627,40 @@ async function fetchFortiswitchControllerPortsCmdb(
 
   const fetchPromise = (async (): Promise<FortiswitchControllerPortsMap> => {
     try {
-      // datasource=1 expands range syntax in allowed-vlans / untagged-vlans
-      // into individual {vlan-id} entries on the versions that support it;
-      // older FortiOS ignores the flag and returns the raw string, which the
-      // parser above handles too.
-      const path = "/api/v2/cmdb/switch-controller/managed-switch?datasource=1";
-      const rawRows = await fetchViaFortinetTransport(integration, deviceName, path, timeoutMs, "FortiSwitch CMDB ports fetch");
-      const rows = unwrapFortiosRows(rawRows);
-      const map: FortiswitchControllerPortsMap = new Map();
-      for (const row of rows) {
-        const r = row as Record<string, unknown>;
-        const serial = String(r.sn || r["switch-id"] || r.name || "").trim();
-        if (!serial) continue;
-        const portsRaw = r.ports;
-        if (!Array.isArray(portsRaw)) continue;
-        const portMap = new Map<string, FortiswitchPortVlan>();
-        for (const p of portsRaw) {
-          const port = p as Record<string, unknown>;
-          const portName = String(port["port-name"] ?? "").trim();
-          if (!portName) continue;
-          const nativeRaw = port.vlan;
-          const native = typeof nativeRaw === "number" ? nativeRaw : Number(nativeRaw);
-          const nativeVlan = Number.isFinite(native) && Number.isInteger(native) && native >= 1 && native <= 4094 ? native : null;
-          const allowed   = parseFortiosVlanList(port["allowed-vlans"]);
-          const untagged  = new Set(parseFortiosVlanList(port["untagged-vlans"]));
-          const tagged    = allowed.filter((v) => !untagged.has(v));
-          // Trunk-all detection: newer FortiOS exposes a sibling boolean
-          // (`allowed-vlans-all: "enable"`), older versions stuff the
-          // string `"all"` directly into `allowed-vlans`. Honor either.
-          const trunksAllVlans =
-            fortiosBool(port["allowed-vlans-all"]) ||
-            isFortiosVlanListAll(port["allowed-vlans"]);
-          portMap.set(portName, { nativeVlan, taggedVlans: tagged, trunksAllVlans });
-        }
-        // Trunk → physical-member map: operator LACP bundles (`members`) +
-        // FortiLink auto-ISL uplinks (`isl-local-trunk-name` on each physical
-        // member). The interface overlay uses this to back-fill ifParent so
-        // the topology renderer swaps the opaque trunk name for the real
-        // physical port. See buildFortiswitchTrunkMembers.
-        const trunkMembers = buildFortiswitchTrunkMembers(portsRaw);
-        const mclagPeers = parseFortiswitchMclagPeers(portsRaw);
-        const descriptionByPort = parseFortiswitchPortDescriptions(portsRaw);
-        map.set(serial.toUpperCase(), { vlanByPort: portMap, trunkMembers, mclagPeers, descriptionByPort });
-      }
+      // Three reads instead of one whole-table read (HUB1-a, two 48-port
+      // switches: 342 KB → 57 KB, faster too). `format=` cannot reach inside
+      // the parent's `ports` (~106 attributes a port); addressing each
+      // switch's `ports` child table lets it. No `datasource=1`: on a
+      // FortiLink switch it expands nothing — the VLAN fields are interface
+      // NAMES with or without it — so the names are resolved here instead.
+      //   1. the switch list, serial keys only (throws as the old read did);
+      const switchRows = unwrapFortiosRows(await fetchViaFortinetTransport(
+        integration, deviceName, "/api/v2/cmdb/switch-controller/managed-switch?format=switch-id|sn|name",
+        timeoutMs, "FortiSwitch CMDB list fetch"));
+      //   2. each switch's ports, only the attributes the parsers read — a
+      //      failed switch is left out rather than failing the controller;
+      //   3. the gate's VLAN interfaces, name → id (best-effort: without it
+      //      only numeric VLAN references resolve, as before).
+      const [portsBySwitchId, vlanIdByName] = await Promise.all([
+        Promise.all(switchRows.map(async (row) => {
+          const id = String((row as Record<string, unknown>)?.["switch-id"] ?? "").trim();
+          if (!id) return null;
+          try {
+            const raw = await fetchViaFortinetTransport(integration, deviceName,
+              `/api/v2/cmdb/switch-controller/managed-switch/${encodeURIComponent(id)}/ports?format=${FORTISWITCH_MONITOR_PORT_FORMAT}`,
+              timeoutMs, "FortiSwitch CMDB ports fetch");
+            return [id, unwrapFortiosRows(raw)] as const;
+          } catch (err) {
+            logger.debug({ err, deviceName, switchId: id }, "FortiSwitch ports read failed — that switch gets no CMDB overlay this pass");
+            return null;
+          }
+        })).then((pairs) => new Map(pairs.filter((p): p is readonly [string, unknown[]] => p !== null))),
+        fetchViaFortinetTransport(integration, deviceName, "/api/v2/cmdb/system/interface?format=name|vlanid",
+          timeoutMs, "FortiGate VLAN interface fetch")
+          .then((raw) => fortiosVlanIdByName(unwrapFortiosRows(raw)))
+          .catch(() => new Map<string, number>()),
+      ]);
+      const map = buildFortiswitchControllerPortsMap(switchRows, portsBySwitchId, vlanIdByName);
 
       fortiswitchControllerPortsCache.set(cacheKey, { fetchedAt: Date.now(), ports: map });
       return map;

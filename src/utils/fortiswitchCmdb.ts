@@ -245,3 +245,132 @@ export function readManagedSwitchCmdbSerial(row: unknown): string | null {
  * Pinned by tests/unit/fortiosDiscoveryFormats.test.ts.
  */
 export const FORTISWITCH_DISCOVERY_CMDB_FORMAT = ["sn", "switch-id", "name", "description", "ports"].join("|");
+
+/**
+ * The `format=` filter for MONITORING's per-switch read of
+ * `/api/v2/cmdb/switch-controller/managed-switch/<switch-id>/ports`: the port
+ * attributes the VLAN, trunk-member, MCLAG and port-description parsers read.
+ * Addressing the child table directly is what lets `format=` apply to each
+ * port row; on the parent read it cannot reach inside `ports` (54 ports ×
+ * ~106 attributes per switch). HUB1-a, two 48-port switches: 342 KB → 57 KB,
+ * identical values. A field a parser starts using is added here first.
+ */
+export const FORTISWITCH_MONITOR_PORT_FORMAT = [
+  "port-name", "vlan", "allowed-vlans", "untagged-vlans", "allowed-vlans-all", "members", "member",
+  "isl-local-trunk-name", "isl-peer-device-name", "isl-peer-device-sn", "isl-peer-port-name", "mclag-icl-port", "description",
+].join("|");
+
+/** One managed-switch port's VLAN configuration, as monitoring overlays it. */
+export interface FortiswitchPortVlan {
+  nativeVlan: number | null;
+  taggedVlans: number[];
+  /** `set allowed-vlans-all enable` (or the legacy literal "all"): the port trunks every VLAN. */
+  trunksAllVlans: boolean;
+}
+
+/**
+ * VLAN name → VLAN id, from the controller FortiGate's `system/interface`
+ * rows. On a FortiLink-managed switch every port VLAN field NAMES a FortiGate
+ * VLAN interface — `vlan: "_default"`, `allowed-vlans: [{ "vlan-name":
+ * "quarantine" }]` — never a number (FortiOS 7.6.8, HUB1-a, 2026-11-04:
+ * `_default` → 1, `quarantine` → 4093). The id lives on that interface's
+ * `vlanid`. Rows without a valid id (physical ports, tunnels) are left out.
+ */
+export function fortiosVlanIdByName(interfaceRows: unknown): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!Array.isArray(interfaceRows)) return out;
+  for (const r of interfaceRows) {
+    if (!r || typeof r !== "object") continue;
+    const row = r as Record<string, unknown>;
+    const name = typeof row.name === "string" ? row.name.trim() : "";
+    const id = typeof row.vlanid === "number" ? row.vlanid : Number(row.vlanid);
+    if (name && Number.isInteger(id) && id >= 1 && id <= 4094) out.set(name, id);
+  }
+  return out;
+}
+
+const validVlanId = (n: number): boolean => Number.isInteger(n) && n >= 1 && n <= 4094;
+
+/**
+ * One VLAN reference as an id: a number, a numeric string, an object carrying a
+ * numeric `vlan-id` / `vlanid` / `id` / `vlan`, or a NAME (a bare string or
+ * an object's `vlan-name` / `name` / `q_origin_key`) looked up in
+ * `vlanIdByName`. Null when it resolves to nothing.
+ */
+function resolveVlanRef(ref: unknown, vlanIdByName: ReadonlyMap<string, number>): number | null {
+  if (ref == null) return null;
+  if (typeof ref === "number") return validVlanId(ref) ? ref : null;
+  if (typeof ref === "string") {
+    const s = ref.trim();
+    if (!s) return null;
+    if (/^\d+$/.test(s)) { const n = Number(s); return validVlanId(n) ? n : null; }
+    return vlanIdByName.get(s) ?? null;
+  }
+  if (typeof ref === "object") {
+    const o = ref as Record<string, unknown>;
+    for (const k of ["vlan-id", "vlanid", "id", "vlan"]) {
+      const v = o[k];
+      const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
+      if (validVlanId(n)) return n;
+    }
+    for (const k of ["vlan-name", "name", "q_origin_key"]) {
+      const v = o[k];
+      if (typeof v === "string" && v.trim()) {
+        const id = vlanIdByName.get(v.trim());
+        if (id !== undefined) return id;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * A FortiOS VLAN list (`allowed-vlans`, `untagged-vlans`) as sorted ids: an
+ * array of references (see resolveVlanRef), or a "10,20-25" string from older
+ * firmware. The "all" sentinel yields [] — it is reported by
+ * `parseFortiswitchPortVlan` as `trunksAllVlans`, not as a finite list.
+ */
+export function parseFortiosVlanList(raw: unknown, vlanIdByName: ReadonlyMap<string, number> = new Map()): number[] {
+  const out = new Set<number>();
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      const id = resolveVlanRef(entry, vlanIdByName);
+      if (id !== null) out.add(id);
+    }
+  } else if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s || s.toLowerCase() === "all") return [];
+    for (const part of s.split(",")) {
+      const p = part.trim();
+      if (!p) continue;
+      const range = /^(\d+)\s*-\s*(\d+)$/.exec(p);
+      if (range) {
+        const a = Number(range[1]), b = Number(range[2]);
+        if (a <= b) for (let i = a; i <= b; i++) if (validVlanId(i)) out.add(i);
+      } else {
+        const id = resolveVlanRef(p, vlanIdByName);
+        if (id !== null) out.add(id);
+      }
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * A managed-switch port's VLANs: native (`vlan`), tagged = allowed minus
+ * untagged, and whether it trunks every VLAN (`allowed-vlans-all: enable`, or
+ * the literal "all" older firmware puts in `allowed-vlans`). Names resolve
+ * through `vlanIdByName` (fortiosVlanIdByName over the controller's
+ * interfaces); without it a FortiLink switch's ports resolve to nothing.
+ */
+export function parseFortiswitchPortVlan(port: unknown, vlanIdByName: ReadonlyMap<string, number>): FortiswitchPortVlan {
+  const p = (port && typeof port === "object" ? port : {}) as Record<string, unknown>;
+  const allowed = parseFortiosVlanList(p["allowed-vlans"], vlanIdByName);
+  const untagged = new Set(parseFortiosVlanList(p["untagged-vlans"], vlanIdByName));
+  const allRaw = p["allowed-vlans"];
+  return {
+    nativeVlan: resolveVlanRef(p.vlan, vlanIdByName),
+    taggedVlans: allowed.filter((v) => !untagged.has(v)),
+    trunksAllVlans: fortiosBool(p["allowed-vlans-all"]) || (typeof allRaw === "string" && allRaw.trim().toLowerCase() === "all"),
+  };
+}
