@@ -668,9 +668,8 @@ export function methodKeyForHit(hit: ScanHit): string {
  * inline, `ipSource="manual"`, and the `db.ts` extension minting the `manual`
  * AssetSource row. There is deliberately **no `network-scan` sourceKind**:
  * `projectAssetFromSources` has zero rules for a kind outside its union, so
- * such a row would contribute nothing to the projection while
- * `projectionDriftService` compared projection against the stored row — a
- * drift-log generator. Provenance goes where discovery already puts it, the
+ * such a row would contribute nothing to the projection. Provenance goes
+ * where discovery already puts it, the
  * one-time notes boilerplate plus an audit Event.
  *
  * Pins are resolved by the SAME pure resolvers the integration auto-monitor
