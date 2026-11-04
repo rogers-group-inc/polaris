@@ -23,6 +23,7 @@
  * transitions emit one as well.
  */
 
+import { toNonNegativeInt } from "../utils/num.js";
 import { trimTrailing } from "../utils/trimTrailing.js";
 import { tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
@@ -659,14 +660,14 @@ export function getAdMonitorProtocol(os: string | null | undefined): "winrm" | "
 function readClassFromJson(v: Record<string, unknown> | undefined, defaults: MonitorClassSettings): MonitorClassSettings {
   const o = v ?? {};
   return {
-    intervalSeconds:           toPositiveInt(o.intervalSeconds,           defaults.intervalSeconds),
-    failureThreshold:          toPositiveInt(o.failureThreshold,          defaults.failureThreshold),
-    probeTimeoutMs:            toPositiveInt(o.probeTimeoutMs,            defaults.probeTimeoutMs),
-    sampleRetentionDays:       toPositiveInt(o.sampleRetentionDays,       defaults.sampleRetentionDays),
-    telemetryIntervalSeconds:  toPositiveInt(o.telemetryIntervalSeconds,  defaults.telemetryIntervalSeconds),
-    systemInfoIntervalSeconds: toPositiveInt(o.systemInfoIntervalSeconds, defaults.systemInfoIntervalSeconds),
-    telemetryRetentionDays:    toPositiveInt(o.telemetryRetentionDays,    defaults.telemetryRetentionDays),
-    systemInfoRetentionDays:   toPositiveInt(o.systemInfoRetentionDays,   defaults.systemInfoRetentionDays),
+    intervalSeconds:           toNonNegativeInt(o.intervalSeconds,           defaults.intervalSeconds),
+    failureThreshold:          toNonNegativeInt(o.failureThreshold,          defaults.failureThreshold),
+    probeTimeoutMs:            toNonNegativeInt(o.probeTimeoutMs,            defaults.probeTimeoutMs),
+    sampleRetentionDays:       toNonNegativeInt(o.sampleRetentionDays,       defaults.sampleRetentionDays),
+    telemetryIntervalSeconds:  toNonNegativeInt(o.telemetryIntervalSeconds,  defaults.telemetryIntervalSeconds),
+    systemInfoIntervalSeconds: toNonNegativeInt(o.systemInfoIntervalSeconds, defaults.systemInfoIntervalSeconds),
+    telemetryRetentionDays:    toNonNegativeInt(o.telemetryRetentionDays,    defaults.telemetryRetentionDays),
+    systemInfoRetentionDays:   toNonNegativeInt(o.systemInfoRetentionDays,   defaults.systemInfoRetentionDays),
   };
 }
 
@@ -697,12 +698,6 @@ export async function getMonitorSettings(): Promise<MonitorSettings> {
 // The legacy global-tier WRITE path (updateMonitorSettings + mergeClassUpdate)
 // was removed 2026-08 — exported with zero callers since the monitor-settings
 // hierarchy migration; getMonitorSettings (read) stays for capacityService.
-
-function toPositiveInt(v: unknown, fallback: number): number {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) return fallback;
-  return Math.floor(n);
-}
 
 // ─── Monitor settings resolver ──────────────────────────────────────────────
 //
@@ -885,32 +880,32 @@ function tierFromJson(v: Record<string, unknown> | null | undefined): MonitorTie
   const legacyInterval = toPositiveIntOr(o.telemetryIntervalSeconds, null);
   const legacyTimeout  = toPositiveIntOr(o.telemetryTimeoutMs,        null);
   return {
-    intervalSeconds:            toPositiveInt(o.intervalSeconds,           HARDCODED_FLOOR.intervalSeconds),
-    failureThreshold:           toPositiveInt(o.failureThreshold,          HARDCODED_FLOOR.failureThreshold),
-    fastConfirmIntervalSec:     toPositiveInt(o.fastConfirmIntervalSec,    HARDCODED_FLOOR.fastConfirmIntervalSec),
-    probeTimeoutMs:             toPositiveInt(o.probeTimeoutMs,            HARDCODED_FLOOR.probeTimeoutMs),
-    cpuMemoryTimeoutMs:         toPositiveInt(o.cpuMemoryTimeoutMs,        legacyTimeout  ?? HARDCODED_FLOOR.cpuMemoryTimeoutMs),
-    temperatureTimeoutMs:       toPositiveInt(o.temperatureTimeoutMs,      legacyTimeout  ?? HARDCODED_FLOOR.temperatureTimeoutMs),
-    systemInfoTimeoutMs:        toPositiveInt(o.systemInfoTimeoutMs,       HARDCODED_FLOOR.systemInfoTimeoutMs),
-    cpuMemoryIntervalSeconds:   toPositiveInt(o.cpuMemoryIntervalSeconds,  legacyInterval ?? HARDCODED_FLOOR.cpuMemoryIntervalSeconds),
-    temperatureIntervalSeconds: toPositiveInt(o.temperatureIntervalSeconds, legacyInterval ?? HARDCODED_FLOOR.temperatureIntervalSeconds),
-    systemInfoIntervalSeconds:  toPositiveInt(o.systemInfoIntervalSeconds, HARDCODED_FLOOR.systemInfoIntervalSeconds),
+    intervalSeconds:            toNonNegativeInt(o.intervalSeconds,           HARDCODED_FLOOR.intervalSeconds),
+    failureThreshold:           toNonNegativeInt(o.failureThreshold,          HARDCODED_FLOOR.failureThreshold),
+    fastConfirmIntervalSec:     toNonNegativeInt(o.fastConfirmIntervalSec,    HARDCODED_FLOOR.fastConfirmIntervalSec),
+    probeTimeoutMs:             toNonNegativeInt(o.probeTimeoutMs,            HARDCODED_FLOOR.probeTimeoutMs),
+    cpuMemoryTimeoutMs:         toNonNegativeInt(o.cpuMemoryTimeoutMs,        legacyTimeout  ?? HARDCODED_FLOOR.cpuMemoryTimeoutMs),
+    temperatureTimeoutMs:       toNonNegativeInt(o.temperatureTimeoutMs,      legacyTimeout  ?? HARDCODED_FLOOR.temperatureTimeoutMs),
+    systemInfoTimeoutMs:        toNonNegativeInt(o.systemInfoTimeoutMs,       HARDCODED_FLOOR.systemInfoTimeoutMs),
+    cpuMemoryIntervalSeconds:   toNonNegativeInt(o.cpuMemoryIntervalSeconds,  legacyInterval ?? HARDCODED_FLOOR.cpuMemoryIntervalSeconds),
+    temperatureIntervalSeconds: toNonNegativeInt(o.temperatureIntervalSeconds, legacyInterval ?? HARDCODED_FLOOR.temperatureIntervalSeconds),
+    systemInfoIntervalSeconds:  toNonNegativeInt(o.systemInfoIntervalSeconds, HARDCODED_FLOOR.systemInfoIntervalSeconds),
     // Phase 1 wrote lldpIntervalSeconds / lldpTimeoutMs / storageIntervalSeconds
     // / storageTimeoutMs as additive flat keys on the integration-tier JSON
     // before the per-class streams blocks existed. Continue to read them here
     // as the integration-tier default; per-class streams entries override at
     // dispatch time via loadIntegrationTierSettings(.., assetType).
-    lldpIntervalSeconds:        toPositiveInt(o.lldpIntervalSeconds,       HARDCODED_FLOOR.lldpIntervalSeconds),
-    lldpTimeoutMs:              toPositiveInt(o.lldpTimeoutMs,             HARDCODED_FLOOR.lldpTimeoutMs),
-    storageIntervalSeconds:     toPositiveInt(o.storageIntervalSeconds,    HARDCODED_FLOOR.storageIntervalSeconds),
-    storageTimeoutMs:           toPositiveInt(o.storageTimeoutMs,          HARDCODED_FLOOR.storageTimeoutMs),
-    processesIntervalSeconds:   toPositiveInt(o.processesIntervalSeconds,  HARDCODED_FLOOR.processesIntervalSeconds),
-    processesTimeoutMs:         toPositiveInt(o.processesTimeoutMs,        HARDCODED_FLOOR.processesTimeoutMs),
-    eventLogIntervalSeconds:    toPositiveInt(o.eventLogIntervalSeconds,   HARDCODED_FLOOR.eventLogIntervalSeconds),
-    eventLogTimeoutMs:          toPositiveInt(o.eventLogTimeoutMs,         HARDCODED_FLOOR.eventLogTimeoutMs),
-    sampleRetentionDays:        toPositiveInt(o.sampleRetentionDays,       HARDCODED_FLOOR.sampleRetentionDays),
-    telemetryRetentionDays:     toPositiveInt(o.telemetryRetentionDays,    HARDCODED_FLOOR.telemetryRetentionDays),
-    systemInfoRetentionDays:    toPositiveInt(o.systemInfoRetentionDays,   HARDCODED_FLOOR.systemInfoRetentionDays),
+    lldpIntervalSeconds:        toNonNegativeInt(o.lldpIntervalSeconds,       HARDCODED_FLOOR.lldpIntervalSeconds),
+    lldpTimeoutMs:              toNonNegativeInt(o.lldpTimeoutMs,             HARDCODED_FLOOR.lldpTimeoutMs),
+    storageIntervalSeconds:     toNonNegativeInt(o.storageIntervalSeconds,    HARDCODED_FLOOR.storageIntervalSeconds),
+    storageTimeoutMs:           toNonNegativeInt(o.storageTimeoutMs,          HARDCODED_FLOOR.storageTimeoutMs),
+    processesIntervalSeconds:   toNonNegativeInt(o.processesIntervalSeconds,  HARDCODED_FLOOR.processesIntervalSeconds),
+    processesTimeoutMs:         toNonNegativeInt(o.processesTimeoutMs,        HARDCODED_FLOOR.processesTimeoutMs),
+    eventLogIntervalSeconds:    toNonNegativeInt(o.eventLogIntervalSeconds,   HARDCODED_FLOOR.eventLogIntervalSeconds),
+    eventLogTimeoutMs:          toNonNegativeInt(o.eventLogTimeoutMs,         HARDCODED_FLOOR.eventLogTimeoutMs),
+    sampleRetentionDays:        toNonNegativeInt(o.sampleRetentionDays,       HARDCODED_FLOOR.sampleRetentionDays),
+    telemetryRetentionDays:     toNonNegativeInt(o.telemetryRetentionDays,    HARDCODED_FLOOR.telemetryRetentionDays),
+    systemInfoRetentionDays:    toNonNegativeInt(o.systemInfoRetentionDays,   HARDCODED_FLOOR.systemInfoRetentionDays),
     responseTimePolling:        readPollingFromJson(pollingBlock, "responseTime") ?? readPollingFromJson(flat, "responseTimePolling"),
     cpuMemoryPolling:           readPollingFromJson(pollingBlock, "cpuMemory")    ?? readPollingFromJson(flat, "cpuMemoryPolling")    ?? readPollingFromJson(pollingBlock, "telemetry") ?? readPollingFromJson(flat, "telemetryPolling"),
     temperaturePolling:         readPollingFromJson(pollingBlock, "temperature")  ?? readPollingFromJson(flat, "temperaturePolling")  ?? readPollingFromJson(pollingBlock, "telemetry") ?? readPollingFromJson(flat, "telemetryPolling"),
@@ -4177,7 +4172,7 @@ async function probeSnmp(
   timeoutMs: number,
   wantDescr = false,
 ): Promise<ProbeResult> {
-  const port = toPositiveInt(config.port, 161);
+  const port = toNonNegativeInt(config.port, 161);
   return withSnmpGate(host, port, () => new Promise<ProbeResult>((resolve) => {
     // Reset start INSIDE the gate so reported responseTimeMs reflects only
     // the device round-trip, not the FIFO wait behind a concurrent heavy
@@ -4242,7 +4237,7 @@ async function probeSnmp(
 
 async function probeWinRm(host: string, config: Record<string, unknown>, start: number, timeoutMs: number): Promise<ProbeResult> {
   const useHttps = config.useHttps !== false;
-  const port = toPositiveInt(config.port, useHttps ? 5986 : 5985);
+  const port = toNonNegativeInt(config.port, useHttps ? 5986 : 5985);
   const username = String(config.username || "");
   const password = String(config.password || "");
   if (!username || !password) return finish(start, false, "WinRM credential incomplete");
@@ -4298,7 +4293,7 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
 }
 
 async function probeSsh(host: string, config: Record<string, unknown>, start: number, timeoutMs: number): Promise<ProbeResult> {
-  const port = toPositiveInt(config.port, 22);
+  const port = toNonNegativeInt(config.port, 22);
   const username = String(config.username || "");
   const password = typeof config.password === "string" ? config.password : "";
   const privateKey = typeof config.privateKey === "string" ? config.privateKey : "";
@@ -7435,7 +7430,7 @@ const OID = {
 };
 
 function buildSnmpSession(host: string, config: Record<string, unknown>, timeoutMs?: number): any {
-  const port = toPositiveInt(config.port, 161);
+  const port = toNonNegativeInt(config.port, 161);
   const version = config.version === "v3" ? "v3" : "v2c";
   // Caller-supplied timeout (resolved from the per-stream tier hierarchy)
   // overrides the legacy floor — but only when positive. A 0 or negative
@@ -7607,7 +7602,7 @@ async function withSnmpSession<T>(host: string, config: Record<string, unknown>,
   // doesn't overlap with the cheap response-time probe on the same agent.
   // probeSnmp (which builds its own session for the sysUpTime get) also
   // acquires the same gate — both paths key on host:port so they FIFO.
-  const port = toPositiveInt(config.port, 161);
+  const port = toNonNegativeInt(config.port, 161);
   return withSnmpGate(host, port, async () => {
     const session = buildSnmpSession(host, config, timeoutMs);
     // net-snmp emits 'error' rather than throwing for socket/listener errors;
