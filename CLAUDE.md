@@ -80,7 +80,7 @@ Both are fed from this repo's commits, not edited on their own schedule: the `/p
 
 ## Architecture
 
-Code lives in `src/` (`api/routes/`, `api/middleware/`, `services/`, `jobs/`, `utils/`, `models/`, `setup/`). Frontend is vanilla JavaScript in `public/`. Database schema in `prisma/schema.prisma`. Migrations in `prisma/migrations/`. Fresh-install + update scripts and systemd units in `deploy/`; maintenance utilities (audit, MIB fetcher, doc-check, FMG smoke tests) in `scripts/`. Operator-facing docs in `docs/`.
+Code lives in `src/` (`api/routes/`, `api/middleware/`, `services/`, `jobs/`, `utils/`, `setup/`). Frontend is vanilla JavaScript in `public/`. Database schema in `prisma/schema.prisma`. Migrations in `prisma/migrations/`. Fresh-install + update scripts and systemd units in `deploy/`; maintenance utilities (audit, MIB fetcher, doc-check, FMG smoke tests) in `scripts/`. Operator-facing docs in `docs/`.
 
 > The file-by-file map is `polaris-change-impact` → references/file-map/; writer/reader relationships are its cross-cutting and per-service entries; canonical UI implementations are in `polaris-ui-canon`. Process roles (`web` / `monitor` / `discovery` / `dash` / `all`) are gated by `src/utils/role.ts` — see `polaris-monitoring-discovery` → process-roles-runtime.md.
 

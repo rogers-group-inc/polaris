@@ -1,4 +1,4 @@
-# File map — src/ root, src/dash/, src/api/, src/setup/, src/models/
+# File map — src/ root, src/dash/, src/api/, src/setup/
 
 The Express app, routers, middleware, the dash listener, the first-run wizard and shared models.
 
@@ -90,6 +90,4 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   │   ├── setupServer.ts           # Setup server initialization; generates the one-time setup token before the listener opens and prints it in the banner
 │   │   ├── setupToken.ts            # One-time setup token (business rule 108): `loadOrCreateSetupToken` (`POLARIS_SETUP_TOKEN`, else `<state>/.setup-token`, else random 0600), `requireSetupToken` (X-Setup-Token, constant-time, fails CLOSED when none is loaded), `discardSetupToken` on finalize. Guards /preflight, /generate-secret, /test-connection, /finalize and /verify-token. Pinned by tests/unit/setupToken.test.ts
 │   │   └── detectSetup.ts           # Resolves setup state: configured / needs-setup / locked
-│   ├── models/
-│   │   └── types.ts                 # Shared TypeScript interfaces
 ```

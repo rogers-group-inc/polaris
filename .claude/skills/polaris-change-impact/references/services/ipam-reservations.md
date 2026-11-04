@@ -108,27 +108,6 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
-## services/ipService.ts
-
-**What it owns:** IP validation, availability checking, and subnet capacity reporting.
-
-**Public API:** assertValidIp, assertValidCidr, assertIpInSubnet, isIpAvailable, getActiveReservationsForSubnet, subnetCapacity.
-
-**Used by:** src/api/routes/reservations.ts (multiple callers), src/services/reservationService.ts (ipInCidr, detectIpVersion), src/services/reservationPushService.ts (isValidIpAddress).
-
-**Invariants:**
-- IPv4-only for capacity calculations (IPv6 raises 400)
-- All CIDR inputs are normalized (host bits zeroed)
-- IP addresses must be validated before subnet containment checks
-- Active reservations indexed on subnetId + status = "active"
-
-**When changing this:**
-- Review all calls to assertValidIp/assertValidCidr in routes (ipAddress validation gates many Reservation operations)
-- Check utilization calculations depend on subnetCapacity (affects Dashboard utilization card)
-- Test with both IPv4 and IPv6 where applicable
-
----
-
 ## services/duplicateIpConflictService.ts
 
 **What it owns:** The `duplicate-ip` Conflict flavour end to end (business rule 40) — detection, the raise/refresh/auto-close lifecycle, and BOTH resolution verbs (reassign one member to a new address; merge members that are one device recorded twice). Sibling of `ipOverrideService` (same JSON-path dedup pattern, same auto-resolution convention), but detection-driven rather than write-driven.
@@ -572,12 +551,12 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** listSubnets, getSubnet, createSubnet, allocateNextSubnet, bulkAllocate, previewBulkAllocate, resolveBlockForCidr (most specific containing block, same IP version, via `utils/cidr.ts → mostSpecificContaining()`), updateSubnet, listMoveTargets + moveSubnet (re-parent onto another block), getSubnetIps, deleteSubnet, buildIpContexts + IpContext (batched IP → most-specific containing subnet — id, cidr, name — + active-reservation summary; THE single implementation of the `cidr >>= ip` / `masklen DESC` containment SQL).
 
-**Cross-service deps:** ipService (indirectly via cidrContains/cidrOverlaps from utils/cidr.ts), subnetExclusionService (`assertNotExcluded` inside `createSubnetRowChecked`; `loadExclusions` + `exclusionsOverlapping` in the two allocators — business rule 42).
+**Cross-service deps:** subnetExclusionService (`assertNotExcluded` inside `createSubnetRowChecked`; `loadExclusions` + `exclusionsOverlapping` in the two allocators — business rule 42).
 
 **Used by:** src/api/routes/subnets.ts (all operations), src/api/routes/assets.ts (buildIpContexts — per-row `ipContext` for the asset table's View Lease button and its default-hidden Network column, which prints `subnetName`), src/services/dnsResolvedReservationService.ts (buildIpContexts — target-subnet resolution in the reconciler), src/services/ipContextService.ts (buildIpContexts — the containing network behind the Add Asset IP cross-reference; deliberately reuses this rather than re-implementing the `cidr >>= ip` / `masklen DESC` query), src/services/reservationService.ts (subnet lookups, status checks), src/services/utilizationService.ts (subnet status grouping). Browser-side consumers of `listSubnets`' rows: public/js/subnets.js (the IPAM → Networks list, its row menu's delete/archive confirmations and both exports) and public/js/block-panel.js (the block drill-in panel's network table).
 
 **Invariants:**
-- **`listSubnets` counts reservations TWICE, and the two counts answer different questions** (business rule 69). `_count.reservations` is FILTERED to `status: "active"` with an `ipAddress` — addresses actually held, which is what the Networks list's Reservations column shows and what its `utilizationPercent` is a percentage of. `totalReservations` (a `groupBy` scoped by the same WHERE) is every row whatever its status, which is what a cascade delete removes and what the delete / archive confirmations must quote. Released and expired reservations are kept forever (reservationService soft-releases; only `cleanupStaleDnsResolvedReleased` prunes any of them), so the unfiltered count read 300 reservations on a /24 once a DHCP-leased network had churned. A whole-subnet reservation (`ipAddress` null) is excluded from the filtered count deliberately — it holds no individual address and already shows as status `reserved`. The numerator matches ipService.subnetCapacity and the IP panel's footer bar; those three agree or none of them is trusted
+- **`listSubnets` counts reservations TWICE, and the two counts answer different questions** (business rule 69). `_count.reservations` is FILTERED to `status: "active"` with an `ipAddress` — addresses actually held, which is what the Networks list's Reservations column shows and what its `utilizationPercent` is a percentage of. `totalReservations` (a `groupBy` scoped by the same WHERE) is every row whatever its status, which is what a cascade delete removes and what the delete / archive confirmations must quote. Released and expired reservations are kept forever (reservationService soft-releases; only `cleanupStaleDnsResolvedReleased` prunes any of them), so the unfiltered count read 300 reservations on a /24 once a DHCP-leased network had churned. A whole-subnet reservation (`ipAddress` null) is excluded from the filtered count deliberately — it holds no individual address and already shows as status `reserved`. The numerator matches the IP panel's footer bar; the two agree or neither is trusted
 - `usableHosts` / `utilizationPercent` are `null` for IPv6 and for any CIDR `usableHostCount` refuses — never 0, which the cell would draw as an empty bar (a positive claim that the network is free)
 - Subnet must be contained within parent block CIDR
 - **`deleteSubnet`'s 409 counts active reservations EXCEPT `interface_ip`** (rule 4) and takes `{ force }`; the service trusts the flag, so the admin-equivalent check lives in the route (`callerIsAdminEquivalent`). A forced delete is a cascade — no per-row `releaseReservation`, so nothing is unpushed from a FortiGate — and its `subnet.deleted` Event is `warning` with `details.forced`.
