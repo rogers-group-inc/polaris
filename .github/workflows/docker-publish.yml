@@ -75,8 +75,19 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Unused files, unused / unlisted dependencies and unresolved imports
+      # fail; unused exports are warnings until the code-quality ledger's
+      # un-export batch lands (knip.jsonc, docs/CODE-QUALITY-LEDGER.md).
+      - name: Dead code (knip)
+        run: npm run check:dead
+
       - name: Run unit tests
         run: npx vitest run tests/unit
+
+      # A report, never a gate: .jscpd.json has no threshold, so this exits 0.
+      # The summary table in the log is the trend to watch.
+      - name: Duplication report (informational)
+        run: npm run check:dup -- --reporters console --silent
 
   integration:
     runs-on: ubuntu-24.04
