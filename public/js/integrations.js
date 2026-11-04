@@ -8644,6 +8644,24 @@ function _makeSavedQueryStore(storageKey, version, presets) {
     },
   };
 }
+// The FortiGate picker's suggestions (FortiManager Query API window): the
+// discovered gates whose FortiManager name, hostname or address contains the
+// typed text, prefix matches first, capped. An empty query lists every gate.
+// Pure — the wiring is _wireFmgGatePicker.
+var FMG_GATE_SUGGEST_CAP = 50;
+function _fmgGateSuggestions(gates, query) {
+  var q = String(query || "").trim().toLowerCase();
+  var list = Array.isArray(gates) ? gates : [];
+  if (!q) return list.slice(0, FMG_GATE_SUGGEST_CAP);
+  var prefix = [];
+  var inner = [];
+  list.forEach(function (g) {
+    var fields = [g.deviceName, g.hostname, g.ipAddress].map(function (v) { return String(v || "").toLowerCase(); });
+    if (fields.some(function (f) { return f.indexOf(q) === 0; })) prefix.push(g);
+    else if (fields.some(function (f) { return f.indexOf(q) > 0; })) inner.push(g);
+  });
+  return prefix.concat(inner).slice(0, FMG_GATE_SUGGEST_CAP);
+}
 // </fortinet-query-presets>
 
 function _renderSavedQuerySelect(selectId, queries, selectValue) {
@@ -8732,6 +8750,97 @@ function _fmgRenderSavedSelect(queries, mode, selectValue) {
     }).join("");
 }
 
+// The FortiGate picker of the FortiManager Query API window — the .aw-suggest
+// combobox recipe (polaris-ui-canon: never <datalist>). Click or focus lists
+// every discovered gate; typing filters; ArrowUp/Down + Enter pick; Escape
+// closes the list without closing the modal. Any typed name is still sent.
+function _wireFmgGatePicker(integrationId) {
+  var input = document.getElementById("fmg-fgt-device");
+  var sug = document.getElementById("fmg-fgt-device-suggest");
+  if (!input || !sug) return;
+  var gates = [];
+  var state = "loading";   // loading | ready | error
+  var lastQuery = "";
+
+  function render(query) {
+    lastQuery = query;
+    var html;
+    if (state === "loading") {
+      html = '<div class="aw-suggest-empty">Loading the discovered FortiGates…</div>';
+    } else if (state === "error") {
+      html = '<div class="aw-suggest-empty">Couldn’t load the discovered FortiGates. Typing a name still works.</div>';
+    } else if (!gates.length) {
+      html = '<div class="aw-suggest-empty">No FortiGates discovered yet. Type a FortiManager device name.</div>';
+    } else {
+      var hits = _fmgGateSuggestions(gates, query);
+      html = hits.length
+        ? hits.map(function (g) {
+            var detail = [g.hostname, g.ipAddress, g.status && g.status !== "active" ? g.status : ""].filter(Boolean).join(" · ");
+            return '<div class="aw-suggest-item" role="option" data-val="' + escapeHtml(g.deviceName) + '" title="' + escapeHtml(g.deviceName + (detail ? " — " + detail : "")) + '">' +
+              escapeHtml(g.deviceName) +
+              (detail ? ' <span style="color:var(--color-text-tertiary)">' + escapeHtml(detail) + '</span>' : "") +
+            '</div>';
+          }).join("")
+        : '<div class="aw-suggest-empty">No discovered FortiGate matches. It will be sent as typed.</div>';
+    }
+    sug.innerHTML = html;
+    sug.classList.add("open");
+  }
+  function close() { sug.classList.remove("open"); }
+  function pick(value) {
+    input.value = value;
+    close();
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  // Focus / click show the whole roster (a remembered name in the box must
+  // not hide the others); typing narrows it.
+  input.addEventListener("focus", function () { render(""); });
+  input.addEventListener("click", function () { if (!sug.classList.contains("open")) render(""); });
+  input.addEventListener("input", function () { render(input.value); });
+  input.addEventListener("blur", function () {
+    // Delay so a mousedown on a suggestion (which fires before blur completes) still lands.
+    setTimeout(function () { if (!sug.contains(document.activeElement)) close(); }, 150);
+  });
+  sug.addEventListener("mousedown", function (e) {
+    var item = e.target.closest && e.target.closest(".aw-suggest-item");
+    if (!item) return;
+    e.preventDefault(); // keep focus on the input
+    pick(item.getAttribute("data-val"));
+  });
+  input.addEventListener("keydown", function (e) {
+    var isOpen = sug.classList.contains("open");
+    if (e.key === "Escape") {
+      if (isOpen) { close(); e.stopPropagation(); } // keep the modal open
+      return;
+    }
+    if (e.key === "ArrowDown" && !isOpen) { e.preventDefault(); render(input.value); return; }
+    if (!isOpen) return;
+    var items = Array.prototype.slice.call(sug.querySelectorAll(".aw-suggest-item"));
+    if (!items.length) return;
+    var idx = items.findIndex(function (i) { return i.classList.contains("active"); });
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      var next = e.key === "ArrowDown" ? Math.min(idx + 1, items.length - 1) : Math.max(idx - 1, 0);
+      items.forEach(function (i) { i.classList.remove("active"); });
+      items[next].classList.add("active");
+      if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && idx >= 0) {
+      e.preventDefault();
+      pick(items[idx].getAttribute("data-val"));
+    }
+  });
+
+  api.integrations.fortigates(integrationId).then(function (r) {
+    gates = (r && r.fortigates) || [];
+    state = "ready";
+  }).catch(function () {
+    state = "error";
+  }).then(function () {
+    if (sug.classList.contains("open")) render(lastQuery);
+  });
+}
+
 function openApiQueryModal(id, adom, useProxy) {
   adom = adom || "root";
   if (useProxy === undefined) useProxy = true;
@@ -8768,13 +8877,16 @@ function openApiQueryModal(id, adom, useProxy) {
     '</div>' +
     '<hr style="border:none;border-top:1px solid var(--color-border);margin:0 0 0.75rem">' +
     // ─── FortiGate (both modes) ──────────────────────────────────────────
-    // A text box with a suggestion list: pick one of the integration's
-    // discovered gates (GET /integrations/:id/fortigates fills the datalist)
-    // or type any FortiManager device name.
+    // A text box with a suggestion list (the .aw-suggest combobox recipe —
+    // never <datalist>, which most browsers won't open on click): pick one of
+    // the integration's discovered gates (GET /integrations/:id/fortigates) or
+    // type any FortiManager device name.
     '<div class="form-group">' +
       '<label for="fmg-fgt-device">FortiGate</label>' +
-      '<input type="text" id="fmg-fgt-device" list="fmg-fgt-device-list" autocomplete="off" spellcheck="false" placeholder="Choose a discovered FortiGate or type its FortiManager name">' +
-      '<datalist id="fmg-fgt-device-list"></datalist>' +
+      '<span class="aw-combo aw-combo-dim" id="fmg-fgt-device-combo">' +
+        '<input type="text" id="fmg-fgt-device" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="fmg-fgt-device-suggest" placeholder="Choose a discovered FortiGate or type its FortiManager name">' +
+        '<div class="aw-suggest" id="fmg-fgt-device-suggest" role="listbox"></div>' +
+      '</span>' +
       '<p class="hint" id="fmg-fgt-device-hint"></p>' +
     '</div>' +
     // ─── FMG (JSON-RPC) form ─────────────────────────────────────────────
@@ -8893,16 +9005,7 @@ function openApiQueryModal(id, adom, useProxy) {
   }
   _fmgApplyMode("fmg");
 
-  // The discovered FortiGates, as suggestions. The field keeps taking any typed
-  // name, so a failed or empty lookup only means no suggestions.
-  api.integrations.fortigates(id).then(function (r) {
-    var list = document.getElementById("fmg-fgt-device-list");
-    if (!list) return;
-    list.innerHTML = ((r && r.fortigates) || []).map(function (g) {
-      var label = [g.hostname, g.ipAddress, g.status && g.status !== "active" ? g.status : ""].filter(Boolean).join(" · ");
-      return '<option value="' + escapeHtml(g.deviceName) + '"' + (label ? ' label="' + escapeHtml(label) + '"' : "") + "></option>";
-    }).join("");
-  }).catch(function () { /* typing a name still works */ });
+  _wireFmgGatePicker(id);
 
   fmgRadio.addEventListener("change", function () { if (this.checked) _fmgApplyMode("fmg"); });
   fgtRadio.addEventListener("change", function () { if (this.checked) _fmgApplyMode("fortigate"); });

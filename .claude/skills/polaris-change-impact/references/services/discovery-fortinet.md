@@ -252,13 +252,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/integrationFortigateRosterService.ts
 
-**What it owns:** the FortiGates a FortiManager / FortiGate integration has discovered, by the name their queries take — FortiManager's device name (`fortinetTopology.deviceName`, which routinely differs from `Asset.hostname`). Feeds the FortiGate picker (a text box with a `<datalist>`) of the FortiManager Query API window.
+**What it owns:** the FortiGates a FortiManager / FortiGate integration has discovered, by the name their queries take — FortiManager's device name (`fortinetTopology.deviceName`, which routinely differs from `Asset.hostname`). Feeds the FortiGate picker of the FortiManager Query API window (an `.aw-suggest` combobox, never a `<datalist>`).
 
 **Public API:** `listIntegrationFortigates(integrationId)` (404 unknown id, 400 for a type other than `fortimanager` / `fortigate`); `fortigateRosterFromAssets(rows)` (pure, unit-tested).
 
 **Cross-service deps:** prisma only (one `integration.findUnique` + one `asset.findMany` with a tight `select`).
 
-**Used by:** `src/api/routes/integrations.ts` `GET /:id/fortigates` (thin wrapper, behind the router-level `integrations:write` — the Query API's own gate); `public/js/api.js` `api.integrations.fortigates`; `public/js/integrations.js` `openApiQueryModal`, which fills `#fmg-fgt-device-list` on open and substitutes the field into `<device-name>` at Send (JSON-escaped; the params box keeps the placeholder).
+**Used by:** `src/api/routes/integrations.ts` `GET /:id/fortigates` (thin wrapper, behind the router-level `integrations:write` — the Query API's own gate); `public/js/api.js` `api.integrations.fortigates`; `public/js/integrations.js` `openApiQueryModal` → `_wireFmgGatePicker` (fetches on open; `_fmgGateSuggestions` matches name / hostname / address, prefix first, capped at `FMG_GATE_SUGGEST_CAP`) and Send, which substitutes the field into `<device-name>` (JSON-escaped; the params box keeps the placeholder). Pinned by `tests/unit/fmgGatePickerDom.test.ts` and `tests/unit/fortinetQueryPresets.test.ts`.
 
 **Invariants:**
 - **The name is FortiManager's**, never the hostname when a `deviceName` exists — `/adom/<adom>/device/<name>` and the direct-mode resolver key on it. Hostname is the fallback only for a row with no stamp.

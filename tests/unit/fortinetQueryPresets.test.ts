@@ -171,6 +171,35 @@ describe("FortiGate presets cover every discovery query", () => {
   });
 });
 
+describe("FortiGate picker suggestions (_fmgGateSuggestions)", () => {
+  const gates = [
+    { deviceName: "BRANCH-7-61F", hostname: "branch7", ipAddress: "10.7.0.1" },
+    { deviceName: "HQ-CLUSTER", hostname: "hq-a", ipAddress: "10.1.1.1" },
+    { deviceName: "SITE-HQ-ANNEX", hostname: null, ipAddress: "10.1.9.1" },
+  ];
+  const names = (q: string) =>
+    (JSON.parse(JSON.stringify(sandbox._fmgGateSuggestions(gates, q))) as any[]).map((g) => g.deviceName);
+
+  it("lists every gate for an empty query", () => {
+    expect(names("")).toEqual(["BRANCH-7-61F", "HQ-CLUSTER", "SITE-HQ-ANNEX"]);
+  });
+
+  it("matches name, hostname or address, case-insensitively, prefix matches first", () => {
+    expect(names("hq")).toEqual(["HQ-CLUSTER", "SITE-HQ-ANNEX"]);
+    expect(names("BRANCH7")).toEqual(["BRANCH-7-61F"]);
+    expect(names("10.1.")).toEqual(["HQ-CLUSTER", "SITE-HQ-ANNEX"]);
+  });
+
+  it("returns nothing for no match (the typed name is still sent as typed)", () => {
+    expect(names("nowhere")).toEqual([]);
+  });
+
+  it("caps the list", () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({ deviceName: `GATE-${i}` }));
+    expect(sandbox._fmgGateSuggestions(many, "").length).toBe(sandbox.FMG_GATE_SUGGEST_CAP);
+  });
+});
+
 describe("saved-query store", () => {
   const make = (version: number, presets: unknown[]) =>
     sandbox._makeSavedQueryStore("test-store", version, presets);
