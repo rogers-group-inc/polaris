@@ -38,6 +38,7 @@
  *    the equipment that publishes no private MIB worth walking.
  */
 
+import { escapeRegExp } from "./regex.js";
 import { parseVendorSysDescr } from "./snmpDescrIdentity.js";
 
 /** The system-group objects worth reading. Scalars, hence the trailing .0. */
@@ -265,7 +266,7 @@ export function vendorFromSysDescr(sysDescr: string | undefined): string | undef
   if (!s) return undefined;
   const ordered = [...DESCR_VENDOR_WORDS].sort((a, b) => b.length - a.length);
   for (const word of ordered) {
-    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = escapeRegExp(word);
     if (new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(s)) return word;
   }
   return undefined;

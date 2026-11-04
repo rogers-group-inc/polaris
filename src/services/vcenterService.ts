@@ -31,6 +31,7 @@
  * vCenter) with a `${integrationId}:${moref}` fallback — see pickVmExternalId.
  */
 
+import { escapeRegExp } from "../utils/regex.js";
 import { request as httpsRequest } from "node:https";
 import { AppError } from "../utils/errors.js";
 import { xmlEscape } from "../utils/winrm.js";
@@ -580,7 +581,7 @@ export function parseObjRef(block: string): string | null {
 /** Read a scalar propSet value by property name from an object block. Exported for tests. */
 export function parsePropValue(block: string, name: string): string | null {
   const re = new RegExp(
-    `<propSet><name>${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
+    `<propSet><name>${escapeRegExp(name)}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
   );
   return block.match(re)?.[1]?.trim() ?? null;
 }
@@ -595,7 +596,7 @@ function parsePropNumber(block: string, name: string): number | null {
 /** The raw propSet XML (nested values like `host` mounts or `info`) by property name. */
 function parsePropXml(block: string, name: string): string | null {
   const re = new RegExp(
-    `<propSet><name>${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
+    `<propSet><name>${escapeRegExp(name)}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
   );
   return block.match(re)?.[1] ?? null;
 }

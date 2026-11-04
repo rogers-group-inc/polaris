@@ -24,6 +24,7 @@
  * (services/discovery/workloadSync.ts); this file knows Unraid, nothing else.
  */
 
+import { escapeRegExp } from "../utils/regex.js";
 import { graphqlHasBlockString, isQueryOnlyGraphql } from "../utils/graphqlOperations.js";
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
@@ -423,7 +424,7 @@ export function applyUnraidStorageLayout(pools: WorkloadPool[], data: any): Work
       const name = str(d?.name);
       if (!name) return false;
       if (name === pool.name) return true;
-      if (!new RegExp(`^${pool.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\d+$`).test(name)) return false;
+      if (!new RegExp(`^${escapeRegExp(pool.name)}\\d+$`).test(name)) return false;
       // A longer pool name that this member also extends wins ("cache" vs "cache_nvme").
       return !pools.some((o) => o.name.length > pool.name.length && name.startsWith(o.name));
     });

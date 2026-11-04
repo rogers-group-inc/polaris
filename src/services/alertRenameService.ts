@@ -20,6 +20,7 @@
  * apart.
  */
 
+import { escapeRegExp } from "../utils/regex.js";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 
@@ -28,7 +29,7 @@ import { logger } from "../utils/logger.js";
 // device. A trailing '.' is a sentence ending, not part of the name, unless a
 // name character follows it ("GATE-1.corp").
 function wholeNamePattern(name: string): RegExp {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = escapeRegExp(name);
   return new RegExp(`(?<![A-Za-z0-9_.-])${escaped}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])`, "g");
 }
 
