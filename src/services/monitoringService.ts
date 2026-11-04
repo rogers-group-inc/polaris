@@ -82,6 +82,7 @@ import {
 } from "../utils/snmpIpAddressTable.js";
 import { parseInterfaceIpv6 } from "../utils/fortiosIpv6.js";
 import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
+import { FORTIOS_INTERFACE_CMDB_FORMAT } from "../utils/fortiosInterfaceRef.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -6566,7 +6567,7 @@ async function collectSystemInfoFortinet(
   // interfaces[] (matching the prior behavior where monitor failure with
   // no interfaces threw, but partial success returned).
   const endCmdb = startPhase("systeminfo.rest.cmdb_interface");
-  const cmdbInterfacePromise = fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root" }, timeoutMs })
+  const cmdbInterfacePromise = fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root", format: FORTIOS_INTERFACE_CMDB_FORMAT }, timeoutMs })
     .catch(() => null as any)
     .then((res) => { endCmdb({ ok: res != null }); return res; });
   // Software switch members (applyFortiSoftwareSwitchMembers). Best-effort: a
@@ -6799,7 +6800,7 @@ export function fortilinkInterfaceNamesFromCmdb(cmdbRes: unknown): Set<string> {
  * failure degrades to "collect all LLDP" rather than dropping neighbors.
  */
 async function fetchFortilinkInterfaceSet(fg: FortiGateConfig, timeoutMs?: number): Promise<Set<string>> {
-  const res = await fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root" }, timeoutMs })
+  const res = await fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root", format: FORTIOS_INTERFACE_CMDB_FORMAT }, timeoutMs })
     .catch(() => null as any);
   return fortilinkInterfaceNamesFromCmdb(res);
 }

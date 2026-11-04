@@ -57,7 +57,7 @@ import { parseVipServerInfo } from "./fortimanagerService.js";
 import { findFortiswitchUplinkPorts } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
-import { fortiosVlanParentOf } from "../utils/fortiosInterfaceRef.js";
+import { fortiosVlanParentOf, FORTIOS_INTERFACE_CMDB_FORMAT } from "../utils/fortiosInterfaceRef.js";
 
 export interface FortiGateConfig {
   host: string;
@@ -1319,7 +1319,9 @@ export async function discoverDhcpSubnets(
   // own await re-raises it into its catch and its "Failed to query interfaces"
   // log, as when it made its own call.
   const interfaceListPromise = fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", {
-    query: { ...queryBase },
+    // Only the attributes Polaris reads (a field missing from the list is
+    // silently absent — add it there first).
+    query: { ...queryBase, format: FORTIOS_INTERFACE_CMDB_FORMAT },
     signal,
   });
   try {
