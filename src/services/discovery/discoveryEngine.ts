@@ -44,6 +44,7 @@ import {
   decideInfraDhcpBinding,
   reservationBelongsToInfraDevice,
 } from "../../utils/infraDhcpBinding.js";
+import { dhcpExpiryPatch } from "../../utils/dhcpLeaseExpiry.js";
 import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
 import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX, AD_GUID_TAG_PREFIX, SID_TAG_PREFIX } from "../../utils/assetSourceTags.js";
 import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanagerService.js";
@@ -5715,13 +5716,21 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           // allowlist) survive untouched.
           const needsSourceFlip = existingRes.sourceType !== proposedSourceType;
           const needsStalenessBump = entry.seenLeased && isDhcpReservation;
-          if (needsSourceFlip) {
-            // Mixed update — the new sourceType differs per row, so we can't
-            // bulk these (updateMany only supports one common data shape).
-            // Issue inline as one per-row update; the staleness bump rides
-            // along when both apply.
+          // A renewed lease carries a new end; a lease promoted to a
+          // reservation must stop expiring. Without this the row kept the
+          // expiry it was created with, expireStaleReservations retired a
+          // live lease, and the next pass re-created it under a new id
+          // (utils/dhcpLeaseExpiry.ts).
+          const expiryPatch = dhcpExpiryPatch(existingRes.expiresAt, proposedSourceType, proposedExpiresAt);
+          if (needsSourceFlip || expiryPatch) {
+            // Mixed update — the new sourceType / lease end differs per row,
+            // so we can't bulk these (updateMany only supports one common
+            // data shape). Issue inline as one per-row update; the staleness
+            // bump rides along when both apply. A renewal lands here once
+            // per lease renewal, not once per pass.
             const update: Record<string, unknown> = {
               sourceType: proposedSourceType,
+              ...(expiryPatch ?? {}),
             };
             if (
               existingRes.owner === "dhcp-lease" ||
@@ -5743,6 +5752,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
               data: update,
             });
             phase5Stats.writesReservationUpdate++;
+            if (expiryPatch) existingRes.expiresAt = expiryPatch.expiresAt;
           } else if (needsStalenessBump) {
             // Pure staleness bump — defer to one bulk updateMany at end of
             // phase. Every row in this set gets the same data shape
