@@ -14,6 +14,20 @@ var _assetsTotal = 0;
 var _assetsSF = null;
 var _assetsLayout = null;
 var _assetsSelected = new Set();
+
+// Business rule 141 (e): the per-device verbs read the server's per-row
+// verdict (`canEdit` / `canQuarantine`) through app.js's canEditAsset /
+// canQuarantineAsset. The shims fall back to the role-level helpers when
+// app.js is not loaded (the DOM test harnesses eval this file alone), the
+// same `typeof … === "function"` posture the rest of the file takes.
+function _canEditAsset(a) {
+  if (typeof canEditAsset === "function") return canEditAsset(a);
+  return typeof canManageAssets === "function" && canManageAssets();
+}
+function _canQuarantineAsset(a) {
+  if (typeof canQuarantineAsset === "function") return canQuarantineAsset(a);
+  return typeof canQuarantineAssets === "function" && canQuarantineAssets();
+}
 // Selection can span pages, but _assetsData only holds the current page, so we
 // remember a little metadata (status, assetType) for every selected asset to
 // drive the bulk-bar button visibility even after the operator pages away.
@@ -2067,6 +2081,28 @@ function _assetsUpdateBulkBar() {
    "assets-bulk-maint-btn",
    "assets-bulk-quarantine-btn", "assets-bulk-unquarantine-btn"
   ].forEach(function (id) { var b = document.getElementById(id); if (b) b.disabled = count === 0; });
+  // Rule 141 (e): a bulk edit refuses the whole selection when one row is out
+  // of this caller's reach, so the verbs grey out with the reason instead of
+  // 403ing after the click. Full Read-Write never greys here.
+  if (count > 0 && !permAtLeast("assets", "fullwrite")) {
+    var outOfScope = 0, outOfQScope = 0, outOfMScope = 0;
+    _assetsData.forEach(function (r) {
+      if (!_assetsSelected.has(r.id)) return;
+      if (r.canEdit === false) outOfScope++;
+      if (r.canQuarantine === false) outOfQScope++;
+      if (r.canMaintain === false) outOfMScope++;
+    });
+    var reason = function (n) { return n + " of the selected device" + (n === 1 ? " is" : "s are") + " not yours to change (not added by you, and carrying none of your tags)"; };
+    [["assets-bulk-type-btn", outOfScope], ["assets-bulk-state-btn", outOfScope], ["assets-bulk-monitor-btn", outOfScope],
+     ["assets-bulk-tags-btn", outOfScope], ["assets-bulk-delete-btn", outOfScope], ["assets-bulk-edit-btn", outOfScope],
+     ["assets-bulk-quarantine-btn", outOfQScope], ["assets-bulk-unquarantine-btn", outOfQScope], ["assets-bulk-maint-btn", outOfMScope]]
+      .forEach(function (pair) {
+        var b = document.getElementById(pair[0]);
+        if (!b || !pair[1]) return;
+        b.disabled = true;
+        b.title = reason(pair[1]);
+      });
+  }
 
   // Compare needs at least two assets to overlay, so it stays VISIBLE and greys
   // out below two — a button that only appears once the right number of rows is
@@ -2530,7 +2566,8 @@ function _managementAccessMenuItems(a) {
 // click adds as their own group after the remote-access verbs.
 function _assetMenuItems(a, extra) {
   var items = [{ label: "Open", primary: true, onSelect: function () { openViewModal(a.id); } }];
-  if (canManageAssets()) {
+  // Rule 141 (e): Edit / Delete only where this caller's click succeeds.
+  if (_canEditAsset(a)) {
     items.push({ label: "Edit", onSelect: function () { openEditModal(a.id); } });
   }
   var mgmt = _managementAccessMenuItems(a);
@@ -2547,7 +2584,7 @@ function _assetMenuItems(a, extra) {
     items.push({ separator: true });
     quarantine.forEach(function (q) { items.push(q); });
   }
-  if (canManageAssets()) {
+  if (_canEditAsset(a)) {
     items.push({ separator: true });
     items.push({
       label: "Delete",
@@ -3312,7 +3349,7 @@ function assetTypeBadge(type, asset) {
   // Clickable for admin/assetsadmin — opens a dropdown of the 8 AssetType
   // values; selecting one PUTs the change inline. Same data-attribute pattern
   // as the Status pill so the delegated handler can dispatch without lookups.
-  var canToggle = typeof canManageAssets === "function" && canManageAssets() && asset && asset.id;
+  var canToggle = _canEditAsset(asset) && asset && asset.id;
   if (!canToggle) {
     return '<span class="badge badge-asset-type">' + escapeHtml(label) + '</span>';
   }
@@ -3432,7 +3469,7 @@ function statusAllowsMonitoring(status) {
 
 function assetMonitorBadge(asset) {
   var monitorable = statusAllowsMonitoring(asset && asset.status);
-  var canToggle = typeof canManageAssets === "function" && canManageAssets() && asset && asset.id && monitorable;
+  var canToggle = _canEditAsset(asset) && asset && asset.id && monitorable;
   var toggleAttrs = canToggle
     ? ' data-monitor-toggle="' + escapeHtml(asset.id) + '" data-monitored="' + (asset.monitored ? "true" : "false") + '"' +
       (asset.hostname ? ' data-hostname="' + escapeHtml(asset.hostname) + '"' : "") + ' role="button" tabindex="0"'
@@ -5174,7 +5211,7 @@ async function openEditModal(id, opts) {
     // from Save, and only for an existing asset the operator may manage — the
     // same gate the row menu's Delete carries, since DELETE /assets/:id is
     // assets:write server-side.
-    var footer = (asset.id && canManageAssets()
+    var footer = (asset.id && _canEditAsset(asset)
         ? '<button class="btn btn-danger" id="btn-delete-asset" style="margin-right:auto">Delete Asset</button>'
         : '') +
       '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
@@ -6091,7 +6128,7 @@ async function openViewModal(id, opts) {
     // ...and only offered on a not-yet-quarantined asset when quarantine push
     // is enabled somewhere (_quarantinePushAvailable); an already-quarantined
     // asset keeps the tab regardless so Release + the push targets stay visible.
-    if (canQuarantineAssets() && (a.status === "quarantined" || (hasMac && !isInfraQ && _quarantinePushAvailable()))) {
+    if (_canQuarantineAsset(a) && (a.status === "quarantined" || (hasMac && !isInfraQ && _quarantinePushAvailable()))) {
       tabs.push({ key: "quarantine", label: a.status === "quarantined" ? "Quarantine ⚠" : "Quarantine", html: _assetQuarantineTabHTML(a) });
     }
     // Events tab — audit history about this asset (assetId=a.id: its own
@@ -6211,7 +6248,7 @@ async function openViewModal(id, opts) {
     // its button by id, not by container.
     var actionBtns = copyBtns + _managementAccessButtonsHTML(a);
     var dismissBtns = '<button class="btn btn-sm btn-secondary" id="btn-asset-panel-close-btn">Close</button>' +
-      (canManageAssets() ? '<button class="btn btn-sm btn-primary" id="btn-asset-panel-edit-btn">Edit</button>' : '');
+      (_canEditAsset(a) ? '<button class="btn btn-sm btn-primary" id="btn-asset-panel-edit-btn">Edit</button>' : '');
     if (actionsEl) actionsEl.innerHTML = actionBtns;
     footerEl.innerHTML = dismissBtns;
 
@@ -6234,7 +6271,7 @@ async function openViewModal(id, opts) {
     if (deviceQueryTabs.length) wireModalTabs("asset-dq");
     if (showSnmpWalkTab) _wireSnmpWalkTab(a);
     if (apiQueryTransport) _wireAssetApiQuery(a, apiQueryTransport);
-    if (canQuarantineAssets()) _wireQuarantineTab(a);
+    if (_canQuarantineAsset(a)) _wireQuarantineTab(a);
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) _wireSdwanTab(a, sdwanRules, sdwanLinks, sdwanMembers);
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
@@ -7805,7 +7842,7 @@ async function _openBookingFromCalendar(a, ob) {
       if (pending) {
         var rb = await api.assets.reboot(a.id);
         if (rb.schedule && rb.schedule.id === ob.scheduleId) {
-          if (typeof canManageAssets === "function" && canManageAssets()) _openRebootModal(a, rb, rb.schedule);
+          if (_canEditAsset(a)) _openRebootModal(a, rb, rb.schedule);
           return;
         }
         showToast("That reboot is no longer booked — it has started, been changed or been cancelled", "info");
@@ -7818,7 +7855,7 @@ async function _openBookingFromCalendar(a, ob) {
       if (pending) {
         var fw = await api.assets.firmwareUpgrade(a.id);
         if (fw.schedule && fw.schedule.id === ob.scheduleId) {
-          if (typeof canManageAssets === "function" && canManageAssets()) _openFirmwareApprovalModal(a, fw, fw.schedule);
+          if (_canEditAsset(a)) _openFirmwareApprovalModal(a, fw, fw.schedule);
           return;
         }
         showToast("That upgrade is no longer booked — it has started, been changed or been cancelled", "info");
@@ -15646,8 +15683,9 @@ function _rebootMethodText(rb) {
 
 /** The header's reboot control for one availability answer. Pure, so the DOM test can render it. */
 function _rebootControlHTML(a, rb) {
+  // Rule 141 (e): rebooting is an assets:write verb on THIS device.
   if (!rb || rb.state === "unsupported") return "";
-  var canAct = typeof canManageAssets === "function" && canManageAssets();
+  var canAct = _canEditAsset(a);
   var run = rb.activeRun;
   var parts = [];
   if (run) {
@@ -15686,7 +15724,7 @@ async function _loadAssetRebootControl(a) {
   var btn = document.getElementById("btn-asset-reboot");
   if (btn && !btn.disabled) btn.addEventListener("click", function () { _openRebootModal(a, rb, null); });
   var chip = document.getElementById("btn-asset-reboot-scheduled");
-  if (chip && rb.schedule && typeof canManageAssets === "function" && canManageAssets()) {
+  if (chip && rb.schedule && _canEditAsset(a)) {
     chip.addEventListener("click", function () { _openRebootModal(a, rb, rb.schedule); });
   }
   if (rb.activeRun) _startRebootPoll(a, rb.activeRun.id);
@@ -15936,7 +15974,7 @@ async function _toggleAgentReboot(a, agent, btn) {
 }
 
 function _assetDiscoverNowBtnHTML(a) {
-  if (typeof canManageAssets !== "function" || !canManageAssets()) return "";
+  if (!_canEditAsset(a)) return "";
   var topo = a && a.fortinetTopology;
   var integ = a && a.discoveredByIntegration;
   var role = topo && topo.role;
@@ -17170,7 +17208,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
       '<button class="btn btn-sm btn-primary" id="btn-iface-custom-apply">Apply</button>' +
     '</div>';
 
-  var canEditComment = canManageAssets();
+  var canEditComment = _canEditAsset(asset);
   bodyEl.innerHTML =
     '<div style="padding:1rem 1.25rem">' +
       '<div id="iface-comment-block" style="margin-bottom:0.75rem">' +
@@ -21424,7 +21462,7 @@ function addressPillsHTML(asset) {
   var primaryMacKey = primaryIp ? _addressMacKey(primaryAddressMac(asset)) : null;
   var singles = macs.filter(function (m) { return !m.macEnd; });
   var ranges = macs.filter(function (m) { return !!m.macEnd; });
-  var pinnable = canManageAssets() && _assetAddressPinnable(asset);
+  var pinnable = _canEditAsset(asset) && _assetAddressPinnable(asset);
   function isPrimaryRow(r) {
     return r.ip === primaryIp && (!pinMacKey || (!!r.mac && _addressMacKey(r.mac) === pinMacKey));
   }
@@ -26060,13 +26098,13 @@ function _loadAssetNotificationsTab(assetId) {
         // Clear (fullwrite) are separate permission levels, so a row can carry
         // either, both, or neither.
         var parts = [];
-        if (!n.acknowledged && shape.canAck) {
+        if (!n.acknowledged && shape.canAck && n.canAcknowledge !== false) {
           // The automation's note policy rides the control that uses it, so
           // the modal can mark the field required without a second fetch.
           parts.push('<button class="btn btn-sm btn-secondary asset-alert-ack" data-id="' + escapeHtml(n.id) + '"' +
             (n.requireAckNote ? ' data-note-required="1"' : "") + '>Acknowledge</button>');
         }
-        if (shape.canClear) {
+        if (shape.canClear && n.canClear !== false) {
           parts.push('<button class="btn btn-sm btn-secondary asset-alert-clear" data-id="' + escapeHtml(n.id) + '">Clear</button>');
         }
         if (!parts.length) parts.push('<span style="color:var(--color-text-tertiary)">—</span>');
@@ -26205,8 +26243,8 @@ function _assetAlertMenuItems(n, shape, selected, assetId) {
     });
   }
   var verbs = [];
-  if (!n.acknowledged && shape.canAck) verbs.push({ label: "Acknowledge", onSelect: function () { _bulkAcknowledgeAssetAlerts([id], assetId); } });
-  if (shape.canClear) verbs.push({ label: "Clear", danger: true, onSelect: function () { _bulkClearAssetAlerts([id], assetId); } });
+  if (!n.acknowledged && shape.canAck && n.canAcknowledge !== false) verbs.push({ label: "Acknowledge", onSelect: function () { _bulkAcknowledgeAssetAlerts([id], assetId); } });
+  if (shape.canClear && n.canClear !== false) verbs.push({ label: "Clear", danger: true, onSelect: function () { _bulkClearAssetAlerts([id], assetId); } });
   if (items.length && verbs.length) items.push({ separator: true });
   return items.concat(verbs);
 }

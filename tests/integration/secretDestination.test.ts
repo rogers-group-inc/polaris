@@ -59,6 +59,7 @@ async function loginAs(username: string): Promise<Session> {
 
 let adminUser = "";
 let assetsOnlyUser = "";
+let assetsFullUser = "";
 let integrationsUser = "";
 let fmgId = "";
 let firewallId = "";
@@ -74,7 +75,10 @@ beforeAll(async () => {
 
   adminUser = await createRoleUser("admin", matrix("fullwrite"));
   assetsOnlyUser = await createRoleUser("assets", matrix("read", { assets: "write" }));
-  integrationsUser = await createRoleUser("integrations", matrix("read", { assets: "write", integrations: "write" }));
+  // The PDF import is fleet-wide (rule 141 (e)): Full Read-Write on Assets, still no Integrations.
+  assetsFullUser = await createRoleUser("assetsfull", matrix("read", { assets: "fullwrite" }));
+  // assets at fullwrite: the firewall is owned by assetsOnlyUser (rule 141 (e)); the subject here is the Integrations gate.
+  integrationsUser = await createRoleUser("integrations", matrix("read", { assets: "fullwrite", integrations: "write" }));
 
   const fmg = await prisma.integration.create({
     data: {
@@ -93,6 +97,8 @@ beforeAll(async () => {
       status: "active",
       ipAddress: "10.99.241.50",
       ipSource: "fortimanager",
+      // Rule 141 (e): the Read-Write callers below reach this device because they own it.
+      createdBy: assetsOnlyUser,
       discoveredByIntegrationId: fmgId,
       monitored: false,
     } as never,
@@ -243,7 +249,7 @@ d("PUT /assets/:id — a firewall's address is where the integration token goes"
 
   it("does not gate an asset no integration manages", async () => {
     const { agent, csrf } = await loginAs(assetsOnlyUser);
-    const plain = await prisma.asset.create({ data: { hostname: PFX + "-plain", assetType: "server", status: "active", ipAddress: "10.99.241.60", monitored: false } as never });
+    const plain = await prisma.asset.create({ data: { hostname: PFX + "-plain", assetType: "server", status: "active", ipAddress: "10.99.241.60", monitored: false, createdBy: assetsOnlyUser } as never });
     const res = await agent.put(`/api/v1/assets/${plain.id}`).set("X-CSRF-Token", csrf).send({ ipAddress: "10.99.241.61" });
     expect(res.status).toBe(200);
   });
@@ -252,7 +258,7 @@ d("PUT /assets/:id — a firewall's address is where the integration token goes"
 d("PUT /assets/:id — the gate follows the managing integration, not the asset type", () => {
   it("refuses a new address on a managed firewall retyped to server", async () => {
     const retyped = await prisma.asset.create({
-      data: { hostname: PFX + "-retyped", assetType: "server", status: "active", ipAddress: "10.99.241.70", discoveredByIntegrationId: fmgId, monitored: false } as never,
+      data: { hostname: PFX + "-retyped", assetType: "server", status: "active", ipAddress: "10.99.241.70", discoveredByIntegrationId: fmgId, monitored: false, createdBy: assetsOnlyUser } as never,
     });
     const { agent, csrf } = await loginAs(assetsOnlyUser);
     const res = await agent.put(`/api/v1/assets/${retyped.id}`).set("X-CSRF-Token", csrf).send({ ipAddress: "198.51.100.79" });
@@ -262,7 +268,7 @@ d("PUT /assets/:id — the gate follows the managing integration, not the asset 
 
   it("refuses a new address on a managed FortiSwitch too", async () => {
     const sw = await prisma.asset.create({
-      data: { hostname: PFX + "-sw", assetType: "switch", status: "active", ipAddress: "10.99.241.71", discoveredByIntegrationId: fmgId, monitored: false } as never,
+      data: { hostname: PFX + "-sw", assetType: "switch", status: "active", ipAddress: "10.99.241.71", discoveredByIntegrationId: fmgId, monitored: false, createdBy: assetsOnlyUser } as never,
     });
     const { agent, csrf } = await loginAs(assetsOnlyUser);
     const res = await agent.put(`/api/v1/assets/${sw.id}`).set("X-CSRF-Token", csrf).send({ ipAddress: "198.51.100.80" });
@@ -296,9 +302,9 @@ d("POST /assets/import-pdf — an invoice row cannot move a managed firewall's a
     await prisma.asset.update({ where: { id: firewallId }, data: { serialNumber: SERIAL } });
   });
 
-  it("refuses an Assets Read-Write caller, even on a dry run, and writes nothing", async () => {
+  it("refuses a caller without Integrations Read-Write, even on a dry run, and writes nothing", async () => {
     const before = (await prisma.asset.findUnique({ where: { id: firewallId } }))!.ipAddress;
-    const { agent, csrf } = await loginAs(assetsOnlyUser);
+    const { agent, csrf } = await loginAs(assetsFullUser);
     for (const dryRun of [true, false]) {
       const res = await agent.post("/api/v1/assets/import-pdf").set("X-CSRF-Token", csrf)
         .send({ assets: [{ serialNumber: SERIAL, ipAddress: "198.51.100.78" }], dryRun });
@@ -308,7 +314,7 @@ d("POST /assets/import-pdf — an invoice row cannot move a managed firewall's a
   });
 
   it("still imports the row's other fields when it carries no new address", async () => {
-    const { agent, csrf } = await loginAs(assetsOnlyUser);
+    const { agent, csrf } = await loginAs(assetsFullUser);
     const res = await agent.post("/api/v1/assets/import-pdf").set("X-CSRF-Token", csrf)
       .send({ assets: [{ serialNumber: SERIAL, model: "FortiGate-60F" }], dryRun: false });
     expect(res.status).toBe(200);

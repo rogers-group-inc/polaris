@@ -8,7 +8,7 @@ knows about a device is reachable from here.
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |
-| `assets:write` | add and edit rows, the bulk Type / State / Monitoring / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
+| `assets:write` | add and edit **the devices you added or adopted, or that carry one of your tags** ([rule 141](Business-Rules#rule-141)) — the bulk Type / State / Monitoring / Delete actions, mass-pin, start / stop / restart / update an [Unraid or TrueNAS workload](#unraid-and-truenas-scale-workloads) |
 | `assets:fullwrite` | manage saved filters and folders that have no owner, and take any one as your own (**Make private to me**) |
 | `agentDeploy:write` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), bulk deploy, the agent host's reboot opt-in, a process's log path |
 | `assetMerge:write` | **merge** two records into one |

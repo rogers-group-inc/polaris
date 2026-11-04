@@ -217,6 +217,7 @@ export interface MergeAssetsResult {
 
 const ASSET_SELECT = {
   id: true,
+  createdBy: true,
   hostname: true,
   dnsName: true,
   ipAddress: true,
@@ -771,6 +772,11 @@ export async function mergeAssets(opts: {
   // the flip actually turns the survivor ON). Shared with the conflict path.
   const { carried: carriedMonitoring, adopted: monitorFieldsAdopted } =
     resolveMonitoringCarry(update, c, g);
+
+  // Business rule 141 (e): a merge keeps the owner. The survivor's own stays;
+  // a survivor with none takes the absorbed record's, so a device someone
+  // adopted does not become ownerless by being merged into a discovered row.
+  if (!c.createdBy && g.createdBy) update.createdBy = g.createdBy;
 
   let movedSources = 0;
   let movedMacs = 0;

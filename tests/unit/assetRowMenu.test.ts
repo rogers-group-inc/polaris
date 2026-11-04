@@ -81,6 +81,10 @@ function withPerms(assets: boolean, quarantine: boolean, pushEnabled = true) {
   g.canManageAssets = () => assets;
   g.canQuarantineAssets = () => quarantine;
   g._quarantinePushAvailable = () => pushEnabled;
+  // The per-device shims (rule 141 (e)) fall back to the role helpers this
+  // harness stubs, so the cases below keep meaning what they say.
+  (0, eval)(fnSrc("_canEditAsset"));
+  (0, eval)(fnSrc("_canQuarantineAsset"));
   (0, eval)(fnSrc("_quarantineMenuItems"));
   (0, eval)(fnSrc("_assetMgmtAccess"));
   (0, eval)(fnSrc("_managementAccessMenuItems"));

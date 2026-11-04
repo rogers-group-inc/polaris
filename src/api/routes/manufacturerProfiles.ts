@@ -16,6 +16,7 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { requirePermission } from "../middleware/permissions.js";
+import { scopeAssetIds } from "../middleware/writeScope.js";
 import {
   listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
   updateMetricRow, createOverride, updateOverride, deleteOverride,
@@ -366,6 +367,8 @@ router.put(
   "/:id/widgets/:widgetId/assets",
   requirePermission("manufacturerProfiles", "write"),
   requirePermission("assets", "write"),
+  // Business rule 141 (e): every device the body names must be in scope.
+  scopeAssetIds("assets", "change widgets on devices", (r) => [...(((r.body || {}) as { enable?: unknown }).enable as string[] || []), ...(((r.body || {}) as { disable?: unknown }).disable as string[] || [])]),
   handle(async (req, res) => {
     const parsed = WidgetAssetsSchema.safeParse(req.body);
     if (!parsed.success) throw new AppError(400, parsed.error.issues.map((e) => e.message).join("; "));

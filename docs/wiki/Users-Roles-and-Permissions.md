@@ -22,10 +22,33 @@ a rung only exists where it grants something the rung beneath it does not.
 A user has one role. A bearer token is bound to one role at mint time and passes
 the same gates a session does.
 
-### Ownership
+### Ownership and tags
 
-Five keys carry an **ownership dimension**: `subnets`, `reservations`,
-`contacts`, `credentials`, `networkScan`.
+Twelve keys carry an **ownership dimension**. On nine of them — `assets`,
+`assetsQuarantine`, `alerts`, `maintenanceManagement`, `discoveryConflicts`,
+`staleReservations`, `deviceMap`, `subnets`, `reservations` — the dimension is
+**widened by tags** ([rule 141](Business-Rules#rule-141)):
+
+| Level | Your tags | Reaches |
+|---|---|---|
+| `write` | none | records **you** created — a device you added by hand or adopted from your own Network Discovery, a network or reservation you made |
+| `write` | one or more | those, **plus** every record carrying one of your tags (a map region counts: a device in your region, a network a FortiGate in your region serves) |
+| `fullwrite` | any | every record |
+
+Tags come from your account and your sign-in groups together. A device
+integration discovery brought in has no owner and no tags, so until someone
+[tags it](#tags-are-an-administrators-grant) only Full Read-Write reaches it.
+What "the record" is depends on the key: an alert is judged on its device, a
+maintenance window on the devices it names (a window with a device *filter*
+is Full Read-Write — it reaches devices nobody has yet), a conflict on any of
+its members, a site layout on the site's FortiGate, a stale reservation on its
+network. Lists and details say per row what you may change, and a bulk action
+with one row out of your reach does nothing. The update of 2026-11-04 raised
+every existing Read-Write on those keys to Full Read-Write, so nobody lost
+reach that day; opt a role in by lowering it to Read-Write and assigning tags.
+
+On the other three — `contacts`, `credentials`, `networkScan` — the records
+carry no tags, so the rule is the original one:
 
 | Level | Reaches |
 |---|---|
@@ -69,9 +92,9 @@ decision the operator did not really make.
 | Ladder | Keys | Why |
 |---|---|---|
 | `none \| read` | `assetsProbe` | A probe dials the device and writes nothing in Polaris, so Read *is* the whole grant |
-| `none \| read \| write` | 21 keys — see the tables below | No route asks for Full Read-Write on them. It means something only where it lifts an ownership filter or reserves a more dangerous act |
+| `none \| read \| write` | 16 keys — see the tables below | No route asks for Full Read-Write on them. It means something only where it lifts an ownership filter or reserves a more dangerous act |
 | `none \| write` | `serverSettingsData`, `assetMerge`, `agentDeploy`, `alertClear` | Nothing on them is merely viewable. The Data key's reads sit on the System key's floor and everything it gates changes the database or hands over a copy of it; each of the three act keys names one dangerous act and nothing else |
-| all four | the 5 ownership keys and 7 named exceptions | Marked in the tables below |
+| all four | the 12 ownership keys and 5 named exceptions | Marked in the tables below |
 
 The UI renders a dash instead of a radio for an unsupported cell. Stored values
 **clamp down, never up** — a `fullwrite` on a read-only key means "as much as

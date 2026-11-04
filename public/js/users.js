@@ -1946,9 +1946,15 @@ function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
         '</label>' +
       '</td>';
     }).join("");
-    var ownershipNote = f.hasOwnershipDimension
-      ? ' <span title="Read-Write = create/edit/delete your own rows only; Full Read-Write = create/edit/delete any row" style="color:var(--color-text-tertiary);font-size:0.85em">(Read-Write = own · Full Read-Write = any)</span>'
-      : '';
+    // Two flavours of the ownership dimension (business rule 141 (e)): a
+    // tag-scoped key's Read-Write also reaches rows carrying one of the
+    // caller's tags; the owner-only keys (contacts, credentials, discoveries)
+    // reach rows they created and nothing more.
+    var ownershipNote = f.tagScoped
+      ? ' <span title="Read-Write = rows you created or that carry one of your tags; Full Read-Write = any row" style="color:var(--color-text-tertiary);font-size:0.85em">(Read-Write = own + tagged · Full Read-Write = any)</span>'
+      : f.hasOwnershipDimension
+        ? ' <span title="Read-Write = create/edit/delete your own rows only; Full Read-Write = create/edit/delete any row" style="color:var(--color-text-tertiary);font-size:0.85em">(Read-Write = own · Full Read-Write = any)</span>'
+        : '';
     return sectionRow + '<tr>' +
       '<td>' +
         '<div style="font-weight:600">' + escapeHtml(f.label) + ownershipNote + '</div>' +

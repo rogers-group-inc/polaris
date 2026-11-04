@@ -82,7 +82,7 @@ d("group firmware upgrade routes", () => {
     // Unmonitored: the live health gate has nothing to refuse, so the job's
     // refusal below comes from the image file, the start's last gate.
     const mk = (hostname: string, assetType: string, serialNumber: string, osVersion: string, fortinetTopology: object) =>
-      prisma.asset.create({ data: { hostname, assetType, serialNumber, manufacturer: MFR, ipAddress: "192.0.2." + (Object.keys(ids).length + 120), osVersion, monitored: false, fortinetTopology } });
+      prisma.asset.create({ data: { hostname, assetType, serialNumber, manufacturer: MFR, ipAddress: "192.0.2." + (Object.keys(ids).length + 120), osVersion, monitored: false, fortinetTopology, createdBy: flasherU } });
     ids.gateA = (await mk("fwgroup-gateA", "firewall", "FG60FTK0FWG00001", "7.4.5 build2702", { role: "fortigate", deviceName: "fwgroup-gateA" })).id;
     ids.gateB = (await mk("fwgroup-gateB", "firewall", "FG60FTK0FWG00002", "7.4.5 build2702", { role: "fortigate", deviceName: "fwgroup-gateB" })).id;
     ids.sw1 = (await mk("fwgroup-sw1", "switch", "S108FFTF2300FWG1", "7.4.3 build0542", { role: "fortiswitch", controllerSerial: "FG60FTK0FWG00001" })).id;

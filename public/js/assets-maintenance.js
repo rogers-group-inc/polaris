@@ -1087,13 +1087,19 @@ async function _maintReloadList() {
       '<td style="white-space:nowrap">' + (maintScheduleOwner(s)
         ? escapeHtml(maintScheduleOwner(s))
         : '<span style="color:var(--color-text-tertiary)">—</span>') + "</td>" +
-      '<td style="white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">' +
-        '<input type="checkbox" class="maint-enable-toggle" data-id="' + s.id + '"' + (s.enabled ? " checked" : "") + ' style="width:auto">' +
-        (s.enabled ? "Enabled" : "Disabled") + "</label></td>" +
-      '<td style="white-space:nowrap">' +
-        '<button type="button" class="btn btn-secondary btn-sm maint-edit-btn" data-id="' + s.id + '">Edit</button> ' +
-        '<button type="button" class="btn btn-danger btn-sm maint-delete-btn" data-id="' + s.id + '">Delete</button>' +
-      "</td></tr>";
+      // Rule 141 (e): a window the caller did not create, on devices outside
+      // their reach, is shown and not editable here.
+      (s.canEdit === false
+        ? '<td style="white-space:nowrap">' + (s.enabled ? "Enabled" : "Disabled") + '</td>' +
+          '<td style="white-space:nowrap"><span class="hint" title="Not created by you, on devices you did not add and that carry none of your tags">Not yours to change</span></td>'
+        : '<td style="white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">' +
+            '<input type="checkbox" class="maint-enable-toggle" data-id="' + s.id + '"' + (s.enabled ? " checked" : "") + ' style="width:auto">' +
+            (s.enabled ? "Enabled" : "Disabled") + "</label></td>" +
+          '<td style="white-space:nowrap">' +
+            '<button type="button" class="btn btn-secondary btn-sm maint-edit-btn" data-id="' + s.id + '">Edit</button> ' +
+            '<button type="button" class="btn btn-danger btn-sm maint-delete-btn" data-id="' + s.id + '">Delete</button>' +
+          "</td>") +
+      "</tr>";
   }).join("");
   el.innerHTML = calLink +
     '<table class="data-table"><thead><tr style="white-space:nowrap">' +

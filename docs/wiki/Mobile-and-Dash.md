@@ -327,7 +327,12 @@ asset fresh and saves only its own fields:
 | **Monitoring** | monitoring on or off, and per stream (Response Time, CPU/Memory, Hardware Sensors, Interfaces, LLDP, Storage) the [polling method](Polling-Methods), its credential and MIB, the poll interval and the timeouts. Each inherited value names the tier it comes from, and Response Time says which automation declares the device Down and after how many missed polls | Read-Write on Assets |
 | **Maintenance** | the windows open now and the schedules covering the asset, with **Remove this asset** and **Delete schedule**, and **Enter maintenance** until a date and time in the server's time zone | Read on Assets to look; Read-Write on Maintenance to act |
 
-An entry you can't use is shown greyed with the reason. The phone asks the
+An entry you can't use is shown greyed with the reason. One difference from the
+desktop: the phone reads these gates from your role, not per device. With
+Read-Write on Assets the entries show on every device, and a save on a device
+you did not add and that carries none of your tags is refused when it lands
+([rule 141](Business-Rules#rule-141)); the desktop greys those verbs per device.
+The phone asks the
 same questions as the desktop before a save lands: a new IP another asset holds
 ([rule 40](Business-Rules#rule-40)) or one Polaris has little evidence for
 ([rule 103](Business-Rules#rule-103)) is confirmed first, and a decommissioned,

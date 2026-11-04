@@ -1514,8 +1514,11 @@ function getAlertsFormData() {
 
     var actions = isResolved
       ? resolvedActionsHtml(c)
-      : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '">Reject</button>' +
-        '<button class="btn btn-primary btn-sm" data-conflict-action="accept" data-conflict-id="' + c.id + '">Accept</button>';
+      : (c.canResolve === false
+        // Rule 141 (e): none of this conflict's records is one the caller added or that carries one of their tags.
+        ? '<span class="hint" title="Resolving needs a member you added or that carries one of your tags, or Full Read-Write on Discovery Conflicts">Not yours to resolve</span>'
+        : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '">Reject</button>' +
+          '<button class="btn btn-primary btn-sm" data-conflict-action="accept" data-conflict-id="' + c.id + '">Accept</button>');
 
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +
@@ -2005,7 +2008,8 @@ function getAlertsFormData() {
         ? '<div><span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span></div>'
         : "";
       var label = (isLease ? "lease " : "reservation ") + (r.ipAddress || "") + (r.gate ? " on " + r.gate : "");
-      var actionCell = (isResolved || !canKeep)
+      // Rule 141 (f): the verbs show only when this caller may release here.
+      var actionCell = (isResolved || !canKeep || c.canRelease === false || r.inScope === false)
         ? '<td></td>'
         : '<td class="conflict-action-cell" style="white-space:nowrap">' +
             '<button class="btn btn-secondary btn-sm" data-dupres-keep data-conflict-id="' + c.id + '" ' +
@@ -2428,8 +2432,10 @@ function getAlertsFormData() {
         body.innerHTML = '<div class="empty-state" style="padding:2rem">' + empty + '</div>';
         return;
       }
-      var canIgnore = canManageNetworks();
-      body.innerHTML = alerts.map(function (a) { return renderAlertCard(a, settings, show, canIgnore); }).join("");
+      // Rule 141 (e): the stale verbs are staleReservations:write on a
+      // reservation this caller created or whose network carries their tag.
+      var canIgnore = typeof permAtLeast === "function" && permAtLeast("staleReservations", "write");
+      body.innerHTML = alerts.map(function (a) { return renderAlertCard(a, settings, show, canIgnore && a.canEdit !== false); }).join("");
 
       // Bind Snooze / Free / Ignore / Un-ignore buttons
       body.querySelectorAll("[data-alert-action]").forEach(function (el) {

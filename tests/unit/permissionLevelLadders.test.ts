@@ -94,6 +94,20 @@ describe("ownership-dimensioned keys", () => {
     }
   });
 
+  it("every tag-scoped key carries the ownership dimension, and the owner-only trio does not scope by tag", () => {
+    // Rule 141 (e): tag scope is the owner dimension WIDENED by tags — never a
+    // dimension of its own — so `tagScoped` without `hasOwnershipDimension`
+    // would be a key whose Read-Write reaches tagged rows but not owned ones.
+    for (const def of FUNCTION_KEYS.filter(f => f.tagScoped)) {
+      expect(def.hasOwnershipDimension, `${def.key} is tagScoped without the ownership dimension`).toBe(true);
+    }
+    const scoped = FUNCTION_KEYS.filter(f => f.tagScoped).map(f => f.key).sort();
+    expect(scoped).toEqual(["alerts", "assets", "assetsQuarantine", "deviceMap", "discoveryConflicts", "maintenanceManagement", "reservations", "staleReservations", "subnets"]);
+    for (const key of ["contacts", "credentials", "networkScan"]) {
+      expect(FUNCTION_KEYS.find(f => f.key === key)?.tagScoped, `${key} must stay owner-only`).toBeFalsy();
+    }
+  });
+
   it("an ownership-dimensioned key must be able to hold both write and fullwrite", () => {
     // The dimension IS the distinction between the two levels, so a shortened
     // ladder on one of these keys would silently collapse it.
@@ -122,8 +136,9 @@ describe("no dead top rung", () => {
     // what the fourth rung still buys is REACH, which release 2 of the
     // write-scope change (business rule 141) turns into an ownership
     // dimension. Until that lands, the rung is excused by what it still gates.
-    assets: "managing ownerless saved filters / folders (savedOwnershipService, rule 140) and merging two assets you own without the assetMerge key",
-    alerts: "nothing beyond write yet — placeholder until release 2 marks the key tagScoped (hasOwnershipDimension); kept so a stored fullwrite is not clamped away in between",
+    // `assets` and `alerts` left this map on 2026-11-04: both carry the
+    // ownership dimension now (tagScoped, rule 141 (e)), which is what
+    // excuses their fourth rung.
     assetMonitorSettings: "the outage simulation (POST /assets/:id/dependency-test)",
     integrations: "aborting a discovery in flight (DELETE /integrations/:id/discover)",
     users: "IdP group-mapping CRUD (the /group-mappings mount)",

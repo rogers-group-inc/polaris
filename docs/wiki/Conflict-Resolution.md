@@ -20,10 +20,11 @@ shown only where your role and the device allow it).
 | Gate | |
 |---|---|
 | `discoveryConflicts:read` | see the queue |
-| `discoveryConflicts:write` | accept / reject / adopt / dismiss |
+| `discoveryConflicts:read` | see the conflicts — including the duplicate-reservation cards, which Reservations Read-Write resolves (below) |
+| `discoveryConflicts:write` | accept / reject / adopt / dismiss — at Read-Write only a conflict with a member you added or that carries one of your tags ([rule 141](Business-Rules#rule-141)); Full Read-Write any |
 | **plus `assets:write`** | **chained**, for the duplicate-IP verbs that change an asset's address (*Apply* a new address, *Clear*), and for accepting a **decommissioned agent** check-in, which reactivates the asset |
 | **plus `assetMerge:write`** | **chained**, for the duplicate-IP and duplicate-serial merge verbs and a chassis swap's *merge the old asset* — they delete a record |
-| **plus `reservations:write`** | **chained**, for *Keep* and *Release* / *Revoke lease* on a duplicate-reservation card — they release reservations and leases, so below Full read-write only ones you created |
+| **`reservations:write`** (not `discoveryConflicts:write`) | *Keep* and *Release* / *Revoke lease* on a duplicate-reservation card — a reservations task. Below Full read-write at least one binding must be yours or on a network / device carrying your tag; then every binding in the conflict may be released, on any FortiGate |
 
 ---
 

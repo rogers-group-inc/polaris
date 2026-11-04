@@ -30,6 +30,7 @@ import {
   type MatchGroup,
 } from "../../utils/assetTypeMatch.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { requireFleetWide } from "../middleware/writeScope.js";
 import { logEvent } from "./events.js";
 
 const router = Router();
@@ -140,7 +141,7 @@ router.post("/match-preview", requirePermission("assets", "read"), async (req, r
 });
 
 /** Re-type the assets the saved rules claim. Explicit, audited, `other`-only. */
-router.post("/match-apply", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/match-apply", requirePermission("assets", "write"), requireFleetWide("assets", "re-typing devices across the fleet"), async (req, res, next) => {
   try {
     const result = await assetTypeService.applyMatchRules();
     if (result.updated > 0) {
@@ -164,7 +165,7 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
 
 // ─── Writes ────────────────────────────────────────────────────────────────
 
-router.post("/", requirePermission("assets", "write"), async (req, res, next) => {
+router.post("/", requirePermission("assets", "write"), requireFleetWide("assets", "the asset-type catalogue"), async (req, res, next) => {
   try {
     const input = CreateSchema.parse(req.body);
     const saved = await assetTypeService.createAssetType({
@@ -183,7 +184,7 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
-router.put("/:id", requirePermission("assets", "write"), async (req, res, next) => {
+router.put("/:id", requirePermission("assets", "write"), requireFleetWide("assets", "the asset-type catalogue"), async (req, res, next) => {
   try {
     const input = UpdateSchema.parse(req.body);
     const saved = await assetTypeService.updateAssetType(req.params.id as string, input);
@@ -199,7 +200,7 @@ router.put("/:id", requirePermission("assets", "write"), async (req, res, next) 
   } catch (err) { next(err); }
 });
 
-router.delete("/:id", requirePermission("assets", "write"), async (req, res, next) => {
+router.delete("/:id", requirePermission("assets", "write"), requireFleetWide("assets", "the asset-type catalogue"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const before = await assetTypeService.getAssetType(id).catch(() => null);

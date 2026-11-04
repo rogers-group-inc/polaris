@@ -45,7 +45,7 @@ custom header — while authentication is fully enforced downstream.
 ### The ownership trap
 
 Networks, reservations, contacts, credentials and Discoveries carry an
-[ownership dimension](Users-Roles-and-Permissions#ownership): `write` reaches
+[ownership dimension](Users-Roles-and-Permissions#ownership-and-tags): `write` reaches
 only rows whose creator matches the caller.
 
 **A token has no username.** So a token bound to a role with plain `write` on
