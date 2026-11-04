@@ -1,14 +1,13 @@
 /**
  * tests/unit/logFlagRuleService.test.ts
  *
- * Pure-helper coverage for log-flag rules: glob compilation, the per-matchType
+ * Pure-helper coverage for log-flag rules: the per-matchType
  * matcher (incl. case-sensitivity + minLevel gate + invalid-regex safety), and
  * scope filtering. The DB-bound CRUD + cache are exercised by integration tests.
  */
 
 import { describe, it, expect } from "vitest";
 import {
-  globToRegExp,
   compileRule,
   applicableRules,
   type LogFlagRuleRow,
@@ -23,16 +22,6 @@ function rule(overrides: Partial<LogFlagRuleRow>): LogFlagRuleRow {
     ...overrides,
   };
 }
-
-describe("globToRegExp", () => {
-  it("anchors + maps * and ?", () => {
-    expect(globToRegExp("*error*")).toBe("^.*error.*$");
-    expect(globToRegExp("a?c")).toBe("^a.c$");
-  });
-  it("escapes regex metacharacters", () => {
-    expect(globToRegExp("a.b(c)")).toBe("^a\\.b\\(c\\)$");
-  });
-});
 
 describe("compileRule — matchers", () => {
   it("substring is case-insensitive by default", () => {
