@@ -100,7 +100,7 @@ const str =(v: unknown): string => (typeof v === "string" ? v : v == null ? "" :
  * ARP at that address (91(g)), so the row only ever minted a second asset at
  * the switch's address. Matched case-insensitively on the trimmed value.
  */
-export function isFortiswitchInventoryClient(client: Record<string, any>): boolean {
+function isFortiswitchInventoryClient(client: Record<string, any>): boolean {
   return str(client.hardware_family).trim().toLowerCase() === "fortiswitch";
 }
 
