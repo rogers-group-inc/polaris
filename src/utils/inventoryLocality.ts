@@ -66,7 +66,7 @@ export function inventorySwitchAttribution(
  * transports at once.
  */
 export const INVENTORY_QUERY_FORMAT =
-  "mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|detected_interface|interface" +
+  "mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|hardware_family|detected_interface|interface" +
   "|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name" +
   "|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address";
 
@@ -93,6 +93,18 @@ export interface ParsedInventoryClient {
 const str =(v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
 
 /**
+ * Business rule 91(h): a client-list row FortiOS fingerprints with hardware
+ * family "FortiSwitch" is a managed switch's own management traffic, not an
+ * endpoint. The switch is already discovered from `managed-switch/status`
+ * (serial, switch-id, `connecting_from`), and its MAC from the gate's lease /
+ * ARP at that address (91(g)), so the row only ever minted a second asset at
+ * the switch's address. Matched case-insensitively on the trimmed value.
+ */
+export function isFortiswitchInventoryClient(client: Record<string, any>): boolean {
+  return str(client.hardware_family).trim().toLowerCase() === "fortiswitch";
+}
+
+/**
  * Parse one raw `user/device/query` client row, for both the FMG-proxied and
  * the standalone-FortiGate collectors. Field names vary by FortiOS build, and
  * a name this parser doesn't know reads as EMPTY rather than failing — which
@@ -111,9 +123,12 @@ const str =(v: unknown): string => (typeof v === "string" ? v : v == null ? "" :
  * old build's `ip` when that held IPv6), which business rule 125 records in
  * IPAM and never lets re-address the asset.
  *
- * Returns null for a row with neither MAC nor address, or no `last_seen`.
+ * Returns null for a row with neither MAC nor address, or no `last_seen`, and
+ * for a managed FortiSwitch's own management traffic (business rule 91(h),
+ * `isFortiswitchInventoryClient`).
  */
 export function parseInventoryClient(client: Record<string, any>, device: string): ParsedInventoryClient | null {
+  if (isFortiswitchInventoryClient(client)) return null;
   const mac = str(client.mac);
   const rawIp = str(client.ipv4_address) || str(client.ip);
   const rawIsV6 = isIpv6Address(rawIp);
