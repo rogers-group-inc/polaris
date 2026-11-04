@@ -189,8 +189,11 @@ describe("quarantine RBAC defaults", () => {
     // admin's EFFECTIVE level today is `write`. Both are "the top of the
     // ladder"; the seed text below is history and is asserted as such.
     expect(matrixFor("admin")).toContain('"assetsQuarantine":"fullwrite"');
-    expect(levelsFor("assetsQuarantine")).toEqual(["none", "read", "write"]);
-    expect(clampLevelToKey("assetsQuarantine", "fullwrite")).toBe("write");
+    // 2026-11-04 (rule 141 (e)) widened it back to all four: Read-Write now
+    // reaches owned-or-tagged devices and Full Read-Write any — the lift
+    // migration 20261104100000 carried every stored write up with it.
+    expect(levelsFor("assetsQuarantine")).toEqual(["none", "read", "write", "fullwrite"]);
+    expect(clampLevelToKey("assetsQuarantine", "fullwrite")).toBe("fullwrite");
     for (const role of ["readonly", "networkadmin", "user"]) {
       expect(matrixFor(role), role).toContain('"assetsQuarantine":"read"');
     }

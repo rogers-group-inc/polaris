@@ -20,6 +20,7 @@ import * as reservationService from "../../services/reservationService.js";
 import * as staleService from "../../services/reservationStaleService.js";
 import { AppError } from "../../utils/errors.js";
 import { requirePermission, requireOwnership, assertOwnership } from "../middleware/permissions.js";
+import { requestActor } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -214,7 +215,7 @@ router.post("/next-available", requireOwnership("reservations"), async (req, res
     const input = NextAvailableSchema.parse(req.body);
     const reservation = await reservationService.nextAvailableReservation({
       ...input,
-      createdBy: req.session?.username,
+      createdBy: requestActor(req),
     });
     res.status(201).json(reservation);
   } catch (err) {
@@ -253,7 +254,7 @@ router.post("/", requireOwnership("reservations"), async (req, res, next) => {
     const input = CreateReservationSchema.parse(req.body);
     const reservation = await reservationService.createReservation({
       ...input,
-      createdBy: req.session?.username,
+      createdBy: requestActor(req),
     });
     res.status(201).json(reservation);
   } catch (err) {

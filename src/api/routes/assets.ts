@@ -5426,7 +5426,8 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
         assertQuarantineStatusUntouched(updateData.status, null);
         preview.push({ action: "create", serialNumber: serial, hostname: row.hostname || null, fields });
         if (!dryRun) {
-          await prisma.asset.create({ data: { assetType: "other", status: "storage", statusChangedAt: new Date(), statusChangedBy: requestActor(req) ?? "manual", ...updateData } as any });
+          // A row the import CREATES is the importer's (business rule 141 (e)), like a hand-added device.
+          await prisma.asset.create({ data: { assetType: "other", status: "storage", statusChangedAt: new Date(), statusChangedBy: requestActor(req) ?? "manual", createdBy: requestActor(req) ?? null, ...updateData } as any });
           created++;
         }
       }

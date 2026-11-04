@@ -15,6 +15,7 @@ import {
   assertTagChangeAllowed,
   callerIsAdminEquivalent,
 } from "../middleware/permissions.js";
+import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
 
 const router = Router();
@@ -109,7 +110,7 @@ router.post("/next-available", requireOwnership("subnets"), async (req, res, nex
     assertTagChangeAllowed(req, [], metadata.tags);
     const subnet = await subnetService.allocateNextSubnet(blockId, prefixLength, {
       ...metadata,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(subnet);
@@ -149,7 +150,7 @@ router.post("/bulk-allocate", requireOwnership("subnets"), async (req, res, next
     assertTagChangeAllowed(req, [], input.tags);
     const result = await subnetService.bulkAllocate({
       ...input,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(result);
@@ -187,7 +188,7 @@ router.post("/exclusions", requirePermission("subnets", "fullwrite"), async (req
     const input = CreateExclusionSchema.parse(req.body);
     const created = await subnetExclusionService.createExclusion({
       ...input,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(created);
@@ -340,7 +341,7 @@ router.post("/", requireOwnership("subnets"), async (req, res, next) => {
     assertTagChangeAllowed(req, [], input.tags);
     const subnet = await subnetService.createSubnet({
       ...input,
-      createdBy: req.session?.username ?? undefined,
+      createdBy: requestActor(req),
       actor: req.session?.username,
     });
     res.status(201).json(subnet);
