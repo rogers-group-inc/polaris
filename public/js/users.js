@@ -2178,11 +2178,9 @@ function collectRegionPicker(idPrefix) {
 // assignment alone. Used in the role slide-over, the per-user tag modal, and
 // the Group Mappings slide-over.
 
-// The one category the tag registry refuses hand-created rows in: every tag in
-// it is minted by a Device Map region save (REGION_TAG_CATEGORY in
-// mapRegionService, which is the authority). Mirrored here so the Category box
-// never suggests it.
-var REGION_TAG_CATEGORY = "Map Regions";
+// REGION_TAG_CATEGORY (the one category the registry refuses hand-created
+// rows in; mapRegionService is the authority) comes from app.js, which loads
+// first on this page. It used to be re-declared here as well.
 
 // Catalogue state. Loaded once per page load by loadTagList().
 var _tagList = [];              // registry tag names, category-then-name order
