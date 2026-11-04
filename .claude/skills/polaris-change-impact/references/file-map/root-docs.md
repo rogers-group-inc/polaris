@@ -16,7 +16,7 @@ polaris/
 ├── .env.example
 ├── package.json
 ├── tsconfig.json
-├── prisma.config.ts                 # Prisma 7 config (datasource URL, seed command)
+├── prisma.config.ts                 # Prisma 7 config (datasource URL, seed command). `prisma generate` alone gets a placeholder URL when DATABASE_URL is unset, so `npm ci` works without a .env (tests/unit/prismaConfigGenerateFallback.test.ts); every connecting command still errors on it
 ├── prisma/
 │   ├── schema.prisma                # Database schema
 │   └── seed.ts
