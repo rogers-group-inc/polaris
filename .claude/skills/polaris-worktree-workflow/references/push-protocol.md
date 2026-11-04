@@ -33,14 +33,19 @@ branches are left for a bare "push". For each:
    remove` follows a junction and deletes the target.
 3. If a dev stack lingers (`podman ps -a --format '{{.Names}}' | grep polaris-<slug>`):
    `podman compose -f compose.dev.yml -p polaris-<slug> down -v`.
-4. `git worktree remove <path>` (add `--force` only for untracked leftovers like `.env`,
+4. `git worktree unlock <path>` — no-op output aside, harmless when unlocked. A worktree made
+   by the retired `EnterWorktree` tool carries a git-level lock ("claude session <slug>
+   (pid …)") that `ExitWorktree keep` leaves behind, and `remove` refuses it (five logged
+   clean-ups, 2026-10-30 → 11-02). Its own call; ignore "is not locked".
+5. `git worktree remove <path>` (add `--force` only for untracked leftovers like `.env`,
    `node_modules`, `src/generated`, never for uncommitted source changes — those mean the
    worktree was not actually finished; report instead).
-5. `git branch -d worktree-<slug>` (`-d`, not `-D`: it refuses if the branch is not merged,
+6. `git branch -d worktree-<slug>` (`-d`, not `-D`: it refuses if the branch is not merged,
    which is the safety you want).
 
 If a `git worktree remove` fails with "Permission denied", a Bash tool call still has that
-directory as its cwd — `cd` out and retry.
+directory as its cwd — `cd <main-checkout>` and retry (a session that `cd`'d into its own
+worktree must leave it before removing it).
 
 ## 4. Report
 

@@ -78,9 +78,9 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
 4. **End-of-work commit**: `rm WORKLOCK`, commit everything pending (one logical change per
    commit). A `DEVLOCK` means a dev stack is up: `podman compose -f compose.dev.yml -p
    polaris-<slug> down -v`, delete the lock, then commit.
-5. **Merge this chat's worktree — and only it.** From the main checkout — a worktree-isolated
-   session must `ExitWorktree` (keep) first; its Bash guard refuses git aimed at the main
-   checkout. **Before merging**, `git fetch origin` and check `git log origin/main..main`: it must
+5. **Merge this chat's worktree — and only it.** In the main checkout (`git -C <main-checkout>
+   …`; a legacy `EnterWorktree` session must `ExitWorktree` (keep) first — its Bash guard
+   refuses git aimed at the main checkout). **Before merging**, `git fetch origin` and check `git log origin/main..main`: it must
    be empty. Commits there were merged by someone else and would ride along on this push — stop,
    list them, and let the user decide (push them too, or push nothing). Then
    `git merge --no-ff worktree-<slug>`. **No inventory, no numbered menu**: other worktrees are
@@ -115,8 +115,8 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
 9. **Commit and push the plugin repos — do not ask.** When step 1's docs-sync routing sent an
    edit to `../polaris-toolbox` or `../fortinet-api-conventions`, that edit is committed and
    pushed here, after the Polaris push — the user decided (2026-10-29) that invoking
-   `/polaris-deploy` approves those pushes too. A worktree-isolated session cannot commit to a
-   sibling repo, so this runs after step 5's `ExitWorktree`. Per repo: `git -C <repo> status
+   `/polaris-deploy` approves those pushes too. (A legacy `EnterWorktree` session cannot commit
+   to a sibling repo until step 5's `ExitWorktree`; a `worktree-start.mjs` session can.) Per repo: `git -C <repo> status
    --short`, commit what the routing put there (bump `plugin.json` first), then check
    `git -C <repo> log --oneline origin/main..main` and push with `git -C <repo> push origin main`
    **as a call of its own** — chained after anything else, the auto-mode classifier has refused

@@ -2,23 +2,26 @@
 
 ## Creating the worktree
 
-Use the `EnterWorktree` tool with a short slug (`skills-conversion`, `fix-arp-tab`). It creates
-`.claude/worktrees/<slug>` on branch `worktree-<slug>` from `origin/main` (setting
-`worktree.baseRef`; check `git status -sb` in the main checkout first — if local `main` is
-ahead of `origin/main`, the fresh worktree will not carry those commits) and switches the
-session's working directory into it.
+`node .claude/skills/polaris-worktree-workflow/scripts/worktree-start.mjs <slug> "<purpose>"`
+with a short slug (`skills-conversion`, `fix-arp-tab`). It runs `git worktree add -b
+worktree-<slug> .claude/worktrees/<slug> main` — **local** `main`, so merges not yet pushed are
+in the base — writes `WORKLOCK`, and generates the Prisma client; `--env` and `--install` add
+the `.env` copy and `npm ci`. It refuses an existing path or branch. Then `cd` to the printed
+path as its own Bash call.
 
-**"core.worktree redirect" from `EnterWorktree name=`** is not a failure to create: the
-worktree and branch exist. It happens when the session was launched from a lowercase `c:\` and
-git reports `C:/` (six sessions hit it 2026-10-27/28). Enter it with
-`EnterWorktree path=<main-checkout, uppercase drive>/.claude/worktrees/<slug>` and carry on.
+**Why not `EnterWorktree`** (retired 2026-11-04, error-log review 2): on a session launched
+from a lowercase `c:\` it created the worktree and then refused to enter it ("core.worktree
+redirect", 8 entries in six days — the Agent tool's `isolation: "worktree"` fails the same
+way); it put the session under a Bash guard that refused heredocs, variables, loops, `xargs`
+and git in a compound (~30 entries); its git-level lock survived `ExitWorktree keep` and made
+`git worktree remove` refuse (5); and it branched from `origin/main`. A plain `cd` into a
+worktree gets none of that — the guard belongs to the tool, not to the directory (verified
+2026-11-04). The price is that nothing stops a Bash command touching the main checkout; SKILL.md
+→ "Start of a task" says what to keep out of it.
 
-Then, before the first edit, write the lock — the Write tool is fine (`require-worklock.mjs`
-exempts the lock file itself since 2026-10-29), or as a lone Bash call:
-
-```
-printf '%s %s\n' "$(date -u +%FT%TZ)" "<purpose>" > WORKLOCK
-```
+To lock a worktree by hand (a follow-up task in an already-committed one): the Write tool
+(`require-worklock.mjs` exempts the lock file itself), or a lone Bash
+`printf '%s %s\n' "$(date -u +%FT%TZ)" "<purpose>" > WORKLOCK`.
 
 `WORKLOCK` and `DEVLOCK` are gitignored. Their presence is the only signal another chat has
 that this worktree is in use, so write `WORKLOCK` immediately and delete it only when the
@@ -28,8 +31,11 @@ work is committed.
 
 A fresh worktree has no `.env`, no `node_modules` and no `src/generated/prisma`.
 
-1. `cp <main-checkout>/.env .env` — gitignored; `prisma generate` reads `DATABASE_URL` from it
-   at config-load time without connecting.
+`worktree-start.mjs` does steps 1–2 on request (`--env`, `--install`) and the client always.
+
+1. `cp <main-checkout>/.env .env` — gitignored; needed for tests against a DB, not for
+   `prisma generate` (since 2026-11-04 `prisma.config.ts` hands `generate` a placeholder URL
+   when `DATABASE_URL` is unset, so `npm ci` no longer fails in postinstall without a `.env`).
 2. `npm install --no-audit --no-fund` — its own `node_modules` (about a minute on this PC) and,
    via `postinstall`, its own generated Prisma client. `postinstall` also runs
    `git config core.hooksPath .githooks`, so the pre-commit doc guard is active here too.

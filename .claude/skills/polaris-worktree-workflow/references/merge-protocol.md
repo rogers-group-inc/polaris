@@ -48,8 +48,9 @@ For each selected worktree:
 1. If dirty: commit the pending changes **in that worktree** (`git -C <path> add -A && git -C
    <path> commit -m "wip: pending changes at merge time"`), so nothing is lost and the merge
    is of a real commit.
-2. From the main checkout, on `main` (a worktree-isolated session must `ExitWorktree` with
-   action keep first — its Bash guard refuses git commands aimed at the main checkout):
+2. In the main checkout, on `main` (`git -C <main-checkout> …`; a legacy `EnterWorktree`
+   session must `ExitWorktree` with action keep first — its Bash guard refuses git aimed at the
+   main checkout):
    `git merge --no-ff worktree-<slug>` (a merge commit per
    worktree keeps each unit of work identifiable in history; use the branch's own subjects in
    the merge message body).

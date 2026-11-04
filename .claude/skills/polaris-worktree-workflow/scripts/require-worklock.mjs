@@ -62,8 +62,9 @@ try {
   if (!isWorktree && /^\.claude[\\/]settings(\.local)?\.json$/i.test(resolve(target).slice(main.length + 1))) process.exit(0);
   if (!isWorktree) {
     process.stderr.write(
-      `Polaris workflow: ${target} is in the MAIN checkout. Create a worktree first (EnterWorktree), ` +
-      `write WORKLOCK at its root, and edit there. See .claude/skills/polaris-worktree-workflow/SKILL.md.\n`);
+      `Polaris workflow: ${target} is in the MAIN checkout. Create a worktree first:\n` +
+      `  node .claude/skills/polaris-worktree-workflow/scripts/worktree-start.mjs <slug> "<purpose>"\n` +
+      `then cd into it and edit there (not the EnterWorktree tool). See .claude/skills/polaris-worktree-workflow/SKILL.md.\n`);
     process.exit(2);
   }
   if (!under(root.dir, join(main, ".claude", "worktrees"))) {
@@ -73,9 +74,11 @@ try {
   if (norm(target) === norm(join(root.dir, "WORKLOCK"))) process.exit(0);
   if (!existsSync(join(root.dir, "WORKLOCK"))) {
     process.stderr.write(
-      `Polaris workflow: no WORKLOCK in worktree ${root.dir}. Write it before editing:\n` +
-      `  printf '%s %s\\n' "$(date -u +%FT%TZ)" "<purpose>" > WORKLOCK\n` +
-      `(If the work is finished and committed, this edit should be happening in a new worktree.)\n`);
+      `Polaris workflow: no WORKLOCK in worktree ${root.dir}.\n` +
+      `If this is a follow-up task in a worktree you already committed (the end-of-task step ` +
+      `deleted the lock) and its branch is not merged yet, re-lock it and carry on — Write ` +
+      `${join(root.dir, "WORKLOCK")} (one line: ISO timestamp + purpose; the hook lets that Write through). ` +
+      `If its branch is already merged, start a new worktree with worktree-start.mjs instead.\n`);
     process.exit(2);
   }
   process.exit(0);

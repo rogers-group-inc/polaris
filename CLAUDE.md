@@ -53,10 +53,12 @@ Both are fed from this repo's commits, not edited on their own schedule: the `/p
 
 ## Session workflow (always in force)
 
-1. **Never edit the main checkout.** Before the first edit of a task, create a worktree
-   (`EnterWorktree` → `.claude/worktrees/<slug>`, branch `worktree-<slug>`) and write a
-   `WORKLOCK` file at its root (one line: ISO timestamp + purpose). A PreToolUse hook refuses
-   Edit/Write inside the repo without one.
+1. **Never edit the main checkout.** Before the first edit of a task, create a worktree with
+   `node .claude/skills/polaris-worktree-workflow/scripts/worktree-start.mjs <slug> "<purpose>"`
+   (→ `.claude/worktrees/<slug>`, branch `worktree-<slug>` from local `main`, `WORKLOCK`
+   written, Prisma client generated), then `cd` into it. **Do not use the `EnterWorktree`
+   tool** — retired 2026-11-04; its Bash guard, drive-case refusal and git lock were half the
+   error log. A PreToolUse hook refuses Edit/Write inside the repo without a `WORKLOCK`.
 2. **Finishing a task = delete `WORKLOCK`, then commit everything in the worktree.** Run
    `/polaris-docs-sync` first — or `/polaris-deploy`, which runs it and carries on through
    merge and push. The end-of-work commit does not wait for approval; merges and pushes do,
