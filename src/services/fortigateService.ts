@@ -500,9 +500,9 @@ async function fetchFortiswitchCmdbMeta(
   // dependency membership constraint has to tell those apart.
   let ok = false;
   try {
+    // No `datasource=1`: it annotates every reference inside each port row
+    // (~18% of the response) and nothing here reads the annotations.
     const rows = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/switch-controller/managed-switch", {
-      // No `datasource=1`: it annotates every reference inside each port row
-      // (~18% of the response) and nothing here reads the annotations.
       query: { ...queryBase, format: FORTISWITCH_DISCOVERY_CMDB_FORMAT },
       signal,
     });
@@ -1300,10 +1300,9 @@ export async function discoverDhcpSubnets(
   // for interface IPs, VLANs, secondaries and IPv6 (ctx.interfaceListPromise).
   // Awaited here inside the try, so a rejection is always handled; Step 3b's
   // own await re-raises it into its catch and its "Failed to query interfaces"
-  // log, as when it made its own call.
+  // log, as when it made its own call. Only the attributes Polaris reads are
+  // asked for (a field missing from the list is silently absent — add it there first).
   const interfaceListPromise = fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", {
-    // Only the attributes Polaris reads (a field missing from the list is
-    // silently absent — add it there first).
     query: { ...queryBase, format: FORTIOS_INTERFACE_CMDB_FORMAT },
     signal,
   });
