@@ -8,10 +8,14 @@
  * primary, and moved the asset's ipAddress to the claimant's lease — after
  * which the monitor probed the claimant with the server's stored credentials.
  *
- * Protected (monitored, or any credential attached) + hostname-only → the MAC
- * is kept as an unverified sighting, the address and primary MAC stay put, and
- * one warning Event is written. Unprotected assets and MAC matches keep the
- * historical behaviour.
+ * 91(b) answered that for protected assets (monitored, or a credential
+ * attached) by keeping the claimant's MAC as an unverified sighting. Rule 91(f)
+ * (2026-11-04) goes further: Phases 6 and 7 no longer match on a hostname at
+ * all, for ANY asset — whole product lines send one DHCP hostname ("iPhone",
+ * "espressif"), and the rung was fusing them into a single asset holding a
+ * hundred MACs. A lease whose MAC no asset knows touches nothing; a
+ * detected-device row with that MAC becomes its own asset. MAC matches are
+ * unchanged.
  *
  * Skips cleanly when DATABASE_URL isn't reachable (tests/integration/_helpers).
  */
@@ -20,7 +24,6 @@ import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import { syncDhcpSubnets } from "../../src/services/discovery/discoveryEngine.js";
-import { UNVERIFIED_HOSTNAME_MAC_SOURCE } from "../../src/utils/macAddresses.js";
 
 const d = dbDescribe;
 const REAL = "AA:BB:CC:91:0B:01";
@@ -129,8 +132,11 @@ const readAsset = (id: string) =>
 const refusals = (id: string) =>
   prisma.event.findMany({ where: { action: ACTION, resourceId: id }, select: { level: true, message: true, details: true, resourceType: true, resourceName: true } });
 
-d("hostname-only adoption on protected assets (business rule 91(b))", () => {
-  it("monitored asset + hostname-only lease: address and primary MAC unchanged, MAC kept unverified, one warning", async () => {
+const assetsNamed = () =>
+  prisma.asset.findMany({ where: { hostname: HOST }, select: { id: true, macAddress: true, ipAddress: true } });
+
+d("a DHCP hostname is never a match (business rules 91(b), 91(f))", () => {
+  it("monitored asset + hostname-only lease: nothing on the asset changes, no MAC row, no warning", async () => {
     const id = await seedServer(true);
     await run([lease({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })]);
 
@@ -139,35 +145,11 @@ d("hostname-only adoption on protected assets (business rule 91(b))", () => {
     expect(after?.ipSource).toBe(GATE);
     expect(after?.learnedLocation).toBe(GATE);
     expect(after?.macAddress).toBe(REAL);
-    const claimantRow = after?.macAddressRows.find((r) => r.mac === CLAIMANT);
-    expect(claimantRow?.source).toBe(UNVERIFIED_HOSTNAME_MAC_SOURCE);
-    expect(after?.macAddressRows.find((r) => r.mac === REAL)).toBeTruthy();
-
-    const events = await refusals(id);
-    expect(events).toHaveLength(1);
-    expect(events[0].level).toBe("warning");
-    expect(events[0].resourceType).toBe("asset");
-    expect(events[0].resourceName).toBe(HOST);
-    expect(events[0].message).toContain(HOST);
-    expect(events[0].message).toContain(CLAIMANT);
-    expect(events[0].message).toContain(IP_CLAIMANT);
-    expect(events[0].message).toContain("hn-adopt-test");
-    expect(events[0].details).toMatchObject({ mac: CLAIMANT, ip: IP_CLAIMANT, hostname: HOST, source: "dhcp-lease" });
+    expect(after?.macAddressRows.map((r) => r.mac)).toEqual([REAL]);
+    expect(await refusals(id)).toHaveLength(0);
   });
 
-  it("the recorded MAC is not identity: a second run is refused again, never re-addresses", async () => {
-    const id = await seedServer(true);
-    await run([lease({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })]);
-    await run([lease({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })]);
-    const after = await readAsset(id);
-    expect(after?.ipAddress).toBe(IP_REAL);
-    expect(after?.macAddress).toBe(REAL);
-    expect(after?.macAddressRows.find((r) => r.mac === CLAIMANT)?.source).toBe(UNVERIFIED_HOSTNAME_MAC_SOURCE);
-    // One per (asset, MAC) per run — two runs, two warnings.
-    expect(await refusals(id)).toHaveLength(2);
-  });
-
-  it("asset with a credential but not monitored is protected too", async () => {
+  it("asset with a credential but not monitored: nothing changes either", async () => {
     const id = await seedServer(false);
     const cred = await prisma.credential.create({ data: { name: CRED_NAME, type: "ssh", config: {} } });
     await prisma.asset.update({ where: { id }, data: { processesCredentialId: cred.id } });
@@ -175,45 +157,48 @@ d("hostname-only adoption on protected assets (business rule 91(b))", () => {
     const after = await readAsset(id);
     expect(after?.ipAddress).toBe(IP_REAL);
     expect(after?.macAddress).toBe(REAL);
-    expect(await refusals(id)).toHaveLength(1);
+    expect(after?.macAddressRows.map((r) => r.mac)).toEqual([REAL]);
   });
 
-  it("device-inventory path: hostname-only row moves nothing on a protected asset; lease + row give ONE warning", async () => {
-    const id = await seedServer(true);
+  it("UNPROTECTED asset + hostname-only lease: the address no longer moves (rule 91(f))", async () => {
+    const id = await seedServer(false);
+    await run([lease({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })]);
+    const after = await readAsset(id);
+    expect(after?.ipAddress).toBe(IP_REAL);
+    expect(after?.macAddress).toBe(REAL);
+    expect(after?.macAddressRows.map((r) => r.mac)).toEqual([REAL]);
+  });
+
+  it("device-inventory row with an unknown MAC becomes its own asset, not the named one's", async () => {
+    const id = await seedServer(false);
     await run(
       [lease({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })],
       [inv({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })],
     );
     const after = await readAsset(id);
     expect(after?.ipAddress).toBe(IP_REAL);
-    expect(after?.learnedLocation).toBe(GATE);
     expect(after?.macAddress).toBe(REAL);
     expect(after?.os).toBe("Rocky Linux");
     expect(after?.manufacturer).toBeNull();
     expect(after?.lastSeenSwitch).toBeNull();
-    expect(await refusals(id)).toHaveLength(1);
+    expect(after?.macAddressRows.map((r) => r.mac)).toEqual([REAL]);
+
+    const named = await assetsNamed();
+    expect(named).toHaveLength(2);
+    const other = named.find((a) => a.id !== id);
+    expect(other?.macAddress).toBe(CLAIMANT);
+    expect(other?.ipAddress).toBe(IP_CLAIMANT);
   });
 
-  it("device-inventory only (no lease): MAC recorded unverified, address unchanged", async () => {
-    const id = await seedServer(true);
-    await run([], [inv({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })]);
-    const after = await readAsset(id);
-    expect(after?.ipAddress).toBe(IP_REAL);
-    expect(after?.macAddress).toBe(REAL);
-    expect(after?.macAddressRows.find((r) => r.mac === CLAIMANT)?.source).toBe(UNVERIFIED_HOSTNAME_MAC_SOURCE);
-    const events = await refusals(id);
-    expect(events).toHaveLength(1);
-    expect(events[0].details).toMatchObject({ source: "device-inventory", mac: CLAIMANT });
-  });
-
-  it("unprotected asset + hostname-only lease: today's behaviour — the address moves", async () => {
-    const id = await seedServer(false);
-    await run([lease({ macAddress: CLAIMANT, ipAddress: IP_CLAIMANT })]);
-    const after = await readAsset(id);
-    expect(after?.ipAddress).toBe(IP_CLAIMANT);
-    expect(after?.macAddress).toBe(CLAIMANT);
-    expect(after?.macAddressRows.find((r) => r.mac === CLAIMANT)?.source).toBe("dhcp-lease");
-    expect(await refusals(id)).toHaveLength(0);
+  it("many devices sending one hostname stay many assets across runs", async () => {
+    await seedServer(false);
+    const macs = ["AA:BB:CC:91:0F:01", "AA:BB:CC:91:0F:02", "AA:BB:CC:91:0F:03"];
+    const rows = macs.map((m, i) => inv({ macAddress: m, ipAddress: `10.91.191.${50 + i}` }));
+    await run([], rows);
+    await run([], rows);
+    const named = await assetsNamed();
+    expect(named).toHaveLength(1 + macs.length);
+    expect(new Set(named.map((a) => a.macAddress))).toEqual(new Set([REAL, ...macs]));
   });
 
   it("protected asset + MAC match: unchanged behaviour — the address may move", async () => {

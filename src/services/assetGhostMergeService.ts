@@ -244,12 +244,31 @@ export type DuplicateGroupDecision =
   | { kind: "skip"; reason: string };
 
 /**
+ * More same-named rows than one device could plausibly leave behind (wired +
+ * Wi-Fi + a directory record) means the name is a shared default — "iPhone",
+ * "espressif", a vendor's fixed DHCP name — not a pile of ghosts. Business
+ * rule 91(f). The same reasoning, and the same figure, as the serial pass's
+ * `MAX_PLAUSIBLE_DUPLICATES`; kept separate because the two may diverge.
+ */
+export const MAX_PLAUSIBLE_HOSTNAME_DUPLICATES = 3;
+
+/**
  * Pick the canonical row of a duplicate-hostname group by source-kind tier
- * (ties broken by most-recent lastSeen, then updatedAt). Tie-safety: a
- * same-tier sibling whose non-null MAC disagrees with the canonical's is a
- * genuine second device — the whole group is skipped for operator review.
+ * (ties broken by most-recent lastSeen, then updatedAt). The whole group is
+ * skipped for operator review when anything it carries says these are
+ * different devices (business rule 91 / 91(f)): two usable serials that
+ * differ, two primary MACs that differ — at ANY tier — or more rows than one
+ * device could leave behind.
  */
 export function decideDuplicateHostnameGroup(rows: DuplicateHostnameAssetRow[]): DuplicateGroupDecision {
+  // A shared default name groups every device that ships with it. Refused
+  // before ranking: no member of such a group is anyone's ghost by name alone.
+  if (rows.length > MAX_PLAUSIBLE_HOSTNAME_DUPLICATES) {
+    return {
+      kind: "skip",
+      reason: `${rows.length} assets share this hostname — more than one device could leave behind, so it is a shared name`,
+    };
+  }
   const decorated = rankBySourceTier(rows);
   const canonical = decorated[0];
   const rest = decorated.slice(1);
@@ -272,14 +291,24 @@ export function decideDuplicateHostnameGroup(rows: DuplicateHostnameAssetRow[]):
     }
   }
 
-  const cMac = normMac(canonical.row.macAddress);
-  for (const g of rest) {
-    if (g.tier !== canonical.tier) continue;
-    const gMac = normMac(g.row.macAddress);
-    if (cMac && gMac && cMac !== gMac) {
+  // Two primary MACs that differ are two network cards, and a shared hostname
+  // does not say they sit in one device (rule 91(f)). This used to apply only
+  // between rows tied at the same source tier, so an Intune "iPhone" absorbed
+  // every DHCP-discovered "iPhone" in the fleet, MACs and addresses and all.
+  // Compared across EVERY pair, not just against the canonical: a MAC-less
+  // canonical must not become the bridge that fuses two cards together.
+  // The cost is accepted: a docked laptop's wired and Wi-Fi rows stay two
+  // assets until something with real evidence (a directory MAC, the agent)
+  // links them.
+  let firstMac = "";
+  for (const d of decorated) {
+    const mac = normMac(d.row.macAddress);
+    if (!mac) continue;
+    if (!firstMac) firstMac = mac;
+    else if (mac !== firstMac) {
       return {
         kind: "skip",
-        reason: `tied tier ${canonical.tier} with conflicting MACs (${cMac} vs ${gMac})`,
+        reason: `conflicting MACs (${firstMac} vs ${mac}) — a shared hostname is not an identity`,
       };
     }
   }

@@ -50,16 +50,21 @@ describe("decideDuplicateHostnameGroup", () => {
     }
   });
 
-  it("managed switch (tier 2) beats firewall (4), endpoint (5), manual (6), orphan (7)", () => {
-    const d = decideDuplicateHostnameGroup([
-      row({ id: "orphan" }),
-      row({ id: "manual", sources: [{ sourceKind: "manual" }] }),
-      row({ id: "fw", sources: [{ sourceKind: "fortigate-firewall" }] }),
-      row({ id: "sw", sources: [{ sourceKind: "fortiswitch" }] }),
-      row({ id: "ep", sources: [{ sourceKind: "fortigate-endpoint" }] }),
-    ]);
+  // Groups of at most MAX_PLAUSIBLE_HOSTNAME_DUPLICATES (3), so the tier
+  // ladder is walked in overlapping triples.
+  it.each([
+    [["orphan", "manual", "ep"], "ep"],
+    [["manual", "ep", "fw"], "fw"],
+    [["ep", "fw", "sw"], "sw"],
+  ])("tier ladder: switch 2 > firewall 4 > endpoint 5 > manual 6 > orphan 7 (%j → %s)", (ids, want) => {
+    const kinds: Record<string, string | null> = {
+      orphan: null, manual: "manual", ep: "fortigate-endpoint", fw: "fortigate-firewall", sw: "fortiswitch",
+    };
+    const d = decideDuplicateHostnameGroup(
+      ids.map((id) => row({ id, sources: kinds[id] ? [{ sourceKind: kinds[id]! }] : [] })),
+    );
     expect(d.kind).toBe("merge");
-    if (d.kind === "merge") expect(d.canonical.id).toBe("sw");
+    if (d.kind === "merge") expect(d.canonical.id).toBe(want);
   });
 
   it("the best tier across an asset's sources wins (endpoint+ad row ranks tier 1)", () => {
@@ -92,11 +97,47 @@ describe("decideDuplicateHostnameGroup", () => {
     if (d.kind === "skip") expect(d.reason).toContain("conflicting MACs");
   });
 
-  it("does NOT skip when the conflicting-MAC sibling sits at a lower tier", () => {
+  // Rule 91(f): before 2026-11-04 the MAC check ran only between rows tied at
+  // one tier, so an Intune "iPhone" absorbed every DHCP-discovered "iPhone".
+  it("skips when the conflicting-MAC sibling sits at a lower tier (rule 91(f))", () => {
     const d = decideDuplicateHostnameGroup([
-      row({ id: "x", sources: [{ sourceKind: "entra" }], macAddress: "AA:BB:CC:DD:EE:01" }),
-      row({ id: "y", sources: [{ sourceKind: "fortigate-endpoint" }], macAddress: "AA:BB:CC:DD:EE:02" }),
+      row({ id: "x", hostname: "iPhone", sources: [{ sourceKind: "intune" }], macAddress: "AA:BB:CC:DD:EE:01" }),
+      row({ id: "y", hostname: "iPhone", sources: [{ sourceKind: "fortigate-endpoint" }], macAddress: "AA:BB:CC:DD:EE:02" }),
     ]);
+    expect(d.kind).toBe("skip");
+    if (d.kind === "skip") expect(d.reason).toContain("conflicting MACs");
+  });
+
+  it("a MAC-less canonical does not bridge two siblings whose MACs differ (rule 91(f))", () => {
+    const d = decideDuplicateHostnameGroup([
+      row({ id: "dir", sources: [{ sourceKind: "entra" }] }),
+      row({ id: "e1", sources: [{ sourceKind: "fortigate-endpoint" }], macAddress: "AA:BB:CC:DD:EE:01" }),
+      row({ id: "e2", sources: [{ sourceKind: "fortigate-endpoint" }], macAddress: "AA:BB:CC:DD:EE:02" }),
+    ]);
+    expect(d.kind).toBe("skip");
+  });
+
+  it("still merges a MAC-less record into the one row that carries a MAC", () => {
+    const d = decideDuplicateHostnameGroup([
+      row({ id: "dir", sources: [{ sourceKind: "entra" }] }),
+      row({ id: "e1", sources: [{ sourceKind: "fortigate-endpoint" }], macAddress: "AA:BB:CC:DD:EE:01" }),
+    ]);
+    expect(d.kind).toBe("merge");
+    if (d.kind === "merge") expect(d.canonical.id).toBe("dir");
+  });
+
+  it("refuses a group larger than one device could leave behind, even with no MACs (rule 91(f))", () => {
+    const d = decideDuplicateHostnameGroup(
+      ["a", "b", "c", "d"].map((id) => row({ id, hostname: "espressif", sources: [{ sourceKind: "fortigate-endpoint" }] })),
+    );
+    expect(d.kind).toBe("skip");
+    if (d.kind === "skip") expect(d.reason).toContain("shared name");
+  });
+
+  it("a group of exactly the cap is still judged on its MACs", () => {
+    const d = decideDuplicateHostnameGroup(
+      ["a", "b", "c"].map((id) => row({ id, sources: [{ sourceKind: "manual" }] })),
+    );
     expect(d.kind).toBe("merge");
   });
 
