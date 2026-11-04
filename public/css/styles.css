@@ -9141,17 +9141,33 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    of the top bar (the gate's name, Fit / Open / full screen) it would
    otherwise grow over; its body scrolls instead. */
 .devmap-topo-legend { width: 230px; max-height: calc(100% - 56px); }
-/* Location chips, under the top bar (the gate's name / Fit / Open). Same
-   rows as the Device Map page's switcher; the strip itself lets drags reach
-   the graph, only the chips take clicks. */
+/* Location chips, under the top bar (the gate's name / Fit / Open): the
+   Device Map page's switcher rows run on as ONE strip (a divider where the
+   page breaks a row) that never wraps — it scrolls sideways under the wheel
+   (deviceMap.js), its scrollbar hidden, and fades at an edge it continues
+   past (.is-overflow-l / -r, kept by the widget). The graph starts below
+   the band (placeGraph), so the strip takes pointer events itself. The
+   padding keeps the chips' shadow inside the clip. */
 .devmap-topo-views {
-  position: absolute; left: 8px; top: 42px; z-index: 1;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
-  max-width: calc(100% - 16px);
-  pointer-events: none;
+  position: absolute; left: 4px; right: 4px; top: 42px; z-index: 1;
+  display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;
+  padding: 2px 4px 8px;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
 }
+.devmap-topo-views::-webkit-scrollbar { display: none; }
 .devmap-topo-views[hidden] { display: none; }
-.devmap-topo-views .topology-floor-chip { pointer-events: auto; }
+.devmap-topo-views .topology-floor-chip { flex: none; }
+.devmap-topo-views.is-overflow-r { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.devmap-topo-views.is-overflow-l { mask-image: linear-gradient(to right, transparent, #000 32px); }
+.devmap-topo-views.is-overflow-l.is-overflow-r {
+  mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+}
+.devmap-chip-sep {
+  flex: none; padding: 0 2px;
+  color: var(--color-text-tertiary); opacity: 0.8;
+  font-size: 15px; line-height: 1; user-select: none;
+}
 /* A location chip with its pin: the label, then a small map-pin toggle
    (signed-in Dashboard, out of edit mode) or mark. Unpinned, the toggle is
    faint until the chip is hovered; pinned, it wears the accent. */
