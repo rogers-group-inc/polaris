@@ -235,7 +235,7 @@ router.post("/login", async (req, res, next) => {
           details: { ip: req.ip, userAgent: req.get("user-agent") || undefined, groups: result.groups.length, role: provisioned.role.name },
         });
         return res.json({ ok: true, username: provisioned.username, role: provisioned.role.name });
-      } catch (err) {
+      } catch {
         const tripped = recordFailure(username);
         if (tripped.lockedNow) {
           logEvent({
@@ -997,7 +997,7 @@ router.post("/azure/logout", requireAuth, async (req, res) => {
     req.session.destroy(() => {});
     res.clearCookie("connect.sid");
     res.json({ ok: true });
-  } catch (err: any) {
+  } catch {
     req.session.destroy(() => {});
     res.clearCookie("connect.sid");
     res.json({ ok: true });

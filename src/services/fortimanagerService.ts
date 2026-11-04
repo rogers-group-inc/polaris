@@ -1982,7 +1982,6 @@ async function fmgStepDhcpMonitor(ctx: FmgDeviceCtx): Promise<void> {
       const leaseRes = await rpc(baseUrl, leasePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       flags.didDhcpLeasesQuery = true;
       const leaseData = leaseRes.result?.[0]?.data;
-      const monitorStatus = Array.isArray(leaseData) ? leaseData[0]?.status?.code : undefined;
       const rawResults = Array.isArray(leaseData)
         ? leaseData[0]?.response?.results
         : (leaseData as any)?.response?.results;
@@ -2905,7 +2904,6 @@ export async function discoverDhcpSubnets(
     if (signal?.aborted) return null;
 
     log("discover.device.start", "info", `Starting discovery for ${deviceName}`, deviceName);
-    const devStartMs = Date.now();
 
     // Direct mode: skip FMG entirely for per-device calls. Use the FortiGate's
     // real management-interface IP (resolved through FMG's interface config —

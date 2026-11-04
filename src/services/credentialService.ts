@@ -32,9 +32,7 @@ import { getOnboardingState } from "./windowsSshOnboardingService.js";
 import {
   type HttpCheckConfig,
   normalizeHttpPath,
-  resolveHttpAuthMode,
   HTTP_CREDENTIAL_AUTH_MODES,
-  type HttpAuthConfig,
 } from "../utils/httpCheck.js";
 
 export type CredentialType = "snmp" | "winrm" | "ssh" | "restapi" | "http";

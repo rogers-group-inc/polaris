@@ -29,7 +29,6 @@ import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
 import { chunkArray } from "../utils/chunk.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
 import { performance } from "node:perf_hooks";
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
@@ -7672,7 +7671,6 @@ function snmpVarbindToPrintable(vb: { type: number; value: unknown }): string {
       return `${v[0]}.${v[1]}.${v[2]}.${v[3]}`;
     }
     const text = v.toString("utf8");
-    // eslint-disable-next-line no-control-regex
     if (/^[\x09\x0a\x0d\x20-\x7e]*$/.test(text)) return trimTrailing(text, " ");
     return v.toString("hex").match(/.{1,2}/g)?.join(" ").toUpperCase() || "";
   }

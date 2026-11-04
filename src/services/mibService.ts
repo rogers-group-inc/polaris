@@ -304,13 +304,6 @@ function parseIndexNames(body: string): string[] | null {
   return out.length > 0 ? out : null;
 }
 
-interface RawObjectDecl {
-  name: string;
-  kind: MibSymbolKind;
-  body: string;       // text between the keyword and `::=`
-  oidParts: string[]; // raw `::= { ... }` body split into tokens
-}
-
 // Master regex for OBJECT-TYPE / OBJECT-IDENTITY / NOTIFICATION-TYPE /
 // MODULE-IDENTITY declarations. Matches lowercase-leading symbols only —
 // matches the same convention used by oidRegistry's parseObjectAssignments.

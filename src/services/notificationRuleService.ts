@@ -27,12 +27,10 @@ import {
   CHANGE_TYPE_ACTIONS,
   legacyMirrorOfV2,
   normalizeRuleToV2,
-  normalizeEscalationToV2,
   allRuleActionRefs,
   type RuleActionCarrier,
   notifyChannelIds,
   rebootActionHasTo,
-  evaluateScopeCondition,
   buildShadowIndex,
   isAssetShadowed,
   triggerSignature,
@@ -45,7 +43,6 @@ import {
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { listRegions, REGION_TAG_CATEGORY } from "./mapRegionService.js";
 import { regionLevelIndex } from "./regionHierarchyService.js";
-import { ipInCidr } from "../utils/cidr.js";
 import { invalidateDownDetectionCache } from "./downDetectionService.js";
 import { bumpQuietTimeCache } from "./quietTimeHoldService.js";
 import { scopeMatchesAsset } from "./notificationTypes.js";

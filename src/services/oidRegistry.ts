@@ -356,7 +356,7 @@ const NAMED_NUMBER_RE = /^[a-zA-Z][\w-]*\((\d+)\)$/;
 export function tryResolveParts(parts: string[], numeric: Map<string, string>): string | null {
   if (parts.length === 0) return null;
 
-  function partToOid(p: string, isFirst: boolean): string | null {
+  function partToOid(p: string, _isFirst: boolean): string | null {
     if (isInteger(p)) return p;
     const namedNum = NAMED_NUMBER_RE.exec(p);
     if (namedNum) return namedNum[1];

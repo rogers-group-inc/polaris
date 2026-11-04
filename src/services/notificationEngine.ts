@@ -155,7 +155,7 @@ import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js
 // Business rule 78 — who silenced a dependency-suppressed device, for the
 // alert a down automation raises about it anyway.
 import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "./dependencyTreeService.js";
-import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
+import { dependencyTriggerSummary } from "../utils/notificationTemplate.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
 import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
@@ -4439,28 +4439,6 @@ function tierLadderFor(rule: DbRule): ResolvedTier[] | null {
 function seriesRun(reading: Reading, meets: (v: number | string | boolean | null) => boolean): number | null {
   if (!reading.series) return null;
   return leadingRun(reading.series, meets);
-}
-
-/**
- * The run behind a reading for one side of the decision (met, or recovered),
- * resolving the series and current-state families into one answer.
- *
- * `stateRun` / `lastAt` are the state row's counters, read only when there is
- * no series. `advanced` says whether the current-state counter moved, i.e.
- * whether the caller has anything to persist — a repeat of the same poll writes
- * nothing, which is what keeps the hot path transition-write-only.
- */
-function runFor(
-  reading: Reading,
-  meets: boolean,
-  predicate: (v: number | string | boolean | null) => boolean,
-  stateRun: number,
-  lastAt: Date | null | undefined,
-): { run: number; advanced: boolean; stateful: boolean } {
-  const s = seriesRun(reading, predicate);
-  if (s !== null) return { run: s, advanced: false, stateful: false };
-  const stepped = advanceRun(stateRun, meets, reading.readingAt, lastAt);
-  return { run: stepped.run, advanced: stepped.advanced, stateful: true };
 }
 
 /**

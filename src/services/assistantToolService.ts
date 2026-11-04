@@ -325,7 +325,6 @@ const ASSET_FILTER_ARGS = {
   warrantyExpiresBefore: z.string().max(40).optional(),
   warrantyExpiresAfter: z.string().max(40).optional(),
 };
-const AssetFilterArgs = z.object(ASSET_FILTER_ARGS);
 
 const AssetArgs = z.object({
   ...ASSET_FILTER_ARGS,
@@ -450,7 +449,7 @@ const DEVICE_FILTER_PROPS = {
  * filters cannot be applied (no region assigned, a bad CIDR).
  */
 async function assetFilterWhere(
-  a: z.infer<typeof AssetFilterArgs>,
+  a: z.infer<z.ZodObject<typeof ASSET_FILTER_ARGS>>,
   req: Request,
 ): Promise<{ where: Record<string, unknown>; subnet?: string } | ToolResult> {
   const and: Record<string, unknown>[] = [];

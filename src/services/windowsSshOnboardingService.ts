@@ -32,13 +32,6 @@
  */
 
 import { createHash } from "node:crypto";
-// ssh2 is CommonJS. cjs-module-lexer surfaces `Client` as a named export (which
-// is why remoteExec.ts can `import { Client }`) but NOT `utils`, so a named
-// import throws at module-load under Node's real ESM loader — even though the
-// bundler used by Vitest interops it happily. Reach it off the default export.
-import ssh2 from "ssh2";
-const sshUtils = ssh2.utils;
-
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { generateEd25519Keypair, SshKeygenError } from "../utils/sshKeygen.js";

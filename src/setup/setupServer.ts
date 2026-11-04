@@ -62,7 +62,7 @@ export function startSetupServer(): void {
   app.use(express.static(publicDir, { index: false }));
 
   // All non-API, non-asset requests fall through to setup.html
-  app.use((req, res, next) => {
+  app.use((req, res, _next) => {
     if (req.path.startsWith("/api/")) {
       return res.status(404).json({ error: "Not found" });
     }

@@ -44,7 +44,6 @@ import {
   parseNginxVersion,
   parseJavaVersion,
   parseOsRelease,
-  runningNodeTrack,
 } from "../utils/platformVersions.js";
 import {
   platformEolDatasetSchema,

@@ -23,7 +23,7 @@
  * `getAgentVersion()` (reads `agent/VERSION`), NOT `getAppVersion()`.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, rename, writeFile, stat, readdir, rm } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";

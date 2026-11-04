@@ -4149,9 +4149,6 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         continue;
       }
 
-      // New FortiGate — set the Device Map tag (fgt:<serial>) so the map endpoint
-      // can find this device by a stable key even if hostname/model changes later.
-      const fgTag = member.serial ? `fgt:${member.serial}` : null;
       // Phase 3b.1 cutover: project from a synthetic single-source array
       // built directly from this just-discovered firewall's observed blob.
       // Pure projection, no DB roundtrip — new asset has no other sources.
@@ -8321,22 +8318,6 @@ export async function dismissRefusedHostnameConflicts(integrationId: string): Pr
     });
   }
   return refused.length;
-}
-
-function sidTag(sid: string): string {
-  return `${SID_TAG_PREFIX}${sid.toUpperCase()}`;
-}
-
-// Reject SIDs that aren't useful as a cross-integration identity key:
-// empty, the null SID ("S-1-0-0"), or anything that doesn't look like a SID.
-// The hybrid-join cross-link only works when the SID actually pins one
-// device — placeholder SIDs would just collide every dead account.
-function isMeaningfulSid(sid: string | undefined | null): boolean {
-  if (!sid) return false;
-  const s = sid.trim().toUpperCase();
-  if (!s.startsWith("S-")) return false;
-  if (s === "S-1-0-0") return false;
-  return true;
 }
 
 // Tags the Entra discovery auto-assigns each run (so we strip them on update
