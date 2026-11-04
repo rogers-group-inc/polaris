@@ -40,6 +40,7 @@
  * burst can inform a ratio and must never move monitorStatus.
  */
 
+import { chunkArray } from "./chunk.js";
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { burstPingHost, type BurstPingResult } from "./icmpPing.js";
@@ -203,13 +204,6 @@ export function parseFpingOutput(out: string): Map<string, BurstPingResult> {
   return map;
 }
 
-/** Split an array into fixed-size chunks. */
-function chunk<T>(xs: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
-  return out;
-}
-
 async function runFpingChunk(
   targets: string[],
   opts: Required<Pick<BurstPingOptions, "count" | "periodMs" | "timeoutMs">>,
@@ -318,7 +312,7 @@ export async function burstPing(
   if (backend === "ping") return await runPingFallback(uniq, resolved);
 
   const out = new Map<string, BurstPingResult>();
-  for (const c of chunk(uniq, BURST_CHUNK)) {
+  for (const c of chunkArray(uniq, BURST_CHUNK)) {
     const got = await runFpingChunk(c, resolved);
     // A chunk that produced NOTHING while it had targets means fping ran but we
     // could not use it — an unsupported flag on an old build, a permissions

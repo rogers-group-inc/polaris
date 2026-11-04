@@ -51,6 +51,7 @@
  * gates without coordinates are never touched by it.
  */
 
+import { chunkArray } from "../utils/chunk.js";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
@@ -515,7 +516,7 @@ async function addTagToAssets(assetIds: string[], tag: string): Promise<number> 
     if (tags.includes(tag)) continue;
     updates.push({ id: row.id, tags: [...tags, tag] });
   }
-  for (const c of chunk50(updates)) {
+  for (const c of chunkArray(updates, 50)) {
     await prisma.$transaction(
       c.map((u) => prisma.asset.update({ where: { id: u.id }, data: { tags: u.tags } })),
     );
@@ -535,7 +536,7 @@ async function addTagToSubnets(subnetIds: string[], tag: string): Promise<number
     if (tags.includes(tag)) continue;
     updates.push({ id: row.id, tags: [...tags, tag] });
   }
-  for (const c of chunk50(updates)) {
+  for (const c of chunkArray(updates, 50)) {
     await prisma.$transaction(
       c.map((u) => prisma.subnet.update({ where: { id: u.id }, data: { tags: u.tags } })),
     );
@@ -554,7 +555,7 @@ async function removeTagFromAllSubnets(tag: string): Promise<number> {
     select: { id: true, tags: true },
   });
   if (rows.length === 0) return 0;
-  for (const c of chunk50(rows)) {
+  for (const c of chunkArray(rows, 50)) {
     await prisma.$transaction(
       c.map((row) => {
         const tags = Array.isArray(row.tags) ? row.tags : [];
@@ -591,7 +592,7 @@ async function removeTagFromAllAssets(tag: string): Promise<number> {
     select: { id: true, tags: true },
   });
   if (rows.length === 0) return 0;
-  for (const c of chunk50(rows)) {
+  for (const c of chunkArray(rows, 50)) {
     await prisma.$transaction(
       c.map((row) => {
         const tags = Array.isArray(row.tags) ? row.tags : [];
@@ -618,7 +619,7 @@ async function removeTagFromAssets(assetIds: string[], tag: string): Promise<num
     select: { id: true, tags: true },
   });
   if (rows.length === 0) return 0;
-  for (const chunk of chunk50(rows)) {
+  for (const chunk of chunkArray(rows, 50)) {
     await prisma.$transaction(
       chunk.map((row) => {
         const tags = Array.isArray(row.tags) ? row.tags : [];
@@ -640,7 +641,7 @@ async function removeTagFromSubnets(subnetIds: string[], tag: string): Promise<n
     select: { id: true, tags: true },
   });
   if (rows.length === 0) return 0;
-  for (const chunk of chunk50(rows)) {
+  for (const chunk of chunkArray(rows, 50)) {
     await prisma.$transaction(
       chunk.map((row) => {
         const tags = Array.isArray(row.tags) ? row.tags : [];
@@ -652,12 +653,6 @@ async function removeTagFromSubnets(subnetIds: string[], tag: string): Promise<n
     );
   }
   return rows.length;
-}
-
-function chunk50<T>(rows: T[]): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < rows.length; i += 50) out.push(rows.slice(i, i + 50));
-  return out;
 }
 
 // --- Provenance (RegionTagAssignment) ---
@@ -709,7 +704,7 @@ async function recordProvenance(
   targetIds: string[],
 ): Promise<void> {
   if (targetIds.length === 0) return;
-  for (const chunk of chunk50(targetIds)) {
+  for (const chunk of chunkArray(targetIds, 50)) {
     await prisma.regionTagAssignment.createMany({
       data: chunk.map((targetId) => ({ regionId, targetType, targetId })),
       skipDuplicates: true,
@@ -723,7 +718,7 @@ async function dropProvenance(
   targetIds: string[],
 ): Promise<void> {
   if (targetIds.length === 0) return;
-  for (const chunk of chunk50(targetIds)) {
+  for (const chunk of chunkArray(targetIds, 50)) {
     await prisma.regionTagAssignment.deleteMany({
       where: { regionId, targetType, targetId: { in: chunk } },
     });
@@ -1353,7 +1348,7 @@ export async function stripOutOfRegionFirewallTags(regions: MapRegion[]): Promis
     if (keep.length !== tags.length) updates.push({ id: gate.id, tags: keep });
   }
 
-  for (const c of chunk50(updates)) {
+  for (const c of chunkArray(updates, 50)) {
     await prisma.$transaction(
       c.map((u) => prisma.asset.update({ where: { id: u.id }, data: { tags: u.tags } })),
     );

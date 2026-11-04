@@ -9386,7 +9386,7 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
     // this integration's claim on a device it no longer holds. Rows for
     // DISABLED devices are kept: the device still exists, it is switched off.
     if (gone.length > 0) {
-      for (const batch of chunkIds(gone.map((r) => r.id))) {
+      for (const batch of chunkArray(gone.map((r) => r.id), 500)) {
         await prisma.assetSource.deleteMany({ where: { id: { in: batch } } });
       }
       syncLog("info", `Swept ${gone.length} stale ${directoryLabel} source row(s) for device(s) no longer in the directory.`);
@@ -9455,13 +9455,6 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
   }
 
   return decommissioned;
-}
-
-/** Split an id list into DB-friendly batches for deleteMany. */
-function chunkIds(ids: string[], size = 500): string[][] {
-  const out: string[][] = [];
-  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
-  return out;
 }
 
 export async function syncEntraDevices(

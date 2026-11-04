@@ -40,6 +40,7 @@
  * unit testing.
  */
 
+import { chunkArray } from "../utils/chunk.js";
 import { prisma } from "../db.js";
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import { bareFortinetDeviceName } from "../utils/assetSourceLocation.js";
@@ -1613,13 +1614,6 @@ export async function recomputeDependencyTree(integrationId?: string): Promise<{
 
 // ─── Endpoint-half writeback ────────────────────────────────────────────────
 
-/** Chunk ids so no statement carries a pathological IN list. */
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
 /**
  * The owning FortiGate for each of these endpoints' addresses, per IPAM —
  * the last-resort parent tier (business rule 55).
@@ -1646,7 +1640,7 @@ async function resolveIpamGatesForEndpoints(assetIds: string[]): Promise<Map<str
   if (assetIds.length === 0) return out;
 
   const claims: MaclessClaimRow[] = [];
-  for (const ids of chunk(assetIds, 500)) {
+  for (const ids of chunkArray(assetIds, 500)) {
     const rows = await prisma.$queryRaw<MaclessClaimRow[]>`
       SELECT a.id, a.hostname, a."ipAddress" AS ip, a."ipSource", a."ipOverride",
              a."lastSeen", h."lastSeen" AS "ipLastSeen",
@@ -1685,7 +1679,7 @@ async function loadMacTableSwitchesForEndpoints(assetIds: string[]): Promise<Map
   if (assetIds.length === 0) return out;
   const cutoff = new Date(Date.now() - MAC_TABLE_FRESH_MS);
   const rows: Array<{ assetId: string; matchedAssetId: string | null; lastSeen: Date }> = [];
-  for (const ids of chunk(assetIds, 500)) {
+  for (const ids of chunkArray(assetIds, 500)) {
     rows.push(...await prisma.assetMacTableEntry.findMany({
       where:  { matchedAssetId: { in: ids }, status: "learned", lastSeen: { gte: cutoff } },
       select: { assetId: true, matchedAssetId: true, lastSeen: true },
@@ -1868,10 +1862,10 @@ async function syncEndpointDependencyEdges(
   }
 
   await prisma.$transaction(async tx => {
-    for (const ids of chunk(staleIds, 500)) {
+    for (const ids of chunkArray(staleIds, 500)) {
       await tx.assetDependencyParent.deleteMany({ where: { id: { in: ids } } });
     }
-    for (const batch of chunk(toInsert, 1000)) {
+    for (const batch of chunkArray(toInsert, 1000)) {
       await tx.assetDependencyParent.createMany({
         data: batch.map(e => ({
           assetId:       e.childAssetId,
@@ -1883,12 +1877,12 @@ async function syncEndpointDependencyEdges(
       });
     }
     for (const [via, ids] of retypeByVia) {
-      for (const batch of chunk(ids, 500)) {
+      for (const batch of chunkArray(ids, 500)) {
         await tx.assetDependencyParent.updateMany({ where: { id: { in: batch } }, data: { detectedVia: via } });
       }
     }
     for (const [layer, ids] of layerBuckets) {
-      for (const batch of chunk(ids, 500)) {
+      for (const batch of chunkArray(ids, 500)) {
         // The "don't rewrite what already matches" guard has to spell out the
         // NULL case: `dependencyLayer <> 3` is NULL — not true — for a row whose
         // layer is NULL, so a bare `not` silently skips every endpoint that has
