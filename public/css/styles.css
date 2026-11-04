@@ -5312,6 +5312,12 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .modal.modal-large { max-width: min(94vw, 1200px); width: min(94vw, 1200px); }
 .modal.modal-xl { max-width: min(92vw, 1360px); width: min(92vw, 1360px); }
 .modal.modal-xl .modal-body { padding: 0; }
+/* A view-only dialog (openModal options.readOnly → _lockModalReadOnly): fields
+   are disabled by the script; every body button that would change something is
+   hidden here, so the dialog reads as the configuration rather than as a form
+   full of dead controls. `data-ro-keep` keeps the ones that only show things. */
+.modal.modal-readonly .modal-body button:not([data-ro-keep]),
+.modal.modal-readonly .modal-body .aw-grip { display: none !important; }
 
 /* PDF import split pane */
 .pdf-import-pane {

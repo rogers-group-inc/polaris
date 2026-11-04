@@ -8,7 +8,7 @@ Polaris a monitoring tool rather than an inventory.
 
 | Gate | Grants |
 |---|---|
-| `automationManagement:read` | see the page, export, view code |
+| `automationManagement:read` | see the page, open an automation read-only (**View**), export, view code |
 | `automationManagement:write` | create, edit, clone, delete, preview a draft against current data, run test deliveries |
 | `automationScripts:read` / `:write` | the Scripts tab; attaching a script action needs **write** |
 | `contacts:read` | the Address Book tab |
@@ -80,8 +80,12 @@ first tier it fires at). Hovering it lists the ladder, e.g. *Warning → Serious
 (20) → Critical (30)*. The column's filter and sort use that base severity.
 
 Clicking an automation's **name**, or double-clicking anywhere on its row, opens
-it in the editor; right-clicking the name or the row opens a menu: **Edit**, **Clone**, **View code**, **Export**, **Delete**. Below `automationManagement:write` the name
-renders as plain text and the **Enabled** column as a static label.
+it in the editor; right-clicking the name or the row opens a menu: **Edit**, **Clone**, **View code**, **Export**, **Delete**. Below `automationManagement:write` the
+menu is **View**, **View code**, **Export**, and clicking the name opens the
+same editor as **View automation** — every step, the stored values, every
+field locked, **Close** in place of Save — and the **Enabled** column is a
+static label. The live previews (matched devices, *Test against current data*,
+the example message) need **write**, so in that view each one says so instead.
 
 **Clone** pre-fills the wizard, saves as a create, names it `<name> (copy)`, and
 is **created disabled**. That is not politeness: two automations with the same

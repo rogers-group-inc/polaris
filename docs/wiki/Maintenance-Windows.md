@@ -83,15 +83,19 @@ Two tabs:
 
 | Tab | |
 |---|---|
-| **Create Schedule** | the form, with a live device-list preview |
-| **Schedules** | the list of what exists, with a link to the calendar on the Events page |
+| **Create Schedule** | the form, with a live device-list preview — named **Edit Schedule** while it holds a stored schedule |
+| **Schedules** | the list of what exists — with a **Created by** column naming the account that made each one — and a link to the calendar on the Events page |
 
 A schedule selects devices either by a **filter** or by **explicit asset ids**
 (which is what the Assets right-click menu pins), and states a recurrence.
 
+Clicking a schedule (on the Schedules tab, the Active Maintenance widget or the
+Events calendar) loads it into the form: the tab reads **Edit Schedule**, and
+the banner above the form names the schedule and who created it, and when.
 **Create Schedule** (or **Save Changes** while editing) and **Cancel Edit** sit
-bottom-right in the modal footer and show only on the Create Schedule tab; the
-**×** in the header closes the modal.
+bottom-right in the modal footer and show only on that tab. **Cancel Edit**
+clears the form and turns the tab back into **Create Schedule**, as a save
+does; the **×** in the header closes the modal.
 
 ### The calendar
 

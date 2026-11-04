@@ -1728,6 +1728,18 @@ async function openAutomationWizard(existing, opts) {
   var importing = !!(opts && opts.import) && !!existing;
   var cloning = importing || (!!(opts && opts.clone) && !!existing);
   var editing = cloning ? null : (existing || null);
+  // VIEW mode — a role with automationManagement:read but not write opens a
+  // row to see how it is configured. It is an edit draft (every step unlocked,
+  // the stored rule rendered as-is) shown in a read-only modal: openModal's
+  // readOnly option disables every field and hides every body button that
+  // would change something, the footer has Close instead of Save, and the
+  // live previews — POST /automations/preview and /message-example are gated
+  // at write — are not asked, so the steps say why instead of showing a 403.
+  var readOnly = !!(opts && opts.readOnly) && !!existing && !cloning;
+  var PREVIEW_NEEDS_WRITE = "Live previews need edit access to automations.";
+  function awPreview(body) {
+    return readOnly ? Promise.reject(new Error(PREVIEW_NEEDS_WRITE)) : api.automations.preview(body);
+  }
   // What the imported file said it needs, and what it could not carry.
   var importInfo = importing ? (opts.importInfo || {}) : null;
 
@@ -2272,7 +2284,7 @@ async function openAutomationWizard(existing, opts) {
     // Size and colour live in .aw-collapse (styles.css) rather than inline: the
     // glyph is the only affordance on a severity block's header line, so it has
     // to read as a control at a glance.
-    return '<button type="button" class="btn-icon aw-collapse" data-collapse="' + escapeHtml(key) + '" ' +
+    return '<button type="button" class="btn-icon aw-collapse" data-ro-keep data-collapse="' + escapeHtml(key) + '" ' +
       'aria-expanded="' + (on ? "false" : "true") + '" title="' + (on ? "Expand this severity" : "Collapse this severity") + '" ' +
       'aria-label="' + (on ? "Expand this severity" : "Collapse this severity") + '">' +
       (on ? "&#x25B8;" : "&#x25BE;") + "</button>";
@@ -2513,6 +2525,7 @@ async function openAutomationWizard(existing, opts) {
     };
     var ex;
     try {
+      if (readOnly) throw new Error(PREVIEW_NEEDS_WRITE);
       ex = await api.automations.messageExample({ rule: body, assetId: _awExampleAssetId });
     } catch (err) {
       if (seq !== _awExampleSeq) return;
@@ -2633,12 +2646,25 @@ async function openAutomationWizard(existing, opts) {
     '<div class="step-panel" id="aw-step-7"></div>'; // rendered on entry (summary + affected devices)
 
   var footer =
-    '<button class="btn btn-secondary" id="aw-cancel">Cancel</button>' +
+    '<button class="btn btn-secondary" id="aw-cancel">' + (readOnly ? "Close" : "Cancel") + '</button>' +
     '<button class="btn btn-secondary" id="aw-back" style="display:none">&larr; Back</button>' +
     '<button class="btn btn-primary" id="aw-next">Next &rarr;</button>' +
+    // Present but never shown in view mode (syncFooter), so every reference
+    // below stays valid and the step keys find no visible submit to press.
     '<button class="btn btn-primary" id="aw-save" style="display:none">' + (editing ? "Save changes" : cloning && !importing ? "Create clone" : "Create automation") + '</button>';
 
-  openModal(editing ? "Edit automation" : importing ? "Imported automation" : cloning ? "Clone automation" : "New automation", body, footer, { wide: true });
+  if (readOnly) {
+    var roText = "Your role can see how this automation is configured but not change it. " +
+      "Step through it with Next, or click any step.";
+    // Guarded on the app.js global, like wireModalStepKeys below.
+    body = '<div style="margin:-0.75rem 0 0.75rem">' +
+      (typeof calloutHTML === "function"
+        ? calloutHTML("note", "View only", roText)
+        : '<p class="hint"><strong>View only</strong> — ' + roText + '</p>') +
+      '</div>' + body;
+  }
+
+  openModal(readOnly ? "View automation" : editing ? "Edit automation" : importing ? "Imported automation" : cloning ? "Clone automation" : "New automation", body, footer, { wide: true, readOnly: readOnly });
 
   // ── Export / import / view-code (public/js/automations-portability.js) ──
   // Guarded on the global: the wizard is standalone and loads on five pages,
@@ -2936,7 +2962,7 @@ async function openAutomationWizard(existing, opts) {
       // A Path Monitor draft's pool is agent hosts — preview the scope the
       // engine will actually resolve (pathMonitorScopeC).
       var pathPool = isPathTriggerC(draft.trigger);
-      var res = await api.automations.preview({ scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope });
+      var res = await awPreview({ scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope });
       var rows = (res.matches || []).slice(0, 15).map(function (m) {
         return '<tr><td>' + escapeHtml(m.hostname || m.assetId || "") + '</td></tr>';
       }).join("");
@@ -4827,7 +4853,7 @@ async function openAutomationWizard(existing, opts) {
     if (key === _pathPoolKey) { paint(); return; }
     _pathPoolKey = key;
     try {
-      var res = await api.automations.preview({ scope: scope });
+      var res = await awPreview({ scope: scope });
       if (_pathPoolKey !== key) return; // a newer request owns the line
       _pathPoolCount = res.totalEvaluated || 0;
     } catch (_e) {
@@ -5849,7 +5875,7 @@ async function openAutomationWizard(existing, opts) {
     collectStep2(); collectStep3();
     box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">Testing…</p>';
     try {
-      var res = await api.automations.preview({ trigger: draft.trigger, scope: draft.scope, reset: draft.reset || undefined });
+      var res = await awPreview({ trigger: draft.trigger, scope: draft.scope, reset: draft.reset || undefined });
       if (!res.supported) { box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml(res.note || "Not previewable.") + '</p>'; return; }
       // Counted server-side over every reading: the returned rows are capped
       // (and now ordered carve-out-first), so counting them here would report
@@ -7617,8 +7643,8 @@ async function openAutomationWizard(existing, opts) {
    *  editor's SAVE is gated separately, inside openCodeModal. */
   function codeButtonsHtml() {
     if (!portability()) return '';
-    return '<button class="btn btn-secondary" id="aw-view-code" type="button" style="padding:2px 10px;font-size:0.8rem">View code</button>' +
-      '<button class="btn btn-secondary" id="aw-export" type="button" style="padding:2px 10px;font-size:0.8rem">Export</button>';
+    return '<button class="btn btn-secondary" id="aw-view-code" type="button" data-ro-keep style="padding:2px 10px;font-size:0.8rem">View code</button>' +
+      '<button class="btn btn-secondary" id="aw-export" type="button" data-ro-keep style="padding:2px 10px;font-size:0.8rem">Export</button>';
   }
 
   /** The one export path, shared by the Summary button and the code modal's
@@ -7652,7 +7678,7 @@ async function openAutomationWizard(existing, opts) {
     var viewBtn = document.getElementById('aw-view-code');
     if (viewBtn) {
       viewBtn.addEventListener('click', function () {
-        var canSave = permAtLeast('automationManagement', 'write');
+        var canSave = !readOnly && permAtLeast('automationManagement', 'write');
         P.openCodeModal({
           title: 'Automation code',
           body: buildPayload({ nameFallback: 'Untitled automation' }),
@@ -8026,7 +8052,7 @@ async function openAutomationWizard(existing, opts) {
       // automations that watch the same thing) and exclude this rule itself.
       var body = { scope: draft.scope, trigger: draft.trigger, reset: draft.reset || undefined };
       if (editing && editing.id) body.id = editing.id;
-      var res = await api.automations.preview(body);
+      var res = await awPreview(body);
       // Nothing to evaluate (an unfiltered event/change draft): say why rather
       // than rendering its empty result as "0 device(s) match the filter".
       if (res.supported === false) {
@@ -8157,7 +8183,7 @@ async function openAutomationWizard(existing, opts) {
     }).join("");
     row.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
-        '<button type="button" class="btn-icon aw-collapse" aria-expanded="false" ' +
+        '<button type="button" class="btn-icon aw-collapse" data-ro-keep aria-expanded="false" ' +
           'title="Expand this action" aria-label="Expand this action">&#x25B8;</button>' +
         '<select class="aw-action-type" style="width:auto">' + typeOpts + '</select>' +
         '<span class="aw-action-summary" style="flex:1;font-size:0.8rem;color:var(--color-text-tertiary)"></span>' +
@@ -10067,7 +10093,7 @@ async function openAutomationWizard(existing, opts) {
     document.getElementById("aw-next").style.display = step < STEPS.length ? "" : "none";
     // A clone opens with every step already visited, so it gets the edit-mode
     // affordance too: save from wherever the operator finished changing things.
-    document.getElementById("aw-save").style.display = (step === STEPS.length || editing || cloning) ? "" : "none";
+    document.getElementById("aw-save").style.display = !readOnly && (step === STEPS.length || editing || cloning) ? "" : "none";
   }
   function goToStep(n, opts) {
     opts = opts || {};
@@ -10096,7 +10122,9 @@ async function openAutomationWizard(existing, opts) {
     return true;
   }
 
-  document.getElementById("aw-next").addEventListener("click", function () { goToStep(step + 1, { validate: true }); });
+  // View mode does not validate: there is nothing to save, and a stored rule
+  // the current client would word differently must still be readable.
+  document.getElementById("aw-next").addEventListener("click", function () { goToStep(step + 1, { validate: !readOnly }); });
   document.getElementById("aw-back").addEventListener("click", function () { goToStep(step - 1); });
   // → / ← walk the steps and Enter advances while Next is showing, submitting
   // only on step 6 (app.js § Stepped-modal keyboard navigation). Guarded on the
@@ -10111,6 +10139,7 @@ async function openAutomationWizard(existing, opts) {
     });
   });
   document.getElementById("aw-cancel").addEventListener("click", function () {
+    if (readOnly) { closeModal(); return; }
     COLLECT[step]();
     // Clones are excluded from the stash: it exists to protect work typed from
     // scratch, and a clone is one click away from being recreated — offering to
@@ -10176,6 +10205,7 @@ async function openAutomationWizard(existing, opts) {
    * the code viewer must work on an incomplete draft.
    */
   async function saveAutomation(btn) {
+    if (readOnly) return false; // view mode never writes
     COLLECT[step]();
     // Validate every step; jump to the first failing one.
     for (var i = 1; i <= STEPS.length; i++) {

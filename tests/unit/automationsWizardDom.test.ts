@@ -34,6 +34,8 @@ const downloads: { obj: unknown; filename: string }[] = [];
  *  Devices step a carve-out picture without re-standing the whole harness. */
 const DEFAULT_PREVIEW: Record<string, unknown> = { supported: true, totalEvaluated: 3, meetsCount: 0, matches: [] };
 let previewResponse: Record<string, unknown> = DEFAULT_PREVIEW;
+/** How many times POST /automations/preview was asked — view mode never asks. */
+let previewCallCount = 0;
 /** The global capacity alert hold (rule 105) the event step reads and writes. */
 let capHold: Record<string, unknown> = {
   holdMinutes: 30, intervalMinutes: 10, pending: null,
@@ -60,7 +62,12 @@ beforeAll(() => {
   // reopen (which is what the import flow does), and getElementById returns the
   // FIRST — so the test would silently read the stale wizard and disagree with
   // the browser.
-  g.openModal = (title: string, body: string, footer: string) => {
+  g.openModal = (title: string, body: string, footer: string, options?: { readOnly?: boolean }) => {
+    // The real view-only lock (sliced out of app.js below), torn down and
+    // re-applied exactly as openModal does, so the read-only tests exercise
+    // the observer the browser runs rather than a stand-in.
+    const ro = g as { _roTeardown?: (() => void) | null; _lockModalReadOnly?: (m: unknown) => () => void };
+    if (ro._roTeardown) { ro._roTeardown(); ro._roTeardown = null; }
     let overlay = doc.getElementById("modal-overlay");
     if (!overlay) {
       overlay = doc.createElement("div");
@@ -73,7 +80,21 @@ beforeAll(() => {
     overlay.querySelector(".modal-header h3").textContent = title;
     overlay.querySelector(".modal-body").innerHTML = body;
     overlay.querySelector(".modal-footer").innerHTML = footer;
+    if (options && options.readOnly) ro._roTeardown = ro._lockModalReadOnly!(overlay.querySelector(".modal"));
   };
+  g.MutationObserver = win.MutationObserver;
+  {
+    const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+    const start = appSrc.indexOf("function _lockModalReadOnly(");
+    if (start === -1) throw new Error("_lockModalReadOnly not found in public/js/app.js");
+    let depth = 0;
+    let end = -1;
+    for (let i = appSrc.indexOf("{", start); i < appSrc.length; i++) {
+      if (appSrc[i] === "{") depth++;
+      else if (appSrc[i] === "}" && --depth === 0) { end = i + 1; break; }
+    }
+    (0, eval)(appSrc.slice(start, end));
+  }
   g.api = {
     automations: {
       update: async (_id: string, payload: unknown) => { savedPayloads.push(payload as Record<string, unknown>); return { rule: {} }; },
@@ -108,7 +129,7 @@ beforeAll(() => {
         models: ["FGT-60F"],
         subnets: [{ id: "s1", name: "Mgmt", cidr: "10.20.0.0/24" }],
       }),
-      preview: async () => previewResponse,
+      preview: async () => { previewCallCount++; return previewResponse; },
       // The cadence the poll-counted hold + window fields convert through.
       // 120s with a spread, so a caption that quietly assumed 60 is visible.
       pollCadence: async () => ({ stream: "cpuMemory", mode: 120, min: 60, max: 300, timeoutMs: 5000, assetCount: 7 }),
@@ -4973,5 +4994,77 @@ describe("reboot action", () => {
     const resetOpts = Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action .aw-action-type option")).map((o) => (o as HTMLOptionElement).value);
     expect(resetOpts.length).toBeGreaterThan(0);
     expect(resetOpts).not.toContain("reboot");
+  });
+});
+
+describe("view mode (automationManagement:read without write)", () => {
+  const rule = {
+    id: "r-view",
+    name: "CPU high",
+    description: "Pages the NOC",
+    enabled: true,
+    severity: "warning",
+    trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 90, forDurationSec: 0 },
+    scope: { allAssets: true },
+    reset: { mode: "auto" },
+    cooldownSec: null,
+    actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] }],
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 30));
+  const click = (sel: string) => (doc.querySelector(sel) as unknown as { click: () => void }).click();
+
+  async function openView(): Promise<void> {
+    doc.body.innerHTML = "";
+    toastErrors.length = 0;
+    savedPayloads.length = 0;
+    previewCallCount = 0;
+    await (g.openAutomationWizard as (r: unknown, o: unknown) => Promise<void>)(JSON.parse(JSON.stringify(rule)), { readOnly: true });
+    await tick();
+  }
+
+  it("opens as View automation with the stored values, Close in place of Cancel, and no Save", async () => {
+    await openView();
+    expect(doc.querySelector(".modal-header h3")!.textContent).toBe("View automation");
+    expect(doc.querySelector(".modal")!.classList.contains("modal-readonly")).toBe(true);
+    expect((doc.querySelector("#aw-name") as HTMLInputElement).value).toBe("CPU high");
+    expect(doc.querySelector("#aw-cancel")!.textContent).toBe("Close");
+    expect((doc.querySelector("#aw-save") as HTMLElement).style.display).toBe("none");
+    expect(doc.querySelector(".modal-body")!.textContent).toContain("View only");
+  });
+
+  it("disables every field on every step, including steps rendered on entry", async () => {
+    await openView();
+    for (let n = 2; n <= 7; n++) {
+      click('.stepper-step[data-step="' + n + '"]');
+      await tick();
+      // The Save stays hidden on every step, even where edit mode shows it.
+      expect((doc.querySelector("#aw-save") as HTMLElement).style.display).toBe("none");
+    }
+    const live = Array.from(doc.querySelectorAll(".modal-body input, .modal-body select, .modal-body textarea"))
+      .filter((el) => !(el as HTMLInputElement).disabled && !el.hasAttribute("data-ro-keep"));
+    expect(live.map((el) => el.id || el.className)).toEqual([]);
+    expect(doc.querySelectorAll('.modal-body [draggable="true"]').length).toBe(0);
+    expect(savedPayloads).toHaveLength(0);
+  });
+
+  it("Next walks the steps without validating, and the previews are never asked", async () => {
+    await openView();
+    for (let n = 1; n < 7; n++) { click("#aw-next"); await tick(); }
+    expect(doc.querySelector("#aw-step-7.visible")).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 450)); // past the scope preview's debounce
+    expect(previewCallCount).toBe(0);
+    expect(toastErrors).toEqual([]);
+    // The summary's read-level verbs stay; the view-only lock keeps them.
+    expect(doc.querySelector("#aw-view-code")!.hasAttribute("data-ro-keep")).toBe(true);
+    expect(doc.querySelector("#aw-export")!.hasAttribute("data-ro-keep")).toBe(true);
+  });
+
+  it("the lock is torn down when the shared modal is reused for an edit", async () => {
+    await openView();
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(JSON.parse(JSON.stringify(rule)));
+    await tick();
+    expect(doc.querySelector(".modal")!.classList.contains("modal-readonly")).toBe(false);
+    expect((doc.querySelector("#aw-name") as HTMLInputElement).disabled).toBe(false);
+    expect(doc.querySelector(".modal-header h3")!.textContent).toBe("Edit automation");
   });
 });
