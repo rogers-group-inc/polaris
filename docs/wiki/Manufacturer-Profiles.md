@@ -17,7 +17,7 @@ Polaris Agent, FortiManager, the FortiOS REST API or vCenter never reads one.
 device: CPU and memory from HOST-RESOURCES-MIB, disks from its storage table,
 temperatures, fans and voltages from ENTITY-SENSOR-MIB. Many devices, especially
 Linux-based ones, already answer those. A profile row is only for what the vendor
-publishes nowhere else. The quickest test is the asset's **SNMP Walk** tab: pick a
+publishes nowhere else. The quickest test is the asset's **Device Query → SNMP Walk** tab: pick a
 standard MIB and walk it.
 
 **Use the manufacturer name your devices carry.** A profile covers the devices
@@ -107,7 +107,7 @@ polls on the device's hardware-sensor interval, using its first SNMP credential.
   MIB, and the warning tells you what is still missing.
 - After saving, the change reaches collection within about a minute and shows
   from the device's next poll after that.
-  Walk the symbol from the asset's **SNMP Walk** tab to see the raw answer.
+  Walk the symbol from the asset's **Device Query → SNMP Walk** tab to see the raw answer.
 
 | You see | Usually means |
 |---|---|

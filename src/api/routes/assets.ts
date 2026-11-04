@@ -1762,6 +1762,9 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
     let integrationMonitorCredential: { id: string; name: string; type: string } | null = null;
     let integrationUseProxy: boolean | null = null;
     let integrationSyncDescriptions: boolean | null = null;
+    // The FMG ADOM — not a secret — so the Device Query tab's API Query can
+    // address the gate through FortiManager's /sys/proxy/json.
+    let integrationAdom: string | null = null;
     if (asset.discoveredByIntegration) {
       const cfg = (asset.discoveredByIntegration.config as Record<string, unknown> | null) || {};
       const credId = typeof cfg.monitorCredentialId === "string" ? cfg.monitorCredentialId : null;
@@ -1775,6 +1778,7 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
       // Only meaningful for FortiManager; standalone FortiGate is always direct.
       if (asset.discoveredByIntegration.type === "fortimanager") {
         integrationUseProxy = cfg.useProxy !== false;
+        integrationAdom = typeof cfg.adom === "string" && cfg.adom ? cfg.adom : "root";
       }
       // Description Sync is a FortiManager + standalone FortiGate toggle. Expose
       // a derived boolean (the raw config is stripped below — it holds API
@@ -1810,7 +1814,7 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
       macAddresses:  shapeMacRows(macAddressRows),
       hostnameDiscovered,
       discoveredByIntegration: asset.discoveredByIntegration
-        ? { ...integrationLite, useProxy: integrationUseProxy, syncDescriptions: integrationSyncDescriptions }
+        ? { ...integrationLite, useProxy: integrationUseProxy, adom: integrationAdom, syncDescriptions: integrationSyncDescriptions }
         : null,
       integrationMonitorCredential,
     };
