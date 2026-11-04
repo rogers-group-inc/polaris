@@ -24,7 +24,7 @@ import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
 import type { ApLldpNeighborSample } from "../utils/fortiapLldp.js";
-import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial } from "../utils/fortiswitchCmdb.js";
+import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial, FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { getFmgWorker } from "./fmgWorker.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
@@ -2253,7 +2253,11 @@ async function fmgStepSwitches(ctx: FmgDeviceCtx): Promise<void> {
               data: {
                 target: [`/adom/${adom}/device/${deviceName}`],
                 action: "get",
-                resource: "/api/v2/cmdb/switch-controller/managed-switch?datasource=1",
+                // Only what discovery reads (serials, description, the ports
+                // table) — utils/fortiswitchCmdb.ts → FORTISWITCH_DISCOVERY_CMDB_FORMAT.
+                // No `datasource=1`: its per-reference annotations are ~18% of
+                // the response and nothing reads them.
+                resource: `/api/v2/cmdb/switch-controller/managed-switch?format=${FORTISWITCH_DISCOVERY_CMDB_FORMAT}`,
               },
             }],
           };

@@ -231,3 +231,17 @@ export function readManagedSwitchCmdbSerial(row: unknown): string | null {
   const mkey = typeof r["switch-id"] === "string" ? r["switch-id"].trim() : "";
   return mkey || null;
 }
+
+/**
+ * The `format=` filter for DISCOVERY's read of FortiOS REST
+ * `/api/v2/cmdb/switch-controller/managed-switch` (standalone FortiGate, and
+ * the FortiManager path through `/sys/proxy/json`): the serial keys, the
+ * operator description (location codes) and the `ports` table, which
+ * `findFortiswitchUplinkPorts` reads. `format=` keeps a listed child table
+ * whole, so `ports` arrives with every per-port attribute. Each switch row
+ * otherwise carries ~200 top-level attributes. A field discovery starts
+ * reading must be added here, or it is silently absent. Other readers of the
+ * same endpoint (monitoring's per-switch reads) do not use this list.
+ * Pinned by tests/unit/fortiosDiscoveryFormats.test.ts.
+ */
+export const FORTISWITCH_DISCOVERY_CMDB_FORMAT = ["sn", "switch-id", "name", "description", "ports"].join("|");
