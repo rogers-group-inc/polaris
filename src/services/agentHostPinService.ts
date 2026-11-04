@@ -35,7 +35,7 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { forgetCachedHostKey } from "./sshHostKeyService.js";
-import { forgetCachedCertPin } from "./tlsCertPinService.js";
+import { forgetCachedCertPin, normalizeFingerprint } from "./tlsCertPinService.js";
 
 export const DECOMMISSIONED_AGENT_COLLISION_REASON = "decommissioned-agent-checkin";
 
@@ -604,7 +604,7 @@ export async function listArchivedHostPins(): Promise<ArchivedHostPin[]> {
  */
 export function pinFingerprintQuery(raw: string): { hex: string | null; ssh: string | null } | null {
   const q = raw.trim();
-  const hex = /^[0-9a-f:\s-]+$/i.test(q) ? q.replace(/[^0-9a-f]/gi, "").toUpperCase() : "";
+  const hex = /^[0-9a-f:\s-]+$/i.test(q) ? normalizeFingerprint(q) : "";
   const body = q.replace(/^sha256:/i, "");
   const ssh = /^[A-Za-z0-9+/]+=*$/.test(body) ? body.replace(/=+$/, "") : "";
   const out = { hex: hex.length >= 8 ? hex : null, ssh: ssh.length >= 8 ? ssh : null };
@@ -681,7 +681,7 @@ export async function findAssetsByPinFingerprint(raw: string, limit = 8): Promis
   for (const a of archives) {
     for (const p of parseArchivedPins(a.archivedHostPins)) {
       const hit = p.kind === "tls"
-        ? !!fq.hex && normalizeHex(p.fingerprint).includes(fq.hex)
+        ? !!fq.hex && normalizeFingerprint(p.fingerprint).includes(fq.hex)
         : !!fq.ssh && p.fingerprint.includes(fq.ssh);
       if (hit) push({ assetId: a.assetId, kind: p.kind, host: p.host, port: p.port, archived: true });
     }
@@ -689,6 +689,3 @@ export async function findAssetsByPinFingerprint(raw: string, limit = 8): Promis
   return out;
 }
 
-function normalizeHex(fp: string): string {
-  return fp.replace(/[^0-9a-f]/gi, "").toUpperCase();
-}
