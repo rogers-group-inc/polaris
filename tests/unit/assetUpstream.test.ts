@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { splitLastSeenSwitch } from "../../src/services/assetUpstreamService.js";
+import { pickFirewallEntry, splitLastSeenSwitch, type UpstreamAssetRef } from "../../src/services/assetUpstreamService.js";
 
 describe("splitLastSeenSwitch", () => {
   it("splits the stored '<switch>/<port>' shape", () => {
@@ -29,5 +29,54 @@ describe("splitLastSeenSwitch", () => {
     expect(splitLastSeenSwitch(undefined)).toBeNull();
     expect(splitLastSeenSwitch("   ")).toBeNull();
     expect(splitLastSeenSwitch("/port9")).toBeNull();
+  });
+});
+
+describe("pickFirewallEntry — sighted gates that are gone", () => {
+  const ref = (id: string, status = "active"): UpstreamAssetRef => ({
+    id, hostname: id, ipAddress: null, assetType: "firewall", status, monitorStatus: null, managementAccess: null,
+  });
+  const at = (iso: string) => new Date(iso);
+  const subnet = { name: "NEW-FGT", source: "subnet" as const, subnetCidr: "10.9.0.0/24", asset: ref("new") };
+
+  it("names the newest sighting when its gate still exists", () => {
+    const out = pickFirewallEntry(
+      [{ fortigateDevice: "NEW-FGT", lastSeen: at("2026-11-01T00:00:00Z") }, { fortigateDevice: "OLD-FGT", lastSeen: at("2026-10-01T00:00:00Z") }],
+      (n) => ref(n),
+      subnet,
+    );
+    expect(out).toMatchObject({ name: "NEW-FGT", source: "sighting", lastSeen: "2026-11-01T00:00:00.000Z" });
+  });
+
+  it("passes over a newer sighting whose gate was deleted for an older one that still exists", () => {
+    const out = pickFirewallEntry(
+      [{ fortigateDevice: "GONE-FGT", lastSeen: at("2026-11-01T00:00:00Z") }, { fortigateDevice: "LIVE-FGT", lastSeen: at("2026-10-01T00:00:00Z") }],
+      (n) => (n === "LIVE-FGT" ? ref(n) : null),
+      null,
+    );
+    expect(out).toMatchObject({ name: "LIVE-FGT", source: "sighting" });
+  });
+
+  it("passes over a decommissioned gate", () => {
+    const out = pickFirewallEntry([{ fortigateDevice: "OLD-FGT", lastSeen: at("2026-10-01T00:00:00Z") }], (n) => ref(n, "decommissioned"), subnet);
+    expect(out).toBe(subnet);
+  });
+
+  it("falls to the IPAM gate when every sighted gate is gone — the replaced-firewall case", () => {
+    const out = pickFirewallEntry([{ fortigateDevice: "OLD-FGT", lastSeen: at("2026-10-01T00:00:00Z") }], () => null, subnet);
+    expect(out).toBe(subnet);
+  });
+
+  it("keeps the newest name, unresolved, when nothing resolves and IPAM has no answer", () => {
+    const out = pickFirewallEntry(
+      [{ fortigateDevice: "A-FGT", lastSeen: at("2026-11-01T00:00:00Z") }, { fortigateDevice: "B-FGT", lastSeen: at("2026-10-01T00:00:00Z") }],
+      () => null,
+      null,
+    );
+    expect(out).toMatchObject({ name: "A-FGT", source: "sighting", asset: null });
+  });
+
+  it("null with no sightings and no IPAM answer", () => {
+    expect(pickFirewallEntry([], () => null, null)).toBeNull();
   });
 });

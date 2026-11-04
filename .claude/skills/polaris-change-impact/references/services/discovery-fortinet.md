@@ -181,6 +181,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - FortiAP `/api/v2/monitor/wifi/managed_ap` row parsing is centralized in `src/utils/fortiapMonitorRow.ts` (`parseFortiapMonitorRow` + `FORTIAP_MONITOR_FORMAT`) — both transports import the same parser + format string so they can't drift.
 - Standalone FortiGate has no proxy/direct toggle (useProxy doesn't apply); all queries go directly to the device's management IP.
 - proxyQuery is the REST pass-through behind the Query API tool (both the standalone FortiGate integration and FMG's "Directly to FortiGate" mode, via `fortimanagerService → proxyQueryViaFortigate()`). GET is a read; POST/PUT/DELETE reach the live CMDB and the route logs them as `integration.query.write`.
+- **Every discovery query has a Saved Queries preset** in the two consoles: the `// <fortinet-query-presets>` block of `public/js/integrations.js` (`_FMG_PROXY_PRESET_QUERIES`, `_FGT_PRESET_QUERIES`, and `_FMG_DIRECT_PRESET_QUERIES` derived from the latter). Adding, dropping or reshaping a query in `fortimanagerService.ts` / `fortigateService.ts` (a path, a `fields` list, a `format=`) means changing its preset in the same commit and bumping `_FMG_QUERIES_VERSION` / `_FGT_QUERIES_VERSION`; `tests/unit/fortinetQueryPresets.test.ts` extracts every url / resource / GET path from the two services and fails on one with no preset (its `NOT_DISCOVERY` list names the deliberate exceptions). A version bump keeps the operator's own saved queries (`_makeSavedQueryStore`: `preset: true` flag, else name + mode).
 - **fgRequest only maps HTTP statuses to AppError — a request that never got an HTTP answer escapes raw** (undici `TypeError("fetch failed")` with a `cause.code` such as ETIMEDOUT / ECONNREFUSED / a TLS cert code, the AbortError from its own 15 s timeout, or a SyntaxError from a non-JSON 200). That is deliberate for its internal callers: `testConnection` branches on `cause.code`, and probes/push classify the raw error. But the route error handler can only render a raw error as a bare 500 "Internal server error", so **proxyQuery converts them through `describeFgTransportError()` into a 502 "Could not reach FortiGate at <host>:<port> — <why>"**; FMG direct mode appends how the address was chosen (the device's management IP as FortiManager reports it on the configured interface). Convert at the entry point that faces an operator, never inside fgRequest. Pinned by `tests/unit/fgProxyQueryTransportErrors.test.ts`.
 - Per-FortiGate query fan-out is seven parallel chains (A-G); Chain G calls `/api/v2/monitor/system/ha-peer` to populate `DiscoveredDevice.haMode` + `haMembers`. 404 / empty = standalone.
 - Chain G failures are isolated — a hung HA query never tanks the whole device's discovery (same try/catch pattern as Chains A-F).
@@ -248,6 +249,21 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Don't add retries here — the caller (syncDhcpSubnets) treats this as a single-shot, best-effort fetch; retry logic would burn discovery wall-clock for marginal value.
 
 ---
+
+## services/integrationFortigateRosterService.ts
+
+**What it owns:** the FortiGates a FortiManager / FortiGate integration has discovered, by the name their queries take — FortiManager's device name (`fortinetTopology.deviceName`, which routinely differs from `Asset.hostname`). Feeds the FortiGate picker (a text box with a `<datalist>`) of the FortiManager Query API window.
+
+**Public API:** `listIntegrationFortigates(integrationId)` (404 unknown id, 400 for a type other than `fortimanager` / `fortigate`); `fortigateRosterFromAssets(rows)` (pure, unit-tested).
+
+**Cross-service deps:** prisma only (one `integration.findUnique` + one `asset.findMany` with a tight `select`).
+
+**Used by:** `src/api/routes/integrations.ts` `GET /:id/fortigates` (thin wrapper, behind the router-level `integrations:write` — the Query API's own gate); `public/js/api.js` `api.integrations.fortigates`; `public/js/integrations.js` `openApiQueryModal`, which fills `#fmg-fgt-device-list` on open and substitutes the field into `<device-name>` at Send (JSON-escaped; the params box keeps the placeholder).
+
+**Invariants:**
+- **The name is FortiManager's**, never the hostname when a `deviceName` exists — `/adom/<adom>/device/<name>` and the direct-mode resolver key on it. Hostname is the fallback only for a row with no stamp.
+- **One entry per HA cluster** (both members carry the cluster's one name); the primary describes it, a standby only when no primary row exists.
+- Decommissioned firewalls are left out. The picker is a suggestion list: the field always accepts a typed name, and a failed lookup only removes suggestions.
 
 ## services/integrationHealthService.ts
 

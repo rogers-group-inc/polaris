@@ -543,6 +543,21 @@ being text you re-find by hand. When several switches share the stored name
 by its MAC table, then by the FortiGate that last saw the device — and stays
 plain text when nothing settles it ([rule 91](Business-Rules#rule-91)).
 
+**Last Seen Firewall** is answered in this order:
+
+1. **A managed FortiSwitch or FortiAP** shows its **controller** FortiGate, the
+   one holding its FortiLink session or CAPWAP tunnel. This is the same gate
+   its Location shows, and it moves as soon as discovery sees a new
+   controller.
+2. **Any other device** shows the newest FortiGate that reported it through a
+   DHCP lease or reservation, as long as that FortiGate is still in Polaris.
+   A report from a firewall you deleted or decommissioned is skipped, so a
+   replaced gate stops being named.
+3. If no reporting gate is still in Polaris, the row shows the gate that
+   **owns the network** the device's address is in, marked
+   "(owns 10.x.x.x/24)" ([rule 55](Business-Rules#rule-55)).
+4. If there is none, it shows the newest reported name as plain text.
+
 The tag picker in the edit form shows every tag the asset carries except its
 `azure:` tags, which it leaves out. Tags with no
 entry in the tag list (Server Settings → Identification), such as the ones

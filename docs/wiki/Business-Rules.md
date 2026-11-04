@@ -499,7 +499,9 @@ parent, never move one, and every surface says which answer it got.** (The
 write side, where an address actually places a device, is [rule 45](#rule-45).)
 It can only ever **add** a parent, never move one, so the failure mode is a missed
 alert and never a false one. An inference has no moment, so the row prints no
-timestamp.
+timestamp. On the Last Seen Firewall row it is consulted only when no reporting
+gate is still in Polaris. A managed FortiSwitch or FortiAP never reaches it,
+because its row shows its controller gate.
 
 ### Rule 56
 **What ignoring an alert costs is answered where the thing that costs it lives:

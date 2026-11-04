@@ -54,6 +54,7 @@ import {
   applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
 import { checkForSlowRuns, triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
+import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
 const router = Router();
 
@@ -2212,6 +2213,17 @@ router.post("/test/fortigate-sample", async (req, res, next) => {
     }
 
     res.json({ ok: fgResult.ok, message, deviceName: fgResult.deviceName });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/integrations/:id/fortigates — the FortiGates this integration has
+// discovered, by FortiManager device name: the Query API window's FortiGate
+// picker. Same gate as the Query API itself (the router-level integrations:write).
+router.get("/:id/fortigates", async (req, res, next) => {
+  try {
+    res.json({ fortigates: await listIntegrationFortigates(req.params.id) });
   } catch (err) {
     next(err);
   }
