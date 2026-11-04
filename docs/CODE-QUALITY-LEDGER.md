@@ -64,7 +64,7 @@ production caller at all, move the test onto the real code path and delete the f
 | CQ-T002 | lint | `tsconfig.json` | `noUnusedLocals` was off; 20 unused locals had accumulated. Enabled and cleared. | L | S | 1 | fixed@a14685cf2 | tsc |
 | CQ-T003 | lint | `eslint.config.mjs` scope | 26 warnings (25 unused vars, 1 stale disable directive). Cleared; lint reports 0. | L | S | 1 | fixed@a14685cf2 | eslint |
 | CQ-T004 | dead-export | `package.json` devDependencies | `@types/express-rate-limit` and `@types/netmask` duplicated types both packages ship; `@types/xml2js` had no consumer. Removed. | L | S | 1 | fixed@b6522808b | knip |
-| CQ-T005 | lint | `.githooks/pre-commit`, `docker-publish.yml` | knip in the hook and the CI `test` job; jscpd as an informational CI step. | L | S | 1 | verified | read |
+| CQ-T005 | lint | `.githooks/pre-commit`, `docker-publish.yml` | knip in the hook and the CI `test` job; jscpd as an informational CI step. | L | S | 1 | fixed@f9f1b3666 | read |
 | CQ-T006 | lint | `knip.jsonc` | Flip `exports` / `types` from warn to error once B2 lands. | L | S | 1 | verified | read |
 | CQ-T007 | lint | `agent/` | Nothing runs `gofmt`, `go vet` or `go test` on the agent anywhere; CodeQL is nightly only. Moves to B7 because the agent rebuild contract bumps `agent/VERSION` on any agent edit. | L | S | 1 | verified | read |
 | CQ-T008 | dead-export | `package.json` dependencies | `@types/ws` sits in `dependencies`, not `devDependencies`. | L | S | 2 | verified | read |
@@ -77,10 +77,10 @@ production caller at all, move the test onto the real code path and delete the f
 
 | id | kind | where | summary | risk | effort | tier | status | verified-by |
 |---|---|---|---|---|---|---|---|---|
-| CQ-B001 | dead-file | `src/services/ipService.ts` | Only its own test imports it; `utils/cidr.ts` owns the math. The `ipam-reservations` skill entry wrongly says reservations routes use it. Delete with its test. | L | S | 1 | verified | grep |
-| CQ-B002 | dead-file | `src/services/projectionDriftService.ts` | `detectAndLogDrift` has no caller. About ten skill references describe it as live. | L | M | 1 | verified | knip |
-| CQ-B003 | dead-file | `src/models/types.ts` | Nothing imports it (augmented Prisma result shapes, re-exported enums). | L | S | 1 | verified | knip |
-| CQ-B004 | dead-file | `src/jobs/integrationConnectionTester.ts` | Disabled in `app.ts` since 2026-06-02 "pending removal". Remove with its metric (`recordIntegrationTest`, `polaris_integration_test_total`), the Grafana panel, and the comments in `discoveryEngine.ts` and `discoveryScheduler.ts` that still say it refreshes `lastTestOk` every 10 minutes. | L | M | 1 | verified | read |
+| CQ-B001 | dead-file | `src/services/ipService.ts` | Only its own test imports it; `utils/cidr.ts` owns the math. The `ipam-reservations` skill entry wrongly says reservations routes use it. Delete with its test. | L | S | 1 | fixed@3401a55e8 | grep |
+| CQ-B002 | dead-file | `src/services/projectionDriftService.ts` | `detectAndLogDrift` has no caller. About ten skill references describe it as live. | L | M | 1 | fixed@c95e3d1fa | knip |
+| CQ-B003 | dead-file | `src/models/types.ts` | Nothing imports it (augmented Prisma result shapes, re-exported enums). | L | S | 1 | fixed@3401a55e8 | knip |
+| CQ-B004 | dead-file | `src/jobs/integrationConnectionTester.ts` | Disabled in `app.ts` since 2026-06-02 "pending removal". Remove with its metric (`recordIntegrationTest`, `polaris_integration_test_total`), the Grafana panel, and the comments in `discoveryEngine.ts` and `discoveryScheduler.ts` that still say it refreshes `lastTestOk` every 10 minutes. | L | M | 1 | fixed@c86a581ae | read |
 | CQ-B005 | dead-function | `discoveryEngine.ts` `sidTag`, `isMeaningfulSid`; `notificationEngine.ts` `runFor` | Uncalled. | L | S | 1 | fixed@a14685cf2 | tsc |
 | CQ-B006 | dead-export | `src/utils/*` | About 56 UPPER_CASE constants and 35 functions/types exported but used only in their own file (`burstPing` 8, `stateProbes` 5, `haAdvisories` 5, `wildcard.globMatches`, `dbRetry.extractPgCode`, `routePath.resolvedRequestPath`, `remoteExec.sshRunOne`). Un-export. knip's list is the authority. | L | M | 1 | verified | knip |
 | CQ-B007 | dead-export | `src/services/*` | The rest of knip's 504 + 281 (top: `notificationTypes` 62, `monitoringService` 23, `pathCheckService` 16, `credentialService` 16, `genericApiService` 14). Same treatment as B006. | L | M | 1 | verified | knip |
@@ -145,7 +145,7 @@ production caller at all, move the test onto the real code path and delete the f
 | CQ-B061 | structure | `monitoringService.ts` (15k lines) | Nine clusters: settings resolution, probes, generic collectors, Fortinet REST, SNMP core and collectors, result recording, probe outcome, per-stream runners and scheduler, retention. | H | L | 3 | verified | read |
 | CQ-B062 | structure | `routes/assets.ts` (7.5k lines, about 110 routes, 154 inline Prisma calls) | Sub-routers under one `assetsRouter`, extracting services as each moves. | M | L | 3 | verified | read |
 | CQ-B063 | structure | `notificationEngine.ts` (7.7k), `notificationTypes.ts` (6.3k, 287 exports) | Readings, threshold evaluation, alert groups and the preview API are separable. | M | L | 3 | verified | read |
-| CQ-B064 | structure | no shared integration interface | Dispatch is an if-chain on `integration.type` (`runPreflightTest`); each integration names its own test/discover functions. An adapter interface would turn the ~30-callsite onboarding checklist into a type error. | M | L | 3 | verified | read |
+| CQ-B064 | structure | no shared integration interface | Dispatch is an if-chain on `integration.type`, written twice: `runPreflightTest` (stored integrations; `POST /:id/test` has called it since c86a581ae, which deleted a third copy) and the draft `POST /integrations/test` route, which tests a narrowed unsaved config with no integration id. `triggerDiscovery` hand-writes the per-type required-field checks a third way. Each integration names its own test/discover functions. An adapter interface would turn the ~30-callsite onboarding checklist into a type error. | M | L | 3 | verified | read |
 
 ## Frontend (F)
 
