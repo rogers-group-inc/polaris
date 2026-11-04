@@ -360,7 +360,7 @@
     }
 
     var ack = canAck(), clear = canClear();
-    var unacked = _alerts.filter(function (n) { return !n.acknowledged; });
+    var unacked = _alerts.filter(acknowledgeable);
     // One switch losing its uplink raises one alert per pinned interface, so a
     // per-row-only sheet means a dozen taps and a dozen prompts to close out
     // one outage. Offered only when there is more than one to batch.
@@ -371,6 +371,11 @@
 
     body.innerHTML = bulk + _alerts.map(function (n) { return alertItemHTML(n, ack, clear); }).join("");
   }
+
+  // Rule 141 (e), as on the desktop: the role grants the verb, the alert's
+  // server verdict (canAcknowledge / canClear on GET /assets/:id/alerts) says
+  // whether it reaches THIS alert. A row without the flag counts as reachable.
+  function acknowledgeable(n) { return !n.acknowledged && n.canAcknowledge !== false; }
 
   function alertItemHTML(n, ack, clear) {
     var sev = n.severity || "info";
@@ -392,11 +397,11 @@
     }
 
     var actions = [];
-    if (!n.acknowledged && ack) {
+    if (ack && acknowledgeable(n)) {
       actions.push('<button class="btn btn-tonal alert-ack" data-id="' + escapeHtml(n.id) + '"'
         + (n.requireAckNote ? ' data-note-required="1"' : "") + '>Acknowledge</button>');
     }
-    if (clear) {
+    if (clear && n.canClear !== false) {
       actions.push('<button class="btn btn-outlined alert-clear" data-id="' + escapeHtml(n.id) + '">Clear</button>');
     }
 
@@ -427,7 +432,9 @@
       if (clearBtn) { clearAlerts([clearBtn.dataset.id], assetId, clearBtn); return; }
       var all = t.closest("#asset-alerts-ack-all");
       if (all) {
-        var pending = _alerts.filter(function (n) { return !n.acknowledged; });
+        // Only the ones this viewer may acknowledge: the route refuses the
+        // whole batch when one id is out of reach (rule 141 (e)).
+        var pending = _alerts.filter(acknowledgeable);
         // Required when ANY of them requires it: the route applies one note to
         // the whole batch and refuses it whole otherwise, so asking up front
         // beats a 400 after the fact.

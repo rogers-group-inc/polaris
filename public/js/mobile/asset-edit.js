@@ -46,8 +46,24 @@
     var have = (user && user.permissions && user.permissions[key]) || "none";
     return (_PERM_RANK[have] || 0) >= (_PERM_RANK[level] || 0);
   }
-  function canEditAsset() { return permAtLeast("assets", "write"); }
+  // Business rule 141 (e), as on the desktop (app.js → _scopedVerb): Read-Write
+  // reaches only the devices the caller added or that carry one of their tags,
+  // and the server says which per device (`canEdit` / `canMaintain` on
+  // GET /assets/:id). Full Read-Write reaches all; a device without the flag
+  // (an older payload) counts as reachable — the server decides either way.
+  function scopedVerb(key, flag, a) {
+    if (permAtLeast(key, "fullwrite")) return true;
+    if (!permAtLeast(key, "write")) return false;
+    var x = a || (_ctx && _ctx.asset);
+    return !x || x[flag] !== false;
+  }
+  function canEditAsset(a) { return scopedVerb("assets", "canEdit", a); }
+  function canMaintainAsset(a) { return scopedVerb("maintenanceManagement", "canMaintain", a); }
   function canManageMaintenance() { return permAtLeast("maintenanceManagement", "write"); }
+  var NOT_YOURS = "Not yours to change — you didn’t add this device and it carries none of your tags";
+  /** Why an asset verb is greyed: the role lacks the key, or this device is out of reach. */
+  function editDenied() { return permAtLeast("assets", "write") ? NOT_YOURS : "Needs Read-Write on Assets"; }
+  function deniedText(t) { return typeof t.denied === "function" ? t.denied() : t.denied; }
 
   function toast(msg, isError) {
     if (window.PolarisTabs && PolarisTabs.showSnackbar) PolarisTabs.showSnackbar(msg, isError ? { error: true } : undefined);
@@ -226,10 +242,10 @@
   var TABS = [
     { key: "general", label: "General", icon: "i-info",
       desc: "Name, address, details, location, procurement, notes, tags",
-      allowed: canEditAsset, denied: "Needs Read-Write on Assets" },
+      allowed: function () { return canEditAsset(); }, denied: editDenied },
     { key: "monitoring", label: "Monitoring", icon: "i-target",
       desc: "Monitoring on/off, polling methods, intervals, timeouts",
-      allowed: canEditAsset, denied: "Needs Read-Write on Assets" },
+      allowed: function () { return canEditAsset(); }, denied: editDenied },
     { key: "maintenance", label: "Maintenance", icon: "i-construction",
       desc: "Open windows, covering schedules, enter maintenance",
       allowed: function () { return true; }, denied: "" },
@@ -260,7 +276,7 @@
     if (rb.activeRun) return { enabled: false, desc: "Reboot in progress" };
     var schedulable = !!REBOOT_SCHEDULABLE[rb.state];
     if (!rb.available && !schedulable) return { enabled: false, desc: rb.reason || "This device cannot be rebooted from Polaris" };
-    if (!canAct) return { enabled: false, desc: "Needs Read-Write on Assets" };
+    if (!canAct) return { enabled: false, desc: editDenied() };
     if (!rb.available) return { enabled: true, desc: (rb.reason || "Not right now.") + " It can be scheduled for later." };
     if (rb.schedule) return { enabled: true, desc: "A reboot is already scheduled — this reboots now" };
     return { enabled: true, desc: "Restart now or schedule it" };
@@ -331,6 +347,8 @@
     _ctx = {
       assetId: asset.id,
       hostname: asset.hostname || asset.assetTag || "",
+      // Carries the server's per-device verdict (canEdit / canMaintain).
+      asset: asset,
       onSaved: opts && typeof opts.onSaved === "function" ? opts.onSaved : null,
     };
     var onReboot = opts && typeof opts.onReboot === "function" ? opts.onReboot : null;
@@ -343,7 +361,7 @@
       // as "Checking…" and is filled (or dropped) by loadRebootRow.
       '<div class="ae-menu" id="ae-menu-actions" role="menu" aria-label="Actions">' +
         actionRowHtml("ae-action-discover", "i-sync", "Discover Now",
-          canDiscover ? discoverDesc(asset) : "Needs Read-Write on Assets", canDiscover) +
+          canDiscover ? discoverDesc(asset) : editDenied(), canDiscover) +
         (onReboot ? actionRowHtml("ae-action-reboot", "i-power", "Reboot", "Checking…", false) : "") +
       '</div>' +
       '<div class="ae-menu" role="menu" aria-label="Edit">' +
@@ -353,7 +371,7 @@
             (ok ? '' : ' disabled aria-disabled="true"') + '>' +
           '<div class="leading tonal"><svg viewBox="0 0 24 24"><use href="#' + t.icon + '"/></svg></div>' +
           '<div class="content"><div class="headline">' + esc(t.label) + '</div>' +
-            '<div class="supporting">' + esc(ok ? t.desc : t.denied) + '</div></div>' +
+            '<div class="supporting">' + esc(ok ? t.desc : deniedText(t)) + '</div></div>' +
           '<div class="trailing"><svg viewBox="0 0 24 24"><use href="#i-chev-right"/></svg></div>' +
         '</button>';
       }).join("") +
@@ -384,7 +402,7 @@
     if (!_ctx) return;
     var tab = TABS.filter(function (t) { return t.key === key; })[0];
     if (!tab) return;
-    if (!tab.allowed()) { toast(tab.denied, true); return; }
+    if (!tab.allowed()) { toast(deniedText(tab), true); return; }
     closeEdit();
     var token = ++_token;
     var sheet = buildSheet(EDIT_ID, closeEdit);
@@ -1070,7 +1088,10 @@
       }).then(function () { return true; }, function () { return false; }) : Promise.resolve(false),
     ]).then(function (r) {
       if (token !== _token) return;
-      renderMaintenance(r[0], r[1], mayMaint, r[2] && typeof window.maintCreateAdhoc === "function");
+      // Entering maintenance creates a window on THIS device, so it needs the
+      // device in reach as well as the key (rule 141 (e)).
+      var reach = mayMaint && canMaintainAsset(r[0]) && !(r[1] && r[1].canMaintain === false);
+      renderMaintenance(r[0], r[1], mayMaint, reach && r[2] && typeof window.maintCreateAdhoc === "function", reach);
     });
   }
 
@@ -1088,14 +1109,25 @@
         : (s.nextStart ? "next: " + new Date(s.nextStart).toLocaleString() : "no upcoming window");
       var acts = "";
       if (mayMaint) {
+        // Rule 141 (e), as the desktop tab: Remove needs THIS device in reach
+        // (info.canMaintain), Delete the whole window (s.canEdit). A payload
+        // without the flags counts as reachable — the server decides.
+        var mayRemove = info.canMaintain !== false;
+        var mayDelete = s.canEdit !== false;
         // A filter-matched asset has no per-asset removal — the filter would
         // put it straight back — so say that where the button would be.
-        acts = (s.removable
-            ? '<button type="button" class="btn btn-outlined btn-sm" data-maint-act="remove" data-schedule-id="' + esc(s.id) +
-                '" data-schedule-name="' + esc(s.name) + '"' + (s.lastTarget ? ' data-last-target="true"' : '') + '>Remove this asset</button>'
-            : '<span class="ae-hint">Matched by this schedule’s filter — edit the filter on the desktop to exclude it.</span>') +
-          '<button type="button" class="btn btn-error btn-sm" data-maint-act="delete" data-schedule-id="' + esc(s.id) +
+        if (!s.removable) {
+          acts += '<span class="ae-hint">Matched by this schedule’s filter — edit the filter on the desktop to exclude it.</span>';
+        } else if (mayRemove) {
+          acts += '<button type="button" class="btn btn-outlined btn-sm" data-maint-act="remove" data-schedule-id="' + esc(s.id) +
+            '" data-schedule-name="' + esc(s.name) + '"' + (s.lastTarget ? ' data-last-target="true"' : '') + '>Remove this asset</button>';
+        }
+        if (mayDelete) {
+          acts += '<button type="button" class="btn btn-error btn-sm" data-maint-act="delete" data-schedule-id="' + esc(s.id) +
             '" data-schedule-name="' + esc(s.name) + '">Delete schedule</button>';
+        } else if (!mayRemove || !s.removable) {
+          acts += '<span class="ae-hint">Not yours to change — not created by you, on devices you didn’t add and that carry none of your tags.</span>';
+        }
       }
       rows.push('<div class="ae-maint-sched"><div class="ae-maint-sched-head"><strong>' + esc(s.name) + '</strong>' +
           (s.enabled ? '' : ' <span class="ae-hint">(disabled)</span>') + '</div>' +
@@ -1105,7 +1137,7 @@
     return rows.length ? rows.join("") : '<p class="ae-hint">Not covered by any maintenance schedule.</p>';
   }
 
-  function renderMaintenance(a, info, mayMaint, canAdhoc) {
+  function renderMaintenance(a, info, mayMaint, canAdhoc, reach) {
     var body = $("ae-body");
     if (!body) return;
     var adhoc = "";
@@ -1119,8 +1151,10 @@
           "Both the date and the time, in the Polaris server’s timezone" + (label ? ": <strong>" + esc(label) + "</strong>" : "") + ".") +
         checkRow("ae-maint-suppress", "Mark dependent devices as down", true) +
         '<p class="ae-hint">Creates a one-time maintenance schedule for this asset starting now. Polling and notifications pause until the end time.</p>';
-    } else if (mayMaint) {
+    } else if (reach) {
       adhoc = '<p class="ae-hint">Maintenance scheduling couldn’t be loaded — try again, or use Assets → Maintenance on the desktop.</p>';
+    } else if (mayMaint) {
+      adhoc = '<p class="ae-hint">You can put only the devices you added, or that carry one of your tags, into maintenance.</p>';
     } else {
       adhoc = '<p class="ae-hint">You don’t have permission to change maintenance windows.</p>';
     }

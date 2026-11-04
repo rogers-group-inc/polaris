@@ -13,7 +13,7 @@ import { assetDialAddress } from "../../utils/assetDialAddress.js";
 import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission, credentialUseActor, assertTagChangeAllowed } from "../middleware/permissions.js";
-import { resolveWriteScope, inWriteScope } from "../../services/writeScopeService.js";
+import { resolveWriteScope, inWriteScope, scheduleCanEditByIds } from "../../services/writeScopeService.js";
 import { scopeAssetParam, scopeAssetIds, requireFleetWide, idsFromBody } from "../middleware/writeScope.js";
 import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
 import {
@@ -2526,10 +2526,28 @@ router.get("/:id/maintenance-windows", requirePermission("assets", "read"), asyn
 });
 
 // GET /assets/:id/maintenance-info — current windows + covering schedules for
-// the edit-modal Monitoring tab / slide-over.
+// the edit-modal Maintenance tab / slide-over / phone sheet. Rule 141 (e):
+// `canMaintain` says whether the caller may put THIS asset into maintenance or
+// take it off a window's device list; each schedule's `canEdit` whether they
+// may delete it (its creator, or every explicit device in scope). Both screens
+// grey those verbs from these, never from the role alone.
 router.get("/:id/maintenance-info", requirePermission("assets", "read"), async (req, res, next) => {
   try {
-    res.json(await getAssetMaintenanceInfo(req.params.id as string));
+    const id = req.params.id as string;
+    const info = await getAssetMaintenanceInfo(id);
+    const scope = await resolveWriteScope(req, "maintenanceManagement");
+    const [asset, canEdit] = await Promise.all([
+      scope.kind === "scoped"
+        ? prisma.asset.findUnique({ where: { id }, select: { createdBy: true, tags: true } })
+        : Promise.resolve(null),
+      scheduleCanEditByIds(scope, info.schedules.map((s) => s.id)),
+    ]);
+    const canMaintain = scope.kind === "all" || (scope.kind === "scoped" && !!asset && inWriteScope(scope, asset));
+    res.json({
+      ...info,
+      canMaintain,
+      schedules: info.schedules.map((s) => ({ ...s, canEdit: canEdit.get(s.id) === true })),
+    });
   } catch (err) { next(err); }
 });
 

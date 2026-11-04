@@ -421,6 +421,112 @@ describe("Maintenance sheet", () => {
   });
 });
 
+// Business rule 141 (e): Read-Write reaches only the devices the viewer added
+// or that carry one of their tags. The server says which per device
+// (`canEdit` / `canMaintain` / `canQuarantine` on GET /assets/:id, and on
+// maintenance-info `canMaintain` + each schedule's `canEdit`); the phone
+// reads those exactly as the desktop's _scopedVerb does.
+describe("write scope per device (rule 141 (e))", () => {
+  function stubMaintHelpers() {
+    g.maintCreateAdhoc = vi.fn(async () => ({}));
+    g.maintValidateAdhocEnd = vi.fn((v: string) => ({ ok: true, value: v }));
+    g.maintLocalIso = (d: Date) => d.toISOString().slice(0, 16);
+    g.maintServerNow = () => new Date("2026-10-12T10:00:00Z");
+    g.maintLoadServerClock = vi.fn(async () => undefined);
+    g.maintServerClockLabel = () => "America/Chicago";
+  }
+
+  it("greys General, Monitoring and Discover Now on a device out of reach, saying why", async () => {
+    boot(WRITER);
+    ASSETS.srv.canEdit = false;
+    await openMenu("srv");
+    expect(menuItem("general").disabled).toBe(true);
+    expect(menuItem("monitoring").disabled).toBe(true);
+    expect(menuItem("general").textContent).toContain("Not yours to change");
+    expect(menuItem("general").textContent).not.toContain("Needs Read-Write");
+    expect($("ae-action-discover").disabled).toBe(true);
+    expect($("ae-action-discover").textContent).toContain("Not yours to change");
+  });
+
+  it("a device the viewer can reach stays open; a payload with no flag counts as reachable", async () => {
+    boot(WRITER);
+    ASSETS.srv.canEdit = true;
+    await openMenu("srv");
+    expect(menuItem("general").disabled).toBe(false);
+    boot(WRITER);
+    await openMenu("srv");
+    expect(menuItem("general").disabled).toBe(false);
+  });
+
+  it("Full Read-Write reaches every device whatever the flag says", async () => {
+    boot({ assets: "fullwrite", maintenanceManagement: "fullwrite" });
+    ASSETS.srv.canEdit = false;
+    await openMenu("srv");
+    expect(menuItem("general").disabled).toBe(false);
+    expect($("ae-action-discover").disabled).toBe(false);
+  });
+
+  it("an out-of-reach device offers no Enter maintenance, Remove or Delete", async () => {
+    stubMaintHelpers();
+    boot(WRITER, {
+      maintenanceInfo: vi.fn(async () => ({
+        openWindows: [], inMaintenance: false, canMaintain: false,
+        schedules: [{ id: "s1", name: "Patch night", enabled: true, activeNow: false, nextStart: null, removable: true, canEdit: false }],
+      })),
+    });
+    stubMaintHelpers();
+    ASSETS.srv.canMaintain = false;
+    await openTab("srv", "maintenance");
+    expect($("ae-maint-info").textContent).toContain("Patch night");
+    expect(document.querySelector("[data-maint-act]")).toBeNull();
+    expect($("ae-maint-info").textContent).toContain("Not yours to change");
+    expect($("ae-maint-until")).toBeNull();
+    expect($("ae-body").textContent).toContain("only the devices you added");
+  });
+
+  it("a window the viewer may delete keeps Delete even when this device is out of reach", async () => {
+    stubMaintHelpers();
+    boot(WRITER, {
+      maintenanceInfo: vi.fn(async () => ({
+        openWindows: [], inMaintenance: false, canMaintain: false,
+        schedules: [{ id: "s1", name: "Patch night", enabled: true, activeNow: false, nextStart: null, removable: true, canEdit: true }],
+      })),
+    });
+    stubMaintHelpers();
+    await openTab("srv", "maintenance");
+    expect(document.querySelector('[data-maint-act="remove"]')).toBeNull();
+    expect(document.querySelector('[data-maint-act="delete"]')).not.toBeNull();
+  });
+
+  it("a reachable device with a window it may not delete offers Remove only", async () => {
+    stubMaintHelpers();
+    boot(WRITER, {
+      maintenanceInfo: vi.fn(async () => ({
+        openWindows: [], inMaintenance: false, canMaintain: true,
+        schedules: [{ id: "s1", name: "Patch night", enabled: true, activeNow: false, nextStart: null, removable: true, canEdit: false }],
+      })),
+    });
+    stubMaintHelpers();
+    await openTab("srv", "maintenance");
+    expect(document.querySelector('[data-maint-act="remove"]')).not.toBeNull();
+    expect(document.querySelector('[data-maint-act="delete"]')).toBeNull();
+    expect($("ae-maint-until")).not.toBeNull();
+  });
+
+  it("withholds Release Quarantine on a quarantined device out of the viewer's quarantine reach", async () => {
+    boot({ assets: "write", assetsQuarantine: "write" });
+    ASSETS.srv.status = "quarantined";
+    ASSETS.srv.canQuarantine = false;
+    await openAsset("srv");
+    expect(document.getElementById("asset-quarantine-btn")).toBeNull();
+    boot({ assets: "write", assetsQuarantine: "write" });
+    ASSETS.srv.status = "quarantined";
+    ASSETS.srv.canQuarantine = true;
+    await openAsset("srv");
+    expect(document.getElementById("asset-quarantine-btn")).not.toBeNull();
+  });
+});
+
 describe("mirrors of desktop constants", () => {
   const grab = (src: string, re: RegExp) => { const m = re.exec(src); expect(m, String(re)).toBeTruthy(); return m![1]; };
   const norm = (s: string) => s.replace(/\s+/g, " ").replace(/,\s*([\]}])/g, "$1").trim();
