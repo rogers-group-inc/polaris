@@ -169,6 +169,74 @@ describe("Events Alerts panel", () => {
     expect(view(win)).toBe("active");
   });
 
+  describe("conflict cards: copy an address, open or menu an asset name", () => {
+    const dupIp = {
+      id: "c1",
+      entityType: "asset",
+      status: "pending",
+      assetId: "a1",
+      proposedAssetFields: {
+        collisionReason: "duplicate-ip",
+        ipAddress: "10.0.0.5",
+        members: [
+          { assetId: "a1", hostname: "PC-ONE", assetType: "workstation", status: "active", monitored: true },
+          { assetId: "a2", hostname: "PC-TWO", assetType: "workstation", status: "active", monitored: true },
+        ],
+      },
+    };
+
+    async function bootCard(gesture: { x: number; y: number } | null) {
+      const { win } = await boot({ conflicts: 1, queued: 0, failed: 0, stale: 0 });
+      const copied: string[] = [];
+      const opened: string[] = [];
+      const menus: Array<{ labels: string[]; at: unknown }> = [];
+      win.api.conflicts.list = async () => ({ conflicts: [dupIp] });
+      win.api.assets = { get: async (id: string) => ({ id, hostname: id === "a1" ? "PC-ONE" : "PC-TWO" }) };
+      win.copyTextToClipboard = async (t: string) => { copied.push(t); return true; };
+      win.timeAgo = () => "now";
+      win.permAtLeast = () => false;
+      win.rowMenuGesture = () => gesture;
+      win.PolarisPanels = {
+        openAsset: (id: string) => { opened.push(id); return Promise.resolve(true); },
+        ensure: () => Promise.resolve(),
+      };
+      win._assetMenuItems = (a: { id: string }) => [{ label: "Open", primary: true, onSelect: () => opened.push(a.id) }, { label: "Edit", onSelect: () => {} }];
+      win.showRowMenu = (_anchor: unknown, items: Array<{ label: string }>, opts: { menuAt?: unknown }) => {
+        menus.push({ labels: items.map((i) => i.label), at: opts && opts.menuAt });
+      };
+      await openAlerts(win);
+      return { win, copied, opened, menus };
+    }
+
+    it("copies an address on click", async () => {
+      const { win, copied } = await bootCard(null);
+      const ip = win.document.querySelector('.conflict-card [data-copy="10.0.0.5"]') as unknown as HTMLElement;
+      expect(ip).not.toBeNull();
+      ip.click();
+      await settle();
+      expect(copied).toEqual(["10.0.0.5"]);
+    });
+
+    it("opens the asset in place on a left click on its name, without a fetch", async () => {
+      const { win, opened, menus } = await bootCard(null);
+      const name = win.document.querySelector('[data-conflict-asset="a2"]') as unknown as HTMLElement;
+      expect(name.classList.contains("row-menu-trigger")).toBe(true);
+      name.click();
+      await settle();
+      expect(opened).toEqual(["a2"]);
+      expect(menus).toEqual([]);
+    });
+
+    it("shows the asset's row menu at the pointer on a right click", async () => {
+      const at = { x: 40, y: 50 };
+      const { win, opened, menus } = await bootCard(at);
+      (win.document.querySelector('[data-conflict-asset="a1"]') as unknown as HTMLElement).click();
+      await settle();
+      expect(opened).toEqual([]);
+      expect(menus).toEqual([{ labels: ["Open", "Edit"], at }]);
+    });
+  });
+
   it("does not paint a conflict list over a view the operator has switched to", async () => {
     const { win } = await boot({ conflicts: 1, queued: 0, failed: 0, stale: 0 });
     let release: () => void = () => {};

@@ -12,6 +12,11 @@ Reached from the **Alerts** button on the **Events** page (its **Conflicts**
 views; it opens on pending conflicts whenever there are any) and the **Conflict
 Queue** dashboard widget. Everyone who can see the queue sees every flavour.
 
+On every card, **click an IP address to copy it**. **Click an asset's name** to
+open the asset over the panel, or **right-click it** for the same menu its row
+has on the Assets list (Open, Edit, remote access, quarantine, Delete — each
+shown only where your role and the device allow it).
+
 | Gate | |
 |---|---|
 | `discoveryConflicts:read` | see the queue |
@@ -385,9 +390,9 @@ belongs to the device through any of the device's MAC addresses, so a wired
 and a Wi-Fi reservation on one laptop are two. Decommissioned and disabled devices, FortiGates, FortiSwitches and
 FortiAPs are never reported, and neither is a MAC two assets both list.
 
-The card lists each one: its address (the device's primary address carries the
+The card lists each one: its address (click it to copy; the device's primary address carries the
 same **★ Primary** pill as the asset's address list, under it), network (click it to open the network), FortiGate (click it to open
-the gate), MAC (click it to copy), its kind (a reservation from the gate, one
+the gate, right-click for its menu), MAC (click it to copy), its kind (a reservation from the gate, one
 pushed by Polaris, or a lease), and when it was created.
 
 | Verb | Does |
