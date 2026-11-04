@@ -456,11 +456,50 @@
     pane.appendChild(bar);
 
     // Location chips under the bar — the Device Map page's switcher, limited
-    // to the pinned locations on the wallboard.
+    // to the pinned locations on the wallboard. ONE strip, never rows
+    // (operator request 2026-11-04): the page's rows (Base / areas / the
+    // open area's buildings / the open building's floors) run on after each
+    // other with a divider between, and the strip scrolls sideways under the
+    // mouse wheel instead of wrapping — a site with twenty areas wrapped the
+    // areas onto three lines and pushed the graph down the widget.
     var chips = document.createElement("div");
     chips.className = "devmap-topo-views";
     chips.hidden = true;
     pane.appendChild(chips);
+    // A wheel over the strip scrolls it sideways by its larger delta (a mouse
+    // wheel's vertical one, or a trackpad's sideways swipe) — the folder
+    // tabs' gesture. It takes the event only while there is somewhere to
+    // scroll, so a strip that fits leaves the wheel to the page.
+    chips.addEventListener("wheel", function (e) {
+      var max = chips.scrollWidth - chips.clientWidth;
+      if (max <= 1) return;
+      var d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (!d) return;
+      if (e.deltaMode === 1) d *= 40;                       // lines (Firefox)
+      else if (e.deltaMode === 2) d *= chips.clientWidth;   // pages
+      e.preventDefault();
+      chips.scrollLeft = Math.max(0, Math.min(max, chips.scrollLeft + d));
+      markChipOverflow();
+    }, { passive: false });
+    chips.addEventListener("scroll", function () { markChipOverflow(); }, { passive: true });
+    // The strip fades out at an edge it continues past, so a cut chip reads
+    // as "more this way" rather than as the end.
+    function markChipOverflow() {
+      var max = chips.scrollWidth - chips.clientWidth;
+      chips.classList.toggle("is-overflow-l", chips.scrollLeft > 1);
+      chips.classList.toggle("is-overflow-r", max - chips.scrollLeft > 1);
+    }
+    // The active chip is brought into the strip's window after a render — a
+    // pick (or a rotation step) into a building that sits past the right
+    // edge would otherwise leave its floors out of sight.
+    function revealActiveChip() {
+      var active = chips.querySelector(".topology-floor-chip.is-active");
+      var room = chips.clientWidth;
+      if (!active || !room) return;
+      var l = active.offsetLeft, r = l + active.offsetWidth, margin = 12;
+      if (l < chips.scrollLeft + margin) chips.scrollLeft = Math.max(0, l - margin);
+      else if (r > chips.scrollLeft + room - margin) chips.scrollLeft = r - room + margin;
+    }
 
     // The legend: bottom-left, collapsed into its button until opened (the
     // graph is small in a widget), open/closed remembered per viewer.
@@ -584,13 +623,21 @@
       chips.innerHTML = "";
       chips.hidden = !rows.length;
       rows.forEach(function (row, depth) {
-        var r = document.createElement("div");
-        r.className = "topology-floor-row" + (depth ? " topology-floor-row-depth-" + depth : "");
-        row.forEach(function (c) { r.appendChild(chipEl(c)); });
-        chips.appendChild(r);
+        // A divider where the page starts a new row: what follows is inside
+        // the active chip before it.
+        if (depth) {
+          var sep = document.createElement("span");
+          sep.className = "devmap-chip-sep";
+          sep.setAttribute("aria-hidden", "true");
+          sep.textContent = "›";
+          chips.appendChild(sep);
+        }
+        row.forEach(function (c) { chips.appendChild(chipEl(c)); });
       });
       placeGraph();
       fitLegend();
+      revealActiveChip();
+      markChipOverflow();
     }
     // With chips showing, the graph starts below them, so no pill sits over a
     // device or a location box; without chips it keeps the whole pane (the
@@ -668,11 +715,12 @@
     function onTheme() { if (window.PolarisTopologyRender) fillLegend(); render(); }
     document.addEventListener("themechange", onTheme);
     var ro = new ResizeObserver(function () {
-      // A narrower pane can wrap the chips onto another row: the graph moves
-      // down with them before it is resized.
+      // The chip strip is one line whatever the width, but its band is
+      // measured, not assumed, before the graph is resized under it.
       placeGraph();
       if (cy) try { cy.resize(); } catch (_) {}
       fitLegend();
+      markChipOverflow();
     });
     ro.observe(pane);
 
