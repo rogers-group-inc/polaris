@@ -6,6 +6,7 @@
  * and tracks progress via a status file that survives restarts.
  */
 
+import { sleep } from "../utils/sleep.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -188,8 +189,6 @@ function isTimeoutKill(err: any): boolean {
 function registryAnsweredWith404(err: any): boolean {
   return /\bE404\b|404 Not Found/i.test(String(err?.stderr || err?.stdout || err?.message || ""));
 }
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** The default re-run advice is written for `npm ci`; steps with different economics pass their own. */
 const WARM_CACHE_ADVICE =

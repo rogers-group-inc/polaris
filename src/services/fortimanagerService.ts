@@ -4,6 +4,7 @@
  * Authenticates via bearer token (API key) rather than session-based login.
  */
 
+import { sleep } from "../utils/sleep.js";
 import { Netmask } from "netmask";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
@@ -486,14 +487,6 @@ function markRetryable<E extends object>(err: E): E {
   return err;
 }
 
-function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) { resolve(); return; }
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
-  });
-}
-
 async function rpcInner(
   url: string,
   payload: JsonRpcRequest,
@@ -516,7 +509,7 @@ async function rpcInner(
         { url: describeRpcParams(payload), attempt: attempt + 1, backoffMs, message: (err as Error)?.message },
         "fmg rpc: transient failure — backing off then retrying",
       );
-      await sleepWithAbort(backoffMs, externalSignal);
+      await sleep(backoffMs, externalSignal);
     }
   }
   throw lastErr;
@@ -2507,7 +2500,7 @@ async function fmgStepArp(ctx: FmgDeviceCtx): Promise<void> {
         const { sent, dropped } = await primeArpCache(sweepIps);
         if (sent > 0) {
           log("discover.arp", "info", `${deviceName}: ARP presence sweep — probed ${sent} reserved IP(s)${dropped > 0 ? ` (${dropped} over cap, skipped)` : ""}`, deviceName);
-          await sleepWithAbort(ARP_SETTLE_MS, signal);
+          await sleep(ARP_SETTLE_MS, signal);
         }
       }
       const arpPayload: JsonRpcRequest = {
