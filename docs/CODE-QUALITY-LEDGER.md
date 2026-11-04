@@ -66,7 +66,7 @@ production caller at all, move the test onto the real code path and delete the f
 | CQ-T004 | dead-export | `package.json` devDependencies | `@types/express-rate-limit` and `@types/netmask` duplicated types both packages ship; `@types/xml2js` had no consumer. Removed. | L | S | 1 | fixed@b6522808b | knip |
 | CQ-T005 | lint | `.githooks/pre-commit`, `docker-publish.yml` | knip in the hook and the CI `test` job; jscpd as an informational CI step. | L | S | 1 | fixed@f9f1b3666 | read |
 | CQ-T006 | lint | `knip.jsonc` | Flip `exports` / `types` from warn to error. After the un-export (5b4e70834) 64 warnings remain: the CQ-B014 deletion candidates, three unused test-helper exports, and `HandlerTimeoutPressure` (needs a knip ignore). Flip once CQ-B014 lands. | L | S | 1 | verified | read |
-| CQ-T007 | lint | `agent/` | Nothing runs `gofmt`, `go vet` or `go test` on the agent anywhere; CodeQL is nightly only. Moves to B7 because the agent rebuild contract bumps `agent/VERSION` on any agent edit. | L | S | 1 | verified | read |
+| CQ-T007 | lint | `agent/` | Nothing runs `gofmt`, `go vet` or `go test` on the agent anywhere; CodeQL is nightly only. Moves to B7 because the agent rebuild contract bumps `agent/VERSION` on any agent edit. | L | S | 1 | fixed@618592773 | read |
 | CQ-T008 | dead-export | `package.json` dependencies | `@types/ws` sits in `dependencies`, not `devDependencies`. | L | S | 2 | verified | read |
 | CQ-T009 | structure | `tests/` | 287 test files hand-roll `vi.mock("../../src/db.js")`; `eventLogService` is mocked in 90. Five local `makeAsset` factories. A shared stub factory would cut the boilerplate. | M | L | 3 | verified | grep |
 | CQ-T010 | structure | `src/services/` | 171 of 285 services have no unit test file named after them; 25 are not imported by any test (largest: `subnetRefreshService`, `monitorSettingsService`, `savedFolderService`). Rule: one test per service you next touch. | L | L | 3 | verified | grep |
@@ -118,7 +118,7 @@ production caller at all, move the test onto the real code path and delete the f
 
 | id | kind | where | summary | risk | effort | tier | status | verified-by |
 |---|---|---|---|---|---|---|---|---|
-| CQ-B040 | canon-violation | route query parsing | Pagination parsed four ways in about 12 route files; boolean query flags coerced 8 different ways. A `utils/queryParams.ts` (`intParam`, `boolParam`, `pageParams`) reproducing each site's default and cap. The Zod-coerce routes stay as they are. | M | M | 1 | verified | grep |
+| CQ-B040 | canon-violation | route query parsing | Pagination parsed four ways in about 12 route files; boolean query flags coerced 8 different ways. A `utils/queryParams.ts` (`intParam`, `boolParam`, `pageParams`) reproducing each site's default and cap. The Zod-coerce routes stay as they are. | M | M | 1 | fixed@9b12b270b | grep |
 | CQ-B041 | canon-violation | `src/jobs/*` | No job wrapper: each of 87 jobs hand-rolls `setTimeout` + `setInterval` + try/catch + `runInstrumentedJob`. Errors logged at warn in 32 files and error in 55, in six payload shapes. A `defineJob({ name, firstRunDelayMs, intervalMs, run })` in `_metrics.ts`. | M | L | 2 | verified | read |
 | CQ-B042 | canon-violation | `process.env` in ~25 services | `POLARIS_PUBLIC_URL` read in 7 places despite `utils/publicUrl.ts`; `POLARIS_PROXY_CERT_PATH` in 6 despite `utils/proxyMode.ts`. Route through the existing modules; no new god-module. | L | M | 2 | verified | grep |
 | CQ-B043 | canon-violation | `routes/integrations.ts` | About 228 Zod schema references inside handlers rather than at the top of the file. | L | M | 2 | verified | grep |
@@ -208,21 +208,21 @@ production caller at all, move the test onto the real code path and delete the f
 
 | id | kind | where | summary | risk | effort | tier | status | verified-by |
 |---|---|---|---|---|---|---|---|---|
-| CQ-G001 | lint | 9 committed files not gofmt-clean (`main.go`, `pacing_test.go`, `cputimes_test.go`, `eventlog_windows.go`, `path_check_traceroute.go`, `systeminfo.go`, `config.go`, `client.go`, `ws.go`) | Format by name only (never package-wide on a CRLF checkout); add `fmt-check` and `vet` Makefile targets and CI steps. | L | S | 1 | verified | gofmt |
-| CQ-G002 | bug | `path_check.go` and `path_check_http.go` UTF-8 trimming loops | Rescan the string each pass (O(n²)) and empty the whole string when an earlier byte is invalid, e.g. a binary response body. | M | S | 1 | verified | read |
-| CQ-G003 | bug | `path_check_traceroute.go truncateNote` | Can cut a multi-byte character in half. | L | S | 1 | verified | read |
-| CQ-G004 | efficiency | `telemetry.go` + `meminfo.go` | Memory is read twice per telemetry tick and the first result discarded. | L | S | 1 | verified | read |
-| CQ-G005 | dup-helper | atomic cursor save ×3 (`eventlog.go`, `processlog.go`, `servicelog.go`), cursor load ×3, journalctl tail-cursor ×3, `journalStr` ≡ `jsonLineField`, hand-rolled `trimSpace` | One `writeFileAtomic` on the safer `CreateTemp` pattern from `config.go`, one cursor helper. | L | M | 1 | verified | read |
-| CQ-G006 | dup-helper | ten "run collector with a deadline" blocks in `main.go` | One generic `withTimeout[T]`. | L | S | 1 | verified | read |
-| CQ-G007 | canon-violation | `interface{}` ×4; `%v` on errors in the three `reboot_*.go`; `bytes.Index([]byte(line), …)` ×3 | `any`, `%w`, `strings.Index`. | L | S | 1 | verified | read |
-| CQ-G008 | dead-export | `MemBreakdownOnce`, `ValidateCheckDef`, `WSDialer.Dial`, `pinned.Prefix` | Exported, used only inside their package. Un-export after checking `src/` does not name them. | L | S | 1 | verified | grep |
+| CQ-G001 | lint | 9 committed files not gofmt-clean (`main.go`, `pacing_test.go`, `cputimes_test.go`, `eventlog_windows.go`, `path_check_traceroute.go`, `systeminfo.go`, `config.go`, `client.go`, `ws.go`) | Format by name only (never package-wide on a CRLF checkout); add `fmt-check` and `vet` Makefile targets and CI steps. | L | S | 1 | fixed@618592773 | gofmt |
+| CQ-G002 | bug | `path_check.go` and `path_check_http.go` UTF-8 trimming loops | Rescan the string each pass (O(n²)) and empty the whole string when an earlier byte is invalid, e.g. a binary response body. | M | S | 1 | fixed@618592773 | read |
+| CQ-G003 | bug | `path_check_traceroute.go truncateNote` | Can cut a multi-byte character in half. | L | S | 1 | fixed@618592773 | read |
+| CQ-G004 | efficiency | `telemetry.go` + `meminfo.go` | Memory is read twice per telemetry tick and the first result discarded. | L | S | 1 | fixed@618592773 | read |
+| CQ-G005 | dup-helper | atomic cursor save ×3 (`eventlog.go`, `processlog.go`, `servicelog.go`), cursor load ×3, journalctl tail-cursor ×3, `journalStr` ≡ `jsonLineField`, hand-rolled `trimSpace` | One `writeFileAtomic` on the safer `CreateTemp` pattern from `config.go`, one cursor helper. | L | M | 1 | deferred: the cursor/journal paths are per-OS runtime code (journalctl on Linux, wevtutil on Windows) that compiles here but cannot be exercised; do it beside a Linux and a Windows agent | read |
+| CQ-G006 | dup-helper | ten "run collector with a deadline" blocks in `main.go` | One generic `withTimeout[T]`. | L | S | 1 | deferred: the ten collector-deadline blocks in main.go deliberately leak a goroutine on timeout; a generic wrapper should land with the transport-context work in CQ-G009 | read |
+| CQ-G007 | canon-violation | `interface{}` ×4; `%v` on errors in the three `reboot_*.go`; `bytes.Index([]byte(line), …)` ×3 | `any`, `%w`, `strings.Index`. | L | S | 1 | fixed@618592773 | read |
+| CQ-G008 | dead-export | `MemBreakdownOnce`, `ValidateCheckDef`, `WSDialer.Dial`, `pinned.Prefix` | Exported, used only inside their package. Un-export after checking `src/` does not name them. | L | S | 1 | partly fixed@618592773 (MemBreakdownOnce, ValidateCheckDef, WSDialer.Dial unexported); pinned.Prefix stays exported — making config.go use it would pull crypto/tls into the config package for one constant | grep |
 | CQ-G009 | canon-violation | `internal/transport` | No tests at all (934 lines), and no HTTP call takes a context, so shutdown cannot cancel an in-flight request. `Client.bearer` is written by `SetBearer` with no synchronisation. | M | M | 2 | verified | read |
 | CQ-G010 | efficiency | `processtelemetry.go` | Primes CPU with a 300 ms blocking `Percent(0)`, the approach README says 0.20.0 replaced. | L | S | 2 | verified | read |
 | CQ-G011 | efficiency | `path_check_http.go` | Compiles the check's regex on every probe; cache per check definition. | L | S | 2 | verified | read |
 | CQ-G012 | canon-violation | exec timeouts | 5 to 60 s depending on file; three commands (`systeminfo_darwin`, `reboot_darwin`, `reboot_windows`) have none. | L | S | 2 | verified | read |
 | CQ-G013 | canon-violation | logging | Plain `log.Printf` with a global `verbose` flag; one stream logs as both `pathCheck:` and `path-check sent:`. | L | S | 2 | verified | read |
 | CQ-G014 | dead-file | build-tagged stubs `eventlog_other.go`, `path_check_icmp_other.go`, `systeminfo_other.go`, `reboot_other.go`, `processlog_open_other.go` | Never compiled by the Makefile's six targets. Keep only if a non-linux/darwin/windows build is wanted. | L | S | 2 | verified | read |
-| CQ-G015 | canon-violation | `agent/README.md`, `go.mod` | README says one dependency (there are four); three direct deps sit in the indirect block. | L | S | 1 | verified | read |
+| CQ-G015 | canon-violation | `agent/README.md`, `go.mod` | README says one dependency (there are four). (The survey also said three direct deps were marked indirect; they are not — `go mod tidy` changes nothing.) | L | S | 1 | fixed@618592773 | read |
 
 ## Survey claims that were wrong (do not act on them)
 
