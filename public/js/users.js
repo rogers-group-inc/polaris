@@ -1456,7 +1456,6 @@ function wirePasswordChecks(inputId, containerId) { PolarisPasswordSelf.wire(inp
 function checkPasswordField(pw, containerId) { return PolarisPasswordSelf.check(pw, containerId); }
 function passwordMatchHTML(containerId) { return PolarisPasswordSelf.matchHTML(containerId); }
 function wirePasswordMatch(pwId, confirmId, containerId) { PolarisPasswordSelf.wireMatch(pwId, confirmId, containerId); }
-function checkPasswordMatch(pw, confirm, containerId) { return PolarisPasswordSelf.checkMatch(pw, confirm, containerId); }
 
 // ─── Roles section ─────────────────────────────────────────────────────────
 

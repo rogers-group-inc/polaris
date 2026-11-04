@@ -189,12 +189,6 @@ function _maintFmtLocal(iso) {
   return _MAINT_MONTHS[Number(m[2]) - 1] + " " + Number(m[3]) + " " + m[1] + " " + m[4];
 }
 
-function _maintFmtDate(iso) {
-  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
-  if (!m) return String(iso || "");
-  return _MAINT_MONTHS[Number(m[2]) - 1] + " " + Number(m[3]) + " " + m[1];
-}
-
 /**
  * Human-readable one-liner for a schedule's recurrence shape.
  *

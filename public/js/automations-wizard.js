@@ -998,7 +998,6 @@ function makeAutomationSentences(s) {
 
   /** " ⇒ warning", or "" when the caller didn't pass the ladder. */
   function sevArrow(sev) { return sev ? "  ⇒ " + sev : ""; }
-  function holdClause(sec) { return sec > 0 ? "  held " + compactDuration(sec) : ""; }
 
   function triggerFormula(tr, opts) {
     var out = { lines: [], note: "" };
@@ -5685,11 +5684,6 @@ async function openAutomationWizard(existing, opts) {
     var win = 0;
     leaves.forEach(function (l) { if (tgLeafAggregated(l)) win = Math.max(win, Number(l.windowSec) || 0); });
     return win || Number(tr.forDurationSec) || 0;
-  }
-  /** The same value in minutes, for the PROSE surfaces (sentences, folded tier
-   *  summaries) — those describe stored behaviour, so they keep wall clock. */
-  function triggerDurationMinutes(tr) {
-    return Math.round(triggerDurationSec(tr) / 60);
   }
   /**
    * Seconds for the ratio sustain field — the stored hold, but ONLY when the

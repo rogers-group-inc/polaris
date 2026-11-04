@@ -2235,14 +2235,6 @@ function assetNetworkCellHTML(a) {
   return '<span title="' + escapeHtml(ctx.subnetCidr) + '">' + escapeHtml(name || ctx.subnetCidr) + '</span>';
 }
 
-function _viewLeaseActionHTML(a) {
-  if (!a.ipAddress) return '';
-  var ctx = a.ipContext;
-  if (!ctx || !ctx.subnetId) return '';
-  var title = 'View this IP in ' + (ctx.subnetCidr || 'its network');
-  return '<button class="btn btn-sm btn-secondary" onclick="viewAssetLease(' + jsArg(a.id) + ')" title="' + escapeHtml(title) + '">View Lease</button>';
-}
-
 function viewAssetLease(id) {
   var a = (_assetsData || []).find(function (x) { return x.id === id; });
   // Fall back to the asset currently shown in the details slide-over — it
@@ -12686,15 +12678,6 @@ function _vcPowerBadge(state) {
   return '<span style="color:' + color + '">●</span> ' + escapeHtml(label);
 }
 
-function _vcUsageBar(usedBytes, totalBytes) {
-  if (usedBytes == null || totalBytes == null || !(totalBytes > 0)) return "";
-  var pct = Math.min(100, Math.max(0, (usedBytes / totalBytes) * 100));
-  var color = pct >= 90 ? "var(--color-danger,#ef5350)" : pct >= 75 ? "var(--color-warning,#ffb74d)" : "var(--color-primary,#4fc3f7)";
-  return '<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:4px;height:6px;overflow:hidden;min-width:70px">' +
-    '<div style="width:' + pct.toFixed(1) + '%;height:100%;background:' + color + '"></div></div>' +
-    '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">' + pct.toFixed(0) + '%</span>';
-}
-
 // ─── Workload section (Unraid / TrueNAS SCALE) ─────────────────────────────
 // The General-tab block for an asset whose virtualization blob carries a
 // `platform` — a host (its pools + the VMs / containers placed on it) or a
@@ -15163,36 +15146,6 @@ function _renderSessionsChart(container, data, asset) {
   });
   _addChartScreenshotButton(container, "Active Sessions", { yAxis: "Sessions" });
   _observeChartResize(container, function (c) { _renderSessionsChart(c, data, asset); });
-}
-
-// Human-readable label for the polling method behind the response-time
-// chart. Reads the per-asset responseTimePolling override first; falls
-// back to the source default ("rest_api" for Fortinet, "icmp" for the
-// rest). Coarse view — full provenance is in /effective-monitor-settings,
-// but a label that's right 95% of the time is good enough for a chart
-// caption.
-function _probeMethodLabel(a) {
-  if (!a) return "—";
-  // Source default for response time is ICMP on EVERY source kind, Fortinet
-  // included (defaultPollingForSource) — this used to claim rest_api for the
-  // two Fortinet sources and so mislabelled every gate that had no explicit
-  // per-asset override, which is most of them.
-  var polling = a.responseTimePolling || "icmp";
-  switch (polling) {
-    case "rest_api":     return "REST API";
-    case "snmp":         return "SNMP GET";
-    case "winrm":        return "WinRM";
-    case "ssh":          return "SSH";
-    case "icmp":         return "ICMP ping";
-    case "fortimanager": return "FortiManager roster";
-    case "vcenter":      return "vCenter";
-    case "unraid":       return "Unraid";
-    case "truenas":      return "TrueNAS";
-    case "proxmox":      return "Proxmox";
-    case "genericapi":   return "Generic API";
-    case "agent":        return "Polaris Agent";
-    default:             return polling;
-  }
 }
 
 // Per-stream polling-method + asset-source resolver used by the chart badges
@@ -22457,26 +22410,6 @@ async function singleForwardLookup(id, name) {
 
 /* ─── OUI Lookup ────────────────────────────────────────────────────────── */
 
-async function bulkOuiLookup() {
-  // The lookup itself is server-side and scans the whole fleet (ouiLookupAll),
-  // so the confirm can't be scoped to the current page — ask generically and
-  // let the server report how many were missing / resolved.
-  var ok = await showConfirm("Run OUI manufacturer lookup for all assets missing a manufacturer?");
-  if (!ok) return;
-
-  try {
-    var result = await api.assets.ouiLookupAll();
-    if (!result.total) {
-      showToast("All assets with MACs already have a manufacturer", "success");
-    } else {
-      showToast("OUI resolved " + result.resolved + " of " + result.total + " assets", "success");
-    }
-    if (result.resolved > 0) loadAssets();
-  } catch (err) {
-    showToast(err.message, "error");
-  }
-}
-
 async function singleOuiLookup(id, mac) {
   try {
     var result = await api.assets.ouiLookup(id);
@@ -23761,7 +23694,6 @@ function _wireSnmpWalkTab(a) {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  function _isUploadedMib(mibId) { return mibId && !mibId.startsWith("std:"); }
   // "MIB-aware" — std AND uploaded MIBs both render the browse tree and
   // walk through the symbol-resolving endpoint. Raw OID mode (no MIB) is
   // the only branch that stays on numeric input + raw walk.
@@ -27371,33 +27303,6 @@ function _agentScriptHasChoicesFor(os) {
   return (_agentInstallScriptsCache.list || []).filter(function (s) { return s.osPlatform === os; }).length > 1;
 }
 
-function _credentialOptionsFor(type, selectedId) {
-  var opts = '<option value="">— select credential —</option>';
-  _credentialCache.list
-    .filter(function (c) { return c.type === type; })
-    .forEach(function (c) {
-      opts += '<option value="' + escapeHtml(c.id) + '"' + (selectedId === c.id ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>';
-    });
-  return opts;
-}
-
-// All credential types in one picker, with the type tagged on each label so
-// the operator can pick the credential that matches their chosen polling
-// method. Used by the asset edit modal's Monitoring tab — picking a SNMP
-// credential alongside polling=winrm is silently ignored at probe time, but
-// that's the operator's call to make.
-function _credentialOptionsForAny(selectedId) {
-  var opts = '<option value="">— none —</option>';
-  _credentialCache.list.forEach(function (c) {
-    var typeLabel = (c.type || "").toUpperCase();
-    opts += '<option value="' + escapeHtml(c.id) + '"' +
-      (selectedId === c.id ? " selected" : "") + '>' +
-      escapeHtml(c.name) + ' · ' + escapeHtml(typeLabel) +
-      '</option>';
-  });
-  return opts;
-}
-
 // ─── Monitoring Settings Modal ──────────────────────────────────────────────
 // Opened from the "Monitoring Settings" button in the Assets page header.
 // Two sections, both admin/assetsadmin only:
@@ -27793,20 +27698,6 @@ function _monsetManualSectionHTML(v) {
   '</div>';
 }
 
-// Renders one numeric input with label + range hint. `warnUnder500` adds a
-// soft warning indicator when the current value is below 500ms — used for
-// probeTimeoutMs per the spec.
-function _monsetField(id, label, unit, value, min, max, warnUnder500) {
-  var v = (value === null || value === undefined) ? "" : value;
-  var warn = warnUnder500 && Number(v) > 0 && Number(v) < 500;
-  var warnIcon = warn ? ' <span title="Probes will likely false-fail under healthy network conditions at this timeout" style="color:var(--color-warning);font-weight:700">⚠</span>' : "";
-  return '<div class="form-group">' +
-    '<label for="' + id + '">' + escapeHtml(label) + warnIcon + '</label>' +
-    '<input type="number" id="' + id + '" min="' + min + '" max="' + max + '" value="' + escapeHtml(String(v)) + '">' +
-    (unit ? '<div style="font-size:0.78rem;color:var(--color-text-tertiary);margin-top:2px">' + escapeHtml(unit) + '</div>' : '') +
-  '</div>';
-}
-
 function _monsetReadField(id, fallback) {
   var el = document.getElementById(id);
   if (!el || el.value === "") return fallback;
@@ -27892,59 +27783,6 @@ function _monsetOverridesSectionHTML(rows) {
       '</tr></thead>' +
       '<tbody id="monset-overrides-tbody">' + rowHTML + '</tbody>' +
     '</table>' +
-  '</div>';
-}
-
-function _monsetOverrideSummary(o) {
-  var parts  = [];
-  var labels = {
-    intervalSeconds:           "probe",
-    // Dormant field — kept in the label map so an install that stored this
-    // override before 2026-08-19 still gets a readable summary chip for it.
-    fastConfirmIntervalSec:    "confirm-reprobe",
-    probeTimeoutMs:            "probe-timeout",
-    cpuMemoryTimeoutMs:        "cpu-mem-timeout",
-    temperatureTimeoutMs:      "temp-timeout",
-    systemInfoTimeoutMs:       "sysinfo-timeout",
-    cpuMemoryIntervalSeconds:  "cpu-mem",
-    temperatureIntervalSeconds: "temp",
-    systemInfoIntervalSeconds: "sysinfo",
-    responseTimePolling:       "rt-poll",
-    cpuMemoryPolling:          "cpu-mem-poll",
-    temperaturePolling:        "temp-poll",
-    interfacesPolling:         "if-poll",
-    lldpPolling:               "lldp-poll",
-    storagePolling:            "storage-poll",
-  };
-  Object.keys(labels).forEach(function (k) {
-    if (o[k] !== null && o[k] !== undefined) parts.push(labels[k] + "=" + o[k]);
-  });
-  return parts.length === 0 ? "(empty — all fields inherited)" : parts.join(", ");
-}
-
-// Warning banner shown inside the class-override editor when the operator picks
-// (class=switch|access_point) + (source=FMG/FortiGate integration whose
-// per-class `enabled` flag — fortiswitchMonitor.enabled / fortiapMonitor.enabled
-// — is false). In that state discovery never stamps `Asset.monitorCredentialId`
-// on the managed switch/AP rows, so a class override with no per-stream
-// credential set will fall through to the integration's top-level
-// `monitorCredentialId` (the FortiGate's SNMP credential) — usually wrong for
-// FortiLink-side switches/APs. Returns empty string when the warning doesn't apply.
-function _monsetDirectPollWarningHTML(integrationId, assetType) {
-  if (assetType !== "switch" && assetType !== "access_point") return "";
-  if (!integrationId || integrationId === "null") return "";
-  var intg = _monsetIntegrations.find(function (i) { return i.id === integrationId; });
-  if (!intg) return "";
-  if (intg.type !== "fortimanager" && intg.type !== "fortigate") return "";
-  var cfg = intg.config || {};
-  var blockKey = assetType === "switch" ? "fortiswitchMonitor" : "fortiapMonitor";
-  var block = cfg[blockKey] || {};
-  if (block.enabled === true) return "";
-  var classLabel = assetType === "switch" ? "FortiSwitches" : "FortiAPs";
-  return '<div id="monset-ov-direct-poll-warning-inner" style="margin:0.25rem 0 0.75rem 0;padding:0.5rem 0.75rem;background:rgba(245,158,11,0.08);border:1px solid var(--color-warning);border-radius:4px;color:var(--color-warning);font-size:0.82rem">' +
-    '&#9888; <strong>Direct Polling is off</strong> for ' + escapeHtml(classLabel) + ' on this integration. ' +
-    'Discovery won\'t stamp an SNMP credential on the asset row, so a class override without an explicit per-stream credential will fall through to the FortiGate\'s SNMP credential (usually wrong for FortiLink-side ' + escapeHtml(classLabel.toLowerCase()) + '). ' +
-    'Either set the per-stream credentials below, or enable Direct Polling under the integration\'s ' + escapeHtml(classLabel) + ' subtab.' +
   '</div>';
 }
 

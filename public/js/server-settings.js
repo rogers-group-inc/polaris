@@ -1564,11 +1564,6 @@ function _capacityUnlistedRow(label, bytes, hint) {
     '</tr>';
 }
 
-function _capacityFormatPct(num, denom) {
-  if (denom == null || denom <= 0) return "—";
-  return Math.round((num / denom) * 100) + "%";
-}
-
 function _capacitySeverityLabel(s) {
   // Accept both the new vocabulary (critical/warning/watch/ok) and the
   // legacy color names (red/amber) so a stale snapshot returned from an
