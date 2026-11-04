@@ -55,6 +55,8 @@ to `manual`.
 ### Rule 7
 **Conflict detection.** A discovery value differing from an existing manual
 reservation creates a [Conflict](Conflict-Resolution) rather than overwriting.
+Values are compared the way you read them: extra or invisible spaces, and
+upper- versus lower-case in a hostname, are not a difference.
 
 ### Rule 8
 **Event archival.** Events older than the configured retention (default 7 days,

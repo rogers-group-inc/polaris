@@ -162,6 +162,7 @@ import {
 import { reconcileMacAddresses } from "../macAddressService.js";
 import { logger } from "../../utils/logger.js";
 import { deviceSerialOrNull } from "../../utils/safeText.js";
+import { normalizeConflictValue } from "../../utils/conflictValue.js";
 
 /** Auto-disable window for per-integration verbose debug logging (30 minutes). */
 const VERBOSE_LOGGING_TTL_MS = 30 * 60 * 1000;
@@ -1480,6 +1481,14 @@ export interface ProposedReservationData {
  * fields are all populated offered the operator no decision — just noise on
  * every VIP that also holds a lease.
  *
+ * "Differs" is judged on what an operator can see, not on the raw bytes
+ * (`utils/conflictValue.ts → normalizeConflictValue`): a trailing space, a non-breaking space or a
+ * zero-width character from a pasted name, or — for the hostname, which DNS
+ * and DHCP treat case-insensitively — a difference only in letter case, is
+ * not a difference. The card renders both sides as HTML, which collapses
+ * whitespace, so a byte-level compare raised cards whose two columns read
+ * identically and offered the operator nothing to decide.
+ *
  * Exported for unit tests; the conflict write itself needs a DB.
  */
 export function computeConflictFields(
@@ -1487,12 +1496,11 @@ export function computeConflictFields(
   existing: { hostname?: string | null; owner?: string | null; projectRef?: string | null },
   mode: "differs" | "fill-only" = "differs",
 ): string[] {
-  const isBlank = (v?: string | null): boolean => v == null || v.trim() === "";
   const fields: Array<"hostname" | "owner" | "projectRef"> = ["hostname", "owner", "projectRef"];
   return fields.filter((f) => {
-    const p = proposed[f] ?? null;
-    const e = existing[f] ?? null;
-    if (mode === "fill-only") return isBlank(e) && !isBlank(p);
+    const p = normalizeConflictValue(f, proposed[f]);
+    const e = normalizeConflictValue(f, existing[f]);
+    if (mode === "fill-only") return e === null && p !== null;
     return p !== e;
   });
 }
