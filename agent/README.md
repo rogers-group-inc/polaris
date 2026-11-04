@@ -12,7 +12,7 @@ make dev        # local-arch build for quick iteration (./polaris-agent)
 
 Binaries are static (`CGO_ENABLED=0`); copying one file to the target host is sufficient.
 
-Dependencies: just one — `github.com/gorilla/websocket` for the outbound pull-side WebSocket. The HTTP push path uses only stdlib `net/http`.
+Direct dependencies (agent/go.mod): `github.com/gorilla/websocket` (the outbound pull-side WebSocket), `github.com/shirou/gopsutil/v3` (the OS readings behind the sample streams), `github.com/yusufpapurcu/wmi` (Windows WMI queries) and `golang.org/x/sys` (the syscall layer under both). The HTTP push path uses only stdlib `net/http`. Checks: `make fmt-check vet test` (run on Linux or in CI — see the Makefile).
 
 ## Configuration
 

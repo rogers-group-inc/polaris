@@ -86,7 +86,10 @@ func TelemetryOnce() *transport.TelemetrySample {
 	// Memory bytes. We send both pct AND used/total — the server
 	// schema accepts either form, and the System tab chart prefers
 	// pct when both are present.
-	if vm, err := mem.VirtualMemory(); err == nil {
+	// One VirtualMemory reading per tick, shared by the aggregate below and
+	// the breakdown after it (it used to be read twice).
+	vm, vmErr := mem.VirtualMemory()
+	if vmErr == nil {
 		p := round1(vm.UsedPercent)
 		sample.MemPct = &p
 		used := vm.Used
@@ -98,11 +101,14 @@ func TelemetryOnce() *transport.TelemetrySample {
 	// Memory breakdown + swap. Independent of the block above: a platform
 	// that can report used/total but not the bands sends the pair alone and
 	// the chart draws one line, exactly as it did before this existed.
-	if b := MemBreakdownOnce(); b.Ok {
+	if vmErr != nil {
+		vm = nil
+	}
+	if b := memBreakdownOf(vm); b.Ok {
 		// Re-send used/total from the breakdown so the four bands the chart
-		// stacks are guaranteed to close on the total it scales the axis to.
-		// Taking them from the VirtualMemory() call above instead would mix
-		// two readings and leave a visible sliver of unaccounted memory.
+		// stacks close exactly on the total it scales the axis to (the
+		// breakdown's Used may differ from vm.Used where a platform cache
+		// override applies).
 		used, total := b.Used, b.Total
 		buffers, cached, free := b.Buffers, b.Cached, b.Free
 		sample.MemUsedBytes = &used

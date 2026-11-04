@@ -28,7 +28,7 @@ func reboot(delay time.Duration, _ string) error {
 	}
 	time.Sleep(delay)
 	if out, err := exec.Command("/sbin/shutdown", "-r", "now").CombinedOutput(); err != nil {
-		return fmt.Errorf("shutdown refused the reboot: %v: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("shutdown refused the reboot: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

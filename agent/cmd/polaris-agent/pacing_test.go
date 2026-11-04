@@ -18,16 +18,16 @@ import (
 // below can check an offset against the interval it actually has to fit in.
 // A loop added to loopPhaseSec without a line here fails TestEveryLoopPhaseIsKnown.
 var defaultIntervalSec = map[string]int{
-	"responseTime":       defaultResponseTimeIntervalSec,
-	"command":            defaultCommandPollIntervalSec,
-	"heartbeat":          defaultHeartbeatIntervalSec,
-	"telemetry":          defaultTelemetryIntervalSec,
-	"systemInfo":         defaultHeartbeatIntervalSec,
-	"interfaces":         defaultInterfacesIntervalSec,
-	"storage":            defaultStorageIntervalSec,
-	"eventLog":           defaultEventLogIntervalSec,
-	"processInventory":   defaultProcessInventoryIntervalSec,
-	"serviceInventory":   defaultServiceInventoryIntervalSec,
+	"responseTime":     defaultResponseTimeIntervalSec,
+	"command":          defaultCommandPollIntervalSec,
+	"heartbeat":        defaultHeartbeatIntervalSec,
+	"telemetry":        defaultTelemetryIntervalSec,
+	"systemInfo":       defaultHeartbeatIntervalSec,
+	"interfaces":       defaultInterfacesIntervalSec,
+	"storage":          defaultStorageIntervalSec,
+	"eventLog":         defaultEventLogIntervalSec,
+	"processInventory": defaultProcessInventoryIntervalSec,
+	"serviceInventory": defaultServiceInventoryIntervalSec,
 	// The loop wakes on this cadence; a collection happens on at most one
 	// wake in every defaultSoftwareInventoryIntervalSec, always on this phase.
 	"softwareInventory":  softwareInventoryCheckSec,
@@ -35,7 +35,7 @@ var defaultIntervalSec = map[string]int{
 	"processLog":         defaultProcessLogIntervalSec,
 	"serviceLog":         defaultProcessLogIntervalSec,
 	"processConnections": defaultProcessConnectionsIntervalSec,
-	"pathCheck":       defaultPathCheckIntervalSec,
+	"pathCheck":          defaultPathCheckIntervalSec,
 }
 
 func TestEveryLoopPhaseIsKnown(t *testing.T) {

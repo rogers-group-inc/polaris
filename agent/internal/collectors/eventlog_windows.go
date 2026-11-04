@@ -125,11 +125,15 @@ type winParsedEvent struct {
 // wevtutil /f:XML emits a sequence of <Event> elements (no single root).
 // xml.Decoder.Decode in a loop handles the concatenation cleanly.
 type wevtSystem struct {
-	Provider      struct{ Name string `xml:"Name,attr"` } `xml:"Provider"`
-	EventID       string                                  `xml:"EventID"`
-	Level         string                                  `xml:"Level"`
-	TimeCreated   struct{ SystemTime string `xml:"SystemTime,attr"` } `xml:"TimeCreated"`
-	EventRecordID string                                  `xml:"EventRecordID"`
+	Provider struct {
+		Name string `xml:"Name,attr"`
+	} `xml:"Provider"`
+	EventID     string `xml:"EventID"`
+	Level       string `xml:"Level"`
+	TimeCreated struct {
+		SystemTime string `xml:"SystemTime,attr"`
+	} `xml:"TimeCreated"`
+	EventRecordID string `xml:"EventRecordID"`
 }
 type wevtEvent struct {
 	System    wevtSystem `xml:"System"`

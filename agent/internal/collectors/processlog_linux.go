@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,7 +54,7 @@ func journaldCommTailCursor(name string) string {
 	cursor := ""
 	for sc.Scan() {
 		line := sc.Text()
-		if i := bytes.Index([]byte(line), []byte("cursor:")); i >= 0 {
+		if i := strings.Index(line, "cursor:"); i >= 0 {
 			cursor = trimSpace(line[i+len("cursor:"):])
 		}
 	}
@@ -98,7 +99,7 @@ func journaldUnitTailCursor(unit string) string {
 	cursor := ""
 	for sc.Scan() {
 		line := sc.Text()
-		if i := bytes.Index([]byte(line), []byte("cursor:")); i >= 0 {
+		if i := strings.Index(line, "cursor:"); i >= 0 {
 			cursor = trimSpace(line[i+len("cursor:"):])
 		}
 	}
