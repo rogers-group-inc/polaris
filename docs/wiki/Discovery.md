@@ -264,6 +264,13 @@ Every integration type except Windows Server has a **Query API** button that
 proxies a raw read to the upstream system. It is the operator's self-service way to answer *"why didn't
 device X get discovered?"*.
 
+On a FortiManager or FortiGate integration, **Saved Queries** lists every query
+discovery sends, with the same fields and filters, so you can see exactly what
+discovery read. For a FortiManager query, replace `<device-name>` with the
+FortiGate's name as FortiManager shows it. Queries you save yourself are kept
+when an update adds or changes the built-in ones. If you save a query under the
+same name as a built-in one, the update replaces it with the built-in version.
+
 When a FortiGate query cannot connect at all, the response reads
 **Could not reach FortiGate at `<address>:<port>` — `<reason>`**, where the reason
 is a timeout, a refused connection, no route, a TLS certificate rejection, or a
