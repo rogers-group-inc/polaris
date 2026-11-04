@@ -6449,8 +6449,16 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
     // upstream firewall. The exact timestamp + every firewall that has seen
     // the asset live in the Sources tab's sightings table. Left as "-" when no
     // firewall has ever sighted the asset.
+    // A managed FortiSwitch / FortiAP is answered by its controller gate (the
+    // one holding its FortiLink session / CAPWAP tunnel), never by sightings —
+    // a statically-addressed AP has only the sightings its REPLACED gate left
+    // behind. Paint that name now; the upstream call below adds the verbs.
     var fwCell = document.getElementById("asset-last-fw-" + a.id);
-    if (fwCell) {
+    var ctlTopo = (a.assetType === "access_point" || a.assetType === "switch") ? (a.fortinetTopology || null) : null;
+    var ctlName = ctlTopo && (ctlTopo.controllerFortigate || ctlTopo.controllerSerial);
+    if (fwCell && ctlName) {
+      fwCell.textContent = ctlName;
+    } else if (fwCell) {
       var bestFw = null, bestMs = -1;
       (sightings || []).forEach(function (s) {
         if (!s.fortigateDevice) return;
@@ -21986,11 +21994,12 @@ function _upgradeUpstreamRow(cellId, entry, kindLabel) {
   // Keep the name the server reports even when nothing resolved — for the
   // firewall row that IS the fill (the sightings pass above may not have run
   // for a caller without assetsQuarantine:read).
-  // "Last Seen Firewall" can be answered two ways and they are not the same
-  // claim: a sighting is a gate reporting the device, source "subnet" is the
-  // gate that owns the network its address is in — an inference used only when
-  // nothing has ever sighted it. The row says which, so it never reads as
-  // evidence it isn't.
+  // "Last Seen Firewall" can be answered three ways and they are not the same
+  // claim: source "controller" is the gate managing a FortiSwitch / FortiAP
+  // (direct, current — no note), a sighting is a gate reporting the device,
+  // source "subnet" is the gate that owns the network its address is in — an
+  // inference used only when no gate Polaris still holds has sighted it. The
+  // row says when it is the inference, so it never reads as evidence it isn't.
   var derived = entry.source === "subnet"
     ? " (owns " + (entry.subnetCidr || "this network") + ")"
     : "";
