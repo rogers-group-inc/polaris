@@ -240,4 +240,18 @@ Found alongside: the FortiSwitch update path reindexed the switch under its new 
 
 Not done here: MACs the old capture already wrote (source `fmg-discovery`) stay on their switches — some may be a gate's or a neighbouring switch's MAC, and a primary MAC is not replaced once set. Clearing them needs an audit against prod data first. A FortiSwitch that takes DHCP on several VLANs (each lease from another interface MAC, named by its switch-id) still produces one endpoint asset per extra interface: pairing those needs a hostname match scoped to the switch's own controller, which is the owner's decision against 91(f).
 
-Rejected alternatives: keeping the `is_fortilink_peer` capture as a first choice with the gate lookup as fallback (it is wrong when it answers, not only when it is silent); matching the switch by address alone across gates (the 91(e) cross-site collision); asking the switch itself over SNMP / SSH (only switches Polaris polls, and a second source to reconcile — left as a possible later addition).
+Rejected alternatives (91(g)): keeping the `is_fortilink_peer` capture as a first choice with the gate lookup as fallback (it is wrong when it answers, not only when it is silent); matching the switch by address alone across gates (the 91(e) cross-site collision); asking the switch itself over SNMP / SSH (only switches Polaris polls, and a second source to reconcile — left as a possible later addition).
+
+### 91(h) — a FortiSwitch in the gate's client list is not an endpoint (2026-11-04)
+
+Same incident as 91(g), read from the other side. The owner ran `user/device/query` and `managed-switch/status` by hand: both report the managed switches, with the same address, serial and hostname, but only the client list carries a MAC — so discovery made the switch twice (a FortiSwitch asset from the status table, a `fortigate-endpoint` asset from the client list) and then raised a duplicate-IP conflict between them (rule 40).
+
+Two fixes were offered: request the serial the client list reports and match it to the switch on serial + address (91(c)'s shape), or ignore the row. The owner chose: **if the hardware family is FortiSwitch, ignore it.** The switch's identity, address and state already come from `managed-switch/status`; its MAC from the gate's lease / ARP (91(g)). The client-list row adds nothing the switch needs and was the only source of the twin.
+
+What was built: `hardware_family` added to `INVENTORY_QUERY_FORMAT` (it was not requested, so discovery could not see it), and `isFortiswitchInventoryClient` drops the row first thing in `parseInventoryClient` — the one parser both transports use — so no later phase sees it. The Saved Queries presets carry the widened format string (their test pins them to the constant).
+
+Scope, deliberately narrow: only the "FortiSwitch" family. A FortiAP's own row is left alone — 91(e) pairs an unauthorized AP through that row's MAC, and the owner asked about switches. An endpoint behind a switch port (`fortiswitch_*` attribution fields) is unaffected: the drop reads the device's own family, not where it is plugged in.
+
+Consequence: a twin minted before this change is never refreshed again. On the switch's next pass 91(g)'s ghost sweep absorbs it when the gate's lease or ARP gives the switch the same MAC; otherwise it stays until an operator deletes it (it will not be re-created).
+
+Rejected alternative: matching the client-list row to the switch by serial + address. Sound, but it keeps a second, redundant record of the switch flowing through every endpoint phase for no gain, and needs the serial field's name confirmed per FortiOS build.

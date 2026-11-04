@@ -182,6 +182,35 @@ describe("parseInventoryClient", () => {
     detected_interface: "PlantLan",
   };
 
+  // Business rule 91(h): a managed FortiSwitch's own management traffic is
+  // not an endpoint. The row shape FortiOS reported for one in prod.
+  const SWITCH_ROW = {
+    ipv4_address: "172.31.58.129",
+    mac: "d4:b4:c0:00:60:7e",
+    hostname: "SITE-148F-1",
+    os_name: "FortiSwitch OS",
+    os_version: "7.6.8 Build 1164",
+    hardware_vendor: "Fortinet",
+    hardware_family: "FortiSwitch",
+    last_seen: 1791665249,
+    is_online: true,
+  };
+
+  it("drops a row whose hardware family is FortiSwitch, in any case and padding", () => {
+    expect(parseInventoryClient(SWITCH_ROW, "GW-1")).toBeNull();
+    expect(parseInventoryClient({ ...SWITCH_ROW, hardware_family: " fortiswitch " }, "GW-1")).toBeNull();
+  });
+
+  it("keeps a row the switch merely attributes (an endpoint behind a FortiSwitch port)", () => {
+    expect(parseInventoryClient(ROW_7X, "GW-1")).not.toBeNull();
+    expect(parseInventoryClient({ ...SWITCH_ROW, hardware_family: "FortiAP" }, "GW-1")).not.toBeNull();
+    expect(parseInventoryClient({ ...SWITCH_ROW, hardware_family: "" }, "GW-1")).not.toBeNull();
+  });
+
+  it("requests hardware_family, so the drop can see it", () => {
+    expect(INVENTORY_QUERY_FORMAT.split("|")).toContain("hardware_family");
+  });
+
   it("reads a 7.x row: ipv4_address, os_name, detected_interface, unauth_user", () => {
     const p = parseInventoryClient(ROW_7X, "GW-1")!;
     expect(p).toMatchObject({

@@ -8535,7 +8535,7 @@ var _FMG_PROXY_PRESET_QUERIES = [
   // ── A managed FortiGate's live state, through FortiManager's proxy ──
   // Discovery adds "&ipv6=true" when IPv6 is on for the install.
   _fmgProxyPreset("DHCP leases on device", "/api/v2/monitor/system/dhcp?format=ip|mac|hostname|interface|reserved|expire_time|access_point|ssid|vci|type"),
-  _fmgProxyPreset("Endpoint devices on device", "/api/v2/monitor/user/device/query?format=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address"),
+  _fmgProxyPreset("Endpoint devices on device", "/api/v2/monitor/user/device/query?format=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|hardware_family|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address"),
   _fmgProxyPreset("ARP table on device", "/api/v2/monitor/network/arp"),
   _fmgProxyPreset("Managed FortiSwitches on device", "/api/v2/monitor/switch-controller/managed-switch/status?format=connecting_from|fgt_peer_intf_name|join_time|os_version|serial|switch-id|state|status"),
   _fmgProxyPreset("FortiSwitch config (descriptions, uplink ports) on device", "/api/v2/cmdb/switch-controller/managed-switch?datasource=1"),
@@ -8560,7 +8560,7 @@ var _FGT_PRESET_QUERIES = [
   // Discovery adds ipv6=true when IPv6 is on for the install.
   { name: "DHCP leases", method: "GET", path: "/api/v2/monitor/system/dhcp", query: "vdom=root\nformat=ip|mac|hostname|interface|reserved|expire_time|access_point|ssid|vci|type" },
   { name: "Firewall VIPs", method: "GET", path: "/api/v2/cmdb/firewall/vip", query: "vdom=root" },
-  { name: "Endpoint devices", method: "GET", path: "/api/v2/monitor/user/device/query", query: "vdom=root\nformat=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address" },
+  { name: "Endpoint devices", method: "GET", path: "/api/v2/monitor/user/device/query", query: "vdom=root\nformat=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|hardware_family|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address" },
   { name: "ARP table", method: "GET", path: "/api/v2/monitor/network/arp", query: "vdom=root" },
   { name: "Managed FortiSwitches", method: "GET", path: "/api/v2/monitor/switch-controller/managed-switch/status", query: "vdom=root\nformat=connecting_from|fgt_peer_intf_name|join_time|os_version|serial|switch-id|state|status" },
   { name: "FortiSwitch config (descriptions, uplink ports)", method: "GET", path: "/api/v2/cmdb/switch-controller/managed-switch", query: "vdom=root\ndatasource=1" },

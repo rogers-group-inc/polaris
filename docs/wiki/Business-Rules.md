@@ -1635,6 +1635,16 @@ asset per additional interface, each with the switch's name and a different MAC
 and address. Merge those by hand (select them with the switch on the Assets
 page and choose **Merge**).
 
+**91(h) A FortiSwitch in a FortiGate's client list is not an endpoint.** The
+FortiGate's client list also reports each managed switch's own management
+traffic, with the switch's name, address and MAC. Discovery used to turn that
+into a second asset beside the switch, which then showed as a duplicate-IP
+conflict. Discovery now ignores a client-list entry whose hardware family is
+FortiSwitch; the switch itself is still discovered from the FortiGate's managed
+switch list. A duplicate created before this change is not refreshed again:
+the next discovery run merges it into the switch when the gate's lease or ARP
+entry gives the switch the same MAC, and otherwise you can delete it.
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time
