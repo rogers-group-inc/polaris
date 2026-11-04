@@ -266,8 +266,12 @@ device X get discovered?"*.
 
 On a FortiManager or FortiGate integration, **Saved Queries** lists every query
 discovery sends, with the same fields and filters, so you can see exactly what
-discovery read. For a FortiManager query, replace `<device-name>` with the
-FortiGate's name as FortiManager shows it. Queries you save yourself are kept
+discovery read. On a FortiManager integration, pick the gate in the
+**FortiGate** field: it suggests every FortiGate the integration has
+discovered, by its name in FortiManager, and also takes a name you type. In
+**FortiManager (JSON-RPC)** mode that name replaces `<device-name>` in the
+params when you press **Send**; the params keep the placeholder, so the same
+query works for the next gate you pick. Queries you save yourself are kept
 when an update adds or changes the built-in ones. If you save a query under the
 same name as a built-in one, the update replaces it with the built-in version.
 

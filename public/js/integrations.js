@@ -8767,6 +8767,16 @@ function openApiQueryModal(id, adom, useProxy) {
       '</div>' +
     '</div>' +
     '<hr style="border:none;border-top:1px solid var(--color-border);margin:0 0 0.75rem">' +
+    // ─── FortiGate (both modes) ──────────────────────────────────────────
+    // A text box with a suggestion list: pick one of the integration's
+    // discovered gates (GET /integrations/:id/fortigates fills the datalist)
+    // or type any FortiManager device name.
+    '<div class="form-group">' +
+      '<label for="fmg-fgt-device">FortiGate</label>' +
+      '<input type="text" id="fmg-fgt-device" list="fmg-fgt-device-list" autocomplete="off" spellcheck="false" placeholder="Choose a discovered FortiGate or type its FortiManager name">' +
+      '<datalist id="fmg-fgt-device-list"></datalist>' +
+      '<p class="hint" id="fmg-fgt-device-hint"></p>' +
+    '</div>' +
     // ─── FMG (JSON-RPC) form ─────────────────────────────────────────────
     '<div id="fmg-form-fmg">' +
       '<div class="form-group">' +
@@ -8801,11 +8811,6 @@ function openApiQueryModal(id, adom, useProxy) {
           '<label>Path</label>' +
           '<input type="text" id="fmg-fgt-path" value="/api/v2/monitor/system/status" placeholder="/api/v2/monitor/system/status" style="font-family:monospace;font-size:0.85rem">' +
         '</div>' +
-      '</div>' +
-      '<div class="form-group" style="margin-top:0.75rem">' +
-        '<label>Target FortiGate</label>' +
-        '<input type="text" id="fmg-fgt-device" placeholder="FMG device name — e.g. FG-HQ-01">' +
-        '<p class="hint">Name as it appears in FortiManager. Polaris resolves the management IP via FMG, then sends the REST call directly using the integration\'s FortiGate API token.</p>' +
       '</div>' +
       '<div class="form-group">' +
         '<label>API Token Override <span style="font-size:0.8rem;color:var(--color-text-tertiary)">(optional)</span></label>' +
@@ -8869,6 +8874,12 @@ function openApiQueryModal(id, adom, useProxy) {
   function _fmgApplyMode(mode) {
     document.getElementById("fmg-form-fmg").style.display = mode === "fmg" ? "" : "none";
     document.getElementById("fmg-form-fgt").style.display = mode === "fortigate" ? "" : "none";
+    var deviceHint = document.getElementById("fmg-fgt-device-hint");
+    if (deviceHint) {
+      deviceHint.innerHTML = mode === "fortigate"
+        ? "The FortiGate to send to, by its name in FortiManager. Polaris looks up its management IP in FortiManager, then sends the REST call directly with the integration's FortiGate API token."
+        : "Replaces <code>&lt;device-name&gt;</code> in the params when you send. Not needed for a query that names no FortiGate.";
+    }
     // Repopulate the Saved Queries dropdown with the presets/saves that match
     // the newly selected transport. The dropdown's option value is the original
     // index into savedQueries, so load/delete still resolve by that index.
@@ -8880,6 +8891,19 @@ function openApiQueryModal(id, adom, useProxy) {
     var prior = sel ? sel.value : "";
     _fmgRenderSavedSelect(savedQueries, mode, prior);
   }
+  _fmgApplyMode("fmg");
+
+  // The discovered FortiGates, as suggestions. The field keeps taking any typed
+  // name, so a failed or empty lookup only means no suggestions.
+  api.integrations.fortigates(id).then(function (r) {
+    var list = document.getElementById("fmg-fgt-device-list");
+    if (!list) return;
+    list.innerHTML = ((r && r.fortigates) || []).map(function (g) {
+      var label = [g.hostname, g.ipAddress, g.status && g.status !== "active" ? g.status : ""].filter(Boolean).join(" · ");
+      return '<option value="' + escapeHtml(g.deviceName) + '"' + (label ? ' label="' + escapeHtml(label) + '"' : "") + "></option>";
+    }).join("");
+  }).catch(function () { /* typing a name still works */ });
+
   fmgRadio.addEventListener("change", function () { if (this.checked) _fmgApplyMode("fmg"); });
   fgtRadio.addEventListener("change", function () { if (this.checked) _fmgApplyMode("fortigate"); });
 
@@ -8972,7 +8996,7 @@ function openApiQueryModal(id, adom, useProxy) {
     if (mode === "fortigate") {
       var deviceName = document.getElementById("fmg-fgt-device").value.trim();
       var path = document.getElementById("fmg-fgt-path").value.trim();
-      if (!deviceName) { showToast("Enter the FMG device name of the FortiGate", "error"); return; }
+      if (!deviceName) { showToast("Choose or type a FortiGate", "error"); return; }
       if (!path) { showToast("Enter a path (e.g. /api/v2/monitor/system/status)", "error"); return; }
       var fgtMethod = document.getElementById("fmg-fgt-method").value;
       var bodyRaw = document.getElementById("fmg-fgt-body").value.trim();
@@ -9016,6 +9040,16 @@ function openApiQueryModal(id, adom, useProxy) {
     } else {
       var method = document.getElementById("fmg-method").value;
       var paramsRaw = document.getElementById("fmg-params").value.trim();
+      // <device-name> is filled from the FortiGate field at Send time, so the
+      // params box (and a query saved from it) keeps the placeholder and
+      // works for whichever gate is picked next. JSON-escaped: a name is
+      // operator text and lands inside a JSON string.
+      if (paramsRaw.indexOf("<device-name>") >= 0) {
+        var fmgDevice = document.getElementById("fmg-fgt-device").value.trim();
+        if (!fmgDevice) { showToast("Choose or type a FortiGate — the params name <device-name>", "error"); return; }
+        paramsRaw = paramsRaw.split("<device-name>").join(JSON.stringify(fmgDevice).slice(1, -1));
+        try { localStorage.setItem("polaris-fmg-query-device-" + id, fmgDevice); } catch (_) { /* private mode */ }
+      }
       var params;
       try {
         params = JSON.parse(paramsRaw);

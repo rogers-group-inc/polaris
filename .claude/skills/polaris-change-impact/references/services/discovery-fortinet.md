@@ -250,6 +250,21 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/integrationFortigateRosterService.ts
+
+**What it owns:** the FortiGates a FortiManager / FortiGate integration has discovered, by the name their queries take — FortiManager's device name (`fortinetTopology.deviceName`, which routinely differs from `Asset.hostname`). Feeds the FortiGate picker (a text box with a `<datalist>`) of the FortiManager Query API window.
+
+**Public API:** `listIntegrationFortigates(integrationId)` (404 unknown id, 400 for a type other than `fortimanager` / `fortigate`); `fortigateRosterFromAssets(rows)` (pure, unit-tested).
+
+**Cross-service deps:** prisma only (one `integration.findUnique` + one `asset.findMany` with a tight `select`).
+
+**Used by:** `src/api/routes/integrations.ts` `GET /:id/fortigates` (thin wrapper, behind the router-level `integrations:write` — the Query API's own gate); `public/js/api.js` `api.integrations.fortigates`; `public/js/integrations.js` `openApiQueryModal`, which fills `#fmg-fgt-device-list` on open and substitutes the field into `<device-name>` at Send (JSON-escaped; the params box keeps the placeholder).
+
+**Invariants:**
+- **The name is FortiManager's**, never the hostname when a `deviceName` exists — `/adom/<adom>/device/<name>` and the direct-mode resolver key on it. Hostname is the fallback only for a row with no stamp.
+- **One entry per HA cluster** (both members carry the cluster's one name); the primary describes it, a standby only when no primary row exists.
+- Decommissioned firewalls are left out. The picker is a suggestion list: the field always accepts a typed name, and a failed lookup only removes suggestions.
+
 ## services/integrationHealthService.ts
 
 **What it owns:** the payload behind `GET /api/v1/integrations/health-summary` — the sidebar's 30-second poll, running on every page for every signed-in session. Two unrelated signals share one response deliberately: `failed` (enabled integrations whose most recent connection test failed) and `proxyAdvice` (enabled FortiManager integrations still on the proxy transport whose fleet has outgrown it). Neither is worth a second poll.
