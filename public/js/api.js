@@ -125,8 +125,13 @@ function timeZoneOpts() {
 if (typeof window !== "undefined") window.timeZoneOpts = timeZoneOpts;
 
 // Compact relative time ("5s ago" / "5m ago" / "3h ago" / "2d ago").
+// Empty or unparseable input renders as "" (it used to read "NaNd ago"); the
+// three mobile formatTimeAgo wrappers that added this guard are gone.
 function timeAgo(dateStr) {
-  var diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (!dateStr) return "";
+  var t = new Date(dateStr).getTime();
+  if (isNaN(t)) return "";
+  var diff = Math.floor((Date.now() - t) / 1000);
   if (diff < 0) return "just now";
   if (diff < 60) return diff + "s ago";
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";

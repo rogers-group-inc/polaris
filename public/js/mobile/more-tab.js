@@ -55,12 +55,6 @@
   }
   // escapeHtml is the canonical global from api.js (loaded first on every page).
   // api.js timeAgo with the mobile guard for empty/unparseable timestamps.
-  function formatTimeAgo(iso) {
-    if (!iso) return "";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return timeAgo(iso);
-  }
   function loadingHtml() {
     return '<div class="loading-screen" style="padding:48px 0;"><div class="spinner"></div></div>';
   }
@@ -130,7 +124,7 @@
             + '  <div class="content">'
             + '    <div class="headline">' + escapeHtml(prettyAction(e.action)) + (e.resourceName ? " · " + escapeHtml(e.resourceName) : "") + '</div>'
             + '    <div class="supporting" style="white-space:normal;">' + escapeHtml(e.message || "") + '</div>'
-            + '    <div class="supporting mono" style="font-size:12px;color:var(--md-on-surface-variant);margin-top:4px;">' + escapeHtml(formatTimeAgo(e.timestamp)) + (e.actor ? " · " + escapeHtml(e.actor) : "") + '</div>'
+            + '    <div class="supporting mono" style="font-size:12px;color:var(--md-on-surface-variant);margin-top:4px;">' + escapeHtml(timeAgo(e.timestamp)) + (e.actor ? " · " + escapeHtml(e.actor) : "") + '</div>'
             + '  </div>'
             + '</button>'
             + (i < events.length - 1 ? '<div class="list-divider"></div>' : '');

@@ -415,12 +415,6 @@
       + '</div>';
   }
 
-  function formatTimeAgo(iso) {
-    if (!iso) return "";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return timeAgo(iso);
-  }
 
   // ─── Severity breakdown ────────────────────────────────────────────────
   // One tile per severity above the toolbar, counting what the list would
@@ -617,7 +611,7 @@
     var rank = sevRank(sev);
     var leadCls = rank >= 5 ? "error" : (rank >= 3 ? "warning" : "");
     var iconHref = rank >= 5 ? "#i-down-arrow" : (rank >= 3 ? "#i-warn" : "#i-info");
-    var meta = formatTimeAgo(n.triggeredAt);
+    var meta = timeAgo(n.triggeredAt);
     if (n.acknowledged) meta += " · acknowledged" + (n.acknowledgedBy ? " by " + n.acknowledgedBy : "");
     // The Ack and Clear controls are siblings of the row button, not inside
     // it — nesting a <button> inside a <button> is invalid and swallows the
