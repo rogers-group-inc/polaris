@@ -15,7 +15,7 @@
 import { AppError } from "./errors.js";
 
 export const TAG_MAX_LEN = 64;
-export const TAGS_MAX_COUNT = 64;
+const TAGS_MAX_COUNT = 64;
 
 /**
  * The prefix an ASSET's region tag carries. `User`/`Role`/`GroupMapping`
@@ -167,7 +167,7 @@ export function renameTagInList(
  * and chart bands on every theme — a single hex cannot, the bands' warning being
  * #ffd600 on nightfall and #f57f17 on the daylight themes.
  */
-export const TAG_SEVERITY_COLOR_PREFIX = "severity:";
+const TAG_SEVERITY_COLOR_PREFIX = "severity:";
 
 /** The severities a color reference may name — SEVERITIES in
  *  src/services/notificationTypes.ts (a util does not import a service; the

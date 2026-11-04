@@ -38,7 +38,7 @@ export const FORTIGATE_SENSOR_COLUMNS: SensorColumns = {
   transform:   null,
 };
 
-export interface CpuQuery {
+interface CpuQuery {
   symbol: string;                       // symbolic OID name (resolved via oidRegistry)
   mode: "scalar" | "walk-avg";          // scalar = .0, walk-avg = walk subtree + average
 }
@@ -87,7 +87,7 @@ export interface DiskQuery {
  * — typical on FortiAPs which publish only `fapTemperature` and don't
  * implement either of the table-based paths.
  */
-export interface TemperatureQuery {
+interface TemperatureQuery {
   symbol: string;                       // symbolic OID name resolved via oidRegistry
   // "scalar" = single .0 Celsius reading (FortiAP fapTemperature).
   // "table"  = a sensor table (business rule 132): `symbol` is its VALUE
@@ -117,7 +117,7 @@ export interface TemperatureQuery {
  * as `SystemInfoSample.detectedModel` and adopted onto `Asset.model` by
  * `recordSystemInfoResult` when the stored model is still generic.
  */
-export interface ModelQuery {
+interface ModelQuery {
   symbol: string;                       // symbolic OID name resolved via oidRegistry
   /** Extract the display model from the raw scalar; null = unrecognized (nothing stamped). */
   parse: (raw: string) => string | null;

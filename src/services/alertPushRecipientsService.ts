@@ -75,7 +75,7 @@ import { logger } from "../utils/logger.js";
 import { escapeHtml } from "../utils/notificationTemplate.js";
 
 /** The push-recipient tokens, resolved at delivery like `{chart.*}`. */
-export const PUSH_RECIPIENT_TOKENS = ["push.recipients"] as const;
+const PUSH_RECIPIENT_TOKENS = ["push.recipients"] as const;
 export type PushRecipientToken = (typeof PUSH_RECIPIENT_TOKENS)[number];
 
 /**
@@ -87,7 +87,7 @@ export type PushRecipientToken = (typeof PUSH_RECIPIENT_TOKENS)[number];
  * operator template may want one and not the other, and because a send that
  * reaches nobody by push must still be able to name who it reached by mail.
  */
-export const EMAIL_RECIPIENT_TOKENS = ["email.recipients"] as const;
+const EMAIL_RECIPIENT_TOKENS = ["email.recipients"] as const;
 export type EmailRecipientToken = (typeof EMAIL_RECIPIENT_TOKENS)[number];
 
 /**

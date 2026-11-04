@@ -511,7 +511,7 @@ export interface MonitorTierSettings {
   eventLogCredentialId:      string | null;
 }
 
-export type MonitorOverrideSettings = Partial<MonitorTierSettings>;
+type MonitorOverrideSettings = Partial<MonitorTierSettings>;
 
 /** Final per-asset shape after the resolver walks all four tiers. */
 export type ResolvedMonitorSettings = MonitorTierSettings;
@@ -591,7 +591,7 @@ const HARDCODED_FLOOR: MonitorTierSettings = {
 // these types get removed in a follow-up pass.
 
 /** @deprecated use MonitorTierSettings */
-export interface MonitorClassSettings {
+interface MonitorClassSettings {
   intervalSeconds:           number;
   failureThreshold:          number;
   probeTimeoutMs:            number;
@@ -982,7 +982,7 @@ function readMibIdFromJson(v: unknown): string | null {
  * Shared by the source default and the resolver's validity gate so the two
  * cannot disagree about what is collectable.
  */
-export function fortiosRestUsable(stream: Stream, assetType: string | null | undefined): boolean {
+function fortiosRestUsable(stream: Stream, assetType: string | null | undefined): boolean {
   const isManagedChild = assetType === "switch" || assetType === "access_point";
   return stream === "responseTime" && isManagedChild;
 }
@@ -1562,7 +1562,7 @@ export async function resolveMonitorSettings(asset: AssetMonitorContext): Promis
  *                           applies (may itself be null = stream not
  *                           delivered for this source kind)
  */
-export type ProvenanceTier = "asset" | "class" | "integration" | "integration-class" | "manual" | "integrationPollInterval" | "default";
+type ProvenanceTier = "asset" | "class" | "integration" | "integration-class" | "manual" | "integrationPollInterval" | "default";
 
 export interface ResolvedSettingsWithProvenance {
   resolved:        ResolvedMonitorSettings;
@@ -2529,7 +2529,7 @@ function fortinetUptimeSecondsFromStatus(res: any): number | null {
 // probe rate stays bounded by controller-count, not device-count — important
 // for FMG proxy mode (concurrency = 1).
 
-export interface FortinetControllerEntry {
+interface FortinetControllerEntry {
   /** True when the controller reports this device as currently online. */
   connected: boolean;
   /** Raw status string the controller reported, surfaced in failure errors. */
@@ -4444,7 +4444,7 @@ interface RawHttpExchange {
   truncated: boolean;
 }
 
-export async function probeHttp(
+async function probeHttp(
   host: string,
   config: Record<string, unknown>,
   start: number,
@@ -4822,10 +4822,6 @@ export interface HardwareSensorSample {
   alarmStatus: string | null;
 }
 
-// IpsecTunnelSample / IpsecConnectionSample live with their parser in
-// utils/fortiosIpsec.ts; re-exported here for the existing importers.
-export type { IpsecTunnelSample, IpsecConnectionSample };
-
 /**
  * One SD-WAN Performance SLA health-check reading for a single WAN member.
  * Read from /api/v2/monitor/virtual-wan/health-check. One sample per
@@ -4901,7 +4897,7 @@ export interface LldpNeighborSample {
  * colon-uppercase before persist; the persist layer resolves
  * `matchedAssetId` by MAC lookup against the endpoint inventory.
  */
-export interface WirelessStationSample {
+interface WirelessStationSample {
   staMacAddr:      string;
   staIpAddr?:      string | null;
   ssid?:           string | null;
@@ -4918,7 +4914,7 @@ export interface WirelessStationSample {
 }
 
 /** One field-replaceable unit from ENTITY-MIB entPhysicalTable. */
-export interface PhysicalEntitySample {
+interface PhysicalEntitySample {
   entIndex:    number;
   entClass:    string;
   descr:       string | null;
@@ -5322,7 +5318,7 @@ async function collectHardwareSensorsViaSnmpSession(
  * tunnels are pinned — the endpoint can be slow on busy gateways and we don't
  * want to hammer it from the fast cadence unless asked.
  */
-export async function collectFastFiltered(assetId: string): Promise<CollectionResult<SystemInfoSample>> {
+async function collectFastFiltered(assetId: string): Promise<CollectionResult<SystemInfoSample>> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
     include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
@@ -6678,7 +6674,7 @@ async function collectSystemInfoFortinet(
  * but builds its own FortiGateConfig from the integration so the caller
  * doesn't have to.
  */
-export async function collectLldpOnlyFortinet(
+async function collectLldpOnlyFortinet(
   host: string,
   integration: { type: string; config: Record<string, unknown> },
   timeoutMs?: number,
@@ -7626,7 +7622,7 @@ async function withSnmpSession<T>(host: string, config: Record<string, unknown>,
   }, gateWaitTimeoutMs);
 }
 
-export interface SnmpWalkRow {
+interface SnmpWalkRow {
   oid: string;
   type: string;
   value: string;
@@ -9478,7 +9474,7 @@ async function collectFastFilteredSnmp(
  * routed LLDP to SNMP. Opens its own SNMP session — cheap enough; LLDP walks
  * are normally ~6 columns and finish in a few hundred ms.
  */
-export async function collectLldpOnlySnmp(
+async function collectLldpOnlySnmp(
   host: string,
   config: Record<string, unknown>,
   timeoutMs?: number,
@@ -11022,7 +11018,7 @@ export async function persistAssetProcesses(
 
 // ─── Application Map: process connection persistence ─────────────────────────
 
-export type ProcessConnectionKind = "listen" | "outbound" | "inbound";
+type ProcessConnectionKind = "listen" | "outbound" | "inbound";
 
 export interface ProcessConnectionInput {
   /** AssetProcess.name key — same program-name space as the pin arrays. */
@@ -12477,7 +12473,7 @@ export async function recordProbeResult(
  * Runs only on those edges, so it is one indexed read (Event
  * @@index([assetId, timestamp])) per edge, never per poll.
  */
-export async function logStatusEventIfPaired(assetId: string, next: "up" | "down", input: LogEventInput): Promise<void> {
+async function logStatusEventIfPaired(assetId: string, next: "up" | "down", input: LogEventInput): Promise<void> {
   try {
     const last = await prisma.event.findFirst({
       where: { assetId, action: "monitor.status_changed" },
@@ -14010,7 +14006,7 @@ export async function runLossSweepFor(assetIds: string[], labels: WorkItemLabels
  * fallback. Used by `runStorageFor` to walk just the storage table without
  * incurring the full IF-MIB / LLDP-MIB session cost.
  */
-export async function collectStorageOnlySnmp(
+async function collectStorageOnlySnmp(
   host: string,
   config: Record<string, unknown>,
   manufacturer: string | null | undefined,
@@ -14103,7 +14099,7 @@ export const MONITOR_CANDIDATE_WHERE = {
  */
 /** The cursor pass's candidate load — mirrored (deliberately, see the note in
  *  monitorAssets.ts publishDueWork) by the pg-boss publisher's own query. */
-export async function loadMonitorPassCandidates() {
+async function loadMonitorPassCandidates() {
   return prisma.asset.findMany({
     where: MONITOR_CANDIDATE_WHERE,
     select: {
@@ -14166,8 +14162,8 @@ export async function loadMonitorPassCandidates() {
 }
 export type MonitorPassCandidate = Awaited<ReturnType<typeof loadMonitorPassCandidates>>[number];
 
-export type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "sdwan" | "lossSample" | "customWidget";
-export type MonitorWork = { id: string; kind: MonitorWorkKind };
+type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "sdwan" | "lossSample" | "customWidget";
+type MonitorWork = { id: string; kind: MonitorWorkKind };
 /**
  * Effective probe spacing in seconds for one asset.
  *
@@ -14801,7 +14797,7 @@ async function pruneSelectionAwareDetail(
  * Each tier reads its own retention values from the global setting. 0 (or
  * negative) disables retention for that class within the tier.
  */
-export async function pruneMonitorSamples(): Promise<number> {
+async function pruneMonitorSamples(): Promise<number> {
   const r = (await getSampleRetention()).assets;
   const [detail, hourly, daily] = await Promise.all([
     pruneTierByDays((w) => prisma.assetMonitorSample.deleteMany({       where: w as any }), r.detail, "timestamp",   "asset_monitor_samples"),
@@ -14819,7 +14815,7 @@ export async function pruneMonitorSamples(): Promise<number> {
  * card. Hardware sensors are gauges with no selection split, so they prune
  * uniformly like cpuMem.
  */
-export async function pruneTelemetrySamples(): Promise<number> {
+async function pruneTelemetrySamples(): Promise<number> {
   const ret = await getSampleRetention();
   const cm = ret.cpuMem;
   const hw = ret.hardware;
@@ -14847,7 +14843,7 @@ export async function pruneTelemetrySamples(): Promise<number> {
  * they're pruned by their own helper and only consume the DETAIL retention
  * tier (no rollups for LLDP — it's current-state, not time-series).
  */
-export async function pruneSystemInfoSamples(): Promise<number> {
+async function pruneSystemInfoSamples(): Promise<number> {
   const r = await getSampleRetention();
   const [
     iDetail, iHourly, iDaily, sDetail, sHourly, sDaily, ipDetail, ipHourly, ipDaily,

@@ -38,9 +38,9 @@ import { compilePattern } from "./autoMonitorInterfacesService.js";
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
-export interface StorageByNamesBlock   { names: string[] }
-export interface StorageByPatternsBlock { patterns: string[]; regex: boolean }
-export interface StorageAllBlock        { all: true }
+interface StorageByNamesBlock   { names: string[] }
+interface StorageByPatternsBlock { patterns: string[]; regex: boolean }
+interface StorageAllBlock        { all: true }
 
 export type AutoMonitorStorageSelection = {
   byNames?:    StorageByNamesBlock;
@@ -199,7 +199,7 @@ const STORAGE_CLASSES_BY_TYPE: Record<string, StorageClass[]> = {
   vcenter:         ["virtual_machine"],
 };
 
-export interface CachedStorageRow {
+interface CachedStorageRow {
   mountPath: string;
   deviceCount: number;
 }
@@ -210,7 +210,7 @@ export interface StorageAggregateCacheEntry {
 }
 
 /** Map keyed by StorageClass; the persisted shape of Integration.storageAggregateCache. */
-export type StorageAggregateCache = Record<string, StorageAggregateCacheEntry>;
+type StorageAggregateCache = Record<string, StorageAggregateCacheEntry>;
 
 /**
  * Recompute the mount-path aggregate for every storage class this integration

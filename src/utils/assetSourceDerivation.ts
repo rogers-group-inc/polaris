@@ -22,7 +22,7 @@
  * populating shape; phase 2 cutover writes the rich source-shaped payload.
  */
 
-export type DerivedSourceKind =
+type DerivedSourceKind =
   | "entra"
   | "ad"
   | "fortigate-firewall"

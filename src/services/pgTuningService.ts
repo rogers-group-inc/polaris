@@ -87,7 +87,7 @@ export function parsePgBytes(val: string): number {
  * reuse it without duplicating the PG_SETTINGS query. Returns null when no
  * threshold is crossed (small install — no tuning advice yet).
  */
-export interface PgTuningRow {
+interface PgTuningRow {
   name: string;
   current: string;
   recommended: string;

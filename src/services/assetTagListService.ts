@@ -159,7 +159,7 @@ export async function pageAssetIdsByTags(
 }
 
 /** Most rows `listAssetsWithTag` returns; `total` still counts every one. */
-export const ASSETS_WITH_TAG_LIMIT = 1000;
+const ASSETS_WITH_TAG_LIMIT = 1000;
 
 export interface AssetWithTagRow {
   id: string;

@@ -56,7 +56,7 @@ import { MAX_DEVICE_REGION_LEVELS } from "./notificationTypes.js";
 
 export { MAX_DEVICE_REGION_LEVELS };
 
-export interface RegionLevelEntry {
+interface RegionLevelEntry {
   /** The region's name as stored, for matching against a user's region tags. */
   name: string;
   /** The immediate container's name, or null for a top-level region. */

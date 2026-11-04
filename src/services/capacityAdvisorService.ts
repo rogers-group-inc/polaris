@@ -76,9 +76,9 @@ export type AdvisorLeverKey =
   | "PG_WORK_MEM"
   | "PG_RANDOM_PAGE_COST";
 
-export type ApplyMode = "env" | "queue-mode-endpoint" | "advisory-only";
+type ApplyMode = "env" | "queue-mode-endpoint" | "advisory-only";
 
-export interface AdvisorRecommendation {
+interface AdvisorRecommendation {
   key: AdvisorLeverKey;
   applyMode: ApplyMode;
   /** Null when the current value can't be resolved (e.g. PG setting query failed). */
@@ -136,6 +136,8 @@ export interface AdvisorState {
   handlerTimeoutPressure: HandlerTimeoutPressure[];
 }
 
+// Exported for capacityService's inline `import("./capacityAdvisorService.js")`
+// type reference (the two modules import each other); knip cannot see that form.
 export interface HandlerTimeoutPressure {
   cadence: CadenceKey;
   /** Observed p90 in seconds (from the histogram, or COLD_START fallback). */
@@ -146,7 +148,7 @@ export interface HandlerTimeoutPressure {
   utilization: number;
 }
 
-export interface IntegrationBreakdown {
+interface IntegrationBreakdown {
   fortimanagerProxy: number;
   fortimanagerDirectParallelismSum: number;
   fortigate: number;
@@ -161,7 +163,7 @@ export interface IntegrationBreakdown {
   genericapi?: number;
 }
 
-export interface PgRecommendation {
+interface PgRecommendation {
   /** Friendly current display value (e.g. "128MB"), or null when unknown. */
   current: string | null;
   /** Friendly recommended value. */
@@ -217,7 +219,7 @@ export interface AdvisorInputs {
  *  1000 samples accumulate per minute — this threshold is reached in seconds. */
 export const COLD_START_MIN_SAMPLES = 100;
 
-export const COLD_START_P90_SEC: Record<CadenceKey, number> = {
+const COLD_START_P90_SEC: Record<CadenceKey, number> = {
   probe:        0.4,
   fastFiltered: 0.6,
   telemetry:    0.8,
@@ -1142,9 +1144,9 @@ const ENV_KEY_MAP: Partial<Record<AdvisorLeverKey, string>> = {
   POLARIS_HEAVY_CONCURRENCY:        "POLARIS_HEAVY_CONCURRENCY",
 };
 
-export type StageStatus = "applied" | "skipped" | "error";
+type StageStatus = "applied" | "skipped" | "error";
 
-export interface StageResult {
+interface StageResult {
   key: AdvisorLeverKey;
   status: StageStatus;
   oldValue: string | null;

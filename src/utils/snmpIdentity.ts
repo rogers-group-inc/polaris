@@ -120,7 +120,7 @@ export interface SnmpIdentity {
  * exists for — PDUs, UPSes, environmental sensors, print devices. Anything
  * not here resolves to `undefined`, never a guess.
  */
-export const SNMP_ENTERPRISE_VENDORS: Record<number, string> = {
+const SNMP_ENTERPRISE_VENDORS: Record<number, string> = {
   9:     "Cisco",
   11:    "HP",
   43:    "3Com",

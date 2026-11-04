@@ -38,7 +38,7 @@ import {
   MAX_SCRIPT_TIMEOUT_SEC,
 } from "../../services/automationScriptService.js";
 
-export const automationScriptsRouter = Router();
+const automationScriptsRouter = Router();
 
 const scriptInputSchema = z.object({
   name: z.string().min(1).max(200),

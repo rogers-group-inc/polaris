@@ -124,7 +124,7 @@ const QUARANTINE_DROP = "enable" as const;
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
-export function quarantineTargetName(assetId: string): string {
+function quarantineTargetName(assetId: string): string {
   // FortiOS object names are typically capped at 35 chars. `polaris-q-`
   // is 10 chars; a short asset id of 12 hex chars gives a 22-char total
   // with comfortable headroom across versions. Strip dashes from the
@@ -548,7 +548,7 @@ export async function unpushQuarantineFromFortigate(
  * and contains every desired MAC; false otherwise. Used by the discovery
  * sync for drift detection.
  */
-export async function verifyQuarantineOnFortigate(params: {
+async function verifyQuarantineOnFortigate(params: {
   assetId: string;
   desiredMacs: string[];
   transport: Transport;

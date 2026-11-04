@@ -58,7 +58,7 @@ const CALLBACK_PATH = "/api/v1/auth/oidc/callback";
 let _cache: { value: OidcSettings; expiry: number } | null = null;
 let _config: client.Configuration | null = null;
 
-export async function getOidcSettings(): Promise<OidcSettings> {
+async function getOidcSettings(): Promise<OidcSettings> {
   if (_cache && Date.now() < _cache.expiry) return _cache.value;
   const row = await prisma.setting.findUnique({ where: { key: "oidc" } });
   const value = row?.value

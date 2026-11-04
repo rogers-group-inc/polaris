@@ -732,7 +732,7 @@ export function enumerateSubnetIps(
 
 // ─── Template packing / anchor allocation ───────────────────────────────────
 
-export interface PackedEntry<T> {
+interface PackedEntry<T> {
   /** Caller-supplied source entry. */
   entry: T;
   /** Byte offset (relative to anchor start) where this subnet begins. */
@@ -852,7 +852,7 @@ export interface ScanTarget {
 }
 
 /** Why an address the operator asked for is not going to be probed. */
-export type ScanTargetDropReason =
+type ScanTargetDropReason =
   | "invalid"        // unparseable, or not IPv4
   | "excluded"       // loopback / link-local / multicast / unspecified
   | "cap";           // over maxTargets

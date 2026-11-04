@@ -136,7 +136,7 @@ export async function recentAdvisorLines(conversationId: string, n = 5): Promise
 }
 
 /** First line of the opening question, trimmed to a title. Exported for tests. */
-export function titleFromQuestion(text: string): string {
+function titleFromQuestion(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
   if (!line) return "New conversation";
   return line.length > 60 ? line.slice(0, 57).trimEnd() + "…" : line;

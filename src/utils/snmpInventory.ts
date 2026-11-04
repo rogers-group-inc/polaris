@@ -72,7 +72,7 @@ const HR_STORAGE_TYPE_PREFIX = "1.3.6.1.2.1.25.2.1.";
 
 /** Caps. A chassis can publish thousands of ifIndexes; the picker needs tens. */
 export const MAX_SCAN_INTERFACES = 500;
-export const MAX_SCAN_STORAGE = 100;
+const MAX_SCAN_STORAGE = 100;
 
 /** Strip a leading dot and the column prefix, leaving the index suffix. */
 function indexSuffix(oid: string, column: string): string | null {

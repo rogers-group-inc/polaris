@@ -50,9 +50,9 @@ import { DEFAULT_FIRMWARE_TIMEOUTS, type FirmwareEngineContext } from "./firmwar
 import { withSshClient } from "../utils/remoteExec.js";
 import { AppError } from "../utils/errors.js";
 
-export const REBOOT_PATH = "/api/v2/monitor/system/os/reboot";
-export const SWITCH_RESTART_PATH = "/api/v2/monitor/switch-controller/managed-switch/restart";
-export const AP_RESTART_PATH = "/api/v2/monitor/wifi/managed_ap/restart";
+const REBOOT_PATH = "/api/v2/monitor/system/os/reboot";
+const SWITCH_RESTART_PATH = "/api/v2/monitor/switch-controller/managed-switch/restart";
+const AP_RESTART_PATH = "/api/v2/monitor/wifi/managed_ap/restart";
 const STATUS_PATH = "/api/v2/monitor/system/status";
 const HA_PATH = "/api/v2/cmdb/system/ha";
 const WEB_UI_STATE_PATH = "/api/v2/monitor/web-ui/state";
@@ -68,8 +68,8 @@ export type GateLink =
   | { kind: "ssh"; host: string; config: Record<string, unknown> };
 
 /** `joinTime` is epoch ms — when the device last joined its controller (FortiLink / CAPWAP). */
-export interface ManagedSwitchState { serial: string; switchId: string; status: string | null; joinTime: number | null }
-export interface ManagedApState { serial: string; wtpId: string; status: string | null; joinTime: number | null }
+interface ManagedSwitchState { serial: string; switchId: string; status: string | null; joinTime: number | null }
+interface ManagedApState { serial: string; wtpId: string; status: string | null; joinTime: number | null }
 
 /**
  * A controller join time to epoch ms. A managed switch's `join_time` is a
@@ -118,7 +118,7 @@ export interface GateOps {
 }
 
 /** A switch-id / wtp-id / serial that is safe to put on a CLI line or in a query: no spaces, no control characters (rule 107). */
-export function assertCliToken(v: string, what: string): string {
+function assertCliToken(v: string, what: string): string {
   if (!/^[A-Za-z0-9._:-]{1,64}$/.test(v)) throw new RebootSendError(`${what} "${v}" is not a plain device name — refusing to send it to the FortiGate`);
   return v;
 }
@@ -315,7 +315,7 @@ const CLI_ERROR = /Command fail|command parse error|Unknown action|invalid (?:in
  * printed between the command and the next prompt — or, for a command that
  * takes the box down, whatever arrived before the connection dropped.
  */
-export async function runFortiCli(host: string, config: Record<string, unknown>, command: string, opts: { timeoutMs?: number; expectDrop?: boolean } = {}): Promise<{ output: string; dropped: boolean }> {
+async function runFortiCli(host: string, config: Record<string, unknown>, command: string, opts: { timeoutMs?: number; expectDrop?: boolean } = {}): Promise<{ output: string; dropped: boolean }> {
   if (/[\r\n]/.test(command)) throw new RebootSendError("a CLI command cannot span lines");
   const timeoutMs = opts.timeoutMs ?? 30_000;
   return withSshClient(host, config, (client) => new Promise((resolve, reject) => {
@@ -402,7 +402,7 @@ function sshOps(l: Extract<GateLink, { kind: "ssh" }>): GateOps {
 }
 
 /** The operations a link supports. */
-export function gateOps(link: GateLink): GateOps {
+function gateOps(link: GateLink): GateOps {
   switch (link.kind) {
     case "token":     return restOps(tokenAdapter(link), { envelopeSerial: true });
     case "login":     return restOps(loginAdapter(link), { envelopeSerial: true });

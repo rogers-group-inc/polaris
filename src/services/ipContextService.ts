@@ -53,7 +53,7 @@ export interface IpContextOptions {
   includeReservations: boolean;
 }
 
-export interface IpContextSubnet {
+interface IpContextSubnet {
   id: string;
   cidr: string;
   name: string;
@@ -83,7 +83,7 @@ export interface IpContextReservation {
   notes: string | null;
 }
 
-export interface IpContextArpRow {
+interface IpContextArpRow {
   macAddress: string;
   ifName: string | null;
   ageSec: number | null;
@@ -92,14 +92,14 @@ export interface IpContextArpRow {
   matched: { id: string; hostname: string | null } | null;
 }
 
-export interface IpContextSighting {
+interface IpContextSighting {
   fortigateDevice: string;
   source: string;
   lastSeen: Date;
   asset: { id: string; hostname: string | null; assetType: string } | null;
 }
 
-export interface IpContextSwitchPort {
+interface IpContextSwitchPort {
   macAddress: string;
   ifName: string | null;
   vlanId: number | null;
@@ -107,7 +107,7 @@ export interface IpContextSwitchPort {
   switchAsset: { id: string; hostname: string | null } | null;
 }
 
-export interface IpContextApStation {
+interface IpContextApStation {
   macAddress: string;
   ssid: string | null;
   band: string | null;
@@ -118,7 +118,7 @@ export interface IpContextApStation {
   apAsset: { id: string; hostname: string | null } | null;
 }
 
-export interface IpContextExistingAsset {
+interface IpContextExistingAsset {
   id: string;
   hostname: string | null;
   assetType: string;

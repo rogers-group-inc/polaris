@@ -111,7 +111,7 @@ const API_PATTERN_ALLOWLIST = [/^\/map\/sites\/[^/]+\/topology$/];
  * matches a real IPv6 source against a v4 entry, and fails closed on an empty
  * or invalid list.
  */
-export function isSourceAllowed(ip: string, settings: DashSettings): boolean {
+function isSourceAllowed(ip: string, settings: DashSettings): boolean {
   return ipInScope(ip, settings.ipScope, settings.allowedCidrs);
 }
 

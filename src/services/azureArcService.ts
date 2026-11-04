@@ -1685,7 +1685,7 @@ export interface ArcSoftwareRow {
 }
 
 /** KQL: the Arc machines a workspace holds a software snapshot for. Pure. */
-export function buildArcSoftwareMachinesQuery(): string {
+function buildArcSoftwareMachinesQuery(): string {
   return [
     "ConfigurationData",
     "| where ConfigDataType == \"Software\"",

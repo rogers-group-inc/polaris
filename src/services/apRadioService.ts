@@ -49,7 +49,7 @@ import type { ApRadioSample } from "../utils/fortiapMonitorRow.js";
 export type ApInventorySource = "fortios" | "snmp";
 
 /** One SSID as the API returns it. */
-export interface ApVapView {
+interface ApVapView {
   vapName: string;
   ssid: string | null;
   bssid: string | null;

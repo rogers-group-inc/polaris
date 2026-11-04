@@ -124,7 +124,7 @@ const SIZE_THRESHOLD = 5000;
 // Buffer hold window. Matches sampleWriteBuffer's 2 s — the two buffers
 // flush on the same cadence by design so the UI status pill + sample chart
 // lag together rather than diverging.
-export const FLUSH_INTERVAL_MS = 2000;
+const FLUSH_INTERVAL_MS = 2000;
 
 const TABLE_LABEL = "assets:probe";
 

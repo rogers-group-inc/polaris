@@ -22,7 +22,7 @@ import { ipInCidr, isLinkLocalIp, isLoopbackIp, isValidIpAddress } from "./cidr.
 export type WorkloadPlatform = "unraid" | "truenas" | "proxmox";
 export type WorkloadRole = "host" | "vm" | "container";
 
-export const WORKLOAD_PLATFORMS: ReadonlyArray<WorkloadPlatform> = ["unraid", "truenas", "proxmox"];
+const WORKLOAD_PLATFORMS: ReadonlyArray<WorkloadPlatform> = ["unraid", "truenas", "proxmox"];
 
 const KINDS: Readonly<Record<WorkloadPlatform, Readonly<Record<WorkloadRole, string>>>> = {
   unraid:  { host: "unraid-host",  vm: "unraid-vm",  container: "unraid-container" },

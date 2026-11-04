@@ -112,7 +112,7 @@ export interface AppMapNode {
   overflowCount?: number;
 }
 
-export interface AppMapEdgePort {
+interface AppMapEdgePort {
   proto: string;
   port: number;
   count: number;
@@ -318,7 +318,7 @@ export function pickHistoryHolder(rows: IpHistoryCandidate[], refTimeMs: number)
  * same IP, pickHistoryHolder chooses the one most plausibly current at that
  * time. Decommissioned assets are excluded like everywhere else.
  */
-export async function resolveIpsViaHistory(
+async function resolveIpsViaHistory(
   refTimeByIp: Map<string, number>,
 ): Promise<Map<string, ResolvedAssetLite>> {
   const out = new Map<string, ResolvedAssetLite>();
@@ -377,7 +377,7 @@ export interface IpNameHint {
   source: "reservation" | "dns";
 }
 
-export async function resolveIpsToNameHints(ips: string[]): Promise<Map<string, IpNameHint>> {
+async function resolveIpsToNameHints(ips: string[]): Promise<Map<string, IpNameHint>> {
   const out = new Map<string, IpNameHint>();
   if (ips.length === 0) return out;
   const rows = await prisma.reservation.findMany({
@@ -938,7 +938,7 @@ function layoutToDto(row: { view: string; positions: Prisma.JsonValue; updatedBy
   };
 }
 
-export async function getAppMapLayout(view = "global"): Promise<AppMapLayoutDto | null> {
+async function getAppMapLayout(view = "global"): Promise<AppMapLayoutDto | null> {
   assertViewKey(view);
   const row = await prisma.applicationMapLayout.findUnique({ where: { view } });
   return row ? layoutToDto(row) : null;

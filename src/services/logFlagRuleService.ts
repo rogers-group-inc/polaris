@@ -97,7 +97,7 @@ export function compileRule(rule: LogFlagRuleRow): CompiledRule {
 let cache: CompiledRule[] | null = null;
 
 /** Drop the cache so the next read recompiles. Called on every rule write. */
-export function invalidateLogFlagRuleCache(): void {
+function invalidateLogFlagRuleCache(): void {
   cache = null;
 }
 

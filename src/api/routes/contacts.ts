@@ -109,7 +109,7 @@ function canSeeDirectory(req: Parameters<typeof hasPermission>[0]): boolean {
   return hasPermission(req, "automationManagement", "read");
 }
 
-export const contactsRouter = Router();
+const contactsRouter = Router();
 
 /**
  * One page of the address book. `q` filters on email or name SERVER-side.

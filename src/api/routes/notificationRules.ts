@@ -45,7 +45,7 @@ import {
 } from "../../services/capacityService.js";
 import { logEvent } from "./events.js";
 
-export const notificationRulesRouter = Router();
+const notificationRulesRouter = Router();
 
 notificationRulesRouter.get("/", requirePermission("automationManagement", "read"), async (_req, res, next) => {
   try {

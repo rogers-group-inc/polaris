@@ -97,7 +97,7 @@ const NO_OUTPUT_TIMEOUT_MS = 10 * 60 * 1000;
 /** How many history entries the Setting row retains. */
 const HISTORY_LIMIT = 50;
 
-export type BackupKind = "manual" | "pre-update" | "scheduled";
+type BackupKind = "manual" | "pre-update" | "scheduled";
 
 export interface BackupRecord {
   id: string;

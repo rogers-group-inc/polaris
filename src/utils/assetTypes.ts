@@ -48,7 +48,7 @@ export const BUILT_IN_ASSET_TYPES = [
   "container",
 ] as const;
 
-export type BuiltInAssetType = (typeof BUILT_IN_ASSET_TYPES)[number];
+type BuiltInAssetType = (typeof BUILT_IN_ASSET_TYPES)[number];
 
 /**
  * True when `name` carries no classification: empty, or the `other`

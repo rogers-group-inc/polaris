@@ -589,7 +589,7 @@ export async function allocateNextSubnet(
  * allocations so later templates land on a clean boundary. The route layer
  * validates that `name` is present whenever `skip` is not true.
  */
-export interface BulkAllocateEntry {
+interface BulkAllocateEntry {
   skip?: boolean;
   name?: string;
   prefixLength: number;

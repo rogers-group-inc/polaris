@@ -80,13 +80,13 @@ export const SAMPLE_SDWAN_HEALTH_CHECK = "Example-SLA";
 export const SAMPLE_SDWAN_LINK = "wan1";
 
 /** The interface a test of a port-scoped automation names. */
-export const SAMPLE_INTERFACE_NAME = "port12";
+const SAMPLE_INTERFACE_NAME = "port12";
 
 /** The filesystem a test of a storage* automation names. */
-export const SAMPLE_MOUNT_PATH = "/data";
+const SAMPLE_MOUNT_PATH = "/data";
 /** The cores a TEST of a per-core CPU automation names. Core numbers only — a
  *  percentage beside them would read as a measurement of a real device. */
-export const SAMPLE_CPU_CORES = "Core 3, Core 7";
+const SAMPLE_CPU_CORES = "Core 3, Core 7";
 
 /** The path check a test of a path* automation names (a made-up check,
  *  business rule 65 — never one from this install). */

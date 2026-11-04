@@ -43,9 +43,9 @@ export type SavedFolderKind = "filter" | "dashboard";
 export type SavedVisibility = "private" | "public";
 
 /** Deepest nesting allowed — a menu indents per level, so this is a readability bound. */
-export const MAX_FOLDER_DEPTH = 8;
+const MAX_FOLDER_DEPTH = 8;
 /** Folders one user may own per kind + scope — a bound on menu render cost. */
-export const MAX_FOLDERS_PER_USER = 200;
+const MAX_FOLDERS_PER_USER = 200;
 
 export interface SavedFolderDto extends OwnershipDto {
   id: string;
@@ -115,7 +115,7 @@ async function load(id: string): Promise<FolderRow> {
 }
 
 /** One folder, for a route that must resolve its scope's key before acting. 404 when invisible. */
-export async function getFolderForViewer(id: string, viewer: SavedViewer | null): Promise<FolderRow> {
+async function getFolderForViewer(id: string, viewer: SavedViewer | null): Promise<FolderRow> {
   const row = await load(id);
   if (!canSee(row, viewer)) throw new AppError(404, "Folder not found");
   return row;

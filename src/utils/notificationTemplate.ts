@@ -71,7 +71,7 @@ export const TEMPLATE_VARIABLE_SECTIONS = [
   { key: "escalation", label: "Reminders & escalation" },
   { key: "email", label: "Email furniture" },
 ] as const;
-export type TemplateVariableSection = (typeof TEMPLATE_VARIABLE_SECTIONS)[number]["key"];
+type TemplateVariableSection = (typeof TEMPLATE_VARIABLE_SECTIONS)[number]["key"];
 
 /**
  * Which triggers can give a token a value — answered per trigger by
@@ -100,7 +100,7 @@ export type TemplateVariableScope =
  *   reminder    only on a reminder
  *   update      only on a grouped alert's [UPDATED] send
  */
-export type TemplateVariableSentOn = "delivery" | "escalation" | "reminder" | "update";
+type TemplateVariableSentOn = "delivery" | "escalation" | "reminder" | "update";
 
 export interface TemplateVariable {
   token: string;
@@ -347,7 +347,7 @@ function dependencyReasonPhrase(reason: DependencyTemplateParts["reason"]): stri
 }
 
 /** The `{dependency.summary}` sentence — the whole notice, or nothing. */
-export function dependencySummarySentence(asset: string, d: DependencyTemplateParts | null | undefined): string {
+function dependencySummarySentence(asset: string, d: DependencyTemplateParts | null | undefined): string {
   if (!d) return "";
   const who = asset || "The device";
   if (!d.upstream) return `DEPENDENCY DOWN — ${who} is unreachable because a device above it is down`;
@@ -375,7 +375,7 @@ export function dependencyTriggerSummary(d: DependencyTemplateParts | null | und
  * this rather than replacing their words — and it must be the MESSAGE that
  * carries it, because push, Slack, Teams and Pushbullet send nothing else.
  */
-export function dependencyHeadline(d: DependencyTemplateParts | null | undefined): string {
+function dependencyHeadline(d: DependencyTemplateParts | null | undefined): string {
   if (!d) return "";
   const s = dependencyTriggerSummary(d);
   return "DEPENDENCY DOWN" + s.slice("Dependency down".length);

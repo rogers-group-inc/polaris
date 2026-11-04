@@ -46,7 +46,7 @@ import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { compareFirmwareVersions, parseFirmwareVersion } from "../utils/firmwareVersion.js";
 import { buildFirmwareChangedEvent, logEvent } from "./eventLogService.js";
 
-export const FORTINET_LIVE_SOURCE_KIND = "fortinet-live";
+const FORTINET_LIVE_SOURCE_KIND = "fortinet-live";
 
 /** One device's live answer, plus what the asset row shows right now. */
 export interface FortinetLiveVersionReading {

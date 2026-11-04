@@ -71,7 +71,7 @@ const previewInputSchema = z.object({
   assetIds: z.array(z.string()).max(500).optional(),
 });
 
-export const maintenanceSchedulesRouter = Router();
+const maintenanceSchedulesRouter = Router();
 
 maintenanceSchedulesRouter.get("/", requirePermission("maintenanceManagement", "read"), async (req, res, next) => {
   try {

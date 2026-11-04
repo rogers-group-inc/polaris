@@ -29,7 +29,7 @@ export const OBSERVED_IPV6_TTL_MS = 24 * 60 * 60 * 1000;
  * A sighting this recent is CURRENT: it moves an existing row's expiry to
  * now + TTL. Older ones (a remembered-offline inventory row) only create.
  */
-export const OBSERVED_IPV6_CURRENT_MS = 15 * 60 * 1000;
+const OBSERVED_IPV6_CURRENT_MS = 15 * 60 * 1000;
 
 export interface ObservedIpv6Sighting {
   ip: string;

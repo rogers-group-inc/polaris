@@ -90,7 +90,7 @@ export function captureHeaders(raw: Record<string, string | string[] | undefined
 }
 
 /** One traceroute's ceiling — the agent's TracerouteBudget. */
-export const TRACEROUTE_BUDGET_MS = 30_000;
+const TRACEROUTE_BUDGET_MS = 30_000;
 const MAX_ERROR_LEN = 512;
 
 // ─── Pure helpers (tested) ──────────────────────────────────────────────────
@@ -123,12 +123,12 @@ export function excerptOf(body: Buffer): string {
   return new TextDecoder("utf-8").decode(body.subarray(0, MAX_EXCERPT_CHARS), { stream: true });
 }
 
-export function truncateError(msg: string): string {
+function truncateError(msg: string): string {
   return msg.length > MAX_ERROR_LEN ? msg.slice(0, MAX_ERROR_LEN) : msg;
 }
 
 /** This server's own addresses, lower-cased. */
-export function ownAddresses(): Set<string> {
+function ownAddresses(): Set<string> {
   const out = new Set<string>();
   for (const list of Object.values(os.networkInterfaces())) {
     for (const ni of list ?? []) out.add(ni.address.toLowerCase());

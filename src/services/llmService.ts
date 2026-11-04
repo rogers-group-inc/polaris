@@ -40,7 +40,7 @@ import { guardedLookup, isBlockedLlmHost } from "../utils/netGuard.js";
 import Anthropic from "@anthropic-ai/sdk";
 import AnthropicFoundry from "@anthropic-ai/foundry-sdk";
 
-export type LlmProvider = "openai" | "azure";
+type LlmProvider = "openai" | "azure";
 
 export interface LlmConfig {
   /** Absent = "openai" (any OpenAI-compatible server) — every row made before Azure support. */
@@ -117,7 +117,7 @@ export interface ChatToolCall {
 }
 
 /** A screenshot on a user turn (rule 95(l)): sniffed type + base64 bytes. */
-export interface ChatImage {
+interface ChatImage {
   mimeType: string;
   base64: string;
 }
@@ -537,7 +537,7 @@ async function getJson(config: LlmConfig, method: "GET" | "POST", path: string, 
  * Ollama capabilities for the given models, or null when this is not an
  * Ollama server (or one too old to report capabilities). Exported for tests.
  */
-export async function ollamaCapabilities(config: LlmConfig, ids: string[]): Promise<Map<string, string[]> | null> {
+async function ollamaCapabilities(config: LlmConfig, ids: string[]): Promise<Map<string, string[]> | null> {
   if (isAzureProvider(config)) return null;
   const base = normalizeBasePath(config.basePath);
   if (base !== "/v1" && base !== "") return null;
@@ -667,7 +667,7 @@ export interface LlmTestResult {
  * Model passes when the server has a chat model to default to.
  */
 /** Below this many tokens a turn has little room left for lookups (assistantChatService.contextBudget). */
-export const SMALL_CONTEXT_WINDOW = 6000;
+const SMALL_CONTEXT_WINDOW = 6000;
 
 export async function testConnection(config: LlmConfig): Promise<LlmTestResult> {
   const out = await testConnectionInner(config);
@@ -904,7 +904,7 @@ export function applyStreamChunk(
 /** Output ceiling per round. Required by the Messages API; only what is generated is billed. */
 export const ANTHROPIC_MAX_TOKENS = 64_000;
 
-export function isAnthropicShape(config: LlmConfig): boolean {
+function isAnthropicShape(config: LlmConfig): boolean {
   return isAzureProvider(config) && config.azureApiShape === "anthropic";
 }
 

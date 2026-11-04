@@ -48,10 +48,10 @@ export const STATE_MAP_MODES = [
   "lte",
 ] as const;
 
-export type StateMapMode = (typeof STATE_MAP_MODES)[number];
+type StateMapMode = (typeof STATE_MAP_MODES)[number];
 
 /** Modes that read `values`; the others ignore it entirely. */
-export const STATE_MODES_NEEDING_VALUES: ReadonlySet<StateMapMode> = new Set<StateMapMode>([
+const STATE_MODES_NEEDING_VALUES: ReadonlySet<StateMapMode> = new Set<StateMapMode>([
   "equals",
   "notEquals",
   "gte",
@@ -61,13 +61,13 @@ export const STATE_MODES_NEEDING_VALUES: ReadonlySet<StateMapMode> = new Set<Sta
 /** Modes that compare against exactly one value rather than a set. */
 const SINGLE_VALUE_MODES: ReadonlySet<StateMapMode> = new Set<StateMapMode>(["gte", "lte"]);
 
-export const DEFAULT_TRUE_LABEL = "Alarm";
-export const DEFAULT_FALSE_LABEL = "OK";
+const DEFAULT_TRUE_LABEL = "Alarm";
+const DEFAULT_FALSE_LABEL = "OK";
 
 /** Longest label we store — these render in a table cell and an alert subject. */
-export const STATE_LABEL_MAX = 32;
+const STATE_LABEL_MAX = 32;
 /** Cap on the comparison set. An enum needing more than this is really a gauge. */
-export const STATE_VALUES_MAX = 20;
+const STATE_VALUES_MAX = 20;
 
 export interface StateMap {
   mode: StateMapMode;

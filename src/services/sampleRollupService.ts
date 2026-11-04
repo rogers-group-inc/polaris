@@ -40,9 +40,9 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { startSampleRollupTimer } from "../metrics.js";
 
-export type RollupTier = "hourly" | "daily";
+type RollupTier = "hourly" | "daily";
 
-export type SourceTable =
+type SourceTable =
   | "monitor"
   | "telemetry"
   | "hardware"

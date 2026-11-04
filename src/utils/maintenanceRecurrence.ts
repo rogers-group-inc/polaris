@@ -131,7 +131,7 @@ function overlapProblems(s: {
 /** Cap on hour ranges in ONE day. Eight covers "overnight, plus a lunch
  *  window, plus a couple of afternoon slots" with room to spare, and bounds
  *  both the overlap check and the per-tick occurrence expansion. */
-export const MAX_RANGES_PER_DAY = 8;
+const MAX_RANGES_PER_DAY = 8;
 
 /**
  * One hour range within a day. Both ends are required — an "open" range has no
@@ -156,7 +156,7 @@ const dayHoursSchema = z
   })
   .strict();
 
-export type DayHours = z.infer<typeof dayHoursSchema>;
+type DayHours = z.infer<typeof dayHoursSchema>;
 
 const recurringSchema = z
   .object({

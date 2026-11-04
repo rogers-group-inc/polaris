@@ -250,7 +250,7 @@ export type DuplicateGroupDecision =
  * rule 91(f). The same reasoning, and the same figure, as the serial pass's
  * `MAX_PLAUSIBLE_DUPLICATES`; kept separate because the two may diverge.
  */
-export const MAX_PLAUSIBLE_HOSTNAME_DUPLICATES = 3;
+const MAX_PLAUSIBLE_HOSTNAME_DUPLICATES = 3;
 
 /**
  * Pick the canonical row of a duplicate-hostname group by source-kind tier

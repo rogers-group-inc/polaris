@@ -50,7 +50,7 @@ export function normalizeBrandTheme(value: unknown): BrandTheme {
 }
 
 /** Operator-facing promise: the accent is "roughly 50% the size of the logo". */
-export const ACCENT_FRACTION = 0.5;
+const ACCENT_FRACTION = 0.5;
 
 /**
  * Longest side of the rendered composite. A logo is displayed at ~70–220 CSS

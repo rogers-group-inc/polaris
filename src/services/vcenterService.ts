@@ -49,7 +49,7 @@ export interface VcenterConfig {
   vmExclude?: string[]; // Ignored when vmInclude is non-empty
 }
 
-export interface DiscoveredVcenterCluster {
+interface DiscoveredVcenterCluster {
   moref: string; // "domain-c8"
   name: string;
 }
@@ -70,7 +70,7 @@ export interface DiscoveredVcenterHost {
   portgroups: VcenterHostPortgroup[] | null;
 }
 
-export interface VcenterVmDisk {
+interface VcenterVmDisk {
   key: string; // hardware device key, e.g. "2000"
   label: string; // "Hard disk 1"
   capacityBytes: number | null;
@@ -799,7 +799,7 @@ export function parsePerfResponse(xml: string, counters: VcenterPerfCounters): M
  * quickStats, which is already being fetched, so asking perf for them would
  * be a second answer to a question we have.
  */
-export async function fetchVcenterPerfSamples(
+async function fetchVcenterPerfSamples(
   config: VcenterConfig,
   session: SoapSession,
   entityType: "VirtualMachine" | "HostSystem",

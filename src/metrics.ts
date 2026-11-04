@@ -14,7 +14,7 @@
 
 import { Registry, collectDefaultMetrics, Histogram, Counter, Gauge } from "prom-client";
 
-export const registry = new Registry();
+const registry = new Registry();
 collectDefaultMetrics({ register: registry });
 
 // ─── Polaris-specific metrics ──────────────────────────────────────────────
@@ -513,7 +513,7 @@ export function setFmgWorkerNativeInflight(integrationId: string, count: number)
   fmgWorkerNativeInflight.set({ integrationId }, count);
 }
 
-export type Severity = "ok" | "watch" | "warning" | "critical";
+type Severity = "ok" | "watch" | "warning" | "critical";
 const SEVERITY_VALUES: Record<Severity, number> = { ok: 0, watch: 1, warning: 2, critical: 3 };
 
 export interface DbPoolGauges {
@@ -531,7 +531,7 @@ export function setDbPoolGauges(p: DbPoolGauges): void {
   dbPoolMax.set(p.maxConnections);
 }
 
-export interface CapacityVolumeGauge {
+interface CapacityVolumeGauge {
   /** Stable label — first path resolved to this filesystem. */
   volume: string;
   /** Comma-joined role names (app, state, backups, db). */
@@ -540,7 +540,7 @@ export interface CapacityVolumeGauge {
   totalBytes: number;
 }
 
-export interface CapacitySampleTableGauge {
+interface CapacitySampleTableGauge {
   table: string;
   deadTupRatio: number;
 }

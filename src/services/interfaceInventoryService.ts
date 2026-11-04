@@ -397,7 +397,7 @@ const IDENTITY_CACHE_MAX = 5000;
 const identityCache = new Map<string, { at: number; identity: InterfaceIdentity }>();
 
 /** Drop an asset's cached identity — call after any write to its inventory. */
-export function invalidateInterfaceIdentity(assetId: string): void {
+function invalidateInterfaceIdentity(assetId: string): void {
   identityCache.delete(assetId);
 }
 

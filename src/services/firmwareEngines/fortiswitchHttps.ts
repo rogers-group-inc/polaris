@@ -38,14 +38,14 @@ import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString, asNumber
 import { parseFirmwareVersion, compareFirmwareVersions, formatFirmwareVersion } from "../../utils/firmwareVersion.js";
 import { basename } from "node:path";
 
-export const FORTISWITCH_MAX_IMAGE_BYTES = 104_857_600;
+const FORTISWITCH_MAX_IMAGE_BYTES = 104_857_600;
 
 const IMAGE_PATH = "/system/config/firmware/image";
 const UPLOAD_PATH = "/api/v2/execute/upload/file";
 const COMPAT_PATH = "/system/config/firmware/compatible";
 const DEPLOY_PATH = "/system/config/firmware/deploy";
 
-export interface FortiSwitchStatus {
+interface FortiSwitchStatus {
   osVersion: string | null;
   build: string | null;
   serial: string | null;
@@ -91,7 +91,7 @@ function answered(res: { status: number; location: string | null }): string {
  * names what the switch answered so the next firmware's quirk is readable
  * from the run log instead of a curl session.
  */
-export async function switchLogin(c: DeviceHttpClient, ctx: FirmwareEngineContext, timeoutMs = ctx.timeouts.commandMs): Promise<void> {
+async function switchLogin(c: DeviceHttpClient, ctx: FirmwareEngineContext, timeoutMs = ctx.timeouts.commandMs): Promise<void> {
   c.clearSession();
   const res = await c.postForm("/login", [
     { name: "username", value: ctx.credential.username },
@@ -115,7 +115,7 @@ export async function switchLogin(c: DeviceHttpClient, ctx: FirmwareEngineContex
 }
 
 /** GET the firmware status; null progress when the switch is not flashing. */
-export async function switchStatus(c: DeviceHttpClient, _ctx: FirmwareEngineContext): Promise<FortiSwitchStatus> {
+async function switchStatus(c: DeviceHttpClient, _ctx: FirmwareEngineContext): Promise<FortiSwitchStatus> {
   const res = await c.get(`${IMAGE_PATH}?_=${Date.now()}`);
   if (loggedOut(res)) throw new FirmwareEngineError("session expired", "preflight");
   const j = jsonOrNull(res.body);

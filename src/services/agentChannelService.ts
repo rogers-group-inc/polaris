@@ -258,7 +258,7 @@ export function asFrame(value: unknown): Frame | null {
   return { type: v.type, id: typeof v.id === "string" ? v.id : "", payload: v.payload };
 }
 
-export function onFrame(managedAgentId: string, data: unknown): void {
+function onFrame(managedAgentId: string, data: unknown): void {
   let frame: Frame | null;
   try {
     const text = typeof data === "string" ? data : (data as Buffer).toString("utf8");
@@ -286,7 +286,7 @@ export function onFrame(managedAgentId: string, data: unknown): void {
 
 // ─── Server-initiated verbs ───────────────────────────────────────────
 
-export interface ProbeNowResult {
+interface ProbeNowResult {
   success:        boolean;
   responseTimeMs?: number;
   error?:          string;
@@ -329,7 +329,7 @@ export function refreshConfig(managedAgentId: string): void {
 // waiting for its ~20s command poll. No-op when the agent isn't attached (it
 // picks the command up on its next poll — the guaranteed floor). Fed by the
 // cross-process command-wake listener below.
-export function wakeCommands(managedAgentId: string): void {
+function wakeCommands(managedAgentId: string): void {
   const session = sessions.get(managedAgentId);
   if (!session) return;
   safeSend(session.ws, { type: "commands-pending", id: "", payload: {} });

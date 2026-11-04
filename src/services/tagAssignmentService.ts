@@ -127,29 +127,29 @@ type StringField = (typeof STRING_FIELDS)[number];
 type EnumField = (typeof ENUM_FIELDS)[number];
 type StringOp = (typeof STRING_OPS)[number];
 
-export interface StringRule {
+interface StringRule {
   field: StringField | EnumField;
   op: StringOp;
   values: string[];
 }
-export interface SubnetRule {
+interface SubnetRule {
   field: "subnet";
   op: "inCidr";
   cidrs: string[];
 }
 /** Discovered-by integration; values are Integration ids. */
-export interface IntegrationRule {
+interface IntegrationRule {
   field: "integration";
   op: "exact";
   values: string[];
 }
 /** "Behind FortiGate" by device name (learnedLocation + DHCP sightings). */
-export interface FortigateRule {
+interface FortigateRule {
   field: "fortigate";
   op: StringOp;
   values: string[];
 }
-export type CriteriaRule = StringRule | SubnetRule | IntegrationRule | FortigateRule;
+type CriteriaRule = StringRule | SubnetRule | IntegrationRule | FortigateRule;
 
 export interface TagCriteria {
   version: 1;
@@ -389,7 +389,7 @@ function tagAssetIsEligible(cond: ScopeConditionGroup, status: string | null | u
 }
 
 /** Every asset id a tag filter currently covers, whichever shape it is in. */
-export async function resolveTagFilterAssetIds(filter: TagFilter): Promise<Set<string>> {
+async function resolveTagFilterAssetIds(filter: TagFilter): Promise<Set<string>> {
   if (filter.condition) {
     return resolveDeviceFilterAssetIds(filter.condition, { where: tagEligibilityWhere(filter.condition) });
   }
@@ -816,7 +816,7 @@ async function expectedTaggedPorts(
 }
 
 /** How many ports a tag filter would tag — the preview's second count. */
-export async function countTaggedPorts(
+async function countTaggedPorts(
   cond: ScopeConditionGroup | null,
   assetIds: ReadonlySet<string>,
 ): Promise<number> {

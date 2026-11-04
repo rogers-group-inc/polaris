@@ -113,7 +113,7 @@ export function readSystemStatus(body: unknown): FortiOsSystemStatus {
 }
 
 /** One member of an HA cluster, as `ha-peer` reports it. */
-export interface FortiOsHaMember {
+interface FortiOsHaMember {
   serial: string;
   hostname?: string;
   priority?: number;

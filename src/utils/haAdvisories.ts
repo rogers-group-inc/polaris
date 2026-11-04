@@ -17,7 +17,7 @@
  */
 
 /** How a measured figure reads against its threshold. */
-export type AdvisoryLevel = "ok" | "warn" | "bad" | "unknown";
+type AdvisoryLevel = "ok" | "warn" | "bad" | "unknown";
 
 export interface Advisory {
   level:  AdvisoryLevel;
@@ -151,7 +151,7 @@ export function walAdvisory(rate: WalRate | null): Advisory & { recommendedMbps?
 // ─── Recovery point ─────────────────────────────────────────────────────────
 
 /** Buffered samples not yet flushed; see sampleWriteBuffer. */
-export const BUFFER_LOSS_SEC = 2;
+const BUFFER_LOSS_SEC = 2;
 
 export function rpoAdvisory(lagBytes: number | null, rate: WalRate | null): Advisory {
   if (lagBytes === null) {
@@ -194,9 +194,9 @@ export interface RtoEstimate {
 }
 
 /** Promote plus the app group coming up: measured range, not a guess to tune. */
-export const PROMOTE_SEC     = 10;
-export const APP_START_MIN_SEC = 20;
-export const APP_START_MAX_SEC = 40;
+const PROMOTE_SEC     = 10;
+const APP_START_MIN_SEC = 20;
+const APP_START_MAX_SEC = 40;
 
 /**
  * Downtime range for an unplanned failover.
@@ -248,7 +248,7 @@ export interface SizingInputs {
 }
 
 /** Growth headroom on top of the current database size. */
-export const DB_GROWTH_FACTOR = 1.3;
+const DB_GROWTH_FACTOR = 1.3;
 
 export function sizingAdvisory(input: SizingInputs): Advisory & { minDbVolumeBytes?: number } {
   const parts: string[] = [];

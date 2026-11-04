@@ -85,7 +85,7 @@ export function _resetDatasetCache(): void {
 
 // ─── Observation ──────────────────────────────────────────────────────
 
-export type ProbeStatus =
+type ProbeStatus =
   /** A version was read. */
   | "ok"
   /** The component is legitimately not present on this host. */
@@ -307,7 +307,7 @@ export async function observePlatformStack(): Promise<ObservedComponent[]> {
 
 // ─── Assembly ─────────────────────────────────────────────────────────
 
-export interface LifecycleComponent extends ObservedComponent {
+interface LifecycleComponent extends ObservedComponent {
   label: string;
   kind: string;
   policy: string;

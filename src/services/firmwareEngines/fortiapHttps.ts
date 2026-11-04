@@ -36,7 +36,7 @@ const PERF_PATH = "/api/v1/sys-perf";
 const UPGRADE_PATH = "/api/v1/upgrade-image";
 const CSRF_HEADER = "x-csrf-token";
 
-export interface FortiApStatus {
+interface FortiApStatus {
   firmwareVersion: string | null;
   serial: string | null;
   hostname: string | null;
@@ -55,12 +55,12 @@ function client(ctx: FirmwareEngineContext): DeviceHttpClient {
 }
 
 /** True when SOMETHING answered /logincheck — the AP has a local UI. */
-export async function apProbe(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<boolean> {
+async function apProbe(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<boolean> {
   const res = await c.postEmpty(LOGIN_PATH, ctx.timeouts.probeMs);
   return res.status === 200 || res.status === 401 || res.status === 403;
 }
 
-export async function apLogin(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<void> {
+async function apLogin(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<void> {
   c.clearSession();
   const res = await c.postForm(LOGIN_PATH, [
     { name: "username", value: ctx.credential.username },
@@ -74,7 +74,7 @@ export async function apLogin(c: DeviceHttpClient, ctx: FirmwareEngineContext): 
   c.setHeader("X-CSRF-TOKEN", typeof token === "string" && token ? token : null);
 }
 
-export async function apStatus(c: DeviceHttpClient): Promise<FortiApStatus> {
+async function apStatus(c: DeviceHttpClient): Promise<FortiApStatus> {
   const res = await c.get(STATUS_PATH);
   if (res.status === 401 || res.status === 403) throw new FirmwareEngineError("session expired", "preflight");
   const j = jsonOrNull(res.body);

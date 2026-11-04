@@ -160,7 +160,7 @@ export interface HardwareSensorSampleRow {
  *  (kept at full retention with rollups); "slow" = full system-info scrape
  *  (kept 24h, never rolled up). Required on every write so the discriminator
  *  is always stamped — see selection-aware retention. */
-export type SampleCadence = "fast" | "slow";
+type SampleCadence = "fast" | "slow";
 
 export interface InterfaceSampleRow {
   assetId: string;
@@ -332,7 +332,7 @@ const SIZE_THRESHOLD = 5000;
 // Buffer hold window. 2 s = the maximum delay a sample waits before
 // landing in Postgres. UI charts hosted off the sample tables will lag
 // by at most this long.
-export const FLUSH_INTERVAL_MS = 2000;
+const FLUSH_INTERVAL_MS = 2000;
 
 // ─── Public enqueue API ───────────────────────────────────────────────────
 //

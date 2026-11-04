@@ -26,9 +26,9 @@ import {
   resolveInfraParentAsset,
 } from "../utils/fortinetParentKey.js";
 
-export type ConnectionHopKind = "endpoint" | "switch" | "firewall";
+type ConnectionHopKind = "endpoint" | "switch" | "firewall";
 
-export interface ConnectionPathHop {
+interface ConnectionPathHop {
   kind: ConnectionHopKind;
   id: string;
   hostname: string | null;

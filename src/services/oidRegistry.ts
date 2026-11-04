@@ -170,7 +170,7 @@ let _loadingPromise: Promise<void> | null = null;
 
 // Per-scope resolution cache. Key is `${manufacturer ?? ""}|${model ?? ""}`.
 // Values store both the OID and which MIB (if any) provided it, for the UI.
-export interface ResolvedSymbol {
+interface ResolvedSymbol {
   oid: string;
   fromMibId: string | null;        // null = built-in seed or a bundled standard MIB
   fromModuleName: string | null;   // set for uploads AND standards; null only for the seed

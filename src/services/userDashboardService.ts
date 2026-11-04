@@ -21,20 +21,20 @@ export interface DashboardLayout {
   activeId: string;
 }
 
-export interface Dashboard {
+interface Dashboard {
   id: string;
   name: string;
   columns: DashboardColumn[];
 }
 
-export interface DashboardColumn {
+interface DashboardColumn {
   id: string;
   /** 12-grid width units: 3 | 4 | 6 | 12. */
   width: number;
   widgets: DashboardWidgetInstance[];
 }
 
-export interface DashboardWidgetInstance {
+interface DashboardWidgetInstance {
   id: string;
   type: string;
   /** Row-step height: 1 | 2 | 3 (→ 280 / 576 / 872px). */
@@ -42,7 +42,7 @@ export interface DashboardWidgetInstance {
   config: Record<string, unknown>;
 }
 
-export const EMPTY_LAYOUT: DashboardLayout = { version: 3, dashboards: [], activeId: "" };
+const EMPTY_LAYOUT: DashboardLayout = { version: 3, dashboards: [], activeId: "" };
 
 /**
  * Returns the caller's layout, or the empty layout if no row exists yet.

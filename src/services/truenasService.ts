@@ -98,7 +98,7 @@ type Pending = { resolve: (v: any) => void; reject: (e: Error) => void; timer: N
  * opens one, does its work, and closes it in `finally` — the snapshot cache
  * above it is what bounds how often that happens.
  */
-export class TrueNasSession {
+class TrueNasSession {
   private ws: WebSocket | null = null;
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -245,7 +245,7 @@ function str(v: unknown): string | null {
 }
 
 /** "TrueNAS-SCALE-25.10.1" / "25.10.1" → "25.10.1". */
-export function truenasVersion(v: unknown): string | null {
+function truenasVersion(v: unknown): string | null {
   const s = str(v);
   if (!s) return null;
   const m = s.match(/(\d+\.\d+(?:\.\d+)*(?:[-.]\w+)?)$/);
@@ -407,7 +407,7 @@ export function trueNasDiskFacts(temps: Record<string, unknown> | null, disks: a
  * `{ sda: { temperature: 34, ... } }`; tolerate both. disk.query supplies the
  * serial and pool when it was readable.
  */
-export function parseTrueNasDisks(temps: Record<string, unknown> | null, disks: any[]): WorkloadDisk[] {
+function parseTrueNasDisks(temps: Record<string, unknown> | null, disks: any[]): WorkloadDisk[] {
   const byName = new Map<string, any>((disks ?? []).filter((d) => str(d?.name)).map((d) => [String(d.name), d]));
   const names = new Set<string>([...Object.keys(temps ?? {}), ...byName.keys()]);
   const out: WorkloadDisk[] = [];

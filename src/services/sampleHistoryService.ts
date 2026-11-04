@@ -126,7 +126,7 @@ async function readDetailWithAnchor<T extends { timestamp: Date }>(
 
 // ─── Monitor history (response time) ─────────────────────────────────────────
 
-export interface MonitorHistoryRow {
+interface MonitorHistoryRow {
   timestamp:      Date;
   success?:       boolean;   // detail only
   /** Detail only — a failure taken while the parent was dark (drawn grey). */
@@ -377,7 +377,7 @@ export async function readLastMonitorSuccessAt(assetId: string, since: Date): Pr
 
 // ─── Telemetry history (CPU + memory) ────────────────────────────────────────
 
-export interface TelemetryHistoryRow {
+interface TelemetryHistoryRow {
   timestamp:        Date;
   cpuPct:           number | null;
   // Per-logical-core utilisation, index = core id. DETAIL TIER ONLY — the
@@ -588,7 +588,7 @@ export async function readTelemetryHistory(
 // `sensorClass` lets the UI group/label. `alarmStatus` rides the detail tier
 // only (not aggregatable). The rollup tiers carry avg/min/max of `value`.
 
-export interface HardwareSensorHistoryRow {
+interface HardwareSensorHistoryRow {
   timestamp:    Date;
   sensorName:   string;
   sensorClass:  string;
@@ -1273,7 +1273,7 @@ export async function readPathCheckHistory(
 // Rollup buckets are written on completed boundaries, so the stitch is exact
 // up to the newest partial bucket — the UI presents the count as approximate.
 
-export interface StreamHistorySummary {
+interface StreamHistorySummary {
   oldestAt: Date | null;
   newestAt: Date | null;
   sampleCount: number;
@@ -1396,7 +1396,7 @@ export function sdwanMemberLinkState(
   return { linkState: iface.operStatus === "up" ? "up" : "down", linkSource: "interface" };
 }
 
-export interface SdwanMemberHealthCheck {
+interface SdwanMemberHealthCheck {
   healthCheck: string;
   state:       string;        // "up" | "down"
   latencyMs:   number | null;
@@ -1425,7 +1425,7 @@ export interface SdwanMemberRow {
 }
 
 /** One scrape of one member on the Health Check Status strip. */
-export interface SdwanStripSegment {
+interface SdwanStripSegment {
   timestamp: Date;
   /** Alive in every health check it belongs to. */
   up:        boolean;

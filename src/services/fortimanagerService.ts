@@ -41,7 +41,7 @@ import {
 // that keys by "FortiGate device name" must lowercase the key so writes from
 // either source land in the same bucket; original casing is preserved on the
 // raw device object and the asset row for logging and Event messages.
-export const fmgNameKey = (n: string | null | undefined): string =>
+const fmgNameKey = (n: string | null | undefined): string =>
   String(n ?? "").toLowerCase();
 
 export interface FortiManagerConfig {
@@ -1699,7 +1699,7 @@ export function parseFmgVariableDynamicMapping(varData: any): Map<string, string
  * defined on this ADOM. Best-effort: any RPC/parse failure yields an empty map
  * so discovery proceeds with the existing fallbacks. Never throws.
  */
-export async function fetchFmgMetavarCoordMap(
+async function fetchFmgMetavarCoordMap(
   config: FortiManagerConfig,
   latMetavar: string,
   lngMetavar: string,
@@ -1755,7 +1755,7 @@ export async function fetchFmgMetavarCoordMap(
  * `mr` (minor release), `patch`. Returns "" when the major version is missing
  * or unparseable so the caller can fall back to other sources.
  */
-export function buildFmgOsVersion(raw: any): string {
+function buildFmgOsVersion(raw: any): string {
   const major = Number(raw?.os_ver);
   if (!Number.isFinite(major) || major <= 0) return "";
   const mr = Number(raw?.mr);

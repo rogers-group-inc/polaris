@@ -89,10 +89,10 @@ export const APPROVAL_WINDOW_MS = 30 * 60 * 1000;
  * "approved", so a working enrollment claims within seconds; an approval no
  * script ever collected used to stay claimable forever.
  */
-export const CLAIM_WINDOW_MS = 10 * 60 * 1000;
+const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 
 /** The stored form of a poll handle: only its SHA-256 is ever written (F86). */
-export function hashRequestId(requestId: string): string {
+function hashRequestId(requestId: string): string {
   return createHash("sha256").update(requestId, "utf8").digest("hex");
 }
 
@@ -104,7 +104,7 @@ export function hashRequestId(requestId: string): string {
  * kept, so the script still reads "expired" rather than a bare 404 it would
  * poll on until its own timeout.
  */
-export async function expireStaleEnrollments(now = new Date()): Promise<number> {
+async function expireStaleEnrollments(now = new Date()): Promise<number> {
   const res = await prisma.haEnrollment.updateMany({
     where: {
       OR: [
@@ -118,7 +118,7 @@ export async function expireStaleEnrollments(now = new Date()): Promise<number> 
   return res.count;
 }
 
-export type EnrollmentStatus = "issued" | "pending" | "approved" | "delivered" | "rejected" | "expired";
+type EnrollmentStatus = "issued" | "pending" | "approved" | "delivered" | "rejected" | "expired";
 
 // ─── Minting ────────────────────────────────────────────────────────────────
 

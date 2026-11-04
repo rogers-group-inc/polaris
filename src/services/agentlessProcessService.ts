@@ -143,7 +143,7 @@ export function telemetryFromPsRows(rows: PsRow[], monitored: string[]): Process
 
 // ─── Linux parsers ────────────────────────────────────────────────────
 
-export const LINUX_PS_COMMAND = "LC_ALL=C ps -eo pid=,pcpu=,rss=,etimes=,user:32=,comm=";
+const LINUX_PS_COMMAND = "LC_ALL=C ps -eo pid=,pcpu=,rss=,etimes=,user:32=,comm=";
 
 /** Parse `ps -eo pid=,pcpu=,rss=,etimes=,user:32=,comm=` output. `nowMs` anchors
  * etimes → startedAt. Malformed lines are skipped. */
@@ -250,7 +250,7 @@ export function parseLinuxSs(stdout: string): RawSocketRow[] {
 // normalized by core count server-side? No — PercentProcessorTime can exceed
 // 100 on multi-core (per-core sum), same semantics as the agent's summed
 // gopsutil percent, so it lands as-is.
-export const WINDOWS_PS_PROCESS_SCRIPT = [
+const WINDOWS_PS_PROCESS_SCRIPT = [
   `$ErrorActionPreference='SilentlyContinue'`,
   `$c=@{};Get-CimInstance Win32_PerfFormattedData_PerfProc_Process|%{$c[[int]$_.IDProcess]=$_.PercentProcessorTime}`,
   `Get-Process|%{[pscustomobject]@{p=$_.Id;n=$_.ProcessName;c=$c[[int]$_.Id];w=$_.WorkingSet64;s=$(try{$_.StartTime.ToUniversalTime().ToString('o')}catch{$null})}}|ConvertTo-Json -Compress`,

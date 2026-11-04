@@ -487,7 +487,7 @@ export function toStoredMember(row: IpClaimRow): DuplicateIpMember {
  * fleet returns the handful of colliding rows, not the fleet), and the
  * freshness verdict stays in JS where it is pure and testable.
  */
-export async function loadDuplicateIpClaims(): Promise<IpClaimRow[]> {
+async function loadDuplicateIpClaims(): Promise<IpClaimRow[]> {
   return prisma.$queryRaw<IpClaimRow[]>`
     WITH claims AS (
       SELECT a.id, a."ipAddress" AS ip, a.hostname, a."assetType",
@@ -590,7 +590,7 @@ async function loadClaimsForIp(ip: string): Promise<IpClaimRow[]> {
  * pass re-derive a cross-source group as ineligible and auto-close a conflict
  * the scan had just raised — the two would then fight every tick.
  */
-export async function loadCrossSourceContext(rows: IpClaimRow[]): Promise<CrossSourceContext> {
+async function loadCrossSourceContext(rows: IpClaimRow[]): Promise<CrossSourceContext> {
   const assetIds = [...new Set(rows.map((r) => r.id).filter(Boolean))];
   const ips = [...new Set(rows.map((r) => r.ip).filter(Boolean))];
   if (assetIds.length === 0 || ips.length === 0) return EMPTY_CROSS_SOURCE_CONTEXT;
@@ -663,7 +663,7 @@ export const evaluateDuplicateIp = evaluateIp;
 // save raises and exactly what the next sweep leaves standing.
 
 /** One network-present asset already recording the address, as the form shows it. */
-export interface IpHolder extends DuplicateIpMember {
+interface IpHolder extends DuplicateIpMember {
   /** Whether this holder's claim is CURRENT (rule 40(b)); a stale one is shown but does not collide. */
   claimCurrent: boolean;
 }

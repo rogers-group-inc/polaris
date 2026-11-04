@@ -114,7 +114,7 @@ export function parseMib(raw: string): ParsedMib {
 // the heavier parser cannot break uploads (the upload hot path stays on
 // the lighter validator).
 
-export type MibBaseType =
+type MibBaseType =
   | "INTEGER"
   | "OCTET STRING"
   | "Counter32"
@@ -128,22 +128,22 @@ export type MibBaseType =
   | "SEQUENCE OF"
   | "OTHER";
 
-export type MibAccess =
+type MibAccess =
   | "read-only"
   | "read-write"
   | "read-create"
   | "not-accessible"
   | "accessible-for-notify";
 
-export type MibStatus = "current" | "deprecated" | "obsolete";
+type MibStatus = "current" | "deprecated" | "obsolete";
 
-export type MibSymbolKind =
+type MibSymbolKind =
   | "object-type"
   | "object-identity"
   | "notification-type"
   | "module-identity";
 
-export interface MibEnumValue {
+interface MibEnumValue {
   label: string;
   value: number;
 }

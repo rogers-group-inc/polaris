@@ -62,7 +62,7 @@ import { logger } from "../utils/logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type DependencyDetectedVia =
+type DependencyDetectedVia =
   | "controller"
   | "interface"
   | "lldp"
@@ -76,10 +76,10 @@ export type DependencyDetectedVia =
 // "unraid" / "truenas" / "proxmox": a VM or container → the Unraid / TrueNAS
 // host or Proxmox node it runs on (services/workloadSync.ts), the vCenter
 // placement edge's twin.
-export type DependencySource = "computed" | "override" | "endpoint" | "vcenter" | "unraid" | "truenas" | "proxmox";
+type DependencySource = "computed" | "override" | "endpoint" | "vcenter" | "unraid" | "truenas" | "proxmox";
 
 /** Hypervisor-placement edge sources: the endpoint half never overlays these. */
-export const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "unraid", "truenas", "proxmox"];
+const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "unraid", "truenas", "proxmox"];
 
 /**
  * The Fortinet infra types the BFS-layered half of the DAG is built from.
@@ -96,7 +96,7 @@ export const FORTINET_INFRA_ASSET_TYPES = ["firewall", "switch", "access_point"]
  * buckets everything that isn't `override` together, so these participate in
  * suppression exactly like a computed row.
  */
-export const ENDPOINT_DEPENDENCY_SOURCE = "endpoint";
+const ENDPOINT_DEPENDENCY_SOURCE = "endpoint";
 
 /** Pure-function input — one Fortinet infra asset. */
 export interface DepAsset {
@@ -1077,7 +1077,7 @@ export function evaluateSuppression(
 /** Why a node counts against the devices below it. */
 export type DependencyBlameReason = "down" | "maintenance" | "dependency_test" | "suppressed";
 
-export interface DependencyBlameNode {
+interface DependencyBlameNode {
   id: string;
   hostname: string | null;
   reason: DependencyBlameReason;
@@ -1716,7 +1716,7 @@ const MAC_TABLE_FRESH_MS = 48 * 60 * 60 * 1000;
  * `Asset.dependencyLayer` is stamped to parent-layer + 1 (null when the parent
  * itself is unlayered) so the asset-details tree can print the endpoint's level.
  */
-export async function syncEndpointDependencyEdges(
+async function syncEndpointDependencyEdges(
   infra: DepAsset[],
   layers: Map<string, number>,
 ): Promise<{ endpoints: number; edges: number; added: number; removed: number; retyped: number }> {

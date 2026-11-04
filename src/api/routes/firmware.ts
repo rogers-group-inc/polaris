@@ -472,5 +472,3 @@ firmwareGroupRouter.get("/:groupId", requirePermission("assets", "read"), handle
 firmwareGroupRouter.delete("/:groupId", requirePermission("assets", "write"), handle(async (req, res) => {
   res.json({ group: await cancelGroupSchedule(String(req.params.groupId), requestActor(req) ?? "unknown") });
 }));
-
-export default firmwareRouter;

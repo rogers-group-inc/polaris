@@ -308,7 +308,7 @@ export async function archiveAndExport(cutoff: Date): Promise<number> {
 
 // ─── Retention Settings ──────────────────────────────────────────────────────
 
-export type EventLevel = "info" | "warning" | "error";
+type EventLevel = "info" | "warning" | "error";
 
 export interface RetentionSettings {
   retentionDays: number;

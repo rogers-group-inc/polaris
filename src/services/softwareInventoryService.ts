@@ -35,10 +35,10 @@ import { fetchArcSoftware, type ArcDiscoveryProgressCallback, type ArcSoftwareRo
 
 export type SoftwareSource = "agent" | "intune" | "arc";
 /** Display and preference order: the first source an asset has is shown first. */
-export const SOFTWARE_SOURCES: readonly SoftwareSource[] = ["agent", "intune", "arc"];
+const SOFTWARE_SOURCES: readonly SoftwareSource[] = ["agent", "intune", "arc"];
 
 /** The AssetInventoryScrape kind that stamps one source's list. */
-export function softwareScrapeKind(source: SoftwareSource): string {
+function softwareScrapeKind(source: SoftwareSource): string {
   return source === "agent" ? "software" : `software:${source}`;
 }
 
@@ -165,7 +165,7 @@ export async function persistAssetSoftware(
 }
 
 /** Remove one source's list (and its stamp) from the given assets. */
-export async function clearAssetSoftware(assetIds: string[], source: SoftwareSource): Promise<number> {
+async function clearAssetSoftware(assetIds: string[], source: SoftwareSource): Promise<number> {
   if (assetIds.length === 0) return 0;
   let removed = 0;
   for (let i = 0; i < assetIds.length; i += 1000) {
@@ -185,7 +185,7 @@ export async function clearAssetSoftware(assetIds: string[], source: SoftwareSou
  * merged away from it). The source's AssetSource row is the only thing that
  * says the asset is still that integration's, so this is keyed on it.
  */
-export async function sweepOrphanedSoftware(source: "intune" | "arc"): Promise<number> {
+async function sweepOrphanedSoftware(source: "intune" | "arc"): Promise<number> {
   const kind = softwareScrapeKind(source);
   const removed = await prisma.$executeRaw`
     DELETE FROM "asset_software" s
@@ -314,7 +314,7 @@ export function planIntuneSoftwareFetch(
 }
 
 /** An Intune detected app as a software row. Pure. */
-export function intuneAppToInput(a: IntuneDetectedApp): AssetSoftwareInput {
+function intuneAppToInput(a: IntuneDetectedApp): AssetSoftwareInput {
   return {
     name: a.displayName,
     version: a.version,
@@ -327,7 +327,7 @@ export function intuneAppToInput(a: IntuneDetectedApp): AssetSoftwareInput {
 }
 
 /** A Change Tracking software row as a software row. Pure. */
-export function arcSoftwareToInput(r: ArcSoftwareRow): AssetSoftwareInput {
+function arcSoftwareToInput(r: ArcSoftwareRow): AssetSoftwareInput {
   return {
     name: r.name,
     version: r.version,

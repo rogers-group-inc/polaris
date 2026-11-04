@@ -54,7 +54,6 @@ import {
   type FirmwareVsPrimary,
   resolveFirmwareCredential,
   resolveImagePath,
-  getImage,
   type EffectiveBinding,
   type FirmwareImageRow,
   type ResolvedFirmwareCredential,
@@ -90,7 +89,7 @@ const ABORT_SETTLE_MS = 30_000;
  */
 const DEVICE_FLASHING_STAGES = new Set<string>(["deploying", "rebooting", "verifying", "recovering"]);
 
-export type UpgradeAvailabilityState =
+type UpgradeAvailabilityState =
   | "unsupported"       // no engine for this manufacturer / type / serial
   | "no-serial"
   | "no-version"
@@ -104,7 +103,7 @@ export type UpgradeAvailabilityState =
   | "available";
 
 /** An HA cluster as the primary's card shows it (rule 129): who the run reboots. */
-export interface ClusterInfo {
+interface ClusterInfo {
   mode: string;
   /** Every member, the primary first; `assetId` null for a member Polaris holds no record of. */
   members: Array<{ serial: string; assetId: string | null; hostname: string | null; role: "primary" | "secondary" }>;
@@ -1109,5 +1108,3 @@ export async function failOrphanedFirmwareRuns(): Promise<number> {
   }
   return orphans.length;
 }
-
-export { getImage as getFirmwareImage };

@@ -74,7 +74,7 @@ const MASK = SECRET_MASK;
 
 let _cache: { value: LdapSettings; expiry: number } | null = null;
 
-export async function getLdapSettings(): Promise<LdapSettings> {
+async function getLdapSettings(): Promise<LdapSettings> {
   if (_cache && Date.now() < _cache.expiry) return _cache.value;
   const row = await prisma.setting.findUnique({ where: { key: "ldap" } });
   const value = row?.value

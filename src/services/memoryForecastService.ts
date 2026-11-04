@@ -47,7 +47,7 @@ export interface MemoryForecastRow {
 }
 
 /** Trend lookback (days) — the storage forecast's window. */
-export const MEMORY_FORECAST_LOOKBACK_DAYS = 30;
+const MEMORY_FORECAST_LOOKBACK_DAYS = 30;
 /** Minimum distinct daily points for a fit (a fresh install / new asset stays quiet). */
 export const MEMORY_FORECAST_MIN_POINTS = 7;
 /** Forecasts beyond this horizon are dropped — beyond a year is noise, not planning. */

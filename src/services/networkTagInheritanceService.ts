@@ -63,7 +63,7 @@ import { logEvent } from "./eventLogService.js";
 const BATCH = 50;
 
 /** The markers discovery stamps on a network it creates or claims. */
-export const NETWORK_SYSTEM_TAGS: ReadonlySet<string> = new Set(["dhcp-discovered", "fortimanager", "fortigate"]);
+const NETWORK_SYSTEM_TAGS: ReadonlySet<string> = new Set(["dhcp-discovered", "fortimanager", "fortigate"]);
 
 /** Whether a network's tag is handed down to its switches and ports. */
 export function isInheritableNetworkTag(tag: string): boolean {
@@ -86,7 +86,7 @@ export function portCarriesVlan(port: PortVlans, vlan: number): boolean {
   return port.nativeVlan === vlan || port.taggedVlans.includes(vlan);
 }
 
-export interface InheritanceNetwork {
+interface InheritanceNetwork {
   fortigateSerial: string | null;
   fortigateDevice: string | null;
   /** The interface the VLAN sits on (`Subnet.fortigateVlanParent`). */
@@ -96,7 +96,7 @@ export interface InheritanceNetwork {
 }
 
 /** The gate-side interface a switch is managed through (`uplinkInterface`, FortiOS's `fgt_peer_intf_name`). */
-export function switchManagementInterface(topology: unknown): string | null {
+function switchManagementInterface(topology: unknown): string | null {
   const v = topology && typeof topology === "object" ? (topology as { uplinkInterface?: unknown }).uplinkInterface : null;
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }

@@ -317,7 +317,7 @@ async function upsertTagRegistry(name: string): Promise<void> {
 // --- Retired region names (the sweep's evidence) ---
 
 /** A region name Polaris itself retired, and therefore may strip the tag for. */
-export interface RetiredRegionName {
+interface RetiredRegionName {
   name: string;
   /** The region that carried it. Kept for the audit trail, not for matching. */
   regionId: string;
@@ -388,7 +388,7 @@ function readTopology(raw: unknown): TopologyMeta {
   return {};
 }
 
-export interface RegionMembership {
+interface RegionMembership {
   /** Asset IDs that should carry the region tag. */
   assetIds: Set<string>;
   /** Subnet IDs that should carry it — those served by an enclosed gate. */

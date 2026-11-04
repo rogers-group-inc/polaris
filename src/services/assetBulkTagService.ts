@@ -36,7 +36,7 @@ import { isAzureTag } from "../utils/tagNormalize.js";
 export type BulkTagMode = "add" | "remove" | "replace";
 
 /** Tag namespaces a bulk REPLACE keeps on every asset. Compared case-insensitively. */
-export const REPLACE_PRESERVED_PREFIXES = ["region:", "prev-entra:", "prev-ad:"] as const;
+const REPLACE_PRESERVED_PREFIXES = ["region:", "prev-entra:", "prev-ad:"] as const;
 
 const BATCH = 50;
 

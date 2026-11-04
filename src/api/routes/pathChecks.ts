@@ -130,7 +130,7 @@ function writeOpts(req: Parameters<typeof hasPermission>[0]) {
   return { mayRunOnServer: hasPermission(req, "networkScan", "write"), credentialAccess, useActor: credentialUseActor(req) };
 }
 
-export const pathChecksRouter = Router();
+const pathChecksRouter = Router();
 
 pathChecksRouter.get("/", requirePermission("pathChecks", "read"), async (_req, res, next) => {
   try {

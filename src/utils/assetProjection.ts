@@ -145,7 +145,7 @@ export interface AssetSourceForProjection {
   lastSeen?: Date | null;
 }
 
-export interface ProjectedAsset {
+interface ProjectedAsset {
   hostname: string | null;
   serialNumber: string | null;
   manufacturer: string | null;
@@ -169,7 +169,7 @@ export interface ProjectedAsset {
   productType: string | null;
 }
 
-export type ProjectionProvenance = Partial<Record<keyof ProjectedAsset, AssetSourceKind | string>>;
+type ProjectionProvenance = Partial<Record<keyof ProjectedAsset, AssetSourceKind | string>>;
 
 export interface ProjectionResult {
   projected: ProjectedAsset;

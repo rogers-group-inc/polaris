@@ -29,11 +29,11 @@ import { logger } from "../utils/logger.js";
 import { escapeHtml } from "../utils/notificationTemplate.js";
 import { formatBytes } from "../utils/haAdvisories.js";
 
-export const PROCESS_TOKENS = ["processes.top"] as const;
+const PROCESS_TOKENS = ["processes.top"] as const;
 export type ProcessToken = (typeof PROCESS_TOKENS)[number];
 
 /** How many programs the block lists. */
-export const TOP_PROCESS_COUNT = 5;
+const TOP_PROCESS_COUNT = 5;
 
 export type ProcessRanking = "cpu" | "memory";
 

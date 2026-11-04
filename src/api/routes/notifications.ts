@@ -23,7 +23,7 @@ import {
 } from "../../services/notificationService.js";
 import { getEffectiveRegionTags } from "../../services/regionScopeService.js";
 
-export const notificationsRouter = Router();
+const notificationsRouter = Router();
 
 /**
  * The region scope the alert READS apply to this caller. Empty = unrestricted.

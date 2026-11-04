@@ -78,7 +78,7 @@ let bootTimeMode: QueueMode | null = null;
  * fails if node_modules is incomplete or the install was extracted from a
  * stripped tarball. Cached after first call.
  */
-export async function detectPgboss(): Promise<boolean> {
+async function detectPgboss(): Promise<boolean> {
   if (cachedPgbossInstalled !== null) return cachedPgbossInstalled;
   try {
     await import("pg-boss");
@@ -266,9 +266,9 @@ export const DISCOVERY_JOB_HEARTBEAT_SECONDS = 60;
 // discovery for the whole fleet until it finished. `policy: "singleton"` +
 // singletonKey = the SCAN id enforces one active run per Discovery across every
 // process (a second Run row would fight the first over the same counters).
-export const SCAN_QUEUE_NAME = "polaris-network-scan";
+const SCAN_QUEUE_NAME = "polaris-network-scan";
 
-export interface ScanJobPayload {
+interface ScanJobPayload {
   /** The NetworkScanRun row this job executes — it already exists, queued. */
   runId: string;
   /** Also carried so the singletonKey can be the SCAN, not the run. */
@@ -279,7 +279,7 @@ export interface ScanJobPayload {
 /** Signature of the scan executor injected by the boot path (app.ts). */
 export type ScanJobHandler = (runId: string, actor: string) => Promise<void>;
 
-export interface DiscoveryJobPayload {
+interface DiscoveryJobPayload {
   integrationId: string;
   actor: string;
   /**

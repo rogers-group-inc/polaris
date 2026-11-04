@@ -37,9 +37,9 @@ export interface StorageForecastRow {
 }
 
 /** Default trend lookback (days) — user-confirmed 30-day window. */
-export const FORECAST_LOOKBACK_DAYS = 30;
+const FORECAST_LOOKBACK_DAYS = 30;
 /** Minimum distinct daily points for a fit (a fresh install/new mount stays quiet). */
-export const FORECAST_MIN_POINTS = 7;
+const FORECAST_MIN_POINTS = 7;
 /** Forecasts beyond this horizon are dropped — beyond a year is noise, not planning. */
 export const FORECAST_MAX_DAYS = 365;
 

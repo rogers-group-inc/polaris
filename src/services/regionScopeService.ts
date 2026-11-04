@@ -23,7 +23,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { resolveGroupsToAccess, mappingProviderForAuthProvider } from "./groupMappingService.js";
 import { unionTags, renameTagInList } from "../utils/tagNormalize.js";
 
-export interface TagScope {
+interface TagScope {
   user: string[];
   group: string[];
   effective: string[];

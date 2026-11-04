@@ -134,10 +134,10 @@ export interface AutoMapNameBlock {
 
 /** "map" pins the Application Map surfaces AND the monitoring surfaces (mapping
  *  implies monitoring); "monitor" pins only the monitoring surfaces. */
-export type AppMapRuleMode = "map" | "monitor";
+type AppMapRuleMode = "map" | "monitor";
 /** "manual" = wizard-authored; "auto" = created/consolidated from a per-asset
  *  Services-tab pin toggle (recordOperatorPinChanges). */
-export type AppMapRuleSource = "manual" | "auto";
+type AppMapRuleSource = "manual" | "auto";
 
 /**
  * A rule's device filter: the shared condition tree, or — only for a stored
@@ -147,7 +147,7 @@ export type AppMapRuleSource = "manual" | "auto";
  */
 export type AppMapScope = ScopeConditionGroup | TagCriteria;
 
-export function isConditionScope(scope: AppMapScope): scope is ScopeConditionGroup {
+function isConditionScope(scope: AppMapScope): scope is ScopeConditionGroup {
   return Array.isArray((scope as ScopeConditionGroup).children);
 }
 

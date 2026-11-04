@@ -72,7 +72,7 @@ import { chunkArray } from "../utils/chunk.js";
 import { getArchivedSubnet } from "./subnetArchiveService.js";
 import { mergeAssets, assertMergeTokenSafe } from "./assetMergeService.js";
 
-export const CHASSIS_REPLACED_COLLISION_REASON = "chassis-replaced";
+const CHASSIS_REPLACED_COLLISION_REASON = "chassis-replaced";
 
 /** Prisma filter matching this feature's conflicts. */
 const CHASSIS_CONFLICT_WHERE = {
@@ -116,7 +116,7 @@ export interface DiffSide {
   projectRef: string | null;
 }
 
-export type LineVerdict = "only-old" | "only-new" | "differs" | "same";
+type LineVerdict = "only-old" | "only-new" | "differs" | "same";
 
 export interface ChassisDiffLine {
   /** Address, or null for a full-subnet reservation. */
@@ -134,7 +134,7 @@ export interface ChassisDiffLine {
   notMigratableReason?: NotMigratableReason;
 }
 
-export type NotMigratableReason = "device-owned" | "observed" | "device-managed";
+type NotMigratableReason = "device-owned" | "observed" | "device-managed";
 
 /**
  * The only two source types worth carrying onto a replacement chassis.
@@ -157,7 +157,7 @@ export type NotMigratableReason = "device-owned" | "observed" | "device-managed"
  *     gate re-discovers them within a cycle, so migrating is at best a no-op
  *     and at worst fights rule 23's give-the-address-back lifecycle.
  */
-export const MIGRATABLE_SOURCE_TYPES: ReadonlySet<string> = new Set([
+const MIGRATABLE_SOURCE_TYPES: ReadonlySet<string> = new Set([
   "manual",
   "dhcp_reservation",
 ]);
@@ -165,7 +165,7 @@ export const MIGRATABLE_SOURCE_TYPES: ReadonlySet<string> = new Set([
 const OBSERVED_SOURCE_TYPES: ReadonlySet<string> = new Set(["dhcp_lease", "dns_resolved"]);
 
 /** Why this old line cannot be carried forward, or null when it can. */
-export function notMigratableReasonFor(sourceType: string): NotMigratableReason | null {
+function notMigratableReasonFor(sourceType: string): NotMigratableReason | null {
   if (MIGRATABLE_SOURCE_TYPES.has(sourceType)) return null;
   if (DEVICE_OWNED_SOURCE_TYPES.has(sourceType)) return "device-owned";
   if (OBSERVED_SOURCE_TYPES.has(sourceType)) return "observed";
@@ -658,7 +658,7 @@ async function loadPendingSwapConflicts(oldSerial: string, newSerial: string) {
  * reported, and an `in:` filter is case-sensitive (the loadControllerContext
  * trap). Bounded by the fleet's firewall count.
  */
-export async function findChassisAssets(oldSerial: string, newSerial: string): Promise<{
+async function findChassisAssets(oldSerial: string, newSerial: string): Promise<{
   oldAssetId: string | null;
   newAssetId: string | null;
 }> {

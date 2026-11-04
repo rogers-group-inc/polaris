@@ -31,10 +31,10 @@ import { truncate } from "./text.js";
 type SshClient = Parameters<typeof sshExec>[0];
 
 /** What `mktemp -d /tmp/polaris-agent.XXXXXXXXXX` returns — and nothing else is accepted. */
-export const UNIX_STAGE_DIR_RE = /^\/tmp\/polaris-agent\.[A-Za-z0-9]{10}$/;
+const UNIX_STAGE_DIR_RE = /^\/tmp\/polaris-agent\.[A-Za-z0-9]{10}$/;
 
 /** A Windows staging path: drive-rooted, no quote or shell metacharacters, our own random leaf. */
-export const WINDOWS_STAGE_DIR_RE = /^[A-Za-z]:\\[^"'<>|?*\r\n%`$]+\\polaris-agent-[0-9a-f]{32}$/;
+const WINDOWS_STAGE_DIR_RE = /^[A-Za-z]:\\[^"'<>|?*\r\n%`$]+\\polaris-agent-[0-9a-f]{32}$/;
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
 

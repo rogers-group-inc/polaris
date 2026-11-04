@@ -74,8 +74,6 @@ import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } f
 
 // ─── The normalized shape both services return ────────────────────────────────
 
-export type { WorkloadState } from "../../utils/workloadSources.js";
-
 export interface WorkloadPool {
   name: string;
   /** "array" / "cache" / "pool" (Unraid) or "zfs" (TrueNAS). */

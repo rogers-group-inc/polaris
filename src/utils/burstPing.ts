@@ -55,7 +55,7 @@ export type { BurstPingResult } from "./icmpPing.js";
  * ~1.3% resolution over a 15-minute window — an order of magnitude better than
  * the 6.7% the poll-outcome ratio could reach.
  */
-export const BURST_COUNT = 5;
+const BURST_COUNT = 5;
 
 /**
  * How long ONE host costs on the fallback path, measured rather than guessed:
@@ -67,8 +67,8 @@ export const BURST_COUNT = 5;
  * cadence and must not be given one. The sweep scheduler reads
  * `suggestedSweepIntervalSec` for its floor rather than assuming 60.
  */
-export const FALLBACK_SECS_PER_HOST_POSIX = 1.0;
-export const FALLBACK_SECS_PER_HOST_WINDOWS = 3.3;
+const FALLBACK_SECS_PER_HOST_POSIX = 1.0;
+const FALLBACK_SECS_PER_HOST_WINDOWS = 3.3;
 
 /**
  * The shortest sweep interval this host can actually sustain for `assetCount`
@@ -93,16 +93,16 @@ export function suggestedSweepIntervalSec(assetCount: number, hasFping: boolean)
 /** Interval between packets to the SAME target. With a fixed count this paces
  *  the whole run: a sweep takes about BURST_COUNT x this, whatever the chunk
  *  size. */
-export const BURST_PERIOD_MS = 500;
+const BURST_PERIOD_MS = 500;
 
 /** Interval between packets to DIFFERENT targets — fping's own pacing knob. At
  *  1ms a 500-host round takes 500ms, which fits inside BURST_PERIOD_MS, so the
  *  period above stays the thing that bounds the sweep. */
-export const BURST_SPACING_MS = 1;
+const BURST_SPACING_MS = 1;
 
 /** Per-echo timeout. Generous versus any LAN/WAN round trip; the point is to
  *  distinguish "no reply" from "slow reply", not to measure latency. */
-export const BURST_TIMEOUT_MS = 1000;
+const BURST_TIMEOUT_MS = 1000;
 
 /**
  * Targets per fping process. Chosen so one round of the inter-target pacing
@@ -112,12 +112,12 @@ export const BURST_TIMEOUT_MS = 1000;
  * which is why targets ride argv rather than stdin: no plumbing, and no
  * dependency on which stdin spelling the installed fping accepts.
  */
-export const BURST_CHUNK = 500;
+const BURST_CHUNK = 500;
 
 /** How many per-host ping processes the FALLBACK may have in flight. Bounded
  *  because that path forks per host and a fleet-wide sweep would otherwise try
  *  to spawn thousands of processes at once. */
-export const FALLBACK_CONCURRENCY = 64;
+const FALLBACK_CONCURRENCY = 64;
 
 export interface BurstPingOptions {
   count?: number;

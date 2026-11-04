@@ -31,7 +31,7 @@ import {
   type ParsedPeerInterface,
 } from "../utils/fortinetSerialPattern.js";
 
-export interface InterfaceInferredEdge {
+interface InterfaceInferredEdge {
   sourceAssetId: string;
   sourceIfName: string;
   targetAssetId: string;
@@ -43,7 +43,7 @@ export interface InterfaceInferredEdge {
   aggregateIndex: number | null;
 }
 
-export interface InterfaceInferredRemote {
+interface InterfaceInferredRemote {
   id: string;
   hostname: string | null;
   serialNumber: string | null;

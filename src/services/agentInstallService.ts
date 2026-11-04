@@ -1443,9 +1443,6 @@ export function uninstallerScript(platform: "linux" | "darwin", scriptId?: strin
   }
 }
 
-// Privilege-tier → systemd [Service] block mapping lives in utils/agentUnit.ts
-// (pure, unit-tested there). Re-exported for callers that import from here.
-export { normalizePrivilegeTier };
 export type { AgentPrivilegeTier };
 
 // Polaris Agent installer for Linux (systemd), parameterized by privilege tier.

@@ -174,7 +174,7 @@ const VERBOSE_LOGGING_TTL_MS = 30 * 60 * 1000;
  * sessions aren't silently broken; the expiry job will clear them on the
  * next tick once 30 minutes pass.
  */
-export function isVerboseLoggingActive(cfg: Record<string, unknown>): boolean {
+function isVerboseLoggingActive(cfg: Record<string, unknown>): boolean {
   if (cfg.verboseLogging !== true) return false;
   const at = cfg.verboseLoggingEnabledAt;
   if (typeof at !== "string") return true; // legacy: no timestamp, treat as active
@@ -606,7 +606,7 @@ export async function runPreflightTest(integration: { id: string; type: string; 
  * ends in a FortiManager `else` that would otherwise run FMG discovery
  * against an LLM host.
  */
-export const NON_DISCOVERABLE_INTEGRATION_TYPES: ReadonlySet<string> = new Set(["llm"]);
+const NON_DISCOVERABLE_INTEGRATION_TYPES: ReadonlySet<string> = new Set(["llm"]);
 
 /**
  * Enqueue a discovery run. Validates the integration config (fast 400 for the
@@ -2411,7 +2411,7 @@ export function resolveSweepController(topology: unknown, ctx: SweepControllerCo
  * undefined) leaves the stored parent alone, so one failed CMDB read never
  * clears it.
  */
-export function subnetInterfaceFields(entry: { name?: string; vlanParent?: string | null }): {
+function subnetInterfaceFields(entry: { name?: string; vlanParent?: string | null }): {
   fortigateInterface?: string;
   fortigateVlanParent?: string | null;
 } {

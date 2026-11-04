@@ -62,7 +62,7 @@ import { assertFolderTarget, listVisibleFolders, type SavedFolderDto } from "./s
 export { normalizeName };
 
 /** Dashboards one user may own — a bound on list-render cost. */
-export const MAX_SAVED_DASHBOARDS_PER_USER = 50;
+const MAX_SAVED_DASHBOARDS_PER_USER = 50;
 
 export type SavedDashboardVisibility = "private" | "public";
 

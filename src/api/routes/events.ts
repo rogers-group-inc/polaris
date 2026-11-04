@@ -357,8 +357,4 @@ export default router;
 export {
   logEvent,
   buildChanges,
-  snapshotMaterialAssetFields,
-  logDiscoveryAssetCreated,
-  logDiscoveryAssetUpdated,
 } from "../../services/eventLogService.js";
-export type { LogEventInput, DiscoveryAuditContext } from "../../services/eventLogService.js";

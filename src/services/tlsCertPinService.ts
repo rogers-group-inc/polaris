@@ -258,7 +258,7 @@ export async function listCertPinsWithUsers(): Promise<Array<TlsCertPinRecord & 
 }
 
 /** The pins for specific endpoints (an asset's Sources tab). Missing endpoints are simply absent. */
-export async function pinsForEndpoints(endpoints: Array<{ host: string; port: number }>): Promise<TlsCertPinRecord[]> {
+async function pinsForEndpoints(endpoints: Array<{ host: string; port: number }>): Promise<TlsCertPinRecord[]> {
   if (!endpoints.length) return [];
   return prisma.tlsCertPin.findMany({ where: { OR: endpoints.map((e) => ({ host: e.host, port: e.port })) } });
 }

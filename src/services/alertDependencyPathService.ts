@@ -62,8 +62,7 @@ import {
 import type { DependencyBlameReason } from "./dependencyTreeService.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
-export const DEPENDENCY_PATH_TOKENS = ["dependency.path"] as const;
-export type DependencyPathToken = (typeof DEPENDENCY_PATH_TOKENS)[number];
+export type DependencyPathToken = "dependency.path";
 
 /** Most devices the diagram draws; a longer chain keeps two at each end. */
 export const MAX_PATH_DEVICES = 4;
@@ -71,7 +70,7 @@ export const MAX_PATH_DEVICES = 4;
 export const DEPENDENCY_PATH_CID = "polaris-dependency-path@polaris";
 
 /** Why a drawn device is on the path — the blame reason, or the alert's own device. */
-export type PathNodeRole = DependencyBlameReason | "alerting";
+type PathNodeRole = DependencyBlameReason | "alerting";
 
 /** What a device reads at delivery — drawn on an all-clear instead of its fire-time role. */
 export type PathNowState = "up" | "recovering" | "warning" | "down" | "suppressed" | "maintenance" | "unknown";
@@ -93,7 +92,7 @@ export interface PathNode {
 export type PathEntry = { kind: "node"; node: PathNode } | { kind: "gap"; hidden: number };
 
 /** Port names on the link between two adjacent drawn devices (left = parent). */
-export interface PathLink {
+interface PathLink {
   parentPort: string | null;
   childPort: string | null;
 }
@@ -307,7 +306,7 @@ function esc(s: string): string {
 }
 
 /** Shorten to a character budget — a deliberate over-estimate of glyph width (0.6em). */
-export function fitText(s: string, widthPx: number, fontPx: number): string {
+function fitText(s: string, widthPx: number, fontPx: number): string {
   const max = Math.max(3, Math.floor(widthPx / (fontPx * 0.6)));
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }

@@ -60,10 +60,10 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export const HA_CONFIG_KEY = "ha.config";
+const HA_CONFIG_KEY = "ha.config";
 
 /** Patroni's default lease TTL, as shipped in deploy/ha/patroni.yml.example. */
-export const DEFAULT_TTL_SEC = 30;
+const DEFAULT_TTL_SEC = 30;
 
 export type HaRole = "primary" | "standby" | "witness";
 
@@ -85,7 +85,7 @@ export interface HaNode {
   sshHostKeys: string[];
 }
 
-export interface HaGslbSettings {
+interface HaGslbSettings {
   monitorIntervalSec: number;
   monitorRetries:     number;
   dnsTtlSec:          number;
@@ -450,7 +450,7 @@ async function readReplicationLagBytes(): Promise<number | null> {
 
 // ─── Cluster status ─────────────────────────────────────────────────────────
 
-export interface HaMember {
+interface HaMember {
   name:     string;
   role:     string;
   state:    string;
@@ -528,7 +528,7 @@ async function patroniGet(path: string, timeoutMs: number): Promise<{ status: nu
  * cluster built before rule 117's TLS amendment. Null when it has not been
  * read yet or an override is set (the capacity card stays quiet then).
  */
-export function patroniRestIsCleartext(): boolean | null {
+function patroniRestIsCleartext(): boolean | null {
   if (PATRONI_REST_OVERRIDE || lastPatroniScheme === null) return null;
   return lastPatroniScheme === "http";
 }

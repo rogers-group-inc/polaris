@@ -48,7 +48,7 @@ import {
 } from "../../utils/fortinetParentKey.js";
 
 /** The integration fields every caller of a resolved scope needs. */
-export interface ScopeIntegration {
+interface ScopeIntegration {
   id: string;
   name: string;
   type: string;
@@ -56,7 +56,7 @@ export interface ScopeIntegration {
   enabled: boolean;
 }
 
-export interface ResolvedAssetScope {
+interface ResolvedAssetScope {
   integration: ScopeIntegration;
   /**
    * The narrowing, or null when the integration IS a single device (standalone

@@ -56,7 +56,7 @@ export interface SubnetExclusionRow {
   updatedAt: Date;
 }
 
-export interface ExclusionMatch {
+interface ExclusionMatch {
   id: string;
   cidr: string;
   name: string;

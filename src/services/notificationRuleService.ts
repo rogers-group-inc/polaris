@@ -477,11 +477,11 @@ export async function listScopeOptions(): Promise<{
 const SUBSCRIPTION_TTL_MS = 60_000;
 const _subscriptionCache = createTtlCache<Set<string>>({ ttlMs: SUBSCRIPTION_TTL_MS, maxEntries: 1 });
 
-export function bumpChangeSubscriptions(): void {
+function bumpChangeSubscriptions(): void {
   _subscriptionCache.invalidate();
 }
 
-export function getSubscribedChangeActions(): Promise<Set<string>> {
+function getSubscribedChangeActions(): Promise<Set<string>> {
   return _subscriptionCache.getOrCompute("", async () => {
     const rules = await prisma.notificationRule.findMany({
       where: { enabled: true },
@@ -659,7 +659,7 @@ export async function listRules() {
   return rows.map(withV2);
 }
 
-export async function getRule(id: string) {
+async function getRule(id: string) {
   const rule = await prisma.notificationRule.findUnique({ where: { id }, include: ALERT_GROUP_INCLUDE });
   if (!rule) throw new AppError(404, "Notification rule not found");
   return withV2(rule);

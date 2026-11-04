@@ -60,7 +60,7 @@ const SETTING_KEY = "windowsSshOnboarding";
 const SETTING_TTL_MS = 10_000;
 
 export type SshOnboardingPlatform = "windows" | "linux";
-export const SSH_ONBOARDING_PLATFORMS: readonly SshOnboardingPlatform[] = ["windows", "linux"];
+const SSH_ONBOARDING_PLATFORMS: readonly SshOnboardingPlatform[] = ["windows", "linux"];
 
 /**
  * ONE managed credential PER PLATFORM, both carrying the SAME keypair.
@@ -81,13 +81,13 @@ const KEY_COMMENT = "polaris-agent-deploy";
 
 const DEFAULT_USERNAME = "polaris-agent";
 
-export interface PlatformAccountConfig {
+interface PlatformAccountConfig {
   accountMode: SshOnboardingAccountMode;
   /** "" only in existing mode, until an operator names the account. */
   username: string;
 }
 
-export interface WindowsSshOnboardingConfig {
+interface WindowsSshOnboardingConfig {
   /** Managed credential per platform. Null until the first generate. */
   credentialIds: Record<SshOnboardingPlatform, string | null>;
   windows: PlatformAccountConfig;

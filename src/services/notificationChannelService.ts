@@ -22,7 +22,7 @@ import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
 import { restoreStoredSecrets } from "../utils/secretDestination.js";
 import { asObject } from "../utils/object.js";
 
-export const MASK = SECRET_MASK;
+const MASK = SECRET_MASK;
 
 type ChannelRow = {
   id: string;

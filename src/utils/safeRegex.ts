@@ -38,7 +38,7 @@ export interface SafeRegex {
 }
 
 /** One match from execAll: [whole, group1, …] plus where it started. */
-export type SafeMatch = Array<string | undefined> & { index: number };
+type SafeMatch = Array<string | undefined> & { index: number };
 
 export interface SafeRegexOptions {
   ignoreCase?: boolean;

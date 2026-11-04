@@ -198,7 +198,7 @@ export type FlatRetentionEntity = "appMapConnections" | "arpEntries" | "pathChec
 
 export const FLAT_RETENTION_ENTITIES: FlatRetentionEntity[] = ["appMapConnections", "arpEntries", "pathCheckTraceroutes"];
 
-export interface FlatRetention {
+interface FlatRetention {
   days: number;
 }
 

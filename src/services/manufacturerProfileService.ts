@@ -71,7 +71,7 @@ export const AGGREGATES: Aggregate[] = ["none", "avg", "sum"];
 // metric or override. Must stay in sync with the frontend `_SNMP_STANDARD_MIBS`
 // table in `public/js/assets.js` (the SNMP Walk dropdown) — the keys are
 // shared so the same labels render in both surfaces.
-export const STD_MIB_KEYS = new Set<string>([
+const STD_MIB_KEYS = new Set<string>([
   "std:system",
   "std:interfaces",
   "std:if-ext",
@@ -115,7 +115,7 @@ export type MetricRowType = "scalar" | "double_scalar" | "table";
  * double_scalar row. Filled by `annotateReadiness` on every read; absent on
  * the cached row the probe path uses (the probe resolves for itself).
  */
-export interface RowReadiness {
+interface RowReadiness {
   a: SymbolReadiness;
   b: SymbolReadiness | null;
   /** A sensor table row's name / alarm columns (business rule 132); absent on every other row. */
@@ -237,8 +237,8 @@ export interface ProfileFull {
 // Edited with the Custom MIB tab's pencil button and shared by every asset
 // under the profile.
 
-export const LAYOUT_WIDTHS = [3, 4, 6, 12] as const;
-export const LAYOUT_HEIGHTS = [1, 2, 3] as const;
+const LAYOUT_WIDTHS = [3, 4, 6, 12] as const;
+const LAYOUT_HEIGHTS = [1, 2, 3] as const;
 const LAYOUT_MAX_COLUMNS = 48;
 
 export interface WidgetLayout {
@@ -898,7 +898,7 @@ export async function listManufacturerSuggestions(): Promise<ManufacturerSuggest
   });
 }
 
-export type ManufacturerSuggestionSource = "asset" | "alias" | "oui";
+type ManufacturerSuggestionSource = "asset" | "alias" | "oui";
 
 export interface ManufacturerSuggestion {
   value:      string;
@@ -1005,7 +1005,7 @@ function readinessParts(r: RowReadiness | null | undefined): SymbolReadiness[] {
 }
 
 /** Return a copy of `profile` with `readiness` filled on every configured metric row and override. */
-export function annotateReadiness(profile: ProfileFull): ProfileFull {
+function annotateReadiness(profile: ProfileFull): ProfileFull {
   return {
     ...profile,
     metrics: profile.metrics.map((m) => ({
@@ -1020,7 +1020,7 @@ export function annotateReadiness(profile: ProfileFull): ProfileFull {
 }
 
 /** The collapsed-header rollup: ready / partial / how many symbols are unresolved, and which. */
-export function readinessSummary(profile: ProfileFull): Pick<ProfileSummary, "ready" | "partial" | "unresolvedCount" | "unresolvedSymbols"> {
+function readinessSummary(profile: ProfileFull): Pick<ProfileSummary, "ready" | "partial" | "unresolvedCount" | "unresolvedSymbols"> {
   const annotated = annotateReadiness(profile);
   const all: SymbolReadiness[] = [];
   for (const m of annotated.metrics) {
@@ -1045,7 +1045,7 @@ export function readinessSummary(profile: ProfileFull): Pick<ProfileSummary, "re
  * first step would make the page unusable for exactly the operator it is
  * meant to help.
  */
-export function symbolWarnings(manufacturer: string, symbols: Array<{ symbol: string | null; mibId: string | null }>): string[] {
+function symbolWarnings(manufacturer: string, symbols: Array<{ symbol: string | null; mibId: string | null }>): string[] {
   const out: string[] = [];
   for (const { symbol, mibId } of symbols) {
     if (!symbol) continue;

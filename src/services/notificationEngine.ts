@@ -5361,7 +5361,7 @@ async function neverAnnounced(notificationId: string): Promise<boolean> {
 }
 
 /** Is this grouped alert still waiting to send its first message? */
-export function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
+function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
   return !!row.firstSendDueAt && !row.firstSentAt;
 }
 
@@ -6832,7 +6832,7 @@ export function clearAssetDetailCache(): void {
   _assetDetailCache.clear();
   _blameCache = newBlameLoadCache();
 }
-export async function assetDetail(assetId: string): Promise<AssetDetailRow | null> {
+async function assetDetail(assetId: string): Promise<AssetDetailRow | null> {
   if (_assetDetailCache.has(assetId)) return _assetDetailCache.get(assetId)!;
   const a = await prisma.asset.findUnique({ where: { id: assetId }, select: ASSET_DETAIL_SELECT });
   const row = a ? { ...a, status: String(a.status) } : null;
@@ -6900,7 +6900,7 @@ export type MaintenanceSpan = { startedAt: Date; endedAt: Date | null };
  * clears within the tick still leaks — a separate problem, and not one any
  * table here can answer.
  */
-export async function loadMaintenanceSpansForEvents(
+async function loadMaintenanceSpansForEvents(
   assetIds: string[],
   from: Date,
   to: Date,

@@ -120,7 +120,7 @@ export function genericApiObserved(
  * integration writes the column, the values differ and the feed stops
  * touching it. A feed never clears a column.
  */
-export const GENERIC_API_FEED_FIELDS = [
+const GENERIC_API_FEED_FIELDS = [
   "department", "assignedTo", "purchaseOrder", "description", "assetTag", "acquiredAt", "warrantyExpiry",
 ] as const;
 type FeedField = (typeof GENERIC_API_FEED_FIELDS)[number];

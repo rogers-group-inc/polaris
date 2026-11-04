@@ -76,7 +76,7 @@ import { MIN_DIRECTORY_QUERY, searchDirectory, type DirectorySourceKind } from "
 export type ContactOrigin = "manual" | "entra" | "ad";
 
 /** A synced row is one the directory sync created and still claims. */
-export function isDirectoryOrigin(origin: string): boolean {
+function isDirectoryOrigin(origin: string): boolean {
   return origin !== "manual";
 }
 
@@ -264,7 +264,7 @@ export function normalizeContactCondition(raw: unknown): ScopeConditionGroup | n
  * tree can't express (an `integration` rule) keeps matching through the flat
  * predicate instead of being half-converted.
  */
-export function contactFilterOf(
+function contactFilterOf(
   contact: Pick<ContactRow, "assetCondition" | "assetCriteria">,
 ): { condition: ScopeConditionGroup | null; criteria: TagCriteria | null } {
   if (contact.assetCondition) return { condition: contact.assetCondition, criteria: null };

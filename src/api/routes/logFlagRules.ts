@@ -17,7 +17,7 @@ import {
   deleteLogFlagRule,
 } from "../../services/logFlagRuleService.js";
 
-export const logFlagRulesRouter = Router();
+const logFlagRulesRouter = Router();
 
 const RuleObject = z.object({
   name:          z.string().min(1).max(128),

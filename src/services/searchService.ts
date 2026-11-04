@@ -18,7 +18,7 @@ import { activeAlertSummaryByAsset, type AssetActiveAlertSummary } from "./notif
 import { resolveIpsToAssets } from "./applicationMapService.js";
 import { findAssetsByPinFingerprint, type PinFingerprintMatch } from "./agentHostPinService.js";
 
-export interface SearchHit {
+interface SearchHit {
   // `ipsec`: a FortiGate's phase-1 tunnel or a peer connected through one
   // (an ADVPN spoke, a dial-up peer, a FortiClient / SSL-VPN user) — the
   // IPsec tab's rows. `id` is `<gateAssetId>|<tunnel|conn>|<name>`; the gate
@@ -146,7 +146,7 @@ export function normalizeMac(raw: string): string | null {
  * overlap that interval iff they contain a MAC with the prefix. Returns null
  * when the term isn't hex-and-separators (then it can't be a MAC fragment).
  */
-export function macPrefixBounds(term: string): { low: string; high: string } | null {
+function macPrefixBounds(term: string): { low: string; high: string } | null {
   const compact = term.replace(/[\s:\-.]/g, "");
   if (!/^[0-9a-fA-F]{1,12}$/.test(compact)) return null;
   const toColon = (hex: string) => hex.toUpperCase().match(/.{2}/g)!.join(":");

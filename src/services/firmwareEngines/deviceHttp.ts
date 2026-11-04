@@ -441,7 +441,7 @@ export class DeviceHttpClient {
  * page a failed /logincheck returns) even when the request named no
  * Accept-Encoding; a body that does not inflate is returned as it came.
  */
-export function decodeBody(raw: Buffer, encoding: string | string[] | undefined): string {
+function decodeBody(raw: Buffer, encoding: string | string[] | undefined): string {
   const gz = (Array.isArray(encoding) ? encoding.join(",") : encoding ?? "").toLowerCase().includes("gzip")
     || (raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b);
   if (gz) {

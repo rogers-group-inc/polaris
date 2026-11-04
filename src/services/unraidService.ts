@@ -95,7 +95,7 @@ function translateNetworkError(err: any, config: UnraidConfig): AppError {
  * are returned to the caller (a field the key's role may not read should not
  * fail the whole inventory).
  */
-export async function unraidGraphql<T = any>(
+async function unraidGraphql<T = any>(
   config: UnraidConfig,
   query: string,
   variables?: Record<string, unknown>,
@@ -194,7 +194,7 @@ export const UNRAID_INVENTORY_QUERY = `query PolarisInventory {
  * must lose only this, never the inventory.
  */
 const ARRAY_DISK_LAYOUT_FIELDS = "name device size status temp numErrors fsType rotational type";
-export const UNRAID_STORAGE_QUERY = `query PolarisStorage {
+const UNRAID_STORAGE_QUERY = `query PolarisStorage {
   array {
     parityCheckStatus { status date errors progress running paused }
     parities { ${ARRAY_DISK_LAYOUT_FIELDS} }
@@ -437,7 +437,7 @@ export function applyUnraidStorageLayout(pools: WorkloadPool[], data: any): Work
   });
 }
 
-export function parseUnraidDisks(array: any): WorkloadDisk[] {
+function parseUnraidDisks(array: any): WorkloadDisk[] {
   if (!array) return [];
   const out: WorkloadDisk[] = [];
   const add = (list: any[], pool: string | null) => {
@@ -775,7 +775,7 @@ export function normalizeUnraidContainerUsage(
  * rejects: a failed socket yields an empty map (containers then simply carry
  * no CPU / memory this tick) and is logged at debug.
  */
-export async function sampleUnraidContainerStats(
+async function sampleUnraidContainerStats(
   config: UnraidConfig,
   expectedIds: ReadonlySet<string>,
   windowMs = DEFAULT_STATS_WINDOW_MS,

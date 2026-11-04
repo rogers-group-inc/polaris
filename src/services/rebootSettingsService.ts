@@ -29,7 +29,7 @@ export interface RebootSettings {
   requireNote: boolean;
 }
 
-export function defaultRebootSettings(): RebootSettings {
+function defaultRebootSettings(): RebootSettings {
   return { requireNote: false };
 }
 

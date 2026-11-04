@@ -20,7 +20,7 @@ import { logger } from "../utils/logger.js";
 
 export type DiscoveryRunStatus = "queued" | "running" | "completed" | "aborted" | "error";
 
-export interface ActiveDeviceEntry {
+interface ActiveDeviceEntry {
   name: string;
   startedAt: number; // epoch ms
 }

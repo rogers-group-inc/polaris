@@ -1468,7 +1468,7 @@ const UPDATE_SYNC_HELPER = "/usr/local/sbin/polaris-update-sync";
  * it fails like before (self-exit; the web role alone restarts) and the
  * operator runs a setup script or deploy/update-linux.sh once. Pure.
  */
-export function bootstrapUpdateSyncScript(appDir: string): string {
+function bootstrapUpdateSyncScript(appDir: string): string {
   return [
     "set -e",
     `install -o root -g root -m 0755 ${appDir}/deploy/scripts/polaris-update-sync.sh ${UPDATE_SYNC_HELPER}`,

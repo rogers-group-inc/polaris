@@ -20,7 +20,7 @@ import { guardedLookup } from "./netGuard.js";
 let agent: Agent | null = null;
 
 /** The guarded dispatcher (exported for tests). */
-export function guardedDispatcher(): Dispatcher {
+function guardedDispatcher(): Dispatcher {
   if (!agent) agent = new Agent({ connect: { lookup: guardedLookup() } });
   return agent;
 }

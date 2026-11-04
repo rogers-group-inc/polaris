@@ -41,13 +41,13 @@ import { sleep } from "../utils/sleep.js";
  * ICMP port-unreachable (which itself confirms the ARP resolution we wanted);
  * a dead one silently drops. Nothing on the wire carries payload.
  */
-export const ARP_SWEEP_PORT = 33434;
+const ARP_SWEEP_PORT = 33434;
 
 /** Datagrams per pacing batch. */
 export const ARP_SWEEP_BATCH_SIZE = 256;
 
 /** Pause between pacing batches (ms). */
-export const ARP_SWEEP_BATCH_PAUSE_MS = 25;
+const ARP_SWEEP_BATCH_PAUSE_MS = 25;
 
 /**
  * Hard cap on targets per sweep — a runaway-input backstop far above any
