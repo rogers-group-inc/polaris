@@ -395,9 +395,9 @@ switch and FortiGate above it are skipped.
 ## The asset slide-over
 
 Click a row. Tabs, in order, each shown only where it applies: **General ·
-System · Wireless · SD-WAN · IPsec · Paths · MAC Table · ARP Table · Services ·
-Software · Quarantine · Events · Alerts · Custom MIB · SNMP Walk · Sources**. General,
-System and Sources are always there.
+System · SD-WAN · IPsec · ARP Table · MAC Table · Wireless · Paths · Services ·
+Software · Quarantine · Events · Alerts · Custom MIB · Device Query · Sources**.
+General, System and Sources are always there.
 
 Three are device-type specific: **Wireless** on a monitored access point, **MAC
 Table** on a switch, **ARP Table** on a firewall. A firewall also gets
@@ -423,12 +423,23 @@ The rest are conditional:
 - **Events** — with `events:read`. **Alerts** — with `alerts:read`.
 - **Custom MIB** — when the asset's manufacturer profile defines custom widgets
   (Server Settings → Credentials → Manufacturer Profiles).
-- **SNMP Walk** — with the **Asset Probes** permission, **and** only when at
-  least one monitoring stream actually resolves to SNMP for this asset. The
-  **Credential** field starts on the credential that SNMP polling uses for
-  this asset: the stream's own credential, the asset's default, a class
-  override, or the FortiManager / FortiGate integration's monitor credential,
-  in that order. Pick another to walk with a different one.
+- **Device Query** — ask the device a question directly. It holds two
+  sub-tabs, each shown only where it applies, and the tab appears when at
+  least one does:
+  - **SNMP Walk** — with the **Asset Probes** permission, **and** only when at
+    least one monitoring stream actually resolves to SNMP for this asset. The
+    **Credential** field starts on the credential that SNMP polling uses for
+    this asset: the stream's own credential, the asset's default, a class
+    override, or the FortiManager / FortiGate integration's monitor
+    credential, in that order. Pick another to walk with a different one.
+  - **API Query** — on a FortiGate discovered by a FortiManager or FortiGate
+    integration, for a role with **Integrations** Read-Write (the same
+    permission as the integration's **Query API** console). It sends a
+    read-only FortiOS REST `GET` to this gate through its own integration:
+    through FortiManager's proxy when the integration uses it, otherwise
+    directly. Pick a preset or type a path and query parameters, then
+    **Send**. Writes are not offered here; use the integration's Query API
+    console for those.
 
 The header also carries **Screenshot** and **Export PDF** (below), **Open HTTPS** /
 **Open RDP** / **Open SSH** where the device has them, and **Edit** for

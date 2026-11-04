@@ -6130,12 +6130,31 @@ async function openViewModal(id, opts) {
     // picker rode the same wave, so the cache is warm here — do NOT re-add an
     // await, it was the fourth serial barrier in front of first paint.
     var showSnmpWalkTab = canProbeAssets() && _assetUsesSnmpPolling(a, effMonitorSettings);
+    // API Query — a read-only FortiOS REST console aimed at this gate through
+    // its own integration (FortiManager proxy / direct, or standalone
+    // FortiGate). Gated on integrations=write, the gate of the
+    // /integrations/:id/query endpoint it calls.
+    var apiQueryTransport = _assetApiQueryTransport(a);
+    // Device Query tab — SNMP Walk and API Query as sub-tabs. The strip shows
+    // even with one sub-tab so the panel says which query it is.
+    var deviceQueryTabs = [];
     if (showSnmpWalkTab) {
-      tabs.push({ key: "snmp", label: "SNMP Walk", html: assetSnmpWalkViewHTML(a, effMonitorSettings) });
+      deviceQueryTabs.push({ key: "snmp", label: "SNMP Walk", html: assetSnmpWalkViewHTML(a, effMonitorSettings) });
     }
-    // Sources tab — moved to the end so the operational tabs (Processes /
-    // Quarantine / Events) come first; discovery-source provenance lives last.
+    if (apiQueryTransport) {
+      deviceQueryTabs.push({ key: "api", label: "API Query", html: _assetApiQueryHTML(a, apiQueryTransport) });
+    }
+    if (deviceQueryTabs.length) {
+      tabs.push({ key: "devicequery", label: "Device Query", html: tabbedBodyHTML("asset-dq", deviceQueryTabs) });
+    }
+    // Sources tab — discovery-source provenance lives last.
     tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory, a.discoveredByIntegrationId) });
+    // The strip's order is decided here, not by push order (operator decision
+    // 2026-11-04): General, System, SD-WAN, IPsec, ARP Table, MAC Table,
+    // Wireless, Events, Alerts, Sources. The tabs that list does not name
+    // keep their place between those neighbours. A key missing from the list
+    // sorts just before Sources, so a new tab is never silently dropped.
+    tabs = _orderAssetViewTabs(tabs);
     var tabsHTML = tabbedBodyHTML("asset-view", tabs);
     bodyEl.innerHTML = '<div class="asset-panel-content">' + tabsHTML + '</div>';
     _loadAssetTlsPins(bodyEl);
@@ -6212,7 +6231,9 @@ async function openViewModal(id, opts) {
       if (wantTab) wantTab.click();
     }
     if (opts.openBooking) _openBookingFromCalendar(a, opts.openBooking);
+    if (deviceQueryTabs.length) wireModalTabs("asset-dq");
     if (showSnmpWalkTab) _wireSnmpWalkTab(a);
+    if (apiQueryTransport) _wireAssetApiQuery(a, apiQueryTransport);
     if (canQuarantineAssets()) _wireQuarantineTab(a);
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) _wireSdwanTab(a, sdwanRules, sdwanLinks, sdwanMembers);
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
@@ -23181,6 +23202,216 @@ function _assetUsesSnmpPolling(asset, eff) {
   return ["responseTimePolling", "cpuMemoryPolling", "temperaturePolling", "interfacesPolling",
           "lldpPolling", "storagePolling", "processesPolling", "eventLogPolling"]
     .some(function (k) { return r[k] === "snmp"; });
+}
+
+// ─── Asset slide-over tab order ────────────────────────────────────────────
+//
+// The order the asset slide-over's tab strip reads in. The operator's list
+// (2026-11-04) is General, System, SD-WAN, IPsec, ARP Table, MAC Table,
+// Wireless, Events, Alerts, Sources; the conditional tabs it does not name
+// sit between the neighbours they belong with. A FortiGate's MAC Table and
+// Wireless (childmactable / childwireless) are the same tabs drawn from its
+// switches and APs, so they share their own-device siblings' slots.
+var _ASSET_VIEW_TAB_ORDER = [
+  "general", "system", "workloads",
+  "sdwan", "ipsec",
+  "arptable", "mactable", "childmactable",
+  "stations", "childwireless",
+  "pathCheck", "services", "software", "quarantine",
+  "events", "notifications",
+  "customMib", "devicequery",
+  "sources",
+];
+
+function _orderAssetViewTabs(tabs) {
+  var unknownRank = _ASSET_VIEW_TAB_ORDER.indexOf("sources") - 0.5;
+  function rank(t) {
+    var i = _ASSET_VIEW_TAB_ORDER.indexOf(t.key);
+    return i === -1 ? unknownRank : i;
+  }
+  // Array.prototype.sort is stable, so two unknown keys keep push order.
+  return tabs.slice().sort(function (x, y) { return rank(x) - rank(y); });
+}
+
+// ─── Device Query → API Query sub-tab ──────────────────────────────────────
+//
+// A read-only FortiOS REST console aimed at THIS gate, through the
+// integration that discovered it. It calls POST /integrations/:id/query, the
+// same endpoint as the integration's Query API console, so it carries that
+// endpoint's gate (integrations=write) and nothing new on the server.
+// GET only: device writes stay in the integration console, where the
+// FortiGate branches audit them.
+//
+// Transport, by integration:
+//   fortigate                   → the integration's own REST call (the gate IS
+//                                 the integration's device)
+//   fortimanager, proxy on      → JSON-RPC exec /sys/proxy/json, targeting
+//                                 the gate by its FMG device name
+//   fortimanager, proxy off     → mode "fortigate": FMG resolves the gate's
+//                                 management IP, the call goes direct
+// The FMG device name is fortinetTopology.deviceName — FMG's name may differ
+// from the gate's configured hostname, which is only the fallback.
+function _assetApiQueryTransport(a) {
+  if (!a || a.assetType !== "firewall") return null;
+  var integ = a.discoveredByIntegration;
+  if (!integ || !integ.id) return null;
+  if (!permAtLeast("integrations", "write")) return null;
+  if (integ.type === "fortigate") {
+    return { kind: "fortigate", integrationId: integ.id, integrationName: integ.name || "" };
+  }
+  if (integ.type === "fortimanager") {
+    var topo = a.fortinetTopology || {};
+    // A row discovered before the stamp existed falls back to the hostname,
+    // as descriptionSyncService does; a mismatch shows as FMG's error.
+    var deviceName = (typeof topo.deviceName === "string" && topo.deviceName.trim()) || (a.hostname || "").trim() || null;
+    if (!deviceName) return null;
+    return {
+      kind: integ.useProxy === false ? "fmg-direct" : "fmg-proxy",
+      integrationId: integ.id,
+      integrationName: integ.name || "",
+      deviceName: deviceName,
+      adom: integ.adom || "root",
+    };
+  }
+  return null;
+}
+
+// Last path + parameters, kept across slide-over opens like the SNMP walk's.
+var _assetApiQueryLastPath = "/api/v2/monitor/system/status";
+var _assetApiQueryLastParams = "vdom=root";
+
+function _assetApiQueryPresets() {
+  // The FortiGate console's preset list (integrations.js) when it is loaded.
+  return (typeof _FGT_PRESET_QUERIES !== "undefined" && Array.isArray(_FGT_PRESET_QUERIES))
+    ? _FGT_PRESET_QUERIES.filter(function (q) { return !q.method || q.method === "GET"; })
+    : [];
+}
+
+function _assetApiQueryHTML(a, t) {
+  var via = t.kind === "fortigate"
+    ? "directly, with the <strong>" + escapeHtml(t.integrationName) + "</strong> integration's API token"
+    : t.kind === "fmg-proxy"
+      ? "through FortiManager <strong>" + escapeHtml(t.integrationName) + "</strong> (proxy), as device <code>" + escapeHtml(t.deviceName) + "</code>"
+      : "directly, with FortiManager <strong>" + escapeHtml(t.integrationName) + "</strong>'s FortiGate credentials, as device <code>" + escapeHtml(t.deviceName) + "</code>";
+  var presets = _assetApiQueryPresets();
+  var presetOpts = '<option value="">— load a preset —</option>' + presets.map(function (q, i) {
+    return '<option value="' + i + '">' + escapeHtml(q.name) + "</option>";
+  }).join("");
+  return (
+    '<div data-shot-section="apiQuery" data-shot-label="API Query" style="display:flex;flex-direction:column;gap:0.75rem">' +
+      '<div style="font-size:0.85rem;color:var(--color-text-secondary)">' +
+        "Sends a read-only FortiOS REST <code>GET</code> to this FortiGate " + via + ". " +
+        "Writes are not offered here — use the integration's Query API console." +
+      "</div>" +
+      (presets.length
+        ? '<div><label class="form-label" for="asset-api-preset" style="font-size:0.8rem">Preset</label>' +
+            '<select class="form-control" id="asset-api-preset">' + presetOpts + "</select></div>"
+        : "") +
+      "<div>" +
+        '<label class="form-label" for="asset-api-path" style="font-size:0.8rem">Path</label>' +
+        '<input class="form-control" id="asset-api-path" type="text" value="' + escapeHtml(_assetApiQueryLastPath) + '" placeholder="/api/v2/monitor/system/status" style="font-family:var(--font-mono,monospace);font-size:0.85rem">' +
+      "</div>" +
+      "<div>" +
+        '<label class="form-label" for="asset-api-params" style="font-size:0.8rem">Query parameters <span style="color:var(--color-text-secondary);font-weight:normal">(one per line — <code>key=value</code>)</span></label>' +
+        '<textarea class="form-control" id="asset-api-params" rows="3" style="font-family:var(--font-mono,monospace);font-size:0.82rem" placeholder="vdom=root&#10;format=name|ip|status">' + escapeHtml(_assetApiQueryLastParams) + "</textarea>" +
+      "</div>" +
+      '<div style="display:flex;gap:0.5rem;align-items:center">' +
+        '<button type="button" class="btn btn-primary btn-sm" id="btn-asset-api-send">Send</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="btn-asset-api-copy" disabled>Copy response</button>' +
+        '<span id="asset-api-status" style="font-size:0.8rem;color:var(--color-text-secondary)"></span>' +
+      "</div>" +
+      '<pre id="asset-api-response" style="display:none;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0.75rem;font-size:0.78rem;overflow:auto;max-height:60vh;white-space:pre-wrap;word-break:break-all;margin:0"></pre>' +
+    "</div>"
+  );
+}
+
+// "key=value" lines → an object; a bare key maps to "". Same parse as the
+// integration consoles.
+function _assetApiQueryParseParams(text) {
+  var out = {};
+  String(text || "").split("\n").forEach(function (line) {
+    var trimmed = line.trim();
+    if (!trimmed) return;
+    var eq = trimmed.indexOf("=");
+    if (eq < 0) { out[trimmed] = ""; return; }
+    var key = trimmed.slice(0, eq).trim();
+    if (key) out[key] = trimmed.slice(eq + 1).trim();
+  });
+  return out;
+}
+
+// The request body for POST /integrations/:id/query, per transport.
+function _assetApiQueryPayload(t, path, params) {
+  if (t.kind === "fortigate") return { method: "GET", path: path, query: params };
+  if (t.kind === "fmg-direct") {
+    return { mode: "fortigate", deviceName: t.deviceName, method: "GET", path: path, query: params };
+  }
+  // FMG proxy: the query string rides on the proxied resource.
+  var qs = Object.keys(params).map(function (k) {
+    return encodeURIComponent(k) + (params[k] === "" ? "" : "=" + encodeURIComponent(params[k]));
+  }).join("&");
+  return {
+    mode: "fmg",
+    method: "exec",
+    params: [{
+      url: "/sys/proxy/json",
+      data: {
+        target: ["/adom/" + t.adom + "/device/" + t.deviceName],
+        action: "get",
+        resource: path + (qs ? (path.indexOf("?") === -1 ? "?" : "&") + qs : ""),
+      },
+    }],
+  };
+}
+
+function _wireAssetApiQuery(a, t) {
+  var sendBtn = document.getElementById("btn-asset-api-send");
+  if (!sendBtn) return;
+  var copyBtn = document.getElementById("btn-asset-api-copy");
+  var statusEl = document.getElementById("asset-api-status");
+  var pathEl = document.getElementById("asset-api-path");
+  var paramsEl = document.getElementById("asset-api-params");
+  var respEl = document.getElementById("asset-api-response");
+  var presetEl = document.getElementById("asset-api-preset");
+  if (presetEl) {
+    presetEl.addEventListener("change", function () {
+      var q = _assetApiQueryPresets()[parseInt(presetEl.value, 10)];
+      if (!q) return;
+      pathEl.value = q.path || "";
+      paramsEl.value = q.query || "";
+    });
+  }
+  sendBtn.addEventListener("click", async function () {
+    var path = pathEl.value.trim();
+    if (!path) { showToast("Enter a path (e.g. /api/v2/monitor/system/status)", "error"); return; }
+    _assetApiQueryLastPath = path;
+    _assetApiQueryLastParams = paramsEl.value;
+    var payload = _assetApiQueryPayload(t, path, _assetApiQueryParseParams(paramsEl.value));
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Sending…";
+    statusEl.textContent = "";
+    var started = Date.now();
+    try {
+      var result = await api.integrations.query(t.integrationId, payload);
+      respEl.textContent = JSON.stringify(result, null, 2);
+      statusEl.textContent = "Answered in " + (Date.now() - started) + " ms";
+    } catch (err) {
+      respEl.textContent = "Error: " + (err && err.message ? err.message : String(err));
+      statusEl.textContent = "";
+    } finally {
+      respEl.style.display = "";
+      copyBtn.disabled = false;
+      sendBtn.disabled = false;
+      sendBtn.textContent = "Send";
+    }
+  });
+  copyBtn.addEventListener("click", function () {
+    copyTextToClipboard(respEl.textContent).then(function (ok) {
+      if (!ok) { showToast("Copy failed", "error"); return; }
+      copyBtn.textContent = "Copied!";
+      setTimeout(function () { copyBtn.textContent = "Copy response"; }, 1500);
+    });
+  });
 }
 
 var _snmpWalkLastOid = "1.3.6.1.2.1.1";
