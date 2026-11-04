@@ -16,6 +16,7 @@
  * top of this key's ladder (none / read / write).
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import { requirePermission, } from "../middleware/permissions.js";
@@ -77,7 +78,7 @@ quietTimeSchedulesRouter.get("/",requirePermission("automationManagement", "read
  *  of `/:id` so the literal path wins. */
 quietTimeSchedulesRouter.get("/summaries", requirePermission("automationManagement", "read"), async (req, res, next) => {
   try {
-    const limit = Number(req.query.limit) || 20;
+    const limit = intQuery(req.query.limit, { fallback: 20 })!;
     res.json({ summaries: await listQuietTimeSummaries(limit) });
   } catch (err) { next(err); }
 });

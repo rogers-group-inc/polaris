@@ -24,6 +24,7 @@
  * applied to bearer-token callers.)
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
@@ -114,8 +115,8 @@ function assertCanReactivate(req: Request, conflict: { proposedAssetFields?: unk
 router.get("/", async (req, res, next) => {
   try {
     const status = (req.query.status as string) || "pending";
-    const limit = Math.min(parseInt(req.query.limit as string, 10) || 100, 5000);
-    const offset = parseInt(req.query.offset as string, 10) || 0;
+    const limit = intQuery(req.query.limit, { fallback: 100, max: 5000 })!;
+    const offset = intQuery(req.query.offset, { fallback: 0 })!;
 
     const entityTypes = visibleEntityTypes(req);
     if (entityTypes.length === 0) {

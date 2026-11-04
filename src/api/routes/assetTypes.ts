@@ -16,6 +16,7 @@
  * generic behavior by design.
  */
 
+import { boolQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import * as assetTypeService from "../../services/assetTypeService.js";
@@ -100,7 +101,7 @@ const PreviewSchema = z.object({
 
 router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
   try {
-    const withUsage = req.query.withUsage === "1" || req.query.withUsage === "true";
+    const withUsage = boolQuery(req.query.withUsage);
     res.json({ types: await assetTypeService.listAssetTypes({ withUsage }) });
   } catch (err) { next(err); }
 });

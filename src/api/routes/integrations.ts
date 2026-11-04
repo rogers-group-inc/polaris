@@ -2,6 +2,7 @@
  * src/api/routes/integrations.ts — Integration CRUD + connection testing
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
@@ -1470,8 +1471,8 @@ const UpdateIntegrationSchema = z.object({
 // GET /api/v1/integrations
 router.get("/", async (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
-    const offset = parseInt(req.query.offset as string, 10) || 0;
+    const limit = intQuery(req.query.limit, { fallback: 50, max: 200 })!;
+    const offset = intQuery(req.query.offset, { fallback: 0 })!;
     const [integrations, total] = await Promise.all([
       prisma.integration.findMany({
         orderBy: { createdAt: "desc" },
