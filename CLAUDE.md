@@ -142,6 +142,8 @@ npm run test:fmg
 npm run typecheck
 npm run lint
 npm run check:docs && npm run check:versions && npm run check:deps && npm run check:wiki
+npm run check:dead    # knip: dead files/exports/deps (pre-commit + CI); backlog in docs/CODE-QUALITY-LEDGER.md
+npm run check:dup     # jscpd duplication report (informational)
 ```
 
 ---

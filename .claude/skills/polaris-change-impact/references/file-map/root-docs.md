@@ -15,12 +15,15 @@ polaris/
 ├── README.md
 ├── .env.example
 ├── package.json
-├── tsconfig.json
+├── tsconfig.json                    # strict + noUnusedLocals (since 2026-11-04); covers src/ only — tests/ is excluded and is type-checked by nobody
+├── knip.jsonc                       # `npm run check:dead`: dead files / exports / dependencies over src, scripts, prisma, tests (public/ excluded: no module system). src/jobs/*.ts are explicit entries because app.ts loads them through importJob over a string array. `!` marks production entries for `check:dead:prod` (exports only tests reach). Pre-commit + CI
+├── .jscpd.json                      # `npm run check:dup`: duplication REPORT, never a gate (no threshold). maxSize/maxLines raised so assets.js and monitoringService.ts are scanned. JSON to the gitignored audit-reports/jscpd/
 ├── prisma.config.ts                 # Prisma 7 config (datasource URL, seed command)
 ├── prisma/
 │   ├── schema.prisma                # Database schema
 │   └── seed.ts
 ├── docs/
+│   ├── CODE-QUALITY-LEDGER.md       # The code-quality backlog (dead code, duplicated helpers, inconsistencies, efficiency, giant-file structure) from the 2026-11-04 review: one verified row per finding with tier and status; a fix commit flips its row to fixed@<sha>. Not scanned by check:docs, so it may cite file:line. Also records the survey claims that proved wrong
 │   ├── INSTALL.md                   # Fresh-install guide (RHEL/Rocky/AlmaLinux 9, Ubuntu/Debian, container). Includes disk-sizing requirements per volume (DB ≥50 GB, app/state ≥5 GB, /var/log ≥5 GB on STIG layouts) and recovery steps for the "/var is full and Postgres is crash-looping" case. Fresh installs ONLY since 2026-09-15 — an existing install goes to the in-app updater, or to UPGRADING.md below.
 │   ├── UPGRADING.md                 # Every runbook for a host that already exists: a Node or signing-JDK major, PostgreSQL 15 → 17 (with the Docker/Unraid dump-and-restore variant), RHEL AppStream → PGDG, the legacy single-process polaris.service → split-role, the pre-nginx → nginx cutover, and recovering an update that died on a TLS-intercepting network. Split out of INSTALL.md so a first-time installer is not reading 760 lines addressed to someone else. Deliberately NOT a check:versions site — it names the version you are leaving beside the one you are going to (see polaris-tech-lifecycle → pin-consistency-check.md).
 │   └── fmg-discovery.md             # FortiManager discovery decision tree (operator-facing): transport mode (proxy vs direct), roster filtering, per-class stamping for FortiGates / FortiSwitches / FortiAPs, push toggles, projection apply. Companion to the phase-by-phase narrative in CLAUDE.md's "FMG Discovery Workflow" section.
