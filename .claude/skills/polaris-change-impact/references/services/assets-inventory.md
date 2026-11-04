@@ -298,6 +298,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/api/routes/assets.ts` — `POST /assets/:id/merge`; `assetGhostMergeService.ts` (imports `transferAssetSideTables`).
 
 **Invariants:**
+- The survivor keeps its owner; an ownerless survivor takes the absorbed record's `createdBy` (business rule 141 (e), 2026-11-04) so a merge never turns an owned device into a Full Read-Write-only one. The merge itself is `assetMerge` (any two) — rule 141 (a).
 - Canonical and ghost must be distinct IDs; all transfers run in a single `$transaction`.
 - Ghost `AssetSource` rows re-bind to canonical (global `(sourceKind, externalId)` uniqueness means no collision); `AssetMacAddress` / `AssetAssociatedIp` / `AssetIpHistory` / `AssetFortigateSighting` delete-on-conflict when duplicates exist.
 - `ManagedAgent` transfers only if the survivor has none; `lastSeen` keeps the more recent value; tags union; `acquiredAt` clamped to stay ≤ `lastSeen`.
