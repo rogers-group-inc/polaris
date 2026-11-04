@@ -97,6 +97,9 @@ beforeAll(() => {
   g.currentUsername = "alice";
   g.formatDate = () => "";
   g.regionPillsHtml = () => "";
+  // An app.js global (users.js stopped re-declaring it): app.js loads first on
+  // the Users page, so the picker reads it from there.
+  g.REGION_TAG_CATEGORY = "Map Regions";
   g.TableSF = function () {};
   g.setupColumnLayout = () => null;
   g.userReady = Promise.resolve();
