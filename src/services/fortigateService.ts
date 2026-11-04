@@ -572,6 +572,8 @@ interface FgtChainCtx {
   deviceHostname: string;
   deviceSerial: string;
   mgmtIfaceName: string;
+  /** Step 2's `/api/v2/cmdb/system/interface` read, shared with Step 3b. */
+  interfaceListPromise: Promise<any[]>;
   discovered: DiscoveredSubnet[];
   devices: DiscoveredDevice[];
   interfaceIps: DiscoveredInterfaceIp[];
@@ -608,7 +610,7 @@ interface FgtChainCtx {
 
 // Chain A: DHCP CMDB (Step 3) → live DHCP monitor (3a) + interface IPs (3b) in parallel.
 async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
-  const { config, queryBase, signal, log, deviceName, deviceHostname, deviceSerial, mgmtIfaceName, discovered, interfaceIps, dhcpEntries, dhcpInterfaceNames, flags } = ctx;
+  const { config, queryBase, signal, log, deviceName, deviceHostname, deviceSerial, mgmtIfaceName, interfaceListPromise, discovered, interfaceIps, dhcpEntries, dhcpInterfaceNames, flags } = ctx;
       // Step 3: DHCP server configuration
       try {
         const dhcpData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system.dhcp/server", { query: queryBase, signal });
@@ -797,7 +799,8 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
         // proxy path applies, and lands as role:"interface".
         (async () => {
           try {
-            const ifaceData = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", { query: queryBase, signal });
+            // The interface table Step 2 already requested — not a second call.
+            const ifaceData = await interfaceListPromise;
     const ifaceVlanMap = new Map<string, number>();
     const ifaceVlanParent = new Map<string, string>();
     let ifaceIpCount = 0;
@@ -1309,11 +1312,18 @@ export async function discoverDhcpSubnets(
   // normalizeMacsDistinct.
   let mgmtMac: string | null = null;
   let interfaceMacs: string[] = [];
+  // ONE read of the gate's interface table per discovery run: this step takes
+  // the mgmt IP / MACs from it, and Chain A's Step 3b awaits the SAME promise
+  // for interface IPs, VLANs, secondaries and IPv6 (ctx.interfaceListPromise).
+  // Awaited here inside the try, so a rejection is always handled; Step 3b's
+  // own await re-raises it into its catch and its "Failed to query interfaces"
+  // log, as when it made its own call.
+  const interfaceListPromise = fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", {
+    query: { ...queryBase },
+    signal,
+  });
   try {
-    const ifaceList = await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/system/interface", {
-      query: { ...queryBase },
-      signal,
-    });
+    const ifaceList = await interfaceListPromise;
     if (Array.isArray(ifaceList) && ifaceList.length > 0) {
       const mgmtIface = ifaceList.find((i) => i?.name === mgmtIfaceName);
       if (mgmtIface) {
@@ -1418,7 +1428,7 @@ export async function discoverDhcpSubnets(
   };
   const ctx: FgtChainCtx = {
     config, queryBase, signal, log, skipGeoLog,
-    deviceName, deviceHostname, deviceSerial, mgmtIfaceName,
+    deviceName, deviceHostname, deviceSerial, mgmtIfaceName, interfaceListPromise,
     discovered, devices, interfaceIps, dhcpEntries, deviceInventory, inventoryDevices,
     fortiSwitches, fortiAps, vips, switchMacTable, arpTable, dhcpInterfaceNames,
     membership,
