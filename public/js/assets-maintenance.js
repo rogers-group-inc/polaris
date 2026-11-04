@@ -907,12 +907,30 @@ function _maintResetEditor() {
   document.getElementById("maint-edit-banner").style.display = "none";
   document.getElementById("maint-save").textContent = "Create Schedule";
   document.getElementById("maint-cancel-edit").style.display = "none";
+  _maintSetEditorTabLabel(false);
   _maintSyncScheduleBlocks();
   _maintSyncExplicitLine();
   _maintRefreshPreview();
 }
 
-/** Load a schedule row into the editor and switch to the Create tab. */
+/**
+ * The editor tab is named for what Save will do: "Create Schedule" while the
+ * form is blank, "Edit Schedule" while it holds a stored schedule. Cancel Edit
+ * and a successful save both go back through _maintResetEditor, which renames
+ * it back.
+ */
+function _maintSetEditorTabLabel(editing) {
+  var tab = document.querySelector('#maint-tabs .page-tab[data-tab="create"]');
+  if (tab) tab.textContent = editing ? "Edit Schedule" : "Create Schedule";
+}
+
+/** Who made a schedule — `createdBy` is the creating account's username,
+ *  null for a row from before it was recorded or made by the system. */
+function maintScheduleOwner(row) {
+  return row && row.createdBy ? String(row.createdBy) : "";
+}
+
+/** Load a schedule row into the editor and switch to the (now Edit) tab. */
 function _maintLoadIntoEditor(row) {
   _maintEditingId = row.id;
   _maintEditingAssetIds = Array.isArray(row.assetIds) ? row.assetIds.slice() : [];
@@ -959,10 +977,15 @@ function _maintLoadIntoEditor(row) {
   }
 
   var banner = document.getElementById("maint-edit-banner");
-  banner.textContent = "Editing schedule: " + (row.name || row.id);
+  var owner = maintScheduleOwner(row);
+  var created = row.createdAt ? new Date(row.createdAt) : null;
+  banner.textContent = "Editing schedule: " + (row.name || row.id) +
+    " — created by " + (owner || "an unknown user") +
+    (created && !isNaN(created.getTime()) ? " on " + created.toLocaleString() : "");
   banner.style.display = "";
   document.getElementById("maint-save").textContent = "Save Changes";
   document.getElementById("maint-cancel-edit").style.display = "";
+  _maintSetEditorTabLabel(true);
   _maintSyncScheduleBlocks();
   _maintSyncExplicitLine();
   _maintRefreshPreview();
@@ -1061,6 +1084,9 @@ async function _maintReloadList() {
       "<td>" + escapeHtml(maintScheduleSummary(s.schedule)) + "</td>" +
       '<td style="white-space:nowrap">' + escapeHtml(_maintTargetsSummary(s)) + "</td>" +
       (pathMode ? "" : '<td style="white-space:nowrap">' + (s.suppressChildren !== false ? "Marked down" : "Unaffected") + "</td>") +
+      '<td style="white-space:nowrap">' + (maintScheduleOwner(s)
+        ? escapeHtml(maintScheduleOwner(s))
+        : '<span style="color:var(--color-text-tertiary)">—</span>') + "</td>" +
       // Rule 141 (e): a window the caller did not create, on devices outside
       // their reach, is shown and not editable here.
       (s.canEdit === false
@@ -1079,6 +1105,7 @@ async function _maintReloadList() {
     '<table class="data-table"><thead><tr style="white-space:nowrap">' +
     '<th>Name</th><th>Schedule</th><th>Targets</th>' +
     (pathMode ? "" : '<th title="Whether devices behind an in-maintenance asset are dependency-suppressed for the window">Dependents</th>') +
+    '<th title="The account that created the schedule">Created by</th>' +
     '<th>State</th><th></th>' +
     "</tr></thead><tbody>" + rows + "</tbody></table>" +
     '<p class="hint" style="margin-top:8px">' + (pathMode

@@ -490,6 +490,40 @@ describe("Device Map widget — location chips, pins and rotation", () => {
     unmount();
   });
 
+  it("the chips are one strip with a divider where the page breaks a row, and the wheel scrolls it sideways", async () => {
+    floorViews = VIEWS;
+    const { el, unmount } = render({});
+    await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
+    // The fake switcher answers two rows (Base, then every location): one
+    // strip, the page's row break a divider.
+    const strip = el.querySelector(".devmap-topo-views") as HTMLElement & { dispatchEvent: (e: Event) => boolean };
+    expect(strip.querySelectorAll(".topology-floor-row")).toHaveLength(0);
+    const order = Array.from(strip.children).map((c) => (c.classList.contains("devmap-chip-sep") ? "|" : c.textContent));
+    expect(order).toEqual(["Base", "|", "Mine", "Mine — B1", "Yard", "Yard — Scale"]);
+
+    // happy-dom lays nothing out: give the strip a window narrower than its row.
+    Object.defineProperty(strip, "scrollWidth", { value: 600, configurable: true });
+    Object.defineProperty(strip, "clientWidth", { value: 200, configurable: true });
+    const wheel = (deltaY: number, deltaX = 0) => {
+      const e = new win.WheelEvent("wheel", { deltaY, deltaX, cancelable: true, bubbles: true });
+      strip.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(wheel(100)).toBe(true);        // a vertical notch scrolls sideways
+    expect(strip.scrollLeft).toBe(100);
+    expect(wheel(-30)).toBe(true);
+    expect(strip.scrollLeft).toBe(70);
+    expect(wheel(5, 1000)).toBe(true);    // the larger delta wins, clamped to the end
+    expect(strip.scrollLeft).toBe(400);
+    expect(strip.classList.contains("is-overflow-l")).toBe(true);
+    expect(strip.classList.contains("is-overflow-r")).toBe(false);
+
+    // A strip that fits leaves the wheel to the page.
+    Object.defineProperty(strip, "scrollWidth", { value: 200, configurable: true });
+    expect(wheel(100)).toBe(false);
+    unmount();
+  });
+
   it("an older widget whose gear set a rotation period opens rotating", async () => {
     floorViews = VIEWS;
     const { el, unmount } = render({ topologyLock: ["a|mine", "a|yard"], topologyRotateSec: 15 });

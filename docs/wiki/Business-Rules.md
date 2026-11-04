@@ -1552,9 +1552,8 @@ that is monitored or has credentials attached, Polaris records the MAC as
 not the type, location or users. Otherwise it would start polling the newcomer
 with that asset's credentials. Each case writes a
 `discovery.hostname_adopt_refused` warning on the asset. An unverified MAC is
-never used to recognise the device on a later run. Assets that are neither
-monitored nor credentialed keep matching by name, so a laptop's Wi-Fi and
-wired addresses still land on one card.
+never used to recognise the device on a later run. Since 91(f), below, a DHCP
+hostname no longer matches any asset at all, so this case no longer arises.
 
 **91(c) A managed switch or access point is recognised by its serial on its
 own address.** A FortiSwitch or FortiAP takes its management address by DHCP
@@ -1593,6 +1592,30 @@ gate's sources name two different MACs for the address, or when two access
 points on the gate report the same address. An access point is never matched
 to another asset by address alone. 192.168.1.2, the FortiAP factory default, is
 in use behind many gates at once.
+
+**91(f) Devices that share a hostname are never merged for it.** Whole product
+lines send the same name in their DHCP requests: every iPhone sends `iPhone`,
+every ESP32 board sends `espressif`, and a time-clock model can send its model
+name. Polaris used to attach a newcomer's MAC and address to whichever asset
+already had the name, so a single asset could collect dozens of devices. Now:
+
+- A DHCP lease or detected-device entry is matched to an asset only by its MAC
+  (or, for a managed switch or access point, by its serial on its own address,
+  91(c)). An entry with an unknown MAC becomes its own asset, even when another
+  asset has the same name.
+- The duplicate cleanup that runs every 30 minutes leaves a set of same-named
+  assets alone when two of them have different MACs, or when more than three
+  assets share the name.
+
+The trade-off: a phone that changes its private MAC, or a laptop with both a
+wired and a Wi-Fi connection, can show as two assets until a directory record,
+the Polaris Agent or an operator merge links them (select both on the Assets
+page and choose **Merge**).
+
+Assets merged together before this change keep the MACs and addresses they
+collected. To separate one, remove the extra MACs from the asset
+([Rule 79](#rule-79)) or delete it. The next discovery run then creates one
+asset per device.
 
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is

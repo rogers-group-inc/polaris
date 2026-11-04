@@ -738,13 +738,13 @@ var _rulesPage = 1;
     };
     tbody.innerHTML = pageRows.map(function (r) {
       // The row's verbs live behind the name (Edit / Clone / Delete) instead of
-      // an Actions column. Without edit rights there's nothing to offer, so the
-      // name stays plain text rather than a control that opens an empty menu.
-      var nameCell = canEditRules
-        ? '<button type="button" class="row-menu-trigger rule-menu" data-id="' + r.id + '" ' +
-            'aria-haspopup="menu" aria-expanded="false" title="Actions for this automation">' +
-            escapeHtml(r.name) + '</button>'
-        : escapeHtml(r.name);
+      // an Actions column. Without edit rights the menu still opens — View (the
+      // wizard in read-only mode), View code, Export — so a read-level role can
+      // see how an automation is configured.
+      var nameCell =
+        '<button type="button" class="row-menu-trigger rule-menu" data-id="' + r.id + '" ' +
+            'aria-haspopup="menu" aria-expanded="false" title="' + (canEditRules ? "Actions for this automation" : "View this automation") + '">' +
+            escapeHtml(r.name) + '</button>';
       // Enabled toggle — interactive switch for rule editors; static label otherwise.
       var enabledCell = canEditRules
         ? '<label class="toggle-switch" title="' + (r.enabled ? "Enabled — click to disable" : "Disabled — click to enable") + '">' +
@@ -804,6 +804,13 @@ var _rulesPage = 1;
       b.addEventListener("click", function () {
         var r = _rules.find(function (x) { return x.id === b.dataset.id; });
         if (!r) return;
+        if (!canEditRules) {
+          var viewItems = [
+            { label: "View", primary: true, title: "See how this automation is configured", onSelect: function () { openWizardFor(r, { readOnly: true }); } },
+          ].concat(portabilityMenuItems(r));
+          showRowMenu(b, viewItems, { label: "Actions for " + r.name });
+          return;
+        }
         showRowMenu(b, [
           { label: "Edit", primary: true, onSelect: function () { openWizardFor(r); } },
           {

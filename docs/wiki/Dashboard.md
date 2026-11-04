@@ -218,9 +218,12 @@ legend leaves out the hidden types. Every type is shown until you untick it.
 **Locations.** When the site's devices carry location codes (`a:` area,
 `b:` building, `f:` floor in their descriptions), the topology shows the same
 location chips as the Device Map page: **Base** for the whole site, then its
-areas, then the buildings and floors of the one you pick. Each location is
-drawn with the layout saved for it on the Device Map page. A dashed stub
-standing for a device elsewhere opens that location when you click it.
+areas, then the buildings and floors of the one you pick, with a › between
+each level. The chips sit in one row that never wraps: when there are more
+than fit, the row fades at the edge it continues past, and the mouse wheel
+scrolls it sideways. Each location is drawn with the layout saved for it on
+the Device Map page. A dashed stub standing for a device elsewhere opens that
+location when you click it.
 
 **Pinned locations.** On a one-gate widget, every location chip carries a
 small pin while you are *not* customizing. Click it to pin that location;

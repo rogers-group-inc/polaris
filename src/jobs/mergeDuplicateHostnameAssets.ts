@@ -81,10 +81,13 @@
  *   6 — manual                               (Phase-1 backfill placeholder)
  *   7 — no source rows                       (orphan)
  *
- * Tie-safety: if two rows are tied at the same tier AND both have non-null
- * primary MACs that DON'T MATCH, the group is skipped (genuine "two
- * different devices sharing a hostname"). Logged at warn with the asset
- * ids so an operator can decide.
+ * Refusals (business rule 91 / 91(f)): the group is skipped when any two rows
+ * carry non-null primary MACs that DON'T MATCH, at ANY tier; when two usable
+ * serials differ; or when more than MAX_PLAUSIBLE_HOSTNAME_DUPLICATES (3)
+ * rows share the name — a shared default ("iPhone", "espressif"), not ghosts.
+ * Logged at warn with the asset ids so an operator can decide. Until
+ * 2026-11-04 the MAC check ran only between rows tied at one tier, so an
+ * Intune "iPhone" absorbed every DHCP-discovered "iPhone" in the fleet.
  *
  * SCOPE OF WHAT FOLLOWS: the side-table / cascade / absorption notes below
  * describe the HOSTNAME pass's executor (`mergeDuplicateHostnameGhost`). The

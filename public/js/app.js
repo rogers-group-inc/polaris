@@ -3804,6 +3804,56 @@ function _focusFirstIn(container) {
 var _modalReturnFocus = null;  // element refocused when the shared modal closes
 var _modalKeyTeardown = null;  // active focus-trap teardown for the shared modal
 var _modalStepKeyTeardown = null; // active stepper-key teardown for the shared modal
+var _modalReadOnlyTeardown = null; // active read-only lock on the shared modal (openModal options.readOnly)
+
+/**
+ * Lock the shared modal's body for VIEWING: every field is disabled, every
+ * body button is hidden (styles.css → .modal.modal-readonly) except those
+ * marked `data-ro-keep` (fold chevrons, View code, Export), and drags are
+ * refused. A MutationObserver re-applies it to whatever the dialog renders
+ * later — a wizard builds steps on entry and re-renders rows — so the lock
+ * cannot be outrun by content that did not exist when the modal opened.
+ * Returns the teardown; openModal / closeModal call it.
+ */
+function _lockModalReadOnly(modal) {
+  var body = modal.querySelector(".modal-body");
+  modal.classList.add("modal-readonly");
+  function lock(root) {
+    if (!root || !root.querySelectorAll) return;
+    var fields = root.matches && root.matches("input, select, textarea") ? [root] : [];
+    root.querySelectorAll("input, select, textarea").forEach(function (el) { fields.push(el); });
+    fields.forEach(function (el) {
+      // Only when it is not already: re-setting an attribute queues another
+      // mutation record, and the observer below would chase its own tail.
+      if (el.hasAttribute("data-ro-keep") || el.disabled) return;
+      el.disabled = true;
+    });
+    root.querySelectorAll('[contenteditable]:not([contenteditable="false"])').forEach(function (el) { el.setAttribute("contenteditable", "false"); });
+    var drags = root.getAttribute && root.getAttribute("draggable") === "true" ? [root] : [];
+    root.querySelectorAll('[draggable="true"]').forEach(function (el) { drags.push(el); });
+    drags.forEach(function (el) { el.setAttribute("draggable", "false"); });
+  }
+  lock(body);
+  // Added nodes AND re-enabled fields: the dialog's own sync code flips
+  // `.disabled` by property as it reacts to state (a wizard toggles a checkbox
+  // on when its trigger qualifies), which removes the attribute.
+  var obs = new MutationObserver(function (records) {
+    records.forEach(function (r) {
+      if (r.type === "attributes") { lock(r.target); return; }
+      r.addedNodes.forEach(function (n) { if (n.nodeType === 1) lock(n); });
+    });
+  });
+  obs.observe(body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "draggable"] });
+  function refuse(e) { e.preventDefault(); e.stopPropagation(); }
+  body.addEventListener("dragstart", refuse, true);
+  body.addEventListener("drop", refuse, true);
+  return function () {
+    obs.disconnect();
+    body.removeEventListener("dragstart", refuse, true);
+    body.removeEventListener("drop", refuse, true);
+    modal.classList.remove("modal-readonly");
+  };
+}
 
 // ─── Stepped-modal keyboard navigation ────────────────────────────────────────
 //
@@ -4852,9 +4902,12 @@ function openModal(title, bodyHTML, footerHTML, options) {
   if (options && options.wide) modal.classList.add("modal-wide");
   if (options && options.large) modal.classList.add("modal-large");
   if (options && options.xl) modal.classList.add("modal-xl");
+  if (_modalReadOnlyTeardown) { _modalReadOnlyTeardown(); _modalReadOnlyTeardown = null; }
   overlay.querySelector(".modal-header h3").textContent = title;
   overlay.querySelector(".modal-body").innerHTML = bodyHTML;
   overlay.querySelector(".modal-footer").innerHTML = footerHTML || "";
+  // A view-only dialog (e.g. an automation opened by a role without write).
+  if (options && options.readOnly) _modalReadOnlyTeardown = _lockModalReadOnly(modal);
   var slideoverOpen = !!document.querySelector(".slideover-overlay.open");
   overlay.classList.toggle("above-slideover", slideoverOpen);
   if (typeof initPanelLock === "function") {
@@ -4892,6 +4945,7 @@ function closeModal() {
   }
   if (_modalKeyTeardown) { _modalKeyTeardown(); _modalKeyTeardown = null; }
   if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
+  if (_modalReadOnlyTeardown) { _modalReadOnlyTeardown(); _modalReadOnlyTeardown = null; }
   if (_modalReturnFocus && typeof _modalReturnFocus.focus === "function") {
     try { _modalReturnFocus.focus(); } catch (_) { /* element gone */ }
   }
