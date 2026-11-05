@@ -6937,11 +6937,24 @@ function _agentStatusLabel(s) {
   }
 }
 
+// The SAME mapping as agent-build.js → _agentStatusBadge (the Agents settings
+// page): a status reads the same colour wherever it is shown (CQ-F021 — an
+// upgrade_failed agent read red there and grey here). tests/unit/
+// agentStatusColorParity.test.ts fails if the two drift apart.
 function _agentStatusColor(s) {
-  if (s === "active") return "var(--color-success)";
-  if (s === "failed" || s === "uninstall_failed") return "var(--color-danger)";
-  if (s === "revoked") return "var(--color-warning)";
-  return "var(--color-text-secondary)";
+  switch (s) {
+    case "active":            return "var(--color-success)";
+    case "failed":
+    case "upgrade_failed":
+    case "uninstall_failed":  return "var(--color-danger)";
+    case "revoked":           return "var(--color-warning)";
+    case "pending":
+    case "uploading":
+    case "enrolling":
+    case "upgrading":
+    case "uninstalling":      return "var(--color-accent)";
+    default:                  return "var(--color-text-tertiary)";
+  }
 }
 
 // Asset-source kinds the agent can be installed on — mirrors the "agent"
