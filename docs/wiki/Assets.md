@@ -962,6 +962,11 @@ of the combined CPU & Memory chart (prefixed *Memory —* there).
   Processes band, so page cache never reads as a leak.
 - It needs **7 days** of history before it says anything; until then the
   headline reads *Forecast needs 7 days of history — N so far*.
+- A **reboot restarts the forecast**: memory before the restart says nothing
+  about the host after it. Polaris knows the device rebooted from its
+  uptime, and fits only the days since. Until there are 7 of them again the
+  headline reads *Forecast restarted at the reboot on Nov 5 — needs 7 days
+  of history — N so far*.
 - When a **Memory utilization** automation covers the device, the headline
   counts down to that automation's **next level** instead of to full, in that
   level's severity colour. For example, *Days until Serious: 12 · trend:

@@ -98,6 +98,13 @@ a day raises a **serious** alert reading *COWAN-61F-1 — Days until Serious:
 because the memory utilization automation already says so. A level due later
 than the window says nothing yet.
 
+A **reboot restarts the forecast**. Restarting a host empties its memory, so
+the trend before it no longer applies. Polaris sees the reboot in the
+device's uptime, fits only the days since, and ends a forecast alert that
+is up. It has no forecast again until it has 7 days of history of its own.
+This applies to **Days until memory full** too. A device that reports no
+uptime (ICMP, SSH or WinRM probes alone) keeps its 30-day trend.
+
 The countdown stays current while the alert is up. Each day the trend holds,
 the same alert's message and the reminders it sends move on: *Days until
 Serious: 10* becomes *9*, then *8*. This is not a new alert and nothing is
