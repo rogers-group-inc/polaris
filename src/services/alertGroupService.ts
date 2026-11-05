@@ -39,6 +39,7 @@ import { logEvent } from "./eventLogService.js";
 import { assertActionRefs } from "./notificationRuleService.js";
 import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
 import { triggerCanJoinGroup, foldSpansDevices, normalizeRuleToV2, type Trigger, type AlertGroupFoldBy } from "./notificationTypes.js";
+import { jsonEqual } from "../utils/jsonEqual.js";
 
 export interface AlertGroupInput {
   name: string;
@@ -214,8 +215,10 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   //
   // Compared as JSON rather than by identity: the editor posts a rebuilt tree
   // on every save, so a reference check would retire every alert on every
-  // save of an unrelated field.
-  if (JSON.stringify(existing.scope ?? null) !== JSON.stringify(input.scope ?? null)) {
+  // save of an unrelated field. And key-order-blind (jsonEqual): the stored
+  // scope comes back from jsonb with its keys reordered, so a plain string
+  // compare retired them anyway (CQ-B054).
+  if (!jsonEqual(existing.scope ?? null, input.scope ?? null)) {
     await retireGroupAlerts(id, "system:group-rescoped");
   } else if (existing.foldBy !== foldBy) {
     // A new fold changes what ONE alert is: a live alert per device

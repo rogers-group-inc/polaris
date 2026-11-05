@@ -61,6 +61,7 @@ import { buildCidrMatcher } from "../utils/cidr.js";
 import { controllerIdentityKeys, readFirewallDeviceName } from "../utils/fortinetParentKey.js";
 import { buildRegionHierarchy, type RegionHierarchy } from "../utils/regionHierarchy.js";
 import { createTtlCache } from "../utils/ttlCache.js";
+import { jsonEqual } from "../utils/jsonEqual.js";
 
 const SETTING_KEY = "mapRegions";
 /**
@@ -945,7 +946,7 @@ export async function updateRegion(
     }
 
     const polygonChanged =
-      input.polygon !== undefined && JSON.stringify(polygon) !== JSON.stringify(existing.polygon);
+      input.polygon !== undefined && !jsonEqual(polygon, existing.polygon);
 
     const updated: MapRegion = {
       ...existing,

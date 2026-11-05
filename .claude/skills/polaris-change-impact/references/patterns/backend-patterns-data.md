@@ -248,3 +248,13 @@ Docs a new table owes: an the skill references (formerly ARCHITECTURE.md) "Core 
 - Mirror any mode-set change into the client's label/needs-values tables (`STATE_MODE_LABELS`, `STATE_MODES_WITH_VALUES`, `_stateMapSummary` in `public/js/server-settings.js`).
 
 ---
+
+## "Did this stored JSON blob change?" (compare key-order-blind)
+
+**Canonical:** `src/utils/jsonEqual.ts → jsonEqual(a, b)`. Every change-detection check on a Prisma `Json` column — skip a write when nothing moved, retire only on a real reshape, log a change set — compares through it.
+
+- **Never `JSON.stringify(a) !== JSON.stringify(b)` against a value read from the database.** A `Json` column is PostgreSQL `jsonb`, which stores object keys in its own order (shorter keys first, then bytewise): `{"field","op","value"}` comes back as `{"op","field","value"}`. The string compare then reports a change on EVERY pass — CQ-B054 (2026-11-05) found it rewriting every directory provenance row on every sync, refreshing every pending duplicate-reservation conflict every pass, and retiring a group's live alerts on unrelated saves.
+- `jsonEqual` keeps JSON semantics otherwise: arrays stay order-sensitive (a reordered list IS a change), `undefined` drops, a Date compares as its ISO string.
+- A regression test stores the blob with its keys reversed and asserts no write — `tests/unit/directorySyncRun.test.ts` ("keys reordered") is the model; it fails against the string compare.
+
+---

@@ -20,6 +20,7 @@
 
 import { prisma } from "../db.js";
 import { logEventsBatch, type LogEventInput } from "./eventLogService.js";
+import { jsonEqual } from "../utils/jsonEqual.js";
 
 export const CREDENTIAL_USED_ACTION = "credential.used";
 export const CREDENTIAL_BORROWED_ACTION = "credential.borrowed";
@@ -186,7 +187,7 @@ export function scanCredentialUses(
   const ids = scanCredentialIds(after.methods);
   if (!before || run) return ids.map((credentialId) => ({ credentialId, destination }));
   const targetsMoved = summarizeTargets(before.targets) !== destination
-    || JSON.stringify(before.targets ?? null) !== JSON.stringify(after.targets ?? null);
+    || !jsonEqual(before.targets ?? null, after.targets ?? null);
   const had = new Set(scanCredentialIds(before.methods));
   return ids.filter((id) => targetsMoved || !had.has(id)).map((credentialId) => ({ credentialId, destination }));
 }
