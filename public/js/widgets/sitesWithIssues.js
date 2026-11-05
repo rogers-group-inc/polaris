@@ -97,10 +97,10 @@
       var current = data || [];
       render(el, current, config);
       wire(el, function () { return current; }, config);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         PolarisWidgets.getNocSummary(PolarisWidgets.nocFilterOpts(config), ["sitesWithIssues"]).then(function (d) { current = (d && d.sitesWithIssues) || []; render(el, current, config); }).catch(function () {});
       }, PolarisWidgets.REFRESH.normal);
-      ctx.onUnmount(function () { clearInterval(timer); _state.delete(el); });
+      ctx.onUnmount(function () { _state.delete(el); });
     },
 
     renderPreview: function (el) {

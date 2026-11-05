@@ -84,10 +84,9 @@
 
     renderInstance: function (el, config, data, ctx) {
       renderTiles(el, data, config);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         PolarisWidgets.getNocSummary(PolarisWidgets.nocFilterOpts(config), ["status"]).then(function (d) { renderTiles(el, d, config); }).catch(function () {});
       }, PolarisWidgets.REFRESH.normal);
-      ctx.onUnmount(function () { clearInterval(timer); });
     },
 
     renderPreview: function (el) {

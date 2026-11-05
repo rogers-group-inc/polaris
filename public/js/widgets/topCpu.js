@@ -34,10 +34,9 @@
 
     renderInstance: function (el, config, data, ctx) {
       render(el, config, data);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         PolarisWidgets.getNocSummary(PolarisWidgets.nocFilterOpts(config), ["topCpu"]).then(function (d) { render(el, config, (d && d.topCpu) || []); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
-      ctx.onUnmount(function () { clearInterval(timer); });
     },
 
     renderPreview: function (el) {

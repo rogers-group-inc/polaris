@@ -349,9 +349,8 @@
       el.addEventListener("click", onClick);
       // `normal`: a window's end is minutes away at the closest, and the
       // countdown is re-derived on every paint from the instant the feed sent.
-      var timer = setInterval(refresh, PolarisWidgets.REFRESH.normal);
+      PolarisWidgets.pollVisible(ctx, refresh, PolarisWidgets.REFRESH.normal);
       ctx.onUnmount(function () {
-        clearInterval(timer);
         if (settleTimer) clearTimeout(settleTimer);
         el.removeEventListener("click", onClick);
       });

@@ -75,8 +75,7 @@
 
     renderInstance: function (el, _config, data, ctx) {
       renderRows(el, runsOf(data));
-      var timer = setInterval(function () {
-        if (document.hidden) return;
+      PolarisWidgets.pollVisible(ctx, function () {
         if (typeof window._getServerDiscoveries === "function") {
           renderRows(el, runsOf(window._getServerDiscoveries()));
           return;
@@ -85,7 +84,6 @@
           .then(function (next) { renderRows(el, runsOf(next)); })
           .catch(function () {});
       }, PolarisWidgets.REFRESH.fast);
-      ctx.onUnmount(function () { clearInterval(timer); });
     },
 
     renderPreview: function (el) {

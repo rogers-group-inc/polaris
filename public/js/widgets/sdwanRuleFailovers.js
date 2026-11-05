@@ -136,10 +136,10 @@
         PolarisWidgets.openAssetDetail(link.getAttribute("data-asset-id"), { tab: "sdwan" });
       };
       el.addEventListener("click", onClick);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         fetchRows(config).then(function (rows) { render(el, rows, config); }).catch(function () {});
       }, PolarisWidgets.REFRESH.normal);
-      ctx.onUnmount(function () { clearInterval(timer); el.removeEventListener("click", onClick); });
+      ctx.onUnmount(function () { el.removeEventListener("click", onClick); });
     },
 
     renderPreview: function (el) {

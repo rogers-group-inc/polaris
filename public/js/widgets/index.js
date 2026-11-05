@@ -137,6 +137,39 @@
   // progress readout; do not copy the pattern to a widget that needs fresh data.
   window.PolarisWidgets.REFRESH = { fast: 10000, normal: 30000, slow: 60000 };
 
+  // A widget's refresh loop: EVERY periodic data read in a widget goes through
+  // this, never a bare setInterval (CQ-F040). A hidden tab (another browser
+  // tab, a minimised window, a wallboard screen that went to sleep) skips its
+  // ticks — 31 widgets polling on 30 s / 60 s whether or not anyone was looking
+  // was server load for nothing. Coming back refreshes at once only when a tick
+  // was actually skipped, so a quick tab switch does not fire every widget on
+  // the dashboard together. The timer and the visibility listener are both
+  // released through ctx.onUnmount; the returned function stops it early.
+  // app.js keeps its own pollVisible for the sidebar pollers: most pages that
+  // load app.js never load this file, and /dash loads this one without app.js.
+  window.PolarisWidgets.pollVisible = function (ctx, fn, ms) {
+    var missed = false;
+    var stopped = false;
+    var timer = setInterval(function () {
+      if (document.hidden) { missed = true; return; }
+      fn();
+    }, ms);
+    function onVisibility() {
+      if (document.hidden || !missed) return;
+      missed = false;
+      fn();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    }
+    if (ctx && typeof ctx.onUnmount === "function") ctx.onUnmount(stop);
+    return stop;
+  };
+
   // Shared NOC-summary accessor. Each widget fetches ONLY its own feed(s)
   // (?feeds=topCpu) so it renders as soon as its data exists instead of
   // gating on the slowest feed in a monolithic payload. Results are memoized
