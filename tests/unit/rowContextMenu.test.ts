@@ -613,7 +613,7 @@ describe("double click anywhere on a data-row-menu-row", () => {
 // open and the whole-row right-click menu; pin the count per file.
 describe("list pages that open on double click and menu on right click", () => {
   const cases: Array<[string, number]> = [
-    ["public/js/assets.js", 1],
+    ["public/js/assets.js", 2], // the Assets list + Firewall Sightings (a resolved gate's row)
     ["public/js/users.js", 3],
     ["public/js/automations.js", 1],
     ["public/js/blocks.js", 1],

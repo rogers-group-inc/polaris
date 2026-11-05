@@ -24106,9 +24106,31 @@ function _formatSourceObservedValue(v) {
     // Pretty-print ISO timestamps; raw-show short strings; mono-format obvious
     // identifiers so they're easy to read at a glance.
     if (/^\d{4}-\d{2}-\d{2}T/.test(v)) return escapeHtml(formatDate(v));
+    if (_isCopyableAddress(v)) return _sourceAddressCopyHTML(v);
     return escapeHtml(v);
   }
+  // A list of addresses (a source's MACs, its IPs): one click-to-copy value each.
+  if (Array.isArray(v) && v.length && v.every(function (x) { return typeof x === "string" && _isCopyableAddress(x); })) {
+    return v.map(_sourceAddressCopyHTML).join(", ");
+  }
   return '<code class="mono" style="font-size:0.78rem">' + escapeHtml(JSON.stringify(v)) + '</code>';
+}
+
+// Is this observed value an IP address (v4 / v6, optionally with a /prefix)
+// or a MAC address? Those are click-to-copy on the Sources tab. A shape check
+// only: the value is copied verbatim, never parsed (IP math lives server-side).
+var _SOURCE_IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\/\d{1,2})?$/;
+var _SOURCE_IPV6_RE = /^[0-9a-f:.]{2,45}(?:%[\w.-]+)?(?:\/\d{1,3})?$/i;
+var _SOURCE_MAC_RE = /^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$|^(?:[0-9a-f]{4}\.){2}[0-9a-f]{4}$/i;
+function _isCopyableAddress(v) {
+  var t = String(v).trim();
+  if (!t) return false;
+  if (_SOURCE_MAC_RE.test(t) || _SOURCE_IPV4_RE.test(t)) return true;
+  // IPv6: hex groups with "::" or all eight groups (so "12:30:45" is not one).
+  return _SOURCE_IPV6_RE.test(t) && (t.indexOf("::") !== -1 || (t.match(/:/g) || []).length === 7);
+}
+function _sourceAddressCopyHTML(v) {
+  return '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(v) + '">' + escapeHtml(v) + '</span>';
 }
 
 // Status pip rendered next to each row in the dependency tree. Mirrors the
@@ -24422,28 +24444,107 @@ function _wireDependencyTreeLinks(rootEl) {
 // Shared markup for the per-firewall DHCP sighting table. Used by the Sources
 // tab (general-visibility "found by N firewalls" history) and the Quarantine
 // tab's fan-out section.
+//
+// The FortiGate and VLAN cells are row-menu triggers: a click opens what they
+// name (the gate's asset, the network), a right click shows the menu (the
+// gate's Open HTTPS / Open SSH too). The server resolves each gate name to
+// its asset (`fortigateAsset`) and each address to its network (`subnetId`);
+// an unresolved one stays plain text. A row whose gate resolved carries the
+// row-menu-row marker, so a double click / right click anywhere on it is
+// the gate's. The IP is click-to-copy (the slide-over body's copy handler).
+var _sightingMenuRows = {};
+var _sightingMenuSeq = 0;
+
 function _sightingsTableHTML(rows) {
   if (!Array.isArray(rows) || !rows.length) {
     return '<p class="empty-state" style="margin:0">No firewall sightings recorded.</p>';
   }
   return '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>FortiGate</th><th>IP Address</th><th>VLAN</th><th>Source</th><th>Last Seen</th></tr></thead><tbody>' +
     rows.map(function (s) {
+      var key = "s" + (++_sightingMenuSeq);
+      _sightingMenuRows[key] = s;
+      var gateName = s.fortigateDevice || "?";
+      var gateRef = s.fortigateAsset && s.fortigateAsset.id ? s.fortigateAsset : null;
+      var gateCell = gateRef
+        ? '<button type="button" class="row-menu-trigger" aria-haspopup="menu" data-sighting-gate="' + key + '" title="Open this FortiGate. Right-click for more">' + escapeHtml(gateName) + '</button>'
+        : '<span title="No firewall in inventory matches this FortiGate name">' + escapeHtml(gateName) + '</span>';
       var vlanCell = "—";
       if (s.subnetName || s.vlan != null) {
         var parts = [];
         if (s.subnetName) parts.push(escapeHtml(s.subnetName));
-        if (s.vlan != null) parts.push("VLAN " + s.vlan);
+        if (s.vlan != null) parts.push("VLAN " + escapeHtml(String(s.vlan)));
         vlanCell = parts.join(" · ");
+        if (s.subnetId && _canOpenSightingNetwork()) {
+          vlanCell = '<button type="button" class="row-menu-trigger" aria-haspopup="menu" data-sighting-net="' + key + '" title="Open this network. Right-click for more">' + vlanCell + '</button>';
+        }
       }
-      return '<tr>' +
-        '<td>' + escapeHtml(s.fortigateDevice || "?") + '</td>' +
-        '<td>' + escapeHtml(s.ipAddress || "—") + '</td>' +
+      var ipCell = s.ipAddress
+        ? '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(s.ipAddress) + '">' + escapeHtml(s.ipAddress) + '</span>'
+        : "—";
+      return (gateRef ? '<tr data-row-menu-row>' : '<tr>') +
+        '<td>' + gateCell + '</td>' +
+        '<td>' + ipCell + '</td>' +
         '<td>' + vlanCell + '</td>' +
         '<td><span class="badge badge-type">' + escapeHtml(s.source || "?") + '</span></td>' +
         '<td>' + (s.lastSeen ? formatDate(s.lastSeen) : "—") + '</td>' +
       '</tr>';
     }).join("") +
     '</tbody></table>';
+}
+
+// Opening a network panel reads the network list (subnets:read); without it
+// the VLAN stays plain text rather than offering a panel that 403s.
+function _canOpenSightingNetwork() {
+  return typeof permAtLeast === "function" && permAtLeast("subnets", "read") &&
+    typeof PolarisPanels !== "undefined" && typeof PolarisPanels.openNetwork === "function";
+}
+
+function _sightingGateMenuItems(s) {
+  var items = _upstreamMenuItems(s.fortigateAsset);
+  if (!items.length) return items;
+  items.push({ separator: true });
+  items.push({
+    label: "Copy name",
+    onSelect: function () { copyTextToClipboard(s.fortigateDevice || ""); },
+  });
+  return items;
+}
+
+function _sightingNetworkMenuItems(s) {
+  var label = s.subnetName || (s.vlan != null ? "VLAN " + s.vlan : "network");
+  return [
+    {
+      label: "Open network",
+      primary: true,
+      title: "Open " + label + " in its network panel",
+      onSelect: function () { PolarisPanels.openNetwork(s.subnetId); },
+    },
+    { separator: true },
+    {
+      label: "Copy name",
+      onSelect: function () { copyTextToClipboard(label); },
+    },
+  ];
+}
+
+// One document listener for every rendered sightings table (Sources tab,
+// Quarantine tab). Guarded so a second evaluation of this file can't stack it.
+if (typeof document !== "undefined" && document.addEventListener && typeof window !== "undefined" && !window.__polarisSightingMenus) {
+  window.__polarisSightingMenus = true;
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    var btn = t && typeof t.closest === "function" ? t.closest("[data-sighting-gate], [data-sighting-net]") : null;
+    if (!btn) return;
+    var gateKey = btn.getAttribute("data-sighting-gate");
+    var s = _sightingMenuRows[gateKey || btn.getAttribute("data-sighting-net")];
+    if (!s) return;
+    e.preventDefault();
+    if (gateKey) {
+      showRowMenu(btn, _sightingGateMenuItems(s), { label: "Actions for " + (s.fortigateDevice || "FortiGate") });
+    } else {
+      showRowMenu(btn, _sightingNetworkMenuItems(s), { label: "Actions for " + (s.subnetName || "network") });
+    }
+  });
 }
 
 // Shared markup for the IP-history table (IPs this asset has held over time).
@@ -24458,7 +24559,7 @@ function _ipHistoryTableHTML(rows) {
       var net = h.network || null;
       var vlanTitle = net ? ' title="' + escapeHtml((net.name || "") + (net.cidr ? " " + net.cidr : "")) + '"' : '';
       return '<tr>' +
-        '<td class="mono">' + escapeHtml(h.ip || "-") + '</td>' +
+        '<td>' + (h.ip ? '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(h.ip) + '">' + escapeHtml(h.ip) + '</span>' : "-") + '</td>' +
         '<td' + vlanTitle + '>' + (h.vlan != null ? escapeHtml(String(h.vlan)) : "-") + '</td>' +
         '<td>' + (h.firstSeen ? escapeHtml(formatDate(h.firstSeen)) : "-") + '</td>' +
         '<td>' + (h.lastSeen ? escapeHtml(formatDate(h.lastSeen)) : "-") + '</td>' +
