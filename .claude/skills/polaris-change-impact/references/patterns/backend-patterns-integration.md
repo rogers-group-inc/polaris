@@ -44,7 +44,7 @@ Verbatim from TOUCHES.md → Canonical backend patterns.
 - **`.reset()` before re-stamping volatile label sets.** When the set of label values is computed each tick (volumes from statfs, sample tables from pg_class), call `metric.reset()` first so dropped values don't leave orphan series. Don't `.reset()` for stable label sets (cadences, transports, queues).
 - **Histograms observe successful work only.** Failures / aborts / errors increment a counter (`polaris_*_total{outcome}`) without polluting the latency distribution. Achieved by structuring the helper as `startTimer() ... await op() ... stop()` — a throw before `stop()` drops the observation.
 - **HTTP middleware uses `req.route?.path` at finish time.** Captured in `res.once("finish", ...)` so the Express router has had a chance to match. Unmatched paths roll up to `"unmatched"`. Combine with `req.baseUrl` for routers mounted on a sub-path. `/metrics` and `/health` are explicitly skipped so scrape requests don't show up as application traffic.
-- **`runInstrumentedJob(name, fn)` for periodic jobs.** Wraps the tick body without changing existing error semantics — thrown errors propagate to the caller's existing try/catch. Job names are stable, machine-readable identifiers; multi-tick modules use `<module>.<loop>` (e.g. `monitorAssets.probe` / `monitorAssets.heavy`).
+- **`defineJob({ name, … })` for periodic jobs (it calls `runInstrumentedJob(name, fn)` for you; CQ-B041).** Wraps the tick body without changing existing error semantics — thrown errors propagate to the caller's existing try/catch. Job names are stable, machine-readable identifiers; multi-tick modules use `<module>.<loop>` (e.g. `monitorAssets.probe` / `monitorAssets.heavy`).
 - **Documentation in two places.** Every new metric family gets a one-paragraph entry in CLAUDE.md's Observability section AND a writers/readers/invariants entry in polaris-change-impact's `cross-cutting/observability-metrics`.
 
 **When adding a new metric:**
@@ -55,7 +55,7 @@ Verbatim from TOUCHES.md → Canonical backend patterns.
 - Add the documentation entries (CLAUDE.md Observability + polaris-change-impact cross-cutting/observability-metrics) in the same commit.
 
 **When instrumenting a new job:**
-- Wrap the tick body in `runInstrumentedJob("name", async () => { ... })`. Keep the existing outer try/catch for error logging — the helper's catch re-throws so log paths are preserved.
+- Define the job with `defineJob` from `src/jobs/_defineJob.ts`; it wraps the tick in `runInstrumentedJob`, logs a failed tick at error as `{ err, job }`, and skips a tick while the previous one runs. Only a one-shot or irregular job wraps its body in `runInstrumentedJob("name", async () => { ... })` directly.
 - Pick a stable, machine-readable name (no spaces, no version suffixes, no UUIDs). One-shot startup migrations use the module basename; multi-tick modules use `<module>.<loop>`.
 - If the new job ships with the same commit that adds an unrelated capability, the metric label is one observation that confirms the job is actually firing on a real install — useful smoke check during the first deploy.
 

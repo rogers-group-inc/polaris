@@ -10,22 +10,17 @@
  * Import this module from src/app.ts (startBackgroundJobs) to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { runEscalationSweep } from "../services/notificationEscalationService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 60 * 1000; // 1 minute
 
-async function runEscalateNotifications(): Promise<void> {
-  try {
-    await runInstrumentedJob("escalateNotifications", async () => {
-      await runEscalationSweep();
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "escalateNotifications job failed (non-fatal)");
-  }
-}
-
 // Boot delay so the DB is ready; offset from the evaluate tick.
-setTimeout(runEscalateNotifications, 45_000);
-setInterval(runEscalateNotifications, INTERVAL_MS);
+defineJob({
+  name: "escalateNotifications",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 45_000,
+  run: async () => {
+    await runEscalationSweep();
+  },
+});

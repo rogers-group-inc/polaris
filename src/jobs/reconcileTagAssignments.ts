@@ -17,54 +17,44 @@
  * asset merged away, or an Arc integration disabled or deleted, whose runs
  * would otherwise never prune again.
  *
- * Independent `running` guard. Failures are logged at debug and never thrown.
+ * defineJob (src/jobs/_defineJob.ts) skips a tick while the previous one is
+ * still running, and logs a failed tick at error as { err, job }; it never throws.
  *
  * Import this module from src/app.ts to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { reconcileAllTags, syncAzureTagRegistry } from "../services/tagAssignmentService.js";
 import { logEvent } from "../services/eventLogService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 6 * 60 * 60 * 1000;
 const STARTUP_DELAY_MS = 90 * 1000;
 
-let running = false;
-
-async function tick(): Promise<void> {
-  if (running) return;
-  running = true;
-  try {
-    await runInstrumentedJob("reconcileTagAssignments", async () => {
-      const summary = await reconcileAllTags();
-      const inherited = (summary.networkAdded ?? 0) + (summary.networkRemoved ?? 0) +
-        (summary.networkPortsAdded ?? 0) + (summary.networkPortsRemoved ?? 0);
-      if (summary.added > 0 || summary.removed > 0 || inherited > 0) {
-        logEvent({
-          action: "tag.assignments_reconciled",
-          resourceType: "tag",
-          message: `Periodic tag reconcile: +${summary.added} / -${summary.removed}` +
-            (inherited > 0 ? `; network tags on switches +${summary.networkAdded ?? 0} / -${summary.networkRemoved ?? 0}, ports +${summary.networkPortsAdded ?? 0} / -${summary.networkPortsRemoved ?? 0}` : ""),
-          details: summary,
-        });
-      }
-      const azure = await syncAzureTagRegistry();
-      if (azure.removed > 0) {
-        logEvent({
-          action: "tag.azure_pruned",
-          resourceType: "tag",
-          message: `Removed ${azure.removed} Azure tag(s) no asset carries any more`,
-          details: azure,
-        });
-      }
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message ?? String(err) }, "reconcileTagAssignments tick failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
-
-setTimeout(tick, STARTUP_DELAY_MS);
-setInterval(tick, INTERVAL_MS);
+defineJob({
+  name: "reconcileTagAssignments",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: STARTUP_DELAY_MS,
+  run: async () => {
+    const summary = await reconcileAllTags();
+    const inherited = (summary.networkAdded ?? 0) + (summary.networkRemoved ?? 0) +
+      (summary.networkPortsAdded ?? 0) + (summary.networkPortsRemoved ?? 0);
+    if (summary.added > 0 || summary.removed > 0 || inherited > 0) {
+      logEvent({
+        action: "tag.assignments_reconciled",
+        resourceType: "tag",
+        message: `Periodic tag reconcile: +${summary.added} / -${summary.removed}` +
+          (inherited > 0 ? `; network tags on switches +${summary.networkAdded ?? 0} / -${summary.networkRemoved ?? 0}, ports +${summary.networkPortsAdded ?? 0} / -${summary.networkPortsRemoved ?? 0}` : ""),
+        details: summary,
+      });
+    }
+    const azure = await syncAzureTagRegistry();
+    if (azure.removed > 0) {
+      logEvent({
+        action: "tag.azure_pruned",
+        resourceType: "tag",
+        message: `Removed ${azure.removed} Azure tag(s) no asset carries any more`,
+        details: azure,
+      });
+    }
+  },
+});

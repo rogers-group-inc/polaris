@@ -15,23 +15,19 @@
  */
 
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import { reconcilePrimaryIpv6 } from "../services/primaryIpv6Service.js";
 
 const INTERVAL_MS = 10 * 60 * 1000;
 const FIRST_RUN_DELAY_MS = 120_000;
 
-async function reconcilePrimaryIpv6Job(): Promise<void> {
-  try {
-    await runInstrumentedJob("reconcilePrimaryIpv6", async () => {
-      const result = await reconcilePrimaryIpv6();
-      if (result.changed || result.cleared) logger.info(result, "primary IPv6 addresses re-chosen");
-    });
-  } catch (err) {
-    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "reconcilePrimaryIpv6 failed");
-  }
-}
-
 // Delayed first run: let the first interface scrapes land.
-setTimeout(reconcilePrimaryIpv6Job, FIRST_RUN_DELAY_MS);
-setInterval(reconcilePrimaryIpv6Job, INTERVAL_MS);
+defineJob({
+  name: "reconcilePrimaryIpv6",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    const result = await reconcilePrimaryIpv6();
+    if (result.changed || result.cleared) logger.info(result, "primary IPv6 addresses re-chosen");
+  },
+});

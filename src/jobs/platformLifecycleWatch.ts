@@ -21,7 +21,7 @@ import {
   lifecycleStateIsFresh,
 } from "../services/platformLifecycleService.js";
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -32,41 +32,37 @@ const INTERVAL_MS = 24 * 60 * 60 * 1000;
  */
 const FIRST_RUN_DELAY_MS = 90_000;
 
-async function runWatch(): Promise<void> {
-  try {
-    await runInstrumentedJob("platformLifecycleWatch", async () => {
-      // Age guard, the same shape ouiRefresh uses. Without it a restart loop
-      // re-fires the transition Event on every boot, which is exactly the
-      // behaviour that makes an alerting channel worth ignoring.
-      if (await lifecycleStateIsFresh()) {
-        logger.debug("platform lifecycle state is fresh — skipping this run");
-        return;
-      }
+defineJob({
+  name: "platformLifecycleWatch",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    // Age guard, the same shape ouiRefresh uses. Without it a restart loop
+    // re-fires the transition Event on every boot, which is exactly the
+    // behaviour that makes an alerting channel worth ignoring.
+    if (await lifecycleStateIsFresh()) {
+      logger.debug("platform lifecycle state is fresh — skipping this run");
+      return;
+    }
 
-      const result = await getPlatformLifecycle({ force: true });
-      if (result.datasetError) {
-        // Nothing to compare against; say so once rather than recording a
-        // transition to a state we could not compute.
-        logger.warn({ err: result.datasetError }, "platform lifecycle dataset unreadable — skipping transition check");
-        return;
-      }
+    const result = await getPlatformLifecycle({ force: true });
+    if (result.datasetError) {
+      // Nothing to compare against; say so once rather than recording a
+      // transition to a state we could not compute.
+      logger.warn({ err: result.datasetError }, "platform lifecycle dataset unreadable — skipping transition check");
+      return;
+    }
 
-      await recordPlatformLifecycleTransition(result);
-      logger.info(
-        {
-          severity: result.severity,
-          needsAttention: result.components.filter(
-            (c) => c.grade.severity === "warning" || c.grade.severity === "critical",
-          ).length,
-          datasetReviewedAt: result.datasetReviewedAt,
-        },
-        "platform lifecycle check complete",
-      );
-    });
-  } catch (err) {
-    logger.error(err, "platform lifecycle watch failed");
-  }
-}
-
-setTimeout(runWatch, FIRST_RUN_DELAY_MS);
-setInterval(runWatch, INTERVAL_MS);
+    await recordPlatformLifecycleTransition(result);
+    logger.info(
+      {
+        severity: result.severity,
+        needsAttention: result.components.filter(
+          (c) => c.grade.severity === "warning" || c.grade.severity === "critical",
+        ).length,
+        datasetReviewedAt: result.datasetReviewedAt,
+      },
+      "platform lifecycle check complete",
+    );
+  },
+});

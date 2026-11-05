@@ -17,7 +17,7 @@
  */
 
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import {
   reconcileDuplicateReservationConflicts,
   logScanFailure,
@@ -26,18 +26,17 @@ import {
 const INTERVAL_MS = 10 * 60 * 1000;
 const FIRST_RUN_DELAY_MS = 50_000;
 
-async function detectDuplicateReservations(): Promise<void> {
-  try {
-    await runInstrumentedJob("detectDuplicateReservations", async () => {
-      const result = await reconcileDuplicateReservationConflicts();
-      if (result.raised || result.closed || result.refreshed) {
-        logger.info(result, "duplicate-reservation conflict reconcile complete");
-      }
-    });
-  } catch (err) {
+defineJob({
+  name: "detectDuplicateReservations",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    const result = await reconcileDuplicateReservationConflicts();
+    if (result.raised || result.closed || result.refreshed) {
+      logger.info(result, "duplicate-reservation conflict reconcile complete");
+    }
+  },
+  onError: (err: any) => {
     logScanFailure(err);
-  }
-}
-
-setTimeout(detectDuplicateReservations, FIRST_RUN_DELAY_MS);
-setInterval(detectDuplicateReservations, INTERVAL_MS);
+  },
+});

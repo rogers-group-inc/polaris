@@ -9,22 +9,17 @@
  * Import this module from src/app.ts (startBackgroundJobs) to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { drainPendingDeliveries } from "../services/notificationDeliveryService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 15 * 1000;
 
-async function runDeliverNotifications(): Promise<void> {
-  try {
-    await runInstrumentedJob("deliverNotifications", async () => {
-      await drainPendingDeliveries();
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "deliverNotifications job failed (non-fatal)");
-  }
-}
-
 // Boot delay so the engine has produced deliveries to drain.
-setTimeout(runDeliverNotifications, 35_000);
-setInterval(runDeliverNotifications, INTERVAL_MS);
+defineJob({
+  name: "deliverNotifications",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 35_000,
+  run: async () => {
+    await drainPendingDeliveries();
+  },
+});

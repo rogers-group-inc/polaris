@@ -22,7 +22,7 @@
 
 import { logger } from "../utils/logger.js";
 import { logEvent } from "../services/eventLogService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import { createBackup, listBackups, deleteBackup } from "../services/backupService.js";
 import {
   getBackupSchedule,
@@ -56,78 +56,74 @@ async function pruneScheduledBackups(retainCount: number): Promise<number> {
   return pruned;
 }
 
-async function runScheduledBackup(): Promise<void> {
-  try {
-    await runInstrumentedJob("scheduledBackup", async () => {
-      const schedule = await getBackupSchedule();
-      if (!isScheduledBackupDue(schedule, new Date())) return;
-
-      logger.info(
-        { intervalHours: schedule.intervalHours, retainCount: schedule.retainCount },
-        "scheduledBackup: taking an automatic database backup",
-      );
-
-      let record;
-      let path: string;
-      try {
-        ({ record, path } = await createBackup({
-          password: schedule.passphrase,
-          kind: "scheduled",
-          actor: "system:scheduled-backup",
-        }));
-      } catch (err: any) {
-        // A failing scheduled backup is exactly the kind of thing that stays
-        // invisible until it matters, so it gets a warning Event (which flows
-        // out through syslog/SFTP archival) as well as a log line and the
-        // lastError the settings card renders.
-        const detail = err?.message || String(err);
-        await recordScheduledBackupOutcome({ ok: false, error: detail });
-        await logEvent({
-          level: "error",
-          action: "server.backup.scheduled_failed",
-          resourceType: "backup",
-          actor: "system:scheduled-backup",
-          message: `Scheduled database backup FAILED: ${detail}`,
-          details: { error: detail },
-        });
-        logger.error({ err }, "scheduledBackup: backup failed");
-        return;
-      }
-
-      // Off-host copy is best-effort: the local backup already succeeded, and an
-      // unmounted or full share must not mark the run failed.
-      if (schedule.copyToDir) {
-        try {
-          const dest = await copyBackupOffHost(path, record.filename, schedule.copyToDir);
-          logger.info({ dest }, "scheduledBackup: copied backup off-host");
-        } catch (err: any) {
-          await logEvent({
-            level: "warning",
-            action: "server.backup.offhost_copy_failed",
-            resourceType: "backup",
-            resourceId: record.id,
-            resourceName: record.filename,
-            actor: "system:scheduled-backup",
-            message: `Scheduled backup succeeded but the off-host copy to ${schedule.copyToDir} failed: ${err?.message || err}`,
-            details: { copyToDir: schedule.copyToDir, error: String(err?.message || err) },
-          });
-          logger.warn({ err, copyToDir: schedule.copyToDir }, "scheduledBackup: off-host copy failed");
-        }
-      }
-
-      const pruned = await pruneScheduledBackups(schedule.retainCount);
-      await recordScheduledBackupOutcome({ ok: true });
-      logger.info(
-        { backupId: record.id, sizeBytes: record.size, pruned },
-        "scheduledBackup: backup complete",
-      );
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message ?? String(err) }, "scheduledBackup tick failed (non-fatal)");
-  }
-}
-
 // Boot delay so migrations and the first-boot jobs have settled before a
 // potentially long-running dump competes with them for the DB.
-setTimeout(runScheduledBackup, 120_000);
-setInterval(runScheduledBackup, INTERVAL_MS);
+defineJob({
+  name: "scheduledBackup",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 120_000,
+  run: async () => {
+    const schedule = await getBackupSchedule();
+    if (!isScheduledBackupDue(schedule, new Date())) return;
+
+    logger.info(
+      { intervalHours: schedule.intervalHours, retainCount: schedule.retainCount },
+      "scheduledBackup: taking an automatic database backup",
+    );
+
+    let record;
+    let path: string;
+    try {
+      ({ record, path } = await createBackup({
+        password: schedule.passphrase,
+        kind: "scheduled",
+        actor: "system:scheduled-backup",
+      }));
+    } catch (err: any) {
+      // A failing scheduled backup is exactly the kind of thing that stays
+      // invisible until it matters, so it gets a warning Event (which flows
+      // out through syslog/SFTP archival) as well as a log line and the
+      // lastError the settings card renders.
+      const detail = err?.message || String(err);
+      await recordScheduledBackupOutcome({ ok: false, error: detail });
+      await logEvent({
+        level: "error",
+        action: "server.backup.scheduled_failed",
+        resourceType: "backup",
+        actor: "system:scheduled-backup",
+        message: `Scheduled database backup FAILED: ${detail}`,
+        details: { error: detail },
+      });
+      logger.error({ err }, "scheduledBackup: backup failed");
+      return;
+    }
+
+    // Off-host copy is best-effort: the local backup already succeeded, and an
+    // unmounted or full share must not mark the run failed.
+    if (schedule.copyToDir) {
+      try {
+        const dest = await copyBackupOffHost(path, record.filename, schedule.copyToDir);
+        logger.info({ dest }, "scheduledBackup: copied backup off-host");
+      } catch (err: any) {
+        await logEvent({
+          level: "warning",
+          action: "server.backup.offhost_copy_failed",
+          resourceType: "backup",
+          resourceId: record.id,
+          resourceName: record.filename,
+          actor: "system:scheduled-backup",
+          message: `Scheduled backup succeeded but the off-host copy to ${schedule.copyToDir} failed: ${err?.message || err}`,
+          details: { copyToDir: schedule.copyToDir, error: String(err?.message || err) },
+        });
+        logger.warn({ err, copyToDir: schedule.copyToDir }, "scheduledBackup: off-host copy failed");
+      }
+    }
+
+    const pruned = await pruneScheduledBackups(schedule.retainCount);
+    await recordScheduledBackupOutcome({ ok: true });
+    logger.info(
+      { backupId: record.id, sizeBytes: record.size, pruned },
+      "scheduledBackup: backup complete",
+    );
+  },
+});

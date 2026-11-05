@@ -18,29 +18,19 @@
 
 import { logger } from "../utils/logger.js";
 import { reconcilePathCheckSources } from "../services/pathCheckService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 5 * 60 * 1000;
 const BOOT_DELAY_MS = 45 * 1000;
 
-let running = false;
-
-async function tick(): Promise<void> {
-  if (running) return;
-  running = true;
-  try {
-    await runInstrumentedJob("pathCheckSources.reconcile", async () => {
-      const r = await reconcilePathCheckSources();
-      if (r.added || r.removed) {
-        logger.info(r, "Path check membership reconciled");
-      }
-    });
-  } catch (err: any) {
-    logger.error({ err: err?.message ?? String(err) }, "pathCheckSources.reconcile tick failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
-
-setTimeout(tick, BOOT_DELAY_MS);
-setInterval(tick, INTERVAL_MS);
+defineJob({
+  name: "pathCheckSources.reconcile",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: BOOT_DELAY_MS,
+  run: async () => {
+    const r = await reconcilePathCheckSources();
+    if (r.added || r.removed) {
+      logger.info(r, "Path check membership reconciled");
+    }
+  },
+});

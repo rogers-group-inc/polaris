@@ -20,24 +20,20 @@
  */
 
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import { releaseConfirmedPins } from "../services/primaryAddressService.js";
 
 const INTERVAL_MS = 15 * 60 * 1000;
 const FIRST_RUN_DELAY_MS = 90_000;
 
-async function releaseConfirmedPinsJob(): Promise<void> {
-  try {
-    await runInstrumentedJob("releaseConfirmedPins", async () => {
-      const result = await releaseConfirmedPins();
-      if (result.released) logger.info(result, "released primary-address pins the network now backs");
-    });
-  } catch (err) {
-    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "releaseConfirmedPins failed");
-  }
-}
-
 // Delayed first run: let discovery and the monitor loops settle first, so a
 // half-populated fleet's thin evidence isn't what gets compared.
-setTimeout(releaseConfirmedPinsJob, FIRST_RUN_DELAY_MS);
-setInterval(releaseConfirmedPinsJob, INTERVAL_MS);
+defineJob({
+  name: "releaseConfirmedPins",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    const result = await releaseConfirmedPins();
+    if (result.released) logger.info(result, "released primary-address pins the network now backs");
+  },
+});
