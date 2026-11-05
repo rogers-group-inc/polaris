@@ -53,13 +53,15 @@
     "dependencies": "error",
     "unlisted": "error",
     "unresolved": "error",
-    // exports/types start as warnings so CI can gate on day one; they flip to
-    // "error" once the un-export batch of the code-quality ledger has landed.
-    "exports": "warn",
-    "types": "warn",
-    "nsExports": "warn",
-    "nsTypes": "warn",
-    "enumMembers": "warn",
-    "duplicates": "warn"
+    // An export nothing imports fails the guard (CQ-T006). Un-export a symbol
+    // only its own file uses; delete one nothing uses. A deliberate exception
+    // (the server half of a protocol, a documented type) carries `@public` in
+    // its JSDoc and says why.
+    "exports": "error",
+    "types": "error",
+    "nsExports": "error",
+    "nsTypes": "error",
+    "enumMembers": "error",
+    "duplicates": "error"
   }
 }
