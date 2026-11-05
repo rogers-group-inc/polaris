@@ -8885,7 +8885,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 @keyframes sitemap-pulse-ring { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(4); opacity: 0; } }
 .sitemap-pulse {
   width: 22px; height: 22px; border-radius: 50%;
-  background: #ff1744; animation: sitemap-pulse-ring 2s ease-out infinite; pointer-events: none;
+  background: #c62828; animation: sitemap-pulse-ring 2s ease-out infinite; pointer-events: none; /* POLARIS_HEALTH_COLORS.down, the pin it rings */
 }
 
 /* Home/reset-view control button under the Leaflet +/− zoom control. */
@@ -8919,7 +8919,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    and draggable so overlapping labels can be pulled apart. The static tail is
    hidden here; a dashed leader line (.sitemap-leaders) connects it to its dot
    instead, so the connection holds even after the label is dragged aside. */
-.leaflet-tooltip.sitemap-tip-down { background: rgba(40,8,12,0.92); border-color: #ff1744; color: #ff6b85; pointer-events: auto; cursor: grab; }
+.leaflet-tooltip.sitemap-tip-down { background: rgba(40,8,12,0.92); border-color: #c62828; color: #ff6b85; pointer-events: auto; cursor: grab; }
 .leaflet-tooltip.sitemap-tip-down.dragging { cursor: grabbing; }
 .leaflet-tooltip.sitemap-tip-down.leaflet-tooltip-top::before { display: none; }
 /* Acknowledged outage: same label, faded (the dot drops its pulse ring). */

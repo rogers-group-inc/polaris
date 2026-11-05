@@ -161,11 +161,21 @@ async function dbTodayMs(): Promise<number> {
   return new Date(today).getTime();
 }
 
-/** The asset as monitoring leaves it after seeing its uptime drop at `boot`. */
+/**
+ * The asset as monitoring leaves it after seeing its uptime drop at `boot`.
+ *
+ * Uptime is FLOORED, as a device's counter is (whole seconds elapsed). It was
+ * Math.round, and whenever the sub-second remainder was >= 0.5 the derived boot
+ * `lastMonitorAt - lastUptimeSec` landed a fraction of a second BEFORE `boot`;
+ * the boot CTE takes LEAST(lastRebootAt, that) — correctly, by design — so
+ * `restartedAt` came back as 09:59:59.6xx instead of 10:00:00.000 about half the
+ * time. That flake failed the CI integration job (and so the image build) on
+ * most pushes of 2026-11-05.
+ */
 async function markRebooted(boot: Date): Promise<void> {
   const seen = new Date();
   await prisma.asset.update({
     where: { id: assetId },
-    data: { lastRebootAt: boot, lastMonitorAt: seen, lastUptimeSec: Math.round((seen.getTime() - boot.getTime()) / 1000) },
+    data: { lastRebootAt: boot, lastMonitorAt: seen, lastUptimeSec: Math.floor((seen.getTime() - boot.getTime()) / 1000) },
   });
 }
