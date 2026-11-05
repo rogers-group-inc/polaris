@@ -1442,6 +1442,27 @@ async function loadClassOverride(
   return result;
 }
 
+/**
+ * The Asset columns a probe or collector load leaves out (CQ-B051). Asset is
+ * the widest table in the schema (~170 columns); these five JSON blobs are the
+ * bulk of a row and nothing on the probe / collector path reads them —
+ * typecheck proves it: every load below carries `omit: PROBE_ASSET_OMIT`, so a
+ * collector that starts reading one fails to compile instead of silently
+ * getting undefined. That is why this is an OMIT and not a hand-listed
+ * `select`: a forgotten column in a select reads as "inherit" at run time
+ * (2026-09 audit), a wrongly omitted one here is a type error.
+ *
+ * `fortinetTopology` is NOT omitted: the FortiSwitch / FortiAP collectors read
+ * their controller gate from it (resolveFortinetParent and friends).
+ */
+export const PROBE_ASSET_OMIT = {
+  associatedUsers:   true,
+  virtualization:    true,
+  descriptionSync:   true,
+  managementAccess:  true,
+  quarantineTargets: true,
+} as const;
+
 /** Minimal asset shape the resolver needs. */
 export interface AssetMonitorContext {
   assetType:                 string;
@@ -2141,6 +2162,7 @@ export async function probeAsset(
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: {
         monitorCredential: true,
         responseTimeCredential: true,
@@ -5030,7 +5052,7 @@ const TELEMETRY_ASSET_INCLUDE = {
 } as const;
 
 function loadTelemetryAsset(assetId: string) {
-  return prisma.asset.findUnique({ where: { id: assetId }, include: TELEMETRY_ASSET_INCLUDE });
+  return prisma.asset.findUnique({ where: { id: assetId }, omit: PROBE_ASSET_OMIT, include: TELEMETRY_ASSET_INCLUDE });
 }
 
 /** One row of TELEMETRY_ASSET_INCLUDE — what the collectors accept preloaded. */
@@ -5297,6 +5319,7 @@ async function collectHardwareSensorsViaSnmpSession(
 async function collectFastFiltered(assetId: string): Promise<CollectionResult<SystemInfoSample>> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
   });
   if (!asset)            return { supported: false, error: "Asset not found" };
@@ -5749,6 +5772,7 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
   const endLoad = startPhase("systeminfo.load_asset");
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { monitorCredential: true, interfacesCredential: true, lldpCredential: true, discoveredByIntegration: true },
   });
   endLoad({ found: !!asset });
@@ -11401,6 +11425,7 @@ export async function persistManagedApLldpNeighbors(
 ): Promise<"persisted" | "skipped"> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { discoveredByIntegration: { select: { type: true } } },
   });
   if (!asset) return "skipped";
@@ -13260,6 +13285,7 @@ export async function runLldpFor(assetId: string, labels: WorkItemLabels): Promi
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, interfacesCredential: true, lldpCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13377,6 +13403,7 @@ export async function runStorageFor(assetId: string, labels: WorkItemLabels): Pr
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13509,6 +13536,7 @@ export async function runEventLogFor(assetId: string, labels: WorkItemLabels): P
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, eventLogCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13626,6 +13654,7 @@ export function sdwanShouldQueue(
 export async function resolveSdwanPollIntervalForAsset(assetId: string): Promise<number | null> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { discoveredByIntegration: { select: { type: true } } },
   });
   if (!asset || !asset.monitored || asset.status === "decommissioned" || asset.status === "disabled") return null;
@@ -13654,6 +13683,7 @@ export async function runSdwanFor(assetId: string, labels: WorkItemLabels): Prom
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13720,6 +13750,7 @@ export async function runProcessesFor(assetId: string, labels: WorkItemLabels): 
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, processesCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
