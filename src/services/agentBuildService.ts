@@ -36,6 +36,7 @@ import { logEvent } from "./eventLogService.js";
 import { truncate } from "../utils/text.js";
 import { logger } from "../utils/logger.js";
 import { prisma } from "../db.js";
+import { sortNewestFirst } from "../utils/sortByTime.js";
 import {
   AGENT_SERVER_URL_SETTING_KEY,
   inferOwnServerUrl,
@@ -980,7 +981,7 @@ export async function getInventory(): Promise<InventoryResult> {
       } catch { /* skip */ }
       oldVersions.push({ version: e.name, bytes, mtime: new Date(mtimeMs || 0).toISOString() });
     }
-    oldVersions.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
+    sortNewestFirst(oldVersions, (e) => e.mtime);
   } catch { /* directory missing — no old versions */ }
 
   // Server-URL: render what install would actually use right now (effective),

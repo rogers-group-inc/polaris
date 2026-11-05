@@ -73,6 +73,7 @@ import { logger } from "../../utils/logger.js";
 import { normalizeMacOrNull } from "../../utils/mac.js";
 import { splitInterfaceAddresses } from "../../utils/interfaceAddress.js";
 import { ipv6Enabled } from "../../services/ipv6GateService.js";
+import { sortNewestFirst } from "../../utils/sortByTime.js";
 
 // ─── /enroll (public) ─────────────────────────────────────────────────
 //
@@ -1340,7 +1341,7 @@ agentsRouter.post("/system-info", async (req, res, next) => {
             lastSeen:   nowIso,
           });
         }
-        merged.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
+        sortNewestFirst(merged, (e) => e.lastSeen);
         await reconcileMacAddresses(assetId, merged);
         // Hardware-truth entries (this polaris-agent row included) outrank
         // sightings for the primary slot — see selectPrimaryMac.
