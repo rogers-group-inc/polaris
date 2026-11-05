@@ -162,6 +162,7 @@ import {
 import { reconcileMacAddresses } from "../macAddressService.js";
 import { logger } from "../../utils/logger.js";
 import { deviceSerialOrNull } from "../../utils/safeText.js";
+import { sortNewestFirst } from "../../utils/sortByTime.js";
 
 /** Auto-disable window for per-integration verbose debug logging (30 minutes). */
 const VERBOSE_LOGGING_TTL_MS = 30 * 60 * 1000;
@@ -4094,7 +4095,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
               macList.push({ mac, lastSeen: now, source: "fortigate-firewall" });
             }
           }
-          macList.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
+          sortNewestFirst(macList, (e) => e.lastSeen);
           if (!existingAsset.macAddress) updateData.macAddress = memberDevice.mgmtMac || fwMacs[0];
           existingAsset.macAddresses = macList;
           fwMacListForReconcile = macList;
@@ -4677,7 +4678,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           } else {
             macList.push({ mac: normalizedSwMac, lastSeen: now, source: "fmg-discovery", ...(sw.device ? { device: sw.device } : {}) });
           }
-          macList.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
+          sortNewestFirst(macList, (e) => e.lastSeen);
           if (!existingAsset.macAddress) updateData.macAddress = macList[0].mac;
           existingAsset.macAddresses = macList;
           swMacListForReconcile = macList;
@@ -6468,7 +6469,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           ...(matchingSubnet ? { subnetCidr: matchingSubnet.cidr, subnetName: matchingSubnet.name } : {}),
         });
       }
-      macList.sort((a: any, b: any) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
+      sortNewestFirst(macList, (e) => e.lastSeen);
 
       // Presence gate: dhcp-lease rows are currently-held leases and
       // seenLeased marks static reservations confirmed actively held. A
@@ -6936,7 +6937,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           } else {
             userList.push({ user: username, domain, lastSeen: now, source: "device-inventory" });
           }
-          userList.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
+          sortNewestFirst(userList, (e) => e.lastSeen);
           updateData.associatedUsers = userList;
         }
 
@@ -6967,7 +6968,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
               ...(inv.device && invIsLocal ? { device: inv.device } : {}),
             });
           }
-          macList.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
+          sortNewestFirst(macList, (e) => e.lastSeen);
           // Rule 91(b): a refused sighting keeps the current primary.
           updateData.macAddress = (invAdoptRefused && existingAsset.macAddress)
             ? existingAsset.macAddress
@@ -11335,7 +11336,7 @@ export async function syncVcenterDevices(
           merged.push({ mac: e.mac, lastSeen: nowIso, source: e.source });
         }
       }
-      merged.sort((a: any, b: any) => new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime());
+      sortNewestFirst(merged, (e) => e.lastSeen);
       // vcenter-vnic rows are hardware truth — see selectPrimaryMac.
       return { primary: selectPrimaryMac(merged) ?? merged[0]?.mac ?? null, merged };
     };

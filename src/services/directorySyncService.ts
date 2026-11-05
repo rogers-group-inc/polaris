@@ -38,6 +38,7 @@ import { logEvent } from "./eventLogService.js";
 import { bumpContactCache, normalizeContactEmail } from "./contactService.js";
 import { listDirectoryPeople as listDirectoryPeopleEntra } from "./entraIdService.js";
 import { listDirectoryPeople as listDirectoryPeopleAd } from "./activeDirectoryService.js";
+import { jsonEqual } from "../utils/jsonEqual.js";
 
 /**
  * One directory entry as the bulk readers report it. A superset of the live
@@ -507,7 +508,7 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
       provenanceCreates.push({ integrationId, externalId, sourceKind, contactId: contact.id, observed: d.entry });
     } else if (
       prior.contactId !== contact.id ||
-      JSON.stringify(prior.observed) !== JSON.stringify(d.entry)
+      !jsonEqual(prior.observed, d.entry) // key-order-blind: `observed` comes back from jsonb reordered
     ) {
       // The address moved to a different contact, or the directory changed
       // something. Anything else is a no-op: comparing the blob is what keeps a

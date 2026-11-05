@@ -33,6 +33,7 @@ import { MAX_EXCERPT_CHARS } from "../utils/httpCheck.js";
 import { logEvent } from "./eventLogService.js";
 import { enqueuePathCheckSamples, type PathCheckSampleRow } from "./sampleWriteBuffer.js";
 import { recordPathCheckSamples, recordPathCheckPathChange } from "../metrics.js";
+import { sortOldestFirst } from "../utils/sortByTime.js";
 
 /** A path change within this long of the last one for the same (host, check)
  *  is recorded (the traceroute row keeps it) but writes no second Event — ECMP
@@ -345,7 +346,7 @@ export async function ingestPathCheckTraceroutes(
   const hostLabel = isServer ? POLARIS_SERVER_LABEL : asset?.hostname || asset?.ipAddress || assetId;
 
   // Oldest first so each item is compared against the one before it.
-  const ordered = [...accepted].sort((a, b) => sampleTime(a.timestamp, now).getTime() - sampleTime(b.timestamp, now).getTime());
+  const ordered = sortOldestFirst([...accepted], (s) => sampleTime(s.timestamp, now));
   const creates: Parameters<typeof prisma.assetPathCheckTraceroute.createMany>[0]["data"] = [];
   const state = new Map<string, { hash: string | null; hops: StoredHop[] | null; lastEventAt: Date | null; lastAt: Date | null; complete: boolean | null; hopCount: number | null }>();
   const events: Promise<void>[] = [];
