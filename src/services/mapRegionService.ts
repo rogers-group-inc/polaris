@@ -883,11 +883,6 @@ export async function listRegions(): Promise<MapRegion[]> {
   return all.slice().sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function getRegion(id: string): Promise<MapRegion | null> {
-  const all = await loadAll();
-  return all.find((r) => r.id === id) ?? null;
-}
-
 export async function createRegion(input: SaveRegionInput): Promise<MapRegion> {
   // Shape validation needs no lock and should reject before we queue behind
   // another writer.

@@ -398,8 +398,3 @@ export async function getAppMapConnectionRetentionDays(): Promise<number> {
 export async function getArpEntryRetentionDays(): Promise<number> {
   return (await getSampleRetention()).arpEntries.days;
 }
-
-/** Configured window (days) for path-check traceroute snapshots. */
-export async function getPathCheckTracerouteRetentionDays(): Promise<number> {
-  return (await getSampleRetention()).pathCheckTraceroutes.days;
-}

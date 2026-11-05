@@ -646,9 +646,6 @@ async function evaluateIp(ip: string): Promise<DuplicateIpGroup | null> {
   return groups.find((g) => g.ip === ip) ?? null;
 }
 
-/** The qualified duplicate group on ONE address right now, or null. */
-export const evaluateDuplicateIp = evaluateIp;
-
 // ─── Write-time check (rule 40(i)) ────────────────────────────────────────────
 //
 // The sweep answers "where are the duplicates" for the fleet every ten minutes.

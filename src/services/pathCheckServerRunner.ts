@@ -68,7 +68,7 @@ export interface RunCapture {
   finalUrl?: string;
 }
 
-/** Mirrors pathCheckService.MAX_REDIRECTS (a type-only import cannot carry a value). */
+/** Redirect hops a check that follows redirects takes at most (the agent's maxRedirects matches). */
 const MAX_REDIRECTS = 5;
 
 export const MAX_CAPTURED_HEADERS = 60;

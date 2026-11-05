@@ -43,16 +43,6 @@
  * so a caller can tell "the device did not say" from "the device said empty".
  */
 
-/** The FortiOS REST envelope, as much of it as anything here reads. */
-export interface FortiOsEnvelope<T = unknown> {
-  results?: T;
-  serial?: string;
-  version?: string;
-  build?: number;
-  status?: string;
-  vdom?: string;
-}
-
 /** Read a string field from the envelope, falling back to the payload. */
 function readString(body: unknown, key: string): string | undefined {
   if (!body || typeof body !== "object") return undefined;

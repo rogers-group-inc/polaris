@@ -57,5 +57,4 @@ export const ColumnsSchema = z
     }
   });
 
-export type DashboardWidgetInstanceInput = z.infer<typeof WidgetInstanceSchema>;
 export type DashboardColumnInput = z.infer<typeof ColumnSchema>;

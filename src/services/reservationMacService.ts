@@ -51,10 +51,6 @@ const store = createSettingStore<ReservationMacPlaceholderSettings>({
   parse: normalizeReservationMacSettings,
 });
 
-export function invalidateReservationMacCache(): void {
-  store.invalidate();
-}
-
 export async function getReservationMacSettings(): Promise<ReservationMacPlaceholderSettings> {
   return store.get();
 }

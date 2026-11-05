@@ -213,8 +213,6 @@ export async function requestCancel(integrationId: string): Promise<boolean> {
   return res.count > 0;
 }
 
-export type DiscoveryRunRow = Awaited<ReturnType<typeof listActiveRuns>>[number];
-
 /** All queued/running runs — drives the /discoveries endpoint + slow-run check. */
 export async function listActiveRuns() {
   return prisma.discoveryRun.findMany({

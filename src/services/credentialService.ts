@@ -125,6 +125,13 @@ interface RestApiConfig {
   verifyTls?: boolean;
 }
 
+/**
+ * Every credential type's `config` shape, as one union. No code narrows a
+ * config through it (CredentialRecord.config stays a plain record); it is the
+ * typed reference for the per-type interfaces above, which business rule 21
+ * cites for their field semantics.
+ * @public
+ */
 export type CredentialConfig = SnmpConfig | WinRmConfig | SshConfig | RestApiConfig | HttpCheckConfig;
 
 export interface CredentialRecord {

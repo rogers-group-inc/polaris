@@ -1447,7 +1447,6 @@ export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" 
   // with yes / no. See `agentInstalled` in SCOPE_FIELD_OPS.
   agentInstalled: { relation: "managedAgent", column: "installStatus" },
 };
-export const RELATION_CONDITION_FIELD_NAMES = Object.keys(RELATION_CONDITION_FIELDS);
 
 /** Does this tree ask about the interface inventory? */
 export function conditionNeedsInterfaces(cond: ScopeConditionGroup | null | undefined): boolean {
@@ -2463,8 +2462,6 @@ const bandFollowUpSchema = z
   })
   .strict();
 
-export type BandFollowUp = z.infer<typeof bandFollowUpSchema>;
-
 // ─── Per-action escalation (escalatable actions) ────────────────────────────
 // A rule's top-level actions and each severity band's actions may carry their
 // OWN escalation chain — "notify team A, and if unhandled 15 min later notify
@@ -2572,10 +2569,7 @@ type EscalationConfig = z.infer<typeof escalationSchema>;
 export type ResetConfig = z.infer<typeof resetSchema>;
 type NotifyAction = z.infer<typeof notifyActionSchema>;
 export type ApiCallAction = z.infer<typeof apiCallActionSchema>;
-export type ScriptAction = z.infer<typeof scriptActionSchema>;
-export type RebootAction = z.infer<typeof rebootActionSchema>;
 export type AutomationAction = z.infer<typeof actionSchema>;
-export type EscalationTierV2 = z.infer<typeof escalationTierV2Schema>;
 export type EscalationV2Config = z.infer<typeof escalationV2Schema>;
 
 // ─── Specificity ranking (automation precedence / carve-out) ────────────────

@@ -139,7 +139,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** DB-backed live state for discovery runs (replaces the prior in-memory `activeDiscovery` Map). The discovery worker coalesces hot progress writes through a `RunAccumulator`; the web role reads the rows for the `/discoveries` list, slow-run detection, and cancel signalling.
 
-**Public API:** `DiscoveryRunStatus`, `ActiveDeviceEntry`, `RunAccumulator`, `newRunAccumulator`, `upsertQueuedRun`, `markRunStarted`, `flushRunProgress`, `touchWorkerHeartbeat`, `finishRun`, `isRunActive`, `anyRunActive`, `isCancelRequested`, `requestCancel`, `listActiveRuns`, `persistSlowFlags`, `reapStaleRuns`, `DiscoveryRunRow`
+**Public API:** `DiscoveryRunStatus`, `ActiveDeviceEntry`, `RunAccumulator`, `newRunAccumulator`, `upsertQueuedRun`, `markRunStarted`, `flushRunProgress`, `touchWorkerHeartbeat`, `finishRun`, `isRunActive`, `anyRunActive`, `isCancelRequested`, `requestCancel`, `listActiveRuns`, `persistSlowFlags`, `reapStaleRuns`
 
 `RunAccumulator.skippedErrorDevices` (a `Set<string>`) names the devices behind `skippedErrorCount`. In memory only and deliberately not a column: its one reader is the `integration.discover.devices_unread` Event that `runDiscovery` writes at the end of the same run.
 
@@ -293,7 +293,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** DB-backed heartbeat of every local `FmgWorker`'s proxy + native lane state. The role that runs FMG traffic (discovery in split-role prod, the single process in "all" mode) writes a snapshot of `getAllFmgWorkers()` to the `fmgActivitySnapshot` Setting row every 2 s. The web role reads the same row back through `GET /:id/fmg-activity` — bridging the in-memory state across the multi-process split. The integrations page no longer renders it (the "Active FMG Calls" card row was removed 2026-10-01); the endpoint is API-only now, for diagnosing a stuck proxy / CMDB call.
 
-**Public API:** `startFmgActivityHeartbeat()` (idempotent boot-path entry), `getFmgActivityForIntegration(integrationId)` (read-side; returns proxyInFlightLabel + proxyQueueDepth + nativeInFlightCount + updatedAt/role/ageMs/fresh), `STALENESS_MS` (10 s — older snapshots are flagged `fresh: false`), `stopFmgActivityHeartbeatForTests`.
+**Public API:** `startFmgActivityHeartbeat()` (idempotent boot-path entry), `getFmgActivityForIntegration(integrationId)` (read-side; returns proxyInFlightLabel + proxyQueueDepth + nativeInFlightCount + updatedAt/role/ageMs/fresh), `STALENESS_MS` (10 s — older snapshots are flagged `fresh: false`).
 
 **Cross-service deps:** fmgWorker (`getAllFmgWorkers()` for the snapshot), prisma (single `Setting` row read/write).
 

@@ -96,8 +96,6 @@ interface CheckBodyMatch {
 
 export const HTTP_METHODS = ["GET", "HEAD"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
-/** Redirect hops a check that follows redirects takes at most. */
-export const MAX_REDIRECTS = 5;
 
 interface CheckHttpConfig {
   /** Accepted status spec, e.g. "200,204,300-399". Empty = any 2xx. */
@@ -108,7 +106,7 @@ interface CheckHttpConfig {
   method?: HttpMethod;
   /** Sent as Host (and the TLS SNI name) instead of the URL's host — test one backend by address. */
   hostHeader?: string | null;
-  /** Follow up to MAX_REDIRECTS redirects and judge the LAST response. Default off. */
+  /** Follow up to 5 redirects (pathCheckServerRunner MAX_REDIRECTS) and judge the LAST response. Default off. */
   followRedirects?: boolean;
 }
 

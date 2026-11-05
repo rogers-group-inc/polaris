@@ -43,10 +43,6 @@ const store = createSettingStore<SourceLocationPriority>({
   parse: normalizeSourceLocationPriority,
 });
 
-export function invalidateSourcePriorityCache(): void {
-  store.invalidate();
-}
-
 async function getSourceLocationPriority(): Promise<SourceLocationPriority> {
   return store.get();
 }

@@ -65,7 +65,6 @@ export const METRIC_KEYS: MetricKey[] = [
 
 /** How a walked subtree collapses to one reading. Replaces the hardcoded `walkSubtree`. */
 export type Aggregate = "none" | "avg" | "sum";
-export const AGGREGATES: Aggregate[] = ["none", "avg", "sum"];
 
 // Allowed display-only standard-MIB hints an operator can pin on a profile
 // metric or override. Must stay in sync with the frontend `_SNMP_STANDARD_MIBS`

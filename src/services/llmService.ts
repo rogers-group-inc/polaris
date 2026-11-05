@@ -746,12 +746,6 @@ async function testAzureConnection(config: LlmConfig): Promise<LlmTestResult> {
   };
 }
 
-/** The models a test of this config would offer, as a plain list for the form. */
-export async function describeModels(config: LlmConfig): Promise<{ models: LlmModelInfo[]; defaultModel: string | null }> {
-  const models = await listModels(config);
-  return { models, defaultModel: pickDefaultModel(models) };
-}
-
 // ─── Resolving a blank Model at chat time ────────────────────────────────────
 
 const resolvedModelCache = new Map<string, { model: string; at: number }>();

@@ -136,8 +136,6 @@ export interface AdvisorState {
   handlerTimeoutPressure: HandlerTimeoutPressure[];
 }
 
-// Exported for capacityService's inline `import("./capacityAdvisorService.js")`
-// type reference (the two modules import each other); knip cannot see that form.
 export interface HandlerTimeoutPressure {
   cadence: CadenceKey;
   /** Observed p90 in seconds (from the histogram, or COLD_START fallback). */
@@ -301,7 +299,6 @@ const PGBOSS_RECOMMEND_ASSETS = 500;
  *  used elsewhere by the advisor). */
 const HANDLER_TIMEOUT_PRESSURE_RATIO = 0.7;
 
-const ADVISOR_CACHE_TTL_MS = 10 * 60 * 1000;
 const LAST_CHANGE_REQUIRED_SETTING_KEY = "capacity.advisor.lastChangeRequired";
 
 // ─── Public utility: roundUpToNearest (exported for tests) ────────────────
@@ -853,7 +850,7 @@ async function readIntegrationBreakdown(): Promise<IntegrationBreakdown> {
  * assets with at least one pin (interface / storage / ipsec tunnel).
  *
  * `fastFiltered` mirrors the gate in `jobs/monitorAssets.ts:236` —
- * `publishMonitorJob("fastFiltered", a.id, …)` fires once per ASSET (not per
+ * a `fastFiltered` job is published once per ASSET (not per
  * pin) when `hasFastPin` is true. Counting `monitoredInterfaceCount` (the
  * sum of pin-array lengths across all assets) is wrong because an operator
  * who pins 12 ports on one switch produces 12 interface pins but only 1
@@ -976,21 +973,8 @@ export async function recomputeAdvisorFromSnapshot(
   };
 
   const state = buildAdvisorState(inputs);
-  cachedState = state;
-  cachedAt = Date.now();
   void recordAdvisorTransition(state);
   return state;
-}
-
-// ─── Cache ─────────────────────────────────────────────────────────────────
-
-let cachedState: AdvisorState | null = null;
-let cachedAt = 0;
-
-export function getCachedAdvisorState(): AdvisorState | null {
-  if (!cachedState) return null;
-  if (Date.now() - cachedAt > ADVISOR_CACHE_TTL_MS) return null;
-  return cachedState;
 }
 
 // ─── Summary for capacityService reasons ──────────────────────────────────
@@ -1244,16 +1228,3 @@ export async function stageAdvisorState(
   const restartRequired = results.some((r) => r.status === "applied");
   return { ok: results.every((r) => r.status !== "error"), results, restartRequired };
 }
-
-export const __testing = {
-  HISTOGRAM_BUCKETS,
-  PER_CADENCE_FLOOR,
-  FLOATING_FLOOR,
-  SAFETY_FACTOR,
-  HTTP_JOB_OVERHEAD,
-  PGBOSS_POOL_TARGET,
-  POLARIS_FRACTION_OF_MAX,
-  MAX_CONNECTIONS_ROUNDING,
-  POOL_ROUNDING,
-  PGBOSS_RECOMMEND_ASSETS,
-};

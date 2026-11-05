@@ -105,15 +105,6 @@ export async function listChannels() {
   return rows.map(maskRow);
 }
 
-/** Lightweight {id,name,type,enabled} list for the rule-builder channel picker. */
-export async function listChannelsForBuilder() {
-  const rows = await prisma.notificationChannel.findMany({
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, type: true, enabled: true },
-  });
-  return rows.map((r) => ({ ...r, transport: isChannelType(r.type) ? CHANNEL_TRANSPORT[r.type as ChannelType] : "unknown" }));
-}
-
 export async function getChannel(id: string) {
   const row = (await prisma.notificationChannel.findUnique({ where: { id } })) as ChannelRow | null;
   if (!row) throw new AppError(404, "Notification channel not found");

@@ -782,7 +782,7 @@ function ensureMetricsRefresh(): void {
 /**
  * Producer-only init for roles that publish but don't consume (web / all's
  * scheduler tier). Opens the boss connection + ensures queues exist so
- * publishMonitorJob / publishDiscoveryJob have a live `send` target, and
+ * publishMonitorJobsBulk / publishDiscoveryJob have a live target, and
  * starts the metrics refresh so the Maintenance tab sees queue depth.
  */
 export async function startQueueProducer(): Promise<void> {
@@ -1163,57 +1163,21 @@ async function dispatchFloatingJob(
   }
 }
 
-/**
- * Submit a monitor job. No-op when pg-boss isn't running (e.g. process is on
- * cursor mode, or pg-boss hasn't started yet). The `singletonKey` makes the
- * submission a coalescing operation — a duplicate for the same (assetId,
- * cadence) is silently absorbed while a prior job is queued or running, so
- * the publisher can re-evaluate due assets every tick without piling up
- * stale jobs.
- *
- * `retryLimit: 0` is deliberate: monitor cadences are stateless and the
- * next tick will re-evaluate due state anyway — better to drop a failed
- * job and pick the asset up fresh than retry against a probably-still-down
- * host with a stale snapshot. Per-queue `expireInSeconds` caps the handler
- * runtime so a wedged scrape doesn't hold a worker slot forever; see
- * EXPIRE_BY_QUEUE in startPgbossWorkers above for the per-cadence values.
- */
-export async function publishMonitorJob(
-  cadence: MonitorCadence,
-  assetId: string,
-  labels?: { transport?: string; assetType?: string; verboseDebug?: boolean },
-): Promise<void> {
-  if (!bossInstance) return;
-  const queue = QUEUE_NAMES[cadence];
-  await bossInstance.send(
-    queue,
-    {
-      assetId,
-      transport: labels?.transport,
-      assetType: labels?.assetType,
-      verboseDebug: labels?.verboseDebug,
-    } as MonitorJobPayload,
-    {
-      singletonKey: `${assetId}:${cadence}`,
-    },
-  );
-}
-
 /** Insert chunk size for publishMonitorJobsBulk — bounds one statement's
  *  serialized-JSON payload, nothing more. */
 const MONITOR_JOB_INSERT_CHUNK = 500;
 
 /**
- * Bulk counterpart of publishMonitorJob: one INSERT per queue per tick instead
- * of one awaited send() round trip per asset — the per-asset shape issued up
- * to eight serialized inserts per asset per tick on a REST/SNMP-heavy fleet.
- * Payload and the `${assetId}:${cadence}` singletonKey are identical to
- * publishMonitorJob's, and pg-boss enforces the stately queue policy with
- * unique constraints on the job table itself, so insert() coalesces a
- * duplicate of a queued job exactly the way send() does (verified
- * empirically against pg-boss 12.18 — see the ensureQueues comment). Neither
- * path passes retry/expire options — jobs inherit the queue-level values
- * ensureQueues declared.
+ * The ONLY monitor-job publisher: one INSERT per queue per tick instead of one
+ * awaited send() round trip per asset — the per-asset shape (a single-job
+ * publisher, deleted 2026-11-05 as uncalled) issued up to eight serialized
+ * inserts per asset per tick on a REST/SNMP-heavy fleet. Each job carries the
+ * `${assetId}:${cadence}` singletonKey, and pg-boss enforces the stately queue
+ * policy with unique constraints on the job table itself, so insert()
+ * coalesces a duplicate of a queued job exactly the way send() would
+ * (verified empirically against pg-boss 12.18 — see the ensureQueues
+ * comment). No retry/expire options are passed — jobs inherit the
+ * queue-level values ensureQueues declared.
  */
 export async function publishMonitorJobsBulk(
   cadence: MonitorCadence,

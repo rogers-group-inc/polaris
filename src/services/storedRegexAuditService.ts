@@ -118,7 +118,3 @@ export async function countUnusableStoredPatterns(): Promise<number> {
     return 0;
   }
 }
-
-export function _resetUnusablePatternCache(): void {
-  cached = null;
-}

@@ -124,11 +124,6 @@ export type AssetSourceKind =
  */
 export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr", "fortinet-live"];
 
-/** True when this kind's presence means "something still holds this device". */
-export function sourceClaimsExistence(kind: string): boolean {
-  return !ENRICHMENT_SOURCE_KINDS.includes(kind as AssetSourceKind);
-}
-
 export interface AssetSourceForProjection {
   sourceKind: AssetSourceKind | string;
   inferred: boolean;
@@ -628,11 +623,6 @@ let activeLearnedLocationRules: FieldRule[] = buildLearnedLocationRules(activeLo
 export function setLearnedLocationPriority(config: SourceLocationPriority): void {
   activeLocationPriority = config;
   activeLearnedLocationRules = buildLearnedLocationRules(config);
-}
-
-/** The order currently in force — for diagnostics / the settings GET. */
-export function getLearnedLocationPriority(): SourceLocationPriority {
-  return activeLocationPriority;
 }
 
 /**

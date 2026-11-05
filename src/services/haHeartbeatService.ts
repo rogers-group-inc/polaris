@@ -236,12 +236,6 @@ export function evaluateHeartbeat(
   return { conflict: true, holder: stamp.hostname, holderInstanceId: stamp.instanceId, ageMs };
 }
 
-/** Read the current stamp, or null when the row is absent/unparseable. */
-export async function readActiveInstance(): Promise<ActiveInstanceStamp | null> {
-  const row = await prisma.setting.findUnique({ where: { key: ACTIVE_INSTANCE_KEY } });
-  return parseStamp(row?.value ?? undefined);
-}
-
 /**
  * Set once the stamp has been released on shutdown, so an in-flight tick
  * cannot resurrect the row behind the successor's back.

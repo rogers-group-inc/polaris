@@ -223,11 +223,6 @@ async function chunkFoldMode(): Promise<Exclude<ChunkFold, false>> {
   return legacyCompressedLink ? "prefix-with-legacy-link" : "prefix";
 }
 
-/** Exported for the tests: forget the probed catalog shape. */
-export function _resetCatalogShapeCache(): void {
-  legacyCompressedLink = null;
-}
-
 interface TableSizeRow {
   name: string;
   bytes: bigint | null;

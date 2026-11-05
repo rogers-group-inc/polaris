@@ -6,7 +6,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Derives recommended worker counts, pool sizes, PostgreSQL settings, and queue mode from observable workload (monitored-asset count, per-cadence P90 work duration, integration load, observed peak connections, host RAM). Advisory by default; a Stage POST writes the env-driven levers.
 
-**Public API:** `buildAdvisorState`, `recomputeAdvisorFromSnapshot`, `stageAdvisorState`, `summarizeAdvisorGaps`, `getCachedAdvisorState`, `percentile`, `roundUpToNearest`, `AdvisorState`, `AdvisorRecommendation`, `CadenceKey`, `AdvisorLeverKey`, `ApplyMode`
+**Public API:** `buildAdvisorState`, `recomputeAdvisorFromSnapshot`, `stageAdvisorState`, `summarizeAdvisorGaps`, `percentile`, `roundUpToNearest`, `AdvisorState`, `AdvisorRecommendation`, `CadenceKey`, `AdvisorLeverKey`, `ApplyMode`
 
 **Cross-service deps:** `prisma`, `AppError`, `setEnvVar`, monitor-work histogram reader (metrics), `queueService` (queue mode + names), `capacityService` (CapacitySnapshot), `logEvent`.
 
@@ -48,7 +48,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Every "how big is this?" figure about the database, from ONE attribution pass over `pg_class`: the per-public-table sizes behind the Maintenance tab's table list and the capacity snapshot's sample-table stats, and the bucket breakdown (`polaris` / `pgboss` / `catalog` / `other`) behind its "Current size". Catalog-only by rule — `pg_class.relpages × block_size`, never `pg_database_size()` or `pg_total_relation_size()`, which stat() every relfilenode behind a relation and were minutes-slow at prod chunk counts.
 
-**Public API:** `getTableSizes(names?)` → `{ sizing, tables[] }`, `getDatabaseSizeBreakdown()` → `DatabaseSizeBreakdown`, the pure `summarizeBuckets`, and `buildTableSizeSql` + `_resetCatalogShapeCache` for the tests.
+**Public API:** `getTableSizes(names?)` → `{ sizing, tables[] }`, `getDatabaseSizeBreakdown()` → `DatabaseSizeBreakdown`, the pure `summarizeBuckets`, and `buildTableSizeSql` for the tests.
 
 **Cross-service deps:** `timescaleService.isTimescaleAvailable()` (whether to attempt the chunk fold).
 
@@ -315,7 +315,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** TimescaleDB extension detection and hypertable migration for the seven sample tables + fourteen rollup tables + the standalone detail-only `asset_custom_widget_samples` (22 hypertable candidates); `dropChunks` pre-filter for retention pruning. Boot-time detection caches hypertable status; subsequent `isHypertable()` checks return cached value without round-tripping. (SD-WAN rules — `asset_sdwan_rules` — are a plain current-state table, not a hypertable candidate.)
 
-**Public API:** `detectTimescale`, `isTimescaleAvailable`, `isHypertable`, `getDetectionState`, `dropChunks`, `getEffectiveCompressAfterDays`, `migrateToHypertables`, `SAMPLE_TABLES`, `ROLLUP_TABLES`, `STANDALONE_SAMPLE_TABLES`, `ALL_HYPERTABLE_CANDIDATES`, `SampleTableName`, `RollupTableName`, `StandaloneSampleTableName`, `ManagedHypertableName`, `DetectionState`.
+**Public API:** `detectTimescale`, `isTimescaleAvailable`, `isHypertable`, `getDetectionState`, `dropChunks`, `getEffectiveCompressAfterDays`, `migrateToHypertables`, `SAMPLE_TABLES`, `ROLLUP_TABLES`, `STANDALONE_SAMPLE_TABLES`, `ALL_HYPERTABLE_CANDIDATES`, `DetectionState`.
 
 **Cross-service deps:** none.
 

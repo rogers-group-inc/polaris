@@ -17,8 +17,9 @@
  *  - `sendProbeNow(managedAgentId, stream, timeoutMs)` — server-initiated
  *    pull. Send a `probe-now-request` frame and await the matching
  *    `probe-now-response` by request-id. Resolves with the result; rejects
- *    on timeout. Used by `POST /api/v1/assets/:id/probe-now` when the
- *    asset's resolved transport is "agent".
+ *    on timeout. NOT WIRED to any route: the agent answers the frame, but
+ *    `POST /api/v1/assets/:id/probe-now` polls an agent asset through the
+ *    normal monitor path. Kept as the server half of that protocol.
  *
  *  - `refreshConfig(managedAgentId)` — send a `refresh-config` frame so
  *    the agent re-fetches /config immediately instead of waiting for its
@@ -292,6 +293,7 @@ interface ProbeNowResult {
   error?:          string;
 }
 
+/** Server half of the agent's probe-now protocol; no caller yet (see the header). @public */
 export function sendProbeNow(
   managedAgentId: string,
   stream: "responseTime" | "telemetry" | "interfaces" | "storage",
@@ -351,20 +353,6 @@ function randomFrameId(): string {
   return Math.random().toString(36).slice(2, 12);
 }
 
-// Test/diag — count of live sessions. Used by /metrics in a follow-on commit.
-export function liveSessionCount(): number {
-  return sessions.size;
-}
-
-// Shutdown hook: graceful close on SIGTERM/SIGINT. Wired from src/app.ts.
-export async function shutdownAllSessions(): Promise<void> {
-  stopCommandWakeListener();
-  const ids = Array.from(sessions.keys());
-  for (const id of ids) {
-    detach(id, "server shutdown");
-  }
-}
-
 // ─── Cross-process command-wake listener (web/all role) ───────────────
 //
 // A dedicated Postgres session LISTENing on CMD_WAKE_CHANNEL. When any process
@@ -376,15 +364,12 @@ export async function shutdownAllSessions(): Promise<void> {
 
 let wakeClient: pg.Client | null = null;
 let wakeReconnectTimer: NodeJS.Timeout | null = null;
-let wakeListenerStopped = false;
 
 export async function startCommandWakeListener(): Promise<void> {
-  wakeListenerStopped = false;
   await connectWakeListener();
 }
 
 async function connectWakeListener(): Promise<void> {
-  if (wakeListenerStopped) return;
   const url = getDirectDatabaseUrl();
   if (!url) {
     logger.warn("Agent command-wake listener: no database URL — near-real-time dispatch disabled (agents still poll)");
@@ -417,16 +402,10 @@ async function connectWakeListener(): Promise<void> {
 }
 
 function scheduleWakeReconnect(): void {
-  if (wakeListenerStopped || wakeReconnectTimer) return;
+  if (wakeReconnectTimer) return;
   if (wakeClient) { try { void wakeClient.end(); } catch { /* ignore */ } wakeClient = null; }
   wakeReconnectTimer = setTimeout(() => {
     wakeReconnectTimer = null;
     void connectWakeListener();
   }, 5000);
-}
-
-function stopCommandWakeListener(): void {
-  wakeListenerStopped = true;
-  if (wakeReconnectTimer) { clearTimeout(wakeReconnectTimer); wakeReconnectTimer = null; }
-  if (wakeClient) { try { void wakeClient.end(); } catch { /* ignore */ } wakeClient = null; }
 }

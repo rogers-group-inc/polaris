@@ -72,9 +72,6 @@ import { MIN_DIRECTORY_QUERY, searchDirectory, type DirectorySourceKind } from "
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-/** Who owns a contact row. See business rule 35. */
-export type ContactOrigin = "manual" | "entra" | "ad";
-
 /** A synced row is one the directory sync created and still claims. */
 function isDirectoryOrigin(origin: string): boolean {
   return origin !== "manual";

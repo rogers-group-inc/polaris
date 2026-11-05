@@ -250,10 +250,6 @@ function nodeKey(manufacturer: string, assetType: string | null, model: string |
 
 // ─── Disk ─────────────────────────────────────────────────────────────────────
 
-export async function ensureFirmwareDirs(): Promise<void> {
-  await mkdir(FIRMWARE_INCOMING_DIR, { recursive: true });
-}
-
 /** Absolute path of an image's bytes, refused when the stored path escapes FIRMWARE_DIR. */
 export function resolveImagePath(storagePath: string): string {
   const abs = resolve(FIRMWARE_DIR, storagePath);

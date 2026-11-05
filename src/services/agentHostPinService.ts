@@ -373,10 +373,6 @@ export async function resolvePendingCheckinConflicts(assetId: string, resolvedBy
 const CHECKIN_THROTTLE_MS = 10 * 60 * 1000;
 const lastCheckinRaise = new Map<string, number>();
 
-export function _resetCheckinThrottle(): void {
-  lastCheckinRaise.clear();
-}
-
 /**
  * Called from agentTokenService.verifyBearer when an authenticated agent's
  * archive is held. Fire-and-forget and throttled — it sits on every agent

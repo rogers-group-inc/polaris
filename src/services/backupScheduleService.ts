@@ -116,10 +116,6 @@ export async function getBackupScheduleMasked(): Promise<BackupSchedule> {
   return { ...s, passphrase: s.passphrase ? SECRET_MASK : null };
 }
 
-export function invalidateBackupScheduleCache(): void {
-  store.invalidate();
-}
-
 /**
  * Merge and persist operator input.
  *

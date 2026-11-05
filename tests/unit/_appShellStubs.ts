@@ -18,7 +18,7 @@ import { resolve } from "node:path";
 const APP_JS = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
 
 /** One top-level `function name(...) {...}` declaration, source text and all. */
-export function extractAppFn(name: string): string {
+function extractAppFn(name: string): string {
   const start = APP_JS.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`${name} not found in public/js/app.js`);
   let depth = 0;

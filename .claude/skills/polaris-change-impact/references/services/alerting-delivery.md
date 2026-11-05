@@ -96,7 +96,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 **What it owns:** The SCHEDULED half of the GAL story (business rule 35) — the exclusion filter's normalization and decision, and the projection of a contact's directory-owned fields from its provenance rows. Its live sibling `directorySearchService` persists nothing; this one is why `Contact.origin` and `DirectoryContactSource` exist.
 
-**Public API:** `runDirectorySync` (the pass), `purgeDirectoryContacts`, `directorySyncAvailable`, `deleteExceedsGuard`, `normalizeDirectorySyncFilter`, `directoryExclusionReason` (PURE), `projectContactFromSources` (PURE), plus the `DirectoryPerson` / `DirectorySyncFilter` / `DirectorySyncSummary` types the two bulk readers produce and consume.
+**Public API:** `runDirectorySync` (the pass), `purgeDirectoryContacts`, `deleteExceedsGuard`, `normalizeDirectorySyncFilter`, `directoryExclusionReason` (PURE), `projectContactFromSources` (PURE), plus the `DirectoryPerson` / `DirectorySyncFilter` / `DirectorySyncSummary` types the two bulk readers produce and consume.
 
 **Cross-service deps:** `utils/integrationFilter` (`matchesWildcard` — the canonical glob-lite matcher every device/VM/interface filter already uses, so an operator who has configured one knows how this behaves).
 
@@ -120,11 +120,11 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 **Public API:** `searchDirectory(query, limit)`, `directorySearchAvailable()`, `listDirectorySources()`, `bumpDirectoryCache()`, `MIN_DIRECTORY_QUERY`, `DirectorySearchEntry`, `DirectorySource` / `DirectorySourceKind`.
 
-`listDirectorySources()` is the enumeration BOTH directory opt-ins are read through — it reports one entry per BACKEND (`entra` / `ad`) with a label and its `search` / `sync` flags, and `directorySyncService.directorySyncAvailable()` delegates to it. It lives here rather than beside the sync it also reports because this module already owns the "which integrations are directories" query and the sync service imports `contactService`, which imports this one. Grouped by backend, never per integration: a stored row records `origin: "entra"`, not which of two Entra integrations produced it, so a per-integration split would promise something the data cannot honour — two integrations of one kind fall back to the product name.
+`listDirectorySources()` is the enumeration BOTH directory opt-ins are read through — it reports one entry per BACKEND (`entra` / `ad`) with a label and its `search` / `sync` flags, and the contacts list derives its `directorySyncAvailable` flag from it. It lives here rather than beside the sync it also reports because this module already owns the "which integrations are directories" query and the sync service imports `contactService`, which imports this one. Grouped by backend, never per integration: a stored row records `origin: "entra"`, not which of two Entra integrations produced it, so a per-integration split would promise something the data cannot honour — two integrations of one kind fall back to the product name.
 
 **Cross-service deps:** `prisma` (integration rows only), `entraIdService.searchDirectoryEntra`, `activeDirectoryService.searchDirectoryAd`, `utils/ttlCache`, `utils/logger`.
 
-**Used by (the source list):** `src/api/routes/contacts.ts` (`directorySources` on the list payload, which the address book's tab strip is built from) and `directorySyncService.directorySyncAvailable`.
+**Used by (the source list):** `src/api/routes/contacts.ts` (`directorySources` on the list payload, which the address book's tab strip is built from, and the `directorySyncAvailable` flag derived from it).
 
 **Used by:** `contactService.searchAddressBook` (when `includeDirectory`), which is reached from `GET /contacts/search?directory=1`.
 
@@ -265,7 +265,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 **What it owns:** The install's letterhead in the top-right corner of an alert email — which artwork the email uses, whether the application name prints beside it, and both rendered forms of the block plus the inline attachment the HTML cites.
 
-**Public API:** `buildAlertBrandBlock()` (the whole delivery-time step — one branding read, one image load, both bodies, memoized 60s), `brandTokensIn(...templates)`, `substituteBrandTokens(body, block)`, `BRAND_LOGO_CID`, plus the pure pieces the tests drive: `renderBrandBlock({name, subtitle, logo}, {html})`, `fitLogo(size)`, `MAX_LOGO_WIDTH` / `MAX_LOGO_HEIGHT`, `EMAIL_LOGO_PATH`, `__resetAlertBrandCacheForTests()`.
+**Public API:** `buildAlertBrandBlock()` (the whole delivery-time step — one branding read, one image load, both bodies, memoized 60s), `brandTokensIn(...templates)`, `substituteBrandTokens(body, block)`, `BRAND_LOGO_CID`, plus the pure pieces the tests drive: `renderBrandBlock({name, subtitle, logo}, {html})`, `fitLogo(size)`, `MAX_LOGO_WIDTH` / `MAX_LOGO_HEIGHT`, `EMAIL_LOGO_PATH`.
 
 **Cross-service deps:** `brandingService.getBranding` + `displayAppName`, `brandLogoService.renderAccentedLogo("light")`, `appIconService.resolveBrandingLogoFile`, `utils/imageMagic.detectImageMagic`, `utils/imageSize.imageSize`, `utils/notificationTemplate.escapeHtml`.
 
@@ -281,7 +281,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 - PNG/JPEG only. A WebP upload has no accent path either (resvg cannot decode it) and mail clients handle it unevenly, so such an install gets the name-and-subtitle block with no image.
 - `fitLogo` never enlarges and caps at 150×46: an operator upload can be any size, and an unconstrained 900px banner scaled by the client pushes the headline into a two-word column. Both dimensions are emitted as HTML ATTRIBUTES because Outlook sizes from those, not from CSS.
 - Every failure rung degrades — unreadable branding, unresolvable logoUrl, failed accent composite, bad magic bytes, unreadable dimensions — dropping the logo, then the whole block. Nothing throws. Letterhead must never be the reason an alert does not arrive; failures log once per distinct reason (`warnOnce`), never per email.
-- Memoized 60s (`CACHE_TTL_MS`) because a drain sends up to `BATCH_SIZE` emails per tick and every one of them wants the identical block. Branding changes on an operator click, so a minute of staleness in letterhead costs nothing — but it means a test must call `__resetAlertBrandCacheForTests()`.
+- Memoized 60s (`CACHE_TTL_MS`) because a drain sends up to `BATCH_SIZE` emails per tick and every one of them wants the identical block. Branding changes on an operator click, so a minute of staleness in letterhead costs nothing.
 
 **When changing this:** the block is rendered per body from one shared `parts` object, so a new element has to be added to `renderBrandBlock` (both branches) rather than to one of them. Adding a second `{brand.*}` token means widening `BRAND_TOKENS` + `substituteBrandTokens`; the deferred-token prefix already covers it. If the block can ever contain a `<table>` of its own, re-check the header's prune immunity — the guard is currently a static wrapper in the template, not something this file emits.
 
@@ -515,7 +515,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 **What it owns:** CRUD + secret handling for the `NotificationChannel` registry (Notifications → Delivery tab) — the operator-managed list of outbound delivery integrations.
 
-**Public API:** `listChannels`/`listChannelsForBuilder`/`getChannel`/`getChannelRaw` (secrets, for senders)/`createChannel`/`updateChannel`/`deleteChannel`/`generateWebPushKeys`/`getWebPushChannel`, `MASK`.
+**Public API:** `listChannels`/`getChannel`/`getChannelRaw` (secrets, for senders)/`createChannel`/`updateChannel`/`deleteChannel`/`generateWebPushKeys`/`getWebPushChannel`, `MASK`.
 
 **Cross-service deps:** `prisma` (notification_channels), `notificationTypes.CHANNEL_TYPE_META` (per-type field defs incl. which are secret) + `CHANNEL_TRANSPORT`, `notificationChannels/webPushChannel.generateVapidKeys`.
 

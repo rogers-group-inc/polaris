@@ -712,11 +712,6 @@ async function resolvePerfCounters(
   return counters;
 }
 
-/** Drop the memoized counter table (tests, and a config change that repoints the host). */
-export function _resetPerfCounterMemo(): void {
-  perfCounterMemo.clear();
-}
-
 /**
  * Parse a QueryPerf response into per-entity readings. Exported for tests.
  *

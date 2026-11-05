@@ -52,6 +52,7 @@ import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
 import { getDirectDatabaseUrl, isPgbouncerMode } from "../utils/dbConnections.js";
 import { logEvent } from "./eventLogService.js";
+import type { HandlerTimeoutPressure } from "./capacityAdvisorService.js";
 import { detectFping } from "../utils/burstPing.js";
 import { configuredSweepIntervalSec, resolveSweepIntervalSec } from "../utils/lossSweep.js";
 import {
@@ -1418,7 +1419,7 @@ export interface AdvisorGapsForReasons {
   /** Cadences whose observed p90 has climbed toward the pg-boss handler timeout
    *  cap (`pgboss.queue.expire_seconds`). Non-empty fires the
    *  `monitor_handler_timeout_pressure` watch reason. */
-  handlerTimeoutPressure?: import("./capacityAdvisorService.js").HandlerTimeoutPressure[];
+  handlerTimeoutPressure?: HandlerTimeoutPressure[];
 }
 
 // Stable family key for a volume. The collapse pass groups every disk reason

@@ -103,11 +103,6 @@ export const ALL_HYPERTABLE_CANDIDATES = [
   ...STANDALONE_SAMPLE_TABLES,
 ] as const;
 
-export type SampleTableName = typeof SAMPLE_TABLES[number];
-export type RollupTableName = typeof ROLLUP_TABLES[number];
-export type StandaloneSampleTableName = typeof STANDALONE_SAMPLE_TABLES[number];
-export type ManagedHypertableName = typeof ALL_HYPERTABLE_CANDIDATES[number];
-
 interface DetectionState {
   extensionInstalled: boolean;
   /**

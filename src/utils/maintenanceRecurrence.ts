@@ -242,7 +242,6 @@ const recurringSchema = z
 export const scheduleShapeSchema = z.union([oneshotSchema, recurringSchema]);
 
 export type MaintenanceScheduleShape = z.infer<typeof scheduleShapeSchema>;
-export type OneshotSchedule = z.infer<typeof oneshotSchema>;
 export type RecurringSchedule = z.infer<typeof recurringSchema>;
 
 export interface MaintenanceOccurrence {

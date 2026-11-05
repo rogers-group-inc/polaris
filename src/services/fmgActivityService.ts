@@ -82,14 +82,6 @@ export function startFmgActivityHeartbeat(): void {
   heartbeatTimer.unref?.();
 }
 
-/** Test-only. */
-export function stopFmgActivityHeartbeatForTests(): void {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-}
-
 /**
  * Read the per-integration activity slice the web role serves from the
  * integrations API. Empty/missing entry returns a zeroed readout with

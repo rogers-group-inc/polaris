@@ -113,10 +113,3 @@ export async function checkReadiness(
     if (timer) clearTimeout(timer);
   }
 }
-
-/** Test seam: drop the memoized pool so a suite can swap DATABASE_URL. */
-export async function resetReadinessPoolForTests(): Promise<void> {
-  const pool = readinessPool;
-  readinessPool = null;
-  if (pool) await pool.end().catch(() => {});
-}

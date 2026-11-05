@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export function appOverlaySource(): string {
+function appOverlaySource(): string {
   const src = readFileSync(resolve(here, "../../public/js/app.js"), "utf8");
   const start = src.indexOf("function buildOverlay(");
   if (start === -1) {

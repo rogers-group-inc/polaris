@@ -155,9 +155,6 @@ const GENERIC_API_MONITOR_FIELDS: Record<GenericApiMonitorStream, { keys: readon
   widgets:      { keys: [], required: [] },
 };
 
-/** Streams whose document holds a LIST of rows (`itemsPath`). */
-export const GENERIC_API_LIST_STREAMS: ReadonlySet<GenericApiMonitorStream> = new Set(["interfaces", "storage", "temperature", "lldp"]);
-
 /** The integration-tier polling key each stream's default lives under (widgets have none). */
 const GENERIC_API_STREAM_POLLING_KEY: Partial<Record<GenericApiMonitorStream, string>> = {
   responseTime: "responseTimePolling",

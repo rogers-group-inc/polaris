@@ -349,7 +349,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** The active-instance heartbeat and the WAL-rate ring behind the active/standby HA deployment (docs/HA.md). Two Setting rows: `ha.activeInstance` = `{instanceId, hostname, pid, at}`, re-stamped every 30s by the scheduler role and deleted on a clean shutdown, and `ha.walSamples` = a 288-entry (24h, one per 5 min) ring of `pg_current_wal_lsn()` readings used to size the WAN link, `max_slot_wal_keep_size` and `maximum_lag_on_failover` BEFORE anyone enables HA. It also owns the install's identity file, `<STATE_DIR>/data/instance-id`.
 
-**Public API:** `evaluateHeartbeat` (pure), `checkActiveInstanceConflict`, `stampActiveInstance`, `releaseActiveInstance`, `readActiveInstance`, `resolveInstanceId`, `getSelfIdentity`, `appendWalSample`, `isHeartbeatEnabled`, `__resetInstanceIdentityForTests`, `ACTIVE_INSTANCE_KEY`, `WAL_SAMPLES_KEY`, `INSTANCE_ID_FILE`, `HEARTBEAT_INTERVAL_MS`, `CONFLICT_WINDOW_MS`, `WAL_SAMPLE_EVERY_TICKS`, `WAL_SAMPLE_RING_SIZE`, `ActiveInstanceStamp`, `InstanceIdentity`, `WalSample`, `HeartbeatVerdict`.
+**Public API:** `evaluateHeartbeat` (pure), `checkActiveInstanceConflict`, `stampActiveInstance`, `releaseActiveInstance`, `resolveInstanceId`, `getSelfIdentity`, `appendWalSample`, `isHeartbeatEnabled`, `__resetInstanceIdentityForTests`, `ACTIVE_INSTANCE_KEY`, `WAL_SAMPLES_KEY`, `INSTANCE_ID_FILE`, `HEARTBEAT_INTERVAL_MS`, `CONFLICT_WINDOW_MS`, `WAL_SAMPLE_EVERY_TICKS`, `WAL_SAMPLE_RING_SIZE`, `ActiveInstanceStamp`, `InstanceIdentity`, `WalSample`, `HeartbeatVerdict`.
 
 **Cross-service deps:** `prisma` (settings), `src/utils/dbConnections.ts` (`getDirectDatabaseUrl` gates the WAL read), `src/utils/paths.ts` (`STATE_DIR` locates the identity file), `node:os`, `node:fs`, `node:crypto`. No other service.
 
@@ -378,7 +378,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **Cross-service deps:** `prisma` (settings) only.
 
-**Used by:** `azureAuthService` (key `sso`; `peek` backs the synchronous `isAzureSsoConfigured` fast path), `entraProxyAuthService` (key `entraProxy`), `dashSettingsService` (key `dashConfig`, 10s TTL = the cross-process propagation delay to the dash listener). Other Setting-blob sites still hand-roll the pattern — migrate them onto this as they're touched., `passwordPolicyService` (key `passwordPolicyConfig`, 10s TTL — but its `get` wrapper swallows a read error and answers the DEFAULT policy, because a settings outage must not lower the password bar) and `passkeyService` (key `passkeyConfig`, 10s TTL — whose wrapper swallows the same error and answers mode `off`, the opposite posture, because that row decides whether a credential may sign someone in)
+**Used by:** `azureAuthService` (key `sso`), `entraProxyAuthService` (key `entraProxy`), `dashSettingsService` (key `dashConfig`, 10s TTL = the cross-process propagation delay to the dash listener). Other Setting-blob sites still hand-roll the pattern — migrate them onto this as they're touched., `passwordPolicyService` (key `passwordPolicyConfig`, 10s TTL — but its `get` wrapper swallows a read error and answers the DEFAULT policy, because a settings outage must not lower the password bar) and `passkeyService` (key `passkeyConfig`, 10s TTL — whose wrapper swallows the same error and answers mode `off`, the opposite posture, because that row decides whether a credential may sign someone in)
 
 **Invariants:**
 - The cache is per-process, exactly like the hand-rolled copies it replaced — a write in one role propagates to other roles only after their ttlMs expires. Don't shorten a TTL without checking what read frequency it implies (dash consults its store on every request).
@@ -500,7 +500,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** Monitor work queue mode dispatch (cursor vs. pg-boss) and pg-boss runtime lifecycle. Boot-time mode capture ensures the running process's queue strategy is frozen at startup despite subsequent Setting writes.
 
-**Public API:** `detectPgboss`, `isPgbossInstalled`, `getQueueMode`, `setQueueMode`, `getBootTimeMode`, `initializeQueue`, `startPgbossWorkers`, `stopPgbossWorkers`, `isPgbossRunning`, `publishMonitorJob`, `QUEUE_NAMES`, `QueueMode`, `publishDiscoveryJob`, `failActiveDiscoveryJobs`, `DISCOVERY_QUEUE_NAME`, `DISCOVERY_JOB_HEARTBEAT_SECONDS`.
+**Public API:** `detectPgboss`, `isPgbossInstalled`, `getQueueMode`, `setQueueMode`, `getBootTimeMode`, `initializeQueue`, `startPgbossWorkers`, `stopPgbossWorkers`, `isPgbossRunning`, `QUEUE_NAMES`, `QueueMode`, `publishDiscoveryJob`, `failActiveDiscoveryJobs`, `DISCOVERY_QUEUE_NAME`, `DISCOVERY_JOB_HEARTBEAT_SECONDS`.
 
 **Cross-service deps:** `monitoringService.ts`.
 
@@ -628,7 +628,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** The operator-configured automatic-backup cadence — the `backupSchedule` Setting row, its validation/merge rules, the pure due-check, and the off-host copy helper.
 
-**Public API:** `getBackupSchedule` (full, INCLUDING the passphrase — internal callers only), `getBackupScheduleMasked` (API shape), `saveBackupSchedule`, `recordScheduledBackupOutcome`, `isScheduledBackupDue(schedule, now)` (pure), `copyBackupOffHost`, `invalidateBackupScheduleCache`, `defaultBackupSchedule`, plus the bounds constants.
+**Public API:** `getBackupSchedule` (full, INCLUDING the passphrase — internal callers only), `getBackupScheduleMasked` (API shape), `saveBackupSchedule`, `recordScheduledBackupOutcome`, `isScheduledBackupDue(schedule, now)` (pure), `copyBackupOffHost`, `defaultBackupSchedule`, plus the bounds constants.
 
 **Cross-service deps:** `services/settingsStore.ts` (TTL-cached Setting accessor), `utils/secretMask.ts`, `utils/backupPassword.ts`.
 

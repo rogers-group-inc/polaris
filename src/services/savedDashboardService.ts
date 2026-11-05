@@ -182,11 +182,6 @@ async function loadVisible(id: string, viewer: SavedViewer | null): Promise<Row>
   return row;
 }
 
-/** Load one row (no visibility check). */
-export async function getSavedDashboard(id: string): Promise<Row> {
-  return load(id);
-}
-
 /**
  * One saved dashboard by id, as a DTO — the wallboard's re-read of the screen
  * it is pinned to, and the Dashboard page's refresh of a loaded tab. A row the

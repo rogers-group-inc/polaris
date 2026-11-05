@@ -72,11 +72,6 @@ export const AGENT_INSTALL_SCRIPTS: AgentInstallScriptMeta[] = [
   },
 ];
 
-/** All variants for a given OS (what the UI picker lists for that target). */
-export function scriptsForOs(os: AgentOsPlatform): AgentInstallScriptMeta[] {
-  return AGENT_INSTALL_SCRIPTS.filter((s) => s.osPlatform === os);
-}
-
 /** The default variant id for an OS. Throws if the catalog is malformed
  *  (missing a default) — a programming error, surfaced loudly. */
 function defaultScriptIdFor(os: AgentOsPlatform): string {

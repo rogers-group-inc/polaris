@@ -611,16 +611,6 @@ export async function migrateArchivedReservations(
   return out;
 }
 
-/** Pending chassis conflicts, newest first — for the review surface. */
-export async function listChassisConflicts(limit = 50) {
-  return prisma.conflict.findMany({
-    where: { ...CHASSIS_CONFLICT_WHERE, status: "pending" },
-    orderBy: { createdAt: "desc" },
-    take: Math.min(Math.max(limit, 1), 200),
-    include: { subnet: { select: { id: true, cidr: true, name: true, fortigateDevice: true } } },
-  });
-}
-
 // ─── One swap, one decision (rule 41(a)) ────────────────────────────────────
 //
 // A FortiGate serves many subnets, so one physical swap raised one card PER

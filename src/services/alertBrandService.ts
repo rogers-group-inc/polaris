@@ -222,12 +222,6 @@ function describeLogo(buf: Buffer, what: string): LoadedLogo | null {
 const CACHE_TTL_MS = 60_000;
 let cached: { at: number; block: AlertBrandBlock } | null = null;
 
-/** Test seam. */
-export function __resetAlertBrandCacheForTests(): void {
-  warned.clear();
-  cached = null;
-}
-
 /** The whole delivery-time step: read branding + the mark once, render both bodies. */
 export async function buildAlertBrandBlock(): Promise<AlertBrandBlock> {
   const now = Date.now();

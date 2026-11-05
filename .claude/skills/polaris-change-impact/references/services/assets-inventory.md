@@ -399,7 +399,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The operator-settable priority behind the assets table's **Sources** column — which discovery source's "where was this learned?" answer wins when an asset is known to several at once. One Setting row (`assetSourcePriority`, `{order[], integrationPrefix}`) over `createSettingStore` with a 30s TTL. The catalogue of who can contribute what is the pure `utils/assetSourceLocation.ts`; this service owns persistence, validation, audit, and installing the order into the projection.
 
-**Public API:** `getSourceLocationPriority()`, `getSourcePrioritySettings()`, `saveSourceLocationPriority(input, actor)`, `refreshProjectionPriority()`, `invalidateSourcePriorityCache()`, `ASSET_SOURCE_PRIORITY_KEY`
+**Public API:** `getSourceLocationPriority()`, `getSourcePrioritySettings()`, `saveSourceLocationPriority(input, actor)`, `refreshProjectionPriority()`, `ASSET_SOURCE_PRIORITY_KEY`
 
 **Cross-service deps:** `settingsStore.createSettingStore`, `eventLogService.logEvent`, `utils/assetSourceLocation` (catalogue + normalizer), `utils/assetProjection.setLearnedLocationPriority` (the install seam).
 
@@ -724,7 +724,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** IEEE OUI database download and CSV parsing; lazy in-memory lookup map; admin-editable overrides (prefix → manufacturer+device); cache persistence via Setting table.
 
-**Public API:** lookupOui, lookupOuiBatch, lookupOuiOverride, refreshOuiDatabase, getOuiStatus, OuiOverride, getOuiOverrides, setOuiOverride, deleteOuiOverride.
+**Public API:** lookupOui, lookupOuiOverride, refreshOuiDatabase, getOuiStatus, OuiOverride, getOuiOverrides, setOuiOverride, deleteOuiOverride.
 
 **Used by:**
 - src/api/routes/assets.ts — GET /assets/:id, look up MAC OUI (vendor name)
@@ -736,7 +736,6 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - IEEE database is downloaded from standards-oui.ieee.org/oui/oui.csv; stored as JSON in Setting table; loaded on-demand into module-level in-memory map (singleton pattern, reset only on refresh).
 - Prefix format: "AABBCC" (6 hex chars); input normalization handles colon/dash/mixed-case (AA:BB:CC, aa-bb-cc, etc.).
 - Overrides take priority over IEEE DB; back-compat layer supports legacy bare-string overrides (migrate to {manufacturer, device?} shape on load).
-- lookupOuiBatch() avoids repeated DB reads; used by discovery to tag multiple assets in one pass.
 - refreshOuiDatabase() runs at startup (skip if <6 days old) and weekly; on 30s HTTP timeout, entire refresh fails (not incremental).
 
 **When changing this:**

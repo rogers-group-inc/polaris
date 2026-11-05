@@ -861,9 +861,6 @@ export function getCurrentBuildAndQueue(): { current: BuildState | null; queue: 
   return { current, queue };
 }
 
-/** Queue depth limit, exported for the UI / docs. */
-export const QUEUE_DEPTH = QUEUE_DEPTH_LIMIT;
-
 // ─── Inventory ────────────────────────────────────────────────────────
 
 interface InventoryFile {

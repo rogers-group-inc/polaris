@@ -699,44 +699,6 @@ export async function resolveSymbolAtVendorScope(
 }
 
 /**
- * Distinct list of model values for which device-specific MIBs have been
- * uploaded under the given manufacturer. Used by the status pill to show
- * "Model overrides for: Catalyst 2960, Nexus 7000".
- */
-export async function listModelOverrides(manufacturer: string): Promise<{ model: string; mibCount: number }[]> {
-  await ensureLoaded();
-  if (!_mibs) return [];
-  const lc = manufacturer.toLowerCase();
-  const counts = new Map<string, number>();
-  for (const m of _mibs) {
-    if (m.manufacturer?.toLowerCase() !== lc) continue;
-    if (!m.model) continue;
-    counts.set(m.model, (counts.get(m.model) ?? 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .map(([model, mibCount]) => ({ model, mibCount }))
-    .sort((a, b) => a.model.localeCompare(b.model));
-}
-
-/** Number of resolved symbols contributed by a specific MIB row id. */
-export async function getMibSymbolCount(mibId: string): Promise<number> {
-  await ensureLoaded();
-  if (!_mibs) return 0;
-  const mib = _mibs.find((m) => m.id === mibId);
-  if (!mib) return 0;
-  // Count is the same regardless of scope — it's just "how many of this
-  // MIB's declarations would resolve when it's loaded into a scope where
-  // its dependencies are present". We use the manufacturer scope for the
-  // count so vendor MIBs see their own dependencies, which is the typical
-  // case. Generic MIBs use the empty scope.
-  const scope = mib.manufacturer
-    ? { manufacturer: mib.manufacturer, model: mib.model }
-    : {};
-  const numeric = getScopeMap(scope.manufacturer, scope.model);
-  return mib.entries.filter((e) => numeric.has(e.name)).length;
-}
-
-/**
  * Resolve every symbol declared by the given MIB to its numeric OID at the
  * MIB's natural scope (its own manufacturer + model layer, falling back to
  * vendor-only and generic layers as `getScopeMap` does for any probe).
@@ -767,24 +729,4 @@ export async function resolveSymbolsForMib(
     out.set(entry.name, resolved?.oid ?? null);
   }
   return out;
-}
-
-/**
- * Resolve a single symbol against an explicit MIB's natural scope. Same
- * fallback chain as `resolveSymbolsForMib`. Returns null when the MIB id
- * doesn't exist or the symbol can't be resolved at this scope.
- *
- * Used by the MIB-aware walk endpoint when the operator picks an object
- * by name from the browse modal — we resolve the name through the MIB's
- * own scope rather than the asset's scope (the operator chose THIS MIB
- * deliberately; resolving against e.g. a Catalyst's scope when the MIB is
- * Fortinet would silently miss the symbol).
- */
-export async function resolveSymbolForMib(
-  mibId: string,
-  name: string,
-): Promise<string | null> {
-  const map = await resolveSymbolsForMib(mibId);
-  if (!map) return null;
-  return map.get(name) ?? null;
 }
