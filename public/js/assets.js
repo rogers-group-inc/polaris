@@ -14574,7 +14574,13 @@ function _memForecastHeadlineHTML(fc) {
   if (signal === "insufficient") {
     var have = fc && fc.points ? fc.points.length : 0;
     var need = (fc && fc.minPoints) || 7;
-    return '<span style="color:' + muted + '">Forecast needs ' + need + ' days of history — ' + have + ' so far</span>';
+    // A reboot restarts the forecast (memoryForecastService): say so, or the
+    // operator reads a device with weeks of history as "1 so far".
+    var since = fc && fc.restartedAt ? new Date(fc.restartedAt) : null;
+    var why = since && !isNaN(since.getTime())
+      ? 'Forecast restarted at the reboot on ' + since.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ' — needs '
+      : 'Forecast needs ';
+    return '<span style="color:' + muted + '">' + why + need + ' days of history — ' + have + ' so far</span>';
   }
   // A memory automation watches this device: count down to its next level,
   // in that level's severity colour — "Days until Serious: 12", the number a

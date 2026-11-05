@@ -161,7 +161,7 @@ import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr
 import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import { PRIORITY_TAGS, prioritySeverityOf, type PrioritySeverity } from "../utils/priorityTags.js";
 import { computeStorageForecast } from "./storageForecastService.js";
-import { computeMemoryForecast, computeMemoryProjection, forecastLevelReading } from "./memoryForecastService.js";
+import { computeMemoryForecastDetail, computeMemoryProjection, forecastLevelReading } from "./memoryForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
@@ -1611,11 +1611,19 @@ async function resolveAssetMetricReadings(
       // apply — the daily averages already smooth; an asset whose memory isn't
       // growing (or has <7 daily points) produces NO reading, so "days <= N"
       // rules stay silent for healthy hosts. One reading per device.
-      const fc = await computeMemoryForecast(ids);
-      return fc.map((r) => {
+      // A host REBOOTED inside the lookback restarts its fit (the reboot
+      // emptied memory) and, until it has a forecast again, reads null, so
+      // a live alert on it ends instead of freezing at the pre-reboot count.
+      const fc = await computeMemoryForecastDetail(ids);
+      const readings: Reading[] = fc.rows.map((r) => {
         const a = index.get(r.assetId)!;
         return { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: r.daysUntilFull };
       });
+      for (const id of fc.restartedWithoutForecast) {
+        const a = index.get(id);
+        if (a) readings.push({ assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: null });
+      }
+      return readings;
     }
     case "memForecastPct": {
       // Forecast metric over the trigger's horizon (FORECAST_HORIZON_METRICS):
