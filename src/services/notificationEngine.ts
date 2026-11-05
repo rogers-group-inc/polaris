@@ -172,6 +172,7 @@ import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreLi
 import { sdwanDimensionMatch, sdwanChildrenYielding } from "../utils/sdwanDimensions.js";
 import {
   buildTemplateContext,
+  forecastCountdown,
   renderNotificationTemplate,
   templateNeedsAsset,
   setRecoverySentence,
@@ -3270,6 +3271,8 @@ async function evaluateThresholdRule(
   // finding the alert a contribution should join costs ZERO extra queries.
   const groupBuf: GroupBuffer | null = ruleGroupsByAsset(rule) ? new Map() : null;
   const liveByAsset = await liveAlertsByAsset(rule, states, tickIndex);
+  /** Firing memory-forecast alerts whose countdown may have moved (refreshForecastCountdowns). */
+  const forecastLive: Array<{ st: { id: string; notificationId: string | null; firingSeverity: string | null }; reading: Reading }> = [];
 
   for (const reading of frozenReadings.length ? [...readings, ...frozenReadings] : readings) {
     const key = `${reading.assetId || ""}|${reading.dimKey}`;
@@ -3417,6 +3420,10 @@ async function evaluateThresholdRule(
           Object.assign(data, runPatch()); // the recovery run just broke
           if (Object.keys(data).length) await prisma.notificationRuleState.update({ where: { id: st.id }, data });
         } // same band / firing without a pending recovery → already active; suppress
+        // A memory forecast's live alert COUNTS DOWN: "Days until Serious: 6"
+        // must read 5 tomorrow, though nothing above changed. Queued here and
+        // rewritten after the loop, only when the countdown moved.
+        if (reading.forecast && st.notificationId && !groupBuf) forecastLive.push({ st, reading });
       }
     } else {
       // condition not met for this reading
@@ -3487,6 +3494,7 @@ async function evaluateThresholdRule(
   // they cannot see these rows and have no business with them: a contribution
   // that only just fired has not gone out of scope or been superseded.
   if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
+  if (forecastLive.length) await refreshForecastCountdowns(rule, forecastLive, now);
 
   // Suppressed assets produced no fire-side readings this tick. Reset their
   // `pending` rows — the debounce restarts from scratch after the window, a
@@ -5808,6 +5816,77 @@ async function applyBandTransition(
       details: { ruleId: rule.id, assetId: reading.assetId || null, dimension: reading.dimKey, severity: newSeverity, from: st.firingSeverity },
     }).catch(() => {});
   }
+}
+
+/**
+ * Keep a live memory-forecast alert's countdown current. The alert fires once,
+ * but "Days until Serious: 6" is a statement about TODAY — while the trend
+ * holds, tomorrow it is 5, and a reminder, the in-app card and the alert list
+ * must say so. Nothing else on a steadily-firing alert changes, so the engine's
+ * ordinary "already active; suppress" path left the fire-time number in place
+ * for the life of the alert.
+ *
+ * In place, like a band change, but QUIET: no re-notify, no escalation reset, no
+ * Event (nothing about the alert changed state). One `findMany` over the
+ * forecast rule's live alerts per tick, and a rebuild + write only for an
+ * alert whose level or whole-day count actually moved, which is about once
+ * a day per alert. Grouped alerts (business rule 75) are left to their own
+ * member bookkeeping and keep the fire-time countdown.
+ */
+async function refreshForecastCountdowns(
+  rule: DbRule,
+  live: Array<{ st: { id: string; notificationId: string | null; firingSeverity: string | null }; reading: Reading }>,
+  now: Date,
+): Promise<void> {
+  if (rule.trigger.type !== "asset_metric") return;
+  const ids = live.map((l) => l.st.notificationId).filter((x): x is string => !!x);
+  if (!ids.length) return;
+  const rows = await prisma.notification.findMany({
+    where: { id: { in: ids }, cleared: false, groupKey: null },
+    select: { id: true, severity: true, message: true, templateCtx: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const levels = forecastLevelsOf(rule.trigger, rule.severity, rule.severityBands);
+  for (const { st, reading } of live) {
+    const notif = st.notificationId ? byId.get(st.notificationId) : undefined;
+    if (!notif || !reading.forecast) continue;
+    const stored = (notif.templateCtx ?? null) as Record<string, string> | null;
+    if (!forecastCountdownMoved(stored, { ...reading.forecast, levels }, notif.severity)) continue;
+    const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
+    const parts = readingContextParts(rule, reading, now);
+    parts.severity = notif.severity;
+    applyFollowUpPolicy(parts, rule, notif.severity);
+    const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
+    await applySensorUnitToSummary(rule, reading, ctx);
+    const message = renderMessage(rule, reading, ctx);
+    ctx["message"] = message;
+    // The snapshot is ALWAYS written for a forecast, even on a rule that would
+    // not otherwise keep one (ruleWantsContext): it is where the countdown
+    // shown last is remembered, so the next tick's comparison costs no rebuild.
+    await prisma.notification.updateMany({
+      where: { id: notif.id, cleared: false },
+      data: { message, templateCtx: ctx as any },
+    });
+  }
+}
+
+/**
+ * Has a live forecast alert's countdown moved since it was last rendered? The
+ * stored snapshot's `forecast.level` / `forecast.days` against what the trend
+ * says now. A snapshot without them (an alert from before countdowns were kept
+ * current, or a rule that stored none) counts as moved, once. Pure.
+ */
+export function forecastCountdownMoved(
+  stored: Record<string, string> | null,
+  forecast: { usedPct: number; slopePerDay: number; levels: ForecastLevel[] },
+  severity: string,
+): boolean {
+  const now = forecastCountdown(forecast, severity);
+  // No countdown to show (the trend stopped growing). The reading then goes
+  // null and the ordinary recovery path ends the alert; nothing to rewrite.
+  if (!now) return false;
+  if (!stored || stored["forecast.days"] == null) return true;
+  return stored["forecast.days"] !== now.days || stored["forecast.level"] !== now.level;
 }
 
 /**
