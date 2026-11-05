@@ -11,12 +11,12 @@
 import { logger } from "../utils/logger.js";
 import { evaluateAllNotificationRules } from "../services/notificationEngine.js";
 import { clearSuppressedAlerts, clearExpiredTestAlerts } from "../services/notificationService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 60 * 1000; // 1 minute
 
 /**
- * Independent re-entrancy guard so a slow tick cannot double-fire.
+ * The overlap skip is load-bearing here (defineJob gives it to every job).
  *
  * `setInterval` does not wait for the previous run, and a tick that overruns 60
  * seconds — a fleet-wide sweep, a slow database, a storm — would otherwise start
@@ -25,44 +25,31 @@ const INTERVAL_MS = 60 * 1000; // 1 minute
  * `clear` and both fire it. That has always been possible; grouped alerts
  * (business rule 75) make it VISIBLE, because the artifact is two alerts for one
  * device rather than a duplicate that looks like a retry. The partial unique
- * index `notifications_group_key_live` is the backstop either way — this is the
- * cheap half of the fix, and the same pattern jobs/dependencyReconciler.ts and
- * six others already carry.
+ * index `notifications_group_key_live` is the backstop either way — the skip is
+ * the cheap half of the fix.
  */
-let running = false;
-
-async function runEvaluateNotificationRules(): Promise<void> {
-  if (running) return;
-  running = true;
-  try {
-    await runInstrumentedJob("evaluateNotificationRules", async () => {
-      // Before the rules run, not after: an asset that went dark behind a
-      // down parent since the last tick must not carry a live alert through
-      // the outage (business rule 16 — maintenance windows are exempt and
-      // never retire an alert). Dependency suppression has no edge of its
-      // own, so this tick is the only thing that catches it. Best-effort; a
-      // failure here must not cost the fleet a tick of evaluation.
-      await clearSuppressedAlerts().catch((err: any) => {
-        logger.warn({ err: err?.message }, "clearSuppressedAlerts sweep failed (non-fatal)");
-      });
-      await evaluateAllNotificationRules();
-      // A wizard test alert has no rule and no state row, so no recovery path
-      // can ever close it — without this it stays on the device's Alerts tab
-      // forever. Sweeps after the rules for the same reason the suppression
-      // sweep runs before them: it can never affect what the engine decides.
-      await clearExpiredTestAlerts().catch((err: any) => {
-        logger.warn({ err: err?.message }, "clearExpiredTestAlerts sweep failed (non-fatal)");
-      });
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "evaluateNotificationRules job failed (non-fatal)");
-  } finally {
-    // In `finally`, not after the try: a throw that escaped the catch above
-    // would otherwise leave the flag set and stop evaluation for good.
-    running = false;
-  }
-}
-
 // Boot delay so the DB + first host-metrics sample are ready.
-setTimeout(runEvaluateNotificationRules, 30_000);
-setInterval(runEvaluateNotificationRules, INTERVAL_MS);
+defineJob({
+  name: "evaluateNotificationRules",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 30_000,
+  run: async () => {
+    // Before the rules run, not after: an asset that went dark behind a
+    // down parent since the last tick must not carry a live alert through
+    // the outage (business rule 16 — maintenance windows are exempt and
+    // never retire an alert). Dependency suppression has no edge of its
+    // own, so this tick is the only thing that catches it. Best-effort; a
+    // failure here must not cost the fleet a tick of evaluation.
+    await clearSuppressedAlerts().catch((err: any) => {
+      logger.warn({ err: err?.message }, "clearSuppressedAlerts sweep failed (non-fatal)");
+    });
+    await evaluateAllNotificationRules();
+    // A wizard test alert has no rule and no state row, so no recovery path
+    // can ever close it — without this it stays on the device's Alerts tab
+    // forever. Sweeps after the rules for the same reason the suppression
+    // sweep runs before them: it can never affect what the engine decides.
+    await clearExpiredTestAlerts().catch((err: any) => {
+      logger.warn({ err: err?.message }, "clearExpiredTestAlerts sweep failed (non-fatal)");
+    });
+  },
+});

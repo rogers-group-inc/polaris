@@ -151,7 +151,7 @@
 import { logger } from "../utils/logger.js";
 import { prisma } from "../db.js";
 import { logEvent } from "../services/eventLogService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import {
   decideDuplicateHostnameGroup,
   decideDuplicateSerialGroup,
@@ -213,253 +213,98 @@ type AssetRow = DuplicateHostnameAssetRow;
 // are cheap once convergent.
 const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
-async function mergeDuplicateHostnameAssets(): Promise<void> {
-  try {
-    await runInstrumentedJob("mergeDuplicateHostnameAssets", async () => {
-      const dryRun = process.env.POLARIS_GHOST_MERGE_DRY_RUN === "1";
+defineJob({
+  name: "mergeDuplicateHostnameAssets",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 0,
+  run: async () => {
+    const dryRun = process.env.POLARIS_GHOST_MERGE_DRY_RUN === "1";
 
-      // ── Pass 1 of 3: SERIAL ────────────────────────────────────────────
-      // Runs first because a serial is the stronger identity. Two rows
-      // carrying one real serial are one device, full stop — so this pass
-      // needs neither the hostname pass's `hostnameOverride` exclusion (that
-      // guards against two genuinely different devices sharing a name, which
-      // a serial rules out) nor its MAC tie-break. What it does need is the
-      // rule 83 filtering, reused rather than re-derived: `isUsableSerial`
-      // rejects SMBIOS placeholders and repeated-character strings, and
-      // MAX_PLAUSIBLE_DUPLICATES treats a serial shared by more assets than
-      // any one device could be as a vendor default rather than a pile of
-      // duplicates.
-      //
-      // The SQL is a coarse prefilter only: the authoritative regrouping is
-      // done in JS with `normalizeSerialKey`, the same helper the discovery
-      // asset index and the rule 83 sweep key on, so nothing depends on
-      // Postgres `btrim` and JS `trim()` agreeing about exotic whitespace.
-      // `status` is a Postgres enum, so the exclusion casts to text —
-      // omitting the cast is the bug rule 83 shipped with.
-      const serialStats = { groupsScanned: 0, groupsMerged: 0, ghostsAbsorbed: 0, groupsSkippedVendor: 0 };
-      const dupSerials = await prisma.$queryRaw<{ ids: string[] }[]>`
-        SELECT array_agg(id) AS ids
-        FROM assets
-        WHERE "serialNumber" IS NOT NULL
-          AND btrim("serialNumber") <> ''
-          AND status::text NOT IN ('decommissioned', 'disabled')
-        GROUP BY upper(btrim("serialNumber"))
-        HAVING count(*) > 1
-        LIMIT 2000
-      `;
+    // ── Pass 1 of 3: SERIAL ────────────────────────────────────────────
+    // Runs first because a serial is the stronger identity. Two rows
+    // carrying one real serial are one device, full stop — so this pass
+    // needs neither the hostname pass's `hostnameOverride` exclusion (that
+    // guards against two genuinely different devices sharing a name, which
+    // a serial rules out) nor its MAC tie-break. What it does need is the
+    // rule 83 filtering, reused rather than re-derived: `isUsableSerial`
+    // rejects SMBIOS placeholders and repeated-character strings, and
+    // MAX_PLAUSIBLE_DUPLICATES treats a serial shared by more assets than
+    // any one device could be as a vendor default rather than a pile of
+    // duplicates.
+    //
+    // The SQL is a coarse prefilter only: the authoritative regrouping is
+    // done in JS with `normalizeSerialKey`, the same helper the discovery
+    // asset index and the rule 83 sweep key on, so nothing depends on
+    // Postgres `btrim` and JS `trim()` agreeing about exotic whitespace.
+    // `status` is a Postgres enum, so the exclusion casts to text —
+    // omitting the cast is the bug rule 83 shipped with.
+    const serialStats = { groupsScanned: 0, groupsMerged: 0, ghostsAbsorbed: 0, groupsSkippedVendor: 0 };
+    const dupSerials = await prisma.$queryRaw<{ ids: string[] }[]>`
+      SELECT array_agg(id) AS ids
+      FROM assets
+      WHERE "serialNumber" IS NOT NULL
+        AND btrim("serialNumber") <> ''
+        AND status::text NOT IN ('decommissioned', 'disabled')
+      GROUP BY upper(btrim("serialNumber"))
+      HAVING count(*) > 1
+      LIMIT 2000
+    `;
 
-      if (dupSerials.length > 0) {
-        const serialRows: AssetRow[] = await prisma.asset.findMany({
-          where: { id: { in: dupSerials.flatMap((d) => d.ids) } },
-          select: ASSET_MERGE_SELECT,
-        });
-
-        const bySerial = new Map<string, AssetRow[]>();
-        for (const r of serialRows) {
-          if (!isUsableSerial(r.serialNumber)) continue;
-          const key = normalizeSerialKey(r.serialNumber);
-          if (!key) continue;
-          const list = bySerial.get(key);
-          if (list) list.push(r);
-          else bySerial.set(key, [r]);
-        }
-
-        for (const [serial, members] of bySerial) {
-          if (members.length < 2) continue;
-          if (members.length > MAX_PLAUSIBLE_DUPLICATES) {
-            serialStats.groupsSkippedVendor++;
-            logger.debug(
-              { serial, count: members.length },
-              "duplicate-serial-merge: ignoring a serial shared by more assets than one device could be",
-            );
-            continue;
-          }
-          serialStats.groupsScanned++;
-
-          const decision = decideDuplicateSerialGroup(members);
-          if (decision.kind === "skip") continue; // not reachable today; keeps the union honest
-          const { canonical, ghosts, tiers } = decision;
-
-          if (dryRun) {
-            logger.info(
-              { serial, tiers, canonicalId: canonical.id, ghostIds: ghosts.map((g) => g.id), dryRun: true },
-              "duplicate-serial-merge: WOULD merge (dry-run)",
-            );
-            continue;
-          }
-
-          // Executed by `absorbDuplicateSerialGroup` — the OPERATOR merge
-          // engine, NOT the hostname pass's `mergeDuplicateHostnameGhost`, whose
-          // cascade would delete the ghost's authoritative sources and its
-          // agent enrolment. See that function's header.
-          try {
-            const { movedSources, movedManagedAgent, absorbedIds } = await absorbDuplicateSerialGroup(
-              canonical,
-              ghosts,
-              MERGE_ACTOR,
-            );
-            serialStats.ghostsAbsorbed += absorbedIds.length;
-            serialStats.groupsMerged++;
-            logger.info(
-              { serial, tiers, canonicalId: canonical.id, absorbedIds: ghosts.map((g) => g.id), movedSources, movedManagedAgent },
-              "duplicate-serial-merge: merged",
-            );
-            await logEvent({
-              action: "asset.duplicate_merged",
-              resourceType: "asset",
-              resourceId: canonical.id,
-              resourceName: canonical.hostname ?? undefined,
-              level: "info",
-              message:
-                `Duplicate-serial cleanup — absorbed ${ghosts.length} record${ghosts.length === 1 ? "" : "s"} of serial ${serial} ` +
-                `into ${canonical.hostname || canonical.id}; moved ${movedSources} source(s)` +
-                (movedManagedAgent ? "; agent enrolment carried over" : ""),
-              details: {
-                matchedOn: "serial",
-                serial,
-                tiers,
-                canonicalId: canonical.id,
-                absorbedIds: ghosts.map((g) => g.id),
-                absorbedSources: ghosts.map((g) => g.sources.map((s) => s.sourceKind)),
-                movedSources,
-                movedManagedAgent,
-              },
-            });
-          } catch (err) {
-            logger.warn(
-              { err, serial, canonicalId: canonical.id, ghostIds: ghosts.map((g) => g.id) },
-              "duplicate-serial-merge: failed (will retry next cycle)",
-            );
-          }
-        }
-      }
-
-      // ── Pass 2 of 3: SERIAL-AS-HOSTNAME ────────────────────────────────
-      // An endpoint placeholder whose hostname is another asset's discovered
-      // serial is that device: FortiOS reports a managed switch / AP's DHCP
-      // client under its serial. The discovery-time sweep only absorbs it on a
-      // run that re-processes the switch, so this pass makes the merge
-      // periodic. Policy in `decideSerialHostnameGhost`; executor is the
-      // inline sweep's own `mergeEndpointGhostIntoAsset` (placeholder sources
-      // dropped, MAC adopted only when the canonical has none).
-      //
-      // The pass lives in the service so its query is integration-tested.
-      const serialHostStats = await mergeSerialHostnameGhosts({ dryRun });
-      if (serialHostStats.scanned > 0) {
-        logger.info(serialHostStats, dryRun ? "serial-hostname-merge dry-run complete" : "serial-hostname-merge complete");
-      }
-
-      // ── Pass 3 of 3: HOSTNAME ──────────────────────────────────────────
-      // Re-queried from scratch below, so rows the serial pass just deleted
-      // are already gone. This pass still earns its place: endpoint assets
-      // carry no serial at all, so MAC-less workstation ghosts — the case
-      // this job was written for — are reachable only by hostname.
-      //
-      // Find every hostname appearing on >1 Asset row. Capped at the
-      // realistic upper bound — even at thousands-of-assets fleets the
-      // duplicate-hostname set is small (the prod sample showed 99).
-      // Operator-pinned hostnames ("hostnameOverride") are excluded on both
-      // sides: a pin that happens to collide with another asset's hostname is
-      // operator intent (two genuinely different devices), not a discovery
-      // ghost — merging on it would absorb a real device.
-      // The grouping query hands back the ids it already grouped, so the
-      // hydrating read below is keyed on the primary key.
-      //
-      // It used to return only the hostnames, and the read then matched them
-      // with `OR: hosts.map(h => ({ hostname: { equals: h, mode: "insensitive" }}))`
-      // — up to 2000 OR'd ILIKEs, which no hostname index can serve (the old
-      // comment's "hostname is indexed" is true and irrelevant: `ILIKE`
-      // doesn't use it), so Postgres seq-scanned the table and ran 2000
-      // pattern comparisons per row, 48 times a day, and worst exactly when
-      // the fleet is most duplicated.
-      const dupHosts = await prisma.$queryRaw<{ host: string; ids: string[] }[]>`
-        SELECT lower(hostname) AS host, array_agg(id) AS ids
-        FROM assets
-        WHERE hostname IS NOT NULL
-          AND "hostnameOverride" IS NULL
-        GROUP BY lower(hostname)
-        HAVING count(*) > 1
-        LIMIT 2000
-      `;
-      if (dupHosts.length === 0) return;
-
-      const dupIds = dupHosts.flatMap((d) => d.ids);
-      const rows: AssetRow[] = await prisma.asset.findMany({
-        where: {
-          id: { in: dupIds },
-          // Mirror the SQL exclusion — a pinned asset must be neither ghost
-          // nor canonical. Redundant with the grouping query's own filter,
-          // kept so the read states its own invariant.
-          hostnameOverride: null,
-        },
+    if (dupSerials.length > 0) {
+      const serialRows: AssetRow[] = await prisma.asset.findMany({
+        where: { id: { in: dupSerials.flatMap((d) => d.ids) } },
         select: ASSET_MERGE_SELECT,
       });
 
-      const groups = new Map<string, AssetRow[]>();
-      for (const r of rows) {
-        const key = (r.hostname ?? "").toLowerCase();
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key)!.push(r);
+      const bySerial = new Map<string, AssetRow[]>();
+      for (const r of serialRows) {
+        if (!isUsableSerial(r.serialNumber)) continue;
+        const key = normalizeSerialKey(r.serialNumber);
+        if (!key) continue;
+        const list = bySerial.get(key);
+        if (list) list.push(r);
+        else bySerial.set(key, [r]);
       }
 
-      let groupsScanned = serialStats.groupsScanned;
-      let groupsMerged = serialStats.groupsMerged;
-      let ghostsAbsorbed = serialStats.ghostsAbsorbed;
-      let groupsSkippedAmbiguous = 0;
-      let groupsSkippedSingleton = 0;
-
-      for (const [host, members] of groups) {
-        if (members.length < 2) {
-          groupsSkippedSingleton++;
-          continue;
-        }
-        groupsScanned++;
-
-        const decision = decideDuplicateHostnameGroup(members);
-        if (decision.kind === "skip") {
-          groupsSkippedAmbiguous++;
-          logger.warn(
-            {
-              host,
-              reason: decision.reason,
-              assetIds: members.map((m) => m.id),
-            },
-            "duplicate-hostname-merge: skipping (operator review)",
+      for (const [serial, members] of bySerial) {
+        if (members.length < 2) continue;
+        if (members.length > MAX_PLAUSIBLE_DUPLICATES) {
+          serialStats.groupsSkippedVendor++;
+          logger.debug(
+            { serial, count: members.length },
+            "duplicate-serial-merge: ignoring a serial shared by more assets than one device could be",
           );
           continue;
         }
+        serialStats.groupsScanned++;
 
+        const decision = decideDuplicateSerialGroup(members);
+        if (decision.kind === "skip") continue; // not reachable today; keeps the union honest
         const { canonical, ghosts, tiers } = decision;
+
         if (dryRun) {
           logger.info(
-            {
-              host,
-              tiers,
-              canonicalId: canonical.id,
-              canonicalSources: canonical.sources.map((s) => s.sourceKind),
-              ghostIds: ghosts.map((g) => g.id),
-              ghostSources: ghosts.map((g) => g.sources.map((s) => s.sourceKind)),
-              dryRun: true,
-            },
-            "duplicate-hostname-merge: WOULD merge (dry-run)",
+            { serial, tiers, canonicalId: canonical.id, ghostIds: ghosts.map((g) => g.id), dryRun: true },
+            "duplicate-serial-merge: WOULD merge (dry-run)",
           );
           continue;
         }
 
+        // Executed by `absorbDuplicateSerialGroup` — the OPERATOR merge
+        // engine, NOT the hostname pass's `mergeDuplicateHostnameGhost`, whose
+        // cascade would delete the ghost's authoritative sources and its
+        // agent enrolment. See that function's header.
         try {
-          for (const ghost of ghosts) {
-            await mergeDuplicateHostnameGhost(canonical, ghost);
-            ghostsAbsorbed++;
-          }
-          groupsMerged++;
+          const { movedSources, movedManagedAgent, absorbedIds } = await absorbDuplicateSerialGroup(
+            canonical,
+            ghosts,
+            MERGE_ACTOR,
+          );
+          serialStats.ghostsAbsorbed += absorbedIds.length;
+          serialStats.groupsMerged++;
           logger.info(
-            {
-              host,
-              tiers,
-              canonicalId: canonical.id,
-              absorbedIds: ghosts.map((g) => g.id),
-            },
-            "duplicate-hostname-merge: merged",
+            { serial, tiers, canonicalId: canonical.id, absorbedIds: ghosts.map((g) => g.id), movedSources, movedManagedAgent },
+            "duplicate-serial-merge: merged",
           );
           await logEvent({
             action: "asset.duplicate_merged",
@@ -467,50 +312,201 @@ async function mergeDuplicateHostnameAssets(): Promise<void> {
             resourceId: canonical.id,
             resourceName: canonical.hostname ?? undefined,
             level: "info",
-            message: `Duplicate-hostname cleanup — absorbed ${ghosts.length} sibling${ghosts.length === 1 ? "" : "s"} into ${canonical.hostname || canonical.id}`,
+            message:
+              `Duplicate-serial cleanup — absorbed ${ghosts.length} record${ghosts.length === 1 ? "" : "s"} of serial ${serial} ` +
+              `into ${canonical.hostname || canonical.id}; moved ${movedSources} source(s)` +
+              (movedManagedAgent ? "; agent enrolment carried over" : ""),
             details: {
-              host,
+              matchedOn: "serial",
+              serial,
               tiers,
               canonicalId: canonical.id,
               absorbedIds: ghosts.map((g) => g.id),
               absorbedSources: ghosts.map((g) => g.sources.map((s) => s.sourceKind)),
+              movedSources,
+              movedManagedAgent,
             },
           });
         } catch (err) {
           logger.warn(
-            { err, host, canonicalId: canonical.id, ghostIds: ghosts.map((g) => g.id) },
-            "duplicate-hostname-merge: failed (will retry next boot)",
+            { err, serial, canonicalId: canonical.id, ghostIds: ghosts.map((g) => g.id) },
+            "duplicate-serial-merge: failed (will retry next cycle)",
           );
         }
       }
+    }
 
-      if (groupsScanned > 0) {
+    // ── Pass 2 of 3: SERIAL-AS-HOSTNAME ────────────────────────────────
+    // An endpoint placeholder whose hostname is another asset's discovered
+    // serial is that device: FortiOS reports a managed switch / AP's DHCP
+    // client under its serial. The discovery-time sweep only absorbs it on a
+    // run that re-processes the switch, so this pass makes the merge
+    // periodic. Policy in `decideSerialHostnameGhost`; executor is the
+    // inline sweep's own `mergeEndpointGhostIntoAsset` (placeholder sources
+    // dropped, MAC adopted only when the canonical has none).
+    //
+    // The pass lives in the service so its query is integration-tested.
+    const serialHostStats = await mergeSerialHostnameGhosts({ dryRun });
+    if (serialHostStats.scanned > 0) {
+      logger.info(serialHostStats, dryRun ? "serial-hostname-merge dry-run complete" : "serial-hostname-merge complete");
+    }
+
+    // ── Pass 3 of 3: HOSTNAME ──────────────────────────────────────────
+    // Re-queried from scratch below, so rows the serial pass just deleted
+    // are already gone. This pass still earns its place: endpoint assets
+    // carry no serial at all, so MAC-less workstation ghosts — the case
+    // this job was written for — are reachable only by hostname.
+    //
+    // Find every hostname appearing on >1 Asset row. Capped at the
+    // realistic upper bound — even at thousands-of-assets fleets the
+    // duplicate-hostname set is small (the prod sample showed 99).
+    // Operator-pinned hostnames ("hostnameOverride") are excluded on both
+    // sides: a pin that happens to collide with another asset's hostname is
+    // operator intent (two genuinely different devices), not a discovery
+    // ghost — merging on it would absorb a real device.
+    // The grouping query hands back the ids it already grouped, so the
+    // hydrating read below is keyed on the primary key.
+    //
+    // It used to return only the hostnames, and the read then matched them
+    // with `OR: hosts.map(h => ({ hostname: { equals: h, mode: "insensitive" }}))`
+    // — up to 2000 OR'd ILIKEs, which no hostname index can serve (the old
+    // comment's "hostname is indexed" is true and irrelevant: `ILIKE`
+    // doesn't use it), so Postgres seq-scanned the table and ran 2000
+    // pattern comparisons per row, 48 times a day, and worst exactly when
+    // the fleet is most duplicated.
+    const dupHosts = await prisma.$queryRaw<{ host: string; ids: string[] }[]>`
+      SELECT lower(hostname) AS host, array_agg(id) AS ids
+      FROM assets
+      WHERE hostname IS NOT NULL
+        AND "hostnameOverride" IS NULL
+      GROUP BY lower(hostname)
+      HAVING count(*) > 1
+      LIMIT 2000
+    `;
+    if (dupHosts.length === 0) return;
+
+    const dupIds = dupHosts.flatMap((d) => d.ids);
+    const rows: AssetRow[] = await prisma.asset.findMany({
+      where: {
+        id: { in: dupIds },
+        // Mirror the SQL exclusion — a pinned asset must be neither ghost
+        // nor canonical. Redundant with the grouping query's own filter,
+        // kept so the read states its own invariant.
+        hostnameOverride: null,
+      },
+      select: ASSET_MERGE_SELECT,
+    });
+
+    const groups = new Map<string, AssetRow[]>();
+    for (const r of rows) {
+      const key = (r.hostname ?? "").toLowerCase();
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    }
+
+    let groupsScanned = serialStats.groupsScanned;
+    let groupsMerged = serialStats.groupsMerged;
+    let ghostsAbsorbed = serialStats.ghostsAbsorbed;
+    let groupsSkippedAmbiguous = 0;
+    let groupsSkippedSingleton = 0;
+
+    for (const [host, members] of groups) {
+      if (members.length < 2) {
+        groupsSkippedSingleton++;
+        continue;
+      }
+      groupsScanned++;
+
+      const decision = decideDuplicateHostnameGroup(members);
+      if (decision.kind === "skip") {
+        groupsSkippedAmbiguous++;
+        logger.warn(
+          {
+            host,
+            reason: decision.reason,
+            assetIds: members.map((m) => m.id),
+          },
+          "duplicate-hostname-merge: skipping (operator review)",
+        );
+        continue;
+      }
+
+      const { canonical, ghosts, tiers } = decision;
+      if (dryRun) {
         logger.info(
           {
-            dryRun,
-            // Totals span both passes; the bySerial* fields break out the
-            // serial half so a jump in one pass is attributable.
-            groupsScanned,
-            groupsMerged,
-            ghostsAbsorbed,
-            groupsSkippedAmbiguous,
-            groupsSkippedSingleton,
-            bySerialGroupsScanned: serialStats.groupsScanned,
-            bySerialGroupsMerged: serialStats.groupsMerged,
-            bySerialGhostsAbsorbed: serialStats.ghostsAbsorbed,
-            bySerialSkippedVendorDefault: serialStats.groupsSkippedVendor,
+            host,
+            tiers,
+            canonicalId: canonical.id,
+            canonicalSources: canonical.sources.map((s) => s.sourceKind),
+            ghostIds: ghosts.map((g) => g.id),
+            ghostSources: ghosts.map((g) => g.sources.map((s) => s.sourceKind)),
+            dryRun: true,
           },
-          dryRun
-            ? "duplicate-hostname-merge dry-run complete"
-            : "duplicate-hostname-merge complete",
+          "duplicate-hostname-merge: WOULD merge (dry-run)",
+        );
+        continue;
+      }
+
+      try {
+        for (const ghost of ghosts) {
+          await mergeDuplicateHostnameGhost(canonical, ghost);
+          ghostsAbsorbed++;
+        }
+        groupsMerged++;
+        logger.info(
+          {
+            host,
+            tiers,
+            canonicalId: canonical.id,
+            absorbedIds: ghosts.map((g) => g.id),
+          },
+          "duplicate-hostname-merge: merged",
+        );
+        await logEvent({
+          action: "asset.duplicate_merged",
+          resourceType: "asset",
+          resourceId: canonical.id,
+          resourceName: canonical.hostname ?? undefined,
+          level: "info",
+          message: `Duplicate-hostname cleanup — absorbed ${ghosts.length} sibling${ghosts.length === 1 ? "" : "s"} into ${canonical.hostname || canonical.id}`,
+          details: {
+            host,
+            tiers,
+            canonicalId: canonical.id,
+            absorbedIds: ghosts.map((g) => g.id),
+            absorbedSources: ghosts.map((g) => g.sources.map((s) => s.sourceKind)),
+          },
+        });
+      } catch (err) {
+        logger.warn(
+          { err, host, canonicalId: canonical.id, ghostIds: ghosts.map((g) => g.id) },
+          "duplicate-hostname-merge: failed (will retry next boot)",
         );
       }
-    });
-  } catch (err) {
-    logger.error({ err }, "mergeDuplicateHostnameAssets failed (will retry next cycle)");
-  }
-}
+    }
 
-mergeDuplicateHostnameAssets();
-setInterval(mergeDuplicateHostnameAssets, INTERVAL_MS);
+    if (groupsScanned > 0) {
+      logger.info(
+        {
+          dryRun,
+          // Totals span both passes; the bySerial* fields break out the
+          // serial half so a jump in one pass is attributable.
+          groupsScanned,
+          groupsMerged,
+          ghostsAbsorbed,
+          groupsSkippedAmbiguous,
+          groupsSkippedSingleton,
+          bySerialGroupsScanned: serialStats.groupsScanned,
+          bySerialGroupsMerged: serialStats.groupsMerged,
+          bySerialGhostsAbsorbed: serialStats.ghostsAbsorbed,
+          bySerialSkippedVendorDefault: serialStats.groupsSkippedVendor,
+        },
+        dryRun
+          ? "duplicate-hostname-merge dry-run complete"
+          : "duplicate-hostname-merge complete",
+      );
+    }
+  },
+});
 

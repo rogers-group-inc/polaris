@@ -42,6 +42,13 @@ interface JobSpec {
   intervalMs: number;
   /** First tick after this many ms; 0 runs it at import; omitted waits one interval. */
   firstRunDelayMs?: number;
+  /**
+   * Start the interval when the first run fires, so ticks land at
+   * delay + n × interval (the discovery scheduler: 5 min, then every 15 min
+   * from THERE). Default false: the interval starts at definition, independent
+   * of the first-run delay. Needs firstRunDelayMs.
+   */
+  intervalAfterFirstRun?: boolean;
   /** One tick. Throwing is fine — it is logged and the next tick runs. */
   run: () => Promise<void>;
   /** Replaces the default failure log for a job that needs its own handling. */
@@ -74,15 +81,21 @@ export function defineJob(spec: JobSpec): JobHandle {
   }
 
   let first: NodeJS.Timeout | null = null;
-  if (spec.firstRunDelayMs === 0) void tick();
-  else if (spec.firstRunDelayMs !== undefined) first = setTimeout(tick, spec.firstRunDelayMs);
-  const interval = setInterval(tick, spec.intervalMs);
+  let interval: NodeJS.Timeout | null = null;
+  const startInterval = () => { interval = setInterval(tick, spec.intervalMs); };
+  if (spec.intervalAfterFirstRun && spec.firstRunDelayMs !== undefined) {
+    first = setTimeout(() => { first = null; startInterval(); void tick(); }, spec.firstRunDelayMs);
+  } else {
+    if (spec.firstRunDelayMs === 0) void tick();
+    else if (spec.firstRunDelayMs !== undefined) first = setTimeout(tick, spec.firstRunDelayMs);
+    startInterval();
+  }
 
   return {
     tick,
     stop() {
       if (first) clearTimeout(first);
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
     },
   };
 }

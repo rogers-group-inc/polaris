@@ -32,13 +32,18 @@ import {
   HEARTBEAT_INTERVAL_MS,
   WAL_SAMPLE_EVERY_TICKS,
 } from "../services/haHeartbeatService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 let ticks = 0;
 
-async function runActiveInstanceHeartbeat(): Promise<void> {
-  try {
-    await runInstrumentedJob("activeInstanceHeartbeat", async () => {
+// The stamp gates the OTHER host's boot, so claim it promptly rather than on a
+// long boot delay — but leave a moment for the DB pool to come up.
+if (isHeartbeatEnabled()) {
+  defineJob({
+    name: "activeInstanceHeartbeat",
+    intervalMs: HEARTBEAT_INTERVAL_MS,
+    firstRunDelayMs: 5_000,
+    run: async () => {
       await stampActiveInstance();
       ticks += 1;
       if (ticks % WAL_SAMPLE_EVERY_TICKS === 1) {
@@ -46,17 +51,8 @@ async function runActiveInstanceHeartbeat(): Promise<void> {
         // freshly restarted host is not a 5-minute hole in the ring.
         await appendWalSample();
       }
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "activeInstanceHeartbeat job failed (non-fatal)");
-  }
-}
-
-// The stamp gates the OTHER host's boot, so claim it promptly rather than on a
-// long boot delay — but leave a moment for the DB pool to come up.
-if (isHeartbeatEnabled()) {
-  setTimeout(runActiveInstanceHeartbeat, 5_000);
-  setInterval(runActiveInstanceHeartbeat, HEARTBEAT_INTERVAL_MS);
+    },
+  });
 } else {
   logger.debug("active-instance heartbeat disabled (non-production or POLARIS_HA_HEARTBEAT=off)");
 }
