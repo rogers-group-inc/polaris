@@ -68,9 +68,9 @@ Sonnet or Opus from the Foundry model catalog). The form then shows:
 | Context window | under **Assistant Behaviour** — set it to the deployment's window: `1000000` for Claude Haiku, Sonnet or Opus 5.5. Left at the 8192 default, Polaris trims history and lookups as if the model were small |
 
 **Test Connection** sends one short chat message to the deployment, the only way
-to prove the endpoint, the credential and the deployment name are all right. The
-background connection check repeats that every 10 minutes while the integration
-is enabled, so it costs a few tokens per check. Everything else — lookups as the
+to prove the endpoint, the credential and the deployment name are all right. It
+runs only when you click it — nothing re-tests the integration in the background,
+so it costs tokens only then. Everything else — lookups as the
 person asking, read-only, the role and token it creates — is the same as for a
 local server.
 
