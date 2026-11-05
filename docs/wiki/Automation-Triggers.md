@@ -98,6 +98,12 @@ a day raises a **serious** alert reading *COWAN-61F-1 — Days until Serious:
 because the memory utilization automation already says so. A level due later
 than the window says nothing yet.
 
+The countdown stays current while the alert is up. Each day the trend holds,
+the same alert's message and the reminders it sends move on: *Days until
+Serious: 10* becomes *9*, then *8*. This is not a new alert and nothing is
+re-sent. Only the number changes. An alert in an alert group keeps the count
+it fired with.
+
 The alert email leads with *Days until Serious: 10 — memory is 80 % and
 growing 0.5 %/day toward Serious at 85 %*. In place of the CPU and memory
 charts it draws the **memory forecast**: the 30 daily averages the trend was
