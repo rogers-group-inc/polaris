@@ -18,45 +18,35 @@
  * The apply is strictly additive and skips assets with nothing fresh, so a tick
  * with no new inventory writes nothing and logs nothing.
  *
- * Independent `running` guard. Failures are logged at debug and never thrown.
+ * defineJob (src/jobs/_defineJob.ts) skips a tick while the previous one is
+ * still running, and logs a failed tick at error as { err, job }; it never throws.
  *
  * Import this module from src/app.ts to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { reconcileAutoMap } from "../services/appMapDiscoveryService.js";
 import { logEvent } from "../services/eventLogService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 30 * 60 * 1000;
 const STARTUP_DELAY_MS = 120 * 1000;
 
-let running = false;
-
-async function tick(): Promise<void> {
-  if (running) return;
-  running = true;
-  try {
-    await runInstrumentedJob("reconcileAppMapAutoMap", async () => {
-      const summary = await reconcileAutoMap();
-      if (summary.devices > 0) {
-        logEvent({
-          action: "application_map.automap.reconciled",
-          resourceType: "application_map",
-          resourceId: "discovery",
-          message:
-            `Auto-map reconcile pinned ${summary.processPins} process(es) + ` +
-            `${summary.servicePins} service(s) across ${summary.devices} device(s)`,
-          details: summary,
-        });
-      }
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message ?? String(err) }, "reconcileAppMapAutoMap tick failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
-
-setTimeout(tick, STARTUP_DELAY_MS);
-setInterval(tick, INTERVAL_MS);
+defineJob({
+  name: "reconcileAppMapAutoMap",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: STARTUP_DELAY_MS,
+  run: async () => {
+    const summary = await reconcileAutoMap();
+    if (summary.devices > 0) {
+      logEvent({
+        action: "application_map.automap.reconciled",
+        resourceType: "application_map",
+        resourceId: "discovery",
+        message:
+          `Auto-map reconcile pinned ${summary.processPins} process(es) + ` +
+          `${summary.servicePins} service(s) across ${summary.devices} device(s)`,
+        details: summary,
+      });
+    }
+  },
+});

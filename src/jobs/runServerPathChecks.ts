@@ -44,7 +44,7 @@ import {
   type ServerCheckState,
   type TraceMode,
 } from "../services/pathCheckServerRunner.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const TICK_MS = 15 * 1000;
 const BOOT_DELAY_MS = 60 * 1000;
@@ -53,8 +53,6 @@ const MAX_IN_FLIGHT = 4;
 
 let states = new Map<string, ServerCheckState>();
 const inFlight = new Set<string>();
-let ticking = false;
-
 async function runOne(def: ServerCheckDef, st: ServerCheckState, mode: TraceMode): Promise<void> {
   try {
     // Opened per run, never cached: a rotated password takes effect on the
@@ -71,34 +69,26 @@ async function runOne(def: ServerCheckDef, st: ServerCheckState, mode: TraceMode
   }
 }
 
-async function tick(): Promise<void> {
-  if (ticking) return;
-  ticking = true;
-  try {
-    await runInstrumentedJob("pathCheck.serverRun", async () => {
-      const defs = await serverCheckDefinitions();
-      states = pruneServerStates(states, defs);
-      const now = Date.now();
-      const due = defs
-        .filter((d) => !inFlight.has(d.id) && serverCheckDue(states.get(d.id), d, now))
-        .sort((a, b) => (states.get(a.id)?.lastRunAt ?? 0) - (states.get(b.id)?.lastRunAt ?? 0));
-      for (const def of due) {
-        if (inFlight.size >= MAX_IN_FLIGHT) break;
-        const st = states.get(def.id)!;
-        const mode = serverTraceMode(st, def);
-        // Stamped at START so due-ness never drifts with how long a run took.
-        st.lastRunAt = now;
-        st.runCount++;
-        inFlight.add(def.id);
-        void runOne(def, st, mode);
-      }
-    });
-  } catch (err: any) {
-    logger.error({ err: err?.message ?? String(err) }, "pathCheck.serverRun tick failed (non-fatal)");
-  } finally {
-    ticking = false;
-  }
-}
-
-setTimeout(tick, BOOT_DELAY_MS);
-setInterval(tick, TICK_MS);
+defineJob({
+  name: "pathCheck.serverRun",
+  intervalMs: TICK_MS,
+  firstRunDelayMs: BOOT_DELAY_MS,
+  run: async () => {
+    const defs = await serverCheckDefinitions();
+    states = pruneServerStates(states, defs);
+    const now = Date.now();
+    const due = defs
+      .filter((d) => !inFlight.has(d.id) && serverCheckDue(states.get(d.id), d, now))
+      .sort((a, b) => (states.get(a.id)?.lastRunAt ?? 0) - (states.get(b.id)?.lastRunAt ?? 0));
+    for (const def of due) {
+      if (inFlight.size >= MAX_IN_FLIGHT) break;
+      const st = states.get(def.id)!;
+      const mode = serverTraceMode(st, def);
+      // Stamped at START so due-ness never drifts with how long a run took.
+      st.lastRunAt = now;
+      st.runCount++;
+      inFlight.add(def.id);
+      void runOne(def, st, mode);
+    }
+  },
+});

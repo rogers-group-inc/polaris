@@ -6,6 +6,7 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 ```
 ├── src/
 │   ├── jobs/
+│   │   ├── _defineJob.ts            # defineJob({ name, intervalMs, firstRunDelayMs?, run, onError? }) — THE periodic-job shape: schedule, runInstrumentedJob metrics, overlap skip, one failure log (error, { err, job }). Returns { tick, stop }. CQ-B041
 │   │   ├── _runOnce.ts              # Shared idempotency marker for the one-shot startup jobs: hasRunMarker(key) guard + stampRunMarker(key, stats) (upsert, `ranAt` timestamp + stats blob). The marker KEY is the contract — never change one after it ships; deleting the marker row is the documented re-run escape hatch.
 │   │   ├── expireReservations.ts    # Mark past-TTL reservations as expired (every 15 min)
 │   │   ├── discoveryScheduler.ts    # auto-discovery on each integration's pollInterval (first check 5 min after start)

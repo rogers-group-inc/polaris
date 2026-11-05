@@ -20,26 +20,22 @@
  */
 
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import { resolveIpUpstreamForMaclessAssets } from "../services/ipUpstreamChainService.js";
 
 const INTERVAL_MS = 10 * 60 * 1000;
 const FIRST_RUN_DELAY_MS = 90_000;
 
-async function resolveIpUpstreamChain(): Promise<void> {
-  try {
-    await runInstrumentedJob("resolveIpUpstreamChain", async () => {
-      const result = await resolveIpUpstreamForMaclessAssets();
-      if (result.switchStamps || result.apStamps || result.ambiguous) {
-        logger.info(result, "ip upstream chain pass complete");
-      }
-    });
-  } catch (err) {
-    logger.error({ err }, "ip upstream chain pass failed");
-  }
-}
-
 // Delayed first run: the evidence tables are refreshed by discovery and the
 // monitor loops, which are still settling at boot.
-setTimeout(resolveIpUpstreamChain, FIRST_RUN_DELAY_MS);
-setInterval(resolveIpUpstreamChain, INTERVAL_MS);
+defineJob({
+  name: "resolveIpUpstreamChain",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    const result = await resolveIpUpstreamForMaclessAssets();
+    if (result.switchStamps || result.apStamps || result.ambiguous) {
+      logger.info(result, "ip upstream chain pass complete");
+    }
+  },
+});

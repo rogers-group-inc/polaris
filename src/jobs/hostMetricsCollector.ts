@@ -15,8 +15,7 @@
 
 import { cpus, totalmem, freemem, loadavg } from "node:os";
 import { prisma } from "../db.js";
-import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 30 * 1000;
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -47,47 +46,43 @@ function cpuPctFromDelta(prev: CpuSnapshot | null, cur: CpuSnapshot): number {
 
 let _lastPruneAt = 0;
 
-async function runHostMetricsCollector(): Promise<void> {
-  try {
-    await runInstrumentedJob("hostMetricsCollector", async () => {
-      const cur = readCpuSnapshot();
-      const cpuPct = cpuPctFromDelta(prevCpu, cur);
-      prevCpu = cur;
-
-      const total = totalmem();
-      const free = freemem();
-      const used = total - free;
-      const memUsedPct = total > 0 ? (used / total) * 100 : 0;
-      const [l1, l5, l15] = loadavg();
-      const rss = process.memoryUsage().rss;
-
-      await prisma.hostMetricsSample.create({
-        data: {
-          cpuPct,
-          memUsedPct,
-          memUsedBytes: BigInt(used),
-          memTotalBytes: BigInt(total),
-          loadAvg1: l1 ?? 0,
-          loadAvg5: l5 ?? 0,
-          loadAvg15: l15 ?? 0,
-          procRssBytes: BigInt(rss),
-        },
-      });
-
-      // Prune hourly (cheap; bounded table).
-      const now = Date.now();
-      if (now - _lastPruneAt > 60 * 60 * 1000) {
-        _lastPruneAt = now;
-        await prisma.hostMetricsSample.deleteMany({ where: { timestamp: { lt: new Date(now - RETENTION_MS) } } });
-      }
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "hostMetricsCollector job failed (non-fatal)");
-  }
-}
-
 // Prime the CPU baseline immediately, then sample on the interval. The first
 // real sample lands one interval later so the CPU delta is meaningful.
 prevCpu = readCpuSnapshot();
-setTimeout(runHostMetricsCollector, INTERVAL_MS);
-setInterval(runHostMetricsCollector, INTERVAL_MS);
+defineJob({
+  name: "hostMetricsCollector",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: INTERVAL_MS,
+  run: async () => {
+    const cur = readCpuSnapshot();
+    const cpuPct = cpuPctFromDelta(prevCpu, cur);
+    prevCpu = cur;
+
+    const total = totalmem();
+    const free = freemem();
+    const used = total - free;
+    const memUsedPct = total > 0 ? (used / total) * 100 : 0;
+    const [l1, l5, l15] = loadavg();
+    const rss = process.memoryUsage().rss;
+
+    await prisma.hostMetricsSample.create({
+      data: {
+        cpuPct,
+        memUsedPct,
+        memUsedBytes: BigInt(used),
+        memTotalBytes: BigInt(total),
+        loadAvg1: l1 ?? 0,
+        loadAvg5: l5 ?? 0,
+        loadAvg15: l15 ?? 0,
+        procRssBytes: BigInt(rss),
+      },
+    });
+
+    // Prune hourly (cheap; bounded table).
+    const now = Date.now();
+    if (now - _lastPruneAt > 60 * 60 * 1000) {
+      _lastPruneAt = now;
+      await prisma.hostMetricsSample.deleteMany({ where: { timestamp: { lt: new Date(now - RETENTION_MS) } } });
+    }
+  },
+});

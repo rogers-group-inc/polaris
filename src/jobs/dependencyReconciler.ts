@@ -12,39 +12,27 @@
  * the hook missed (server restart mid-transition, race with concurrent
  * probes, etc.).
  *
- * Independent `running` guard so a slow tick can't double-fire if the
- * fleet ever grows large enough that one pass exceeds 60s. Best-effort —
- * failures are logged at debug and never thrown.
+ * defineJob (src/jobs/_defineJob.ts) skips a tick while the previous one is
+ * still running, and logs a failed tick at error as { err, job }; it never throws.
  *
  * Import this module from src/app.ts to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { reconcileDependencySuppression } from "../services/dependencyTreeService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 60 * 1000;
-
-let running = false;
-
-async function tick(): Promise<void> {
-  if (running) return;
-  running = true;
-  try {
-    await runInstrumentedJob("dependencyReconciler", async () => {
-      await reconcileDependencySuppression();
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message ?? String(err) }, "dependencyReconciler tick failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
 
 // Skip the very first 60s after boot so monitorAssets.ts has had a chance
 // to record at least one probe per asset and get monitorStatus out of the
 // "unknown" floor. Without that, every fleet-wide reconciler tick on a
 // fresh boot would see "no monitored ancestor is up" and incorrectly
 // suppress everything.
-setTimeout(tick, 60_000);
-setInterval(tick, INTERVAL_MS);
+defineJob({
+  name: "dependencyReconciler",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 60_000,
+  run: async () => {
+    await reconcileDependencySuppression();
+  },
+});

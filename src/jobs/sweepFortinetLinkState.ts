@@ -37,8 +37,7 @@
  * controllers this is designed not to overrun.
  */
 
-import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import { sweepFortinetLinkState } from "../services/fortinetLinkStateService.js";
 
 const DEFAULT_INTERVAL_SEC = 60;
@@ -56,15 +55,11 @@ function resolveIntervalMs(): number {
 // and does nothing — the delay just keeps the startup log quiet.
 const FIRST_RUN_DELAY_MS = 45_000;
 
-async function tick(): Promise<void> {
-  try {
-    await runInstrumentedJob("sweepFortinetLinkState", async () => {
-      await sweepFortinetLinkState();
-    });
-  } catch (err) {
-    logger.error({ err }, "fortinet controller link sweep failed");
-  }
-}
-
-setTimeout(tick, FIRST_RUN_DELAY_MS);
-setInterval(tick, resolveIntervalMs());
+defineJob({
+  name: "sweepFortinetLinkState",
+  intervalMs: resolveIntervalMs(),
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    await sweepFortinetLinkState();
+  },
+});

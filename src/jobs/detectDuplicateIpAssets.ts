@@ -22,7 +22,7 @@
  */
 
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import {
   reconcileDuplicateIpConflicts,
   logScanFailure,
@@ -31,20 +31,19 @@ import {
 const INTERVAL_MS = 10 * 60 * 1000;
 const FIRST_RUN_DELAY_MS = 45_000;
 
-async function detectDuplicateIpAssets(): Promise<void> {
-  try {
-    await runInstrumentedJob("detectDuplicateIpAssets", async () => {
-      const result = await reconcileDuplicateIpConflicts();
-      if (result.raised || result.closed || result.groups) {
-        logger.info(result, "duplicate-ip conflict reconcile complete");
-      }
-    });
-  } catch (err) {
-    logScanFailure(err);
-  }
-}
-
 // Delayed first run: discovery and the monitor loops are still settling at
 // boot, and a half-populated fleet is the one moment stale claims look current.
-setTimeout(detectDuplicateIpAssets, FIRST_RUN_DELAY_MS);
-setInterval(detectDuplicateIpAssets, INTERVAL_MS);
+defineJob({
+  name: "detectDuplicateIpAssets",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    const result = await reconcileDuplicateIpConflicts();
+    if (result.raised || result.closed || result.groups) {
+      logger.info(result, "duplicate-ip conflict reconcile complete");
+    }
+  },
+  onError: (err: any) => {
+    logScanFailure(err);
+  },
+});
