@@ -3511,13 +3511,16 @@ async function evaluateThresholdRule(
   // retires an alert, though fresh evidence may recover one in the loop above),
   // or retired by the suppression sweep (clearSuppressedAlerts, run ahead of
   // this tick) when the asset is dark behind a parent that is down.
-  for (const st of states) {
-    if (st.state === "pending" && st.assetId && suppressedIds.has(st.assetId)) {
-      await prisma.notificationRuleState.update({
-        where: { id: st.id },
-        data: { state: "clear", conditionMetSince: null },
-      });
-    }
+  // One statement, not one per row (CQ-B050): every row gets the same data, and
+  // a maintenance window opening on a large group resets them all at once.
+  const suppressedPendingIds = states
+    .filter((st) => st.state === "pending" && st.assetId && suppressedIds.has(st.assetId))
+    .map((st) => st.id);
+  if (suppressedPendingIds.length) {
+    await prisma.notificationRuleState.updateMany({
+      where: { id: { in: suppressedPendingIds } },
+      data: { state: "clear", conditionMetSince: null },
+    });
   }
 
   // Carved-out assets: a more-specific same-signature automation has taken them
@@ -3657,15 +3660,17 @@ async function evaluateThresholdRule(
     ? await pathCheckIdsInMaintenance()
     : null;
   if (pathHeld?.size) {
+    const heldPendingIds: string[] = [];
     for (const st of states) {
       if (!pathHeld.has(st.dimensionKey)) continue;
       seen.add(`${st.assetId ?? ""}|${st.dimensionKey}`);
-      if (st.state === "pending") {
-        await prisma.notificationRuleState.update({
-          where: { id: st.id },
-          data: { state: "clear", conditionMetSince: null },
-        });
-      }
+      if (st.state === "pending") heldPendingIds.push(st.id);
+    }
+    if (heldPendingIds.length) {
+      await prisma.notificationRuleState.updateMany({
+        where: { id: { in: heldPendingIds } },
+        data: { state: "clear", conditionMetSince: null },
+      });
     }
   }
 
@@ -4302,10 +4307,14 @@ async function evaluateCompositeRule(
   // Suppressed assets: reset pending rows (the debounce restarts after the
   // window). Firing rows belong to the suppression sweep — same contract as
   // the per-reading path.
-  for (const st of states) {
-    if (st.dimensionKey === "" && st.state === "pending" && st.assetId && suppressedIds.has(st.assetId)) {
-      await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null } });
-    }
+  const compositeSuppressedIds = states
+    .filter((st) => st.dimensionKey === "" && st.state === "pending" && st.assetId && suppressedIds.has(st.assetId))
+    .map((st) => st.id);
+  if (compositeSuppressedIds.length) {
+    await prisma.notificationRuleState.updateMany({
+      where: { id: { in: compositeSuppressedIds } },
+      data: { state: "clear", conditionMetSince: null },
+    });
   }
 
   // GROUPED ALERTS (business rule 75): land this composite's contributions
