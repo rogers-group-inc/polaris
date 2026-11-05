@@ -31,12 +31,12 @@ import { prisma } from "../db.js";
 import { chunkArray } from "../utils/chunk.js";
 import { AppError } from "../utils/errors.js";
 import { assertAddedRegionTagsNameARegion } from "./mapRegionService.js";
-import { isAzureTag } from "../utils/tagNormalize.js";
+import { isAzureTag, appendMissingTags } from "../utils/tagNormalize.js";
 
 export type BulkTagMode = "add" | "remove" | "replace";
 
 /** Tag namespaces a bulk REPLACE keeps on every asset. Compared case-insensitively. */
-export const REPLACE_PRESERVED_PREFIXES = ["region:", "prev-entra:", "prev-ad:"] as const;
+const REPLACE_PRESERVED_PREFIXES = ["region:", "prev-entra:", "prev-ad:"] as const;
 
 const BATCH = 50;
 
@@ -62,7 +62,7 @@ export function normalizeBulkTags(tags: readonly string[]): string[] {
 /** The tag array one asset ends up with. Pure; `tags` is already normalized. */
 export function computeBulkTags(mode: BulkTagMode, existing: readonly string[], tags: readonly string[]): string[] {
   if (mode === "add") {
-    return [...existing, ...tags.filter((t) => !existing.includes(t))];
+    return appendMissingTags(existing, tags);
   }
   if (mode === "remove") {
     return existing.filter((t) => !tags.includes(t));

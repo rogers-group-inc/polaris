@@ -79,16 +79,6 @@ export async function ensureTestUser(): Promise<{ username: string; password: st
 }
 
 /**
- * Tear-down companion to ensureTestUser. Call from afterAll only when no
- * other suite still needs the user — usually the user lives forever in the
- * test DB and nobody bothers to delete it.
- */
-export async function deleteTestUser(): Promise<void> {
-  if (!dbReachable) return;
-  await prisma.user.deleteMany({ where: { username: TEST_USERNAME } });
-}
-
-/**
  * Audit Events are written fire-and-forget (`void logEvent(...)`), so a test
  * asserting on Event rows right after a mutation response races the insert.
  * Poll until the count for `action` (optionally scoped to a resourceId)

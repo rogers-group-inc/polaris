@@ -11,7 +11,6 @@
 - `public/js/assets.js` — the Assets table's OS/Firmware column (`[a.os, a.osVersion].join(" ")`), the asset-details General tab row (same join), and the CSV/PDF export column all read the stored pair.
 - `public/js/mobile/asset-detail.js` — the mobile sheet's OS row (same join).
 - `src/services/tagAssignmentService.ts` / `src/services/maintenanceScheduleService.ts` / `src/services/notificationTypes.ts` — `os` / `osVersion` are criteria + scope-condition fields, so an "os contains Windows 11" rule is only true if the stored column says so. This is the whole reason the correction is at write time rather than at render.
-- `src/services/projectionDriftService.ts` — compares the projection's output against the stored row for `os` / `osVersion`.
 
 **Invariants:**
 - **FAMILY comes from a threshold, RELEASE from a table** — deliberately separate mechanisms. `build >= WINDOWS_11_MIN_BUILD` (22000) ⇒ Windows 11 never goes stale, so a build released after this code was written still gets the right family. `CLIENT_RELEASES` does go stale, so an unlisted build keeps its RAW `osVersion` rather than being guessed at (the family fix still lands).
@@ -19,7 +18,7 @@
 - **Idempotent.** Every discovery cycle re-writes the pair and db.ts re-runs the hook, so the transform must be a no-op on its own output: `RELEASE_PREFIX` skips an already-labeled `osVersion` (else `"23H2 (23H2 (10.0.22631.7219)))"`), and the family swap rewrites a correct string to itself.
 - **The `os` name is the gate.** A bare version string with no `os` is left alone — treating "10.0.22631.7219" as Windows without a name to corroborate it would be a guess. `windowsBuildFrom` likewise returns null rather than acting on a weak signal (a 5-digit run inside longer text).
 - **No row read in the db.ts hook.** It reads the build from whatever `osVersion` the SAME write stages. That's sound because every real writer stages the pair together (the projection, the agents system-info route, each discovery create), and a point read there would land on the monitor hot path — 2000 extra queries per heavy cycle to fix a case no writer produces.
-- **Normalizing must happen on BOTH sides or drift logging breaks.** Correcting only on the way to the DB would leave `projectAssetFromSources` returning "Windows 10 Pro" while the stored row says "Windows 11 Pro", and `projectionDriftService` would log that mismatch every cycle, forever. This is why the projection normalizes its own output rather than relying on the db.ts hook.
+- **Normalizing must happen on BOTH sides.** Correcting only on the way to the DB would leave `projectAssetFromSources` returning "Windows 10 Pro" while the stored row says "Windows 11 Pro", so every comparison of projection against the row (conflict proposals, the merge paths) would see a difference that is not there. This is why the projection normalizes its own output rather than relying on the db.ts hook.
 - Not retroactive: existing rows correct themselves when their integration next re-projects them (the pull-based precedent from business rule 22). There is no backfill job.
 
 **When changing this:**

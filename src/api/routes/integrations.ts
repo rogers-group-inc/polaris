@@ -2,6 +2,7 @@
  * src/api/routes/integrations.ts — Integration CRUD + connection testing
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
@@ -53,7 +54,7 @@ import {
   sweepMonitoredForIntegration,
   applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
-import { checkForSlowRuns, triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
+import { checkForSlowRuns, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
 import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
 const router = Router();
@@ -1472,8 +1473,8 @@ const UpdateIntegrationSchema = z.object({
 // GET /api/v1/integrations
 router.get("/", async (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
-    const offset = parseInt(req.query.offset as string, 10) || 0;
+    const limit = intQuery(req.query.limit, { fallback: 50, max: 200 })!;
+    const offset = intQuery(req.query.offset, { fallback: 0 })!;
     const [integrations, total] = await Promise.all([
       prisma.integration.findMany({
         orderBy: { createdAt: "desc" },
@@ -2086,38 +2087,12 @@ router.post("/:id/test", async (req, res, next) => {
     });
     if (!integration) throw new AppError(404, "Integration not found");
 
-    const config = integration.config as Record<string, unknown>;
-    let result: { ok: boolean; message: string; version?: string };
-
     logEvent({ action: "integration.test.started", resourceType: "integration", resourceId: req.params.id, resourceName: integration.name, actor: req.session?.username, message: `Connection test started for "${integration.name}"` });
 
-    if (integration.type === "fortimanager") {
-      result = await fortimanager.testConnection(config as any, integration.id);
-    } else if (integration.type === "fortigate") {
-      result = await fortigate.testConnection(config as any);
-    } else if (integration.type === "windowsserver") {
-      result = await windowsServer.testConnection(config as any);
-    } else if (integration.type === "entraid") {
-      result = await entraId.testConnection(config as any);
-    } else if (integration.type === "activedirectory") {
-      result = await activeDirectory.testConnection(config as any);
-    } else if (integration.type === "vcenter") {
-      result = await vcenter.testConnection(config as any);
-    } else if (integration.type === "azurearc") {
-      result = await azureArc.testConnection(config as any);
-    } else if (integration.type === "unraid") {
-      result = await unraid.testConnection(config as any);
-    } else if (integration.type === "truenas") {
-      result = await truenas.testConnection(config as any);
-    } else if (integration.type === "proxmox") {
-      result = await proxmox.testConnection(config as any);
-    } else if (integration.type === "llm") {
-      result = await llm.testConnection(config as any);
-    } else if (integration.type === GENERIC_API_TYPE) {
-      result = await genericApi.testConnection(config as any);
-    } else {
-      result = { ok: false, message: `Unknown integration type: ${integration.type}` };
-    }
+    // The stored-integration test is the same per-type dispatch discovery
+    // uses; the unsaved-form POST /test below keeps its own, because it
+    // tests a narrowed draft config with no integration id.
+    const result = await runPreflightTest(integration);
 
     // Save test result
     await prisma.integration.update({

@@ -18,6 +18,7 @@
  * text so a caller learns nothing about whether a token existed.
  */
 
+import { boolQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import { requirePermission } from "../middleware/permissions.js";
@@ -299,7 +300,7 @@ haEnrollRouter.get("/:requestId", async (req, res, next) => {
     const requestId = String(req.params.requestId);
     if (!/^[0-9a-f]{64}$/.test(requestId)) throw new AppError(404, "Unknown enrollment request");
 
-    if (req.query.download === "1") {
+    if (boolQuery(req.query.download)) {
       const sourceIp = (req.ip || req.socket.remoteAddress || null) ?? null;
       const { archive, filename } = await claimBundle(requestId, sourceIp);
       await logEvent({

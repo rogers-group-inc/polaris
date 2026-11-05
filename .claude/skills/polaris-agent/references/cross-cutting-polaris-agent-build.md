@@ -138,6 +138,12 @@ build auto-prune + boot-time auto-build are layered on top.
   reads it server-side; `agent/Makefile`'s `VERSION` directive reads it shell-side.
   Both feed the same `-ldflags '-X main.version=…'` flag so the in-binary version,
   the manifest's currentVersion, and the directory name all match.
+- **CI checks the agent source since 2026-11-04**: the `test` job in
+  `docker-publish.yml` runs `make fmt-check vet test` under `agent/` (Go from
+  `actions/setup-go` with `go-version-file: agent/go.mod`, so it adds no pin
+  site). Run the same targets on Linux or in a container, never on a Windows
+  checkout: autocrlf makes every `.go` file CRLF there and `gofmt -l` lists them
+  all. Before that, only the nightly CodeQL scan compiled the agent.
 - Single-slot active build + FIFO queue (depth 3). Queue overflow → 409;
   Go missing → 400.
 - Per-platform `go build` invocations are serial. Parallel builds would

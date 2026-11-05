@@ -31,9 +31,6 @@
 
 export type MonitorStatus = "up" | "warning" | "recovering" | "down" | "unknown" | "passive";
 
-/** The states reachable by probing — i.e. everything except the config state. */
-export const PROBE_MONITOR_STATUSES: readonly MonitorStatus[] = ["up", "warning", "recovering", "down", "unknown"];
-
 /**
  * Operator-facing label for each state. ONE map so the assets pill, the search
  * hit pill, the alert-email trigger summary and the dashboard status tiles can

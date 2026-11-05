@@ -1564,11 +1564,6 @@ function _capacityUnlistedRow(label, bytes, hint) {
     '</tr>';
 }
 
-function _capacityFormatPct(num, denom) {
-  if (denom == null || denom <= 0) return "—";
-  return Math.round((num / denom) * 100) + "%";
-}
-
 function _capacitySeverityLabel(s) {
   // Accept both the new vocabulary (critical/warning/watch/ok) and the
   // legacy color names (red/amber) so a stale snapshot returned from an
@@ -5148,25 +5143,12 @@ function renderIdentificationTab() {
         html += '<p style="font-size:0.82rem;color:var(--color-text-tertiary);font-style:italic;margin:0.25rem 0 0">No tags — category will be removed on save</p>';
       } else {
         html += '<div class="tag-chip-list">';
-        tags.forEach(function (t) {
-          // .hue-pill (styles.css) draws the chip from `--hue` alone and keeps
-          // the label legible whatever colour the operator picked.
-          var hueStyle = tagHueStyle(t.color);
-          var colorStyle = hueStyle ? ' style="' + hueStyle + '"' : '';
-          // Either filter shape counts — a tag written before the condition-tree
-          // cutover still auto-assigns through the folded-forward flat blob.
-          var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
-          var autoMark = managed
-            ? '<span title="Auto-assigned by filter" style="margin-right:4px">&#9881;</span>'
-            : '';
-          html += '<span class="tag-chip' + (hueStyle ? ' hue-pill hue-strong' : '') + '"' + colorStyle + '>' +
-            autoMark +
-            escapeHtml(t.name) +
-            (isAdmin() ? '<button class="tag-chip-edit" data-tag-id="' + t.id + '" title="Edit" style="margin-left:4px;background:none;border:none;color:inherit;cursor:pointer;font-size:0.75rem;opacity:0.7;padding:0">&#9998;</button>' : '') +
-            // Business rule 136: a built-in Priority tag is never deleted.
-            (isAdmin() && !t.builtIn ? '<button class="tag-chip-delete" data-tag-id="' + t.id + '" title="Delete">&times;</button>' : '') +
-          '</span>';
-        });
+          // ONE chip renderer: _tagRegistryChipHTML (azure: rows read-only, the
+          // Tags key gates the verbs, built-ins keep Delete off, and the chip
+          // opens the assets slide-in). A merge on 2026-10-16 put an inline
+          // copy back here that had none of that; tagRegistryChipDom.test.ts
+          // now fails if the markup is ever written twice again.
+          tags.forEach(function (t) { html += _tagRegistryChipHTML(t, canOpenTagAssets); });
         html += '</div>';
       }
       html += '</div>';

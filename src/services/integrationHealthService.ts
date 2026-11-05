@@ -31,7 +31,7 @@ import { prisma } from "../db.js";
  */
 export const FMG_PROXY_GATE_ADVISORY_THRESHOLD = 10;
 
-export interface FailedIntegration {
+interface FailedIntegration {
   id: string;
   name: string;
   type: string;

@@ -51,7 +51,7 @@ export interface HelpSection {
   source?: "wiki" | "api";
 }
 
-export interface HelpHit {
+interface HelpHit {
   page: string;
   title: string;
   heading: string;

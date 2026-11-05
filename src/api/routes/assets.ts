@@ -4,6 +4,7 @@
  * POST / PUT / DELETE require assets admin role.
  */
 
+import { intQuery, boolQuery } from "../../utils/queryParams.js";
 import { tryCompileSafeRegex } from "../../utils/safeRegex.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
@@ -3829,7 +3830,7 @@ router.get("/:id/path-check-traceroutes", requirePermission("assets", "read"), a
     const id = req.params.id as string;
     const checkId = req.query.checkId ? String(req.query.checkId) : null;
     if (!checkId) throw new AppError(400, "checkId query parameter is required");
-    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const limit = intQuery(req.query.limit, { fallback: 10, min: 1, max: 50 })!;
     const traceroutes = await prisma.assetPathCheckTraceroute.findMany({
       where: { assetId: id, checkId },
       orderBy: { timestamp: "desc" },
@@ -4161,9 +4162,9 @@ router.get("/:id/process-logs", requirePermission("assets", "read"), async (req,
     const id = req.params.id as string;
     const name = req.query.name ? String(req.query.name) : null;
     if (!name) throw new AppError(400, "name query parameter is required");
-    const limit = Math.min(2000, Math.max(1, parseInt(String(req.query.limit ?? "500"), 10) || 500));
+    const limit = intQuery(req.query.limit, { fallback: 500, min: 1, max: 2000 })!;
     const since = req.query.since ? new Date(String(req.query.since)) : null;
-    const onlyFlagged = String(req.query.flagged ?? "") === "1";
+    const onlyFlagged = boolQuery(req.query.flagged);
     const rows = await prisma.assetProcessLogSample.findMany({
       where: { assetId: id, name, ...(since && !isNaN(since.getTime()) ? { timestamp: { gte: since } } : {}) },
       orderBy: { timestamp: "desc" },
@@ -4190,9 +4191,9 @@ router.get("/:id/service-logs", requirePermission("assets", "read"), async (req,
     const id = req.params.id as string;
     const unit = req.query.unit ? String(req.query.unit) : null;
     if (!unit) throw new AppError(400, "unit query parameter is required");
-    const limit = Math.min(2000, Math.max(1, parseInt(String(req.query.limit ?? "500"), 10) || 500));
+    const limit = intQuery(req.query.limit, { fallback: 500, min: 1, max: 2000 })!;
     const since = req.query.since ? new Date(String(req.query.since)) : null;
-    const onlyFlagged = String(req.query.flagged ?? "") === "1";
+    const onlyFlagged = boolQuery(req.query.flagged);
     const rows = await prisma.assetServiceLogSample.findMany({
       where: { assetId: id, unit, ...(since && !isNaN(since.getTime()) ? { timestamp: { gte: since } } : {}) },
       orderBy: { timestamp: "desc" },
@@ -7463,7 +7464,7 @@ router.delete("/:id/agent", requirePermission("agentDeploy", "write"), async (re
   try {
     const assetId = req.params.id as string;
     const actor = requestActor(req) || "unknown";
-    const force = String(req.query.force ?? "").toLowerCase() === "true";
+    const force = boolQuery(req.query.force);
 
     const row = await prisma.managedAgent.findUnique({ where: { assetId } });
     if (!row) throw new AppError(404, "No agent installed for this asset");

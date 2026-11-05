@@ -25,23 +25,23 @@
  */
 
 /** The subset of a stored TagCriteria rule this converter reads. */
-export interface FlatCriteriaRule {
+interface FlatCriteriaRule {
   field: string;
   op?: string;
   values?: string[];
   cidrs?: string[];
 }
 
-export interface FlatCriteria {
+interface FlatCriteria {
   rules?: FlatCriteriaRule[];
 }
 
-export interface ConditionRule {
+interface ConditionRule {
   field: string;
   operator: string;
   value: string;
 }
-export interface ConditionGroup {
+interface ConditionGroup {
   op: "and" | "or" | "none" | "notAll";
   children: (ConditionGroup | ConditionRule)[];
 }

@@ -119,7 +119,7 @@ const BUILTIN_ASSET_TYPES: readonly string[] = BUILT_IN_ASSET_TYPES;
 // learnedLocation that isn't any known gate's name), so standalone
 // switches/APs that were never FortiGate-managed remain selectable. Double
 // underscores keep it collision-proof against real device hostnames.
-export const FORTIGATE_NONE_SENTINEL = "__none__";
+const FORTIGATE_NONE_SENTINEL = "__none__";
 
 /**
  * Resolve a per-widget filter into the set of matching asset ids, or null when
@@ -214,19 +214,6 @@ export async function resolveFilteredAssetIds(opts: {
 function idWhere(assetIds: string[] | null): Record<string, unknown> {
   return assetIds ? { id: { in: assetIds } } : {};
 }
-
-// ─── Active-alert severity join ──────────────────────────────────────────────
-// Widgets sort SEVERITY-FIRST: a row whose asset carries an active (uncleared)
-// automation alert floats above unalerted rows, ordered by the alert's
-// severity; within the same severity each feed keeps its own order (value /
-// outage recency / overdue-ness — the sorts below are stable).
-//
-// The rank map moved to utils/alertSeverity.ts when the assets list grew its
-// own active-alert indicator — two services ranking severities from two copies
-// of the same object is how they end up disagreeing about `serious`. Re-exported
-// here because it was exported from this module first and the widget tests
-// import it by that name.
-export { ALERT_SEVERITY_RANK } from "../utils/alertSeverity.js";
 
 // ─── Widget ↔ automation relevance ───────────────────────────────────────────
 // A row shows a severity pill ONLY when the asset carries an active alert whose
@@ -807,7 +794,7 @@ async function hydrateNames(ordered: Array<{ assetId: string; value: number }>):
 
 // Default per-asset sample count the top-N averages smooth over. The widgets'
 // "Average over" gear control overrides it per request (?samples=, 1..MAX).
-export const DEFAULT_TOPN_SAMPLE_COUNT = 10;
+const DEFAULT_TOPN_SAMPLE_COUNT = 10;
 export const MAX_TOPN_SAMPLE_COUNT = 100;
 
 // The averaging window must comfortably contain sampleCount samples at any
@@ -856,7 +843,7 @@ export async function getHighestCpu(limit: number | null = 100, sinceMinutes = 6
  * back to bytes ratio when only absolute bytes were reported (same preference
  * as sampleHistoryService).
  */
-export async function getHighestMemory(limit: number | null = 100, sinceMinutes = 60, assetIds: string[] | null = null, sampleCount: number = DEFAULT_TOPN_SAMPLE_COUNT): Promise<TopNRow[]> {
+async function getHighestMemory(limit: number | null = 100, sinceMinutes = 60, assetIds: string[] | null = null, sampleCount: number = DEFAULT_TOPN_SAMPLE_COUNT): Promise<TopNRow[]> {
   const samples = clampSampleCount(sampleCount);
   const idClause = assetIds ? ` AND s."assetId" = ANY($4::text[])` : "";
   const params: unknown[] = [String(topNWindowMinutes(sinceMinutes, samples)), limit, samples];
@@ -1164,7 +1151,7 @@ export async function getRecentReboots(sinceHours = 72, limit: number | null = 2
 /** The upstream device's name out of a `Notification.dependencyBlame` snapshot
  *  (business rule 78) — the root cause when it is somebody else, else the
  *  device directly above; null when the walk named nobody. */
-export function dependencyUpstreamOf(blame: unknown): string | null {
+function dependencyUpstreamOf(blame: unknown): string | null {
   if (!blame || typeof blame !== "object") return null;
   const b = blame as { upstream?: { hostname?: string | null; id?: string } | null; rootCause?: { hostname?: string | null; id?: string } | null };
   const up = b.upstream?.hostname ?? b.upstream?.id ?? null;
@@ -1191,7 +1178,7 @@ export function ackInheritedAssetIdOf(via: unknown): string | null {
   return typeof id === "string" && id ? id : null;
 }
 
-export interface AlertRow {
+interface AlertRow {
   id: string;
   /** The alerting asset, for the widget's click-through to its details
    *  slide-in. Null on a host/system-scoped alert (one about Polaris itself)
@@ -2117,7 +2104,7 @@ export async function getSdwanSlaCompliance(window: "1h" | "24h", limit: number 
 
 // ─── Per-feed payload assembly + short-TTL cache ─────────────────────────────
 
-export const NOC_FEED_NAMES = [
+const NOC_FEED_NAMES = [
   "status", "downNodes", "downInterfaces", "downIpsecTunnels",
   "topCpu", "topMemory", "slowestResponse", "packetLoss", "diskUsage", "temperature",
   "storageForecast", "stalePolls", "sitesWithIssues", "recentReboots", "activeAlerts",
@@ -2125,7 +2112,7 @@ export const NOC_FEED_NAMES = [
   "sdwanRuleFailovers", "sdwanSingleLink", "sdwanSlaHeadroom",
   "sdwanFlaps1h", "sdwanFlaps24h", "sdwanCompliance1h", "sdwanCompliance24h",
 ] as const;
-export type NocFeedName = (typeof NOC_FEED_NAMES)[number];
+type NocFeedName = (typeof NOC_FEED_NAMES)[number];
 
 const EMPTY_STATUS: StatusSummary = {
   statusCounts: { total: 0, up: 0, down: 0, warning: 0, unknown: 0, recovering: 0, passive: 0, maintenance: 0 },

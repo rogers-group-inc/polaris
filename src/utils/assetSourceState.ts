@@ -31,7 +31,7 @@
  *     for "enabled". Most Fortinet endpoint sightings and Intune land here.
  */
 
-export type AssetSourceStateValue = "enabled" | "disabled" | "unknown";
+type AssetSourceStateValue = "enabled" | "disabled" | "unknown";
 
 export interface AssetSourceStateReading {
   /** Tri-state verdict. `unknown` = this source reports no state. */

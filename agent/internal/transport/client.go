@@ -130,8 +130,8 @@ type ResponseTimeSample struct {
 }
 
 type SamplesBody struct {
-	Stream  string      `json:"stream"` // "responseTime" | "telemetry" | "interfaces" | "storage"
-	Samples interface{} `json:"samples"`
+	Stream  string `json:"stream"` // "responseTime" | "telemetry" | "interfaces" | "storage"
+	Samples any    `json:"samples"`
 }
 
 // TelemetrySample matches the server's TelemetrySampleSchema. cpuPct/memPct
@@ -417,7 +417,7 @@ func (c *Client) ReportCommandResultFull(commandID string, success bool, errMsg,
 	if c.bearer == "" {
 		return errors.New("ReportCommandResult called without a bearer token — enroll first")
 	}
-	body := map[string]interface{}{"commandId": commandID, "success": success}
+	body := map[string]any{"commandId": commandID, "success": success}
 	if errMsg != "" {
 		body["error"] = errMsg
 	}
@@ -552,16 +552,16 @@ type PathCheckTracerouteDef struct {
 
 // PathCheckDef is one pathChecks[] entry from GET /agents/config.
 type PathCheckDef struct {
-	ID              string                    `json:"id"`
-	Name            string                    `json:"name"`
-	Kind            string                    `json:"kind"`   // http | https | tcp | icmp
-	Target          string                    `json:"target"` // URL (http/https), host:port (tcp), host (icmp)
-	IntervalSec     int                       `json:"intervalSec"`
-	TimeoutMs       int                       `json:"timeoutMs"`
-	ExpectStatus    string                    `json:"expectStatus"` // "" → any 2xx
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Kind            string                 `json:"kind"`   // http | https | tcp | icmp
+	Target          string                 `json:"target"` // URL (http/https), host:port (tcp), host (icmp)
+	IntervalSec     int                    `json:"intervalSec"`
+	TimeoutMs       int                    `json:"timeoutMs"`
+	ExpectStatus    string                 `json:"expectStatus"` // "" → any 2xx
 	ExpectBody      *PathCheckBodyExpect   `json:"expectBody"`
-	VerifyTLS       bool                      `json:"verifyTls"`
-	KeepBodyExcerpt bool                      `json:"keepBodyExcerpt"`
+	VerifyTLS       bool                   `json:"verifyTls"`
+	KeepBodyExcerpt bool                   `json:"keepBodyExcerpt"`
 	Traceroute      PathCheckTracerouteDef `json:"traceroute"`
 	// Request options (0.23.0). The server omits each at its default, and
 	// ships a check using any of them only to agents >= 0.23.0 — an older
@@ -609,12 +609,12 @@ type PathCheckHop struct {
 
 // PathCheckTraceroute is one row of stream "pathCheckTraceroute".
 type PathCheckTraceroute struct {
-	CheckID       string            `json:"checkId"`
-	Timestamp     string            `json:"timestamp"`
-	DestinationIP string            `json:"destinationIp"`
-	Complete      bool              `json:"complete"`
-	Reason        string            `json:"reason"` // scheduled | transition
-	Note          string            `json:"note,omitempty"`
+	CheckID       string         `json:"checkId"`
+	Timestamp     string         `json:"timestamp"`
+	DestinationIP string         `json:"destinationIp"`
+	Complete      bool           `json:"complete"`
+	Reason        string         `json:"reason"` // scheduled | transition
+	Note          string         `json:"note,omitempty"`
 	Hops          []PathCheckHop `json:"hops"`
 }
 
@@ -654,7 +654,7 @@ func (c *Client) FetchConfig(ifNoneMatch string) (*ConfigResponse, error) {
 
 // ─── Internal HTTP helper ─────────────────────────────────────────────
 
-func (c *Client) do(method, path string, body, out interface{}, withBearer bool) error {
+func (c *Client) do(method, path string, body, out any, withBearer bool) error {
 	var rdr io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)

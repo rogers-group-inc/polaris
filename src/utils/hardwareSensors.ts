@@ -68,7 +68,7 @@ function cls(sensorClass: HardwareSensorClass): ClassifiedSensor {
   return { sensorClass, unit: SENSOR_CLASS_UNITS[sensorClass] };
 }
 
-export const HARDWARE_SENSOR_CLASSES = Object.keys(SENSOR_CLASS_UNITS) as HardwareSensorClass[];
+const HARDWARE_SENSOR_CLASSES = Object.keys(SENSOR_CLASS_UNITS) as HardwareSensorClass[];
 
 export function isHardwareSensorClass(v: unknown): v is HardwareSensorClass {
   return typeof v === "string" && (HARDWARE_SENSOR_CLASSES as string[]).includes(v);

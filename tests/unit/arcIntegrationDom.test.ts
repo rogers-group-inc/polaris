@@ -7,7 +7,7 @@
  * that are SILENT in the browser:
  *
  *   1. The dispatcher trio (_formHTMLForType / _formConfigForType /
- *      _titleForType). Miss one and Arc quietly renders the FortiManager form
+ *      _productForType). Miss one and Arc quietly renders the FortiManager form
  *      with no error anywhere.
  *   2. The rich-card predicate. If Arc isn't in _isWsSrvRichType, the
  *      Monitoring tab renders the bare windowsserver-style card set — the
@@ -325,8 +325,8 @@ describe("Azure Arc form dispatchers", () => {
     expect(s._formConfigForType("azurearc").tenantId).toBe("44444444-4444-4444-4444-444444444444");
   });
 
-  it("titles the modal Azure Arc", () => {
-    expect(scope._titleForType("azurearc", "Add")).toBe("Add Azure Arc Integration");
+  it("names the product Azure Arc (the modal title and sub-headings read it)", () => {
+    expect(scope._productForType("azurearc")).toBe("Azure Arc");
   });
 });
 

@@ -11,7 +11,7 @@
  * lines a rule applies to: global (every process log), asset (one asset), or
  * process (one asset + program name).
  *
- * The pure helpers (globToRegExp / compileRule / lineMatchesRule /
+ * The pure helpers (compileRule / lineMatchesRule /
  * applicableRules) are exported for unit tests; the DB-bound CRUD + cache live
  * alongside.
  */
@@ -43,21 +43,6 @@ export interface CompiledRule {
 }
 
 const LEVEL_RANK: Record<string, number> = { info: 0, warning: 1, error: 2, critical: 3 };
-
-/**
- * Convert a glob (`*` = any run, `?` = any char) to an anchored RegExp source.
- * Kept for reference / display only: matching uses utils/wildcard.compileGlob,
- * which does not backtrack (business rule 116).
- */
-export function globToRegExp(glob: string): string {
-  let out = "^";
-  for (const ch of glob) {
-    if (ch === "*") out += ".*";
-    else if (ch === "?") out += ".";
-    else out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-  return out + "$";
-}
 
 /**
  * Compile one rule into a matcher. Invalid regex patterns compile to a matcher
@@ -97,7 +82,7 @@ export function compileRule(rule: LogFlagRuleRow): CompiledRule {
 let cache: CompiledRule[] | null = null;
 
 /** Drop the cache so the next read recompiles. Called on every rule write. */
-export function invalidateLogFlagRuleCache(): void {
+function invalidateLogFlagRuleCache(): void {
   cache = null;
 }
 

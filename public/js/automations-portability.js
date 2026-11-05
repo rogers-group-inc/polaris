@@ -686,18 +686,6 @@
 
   // ── The code editor ───────────────────────────────────────────────────────
 
-  function diffRowsHtml(diff) {
-    if (!diff.length) return '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0">Nothing changed.</p>';
-    return '<ul style="margin:0;padding-left:1.1rem;font-size:0.85rem;line-height:1.6">' +
-      diff.map(function (d) {
-        var body = '<code>' + escapeHtml(d.key) + '</code>: ' +
-          (d.changed ? 'changed' : escapeHtml(d.from) + ' &rarr; ' + escapeHtml(d.to));
-        return d.alarming
-          ? '<li style="color:var(--color-danger,#c0392b)"><strong>' + body + '</strong></li>'
-          : '<li>' + body + '</li>';
-      }).join("") + '</ul>';
-  }
-
   /**
    * Show one automation as editable JSON. `onSave(body)` receives the parsed
    * object and returns a promise; the modal stays open on rejection so the

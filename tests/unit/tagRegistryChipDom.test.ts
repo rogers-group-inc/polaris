@@ -69,6 +69,23 @@ function render(html: string) {
   return host.firstElementChild!;
 }
 
+describe("the Tags card renders its chips through _tagRegistryChipHTML", () => {
+  // A merge on 2026-10-16 resolved a conflict by keeping an inline copy of the
+  // chip markup in the card loop and dropping the call. Every case below kept
+  // passing (they call the helper directly) while the live card showed Edit /
+  // Delete on azure: rows, gated on the role instead of the Tags key, and never
+  // opened the slide-in. These two assertions are what would have caught it.
+  const src = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
+
+  it("the card loop calls the helper", () => {
+    expect(src).toMatch(/tags\.forEach\(function \(t\) \{ html \+= _tagRegistryChipHTML\(t, canOpenTagAssets\); \}\);/);
+  });
+
+  it("the chip's Edit button markup exists exactly once (inside the helper)", () => {
+    expect(src.split('<button class="tag-chip-edit"').length - 1).toBe(1);
+  });
+});
+
 describe("tag registry chip", () => {
   it("paints a coloured tag as a hue pill and leaves an uncoloured one plain", () => {
     const coloured = render(chip({ id: "t1", name: "prod", color: "#ff0000" }, false));

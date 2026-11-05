@@ -26,7 +26,7 @@ import type { NextFunction, Request, Response } from "express";
 import { STATE_DIR } from "../utils/paths.js";
 
 export const SETUP_TOKEN_FILE = resolve(STATE_DIR, ".setup-token");
-export const SETUP_TOKEN_HEADER = "x-setup-token";
+const SETUP_TOKEN_HEADER = "x-setup-token";
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 

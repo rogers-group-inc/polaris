@@ -50,7 +50,7 @@ export function getDirectDatabaseUrl(): string {
  * always DATABASE_URL — under PgBouncer mode it points at PgBouncer; under
  * direct mode it points at Postgres directly.
  */
-export function getApplicationDatabaseUrl(): string {
+function getApplicationDatabaseUrl(): string {
   return process.env.DATABASE_URL || "";
 }
 

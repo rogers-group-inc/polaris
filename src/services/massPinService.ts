@@ -76,13 +76,13 @@ export const MASS_PIN_MAX_DELTAS = 20000;
  */
 export const MASS_PIN_ARRAY_CAP = 64;
 
-export interface PinInventoryDevice {
+interface PinInventoryDevice {
   /** Index into PinInventory.assets — hostnames/IPs are encoded once, not per row. */
   a: number;
   pinned: boolean;
 }
 
-export interface PinInventoryRow {
+interface PinInventoryRow {
   /** ifName or mountPath. */
   name: string;
   /** Interfaces facet only; null for storage rows and unknown ifTypes. */
@@ -235,7 +235,7 @@ export async function getPinInventoryForAssets(
 
 // ─── Pure: apply one asset's deltas ──────────────────────────────────────────
 
-export interface PinDelta {
+interface PinDelta {
   assetId: string;
   name: string;
   field: PinField;

@@ -55,7 +55,6 @@ beforeEach(() => {
   g.escapeHtml = (s: unknown) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.api = { roles: {}, users: {} };
-  g.collectRegionPicker = () => [];
   g.collectOtherTags = () => [];
   g.regionPickerHTML = () => "";
   g.otherTagsFieldHTML = () => "";

@@ -76,12 +76,12 @@ const ACTIVE_STATUSES = ["queued", "sending", "rebooting"] as const;
 const LOG_CAP = 300;
 const WRITE_THROTTLE_MS = 5_000;
 /** The agent build that understands `action: "reboot"`. */
-export const MIN_AGENT_REBOOT_VERSION = "0.26.0";
+const MIN_AGENT_REBOOT_VERSION = "0.26.0";
 /** An agent not heard from in this long is not offered a reboot. */
 const AGENT_STALE_MS = 10 * 60_000;
 const INFRA_TYPES = ["firewall", "switch", "access_point"] as const;
 
-export type RebootMethod =
+type RebootMethod =
   | "fortigate-rest"
   | "fortigate-ssh"
   | "controller-switch"
@@ -89,7 +89,7 @@ export type RebootMethod =
   | "device-ssh"
   | "agent";
 
-export type RebootAvailabilityState =
+type RebootAvailabilityState =
   | "unsupported"       // nothing Polaris can reboot this asset through
   | "no-address"        // the link needs an address the asset does not have
   | "no-credential"     // no opt-in covers it (no allowReboot credential / integration)
@@ -103,7 +103,7 @@ export type RebootAvailabilityState =
   | "agent-offline"     // the agent has not been heard from recently
   | "available";
 
-export interface RebootTimeouts {
+interface RebootTimeouts {
   /** How long an agent has to pick up and acknowledge the command before it is withdrawn. */
   agentAckMs: number;
   /** How long to wait for the first sign the device went down (or proof it already cycled). */
@@ -116,7 +116,7 @@ export interface RebootTimeouts {
   recoveryPollMs: number;
 }
 
-export const DEFAULT_REBOOT_TIMEOUTS: RebootTimeouts = {
+const DEFAULT_REBOOT_TIMEOUTS: RebootTimeouts = {
   agentAckMs: 150_000,
   downWaitMs: 300_000,
   upWaitMs: 900_000,
@@ -201,7 +201,7 @@ function isFortinetInfra(a: { manufacturer: string | null; assetType: string }):
 }
 
 /** A FortiGate HA member, read from discovery's stamp — the rule-87 test. Null when standalone / unknown. */
-export function haMembershipOf(a: { assetType: string; fortinetTopology: unknown }): string | null {
+function haMembershipOf(a: { assetType: string; fortinetTopology: unknown }): string | null {
   if (a.assetType !== "firewall") return null;
   const t = (a.fortinetTopology && typeof a.fortinetTopology === "object" ? a.fortinetTopology : {}) as Record<string, unknown>;
   const mode = typeof t.haMode === "string" ? t.haMode : null;
@@ -215,7 +215,7 @@ function addressOf(a: { ipAddress: string | null; dnsName: string | null }): str
 }
 
 /** The integration-side opt-in, short of revealing anything: is this token allowed to reboot, and does it exist? */
-export function integrationRebootGrant(integration: IntegrationRow | null, deviceName: string | null): { ok: true; label: string } | { ok: false; why: string } {
+function integrationRebootGrant(integration: IntegrationRow | null, deviceName: string | null): { ok: true; label: string } | { ok: false; why: string } {
   if (!integration) return { ok: false, why: "no FortiGate or FortiManager integration discovered it" };
   if (integration.type !== "fortigate" && integration.type !== "fortimanager") return { ok: false, why: `a ${integration.type} integration cannot reboot it` };
   const cfg = (integration.config ?? {}) as Record<string, unknown>;

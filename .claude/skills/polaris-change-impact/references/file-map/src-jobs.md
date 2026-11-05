@@ -9,7 +9,6 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   │   ├── _runOnce.ts              # Shared idempotency marker for the one-shot startup jobs: hasRunMarker(key) guard + stampRunMarker(key, stats) (upsert, `ranAt` timestamp + stats blob). The marker KEY is the contract — never change one after it ships; deleting the marker row is the documented re-run escape hatch.
 │   │   ├── expireReservations.ts    # Mark past-TTL reservations as expired (every 15 min)
 │   │   ├── discoveryScheduler.ts    # auto-discovery on each integration's pollInterval (first check 5 min after start)
-│   │   ├── integrationConnectionTester.ts # DISABLED 2026-06-02 (import commented out in app.ts; file kept pending removal). When active: 10-min tick, sequentially test every enabled integration, refresh lastTestAt/lastTestOk so broken integrations auto-resume
 │   │   ├── discoverySlowCheck.ts    # 30s tick: flag in-flight discoveries that exceed their rolling-duration baseline, and auto-abort any full run past its autoAbortMs ceiling (~2× avg — sets cancelRequested, the operator-cancel plumbing); also calls expireVerboseLogging() to auto-disable verbose debug logging after 30 min
 │   │   ├── ouiRefresh.ts            # Refresh IEEE OUI database
 │   │   ├── pruneEvents.ts           # 7-day event log retention (nightly)

@@ -57,7 +57,7 @@ const TIER_BOUNDARY_GRACE_MS = 5 * 60 * 1000;
  * data). Production endpoints route through `pickSampleTierForAsset`
  * which consults `Setting("sampleRetention")` per asset class.
  */
-export const DEFAULT_TIER_RETENTION: TierRetention = {
+const DEFAULT_TIER_RETENTION: TierRetention = {
   detailDays: 7,
   hourlyDays: 30,
 };

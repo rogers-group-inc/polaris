@@ -48,10 +48,10 @@ export const REPORT_ROW_CAP = 5000;
 /** Alert severities, lowest to highest (utils/alertSeverity.ts ranks them). */
 const ALERT_SEVERITIES = ["notice", "informational", "warning", "serious", "critical"] as const;
 
-export interface ReportColumn { key: string; label: string }
+interface ReportColumn { key: string; label: string }
 
 /** The downloads a report card offers. */
-export const REPORT_FORMATS = ["csv", "pdf", "md"] as const;
+const REPORT_FORMATS = ["csv", "pdf", "md"] as const;
 export type ReportFormat = (typeof REPORT_FORMATS)[number];
 
 export interface AssistantReportPayload {
@@ -105,7 +105,7 @@ interface ListToolDef extends ToolDef {
  * word, so a made-up filter (`hostnames`) read as applied: a "15-firewall"
  * report came back with 1,964 devices (seen live 2026-10-28). Exported for tests.
  */
-export function ignoredArgKeys(schema: z.AnyZodObject, args: unknown): string[] {
+function ignoredArgKeys(schema: z.AnyZodObject, args: unknown): string[] {
   if (!args || typeof args !== "object" || Array.isArray(args)) return [];
   const known = new Set(Object.keys(schema.shape));
   return Object.keys(args).filter((k) => !known.has(k));
@@ -325,7 +325,6 @@ const ASSET_FILTER_ARGS = {
   warrantyExpiresBefore: z.string().max(40).optional(),
   warrantyExpiresAfter: z.string().max(40).optional(),
 };
-const AssetFilterArgs = z.object(ASSET_FILTER_ARGS);
 
 const AssetArgs = z.object({
   ...ASSET_FILTER_ARGS,
@@ -354,7 +353,7 @@ const ASSET_TOOL_SELECT = {
  * The raw reading is dropped: on its own it is the uptime at lastMonitorAt,
  * which the model would report as current. Exported for tests.
  */
-export function withUptime<T extends { lastUptimeSec?: number | null; lastMonitorAt?: Date | null; lastRebootAt?: Date | null; monitorStatus?: string | null }>(
+function withUptime<T extends { lastUptimeSec?: number | null; lastMonitorAt?: Date | null; lastRebootAt?: Date | null; monitorStatus?: string | null }>(
   row: T,
 ): Omit<T, "lastUptimeSec" | "lastRebootAt"> & { uptimeSec: number | null; uptime: string | null; upSince: Date | null } {
   const { lastUptimeSec: _u, lastRebootAt: _r, ...rest } = row;
@@ -369,7 +368,7 @@ export function withUptime<T extends { lastUptimeSec?: number | null; lastMonito
  * undated and told the user to go and save the date (seen live 2026-10-27).
  * Exported for tests.
  */
-export function withAcquired<T extends { acquiredAt?: Date | null; createdAt?: Date | null }>(row: T): T & { acquiredFrom: string | null } {
+function withAcquired<T extends { acquiredAt?: Date | null; createdAt?: Date | null }>(row: T): T & { acquiredFrom: string | null } {
   const acquiredAt = row.acquiredAt ?? row.createdAt ?? null;
   return { ...row, acquiredAt, acquiredFrom: row.acquiredAt ? "entered" : acquiredAt ? "first seen by Polaris" : null };
 }
@@ -388,7 +387,7 @@ function acquiredBound(op: "lt" | "gte", d: Date): Record<string, unknown> {
  * the `region:` form and the bare form, and the literal forms are kept for
  * a tag the registry does not hold. Exported for tests.
  */
-export async function regionTagVariants(names: string[]): Promise<string[]> {
+async function regionTagVariants(names: string[]): Promise<string[]> {
   const bare = Array.from(new Set(names.map((n) => n.trim().replace(new RegExp(`^${REGION_TAG_PREFIX}`, "i"), "").trim()).filter(Boolean)));
   if (!bare.length) return [];
   const wanted = bare.flatMap((n) => [REGION_TAG_PREFIX + n, n]);
@@ -450,7 +449,7 @@ const DEVICE_FILTER_PROPS = {
  * filters cannot be applied (no region assigned, a bad CIDR).
  */
 async function assetFilterWhere(
-  a: z.infer<typeof AssetFilterArgs>,
+  a: z.infer<z.ZodObject<typeof ASSET_FILTER_ARGS>>,
   req: Request,
 ): Promise<{ where: Record<string, unknown>; subnet?: string } | ToolResult> {
   const and: Record<string, unknown>[] = [];

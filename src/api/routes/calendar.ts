@@ -20,7 +20,7 @@ import { listCalendar, type CalendarKind } from "../../services/operationsCalend
 const localDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected a local date like 2026-07-12");
 const calendarQuerySchema = z.object({ from: localDay, to: localDay });
 
-export const calendarRouter = Router();
+const calendarRouter = Router();
 
 calendarRouter.get("/", requirePermission("events", "read"), async (req, res, next) => {
   try {

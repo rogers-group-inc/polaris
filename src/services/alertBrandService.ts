@@ -48,7 +48,7 @@ import { logger } from "../utils/logger.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
 /** The branding tokens, resolved at delivery like `{chart.*}`. */
-export const BRAND_TOKENS = ["brand.header"] as const;
+const BRAND_TOKENS = ["brand.header"] as const;
 export type BrandToken = (typeof BRAND_TOKENS)[number];
 
 /** Content-id the HTML references. One image per message, so a fixed id is fine. */
@@ -58,7 +58,7 @@ export const BRAND_LOGO_CID = "polaris-brand-logo";
  * The white email card wants the light-inked wordmark; see the file header.
  * The horizontal lockup, because the block is wider than it is tall.
  */
-export const EMAIL_LOGO_PATH: string = join(PUBLIC_DIR, "img", "brand", "polaris-horiz-light.png");
+const EMAIL_LOGO_PATH: string = join(PUBLIC_DIR, "img", "brand", "polaris-horiz-light.png");
 
 /**
  * Display box for the mark. Small on purpose: this is letterhead beside a
@@ -221,12 +221,6 @@ function describeLogo(buf: Buffer, what: string): LoadedLogo | null {
  */
 const CACHE_TTL_MS = 60_000;
 let cached: { at: number; block: AlertBrandBlock } | null = null;
-
-/** Test seam. */
-export function __resetAlertBrandCacheForTests(): void {
-  warned.clear();
-  cached = null;
-}
 
 /** The whole delivery-time step: read branding + the mark once, render both bodies. */
 export async function buildAlertBrandBlock(): Promise<AlertBrandBlock> {

@@ -101,7 +101,7 @@ export const MATCH_FIELDS = [
   "chassis",
   "productType",
 ] as const;
-export type MatchField = (typeof MATCH_FIELDS)[number];
+type MatchField = (typeof MATCH_FIELDS)[number];
 
 /**
  * Leaf operators. The six that overlap the device-filter vocabulary carry its
@@ -134,7 +134,7 @@ export const MATCH_OPS = [
   "regex",
   "notRegex",
 ] as const;
-export type MatchOp = (typeof MATCH_OPS)[number];
+type MatchOp = (typeof MATCH_OPS)[number];
 
 /**
  * Pre-2026-09 operator spellings, still present in every row the seed
@@ -161,12 +161,12 @@ const POSITIVE_OF: Readonly<Record<string, MatchOp>> = Object.fromEntries(
 ) as Record<string, MatchOp>;
 
 /** Does this operator assert the ABSENCE of a match? */
-export function isNegativeMatchOp(op: string): boolean {
+function isNegativeMatchOp(op: string): boolean {
   return Object.prototype.hasOwnProperty.call(POSITIVE_OF, op);
 }
 
 /** The positive form of an operator (itself, when already positive). */
-export function positiveMatchOp(op: string): string {
+function positiveMatchOp(op: string): string {
   return POSITIVE_OF[op] ?? op;
 }
 
@@ -176,7 +176,7 @@ export function positiveMatchOp(op: string): string {
  * identically in both builders.
  */
 export const MATCH_GROUP_OPS = ["and", "or", "none", "notAll"] as const;
-export type MatchGroupOp = (typeof MATCH_GROUP_OPS)[number];
+type MatchGroupOp = (typeof MATCH_GROUP_OPS)[number];
 
 export const MATCH_CONTEXTS = ["directory", "scan"] as const;
 export type MatchContext = (typeof MATCH_CONTEXTS)[number];
@@ -199,7 +199,7 @@ export interface MatchGroup {
   children: MatchNode[];
 }
 
-export type MatchNode = MatchClause | MatchGroup;
+type MatchNode = MatchClause | MatchGroup;
 
 /**
  * A type's stored rules: one root group. The name is historical — the column
@@ -214,7 +214,7 @@ export type MatchRules = MatchGroup;
  * `normalizeMatchRules`. Nothing READS this shape — write paths take
  * `MatchRulesInput`, everything downstream takes `MatchRules`.
  */
-export interface LegacyMatchClause {
+interface LegacyMatchClause {
   field: MatchField;
   /** Pre-2026-09 leaf key. */
   op?: string;
@@ -223,7 +223,7 @@ export interface LegacyMatchClause {
   negate?: boolean;
 }
 
-export interface LegacyMatchClauseList {
+interface LegacyMatchClauseList {
   clauses: LegacyMatchClause[];
 }
 
@@ -231,7 +231,7 @@ export interface LegacyMatchClauseList {
 export type MatchRulesInput = MatchRules | LegacyMatchClauseList;
 
 /** Narrow a node. A group carries `children`; a leaf carries `field`. */
-export function isMatchGroup(node: MatchNode): node is MatchGroup {
+function isMatchGroup(node: MatchNode): node is MatchGroup {
   return Array.isArray((node as MatchGroup).children);
 }
 
@@ -526,7 +526,7 @@ export function conditionMatches(group: MatchGroup, facts: AssetTypeFacts): bool
 }
 
 /** Does this type claim the device? */
-export function typeMatches(type: MatchableType, facts: AssetTypeFacts, context: MatchContext): boolean {
+function typeMatches(type: MatchableType, facts: AssetTypeFacts, context: MatchContext): boolean {
   if (!type.matchContexts.includes(context)) return false;
   const rules = type.matchRules;
   if (!rules || !rules.children.length) return false;

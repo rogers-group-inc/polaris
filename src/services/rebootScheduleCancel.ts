@@ -22,7 +22,7 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 
-export type RebootCancelCause = "manual" | "detected";
+type RebootCancelCause = "manual" | "detected";
 
 export interface CancelAfterRebootInput {
   assetId: string;

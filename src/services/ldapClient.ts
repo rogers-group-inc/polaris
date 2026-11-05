@@ -22,7 +22,7 @@ export interface LdapConnectionConfig {
   bindPassword: string;
 }
 
-export function buildLdapUrl(config: { host: string; port?: number; useLdaps?: boolean }): string {
+function buildLdapUrl(config: { host: string; port?: number; useLdaps?: boolean }): string {
   const useLdaps = config.useLdaps !== false;
   const defaultPort = useLdaps ? 636 : 389;
   const port = config.port && config.port > 0 ? config.port : defaultPort;
@@ -30,7 +30,7 @@ export function buildLdapUrl(config: { host: string; port?: number; useLdaps?: b
   return `${scheme}://${config.host}:${port}`;
 }
 
-export function newLdapClient(config: { host: string; port?: number; useLdaps?: boolean; verifyTls?: boolean }): Client {
+function newLdapClient(config: { host: string; port?: number; useLdaps?: boolean; verifyTls?: boolean }): Client {
   const useLdaps = config.useLdaps !== false;
   return new Client({
     url: buildLdapUrl(config),

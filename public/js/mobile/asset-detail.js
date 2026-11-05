@@ -1373,7 +1373,7 @@
     row("Location", asset.location || asset.learnedLocation);
     row("Department", asset.department);
     row("Assigned to", asset.assignedTo);
-    row("Last seen", formatTimeAgo(asset.lastSeen));
+    row("Last seen", timeAgo(asset.lastSeen));
     row("Last seen port", asset.lastSeenSwitch
       ? '<span class="mono">' + escapeHtml(asset.lastSeenSwitch) + '</span>'
       : null);
@@ -3437,7 +3437,7 @@
       // cache that ages out in minutes, so absence here proves little.
       var cad = cadenceLabel(data && data.pollIntervalSec);
       var metaBits = [];
-      metaBits.push(data && data.collectedAt ? "read " + escapeHtml(formatTimeAgo(data.collectedAt)) : "never read");
+      metaBits.push(data && data.collectedAt ? "read " + escapeHtml(timeAgo(data.collectedAt)) : "never read");
       metaBits.push(cad ? "every " + escapeHtml(cad) : "on discovery only");
       var metaHead = metaBits.join(" · ");
       var metaNote = '<br><span style="opacity:.8;">Each read is a snapshot and a FortiGate ages entries out in about 1–5 minutes, so short-lived entries can be missing.</span>';
@@ -3475,7 +3475,7 @@
             var sub = ['<span class="mono">' + escapeHtml(e.macAddress || "—") + '</span>'];
             var age = arpAgeLabel(e.ageSec);
             if (age) sub.push("age " + escapeHtml(age));
-            if (showLastSeen && e.lastSeen) sub.push("seen " + escapeHtml(formatTimeAgo(e.lastSeen)));
+            if (showLastSeen && e.lastSeen) sub.push("seen " + escapeHtml(timeAgo(e.lastSeen)));
             var dev = matchedDeviceHtml(e.matchedAsset);
             if (dev) sub.push(dev);
             return tableRowHtml(escapeHtml(e.ipAddress), sub.join(" · "));
@@ -3513,7 +3513,7 @@
       if (!body) return;
 
       var cad = cadenceLabel(data && data.pollIntervalSec);
-      var metaHead = (data && data.collectedAt ? "read " + escapeHtml(formatTimeAgo(data.collectedAt)) : "no entries recorded yet")
+      var metaHead = (data && data.collectedAt ? "read " + escapeHtml(timeAgo(data.collectedAt)) : "no entries recorded yet")
         + " · " + (cad ? "every " + escapeHtml(cad) : "not polled");
 
       if (!entries.length) {
@@ -3522,7 +3522,7 @@
         var lastPass = data && data.lastSystemInfoAt;
         body.innerHTML = tableMsg("No forwarding-database entries. This is collected over SNMP on the system-info cadence; a switch polled via its parent FortiGate reports none."
           + (lastPass
-              ? " The last system-info pass ran " + escapeHtml(formatTimeAgo(lastPass)) + " and returned none."
+              ? " The last system-info pass ran " + escapeHtml(timeAgo(lastPass)) + " and returned none."
               : " No system-info pass has completed against this switch yet."));
         return;
       }
@@ -3687,7 +3687,7 @@
       if (!body) return;
       var controls = document.getElementById("table-sheet-controls");
       var lastAt = (si && si.lastSystemInfoAt) || null;
-      var metaHead = (lastAt ? "read " + escapeHtml(formatTimeAgo(lastAt)) : "never collected")
+      var metaHead = (lastAt ? "read " + escapeHtml(timeAgo(lastAt)) : "never collected")
         + " · " + radios.length + " radio" + (radios.length === 1 ? "" : "s");
       var meshRole = wirelessMeshRoleHtml(_assetCache[assetId], stations);
 
@@ -3808,7 +3808,7 @@
     if (child.ipAddress) bits.push('<span class="mono">' + escapeHtml(child.ipAddress) + '</span>');
     if (child.model) bits.push(escapeHtml(child.model));
     bits.push(child.monitored
-      ? (child.lastSystemInfoAt ? "read " + escapeHtml(formatTimeAgo(child.lastSystemInfoAt)) : "never collected")
+      ? (child.lastSystemInfoAt ? "read " + escapeHtml(timeAgo(child.lastSystemInfoAt)) : "never collected")
       : "not monitored");
     return '<div class="muted" style="padding:2px 0 6px 24px;font-size:13px;">' + bits.join(" · ") + '</div>';
   }
@@ -3818,7 +3818,7 @@
     children.forEach(function (c) {
       if (c.lastSystemInfoAt && (!newest || c.lastSystemInfoAt > newest)) newest = c.lastSystemInfoAt;
     });
-    return newest ? "newest read " + escapeHtml(formatTimeAgo(newest)) : "no child polled yet";
+    return newest ? "newest read " + escapeHtml(timeAgo(newest)) : "no child polled yet";
   }
 
   function loadChildWirelessSheet(assetId) {
@@ -3999,7 +3999,7 @@
           bits.push('<span style="color:' + col + ';font-weight:500;">' + escapeHtml(s.state.label) + '</span>');
         }
         if (s.integration && s.integration.name) bits.push(escapeHtml(s.integration.name));
-        if (s.lastSeen) bits.push("seen " + escapeHtml(formatTimeAgo(s.lastSeen)));
+        if (s.lastSeen) bits.push("seen " + escapeHtml(timeAgo(s.lastSeen)));
         var inferred = s.inferred ? ' <span class="muted" style="font-size:12px;font-weight:400;">· inferred</span>' : '';
         var extId = s.externalId
           ? '<div class="mono" style="font-size:11px;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.externalId) + '</div>'
@@ -4046,7 +4046,7 @@
         if (s.vlan != null) netParts.push("VLAN " + escapeHtml(String(s.vlan)));
         if (netParts.length) bits.push(netParts.join(" "));
         if (s.source) bits.push(escapeHtml(s.source));
-        if (s.lastSeen) bits.push("seen " + escapeHtml(formatTimeAgo(s.lastSeen)));
+        if (s.lastSeen) bits.push("seen " + escapeHtml(timeAgo(s.lastSeen)));
         html += ''
           + '<div class="list-item two-line" style="padding-left:16px;padding-right:16px;">'
           + '  <span class="leading"><svg viewBox="0 0 24 24"><use href="#i-router"/></svg></span>'
@@ -4085,7 +4085,7 @@
           + '  <span class="leading"><svg viewBox="0 0 24 24"><use href="#i-history"/></svg></span>'
           + '  <div class="content">'
           + '    <div class="headline mono">' + escapeHtml(r.ip || "") + '</div>'
-          + '    <div class="supporting">' + escapeHtml((r.source ? r.source + " · " : "") + (formatTimeAgo(r.lastSeen) || "")) + '</div>'
+          + '    <div class="supporting">' + escapeHtml((r.source ? r.source + " · " : "") + (timeAgo(r.lastSeen) || "")) + '</div>'
           + '  </div>'
           + '</div>'
           + (i < rows.length - 1 ? '<div class="list-divider"></div>' : '');
@@ -5061,7 +5061,7 @@
       if (asset.maintenanceReturnStatus) bits.push("returns to " + asset.maintenanceReturnStatus);
       // The last poll predates the window — still worth showing, since it
       // says how long polling has been paused.
-      if (asset.lastMonitorAt) bits.push("last poll " + formatTimeAgo(asset.lastMonitorAt));
+      if (asset.lastMonitorAt) bits.push("last poll " + timeAgo(asset.lastMonitorAt));
       return bits.join(" · ");
     }
     if (asset.dependencySuppressed) {
@@ -5071,17 +5071,11 @@
       if (asset.monitorStatus) bits.push("own probe " + monitorStatusLabel(asset.monitorStatus).toLowerCase());
     }
     if (asset.responseTimePolling) bits.push(asset.responseTimePolling);
-    if (asset.lastMonitorAt) bits.push("last poll " + formatTimeAgo(asset.lastMonitorAt));
+    if (asset.lastMonitorAt) bits.push("last poll " + timeAgo(asset.lastMonitorAt));
     return bits.join(" · ");
   }
 
   // api.js timeAgo with the mobile guard for empty/unparseable timestamps.
-  function formatTimeAgo(iso) {
-    if (!iso) return "";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return timeAgo(iso);
-  }
   // formatDate is the shared mobileFormatDate global from api.js (local-time
   // YYYY-MM-DD). Was a UTC .toISOString().slice here — local is the correct
   // day for the operator's "Acquired" display.

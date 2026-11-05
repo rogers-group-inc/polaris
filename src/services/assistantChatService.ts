@@ -117,7 +117,7 @@ export async function resolveAssistantIntegration(requestedId?: string): Promise
 
 /** Public list for GET /assistant/status — names and models only, never config. */
 /** Default minutes a conversation may sit idle before the chat window sets it aside (0 = never). */
-export const DEFAULT_IDLE_RESET_MINUTES = 30;
+const DEFAULT_IDLE_RESET_MINUTES = 30;
 
 export async function listAssistantIntegrations(): Promise<Array<{ id: string; name: string; model: string; displayName: string; idleResetMinutes: number; images: boolean }>> {
   const rows = await prisma.integration.findMany({
@@ -550,7 +550,7 @@ export function fitHistory<T extends { role: "user" | "assistant"; content: stri
 // so the model knows something was shown there. A model that cannot read
 // images (llmService.acceptsImages) gets the note for every image.
 
-export const MAX_RESENT_IMAGES = 4;
+const MAX_RESENT_IMAGES = 4;
 
 /**
  * Rides as a leading system message on a turn that carries images. A

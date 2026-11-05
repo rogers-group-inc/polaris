@@ -62,7 +62,7 @@ import { assetDialAddress } from "./assetDialAddress.js";
  * nobody gets. The operator-facing control is a monitor setting; this constant
  * is the floor beneath it.
  */
-export const LOSS_SWEEP_ENABLED = true;
+const LOSS_SWEEP_ENABLED = true;
 
 /** Default seconds between sweeps. The scheduler raises it when this host
  *  cannot sustain it — see `resolveSweepIntervalSec`. */
@@ -95,7 +95,7 @@ export function configuredSweepIntervalSec(
 /** Assets per queued chunk job. Matches burstPing's own fping chunk so one
  *  queued job is one fping process; a larger job would just re-chunk inside
  *  the worker and hold a worker slot for longer with no gain. */
-export const LOSS_SWEEP_CHUNK = 500;
+const LOSS_SWEEP_CHUNK = 500;
 
 export interface LossSweepAsset {
   id: string;

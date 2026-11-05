@@ -19,15 +19,15 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
  * The vendor's own rating of one advisory, recorded with it. Red Hat's words
  * map onto these: Important → high, Moderate → medium.
  */
-export const ADVISORY_SEVERITIES = ["critical", "high", "medium", "low"] as const;
-export type AdvisorySeverity = (typeof ADVISORY_SEVERITIES)[number];
+const ADVISORY_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+type AdvisorySeverity = (typeof ADVISORY_SEVERITIES)[number];
 
-export const advisorySchema = z.object({
+const advisorySchema = z.object({
   id: z.string().min(1),
   severity: z.enum(ADVISORY_SEVERITIES),
 });
 
-export const trackSchema = z.object({
+const trackSchema = z.object({
   track: z.string().min(1),
   released: isoDate.optional(),
   /** null = supported with no announced end. Absent = unknown. */
@@ -59,7 +59,7 @@ export const trackSchema = z.object({
     .optional(),
 });
 
-export const technologySchema = z.object({
+const technologySchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   kind: z.enum(["runtime", "database", "extension", "toolchain", "proxy", "os", "library"]),
@@ -83,7 +83,7 @@ export const technologySchema = z.object({
   tracks: z.array(trackSchema),
 });
 
-export const playbookSchema = z.object({
+const playbookSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   docAnchor: z.string().optional(),
@@ -104,8 +104,8 @@ export const platformEolDatasetSchema = z.object({
 export type PlatformEolDataset = z.infer<typeof platformEolDatasetSchema>;
 export type PlatformTechnology = z.infer<typeof technologySchema>;
 export type PlatformTrack = z.infer<typeof trackSchema>;
-export type PlatformSecurityFloor = NonNullable<PlatformTrack["securityFloor"]>;
-export type PlatformAdvisory = z.infer<typeof advisorySchema>;
+type PlatformSecurityFloor = NonNullable<PlatformTrack["securityFloor"]>;
+type PlatformAdvisory = z.infer<typeof advisorySchema>;
 export type PlatformPlaybook = z.infer<typeof playbookSchema>;
 
 // ─── Grading ──────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ export type PlatformPlaybook = z.infer<typeof playbookSchema>;
 export const LIFECYCLE_WATCH_DAYS = 180;
 export const LIFECYCLE_WARNING_DAYS = 90;
 
-export type LifecycleState =
+type LifecycleState =
   /** No observed version, or no matching track in the dataset. */
   | "unknown"
   /** An optional component that is legitimately absent. */
@@ -191,7 +191,7 @@ const DAY_MS = 86_400_000;
 const ADVISORY_RANK: Record<AdvisorySeverity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
 /** The worst vendor rating among a floor's advisories. */
-export function worstAdvisorySeverity(advisories: readonly PlatformAdvisory[]): AdvisorySeverity {
+function worstAdvisorySeverity(advisories: readonly PlatformAdvisory[]): AdvisorySeverity {
   let worst: AdvisorySeverity = "low";
   for (const a of advisories) {
     if (ADVISORY_RANK[a.severity] > ADVISORY_RANK[worst]) worst = a.severity;
@@ -206,7 +206,7 @@ export function worstAdvisorySeverity(advisories: readonly PlatformAdvisory[]): 
  *
  *   low → watch, medium → warning, high / critical → critical
  */
-export function unpatchedSeverity(
+function unpatchedSeverity(
   advisories: readonly PlatformAdvisory[],
   securityExposed: boolean,
 ): LifecycleSeverity {

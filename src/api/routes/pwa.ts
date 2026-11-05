@@ -165,5 +165,3 @@ pwaRouter.get("/icons/:file", async (req, res, next) => {
     return next(err);
   }
 });
-
-export default pwaRouter;

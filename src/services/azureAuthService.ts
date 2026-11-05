@@ -76,11 +76,6 @@ export async function updateSsoSettings(updates: Partial<SsoSettings>): Promise<
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-export function isAzureSsoConfigured(): boolean {
-  const s = ssoStore.peek();
-  return !!(s && s.enabled && s.idpEntityId && s.idpLoginUrl && s.idpCertificate);
-}
-
 export async function isAzureSsoConfiguredAsync(): Promise<boolean> {
   const s = await getSsoSettings();
   return !!(s.enabled && s.idpEntityId && s.idpLoginUrl && s.idpCertificate);

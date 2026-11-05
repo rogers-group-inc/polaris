@@ -2552,12 +2552,6 @@
     if (legendEl && graphEl) graphEl.appendChild(legendEl);
   }
 
-  // Delegates to PolarisTopologyRender so desktop and mobile share one
-  // color scheme. Kept as a local alias for the existing call sites.
-  function fortigateNodeColor(fg) {
-    return window.PolarisTopologyRender.fortinetNodeColor(fg);
-  }
-
   function renderTopologyGraph(data) {
     // Refresh / reset rebuilds the cyInstance from scratch — any synthetic
     // overlay nodes / edges are gone, so reset the state and hide the

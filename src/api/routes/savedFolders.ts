@@ -43,7 +43,7 @@ import {
 import { requireViewer, type OwnerTargetInput } from "../../services/savedOwnershipService.js";
 
 /** A new owner, as every Change owner endpoint takes it. */
-export const OwnerTargetSchema = z.discriminatedUnion("kind", [
+const OwnerTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("user"), userId: z.string().min(1).max(64) }),
   z.object({ kind: z.literal("role"), roleId: z.string().min(1).max(64) }),
   z.object({ kind: z.literal("region"), region: z.string().min(1).max(200) }),

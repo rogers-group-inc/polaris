@@ -81,7 +81,7 @@ export const FUNCTION_SECTIONS = [
   { id: "everywhere", label: "Every page" },
 ] as const;
 
-export type FunctionSectionId = (typeof FUNCTION_SECTIONS)[number]["id"];
+type FunctionSectionId = (typeof FUNCTION_SECTIONS)[number]["id"];
 
 export interface FunctionKeyDef {
   key: string;
@@ -285,7 +285,7 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
 
 const FUNCTION_KEY_SET = new Set(FUNCTION_KEYS.map(f => f.key));
 
-export function isValidFunctionKey(key: string): boolean {
+function isValidFunctionKey(key: string): boolean {
   return FUNCTION_KEY_SET.has(key);
 }
 
@@ -372,7 +372,7 @@ export function permissionOf(
   return "none";
 }
 
-export function isValidAccessLevel(level: string): level is AccessLevel {
+function isValidAccessLevel(level: string): level is AccessLevel {
   return level === "none" || level === "read" || level === "write" || level === "fullwrite";
 }
 

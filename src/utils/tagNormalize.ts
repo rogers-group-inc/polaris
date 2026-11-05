@@ -15,7 +15,7 @@
 import { AppError } from "./errors.js";
 
 export const TAG_MAX_LEN = 64;
-export const TAGS_MAX_COUNT = 64;
+const TAGS_MAX_COUNT = 64;
 
 /**
  * The prefix an ASSET's region tag carries. `User`/`Role`/`GroupMapping`
@@ -57,6 +57,20 @@ export function isAzureTag(tag: string): boolean {
  */
 export function withArcOwnedTags(existing: readonly string[], posted: readonly string[]): string[] {
   return [...existing.filter(isAzureTag), ...posted.filter((t) => !isAzureTag(t))];
+}
+
+/**
+ * `base` followed by every tag of `extra` that `base` does not already hold —
+ * the "keep what the writer preserves, add the fresh set" step every discovery
+ * sync and the bulk-tag add mode take. EXACT and ORDER-PRESERVING on purpose:
+ * no trim, no case-folding, no sort, and a duplicate inside `extra` is kept.
+ * That is what the ten inline copies it replaced did, so every array they
+ * write stays byte-identical. `unionTags` is the wrong tool here: it trims,
+ * case-folds and sorts, which would rewrite every discovered asset's tags.
+ */
+export function appendMissingTags(base: readonly string[], extra: readonly string[]): string[] {
+  const have = new Set(base);
+  return [...base, ...extra.filter((t) => !have.has(t))];
 }
 
 /** Strip the `region:` prefix from a map-region tag (case-insensitive). */
@@ -167,7 +181,7 @@ export function renameTagInList(
  * and chart bands on every theme — a single hex cannot, the bands' warning being
  * #ffd600 on nightfall and #f57f17 on the daylight themes.
  */
-export const TAG_SEVERITY_COLOR_PREFIX = "severity:";
+const TAG_SEVERITY_COLOR_PREFIX = "severity:";
 
 /** The severities a color reference may name — SEVERITIES in
  *  src/services/notificationTypes.ts (a util does not import a service; the

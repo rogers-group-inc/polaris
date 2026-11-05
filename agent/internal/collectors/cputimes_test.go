@@ -59,7 +59,7 @@ func TestBusyPercentsLinuxGuestNotDoubleCounted(t *testing.T) {
 	cur := []cpu.TimesStat{{CPU: "cpu0", User: 50, Idle: 50, Guest: 20}}
 
 	linuxTotal, linuxBusy := cpuBusy(cur[0], true)
-	approx(t, linuxTotal, 100, "linux total")  // guest folded into user
+	approx(t, linuxTotal, 100, "linux total") // guest folded into user
 	approx(t, linuxBusy, 50, "linux busy")
 	otherTotal, _ := cpuBusy(cur[0], false)
 	approx(t, otherTotal, 120, "non-linux total")

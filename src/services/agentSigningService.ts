@@ -309,7 +309,7 @@ export async function resolveJsignJar(): Promise<string | null> {
  * jsign itself needs far less (7.5 is Java 8 bytecode); this is the version
  * the fleet is provisioned and tested with, not a jsign requirement.
  */
-export const JAVA_MINIMUM = "25";
+const JAVA_MINIMUM = "25";
 
 export interface SigningAvailability {
   enabled: boolean;
@@ -510,7 +510,7 @@ export function parseKeytoolAliases(stdout: string): string[] {
  * failure — telling the operator their password is wrong because a tool is
  * missing would send them to the wrong field entirely.
  */
-export async function verifyKeystore(
+async function verifyKeystore(
   cfg: Pick<AgentSigningConfig, "keystorePath" | "keystorePassword">,
 ): Promise<{ verified: boolean; aliases: string[]; error?: string }> {
   const args = [
@@ -571,7 +571,7 @@ export function parseJavaHome(output: string): string | null {
  * yields an executable file — the caller then reports the honest "password not
  * verified" rather than blaming the password.
  */
-export async function resolveKeytoolPath(): Promise<string | null> {
+async function resolveKeytoolPath(): Promise<string | null> {
   const exe = process.platform === "win32" ? "keytool.exe" : "keytool";
   const candidates: string[] = [];
 

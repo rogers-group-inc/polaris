@@ -62,17 +62,16 @@ export type FirmwareAssetType = (typeof FIRMWARE_ASSET_TYPES)[number];
  * Per device type: 100 MiB is the FortiSwitch upload endpoint's own ceiling
  * (and ample for a FortiAP); a FortiGate image runs to ~250 MB.
  */
-export const FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE: Record<FirmwareAssetType, number> = {
+const FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE: Record<FirmwareAssetType, number> = {
   switch: 104_857_600,
   access_point: 104_857_600,
   firewall: 314_572_800,
 };
 /** The largest of the per-type ceilings — what the upload route accepts at all. */
 export const FIRMWARE_MAX_IMAGE_BYTES = Math.max(...Object.values(FIRMWARE_MAX_IMAGE_BYTES_BY_TYPE));
-export const FIRMWARE_IMAGE_ROLES = ["primary", "backup"] as const;
-export type FirmwareImageRole = (typeof FIRMWARE_IMAGE_ROLES)[number];
+type FirmwareImageRole = "primary" | "backup";
 
-export function isFirmwareAssetType(v: unknown): v is FirmwareAssetType {
+function isFirmwareAssetType(v: unknown): v is FirmwareAssetType {
   return v === "switch" || v === "access_point" || v === "firewall";
 }
 
@@ -132,7 +131,7 @@ export interface EffectiveBinding {
   scope: "manufacturer" | "assetType" | "model";
 }
 
-export interface FirmwareModelNode {
+interface FirmwareModelNode {
   model: string;
   assetCount: number;
   orphaned: boolean;
@@ -141,7 +140,7 @@ export interface FirmwareModelNode {
   effectiveBinding: EffectiveBinding | null;
 }
 
-export interface FirmwareTypeNode {
+interface FirmwareTypeNode {
   assetType: string;
   label: string;
   engine: string | null;
@@ -151,7 +150,7 @@ export interface FirmwareTypeNode {
   models: FirmwareModelNode[];
 }
 
-export interface FirmwareManufacturerNode {
+interface FirmwareManufacturerNode {
   name: string;
   assetCount: number;
   binding: FirmwareBindingRef | null;
@@ -250,10 +249,6 @@ function nodeKey(manufacturer: string, assetType: string | null, model: string |
 }
 
 // ─── Disk ─────────────────────────────────────────────────────────────────────
-
-export async function ensureFirmwareDirs(): Promise<void> {
-  await mkdir(FIRMWARE_INCOMING_DIR, { recursive: true });
-}
 
 /** Absolute path of an image's bytes, refused when the stored path escapes FIRMWARE_DIR. */
 export function resolveImagePath(storagePath: string): string {
@@ -917,7 +912,7 @@ export async function firmwareBindingCredentialIds(
 
 // ─── Candidates ───────────────────────────────────────────────────────────────
 
-export type CandidateReason = "ok" | "no-engine" | "no-serial" | "no-version" | "no-images" | "current" | "platform-unmatched";
+type CandidateReason = "ok" | "no-engine" | "no-serial" | "no-version" | "no-images" | "current" | "platform-unmatched";
 
 export interface UpgradeCandidates {
   reason: CandidateReason;
@@ -1038,7 +1033,7 @@ export async function findUpgradeCandidates(asset: { manufacturer: string | null
 /** The device-list slide-in's cap. A manufacturer node on a large fleet can
  *  hold a couple of thousand switches and APs; the list is for finding one,
  *  and `total` still reports the true count. */
-export const FIRMWARE_NODE_ASSET_LIMIT = 2000;
+const FIRMWARE_NODE_ASSET_LIMIT = 2000;
 
 export type FirmwareNodeAsset = {
   id: string; hostname: string | null; ipAddress: string | null; assetType: string; model: string | null;

@@ -23,7 +23,7 @@
  * `getAgentVersion()` (reads `agent/VERSION`), NOT `getAppVersion()`.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, rename, writeFile, stat, readdir, rm } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
@@ -54,7 +54,7 @@ const execFileAsync = promisify(execFile);
 
 // ─── Public types ─────────────────────────────────────────────────────
 
-export const PLATFORMS = [
+const PLATFORMS = [
   { os: "linux",   arch: "amd64" },
   { os: "linux",   arch: "arm64" },
   { os: "darwin",  arch: "amd64" },
@@ -63,7 +63,7 @@ export const PLATFORMS = [
   { os: "windows", arch: "arm64" },
 ] as const;
 
-export type BuildPhase =
+type BuildPhase =
   | "queued"
   | "preparing"
   | "building:linux-amd64"
@@ -78,7 +78,7 @@ export type BuildPhase =
   | "failed"
   | "cancelled";
 
-export interface BuildStep {
+interface BuildStep {
   platform: string;
   arch:     string;
   status:   "pending" | "running" | "success" | "failed";
@@ -844,7 +844,7 @@ export function getBuild(buildId: string): BuildState | null {
   return publicView(buildStates.get(buildId) ?? null);
 }
 
-export function getCurrentBuild(): BuildState | null {
+function getCurrentBuild(): BuildState | null {
   if (currentBuildId === null) return null;
   return publicView(buildStates.get(currentBuildId) ?? null);
 }
@@ -861,12 +861,9 @@ export function getCurrentBuildAndQueue(): { current: BuildState | null; queue: 
   return { current, queue };
 }
 
-/** Queue depth limit, exported for the UI / docs. */
-export const QUEUE_DEPTH = QUEUE_DEPTH_LIMIT;
-
 // ─── Inventory ────────────────────────────────────────────────────────
 
-export interface InventoryFile {
+interface InventoryFile {
   platform: string;
   arch:     string;
   filename: string;

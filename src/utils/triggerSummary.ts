@@ -136,7 +136,7 @@ export function triggerSubject(trigger: SummarizableTrigger, dimensionLabel?: st
 }
 
 /** The unit to print after a value — the sensor's own unit when we know it. */
-export function triggerUnit(trigger: SummarizableTrigger, sensorUnit?: string | null): string {
+function triggerUnit(trigger: SummarizableTrigger, sensorUnit?: string | null): string {
   if (trigger.metric === "hwSensorValue") return sensorUnit ?? "";
   if (trigger.metric === "hwSensorAlarm") return "";
   const unit = trigger.metric ? METRIC_META[trigger.metric]?.unit ?? "" : "";

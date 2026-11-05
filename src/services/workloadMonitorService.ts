@@ -68,7 +68,7 @@ import type {
 } from "./monitoringService.js";
 
 /** Same TTL as the vCenter caches: every asset on one integration shares a read per tick. */
-export const WORKLOAD_SNAPSHOT_TTL_MS = 30_000;
+const WORKLOAD_SNAPSHOT_TTL_MS = 30_000;
 
 interface CacheEntry {
   snap: WorkloadSnapshot;
@@ -113,7 +113,7 @@ export async function fetchWorkloadSnapshotCached(integration: {
   });
 }
 
-export type WorkloadReading =
+type WorkloadReading =
   | { kind: "host"; platform: WorkloadPlatform; host: WorkloadHost; usage: WorkloadHostUsage | null; snap: WorkloadSnapshot }
   | { kind: "vm"; platform: WorkloadPlatform; vm: WorkloadVm; usage: WorkloadUsage | null; snap: WorkloadSnapshot }
   | { kind: "container"; platform: WorkloadPlatform; container: WorkloadContainer; usage: WorkloadUsage | null; snap: WorkloadSnapshot }
@@ -125,7 +125,7 @@ export type WorkloadReading =
  * NOT discoveredByIntegration, which keeps pointing at a directory integration
  * when an AD-found VM was later merged by an Unraid / TrueNAS sync.
  */
-export async function readWorkloadAsset(assetId: string): Promise<WorkloadReading> {
+async function readWorkloadAsset(assetId: string): Promise<WorkloadReading> {
   const source = await prisma.assetSource.findFirst({
     where: { assetId, sourceKind: { in: [...ALL_WORKLOAD_SOURCE_KINDS] } },
     select: {
@@ -273,7 +273,7 @@ function clampPct(v: number | null | undefined): number | null {
 
 // ─── Interfaces + storage ─────────────────────────────────────────────────────
 
-export function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSample {
+function buildWorkloadSystemInfo(reading: WorkloadReading): SystemInfoSample {
   const interfaces: InterfaceSample[] = [];
   const storage: StorageSample[] = [];
   // A container / App: its own network's traffic, when it has a network of its

@@ -155,7 +155,7 @@ import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js
 // Business rule 78 — who silenced a dependency-suppressed device, for the
 // alert a down automation raises about it anyway.
 import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "./dependencyTreeService.js";
-import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
+import { dependencyTriggerSummary } from "../utils/notificationTemplate.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
 import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
@@ -4450,28 +4450,6 @@ function seriesRun(reading: Reading, meets: (v: number | string | boolean | null
 }
 
 /**
- * The run behind a reading for one side of the decision (met, or recovered),
- * resolving the series and current-state families into one answer.
- *
- * `stateRun` / `lastAt` are the state row's counters, read only when there is
- * no series. `advanced` says whether the current-state counter moved, i.e.
- * whether the caller has anything to persist — a repeat of the same poll writes
- * nothing, which is what keeps the hot path transition-write-only.
- */
-function runFor(
-  reading: Reading,
-  meets: boolean,
-  predicate: (v: number | string | boolean | null) => boolean,
-  stateRun: number,
-  lastAt: Date | null | undefined,
-): { run: number; advanced: boolean; stateful: boolean } {
-  const s = seriesRun(reading, predicate);
-  if (s !== null) return { run: s, advanced: false, stateful: false };
-  const stepped = advanceRun(stateRun, meets, reading.readingAt, lastAt);
-  return { run: stepped.run, advanced: stepped.advanced, stateful: true };
-}
-
-/**
  * Both runs behind one reading — how many consecutive readings have MET the
  * trigger, and how many have RECOVERED from it — resolved for either family of
  * source. `stateful` says the numbers came from the state row rather than from
@@ -5391,7 +5369,7 @@ async function neverAnnounced(notificationId: string): Promise<boolean> {
 }
 
 /** Is this grouped alert still waiting to send its first message? */
-export function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
+function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
   return !!row.firstSendDueAt && !row.firstSentAt;
 }
 
@@ -6933,7 +6911,7 @@ export function clearAssetDetailCache(): void {
   _assetDetailCache.clear();
   _blameCache = newBlameLoadCache();
 }
-export async function assetDetail(assetId: string): Promise<AssetDetailRow | null> {
+async function assetDetail(assetId: string): Promise<AssetDetailRow | null> {
   if (_assetDetailCache.has(assetId)) return _assetDetailCache.get(assetId)!;
   const a = await prisma.asset.findUnique({ where: { id: assetId }, select: ASSET_DETAIL_SELECT });
   const row = a ? { ...a, status: String(a.status) } : null;
@@ -7001,7 +6979,7 @@ export type MaintenanceSpan = { startedAt: Date; endedAt: Date | null };
  * clears within the tick still leaks — a separate problem, and not one any
  * table here can answer.
  */
-export async function loadMaintenanceSpansForEvents(
+async function loadMaintenanceSpansForEvents(
   assetIds: string[],
   from: Date,
   to: Date,

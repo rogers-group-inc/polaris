@@ -19,7 +19,7 @@
 export const BACKUP_MIN_PASSWORD_LEN = 12;
 
 /** Minimum number of DISTINCT characters — rejects single-char repeats. */
-export const BACKUP_MIN_DISTINCT_CHARS = 4;
+const BACKUP_MIN_DISTINCT_CHARS = 4;
 
 /**
  * Validate a backup-encryption passphrase. Returns null when no passphrase was

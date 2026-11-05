@@ -75,8 +75,32 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Unused files, unused / unlisted dependencies and unresolved imports
+      # fail; unused exports are warnings until the code-quality ledger's
+      # un-export batch lands (knip.jsonc, docs/CODE-QUALITY-LEDGER.md).
+      - name: Dead code (knip)
+        run: npm run check:dead
+
       - name: Run unit tests
         run: npx vitest run tests/unit
+
+      # The Go agent: nothing checked it before 2026-11-04 but the nightly
+      # CodeQL scan. go-version-file keeps this out of the Go pin family
+      # (agent/go.mod is already a check:versions site).
+      - name: Set up Go (agent)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: Agent gofmt / vet / tests
+        working-directory: agent
+        run: make fmt-check vet test
+
+      # A report, never a gate: .jscpd.json has no threshold, so this exits 0.
+      # The summary table in the log is the trend to watch.
+      - name: Duplication report (informational)
+        run: npm run check:dup -- --reporters console --silent
 
   integration:
     runs-on: ubuntu-24.04

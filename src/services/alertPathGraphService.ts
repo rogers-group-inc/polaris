@@ -35,8 +35,7 @@ import { activeMembers, primaryMember, type AlertMember } from "./notificationTy
 import { POLARIS_SERVER_LABEL, POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
-export const PATH_GRAPH_TOKENS = ["path.graph"] as const;
-export type PathGraphToken = (typeof PATH_GRAPH_TOKENS)[number];
+export type PathGraphToken = "path.graph";
 
 /** Most path graphs one email draws. */
 export const MAX_PATH_GRAPHS = 4;

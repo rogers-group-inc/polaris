@@ -199,8 +199,3 @@ export function collectorExists(
 ): boolean {
   return collectorCapability(source, stream, method, opts).implemented;
 }
-
-/** Field name (`cpuMemoryPolling`) → stream (`cpuMemory`). */
-export function streamFromPollingField(field: string): Stream {
-  return field.replace(/Polling$/, "") as Stream;
-}

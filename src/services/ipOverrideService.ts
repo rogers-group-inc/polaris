@@ -37,7 +37,7 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 
-export const IP_OVERRIDE_COLLISION_REASON = "ip-override";
+const IP_OVERRIDE_COLLISION_REASON = "ip-override";
 
 // Prisma JSON filter matching this feature's conflicts.
 const IP_OVERRIDE_CONFLICT_WHERE = {

@@ -48,7 +48,7 @@ func reboot(delay time.Duration, comment string) error {
 	}
 	args := []string{"/r", "/f", "/t", strconv.Itoa(secs), "/d", "p:0:0", "/c", c}
 	if out, err := exec.Command("shutdown.exe", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("shutdown.exe refused the reboot: %v: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("shutdown.exe refused the reboot: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

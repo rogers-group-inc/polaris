@@ -76,9 +76,9 @@ export type AdvisorLeverKey =
   | "PG_WORK_MEM"
   | "PG_RANDOM_PAGE_COST";
 
-export type ApplyMode = "env" | "queue-mode-endpoint" | "advisory-only";
+type ApplyMode = "env" | "queue-mode-endpoint" | "advisory-only";
 
-export interface AdvisorRecommendation {
+interface AdvisorRecommendation {
   key: AdvisorLeverKey;
   applyMode: ApplyMode;
   /** Null when the current value can't be resolved (e.g. PG setting query failed). */
@@ -146,7 +146,7 @@ export interface HandlerTimeoutPressure {
   utilization: number;
 }
 
-export interface IntegrationBreakdown {
+interface IntegrationBreakdown {
   fortimanagerProxy: number;
   fortimanagerDirectParallelismSum: number;
   fortigate: number;
@@ -161,7 +161,7 @@ export interface IntegrationBreakdown {
   genericapi?: number;
 }
 
-export interface PgRecommendation {
+interface PgRecommendation {
   /** Friendly current display value (e.g. "128MB"), or null when unknown. */
   current: string | null;
   /** Friendly recommended value. */
@@ -217,7 +217,7 @@ export interface AdvisorInputs {
  *  1000 samples accumulate per minute — this threshold is reached in seconds. */
 export const COLD_START_MIN_SAMPLES = 100;
 
-export const COLD_START_P90_SEC: Record<CadenceKey, number> = {
+const COLD_START_P90_SEC: Record<CadenceKey, number> = {
   probe:        0.4,
   fastFiltered: 0.6,
   telemetry:    0.8,
@@ -299,7 +299,6 @@ const PGBOSS_RECOMMEND_ASSETS = 500;
  *  used elsewhere by the advisor). */
 const HANDLER_TIMEOUT_PRESSURE_RATIO = 0.7;
 
-const ADVISOR_CACHE_TTL_MS = 10 * 60 * 1000;
 const LAST_CHANGE_REQUIRED_SETTING_KEY = "capacity.advisor.lastChangeRequired";
 
 // ─── Public utility: roundUpToNearest (exported for tests) ────────────────
@@ -851,7 +850,7 @@ async function readIntegrationBreakdown(): Promise<IntegrationBreakdown> {
  * assets with at least one pin (interface / storage / ipsec tunnel).
  *
  * `fastFiltered` mirrors the gate in `jobs/monitorAssets.ts:236` —
- * `publishMonitorJob("fastFiltered", a.id, …)` fires once per ASSET (not per
+ * a `fastFiltered` job is published once per ASSET (not per
  * pin) when `hasFastPin` is true. Counting `monitoredInterfaceCount` (the
  * sum of pin-array lengths across all assets) is wrong because an operator
  * who pins 12 ports on one switch produces 12 interface pins but only 1
@@ -974,21 +973,8 @@ export async function recomputeAdvisorFromSnapshot(
   };
 
   const state = buildAdvisorState(inputs);
-  cachedState = state;
-  cachedAt = Date.now();
   void recordAdvisorTransition(state);
   return state;
-}
-
-// ─── Cache ─────────────────────────────────────────────────────────────────
-
-let cachedState: AdvisorState | null = null;
-let cachedAt = 0;
-
-export function getCachedAdvisorState(): AdvisorState | null {
-  if (!cachedState) return null;
-  if (Date.now() - cachedAt > ADVISOR_CACHE_TTL_MS) return null;
-  return cachedState;
 }
 
 // ─── Summary for capacityService reasons ──────────────────────────────────
@@ -1142,9 +1128,9 @@ const ENV_KEY_MAP: Partial<Record<AdvisorLeverKey, string>> = {
   POLARIS_HEAVY_CONCURRENCY:        "POLARIS_HEAVY_CONCURRENCY",
 };
 
-export type StageStatus = "applied" | "skipped" | "error";
+type StageStatus = "applied" | "skipped" | "error";
 
-export interface StageResult {
+interface StageResult {
   key: AdvisorLeverKey;
   status: StageStatus;
   oldValue: string | null;
@@ -1242,16 +1228,3 @@ export async function stageAdvisorState(
   const restartRequired = results.some((r) => r.status === "applied");
   return { ok: results.every((r) => r.status !== "error"), results, restartRequired };
 }
-
-export const __testing = {
-  HISTOGRAM_BUCKETS,
-  PER_CADENCE_FLOOR,
-  FLOATING_FLOOR,
-  SAFETY_FACTOR,
-  HTTP_JOB_OVERHEAD,
-  PGBOSS_POOL_TARGET,
-  POLARIS_FRACTION_OF_MAX,
-  MAX_CONNECTIONS_ROUNDING,
-  POOL_ROUNDING,
-  PGBOSS_RECOMMEND_ASSETS,
-};

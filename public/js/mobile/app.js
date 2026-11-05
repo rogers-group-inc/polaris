@@ -446,8 +446,6 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     }
 
     currentUser = user;
-    // Make the current user available to api.js callers (avatar, role checks).
-    window.__polarisUser = user;
 
     // Chat takes the Networks slot only when the assistant is usable here:
     // the last answer this phone saw decides the first paint, the live

@@ -37,10 +37,9 @@
  *
  * Applied at WRITE time in two places (both call this one function):
  *   - projectAssetFromSources (utils/assetProjection.ts) — so the projected
- *     pair, projectionDriftService's comparison, and conflict proposals all
- *     agree. Normalizing only on the way to the DB would make drift detection
- *     report a permanent mismatch between "Windows 10 Pro" and the stored
- *     "Windows 11 Pro", every cycle, forever.
+ *     pair and conflict proposals agree with the stored row. Normalizing only
+ *     on the way to the DB would leave a permanent mismatch between the
+ *     projected "Windows 10 Pro" and the stored "Windows 11 Pro".
  *   - the Asset write hooks in db.ts — the catch-all for the legacy inline
  *     writers (discoveryEngine's fortigate-endpoint path, the agents
  *     system-info route, conflictResolutionService, the assets PUT route).

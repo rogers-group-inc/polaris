@@ -36,13 +36,13 @@ export interface DnsSettings {
 }
 
 /** A single PTR answer. ttl is null when the resolver cannot retrieve it (standard mode). */
-export interface PtrRecord {
+interface PtrRecord {
   name: string;
   ttl: number | null;
 }
 
 /** A single A/AAAA answer from a forward lookup. */
-export interface ARecord {
+interface ARecord {
   address: string;
   family: 4 | 6;
 }

@@ -40,6 +40,7 @@
  * unit testing.
  */
 
+import { chunkArray } from "../utils/chunk.js";
 import { prisma } from "../db.js";
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import { bareFortinetDeviceName } from "../utils/assetSourceLocation.js";
@@ -62,7 +63,7 @@ import { logger } from "../utils/logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type DependencyDetectedVia =
+type DependencyDetectedVia =
   | "controller"
   | "interface"
   | "lldp"
@@ -76,10 +77,10 @@ export type DependencyDetectedVia =
 // "unraid" / "truenas" / "proxmox": a VM or container → the Unraid / TrueNAS
 // host or Proxmox node it runs on (services/workloadSync.ts), the vCenter
 // placement edge's twin.
-export type DependencySource = "computed" | "override" | "endpoint" | "vcenter" | "unraid" | "truenas" | "proxmox";
+type DependencySource = "computed" | "override" | "endpoint" | "vcenter" | "unraid" | "truenas" | "proxmox";
 
 /** Hypervisor-placement edge sources: the endpoint half never overlays these. */
-export const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "unraid", "truenas", "proxmox"];
+const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "unraid", "truenas", "proxmox"];
 
 /**
  * The Fortinet infra types the BFS-layered half of the DAG is built from.
@@ -96,7 +97,7 @@ export const FORTINET_INFRA_ASSET_TYPES = ["firewall", "switch", "access_point"]
  * buckets everything that isn't `override` together, so these participate in
  * suppression exactly like a computed row.
  */
-export const ENDPOINT_DEPENDENCY_SOURCE = "endpoint";
+const ENDPOINT_DEPENDENCY_SOURCE = "endpoint";
 
 /** Pure-function input — one Fortinet infra asset. */
 export interface DepAsset {
@@ -1077,7 +1078,7 @@ export function evaluateSuppression(
 /** Why a node counts against the devices below it. */
 export type DependencyBlameReason = "down" | "maintenance" | "dependency_test" | "suppressed";
 
-export interface DependencyBlameNode {
+interface DependencyBlameNode {
   id: string;
   hostname: string | null;
   reason: DependencyBlameReason;
@@ -1613,13 +1614,6 @@ export async function recomputeDependencyTree(integrationId?: string): Promise<{
 
 // ─── Endpoint-half writeback ────────────────────────────────────────────────
 
-/** Chunk ids so no statement carries a pathological IN list. */
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
 /**
  * The owning FortiGate for each of these endpoints' addresses, per IPAM —
  * the last-resort parent tier (business rule 55).
@@ -1646,7 +1640,7 @@ async function resolveIpamGatesForEndpoints(assetIds: string[]): Promise<Map<str
   if (assetIds.length === 0) return out;
 
   const claims: MaclessClaimRow[] = [];
-  for (const ids of chunk(assetIds, 500)) {
+  for (const ids of chunkArray(assetIds, 500)) {
     const rows = await prisma.$queryRaw<MaclessClaimRow[]>`
       SELECT a.id, a.hostname, a."ipAddress" AS ip, a."ipSource", a."ipOverride",
              a."lastSeen", h."lastSeen" AS "ipLastSeen",
@@ -1685,7 +1679,7 @@ async function loadMacTableSwitchesForEndpoints(assetIds: string[]): Promise<Map
   if (assetIds.length === 0) return out;
   const cutoff = new Date(Date.now() - MAC_TABLE_FRESH_MS);
   const rows: Array<{ assetId: string; matchedAssetId: string | null; lastSeen: Date }> = [];
-  for (const ids of chunk(assetIds, 500)) {
+  for (const ids of chunkArray(assetIds, 500)) {
     rows.push(...await prisma.assetMacTableEntry.findMany({
       where:  { matchedAssetId: { in: ids }, status: "learned", lastSeen: { gte: cutoff } },
       select: { assetId: true, matchedAssetId: true, lastSeen: true },
@@ -1716,7 +1710,7 @@ const MAC_TABLE_FRESH_MS = 48 * 60 * 60 * 1000;
  * `Asset.dependencyLayer` is stamped to parent-layer + 1 (null when the parent
  * itself is unlayered) so the asset-details tree can print the endpoint's level.
  */
-export async function syncEndpointDependencyEdges(
+async function syncEndpointDependencyEdges(
   infra: DepAsset[],
   layers: Map<string, number>,
 ): Promise<{ endpoints: number; edges: number; added: number; removed: number; retyped: number }> {
@@ -1868,10 +1862,10 @@ export async function syncEndpointDependencyEdges(
   }
 
   await prisma.$transaction(async tx => {
-    for (const ids of chunk(staleIds, 500)) {
+    for (const ids of chunkArray(staleIds, 500)) {
       await tx.assetDependencyParent.deleteMany({ where: { id: { in: ids } } });
     }
-    for (const batch of chunk(toInsert, 1000)) {
+    for (const batch of chunkArray(toInsert, 1000)) {
       await tx.assetDependencyParent.createMany({
         data: batch.map(e => ({
           assetId:       e.childAssetId,
@@ -1883,12 +1877,12 @@ export async function syncEndpointDependencyEdges(
       });
     }
     for (const [via, ids] of retypeByVia) {
-      for (const batch of chunk(ids, 500)) {
+      for (const batch of chunkArray(ids, 500)) {
         await tx.assetDependencyParent.updateMany({ where: { id: { in: batch } }, data: { detectedVia: via } });
       }
     }
     for (const [layer, ids] of layerBuckets) {
-      for (const batch of chunk(ids, 500)) {
+      for (const batch of chunkArray(ids, 500)) {
         // The "don't rewrite what already matches" guard has to spell out the
         // NULL case: `dependencyLayer <> 3` is NULL — not true — for a row whose
         // layer is NULL, so a bare `not` silently skips every endpoint that has

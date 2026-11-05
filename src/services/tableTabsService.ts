@@ -56,7 +56,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 /** Open views per table. Above this the strip stops being navigable anyway. */
 export const MAX_TABS = 20;
 export const MAX_TAB_NAME_LEN = 40;
-export const MAX_TAB_ID_LEN = 64;
+const MAX_TAB_ID_LEN = 64;
 /**
  * Starred rows per tab. Well above any real "rows I watch" list, and far below
  * what would matter: the whole strip is ONE JSON blob, so 20 tabs × this × a
@@ -72,7 +72,7 @@ export const MAX_TAB_FAVORITES = 500;
  */
 export const MAX_TAB_COLUMNS = 200;
 
-export interface TableTab {
+interface TableTab {
   id: string;
   name: string;
   state: SavedFilterState;
@@ -111,7 +111,7 @@ export interface TableTabsLayout {
   activeId: string;
 }
 
-export const EMPTY_LAYOUT: TableTabsLayout = { version: 1, tabs: [], activeId: "" };
+const EMPTY_LAYOUT: TableTabsLayout = { version: 1, tabs: [], activeId: "" };
 
 // C0 range + DEL — a tab name is rendered into the strip.
 const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u001f\\u007f]");

@@ -118,7 +118,7 @@ import { collectManagementAccess, type DeviceAccessGroup } from "../fortinetMana
 import { runDescriptionSyncForIntegration } from "../descriptionSyncService.js";
 import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
 import { reconcileMapRegions } from "../mapRegionService.js";
-import { isAzureTag } from "../../utils/tagNormalize.js";
+import { isAzureTag, appendMissingTags } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
@@ -174,7 +174,7 @@ const VERBOSE_LOGGING_TTL_MS = 30 * 60 * 1000;
  * sessions aren't silently broken; the expiry job will clear them on the
  * next tick once 30 minutes pass.
  */
-export function isVerboseLoggingActive(cfg: Record<string, unknown>): boolean {
+function isVerboseLoggingActive(cfg: Record<string, unknown>): boolean {
   if (cfg.verboseLogging !== true) return false;
   const at = cfg.verboseLoggingEnabledAt;
   if (typeof at !== "string") return true; // legacy: no timestamp, treat as active
@@ -577,7 +577,13 @@ async function buildArpSweepTargets(
   }
 }
 
-export async function runPreflightTest(integration: { id: string; type: string; config: unknown }): Promise<{ ok: boolean; message: string }> {
+/**
+ * Test a STORED integration's connection: the per-type `testConnection`
+ * dispatch behind POST /integrations/:id/test. Nothing calls it on a timer —
+ * the periodic tester was removed on 2026-11-04 (disabled since 2026-06-02),
+ * so `lastTestOk` changes only when an operator tests.
+ */
+export async function runPreflightTest(integration: { id: string; type: string; config: unknown }): Promise<{ ok: boolean; message: string; version?: string }> {
   const config = integration.config as Record<string, unknown>;
   if (integration.type === "fortimanager") return fortimanager.testConnection(config as any, integration.id);
   if (integration.type === "fortigate") return fortigate.testConnection(config as any);
@@ -600,7 +606,7 @@ export async function runPreflightTest(integration: { id: string; type: string; 
  * ends in a FortiManager `else` that would otherwise run FMG discovery
  * against an LLM host.
  */
-export const NON_DISCOVERABLE_INTEGRATION_TYPES: ReadonlySet<string> = new Set(["llm"]);
+const NON_DISCOVERABLE_INTEGRATION_TYPES: ReadonlySet<string> = new Set(["llm"]);
 
 /**
  * Enqueue a discovery run. Validates the integration config (fast 400 for the
@@ -738,11 +744,12 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
   // Scoped runs label every start/complete/abort/error Event with the device.
   const kindLabel = scopeDeviceName ? `${baseKindLabel} (device "${scopeDeviceName}")` : baseKindLabel;
 
-  // No inline preflight — `integrationConnectionTester` refreshes lastTestOk
-  // every 10 min, and the discovery scheduler filters on `lastTestOk: true`,
-  // so a broken integration won't reach this point under auto-discovery. A
-  // manual trigger still proceeds: the operator chose to force a run, and the
-  // discovery error surface is the right place for them to see it fail.
+  // No inline preflight — the discovery scheduler filters on `lastTestOk:
+  // true`, which only an operator's Test Connection writes (nothing re-tests
+  // on a timer), so an integration whose last test failed won't reach this
+  // point under auto-discovery. A manual trigger still proceeds: the operator
+  // chose to force a run, and the discovery error surface is where they see
+  // it fail.
 
   // Pull the operator's Sources-column priority into this process before any
   // projection runs. Discovery is a SEPARATE process in the split-role layout,
@@ -2405,7 +2412,7 @@ export function resolveSweepController(topology: unknown, ctx: SweepControllerCo
  * undefined) leaves the stored parent alone, so one failed CMDB read never
  * clears it.
  */
-export function subnetInterfaceFields(entry: { name?: string; vlanParent?: string | null }): {
+function subnetInterfaceFields(entry: { name?: string; vlanParent?: string | null }): {
   fortigateInterface?: string;
   fortigateVlanParent?: string | null;
 } {
@@ -4150,9 +4157,6 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         continue;
       }
 
-      // New FortiGate — set the Device Map tag (fgt:<serial>) so the map endpoint
-      // can find this device by a stable key even if hostname/model changes later.
-      const fgTag = member.serial ? `fgt:${member.serial}` : null;
       // Phase 3b.1 cutover: project from a synthetic single-source array
       // built directly from this just-discovered firewall's observed blob.
       // Pure projection, no DB roundtrip — new asset has no other sources.
@@ -8337,22 +8341,6 @@ export async function dismissRefusedHostnameConflicts(integrationId: string): Pr
   return refused.length;
 }
 
-function sidTag(sid: string): string {
-  return `${SID_TAG_PREFIX}${sid.toUpperCase()}`;
-}
-
-// Reject SIDs that aren't useful as a cross-integration identity key:
-// empty, the null SID ("S-1-0-0"), or anything that doesn't look like a SID.
-// The hybrid-join cross-link only works when the SID actually pins one
-// device — placeholder SIDs would just collide every dead account.
-function isMeaningfulSid(sid: string | undefined | null): boolean {
-  if (!sid) return false;
-  const s = sid.trim().toUpperCase();
-  if (!s.startsWith("S-")) return false;
-  if (s === "S-1-0-0") return false;
-  return true;
-}
-
 // Tags the Entra discovery auto-assigns each run (so we strip them on update
 // before re-adding the fresh set). Cross-integration identity tags (sid:*,
 // ad-guid:*) are NOT in this list — they must be preserved.
@@ -8737,7 +8725,7 @@ async function syncArcClusters(
         Object.assign(updateData, buildMonitoredSweep(addAs, existing));
 
         const preserved = ((existing.tags as string[]) || []).filter((t) => !isArcManagedTag(t));
-        updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+        updateData.tags = appendMissingTags(preserved, tags);
 
         clampAcquiredToLastSeen(updateData, existing);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData as any });
@@ -9164,7 +9152,7 @@ export async function syncArcDevices(
       );
 
       const preserved = ((existing.tags as string[]) || []).filter((t) => !isArcManagedTag(t));
-      updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, tags);
 
       clampAcquiredToLastSeen(updateData, existing);
       pendingAssetUpdates.push({ id: existing.id, data: updateData });
@@ -9412,7 +9400,7 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
     // this integration's claim on a device it no longer holds. Rows for
     // DISABLED devices are kept: the device still exists, it is switched off.
     if (gone.length > 0) {
-      for (const batch of chunkIds(gone.map((r) => r.id))) {
+      for (const batch of chunkArray(gone.map((r) => r.id), 500)) {
         await prisma.assetSource.deleteMany({ where: { id: { in: batch } } });
       }
       syncLog("info", `Swept ${gone.length} stale ${directoryLabel} source row(s) for device(s) no longer in the directory.`);
@@ -9481,13 +9469,6 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
   }
 
   return decommissioned;
-}
-
-/** Split an id list into DB-friendly batches for deleteMany. */
-function chunkIds(ids: string[], size = 500): string[][] {
-  const out: string[][] = [];
-  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
-  return out;
 }
 
 export async function syncEntraDevices(
@@ -9924,7 +9905,7 @@ export async function syncEntraDevices(
       // Cross-integration identity tags (sid:*, ad-guid:*) and user-set tags
       // pass through untouched.
       const preserved = ((existing.tags as string[]) || []).filter((t) => !isEntraManagedTag(t));
-      updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, tags);
 
       try {
         clampAcquiredToLastSeen(updateData, existing);
@@ -10062,7 +10043,7 @@ export async function syncEntraDevices(
             const { projected: dupProjected } = projectAssetFromSources(sourcesByAssetId.get(dupEntra.asset.id) ?? []);
 
             const preserved = ((dupEntra.asset.tags as string[]) || []).filter((t) => !isEntraManagedTag(t));
-            const newTags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+            const newTags = appendMissingTags(preserved, tags);
             const updateFields: Record<string, unknown> = {
               // Phase 4d: assetTag write retired — AssetSource.externalId on
               // the upserted entra source row above is the authoritative
@@ -10689,7 +10670,7 @@ export async function syncActiveDirectoryDevices(
       const preserved = ((existing.tags as string[]) || []).filter(
         (t) => !isAdManagedTag(t) && !t.startsWith(SID_TAG_PREFIX),
       );
-      updateData.tags = [...preserved, ...tags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, tags);
 
       // Stamp the AD source link so the polling-method resolver picks AD's
       // source default (ICMP for response-time, null for the other streams)
@@ -11246,7 +11227,7 @@ export async function syncVcenterDevices(
       ));
       const preserved = ((existing.tags as string[]) || []).filter((t) => !isVcenterManagedTag(t));
       const freshTags = ["vcenter", "auto-discovered"];
-      updateData.tags = [...preserved, ...freshTags.filter((t) => !preserved.includes(t))];
+      updateData.tags = appendMissingTags(preserved, freshTags);
       clampAcquiredToLastSeen(updateData, existing);
       await prisma.asset.update({ where: { id: existing.id }, data: updateData });
       logDiscoveryAssetUpdated(hostBefore, updateData, existing.id, host.name || host.moref, {
@@ -11420,7 +11401,7 @@ export async function syncVcenterDevices(
         Object.assign(updateData, buildMonitoredSweep(vmClassed ? vmAddAs : null, existing));
         const preserved = ((existing.tags as string[]) || []).filter((t) => !isVcenterManagedTag(t));
         const freshTags = ["vcenter", "auto-discovered"];
-        updateData.tags = [...preserved, ...freshTags.filter((t) => !preserved.includes(t))];
+        updateData.tags = appendMissingTags(preserved, freshTags);
         clampAcquiredToLastSeen(updateData, existing);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData });
         logDiscoveryAssetUpdated(vmBefore, updateData, existing.id, displayName, {

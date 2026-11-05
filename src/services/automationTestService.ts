@@ -55,7 +55,7 @@ import { triggerSummary } from "../utils/triggerSummary.js";
 import { dependencyTriggerSummary } from "../utils/notificationTemplate.js";
 import { SAMPLE_ALERT_DEVICE, SAMPLE_ALERT_HOSTNAME, SAMPLE_UPSTREAM_HOSTNAME, sampleDimensionFor } from "../utils/sampleAlertDevice.js";
 
-export type TestTarget = "delivery" | "event";
+type TestTarget = "delivery" | "event";
 
 /** Which action of the draft to test — an index into the canonical walk. */
 export interface TestActionPath {

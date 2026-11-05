@@ -43,7 +43,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Azure AD (Entra) SAML 2.0 SSO configuration, SAML response validation, user provisioning on first login.
 
-**Public API:** getSsoSettings, updateSsoSettings, isAzureSsoConfigured, isAzureSsoConfiguredAsync, getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser, SsoSettings.
+**Public API:** getSsoSettings, updateSsoSettings, isAzureSsoConfiguredAsync, getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser, SsoSettings.
 
 **Cross-service deps:** None (SAML + database; no service-to-service calls).
 
@@ -445,7 +445,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** CRUD over the `Role` table for the dynamic-role RBAC model — enforces protected/built-in/custom invariants, normalizes the permission matrix + tags, emits `role.*` Events, and bumps the role-version cache so live sessions refresh.
 
-**Public API:** `RoleSummary`, `CreateRoleInput`, `UpdateRoleInput`, `listRoles`, `getRole`, `getRoleByName`, `createRole`, `updateRole`, `deleteRole`, `countAdminEquivalentUsers`, `isAdminEquivalentRole`
+**Public API:** `RoleSummary`, `CreateRoleInput`, `UpdateRoleInput`, `listRoles`, `getRole`, `createRole`, `updateRole`, `deleteRole`, `countAdminEquivalentUsers`, `isAdminEquivalentRole`
 
 **Cross-service deps:** `prisma`, `AppError`, `logEvent`, `tagNormalize`, `bumpRoleVersion` + `normalizePermissions` + `FUNCTION_KEYS` (permissions middleware).
 

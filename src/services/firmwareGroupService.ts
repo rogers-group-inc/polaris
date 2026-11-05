@@ -66,7 +66,7 @@ const MAX_HOPS = 16;
 const ASSESS_CHUNK = 10;
 const ELIGIBLE_TYPES = new Set(["firewall", "switch", "access_point"]);
 
-export const TERMINAL_MEMBER_STATES = new Set<GroupMemberState>(["upgraded", "already-current", "failed", "unverified", "skipped", "dropped"]);
+const TERMINAL_MEMBER_STATES = new Set<GroupMemberState>(["upgraded", "already-current", "failed", "unverified", "skipped", "dropped"]);
 const ACTIVE_GROUP_STATUSES = ["pending", "running"] as const;
 
 function nameOf(a: { hostname: string | null; ipAddress: string | null; id: string }): string {
@@ -75,7 +75,7 @@ function nameOf(a: { hostname: string | null; ipAddress: string | null; id: stri
 
 // ─── Sources (which FortiGate each selected device sits under) ───────────────
 
-export interface GroupSource {
+interface GroupSource {
   gateAssetId: string;
   gateName: string;
   integrationId: string | null;
@@ -83,7 +83,7 @@ export interface GroupSource {
   assetIds: string[];
 }
 
-export interface UnplacedAsset {
+interface UnplacedAsset {
   assetId: string;
   name: string;
   reason: string;
@@ -293,7 +293,7 @@ export async function resolveGroupSources(assetIds: readonly string[]): Promise<
 
 // ─── Planning ────────────────────────────────────────────────────────────────
 
-export interface PlannedMember {
+interface PlannedMember {
   assetId: string;
   name: string;
   assetType: string;
@@ -307,7 +307,7 @@ export interface PlannedMember {
   warnings: string[];
 }
 
-export interface DroppedMember {
+interface DroppedMember {
   assetId: string;
   name: string;
   assetType: string;
@@ -954,7 +954,7 @@ export async function runDueGroupSchedules(now: Date = new Date()): Promise<DueG
 
 // ─── Reads ───────────────────────────────────────────────────────────────────
 
-export interface GroupMemberDetail {
+interface GroupMemberDetail {
   id: string;
   assetId: string;
   name: string;

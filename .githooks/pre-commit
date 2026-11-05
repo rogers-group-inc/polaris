@@ -19,6 +19,10 @@
 #   check-wiki.mjs      the operator wiki source, docs/wiki/ — a page missing
 #                       from _Sidebar.md, a path-style link, a dead page#anchor
 #                       or a relative image can't land (all silent on GitHub).
+#   knip                the dead-code guard (npm run check:dead): a file nothing
+#                       imports, a dependency nothing uses, or an unresolved
+#                       import can't land. Config in knip.jsonc; the backlog it
+#                       feeds is docs/CODE-QUALITY-LEDGER.md.
 #
 # None of the doc guards judges prose accuracy — that is /polaris-docs-sync.
 #
@@ -38,6 +42,22 @@ case "$changed" in
     ;;
   *)
     : # nothing relevant changed; skip the check
+    ;;
+esac
+
+# --- dead code (knip) -----------------------------------------------------
+# Same file set knip reads. Not on public/ (no module system) or docs.
+case "$changed" in
+  *.ts|*.mjs|*package.json*|*knip.jsonc*|*tsconfig.json*)
+    npx --no-install knip --no-progress || {
+      echo ""
+      echo "pre-commit: knip found dead code, an unused dependency or an unresolved import (see above)."
+      echo "Fix it, record a deliberate exception in knip.jsonc with its reason, or bypass once with:  git commit --no-verify"
+      exit 1
+    }
+    ;;
+  *)
+    : # nothing knip reads changed
     ;;
 esac
 

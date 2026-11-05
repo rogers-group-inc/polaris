@@ -43,7 +43,7 @@ export const AREA_EPS_REL = 1e-12;
 export const SIMPLE_RING_MAX_VERTICES = 64;
 
 /** Default primitive-operation ceiling for one hierarchy build. See WorkBudget. */
-export const DEFAULT_WORK_BUDGET = 20_000_000;
+const DEFAULT_WORK_BUDGET = 20_000_000;
 
 export interface Bbox {
   minLat: number;

@@ -53,7 +53,7 @@ export const CONFLICT_WAIT_MS = 2 * 60 * 60_000;
 /** The earliest a booking may be made for, from now. */
 export const MIN_LEAD_MS = 60_000;
 /** The furthest ahead a booking may be made. */
-export const MAX_LEAD_MS = 366 * 24 * 60 * 60_000;
+const MAX_LEAD_MS = 366 * 24 * 60 * 60_000;
 export const MAX_RECIPIENTS = 20;
 /** The cap on each list an automation's reboot action resolves (To, Cc, Bcc). */
 export const AUTOMATION_MAX_RECIPIENTS = 200;

@@ -54,7 +54,7 @@ import { resolvePinnedStorage, type AutoMonitorStorageSelection } from "./autoMo
  * interfaces once an agent runs. One selection for all of them would be a
  * selection that means something different per group.
  */
-export interface ScanAutoMonitor {
+interface ScanAutoMonitor {
   [method: string]: {
     interfaces?: AutoMonitorSelection;
     storage?: AutoMonitorStorageSelection;
@@ -110,7 +110,7 @@ export const MAX_CREDENTIALS_PER_METHOD = 10;
 /** Addresses adoptable in one call — the assets-route bulk-cap precedent. */
 export const MAX_ADOPT_PER_CALL = 500;
 /** How stale a run's heartbeat may be before it's presumed dead. */
-export const SCAN_RUN_STALE_MS = 3 * 60_000;
+const SCAN_RUN_STALE_MS = 3 * 60_000;
 
 /**
  * `requestActor(req)` returns undefined for a caller with neither a session
@@ -461,7 +461,7 @@ function summarizeRun(row: {
 }
 
 /** Is a run in flight for this Discovery? A stalled row does not count. */
-export async function isScanRunning(scanId: string): Promise<boolean> {
+async function isScanRunning(scanId: string): Promise<boolean> {
   const row = await prisma.networkScanRun.findFirst({
     where: { scanId, status: { in: ["queued", "running"] } },
     orderBy: { createdAt: "desc" },
@@ -668,9 +668,8 @@ export function methodKeyForHit(hit: ScanHit): string {
  * inline, `ipSource="manual"`, and the `db.ts` extension minting the `manual`
  * AssetSource row. There is deliberately **no `network-scan` sourceKind**:
  * `projectAssetFromSources` has zero rules for a kind outside its union, so
- * such a row would contribute nothing to the projection while
- * `projectionDriftService` compared projection against the stored row — a
- * drift-log generator. Provenance goes where discovery already puts it, the
+ * such a row would contribute nothing to the projection. Provenance goes
+ * where discovery already puts it, the
  * one-time notes boilerplate plus an audit Event.
  *
  * Pins are resolved by the SAME pure resolvers the integration auto-monitor

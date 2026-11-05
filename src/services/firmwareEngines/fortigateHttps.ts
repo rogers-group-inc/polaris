@@ -68,7 +68,7 @@ const CSRF_COOKIE = /^ccsrf_?token/i;
 /** Two refused logins in the verify loop and it stops — the admin lockout counts them. */
 const MAX_AUTH_REJECTIONS = 2;
 
-export interface FortiGateStatus {
+interface FortiGateStatus {
   serial: string | null;
   /** "v7.6.7 build3401" — the version and build as one parseable string. */
   version: string | null;
@@ -168,7 +168,7 @@ function authMessage(ctx: FirmwareEngineContext, status: number, what: string): 
   return status === 401 ? `the session expired (${what})` : `the bound admin may not ${what} — its profile needs System read-write`;
 }
 
-export async function gateStatus(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<FortiGateStatus> {
+async function gateStatus(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<FortiGateStatus> {
   const res = await c.get(STATUS_PATH);
   if (res.status === 401 || res.status === 403) throw new AuthRejected(authMessage(ctx, res.status, "read system status"), "preflight");
   const j = jsonOrNull(res.body);
@@ -184,7 +184,7 @@ export async function gateStatus(c: DeviceHttpClient, ctx: FirmwareEngineContext
 }
 
 /** "standalone", "a-p", "a-a" — or null when the gate did not say. */
-export async function gateHaMode(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<string | null> {
+async function gateHaMode(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<string | null> {
   const res = await c.get(HA_PATH);
   if (res.status === 401 || res.status === 403) throw new AuthRejected(authMessage(ctx, res.status, "read the HA configuration"), "preflight");
   const j = jsonOrNull(res.body);
@@ -201,7 +201,7 @@ const HA_HISTORY_PATH = "/api/v2/monitor/system/ha-history";
 /** The only cluster mode an upgrade has been proven on (a 61F pair, 2026-10-23). */
 const HA_UPGRADABLE_MODES = new Set(["a-p"]);
 
-export interface ClusterState {
+interface ClusterState {
   /** Every member the cluster reports right now, by serial (upper case). */
   members: string[];
   /** The serial ha-peer flags as primary, or null. */
@@ -215,7 +215,7 @@ export interface ClusterState {
  * the primary flag; no addresses, no versions) and `ha-checksums` (config
  * sync). Seen on 7.6.7 / 7.6.8.
  */
-export async function gateClusterState(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<ClusterState> {
+async function gateClusterState(c: DeviceHttpClient, ctx: FirmwareEngineContext): Promise<ClusterState> {
   const peers = await c.get(HA_PEER_PATH);
   if (peers.status === 401 || peers.status === 403) throw new AuthRejected(authMessage(ctx, peers.status, "read the HA cluster"), "preflight");
   const pj = jsonOrNull(peers.body);
@@ -242,7 +242,7 @@ export async function gateClusterState(c: DeviceHttpClient, ctx: FirmwareEngineC
  * reboot's evidence — no endpoint reports another member's version. null when
  * the build has no such log.
  */
-export async function gateHaHistory(c: DeviceHttpClient, since: number | null): Promise<{ newest: number; joinedSince: Set<string> } | null> {
+async function gateHaHistory(c: DeviceHttpClient, since: number | null): Promise<{ newest: number; joinedSince: Set<string> } | null> {
   const res = await c.get(HA_HISTORY_PATH).catch(() => null);
   const j = res && res.status === 200 ? jsonOrNull(res.body) : null;
   const r = (j?.results && typeof j.results === "object" ? j.results : null) as Record<string, unknown> | null;

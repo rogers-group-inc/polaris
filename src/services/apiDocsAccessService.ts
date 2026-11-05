@@ -38,7 +38,7 @@ export const API_DOCS_SETTING_KEY = "apiDocsConfig";
  * "all" is deliberately not offered, and isIpScope is deliberately NOT the
  * guard here (it would admit "all" from a hand-edited row).
  */
-export type ApiDocsIpScope = "loopback" | "rfc1918" | "custom";
+type ApiDocsIpScope = "loopback" | "rfc1918" | "custom";
 
 function isApiDocsIpScope(v: unknown): v is ApiDocsIpScope {
   return v === "loopback" || v === "rfc1918" || v === "custom";

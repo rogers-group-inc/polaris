@@ -471,7 +471,7 @@ export async function executeActions(
  * direction — a false positive drops every push-preferring recipient from an
  * email-only alert, and nothing anywhere reports the omission.
  */
-export async function actionsCarryBothMethods(actions: AutomationAction[]): Promise<boolean> {
+async function actionsCarryBothMethods(actions: AutomationAction[]): Promise<boolean> {
   const ids = Array.from(
     new Set(actions.flatMap((a) => (a.type === "notify" ? notifyChannelIds(a) : []))),
   );
@@ -503,7 +503,7 @@ export async function actionsCarryBothMethods(actions: AutomationAction[]): Prom
  * reached anyone; one the window-end release sent has). Chat rows have no reader to tell
  * apart, so they are skipped when the chat send was held and never went live.
  */
-export async function heldFireAudience(
+async function heldFireAudience(
   notificationId: string,
 ): Promise<{ addresses: Set<string>; userIds: Set<string>; chat: boolean } | null> {
   const rows = await prisma.notificationDelivery.findMany({

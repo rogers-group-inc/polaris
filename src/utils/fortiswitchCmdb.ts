@@ -15,7 +15,7 @@
 // FortiOS coerces booleans inconsistently across endpoints — sometimes
 // "enable"/"disable", sometimes "yes"/"no", sometimes real true/false, and
 // integer flags like `fortilink-port: 1`. Normalize them all.
-export function fortiosBool(raw: unknown): boolean {
+function fortiosBool(raw: unknown): boolean {
   if (raw === true) return true;
   if (typeof raw === "number") return raw !== 0;
   if (typeof raw !== "string") return false;

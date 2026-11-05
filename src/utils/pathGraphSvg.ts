@@ -23,7 +23,7 @@
  * Pure: no I/O. alertPathGraphService reads the traces and rasterizes.
  */
 
-export interface PathTraceHop {
+interface PathTraceHop {
   ttl: number;
   ip: string | null;
   rdns?: string | null;
@@ -40,7 +40,7 @@ export interface PathTrace {
   hops: PathTraceHop[];
 }
 
-export interface PathGraphNode {
+interface PathGraphNode {
   key: string;
   ttl: number;
   hop: PathTraceHop | null;

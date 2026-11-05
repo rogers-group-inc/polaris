@@ -39,9 +39,9 @@ type tracerouteOpts struct {
 func tracerouteOptsFrom(def transport.PathCheckTracerouteDef) tracerouteOpts {
 	def = normalizeTracerouteDef(def)
 	return tracerouteOpts{
-		maxHops:        def.MaxHops,
-		probesPerHop:   def.ProbesPerHop,
-		probeTimeout:   time.Duration(def.ProbeTimeoutMs) * time.Millisecond,
+		maxHops:      def.MaxHops,
+		probesPerHop: def.ProbesPerHop,
+		probeTimeout: time.Duration(def.ProbeTimeoutMs) * time.Millisecond,
 		// One TTL at a time, as tracert / traceroute do. Probing 8 (even 2)
 		// TTLs at once lost most probes to the core hops of an MPLS path —
 		// their Time Exceeded replies are tunnelled out through the LSP's
@@ -198,9 +198,7 @@ func Traceroute(ctx context.Context, checkID string, dst net.IP, def transport.P
 	return tr
 }
 
+// truncateNote caps a traceroute note at 256 bytes without splitting a character.
 func truncateNote(s string) string {
-	if len(s) > 256 {
-		return s[:256]
-	}
-	return s
+	return truncateUTF8(s, 256)
 }

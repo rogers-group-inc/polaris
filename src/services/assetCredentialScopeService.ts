@@ -32,7 +32,7 @@ const RESOLVED_CREDENTIAL_FIELDS = [
 ] as const;
 
 /** Every credential id the asset's monitoring may already use. Empty for an unknown asset. */
-export async function credentialIdsAttachedToAsset(assetId: string): Promise<Set<string>> {
+async function credentialIdsAttachedToAsset(assetId: string): Promise<Set<string>> {
   const select: Record<string, unknown> = {
     assetType: true,
     ipAddress: true,

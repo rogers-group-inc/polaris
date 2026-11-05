@@ -28,7 +28,7 @@ import { trimTrailing } from "./trimTrailing.js";
  * Percent-decoded, repeated slashes collapsed, dot segments resolved — the
  * path express.static would read. Null when the encoding is malformed.
  */
-export function resolvedRequestPath(path: string, decode = true): string | null {
+function resolvedRequestPath(path: string, decode = true): string | null {
   let p = String(path ?? "");
   if (decode) {
     try {

@@ -22,7 +22,7 @@ import { prisma } from "../db.js";
 import { bareFortinetDeviceName } from "../utils/assetSourceLocation.js";
 import { buildFirewallChangedEvent, logEventsBatch, type LogEventInput } from "./eventLogService.js";
 
-export type SightingSource = "dhcp_lease" | "dhcp_reservation";
+type SightingSource = "dhcp_lease" | "dhcp_reservation";
 
 export interface SightingInput {
   assetId: string;

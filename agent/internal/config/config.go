@@ -72,7 +72,7 @@ type Config struct {
 	ServiceInventoryIntervalSec int
 	// Installed-software cadence (default six hours, see main.go).
 	SoftwareInventoryIntervalSec int
-	CommandPollIntervalSec      int
+	CommandPollIntervalSec       int
 
 	// Verbose turns on per-push lifecycle logging (connect / send / validate
 	// / disconnect) for the sample streams. Diagnostic only — set

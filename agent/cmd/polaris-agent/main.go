@@ -197,12 +197,12 @@ var loopPhaseSec = map[string]int{
 	// loop and a 300 s loop two seconds apart slip through: every cadence
 	// here is a multiple of 60, so a pair's spacing is whatever their phases
 	// differ by, forever, regardless of which group they came from.
-	"responseTime":       0,  // owns zero; everything else is measured around it
-	"command":            2,  // 20 s poll, one cheap GET
+	"responseTime":       0, // owns zero; everything else is measured around it
+	"command":            2, // 20 s poll, one cheap GET
 	"heartbeat":          4,
 	"telemetry":          8,  // cheap now: counter read + push, no sample window
 	"systemInfo":         13, // full host enumeration
-	"pathCheck":       16, // network-bound; see path_check.go
+	"pathCheck":          16, // network-bound; see path_check.go
 	"interfaces":         18,
 	"storage":            22,
 	"softwareInventory":  23, // registry walk / dpkg-query or rpm; collects every 6 h
@@ -1322,7 +1322,7 @@ func wsLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 					return err
 				})
 			}
-			resPayload, _ := json.Marshal(map[string]interface{}{
+			resPayload, _ := json.Marshal(map[string]any{
 				"success":        resp.Success,
 				"responseTimeMs": resp.ResponseTimeMs,
 				"error":          resp.Error,

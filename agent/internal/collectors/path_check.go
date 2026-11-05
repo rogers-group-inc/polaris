@@ -3,7 +3,7 @@
 // The server ships each agent the checks it is a source of (GET /agents/config
 // → pathChecks); the scheduler in cmd/polaris-agent/path_check.go
 // decides which are due and calls RunOnce. Satellite posture: a definition is
-// validated STRICTLY before anything touches the network (ValidateCheckDef),
+// validated STRICTLY before anything touches the network (validateCheckDef),
 // and the agent only ever runs the fixed probe the kind names — never operator
 // code. Every network operation is bound by the context the caller passes, so
 // nothing here can outlive its deadline.
@@ -30,7 +30,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/polaris/agent/internal/transport"
 )
@@ -87,9 +86,9 @@ func normalizeTracerouteDef(t transport.PathCheckTracerouteDef) transport.PathCh
 	return t
 }
 
-// ValidateCheckDef enforces the definition schema. Anything outside it is
+// validateCheckDef enforces the definition schema. Anything outside it is
 // refused — the run then reports "refused: …" instead of probing.
-func ValidateCheckDef(def *transport.PathCheckDef) error {
+func validateCheckDef(def *transport.PathCheckDef) error {
 	if def == nil {
 		return errors.New("no definition")
 	}
@@ -265,21 +264,12 @@ func fptr(v float64) *float64 { return &v }
 func iptr(v int) *int         { return &v }
 func bptr(v bool) *bool       { return &v }
 
-// truncateError keeps an error message within the wire limit, on a UTF-8
-// boundary.
+// truncateError keeps an error message within the wire limit, as valid UTF-8.
 func truncateError(err error) string {
 	if err == nil {
 		return ""
 	}
-	s := err.Error()
-	if len(s) <= pathCheckMaxErrorLen {
-		return s
-	}
-	s = s[:pathCheckMaxErrorLen]
-	for !utf8.ValidString(s) && len(s) > 0 {
-		s = s[:len(s)-1]
-	}
-	return s
+	return truncateUTF8(err.Error(), pathCheckMaxErrorLen)
 }
 
 // ─── Run ──────────────────────────────────────────────────────────────────
@@ -294,7 +284,7 @@ func RunOnce(ctx context.Context, def *transport.PathCheckDef, opts PathCheckOpt
 	}
 	started := now()
 	s := &transport.PathCheckSample{CheckID: def.ID, Timestamp: started.UTC().Format(time.RFC3339Nano)}
-	if err := ValidateCheckDef(def); err != nil {
+	if err := validateCheckDef(def); err != nil {
 		s.Error = truncateError(fmt.Errorf("refused: %w", err))
 		return s, nil
 	}

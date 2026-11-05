@@ -45,7 +45,7 @@ import { buildTransportForIntegration, callFortiOs } from "./reservationPushServ
 import { mapWithConcurrency } from "../utils/concurrency.js";
 import { logger } from "../utils/logger.js";
 
-export type ManagementAccessSource = "firewall-interface" | "fortiswitch" | "fortiap-profile";
+type ManagementAccessSource = "firewall-interface" | "fortiswitch" | "fortiap-profile";
 
 export interface ManagementAccessSummary {
   source: ManagementAccessSource;
@@ -67,7 +67,7 @@ export interface ManagementAccessSummary {
   checkedAt: string;
 }
 
-export const DEFAULT_SWITCH_MGMT_INTERFACE = "internal";
+const DEFAULT_SWITCH_MGMT_INTERFACE = "internal";
 
 // ─── Pure parsers (unit-tested) ───────────────────────────────────────────────
 
@@ -222,7 +222,7 @@ export function buildApSummary(
 }
 
 /** The FortiGate CMDB path holding the managed-switch management-access ACL. */
-export const LOCAL_ACCESS_CMDB_PATH = "/api/v2/cmdb/switch-controller.security-policy/local-access";
+const LOCAL_ACCESS_CMDB_PATH = "/api/v2/cmdb/switch-controller.security-policy/local-access";
 
 /** One `switch-controller security-policy local-access` policy. Either list is
  *  null when the policy doesn't state it (never `[]`, which would read as "no

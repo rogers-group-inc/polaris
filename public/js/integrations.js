@@ -134,22 +134,6 @@ function _polarisReadMibFourStream(idPrefix) {
   };
 }
 
-// Read per-stream credential IDs from selects rendered by _polarisPollingFourStreamHTML
-// (class override tier only — opts.showCredRows must have been true).
-function _polarisReadCredFourStream(idPrefix) {
-  function credVal(stream) {
-    var el = document.getElementById(idPrefix + stream + "Cred");
-    return el ? (el.value || null) : undefined;
-  }
-  return {
-    responseTimeCredentialId: credVal("responseTime"),
-    cpuMemoryCredentialId:    credVal("telemetry"),
-    temperatureCredentialId:  credVal("temperature"),
-    interfacesCredentialId:   credVal("interfaces"),
-    lldpCredentialId:         credVal("lldp"),
-  };
-}
-
 document.addEventListener("DOMContentLoaded", function () {
   // Guard: this file is also loaded on assets.html for its monitoring form
   // helpers; only run the integrations-page init when the list element exists.
@@ -6899,10 +6883,6 @@ var _INTEGRATION_PRODUCTS = {
  *  historical default so a new type can never render a blank title. */
 function _productForType(type) {
   return _INTEGRATION_PRODUCTS[type] || "FortiManager";
-}
-
-function _titleForType(type, action) {
-  return action + " " + _productForType(type) + " Integration";
 }
 
 // What a Test Connection request actually needs, as [fieldId, label] so the

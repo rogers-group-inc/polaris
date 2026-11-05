@@ -2,6 +2,7 @@
  * src/api/routes/subnets.ts
  */
 
+import { intQuery, boolQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import * as subnetService from "../../services/subnetService.js";
@@ -95,8 +96,8 @@ const MoveSubnetSchema = z.object({
 router.get("/", requirePermission("subnets", "read"), async (req, res, next) => {
   try {
     const { blockId, status, tag, createdBy } = req.query as Record<string, string>;
-    const limit = parseInt(req.query.limit as string, 10) || undefined;
-    const offset = parseInt(req.query.offset as string, 10) || undefined;
+    const limit = intQuery(req.query.limit);
+    const offset = intQuery(req.query.offset);
     const resolvedCreatedBy = createdBy === "me" ? (req.session?.username ?? undefined) : (createdBy || undefined);
     const page = await subnetService.listSubnets({ blockId, status: status as any, tag, createdBy: resolvedCreatedBy, limit, offset });
     // Rule 141 (e): `canEdit` per network — own, or carrying one of the caller's tags.
@@ -260,8 +261,8 @@ router.get("/archived", requirePermission("subnets", "read"), async (req, res, n
       blockId: typeof req.query.blockId === "string" ? req.query.blockId : undefined,
       fortigateSerial:
         typeof req.query.fortigateSerial === "string" ? req.query.fortigateSerial : undefined,
-      limit: req.query.limit ? Number(req.query.limit) : undefined,
-      offset: req.query.offset ? Number(req.query.offset) : undefined,
+      limit: intQuery(req.query.limit),
+      offset: intQuery(req.query.offset),
     });
     res.json(result);
   } catch (err) {
@@ -322,8 +323,8 @@ router.post("/:id/refresh", requireOwnership("subnets"), async (req, res, next) 
 router.get("/:id/ips", requirePermission("subnets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-    const pageSize = Math.min(65536, Math.max(1, parseInt(req.query.pageSize as string, 10) || 256));
+    const page = intQuery(req.query.page, { fallback: 1, min: 1 })!;
+    const pageSize = intQuery(req.query.pageSize, { fallback: 256, min: 1, max: 65536 })!;
     const [result, resScope, netScope, net] = await Promise.all([
       subnetService.getSubnetIps(id, page, pageSize),
       resolveWriteScope(req, "reservations"),
@@ -424,7 +425,7 @@ router.post("/:id/move", requireOwnership("subnets"), async (req, res, next) => 
 router.delete("/:id", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const force = req.query.force === "true" || req.query.force === "1";
+    const force = boolQuery(req.query.force);
     if (force && !callerIsAdminEquivalent(req)) {
       throw new AppError(403, "Only an administrator can delete a network that holds active reservations");
     }

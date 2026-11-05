@@ -15,7 +15,7 @@
  *   evidenceScore — the network's evidence alone. The pin / typed-IP warning
  *                   reads THIS, so an operator's choice can't vouch for itself.
  *   score         — the same plus the operator's choice (a pin or a typed
- *                   address) as one more piece at OPERATOR_WEIGHT, never
+ *                   address) as one more piece at EVIDENCE_KINDS.operator's weight, never
  *                   decaying. What the tooltip shows.
  *
  * A third, discoveryScore, leaves out polling as well: only the primary earns
@@ -120,12 +120,10 @@ export function agentSourceCounts(
   return agentReportedIps.size === 0 || agentReportedIps.has(src);
 }
 
-/** The operator's choice, as evidence. */
-export const OPERATOR_WEIGHT = EVIDENCE_KINDS.operator.weight;
 /** Below this evidence score a pin or a typed address asks first. */
 export const CONFIDENCE_WARN_BELOW = 50;
 /** Hours of clean polling that bring the polling weight to ~63% of its cap. */
-export const POLLING_RAMP_HOURS = 24;
+const POLLING_RAMP_HOURS = 24;
 
 /** Polling evidence weight for `hours` of continuous answers as primary. */
 export function pollingWeight(hours: number): number {
@@ -143,7 +141,7 @@ export interface Evidence {
   hours?: number;
 }
 
-export type PenaltyKind = "alive-elsewhere" | "claimed-elsewhere" | "arp-elsewhere";
+type PenaltyKind = "alive-elsewhere" | "claimed-elsewhere" | "arp-elsewhere";
 
 export interface Penalty {
   kind: PenaltyKind;
@@ -161,7 +159,7 @@ export const CLAIMED_ELSEWHERE_FACTOR = 0.5;
  */
 export const ARP_ELSEWHERE_FACTOR = 0.5;
 
-export interface ConfidencePart {
+interface ConfidencePart {
   kind: EvidenceKind;
   label: string;
   device: string | null;

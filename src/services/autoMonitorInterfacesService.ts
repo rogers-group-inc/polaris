@@ -60,23 +60,20 @@ import { interfaceIpIsUnaddressed } from "../utils/cidr.js";
 // ─── Public types ───────────────────────────────────────────────────────────
 
 /** Asset types that By LLDP can match against. Mirrors the AssetType enum. */
-export const LLDP_NEIGHBOR_TYPES = [
-  "firewall",
-  "switch",
-  "access_point",
-  "server",
-  "workstation",
-  "router",
-  "printer",
-  "other",
-] as const;
-export type LldpNeighborType = (typeof LLDP_NEIGHBOR_TYPES)[number];
+type LldpNeighborType =
+  | "firewall"
+  | "switch"
+  | "access_point"
+  | "server"
+  | "workstation"
+  | "router"
+  | "printer"
+  | "other";
 
-export const IF_TYPES = ["physical", "aggregate", "vlan", "loopback", "tunnel"] as const;
-export type IfType = (typeof IF_TYPES)[number];
+type IfType = "physical" | "aggregate" | "vlan" | "loopback" | "tunnel";
 
-export interface ByNamesBlock    { names: string[] }
-export interface ByPatternsBlock { patterns: string[]; regex: boolean; onlyUp: boolean }
+interface ByNamesBlock    { names: string[] }
+interface ByPatternsBlock { patterns: string[]; regex: boolean; onlyUp: boolean }
 /**
  * `includeDownTunnels` is a tunnel-only exception to `onlyUp`: when both are
  * set, fully-`down` IPsec tunnels still pin even though "only currently up" is
@@ -84,8 +81,8 @@ export interface ByPatternsBlock { patterns: string[]; regex: boolean; onlyUp: b
  * (down interfaces pin anyway). A down IPsec tunnel is often exactly what an
  * operator wants to watch, so the picker surfaces this next to the tunnel row.
  */
-export interface ByTypesBlock    { types: IfType[]; onlyUp: boolean; includeDownTunnels?: boolean }
-export interface ByLldpBlock     { neighborTypes: LldpNeighborType[] }
+interface ByTypesBlock    { types: IfType[]; onlyUp: boolean; includeDownTunnels?: boolean }
+interface ByLldpBlock     { neighborTypes: LldpNeighborType[] }
 
 /**
  * Multi-block selection. Each key is optional; presence = block enabled. A
@@ -145,7 +142,7 @@ export interface ResolverInterface {
  * monitored flag — everything else (chassisId, system name, port id, ...)
  * lives in the AssetLldpNeighbor table but isn't consulted here.
  */
-export interface LldpNeighborMatch {
+interface LldpNeighborMatch {
   matchedAssetType: string | null;
   matchedAssetMonitored: boolean;
 }
@@ -797,7 +794,7 @@ const INTERFACE_CLASSES_BY_TYPE: Record<string, AutoMonitorClass[]> = {
   vcenter:         ["virtual_machine"],
 };
 
-export interface CachedAggregateRow {
+interface CachedAggregateRow {
   ifName: string;
   ifType: string | null;
   deviceCount: number;
@@ -809,7 +806,7 @@ export interface InterfaceAggregateCacheEntry {
 }
 
 /** Map keyed by AutoMonitorClass; the persisted shape of Integration.interfaceAggregateCache. */
-export type InterfaceAggregateCache = Record<string, InterfaceAggregateCacheEntry>;
+type InterfaceAggregateCache = Record<string, InterfaceAggregateCacheEntry>;
 
 /**
  * Recompute the "By name" aggregate for every interface class this integration

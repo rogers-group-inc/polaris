@@ -47,7 +47,7 @@ export type WorkloadVerb = "start" | "stop" | "restart" | "update";
 export const WORKLOAD_VERBS: readonly WorkloadVerb[] = ["start", "stop", "restart", "update"];
 
 /** The flag a Polaris stop leaves on Asset.virtualization, carried across syncs. */
-export const PAUSED_BY_STOP_KEY = "monitoringPausedByStop";
+const PAUSED_BY_STOP_KEY = "monitoringPausedByStop";
 
 interface Target {
   asset: { id: string; hostname: string | null; monitored: boolean; virtualization: Record<string, unknown> | null };

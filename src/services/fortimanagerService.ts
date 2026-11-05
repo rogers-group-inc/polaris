@@ -4,6 +4,7 @@
  * Authenticates via bearer token (API key) rather than session-based login.
  */
 
+import { sleep } from "../utils/sleep.js";
 import { Netmask } from "netmask";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
@@ -42,7 +43,7 @@ import {
 // that keys by "FortiGate device name" must lowercase the key so writes from
 // either source land in the same bucket; original casing is preserved on the
 // raw device object and the asset row for logging and Event messages.
-export const fmgNameKey = (n: string | null | undefined): string =>
+const fmgNameKey = (n: string | null | undefined): string =>
   String(n ?? "").toLowerCase();
 
 export interface FortiManagerConfig {
@@ -487,14 +488,6 @@ function markRetryable<E extends object>(err: E): E {
   return err;
 }
 
-function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) { resolve(); return; }
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
-  });
-}
-
 async function rpcInner(
   url: string,
   payload: JsonRpcRequest,
@@ -517,7 +510,7 @@ async function rpcInner(
         { url: describeRpcParams(payload), attempt: attempt + 1, backoffMs, message: (err as Error)?.message },
         "fmg rpc: transient failure — backing off then retrying",
       );
-      await sleepWithAbort(backoffMs, externalSignal);
+      await sleep(backoffMs, externalSignal);
     }
   }
   throw lastErr;
@@ -1700,7 +1693,7 @@ export function parseFmgVariableDynamicMapping(varData: any): Map<string, string
  * defined on this ADOM. Best-effort: any RPC/parse failure yields an empty map
  * so discovery proceeds with the existing fallbacks. Never throws.
  */
-export async function fetchFmgMetavarCoordMap(
+async function fetchFmgMetavarCoordMap(
   config: FortiManagerConfig,
   latMetavar: string,
   lngMetavar: string,
@@ -1756,7 +1749,7 @@ export async function fetchFmgMetavarCoordMap(
  * `mr` (minor release), `patch`. Returns "" when the major version is missing
  * or unparseable so the caller can fall back to other sources.
  */
-export function buildFmgOsVersion(raw: any): string {
+function buildFmgOsVersion(raw: any): string {
   const major = Number(raw?.os_ver);
   if (!Number.isFinite(major) || major <= 0) return "";
   const mr = Number(raw?.mr);
@@ -1983,7 +1976,6 @@ async function fmgStepDhcpMonitor(ctx: FmgDeviceCtx): Promise<void> {
       const leaseRes = await rpc(baseUrl, leasePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       flags.didDhcpLeasesQuery = true;
       const leaseData = leaseRes.result?.[0]?.data;
-      const monitorStatus = Array.isArray(leaseData) ? leaseData[0]?.status?.code : undefined;
       const rawResults = Array.isArray(leaseData)
         ? leaseData[0]?.response?.results
         : (leaseData as any)?.response?.results;
@@ -2452,7 +2444,7 @@ async function fmgStepApCmdbRoster(ctx: FmgDeviceCtx): Promise<void> {
 
 // Step 3d.5: FortiAP -> FortiSwitch port mapping via the detected-device MAC table. Offline gates skip.
 async function fmgStepApPortMap(ctx: FmgDeviceCtx): Promise<void> {
-  const { adom, baseUrl, apiUser, apiToken, verifySsl, signal, integrationId, log, deviceName, offline, localAps, localSwitches, localSwitchMacTable } = ctx;
+  const { adom, baseUrl, apiUser, apiToken, verifySsl, signal, integrationId, log, deviceName, offline, localAps, localSwitchMacTable } = ctx;
     // Step 3d.5: FortiAP → FortiSwitch port mapping via detected-device MAC table
     // Pulls all switch port MAC learnings in one shot and matches each AP's base_mac
     // to its switch + port. APs not seen on any managed switch stay un-peered and
@@ -2514,7 +2506,7 @@ async function fmgStepArp(ctx: FmgDeviceCtx): Promise<void> {
         const { sent, dropped } = await primeArpCache(sweepIps);
         if (sent > 0) {
           log("discover.arp", "info", `${deviceName}: ARP presence sweep — probed ${sent} reserved IP(s)${dropped > 0 ? ` (${dropped} over cap, skipped)` : ""}`, deviceName);
-          await sleepWithAbort(ARP_SETTLE_MS, signal);
+          await sleep(ARP_SETTLE_MS, signal);
         }
       }
       const arpPayload: JsonRpcRequest = {
@@ -2911,7 +2903,6 @@ export async function discoverDhcpSubnets(
     if (signal?.aborted) return null;
 
     log("discover.device.start", "info", `Starting discovery for ${deviceName}`, deviceName);
-    const devStartMs = Date.now();
 
     // Direct mode: skip FMG entirely for per-device calls. Use the FortiGate's
     // real management-interface IP (resolved through FMG's interface config —

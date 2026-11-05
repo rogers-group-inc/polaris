@@ -110,16 +110,15 @@ func bodyMatches(body []byte, exp *transport.PathCheckBodyExpect) (bool, error) 
 	}
 }
 
-// bodyExcerpt: the first 4 KB, cut on a rune boundary, as valid UTF-8.
+// bodyExcerpt: the first 4 KB as valid UTF-8, cut on a character boundary. A
+// binary body keeps its readable bytes (invalid ones become U+FFFD) instead
+// of collapsing to an empty excerpt.
 func bodyExcerpt(body []byte) string {
 	b := body
-	if len(b) > pathCheckMaxExcerptBytes {
-		b = b[:pathCheckMaxExcerptBytes]
-		for len(b) > 0 && !utf8.Valid(b) {
-			b = b[:len(b)-1]
-		}
+	if len(b) > pathCheckMaxExcerptBytes+utf8.UTFMax {
+		b = b[:pathCheckMaxExcerptBytes+utf8.UTFMax]
 	}
-	return strings.ToValidUTF8(string(b), "�")
+	return truncateUTF8(string(b), pathCheckMaxExcerptBytes)
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────
@@ -327,7 +326,7 @@ func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip ne
 	s.HTTPStatus = iptr(res.status)
 	s.LatencyMs = fptr(msSince(start))
 
-	ranges, _ := parseStatusSpec(def.ExpectStatus) // validated by ValidateCheckDef
+	ranges, _ := parseStatusSpec(def.ExpectStatus) // validated by validateCheckDef
 	switch {
 	case !statusAccepted(res.status, ranges):
 		spec := def.ExpectStatus

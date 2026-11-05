@@ -15,7 +15,7 @@ import { chmodSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const PRIVATE_FILE_MODE = 0o600;
-export const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_DIR_MODE = 0o700;
 
 const tightened = new Set<string>();
 

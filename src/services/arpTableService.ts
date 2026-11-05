@@ -44,7 +44,7 @@ import type { ArpNeighborEntry } from "../utils/arpNeighbors.js";
 /** Rows per `createMany` statement — well inside Postgres' 65535-parameter cap. */
 const INSERT_CHUNK = 1000;
 
-export interface ArpRowForPersist {
+interface ArpRowForPersist {
   fortigateDevice: string;
   ip: string;
   mac: string;
@@ -89,7 +89,7 @@ export interface PersistArpTablesOpts {
  * the conflict target and Postgres treats NULLs as distinct — a nullable column
  * would insert a fresh duplicate per scrape for exactly those rows.
  */
-export async function upsertArpNeighbors(
+async function upsertArpNeighbors(
   assetId: string,
   rows: readonly PreparedArpRow[],
   matchAssetByMac?: (mac: string) => string | null | undefined,

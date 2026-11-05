@@ -39,7 +39,7 @@ import { logger } from "../utils/logger.js";
 import { isTimescaleAvailable } from "./timescaleService.js";
 
 /** One public-schema table, sized with everything that belongs to it. */
-export interface TableSize {
+interface TableSize {
   name: string;
   /** Live tuples, chunks folded in. Compressed chunks contribute 0 (their
    *  `n_live_tup` counts compressed batches, ~1 per 1000 logical rows). */
@@ -59,7 +59,7 @@ export interface TableSize {
  * cases are indistinguishable on the card otherwise: a 15 GB sample table and an
  * empty one both render as "0 B".
  */
-export type TableSizing = "chunk-aware" | "parent-only" | "no-timescale";
+type TableSizing = "chunk-aware" | "parent-only" | "no-timescale";
 
 export interface TableSizeResult {
   sizing: TableSizing;
@@ -221,11 +221,6 @@ async function chunkFoldMode(): Promise<Exclude<ChunkFold, false>> {
     }
   }
   return legacyCompressedLink ? "prefix-with-legacy-link" : "prefix";
-}
-
-/** Exported for the tests: forget the probed catalog shape. */
-export function _resetCatalogShapeCache(): void {
-  legacyCompressedLink = null;
 }
 
 interface TableSizeRow {
@@ -438,7 +433,7 @@ export async function getDatabaseSizeBreakdown(): Promise<DatabaseSizeBreakdown>
  * chunks); a restore or a major upgrade leaves every relation un-analyzed and
  * blows through it, which is the case the loud warning is for.
  */
-export const NEVER_ANALYZED_MEASURE_CAP = 200;
+const NEVER_ANALYZED_MEASURE_CAP = 200;
 
 const NEVER_ANALYZED_WHERE_SQL = `
         WHERE c.relkind = 'r'

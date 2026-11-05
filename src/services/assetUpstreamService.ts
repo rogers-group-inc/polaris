@@ -68,7 +68,7 @@ import { shapeManagementAccessForClient } from "./fortinetManagementAccessServic
 import { resolveOwningGateContexts } from "./ipUpstreamChainService.js";
 
 /** The resolved device, shaped for the client's remote-access gating. */
-export interface UpstreamAssetRef {
+interface UpstreamAssetRef {
   id: string;
   hostname: string | null;
   ipAddress: string | null;
@@ -79,7 +79,7 @@ export interface UpstreamAssetRef {
 }
 
 /** One upstream row: the name as displayed, plus the asset it resolved to. */
-export interface UpstreamEntry {
+interface UpstreamEntry {
   /** The device name exactly as the General tab renders it. */
   name: string;
   /** Switch only — the port half of `lastSeenSwitch`, when it carried one. */

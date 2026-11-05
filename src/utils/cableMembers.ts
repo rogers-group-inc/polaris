@@ -48,7 +48,7 @@ export interface CableMember {
   down: boolean;
 }
 
-export interface CableLine {
+interface CableLine {
   /** Port on the A side, or null when that side resolved no members at all. */
   a: string | null;
   b: string | null;

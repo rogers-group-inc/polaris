@@ -2,6 +2,7 @@
  * src/api/routes/serverSettings.ts — NTP and certificate management endpoints
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { ensurePrivateDir } from "../../utils/privateFiles.js";
 import { chunkArray } from "../../utils/chunk.js";
 import { Router, type Request, type Response } from "express";
@@ -1592,7 +1593,7 @@ router.put("/updates/settings", requirePermission("serverSettingsData", "write")
 
 router.get("/updates/history", async (req, res, next) => {
   try {
-    const limit = parseInt(String(req.query.limit || ""), 10) || 20;
+    const limit = intQuery(req.query.limit, { fallback: 20 })!;
     res.json(await getRecentCommits(limit));
   } catch (err) {
     next(err);

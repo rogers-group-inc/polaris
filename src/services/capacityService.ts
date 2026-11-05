@@ -52,6 +52,7 @@ import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
 import { getDirectDatabaseUrl, isPgbouncerMode } from "../utils/dbConnections.js";
 import { logEvent } from "./eventLogService.js";
+import type { HandlerTimeoutPressure } from "./capacityAdvisorService.js";
 import { detectFping } from "../utils/burstPing.js";
 import { configuredSweepIntervalSec, resolveSweepIntervalSec } from "../utils/lossSweep.js";
 import {
@@ -74,7 +75,7 @@ export type Severity = "ok" | "watch" | "warning" | "critical";
 // downstream comparisons + persistence + metrics stay consistent. The two
 // legacy names are intentionally narrowed off the exported `Severity` type so
 // new code can't introduce them.
-export function normalizeSeverity(s: unknown): Severity {
+function normalizeSeverity(s: unknown): Severity {
   if (s === "critical" || s === "warning" || s === "watch" || s === "ok") return s;
   if (s === "red") return "critical";
   if (s === "amber") return "warning";
@@ -262,7 +263,7 @@ function readPendingRootHelpers(): Array<{ path: string; sha256: string }> {
   }
 }
 
-export interface CapacityReason {
+interface CapacityReason {
   severity: "watch" | "warning" | "critical";
   code: string;
   message: string;
@@ -274,9 +275,9 @@ export interface CapacityReason {
   family?: string;
 }
 
-export type VolumeRole = "app" | "state" | "backups" | "db";
+type VolumeRole = "app" | "state" | "backups" | "db";
 
-export interface VolumeStat {
+interface VolumeStat {
   /** All Polaris-named paths that resolve to this filesystem. */
   paths: string[];
   /** Roles this volume serves (deduped). Useful for the operator-facing label. */
@@ -503,7 +504,7 @@ export interface CapacitySnapshot {
 // Detail tier rows are the raw per-cadence samples (rate driven by the
 // monitor cadence settings). Hourly tier is a fixed 24 buckets/day per
 // (asset, extra-key) cell; daily tier is 1 bucket/day per (asset, extra-key).
-export const SAMPLE_TABLES: Array<{
+const SAMPLE_TABLES: Array<{
   name: string;
   entity: RetentionEntity;
   tier:   RetentionTier;
@@ -1418,7 +1419,7 @@ export interface AdvisorGapsForReasons {
   /** Cadences whose observed p90 has climbed toward the pg-boss handler timeout
    *  cap (`pgboss.queue.expire_seconds`). Non-empty fires the
    *  `monitor_handler_timeout_pressure` watch reason. */
-  handlerTimeoutPressure?: import("./capacityAdvisorService.js").HandlerTimeoutPressure[];
+  handlerTimeoutPressure?: HandlerTimeoutPressure[];
 }
 
 // Stable family key for a volume. The collapse pass groups every disk reason
@@ -2023,7 +2024,7 @@ const SEVERITY_RANK: Record<Severity, number> = {
  * Stable order: preserves the input order of winners. Each family's winner
  * stays where its highest-severity representative appeared in the input.
  */
-export function collapseReasonsByFamily(reasons: CapacityReason[]): CapacityReason[] {
+function collapseReasonsByFamily(reasons: CapacityReason[]): CapacityReason[] {
   // First pass: bucket by family, track the winning index within each bucket.
   const buckets = new Map<string, CapacityReason[]>();
   const order: Array<{ family: string | null; reason: CapacityReason }> = [];

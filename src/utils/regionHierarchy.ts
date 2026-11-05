@@ -51,7 +51,7 @@ import {
 export const MAX_HIERARCHY_REGIONS = 500;
 
 /** Ancestor-walk ceiling. Defense in depth: containment is provably acyclic. */
-export const MAX_DEPTH = 32;
+const MAX_DEPTH = 32;
 
 /**
  * How a region's level follows from its children's.
@@ -91,9 +91,9 @@ export const levelByBranchingCount: LevelRule = (childLevels) => {
   return countAtTop >= 2 ? top + 1 : top;
 };
 
-export const DEFAULT_LEVEL_RULE: LevelRule = levelByDepth;
+const DEFAULT_LEVEL_RULE: LevelRule = levelByDepth;
 
-export interface RegionNode {
+interface RegionNode {
   id: string;
   /**
    * The immediate parent: the region's `nestUnderId` when that region really
@@ -116,7 +116,7 @@ export interface RegionNode {
   descendantCount: number;
 }
 
-export type RegionHierarchyWarningKind =
+type RegionHierarchyWarningKind =
   | "overlap"
   | "duplicate"
   | "degenerate"
@@ -126,7 +126,7 @@ export type RegionHierarchyWarningKind =
   | "cap-exceeded"
   | "nest-ignored";
 
-export interface RegionHierarchyWarning {
+interface RegionHierarchyWarning {
   kind: RegionHierarchyWarningKind;
   regionId: string;
   /** The other region in a pairwise finding (overlap, duplicate). */

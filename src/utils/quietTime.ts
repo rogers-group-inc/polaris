@@ -269,7 +269,7 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  * membership against that list themselves (`severitiesKnown`).
  */
 /** The four kinds of people-facing send a quiet time can hold, per severity. */
-export const heldKindsSchema = z
+const heldKindsSchema = z
   .object({
     alerts: z.boolean(),
     alertReminders: z.boolean(),
@@ -289,7 +289,7 @@ const SEND_TO_KIND: Record<QuietSend, keyof HeldKinds> = {
 };
 
 /** Cap on recipient exceptions in one policy. */
-export const MAX_QUIET_RECIPIENTS = 50;
+const MAX_QUIET_RECIPIENTS = 50;
 
 /**
  * One recipient exception (business rule 120): an address and the sends of
@@ -299,13 +299,13 @@ export const MAX_QUIET_RECIPIENTS = 50;
  * than the policy: a kind held here is held for this address even when the
  * policy lets it through.
  */
-export const quietRecipientSchema = z
+const quietRecipientSchema = z
   .object({
     address: z.string().trim().toLowerCase().email().max(320),
     held: z.record(z.string().min(1).max(32), heldKindsSchema),
   })
   .strict();
-export type QuietRecipient = z.infer<typeof quietRecipientSchema>;
+type QuietRecipient = z.infer<typeof quietRecipientSchema>;
 
 export const quietTimeConfigSchema = z
   .object({
@@ -533,7 +533,7 @@ export function quietHoldsSend(cfg: HoldPolicy, severity: string, send: QuietSen
 type RecipientPolicy = HoldPolicy & { recipients?: QuietRecipient[] | null };
 
 /** The exception row for `address`, or null when the address follows the policy. */
-export function quietRecipientFor(cfg: RecipientPolicy, address: string | null | undefined): QuietRecipient | null {
+function quietRecipientFor(cfg: RecipientPolicy, address: string | null | undefined): QuietRecipient | null {
   if (!address || !cfg.recipients || cfg.recipients.length === 0) return null;
   const want = address.trim().toLowerCase();
   return cfg.recipients.find((r) => r.address === want) ?? null;

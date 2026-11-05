@@ -42,7 +42,7 @@ import { AppError } from "../utils/errors.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
 import { validateBackupPassword } from "../utils/backupPassword.js";
 
-export const BACKUP_SCHEDULE_SETTING_KEY = "backupSchedule";
+const BACKUP_SCHEDULE_SETTING_KEY = "backupSchedule";
 
 export interface BackupSchedule {
   enabled: boolean;
@@ -114,10 +114,6 @@ export async function getBackupSchedule(): Promise<BackupSchedule> {
 export async function getBackupScheduleMasked(): Promise<BackupSchedule> {
   const s = await store.get();
   return { ...s, passphrase: s.passphrase ? SECRET_MASK : null };
-}
-
-export function invalidateBackupScheduleCache(): void {
-  store.invalidate();
 }
 
 /**

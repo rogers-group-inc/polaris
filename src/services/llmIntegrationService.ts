@@ -99,7 +99,7 @@ async function uniqueTokenName(base: string): Promise<string> {
  * or what every assistant is told (business rule 111(e)). The model is not
  * one: a different model on the same server is the same destination.
  */
-export const LLM_REPOINT_KEYS = ["provider", "host", "port", "basePath", "useHttps", "allowLoopback", "azureApiShape", "systemPromptExtra"] as const;
+const LLM_REPOINT_KEYS = ["provider", "host", "port", "basePath", "useHttps", "allowLoopback", "azureApiShape", "systemPromptExtra"] as const;
 
 /**
  * Which of LLM_REPOINT_KEYS differ between the stored and the saved config.

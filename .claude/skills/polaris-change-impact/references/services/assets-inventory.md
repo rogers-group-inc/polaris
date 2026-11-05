@@ -86,7 +86,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A pin discovery is still trying to move is never auto-released. The guard stamps `primaryAddressContestedAt` whenever a write staged a DIFFERENT address than the pin (not on a follow, not on a staged clear); `releaseConfirmedPins` filters on it in the `findMany` (null, or older than `PIN_CONTEST_WINDOW_MS`), and `pinPrimaryAddress` / `CLEAR_PRIMARY_ADDRESS_PIN` null it. Without the condition a release hands the address straight back to the choice the operator overrode (prod: a pin released on ARP evidence, and the next discovery put the asset back on the detected-device address). The window is longer than any sane discovery interval, so "no contest inside it" means discovery ran and agreed, not that it has not run.
 - Events: `asset.primary_address.pinned`, `asset.primary_address.unpinned`, `asset.primary_address.followed`, `asset.primary_address.released`.
 
-**When changing this:** the guard's extra read (`AssetAssociatedIp` for (asset, pinned mac)) happens only for a PINNED asset's IP-staging write, so the cost scales with pinned assets, not the fleet — keep it that way. Anything else that writes `ipAddress` as an operator action must spread `CLEAR_PRIMARY_ADDRESS_PIN` or the guard rewrites it back. `projectionDriftService` and discovery Phase 11 re-projection skip `ipAddress` while pinned; a new projection writer needs the same skip.
+**When changing this:** the guard's extra read (`AssetAssociatedIp` for (asset, pinned mac)) happens only for a PINNED asset's IP-staging write, so the cost scales with pinned assets, not the fleet — keep it that way. Anything else that writes `ipAddress` as an operator action must spread `CLEAR_PRIMARY_ADDRESS_PIN` or the guard rewrites it back. Discovery Phase 11 re-projection skips `ipAddress` while pinned; a new projection writer needs the same skip.
 
 ---
 
@@ -399,7 +399,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The operator-settable priority behind the assets table's **Sources** column — which discovery source's "where was this learned?" answer wins when an asset is known to several at once. One Setting row (`assetSourcePriority`, `{order[], integrationPrefix}`) over `createSettingStore` with a 30s TTL. The catalogue of who can contribute what is the pure `utils/assetSourceLocation.ts`; this service owns persistence, validation, audit, and installing the order into the projection.
 
-**Public API:** `getSourceLocationPriority()`, `getSourcePrioritySettings()`, `saveSourceLocationPriority(input, actor)`, `refreshProjectionPriority()`, `invalidateSourcePriorityCache()`, `ASSET_SOURCE_PRIORITY_KEY`
+**Public API:** `getSourceLocationPriority()`, `getSourcePrioritySettings()`, `saveSourceLocationPriority(input, actor)`, `refreshProjectionPriority()`, `ASSET_SOURCE_PRIORITY_KEY`
 
 **Cross-service deps:** `settingsStore.createSettingStore`, `eventLogService.logEvent`, `utils/assetSourceLocation` (catalogue + normalizer), `utils/assetProjection.setLearnedLocationPriority` (the install seam).
 
@@ -724,7 +724,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** IEEE OUI database download and CSV parsing; lazy in-memory lookup map; admin-editable overrides (prefix → manufacturer+device); cache persistence via Setting table.
 
-**Public API:** lookupOui, lookupOuiBatch, lookupOuiOverride, refreshOuiDatabase, getOuiStatus, OuiOverride, getOuiOverrides, setOuiOverride, deleteOuiOverride.
+**Public API:** lookupOui, lookupOuiOverride, refreshOuiDatabase, getOuiStatus, OuiOverride, getOuiOverrides, setOuiOverride, deleteOuiOverride.
 
 **Used by:**
 - src/api/routes/assets.ts — GET /assets/:id, look up MAC OUI (vendor name)
@@ -736,7 +736,6 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - IEEE database is downloaded from standards-oui.ieee.org/oui/oui.csv; stored as JSON in Setting table; loaded on-demand into module-level in-memory map (singleton pattern, reset only on refresh).
 - Prefix format: "AABBCC" (6 hex chars); input normalization handles colon/dash/mixed-case (AA:BB:CC, aa-bb-cc, etc.).
 - Overrides take priority over IEEE DB; back-compat layer supports legacy bare-string overrides (migrate to {manufacturer, device?} shape on load).
-- lookupOuiBatch() avoids repeated DB reads; used by discovery to tag multiple assets in one pass.
 - refreshOuiDatabase() runs at startup (skip if <6 days old) and weekly; on 30s HTTP timeout, entire refresh fails (not incremental).
 
 **When changing this:**
@@ -769,30 +768,5 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Hostname priority rule changes in `assetProjection.ts` change what this prints — the two are the same function on purpose; don't fork it.
 - Adding a caller: pass only pinned ids (the query cost is proportional to the id set), and keep `hostnameDiscovered` as the wire field name — the frontend helper keys on it plus `hostnameOverride`.
 - `ASSET_LIST_SELECT` must keep `hostnameOverride`: it is both the render gate and the id filter.
-
----
-
-## services/projectionDriftService.ts
-
-**What it owns:** Best-effort fire-and-forget shadow drift detection after successful AssetSource upserts; logs disagreements only (observability, no behavior change).
-
-**Public API:** `detectAndLogDrift(assetId, integrationKind)`
-
-**Cross-service deps:** None (uses `projectAssetFromSources()` utility + pino logger).
-
-**Used by:** (Not yet called; Phase 3b shadow phase pending Phase 3b.1 actual write implementation)
-
-**Invariants:**
-- Fire-and-forget: any internal error is swallowed via `logger.warn()`; drift detection failures must never break the Asset write.
-- Drift is asymmetric: projection has X ≠ Y on asset → logged; projection has X, asset null → logged; projection null → silent (no comment = no disagreement).
-- Logs to pino with `event: "asset.projection.drift"` (NOT audit Event table); high volume during full sweeps, operators grep app logs.
-- Compared fields: hostname, serialNumber, manufacturer, model, os, osVersion, learnedLocation, ipAddress, latitude, longitude (match `ProjectedAsset` keys). latitude/longitude are SKIPPED when `Asset.coordSource === "manual"`, hostname is SKIPPED when `Asset.hostnameOverride` is set, and ipAddress is SKIPPED when `Asset.ipOverride` is set, the asset is pinned blank (`Asset.ipBlankPinned`), or a primary address is pinned (`Asset.primaryAddressIp`, business rule 102) — an operator pin deliberately diverges from the projection (the db.ts guard re-asserts it over discovery writes), so it's not drift (the IP disagreement already surfaces as an ip-override Conflict instead).
-- Logs include `assetId, integrationKind, drifts[]` with per-field projected/current/winningSource provenance.
-
-**When changing this:**
-- Sync `PROJECTED_FIELDS` list against `ProjectedAsset` interface additions (assetProjection.ts).
-- If projection rules change in `projectAssetFromSources()`, review which drifts are expected (e.g. hostname tiebreak logic).
-- Check pino logger setup in `src/utils/logger.ts` for structured field compatibility.
-- Once Phase 3b.1 write is implemented, wire `detectAndLogDrift()` into the post-upsert callback in discovery sync paths.
 
 ---

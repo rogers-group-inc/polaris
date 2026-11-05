@@ -6,6 +6,7 @@
  * and tracks progress via a status file that survives restarts.
  */
 
+import { sleep } from "../utils/sleep.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -188,8 +189,6 @@ function isTimeoutKill(err: any): boolean {
 function registryAnsweredWith404(err: any): boolean {
   return /\bE404\b|404 Not Found/i.test(String(err?.stderr || err?.stdout || err?.message || ""));
 }
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** The default re-run advice is written for `npm ci`; steps with different economics pass their own. */
 const WARM_CACHE_ADVICE =
@@ -1468,7 +1467,7 @@ const UPDATE_SYNC_HELPER = "/usr/local/sbin/polaris-update-sync";
  * it fails like before (self-exit; the web role alone restarts) and the
  * operator runs a setup script or deploy/update-linux.sh once. Pure.
  */
-export function bootstrapUpdateSyncScript(appDir: string): string {
+function bootstrapUpdateSyncScript(appDir: string): string {
   return [
     "set -e",
     `install -o root -g root -m 0755 ${appDir}/deploy/scripts/polaris-update-sync.sh ${UPDATE_SYNC_HELPER}`,

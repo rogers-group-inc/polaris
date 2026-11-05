@@ -65,7 +65,7 @@ import {
   recordDownDetectionUnavailable,
 } from "../metrics.js";
 
-export { DEFAULT_MISSED_POLLS, isDownDetectionTrigger };
+export { DEFAULT_MISSED_POLLS,  };
 
 /**
  * How long a snapshot is served before a rebuild. Exported so tests can reason

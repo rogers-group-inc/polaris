@@ -185,7 +185,7 @@ interface NormalizedInput {
 export type MaintenanceTarget = "assets" | "pathChecks";
 
 /** A stored schedule's target — a schedule never carries both. */
-export function scheduleTarget(row: { pathCheckIds?: string[] | null }): MaintenanceTarget {
+function scheduleTarget(row: { pathCheckIds?: string[] | null }): MaintenanceTarget {
   return (row.pathCheckIds ?? []).length > 0 ? "pathChecks" : "assets";
 }
 
@@ -584,7 +584,7 @@ export async function listSchedules(target?: MaintenanceTarget) {
   return prisma.maintenanceSchedule.findMany({ where, orderBy: { createdAt: "desc" } });
 }
 
-export async function getSchedule(id: string) {
+async function getSchedule(id: string) {
   const row = await prisma.maintenanceSchedule.findUnique({ where: { id } });
   if (!row) throw new AppError(404, "Maintenance schedule not found");
   return row;

@@ -39,6 +39,7 @@
  * Static paths are declared BEFORE "/:id".
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
@@ -130,7 +131,7 @@ function writeOpts(req: Parameters<typeof hasPermission>[0]) {
   return { mayRunOnServer: hasPermission(req, "networkScan", "write"), credentialAccess, useActor: credentialUseActor(req) };
 }
 
-export const pathChecksRouter = Router();
+const pathChecksRouter = Router();
 
 pathChecksRouter.get("/", requirePermission("pathChecks", "read"), async (_req, res, next) => {
   try {
@@ -206,7 +207,7 @@ pathChecksRouter.get("/:id/server/history", requirePermission("pathChecks", "rea
 pathChecksRouter.get("/:id/server/traceroutes", requirePermission("pathChecks", "read"), async (req, res, next) => {
   try {
     const checkId = String(req.params.id);
-    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const limit = intQuery(req.query.limit, { fallback: 10, min: 1, max: 50 })!;
     res.json({ checkId, traceroutes: await listServerTraceroutes(checkId, limit) });
   } catch (err) { next(err); }
 });

@@ -101,7 +101,7 @@ const UNKNOWN_MAJOR_SCAN_OLDEST = 10;
  * (`pg_versioned_dirs` in deploy/update-linux.sh) lists what is on disk in the
  * same order.
  */
-export function pgToolCandidatesUnknownMajor(tool: PgTool, opts: PgToolCandidateOptions = {}): string[] {
+function pgToolCandidatesUnknownMajor(tool: PgTool, opts: PgToolCandidateOptions = {}): string[] {
   const platform = opts.platform ?? process.platform;
   const out: string[] = [];
   for (let m = UNKNOWN_MAJOR_SCAN_NEWEST; m >= UNKNOWN_MAJOR_SCAN_OLDEST; m--) {

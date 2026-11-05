@@ -952,9 +952,6 @@ var _rulesPage = 1;
     catch (err) { showToast(err.message || "Delete failed", "error"); }
   }
 
-  // expose for the builder (defined at module scope below)
-  window._notifLoadRules = loadRules;
-  window._notifGetSchema = function () { return _ruleSchema; };
 })();
 
 // ═══════════════════════════ Delivery (channels) tab ════════════════════════

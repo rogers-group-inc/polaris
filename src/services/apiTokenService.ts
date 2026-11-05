@@ -59,7 +59,7 @@ export interface ApiTokenSummary {
   revokedBy: string | null;
 }
 
-export interface AuthenticatedToken {
+interface AuthenticatedToken {
   id: string;
   name: string;
   roleId: string;

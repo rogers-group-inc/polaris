@@ -47,7 +47,7 @@ function isLineTerminator(c: string): boolean {
  * worst case pattern length × subject length, never exponential — the regex
  * translation (`*` → `.*`) let `****…x` backtrack combinatorially. Pure.
  */
-export function globMatches(pattern: string, subject: string, questionMark = true): boolean {
+function globMatches(pattern: string, subject: string, questionMark = true): boolean {
   const p = pattern;
   const s = subject;
   let pi = 0;

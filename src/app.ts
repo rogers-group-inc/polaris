@@ -1385,17 +1385,12 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // Scheduled Backups is enabled. Scheduler role only, so a split-role
       // install takes one backup rather than one per monitor replica.
       "./jobs/scheduledBackup.js",
-      // integrationConnectionTester DISABLED 2026-06-02: the 10-min synthetic
-      // /sys/status probe fired false-positive `integration.test.failed`
-      // warnings on FMG (a transient RPC -11 "no valid session" — session reap
-      // or a concurrent call on the shared API-key session — which the tester
-      // hardcodes to "Invalid or expired API token" and stamps as lastTestOk=
-      // false). A manual Test Connection seconds later always succeeds. Probe
-      // disabled here (file kept) pending the planned removal + health-derived-
-      // from-real-discovery-traffic redesign. NOTE: with the probe off, nothing
-      // auto-refreshes lastTestOk — a stuck `false` must be cleared by one
-      // manual Test Connection (discovery scheduler still gates on lastTestOk).
-      // "./jobs/integrationConnectionTester.js",
+      // No job re-tests integrations on a timer. The 10-min tester was
+      // disabled on 2026-06-02 (its /sys/status probe stamped FMG's transient
+      // RPC -11 "no valid session" as a dead API token) and removed on
+      // 2026-11-04. Only an operator's Test Connection writes lastTestOk, the
+      // discovery scheduler still gates on it, so a stuck `false` is cleared
+      // by one manual test.
     ]) await importJob(p);
     // discoveryScheduler exports an explicit starter (it was refactored off the
     // self-start pattern so the discovery worker handler can be injected).

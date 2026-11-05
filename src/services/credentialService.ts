@@ -32,30 +32,28 @@ import { getOnboardingState } from "./windowsSshOnboardingService.js";
 import {
   type HttpCheckConfig,
   normalizeHttpPath,
-  resolveHttpAuthMode,
   HTTP_CREDENTIAL_AUTH_MODES,
-  type HttpAuthConfig,
 } from "../utils/httpCheck.js";
 
 export type CredentialType = "snmp" | "winrm" | "ssh" | "restapi" | "http";
 
-export interface SnmpV2cConfig {
+interface SnmpV2cConfig {
   version: "v2c";
   community: string;
   port?: number;
 }
 
-export type SnmpV3AuthProtocol = "MD5" | "SHA" | "SHA224" | "SHA256" | "SHA384" | "SHA512";
-export type SnmpV3PrivProtocol = "DES" | "AES" | "AES256B" | "AES256R";
+type SnmpV3AuthProtocol = "MD5" | "SHA" | "SHA224" | "SHA256" | "SHA384" | "SHA512";
+type SnmpV3PrivProtocol = "DES" | "AES" | "AES256B" | "AES256R";
 
-export const SNMP_V3_AUTH_PROTOCOLS: readonly SnmpV3AuthProtocol[] = [
+const SNMP_V3_AUTH_PROTOCOLS: readonly SnmpV3AuthProtocol[] = [
   "MD5", "SHA", "SHA224", "SHA256", "SHA384", "SHA512",
 ];
-export const SNMP_V3_PRIV_PROTOCOLS: readonly SnmpV3PrivProtocol[] = [
+const SNMP_V3_PRIV_PROTOCOLS: readonly SnmpV3PrivProtocol[] = [
   "DES", "AES", "AES256B", "AES256R",
 ];
 
-export interface SnmpV3Config {
+interface SnmpV3Config {
   version: "v3";
   username: string;
   securityLevel: "noAuthNoPriv" | "authNoPriv" | "authPriv";
@@ -66,9 +64,9 @@ export interface SnmpV3Config {
   port?: number;
 }
 
-export type SnmpConfig = SnmpV2cConfig | SnmpV3Config;
+type SnmpConfig = SnmpV2cConfig | SnmpV3Config;
 
-export interface WinRmConfig {
+interface WinRmConfig {
   username: string;
   password: string;
   port?: number;
@@ -86,7 +84,7 @@ export interface WinRmConfig {
  * to recover a public half nobody kept would mean re-touching every endpoint
  * that trusts the old one.
  */
-export interface SshConfig {
+interface SshConfig {
   username: string;
   password?: string;
   privateKey?: string;
@@ -121,20 +119,19 @@ export interface SshConfig {
  * self-signed device certs are common); operators flip it on when their
  * target presents a real cert.
  */
-export interface RestApiConfig {
+interface RestApiConfig {
   baseUrl: string;
   apiToken: string;
   verifyTls?: boolean;
 }
 
 /**
- * HTTP-check credential. The shape lives in utils/httpCheck.ts (shared with the
- * probe and its unit tests) rather than being redeclared here — this is the
- * same type, re-exported under the credential vocabulary so callers reading
- * this file can find it.
+ * Every credential type's `config` shape, as one union. No code narrows a
+ * config through it (CredentialRecord.config stays a plain record); it is the
+ * typed reference for the per-type interfaces above, which business rule 21
+ * cites for their field semantics.
+ * @public
  */
-export type { HttpCheckConfig } from "../utils/httpCheck.js";
-
 export type CredentialConfig = SnmpConfig | WinRmConfig | SshConfig | RestApiConfig | HttpCheckConfig;
 
 export interface CredentialRecord {
@@ -630,7 +627,7 @@ const CREDENTIAL_STREAMS = [
 
 type CredRow = Record<string, string | boolean | null | undefined>;
 
-export interface CredentialUsageAsset {
+interface CredentialUsageAsset {
   assetId: string;
   hostname: string | null;
   ipAddress: string | null;
@@ -641,7 +638,7 @@ export interface CredentialUsageAsset {
   streams: string[];
 }
 
-export interface CredentialUsageClassGroup {
+interface CredentialUsageClassGroup {
   integrationId: string | null;
   integrationName: string | null; // null when the class override is the manual tier
   assetType: string;
@@ -650,7 +647,7 @@ export interface CredentialUsageClassGroup {
   assets: CredentialUsageAsset[];
 }
 
-export interface CredentialUsageIntegrationGroup {
+interface CredentialUsageIntegrationGroup {
   integrationId: string;
   integrationName: string;
   assets: CredentialUsageAsset[];
@@ -663,7 +660,7 @@ export interface CredentialUsageIntegrationGroup {
  * reboot opt-in) — including the Polaris-managed SSH deployment credential an
  * agent with no install credential of its own falls back to.
  */
-export interface CredentialUsageOperationGroup {
+interface CredentialUsageOperationGroup {
   kind: "firmware" | "agent";
   label: string;
   assets: CredentialUsageAsset[];

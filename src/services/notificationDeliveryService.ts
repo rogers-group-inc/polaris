@@ -569,7 +569,7 @@ export async function sendEmailThroughChannel(
 }
 
 /** Append the acknowledge line to a plain-text body. Pure. */
-export function appendAckLine(text: string, ackUrl: string | null): string {
+function appendAckLine(text: string, ackUrl: string | null): string {
   if (!ackUrl) return text;
   return `${text}\n\nAcknowledge this alert: ${ackUrl}`;
 }
@@ -689,7 +689,7 @@ export function readPushFallback(meta: unknown): PushFallback | null {
  *  stamp, the key the email footer scopes itself by. Null on a row queued
  *  before the stamp existed, which widens the footer back to the whole alert
  *  rather than emptying it. */
-export function readDispatch(meta: unknown): string | null {
+function readDispatch(meta: unknown): string | null {
   const d = (meta as { dispatch?: unknown } | null | undefined)?.dispatch;
   return typeof d === "string" && d ? d : null;
 }

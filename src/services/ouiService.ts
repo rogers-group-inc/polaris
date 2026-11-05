@@ -77,26 +77,6 @@ export async function lookupOuiDetailed(input: string): Promise<{
 }
 
 /**
- * Look up OUI for multiple MACs at once (avoids repeated DB reads).
- */
-export async function lookupOuiBatch(macs: string[]): Promise<Map<string, string>> {
-  await ensureLoaded();
-  await ensureOverridesLoaded();
-  const results = new Map<string, string>();
-  for (const mac of macs) {
-    const prefix = normalizeMacPrefix(mac);
-    if (!prefix) continue;
-    const ov = _overridesMap.get(prefix);
-    if (ov) {
-      results.set(mac, ov.manufacturer);
-    } else if (_ouiMap && _ouiMap.has(prefix)) {
-      results.set(mac, _ouiMap.get(prefix)!);
-    }
-  }
-  return results;
-}
-
-/**
  * Check only the override map for a MAC address. Returns the override entry
  * (manufacturer + optional device) or null if no override exists.
  * Does NOT fall back to the IEEE DB.

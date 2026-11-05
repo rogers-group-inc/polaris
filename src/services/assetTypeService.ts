@@ -368,7 +368,7 @@ export async function seedBuiltInAssetTypes(): Promise<{ inserted: number }> {
 // answers that; apply is the explicit second step.
 
 /** One asset a preview would re-type, with the clause that claimed it. */
-export interface MatchPreviewRow {
+interface MatchPreviewRow {
   id: string;
   hostname: string | null;
   os: string | null;

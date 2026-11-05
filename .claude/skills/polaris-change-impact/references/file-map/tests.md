@@ -7,7 +7,6 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 └── tests/
     ├── unit/
     │   ├── cidr.test.ts
-    │   ├── ipService.test.ts
     │   ├── primaryAddressPin.test.ts      # applyPrimaryAddressPin (reassert / follow / none, and the primaryAddressContestedAt stamp: set on a different staged address, not on a follow or a staged clear) + assetAddressService pure helpers (business rule 102)
     │   ├── assetAddressesDom.test.ts      # General-tab Address row (primary IP only, label "Address") + its pills (addressPillsHTML: N IPs hover primary-first and starred with copyable IP + MAC and Set as primary; N MACs hover with per-card IPs matched case/separator-blind, first three named, "Not on MAC list" with no ×, remove ×; port-MAC pill; MAC pill still drawn with no IP). Also pins the rule 103 address-confidence chips (banded chip + hover breakdown on the Address row, plain titled chips in the IPs hover and the list cell).
     │   ├── ipamAddressVerdict.test.ts     # judgeDhcpAddressAgainstIpam — keep / remove / relabel a DHCP address row against IPAM (business rule 102(a))

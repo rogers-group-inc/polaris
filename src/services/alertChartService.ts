@@ -371,7 +371,7 @@ export function chartTokensForAlert(
   return wanted;
 }
 
-export const CHART_WINDOW_MS = 60 * 60 * 1000;
+const CHART_WINDOW_MS = 60 * 60 * 1000;
 
 /** Cap the plotted points: an agent host reports per-minute, but a busy
  *  FortiGate can land far more, and 3000 polyline points is a big PNG for no
@@ -551,14 +551,14 @@ function hslToHex(h: number, s: number, l: number): string {
 
 /** The per-core chart's caption: the busiest core first, then the all-cores
  *  line it sits over. Pure. */
-export function perCoreCaption(hot: { index: number; last: number; peak: number }, allCores: SparkPoint[]): string {
+function perCoreCaption(hot: { index: number; last: number; peak: number }, allCores: SparkPoint[]): string {
   const all = seriesStats(allCores);
   return `Core ${hot.index} now ${formatReading(hot.last, "%")} · peak ${formatReading(hot.peak, "%")}` +
     (all ? ` · all cores now ${formatReading(all.last, "%")}` : "");
 }
 
 /** The per-core chart's text-body line, for a reader with images blocked. */
-export function perCoreSummary(hot: { index: number; last: number; peak: number }, coreCount: number, allCores: SparkPoint[]): string {
+function perCoreSummary(hot: { index: number; last: number; peak: number }, coreCount: number, allCores: SparkPoint[]): string {
   const all = seriesStats(allCores);
   return `CPU per core (last hour, ${coreCount} core${coreCount === 1 ? "" : "s"}): busiest Core ${hot.index} now ${formatReading(hot.last, "%")}, peak ${formatReading(hot.peak, "%")}` +
     (all ? `; all cores now ${formatReading(all.last, "%")}, avg ${formatReading(all.avg, "%")}, peak ${formatReading(all.max, "%")}` : "");
@@ -618,7 +618,7 @@ export interface SensorSeries {
  * a fan's RPM and a rail's volts pass through untouched. Storage, rollups and
  * automation thresholds all stay Celsius.
  */
-export async function loadSensorSeries(
+async function loadSensorSeries(
   assetId: string,
   sensorName: string,
   since: Date,
@@ -1360,7 +1360,7 @@ export interface ProbeLossSeries {
  * `rows` must be ascending by timestamp, which is `loadProbeLoss`'s contract.
  * Exported for the parity test against the SQL.
  */
-export function outageRunFailures(rows: Array<{ success: boolean; assetDown?: boolean | null }>): Set<number> {
+function outageRunFailures(rows: Array<{ success: boolean; assetDown?: boolean | null }>): Set<number> {
   const out = new Set<number>();
   let run: number[] = [];
   let sawOutage = false;

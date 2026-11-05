@@ -64,7 +64,7 @@ const HEADLINE: Record<FirmwareResultOutcome, { label: string; color: string }> 
   missed:     { label: "Upgrade missed",     color: "#b45309" },
 };
 
-export function firmwareResultSubject(input: Pick<FirmwareResultEmailInput, "outcome" | "deviceName" | "toVersion">): string {
+function firmwareResultSubject(input: Pick<FirmwareResultEmailInput, "outcome" | "deviceName" | "toVersion">): string {
   const what = {
     succeeded: "succeeded",
     unverified: "finished unverified",
@@ -76,7 +76,7 @@ export function firmwareResultSubject(input: Pick<FirmwareResultEmailInput, "out
 }
 
 /** One sentence that says what happened, for both bodies. */
-export function firmwareResultSummary(input: FirmwareResultEmailInput): string {
+function firmwareResultSummary(input: FirmwareResultEmailInput): string {
   switch (input.outcome) {
     case "succeeded":
       return input.result === "already-current"

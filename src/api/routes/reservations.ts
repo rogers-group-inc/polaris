@@ -14,6 +14,7 @@
  * the lease can still reserve the IP.
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import * as reservationService from "../../services/reservationService.js";
@@ -242,8 +243,8 @@ router.post("/next-available", requireOwnership("reservations"), async (req, res
 router.get("/", requirePermission("reservations", "read"), async (req, res, next) => {
   try {
     const { subnetId, owner, projectRef, status } = req.query as Record<string, string>;
-    const limit = parseInt(req.query.limit as string, 10) || undefined;
-    const offset = parseInt(req.query.offset as string, 10) || undefined;
+    const limit = intQuery(req.query.limit);
+    const offset = intQuery(req.query.offset);
     const scope = await resolveWriteScope(req, "reservations");
     const page = await reservationService.listReservations({
       subnetId,

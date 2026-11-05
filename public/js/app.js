@@ -597,8 +597,6 @@ function permAtLeast(key, level) {
 // identity (sidebar admin-only menu items, role-name display badge). DO
 // NOT use these for new capability checks — use permAtLeast(key, level).
 function isAdmin() { return currentUserRole === "admin"; }
-function isNetworkAdmin() { return currentUserRole === "networkadmin"; }
-function isAssetsAdmin() { return currentUserRole === "assetsadmin"; }
 
 // Capability shims — rewritten to consult the permission matrix. The
 // names map to the closest function-key check that matches the old
@@ -1625,7 +1623,7 @@ function renderNav() {
 
   // ─── Failed-integration notice ────────────────────────────────────────
   // Sidebar panel surfacing integrations whose most recent credential test
-  // failed. `integrationConnectionTester` refreshes lastTestOk every 10 min,
+  // failed. lastTestOk changes only when an operator runs Test Connection,
   // so polling at 30 s is plenty — the underlying state changes slowly.
   // Silently degrades on permission denial (the route requires
   // integrations=read; users without it just see nothing).
@@ -1648,7 +1646,6 @@ function renderNav() {
   }
   pollFailedIntegrations();
   pollVisible(pollFailedIntegrations, 30000);
-  window._pollFailedIntegrations = pollFailedIntegrations;
   window._getFailedIntegrations = function () { return _failedIntegrations; };
   window._getFmgProxyAdvice = function () { return _fmgProxyAdvice; };
 
@@ -1675,7 +1672,6 @@ function renderNav() {
     pollSigningAlert();
     pollVisible(pollSigningAlert, 30000);
   }
-  window._pollSigningAlert = pollSigningAlert;
   window._getSigningFailure = function () { return _signingFailure; };
 
   // ─── Open security advisories on this host's platform ─────────────────
@@ -1702,7 +1698,6 @@ function renderNav() {
     pollPlatformAdvisories();
     pollVisible(pollPlatformAdvisories, 600000);
   }
-  window._pollPlatformAdvisories = pollPlatformAdvisories;
   window._getPlatformAdvisories = function () { return _platformAdvisories; };
 
   // ─── In-app update progress ───────────────────────────────────────────
@@ -1860,14 +1855,6 @@ function _getRoleBadgeClass(role) {
 // inline (translucent fill + solid text + border, matching the .badge-* CSS
 // recipe) so renamed built-ins and custom roles keep their color. When absent,
 // callers fall back to the legacy name-keyed badge classes above.
-
-function hexToRgba(hex, alpha) {
-  var m = /^#?([0-9a-fA-F]{6})$/.exec((hex || "").trim());
-  if (!m) return null;
-  var n = parseInt(m[1], 16);
-  var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
-}
 
 // Inline style string for a role badge given its stored color — only the
 // `--hue` of a `.hue-pill` (styles.css), so the caller's badge must carry that
@@ -5950,14 +5937,6 @@ function subnetUtilCellHTML(pct, used, usable, title) {
 // Trimmed value of an input by id — THE copy (was five identical top-level
 // copies across page scripts, shadowing each other on co-loaded pages).
 function val(id) { return document.getElementById(id).value.trim(); }
-
-function tagsToArray(str) {
-  return str.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-}
-
-function tagsToString(arr) {
-  return (arr || []).join(", ");
-}
 
 function randomTagColor() {
   var palette = ["#4fc3f7","#4ade80","#f59e0b","#f472b6","#a78bfa","#fb923c","#38bdf8","#34d399","#e879f9","#facc15","#f87171","#2dd4bf","#818cf8","#c084fc"];
