@@ -44,6 +44,7 @@ import {
   telemetrySuccessStamps,
   systemInfoSuccessStamps,
   persistAgentAddressRows,
+  PROBE_ASSET_OMIT,
 } from "../../services/monitoringService.js";
 import {
   enqueueMonitorSample,
@@ -1408,9 +1409,14 @@ function formatMacColonUpper(mac: unknown): string {
 }
 
 async function computeConfigEtag(assetId: string): Promise<string> {
+  // Runs on every agent heartbeat. The resolver reads tier-3 settings through
+  // its own cache, so the integration contributes only its type — never its
+  // config blob (stored secrets included) — and the asset none of its JSON
+  // blobs (CQ-B051).
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    include: { discoveredByIntegration: true },
+    omit: { ...PROBE_ASSET_OMIT, fortinetTopology: true },
+    include: { discoveredByIntegration: { select: { type: true } } },
   });
   if (!asset) return '"deleted"';
   const eff = await resolveMonitorSettings({
