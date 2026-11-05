@@ -226,6 +226,24 @@ export async function previewDecommissionPins(assetIds: string[]): Promise<Decom
 }
 
 /**
+ * The IPv4 address rule 40(k) released from this asset on its latest
+ * decommission — `details.previousIpAddress` of its newest `asset.ip_released`
+ * Event (src/db.ts writes it right after the decommissioning write lands), or
+ * null when there is none. One indexed read ((assetId, timestamp)); only a
+ * decommissioned asset with no address left pays it.
+ */
+export async function releasedAddressOf(assetId: string): Promise<string | null> {
+  const ev = await prisma.event.findFirst({
+    where: { assetId, action: "asset.ip_released" },
+    orderBy: { timestamp: "desc" },
+    select: { details: true },
+  });
+  const d = ev?.details;
+  const ip = d && typeof d === "object" && !Array.isArray(d) ? (d as Record<string, unknown>).previousIpAddress : null;
+  return typeof ip === "string" && ip.trim() ? ip.trim() : null;
+}
+
+/**
  * Move the asset's pins into its agent's archive. Idempotent: an asset with no
  * agent, or whose archive is already held, is left alone (returns null).
  */
@@ -236,13 +254,19 @@ export async function archiveAgentHostPins(
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
     select: {
-      id: true, hostname: true, ipAddress: true, dnsName: true,
+      id: true, hostname: true, ipAddress: true, dnsName: true, status: true,
       managedAgent: { select: { id: true, hostPinsArchivedAt: true } },
     },
   });
   if (!asset?.managedAgent || asset.managedAgent.hostPinsArchivedAt) return null;
 
-  const hosts = assetPinHosts(asset);
+  // Rule 40(k) clears ipAddress on the very write that decommissions, so by
+  // the time either archive writer runs the address the pins are keyed on is
+  // gone from the row. Read it back from that write's `asset.ip_released`
+  // Event, the audit record of exactly which address was released.
+  const ipAddress = asset.ipAddress
+    ?? (asset.status === "decommissioned" ? await releasedAddressOf(asset.id) : null);
+  const hosts = assetPinHosts({ ...asset, ipAddress });
   const shared = await hostsClaimedElsewhere(asset.id, hosts);
   const own = hosts.filter((h) => !shared.has(h));
   const { ssh, tls } = await livePinRows(own);

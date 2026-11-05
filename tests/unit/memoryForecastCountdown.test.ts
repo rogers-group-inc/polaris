@@ -21,6 +21,7 @@ import {
   triggerSchema,
 } from "../../src/services/notificationTypes.js";
 import { buildTemplateContext, forecastCountdown } from "../../src/utils/notificationTemplate.js";
+import { forecastCountdownMoved } from "../../src/services/notificationEngine.js";
 import {
   memoryForecastChartSpec,
   memoryForecastTargetFromRule,
@@ -217,5 +218,35 @@ describe("the forecast email chart", () => {
       { trigger: { type: "asset_metric", metric: "memDaysUntilFull", threshold: 10 }, severity: "warning", severityBands: null },
       "warning",
     )).toEqual({ targetPct: 100, levelName: null, horizonDays: 10 });
+  });
+});
+
+describe("a live forecast alert keeps counting down", () => {
+  // The engine rewrites a firing forecast alert's message and snapshot only
+  // when the countdown it last showed has moved, so a steady alert costs one
+  // read per tick and a write about once a day.
+  const levels = SERIOUS_85_CRITICAL_90;
+  const shown12 = buildTemplateContext({ severity: "serious", forecast: { usedPct: 79, slopePerDay: 0.5, levels } });
+
+  it("is unchanged while the same whole-day count holds", () => {
+    // 79.1 % at 0.5/day is 11.8 days — still "12".
+    expect(forecastCountdownMoved(shown12, { usedPct: 79.1, slopePerDay: 0.5, levels }, "serious")).toBe(false);
+  });
+
+  it("moves when a day has gone by", () => {
+    expect(forecastCountdownMoved(shown12, { usedPct: 79.5, slopePerDay: 0.5, levels }, "serious")).toBe(true);
+  });
+
+  it("moves when the level it counts down to changes", () => {
+    expect(forecastCountdownMoved(shown12, { usedPct: 79, slopePerDay: 0.5, levels }, "critical")).toBe(true);
+  });
+
+  it("refreshes, once, an alert that kept no countdown", () => {
+    expect(forecastCountdownMoved(null, { usedPct: 79, slopePerDay: 0.5, levels }, "serious")).toBe(true);
+    expect(forecastCountdownMoved({ message: "old" }, { usedPct: 79, slopePerDay: 0.5, levels }, "serious")).toBe(true);
+  });
+
+  it("leaves the alert alone when there is no countdown to show", () => {
+    expect(forecastCountdownMoved(shown12, { usedPct: 79, slopePerDay: 0, levels }, "serious")).toBe(false);
   });
 });
