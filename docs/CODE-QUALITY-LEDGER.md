@@ -193,7 +193,7 @@ production caller at all, move the test onto the real code path and delete the f
 
 | id | kind | where | summary | risk | effort | tier | status | verified-by |
 |---|---|---|---|---|---|---|---|---|
-| CQ-F040 | efficiency | 31 widget `setInterval`s (22 widgets on 30 s / 60 s) | Keep polling in a hidden tab. `app.js pollVisible` is local to its IIFE and `dash.html` does not load `app.js`, so add `PolarisWidgets.pollVisible(fn, ms)` in `widgets/index.js` and have `app.js` use it too. | L | M | 2 | verified | grep |
+| CQ-F040 | efficiency | 31 widget `setInterval`s (22 widgets on 30 s / 60 s) | Keep polling in a hidden tab. `app.js pollVisible` is local to its IIFE and `dash.html` does not load `app.js`, so add `PolarisWidgets.pollVisible(fn, ms)` in `widgets/index.js` and have `app.js` use it too. | L | M | 2 | fixed@5f246cea5 (30 polls; deviceMap rotation is a display timer and stays) | grep |
 | CQ-F041 | efficiency | `assets.js` (1.67 MB), `integrations.js` (650 KB), `automations-wizard.js` (609 KB) | Load on index, map, appmap, automations and path-monitor as well as their own pages. | M | L | 3 | verified | read |
 | CQ-F042 | efficiency | `querySelectorAll().forEach(addEventListener)` row loops (assets 61, server-settings 30, events 12, automations 10) | Delegation would bind once per table. | L | M | 2 | verified | grep |
 
