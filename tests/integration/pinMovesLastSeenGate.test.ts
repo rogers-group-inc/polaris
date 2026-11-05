@@ -9,7 +9,7 @@
  * Skips cleanly when DATABASE_URL isn't reachable; see _helpers.ts.
  */
 
-import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable, ensureTestUser, authedAgent } from "./_helpers.js";
@@ -66,8 +66,17 @@ d("pinning an address moves the last-seen FortiGate (business rule 101(b))", () 
     const id = await makeAsset("listpin");
     await pinPrimaryAddress({ assetId: id, mac: MAC, ip: "10.98.2.20", actor: "tester" });
     expect(await gateOf(id)).toBe("PINGATE-B");
-    const ev = await prisma.event.findFirst({ where: { action: "asset.primary_address.pinned", resourceId: id } });
-    expect((ev?.details as any)?.learnedLocation).toEqual({ from: "PINGATE-A", to: "PINGATE-B" });
+    // pinPrimaryAddress writes its audit Event fire-and-forget (the pin never
+    // waits on the audit write), so the row can land after the call returns.
+    // Reading it once raced that insert and lost under CI load ("expected
+    // undefined to deeply equal { from: 'PINGATE-A', to: 'PINGATE-B' }"); wait
+    // for it instead.
+    const ev = await vi.waitFor(async () => {
+      const row = await prisma.event.findFirst({ where: { action: "asset.primary_address.pinned", resourceId: id } });
+      if (!row) throw new Error("pin event not written yet");
+      return row;
+    }, { timeout: 5_000, interval: 50 });
+    expect((ev.details as any)?.learnedLocation).toEqual({ from: "PINGATE-A", to: "PINGATE-B" });
   });
 
   it("leaves the gate alone when no IPAM network holds the pinned address", async () => {
