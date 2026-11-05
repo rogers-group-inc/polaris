@@ -1865,9 +1865,15 @@ path writes `other` over a real type.
 Below the source cards, **Firewall Sightings** lists each FortiGate that has
 handed the device an address: one row per gate and kind, so a gate that holds
 both a DHCP reservation and a lease for the device shows both, each with its
-address, network and VLAN. **IP History** lists every address the device has held,
+address, network and VLAN. Click a FortiGate name to open that firewall (right-click
+it, or anywhere on its row, for Open HTTPS / Open SSH and Copy name), and click a
+network / VLAN to open that network (right-click for Copy name); a gate or network
+Polaris does not hold stays plain text. **IP History** lists every address the device has held,
 with the **VLAN** of the network each one sits in (hover it for the network's
 name and range) and when it was first and last seen.
+
+On this tab, clicking any IP address or MAC address (in the sightings, IP History
+or a source card) copies it to the clipboard.
 
 The inverse is **Split**, shown to the admin role on each non-manual source
 card of an asset with more than one source: it detaches that

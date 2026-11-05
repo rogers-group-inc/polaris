@@ -428,15 +428,16 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Records DHCP-only (asset, FortiGate) sightings to drive quarantine fan-out targeting.
 
-**Public API:** `recordSightings(), computeFreshestGateChanges(), getSightingsForAsset(), getQuarantineCandidates(), getSightingSettings(), updateSightingSettings()`
+**Public API:** `recordSightings(), computeFreshestGateChanges(), getSightingsForAsset(), getSightingsForDisplay(), getQuarantineCandidates(), getSightingSettings(), updateSightingSettings()`
 
-**Cross-service deps:** `eventLogService` (`buildFirewallChangedEvent` + `logEventsBatch` — the `asset.gateway_firewall.changed` audit row), `utils/assetSourceLocation.bareFortinetDeviceName` (device-name normalization).
+**Cross-service deps:** `eventLogService` (`buildFirewallChangedEvent` + `logEventsBatch` — the `asset.gateway_firewall.changed` audit row), `utils/assetSourceLocation.bareFortinetDeviceName` (device-name normalization), `assetUpstreamService.resolveFirewallRefsByName` + `utils/cidr.cidrContains` (`getSightingsForDisplay` only).
 
-**Used by:** `src/services/discovery/discoveryEngine.ts — batch-record sightings after DHCP discovery sync`, `src/api/routes/assets.ts — fetch sighting list for Quarantine tab`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
+**Used by:** `src/services/discovery/discoveryEngine.ts — batch-record sightings after DHCP discovery sync`, `src/api/routes/assets.ts — GET /assets/:id/sightings via getSightingsForDisplay (the Sources tab's Firewall Sightings table and the Quarantine tab's copy)`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
 
 **Invariants:**
 - Sightings are keyed by `(assetId, fortigateDevice, source)` (migration `20261103090000_sightings_per_binding_kind`): a gate holding both a lease and a reservation for the device keeps a row for each, so Firewall Sightings shows both. Within a batch the latest `seenAt` per key wins. Until 2026-11-03 the key was (asset, gate) and `dhcp_reservation` won a tie, which hid the lease — often the address the device was actually using.
 - Readers that want "the gate" must take the freshest row PER GATE: `getQuarantineCandidates` collapses by gate (one quarantine push per gate), and the dependency / search / upstream readers already order by `lastSeen`. `assetMergeService`'s side-table move keys sightings on `["fortigateDevice", "source"]`.
+- `getSightingsForDisplay()` decorates each row with its network (`subnetName` / `vlan` / `subnetId`: the network on the SAME gate whose CIDR holds the row's IP) and `fortigateAsset` (the gate name resolved through `fortinetParentKey`, or null) — three queries whatever the row count. The table's FortiGate and VLAN cells open those; an unresolved one stays text.
 - `getQuarantineCandidates()` filters by `sightingMaxAgeDays` Setting (default 180; 0 = no filter); stored rows never auto-prune.
 - Only DHCP evidence qualifies (transit via System tab interface scrape intentionally excluded per design).
 - Every caller of `recordSightings()` must dedupe + normalize before passing; batch upsert handles dedup again for safety.
@@ -498,7 +499,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** `resolveAssetUpstream(assetId, {includeFirewall, includeSubnetGate})` — turning the three UPSTREAM device NAMES the asset-details General tab renders (Last Seen Switch / AP / Firewall) into the Asset rows behind them, so those rows can carry verbs (open the device, open its HTTPS UI, SSH to it) instead of being text an operator re-finds by hand in the Assets list. Since 2026-09 it also answers the firewall row for a device NO gate has ever sighted, from IPAM (business rule 55). Since 2026-11-04 a managed FortiSwitch / FortiAP's firewall row is its CONTROLLER gate, and a sighting whose gate is gone is passed over.
 
-**Public API:** `resolveAssetUpstream`, the pure `splitLastSeenSwitch` and `pickFirewallEntry`, and the `AssetUpstream` / `UpstreamEntry` / `UpstreamAssetRef` types.
+**Public API:** `resolveAssetUpstream`, `resolveFirewallRefsByName(names)` (gate device names → firewall `UpstreamAssetRef`s in one candidate query; an unresolved name is absent from the map — used by `assetSightingService.getSightingsForDisplay`), the pure `splitLastSeenSwitch` and `pickFirewallEntry`, and the `AssetUpstream` / `UpstreamEntry` / `UpstreamAssetRef` types.
 
 **Cross-service deps:** `utils/fortinetParentKey.ts` (`parentAssetWhereOr` + `buildInfraParentIndex` + `resolveInfraParentAsset` — the shared precedence, never a bare hostname match), `fortinetManagementAccessService.shapeManagementAccessForClient` (the four fields the client's remote-access gate reads), `ipUpstreamChainService.resolveOwningGateContexts` (the IPAM fallback — the same resolver the rule 45 sweep and the endpoint dependency tier use). Reads `Asset` + `AssetFortigateSighting` + (via that resolver) `Subnet` directly; writes nothing.
 

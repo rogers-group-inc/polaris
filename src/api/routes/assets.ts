@@ -46,7 +46,7 @@ import {
   UNMONITORABLE_STATUSES,
 } from "../../utils/assetInvariants.js";
 import { getIpHistory, getHistorySettings, updateHistorySettings, pruneOldHistory } from "../../services/assetIpHistoryService.js";
-import { getSightingsForAsset, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
+import { getSightingsForDisplay, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
 import { readAssetIpsec, readLatestIpsecTunnels } from "../../services/ipsecConnectionService.js";
 import { getAssetSoftware } from "../../services/softwareInventoryService.js";
 import { getInventoryPresence } from "../../services/serviceInventoryService.js";
@@ -58,7 +58,7 @@ import {
 } from "../../services/assetQuarantineService.js";
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
 import { descriptionSyncEnabledForRole } from "../../utils/descriptionSyncFlags.js";
-import { cidrContains, isIpv6Address, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
+import { isIpv6Address, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
 import { buildIpContexts, networksForAddresses } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
@@ -5761,44 +5761,16 @@ router.delete("/:id", requirePermission("assets", "write"), scopeAssetParam("ass
 // ─── Quarantine + sightings ─────────────────────────────────────────────
 
 // GET /api/v1/assets/:id/sightings — DHCP sighting history (any auth user)
-// Each sighting is decorated with subnet name + VLAN resolved from the stored
-// IP against subnets discovered on the same FortiGate, so the Quarantine tab
-// can show "what was seen and on which VLAN" without a second round-trip.
+// Each sighting is decorated with its network (name, VLAN, id) resolved from
+// the stored IP against networks discovered on the same FortiGate, and the
+// firewall asset its gate name resolves to, so the FortiGate and VLAN cells
+// can open what they name (assetSightingService.getSightingsForDisplay).
 router.get("/:id/sightings", requirePermission("assetsQuarantine", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const exists = await prisma.asset.findUnique({ where: { id }, select: { id: true } });
     if (!exists) throw new AppError(404, "Asset not found");
-    const sightings = await getSightingsForAsset(id);
-
-    const devices = Array.from(
-      new Set(sightings.map((s) => s.fortigateDevice).filter(Boolean)),
-    );
-    const subnets = devices.length
-      ? await prisma.subnet.findMany({
-          where: { fortigateDevice: { in: devices } },
-          select: { cidr: true, name: true, vlan: true, fortigateDevice: true },
-        })
-      : [];
-
-    const enriched = sightings.map((s) => {
-      let subnetName: string | null = null;
-      let vlan: number | null = null;
-      if (s.ipAddress) {
-        const match = subnets.find(
-          (sub) =>
-            sub.fortigateDevice === s.fortigateDevice &&
-            cidrContains(sub.cidr, `${s.ipAddress}/32`),
-        );
-        if (match) {
-          subnetName = match.name ?? null;
-          vlan = match.vlan ?? null;
-        }
-      }
-      return { ...s, subnetName, vlan };
-    });
-
-    res.json(enriched);
+    res.json(await getSightingsForDisplay(id));
   } catch (err) {
     next(err);
   }
