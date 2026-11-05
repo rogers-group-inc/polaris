@@ -1471,8 +1471,10 @@ export async function discoverDhcpSubnets(
     }
   }
 
+  // Membership by object identity, as a Set: the includes() form was O(n^2) per gate (CQ-B055).
+  const keptSubnets = new Set(filteredSubnets);
   const excludedIfaceNames = new Set(
-    discovered.filter((s) => !filteredSubnets.includes(s)).map((s) => `${s.fortigateDevice}/${s.name}`)
+    discovered.filter((s) => !keptSubnets.has(s)).map((s) => `${s.fortigateDevice}/${s.name}`)
   );
   const filteredInventory = deviceInventory.filter(
     (d) => !excludedIfaceNames.has(`${d.device}/${d.interfaceName}`) &&

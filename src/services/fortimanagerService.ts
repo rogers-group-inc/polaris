@@ -3256,9 +3256,11 @@ export async function discoverDhcpSubnets(
         config.dhcpInclude,
         config.dhcpExclude,
       );
+      // Membership by object identity, as a Set (CQ-B055; includes() was O(n^2)).
+      const keptDevSubnets = new Set(filteredDevSubnets);
       const excludedDevIfaces = new Set(
         chunk.subnets
-          .filter((s) => !filteredDevSubnets.includes(s))
+          .filter((s) => !keptDevSubnets.has(s))
           .map((s) => `${s.fortigateDevice}/${s.name}`)
       );
       const filteredDevInventory = chunk.deviceInventory.filter(
