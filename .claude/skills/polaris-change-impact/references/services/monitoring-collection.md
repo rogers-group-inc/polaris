@@ -285,7 +285,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Update the resolver's tier caches if any integration/manual/override schema changes.
 - If adding/removing transport probes, update `pollingCompatibility.ts` matrix and write-time validation in `monitorSettingsService.ts` (`assertPollingCompatible`) — and the full lockstep list under cross-cutting/polling-method-resolution → "When changing this", which the `http` method walked end to end.
 - Verify `dropChunks()` calls before sample deletion align with active retention tiers.
-- Test supervisor isolation: probe tick (5s) must not block heavy tick (30s) via `runningProbe`/`runningHeavy` guards.
+- Test supervisor isolation: probe tick (5s) must not block heavy tick (30s): they are two separate `defineJob`s (`monitorAssets.probe` / `monitorAssets.heavy`), each with its own overlap skip.
 
 ---
 

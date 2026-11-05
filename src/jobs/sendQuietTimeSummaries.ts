@@ -12,27 +12,17 @@
  * Import this module from src/app.ts (startBackgroundJobs) to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { runQuietTimeSummaries } from "../services/quietTimeSummaryService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 60 * 1000;
-let running = false;
-
-async function tick(): Promise<void> {
-  if (running) return; // an SMTP stall must not stack ticks
-  running = true;
-  try {
-    await runInstrumentedJob("sendQuietTimeSummaries", async () => {
-      await runQuietTimeSummaries();
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "sendQuietTimeSummaries job failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
-
-// Boot delay so the DB is ready; offset from the escalation tick.
-setTimeout(tick, 50_000);
-setInterval(tick, INTERVAL_MS);
+// Boot delay so the DB is ready; offset from the escalation tick. defineJob's
+// overlap skip is what keeps an SMTP stall from stacking ticks.
+defineJob({
+  name: "sendQuietTimeSummaries",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 50_000,
+  run: async () => {
+    await runQuietTimeSummaries();
+  },
+});

@@ -32,45 +32,22 @@
 import { logger } from "../utils/logger.js";
 import { prisma } from "../db.js";
 import { rollupHourly, rollupDaily, type RollupResult } from "../services/sampleRollupService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const HOURLY_INTERVAL_MS = 30 * 60 * 1000;
 const HOURLY_BOOT_DELAY_MS = 60 * 1000;
 const DAILY_BOOT_DELAY_MS = 90 * 1000;
 
-let runningHourly = false;
-let runningDaily  = false;
-
-async function tickHourly(): Promise<void> {
-  if (runningHourly) return;
-  runningHourly = true;
-  try {
-    await runInstrumentedJob("sampleRollup.hourly", async () => {
-      const results = await rollupHourly();
-      await stampLastSuccess("hourly", results);
-      logResults("hourly", results);
-    });
-  } catch (err: any) {
-    logger.error({ err: err?.message ?? String(err) }, "sampleRollup.hourly tick failed (non-fatal)");
-  } finally {
-    runningHourly = false;
-  }
+async function runHourly(): Promise<void> {
+    const results = await rollupHourly();
+    await stampLastSuccess("hourly", results);
+    logResults("hourly", results);
 }
 
-async function tickDaily(): Promise<void> {
-  if (runningDaily) return;
-  runningDaily = true;
-  try {
-    await runInstrumentedJob("sampleRollup.daily", async () => {
-      const results = await rollupDaily();
-      await stampLastSuccess("daily", results);
-      logResults("daily", results);
-    });
-  } catch (err: any) {
-    logger.error({ err: err?.message ?? String(err) }, "sampleRollup.daily tick failed (non-fatal)");
-  } finally {
-    runningDaily = false;
-  }
+async function runDaily(): Promise<void> {
+    const results = await rollupDaily();
+    await stampLastSuccess("daily", results);
+    logResults("daily", results);
 }
 
 async function stampLastSuccess(tier: "hourly" | "daily", results: RollupResult[]): Promise<void> {
@@ -124,11 +101,21 @@ function msUntilNextUtc(hourUtc: number, minuteUtc: number): number {
 }
 
 // ── Schedule ─────────────────────────────────────────────────────────────────
-setTimeout(tickHourly, HOURLY_BOOT_DELAY_MS);
-setInterval(tickHourly, HOURLY_INTERVAL_MS);
+defineJob({
+  name: "sampleRollup.hourly",
+  intervalMs: HOURLY_INTERVAL_MS,
+  firstRunDelayMs: HOURLY_BOOT_DELAY_MS,
+  run: runHourly,
+});
 
-setTimeout(tickDaily, DAILY_BOOT_DELAY_MS);
-setTimeout(() => {
-  void tickDaily();
-  setInterval(tickDaily, 24 * 3600 * 1000);
-}, msUntilNextUtc(2, 30));
+// Daily tier: anchored at 02:30 UTC, then every 24 h from there — plus one
+// catch-up pass shortly after boot. The boot pass goes through the same
+// handle, so it shares the overlap skip with the anchored schedule.
+const daily = defineJob({
+  name: "sampleRollup.daily",
+  intervalMs: 24 * 3600 * 1000,
+  firstRunDelayMs: msUntilNextUtc(2, 30),
+  intervalAfterFirstRun: true,
+  run: runDaily,
+});
+setTimeout(() => void daily.tick(), DAILY_BOOT_DELAY_MS);

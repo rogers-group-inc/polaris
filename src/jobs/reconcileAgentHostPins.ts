@@ -17,22 +17,18 @@
 
 import { reconcileAgentHostPins as reconcile } from "../services/agentHostPinService.js";
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 10 * 60 * 1000;
 
-async function reconcileAgentHostPins(): Promise<void> {
-  try {
-    await runInstrumentedJob("reconcileAgentHostPins", async () => {
-      const result = await reconcile();
-      if (result.archived > 0 || result.reinstated > 0) {
-        logger.info(result, "Reconciled agent host pins with asset status");
-      }
-    });
-  } catch (err) {
-    logger.warn({ err }, "reconcileAgentHostPins tick failed (non-fatal)");
-  }
-}
-
-setTimeout(reconcileAgentHostPins, 2 * 60 * 1000);
-setInterval(reconcileAgentHostPins, INTERVAL_MS);
+defineJob({
+  name: "reconcileAgentHostPins",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 2 * 60 * 1000,
+  run: async () => {
+    const result = await reconcile();
+    if (result.archived > 0 || result.reinstated > 0) {
+      logger.info(result, "Reconciled agent host pins with asset status");
+    }
+  },
+});

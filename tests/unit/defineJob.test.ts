@@ -61,6 +61,28 @@ describe("defineJob — schedule", () => {
     job.stop();
   });
 
+  it("intervalAfterFirstRun anchors the cadence on the first run", async () => {
+    const run = vi.fn(async () => {});
+    const job = defineJob({ name: "j", intervalMs: 15_000, firstRunDelayMs: 5_000, intervalAfterFirstRun: true, run });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(14_999); // t = 19.999 s: not yet (an unanchored interval would have fired at 15 s)
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1); // t = 20 s = 5 + 15
+    expect(run).toHaveBeenCalledTimes(2);
+    job.stop();
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("stop() before the first run of an anchored job cancels everything", async () => {
+    const run = vi.fn(async () => {});
+    const job = defineJob({ name: "j", intervalMs: 15_000, firstRunDelayMs: 5_000, intervalAfterFirstRun: true, run });
+    job.stop();
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("stop() cancels the first run and the interval", async () => {
     const run = vi.fn(async () => {});
     const job = defineJob({ name: "j", intervalMs: 10_000, firstRunDelayMs: 1_000, run });
@@ -82,6 +104,19 @@ describe("defineJob — overlap", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(run).toHaveBeenCalledTimes(2);
     job.stop();
+  });
+});
+
+describe("every periodic job goes through defineJob (source guard)", () => {
+  it("no file in src/jobs calls setInterval except _defineJob.ts", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = resolve(dirname(fileURLToPath(import.meta.url)), "../../src/jobs");
+    const offenders = readdirSync(dir)
+      .filter((f) => f.endsWith(".ts") && f !== "_defineJob.ts")
+      .filter((f) => /\bsetInterval\(/.test(readFileSync(resolve(dir, f), "utf8")));
+    expect(offenders).toEqual([]);
   });
 });
 
