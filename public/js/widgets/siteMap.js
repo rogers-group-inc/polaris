@@ -723,15 +723,13 @@
       });
       ro.observe(el);
 
-      var siteTimer = setInterval(function () {
-        // A backgrounded window has nobody watching the map; the shared memo
-        // already collapses concurrent instances into one request.
-        if (document.hidden) return;
+      PolarisWidgets.pollVisible(ctx, function () {
+        // pollVisible skips a hidden tab; the shared memo collapses concurrent
+        // instances into one request.
         PolarisWidgets.getMapSites(PolarisWidgets.regionNamesForConfig(config)).then(function (sites) { buildMarkers(sites); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
 
       ctx.onUnmount(function () {
-        clearInterval(siteTimer);
         clearTimeout(tempTimer); clearTimeout(radarTimer); clearTimeout(radarAnimTimer);
         document.removeEventListener("keydown", onKeydown);
         try { ro.disconnect(); } catch (_) {}

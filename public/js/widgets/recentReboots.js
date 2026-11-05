@@ -43,10 +43,9 @@
 
     renderInstance: function (el, config, data, ctx) {
       render(el, data);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         PolarisWidgets.getNocSummary(PolarisWidgets.nocFilterOpts(config), ["recentReboots"]).then(function (d) { render(el, PolarisWidgets.clip((d && d.recentReboots) || [], config && config.rowLimit)); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
-      ctx.onUnmount(function () { clearInterval(timer); });
     },
 
     renderPreview: function (el) {

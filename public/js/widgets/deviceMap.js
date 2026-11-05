@@ -710,7 +710,7 @@
 
     // Device health colours move: refresh on the slow widget cadence, keeping
     // the viewer's zoom and pan.
-    var timer = setInterval(function () { if (!document.hidden) load(); }, PolarisWidgets.REFRESH.slow);
+    var stopPoll = PolarisWidgets.pollVisible(null, load, PolarisWidgets.REFRESH.slow);
     // The legend's swatches are per theme family, like the graph's colours.
     function onTheme() { if (window.PolarisTopologyRender) fillLegend(); render(); }
     document.addEventListener("themechange", onTheme);
@@ -728,7 +728,7 @@
       resize: function () { if (cy) try { cy.resize(); cy.fit(undefined, 30); } catch (_) {} },
       close: function () {
         closed = true;
-        clearInterval(timer);
+        stopPoll();
         if (rotateTimer) clearInterval(rotateTimer);
         document.removeEventListener("themechange", onTheme);
         try { ro.disconnect(); } catch (_) {}
@@ -1101,15 +1101,13 @@
       });
       ro.observe(el);
 
-      var siteTimer = setInterval(function () {
-        // A backgrounded window has nobody watching the map; the shared memo
-        // already collapses concurrent instances into one request.
-        if (document.hidden) return;
+      PolarisWidgets.pollVisible(ctx, function () {
+        // pollVisible skips a hidden tab; the shared memo collapses concurrent
+        // instances into one request.
         PolarisWidgets.getMapSites(PolarisWidgets.regionNamesForConfig(config)).then(function (sites) { buildMarkers(sites); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
 
       ctx.onUnmount(function () {
-        clearInterval(siteTimer);
         if (pane) { pane.close(); pane = null; }
         full.dispose();
         try { ro.disconnect(); } catch (_) {}

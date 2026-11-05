@@ -60,10 +60,9 @@
 
     renderInstance: function (el, config, data, ctx) {
       renderRows(el, data || [], config);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         fetchBlocks().then(function (rows) { renderRows(el, rows || [], config); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
-      ctx.onUnmount(function () { clearInterval(timer); });
     },
 
     renderPreview: function (el) {

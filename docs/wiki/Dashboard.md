@@ -283,6 +283,14 @@ both.
 
 ## Reading the widgets correctly
 
+**Widgets refresh on their own while you look, and pause while you don't.**
+Each widget re-reads on a cadence set by how fast its subject moves: every
+10 seconds (a running discovery), 30 seconds (outages, alerts) or a minute
+(rankings, forecasts, maps). A dashboard in a background browser tab, a
+minimised window or a wallboard whose screen went to sleep stops asking the
+server; when it comes back into view, every widget that missed a refresh
+re-reads at once, so what you see is never older than one interval.
+
 **"Monitored" means monitored.** Nearly every widget counts only assets with
 `monitored = true`. A device you stopped polling drops out of these counts —
 that is the same gate that stops automations firing about it

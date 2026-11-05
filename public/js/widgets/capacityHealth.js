@@ -69,10 +69,9 @@
 
     renderInstance: function (el, _config, data, ctx) {
       renderInstance(el, data);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         fetchCapacity().then(function (d) { renderInstance(el, d); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
-      ctx.onUnmount(function () { clearInterval(timer); });
     },
 
     renderPreview: function (el) {
