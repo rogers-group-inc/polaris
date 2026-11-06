@@ -149,6 +149,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/tagRegistryService.ts
+
+**What it owns:** The tag registry (`Tag` rows) and the `tagSettings` Setting, extracted from `src/api/routes/tags.ts` (CQ-B044, 2026-11-06). Create / rename / recolour / move / re-filter / delete a tag, with every guard and audit Event that used to live in the route.
+
+**Public API:** `listTagRegistry`, `createTag(body, actor)`, `updateTag(id, body, actor)`, `deleteTag(id, actor)`, `getTagSettings`, `updateTagSettings(enforce, actor)`.
+
+**Cross-service deps:** tagAssignmentService (`normalizeTagCondition`, `normalizeCriteria`, `reconcileTag`, `tagIsManaged`, `stripTagAssignments`, `tagFilterView`), mapRegionService (`REGION_TAG_CATEGORY`), notificationTypes (`scopeConditionStats`), `utils/tagNormalize.ts`, eventLogService.
+
+**Used by:** `src/api/routes/tags.ts` (mounted at /server-settings/tags, gated on the `tags` key).
+
+**Invariants:**
+- `region:` names (any category, case-insensitive) and the Map Regions category belong to the Device Map; `azure:` names belong to the Arc sync and a mirrored row is read-only; a built-in Priority tag keeps its name, category and colour (rule 136) and cannot be deleted.
+- A rename rewrites the string across `ip_blocks`, `subnets`, `assets`, `asset_interface_tags` (rule 133) and `network_tag_assignments` (rule 137); the last two drop the old row where the new name already exists on the same key.
+- A filter change or rename re-runs `reconcileTag` best-effort; the periodic job is the safety net.
+
+**When changing this:** a new guard belongs here, not in the route; keep the 409 messages — the registry UI shows them verbatim.
+
 ## services/tagAssignmentService.ts
 
 **What it owns:** Filter-based tag auto-assignment ("managed sync"). Both device-filter contracts on `Tag` — the CURRENT `assetCondition` condition tree (the automations / address-book shape) and the LEGACY flat `criteria` blob it superseded — the asset-matching engines behind each, and the diff-based reconcile that keeps every filter-bearing tag synced onto matching assets via the `TagAutoAssignment` provenance table. **Since 2026-10-26 also the `auto` rows of `AssetInterfaceTag` (business rule 133):** a tag whose filter asserts a native VLAN (`positiveNativeVlans`) is applied to the matched devices' PORTS on that VLAN, with `tagId` as provenance — every reconciler runs this port half beside the device half (`expectedTaggedPorts` → `applyPortDelta`; `reconcilePortTagsForAsset` on the per-asset path). Never writes block/subnet tags.

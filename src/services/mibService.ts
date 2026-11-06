@@ -653,6 +653,24 @@ export async function createMib(input: CreateMibInput): Promise<MibUploadResult>
   return { ...created, symbolCount, unresolvedCount, unresolvedRoots };
 }
 
+/**
+ * The asset a MIB object walk targets — the fields the walk dials (IPv4, else
+ * the primary IPv6 under rule 128) and labels with. 404 when it does not exist.
+ */
+export async function findMibWalkAsset(assetId: string): Promise<{
+  id: string;
+  hostname: string | null;
+  ipAddress: string | null;
+  ipv6Address: string | null;
+}> {
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { id: true, hostname: true, ipAddress: true, ipv6Address: true },
+  });
+  if (!asset) throw new AppError(404, "Asset not found");
+  return asset;
+}
+
 export async function deleteMib(id: string): Promise<void> {
   try {
     await prisma.mibFile.delete({ where: { id } });
