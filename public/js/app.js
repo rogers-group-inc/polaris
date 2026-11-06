@@ -4,55 +4,16 @@
 
 // ─── Theme ────────────────────────────────────────────────
 //
-// Three SELECTABLE themes in two families: `nightfall` is dark, `morning`/
-// `noon` share the daylight overrides in styles.css. Listed in day order,
-// which is the order the dial steps through them. The retired `dark`/`light`
-// ids are not recognized anywhere any more — a browser holding one falls
-// through to DEFAULT_THEME.
-//
-// Adding a theme = one entry here, one position in THEME_BAND_POS, one token
-// block in styles.css, one id in theme-init.js's KNOWN list. Nothing else.
-var THEMES = [
-  { id: "morning",   label: "Morning",   family: "light", icon: _sunriseIcon },
-  { id: "noon",      label: "Noon",      family: "light", icon: _sunIcon },
-  { id: "nightfall", label: "Nightfall", family: "dark",  icon: _starIcon },
-];
+// The engine — the theme catalogue (THEMES / TRANSIT_THEMES / DEFAULT_THEME),
+// the strip positions (THEME_BAND_POS), the crossfade and glow clocks, the
+// band's travel and seam, and isLightTheme — lives in js/theme-core.js, which
+// every page loads right before this file and which the Dash wallboard
+// (dash-boot.js) and the phone (mobile/app.js) share. This file is the
+// sidebar band's HOST: it builds the engine against `.theme-band-track`,
+// names the theme in the band's aria-label, and keeps the long-standing
+// global names (_setTheme / advanceTheme / _seatThemeBands …) that renderNav
+// and the rest of the shell call.
 
-// Transit palettes: real themes with real token blocks that NOTHING can
-// select. They exist so the band has somewhere to be between two selectable
-// themes — advanceTheme() fades THROUGH each one that lies on the way and
-// carries on without stopping, so noon → nightfall crosses the golden hour
-// instead of cutting from near-white to indigo. Not in THEMES, so no picker,
-// no keyboard step, and never persisted (see _setTheme).
-var TRANSIT_THEMES = [
-  { id: "afternoon", label: "Afternoon", family: "light", icon: _sunIcon, transit: true },
-];
-
-// Where each palette sits along the strip art (/img/brand/time-strip-desktop.webp), as a fraction of
-// the strip's width. The engraving is a 24-hour clock unrolled, so six hours
-// is a quarter of it and the two faces land half a strip apart the way noon
-// and midnight should:
-//
-//   0.056   sun face                -> noon
-//   0.306   red-rust late afternoon -> afternoon  (transit only)
-//   0.556   moon face               -> nightfall
-//   0.806   dawn gold               -> morning
-//
-// These are not decoration: each palette was sampled from its own position on
-// this engraving, so the position and the tokens have to agree. Rightward
-// along the strip is forward in time, which is why the ids read in day order.
-// A position with no palette at all has no entry and the band travels straight
-// past it; a TRANSIT position is passed through with its palette showing.
-//
-// MIRRORS `THEME_STRIP_POS` in public/js/mobile/app.js, which is the phone's
-// half of the same control — the anchor was set by eye on the two FACES there
-// and stepped by exactly a quarter, and the two tables must stay identical or
-// the same theme sits under the marker at two different places on two
-// screens. `tests/unit/themeBandParity.test.ts` reads both files and fails
-// when they disagree. The phone document loads none of this file, which is
-// why there are two tables and not one; changing one means changing both,
-// keeping the quarter spacing and moving the anchor.
-var THEME_BAND_POS = { noon: 0.056, afternoon: 0.306, nightfall: 0.556, morning: 0.806 };
 // The desktop's own copy of the engraving: 1676 x 64, twice the band's 32 px
 // height for high-density screens, WebP at quality 90 — 31 KB, where the
 // shared 3456 x 132 PNG it replaced was 757 KB. The phone keeps a full-size
@@ -79,28 +40,10 @@ function _brandArtUrl(path) {
   return v ? path + "?v=" + encodeURIComponent(v) : path;
 }
 
-// The fallback for an unknown or retired saved value. Deliberately NOT
-// THEMES[0]: display order and the default move independently, so reordering
-// the dial never changes what a new install lands on.
-var DEFAULT_THEME = "nightfall";
-
 // No saved preference (fresh browser, or a user who has never touched the
-// dial) follows the OS; matching on "light" leaves nightfall as the fallback
-// for a browser that states no preference. Mirrors js/theme-init.js, which
-// does the same for the login + setup pages. Deliberately does not persist:
-// staying unsaved is what keeps the user tracking their system, and _setTheme
-// is the opt-out.
-(function () {
-  var saved = null;
-  try { saved = localStorage.getItem("polaris-theme"); } catch (e) {}
-  if (saved && !_themeExists(saved)) saved = null;
-  if (!saved) {
-    var light = false;
-    try { light = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches; } catch (e) {}
-    saved = light ? "morning" : DEFAULT_THEME;
-  }
-  document.documentElement.setAttribute("data-theme", saved);
-})();
+// band) follows the OS. theme-init.js already did this in <head>; repeating it
+// here keeps a page that skipped it correct.
+_applySavedTheme();
 
 // Page layout: how wide the shell may grow. Two capped columns centred in the
 // window (the sidebar, tables and slide-overs all follow the column's edges)
@@ -133,367 +76,35 @@ function _currentLayout() {
   document.documentElement.setAttribute("data-layout", _layoutId(saved));
 })();
 
-// SELECTABLE ids only — transit palettes are deliberately absent, so a saved
-// "afternoon" (which nothing should ever write) is rejected here the same way
-// a retired "dark" is, and the browser lands on a real theme.
-function _themeExists(id) {
-  for (var i = 0; i < THEMES.length; i++) if (THEMES[i].id === id) return true;
-  return false;
-}
-
-/**
- * The theme record for `id`, or DEFAULT_THEME's when it names nothing.
- * Resolves selectable AND transit ids — _setTheme has to be able to apply a
- * waypoint, and isLightTheme has to answer correctly while one is showing.
- */
-function _getTheme(id) {
-  for (var i = 0; i < THEMES.length; i++) if (THEMES[i].id === id) return THEMES[i];
-  for (var j = 0; j < TRANSIT_THEMES.length; j++) if (TRANSIT_THEMES[j].id === id) return TRANSIT_THEMES[j];
-  for (var k = 0; k < THEMES.length; k++) if (THEMES[k].id === DEFAULT_THEME) return THEMES[k];
-  return THEMES[0];
-}
-
-function _getCurrentTheme() {
-  return document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
-}
-
-// True for the daylight family. Use this instead of comparing against a theme
-// id anywhere a surface picks an image, a basemap or a chart palette by
-// brightness — an id check misses morning, noon and the afternoon waypoint.
-function isLightTheme(id) {
-  return _getTheme(id || _getCurrentTheme()).family === "light";
-}
-window.isLightTheme = isLightTheme;
-
-// Where the band is now, in strip widths. May exceed 1 between a leg landing
-// and the seam being normalised away. null until first paint.
-var _bandPos = null;
-var _bandSeamTimer = null;
-
-// Every band on the page, not one by id: a second shell or a specimen card can
-// each hold one, and they all read the same clock.
-function _themeBandTracks() { return document.querySelectorAll(".theme-band-track"); }
-
-// Writes _bandPos to every band on the page. `animate` false parks it with the
-// transition suppressed — used for the first paint, for the seam jump, and on
-// resize, where a visible slide would be a bug rather than feedback.
-function _paintThemeBands(animate) {
-  var tracks = _themeBandTracks();
-  for (var i = 0; i < tracks.length; i++) {
-    var track = tracks[i];
-    var copy = track.firstElementChild;
-    var win = track.parentElement;
-    if (!copy || !win) continue;
-    // Measured, not assumed: the art is a 2x asset sized by height, so its
-    // rendered width depends on the band's height and the display's pixel
-    // ratio, and the sidebar is hidden outright under the narrow breakpoint.
-    var stripW = copy.getBoundingClientRect().width;
-    // Before the art loads there is no width to measure and nothing to
-    // position against. Seat on load rather than giving up, or the first click
-    // travels from the band's left edge instead of from the theme showing.
-    // A sidebar that is display:none measures zero with the image already
-    // complete — that one is caught by the resize listener below, which
-    // repaints as soon as the rail is back.
-    if (!stripW) {
-      if (!copy.complete) {
-        copy.addEventListener("load", function () { _paintThemeBands(false); }, { once: true });
-      }
-      continue;
+// The sidebar band's engine (theme-core.js → createThemeEngine). The
+// aria-label is the ONLY place the theme is named: the band carries no
+// caption and no marker — the artwork under the centre is the whole of the
+// visual answer — so this is not a redundant announcement of something a
+// screen reader could reach another way; drop it and the control becomes an
+// unlabelled button that changes the page's colours.
+var _themeEngine = createThemeEngine({
+  track: ".theme-band-track",
+  control: ".theme-band",
+  onApply: function (t) {
+    var bands = document.querySelectorAll(".theme-band");
+    for (var i = 0; i < bands.length; i++) {
+      bands[i].setAttribute("aria-label", "Time of day: " + t.label + ". Move through the day.");
     }
-    // Anchored one strip width left: copy two sits under the marker and copies
-    // one and three cover the window either side, so no position leaves bare
-    // surface beside the art.
-    var x = win.getBoundingClientRect().width / 2 - (_bandPos + 1) * stripW;
-    if (animate) {
-      track.style.transform = "translateX(" + x + "px)";
-    } else {
-      var prev = track.style.transition;
-      track.style.transition = "none";
-      track.style.transform = "translateX(" + x + "px)";
-      void track.offsetWidth;
-      track.style.transition = prev;
-    }
-  }
-}
+  },
+});
 
-// Parks every band at the current position (or at the current theme's, when
-// there is none yet) with no animation. For first paint, and for a band added
-// after boot — renderNav rebuilds the whole rail, so the track it painted a
-// moment ago is a different node by the time the operator sees it.
-function _seatThemeBands() {
-  if (_bandPos === null) _bandPos = THEME_BAND_POS[_getCurrentTheme()];
-  if (_bandPos === undefined) _bandPos = THEME_BAND_POS[DEFAULT_THEME];
-  _paintThemeBands(false);
-}
-
-// Travels to `id`'s position, always leftward. Seats itself on `prevId` first
-// if this is the page's first change, so there is a from-value to travel from.
-function _advanceThemeBands(id, prevId) {
-  var target = THEME_BAND_POS[id];
-  if (target === undefined) return;
-  if (_bandSeamTimer) {
-    // A seam normalisation still owed from the previous leg: settle it now,
-    // unanimated, before measuring this one — otherwise this leg would start
-    // from a position a full strip width away from where it looks.
-    clearTimeout(_bandSeamTimer);
-    _bandSeamTimer = null;
-    if (_bandPos !== null && _bandPos >= 1) { _bandPos -= 1; _paintThemeBands(false); }
-  }
-  if (_bandPos === null) {
-    var seat = THEME_BAND_POS[prevId];
-    _bandPos = seat === undefined ? target : seat;
-    _paintThemeBands(false);
-    if (seat === undefined) return;
-  }
-  // Forward-only: a target that is "behind" is reached by continuing off the
-  // end of the strip and into the identical copy, never by running backwards.
-  // This is the whole reason the day keeps moving one way.
-  var forward = target - _bandPos;
-  while (forward <= 0) forward += 1;
-  _bandPos += forward;
-  _paintThemeBands(true);
-  if (_bandPos >= 1) {
-    // The seam is what makes a finite strip endless: past the end of one copy
-    // is identical pixels in the next, so exactly ONE strip width can be
-    // subtracted unseen once the leg has landed. It must be a whole width
-    // (anything else lands on different pixels and the jump shows) and it must
-    // never run mid-transition.
-    _bandSeamTimer = setTimeout(function () {
-      _bandSeamTimer = null;
-      _bandPos -= 1;
-      _paintThemeBands(false);
-    }, _themeLegMs(id));
-  }
-}
-
-// A resized window moves the centre marker, so the band has to be re-seated
-// under it — without animation, because nothing about a resize is a theme
-// change. This is also what paints a band that could not be measured at all
-// while the sidebar was hidden under the narrow breakpoint.
-if (!window.__polarisBandResize) {
-  window.__polarisBandResize = true;
-  window.addEventListener("resize", function () {
-    if (_bandPos !== null) _paintThemeBands(false);
-  });
-}
-
-// Matches the crossfade duration in styles.css (the data-theme-fading block).
-// Change one, change the other.
-var THEME_FADE_MS = 800;
-// Steps that take longer than THEME_FADE_MS, by DESTINATION. Nightfall →
-// morning is one 800 ms step where noon → nightfall gets two (1.6 s), so dark
-// to light came in a snap; it takes the same 1.6 s here. Every timer tied to a
-// step's length reads _themeLegMs() — the fading attribute's removal (a
-// transition whose rule leaves is cut short), the seam normalisation (never
-// mid-travel) and the next leg's start — and the [data-theme="morning"] rule
-// in the crossfade block of styles.css carries the same number for the
-// palette and the band's travel. MIRRORS THEME_LEG_MS in mobile/app.js
-// (themeBandParity.test.ts).
-var THEME_LEG_MS = { morning: 1600 };
-function _themeLegMs(id) { return THEME_LEG_MS[id] || THEME_FADE_MS; }
-var _themeFadeTimer = null;
-
-// The page glows run on their own, longer clock (the bare `html` rule in the
-// crossfade block of styles.css). data-glow-turn names the turn — "morning-
-// noon" — for that long, so a glow animation can key on WHICH turn it is
-// (the sun rounding to a circle as it climbs) and outlive data-theme-fading,
-// which comes off at 880 ms. Change GLOW_MS with the CSS's 2000ms.
-var GLOW_MS = 2000;
-var _glowTurnTimer = null;
-function _markGlowTurn(fromId, toId) {
-  var root = document.documentElement;
-  root.setAttribute("data-glow-turn", fromId + "-" + toId);
-  if (_glowTurnTimer) clearTimeout(_glowTurnTimer);
-  _glowTurnTimer = setTimeout(function () {
-    root.removeAttribute("data-glow-turn");
-    _glowTurnTimer = null;
-  }, GLOW_MS + 80);
-}
-
-function _prefersReducedMotion() {
-  try {
-    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  } catch (e) { return false; /* no matchMedia — animate */ }
-}
-
-// Can this browser crossfade the theme change as ONE picture — a same-document
-// view transition WITH types (the types carry the step's easing and length to
-// the CSS)? Chromium 125+, Safari 18.2+, Firefox 147+. Anything else takes the per-element
-// crossfade (data-theme-xfade). See the "Theme changes as one crossfade" block
-// in styles.css for why: per-element transitions on a busy page were the
-// 100-150 ms frames.
-function _themeViewTransitions() {
-  try {
-    return typeof document.startViewTransition === "function" &&
-      typeof ViewTransition !== "undefined" && "types" in ViewTransition.prototype;
-  } catch (e) { return false; }
-}
-
-// Arms the palette crossfade for the length of one change. Called before
-// data-theme moves, so the new values are what gets transitioned TO.
-// data-theme-fading drives the band's travel and the timers either way;
-// data-theme-xfade switches on the per-element colour transitions, and only
-// when the change is NOT a view transition (which crossfades the page whole).
-function _beginThemeFade(phase, ms, viaViewTransition) {
-  if (_prefersReducedMotion()) return;
-  var root = document.documentElement;
-  root.setAttribute("data-theme-fading", phase || "solo");
-  if (viaViewTransition) root.removeAttribute("data-theme-xfade");
-  else root.setAttribute("data-theme-xfade", "");
-  if (_themeFadeTimer) clearTimeout(_themeFadeTimer);
-  _themeFadeTimer = setTimeout(function () {
-    root.removeAttribute("data-theme-fading");
-    root.removeAttribute("data-theme-xfade");
-    _themeFadeTimer = null;
-  }, (ms || THEME_FADE_MS) + 80);
-}
-
-/**
- * Applies a theme. `phase` positions this change within a multi-leg turn:
- * "solo" (or omitted), "in", "mid", "out" — see the data-theme-fading block
- * in styles.css.
- */
-function _setTheme(theme, phase) {
-  var t = _getTheme(theme);
-  var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
-  // Only fade a real change — re-applying the current theme (a page re-boot,
-  // another tab syncing) should be instant.
-  var change = t.id !== prevId;
-  var legMs = _themeLegMs(t.id);
-  var viaVT = change && !_prefersReducedMotion() && _themeViewTransitions();
-  if (change) { _beginThemeFade(phase, legMs, viaVT); _markGlowTurn(prevId, t.id); }
-  if (viaVT) {
-    // One crossfade of the whole page instead of thousands of per-element
-    // colour transitions. The update runs after the browser has captured the
-    // outgoing picture; the incoming one is live, so the glow and the band
-    // keep moving inside it. The types give the CSS this step's easing and
-    // length (styles.css, "Theme changes as one crossfade").
-    document.startViewTransition({
-      update: function () { _applyTheme(t, prevId); },
-      types: ["polaris-theme", "polaris-theme-" + (phase || "solo"),
-              legMs > THEME_FADE_MS ? "polaris-theme-slow" : "polaris-theme-std"],
-    });
-  } else {
-    _applyTheme(t, prevId);
-  }
-}
-
-// The DOM half of _setTheme, split out so a view transition can run it as its
-// update callback (after the outgoing picture is captured).
-function _applyTheme(t, prevId) {
-  document.documentElement.setAttribute("data-theme", t.id);
-  // Waypoints are never saved: a reload mid-turn must land on a real theme.
-  if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
-  // The band is TRANSFORMED, never rebuilt — see the .theme-band comment in
-  // styles.css. Writing style.transform on the live track is what lets the
-  // user watch it travel; re-rendering the <img> copies would snap it.
-  // _advanceThemeBands seats itself on the OUTGOING theme when this is the
-  // page's first change, so the first click has a from-value to travel from
-  // rather than snapping straight to the destination.
-  var i;
-  _advanceThemeBands(t.id, prevId);
-  // The aria-label is the ONLY place the theme is named. The band carries no
-  // caption and no marker — the artwork under the centre is the whole of the
-  // visual answer — so this is not a redundant announcement of something a
-  // screen reader could reach another way; drop it and the control becomes an
-  // unlabelled button that changes the page's colours.
-  var bands = document.querySelectorAll(".theme-band");
-  for (i = 0; i < bands.length; i++) {
-    bands[i].setAttribute("aria-label", "Time of day: " + t.label + ". Move through the day.");
-  }
-  // Anything that cached colors at render time — canvases, Leaflet layers,
-  // Cytoscape stylesheets, hand-rolled SVG charts — listens for this rather
-  // than hooking the band.
-  document.dispatchEvent(new CustomEvent("themechange", { detail: { theme: t.id, family: t.family } }));
-}
-
-// Forward distance from position `a` to position `b` in the band's own
-// direction of travel, 0–1. Used to work out which waypoints lie on the way.
-function _bandForwardGap(a, b) { return ((b - a) % 1 + 1) % 1; }
-
-// Where the band is headed: the destination of a sweep still in flight, or
-// simply what is showing. Clicking mid-sweep steps on from the DESTINATION,
-// not from the waypoint currently painted — otherwise a click during the
-// golden hour would treat afternoon as the current theme and never reach
-// nightfall.
-var _themeDest = null;
-var _themeChainTimer = null;
-
-// One click, one step — but the step can have waypoints. The band replaced the
-// row-menu picker: a menu made the operator read three words and aim at one,
-// where the band shows where they are in the day and moves them along it.
-//
-// It lands only on THEMES entries. Any TRANSIT_THEMES position between here
-// and there is faded through on the way: noon → nightfall passes the red-rust
-// late afternoon, so the room goes near-white → golden hour → indigo in one
-// gesture and stops at nightfall. The band travels in the same steps, so the
-// palette and the artwork are always showing the same hour.
-function advanceTheme() {
-  if (_themeChainTimer) { clearTimeout(_themeChainTimer); _themeChainTimer = null; }
-  var from = _themeDest || _getCurrentTheme();
-  var i = THEMES.indexOf(_getTheme(from));
-  var dest = THEMES[(i + 1) % THEMES.length].id;
-
-  var a = THEME_BAND_POS[from] || 0;
-  var span = _bandForwardGap(a, THEME_BAND_POS[dest] || 0) || 1;
-  var stops = TRANSIT_THEMES
-    .filter(function (t) {
-      var d = _bandForwardGap(a, THEME_BAND_POS[t.id] || 0);
-      return d > 0 && d < span;
-    })
-    .sort(function (x, y) {
-      return _bandForwardGap(a, THEME_BAND_POS[x.id] || 0) -
-             _bandForwardGap(a, THEME_BAND_POS[y.id] || 0);
-    })
-    .map(function (t) { return t.id; });
-
-  _themeDest = dest;
-  var queue = stops.concat([dest]);
-  var legs = queue.length;
-  var n = 0;
-  (function step() {
-    // No gap and no re-easing between legs: the next fade starts the instant
-    // the last one lands, and the phase splits one ease across the whole turn,
-    // so noon → afternoon → nightfall reads as a single continuous sweep
-    // rather than two changes with a stop in the middle.
-    var phase = legs === 1 ? "solo" : (n === 0 ? "in" : (n === legs - 1 ? "out" : "mid"));
-    n++;
-    var leg = queue.shift();
-    _setTheme(leg, phase);
-    if (!queue.length) { _themeDest = null; return; }
-    _themeChainTimer = setTimeout(step, _themeLegMs(leg));
-  })();
-}
+// The shell's long-standing names for the engine's verbs. renderNav seats the
+// band after every rebuild of the rail; _setTheme is what the CSS comments and
+// brand-logo.js name.
+function _setTheme(theme, phase) { _themeEngine.set(theme, phase); }
+function _seatThemeBands() { _themeEngine.seat(); }
+function advanceTheme() { _themeEngine.advance(); }
 window.advanceTheme = advanceTheme;
 
 // Aliases for callers that predate the band. `openThemeMenu` no longer opens
 // anything — there is no theme menu to open.
 function toggleTheme() { advanceTheme(); }
 function openThemeMenu() { advanceTheme(); }
-
-// Delegated, so a band rendered by anything — renderNav, a second shell —
-// travels without being wired up. Never add a direct listener to a .theme-band
-// as well, or one click advances two steps.
-if (!document.documentElement.hasAttribute("data-theme-band-wired")) {
-  document.documentElement.setAttribute("data-theme-band-wired", "");
-  document.addEventListener("click", function (e) {
-    if (e.target && e.target.closest && e.target.closest(".theme-band")) advanceTheme();
-  });
-}
-function _sunIcon() {
-  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
-}
-
-function _sunriseIcon() {
-  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 18a5 5 0 00-10 0"/><line x1="12" y1="2" x2="12" y2="9"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="8 6 12 2 16 6"/></svg>';
-}
-
-// Nightfall: a filled crescent built as a MASKED DISC — one circle kept, an
-// offset circle punched out. Hand-fitted arcs collapse to a hairline or read
-// as a full ring at the 15px this renders at; the mask keeps the taper.
-function _starIcon() {
-  return '<svg viewBox="0 0 24 24" fill="none"><mask id="pk-moon"><circle cx="12" cy="12" r="9" fill="#fff"/><circle cx="18" cy="10" r="9" fill="#000"/></mask><circle cx="12" cy="12" r="9" fill="currentColor" mask="url(#pk-moon)"/></svg>';
-}
 
 // ─── Current User ────────────────────────────────────────────────────────────
 //
@@ -1518,7 +1129,7 @@ function renderNav() {
   // it: its position is measured against the rendered width of the artwork,
   // which depends on the band's height and the display's pixel ratio and is
   // unknowable while this is still a string. renderNav also rebuilds the whole
-  // rail, so every re-render hands _paintThemeBands a brand-new track that has
+  // rail, so every re-render hands the band painter a brand-new track that has
   // never been positioned — an unseated one sits at the strip's left edge and
   // the next click travels from there instead of from the theme showing.
   _seatThemeBands();
@@ -5123,7 +4734,7 @@ function showRowMenu(anchor, items, opts) {
     var b = document.createElement("button");
     b.type = "button";
     b.setAttribute("role", "menuitem");
-    // `icon` is developer-supplied SVG markup (ICONS / _sunIcon), never user
+    // `icon` is developer-supplied SVG markup (ICONS), never user
     // data, so innerHTML is safe here; the label stays textContent regardless.
     if (it.icon) {
       b.innerHTML = it.icon;

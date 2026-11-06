@@ -432,7 +432,7 @@
    engraved sun face, the red-rust of late afternoon, the moon face, dawn gold,
    in that order and a quarter of the strip apart. Every theme's palette was
    drawn from one of those positions, so each theme OWNS its place along the
-   strip (THEME_BAND_POS in app.js) and a click travels the band to bring that
+   strip (THEME_BAND_POS in theme-core.js) and a click travels the band to bring that
    place to the centre of the window.
 
    Only a slice is in the rail: a ~1450px strip in a ~204px window, so the day
@@ -444,7 +444,7 @@
 
    Four things not to break:
    - The band travels, the window does not, and it only ever travels ONE way.
-     See _advanceThemeBands() in app.js, which keeps adding forward distance so
+     See travel() in theme-core.js, which keeps adding forward distance so
      the wrap nightfall round to morning carries on through the day instead of
      rewinding through the afternoon.
    - The track holds the art THREE times. It is anchored one strip width left
