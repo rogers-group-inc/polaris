@@ -169,7 +169,7 @@ var _eventsSF = null;
       }
     } catch (err) {
       document.getElementById("events-tbody").innerHTML =
-        '<tr><td colspan="9" class="empty-state">Failed to load events</td></tr>';
+        '<tr><td colspan="8" class="empty-state">Failed to load events</td></tr>';
     }
   }
 
@@ -201,7 +201,7 @@ var _eventsSF = null;
   function renderTable(events) {
     var tbody = document.getElementById("events-tbody");
     if (!events.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No events found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No events found</td></tr>';
       return;
     }
 
@@ -222,26 +222,31 @@ var _eventsSF = null;
       // is the only column that says which device fired. A deleted device
       // falls back to the name an asset row recorded for itself.
       var deviceName = ev.assetName || (ev.resourceType === "asset" && ev.resourceName) || "";
+      // A live device is a row-menu trigger: left click opens its slide-over,
+      // right click shows the asset's own menu (the Assets list's).
       var deviceCell = !deviceName
         ? "-"
         : (ev.assetName && permAtLeast("assets", "read")
-            ? '<a href="#" class="ev-device-link" data-asset-id="' + escapeHtml(ev.assetId) + '">' + escapeHtml(deviceName) + '</a>'
+            ? eventAssetTriggerHtml(ev.assetId, deviceName)
             : escapeHtml(deviceName));
 
-      var detailBtn = ev.details && ev.details.changes
-        ? '<button class="btn btn-secondary btn-sm btn-event-detail" data-event-idx="' + idx + '" style="padding:2px 8px;font-size:0.75rem">Detail</button>'
-        : '';
+      // An event that recorded a field-by-field change list opens it from the
+      // Action text (and a double click on the row) — no Actions column.
+      var hasChanges = !!(ev.details && ev.details.changes);
+      var actionCell = hasChanges
+        ? '<button type="button" class="row-menu-trigger ev-detail-trigger" data-event-idx="' + idx + '" ' +
+            'aria-haspopup="menu" aria-expanded="false" title="View what changed">' + escapeHtml(ev.action || "") + '</button>'
+        : escapeHtml(ev.action || "");
 
-      return '<tr>' +
+      return '<tr' + (hasChanges ? ' data-row-menu-row' : '') + '>' +
         '<td style="font-family:var(--font-mono);font-size:0.82rem;white-space:nowrap">' + escapeHtml(timeStr) + '</td>' +
         '<td><span class="badge ' + levelClass + '">' + levelLabel + '</span></td>' +
-        '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ev.action || "") + '</td>' +
+        '<td style="font-family:var(--font-mono);font-size:0.82rem">' + actionCell + '</td>' +
         '<td>' + escapeHtml(resourceLabel) + '</td>' +
         '<td class="cell-wrap">' + escapeHtml(resourceName) + '</td>' +
         '<td class="cell-wrap">' + deviceCell + '</td>' +
         '<td class="cell-wrap">' + escapeHtml(ev.message || "") + '</td>' +
         '<td>' + escapeHtml(ev.actor || "-") + '</td>' +
-        '<td>' + detailBtn + '</td>' +
         '</tr>';
     }).join("");
 
@@ -338,18 +343,21 @@ var _eventsSF = null;
     _saveEventsPrefs();
   });
 
-  // Detail button delegation
+  // Row triggers: the Device name (asset slide-over / asset menu) and, on an
+  // event with a change list, the Action text (View Changes).
   document.getElementById("events-tbody").addEventListener("click", function (e) {
-    var deviceLink = e.target.closest(".ev-device-link");
-    if (deviceLink) {
-      e.preventDefault();
-      PolarisPanels.openAsset(deviceLink.getAttribute("data-asset-id"));
+    var deviceTrigger = e.target.closest("[data-event-asset]");
+    if (deviceTrigger) {
+      openEventAssetTrigger(deviceTrigger);
       return;
     }
-    var btn = e.target.closest(".btn-event-detail");
-    if (!btn) return;
-    var idx = parseInt(btn.getAttribute("data-event-idx"), 10);
-    if (_eventsCurrentPage[idx]) showEventDetail(_eventsCurrentPage[idx]);
+    var detail = e.target.closest(".ev-detail-trigger");
+    if (!detail) return;
+    var ev = _eventsCurrentPage[parseInt(detail.getAttribute("data-event-idx"), 10)];
+    if (!ev) return;
+    showRowMenu(detail, [
+      { label: "View Changes", primary: true, onSelect: function () { showEventDetail(ev); } },
+    ], { label: "Actions for " + (ev.action || "event") });
   });
 
   // Settings button
@@ -736,6 +744,36 @@ function getAlertsFormData() {
 
 /* ─── Conflict views (rendered inside the Alerts panel) ──────────────────── */
 
+// An asset name on this page (the Device column, every conflict card) is a
+// row-menu trigger: a left click opens the asset slide-over in place, a right
+// click shows the same menu the asset's row has on the Assets list
+// (_assetMenuItems).
+function eventAssetTriggerHtml(assetId, name) {
+  return '<button type="button" class="row-menu-trigger" data-event-asset="' + escapeHtml(assetId) + '" ' +
+    'aria-haspopup="menu" aria-expanded="false" title="Open this asset — right-click for its menu">' +
+    escapeHtml(name) + "</button>";
+}
+
+// The menu needs the full asset record (its verbs depend on type, MAC,
+// status and management access) and assets.js, which this page loads only
+// with the asset slide-over — so only the right click pays for the fetch;
+// a left click opens the panel straight away. The gesture is read
+// synchronously: the forced-menu flag lives only for the replayed click.
+function openEventAssetTrigger(trigger) {
+  var id = trigger.getAttribute("data-event-asset");
+  var at = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
+  if (!id || typeof PolarisPanels === "undefined") return;
+  if (!at) { PolarisPanels.openAsset(id); return; }
+  PolarisPanels.ensure("asset").then(function () {
+    return api.assets.get(id);
+  }).then(function (a) {
+    if (!a || typeof window._assetMenuItems !== "function" || !document.body.contains(trigger)) return;
+    showRowMenu(trigger, window._assetMenuItems(a), { label: "Actions for " + (a.hostname || "asset"), menuAt: at });
+  }).catch(function (err) {
+    showToast((err && err.message) || "Couldn't load this asset", "error");
+  });
+}
+
 // Discovery conflicts have no slide-over of their own: they are the
 // "Conflicts — …" views of the Alerts panel below, which owns opening, closing,
 // the view selector and the badge. This block only draws a conflict list into
@@ -766,35 +804,12 @@ function getAlertsFormData() {
       escapeHtml(ip) + "</" + tag + ">";
   }
 
-  // Every asset name on a conflict card is a row-menu trigger: a left click
-  // opens the asset slide-over in place over this panel, a right click shows
-  // the same menu the asset's row has on the Assets list (_assetMenuItems).
-  // A name with no asset behind it stays text.
+  // Every asset name on a conflict card is the shared asset trigger
+  // (eventAssetTriggerHtml): left click opens the slide-over, right click
+  // shows the asset's menu. A name with no asset behind it stays text.
   function assetNameHtml(assetId, name) {
     if (!assetId) return escapeHtml(name);
-    return '<button type="button" class="row-menu-trigger" data-conflict-asset="' + escapeHtml(assetId) + '" ' +
-      'aria-haspopup="menu" aria-expanded="false" title="Open this asset — right-click for its menu">' +
-      escapeHtml(name) + "</button>";
-  }
-
-  // The menu needs the full asset record (its verbs depend on type, MAC,
-  // status and management access) and assets.js, which this page loads only
-  // with the asset slide-over — so only the right click pays for the fetch;
-  // a left click opens the panel straight away. The gesture is read
-  // synchronously: the forced-menu flag lives only for the replayed click.
-  function openConflictAsset(trigger) {
-    var id = trigger.getAttribute("data-conflict-asset");
-    var at = typeof rowMenuGesture === "function" ? rowMenuGesture() : null;
-    if (!id || typeof PolarisPanels === "undefined") return;
-    if (!at) { PolarisPanels.openAsset(id); return; }
-    PolarisPanels.ensure("asset").then(function () {
-      return api.assets.get(id);
-    }).then(function (a) {
-      if (!a || typeof window._assetMenuItems !== "function" || !document.body.contains(trigger)) return;
-      showRowMenu(trigger, window._assetMenuItems(a), { label: "Actions for " + (a.hostname || "asset"), menuAt: at });
-    }).catch(function (err) {
-      showToast((err && err.message) || "Couldn't load this asset", "error");
-    });
+    return eventAssetTriggerHtml(assetId, name);
   }
 
   // Bound once: the body is repainted on every load, the listener survives it.
@@ -813,10 +828,10 @@ function getAlertsFormData() {
       });
       return;
     }
-    var trigger = t.closest("[data-conflict-asset]");
+    var trigger = t.closest("[data-event-asset]");
     if (!trigger || !body.contains(trigger)) return;
     e.preventDefault();
-    openConflictAsset(trigger);
+    openEventAssetTrigger(trigger);
   });
 
   async function loadConflicts(silent) {

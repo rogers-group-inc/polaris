@@ -26604,10 +26604,9 @@ function _assetEventsTabHTML(assetId) {
           '<th style="width:100px" data-col-id="resource"  data-sf-key="resourceType" data-sf-type="string">Resource</th>' +
           '<th                      data-col-id="message"  data-sf-key="message"   data-sf-type="string">Message</th>' +
           '<th style="width:100px" data-col-id="user"      data-sf-key="actor"     data-sf-type="string">User</th>' +
-          '<th style="width:60px"  data-col-id="actions" data-col-required="true"></th>' +
         '</tr></thead>' +
         '<tbody id="asset-view-events-tbody">' +
-          '<tr><td colspan="7" class="empty-state">Loading…</td></tr>' +
+          '<tr><td colspan="6" class="empty-state">Loading…</td></tr>' +
         '</tbody>' +
       '</table>' +
     '</div>' +
@@ -26625,18 +26624,21 @@ function _renderAssetEventRow(ev, idx) {
   var resourceLabel = ev.resourceType || "-";
   var resourceName = ev.resourceName ? ' <span style="color:var(--color-text-tertiary);font-size:0.8rem">(' + escapeHtml(ev.resourceName) + ')</span>' : "";
 
-  var detailBtn = ev.details && ev.details.changes
-    ? '<button class="btn btn-secondary btn-sm btn-event-detail" data-event-idx="' + idx + '" style="padding:2px 8px;font-size:0.75rem">Detail</button>'
-    : '';
+  // An event with a field-by-field change list opens it from the Action text
+  // (and a double click on the row) — the Events page's gesture, no column.
+  var hasChanges = !!(ev.details && ev.details.changes);
+  var actionCell = hasChanges
+    ? '<button type="button" class="row-menu-trigger ev-detail-trigger" data-event-idx="' + idx + '" ' +
+        'aria-haspopup="menu" aria-expanded="false" title="View what changed">' + escapeHtml(ev.action || "") + '</button>'
+    : escapeHtml(ev.action || "");
 
-  return '<tr>' +
+  return '<tr' + (hasChanges ? ' data-row-menu-row' : '') + '>' +
     '<td style="font-family:var(--font-mono);font-size:0.82rem;white-space:nowrap">' + escapeHtml(timeStr) + '</td>' +
     '<td><span class="badge ' + levelClass + '">' + levelLabel + '</span></td>' +
-    '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ev.action || "") + '</td>' +
+    '<td style="font-family:var(--font-mono);font-size:0.82rem">' + actionCell + '</td>' +
     '<td>' + escapeHtml(resourceLabel) + resourceName + '</td>' +
     '<td>' + escapeHtml(ev.message || "") + '</td>' +
     '<td>' + escapeHtml(ev.actor || "-") + '</td>' +
-    '<td>' + detailBtn + '</td>' +
     '</tr>';
 }
 
@@ -26695,10 +26697,10 @@ async function _loadAssetEventsTabFor() {
     _assetEventsCurrentPage = events;
     tbody.innerHTML = events.length
       ? events.map(_renderAssetEventRow).join("")
-      : '<tr><td colspan="7" class="empty-state">No events found</td></tr>';
+      : '<tr><td colspan="6" class="empty-state">No events found</td></tr>';
     _renderAssetEventsPagination();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">Failed to load events</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Failed to load events</td></tr>';
   }
 }
 
@@ -26836,10 +26838,13 @@ function _wireAssetEventsTab(assetId) {
 
   var tbody = document.getElementById("asset-view-events-tbody");
   if (tbody) tbody.addEventListener("click", function (e) {
-    var detailBtn = e.target.closest(".btn-event-detail");
-    if (!detailBtn) return;
-    var idx = parseInt(detailBtn.getAttribute("data-event-idx"), 10);
-    if (_assetEventsCurrentPage[idx]) _showAssetEventDetail(_assetEventsCurrentPage[idx]);
+    var detail = e.target.closest(".ev-detail-trigger");
+    if (!detail) return;
+    var ev = _assetEventsCurrentPage[parseInt(detail.getAttribute("data-event-idx"), 10)];
+    if (!ev) return;
+    showRowMenu(detail, [
+      { label: "View Changes", primary: true, onSelect: function () { _showAssetEventDetail(ev); } },
+    ], { label: "Actions for " + (ev.action || "event") });
   });
 }
 
