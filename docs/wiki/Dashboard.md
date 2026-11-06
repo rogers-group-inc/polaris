@@ -114,7 +114,7 @@ imported tab is not linked to anything: it is yours to change.
 | **Active Alerts** | alerts your automations have raised from a reading or a state change and nothing has cleared, most severe first — **with Acknowledge and Clear in place** |
 | **Event Alerts** | the same, for alerts raised by **event-triggered** automations — an agent disconnecting, a failed sync, a discovery error. These used to share Active Alerts behind a Show / Hide setting; add this widget wherever you want them |
 | **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise. An outage whose alert has been acknowledged stays listed but is greyed out, with an **ack** pill naming who took it, so unowned outages stand out. Hover the pill to read the acknowledgement note |
-| **Sites With Issues** | sites with assets down or in warning, worst first; expand for the nodes |
+| **Sites With Issues** | sites where an asset carries an active alert, worst alert severity first, with a count per severity; expand for the alerted nodes. A missed poll alone does not list a site |
 | **Asset Types** | breakdown of monitored assets by type; click a slice to drill into the matching asset list |
 
 ### Performance
