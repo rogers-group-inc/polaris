@@ -2204,6 +2204,71 @@ router.get("/:id/fortigates", async (req, res, next) => {
   }
 });
 
+// Request bodies of POST /:id/query, one per integration type (and FortiManager's
+// two modes). Module level per the route-file convention (CQ-B043) — they used
+// to be built inline in the handler on every call.
+const FmgGateQuerySchema = z.object({
+  mode: z.literal("fortigate"),
+  deviceName: z.string().min(1),
+  method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
+  path: z.string().min(1),
+  query: z.record(z.string()).optional(),
+  // JSON request body for POST/PUT (e.g. CMDB writes when testing the
+  // description-sync surfaces). Ignored for GET/DELETE — fetch rejects
+  // GET bodies outright.
+  body: z.unknown().optional(),
+  // Per-request credential override (see overrideFortigateCreds).
+  apiToken: OverrideApiTokenSchema,
+  apiUser: OverrideApiUserSchema,
+});
+const FmgRpcQuerySchema = z.object({
+  mode: z.literal("fmg").optional(),
+  method: z.string().min(1),
+  params: z.array(z.unknown()),
+});
+const FortiGateQuerySchema = z.object({
+  method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
+  path: z.string().min(1),
+  query: z.record(z.string()).optional(),
+  // JSON request body for POST/PUT — same semantics as the FMG
+  // direct-to-FortiGate mode above.
+  body: z.unknown().optional(),
+  // Per-request credential override (see overrideFortigateCreds).
+  apiToken: OverrideApiTokenSchema,
+  apiUser: OverrideApiUserSchema,
+});
+const EntraQuerySchema = z.object({
+  path: z.string().min(1),
+  query: z.record(z.string()).optional(),
+});
+const ActiveDirectoryQuerySchema = z.object({
+  filter:     z.string().optional(),
+  baseDn:     z.string().optional(),
+  scope:      z.enum(["sub", "one", "base"]).optional(),
+  attributes: z.array(z.string()).optional(),
+  sizeLimit:  z.number().int().min(1).max(500).optional(),
+});
+const VcenterQuerySchema = z.object({
+  method: z.enum(["GET", "POST"]).optional().default("GET"),
+  path:   z.string().min(1),
+  query:  z.record(z.string()).optional(),
+});
+const AzureArcQuerySchema = z.object({
+  method: z.enum(["GET", "POST"]).optional().default("GET"),
+  path:   z.string().min(1),
+  query:  z.record(z.string()).optional(),
+  body:   z.unknown().optional(),
+});
+const UnraidQuerySchema = z.object({
+  query:     z.string().min(1).max(20000),
+  variables: z.record(z.unknown()).optional(),
+});
+const TrueNasQuerySchema = z.object({
+  method: z.string().min(1).max(200),
+  params: z.array(z.unknown()).optional().default([]),
+});
+const ProxmoxQuerySchema = z.object({ path: z.string().min(1).max(500) });
+
 // POST /api/v1/integrations/:id/query — proxy a manual API call to a FortiManager or FortiGate
 router.post("/:id/query", async (req, res, next) => {
   try {
@@ -2219,20 +2284,7 @@ router.post("/:id/query", async (req, res, next) => {
       const mode = (req.body && typeof req.body === "object" && (req.body as any).mode) || "fmg";
 
       if (mode === "fortigate") {
-        const { deviceName, method, path, query, body, apiToken, apiUser } = z.object({
-          mode: z.literal("fortigate"),
-          deviceName: z.string().min(1),
-          method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
-          path: z.string().min(1),
-          query: z.record(z.string()).optional(),
-          // JSON request body for POST/PUT (e.g. CMDB writes when testing the
-          // description-sync surfaces). Ignored for GET/DELETE — fetch rejects
-          // GET bodies outright.
-          body: z.unknown().optional(),
-          // Per-request credential override (see overrideFortigateCreds).
-          apiToken: OverrideApiTokenSchema,
-          apiUser: OverrideApiUserSchema,
-        }).parse(req.body);
+        const { deviceName, method, path, query, body, apiToken, apiUser } = FmgGateQuerySchema.parse(req.body);
         const effectiveBody = method === "POST" || method === "PUT" ? body : undefined;
         // A non-GET through the ad-hoc tool can mutate device config — audit it.
         // `usedTokenOverride` records THAT an override was supplied, never its
@@ -2254,28 +2306,14 @@ router.post("/:id/query", async (req, res, next) => {
         return;
       }
 
-      const { method, params } = z.object({
-        mode: z.literal("fmg").optional(),
-        method: z.string().min(1),
-        params: z.array(z.unknown()),
-      }).parse(req.body);
+      const { method, params } = FmgRpcQuerySchema.parse(req.body);
       const result = await fortimanager.proxyQuery(integration.config as any, method, params, integration.id);
       sendProxyJson(res, result);
       return;
     }
 
     if (integration.type === "fortigate") {
-      const { method, path, query, body, apiToken, apiUser } = z.object({
-        method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
-        path: z.string().min(1),
-        query: z.record(z.string()).optional(),
-        // JSON request body for POST/PUT — same semantics as the FMG
-        // direct-to-FortiGate mode above.
-        body: z.unknown().optional(),
-        // Per-request credential override (see overrideFortigateCreds).
-        apiToken: OverrideApiTokenSchema,
-        apiUser: OverrideApiUserSchema,
-      }).parse(req.body);
+      const { method, path, query, body, apiToken, apiUser } = FortiGateQuerySchema.parse(req.body);
       const effectiveBody = method === "POST" || method === "PUT" ? body : undefined;
       if (method !== "GET") {
         logEvent({ action: "integration.query.write", resourceType: "integration", resourceId: integration.id, resourceName: integration.name, actor: req.session?.username, level: "warning", message: `Ad-hoc ${method} ${path} sent to FortiGate${apiToken ? " (with a per-request API token override)" : ""}`, details: { method, path, usedTokenOverride: Boolean(apiToken), ...(effectiveBody !== undefined ? { body: effectiveBody } : {}) } });
@@ -2289,23 +2327,14 @@ router.post("/:id/query", async (req, res, next) => {
     }
 
     if (integration.type === "entraid") {
-      const { path, query } = z.object({
-        path: z.string().min(1),
-        query: z.record(z.string()).optional(),
-      }).parse(req.body);
+      const { path, query } = EntraQuerySchema.parse(req.body);
       const result = await entraId.proxyQuery(integration.config as any, path, query);
       sendProxyJson(res, result);
       return;
     }
 
     if (integration.type === "activedirectory") {
-      const body = z.object({
-        filter:     z.string().optional(),
-        baseDn:     z.string().optional(),
-        scope:      z.enum(["sub", "one", "base"]).optional(),
-        attributes: z.array(z.string()).optional(),
-        sizeLimit:  z.number().int().min(1).max(500).optional(),
-      }).parse(req.body);
+      const body = ActiveDirectoryQuerySchema.parse(req.body);
       const result = await activeDirectory.proxyQuery(integration.config as any, body);
       sendProxyJson(res, result);
       return;
@@ -2314,11 +2343,7 @@ router.post("/:id/query", async (req, res, next) => {
     if (integration.type === "vcenter") {
       // vSphere Automation REST surface only — proxyQuery rejects paths
       // outside "/api/" (the SOAP /sdk endpoint is not exposed to the modal).
-      const { method, path, query } = z.object({
-        method: z.enum(["GET", "POST"]).optional().default("GET"),
-        path:   z.string().min(1),
-        query:  z.record(z.string()).optional(),
-      }).parse(req.body);
+      const { method, path, query } = VcenterQuerySchema.parse(req.body);
       const result = await vcenter.proxyQuery(integration.config as any, method, path, query);
       sendProxyJson(res, result);
       return;
@@ -2329,12 +2354,7 @@ router.post("/:id/query", async (req, res, next) => {
       // management.azure.com, requires an api-version, and allows POST ONLY
       // to the Resource Graph query endpoint — otherwise the console would
       // be a general-purpose ARM write tool.
-      const { method, path, query, body } = z.object({
-        method: z.enum(["GET", "POST"]).optional().default("GET"),
-        path:   z.string().min(1),
-        query:  z.record(z.string()).optional(),
-        body:   z.unknown().optional(),
-      }).parse(req.body);
+      const { method, path, query, body } = AzureArcQuerySchema.parse(req.body);
       const result = await azureArc.proxyQuery(integration.config as any, method, path, query, body);
       sendProxyJson(res, result);
       return;
@@ -2342,10 +2362,7 @@ router.post("/:id/query", async (req, res, next) => {
 
     if (integration.type === "unraid") {
       // GraphQL QUERIES only — proxyQuery refuses mutations / subscriptions.
-      const { query, variables } = z.object({
-        query:     z.string().min(1).max(20000),
-        variables: z.record(z.unknown()).optional(),
-      }).parse(req.body);
+      const { query, variables } = UnraidQuerySchema.parse(req.body);
       const result = await unraid.proxyQuery(integration.config as any, query, variables);
       // Every ad-hoc call with the stored key is audited (rule 117), as the
       // FortiGate write branch is.
@@ -2356,10 +2373,7 @@ router.post("/:id/query", async (req, res, next) => {
 
     if (integration.type === "truenas") {
       // Read methods only — proxyQuery refuses anything outside its allow-list.
-      const { method, params } = z.object({
-        method: z.string().min(1).max(200),
-        params: z.array(z.unknown()).optional().default([]),
-      }).parse(req.body);
+      const { method, params } = TrueNasQuerySchema.parse(req.body);
       const result = await truenas.proxyQuery(integration.config as any, method, params);
       sendProxyJson(res, result);
       return;
@@ -2367,7 +2381,7 @@ router.post("/:id/query", async (req, res, next) => {
 
     if (integration.type === "proxmox") {
       // GET only, and only paths on proxmoxService's read allow-list.
-      const { path } = z.object({ path: z.string().min(1).max(500) }).parse(req.body);
+      const { path } = ProxmoxQuerySchema.parse(req.body);
       const result = await proxmox.proxyQuery(integration.config as any, path);
       sendProxyJson(res, result);
       return;
@@ -2646,18 +2660,19 @@ router.post("/:id/storage-aggregate/apply", async (req, res, next) => {
 // (firewall / switch / access_point / workstation / server). Any missing
 // key is treated as "no proposed change" for that class (omitted from
 // the response).
+const AutoMonitorPreflightSchema = z.object({
+  proposed: z.object({
+    firewall:     z.boolean().optional(),
+    switch:       z.boolean().optional(),
+    access_point: z.boolean().optional(),
+    workstation:  z.boolean().optional(),
+    server:       z.boolean().optional(),
+  }).default({}),
+});
+
 router.post("/:id/auto-monitor-assets/preflight", async (req, res, next) => {
   try {
-    const ProposedSchema = z.object({
-      proposed: z.object({
-        firewall:     z.boolean().optional(),
-        switch:       z.boolean().optional(),
-        access_point: z.boolean().optional(),
-        workstation:  z.boolean().optional(),
-        server:       z.boolean().optional(),
-      }).default({}),
-    });
-    const { proposed } = ProposedSchema.parse(req.body ?? {});
+    const { proposed } = AutoMonitorPreflightSchema.parse(req.body ?? {});
     const integ = await prisma.integration.findUnique({ where: { id: req.params.id } });
     if (!integ) throw new AppError(404, "Integration not found");
 
