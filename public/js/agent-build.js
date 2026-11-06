@@ -1215,6 +1215,8 @@
     });
     var closeBtn = document.getElementById("agent-list-panel-close");
     if (closeBtn) closeBtn.addEventListener("click", closeInstalledAgentsPanel);
+    // Escape closes it when topmost, like every other slide-over (CQ-F025).
+    if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closeInstalledAgentsPanel);
 
     if (typeof initSlideoverResize === "function") {
       initSlideoverResize(document.getElementById("agent-list-panel"), "polaris.panel.width.agentlist");

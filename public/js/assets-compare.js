@@ -347,6 +347,8 @@ function _ensureComparePanelDOM() {
     '</div>';
   document.body.appendChild(overlay);
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closeComparePanel(); });
+  // Escape closes it when topmost, like every other slide-over (CQ-F025).
+  if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closeComparePanel);
   document.getElementById("compare-panel-close").addEventListener("click", closeComparePanel);
   document.getElementById("cmp-close-btn").addEventListener("click", closeComparePanel);
   document.getElementById("cmp-screenshot-btn").addEventListener("click", _cmpScreenshot);

@@ -4539,11 +4539,17 @@ if (typeof window !== "undefined") window.isTopmostSlideover = isTopmostSlideove
 // the event, because once it has closed, the panel beneath IS topmost and a
 // handler registered after this one would close that too — one keypress,
 // two panels gone. Handlers registered earlier already ran and declined.
+//
+// `overlayEl` may also be a FUNCTION returning the overlay, for a panel that
+// re-renders its overlay element on every open (the Users page's role panel):
+// wired once, it finds whichever element is current when the key lands,
+// instead of leaving a listener behind per open.
 function wireSlideoverEscape(overlayEl, close) {
   if (!overlayEl || typeof close !== "function") return;
+  var current = typeof overlayEl === "function" ? overlayEl : function () { return overlayEl; };
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape" || e.defaultPrevented) return;
-    if (!isTopmostSlideover(overlayEl)) return;
+    if (!isTopmostSlideover(current())) return;
     e.stopImmediatePropagation();
     close();
   });
