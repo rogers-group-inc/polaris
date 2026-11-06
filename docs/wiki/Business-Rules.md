@@ -1645,6 +1645,17 @@ switch list. A duplicate created before this change is not refreshed again:
 the next discovery run merges it into the switch when the gate's lease or ARP
 entry gives the switch the same MAC, and otherwise you can delete it.
 
+**91(i) Devices that share a discovered name are named apart by MAC.** When
+discovery finds a device under a name another asset already carries (every
+"iPhone", for example), it adds the last three octets of each device's MAC to
+the name: the first iPhone becomes *iPhone-F2BC27* and the new one
+*iPhone-717C43*. A third device with that name is added the same way. Only names
+discovery gave from a DHCP lease or a FortiGate's client list are changed: a
+name you typed, or one that came from Entra ID, Active Directory, vCenter, a
+Polaris Agent or a Generic API feed, is never changed. If a better source later
+reports the device, its name replaces the suffixed one. Open alerts follow the
+new name.
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time

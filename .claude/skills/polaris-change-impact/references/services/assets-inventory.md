@@ -765,6 +765,29 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/hostnameMacSuffixService.ts
+
+**What it owns:** Business rule 91(i) — telling apart devices that share a discovered hostname. Given the hostnames a discovery pass just created, it reads each name's live family (the bare name and its MAC-suffixed forms) and returns the renames that give every bare-named, discovery-named member a `<name>-<last 3 MAC octets>` suffix.
+
+**Public API:** `planHostnameMacSuffixes(created: {id, hostname}[])` (one `asset.findMany` per 100 names; returns `PlannedRename[]`, writes nothing), `planFamilyRenames(base, members)` (pure), `isSuffixEligible(member)` (pure). Name math in `utils/hostnameMacSuffix.ts` (`macNameSuffix`, `suffixedHostname`, `isHostnameFamilyMember`).
+
+**Cross-service deps:** prisma.asset (read, with `sources.sourceKind`). No writes — the caller applies the renames.
+
+**Used by:** `services/discovery/discoveryEngine.ts` — Phase 7 of `syncDhcpSubnets`, after its deferred writes flush: applies each rename to the row AND the in-memory `AssetIndex` copy, logs `asset.discovery_updated`.
+
+**Invariants:**
+- **Only discovery's own names move.** `hostnameOverride` set, no primary MAC, or no real `fortigate-endpoint` source (the `manual` placeholder every asset is born with does not count — a hand-made asset carries only that) ⇒ never renamed; the family still counts it, so a new device beside it is still suffixed. An asset the calling pass created is eligible before Phase 10 stamps its source — the caller passes `{ id, hostname }` so the service can tell.
+- **A family of one is left alone**, and an already-suffixed member is never renamed again. A suffix another member holds falls back to the full 12-hex MAC; if that is taken too, nothing.
+- **The in-memory rename is load-bearing.** Phase 10 builds the fortigate-endpoint observed blob from the `AssetIndex` row and Phase 11 projects the hostname from it; renaming only the DB row is undone in the same run.
+- Decommissioned assets are outside every family.
+
+**When changing this:**
+- Adding a source kind whose name may be suffixed: extend `SUFFIXABLE_SOURCE_KINDS` and check `assetProjection.ts` ranks it below every directory source.
+- Calling it from another creation path (a split, another integration): pass only the hostnames created, and rename the caller's in-memory copies the same way.
+- Rule 134 (open alerts follow a rename) fires from the `asset.update` — keep the writes as single-row updates, not `updateMany`.
+
+---
+
 ## services/discoveredHostnameService.ts
 
 **What it owns:** The answer to "what hostname would this asset have if the operator pin were cleared?" — a batched read of `AssetSource.observed` run through `projectAssetFromSources`, keyed by assetId. It exists because `Asset.hostnameOverride` makes the pinned value THE `hostname` column (the assets PUT writes both, the src/db.ts guard re-asserts the pin over every projection write), so the discovered name is persisted nowhere on the Asset row.
