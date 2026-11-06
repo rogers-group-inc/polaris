@@ -34,11 +34,20 @@
  * by design — see sampleWriteBuffer.ts) still land in the right bucket
  * on the next tick. The daily job uses a 2-day lookback for the same
  * reason at a coarser cadence.
+ *
+ * Max lines (2026-11): the telemetry rollups also keep per-core CPU vectors
+ * (`avgCpuCorePcts` / `maxCpuCorePcts`, jsonb arrays indexed like the detail
+ * `cpuCorePcts`), and the interface rollups keep the bucket's highest
+ * per-poll rate (`maxInBytesPerSec` / `maxOutBytesPerSec`), which the
+ * first/last endpoints cannot recover. `runMaxLineBackfillOnce` rebuilds the
+ * recent past of those two streams once after the columns land.
  */
 
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { startSampleRollupTimer } from "../metrics.js";
+import { getSampleRetention, FOREVER } from "./sampleRetentionService.js";
+import { getEffectiveCompressAfterDays, isTimescaleAvailable } from "./timescaleService.js";
 
 type RollupTier = "hourly" | "daily";
 
@@ -104,6 +113,31 @@ export async function rollupDaily(lookbackDays = 2): Promise<RollupResult[]> {
   return runAll("daily", since);
 }
 
+/** The sources whose builders accept an upper bound (`$2`) — the ones the
+ *  max-line backfill (`src/jobs/runSampleRollup.ts`) rebuilds. */
+export type BoundedRollupSource = "telemetry" | "interface";
+
+/**
+ * Roll the given sources up over `[since, until)` — the window is the
+ * SOURCE rows read (detail for hourly, `*_hourly` for daily). Unlike
+ * `rollupHourly` / `rollupDaily` a failed statement THROWS instead of being
+ * logged and skipped, so a one-shot caller can tell a failed pass from an
+ * empty one and retry later.
+ */
+export async function rollupRange(
+  tier: RollupTier,
+  sources: BoundedRollupSource[],
+  since: Date,
+  until: Date,
+): Promise<RollupResult[]> {
+  const results: RollupResult[] = [];
+  for (const source of sources) {
+    const def = DEFS.find((d) => d.source === source)!;
+    results.push(await runOne(def, tier, since, until));
+  }
+  return results;
+}
+
 async function runAll(tier: RollupTier, since: Date): Promise<RollupResult[]> {
   const results: RollupResult[] = [];
   for (const def of DEFS) {
@@ -113,15 +147,22 @@ async function runAll(tier: RollupTier, since: Date): Promise<RollupResult[]> {
   return results;
 }
 
-async function runOne(def: RollupDef, tier: RollupTier, since: Date): Promise<RollupResult> {
+/** `until` set = a bounded backfill slice: the statement gets `$2` and a
+ *  failure propagates. Unset = the ticking job: failure is logged and the
+ *  next table still runs. */
+async function runOne(def: RollupDef, tier: RollupTier, since: Date, until?: Date): Promise<RollupResult> {
   const stop = startSampleRollupTimer(tier, def.source);
   const t0 = Date.now();
   let rowsTouched = 0;
   try {
-    const sql = buildSql(def, tier);
     // $executeRawUnsafe returns the affected row count (INSERT + UPDATE).
-    rowsTouched = await prisma.$executeRawUnsafe(sql, since);
+    // Postgres rejects a bound parameter the statement never references, so
+    // `until` is only passed to a builder that was asked for `$2`.
+    rowsTouched = until
+      ? await prisma.$executeRawUnsafe(buildSql(def, tier, true), since, until)
+      : await prisma.$executeRawUnsafe(buildSql(def, tier, false), since);
   } catch (err) {
+    if (until) throw err;
     logger.error(
       { err, source: def.source, tier, since: since.toISOString() },
       "Sample rollup failed for this table; continuing with the next",
@@ -137,13 +178,19 @@ async function runOne(def: RollupDef, tier: RollupTier, since: Date): Promise<Ro
 // Each builder returns ONE parameterised statement. $1 = since timestamp.
 // Bucket size is encoded as `'1 hour'` / `'1 day'` and the source table
 // switches between detail (for hourly tier) and hourly (for daily tier).
+// The telemetry and interface builders optionally take `$2` = an exclusive
+// upper bound on the source rows (`bounded`), for the one-day slices of the
+// max-line backfill; every other builder is 1-parameter only.
 
-function buildSql(def: RollupDef, tier: RollupTier): string {
+function buildSql(def: RollupDef, tier: RollupTier, bounded: boolean): string {
+  if (bounded && def.source !== "telemetry" && def.source !== "interface") {
+    throw new Error(`Sample rollup: ${def.source} has no bounded builder`);
+  }
   switch (def.source) {
     case "monitor":      return tier === "hourly" ? sqlMonitorHourly()      : sqlMonitorDaily();
-    case "telemetry":    return tier === "hourly" ? sqlTelemetryHourly()    : sqlTelemetryDaily();
+    case "telemetry":    return tier === "hourly" ? sqlTelemetryHourly(bounded) : sqlTelemetryDaily(bounded);
     case "hardware":     return tier === "hourly" ? sqlHardwareHourly()     : sqlHardwareDaily();
-    case "interface":    return tier === "hourly" ? sqlInterfaceHourly()    : sqlInterfaceDaily();
+    case "interface":    return tier === "hourly" ? sqlInterfaceHourly(bounded) : sqlInterfaceDaily(bounded);
     case "storage":      return tier === "hourly" ? sqlStorageHourly()      : sqlStorageDaily();
     case "ipsec":        return tier === "hourly" ? sqlIpsecHourly()        : sqlIpsecDaily();
     case "perfSla":      return tier === "hourly" ? sqlPerfSlaHourly()      : sqlPerfSlaDaily();
@@ -343,8 +390,76 @@ function sqlMonitorDaily(): string {
 
 // ─── Telemetry (gauge — CPU + memory) ────────────────────────────────────────
 
-function sqlTelemetryHourly(): string {
+/** `AND <col> < $2` when the builder is bounded, else nothing. */
+function upperBound(column: string, bounded: boolean): string {
+  return bounded ? `AND ${column} < $2` : "";
+}
+
+/** A jsonb value as an array to expand: itself when it IS an array, else
+ *  empty — `jsonb_array_elements` throws on a scalar or object, and a
+ *  hand-written or older row can hold anything. */
+function asJsonbArray(expr: string): string {
+  return `CASE WHEN jsonb_typeof(${expr}) = 'array' THEN ${expr} ELSE '[]'::jsonb END`;
+}
+
+/**
+ * Per-core vector CTEs. `perIdx` names a CTE with one row per
+ * (c_asset, c_bucket, c_idx) holding `c_avg` / `c_max` — c_idx 1-based, the
+ * WITH ORDINALITY position. Emits `core_vec (v_asset, v_bucket, v_avg,
+ * v_max)`: two jsonb arrays per bucket covering positions 1..max index, a
+ * position with no reading being a JSON null so later cores never shift left.
+ * Rounded to 2 decimals — a 64-core host otherwise stores ~1 kB of
+ * float noise per row per vector. The `c_` / `v_` prefixes keep these
+ * columns from colliding with the source table's in the grouped SELECT the
+ * CTE is joined into.
+ */
+function coreVectorCtes(perIdx: string): string {
   return `
+    core_n AS (
+      SELECT c_asset, c_bucket, MAX(c_idx) AS c_n
+      FROM ${perIdx}
+      GROUP BY c_asset, c_bucket
+    ),
+    core_vec AS (
+      SELECT
+        n.c_asset  AS v_asset,
+        n.c_bucket AS v_bucket,
+        jsonb_agg(to_jsonb(round(p.c_avg::numeric, 2)) ORDER BY g.i) AS v_avg,
+        jsonb_agg(to_jsonb(round(p.c_max::numeric, 2)) ORDER BY g.i) AS v_max
+      FROM core_n n
+      CROSS JOIN LATERAL generate_series(1::bigint, n.c_n) AS g(i)
+      LEFT JOIN ${perIdx} p
+        ON p.c_asset = n.c_asset AND p.c_bucket = n.c_bucket AND p.c_idx = g.i
+      GROUP BY n.c_asset, n.c_bucket
+    )`;
+}
+
+function sqlTelemetryHourly(bounded = false): string {
+  // Per-core vectors: every detail row's "cpuCorePcts" is expanded WITH
+  // ORDINALITY and averaged / maxed per (asset, hour, core index). Only
+  // number elements count; a row whose vector is not an array contributes
+  // nothing. The resulting vectors are joined into the grouped SELECT one
+  // row per (asset, bucket), so they ride the GROUP BY without changing the
+  // per-bucket counts.
+  return `
+    WITH core_el AS (
+      SELECT
+        t."assetId" AS c_asset,
+        date_trunc('hour', t."timestamp") AS c_bucket,
+        e.ord AS c_idx,
+        CASE WHEN jsonb_typeof(e.val) = 'number' THEN (e.val)::float8 END AS c_v
+      FROM "asset_telemetry_samples" t
+      CROSS JOIN LATERAL jsonb_array_elements(${asJsonbArray(`t."cpuCorePcts"`)}) WITH ORDINALITY AS e(val, ord)
+      WHERE t."timestamp" >= $1 ${upperBound(`t."timestamp"`, bounded)}
+        AND t."cpuCorePcts" IS NOT NULL
+    ),
+    core_idx AS (
+      SELECT c_asset, c_bucket, c_idx, AVG(c_v) AS c_avg, MAX(c_v) AS c_max
+      FROM core_el
+      WHERE c_v IS NOT NULL
+      GROUP BY c_asset, c_bucket, c_idx
+    ),
+    ${coreVectorCtes("core_idx")}
     INSERT INTO "asset_telemetry_samples_hourly" (
       "id", "assetId", "bucketStart", "sampleCount",
       "avgCpuPct", "minCpuPct", "maxCpuPct",
@@ -354,7 +469,8 @@ function sqlTelemetryHourly(): string {
       "avgSwapUsedBytes", "lastSwapTotalBytes",
       "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
       "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
-      "avgSessionCount", "minSessionCount", "maxSessionCount"
+      "avgSessionCount", "minSessionCount", "maxSessionCount",
+      "avgCpuCorePcts", "maxCpuCorePcts"
     )
     SELECT
       gen_random_uuid()::text,
@@ -382,10 +498,14 @@ function sqlTelemetryHourly(): string {
       -- and is already the documented caveat for a mixed bucket.
       AVG("memPrivateBytes")::bigint, AVG("memSharedBytes")::bigint, AVG("memBalloonedBytes")::bigint,
       AVG("memSwappedBytes")::bigint, AVG("memCompressedBytes")::bigint, AVG("memConsumedBytes")::bigint,
-      AVG("sessionCount"), MIN("sessionCount"), MAX("sessionCount")
+      AVG("sessionCount"), MIN("sessionCount"), MAX("sessionCount"),
+      cv.v_avg, cv.v_max
     FROM "asset_telemetry_samples"
-    WHERE "timestamp" >= $1
-    GROUP BY "assetId", bucket_start
+    LEFT JOIN core_vec cv
+      ON cv.v_asset = "asset_telemetry_samples"."assetId"
+     AND cv.v_bucket = date_trunc('hour', "asset_telemetry_samples"."timestamp")
+    WHERE "timestamp" >= $1 ${upperBound(`"timestamp"`, bounded)}
+    GROUP BY "assetId", bucket_start, cv.v_avg, cv.v_max
     ON CONFLICT ("bucketStart", "assetId") DO UPDATE SET
       "sampleCount"       = EXCLUDED."sampleCount",
       "avgCpuPct"         = EXCLUDED."avgCpuPct",
@@ -410,13 +530,56 @@ function sqlTelemetryHourly(): string {
       "avgMemConsumedBytes"   = EXCLUDED."avgMemConsumedBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
-      "maxSessionCount"   = EXCLUDED."maxSessionCount"
+      "maxSessionCount"   = EXCLUDED."maxSessionCount",
+      "avgCpuCorePcts"    = EXCLUDED."avgCpuCorePcts",
+      "maxCpuCorePcts"    = EXCLUDED."maxCpuCorePcts"
   `;
 }
 
-function sqlTelemetryDaily(): string {
+function sqlTelemetryDaily(bounded = false): string {
   // Weighted averages by sampleCount.
+  //
+  // Per-core vectors from the hourly vectors: per core index, the average is
+  // weighted by each hour's sampleCount over the hours that HAD a reading for
+  // that core (a JSON null slot is skipped, not counted as 0), and the max is
+  // the max of the hourly maxes. The avg and max vectors are expanded
+  // separately (UNION ALL) because a row may carry one without the other.
   return `
+    WITH core_el AS (
+      SELECT
+        h."assetId" AS c_asset,
+        date_trunc('day', h."bucketStart") AS c_bucket,
+        e.ord AS c_idx,
+        CASE WHEN jsonb_typeof(e.val) = 'number' THEN (e.val)::float8 END AS c_a,
+        NULL::float8 AS c_m,
+        h."sampleCount" AS c_w
+      FROM "asset_telemetry_samples_hourly" h
+      CROSS JOIN LATERAL jsonb_array_elements(${asJsonbArray(`h."avgCpuCorePcts"`)}) WITH ORDINALITY AS e(val, ord)
+      WHERE h."bucketStart" >= $1 ${upperBound(`h."bucketStart"`, bounded)}
+        AND h."avgCpuCorePcts" IS NOT NULL
+      UNION ALL
+      SELECT
+        h."assetId",
+        date_trunc('day', h."bucketStart"),
+        e.ord,
+        NULL::float8,
+        CASE WHEN jsonb_typeof(e.val) = 'number' THEN (e.val)::float8 END,
+        h."sampleCount"
+      FROM "asset_telemetry_samples_hourly" h
+      CROSS JOIN LATERAL jsonb_array_elements(${asJsonbArray(`h."maxCpuCorePcts"`)}) WITH ORDINALITY AS e(val, ord)
+      WHERE h."bucketStart" >= $1 ${upperBound(`h."bucketStart"`, bounded)}
+        AND h."maxCpuCorePcts" IS NOT NULL
+    ),
+    core_idx AS (
+      SELECT
+        c_asset, c_bucket, c_idx,
+        SUM(c_a * c_w) / NULLIF(SUM(c_w) FILTER (WHERE c_a IS NOT NULL), 0) AS c_avg,
+        MAX(c_m) AS c_max
+      FROM core_el
+      GROUP BY c_asset, c_bucket, c_idx
+      HAVING COUNT(c_a) > 0 OR COUNT(c_m) > 0
+    ),
+    ${coreVectorCtes("core_idx")}
     INSERT INTO "asset_telemetry_samples_daily" (
       "id", "assetId", "bucketStart", "sampleCount",
       "avgCpuPct", "minCpuPct", "maxCpuPct",
@@ -426,7 +589,8 @@ function sqlTelemetryDaily(): string {
       "avgSwapUsedBytes", "lastSwapTotalBytes",
       "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
       "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
-      "avgSessionCount", "minSessionCount", "maxSessionCount"
+      "avgSessionCount", "minSessionCount", "maxSessionCount",
+      "avgCpuCorePcts", "maxCpuCorePcts"
     )
     SELECT
       gen_random_uuid()::text,
@@ -460,10 +624,14 @@ function sqlTelemetryDaily(): string {
       (SUM("avgMemConsumedBytes"   * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       SUM("avgSessionCount" * "sampleCount") / NULLIF(SUM("sampleCount"), 0),
       MIN("minSessionCount"),
-      MAX("maxSessionCount")
+      MAX("maxSessionCount"),
+      cv.v_avg, cv.v_max
     FROM "asset_telemetry_samples_hourly"
-    WHERE "bucketStart" >= $1
-    GROUP BY "assetId", bucket_start
+    LEFT JOIN core_vec cv
+      ON cv.v_asset = "asset_telemetry_samples_hourly"."assetId"
+     AND cv.v_bucket = date_trunc('day', "asset_telemetry_samples_hourly"."bucketStart")
+    WHERE "bucketStart" >= $1 ${upperBound(`"bucketStart"`, bounded)}
+    GROUP BY "assetId", bucket_start, cv.v_avg, cv.v_max
     ON CONFLICT ("bucketStart", "assetId") DO UPDATE SET
       "sampleCount"       = EXCLUDED."sampleCount",
       "avgCpuPct"         = EXCLUDED."avgCpuPct",
@@ -488,7 +656,9 @@ function sqlTelemetryDaily(): string {
       "avgMemConsumedBytes"   = EXCLUDED."avgMemConsumedBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
-      "maxSessionCount"   = EXCLUDED."maxSessionCount"
+      "maxSessionCount"   = EXCLUDED."maxSessionCount",
+      "avgCpuCorePcts"    = EXCLUDED."avgCpuCorePcts",
+      "maxCpuCorePcts"    = EXCLUDED."maxCpuCorePcts"
   `;
 }
 
@@ -623,8 +793,42 @@ function sqlStorageDaily(): string {
 // Last-seen descriptor columns (status, ip, mac, alias, ...) use the most
 // recent sample's value within the bucket via ARRAY_AGG ORDER BY DESC.
 
-function sqlInterfaceHourly(): string {
+function sqlInterfaceHourly(bounded = false): string {
+  // Peak throughput: the per-poll rate between consecutive fast-cadence rows
+  // of one interface — (octets - previous octets) / seconds between them —
+  // attributed to the bucket of the LATER row, max per bucket. The window
+  // input reaches back one hour before $1 so the first row of the first
+  // bucket still has a predecessor; only pairs whose later row is at or
+  // after $1 are aggregated. A negative delta (counter reset / wrap), a
+  // non-positive time delta and a NULL on either side are dropped. Bytes per
+  // second, the reader's inBytesPerSec unit. ($1 arrives as untyped text, so
+  // the explicit timestamp(3) cast is what lets the interval arithmetic
+  // resolve; it parses the same naive-UTC literal the bare comparisons do.)
   return `
+    WITH if_rates AS (
+      SELECT
+        "assetId" AS r_asset,
+        "ifName"  AS r_if,
+        "timestamp" AS r_ts,
+        "inOctets"  - LAG("inOctets")  OVER w AS r_din,
+        "outOctets" - LAG("outOctets") OVER w AS r_dout,
+        EXTRACT(EPOCH FROM ("timestamp" - LAG("timestamp") OVER w))::float8 AS r_dt
+      FROM "asset_interface_samples"
+      WHERE "timestamp" >= $1::timestamp(3) - interval '1 hour' ${upperBound(`"timestamp"`, bounded)}
+        AND "cadence" = 'fast'
+      WINDOW w AS (PARTITION BY "assetId", "ifName" ORDER BY "timestamp")
+    ),
+    if_peaks AS (
+      SELECT
+        r_asset AS p_asset,
+        r_if    AS p_if,
+        date_trunc('hour', r_ts) AS p_bucket,
+        MAX(CASE WHEN r_din  >= 0 AND r_dt > 0 THEN r_din::float8  / r_dt END) AS p_in,
+        MAX(CASE WHEN r_dout >= 0 AND r_dt > 0 THEN r_dout::float8 / r_dt END) AS p_out
+      FROM if_rates
+      WHERE r_ts >= $1::timestamp(3)
+      GROUP BY r_asset, r_if, date_trunc('hour', r_ts)
+    )
     INSERT INTO "asset_interface_samples_hourly" (
       "id", "assetId", "bucketStart", "ifName", "sampleCount",
       "firstInOctets",  "lastInOctets",
@@ -637,7 +841,8 @@ function sqlInterfaceHourly(): string {
       "lastAlias", "lastDescription",
       "lastIfType", "lastIfParent", "lastVlanId",
       "lastPoeStatus", "lastPoeClass",
-      "lastBucketSampleAt"
+      "lastBucketSampleAt",
+      "maxInBytesPerSec", "maxOutBytesPerSec"
     )
     SELECT
       gen_random_uuid()::text,
@@ -666,10 +871,15 @@ function sqlInterfaceHourly(): string {
       (ARRAY_AGG("vlanId"      ORDER BY "timestamp" DESC) FILTER (WHERE "vlanId"      IS NOT NULL))[1],
       (ARRAY_AGG("poeStatus"   ORDER BY "timestamp" DESC) FILTER (WHERE "poeStatus"   IS NOT NULL))[1],
       (ARRAY_AGG("poeClass"    ORDER BY "timestamp" DESC) FILTER (WHERE "poeClass"    IS NOT NULL))[1],
-      MAX("timestamp")
+      MAX("timestamp"),
+      pk.p_in, pk.p_out
     FROM "asset_interface_samples"
-    WHERE "timestamp" >= $1 AND "cadence" = 'fast'
-    GROUP BY "assetId", bucket_start, "ifName"
+    LEFT JOIN if_peaks pk
+      ON pk.p_asset = "asset_interface_samples"."assetId"
+     AND pk.p_if = "asset_interface_samples"."ifName"
+     AND pk.p_bucket = date_trunc('hour', "asset_interface_samples"."timestamp")
+    WHERE "timestamp" >= $1::timestamp(3) ${upperBound(`"timestamp"`, bounded)} AND "cadence" = 'fast'
+    GROUP BY "assetId", bucket_start, "ifName", pk.p_in, pk.p_out
     ON CONFLICT ("bucketStart", "assetId", "ifName") DO UPDATE SET
       "sampleCount"        = EXCLUDED."sampleCount",
       "firstInOctets"      = EXCLUDED."firstInOctets",
@@ -693,11 +903,13 @@ function sqlInterfaceHourly(): string {
       "lastVlanId"         = EXCLUDED."lastVlanId",
       "lastPoeStatus"      = EXCLUDED."lastPoeStatus",
       "lastPoeClass"       = EXCLUDED."lastPoeClass",
-      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
+      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt",
+      "maxInBytesPerSec"   = EXCLUDED."maxInBytesPerSec",
+      "maxOutBytesPerSec"  = EXCLUDED."maxOutBytesPerSec"
   `;
 }
 
-function sqlInterfaceDaily(): string {
+function sqlInterfaceDaily(bounded = false): string {
   return `
     INSERT INTO "asset_interface_samples_daily" (
       "id", "assetId", "bucketStart", "ifName", "sampleCount",
@@ -711,7 +923,8 @@ function sqlInterfaceDaily(): string {
       "lastAlias", "lastDescription",
       "lastIfType", "lastIfParent", "lastVlanId",
       "lastPoeStatus", "lastPoeClass",
-      "lastBucketSampleAt"
+      "lastBucketSampleAt",
+      "maxInBytesPerSec", "maxOutBytesPerSec"
     )
     SELECT
       gen_random_uuid()::text,
@@ -740,9 +953,11 @@ function sqlInterfaceDaily(): string {
       (ARRAY_AGG("lastVlanId"      ORDER BY "bucketStart" DESC) FILTER (WHERE "lastVlanId"      IS NOT NULL))[1],
       (ARRAY_AGG("lastPoeStatus"   ORDER BY "bucketStart" DESC) FILTER (WHERE "lastPoeStatus"   IS NOT NULL))[1],
       (ARRAY_AGG("lastPoeClass"    ORDER BY "bucketStart" DESC) FILTER (WHERE "lastPoeClass"    IS NOT NULL))[1],
-      MAX("lastBucketSampleAt")
+      MAX("lastBucketSampleAt"),
+      MAX("maxInBytesPerSec"),
+      MAX("maxOutBytesPerSec")
     FROM "asset_interface_samples_hourly"
-    WHERE "bucketStart" >= $1
+    WHERE "bucketStart" >= $1 ${upperBound(`"bucketStart"`, bounded)}
     GROUP BY "assetId", bucket_start, "ifName"
     ON CONFLICT ("bucketStart", "assetId", "ifName") DO UPDATE SET
       "sampleCount"        = EXCLUDED."sampleCount",
@@ -767,7 +982,9 @@ function sqlInterfaceDaily(): string {
       "lastVlanId"         = EXCLUDED."lastVlanId",
       "lastPoeStatus"      = EXCLUDED."lastPoeStatus",
       "lastPoeClass"       = EXCLUDED."lastPoeClass",
-      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
+      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt",
+      "maxInBytesPerSec"   = EXCLUDED."maxInBytesPerSec",
+      "maxOutBytesPerSec"  = EXCLUDED."maxOutBytesPerSec"
   `;
 }
 
@@ -1064,4 +1281,162 @@ function sqlPerfSlaDaily(): string {
       "maxPacketLoss"      = EXCLUDED."maxPacketLoss",
       "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
   `;
+}
+
+// ─── One-shot max-line backfill ──────────────────────────────────────────────
+//
+// The max-line columns (migration 20261106120000_rollup_max_lines) start NULL
+// on every existing rollup row. While detail rows still exist (the detail
+// retention window), re-running the telemetry + interface HOURLY rollup over
+// the recent past and then the DAILY rollup for those days fills them in, so
+// the max / per-core lines are not empty for a week after shipping. It also
+// rewrites the interface hourly rows the duplicated-expression bug
+// (fixed f465ae05b) failed to write.
+//
+// Compression safety: an upsert that matches a row inside a COMPRESSED
+// TimescaleDB chunk decompresses the whole chunk (the 2026-06 bloat
+// incidents). The window therefore stays strictly inside every target table's
+// compress-after window (minus a day of margin), and additionally starts after
+// the newest chunk that is ALREADY compressed (a compress-after window raised
+// after the fact leaves compressed chunks inside the configured one).
+
+/** Marker Setting key. Once shipped, never rename it — every install would
+ *  re-run the backfill. Delete the row to run it again. */
+export const MAX_LINE_BACKFILL_MARKER = "rollupMaxLinesBackfilledAt";
+
+/** Upper bound on the days rebuilt, whatever the retention says. */
+export const MAX_LINE_BACKFILL_CAP_DAYS = 14;
+
+const DAY_MS = 86_400_000;
+
+/** The four rollup tables the backfill writes. */
+const MAX_LINE_BACKFILL_TABLES = [
+  "asset_telemetry_samples_hourly",
+  "asset_telemetry_samples_daily",
+  "asset_interface_samples_hourly",
+  "asset_interface_samples_daily",
+];
+
+function ceilUtcMidnight(ms: number): number {
+  const floor = Math.floor(ms / DAY_MS) * DAY_MS;
+  return floor === ms ? ms : floor + DAY_MS;
+}
+
+/**
+ * The UTC days (each slice is `[day, day + 1 day)`, oldest first) the
+ * max-line backfill rebuilds. Empty = nothing to do.
+ *
+ *   - `detailDays`: the detail retention of each stream rebuilt. FOREVER
+ *     (-1) does not bound; 0 (detail tier off) has nothing to rebuild; if no
+ *     stream keeps detail the result is empty.
+ *   - `compressAfterDays`: each target table's effective compress-after
+ *     window; 0 (compression off) does not bound.
+ *   - `compressedThroughMs`: the newest `range_end` of an already-compressed
+ *     chunk in any target table, or null. The window then starts no earlier
+ *     than the first UTC midnight a full day after it (margin for the
+ *     catalog's session-timezone rendering of a naive-timestamp chunk range).
+ *
+ * The limit is min(cap, detail, compress-after) minus 1 day of safety; the
+ * first slice is the first UTC midnight at or after `now - limit`, so no
+ * slice (and no daily bucket) starts before that point. The last slice is
+ * today's. Days step by a fixed 86 400 000 ms, which is exact in UTC.
+ */
+export function maxLineBackfillDays(
+  nowMs: number,
+  detailDays: number[],
+  compressAfterDays: number[],
+  compressedThroughMs: number | null = null,
+  capDays = MAX_LINE_BACKFILL_CAP_DAYS,
+): Date[] {
+  const kept = detailDays.filter((d) => d === FOREVER || d > 0);
+  if (kept.length === 0) return [];
+  let limit = capDays;
+  for (const d of kept) if (d > 0) limit = Math.min(limit, d);
+  for (const c of compressAfterDays) if (c > 0) limit = Math.min(limit, c);
+  limit -= 1;
+  if (limit < 1) return [];
+  let from = ceilUtcMidnight(nowMs - limit * DAY_MS);
+  if (compressedThroughMs != null) {
+    from = Math.max(from, ceilUtcMidnight(compressedThroughMs + DAY_MS));
+  }
+  const days: Date[] = [];
+  for (let d = from; d <= nowMs; d += DAY_MS) days.push(new Date(d));
+  return days;
+}
+
+/** Newest `range_end` of a compressed chunk in any of `tables`, or null (no
+ *  TimescaleDB, nothing compressed, or the catalog could not be read; the
+ *  compress-after bound still applies then). */
+async function newestCompressedChunkEnd(tables: string[]): Promise<number | null> {
+  if (!isTimescaleAvailable()) return null;
+  try {
+    const rows = await prisma.$queryRawUnsafe<{ m: Date | null }[]>(
+      `SELECT max(range_end) AS m
+         FROM timescaledb_information.chunks
+        WHERE hypertable_name = ANY($1::text[])
+          AND is_compressed = true`,
+      tables,
+    );
+    const m = rows[0]?.m;
+    return m ? new Date(m).getTime() : null;
+  } catch (err) {
+    logger.warn({ err }, "Max-line backfill: compressed-chunk introspection failed; relying on the compress-after window");
+    return null;
+  }
+}
+
+export interface MaxLineBackfillOutcome {
+  /** false = the marker was already set; nothing ran. */
+  ran: boolean;
+  /** UTC days rebuilt (YYYY-MM-DD). */
+  days: string[];
+  hourlyRows: number;
+  dailyRows: number;
+  durationMs: number;
+}
+
+/**
+ * Run the max-line backfill if its marker is not set. Each UTC day in the
+ * window gets one telemetry + one interface hourly INSERT...SELECT, then the
+ * same days get the daily ones: no per-row work, so 2000 assets / 10k pinned
+ * interfaces cost 2 statements per day per tier. A failed statement THROWS
+ * and the marker is not set, so the caller retries on a later tick (every
+ * statement is an idempotent upsert, so a partial pass is harmless). The
+ * marker is also set when the window is empty, so an install with nothing to
+ * rebuild does not look again.
+ */
+export async function runMaxLineBackfillOnce(now: Date = new Date()): Promise<MaxLineBackfillOutcome> {
+  const t0 = Date.now();
+  const existing = await prisma.setting.findUnique({ where: { key: MAX_LINE_BACKFILL_MARKER }, select: { key: true } });
+  if (existing) return { ran: false, days: [], hourlyRows: 0, dailyRows: 0, durationMs: 0 };
+
+  const retention = await getSampleRetention();
+  const days = maxLineBackfillDays(
+    now.getTime(),
+    [retention.cpuMem.detail, retention.interfaces.detail],
+    MAX_LINE_BACKFILL_TABLES.map((t) => getEffectiveCompressAfterDays(t)),
+    await newestCompressedChunkEnd(MAX_LINE_BACKFILL_TABLES),
+  );
+
+  const sources: BoundedRollupSource[] = ["telemetry", "interface"];
+  let hourlyRows = 0;
+  let dailyRows = 0;
+  for (const day of days) {
+    const until = new Date(day.getTime() + DAY_MS);
+    for (const r of await rollupRange("hourly", sources, day, until)) hourlyRows += r.rowsTouched;
+  }
+  for (const day of days) {
+    const until = new Date(day.getTime() + DAY_MS);
+    for (const r of await rollupRange("daily", sources, day, until)) dailyRows += r.rowsTouched;
+  }
+
+  const isoDays = days.map((d) => d.toISOString().slice(0, 10));
+  const durationMs = Date.now() - t0;
+  const value = { ranAt: new Date().toISOString(), days: isoDays, hourlyRows, dailyRows, durationMs };
+  await prisma.setting.upsert({
+    where:  { key: MAX_LINE_BACKFILL_MARKER },
+    update: { value },
+    create: { key: MAX_LINE_BACKFILL_MARKER, value },
+  });
+  return { ran: true, days: isoDays, hourlyRows, dailyRows, durationMs };
 }

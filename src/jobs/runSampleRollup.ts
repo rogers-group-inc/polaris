@@ -26,28 +26,75 @@
  * if the fleet ever grows large enough that one pass exceeds 30 minutes.
  * Best-effort — failures are logged but don't crash the process.
  *
+ * Every rollup pass in this process (hourly, daily, and the one-shot
+ * max-line backfill) runs through one in-process queue (`serialized`), so a
+ * boot-time daily tick never upserts the same buckets concurrently with an
+ * hourly tick or the backfill.
+ *
+ * Max-line backfill (one-shot): after an hourly tick, while the
+ * `rollupMaxLinesBackfilledAt` marker Setting is unset, the hourly tick
+ * also runs `runMaxLineBackfillOnce` (sampleRollupService) — the recent past
+ * of the telemetry + interface rollups rebuilt in one-day slices so the new
+ * max / per-core columns are filled. Its failure is logged and does NOT
+ * fail the hourly tick; the marker stays unset, so the next tick retries.
+ *
  * Import this module from src/app.ts to activate.
  */
 
 import { logger } from "../utils/logger.js";
 import { prisma } from "../db.js";
-import { rollupHourly, rollupDaily, type RollupResult } from "../services/sampleRollupService.js";
+import {
+  rollupHourly,
+  rollupDaily,
+  runMaxLineBackfillOnce,
+  type RollupResult,
+} from "../services/sampleRollupService.js";
 import { defineJob } from "./_defineJob.js";
 
 const HOURLY_INTERVAL_MS = 30 * 60 * 1000;
 const HOURLY_BOOT_DELAY_MS = 60 * 1000;
 const DAILY_BOOT_DELAY_MS = 90 * 1000;
 
+// One queue for every rollup pass in this process. A failed pass does not
+// poison the queue: the next one still runs.
+let queue: Promise<unknown> = Promise.resolve();
+function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn);
+  queue = next.catch(() => undefined);
+  return next;
+}
+
 async function runHourly(): Promise<void> {
+  await serialized(async () => {
     const results = await rollupHourly();
     await stampLastSuccess("hourly", results);
     logResults("hourly", results);
+  });
+  await serialized(runMaxLineBackfillStep);
 }
 
 async function runDaily(): Promise<void> {
+  await serialized(async () => {
     const results = await rollupDaily();
     await stampLastSuccess("daily", results);
     logResults("daily", results);
+  });
+}
+
+/** The one-shot max-line backfill, riding the hourly tick until it succeeds
+ *  once. Never throws: a failure is logged and retried next tick. */
+async function runMaxLineBackfillStep(): Promise<void> {
+  try {
+    const out = await runMaxLineBackfillOnce();
+    if (!out.ran) return;
+    logger.info(
+      { days: out.days, hourlyRows: out.hourlyRows, dailyRows: out.dailyRows, durationMs: out.durationMs },
+      "Max-line rollup backfill complete: telemetry per-core vectors and interface peak rates rebuilt for the recent past " +
+        "(this also rewrites interface hourly rows the pre-f465ae05b rollup failed to write)",
+    );
+  } catch (err) {
+    logger.error({ err }, "Max-line rollup backfill failed; it will retry on the next hourly tick");
+  }
 }
 
 async function stampLastSuccess(tier: "hourly" | "daily", results: RollupResult[]): Promise<void> {
