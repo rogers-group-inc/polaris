@@ -18,6 +18,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { SLIDEOVER_BUILDER } from "./_appShellStubs";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -55,7 +56,7 @@ beforeAll(() => {
   g.api = { assets: { byTag: (tag: string) => byTag(tag) } };
   const ss = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
   // eslint-disable-next-line no-eval
-  (0, eval)(ss);
+  (0, eval)(SLIDEOVER_BUILDER + "\n" + ss);
 });
 
 beforeEach(() => {

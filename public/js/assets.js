@@ -439,9 +439,16 @@ function _chartClipAttr(id) {
   return 'clip-path="url(#' + id + ')"';
 }
 
+// The four verdict hexes below, the outage-marker helpers, _inChartWindow,
+// _derivePerIntervalSeries and the memory band tables live ONCE in
+// public/js/chart-shared.js (PolarisChartShared), shared with the phone; the
+// asset-detail helpers likewise in public/js/asset-shared.js. Here they are
+// aliases and three-line wrappers that keep the desktop names, so both
+// modules must load before this file (tests/unit/assetSharedModules.test.ts).
+//
 // Failed-poll color shared by every failure-aware chart element (red baseline
 // dots, fade-to-red line segments). Matches the danger hue the tooltips use.
-var _CHART_FAIL_COLOR = "#d32f2f";
+var _CHART_FAIL_COLOR = PolarisChartShared.FAIL_COLOR;
 
 // The dependency-down grey. A probe that missed while the asset was
 // dependency-suppressed (its parent was dark) draws the SAME dive as an
@@ -451,7 +458,7 @@ var _CHART_FAIL_COLOR = "#d32f2f";
 // unexplained outage. Flat hex like _CHART_FAIL_COLOR: it has to read on all
 // three themes and is duplicated in utils/sparklineSvg.ts (DEP_COLOR) so the
 // alert email and the device page draw one outage the same way.
-var _CHART_DEP_COLOR = "#9aa0a6";
+var _CHART_DEP_COLOR = PolarisChartShared.DEP_COLOR;
 
 // The response-time series is drawn in the UP green rather than the theme
 // accent, so the one chart that is ABOUT reachability speaks the same four
@@ -475,7 +482,7 @@ var _CHART_UP_COLOR = "var(--color-success)";
 // transition markers spend the same hue on this chart, but at a lighter opacity
 // and as full-height dashed lines with a dot above the plot — different shape,
 // different weight, and never on the baseline where a missed poll sits.
-var _CHART_MISS_COLOR = "#ffc107";
+var _CHART_MISS_COLOR = PolarisChartShared.MISS_COLOR;
 
 // A poll that ANSWERED while missed polls are still outstanding. Same meaning
 // and same hue as the blue cell on the Last-30-min strip: the device is
@@ -497,7 +504,7 @@ var _CHART_MISS_COLOR = "#ffc107";
 // used for the same state all along. Convergent, NOT shared: that map is
 // deliberately its own palette (see the comment on it in api.js) — do not make
 // either one read the other.
-var _CHART_RECOVER_COLOR = "#0288d1";
+var _CHART_RECOVER_COLOR = PolarisChartShared.RECOVER_COLOR;
 
 /**
  * "#rrggbb" + alpha → "rgba(r,g,b,a)". Exists because the Last-30-min strip
@@ -527,20 +534,7 @@ function _hexWithAlpha(hex, alpha) {
 // while the bucket was still above the threshold read `down`, and with no way to
 // paint an `ok` point in the down colour it fell through to the series green.
 function _chartPointColor(p, seriesColor) {
-  if (p.ok) return p.rec ? _CHART_RECOVER_COLOR : seriesColor;
-  // Grey outranks the amber/down split: a miss the upstream explains is not
-  // being counted against this device at all, so how close it sits to the
-  // threshold says nothing worth colouring.
-  if (p.dep) return _CHART_DEP_COLOR;
-  // `down` is set only by the charts that resolved the covering automation's
-  // count (today: response time). Everywhere else it is undefined and the miss
-  // stays red, which is what every other chart has always drawn.
-  //
-  // `downColor` is that automation's SEVERITY colour: Down is not inherently
-  // red, red is what `critical` looks like. Absent ⇒ the red, which is both the
-  // critical colour and the right answer for a miss no automation was resolved
-  // for (see PolarisChartSeverity.downColorOf).
-  return p.down === false ? _CHART_MISS_COLOR : (p.downColor || _CHART_FAIL_COLOR);
+  return PolarisChartShared.chartPointColor(p, seriesColor);
 }
 
 // Failure-aware line rendering. `pts` is a time-ordered list of
@@ -593,15 +587,7 @@ function _failureDotsSVG(pts) {
 // timestamps to have a meaningful middle. Sizes the hole test in
 // _seriesReportedThrough below.
 function _medianCadenceMs(timestampsMs) {
-  if (!timestampsMs || timestampsMs.length < 3) return 0;
-  var dts = [];
-  for (var i = 1; i < timestampsMs.length; i++) {
-    var dt = timestampsMs[i] - timestampsMs[i - 1];
-    if (dt > 0) dts.push(dt);
-  }
-  if (!dts.length) return 0;
-  dts.sort(function (a, b) { return a - b; });
-  return dts[Math.floor(dts.length / 2)];
+  return PolarisChartShared.medianCadenceMs(timestampsMs);
 }
 
 // Missed-poll markers for the streams that carry no per-sample success flag —
@@ -642,25 +628,7 @@ function _medianCadenceMs(timestampsMs) {
 // Diving a line that has data would misreport the data we are actually holding.
 // See _seriesReportedThrough for what "kept reporting" means.
 function _outageMarkers(outages, sampleTimesMs) {
-  if (!outages || !outages.length) return [];
-  var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-  var cadenceMs = _medianCadenceMs(times);
-  var markers = [];
-  outages.forEach(function (o) {
-    var from = +new Date(o.from);
-    var to   = +new Date(o.to);
-    var dep  = o.kind === "dependency";
-    if (!isFinite(from) || !isFinite(to)) return;
-    // Skip the WHOLE window, not merely its edges. Dropping just the end
-    // markers would still leave any interior samples in place, and the line
-    // would dive at the window's start, climb back for each of them, and dive
-    // again — a zigzag that claims an outage and shows readings through it at
-    // the same time.
-    if (_seriesReportedThrough(times, cadenceMs, from, to)) return;
-    markers.push({ t: from, dep: dep });
-    if (to > from) markers.push({ t: to, dep: dep });
-  });
-  return markers.sort(function (a, b) { return a.t - b.t; });
+  return PolarisChartShared.outageMarkers(outages, sampleTimesMs);
 }
 
 // Did the series keep reporting through the outage [from, to]? Two pieces of
@@ -688,15 +656,7 @@ function _outageMarkers(outages, sampleTimesMs) {
 // bucket, i.e. the next bucket's start, so the neighbour lookups are
 // inclusive and the interior test is strict.
 function _seriesReportedThrough(times, cadenceMs, from, to) {
-  var prev = null, next = null;
-  for (var i = 0; i < times.length; i++) {
-    var t = times[i];
-    if (t > from && t < to) return true;
-    if (t <= from) prev = t;
-    if (t >= to && next === null) next = t;
-  }
-  if (!(cadenceMs > 0) || prev === null || next === null) return false;
-  return next - prev <= cadenceMs * 1.5;
+  return PolarisChartShared.seriesReportedThrough(times, cadenceMs, from, to);
 }
 
 // The three things every chart does with those markers, kept together so a new
@@ -2418,28 +2378,15 @@ function viewAssetLease(id) {
 
 function _ensureLeasePanelDOM() {
   if (document.getElementById("lease-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "lease-panel-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="lease-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="lease-panel-title">Lease</h3>' +
-          '<button class="btn-icon" id="lease-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="lease-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="lease-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="lease-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeLeasePanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+  buildSlideover({
+    id: "lease-panel",
+    title: "Lease",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeLeasePanel,
+    resizeKey: "polaris.panel.width.lease",
   });
-  document.getElementById("lease-panel-close").addEventListener("click", closeLeasePanel);
-  initSlideoverResize(document.getElementById("lease-panel"), "polaris.panel.width.lease");
 }
 
 function closeLeasePanel() {
@@ -7861,8 +7808,7 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
 
 /** "YYYY-MM-DDTHH:MM" in the browser's zone — a datetime-local input's value. */
 function _fwLocalInputValue(d) {
-  function p(n) { return (n < 10 ? "0" : "") + n; }
-  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  return PolarisAssetShared.fwLocalInputValue(d);
 }
 
 function _fwBrowserZone() {
@@ -7871,15 +7817,7 @@ function _fwBrowserZone() {
 
 /** "Tue, Oct 7, 2026, 2:00 AM CDT (in 9 h)" — the booking as the reader's clock shows it. */
 function _fwWhenText(iso) {
-  var d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  var txt = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
-  var mins = Math.round((d.getTime() - Date.now()) / 60000);
-  var rel = mins <= 0 ? "due now"
-    : mins < 60 ? "in " + mins + " min"
-    : mins < 48 * 60 ? "in " + Math.round(mins / 60) + " h"
-    : "in " + Math.round(mins / 1440) + " days";
-  return txt + " (" + rel + ")";
+  return PolarisAssetShared.fwWhenText(iso);
 }
 
 function _fwScheduleHTML(sched, canFlash) {
@@ -7900,7 +7838,7 @@ function _fwScheduleHTML(sched, canFlash) {
 }
 
 function _fwParseEmails(text) {
-  return String(text || "").split(/[\s,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  return PolarisAssetShared.fwParseEmails(text);
 }
 
 async function _cancelFirmwareSchedule(a, sched) {
@@ -10455,10 +10393,8 @@ function _storagePctCell(pct) {
 // FAULTED…, Unraid's array state STARTED / STOPPED, a disk's DISK_OK…),
 // coloured by whether it reads healthy. Unknown words stay neutral.
 function _storageHealthCell(h) {
-  var s = String(h).toUpperCase();
-  var good = /^(ONLINE|HEALTHY|STARTED|DISK_OK|OK|PASSED)$/.test(s);
-  var bad = /(FAULT|UNAVAIL|REMOVED|OFFLINE|DEGRADED|FAIL|INVALID|DSBL|WRONG|STOPPED)/.test(s);
-  var color = good ? "var(--color-success,#46a758)" : bad ? "var(--color-danger,#e5484d)" : "var(--color-text-secondary)";
+  var state = PolarisAssetShared.storageHealthState(h);
+  var color = state === "good" ? "var(--color-success,#46a758)" : state === "bad" ? "var(--color-danger,#e5484d)" : "var(--color-text-secondary)";
   return '<span style="color:' + color + '">' + escapeHtml(h) + '</span>';
 }
 
@@ -10471,21 +10407,11 @@ function _storageHealthCell(h) {
 // Inventory, not a time series: it is as fresh as the last discovery run.
 
 function _poolMemberUnhealthy(m) {
-  var errs = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0);
-  var h = String(m.health || "").toUpperCase();
-  return errs > 0 || (h !== "" && !/^(ONLINE|DISK_OK|AVAIL|INUSE)$/.test(h)) ||
-    (m.smart && !/^(OK|PASSED|UNKNOWN)$/i.test(m.smart));
+  return PolarisAssetShared.poolMemberUnhealthy(m);
 }
 
 function _poolScanText(scan) {
-  if (!scan) return "";
-  var kind = scan.kind === "parity-check" ? "Parity check" : scan.kind === "resilver" ? "Resilver" : scan.kind === "scrub" ? "Scrub" : (scan.kind || "Scan");
-  var when = scan.at ? " " + (scan.state === "running" ? "started " : "") + timeAgo(scan.at) : "";
-  var state = scan.state === "running"
-    ? "running" + (scan.percent != null ? " (" + Number(scan.percent).toFixed(1) + "%)" : "")
-    : (scan.state || "—");
-  var errs = scan.errors != null ? ", " + scan.errors + " error" + (scan.errors === 1 ? "" : "s") : "";
-  return kind + ": " + state + when + errs;
+  return PolarisAssetShared.poolScanText(scan);
 }
 
 function _poolLayoutsHTML(rows, details) {
@@ -11007,27 +10933,7 @@ function _radioPowerLabel(r) {
  * with the station count.
  */
 function _buildWirelessTree(radios, stations) {
-  var byBssid = {}, byRadioSsid = {};
-  var nodes = radios.map(function (r) {
-    var vapNodes = (r.vaps || []).map(function (v) {
-      var node = { vap: v, stations: [] };
-      if (v.bssid) byBssid[String(v.bssid).toUpperCase()] = node;
-      if (v.ssid)  byRadioSsid[r.radioIndex + "\u0000" + String(v.ssid).toLowerCase()] = node;
-      return node;
-    });
-    return { radio: r, vaps: vapNodes };
-  });
-
-  var unplaced = [];
-  stations.forEach(function (s) {
-    var node = s.bssid ? byBssid[String(s.bssid).toUpperCase()] : null;
-    if (!node && s.radioId != null && s.ssid) {
-      node = byRadioSsid[s.radioId + "\u0000" + String(s.ssid).toLowerCase()];
-    }
-    if (node) node.stations.push(s);
-    else unplaced.push(s);
-  });
-  return { radios: nodes, unplaced: unplaced };
+  return PolarisAssetShared.buildWirelessTree(radios, stations);
 }
 
 /** The matched-endpoint cell shared by the tree and the flat station table. */
@@ -12303,16 +12209,7 @@ function _chartTimeBounds(samples, since, until) {
 // figure counts a reading the operator cannot see. `tsKey` names the
 // timestamp field when it is not `timestamp`.
 function _inChartWindow(points, since, tsKey) {
-  var list = points || [];
-  if (since == null) return list;
-  var t0 = typeof since === "number" ? since : new Date(since).getTime();
-  if (!isFinite(t0)) return list;
-  var key = tsKey || "timestamp";
-  return list.filter(function (p) {
-    var v = p && p[key];
-    var t = typeof v === "number" ? v : new Date(v).getTime();
-    return !(t < t0);
-  });
+  return PolarisChartShared.inChartWindow(points, since, tsKey);
 }
 
 // Vertical dashed indicator at each local-midnight inside (t0, t1). The
@@ -12478,30 +12375,18 @@ function _severityChartLayer(kind, tiers, minV, maxV, geo) {
 
 function _ensureSensorPanelDOM() {
   if (document.getElementById("sensor-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "sensor-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="sensor-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="sensor-panel-title">Sensor</h3>' +
-          '<button class="btn-icon" id="sensor-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="sensor-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="sensor-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="sensor-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeSensorPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "sensor-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Sensor",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeSensorPanel,
+    resizeKey: "polaris.panel.width.sensor",
   });
-  document.getElementById("sensor-panel-close").addEventListener("click", closeSensorPanel);
-  wireSlideoverEscape(overlay, closeSensorPanel);
-  initSlideoverResize(document.getElementById("sensor-panel"), "polaris.panel.width.sensor");
 }
 
 function closeSensorPanel() {
@@ -14590,11 +14475,7 @@ function _seriesChipHTML(key, label, color, on, title, cls) {
 // colour this chart has always used, and the two tables never co-occur, so
 // "the big one at the bottom" reads the same on any asset. No band may be
 // red (missed poll) or grey (dependency down).
-var _MEM_BANDS_AGENT = [
-  { key: "processes", label: "Processes", color: "#f4a261" },
-  { key: "buffers",   label: "Buffers",   color: "#8ab17d" },
-  { key: "cache",     label: "Cache",     color: "#2a9d8f" },
-];
+var _MEM_BANDS_AGENT = PolarisChartShared.MEM_BANDS_AGENT;
 
 // vSphere. A VM fills private / shared / ballooned / swapped / compressed
 // against its CONFIGURED RAM; an ESXi host fills consumed / ballooned /
@@ -14606,41 +14487,22 @@ var _MEM_BANDS_AGENT = [
 // They are the hypervisor taking memory back from a guest under pressure,
 // and they are invisible to anything running inside that guest — an agent on
 // the same VM cannot see them and must not be made to guess.
-var _MEM_BANDS_VSPHERE = [
-  { key: "consumed",   label: "Consumed",   color: "#f4a261" },
-  { key: "private",    label: "Private",    color: "#f4a261" },
-  { key: "shared",     label: "Shared",     color: "#2a9d8f" },
-  { key: "ballooned",  label: "Ballooned",  color: "#e9c46a" },
-  { key: "swapped",    label: "Host-swapped", color: "#9c6ade" },
-  { key: "compressed", label: "Compressed", color: "#4d96d9" },
-];
+var _MEM_BANDS_VSPHERE = PolarisChartShared.MEM_BANDS_VSPHERE;
 // A TrueNAS host fills the agent's columns in TrueNAS's own words — what its
 // dashboard calls Services and ZFS Cache (the ARC). Same keys and colours, so
 // a chip toggled on one host stays toggled on the next; the ARC is
 // reclaimable like page cache, so it ships off for the same reason.
-var _MEM_BANDS_TRUENAS = _MEM_BANDS_AGENT.map(function (b) {
-  var label = b.key === "processes" ? "Services" : b.key === "cache" ? "ZFS Cache" : b.label;
-  return { key: b.key, label: label, color: b.color };
-});
+var _MEM_BANDS_TRUENAS = PolarisChartShared.MEM_BANDS_TRUENAS;
 
 // A Proxmox node: Proxmox's own "used" with the ZFS ARC carved out of it.
-var _MEM_BANDS_PROXMOX = _MEM_BANDS_AGENT.map(function (b) {
-  var label = b.key === "processes" ? "Used" : b.key === "cache" ? "ZFS ARC" : b.label;
-  return { key: b.key, label: label, color: b.color };
-});
+var _MEM_BANDS_PROXMOX = PolarisChartShared.MEM_BANDS_PROXMOX;
 
 function _memAgentBandsFor(asset) {
-  var v = asset && asset.virtualization;
-  if (v && v.platform === "proxmox" && v.role === "host") return _MEM_BANDS_PROXMOX;
-  return v && v.platform === "truenas" && v.role === "host" ? _MEM_BANDS_TRUENAS : _MEM_BANDS_AGENT;
+  return PolarisChartShared.memAgentBandsFor(asset);
 }
 
-var _MEM_SWAP_COLOR  = "#9c6ade";
+var _MEM_SWAP_COLOR = PolarisChartShared.MEM_SWAP_COLOR;
 var _MEM_TOTAL_COLOR = "rgba(127,127,127,0.55)";
-
-function _numOrNull(v) {
-  return typeof v === "number" && isFinite(v) ? v : null;
-}
 
 // Shapes one sample into the band values the chart stacks, and says which
 // VOCABULARY those values are in.
@@ -14658,51 +14520,7 @@ function _numOrNull(v) {
 // the window reported at all, which is what collapses a bytes-only source
 // to the single band it can honestly draw.
 function _memBandsFor(s) {
-  var total = _numOrNull(s.memTotalBytes);
-  if (total == null) return null;
-
-  var vs = {
-    consumed:   _numOrNull(s.memConsumedBytes),
-    private:    _numOrNull(s.memPrivateBytes),
-    shared:     _numOrNull(s.memSharedBytes),
-    ballooned:  _numOrNull(s.memBalloonedBytes),
-    swapped:    _numOrNull(s.memSwappedBytes),
-    compressed: _numOrNull(s.memCompressedBytes),
-  };
-  var isVsphere = Object.keys(vs).some(function (k) { return vs[k] != null; });
-
-  var values, table;
-  if (isVsphere) {
-    values = vs;
-    table = _MEM_BANDS_VSPHERE;
-  } else {
-    var used = _numOrNull(s.memUsedBytes);
-    if (used == null) return null;
-    values = {
-      processes: used,
-      buffers:   _numOrNull(s.memBuffersBytes),
-      cache:     _numOrNull(s.memCachedBytes),
-    };
-    table = _MEM_BANDS_AGENT;
-  }
-
-  var sum = 0;
-  table.forEach(function (b) { sum += values[b.key] || 0; });
-  return {
-    kind:   isVsphere ? "vsphere" : "agent",
-    table:  table,
-    values: values,
-    total:  total,
-    // Free is DERIVED from the total rather than trusted from the row: it is
-    // the one band the chart does not draw (it is the gap above the stack),
-    // so a free figure that disagreed with total-minus-the-rest would show
-    // up in the tooltip contradicting the picture beside it. The agent's own
-    // memFreeBytes and vSphere's untouched remainder are both this number.
-    free:      Math.max(0, total - sum),
-    inUse:     Math.min(total, sum),
-    swapUsed:  _numOrNull(s.swapUsedBytes),
-    swapTotal: _numOrNull(s.swapTotalBytes),
-  };
+  return PolarisChartShared.memBandsFor(s);
 }
 
 // Splits a run of points wherever an outage falls between two consecutive
@@ -17859,45 +17677,7 @@ async function _saveIfaceComment() {
 // in this bucket" — same semantic as detail tier's "errors in this
 // interval", just at a coarser granularity.
 function _derivePerIntervalSeries(samples, data) {
-  if (data && typeof data.bucketSeconds === "number" && data.bucketSeconds > 0) {
-    var bucketSec = data.bucketSeconds;
-    return (samples || []).map(function (s) {
-      var inBps  = typeof s.inBytesPerSec  === "number" ? s.inBytesPerSec  * 8 : null;
-      var outBps = typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null;
-      var inErr  = typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null;
-      var outErr = typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null;
-      // The bucket's PEAK rate (bytes/s → bits/s), for the throughput chart's
-      // dashed max line. Null on a bucket written before the column existed.
-      var inMaxBps  = typeof s.maxInBytesPerSec  === "number" ? s.maxInBytesPerSec  * 8 : null;
-      var outMaxBps = typeof s.maxOutBytesPerSec === "number" ? s.maxOutBytesPerSec * 8 : null;
-      return { timestamp: s.timestamp, inBps: inBps, outBps: outBps, inErr: inErr, outErr: outErr, inMaxBps: inMaxBps, outMaxBps: outMaxBps };
-    });
-  }
-  var out = [];
-  for (var i = 1; i < samples.length; i++) {
-    var prev = samples[i - 1];
-    var cur  = samples[i];
-    var dtMs = new Date(cur.timestamp) - new Date(prev.timestamp);
-    if (dtMs <= 0) continue;
-    var dtSec = dtMs / 1000;
-    function delta(a, b) {
-      if (typeof a !== "number" || typeof b !== "number") return null;
-      var d = b - a;
-      return d < 0 ? null : d;
-    }
-    var inOct  = delta(prev.inOctets,  cur.inOctets);
-    var outOct = delta(prev.outOctets, cur.outOctets);
-    var inErr  = delta(prev.inErrors,  cur.inErrors);
-    var outErr = delta(prev.outErrors, cur.outErrors);
-    out.push({
-      timestamp: cur.timestamp,
-      inBps:  inOct  != null ? (inOct  * 8) / dtSec : null,
-      outBps: outOct != null ? (outOct * 8) / dtSec : null,
-      inErr:  inErr,
-      outErr: outErr,
-    });
-  }
-  return out;
+  return PolarisChartShared.derivePerIntervalSeries(samples, data);
 }
 
 function _renderIfaceThroughputStats(container, rawSamples, derived, data) {
@@ -18364,30 +18144,18 @@ function _renderIfaceErrorChart(container, derived, opts) {
 
 function _ensureIpsecPanelDOM() {
   if (document.getElementById("ipsec-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "ipsec-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="ipsec-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="ipsec-panel-title">IPsec tunnel</h3>' +
-          '<button class="btn-icon" id="ipsec-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="ipsec-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="ipsec-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="ipsec-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeIpsecPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "ipsec-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "IPsec tunnel",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeIpsecPanel,
+    resizeKey: "polaris.panel.width.ipsec",
   });
-  document.getElementById("ipsec-panel-close").addEventListener("click", closeIpsecPanel);
-  wireSlideoverEscape(overlay, closeIpsecPanel);
-  initSlideoverResize(document.getElementById("ipsec-panel"), "polaris.panel.width.ipsec");
 }
 
 function closeIpsecPanel() {
@@ -18807,12 +18575,8 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
 // loss charts over time). Data comes from the perf-SLA + sdwan-rule sample
 // streams via the asset history endpoints.
 
-var _SDWAN_MEMBER_COLORS = ["#2a9d8f", "#4361ee", "#f4a261", "#9b5de5", "#e76f51", "#43aa8b", "#577590", "#bc6c25"];
 function _sdwanMemberColor(name, members) {
-  if (!name) return "#7b8794";
-  var idx = (members || []).indexOf(name);
-  if (idx < 0) idx = 0;
-  return _SDWAN_MEMBER_COLORS[idx % _SDWAN_MEMBER_COLORS.length];
+  return PolarisAssetShared.sdwanMemberColor(name, members);
 }
 
 // Compact "Health Check Status" strip — one segment per recent scrape.
@@ -19539,30 +19303,18 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
 
 function _ensureStoragePanelDOM() {
   if (document.getElementById("storage-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "storage-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="storage-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="storage-panel-title">Storage</h3>' +
-          '<button class="btn-icon" id="storage-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="storage-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="storage-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="storage-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeStoragePanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "storage-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Storage",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeStoragePanel,
+    resizeKey: "polaris.panel.width.storage",
   });
-  document.getElementById("storage-panel-close").addEventListener("click", closeStoragePanel);
-  wireSlideoverEscape(overlay, closeStoragePanel);
-  initSlideoverResize(document.getElementById("storage-panel"), "polaris.panel.width.storage");
 }
 
 function closeStoragePanel() {
@@ -25732,30 +25484,18 @@ async function _loadServiceLogsFor(assetId, unit, platform) {
 // detail panel's nested-slideover + range-button pattern.
 function _ensureProcPanelDOM() {
   if (document.getElementById("proc-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "proc-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="proc-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="proc-panel-title">Process</h3>' +
-          '<button class="btn-icon" id="proc-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="proc-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="proc-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="proc-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) _closeProcPanel(); });
-  document.getElementById("proc-panel-close").addEventListener("click", _closeProcPanel);
-  wireSlideoverEscape(overlay, _closeProcPanel);
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(document.getElementById("proc-panel"), "polaris.panel.width.process");
-  }
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "proc-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Process",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: _closeProcPanel,
+    resizeKey: "polaris.panel.width.process",
+  });
 }
 
 function _closeProcPanel() {
@@ -29231,18 +28971,7 @@ function _childTabShell(mount, kind, assetId, title, placeholder, children, rend
 // the rule "a0" would hit BA:01 through "ba01", which no one typing a0 means.
 // `filter` is already lower-cased.
 function _childFilterMatches(textParts, macParts, filter) {
-  if (!filter) return true;
-  if (textParts.concat(macParts).join(" ").toLowerCase().indexOf(filter) !== -1) return true;
-  var compact = filter.replace(/[\s:.\-]/g, "");
-  if (compact.length < 2 || !/^[0-9a-f]+$/.test(compact)) return false;
-  return macParts.some(function (m) {
-    if (!m) return false;
-    var hex = String(m).toLowerCase().replace(/[:.\-]/g, "");
-    for (var at = hex.indexOf(compact); at !== -1; at = hex.indexOf(compact, at + 1)) {
-      if (at % 2 === 0) return true;
-    }
-    return false;
-  });
+  return PolarisAssetShared.childFilterMatches(textParts, macParts, filter);
 }
 
 async function _loadAssetChildWireless(assetId) {
@@ -29456,12 +29185,7 @@ function _wireAssetArpTableTab(assetId) {
 // "45s" / "12m" / "3h 04m". FortiOS reports the age in seconds; anything
 // non-numeric is absent rather than zero, so it renders as a dash.
 function _arpAgeLabel(sec) {
-  if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
-  if (sec < 60) return Math.round(sec) + "s";
-  if (sec < 3600) return Math.floor(sec / 60) + "m";
-  var h = Math.floor(sec / 3600);
-  var m = Math.floor((sec % 3600) / 60);
-  return h + "h " + String(m).padStart(2, "0") + "m";
+  return PolarisAssetShared.arpAgeLabel(sec);
 }
 
 // Shared pivot wiring for the `.asset-link` anchors the MAC Table and ARP
@@ -29845,7 +29569,7 @@ var _IPSEC_KIND_LABELS = {
 };
 
 function _ipsecIsRemoteAccess(c) {
-  return c.kind === "remote-access" || c.kind === "ssl-vpn";
+  return PolarisAssetShared.ipsecIsRemoteAccess(c);
 }
 
 function _ipsecTabEligible(payload) {
@@ -29863,11 +29587,7 @@ var _assetIpsecAsset = {};
 
 // "3d 04h" / "5h 12m" / "40m" — how long a connection has been up.
 function _ipsecUptimeLabel(since) {
-  if (!since) return null;
-  var sec = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
-  if (sec < 3600) return Math.max(1, Math.floor(sec / 60)) + "m";
-  if (sec < 86400) return Math.floor(sec / 3600) + "h " + String(Math.floor((sec % 3600) / 60)).padStart(2, "0") + "m";
-  return Math.floor(sec / 86400) + "d " + String(Math.floor((sec % 86400) / 3600)).padStart(2, "0") + "h";
+  return PolarisAssetShared.ipsecUptimeLabel(since);
 }
 
 // The monitor badges, so up / down read the way they do on every asset row.

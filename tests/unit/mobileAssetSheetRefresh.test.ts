@@ -20,6 +20,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 const DETAIL_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "asset-detail.js"), "utf-8");
 const g = globalThis as any;
@@ -48,6 +53,7 @@ describe("mobile asset sheet refresh", () => {
     const known: Record<string, any> = { get, probeNow };
     g.api = { assets: new Proxy(known, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    loadSharedModules();
     new Function(DETAIL_SRC)();
   }
 

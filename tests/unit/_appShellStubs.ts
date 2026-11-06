@@ -62,3 +62,11 @@ export const APP_SHELL_STUBS: string = [
   "function showRowMenu(){}",
   "function isLightTheme(){ return false; }",
 ].join("\n");
+
+/**
+ * app.js's slide-over factory (CQ-F025), verbatim. A page script that builds
+ * its slide-over through buildSlideover needs it in scope to open the panel;
+ * it reaches raiseSlideover / wireSlideoverEscape / initSlideoverResize only
+ * behind typeof guards, so a harness stubs (or omits) those as it likes.
+ */
+export const SLIDEOVER_BUILDER: string = extractAppFn("buildSlideover");

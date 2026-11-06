@@ -399,6 +399,35 @@ describe("two slide-overs stacked", () => {
     expect(closed).toEqual(["b", "a"]);
   });
 
+  // CQ-F025: the Users page's role panel re-renders its overlay element on every
+  // open. A getter wired once must close whichever element is current — not the
+  // first one, and without a per-open listener left behind.
+  it("a getter-form wire closes the overlay that is current when the key lands", () => {
+    overlays();
+    let closes = 0;
+    const current = () => doc.getElementById("rerendered") as HTMLElement | null;
+    g.wireSlideoverEscape(current, () => { closes++; current()?.classList.remove("open"); });
+    const esc = () => doc.dispatchEvent(new (win as any).KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    const render = () => {
+      current()?.remove();
+      const el = doc.createElement("div");
+      el.id = "rerendered";
+      el.className = "slideover-overlay open";
+      doc.body.appendChild(el);
+      return el;
+    };
+    esc();                                   // nothing rendered yet: nothing to close
+    expect(closes).toBe(0);
+    const first = render();
+    esc();
+    expect(closes).toBe(1);
+    expect(first.classList.contains("open")).toBe(false);
+    const second = render();                 // re-rendered: a NEW element, same id
+    esc();
+    expect(closes).toBe(2);
+    expect(second.classList.contains("open")).toBe(false);
+  });
+
   it("raiseSlideover moves a closed overlay past the slide-overs after it, and leaves an open one alone", () => {
     const { a, b } = overlays();
     b.classList.add("open");

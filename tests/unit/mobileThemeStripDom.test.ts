@@ -11,7 +11,7 @@
  *    through the sweep, which is the bug this port had to avoid;
  *  - that a TRANSIT palette is applied but NEVER persisted, so a reload
  *    mid-sweep lands on a real theme the picker can name;
- *  - the QUARTER SPACING of THEME_STRIP_POS — the engraving is a 24-hour clock,
+ *  - the QUARTER SPACING of THEME_BAND_POS (theme-core.js, shared with the desktop) — the engraving is a 24-hour clock,
  *    so six hours is a quarter of it and the two faces land half a strip apart.
  *    A position edited alone silently puts the marker beside a face rather
  *    than on it;
@@ -34,6 +34,7 @@ const MOBILE_APP_JS = readFileSync(
   join(process.cwd(), "public", "js", "mobile", "app.js"),
   "utf-8",
 );
+const CORE_JS = readFileSync(join(process.cwd(), "public", "js", "theme-core.js"), "utf-8");
 const MORE_TAB_JS = readFileSync(
   join(process.cwd(), "public", "js", "mobile", "more-tab.js"),
   "utf-8",
@@ -52,39 +53,23 @@ function extractBlock(src: string, opener: string, from = 0): string {
   return src.slice(start, i + 1);
 }
 
-const extractFn = (name: string) => extractBlock(MOBILE_APP_JS, `function ${name}(`);
-
-function extractDecl(decl: string, close: string): string {
-  const start = MOBILE_APP_JS.indexOf(decl);
-  const end = MOBILE_APP_JS.indexOf(close, start);
-  if (start < 0 || end < 0) throw new Error(`${decl} not found`);
-  return MOBILE_APP_JS.slice(start, end + close.length);
+/**
+ * mobile/app.js's strip HOST — MOBILE_THEME_IDS, the status bar, the
+ * createThemeEngine call and window.PolarisTheme — lifted verbatim, run after
+ * the shared engine (theme-core.js) exactly as mobile.html orders them.
+ */
+function hostBlock(): string {
+  const start = MOBILE_APP_JS.indexOf("var MOBILE_THEME_IDS = {");
+  if (start < 0) throw new Error("the strip host block was not found in mobile/app.js");
+  return MOBILE_APP_JS.slice(start, MOBILE_APP_JS.indexOf("window.PolarisTheme = {", start)) +
+    extractBlock(MOBILE_APP_JS, "window.PolarisTheme = {", start) + ";";
 }
 
 const harness = [
-  extractDecl("var MOBILE_THEMES = [", "];"),
-  extractDecl("var MOBILE_TRANSIT_THEMES = [", "];"),
-  extractDecl("var MOBILE_THEME_IDS = {", "};"),
-  extractDecl("var THEME_STRIP_POS = {", "};"),
-  "var THEME_FADE_MS = 800;",
-  extractDecl("var THEME_LEG_MS = {", "};"),
-  extractFn("_themeLegMs"),
-  "var GLOW_MS = 2000, _glowTurnTimer = null;",
-  extractFn("_markGlowTurn"),
-  "var _stripPos = null, _stripSeamTimer = null, _themeFadeTimer = null;",
-  "var _themeDest = null, _themeChainTimer = null;",
-  extractFn("_mobileTheme"),
-  extractFn("_themeStripTracks"),
-  extractFn("_paintThemeStrips"),
-  extractFn("_advanceThemeStrips"),
-  extractFn("_prefersReducedMotion"),
-  extractFn("_themeViewTransitions"),
-  extractFn("_beginThemeFade"),
-  extractFn("_applyMobileTheme"),
-  extractFn("_syncStatusBar"),
-  extractBlock(MOBILE_APP_JS, "window.PolarisTheme = {") + ";",
-  "return { POS: THEME_STRIP_POS, THEMES: MOBILE_THEMES, TRANSIT: MOBILE_TRANSIT_THEMES,",
-  "         theme: _mobileTheme, api: window.PolarisTheme };",
+  CORE_JS,
+  hostBlock(),
+  "return { POS: THEME_BAND_POS, THEMES: THEMES, TRANSIT: TRANSIT_THEMES,",
+  "         theme: _getTheme, api: window.PolarisTheme };",
 ].join("\n");
 
 type Api = {
@@ -157,14 +142,15 @@ describe("status bar colour", () => {
   });
 
   it("is set at boot, right after the saved theme is applied", () => {
-    const boot = MOBILE_APP_JS.slice(0, MOBILE_APP_JS.indexOf("function _mobileTheme("));
-    const applied = boot.indexOf('document.documentElement.setAttribute("data-theme", saved);');
-    expect(applied).toBeGreaterThan(0);
-    expect(boot.indexOf("_syncStatusBar(_mobileTheme(saved));")).toBeGreaterThan(applied);
+    // theme-core.js's _applySavedTheme writes data-theme and returns the id;
+    // the host paints the status bar from it before the app boots.
+    expect(CORE_JS).toContain('document.documentElement.setAttribute("data-theme", saved);\n  return saved;'.replace(/\n/g, CORE_JS.includes("\r\n") ? "\r\n" : "\n"));
+    const boot = MOBILE_APP_JS.slice(0, MOBILE_APP_JS.indexOf("window.PolarisTheme = {"));
+    expect(boot).toContain("_syncStatusBar(_getTheme(_applySavedTheme()));");
   });
 });
 
-describe("THEME_STRIP_POS", () => {
+describe("THEME_BAND_POS on the phone", () => {
   const api = freshApi();
 
   it("carries a position for every selectable theme and every waypoint", () => {
@@ -365,7 +351,11 @@ describe("the More tab's strip markup", () => {
 
   it("delegates the tap instead of wiring its own listener", () => {
     expect(MORE_TAB_JS).not.toContain('getElementById("theme-strip")');
-    expect(MOBILE_APP_JS).toContain('e.target.closest(".theme-strip")');
+    // The shared engine (theme-core.js) owns the one delegated listener; the
+    // phone only names the control it answers to.
+    expect(MOBILE_APP_JS).toContain('control: ".theme-strip",');
+    expect(CORE_JS).toContain("ev.target.closest(e.control)");
+    expect(MOBILE_APP_JS).not.toContain('e.target.closest(".theme-strip")');
   });
 
   it("retired the two-way Dark/Light row", () => {

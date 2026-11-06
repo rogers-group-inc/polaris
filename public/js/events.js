@@ -2355,6 +2355,8 @@ function openEventAssetTrigger(trigger) {
   btn.addEventListener("click", openPanel);
   closeBtn.addEventListener("click", closePanel);
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closePanel(); });
+  // Escape closes it when topmost, like every other slide-over (CQ-F025).
+  if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closePanel);
   if (filterSel) filterSel.addEventListener("change", loadAlerts);
   if (statusSel) statusSel.addEventListener("change", loadAlerts);
 

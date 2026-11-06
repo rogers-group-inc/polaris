@@ -50,58 +50,25 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const APP_JS = readFileSync(join(process.cwd(), "public", "js", "app.js"), "utf-8");
+const CORE_JS = readFileSync(join(process.cwd(), "public", "js", "theme-core.js"), "utf-8");
 const STYLES_CSS = readFileSync(join(process.cwd(), "public", "css", "styles.css"), "utf-8");
 
-function extractFn(name: string): string {
-  const start = APP_JS.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`${name} not found in app.js`);
-  let depth = 0;
-  let i = APP_JS.indexOf("{", start);
-  for (; i < APP_JS.length; i++) {
-    if (APP_JS[i] === "{") depth++;
-    else if (APP_JS[i] === "}") { depth--; if (depth === 0) break; }
-  }
-  return APP_JS.slice(start, i + 1);
+/**
+ * app.js's band HOST — the createThemeEngine call and the shell's names for
+ * its verbs — lifted verbatim, from the engine call to the last alias.
+ */
+function hostBlock(): string {
+  const start = APP_JS.indexOf("var _themeEngine = createThemeEngine({");
+  const endMarker = "function openThemeMenu() { advanceTheme(); }";
+  const end = APP_JS.indexOf(endMarker, start);
+  if (start < 0 || end < 0) throw new Error("the band host block was not found in app.js");
+  return APP_JS.slice(start, end + endMarker.length);
 }
 
-/** An array or object literal lifted verbatim, so the test can't drift from it. */
-function extractDecl(decl: string, close: string): string {
-  const start = APP_JS.indexOf(decl);
-  const end = APP_JS.indexOf(close, start);
-  if (start < 0 || end < 0) throw new Error(`${decl} not found in app.js`);
-  return APP_JS.slice(start, end + close.length);
-}
-
+// The page's real order: the shared engine (theme-core.js), then app.js's host.
 const harness = [
-  extractDecl("var THEMES = [", "];"),
-  extractDecl("var TRANSIT_THEMES = [", "];"),
-  extractDecl("var THEME_BAND_POS = {", "};"),
-  'var DEFAULT_THEME = "nightfall";',
-  'var THEME_BAND_ART = "/img/brand/time-strip-desktop.webp";',
-  "var THEME_FADE_MS = 800;",
-  extractDecl("var THEME_LEG_MS = {", "};"),
-  extractFn("_themeLegMs"),
-  "var GLOW_MS = 2000, _glowTurnTimer = null;",
-  extractFn("_markGlowTurn"),
-  "var _bandPos = null, _bandSeamTimer = null, _themeFadeTimer = null;",
-  "var _themeDest = null, _themeChainTimer = null;",
-  extractFn("_getTheme"),
-  extractFn("_getCurrentTheme"),
-  extractFn("isLightTheme"),
-  extractFn("_themeBandTracks"),
-  extractFn("_paintThemeBands"),
-  extractFn("_seatThemeBands"),
-  extractFn("_advanceThemeBands"),
-  extractFn("_prefersReducedMotion"),
-  extractFn("_themeViewTransitions"),
-  extractFn("_beginThemeFade"),
-  extractFn("_setTheme"),
-  extractFn("_applyTheme"),
-  extractFn("_bandForwardGap"),
-  extractFn("advanceTheme"),
-  extractFn("_sunIcon"),
-  extractFn("_sunriseIcon"),
-  extractFn("_starIcon"),
+  CORE_JS,
+  hostBlock(),
   "return { setTheme: _setTheme, advanceTheme: advanceTheme, isLightTheme: isLightTheme,",
   "         getTheme: _getTheme, THEMES: THEMES, TRANSIT_THEMES: TRANSIT_THEMES,",
   "         POS: THEME_BAND_POS, seat: _seatThemeBands };",
@@ -222,8 +189,12 @@ describe("sidebar theme band placement", () => {
   it("delegates the click instead of wiring a listener in the template", () => {
     // Two listeners on one band advance two steps per click, which reads as
     // the control skipping a theme.
-    expect(APP_JS).toContain('e.target.closest(".theme-band")');
+    // The engine (theme-core.js) owns the one delegated listener; app.js
+    // only names the control it answers to.
+    expect(APP_JS).toContain('control: ".theme-band",');
+    expect(CORE_JS).toContain("ev.target.closest(e.control)");
     expect(APP_JS).not.toContain('document.getElementById("btn-theme-band")');
+    expect(APP_JS).not.toContain('e.target.closest(".theme-band")');
   });
 
   it("retired the theme menu rather than leaving a second way in", () => {
@@ -282,7 +253,7 @@ describe("theme band CSS", () => {
       STYLES_CSS.indexOf(".theme-band-track img"),
     );
     expect(track).toContain("transition: transform 800ms");
-    expect(APP_JS).toContain("var THEME_FADE_MS = 800;");
+    expect(CORE_JS).toContain("var THEME_FADE_MS = 800;");
   });
 });
 

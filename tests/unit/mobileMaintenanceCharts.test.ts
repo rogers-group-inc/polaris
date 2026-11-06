@@ -27,6 +27,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 const CHARTS_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "charts.js"), "utf-8");
 const DETAIL_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "asset-detail.js"), "utf-8");
@@ -35,6 +40,7 @@ const g = globalThis as any;
 type LineChart = (opts: Record<string, unknown>) => string;
 function loadCharts(): LineChart {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  loadSharedModules();
   new Function(CHARTS_SRC)();
   return g.PolarisCharts.lineChart;
 }
@@ -134,6 +140,7 @@ describe("mobile asset sheet in a maintenance window", () => {
     };
     g.api = { assets: new Proxy(known, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    loadSharedModules();
     new Function(DETAIL_SRC)();
   }
 
