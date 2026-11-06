@@ -4574,6 +4574,112 @@ function raiseSlideover(overlayEl) {
 }
 if (typeof window !== "undefined") window.raiseSlideover = raiseSlideover;
 
+// Build a slide-over's skeleton, append it to <body> and wire it — the one
+// factory every JS-built slide-over uses (CQ-F025). It produces:
+//
+//   div.slideover-overlay#<prefix>-overlay > div.slideover#<id> >
+//     .slideover-resize-handle
+//     .slideover-header > .slideover-header-top (h3 + close button.btn-icon),
+//                         .slideover-meta, then opts.headerHTML
+//     .slideover-body
+//     .slideover-footer (only when opts.footer is given)
+//
+// and wires backdrop click (target equality), the close button, Escape
+// (wireSlideoverEscape — topmost only) and the resize bar/grip
+// (initSlideoverResize, when opts.resizeKey is set). Callers keep their own
+// "already built?" check, so a panel stays lazily built on first open.
+//
+// opts:
+//   id           the .slideover's id (required)
+//   prefix       base for every other id (default: id) — overlay <prefix>-overlay,
+//                title -title, close -close, meta -meta, body -body, footer -footer;
+//                pass an explicit xxxId to override one, or null to omit it
+//   overlayClass extra class on the overlay (e.g. "slideover-nested")
+//   panelStyle   inline style on the .slideover
+//   dialog       true → role="dialog" aria-labelledby=<titleId> tabindex="-1"
+//   title        the <h3>'s inner HTML (the caller escapes it)
+//   titleLead    true → wrap the <h3> in .slideover-header-lead
+//   closeTitle   the close button's title (default "Close"; null omits it)
+//   closeLabel   the close button's aria-label (default none)
+//   meta         false omits the .slideover-meta row (default true)
+//   headerHTML   markup after the meta row, inside .slideover-header
+//   bodyHTML / bodyStyle   the body's initial content / inline style
+//   footer       true → an empty .slideover-footer; a string → its inner HTML
+//   close        what backdrop / close button / Escape call (default: remove
+//                .open, then opts.onClose)
+//   onClose      cleanup after the default close
+//   resizeKey    localStorage key for initSlideoverResize ("polaris.panel.width.<name>")
+//
+// Returns { overlay, panel, body, footer, open(after), close() }: open raises
+// the overlay over any open slide-over (DOM order is stacking order) and
+// reveals it; `after` runs once it is revealed.
+function buildSlideover(opts) {
+  opts = opts || {};
+  var prefix = opts.prefix || opts.id;
+  var idOf = function (key, suffix) {
+    var v = opts[key];
+    if (v === null) return null;
+    return v !== undefined ? v : prefix + "-" + suffix;
+  };
+  var attr = function (name, value) {
+    return value == null ? "" : " " + name + '="' + String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;") + '"';
+  };
+  var titleId = idOf("titleId", "title");
+  var bodyId = idOf("bodyId", "body");
+  var footerId = idOf("footerId", "footer");
+  var closeId = idOf("closeId", "close");
+
+  var overlay = document.createElement("div");
+  overlay.id = idOf("overlayId", "overlay");
+  overlay.className = "slideover-overlay" + (opts.overlayClass ? " " + opts.overlayClass : "");
+  var h3 = "<h3" + attr("id", titleId) + ">" + (opts.title || "") + "</h3>";
+  overlay.innerHTML =
+    '<div class="slideover"' + attr("id", opts.id) +
+      (opts.dialog ? ' role="dialog"' + attr("aria-labelledby", titleId) + ' tabindex="-1"' : "") +
+      attr("style", opts.panelStyle) + ">" +
+      '<div class="slideover-resize-handle"></div>' +
+      '<div class="slideover-header">' +
+        '<div class="slideover-header-top">' +
+          (opts.titleLead ? '<div class="slideover-header-lead">' + h3 + "</div>" : h3) +
+          '<button class="btn-icon"' + attr("id", closeId) +
+            attr("title", opts.closeTitle === undefined ? "Close" : opts.closeTitle) +
+            attr("aria-label", opts.closeLabel) + ">&times;</button>" +
+        "</div>" +
+        (opts.meta === false ? "" : '<div class="slideover-meta"' + attr("id", idOf("metaId", "meta")) + "></div>") +
+        (opts.headerHTML || "") +
+      "</div>" +
+      '<div class="slideover-body"' + attr("id", bodyId) + attr("style", opts.bodyStyle) + ">" + (opts.bodyHTML || "") + "</div>" +
+      (opts.footer
+        ? '<div class="slideover-footer"' + attr("id", footerId) + ">" + (typeof opts.footer === "string" ? opts.footer : "") + "</div>"
+        : "") +
+    "</div>";
+  document.body.appendChild(overlay);
+
+  var panel = overlay.firstChild;
+  var close = typeof opts.close === "function" ? opts.close : function () {
+    overlay.classList.remove("open");
+    if (typeof opts.onClose === "function") opts.onClose();
+  };
+  overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+  var closeBtn = panel.querySelector(".slideover-header-top > .btn-icon");
+  if (closeBtn) closeBtn.addEventListener("click", function () { close(); });
+  if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, close);
+  if (opts.resizeKey && typeof initSlideoverResize === "function") initSlideoverResize(panel, opts.resizeKey);
+
+  return {
+    overlay: overlay,
+    panel: panel,
+    body: panel.querySelector(".slideover-body"),
+    footer: panel.querySelector(".slideover-footer"),
+    open: function (after) {
+      if (typeof raiseSlideover === "function") raiseSlideover(overlay);
+      revealOverlay(overlay, after);
+    },
+    close: close,
+  };
+}
+if (typeof window !== "undefined") window.buildSlideover = buildSlideover;
+
 // Any <a href="/assets.html#view=asset:<id>[&tab=<key>]"> — the deep link the
 // dashboard widgets, the Events page's conflict cards and the alert email all
 // emit — opens the asset panel in place on a plain left click. Modifier and

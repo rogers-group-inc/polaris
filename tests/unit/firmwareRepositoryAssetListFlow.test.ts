@@ -17,6 +17,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { SLIDEOVER_BUILDER } from "./_appShellStubs";
 
 const eff = { credentialName: "FortiSwitch HTTP", scope: "assetType" };
 function tree() {
@@ -57,7 +58,7 @@ async function boot() {
     } },
   });
   win.document.body.innerHTML = '<div id="tab-firmware"></div>';
-  (win as unknown as { eval: (s: string) => void }).eval(readFileSync(resolve(__dirname, "../../public/js/server-settings-firmware.js"), "utf8"));
+  (win as unknown as { eval: (s: string) => void }).eval(SLIDEOVER_BUILDER + "\n" + readFileSync(resolve(__dirname, "../../public/js/server-settings-firmware.js"), "utf8"));
   const tab = (win as unknown as { PolarisFirmwareTab: { load: () => Promise<void>; nodeKey: (...p: string[]) => string; _setState: (s: unknown) => void } }).PolarisFirmwareTab;
   await tab.load();
   const doc = win.document as unknown as Document;

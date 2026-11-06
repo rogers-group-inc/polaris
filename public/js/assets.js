@@ -2418,28 +2418,15 @@ function viewAssetLease(id) {
 
 function _ensureLeasePanelDOM() {
   if (document.getElementById("lease-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "lease-panel-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="lease-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="lease-panel-title">Lease</h3>' +
-          '<button class="btn-icon" id="lease-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="lease-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="lease-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="lease-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeLeasePanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+  buildSlideover({
+    id: "lease-panel",
+    title: "Lease",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeLeasePanel,
+    resizeKey: "polaris.panel.width.lease",
   });
-  document.getElementById("lease-panel-close").addEventListener("click", closeLeasePanel);
-  initSlideoverResize(document.getElementById("lease-panel"), "polaris.panel.width.lease");
 }
 
 function closeLeasePanel() {
@@ -12478,30 +12465,18 @@ function _severityChartLayer(kind, tiers, minV, maxV, geo) {
 
 function _ensureSensorPanelDOM() {
   if (document.getElementById("sensor-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "sensor-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="sensor-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="sensor-panel-title">Sensor</h3>' +
-          '<button class="btn-icon" id="sensor-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="sensor-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="sensor-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="sensor-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeSensorPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "sensor-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Sensor",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeSensorPanel,
+    resizeKey: "polaris.panel.width.sensor",
   });
-  document.getElementById("sensor-panel-close").addEventListener("click", closeSensorPanel);
-  wireSlideoverEscape(overlay, closeSensorPanel);
-  initSlideoverResize(document.getElementById("sensor-panel"), "polaris.panel.width.sensor");
 }
 
 function closeSensorPanel() {
@@ -18364,30 +18339,18 @@ function _renderIfaceErrorChart(container, derived, opts) {
 
 function _ensureIpsecPanelDOM() {
   if (document.getElementById("ipsec-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "ipsec-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="ipsec-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="ipsec-panel-title">IPsec tunnel</h3>' +
-          '<button class="btn-icon" id="ipsec-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="ipsec-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="ipsec-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="ipsec-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeIpsecPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "ipsec-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "IPsec tunnel",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeIpsecPanel,
+    resizeKey: "polaris.panel.width.ipsec",
   });
-  document.getElementById("ipsec-panel-close").addEventListener("click", closeIpsecPanel);
-  wireSlideoverEscape(overlay, closeIpsecPanel);
-  initSlideoverResize(document.getElementById("ipsec-panel"), "polaris.panel.width.ipsec");
 }
 
 function closeIpsecPanel() {
@@ -19539,30 +19502,18 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
 
 function _ensureStoragePanelDOM() {
   if (document.getElementById("storage-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "storage-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="storage-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="storage-panel-title">Storage</h3>' +
-          '<button class="btn-icon" id="storage-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="storage-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="storage-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="storage-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeStoragePanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "storage-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Storage",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeStoragePanel,
+    resizeKey: "polaris.panel.width.storage",
   });
-  document.getElementById("storage-panel-close").addEventListener("click", closeStoragePanel);
-  wireSlideoverEscape(overlay, closeStoragePanel);
-  initSlideoverResize(document.getElementById("storage-panel"), "polaris.panel.width.storage");
 }
 
 function closeStoragePanel() {
@@ -25732,30 +25683,18 @@ async function _loadServiceLogsFor(assetId, unit, platform) {
 // detail panel's nested-slideover + range-button pattern.
 function _ensureProcPanelDOM() {
   if (document.getElementById("proc-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "proc-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="proc-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="proc-panel-title">Process</h3>' +
-          '<button class="btn-icon" id="proc-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="proc-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="proc-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="proc-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) _closeProcPanel(); });
-  document.getElementById("proc-panel-close").addEventListener("click", _closeProcPanel);
-  wireSlideoverEscape(overlay, _closeProcPanel);
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(document.getElementById("proc-panel"), "polaris.panel.width.process");
-  }
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "proc-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Process",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: _closeProcPanel,
+    resizeKey: "polaris.panel.width.process",
+  });
 }
 
 function _closeProcPanel() {

@@ -33,7 +33,9 @@ function jsFiles(dir: string): string[] {
 const NOT_A_PANEL = new Set(["panel-lock.js"]);
 
 describe("every slide-over closes on Escape (CQ-F025)", () => {
-  const files = jsFiles(JS).filter((f) => /slideover-overlay/.test(readFileSync(f, "utf8")));
+  // A panel built through app.js's buildSlideover names neither the class nor
+  // wireSlideoverEscape — the factory wires Escape for it (CQ-F025).
+  const files = jsFiles(JS).filter((f) => /slideover-overlay|buildSlideover\(/.test(readFileSync(f, "utf8")));
 
   it("finds the slide-over files", () => {
     expect(files.length).toBeGreaterThan(8);
@@ -44,7 +46,7 @@ describe("every slide-over closes on Escape (CQ-F025)", () => {
     if (NOT_A_PANEL.has(name)) continue;
     it(`${name} wires Escape`, () => {
       const src = readFileSync(f, "utf8");
-      expect(/wireSlideoverEscape\(/.test(src) || /["']Escape["']/.test(src), `${name} builds a slide-over with no Escape`).toBe(true);
+      expect(/wireSlideoverEscape\(|buildSlideover\(/.test(src) || /["']Escape["']/.test(src), `${name} builds a slide-over with no Escape`).toBe(true);
     });
   }
 });

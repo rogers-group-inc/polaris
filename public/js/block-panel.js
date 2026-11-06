@@ -10,36 +10,16 @@ var _blockPanelDirty = false;
 
 function _ensureBlockPanelDOM() {
   if (document.getElementById("block-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "block-panel-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="block-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="block-panel-title"></h3>' +
-          '<button class="btn-icon" id="block-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="block-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="block-panel-body">' +
-        '<p class="empty-state">Loading...</p>' +
-      '</div>' +
-      '<div class="slideover-footer" id="block-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeBlockPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Escape goes to the topmost layer only — this panel may sit over
+  // another slide-over now that any page can open it.
+  buildSlideover({
+    id: "block-panel",
+    bodyHTML: '<p class="empty-state">Loading...</p>',
+    footer: true,
+    close: closeBlockPanel,
+    resizeKey: "polaris.panel.width.block",
   });
-  document.getElementById("block-panel-close").addEventListener("click", closeBlockPanel);
-
-  // Escape closes the panel when it is the topmost layer (isTopmostSlideover,
-  // app.js) — it may sit over another slide-over now that any page can open it.
-  wireSlideoverEscape(overlay, closeBlockPanel);
-
-  initSlideoverResize(document.getElementById("block-panel"), "polaris.panel.width.block");
 }
 
 function openBlockPanel(blockId) {

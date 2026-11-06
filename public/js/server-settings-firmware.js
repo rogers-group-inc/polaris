@@ -776,31 +776,23 @@
 
   function ensureAssetListDOM() {
     if (document.getElementById("fw-assets-overlay")) return;
-    var overlay = document.createElement("div");
-    overlay.id = "fw-assets-overlay";
-    overlay.className = "slideover-overlay";
-    overlay.innerHTML =
-      '<div class="slideover" id="fw-assets-panel" role="dialog" aria-labelledby="fw-assets-title" tabindex="-1">' +
-        '<div class="slideover-resize-handle"></div>' +
-        '<div class="slideover-header">' +
-          '<div class="slideover-header-top">' +
-            '<h3 id="fw-assets-title">Devices</h3>' +
-            '<button class="btn-icon" id="fw-assets-close" aria-label="Close">&times;</button>' +
-          '</div>' +
-          '<div class="slideover-meta" id="fw-assets-meta"></div>' +
-        '</div>' +
-        '<div class="slideover-body">' +
-          '<div style="padding:1rem 1.25rem">' +
-            '<input type="search" id="fw-assets-filter" placeholder="Filter by hostname, IP, model, serial or version" style="width:100%;margin-bottom:0.75rem">' +
-            '<div id="fw-assets-body"></div>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(overlay);
-
-    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeAssetList(); });
-    document.getElementById("fw-assets-close").addEventListener("click", closeAssetList);
-    if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closeAssetList);
+    // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+    buildSlideover({
+      id: "fw-assets-panel",
+      prefix: "fw-assets",
+      dialog: true,
+      title: "Devices",
+      closeTitle: null,
+      closeLabel: "Close",
+      bodyId: null,
+      bodyHTML:
+        '<div style="padding:1rem 1.25rem">' +
+          '<input type="search" id="fw-assets-filter" placeholder="Filter by hostname, IP, model, serial or version" style="width:100%;margin-bottom:0.75rem">' +
+          '<div id="fw-assets-body"></div>' +
+        '</div>',
+      close: closeAssetList,
+      resizeKey: "polaris.panel.width.firmwareassets",
+    });
 
     var body = document.getElementById("fw-assets-body");
     var openRow = function (row) {
@@ -818,8 +810,6 @@
     document.getElementById("fw-assets-filter").addEventListener("input", function (e) {
       renderAssetList(body, _listRows, e.target.value);
     });
-
-    if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("fw-assets-panel"), "polaris.panel.width.firmwareassets");
   }
 
   function closeAssetList() {

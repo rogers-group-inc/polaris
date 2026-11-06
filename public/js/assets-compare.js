@@ -325,35 +325,20 @@ async function _cmpLoadIfaceUsage(ifaceData) {
 
 function _ensureComparePanelDOM() {
   if (document.getElementById("compare-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "compare-panel-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="compare-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="compare-panel-title">Compare Assets</h3>' +
-          '<button class="btn-icon" id="compare-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="compare-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="compare-panel-body"></div>' +
-      '<div class="slideover-footer" id="compare-panel-footer">' +
-        '<button class="btn btn-sm btn-secondary" id="cmp-screenshot-btn">Screenshot</button>' +
-        '<button class="btn btn-sm btn-secondary" id="cmp-pdf-btn">Export PDF</button>' +
-        '<button class="btn btn-sm btn-secondary" id="cmp-close-btn" style="margin-left:auto">Close</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) closeComparePanel(); });
-  // Escape closes it when topmost, like every other slide-over (CQ-F025).
-  if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closeComparePanel);
-  document.getElementById("compare-panel-close").addEventListener("click", closeComparePanel);
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+  buildSlideover({
+    id: "compare-panel",
+    title: "Compare Assets",
+    footer:
+      '<button class="btn btn-sm btn-secondary" id="cmp-screenshot-btn">Screenshot</button>' +
+      '<button class="btn btn-sm btn-secondary" id="cmp-pdf-btn">Export PDF</button>' +
+      '<button class="btn btn-sm btn-secondary" id="cmp-close-btn" style="margin-left:auto">Close</button>',
+    close: closeComparePanel,
+    resizeKey: "polaris.panel.width.compare",
+  });
   document.getElementById("cmp-close-btn").addEventListener("click", closeComparePanel);
   document.getElementById("cmp-screenshot-btn").addEventListener("click", _cmpScreenshot);
   document.getElementById("cmp-pdf-btn").addEventListener("click", _cmpExportPdf);
-  initSlideoverResize(document.getElementById("compare-panel"), "polaris.panel.width.compare");
 }
 
 function closeComparePanel() {

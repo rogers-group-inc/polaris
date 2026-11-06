@@ -7982,26 +7982,15 @@ var _tagAssetsCurrent = null;
 
 function _ensureTagAssetsPanelDOM() {
   if (document.getElementById("tag-assets-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "tag-assets-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="tag-assets-panel" role="dialog" aria-labelledby="tag-assets-title" tabindex="-1">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="tag-assets-title">Tag</h3>' +
-          '<button class="btn-icon" id="tag-assets-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="tag-assets-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="tag-assets-body"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) closeTagAssetsPanel(); });
-  document.getElementById("tag-assets-close").addEventListener("click", closeTagAssetsPanel);
-  wireSlideoverEscape(overlay, closeTagAssetsPanel);
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+  buildSlideover({
+    id: "tag-assets-panel",
+    prefix: "tag-assets",
+    dialog: true,
+    title: "Tag",
+    close: closeTagAssetsPanel,
+    resizeKey: "polaris.panel.width.tagassets",
+  });
 
   var body = document.getElementById("tag-assets-body");
   var openRow = function (row) {
@@ -8022,10 +8011,6 @@ function _ensureTagAssetsPanelDOM() {
     var row = e.target.closest ? e.target.closest("[data-asset-id]") : null;
     if (row) { e.preventDefault(); openRow(row); }
   });
-
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(document.getElementById("tag-assets-panel"), "polaris.panel.width.tagassets");
-  }
 }
 
 function closeTagAssetsPanel() {
@@ -8147,28 +8132,17 @@ var _credUsageReturnFocus = null;
 
 function _ensureCredUsagePanelDOM() {
   if (document.getElementById("cred-usage-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "cred-usage-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="cred-usage-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="cred-usage-title">Credential usage</h3>' +
-          '<button class="btn-icon" id="cred-usage-close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="cred-usage-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="cred-usage-body"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) closeCredUsagePanel(); });
-  document.getElementById("cred-usage-close").addEventListener("click", closeCredUsagePanel);
-  // Escape only when this panel is topmost — the asset panel a row opens
-  // stacks over it (wireSlideoverEscape / isTopmostSlideover, app.js).
-  wireSlideoverEscape(overlay, closeCredUsagePanel);
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Escape only when this panel is topmost — the asset panel a row
+  // opens stacks over it.
+  buildSlideover({
+    id: "cred-usage-panel",
+    prefix: "cred-usage",
+    title: "Credential usage",
+    closeTitle: null,
+    close: closeCredUsagePanel,
+    resizeKey: "polaris.panel.width.credusage",
+  });
 
   // Click-through to asset details, in place over this panel: PolarisPanels
   // (app.js) loads assets.js on demand on the Server Settings page. The
@@ -8185,10 +8159,6 @@ function _ensureCredUsagePanelDOM() {
     }
     window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
   });
-
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(document.getElementById("cred-usage-panel"), "polaris.panel.width.credusage");
-  }
 }
 
 function closeCredUsagePanel() {
