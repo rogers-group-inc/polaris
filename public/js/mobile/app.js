@@ -392,6 +392,9 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
     try {
       var bootController = new AbortController();
       var bootTimeout = setTimeout(function () { bootController.abort(); }, 10000);
+      // Raw fetch on purpose (CQ-F026): boot needs its own 10 s abort and hands a
+      // signed-out user to PolarisAuth — api.js's request() would redirect to
+      // the desktop /login.html instead.
       var res = await fetch("/api/v1/auth/me", { signal: bootController.signal });
       clearTimeout(bootTimeout);
       if (res.ok) {
