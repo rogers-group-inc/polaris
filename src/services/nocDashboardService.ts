@@ -1478,84 +1478,103 @@ function compareDimensions(a: string | null, b: string | null): number {
 export interface SiteWithIssues {
   site: string;
   division: string | null;
-  downCount: number;
-  warningCount: number;
+  // Assets at the site carrying at least one active (uncleared) alert.
+  alertedCount: number;
+  // Those assets bucketed by their OWN highest active-alert severity, so a
+  // site with one critical device and two warning ones reads 1 + 2, not 3.
+  severityCounts: Record<string, number>;
   total: number;
   lat: number | null;
   lng: number | null;
-  nodes: Array<{ id: string; hostname: string | null; monitorStatus: string | null }>;
-  alertSeverity?: string;
-  alertRank?: number;
+  nodes: Array<{ id: string; hostname: string | null; monitorStatus: string | null; alertSeverity: string; alertRank: number }>;
+  // The worst active alert across the site's nodes — the row's colour and the
+  // header pills' bucket.
+  alertSeverity: string;
+  alertRank: number;
 }
 
 /**
- * Feed 9 — sites with issues. One raw COALESCE groupBy over the monitored set
- * for the per-site counts + avg coordinates, then ONE bounded findMany to
- * attach the affected nodes. Two queries total, flat at 2000 assets.
+ * Feed 9 — sites with issues. A site is "with issues" when one of its
+ * monitored assets carries an ACTIVE ALERT (an uncleared notification raised by
+ * an automation), and its severity is that alert's severity. Poll state is
+ * deliberately not consulted: `monitorStatus = 'warning'` only means a poll was
+ * missed and the down count has started (the UI labels it "Missed"), which is
+ * not an issue anyone was alerted to — the widget used to list every such
+ * asset and the operator read it as an alert that did not exist.
+ *
+ * Assets in maintenance and assets whose outage is a parent's
+ * (dependencySuppressed — the dead gate is the one issue, not the APs behind
+ * it) stay out, as before.
+ *
+ * Three queries, each bounded by the active-alert set rather than the fleet:
+ * the uncleared notifications, the alerted assets' site columns, and one
+ * grouped count for the shown sites' totals + coordinates.
  */
 export async function getSitesWithIssues(maxSites: number | null = 25, assetIds: string[] | null = null): Promise<SiteWithIssues[]> {
-  const idClause = assetIds ? ` AND "id" = ANY($2::text[])` : "";
-  const siteParams: unknown[] = [maxSites];
-  if (assetIds) siteParams.push(assetIds);
-  const siteRows = await prisma.$queryRawUnsafe<Array<{
-    site: string; down: bigint; warning: bigint; total: bigint; lat: number | null; lng: number | null;
-  }>>(
-    `SELECT COALESCE(NULLIF("location", ''), NULLIF("learnedLocation", ''), NULLIF("snmpLocation", ''), '(unknown)') AS site,
-            count(*) FILTER (WHERE "monitorStatus" = 'down'    AND "status" <> 'maintenance') AS down,
-            count(*) FILTER (WHERE "monitorStatus" = 'warning' AND "status" <> 'maintenance') AS warning,
-            count(*) AS total,
-            round(avg("latitude")::numeric, 4)::float8  AS lat,
-            round(avg("longitude")::numeric, 4)::float8 AS lng
-     FROM "assets"
-     WHERE "monitored" = true AND "dependencySuppressed" = false${idClause}
-     GROUP BY 1
-     HAVING count(*) FILTER (WHERE "monitorStatus" IN ('down', 'warning') AND "status" <> 'maintenance') > 0
-     ORDER BY down DESC, warning DESC
-     LIMIT $1`,
-    ...siteParams,
-  );
-  if (siteRows.length === 0) return [];
+  const sev = await activeAlertSeverityByAsset(assetIds, { kind: "any" });
+  if (sev.size === 0) return [];
 
-  // Pull the affected (down/warning) nodes for these sites in one query, then
-  // bucket by site. Bounded by the issue set, not the whole fleet.
   const nodeRows = await prisma.asset.findMany({
-    where: { monitored: true, dependencySuppressed: false, monitorStatus: { in: ["down", "warning"] }, ...NOT_IN_MAINTENANCE, ...idWhere(assetIds) },
+    where: { id: { in: [...sev.keys()] }, monitored: true, dependencySuppressed: false, ...NOT_IN_MAINTENANCE },
     select: {
       id: true, hostname: true, monitorStatus: true,
       location: true, learnedLocation: true, snmpLocation: true, department: true,
     },
   });
-  const nodesBySite = new Map<string, SiteWithIssues["nodes"]>();
-  const divisionBySite = new Map<string, string | null>();
+  if (nodeRows.length === 0) return [];
+
+  const bySite = new Map<string, SiteWithIssues>();
   for (const n of nodeRows) {
+    const a = sev.get(n.id)!;
     const s = siteOf(n);
-    if (!nodesBySite.has(s)) { nodesBySite.set(s, []); divisionBySite.set(s, n.department); }
-    nodesBySite.get(s)!.push({ id: n.id, hostname: n.hostname, monitorStatus: n.monitorStatus });
+    let site = bySite.get(s);
+    if (!site) {
+      site = {
+        site: s, division: n.department, alertedCount: 0, severityCounts: {}, total: 0,
+        lat: null, lng: null, nodes: [], alertSeverity: a.severity, alertRank: a.rank,
+      };
+      bySite.set(s, site);
+    }
+    site.alertedCount += 1;
+    site.severityCounts[a.severity] = (site.severityCounts[a.severity] ?? 0) + 1;
+    site.nodes.push({ id: n.id, hostname: n.hostname, monitorStatus: n.monitorStatus, alertSeverity: a.severity, alertRank: a.rank });
+    if (a.rank > site.alertRank) { site.alertRank = a.rank; site.alertSeverity = a.severity; }
   }
 
-  const sites: SiteWithIssues[] = siteRows.map((r) => ({
-    site: r.site,
-    division: divisionBySite.get(r.site) ?? null,
-    downCount: Number(r.down),
-    warningCount: Number(r.warning),
-    total: Number(r.total),
-    lat: r.lat,
-    lng: r.lng,
-    nodes: nodesBySite.get(r.site) ?? [],
-  }));
-  // Per-site severity = the highest active alert across the site's affected
-  // nodes; sites with alerted nodes lead, then the down/warning ordering holds.
-  const sev = await activeAlertSeverityByAsset(nodeRows.map((n) => n.id), stateRel("monitorStatus"));
+  // Worst alert first, then the site with more alerted devices, then by name.
+  let sites = [...bySite.values()].sort((x, y) =>
+    (y.alertRank - x.alertRank) || (y.alertedCount - x.alertedCount) || x.site.localeCompare(y.site));
+  if (maxSites != null) sites = sites.slice(0, maxSites);
+  for (const s of sites) s.nodes.sort((x, y) => (y.alertRank - x.alertRank) || (x.hostname ?? x.id).localeCompare(y.hostname ?? y.id));
+
+  // Totals + average coordinates for the shown sites only. `total` keeps its
+  // old meaning — every monitored, non-dependency-suppressed asset at the site.
+  const idClause = assetIds ? ` AND "id" = ANY($2::text[])` : "";
+  const params: unknown[] = [sites.map((s) => s.site)];
+  if (assetIds) params.push(assetIds);
+  const totals = await prisma.$queryRawUnsafe<Array<{ site: string; total: bigint; lat: number | null; lng: number | null }>>(
+    `SELECT site, count(*) AS total,
+            round(avg("latitude")::numeric, 4)::float8  AS lat,
+            round(avg("longitude")::numeric, 4)::float8 AS lng
+     FROM (
+       SELECT COALESCE(NULLIF("location", ''), NULLIF("learnedLocation", ''), NULLIF("snmpLocation", ''), '(unknown)') AS site,
+              "latitude", "longitude"
+       FROM "assets"
+       WHERE "monitored" = true AND "dependencySuppressed" = false${idClause}
+     ) s
+     WHERE site = ANY($1::text[])
+     GROUP BY site`,
+    ...params,
+  );
+  const totalBySite = new Map(totals.map((t) => [t.site, t]));
   for (const s of sites) {
-    let best: { severity: string; rank: number } | null = null;
-    for (const n of s.nodes) {
-      const x = sev.get(n.id);
-      if (x && (!best || x.rank > best.rank)) best = x;
-    }
-    if (best) { s.alertSeverity = best.severity; s.alertRank = best.rank; }
-    else s.alertRank = 0;
+    const t = totalBySite.get(s.site);
+    if (!t) continue;
+    s.total = Number(t.total);
+    s.lat = t.lat;
+    s.lng = t.lng;
   }
-  return sites.slice().sort((a, b) => (b.alertRank ?? 0) - (a.alertRank ?? 0));
+  return sites;
 }
 
 export interface FilterOptions {

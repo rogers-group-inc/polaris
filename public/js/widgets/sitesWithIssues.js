@@ -1,9 +1,12 @@
 /**
- * widgets/sitesWithIssues.js — sites that have one or more monitored assets in
- * down/warning, worst first (SolarWinds "Sites with Issues"). Each site row
- * expands inline to list its affected nodes. Node detail arrives inline in the
- * payload, so expansion needs no second fetch (unlike monitorAlerts). Data
- * from /dashboard/noc-summary sitesWithIssues[].
+ * widgets/sitesWithIssues.js — sites where one or more monitored assets carry an
+ * ACTIVE ALERT, worst alert severity first (SolarWinds "Sites with Issues").
+ * Poll state plays no part: a missed poll ("warning" monitorStatus) is not an
+ * issue until an automation raises an alert for it. Each site row expands
+ * inline to list its alerted nodes, each pipped by its own highest active
+ * alert. Node detail arrives inline in the payload, so expansion needs no
+ * second fetch (unlike monitorAlerts). Data from /dashboard/noc-summary
+ * sitesWithIssues[].
  */
 
 (function () {
@@ -16,34 +19,46 @@
     return s;
   }
 
-  function statusPip(status) {
-    var WC = window.POLARIS_WIDGET_STATUS_COLORS;
-    var color = status === "down" ? WC.down : status === "warning" ? WC.warning : WC.neutral;
-    return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';margin-right:6px"></span>';
+  function severityPip(sev) {
+    var color = (PolarisWidgets.alertSeverityBarColor && PolarisWidgets.alertSeverityBarColor(sev)) || window.POLARIS_WIDGET_STATUS_COLORS.neutral;
+    return '<span title="Highest active alert: ' + escapeHtml(sev || "") + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';margin-right:6px"></span>';
+  }
+
+  function rankOf(sev) {
+    return (sev && PolarisWidgets.ALERT_SEVERITY_RANK && PolarisWidgets.ALERT_SEVERITY_RANK[sev]) || 0;
+  }
+
+  // One count pill per severity present at the site, worst first: "1 critical"
+  // "2 warning". Each device counts once, under its own worst active alert.
+  function severityPills(counts) {
+    return Object.keys(counts || {}).sort(function (a, b) { return rankOf(b) - rankOf(a); }).map(function (sev) {
+      var cls = PolarisWidgets.alertSeverityPillClass(sev) || "widget-pill-watch";
+      return '<span class="widget-pill ' + cls + '">' + counts[sev] + ' ' + escapeHtml(sev) + '</span>';
+    }).join(" ");
   }
 
   function render(el, sites, config) {
     sites = sites || [];
     var st = getState(el);
-    var sortBy = (config && config.sortBy) || "downCount";
+    // "downCount" is the stored value of configs saved before the feed became
+    // alert-driven; it means the default severity order.
+    var sortBy = (config && config.sortBy) || "severity";
     var sorted = sites.slice().sort(function (a, b) {
       if (sortBy === "name") return (a.site || "").localeCompare(b.site || "");
-      return (b.downCount - a.downCount) || (b.warningCount - a.warningCount);
+      return ((b.alertRank || 0) - (a.alertRank || 0)) || ((b.alertedCount || 0) - (a.alertedCount || 0)) || (a.site || "").localeCompare(b.site || "");
     });
     sorted = PolarisWidgets.clip(sorted, config && config.rowLimit);
     // Header severity breakdown of the SITES on screen: each site carries the
-    // worst active monitorStatus alert among its own nodes (server-side), so a
-    // pill counts sites at that severity — not nodes. Sites whose down assets
-    // aren't alerting get no bucket (the down/warn counts already live on the
-    // row). Stamped before the empty return so the pills clear with it.
+    // worst active alert among its own nodes (server-side), so a pill counts
+    // sites at that severity — not nodes. Stamped before the empty return so
+    // the pills clear with it.
     PolarisWidgets.setHeaderSeverityCounts(el, sorted, { unalerted: "omit" });
     if (!sorted.length) { el.innerHTML = '<p class="empty-state">No sites with issues</p>'; return; }
     if (st.expanded && !sorted.some(function (s) { return s.site === st.expanded; })) st.expanded = null;
 
     el.innerHTML = sorted.map(function (s) {
       var isOpen = st.expanded === s.site;
-      var pills = '<span class="widget-pill widget-pill-red">' + s.downCount + ' down</span>' +
-        (s.warningCount > 0 ? ' <span class="widget-pill widget-pill-amber">' + s.warningCount + ' warn</span>' : '');
+      var pills = severityPills(s.severityCounts);
       var head = '<button type="button" class="dash-alert-row" data-site="' + escapeHtml(s.site) + '" aria-expanded="' + (isOpen ? "true" : "false") + '" style="width:100%">' +
         '<div class="dash-alert-body">' +
           '<div class="dash-alert-title">' + escapeHtml(s.site) + (s.division ? ' <span style="color:var(--color-text-secondary);font-weight:400">· ' + escapeHtml(s.division) + '</span>' : '') + '</div>' +
@@ -53,14 +68,12 @@
       var body = "";
       if (isOpen) {
         var nodes = (s.nodes || []).slice().sort(function (a, b) {
-          // down before warning
-          if (a.monitorStatus === b.monitorStatus) return 0;
-          return a.monitorStatus === "down" ? -1 : 1;
+          return rankOf(b.alertSeverity) - rankOf(a.alertSeverity);
         });
         body = '<div class="dash-alert-expand">' + (nodes.length ? nodes.map(function (n) {
           var name = n.hostname || n.id;
           var href = '/assets.html#view=asset:' + encodeURIComponent(n.id);
-          return '<div style="padding:2px 0">' + statusPip(n.monitorStatus) + '<a class="dep-tree-link" href="' + href + '">' + escapeHtml(name) + '</a></div>';
+          return '<div style="padding:2px 0">' + severityPip(n.alertSeverity) + '<a class="dep-tree-link" href="' + href + '">' + escapeHtml(name) + '</a></div>';
         }).join("") : '<div class="empty-state" style="text-align:left;padding:0">No node detail</div>') + '</div>';
       }
       return '<div class="dash-alert-item' + (isOpen ? ' is-expanded' : '') + '">' + head + body + '</div>';
@@ -83,10 +96,10 @@
     type: "sitesWithIssues",
     category: "NOC",
     label: "Sites with Issues",
-    description: "Sites with monitored assets down or in warning, worst first. Expand a site for its nodes.",
+    description: "Sites with monitored assets carrying active alerts, worst alert severity first. Expand a site for its alerted nodes.",
     defaultSize: { width: 6, height: 1 },
     minSize: { width: 4, height: 1 },
-    defaultConfig: { rowLimit: 10, sortBy: "downCount", regionScope: "mine" },
+    defaultConfig: { rowLimit: 10, sortBy: "severity", regionScope: "mine" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {
@@ -105,19 +118,19 @@
 
     renderPreview: function (el) {
       render(el, [
-        { site: "Plant A", division: "Ops", downCount: 3, warningCount: 1, total: 12, nodes: [
-          { id: "n1", hostname: "fs-aisle-3", monitorStatus: "down" },
-          { id: "n2", hostname: "fap-conf-rm", monitorStatus: "down" },
+        { site: "Plant A", division: "Ops", alertSeverity: "critical", alertRank: 5, alertedCount: 3, severityCounts: { critical: 1, warning: 2 }, total: 12, nodes: [
+          { id: "n1", hostname: "fs-aisle-3", alertSeverity: "critical" },
+          { id: "n2", hostname: "fap-conf-rm", alertSeverity: "warning" },
         ] },
-        { site: "DC West", division: "Core", downCount: 1, warningCount: 0, total: 8, nodes: [] },
-      ], { rowLimit: 5, sortBy: "downCount" });
+        { site: "DC West", division: "Core", alertSeverity: "serious", alertRank: 4, alertedCount: 1, severityCounts: { serious: 1 }, total: 8, nodes: [] },
+      ], { rowLimit: 5, sortBy: "severity" });
     },
 
     renderConfig: function (el, config, onChange) {
       el.innerHTML =
         '<label>Sort by</label>' +
         '<select data-k="sortBy">' +
-          '<option value="downCount"' + ((config.sortBy || "downCount") === "downCount" ? " selected" : "") + '>Down count</option>' +
+          '<option value="severity"' + (config.sortBy !== "name" ? " selected" : "") + '>Alert severity</option>' +
           '<option value="name"' + (config.sortBy === "name" ? " selected" : "") + '>Site name</option>' +
         '</select>' +
         '<label>Row limit</label>' +

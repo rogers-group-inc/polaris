@@ -697,25 +697,65 @@ describe("getRecentAlerts", () => {
 });
 
 describe("getSitesWithIssues", () => {
-  it("joins per-site counts with affected nodes bucketed by the same coalesced site key", async () => {
-    rawUnsafe.mockResolvedValueOnce([
-      { site: "HQ", down: 2n, warning: 1n, total: 9n, lat: 36.1, lng: -86.7 },
+  const alert = (id: string, assetId: string, severity: string) =>
+    ({ id, assetId, severity, acknowledged: false, acknowledgedBy: null, acknowledgeNote: null, rule: null, alertGroupId: null, members: null });
+
+  it("lists sites by their assets' ACTIVE ALERTS, worst severity first, each asset counted once under its own worst alert", async () => {
+    notifFindMany.mockResolvedValueOnce([
+      alert("a1", "n1", "warning"),
+      alert("a2", "n1", "critical"), // n1's worst wins
+      alert("a3", "n2", "warning"),
+      alert("a4", "n3", "serious"),
     ]);
     findMany.mockResolvedValueOnce([
       { id: "n1", hostname: "n1", monitorStatus: "down", location: "HQ", learnedLocation: null, snmpLocation: null, department: "NetEng" },
-      { id: "n2", hostname: "n2", monitorStatus: "warning", location: "HQ", learnedLocation: null, snmpLocation: null, department: "NetEng" },
+      { id: "n2", hostname: "n2", monitorStatus: "up", location: "HQ", learnedLocation: null, snmpLocation: null, department: "NetEng" },
+      { id: "n3", hostname: "n3", monitorStatus: "up", location: null, learnedLocation: "Plant", snmpLocation: null, department: null },
+    ]);
+    rawUnsafe.mockResolvedValueOnce([
+      { site: "HQ", total: 9n, lat: 36.1, lng: -86.7 },
+      { site: "Plant", total: 4n, lat: null, lng: null },
     ]);
     const r = await noc.getSitesWithIssues();
-    expect(r).toHaveLength(1);
-    expect(r[0]).toMatchObject({ site: "HQ", downCount: 2, warningCount: 1, total: 9, division: "NetEng" });
-    expect(r[0].nodes.map((n) => n.id)).toEqual(["n1", "n2"]);
+    expect(r.map((s) => s.site)).toEqual(["HQ", "Plant"]);
+    expect(r[0]).toMatchObject({
+      site: "HQ", division: "NetEng", alertSeverity: "critical", alertedCount: 2,
+      severityCounts: { critical: 1, warning: 1 }, total: 9, lat: 36.1, lng: -86.7,
+    });
+    expect(r[0].nodes.map((n) => [n.id, n.alertSeverity])).toEqual([["n1", "critical"], ["n2", "warning"]]);
+    expect(r[1]).toMatchObject({ site: "Plant", alertSeverity: "serious", alertedCount: 1, total: 4 });
+    // Totals are read for the shown sites only.
+    expect(rawUnsafe.mock.calls[0][1]).toEqual(["HQ", "Plant"]);
   });
 
-  it("short-circuits to empty when no site has issues", async () => {
-    rawUnsafe.mockResolvedValueOnce([]);
+  it("ignores poll state: a missed poll with no active alert is not an issue", async () => {
+    notifFindMany.mockResolvedValueOnce([]);
     const r = await noc.getSitesWithIssues();
     expect(r).toEqual([]);
     expect(findMany).not.toHaveBeenCalled();
+    expect(rawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it("keeps maintenance and dependency-suppressed assets out of the alerted set", async () => {
+    notifFindMany.mockResolvedValueOnce([alert("a1", "n1", "critical")]);
+    findMany.mockResolvedValueOnce([]); // n1 is filtered by the where
+    const r = await noc.getSitesWithIssues();
+    expect(r).toEqual([]);
+    expect(findMany.mock.calls[0][0].where).toMatchObject({
+      id: { in: ["n1"] }, monitored: true, dependencySuppressed: false, status: { not: "maintenance" },
+    });
+    expect(rawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it("caps at maxSites after ranking, so the worst sites are the ones kept", async () => {
+    notifFindMany.mockResolvedValueOnce([alert("a1", "n1", "warning"), alert("a2", "n2", "critical")]);
+    findMany.mockResolvedValueOnce([
+      { id: "n1", hostname: "n1", monitorStatus: "up", location: "A", learnedLocation: null, snmpLocation: null, department: null },
+      { id: "n2", hostname: "n2", monitorStatus: "up", location: "B", learnedLocation: null, snmpLocation: null, department: null },
+    ]);
+    rawUnsafe.mockResolvedValueOnce([{ site: "B", total: 1n, lat: null, lng: null }]);
+    const r = await noc.getSitesWithIssues(1);
+    expect(r.map((s) => s.site)).toEqual(["B"]);
   });
 });
 
