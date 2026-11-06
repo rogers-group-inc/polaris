@@ -769,14 +769,14 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Business rule 91(i) — telling apart devices that share a discovered hostname. Given the hostnames a discovery pass just created, it reads each name's live family (the bare name and its MAC-suffixed forms) and returns the renames that give every bare-named, discovery-named member a `<name>-<last 3 MAC octets>` suffix.
 
-**Public API:** `planHostnameMacSuffixes(hostnames)` (one `asset.findMany` per 100 names; returns `PlannedRename[]`, writes nothing), `planFamilyRenames(base, members)` (pure), `isSuffixEligible(member)` (pure). Name math in `utils/hostnameMacSuffix.ts` (`macNameSuffix`, `suffixedHostname`, `isHostnameFamilyMember`).
+**Public API:** `planHostnameMacSuffixes(created: {id, hostname}[])` (one `asset.findMany` per 100 names; returns `PlannedRename[]`, writes nothing), `planFamilyRenames(base, members)` (pure), `isSuffixEligible(member)` (pure). Name math in `utils/hostnameMacSuffix.ts` (`macNameSuffix`, `suffixedHostname`, `isHostnameFamilyMember`).
 
 **Cross-service deps:** prisma.asset (read, with `sources.sourceKind`). No writes — the caller applies the renames.
 
 **Used by:** `services/discovery/discoveryEngine.ts` — Phase 7 of `syncDhcpSubnets`, after its deferred writes flush: applies each rename to the row AND the in-memory `AssetIndex` copy, logs `asset.discovery_updated`.
 
 **Invariants:**
-- **Only discovery's own names move.** `hostnameOverride` set, any AssetSource other than `fortigate-endpoint`, or no primary MAC ⇒ never renamed (the family still counts it, so a new device beside it is still suffixed).
+- **Only discovery's own names move.** `hostnameOverride` set, no primary MAC, or no real `fortigate-endpoint` source (the `manual` placeholder every asset is born with does not count — a hand-made asset carries only that) ⇒ never renamed; the family still counts it, so a new device beside it is still suffixed. An asset the calling pass created is eligible before Phase 10 stamps its source — the caller passes `{ id, hostname }` so the service can tell.
 - **A family of one is left alone**, and an already-suffixed member is never renamed again. A suffix another member holds falls back to the full 12-hex MAC; if that is taken too, nothing.
 - **The in-memory rename is load-bearing.** Phase 10 builds the fortigate-endpoint observed blob from the `AssetIndex` row and Phase 11 projects the hostname from it; renaming only the DB row is undone in the same run.
 - Decommissioned assets are outside every family.

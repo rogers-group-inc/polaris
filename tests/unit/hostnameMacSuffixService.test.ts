@@ -19,7 +19,15 @@ const m = (over: Partial<FamilyMember>): FamilyMember => ({
 describe("isSuffixEligible", () => {
   it("takes a lease / detected-device name with a MAC", () => {
     expect(isSuffixEligible(m({}))).toBe(true);
-    expect(isSuffixEligible(m({ sourceKinds: [] }))).toBe(true);
+  });
+  it("an asset with no real source is nobody's to rename — unless this pass just created it", () => {
+    expect(isSuffixEligible(m({ sourceKinds: [] }))).toBe(false);
+    expect(isSuffixEligible(m({ sourceKinds: ["manual"] }))).toBe(false);
+    expect(isSuffixEligible(m({ sourceKinds: ["manual"], createdThisPass: true }))).toBe(true);
+    expect(isSuffixEligible(m({ sourceKinds: ["fortigate-endpoint", "manual"] }))).toBe(true);
+  });
+  it("an operator rename wins even on an asset this pass created", () => {
+    expect(isSuffixEligible(m({ createdThisPass: true, hostnameOverride: "mine" }))).toBe(false);
   });
   it("never touches an operator rename", () => {
     expect(isSuffixEligible(m({ hostnameOverride: "Dave's phone" }))).toBe(false);
@@ -91,7 +99,7 @@ describe("planHostnameMacSuffixes", () => {
   beforeEach(() => findMany.mockReset());
 
   it("does not query for no names", async () => {
-    expect(await planHostnameMacSuffixes([null, "", "  "])).toEqual([]);
+    expect(await planHostnameMacSuffixes([{ id: "x", hostname: null }, { id: "y", hostname: "  " }])).toEqual([]);
     expect(findMany).not.toHaveBeenCalled();
   });
 
@@ -100,7 +108,7 @@ describe("planHostnameMacSuffixes", () => {
       { id: "old", hostname: "iPhone", macAddress: "44:61:32:F2:BC:27", hostnameOverride: null, sources: [{ sourceKind: "fortigate-endpoint" }] },
       { id: "new", hostname: "iPhone", macAddress: "44:61:32:71:7C:43", hostnameOverride: null, sources: [] },
     ]);
-    const out = await planHostnameMacSuffixes(["iPhone", "iphone"]);
+    const out = await planHostnameMacSuffixes([{ id: "new", hostname: "iPhone" }, { id: "new2", hostname: "iphone" }]);
     expect(findMany).toHaveBeenCalledTimes(1);
     const where = findMany.mock.calls[0]![0].where;
     expect(where.status).toEqual({ not: "decommissioned" });

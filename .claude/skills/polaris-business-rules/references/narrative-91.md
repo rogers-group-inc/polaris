@@ -268,4 +268,6 @@ Scale: one `findMany` per 100 created hostnames, only on a run that created asse
 
 Rejected alternatives: suffixing every detected-device asset (noise for the many names that are unique); a per-run shared-name count (a name shared across runs, the usual case, would never be seen); renaming in Phase 11's projection (it runs for every touched asset, not only the ones whose family changed).
 
+Found while verifying (integration, same day): every new asset is born with a `manual` placeholder AssetSource, and a hand-made asset keeps only that row, so an empty-or-placeholder source list cannot say "discovery named this". The first cut treated it as eligible and would have renamed a hand-made asset sharing the name. Eligibility now needs a real `fortigate-endpoint` source, or creation by the asking pass (whose source Phase 10 stamps later).
+
 Not done here: splitting assets fused before 91(f) — the per-MAC Split on the Sources tab — is designed on a canvas and follows separately.

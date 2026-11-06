@@ -6750,7 +6750,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     const pendingInvUpdates = new Map<string, { data: Record<string, unknown>; label: string }>();
     const pendingInvMacs = new Map<string, MacJsonEntry[]>();
     // Hostnames of the assets this pass creates — rule 91(i) names their families apart by MAC after the flush.
-    const invCreatedHostnames: string[] = [];
+    const invCreated: Array<{ id: string; hostname: string }> = [];
 
     for (const inv of result.deviceInventory) {
       if (!inv.macAddress && !inv.ipAddress) continue;
@@ -7087,7 +7087,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             },
           });
           assetIdx.add(newAsset);
-          if (newAsset.hostname) invCreatedHostnames.push(newAsset.hostname);
+          if (newAsset.hostname) invCreated.push({ id: newAsset.id, hostname: newAsset.hostname });
           inventoryAssets.push(inv.hostname || normalizedMac || inv.ipAddress);
           logDiscoveryAssetCreated(newAsset.id, inv.hostname || normalizedMac || inv.ipAddress, {
             integrationName, integrationId, sourceKind: "fortigate-endpoint", actor,
@@ -7142,9 +7142,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // discovery gave it becomes "<name>-<last 3 MAC octets>". After the flush
     // so the family read sees this run's writes; the in-memory row is renamed
     // too, because Phase 10 echoes it into the fortigate-endpoint source.
-    if (invCreatedHostnames.length > 0) {
+    if (invCreated.length > 0) {
       try {
-        const renames = await planHostnameMacSuffixes(invCreatedHostnames);
+        const renames = await planHostnameMacSuffixes(invCreated);
         const results = await batchSettled(renames, (r) =>
           prisma.asset.update({ where: { id: r.id }, data: { hostname: r.to } }),
         );

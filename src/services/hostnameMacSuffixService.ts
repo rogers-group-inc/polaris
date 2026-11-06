@@ -10,9 +10,12 @@
  *
  * Who may be renamed: an asset whose name came from a DHCP lease or a gate's
  * detected-device table and nothing better — no `hostnameOverride` (an operator
- * rename is never touched) and no AssetSource but `fortigate-endpoint` (a name
- * from Entra / AD / vCenter / the agent / a Generic API feed is that source's,
- * and stays). It also needs a primary MAC to take the suffix from.
+ * rename is never touched) and a real `fortigate-endpoint` AssetSource with
+ * nothing beside it but the `manual` placeholder (a name from Entra / AD /
+ * vCenter / the agent / a Generic API feed is that source's, and stays; an
+ * asset with only the placeholder — made by hand — is nobody's to rename). The
+ * one exception is an asset this same pass created: Phase 10 has not stamped
+ * its fortigate-endpoint source yet. It also needs a primary MAC.
  *
  * The name sticks: the fortigate-endpoint source echoes `Asset.hostname` into
  * its observed blob, so later projections keep the suffixed name. A better
@@ -25,6 +28,8 @@ import { isHostnameFamilyMember, suffixedHostname } from "../utils/hostnameMacSu
 
 /** The source kinds whose name a suffix may replace. */
 const SUFFIXABLE_SOURCE_KINDS = new Set(["fortigate-endpoint"]);
+/** The placeholder every asset is born with; swept once a real source lands. */
+const PLACEHOLDER_SOURCE_KIND = "manual";
 
 export interface FamilyMember {
   id: string;
@@ -32,6 +37,8 @@ export interface FamilyMember {
   macAddress: string | null;
   hostnameOverride: string | null;
   sourceKinds: string[];
+  /** Created by the discovery pass asking — its source is not stamped yet. */
+  createdThisPass?: boolean;
 }
 
 export interface PlannedRename {
@@ -44,7 +51,13 @@ export interface PlannedRename {
 export function isSuffixEligible(m: FamilyMember): boolean {
   if (!m.hostname || !m.macAddress) return false;
   if (m.hostnameOverride) return false;
-  return m.sourceKinds.every((k) => SUFFIXABLE_SOURCE_KINDS.has(k));
+  // Phase 7 made it: its fortigate-endpoint source is stamped later this run.
+  if (m.createdThisPass) return true;
+  // Every new asset gets a `manual` placeholder source, and a hand-made asset
+  // keeps only that — so `manual` alone proves nothing. A real
+  // fortigate-endpoint source is required, and nothing better beside it.
+  const real = m.sourceKinds.filter((k) => k !== PLACEHOLDER_SOURCE_KIND);
+  return real.length > 0 && real.every((k) => SUFFIXABLE_SOURCE_KINDS.has(k));
 }
 
 /**
@@ -73,14 +86,16 @@ export function planFamilyRenames(base: string, members: FamilyMember[]): Planne
 }
 
 /**
- * Load each family the given hostnames name (live assets only: a
+ * Load each family the created assets' hostnames name (live assets only: a
  * decommissioned one holds no name a device is told apart from) and return
  * the renames rule 91(i) makes. One query per 100 bases.
  */
-export async function planHostnameMacSuffixes(hostnames: Array<string | null | undefined>): Promise<PlannedRename[]> {
+export async function planHostnameMacSuffixes(created: Array<{ id: string; hostname: string | null | undefined }>): Promise<PlannedRename[]> {
   const bases = new Map<string, string>(); // lowercase → as given
-  for (const h of hostnames) {
-    const t = (h || "").trim();
+  const createdIds = new Set<string>();
+  for (const c of created) {
+    createdIds.add(c.id);
+    const t = (c.hostname || "").trim();
     if (t) bases.set(t.toLowerCase(), t);
   }
   if (bases.size === 0) return [];
@@ -107,6 +122,7 @@ export async function planHostnameMacSuffixes(hostnames: Array<string | null | u
       macAddress: r.macAddress,
       hostnameOverride: r.hostnameOverride,
       sourceKinds: r.sources.map((s) => s.sourceKind),
+      createdThisPass: createdIds.has(r.id),
     }));
     for (const b of chunk) renames.push(...planFamilyRenames(b, members));
   }
