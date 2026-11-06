@@ -307,6 +307,14 @@ selection, or Shift-drag to box-select. Drawn lines are part of the
 layout: **Save layout** and **Reset layout** cover them, and each location
 view keeps its own. Lines are always straight between their points.
 
+**Moving with the arrow keys** (while editing). The arrow keys move the
+selected devices. With no device selected, they move the selected bend
+points instead. With **Snap devices** on, each press moves a device one grid
+cell, and if that cell is taken it carries on to the next free one in the
+same direction. With **Snap line points** on, a bend point moves to the next
+line of the grid as it is drawn at your zoom. With snapping off, each press
+moves 1 pixel, or 10 with **Shift** held. Each press is one undo step.
+
 **Undo and redo** (while editing). **Ctrl+Z** undoes the last layout
 change: a device or box moved, a bend added, moved or deleted, an end point
 moved, or everything snapped. **Ctrl+Shift+Z** (or **Ctrl+Y**) redoes it.

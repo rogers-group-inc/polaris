@@ -1086,6 +1086,15 @@
         if (k === "z" && !e.shiftKey) { e.preventDefault(); _layoutUndo(); }
         else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); _layoutRedo(); }
       }
+      // Arrow keys move the selected devices — or, with none selected, the
+      // selected line points. Edit mode only, never while typing; Shift
+      // takes a bigger step when snapping is off.
+      if (ARROW_DIRS[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey &&
+          overlay.classList.contains("open") && topoState.editing) {
+        var at = e.target;
+        if (at && (at.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(at.tagName))) return;
+        if (_nudgeSelection(ARROW_DIRS[e.key], e.shiftKey)) e.preventDefault();
+      }
     });
     // When the browser exits fullscreen via Esc / OS gesture, drop the
     // fullscreen class so the modal styling reverts cleanly.
@@ -2017,6 +2026,7 @@
       ["Drag a connection line", "Add a bend point there and move it"],
       ["Click a connection line", "Show its points — drag an end point around a device to attach the line there"],
       ["Delete", "Remove the selected bend point (an end point goes back to automatic)"],
+      ["Arrow keys", "Move the selected devices (or, with none selected, line points) — a grid step with snapping on, 1 px off (Shift 10 px)"],
       ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo a layout change (also the arrows under Done Editing)"],
       ["Grid (top right)", "Show the grid — thick lines where devices snap, thin lines in between"],
       ["Snap devices / Snap line points", "Devices land on the thick lines; line points on any line"],
@@ -3380,6 +3390,16 @@
     if (_historyTimer) clearTimeout(_historyTimer);
     _historyTimer = setTimeout(function () { _historyTimer = null; _layoutHistoryRecord(); }, 0);
   }
+  // Record a pending step NOW. A gesture's handlers all run inside one
+  // emit, so a keyboard nudge can close its step synchronously — left to the
+  // 0 ms timer, a second key press that beats it re-arms the timer and the
+  // two presses fold into one undo step.
+  function _layoutHistoryFlush() {
+    if (!_historyTimer) return;
+    clearTimeout(_historyTimer);
+    _historyTimer = null;
+    _layoutHistoryRecord();
+  }
   function _layoutHistoryApply(json) {
     if (!cyInstance || !topoState.siteId) return;
     var blob;
@@ -3563,6 +3583,85 @@
   // off (a nudge, not a jump). Returns how many devices moved.
   // topology-render.js → separatePositions.
   var TOPO_MAX_NODE_PX = 80; // the firewall body (64) + its icon border
+
+  // ── Arrow-key nudge ──────────────────────────────────────────────────────
+  // Arrow keys move what is selected, the same as a drag would:
+  //   devices      Snap devices on → one grid cell (from the cell they are
+  //                on); off → 1 px, Shift 10 px. A device never lands on
+  //                another: the step keeps going in the arrow's direction
+  //                to the next free spot, hopping over what is in the way.
+  //   line points  (only when no device is selected) Snap line points on →
+  //                the next thin/thick line intersection as drawn at this
+  //                zoom; off → 1 px, Shift 10 px.
+  // The move runs through the drag pipeline (grab → move → free → dragfree),
+  // so a line's bends ride along with its devices and the save, the undo
+  // step and the overlap guard are a drag's.
+  var ARROW_DIRS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  var NUDGE_MAX_HOPS = 50;
+  function _isTopoDevice(n) {
+    return !n.data("isLocGroup") && !n.data("isPortal") && !n.data("isEdgeHandle");
+  }
+  function _nudgeSelection(dir, big) {
+    if (!cyInstance || !topoState.editing || topoState.pathOverlay) return false;
+    var px = big ? 10 : 1;
+    var devices = cyInstance.nodes(":selected").filter(_isTopoDevice);
+    if (devices.length > 0) {
+      var snap = _readSnapToGrid();
+      var sx = snap ? TOPO_COL_SPACING : px;
+      var sy = snap ? TOPO_ROW_SPACING : px;
+      var base = {};
+      var items = devices.map(function (n) {
+        var p = n.position();
+        base[n.id()] = snap ? _snapPos(p) : { x: p.x, y: p.y };
+        return { id: n.id(), w: n.outerWidth(), h: n.outerHeight() };
+      });
+      var fixed = [];
+      cyInstance.nodes().forEach(function (n) {
+        if (n.selected() || !_isTopoDevice(n)) return;
+        var p = n.position();
+        fixed.push({ x: p.x, y: p.y, w: n.outerWidth(), h: n.outerHeight() });
+      });
+      // First step in the arrow's direction where the whole selection is
+      // clear of every other device. Nothing within reach → one step, and
+      // the overlap guard on dragfree places whatever still collides.
+      var hops = 1;
+      for (var k = 1; k <= NUDGE_MAX_HOPS; k++) {
+        var cand = items.map(function (it) {
+          var b = base[it.id];
+          return { id: it.id, x: b.x + dir[0] * sx * k, y: b.y + dir[1] * sy * k, w: it.w, h: it.h };
+        });
+        var out = window.PolarisTopologyRender.separatePositions(cand, { stepX: sx, stepY: sy, fixed: fixed });
+        if (cand.every(function (c) { return out[c.id].x === c.x && out[c.id].y === c.y; })) { hops = k; break; }
+      }
+      devices.emit("grab");
+      cyInstance.batch(function () {
+        devices.forEach(function (n) {
+          var b = base[n.id()];
+          n.position({ x: b.x + dir[0] * sx * hops, y: b.y + dir[1] * sy * hops });
+        });
+      });
+      devices.emit("free");
+      devices[0].emit("dragfree");
+      _layoutHistoryFlush(); // one press = one undo step, however fast they come
+      return true;
+    }
+    var points = cyInstance.nodes('[isEdgeHandle][handleKind = "bend"]:selected');
+    if (points.length === 0) return false;
+    var snapPts = _readPref(SNAP_POINTS_STORAGE_KEY);
+    var div = _topologyGridDiv();
+    var fx = snapPts ? TOPO_COL_SPACING / div : px;
+    var fy = snapPts ? TOPO_ROW_SPACING / div : px;
+    points.emit("grab");
+    points.forEach(function (h) {
+      var p = h.position();
+      var b = snapPts ? _snapFine(p) : p;
+      h.position({ x: b.x + dir[0] * fx, y: b.y + dir[1] * fy });
+    });
+    points.emit("free");
+    points[0].emit("dragfree");
+    _layoutHistoryFlush();
+    return true;
+  }
   function _separateDevices(moved) {
     if (!cyInstance || topoState.pathOverlay) return 0;
     var snap = _readSnapToGrid();
