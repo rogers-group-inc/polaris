@@ -21,7 +21,7 @@
  *     from seeded hourly rows.
  */
 
-import { it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import { rollupHourly, rollupDaily } from "../../src/services/sampleRollupService.js";
@@ -416,5 +416,56 @@ d("rollup statements — every source, both tiers", () => {
     expect(rows[0].lastMacAddress).toBe("00:11:22:33:44:55");
     await prisma.assetInterfaceSample.deleteMany({ where: { assetId: ASSET } });
     await prisma.assetInterfaceSampleHourly.deleteMany({ where: { assetId: ASSET } });
+  });
+});
+
+// ─── BUCKET EDGES: a re-roll never rewrites a bucket with part of it ────────────
+//
+// rollupHourly() looks back `now − 2h` and the job ticks every 30 min, so the
+// last tick to touch an hour does so ~2h40m after it began. The lookback used
+// to be passed through un-truncated, and that tick re-rolled the hour from
+// only the rows at or after `now − 2h` — the hour's last ~20 minutes —
+// overwriting the full bucket. The daily tick had the same edge on a day.
+
+d("rollup lookback — whole buckets only", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("hourly: a lookback starting mid-hour still rolls the whole hour", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-05T14:40:00Z")); // since = 12:40
+    await prisma.assetMonitorSample.createMany({
+      data: [
+        { assetId: ASSET, timestamp: new Date("2026-11-05T12:05:00Z"), success: true, responseTimeMs: 10 },
+        { assetId: ASSET, timestamp: new Date("2026-11-05T12:50:00Z"), success: true, responseTimeMs: 30 },
+      ],
+    });
+
+    await rollupHourly();
+
+    const rows = await prisma.assetMonitorSampleHourly.findMany({ where: { assetId: ASSET } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].bucketStart.toISOString()).toBe("2026-11-05T12:00:00.000Z");
+    expect(rows[0].sampleCount).toBe(2);
+    expect(rows[0].avgResponseTimeMs).toBeCloseTo(20, 6);
+  });
+
+  it("daily: a lookback starting mid-day still rolls the whole day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-05T14:40:00Z")); // since = Nov 3 14:40
+    await prisma.assetMonitorSampleHourly.createMany({
+      data: [
+        { assetId: ASSET, bucketStart: new Date("2026-11-03T02:00:00Z"), sampleCount: 60, successCount: 60, failureCount: 0, avgResponseTimeMs: 10, minResponseTimeMs: 5, maxResponseTimeMs: 400 },
+        { assetId: ASSET, bucketStart: new Date("2026-11-03T20:00:00Z"), sampleCount: 60, successCount: 60, failureCount: 0, avgResponseTimeMs: 30, minResponseTimeMs: 5, maxResponseTimeMs: 50 },
+      ],
+    });
+
+    await rollupDaily();
+
+    const rows = await prisma.assetMonitorSampleDaily.findMany({
+      where: { assetId: ASSET, bucketStart: new Date("2026-11-03T00:00:00Z") },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sampleCount).toBe(120);
+    expect(rows[0].maxResponseTimeMs).toBe(400);
   });
 });

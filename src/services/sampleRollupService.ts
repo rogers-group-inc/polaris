@@ -99,8 +99,7 @@ export interface RollupResult {
  * existing buckets with fresh aggregates.
  */
 export async function rollupHourly(lookbackHours = 2): Promise<RollupResult[]> {
-  const since = new Date(Date.now() - lookbackHours * 3600 * 1000);
-  return runAll("hourly", since);
+  return runAll("hourly", bucketFloor(new Date(Date.now() - lookbackHours * 3600 * 1000), "hourly"));
 }
 
 /**
@@ -109,8 +108,23 @@ export async function rollupHourly(lookbackHours = 2): Promise<RollupResult[]> {
  * the detail table — keeps the daily tick cheap even on big fleets.
  */
 export async function rollupDaily(lookbackDays = 2): Promise<RollupResult[]> {
-  const since = new Date(Date.now() - lookbackDays * 86400 * 1000);
-  return runAll("daily", since);
+  return runAll("daily", bucketFloor(new Date(Date.now() - lookbackDays * 86400 * 1000), "daily"));
+}
+
+/**
+ * The start of the bucket `at` falls in — UTC hour or UTC day, matching
+ * `date_trunc` over the naive-UTC timestamp columns. The lookback MUST start
+ * on a bucket edge: every statement upserts whole buckets, so a `since` in the
+ * middle of one re-rolls it from only its later rows and overwrites the full
+ * aggregate. With the 30-minute hourly tick and a 2-hour lookback, the last
+ * tick to touch an hour left it holding only its final ~20 minutes, and the
+ * daily tick lost each day's first hours the same way.
+ */
+export function bucketFloor(at: Date, tier: RollupTier): Date {
+  const d = new Date(at.getTime());
+  if (tier === "daily") d.setUTCHours(0, 0, 0, 0);
+  else d.setUTCMinutes(0, 0, 0);
+  return d;
 }
 
 /** The sources whose builders accept an upper bound (`$2`) — the ones the
