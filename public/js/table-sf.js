@@ -1468,6 +1468,10 @@ TableSF.prototype.apply = function (data) {
  * are anchors for reordering: they hold their authored index while the other
  * columns are dragged around them.
  *
+ * data-col-no-resize="true" pins a column to its declared width (no handle);
+ * data-col-fit="content" does the same at its widest rendered cell, re-measured
+ * on every tbody repaint.
+ *
  * Reordering physically moves the <th>, its <col>, and each body row's cells,
  * because there is no CSS way to permute table columns. Pages that rebuild
  * their tbody keep working without changes — a MutationObserver re-applies the
@@ -1509,6 +1513,12 @@ function setupColumnLayout(tableEl, options) {
   // than being pinned to the 20px utility width. For columns whose content is a
   // fixed-size token (enum badge, MAC) so they shouldn't be draggable.
   var fixedW = {};
+  // Content-fit columns (data-col-fit="content"): static-width like fixedW (no
+  // handle, never stretched, never the auto-fill column), but the width is the
+  // widest rendered cell, re-measured every time the page repaints its tbody —
+  // a short-token column (the Events table's User) that would otherwise carry
+  // its share of the slack, or all of it when it is the rightmost column.
+  var fitContent = {};
   ths.forEach(function (th, i) {
     if (th.classList.contains("cb-col") || th.classList.contains("fav-col")) {
       required[colIds[i]] = true;
@@ -1516,6 +1526,10 @@ function setupColumnLayout(tableEl, options) {
     }
     if (th.getAttribute("data-col-required") === "true") required[colIds[i]] = true;
     if (th.getAttribute("data-col-no-resize") === "true") fixedW[colIds[i]] = true;
+    if (th.getAttribute("data-col-fit") === "content") {
+      fixedW[colIds[i]] = true;
+      fitContent[colIds[i]] = true;
+    }
   });
   // A column the operator can drag — excludes both utility (noResize) and
   // static-width (fixedW) columns.
@@ -2200,6 +2214,38 @@ function setupColumnLayout(tableEl, options) {
     applyWidths();
   })();
 
+  // Size each content-fit column to its widest cell (header label included).
+  // Capped at a third of the container so one runaway value can't crowd out
+  // the prose columns; the cell truncates past that. Returns whether every
+  // visible fit column could be measured (false while the table is off-screen).
+  var fitContentIds = Object.keys(fitContent);
+  function refitContentColumns() {
+    if (!fitContentIds.length) return true;
+    var parent = tableEl.parentElement;
+    var cap = Math.floor(((parent && parent.clientWidth) || 0) / 3);
+    var measuredAll = true, changed = false;
+    fitContentIds.forEach(function (id) {
+      if (hidden[id]) return;
+      var i = srcIdxOf[id];
+      var w = contentWidthOf(i);
+      if (!(w > 0) || !cap) { measuredAll = false; return; }
+      w = Math.max(MIN_COL_W, Math.min(w, cap));
+      if (widths[id] !== w) { widths[id] = w; changed = true; }
+    });
+    if (changed) applyWidths();
+    return measuredAll;
+  }
+  var fitContentMeasured = refitContentColumns();
+  // childList on the tbody only (not its subtree): a page repaint replaces the
+  // rows, while the measuring probe and the column-order pass touch cells.
+  if (fitContentIds.length && typeof MutationObserver === "function") {
+    var fitContentMo = new MutationObserver(function () {
+      if (!tableEl.isConnected) { fitContentMo.disconnect(); return; }
+      fitContentMeasured = refitContentColumns();
+    });
+    ownBodies().forEach(function (tb) { fitContentMo.observe(tb, { childList: true }); });
+  }
+
   // Re-fit the columns when the table becomes measurable (revealed from an
   // inactive tab) or the container resizes. The parent is observed too: with
   // every column pinned to an explicit width, a container SHRINK doesn't
@@ -2211,6 +2257,9 @@ function setupColumnLayout(tableEl, options) {
   if (typeof ResizeObserver === "function") {
     var columnFitRo = new ResizeObserver(function () {
       if (!tableEl.isConnected) { columnFitRo.disconnect(); return; }
+      // A content-fit column measured while hidden (an inactive tab) is sized
+      // the first time the table can be measured.
+      if (!fitContentMeasured) fitContentMeasured = refitContentColumns();
       scheduleColumnFit();
     });
     columnFitRo.observe(tableEl);
