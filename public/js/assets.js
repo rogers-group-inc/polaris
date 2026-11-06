@@ -26603,7 +26603,7 @@ function _assetEventsTabHTML(assetId) {
           '<th style="width:140px" data-col-id="action"    data-sf-key="action"    data-sf-type="string">Action</th>' +
           '<th style="width:100px" data-col-id="resource"  data-sf-key="resourceType" data-sf-type="string">Resource</th>' +
           '<th                      data-col-id="message"  data-sf-key="message"   data-sf-type="string">Message</th>' +
-          '<th style="width:100px" data-col-id="user"      data-sf-key="actor"     data-sf-type="string">User</th>' +
+          '<th style="width:100px" data-col-fit="content" data-col-id="user" data-sf-key="actor"     data-sf-type="string">User</th>' +
         '</tr></thead>' +
         '<tbody id="asset-view-events-tbody">' +
           '<tr><td colspan="6" class="empty-state">Loading…</td></tr>' +
