@@ -264,6 +264,8 @@ var userReady = new Promise(function (resolve) { _userReadyResolve = resolve; })
 async function fetchCurrentUser() {
   try {
     var base = window.__polarisApiBase || "/api/v1";
+    // Raw fetch on purpose (CQ-F026): the wallboard has no app.js session and
+    // calls its own base (/dash/api/v1); there is no login to redirect to.
     var data = await fetch(base + "/auth/me").then(function (r) { return r.json(); });
     if (data.authenticated) {
       currentUserRole = (data.role && data.role.name) || null;

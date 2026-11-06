@@ -530,6 +530,9 @@ var userReady = new Promise(function (resolve) { _userReadyResolve = resolve; })
 
 async function fetchCurrentUser() {
   try {
+    // Raw fetch on purpose (CQ-F026): /auth/me answers 200 { authenticated:false }
+    // for a signed-out caller, and api.js's request() would turn any 401 on the
+    // way into a /login.html redirect before this boot step could handle it.
     var data = await fetch("/api/v1/auth/me").then(function (r) { return r.json(); });
     if (data.authenticated) {
       currentUserRole = (data.role && data.role.name) || null;
@@ -2924,6 +2927,8 @@ function openUserMenu(anchor) {
     icon: ICONS.logout,
     danger: true,
     onSelect: function () {
+      // Raw fetch on purpose (CQ-F026): api.js's request() sends a 401 to /login.html,
+      // and an already-expired session must still finish logging out and land here.
       fetch("/api/v1/auth/logout", { method: "POST", headers: _csrfHeaders() })
         .catch(function () { /* log out locally regardless */ })
         .then(function () { window.location.href = "/signed-out.html"; });
@@ -6375,6 +6380,8 @@ function _resetAutoLogoutTimer() {
   if (_autoLogoutMs <= 0) return;
   _autoLogoutTimer = setTimeout(function () {
     // Session expired client-side — logout
+    // Raw fetch on purpose (CQ-F026): api.js's request() sends a 401 to /login.html,
+    // and an already-expired session must still finish logging out and land here.
     fetch("/api/v1/auth/logout", { method: "POST", headers: _csrfHeaders() }).catch(function () {});
     window.location.href = "/signed-out.html?reason=inactivity";
   }, _autoLogoutMs);

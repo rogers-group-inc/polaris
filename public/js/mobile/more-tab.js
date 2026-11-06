@@ -344,10 +344,14 @@
       // form, matching the desktop, whose logout lands on the form-less
       // /signed-out.html.
       PolarisAuth.markSignedOut();
+      // Raw fetch on purpose (CQ-F026): api.js's request() sends a 401 to the
+      // desktop /login.html; an expired session must still log out and reboot here.
       fetch("/api/v1/auth/logout", { method: "POST", headers: _csrfHeaders() })
         .finally(function () { window.PolarisMobile.boot(); });
     });
 
+    // Raw fetch on purpose (CQ-F026): the version line is decoration and must
+    // fail silently — through api.js a 401 would redirect the whole app.
     fetch("/api/v1/auth/me").then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
       if (!data || !data.version) return;
       var v = data.version;
