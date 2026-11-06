@@ -2662,14 +2662,25 @@
     // the operator dragged previously snap to their stored coordinates.
     cyInstance.one("layoutstop", function () {
       if (!savedPositions) return;
+      var restored = [];
+      var placed = [];
       cyInstance.batch(function () {
         cyInstance.nodes().forEach(function (n) {
           var p = savedPositions[n.id()];
           if (p && typeof p.x === "number" && typeof p.y === "number") {
             n.position({ x: p.x, y: p.y });
+            restored.push(n);
+          } else {
+            placed.push(n);
           }
         });
       });
+      // A device new since the save can be auto-placed on a spot a saved
+      // device now holds (and an old blob can hold two on one spot): the
+      // saved devices keep their spots, first come first served, and the
+      // auto-placed ones step aside. Display only — it persists with the
+      // operator's next save.
+      _separateDevices(restored.concat(placed));
       try { cyInstance.fit(undefined, 30); } catch (e) {}
     });
 
@@ -2743,6 +2754,12 @@
             n.position(_snapPos(n.position()));
           });
         });
+      }
+      // No two devices on one spot: a device dropped (or snapped) onto
+      // another moves to the nearest free spot; the one already there stays.
+      // A box drag's members were separated by the box's `free` handler.
+      if (!evt.target.data("isLocGroup")) {
+        _separateDevices(cyInstance.collection(evt.target).union(cyInstance.nodes(":selected")));
       }
       _markLayoutDirty();
       _layoutHistoryRecordSoon(); // a finished drag is one undo step
@@ -2967,6 +2984,13 @@
             if (m.length > 0) m.position(_snapPos(m.position()));
           });
         });
+      }
+      // The box's devices are the ones that moved: any that landed on a
+      // device outside the box steps aside (the outside one stays put).
+      if (!topoState.pathOverlay) {
+        _separateDevices((evt.target.data("memberIds") || []).map(function (id) {
+          return cyInstance.getElementById(id);
+        }).filter(function (m) { return m.length > 0; }));
       }
       window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
@@ -3533,6 +3557,22 @@
   // ── Snap devices ─────────────────────────────────────────────────────────
   function _readSnapToGrid() { return _readPref(SNAP_STORAGE_KEY); }
 
+  // ── No two devices on one spot ───────────────────────────────────────────
+  // `moved` (nodes, in priority order) may move; every other device holds its
+  // spot. A displaced device goes to the nearest free spot: whole grid cells
+  // when Snap devices is on (so it stays on the grid), a quarter cell when
+  // off (a nudge, not a jump). Returns how many devices moved.
+  // topology-render.js → separatePositions.
+  var TOPO_MAX_NODE_PX = 80; // the firewall body (64) + its icon border
+  function _separateDevices(moved) {
+    if (!cyInstance || topoState.pathOverlay) return 0;
+    var snap = _readSnapToGrid();
+    return window.PolarisTopologyRender.separateNodes(cyInstance, moved, {
+      stepX: snap ? TOPO_COL_SPACING : TOPO_COL_SPACING / TOPO_GRID_DIV,
+      stepY: snap ? TOPO_ROW_SPACING : TOPO_ROW_SPACING / TOPO_GRID_DIV,
+    });
+  }
+
   // Nearest grid cell for a pixel model position. The grid IS the column
   // solver's lattice (TOPO_COL_SPACING × TOPO_ROW_SPACING), so snapped nodes
   // line up exactly with auto-laid-out ones.
@@ -3563,6 +3603,9 @@
         }
       });
     });
+    // Two devices that round to one cell: the first keeps it, the other
+    // takes the nearest free cell.
+    if (_separateDevices(cyInstance.nodes()) > 0) moved = true;
     if (moved) {
       if (topoState.hasLocationCodes) {
         window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
@@ -3583,12 +3626,21 @@
         if (!positions || typeof positions !== "object") return;
         var changed = false;
         var out = {};
+        var items = [];
         Object.keys(positions).forEach(function (id) {
           var p = positions[id];
           if (!p || typeof p.x !== "number" || typeof p.y !== "number") return;
           var s = _snapPos(p);
           out[id] = s;
           if (s.x !== p.x || s.y !== p.y) changed = true;
+          if (id.indexOf("edgepath:") === 0) return; // a line's bend point, not a device
+          // Unrendered, so sized as the largest device (the firewall body).
+          items.push({ id: id, x: s.x, y: s.y, w: TOPO_MAX_NODE_PX, h: TOPO_MAX_NODE_PX });
+        });
+        var sep = window.PolarisTopologyRender.separatePositions(items, { stepX: TOPO_COL_SPACING, stepY: TOPO_ROW_SPACING });
+        items.forEach(function (it) {
+          var q = sep[it.id];
+          if (q.x !== it.x || q.y !== it.y) { out[it.id] = q; changed = true; }
         });
         if (changed) {
           _layoutDirty[topoState.siteId + "|" + view] = true;

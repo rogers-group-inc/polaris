@@ -284,6 +284,13 @@ the next time you edit if you left it on.
   be readable (about 135%). The thick lines stay where they are.
 - **Snap devices** lands a dragged device on the thick lines, and lines up
   every device on the map when you turn it on.
+
+No two devices can sit on the same spot. Drop a device on another one, or
+snap two onto the same grid cell, and the one you moved steps to the nearest
+free spot while the other stays where it was. With **Snap devices** on, it
+moves to the nearest free grid cell. With it off, it moves just far enough to
+clear the other device. When the map opens, a device added since the layout
+was saved also steps aside if its automatic spot is now taken.
 - **Snap line points** lands a dragged bend point on any line, thick or thin,
   so zooming in gives you the finer eight-way spacing to place points on.
 

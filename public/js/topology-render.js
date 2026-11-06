@@ -3285,7 +3285,161 @@
     return html;
   }
 
+  // ── Device overlap guard ─────────────────────────────────────────────────
+  // No two devices may sit on the same spot on the Device Map. "The same
+  // spot" is the device bodies (outer width × height, plus a small gap)
+  // overlapping — two exactly equal x/y is the extreme case, and the one
+  // snapping produces when two devices round to one grid cell.
+  //
+  // separatePositions places `items` IN ORDER (earlier items keep their spot;
+  // a later one that lands on an occupied spot moves) around the `fixed`
+  // boxes, which never move. A displaced item goes to the nearest free spot
+  // on its own lattice — offsets of whole stepX / stepY from where it was
+  // dropped — so a device snapped to the grid stays on the grid. Occupancy is
+  // a bucket hash, so a whole-site pass stays linear at a few hundred nodes.
+  // Pure: shared by the live map (separateNodes) and by the arithmetic snap
+  // of view blobs that are not rendered.
+  var _OVERLAP_GAP = 6;
+  var _OVERLAP_BUCKET = 128;
+  var _OVERLAP_MAX_RING = 12;
+  function _boxesOverlap(a, b, gap) {
+    return Math.abs(a.x - b.x) < (a.w + b.w) / 2 + gap &&
+           Math.abs(a.y - b.y) < (a.h + b.h) / 2 + gap;
+  }
+  function separatePositions(items, opts) {
+    opts = opts || {};
+    var stepX = opts.stepX > 0 ? opts.stepX : 130;
+    var stepY = opts.stepY > 0 ? opts.stepY : 95;
+    var gap = typeof opts.gap === "number" ? opts.gap : _OVERLAP_GAP;
+    var buckets = {};
+    var maxW = 0, maxH = 0;
+    function bucketRange(box) {
+      return {
+        x1: Math.floor((box.x - box.w / 2 - gap) / _OVERLAP_BUCKET),
+        x2: Math.floor((box.x + box.w / 2 + gap) / _OVERLAP_BUCKET),
+        y1: Math.floor((box.y - box.h / 2 - gap) / _OVERLAP_BUCKET),
+        y2: Math.floor((box.y + box.h / 2 + gap) / _OVERLAP_BUCKET),
+      };
+    }
+    function add(box) {
+      if (box.w > maxW) maxW = box.w;
+      if (box.h > maxH) maxH = box.h;
+      var r = bucketRange(box);
+      for (var bx = r.x1; bx <= r.x2; bx++) {
+        for (var by = r.y1; by <= r.y2; by++) {
+          var k = bx + "," + by;
+          (buckets[k] || (buckets[k] = [])).push(box);
+        }
+      }
+    }
+    function collides(box) {
+      // Widen the probe by the largest box seen, so a big neighbour whose
+      // centre is buckets away but whose body reaches here is still found.
+      var probe = { x: box.x, y: box.y, w: box.w + maxW, h: box.h + maxH };
+      var r = bucketRange(probe);
+      for (var bx = r.x1; bx <= r.x2; bx++) {
+        for (var by = r.y1; by <= r.y2; by++) {
+          var list = buckets[bx + "," + by];
+          if (!list) continue;
+          for (var i = 0; i < list.length; i++) {
+            if (_boxesOverlap(box, list[i], gap)) return true;
+          }
+        }
+      }
+      return false;
+    }
+    (opts.fixed || []).forEach(function (f) {
+      add({ x: f.x, y: f.y, w: f.w || 0, h: f.h || 0 });
+    });
+    // Candidate offsets nearest-first (ties: down before up, right before
+    // left), computed once per call.
+    var offsets = [];
+    for (var i = -_OVERLAP_MAX_RING; i <= _OVERLAP_MAX_RING; i++) {
+      for (var j = -_OVERLAP_MAX_RING; j <= _OVERLAP_MAX_RING; j++) {
+        if (i === 0 && j === 0) continue;
+        offsets.push({ dx: i * stepX, dy: j * stepY, d: (i * stepX) * (i * stepX) + (j * stepY) * (j * stepY) });
+      }
+    }
+    offsets.sort(function (a, b) { return a.d - b.d || b.dy - a.dy || b.dx - a.dx; });
+
+    var out = {};
+    var farRight = null;
+    items.forEach(function (it) {
+      var box = { x: it.x, y: it.y, w: it.w || 0, h: it.h || 0 };
+      if (collides(box)) {
+        var found = null;
+        for (var k = 0; k < offsets.length; k++) {
+          var c = { x: it.x + offsets[k].dx, y: it.y + offsets[k].dy, w: box.w, h: box.h };
+          if (!collides(c)) { found = c; break; }
+        }
+        if (!found) {
+          // Everything within the search radius is taken (a pathological
+          // pile-up): park it past the right edge of whatever is placed.
+          if (farRight === null) {
+            farRight = it.x;
+            Object.keys(buckets).forEach(function (key) {
+              buckets[key].forEach(function (b) { if (b.x > farRight) farRight = b.x; });
+            });
+          }
+          farRight += stepX;
+          found = { x: farRight, y: it.y, w: box.w, h: box.h };
+        }
+        box = found;
+      }
+      add(box);
+      out[it.id] = { x: box.x, y: box.y };
+    });
+    return out;
+  }
+
+  function _isLayoutDevice(n) {
+    return !n.data("isLocGroup") && !n.data("isPortal") && !n.data("isEdgeHandle");
+  }
+  // Live-map wrapper. `moved` (a collection or array of nodes, in priority
+  // order) are the devices allowed to move; every other device holds its
+  // spot. Without `moved`, every device is re-checked in graph order (the
+  // first device on a spot keeps it). Returns the number of devices moved.
+  function separateNodes(cy, moved, opts) {
+    if (!cy) return 0;
+    var list = [];
+    var seen = {};
+    var source = moved ? (moved.toArray ? moved.toArray() : moved) : cy.nodes().toArray();
+    source.forEach(function (n) {
+      if (!n || seen[n.id()] || !_isLayoutDevice(n) || n.removed()) return;
+      seen[n.id()] = true;
+      list.push(n);
+    });
+    if (list.length === 0) return 0;
+    var fixed = [];
+    cy.nodes().forEach(function (n) {
+      if (seen[n.id()] || !_isLayoutDevice(n)) return;
+      var p = n.position();
+      fixed.push({ x: p.x, y: p.y, w: n.outerWidth(), h: n.outerHeight() });
+    });
+    var items = list.map(function (n) {
+      var p = n.position();
+      return { id: n.id(), x: p.x, y: p.y, w: n.outerWidth(), h: n.outerHeight() };
+    });
+    var placed = separatePositions(items, {
+      stepX: opts && opts.stepX, stepY: opts && opts.stepY, gap: opts && opts.gap, fixed: fixed,
+    });
+    var count = 0;
+    cy.batch(function () {
+      list.forEach(function (n) {
+        var p = n.position();
+        var q = placed[n.id()];
+        if (q && (q.x !== p.x || q.y !== p.y)) {
+          n.position({ x: q.x, y: q.y });
+          count++;
+        }
+      });
+    });
+    return count;
+  }
+
   window.PolarisTopologyRender = {
+    separatePositions: separatePositions,
+    separateNodes: separateNodes,
     edgeTooltipHtml: edgeTooltipHtml,
     topologyLegendHtml: topologyLegendHtml,
     linkHoverSet: linkHoverSet,
