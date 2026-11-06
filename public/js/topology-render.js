@@ -3311,8 +3311,11 @@
 
   // ── Device overlap guard ─────────────────────────────────────────────────
   // No two devices may sit on the same spot on the Device Map. "The same
-  // spot" is the device bodies (outer width × height, plus a small gap)
-  // overlapping — two exactly equal x/y is the extreme case, and the one
+  // spot" is the device bodies (width × height, border excluded: a
+  // selected device draws a thicker border, and its footprint must not
+  // change with selection) overlapping — no
+  // clearance: the snap cells are 65 × 47.5, so two 46 px switches on
+  // neighbouring rows are 1.5 px apart and must count as free — two exactly equal x/y is the extreme case, and the one
   // snapping produces when two devices round to one grid cell.
   //
   // separatePositions places `items` IN ORDER (earlier items keep their spot;
@@ -3323,7 +3326,7 @@
   // a bucket hash, so a whole-site pass stays linear at a few hundred nodes.
   // Pure: shared by the live map (separateNodes) and by the arithmetic snap
   // of view blobs that are not rendered.
-  var _OVERLAP_GAP = 6;
+  var _OVERLAP_GAP = 0;
   var _OVERLAP_BUCKET = 128;
   var _OVERLAP_MAX_RING = 12;
   function _boxesOverlap(a, b, gap) {
@@ -3438,11 +3441,11 @@
     cy.nodes().forEach(function (n) {
       if (seen[n.id()] || !_isLayoutDevice(n)) return;
       var p = n.position();
-      fixed.push({ x: p.x, y: p.y, w: n.outerWidth(), h: n.outerHeight() });
+      fixed.push({ x: p.x, y: p.y, w: n.width(), h: n.height() });
     });
     var items = list.map(function (n) {
       var p = n.position();
-      return { id: n.id(), x: p.x, y: p.y, w: n.outerWidth(), h: n.outerHeight() };
+      return { id: n.id(), x: p.x, y: p.y, w: n.width(), h: n.height() };
     });
     var placed = separatePositions(items, {
       stepX: opts && opts.stepX, stepY: opts && opts.stepY, gap: opts && opts.gap, fixed: fixed,

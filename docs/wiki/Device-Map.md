@@ -279,8 +279,11 @@ points**. Each one remembers its setting in this browser; the grid only ever sho
 the next time you edit if you left it on.
 
 - **Grid** draws two weights of line behind the map. The thick lines are
-  where devices sit in the automatic layout; the thin lines split each cell
-  in four, and in eight once you zoom in to 100% or more. The thick lines stay where they are.
+  where devices snap. They are twice as close together as the automatic
+  layout's spacing, so every automatically placed device sits on one, with a
+  free line between any two neighbours. The thin lines split each cell in
+  two, and in four once you zoom in to 100% or more. The thick lines stay
+  where they are.
 - **Snap devices** lands a dragged device on the thick lines, and lines up
   every device on the map when you turn it on.
 

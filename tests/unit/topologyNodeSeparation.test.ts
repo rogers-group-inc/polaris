@@ -50,7 +50,7 @@ function sepNodes(spec: unknown): { count: number; pos: Record<string, Pt> } {
   return JSON.parse(sb.sepNodes(JSON.stringify(spec)));
 }
 
-function overlaps(a: Item, b: Item, gap = 6): boolean {
+function overlaps(a: Item, b: Item, gap = 0): boolean {
   return Math.abs(a.x - b.x) < (a.w + b.w) / 2 + gap && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + gap;
 }
 
@@ -72,6 +72,24 @@ describe("separatePositions", () => {
     expect(out.a).toEqual({ x: 260, y: 190 });
     // Nearest whole-cell offset is one row (95 < 130), down before up.
     expect(out.b).toEqual({ x: 260, y: 285 });
+  });
+
+  it("lets switches sit on neighbouring cells of the half-lattice snap grid (65 × 47.5)", () => {
+    // 46 px bodies 47.5 px apart are 1.5 px clear: neighbours, not one spot.
+    const items: Item[] = [
+      { id: "a", x: 65, y: 47.5, w: 46, h: 46 },
+      { id: "b", x: 65, y: 95, w: 46, h: 46 },
+      { id: "c", x: 130, y: 47.5, w: 46, h: 46 },
+    ];
+    expect(sepPos(items, { stepX: 65, stepY: 47.5 })).toEqual({
+      a: { x: 65, y: 47.5 }, b: { x: 65, y: 95 }, c: { x: 130, y: 47.5 },
+    });
+    // A firewall (74 px with its border) is too tall for the row under it.
+    const fw = sepPos([
+      { id: "fw", x: 0, y: 0, w: 74, h: 74 },
+      { id: "sw", x: 0, y: 47.5, w: 46, h: 46 },
+    ], { stepX: 65, stepY: 47.5 });
+    expect(fw.sw).not.toEqual({ x: 0, y: 47.5 });
   });
 
   it("never moves a fixed device, and skips cells fixed devices hold", () => {
