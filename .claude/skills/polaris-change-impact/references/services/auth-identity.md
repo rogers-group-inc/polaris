@@ -490,7 +490,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Request-bound work stays in the ROUTE: rotating the session, revoking the other sessions and clearing the lockout + pending MFA after a password change, `req.session.mfaVerified = true` after confirm, and the success Events (`user.password_changed`, `auth.totp.enrolled`, `auth.totp.disabled`, `user.passkey_registered`) that carry `req.ip`. The one Event this service writes is the step-up failure, because it is part of the check.
 - A self-disable needs a code that claims its TOTP step (single use) or a valid backup code — a stolen session cannot drop MFA.
 
-**When changing this:** the admin-side counterparts (reset another user's password / TOTP) live in routes/users.ts and are NOT this service; the login flows' User reads (still in auth.ts — sessions, lockouts and passkey ceremonies interleave there) are the open half of CQ-B044.
+**When changing this:** the admin-side counterparts (reset another user's password / TOTP) live in routes/users.ts and are NOT this service; the login flows' User reads and writes are `services/loginUserService.ts` (CQ-B044 part 3).
+
+## services/loginUserService.ts
+
+**What it owns:** The User reads and writes of the sign-in flows — password step, TOTP step, passkey sign-in, passkey second factor, forced password change — and `/auth/me`, extracted from `src/api/routes/auth.ts` (CQ-B044 part 3, 2026-11-06). Data access plus ONE decision: the first-login role-review stamp, which the password step and the passkey sign-in each spelled out before.
+
+**Public API:** `findUserWithRoleByUsername(username)`, `findUserWithRoleById(id)`, `recordSuccessfulLogin(user, { stampFirstLogin?, rehashPassword?, remainingBackupCodes? })`, `setPasswordHash(userId, newPassword)`.
+
+**Cross-service deps:** `utils/password.ts` (`hashPassword`).
+
+**Used by:** `src/api/routes/auth.ts` — POST /login, /login/totp, /passkeys/login (passkey sign-in), /login/passkey (passkey second factor), /login/password-change, GET /me.
+
+**Invariants:**
+- Only the FIRST step of a sign-in passes `stampFirstLogin` (the password step, a passkey sign-in): the stamp is `lastLogin === null`, and the second-factor step runs after that write has already set it. Admins are never stamped.
+- Everything request-bound stays in the ROUTE and in its original order: session regeneration, the pending-MFA token consume (a forced change consumes only AFTER the write lands, so a failed write leaves a retryable token), the lockout counter (cleared only when no second factor is owed, or by the second factor), and the passkey ceremony.
+
+**When changing this:** a new sign-in path calls `recordSuccessfulLogin` — never a raw `lastLogin` write — and decides deliberately whether it is a first step.
 
 ## services/totpService.ts
 
