@@ -72,6 +72,7 @@ import { rememberLoginTarget } from "./utils/loginRedirect.js";
 import { canonicalRoutePath, nonCanonicalRequestPath } from "./utils/routePath.js";
 import { isPhoneUserAgent, resolveAssetOpenTarget } from "./utils/assetOpenLink.js";
 import { bearerSatisfies, healthToken, metricsToken } from "./utils/endpointTokens.js";
+import { derivePolarisPort } from "./utils/publicUrl.js";
 
 // Fail-fast environment validation runs BEFORE any listener binds, before
 // pg-boss init, before sample buffers start. Throws on misconfiguration
@@ -1109,10 +1110,10 @@ export async function startApp(): Promise<void> {
   //     else on the network can reach us.
   //   - "all" mode (POLARIS_ROLE unset, npm run dev): bind all interfaces
   //     on PORT for dev ergonomics. No HTTPS, no cert, no Setting.https.
-  // PORT picks env override > 3000 default; no more Setting.https.httpPort
-  // fallback since the Setting key was retired in this same release.
-  const PORT_RAW = process.env.PORT ?? 3000;
-  const PORT = typeof PORT_RAW === "number" ? PORT_RAW : Number.parseInt(String(PORT_RAW), 10) || 3000;
+  // PORT picks env override > 3000 default, through the SAME parser the nginx
+  // config sync uses (derivePolarisPort: an integer 1-65535, else 3000). A
+  // parseInt here once read "8080x" as 8080 while nginx was told 3000.
+  const PORT = derivePolarisPort();
   const httpServer = isProxyMode()
     ? app.listen(PORT, "127.0.0.1", () => {
         logger.info({ port: PORT, bind: "127.0.0.1" }, "Polaris server listening (proxy mode)");

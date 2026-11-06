@@ -62,7 +62,7 @@ import {
   removeWindowsStageDir,
   STAGED_SCRIPT_PRELUDE,
 } from "../utils/remoteStaging.js";
-import { getPublicUrlPort, publicBaseUrl } from "../utils/publicUrl.js";
+import { derivePolarisPort, getPublicUrlPort, publicBaseUrl } from "../utils/publicUrl.js";
 import { getServerCertHostnames, getServerCertFingerprint } from "./certInfo.js";
 import { assetSourceKindFromIntegrationType, isPollingMethodCompatible } from "../utils/pollingCompatibility.js";
 import {
@@ -1711,9 +1711,9 @@ export function inferOwnServerUrlSync(): string {
     const fromCert = preferred ? normalizeAgentServerUrl(`https://${preferred}:${httpsPort}`) : null;
     if (fromCert) return fromCert;
   }
-  const port = process.env.PORT ?? "3000";
+  const port = derivePolarisPort();
   const host = process.env.POLARIS_PUBLIC_HOST ?? "localhost";
-  return normalizeAgentServerUrl(`https://${host}:${port}`) ?? `https://localhost:${port.replace(/\D/g, "") || "3000"}`;
+  return normalizeAgentServerUrl(`https://${host}:${port}`) ?? `https://localhost:${port}`;
 }
 
 interface AgentManifest {
