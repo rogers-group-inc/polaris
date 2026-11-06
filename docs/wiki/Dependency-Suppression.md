@@ -33,7 +33,7 @@ Edges live on the asset and come from these sources:
 
 | Source | Built by |
 |---|---|
-| `computed` | rebuilt at the end of every FortiManager / FortiGate discovery cycle, from interface adjacency, LLDP, mesh and controller signals |
+| `computed` | rebuilt at the end of every FortiManager / FortiGate discovery cycle — including a **Discover Now** on one gate ([rule 142](Business-Rules#rule-142)) — from interface adjacency, LLDP, mesh and controller signals |
 | `endpoint` | a fleet-wide pass giving each endpoint **one** parent |
 | `vcenter` | VM → ESXi host placement |
 | `unraid` / `truenas` | VM or container (App) → the Unraid / TrueNAS host it runs on |

@@ -1553,7 +1553,7 @@ router.delete("/:id/discover", requirePermission("integrations", "fullwrite"), a
     // aborts its local AbortController (the run may be executing in a separate
     // process, so there's no in-memory controller to call here).
     const cancelled = await requestCancel(id);
-    if (!cancelled) { res.status(404).json({ message: "No active discovery for this integration" }); return; }
+    if (!cancelled) { res.status(404).json({ error: "No active discovery for this integration" }); return; }
     res.status(204).send();
   } catch (err) {
     next(err);

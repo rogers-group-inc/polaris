@@ -1,21 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { sweepPhaseEnabled, assetOnlyPostSyncPassesEnabled, vcenterPassEnabled, cascadeControllerOf, isVouchedManagedDevice, isSightedAnywhere, resolveSweepController, type SyncMode, type ManagedDeviceSightings, type SweepControllerContext } from "../../src/services/discovery/discoveryEngine.js";
+import { sweepPhaseEnabled, finalizePhasesEnabled, scopedFinalizeAssetIds, firewallNamedForScopedGate, assetOnlyPostSyncPassesEnabled, vcenterPassEnabled, cascadeControllerOf, isVouchedManagedDevice, isSightedAnywhere, resolveSweepController, type SyncMode, type ManagedDeviceSightings, type SweepControllerContext } from "../../src/services/discovery/discoveryEngine.js";
 import { vcenterSweepBlockedReason } from "../../src/services/vcenterService.js";
 
 // The mode→sweep-phase matrix behind syncDhcpSubnets' destructive phases.
-// Getting this wrong on a scoped run mass-deprecates subnets (Phase 2) or
-// decommissions healthy firewalls (Phase 2a) — knownFirewallSerials is built
-// from result.devices (the processed chunks, one device in a scoped run),
-// not the raw ADOM roster.
+// A scoped (Discover Now) finalize runs every phase but 2, each narrowed to
+// the one gate (business rule 142): 2a judges only firewalls carrying the
+// gate's name (firewallNamedForScopedGate, below), 2c takes the gate's infra
+// set (scopedFinalizeAssetIds, below). Phase 2 never runs there — the gate is
+// on the roster by construction.
 
 const PHASES = ["2", "2a", "2b", "2c"] as const;
 
 describe("sweepPhaseEnabled — SyncMode × sweep-phase matrix", () => {
-  it("finalize-scoped runs ONLY Phase 2b (per-controller switch/AP decommission)", () => {
-    expect(sweepPhaseEnabled("finalize-scoped", "2b")).toBe(true);
+  it("finalize-scoped runs 2a / 2b / 2c (narrowed to the gate) and never Phase 2", () => {
     expect(sweepPhaseEnabled("finalize-scoped", "2")).toBe(false);
-    expect(sweepPhaseEnabled("finalize-scoped", "2a")).toBe(false);
-    expect(sweepPhaseEnabled("finalize-scoped", "2c")).toBe(false);
+    expect(sweepPhaseEnabled("finalize-scoped", "2a")).toBe(true);
+    expect(sweepPhaseEnabled("finalize-scoped", "2b")).toBe(true);
+    expect(sweepPhaseEnabled("finalize-scoped", "2c")).toBe(true);
   });
 
   it("skip-deprecation runs no sweep phase (the per-device pass)", () => {
@@ -30,6 +31,71 @@ describe("sweepPhaseEnabled — SyncMode × sweep-phase matrix", () => {
         expect(sweepPhaseEnabled(mode, phase)).toBe(true);
       }
     }
+  });
+});
+
+describe("finalizePhasesEnabled — who runs Phases 8–9, 12, 13.x", () => {
+  it("every finalize flavour does, a scoped one included (rule 142: Discover Now rebuilds the dependency tree)", () => {
+    expect(finalizePhasesEnabled("full")).toBe(true);
+    expect(finalizePhasesEnabled("finalize")).toBe(true);
+    expect(finalizePhasesEnabled("finalize-scoped")).toBe(true);
+  });
+  it("the per-device pass and the legacy deprecation-only mode do not", () => {
+    expect(finalizePhasesEnabled("skip-deprecation")).toBe(false);
+    expect(finalizePhasesEnabled("deprecation-only")).toBe(false);
+  });
+});
+
+describe("scopedFinalizeAssetIds — the one gate's asset set", () => {
+  const bySerial: Record<string, string> = { FGT1: "gate", FGT1B: "standby", SW1: "switch", AP1: "ap" };
+  const byMac: Record<string, string> = { "AA:AA:AA:AA:AA:01": "lease", "AA:AA:AA:AA:AA:02": "inv", "AA:AA:AA:AA:AA:03": "arp", "AA:AA:AA:AA:AA:04": "mac-table" };
+  const idx = {
+    findBySerial: (sn: string) => (bySerial[sn.toUpperCase()] ? { id: bySerial[sn.toUpperCase()] } : undefined),
+    findByMac:    (m: string)  => (byMac[m] ? { id: byMac[m] } : undefined),
+  };
+  const result = {
+    devices: [{ name: "SITE-1", serial: "FGT1", haMembers: [{ serial: "FGT1B" }] }],
+    fortiSwitches: [{ serial: "SW1" }],
+    fortiAps: [{ serial: "AP1" }],
+    dhcpEntries: [{ macAddress: "aa:aa:aa:aa:aa:01" }],
+    deviceInventory: [{ macAddress: "aa-aa-aa-aa-aa-02" }],
+    arpTable: [{ mac: "AA:AA:AA:AA:AA:03" }],
+    switchMacTable: [{ mac: "AA:AA:AA:AA:AA:04" }],
+  } as any;
+
+  it("collects the gate, its HA member, switches and APs as infra; endpoints by normalized MAC", () => {
+    const s = scopedFinalizeAssetIds(result, idx);
+    expect([...s.infra].sort()).toEqual(["ap", "gate", "standby", "switch"]);
+    expect([...s.all].sort()).toEqual(["ap", "arp", "gate", "inv", "lease", "mac-table", "standby", "switch"]);
+  });
+
+  it("skips what the index does not know, and blank identities", () => {
+    const s = scopedFinalizeAssetIds({
+      devices: [{ name: "X", serial: "" }], fortiSwitches: [{ serial: "NOPE" }], fortiAps: [],
+      dhcpEntries: [{ macAddress: "" }, { macAddress: "bb:bb:bb:bb:bb:bb" }], deviceInventory: [], arpTable: [], switchMacTable: [],
+    } as any, idx);
+    expect(s.all.size).toBe(0);
+    expect(s.infra.size).toBe(0);
+  });
+
+  it("an empty result is an empty scope (narrowed phases then touch nothing)", () => {
+    const s = scopedFinalizeAssetIds({ devices: [], fortiSwitches: [], fortiAps: [], dhcpEntries: [], deviceInventory: [], arpTable: [], switchMacTable: [] } as any, idx);
+    expect(s.all.size).toBe(0);
+  });
+});
+
+describe("firewallNamedForScopedGate — Phase 2a narrowing on a scoped run", () => {
+  const processed = new Map<string, unknown>([["site-1", new Set(["FGT2"])], ["site-1-host", new Set(["FGT2"])]]);
+
+  it("matches by FMG device name or hostname, case-insensitively", () => {
+    expect(firewallNamedForScopedGate({ hostname: "x", fortinetTopology: { deviceName: "SITE-1" } }, processed)).toBe(true);
+    expect(firewallNamedForScopedGate({ hostname: "Site-1-Host", fortinetTopology: null }, processed)).toBe(true);
+  });
+
+  it("never matches another gate's firewall — the scoped run must not judge it", () => {
+    expect(firewallNamedForScopedGate({ hostname: "SITE-2", fortinetTopology: { deviceName: "SITE-2" } }, processed)).toBe(false);
+    expect(firewallNamedForScopedGate({ hostname: null, fortinetTopology: null }, processed)).toBe(false);
+    expect(firewallNamedForScopedGate({ hostname: "SITE-1", fortinetTopology: null }, new Map())).toBe(false);
   });
 });
 

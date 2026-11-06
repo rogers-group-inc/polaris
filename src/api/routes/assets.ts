@@ -2380,14 +2380,14 @@ router.post("/:id/rediscover", requirePermission("assets", "write"), scopeAssetP
         message: `Discovery blocked: ${filterAsset.hostname || deviceName} — ${reason}`,
         details: { integrationId: integration.id, integrationType: integration.type, deviceName, reason },
       });
-      res.status(409).json({ message: reason });
+      res.status(409).json({ error: reason });
       return;
     }
 
     // Pre-check for a friendly message; triggerDiscovery's coalescing return
     // is the authoritative guard (closes the TOCTOU window).
     if (await isRunActive(integration.id)) {
-      res.status(409).json({ message: `A discovery is already running for "${integration.name}" — try again when it finishes` });
+      res.status(409).json({ error: `A discovery is already running for "${integration.name}" — try again when it finishes` });
       return;
     }
     // requestActor covers bearer-token callers ("api:<token name>") as well
@@ -2400,7 +2400,7 @@ router.post("/:id/rediscover", requirePermission("assets", "write"), scopeAssetP
       ? await triggerDiscovery(integration.id, actor, { scope, scopeLabel: deviceName })
       : await triggerDiscovery(integration.id, actor);
     if (!started) {
-      res.status(409).json({ message: `A discovery is already running for "${integration.name}" — try again when it finishes` });
+      res.status(409).json({ error: `A discovery is already running for "${integration.name}" — try again when it finishes` });
       return;
     }
 

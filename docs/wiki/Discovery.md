@@ -194,6 +194,36 @@ A scoped run:
 For Entra and AD, the opt-in disappearance sweep is refused on a scoped run as
 well.
 
+### Discover Now on a FortiGate
+
+On a FortiManager-managed gate — or on one of its FortiSwitches or FortiAPs,
+which runs the gate — Discover Now is **that gate's full discovery**: everything
+the integration's own Discover does, limited to the gate and what sits behind
+it ([rule 142](Business-Rules#rule-142)). It:
+
+- refreshes the gate, its switches, access points, networks, reservations,
+  leases and endpoints;
+- retires a switch or access point the gate no longer manages, and an old
+  FortiGate chassis replaced under the same name;
+- applies the integration's interface auto-monitor selection to the gate and
+  its switches and access points;
+- looks up DNS names and MAC vendors for what the gate reported;
+- **rebuilds the [dependency tree](Dependency-Suppression)**, so a swapped
+  switch is placed under its gate as soon as the run finishes;
+- re-applies region and criteria tags, reads management access, and runs
+  description sync for the gate.
+
+It never judges another gate: a FortiGate that has left FortiManager is retired
+by the next full run, not by a Discover Now elsewhere.
+
+Discover Now is discovery, not monitoring. CPU and memory, response time,
+hardware sensors, interfaces, LLDP neighbours and MAC tables keep their own
+polling schedules. The dependency tree is rebuilt from what those polls last
+collected.
+
+On a **standalone FortiGate** integration the integration *is* the one gate, so
+Discover Now is an ordinary full run.
+
 ---
 
 ## Deciding what has gone away

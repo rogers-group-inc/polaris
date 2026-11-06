@@ -9,7 +9,7 @@
 - `src/services/dependencyTreeService.ts` — propagateAfterStatusChange() is the latency-optimization hook called from recordProbeResult on the confirmed up/down edge (a separate guard from the monitor.status_changed Event emission, which writes only paired up ↔ down Events — propagate does NOT fire on warning).
 - `src/jobs/dependencyReconciler.ts` — 60s tick that calls reconcileDependencySuppression(); the source of truth catches anything the event hook missed.
 - `src/jobs/backfillDependencyTree.ts` — one-shot startup runs recomputeDependencyTree() so existing installs see populated rows without waiting 4h.
-- `src/services/discovery/discoveryEngine.ts` — Phase 12 of syncDhcpSubnets calls recomputeDependencyTree(integrationId) on mode in {full, finalize}.
+- `src/services/discovery/discoveryEngine.ts` — Phase 12 of syncDhcpSubnets calls recomputeDependencyTree(integrationId) on mode in {full, finalize, finalize-scoped} (`finalizePhasesEnabled`) — a scoped Discover Now on a gate re-parents a swapped switch on the click (business rule 142; until 2026-11-06 it waited for the next full run).
 
 **Readers** (files that consume it):
 - `src/services/monitoringService.ts:runMonitorPass()` — Cadence dispatch: heavy cadences gated on `monitorStatus==="up" && !dependencySuppressed`; the probe interval is NOT touched by suppression (`resolveProbeIntervalSec(eff)` takes no asset state — business rule 38(c)).
