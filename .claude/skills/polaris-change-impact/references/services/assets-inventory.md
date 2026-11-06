@@ -765,6 +765,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetMacSplitService.ts
+
+**What it owns:** Business rule 91(j) — splitting MACs off an asset onto assets of their own (the recovery for devices fused before 91(f)).
+
+**Public API:** `splitMacsToNewAssets({ assetId, macs, actor })` → `{ originalAssetId, created[], renamed[] }`; pure `macSplitRefusal(row, primaryMac)` and `hostnameBase(hostname)`.
+
+**Cross-service deps:** prisma (`asset`, `assetMacAddress`, `assetAssociatedIp`, `assetIpHistory`, `assetSource`) in one `$transaction`; `primaryAddressService` (`CLEAR_PRIMARY_ADDRESS_PIN`, `bestListedAddress`); `hostnameMacSuffixService.planHostnameMacSuffixes` (naming, after the transaction); `utils/macAddresses.ts` (`HARDWARE_MAC_SOURCES`, `INTERFACE_MAC_SOURCE`, `selectPrimaryMac`); `eventLogService.logEvent` (`asset.mac_split`, `asset.renamed_by_mac`).
+
+**Used by:** `api/routes/assets.ts` — `POST /assets/:id/macs/split`; `public/js/assets.js` → `_assetMacSplitSectionHTML` / `openMacSplitConfirm` on the Sources tab.
+
+**Invariants:**
+- **The new asset's `macAddress` is the split MAC.** `upsertFortigateEndpointSource` re-binds by primary MAC; anything else lets the next discovery run pull the moved source back.
+- **The original keeps its primary MAC** (only an asset with none gets one from `selectPrimaryMac`) — recomputing would let a hardware-reported NIC take over what the asset is known by.
+- History moves only for addresses no remaining address row holds; sightings and quarantine never move; a quarantined asset is refused.
+- Renames are single-row `asset.update`s so rule 134 (open alerts follow a rename) fires.
+
+**When changing this:**
+- A new per-MAC side table (anything with `assetId` + a MAC column) must be moved here too, and named in rule 91(j).
+- Keep `macSplitRefusal` and the client's `_macSplitRefusal` in `public/js/assets.js` in step (the client hides the button; the server refuses).
+
+---
+
 ## services/hostnameMacSuffixService.ts
 
 **What it owns:** Business rule 91(i) — telling apart devices that share a discovered hostname. Given the hostnames a discovery pass just created, it reads each name's live family (the bare name and its MAC-suffixed forms) and returns the renames that give every bare-named, discovery-named member a `<name>-<last 3 MAC octets>` suffix.

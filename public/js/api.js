@@ -905,6 +905,7 @@ const api = {
     getSightings:         (id)  => request("GET", `/assets/${id}/sightings`),
     getSources:           (id)  => request("GET", `/assets/${id}/sources`),
     splitSource:          (id, sourceId) => request("POST", `/assets/${id}/sources/${sourceId}/split`),
+    splitMacs:            (id, macs) => request("POST", `/assets/${id}/macs/split`, { macs }),
     merge:                (id, body) => request("POST", `/assets/${id}/merge`, body),
     pollingHistory:       (id)  => request("GET", `/assets/${id}/polling-history`),
     getDependencies:      (id)  => request("GET", `/assets/${id}/dependencies`),

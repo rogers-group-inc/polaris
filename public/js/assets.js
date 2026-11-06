@@ -6196,7 +6196,7 @@ async function openViewModal(id, opts) {
       tabs.push({ key: "devicequery", label: "Device Query", html: tabbedBodyHTML("asset-dq", deviceQueryTabs) });
     }
     // Sources tab — discovery-source provenance lives last.
-    tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory, a.discoveredByIntegrationId) });
+    tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory, a.discoveredByIntegrationId, a) });
     // The strip's order is decided here, not by push order (operator decision
     // 2026-11-04): General, System, SD-WAN, IPsec, ARP Table, MAC Table,
     // Wireless, Events, Alerts, Sources. The tabs that list does not name
@@ -27059,7 +27059,253 @@ function _showAssetEventDetail(ev) {
   openModal(title, body, '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
 }
 
-function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoveringIntegrationId) {
+// ─── Split a MAC off onto its own asset (business rule 91(j)) ────────────────
+// The Sources tab lists every MAC on the asset with the address it last held,
+// the gate that saw it and when. A MAC seen by a lease or a gate's client list
+// can be split onto a new asset — the recovery for devices fused before rule
+// 91(f). The primary MAC stays, and a MAC the device reports as its own (an
+// interface port, an agent / Intune / vCenter NIC, a range) is never another
+// device. Click a row to select it, click the MAC to copy, right-click for the
+// menu; the bulk bar splits every selected MAC at once.
+var _MAC_SPLIT_OWN_SOURCES = { "monitor-interface": 1, "polaris-agent": 1, "intune-ethernet": 1, "intune-wifi": 1, "vcenter-vnic": 1 };
+var _MAC_SPLIT_VISIBLE = 6;
+var _macSplitState = {}; // assetId → { asset, sources, ipHistory, selected: {mac:1}, expanded }
+
+function _macSplitRefusal(asset, m) {
+  if (m.macEnd) return "A MAC range is the device's own ports";
+  if (asset.macAddress && String(m.mac).toUpperCase() === String(asset.macAddress).toUpperCase()) return "The primary MAC stays: split the others off";
+  if (_MAC_SPLIT_OWN_SOURCES[m.source]) return "The device reports this MAC as its own";
+  return null;
+}
+
+function _macSplitCanAct(asset) {
+  return typeof canEditAsset === "function" && canEditAsset(asset) &&
+    asset.status !== "decommissioned" && !asset.quarantinedAt;
+}
+
+// "iPhone" for "iPhone-F2BC27" (rule 91(i) suffix), else the name itself.
+function _macSplitBase(hostname) {
+  var m = /^(.+)-([0-9a-f]{6}|[0-9a-f]{12})$/i.exec(hostname || "");
+  return m ? m[1] : (hostname || "");
+}
+
+function _macSplitSuffix(mac) {
+  return String(mac || "").replace(/[^0-9a-f]/gi, "").toUpperCase().slice(-6);
+}
+
+function _macSplitAddrsByMac(asset) {
+  var by = {};
+  (asset.associatedIps || []).forEach(function (r) {
+    if (!r.mac) return;
+    var k = String(r.mac).toUpperCase();
+    (by[k] = by[k] || []).push(r);
+  });
+  Object.keys(by).forEach(function (k) {
+    by[k].sort(function (a, b) { return String(b.lastSeen || "").localeCompare(String(a.lastSeen || "")); });
+  });
+  return by;
+}
+
+function _assetMacSplitSectionHTML(asset, sources, ipHistory) {
+  var macs = Array.isArray(asset && asset.macAddresses) ? asset.macAddresses : [];
+  if (macs.length < 2) return "";
+  var st = _macSplitState[asset.id] || { selected: {}, expanded: false };
+  st.asset = asset; st.sources = sources || []; st.ipHistory = ipHistory || [];
+  _macSplitState[asset.id] = st;
+  return '<div id="asset-mac-split-' + escapeHtml(asset.id) + '" data-shot-section="macSplit" data-shot-label="MAC addresses">' +
+    _assetMacSplitInnerHTML(asset.id) + '</div>';
+}
+
+function _assetMacSplitInnerHTML(assetId) {
+  var st = _macSplitState[assetId];
+  var asset = st.asset;
+  var canAct = _macSplitCanAct(asset);
+  var primary = asset.macAddress ? String(asset.macAddress).toUpperCase() : "";
+  var byMac = _macSplitAddrsByMac(asset);
+  var macs = asset.macAddresses.slice().sort(function (a, b) {
+    var ap = String(a.mac).toUpperCase() === primary, bp = String(b.mac).toUpperCase() === primary;
+    if (ap !== bp) return ap ? -1 : 1;
+    return String(b.lastSeen || "").localeCompare(String(a.lastSeen || ""));
+  });
+  var shown = st.expanded ? macs : macs.slice(0, _MAC_SPLIT_VISIBLE);
+  var selCount = Object.keys(st.selected).length;
+
+  var rows = shown.map(function (m) {
+    var mac = String(m.mac).toUpperCase();
+    var why = _macSplitRefusal(asset, m);
+    var addrs = byMac[mac] || [];
+    var last = addrs[0] || null;
+    var first = addrs.reduce(function (acc, r) { return r.firstSeen && (!acc || r.firstSeen < acc) ? r.firstSeen : acc; }, null);
+    var badges = "";
+    if (mac === primary) badges += ' <span class="badge badge-active" title="The MAC this asset is known by">Primary</span>';
+    else if (why && (m.macEnd || _MAC_SPLIT_OWN_SOURCES[m.source])) badges += ' <span class="badge badge-readonly" title="' + escapeHtml(why) + '">Own port</span>';
+    var ipCell = last
+      ? '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(last.ip) + '" onclick="event.stopPropagation()">' + escapeHtml(last.ip) + '</span>' +
+        (typeof _addressNetworkChipHTML === "function" ? _addressNetworkChipHTML(last.network) : "")
+      : '<span class="hint">no address</span>';
+    var seenBy = [];
+    var gate = (last && last.device) || m.device;
+    if (gate) seenBy.push(escapeHtml(gate));
+    if (last && last.medium) seenBy.push(escapeHtml(last.medium));
+    if (!seenBy.length && m.source) seenBy.push(escapeHtml(formatMacSource(m.source)));
+    var action = why
+      ? '<span class="hint" title="' + escapeHtml(why) + '">' + (mac === primary ? "Stays" : "—") + '</span>'
+      : (canAct ? '<button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); openMacSplitConfirm(' + jsArg(assetId) + ', [' + jsArg(mac) + '])">Split</button>' : '');
+    var selectable = canAct && !why;
+    return '<tr data-mac="' + escapeHtml(mac) + '"' + (st.selected[mac] ? ' class="selected"' : '') +
+      (selectable ? ' onclick="_macSplitToggle(' + jsArg(assetId) + ', ' + jsArg(mac) + ')"' : '') +
+      ' oncontextmenu="_macSplitRowMenu(event, ' + jsArg(assetId) + ', ' + jsArg(mac) + ')">' +
+      '<td class="mono"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(mac) + '" onclick="event.stopPropagation()">' + escapeHtml(mac) + '</span>' + badges + '</td>' +
+      '<td>' + ipCell + '</td>' +
+      '<td>' + (seenBy.join(' &middot; ') || '—') + '</td>' +
+      '<td>' + (first ? escapeHtml(formatDate(first)) : '—') + '</td>' +
+      '<td>' + (m.lastSeen ? escapeHtml(formatDate(m.lastSeen)) : '—') + '</td>' +
+      '<td class="actions">' + action + '</td>' +
+    '</tr>';
+  }).join("");
+  if (!st.expanded && macs.length > _MAC_SPLIT_VISIBLE) {
+    rows += '<tr><td colspan="6" class="empty-state" style="padding:0.5rem"><button type="button" class="btn btn-sm btn-secondary" onclick="_macSplitExpand(' + jsArg(assetId) + ')">Show ' + (macs.length - _MAC_SPLIT_VISIBLE) + ' more</button></td></tr>';
+  }
+
+  var bulk = canAct
+    ? '<div class="bulk-bar' + (selCount ? '' : ' bulk-bar-idle') + '" style="margin-bottom:0.4rem">' +
+        '<span class="bulk-bar-count">' + (selCount ? selCount + ' selected' : 'Click rows to select MACs to split') + '</span>' +
+        (selCount
+          ? '<button type="button" class="btn btn-sm btn-secondary" onclick="_macSplitSelected(' + jsArg(assetId) + ')">Split each into its own asset</button>' +
+            '<button type="button" class="btn btn-sm btn-secondary" onclick="_macSplitClear(' + jsArg(assetId) + ')">Clear</button>'
+          : '') +
+      '</div>'
+    : '';
+  var base = _macSplitBase(asset.hostname) || "the device";
+  return '<div class="section-block" style="margin-bottom:1rem">' +
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.6rem;margin-bottom:0.25rem">' +
+      '<div class="section-label" style="margin:0">MAC addresses on this asset</div>' +
+      '<span class="hint">' + macs.length + ' MACs' + (primary ? ' · 1 primary' : '') + '</span>' +
+    '</div>' +
+    '<p class="hint" style="margin:0 0 0.6rem">Each MAC was seen by a DHCP lease, a FortiGate&#39;s client list or the device itself. ' +
+      'If some are different devices that share a name, split them: each gets its own asset named ' + escapeHtml(base) + '-&lt;last 3 octets&gt;.</p>' +
+    bulk +
+    '<div class="table-wrapper"><table><thead><tr><th>MAC</th><th>Last IP</th><th>Seen by</th><th>First seen</th><th>Last seen</th><th></th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>' +
+  '</div>';
+}
+
+function _macSplitRerender(assetId) {
+  var host = document.getElementById("asset-mac-split-" + assetId);
+  if (host && _macSplitState[assetId]) host.innerHTML = _assetMacSplitInnerHTML(assetId);
+}
+
+function _macSplitToggle(assetId, mac) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  if (st.selected[mac]) delete st.selected[mac]; else st.selected[mac] = 1;
+  _macSplitRerender(assetId);
+}
+
+function _macSplitClear(assetId) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  st.selected = {};
+  _macSplitRerender(assetId);
+}
+
+function _macSplitExpand(assetId) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  st.expanded = true;
+  _macSplitRerender(assetId);
+}
+
+function _macSplitSelected(assetId) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  openMacSplitConfirm(assetId, Object.keys(st.selected));
+}
+
+function _macSplitRowMenu(ev, assetId, mac) {
+  ev.preventDefault();
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  var m = st.asset.macAddresses.find(function (x) { return String(x.mac).toUpperCase() === mac; });
+  var why = m ? _macSplitRefusal(st.asset, m) : "Not on this asset";
+  var items = [{ label: "Copy MAC", onSelect: function () { _macSplitCopy(mac); } }];
+  if (_macSplitCanAct(st.asset)) {
+    items.unshift({ label: "Split into its own asset", disabled: !!why, title: why || "", onSelect: function () { openMacSplitConfirm(assetId, [mac]); } });
+  }
+  showRowMenu(ev.currentTarget, items, { menuAt: { x: ev.clientX, y: ev.clientY } });
+}
+
+function _macSplitCopy(text) {
+  try {
+    navigator.clipboard.writeText(text).then(function () { showToast("Copied " + text); });
+  } catch (e) { /* clipboard unavailable */ }
+}
+
+// The asset would be renamed only when its name is discovery's (rule 91(i)):
+// no operator rename, and a FortiGate endpoint source with nothing better.
+function _macSplitOriginalRenames(asset, sources) {
+  if (asset.hostnameOverride || !asset.hostname) return false;
+  if (_macSplitBase(asset.hostname) !== asset.hostname) return false;
+  var kinds = (sources || []).map(function (s) { return s.sourceKind; }).filter(function (k) { return k !== "manual"; });
+  return kinds.length > 0 && kinds.every(function (k) { return k === "fortigate-endpoint"; });
+}
+
+function openMacSplitConfirm(assetId, macs) {
+  var st = _macSplitState[assetId];
+  if (!st || !macs || !macs.length) return;
+  var asset = st.asset;
+  var byMac = _macSplitAddrsByMac(asset);
+  var base = _macSplitBase(asset.hostname) || "";
+  var kept = {};
+  (asset.associatedIps || []).forEach(function (r) { if (!r.mac || macs.indexOf(String(r.mac).toUpperCase()) === -1) kept[r.ip] = 1; });
+  var rows = macs.map(function (mac) {
+    var ips = (byMac[mac] || []).map(function (r) { return r.ip; });
+    var hist = (st.ipHistory || []).filter(function (h) { return ips.indexOf(h.ip) !== -1 && !kept[h.ip]; }).length;
+    var takes = [];
+    if (ips.length) takes.push(ips.slice(0, 2).map(escapeHtml).join(", ") + (ips.length > 2 ? " +" + (ips.length - 2) : ""));
+    if (hist) takes.push(hist + " history row" + (hist === 1 ? "" : "s"));
+    return '<tr><td class="mono">' + escapeHtml(mac) + '</td>' +
+      '<td class="mono">' + escapeHtml(base ? base + "-" + _macSplitSuffix(mac) : "(no name)") + '</td>' +
+      '<td>' + (takes.join(" · ") || '<span class="hint">the MAC only</span>') + '</td></tr>';
+  }).join("");
+  var renameHTML = _macSplitOriginalRenames(asset, st.sources) && asset.macAddress
+    ? '<div class="form-group" style="margin:0"><label>This asset</label>' +
+        '<div class="form-value"><span class="mono">' + escapeHtml(asset.hostname) + '</span> → <span class="mono">' + escapeHtml(asset.hostname + "-" + _macSplitSuffix(asset.macAddress)) + '</span></div>' +
+        '<div class="hint">Renamed because its name came from a DHCP lease or a FortiGate&#39;s client list. A name you set yourself is never changed.</div></div>'
+    : '<div class="form-group" style="margin:0"><label>This asset</label><div class="form-value"><span class="mono">' + escapeHtml(asset.hostname || asset.id) + '</span> keeps its name.</div></div>';
+  var n = macs.length;
+  var label = "Split " + n + " MAC" + (n === 1 ? "" : "s");
+  var body =
+    '<div style="display:flex;flex-direction:column;gap:0.9rem">' +
+      '<p style="margin:0">Each MAC below becomes its own asset. What moves with it: the MAC, the addresses on it, their IP history and any DHCP reservation on it. Monitoring, credentials, tags and notes stay here.</p>' +
+      '<div class="table-wrapper"><table><thead><tr><th>MAC</th><th>New asset</th><th>Takes</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      renameHTML +
+      '<div class="hint">Discovery keeps each MAC on its new asset from now on. Merge asset puts them back together.</div>' +
+    '</div>';
+  var footer =
+    '<button class="btn btn-secondary" id="mac-split-cancel">Cancel</button>' +
+    '<button class="btn btn-primary" id="mac-split-go">' + label + '</button>';
+  openModal(n === 1 ? "Split this MAC into its own asset?" : "Split " + n + " MACs into their own assets?", body, footer, { wide: true });
+  document.getElementById("mac-split-cancel").onclick = closeModal;
+  document.getElementById("mac-split-go").onclick = async function () {
+    var btn = this;
+    btn.disabled = true; btn.textContent = "Splitting…";
+    try {
+      var result = await api.assets.splitMacs(assetId, macs);
+      closeModal();
+      st.selected = {};
+      var made = (result && result.created) || [];
+      showToast(made.length === 1 ? "Split onto " + (made[0].hostname || "a new asset") : "Split onto " + made.length + " new assets");
+      if (typeof loadAssets === "function") { try { await loadAssets(); } catch (e) { /* not on the Assets page */ } }
+      openViewModal(assetId);
+    } catch (err) {
+      btn.disabled = false; btn.textContent = label;
+      showToast(err.message || "Split failed", "error");
+    }
+  };
+}
+
+function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoveringIntegrationId, asset) {
   sources = Array.isArray(sources) ? sources : [];
   sightings = Array.isArray(sightings) ? sightings : [];
   ipHistory = Array.isArray(ipHistory) ? ipHistory : [];
@@ -27176,7 +27422,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
     );
   }).join("");
   return '<div data-shot-section="sources" data-shot-label="Discovery Sources">' +
-    mergeToolbar + _assetSourceStateSummaryHTML(sources) + sourceCards +
+    mergeToolbar + (asset ? _assetMacSplitSectionHTML(asset, sources, ipHistory) : '') + _assetSourceStateSummaryHTML(sources) + sourceCards +
   '</div>' + historyHTML;
 }
 

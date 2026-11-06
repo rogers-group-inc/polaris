@@ -68,6 +68,7 @@ import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../ser
 import { isAzureTag, withArcOwnedTags } from "../../utils/tagNormalize.js";
 import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
+import { splitMacsToNewAssets } from "../../services/assetMacSplitService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
@@ -5496,6 +5497,23 @@ router.post("/import-pdf", requirePermission("assets", "write"), requireFleetWid
 // permanently wrong asset record that looks correct. `:mac` names the row's
 // START key, so removing an interface-scrape RANGE row removes the whole
 // [mac, macEnd] block.
+// Business rule 91(j): split one or more MACs off this asset, each onto a new
+// asset of its own (named apart by MAC, rule 91(i)). Same gate as removing a
+// MAC: it edits this asset; the new assets are owned by the caller.
+const splitMacsSchema = z.object({
+  macs: z.array(z.string().min(1).max(64)).min(1).max(500),
+});
+router.post("/:id/macs/split", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
+  try {
+    const id = z.string().min(1).parse(req.params.id);
+    const { macs } = splitMacsSchema.parse(req.body);
+    const result = await splitMacsToNewAssets({ assetId: id, macs, actor: requestActor(req) || null });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete("/:id/macs/:mac", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
