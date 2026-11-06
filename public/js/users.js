@@ -1896,6 +1896,13 @@ function closeRoleSlideover() {
   }, 250);
 }
 
+// Escape closes the role panel when topmost, like every other slide-over
+// (CQ-F025). Wired ONCE with a lookup: the overlay is re-rendered on every
+// open, so a per-open wire would leave a stale listener behind each time.
+if (typeof wireSlideoverEscape === "function") {
+  wireSlideoverEscape(function () { return document.getElementById("role-slideover-overlay"); }, closeRoleSlideover);
+}
+
 function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
   var titleText = isCreate ? "New Role" : ("Role: " + (role ? role.name : ""));
   var builtInBadge = role && role.isBuiltIn ? ' <span class="badge" style="background:var(--color-bg-secondary);color:var(--color-text-secondary);font-size:0.7em">Built-in</span>' : "";

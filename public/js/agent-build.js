@@ -1190,36 +1190,16 @@
   function _ensureInstalledAgentsPanelDOM() {
     var overlay = document.getElementById("agent-list-panel-overlay");
     if (overlay) return overlay;
-    overlay = document.createElement("div");
-    overlay.className = "slideover-overlay";
-    overlay.id = "agent-list-panel-overlay";
-    overlay.innerHTML =
-      '<div class="slideover" id="agent-list-panel">' +
-        '<div class="slideover-resize-handle"></div>' +
-        '<div class="slideover-header">' +
-          '<div class="slideover-header-top">' +
-            '<h3>Installed Polaris Agents</h3>' +
-            '<button class="btn-icon" id="agent-list-panel-close" title="Close">×</button>' +
-          '</div>' +
-          '<div class="slideover-meta" id="agent-list-panel-meta"></div>' +
-        '</div>' +
-        '<div class="slideover-body" id="agent-list-panel-body" style="padding:1rem">' +
-          '<p class="empty-state">Loading...</p>' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(overlay);
-
-    // Backdrop click closes (click on the overlay itself, not the panel).
-    overlay.addEventListener("click", function (e) {
-      if (e.target === overlay) closeInstalledAgentsPanel();
-    });
-    var closeBtn = document.getElementById("agent-list-panel-close");
-    if (closeBtn) closeBtn.addEventListener("click", closeInstalledAgentsPanel);
-
-    if (typeof initSlideoverResize === "function") {
-      initSlideoverResize(document.getElementById("agent-list-panel"), "polaris.panel.width.agentlist");
-    }
-    return overlay;
+    // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+    return buildSlideover({
+      id: "agent-list-panel",
+      title: "Installed Polaris Agents",
+      titleId: null,
+      bodyStyle: "padding:1rem",
+      bodyHTML: '<p class="empty-state">Loading...</p>',
+      close: closeInstalledAgentsPanel,
+      resizeKey: "polaris.panel.width.agentlist",
+    }).overlay;
   }
 
   function openInstalledAgentsPanel() {
