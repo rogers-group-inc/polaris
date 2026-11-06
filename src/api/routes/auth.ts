@@ -11,18 +11,26 @@ import * as mfaPending from "../../utils/mfaPending.js";
 import {
   verifyCodeStep as verifyTotpCodeStep,
   consumeBackupCode,
-  generateSecret as generateTotpSecret,
-  generateBackupCodes,
-  buildEnrollment,
 } from "../../services/totpService.js";
 import { claimTotpStep } from "../../services/totpStepService.js";
 import { revokeUserSessions } from "../../services/sessionRevocationService.js";
+import {
+  changeOwnPassword,
+  startTotpEnrollment,
+  confirmTotpEnrollment,
+  disableOwnTotp,
+  getTotpStatus,
+  getOwnAuthProvider,
+  verifyPasskeyStepUp,
+  findPasskeyRegistrant,
+} from "../../services/accountSelfService.js";
 // User.totpSecret is a scalar column, so it sits OUTSIDE the JSON-blob
-// seal-on-write/open-on-read extension in db.ts — sealing is explicit at the
-// four sites below. openValue passes an unsealed value straight through, which
+// seal-on-write/open-on-read extension in db.ts — sealing is explicit: the
+// login challenge below opens it, and the enrol / confirm / self-disable
+// sites live in services/accountSelfService.ts. openValue passes an unsealed value straight through, which
 // is what lets enrollments predating this change keep verifying while
 // backfillSecretEncryption converts them.
-import { sealValue, openValue } from "../../utils/secretBox.js";
+import { openValue } from "../../utils/secretBox.js";
 import { AppError } from "../../utils/errors.js";
 import { requireAuth, requireSessionUser } from "../middleware/auth.js";
 import { requirePermission, snapshotFromRole } from "../middleware/permissions.js";
@@ -1417,23 +1425,7 @@ router.put("/password", requireSessionUser, passwordChangeLimiter, async (req, r
   try {
     const { currentPassword, newPassword } = ChangePasswordSchema.parse(req.body);
     const userId = req.session.userId!;
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new AppError(404, "User not found");
-    if (user.authProvider !== "local") {
-      throw new AppError(400, "Your password is managed by your identity provider — change it there.");
-    }
-
-    const { valid } = await verifyPassword(currentPassword, user.passwordHash);
-    if (!valid) throw new AppError(401, "Current password is incorrect.");
-    if (currentPassword === newPassword) {
-      throw new AppError(400, "The new password must be different from the current one.");
-    }
-    await assertPasswordMeetsPolicy(newPassword);
-
-    await prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash: await hashPassword(newPassword) },
-    });
+    const user = await changeOwnPassword(userId, currentPassword, newPassword);
 
     // Same housekeeping the admin reset does: a lockout counted against the
     // old password is meaningless now, and a TOTP challenge minted against it
@@ -1466,25 +1458,7 @@ const TotpDisableSchema = z.object({ code: z.string().min(1), isBackupCode: z.bo
 // POST /api/v1/auth/totp/enroll — start enrollment for the current user
 router.post("/totp/enroll", requireSessionUser, async (req, res, next) => {
   try {
-    const userId = req.session.userId!;
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new AppError(404, "User not found");
-    if (user.authProvider !== "local") {
-      throw new AppError(400, "Two-factor auth is managed by your identity provider for SSO accounts.");
-    }
-
-    // Starting fresh enrollment always discards any half-configured state.
-    // If TOTP is already fully enabled, the caller must disable it first —
-    // we don't silently replace a working setup.
-    if (user.totpEnabledAt) {
-      throw new AppError(409, "Two-factor auth is already enabled. Disable it before re-enrolling.");
-    }
-
-    const secret = generateTotpSecret();
-    const { otpauthUri, qrSvg } = await buildEnrollment(secret, user.username);
-    await prisma.user.update({ where: { id: userId }, data: { totpSecret: sealValue(secret), totpLastStep: null } });
-
-    res.json({ secret, otpauthUri, qrSvg });
+    res.json(await startTotpEnrollment(req.session.userId!));
   } catch (err) {
     next(err);
   }
@@ -1495,26 +1469,7 @@ router.post("/totp/enroll", requireSessionUser, async (req, res, next) => {
 router.post("/totp/confirm", requireSessionUser, totpCodeLimiter, async (req, res, next) => {
   try {
     const { code } = TotpConfirmSchema.parse(req.body);
-    const userId = req.session.userId!;
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !user.totpSecret) {
-      throw new AppError(400, "No enrollment in progress — start by generating a QR code.");
-    }
-    if (user.totpEnabledAt) {
-      throw new AppError(409, "Two-factor auth is already enabled.");
-    }
-    const confirmStep = verifyTotpCodeStep(openValue(user.totpSecret), code);
-    if (confirmStep === null) {
-      throw new AppError(401, "Invalid code. Try again with a fresh value from your authenticator app.");
-    }
-
-    const { plaintext, hashes } = await generateBackupCodes();
-    await prisma.user.update({
-      where: { id: userId },
-      // The confirming code is the first one used: record its step so it cannot
-      // be replayed at the next login.
-      data: { totpEnabledAt: new Date(), totpBackupCodes: hashes, totpLastStep: confirmStep },
-    });
+    const { account: user, backupCodes: plaintext } = await confirmTotpEnrollment(req.session.userId!, code);
 
     // Mark the current session mfa-verified so the user doesn't have to
     // log out and back in just because they enrolled.
@@ -1540,27 +1495,7 @@ router.post("/totp/confirm", requireSessionUser, totpCodeLimiter, async (req, re
 router.delete("/totp", requireSessionUser, totpCodeLimiter, async (req, res, next) => {
   try {
     const { code, isBackupCode } = TotpDisableSchema.parse(req.body);
-    const userId = req.session.userId!;
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new AppError(404, "User not found");
-    if (!user.totpEnabledAt || !user.totpSecret) {
-      throw new AppError(400, "Two-factor auth is not currently enabled.");
-    }
-
-    let verified = false;
-    if (isBackupCode) {
-      const remaining = await consumeBackupCode(user.totpBackupCodes, code);
-      verified = remaining !== null;
-    } else {
-      const step = verifyTotpCodeStep(openValue(user.totpSecret), code);
-      verified = step !== null && (await claimTotpStep(user.id, step));
-    }
-    if (!verified) throw new AppError(401, "Invalid code.");
-
-    await prisma.user.update({
-      where: { id: userId },
-      data: { totpSecret: null, totpEnabledAt: null, totpBackupCodes: [], totpLastStep: null },
-    });
+    const user = await disableOwnTotp(req.session.userId!, code, isBackupCode === true);
 
     logEvent({
       action: "auth.totp.disabled",
@@ -1580,17 +1515,7 @@ router.delete("/totp", requireSessionUser, totpCodeLimiter, async (req, res, nex
 // GET /api/v1/auth/totp/status — current user's enrollment state
 router.get("/totp/status", requireSessionUser, async (req, res, next) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.session.userId! },
-      select: { authProvider: true, totpSecret: true, totpEnabledAt: true, totpBackupCodes: true },
-    });
-    if (!user) throw new AppError(404, "User not found");
-    res.json({
-      authProvider: user.authProvider,
-      enabled: !!user.totpEnabledAt,
-      enrolling: !!user.totpSecret && !user.totpEnabledAt,
-      backupCodesRemaining: user.totpBackupCodes?.length ?? 0,
-    });
+    res.json(await getTotpStatus(req.session.userId!));
   } catch (err) {
     next(err);
   }
@@ -1608,12 +1533,12 @@ router.get("/totp/status", requireSessionUser, async (req, res, next) => {
 // GET /api/v1/auth/passkeys — this account's credentials + what the install allows
 router.get("/passkeys", requireSessionUser, async (req, res, next) => {
   try {
-    const [passkeys, availability, user] = await Promise.all([
+    const [passkeys, availability, authProvider] = await Promise.all([
       listPasskeys(req.session.userId!),
       getPasskeyAvailability(req),
-      prisma.user.findUnique({ where: { id: req.session.userId! }, select: { authProvider: true } }),
+      getOwnAuthProvider(req.session.userId!),
     ]);
-    res.json({ passkeys, availability, authProvider: user?.authProvider ?? "local" });
+    res.json({ passkeys, availability, authProvider });
   } catch (err) {
     next(err);
   }
@@ -1633,33 +1558,9 @@ const PasskeyRegisterOptionsSchema = z.object({ currentPassword: z.string().min(
 router.post("/passkeys/register/options", requireSessionUser, passkeyCeremonyLimiter, async (req, res, next) => {
   try {
     const { currentPassword } = PasskeyRegisterOptionsSchema.parse(req.body ?? {});
-    const user = await prisma.user.findUnique({
-      where: { id: req.session.userId! },
-      select: { id: true, username: true, displayName: true, authProvider: true, passwordHash: true },
-    });
-    if (!user) throw new AppError(404, "User not found");
-    // A wrong password here counts against the same per-account failure budget
-    // as a wrong password at login, so this cannot be used to grind the
-    // password of an account whose session you hold.
-    if (isLocked(user.username).locked) {
-      throw new AppError(423, "Account temporarily locked due to too many failed attempts.");
-    }
-    const { valid } = await verifyPassword(currentPassword, user.passwordHash);
-    if (!valid) {
-      recordFailure(user.username);
-      await logEvent({
-        action: "auth.passkey.step_up_failed",
-        level: "warning",
-        resourceType: "user",
-        resourceId: user.id,
-        resourceName: user.username,
-        actor: user.username,
-        message: `Wrong password while registering a passkey for ${user.username}`,
-        details: { ip: req.ip },
-      });
-      throw new AppError(401, "Current password is incorrect");
-    }
-    const { passwordHash: _unused, ...startUser } = user;
+    // A wrong password counts against the same per-account lockout budget as
+    // one at login, so a held session cannot grind the password.
+    const startUser = await verifyPasskeyStepUp(req.session.userId!, currentPassword, req.ip);
     res.json(await startPasskeyRegistration(startUser, req));
   } catch (err) {
     next(err);
@@ -1676,11 +1577,7 @@ const PasskeyRegisterSchema = z.object({
 router.post("/passkeys/register", requireSessionUser, passkeyCeremonyLimiter, async (req, res, next) => {
   try {
     const { token, name, response } = PasskeyRegisterSchema.parse(req.body);
-    const user = await prisma.user.findUnique({
-      where: { id: req.session.userId! },
-      select: { id: true, username: true, displayName: true, authProvider: true },
-    });
-    if (!user) throw new AppError(404, "User not found");
+    const user = await findPasskeyRegistrant(req.session.userId!);
 
     const passkey = await finishPasskeyRegistration({
       user,
