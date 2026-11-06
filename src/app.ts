@@ -71,6 +71,8 @@ import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
 import { rememberLoginTarget } from "./utils/loginRedirect.js";
 import { canonicalRoutePath, nonCanonicalRequestPath } from "./utils/routePath.js";
 import { isPhoneUserAgent, resolveAssetOpenTarget } from "./utils/assetOpenLink.js";
+import { bearerSatisfies, healthToken, metricsToken } from "./utils/endpointTokens.js";
+import { derivePolarisPort } from "./utils/publicUrl.js";
 
 // Fail-fast environment validation runs BEFORE any listener binds, before
 // pg-boss init, before sample buffers start. Throws on misconfiguration
@@ -949,11 +951,10 @@ app.use(express.static(path.resolve(__dirname, "..", "public")));
 // open by default and becomes token-gated the moment its env var is set. No
 // token configured means no check, which is what keeps the first-run wizard
 // (and a bare `npm run dev`) able to poll /health before .env exists.
-function bearerOk(req: express.Request, expected: string | undefined): boolean {
-  if (!expected) return true;
-  const auth = req.get("authorization") || "";
-  const supplied = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  return supplied === expected;
+// The token readers and the constant-time comparison live in
+// utils/endpointTokens.ts, shared with the per-role metrics-only listener.
+function bearerOk(req: express.Request, expected: string | null): boolean {
+  return bearerSatisfies(req.get("authorization"), expected);
 }
 
 // Liveness. Open by default because the first-run setup wizard polls this
@@ -966,7 +967,7 @@ function bearerOk(req: express.Request, expected: string | undefined): boolean {
 // add a database check here — use /health/ready below, which exists because
 // the two questions have different right answers on a standby node.
 app.get("/health", (req, res) => {
-  if (!bearerOk(req, process.env.HEALTH_TOKEN)) {
+  if (!bearerOk(req, healthToken())) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   res.json({ status: "ok" });
@@ -981,7 +982,7 @@ app.get("/health", (req, res) => {
 // pool. This route is what takes it out. Same HEALTH_TOKEN convention, and
 // never cached — a stale 200 is exactly the answer that must not be reused.
 app.get("/health/ready", async (req, res) => {
-  if (!bearerOk(req, process.env.HEALTH_TOKEN)) {
+  if (!bearerOk(req, healthToken())) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   res.setHeader("Cache-Control", "no-store");
@@ -1007,7 +1008,7 @@ app.use((req, res, next) => {
   next();
 });
 app.get("/metrics", async (req, res) => {
-  if (!bearerOk(req, process.env.METRICS_TOKEN)) {
+  if (!bearerOk(req, metricsToken())) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   const { contentType, body } = await renderMetrics();
@@ -1109,10 +1110,10 @@ export async function startApp(): Promise<void> {
   //     else on the network can reach us.
   //   - "all" mode (POLARIS_ROLE unset, npm run dev): bind all interfaces
   //     on PORT for dev ergonomics. No HTTPS, no cert, no Setting.https.
-  // PORT picks env override > 3000 default; no more Setting.https.httpPort
-  // fallback since the Setting key was retired in this same release.
-  const PORT_RAW = process.env.PORT ?? 3000;
-  const PORT = typeof PORT_RAW === "number" ? PORT_RAW : Number.parseInt(String(PORT_RAW), 10) || 3000;
+  // PORT picks env override > 3000 default, through the SAME parser the nginx
+  // config sync uses (derivePolarisPort: an integer 1-65535, else 3000). A
+  // parseInt here once read "8080x" as 8080 while nginx was told 3000.
+  const PORT = derivePolarisPort();
   const httpServer = isProxyMode()
     ? app.listen(PORT, "127.0.0.1", () => {
         logger.info({ port: PORT, bind: "127.0.0.1" }, "Polaris server listening (proxy mode)");

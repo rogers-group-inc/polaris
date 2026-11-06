@@ -55,6 +55,7 @@ import { logEvent } from "./eventLogService.js";
 import type { HandlerTimeoutPressure } from "./capacityAdvisorService.js";
 import { detectFping } from "../utils/burstPing.js";
 import { configuredSweepIntervalSec, resolveSweepIntervalSec } from "../utils/lossSweep.js";
+import { healthToken, metricsToken } from "../utils/endpointTokens.js";
 import {
   deriveDbIoVerdict,
   IO_VERDICT_STALE_MS,
@@ -1822,7 +1823,7 @@ function computeReasons(
   // Watch-severity: Maintenance-tab warning + audit Event, no navbar
   // banner. Operators who deliberately want either endpoint open (some
   // L4 health probes can't carry a header) can ignore the warning.
-  if (!process.env.METRICS_TOKEN || process.env.METRICS_TOKEN.trim() === "") {
+  if (!metricsToken()) {
     reasons.push({
       severity: "watch",
       code: "metrics_token_unset",
@@ -1837,7 +1838,7 @@ function computeReasons(
         "`Authorization: Bearer <token>` — see docs/grafana/README.md.",
     });
   }
-  if (!process.env.HEALTH_TOKEN || process.env.HEALTH_TOKEN.trim() === "") {
+  if (!healthToken()) {
     reasons.push({
       severity: "watch",
       code: "health_token_unset",
