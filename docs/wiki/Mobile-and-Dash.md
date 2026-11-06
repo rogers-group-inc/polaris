@@ -201,9 +201,17 @@ Proxmox VE host, CPU + Memory shows two charts, as the desktop does. **CPU** dra
 the average across cores as a thick line over a thin line per core. The chips under
 it are one row that scrolls sideways, fading at an end with more past it. Tap a chip
 to hide or show that line, press and hold a core to show only that core, and tap
-**Show all** to bring every line back. At longer ranges, where Polaris keeps
-summarised figures without per-core detail, the chart shows the average alone and
-says so. **Memory**
+**Show all** to bring every line back. At longer ranges, for a stretch whose
+summarised figures carry no per-core detail, the chart shows the average alone and
+says so.
+
+**On the 30d range a chart also draws a dashed max line.** There each point is
+the average of an hour or a day, so the dashed line, in the same colour and under
+it, traces the **highest reading** in each hour or day. Response Time, CPU (the
+average and each core shown), interface throughput and SD-WAN latency and jitter
+draw it; a **Max** chip under the chart hides or shows it, and the scale fits the
+peaks only while they are shown. The choice is kept for that device until the app
+is reloaded. **Memory**
 stacks what is in use, in bytes, against the installed total: processes, buffers and
 cache (in the device's own terms on TrueNAS, Proxmox and vCenter), with swap as a
 dashed line. **Cache starts hidden**, because the operating system hands cache back

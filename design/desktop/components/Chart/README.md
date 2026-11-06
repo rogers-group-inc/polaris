@@ -21,8 +21,17 @@ The chart palette is fixed hex, not tokens, because the phone charts and the ale
 | recovering (response time only) | `#0288d1` |
 | maintenance band, labelled | `#9575cd` at low opacity |
 | packet loss, dashed, right axis | `#ab47bc` |
+| bucket max on hourly / daily ranges, dashed `2 3` | the series' own colour |
 
 Up on the response-time chart is `color-success`; any other series uses a token (`color-accent`, or an HSL arc for many series that skips red and grey). **No data series may be red or grey.** A missed poll dives to the baseline and stays connected to its neighbours. Colour the SVG inline; the screenshot button rasterizes it without the stylesheet.
+
+## Max line (hourly / daily ranges)
+
+Past the detail tier a point is a bucket and the solid line is its average, so each chart whose rollup keeps a per-bucket max also draws that max as a fine dashed line (`stroke-dasharray="2 3"`, finer than the packet-loss dash) in the series' own colour, thinner and fainter, UNDER the average; a bucket with no max breaks it. A **Max (hourly peak)** / **Max (daily peak)** chip — a dashed swatch, struck through when off — toggles it and is remembered per user per chart; it sits in the chart's own key or legend (the response-time key, the CPU core legend, the SD-WAN member legend), or in a chip-only row above the plot. While shown, the y axis includes the peaks. The tooltip names avg and max either way. Drawn on response time, CPU (average and each drawn core), the combined CPU & Memory chart's CPU, interface throughput, hardware sensors and SD-WAN latency / jitter. Detail ranges have neither line nor chip.
+
+## The response-time key
+
+The key naming the colours the response-time chart drew (Up, Missed poll, Down, Recovering, Parent down, Packet loss, Maintenance, Polling change) sits ABOVE the plot, between the stats line and the chart box, where every other chart's legend sits, and carries the Max chip on a rollup range.
 
 ## Many series
 
