@@ -1,4 +1,4 @@
-<!-- @dsCard group="Assets" page height=960 width=390 -->
+<!-- @dsCard group="Assets" page height=1500 width=390 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -93,6 +93,57 @@
       </div>
       <div class="ty-body-s muted" style="margin-top:8px;">Cache hidden: counted in the gap, not in the stack.</div>
       <div class="ty-body-s muted" style="margin-top:8px;">in use 10.5 GB of 16 GB (66%) · peak 11.2 GB</div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="pv-stage" style="height:520px">
+<div class="sheet asset-sheet">
+  <div class="sheet-handle"></div>
+  <button class="asset-sect-header" aria-expanded="true">
+    <div style="flex:1;text-align:left;min-width:0;">
+      <div class="sect-title">CPU + Memory <span class="sect-poll">Polaris Agent</span></div>
+      <div class="sect-sub">cpu avg 23% · max 91% · mem avg 64%</div>
+    </div>
+    <svg class="caret" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" style="fill:var(--md-on-surface-variant);flex-shrink:0;"><path d="M7 10l5 5 5-5z"/></svg>
+  </button>
+  <div class="sect-body">
+    <div class="card-filled" style="padding:16px;margin-bottom:8px;">
+      <div class="seg" style="display:inline-flex;border:1px solid var(--md-outline);border-radius:var(--shape-full);overflow:hidden;margin-bottom:8px;">
+        <button class="seg-item">1h</button><button class="seg-item">12h</button><button class="seg-item">24h</button><button class="seg-item">7d</button><button class="seg-item on">30d</button>
+      </div>
+
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;">
+        <span class="ty-title-s">CPU</span><span class="ty-body-s muted">4 cores · hourly</span>
+      </div>
+      <div class="chart-wrap" style="height:140px;padding:4px 8px 18px 36px;">
+        <div class="chart-y-labels">
+          <span class="chart-y-tick" style="top:0;">100 %</span>
+          <span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">50.0 %</span>
+          <span class="chart-y-tick" style="bottom:0;">0.00 %</span>
+        </div>
+        <svg class="chart-svg" viewBox="0 0 600 118" preserveAspectRatio="none" role="img" aria-label="CPU over 30 days on hourly buckets: the average and one core, each with its bucket maximum dashed underneath">
+          <line x1="0" x2="600" y1="59" y2="59" stroke="var(--md-outline-variant)" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.5"/>
+          <!-- bucket max companions first: dashed "2 3", series colour, x0.75 width, x0.6 opacity, under every average -->
+          <polyline points="2.0,55.7 51.7,40.9 101.3,51.4 151.0,42.5 200.7,51.9 250.4,5.4 300.0,60.6 349.7,47.4 399.4,52.9 449.0,46.4 498.7,32.1 548.4,53.3 598.0,43.3" fill="none" stroke="hsl(178,68%,46%)" stroke-width="0.83" stroke-opacity="0.33" stroke-dasharray="2 3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+          <polyline points="2.0,65.1 51.7,58.2 101.3,71.2 151.0,57.7 200.7,52.2 250.4,12.3 300.0,61.3 349.7,54.5 399.4,74.3 449.0,20.2 498.7,54.7 548.4,66.7 598.0,69.1" fill="none" stroke="var(--md-primary)" stroke-width="1.65" stroke-opacity="0.6" stroke-dasharray="2 3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+          <!-- averages on top -->
+          <polyline points="2.0,83.5 51.7,85.7 101.3,84.1 151.0,79.5 200.7,81.6 250.4,84.5 300.0,92.2 349.7,78.2 399.4,89.0 449.0,82.6 498.7,75.5 548.4,91.6 598.0,87.3" fill="none" stroke="hsl(178,68%,46%)" stroke-width="1.1" stroke-opacity="0.55" vector-effect="non-scaling-stroke"/>
+          <polyline points="2.0,93.0 51.7,89.9 101.3,91.7 151.0,89.3 200.7,89.1 250.4,94.8 300.0,95.3 349.7,86.9 399.4,92.8 449.0,93.1 498.7,85.3 548.4,90.7 598.0,86.9" fill="none" stroke="var(--md-primary)" stroke-width="2.2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="chart-x-labels"><span>Oct 7</span><span>Nov 6</span></div>
+      </div>
+      <div class="series-legend-bar">
+      <div class="series-legend">
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:var(--md-primary);"></span>Avg</button>
+        <button class="chip" aria-pressed="true" aria-label="Bucket max lines" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:14px;height:0;flex:0 0 auto;border-top:2px dashed currentColor;"></span>Max</button>
+        <button class="chip" aria-pressed="false" style="height:32px;padding:0 10px;gap:6px;font-size:13px;opacity:.8;text-decoration:line-through;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(35,68%,46%);opacity:.45;"></span>Core 0</button>
+        <button class="chip" aria-pressed="false" style="height:32px;padding:0 10px;gap:6px;font-size:13px;opacity:.8;text-decoration:line-through;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(106,68%,63%);opacity:.45;"></span>Core 1</button>
+        <button class="chip" aria-pressed="true" style="height:32px;padding:0 10px;gap:6px;font-size:13px;"><span aria-hidden="true" style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:hsl(178,68%,46%);"></span>Core 2</button>
+      </div>
+        <button class="btn btn-text" style="height:32px;padding:0 12px;flex:0 0 auto;">Show all</button>
+      </div>
+      <div class="ty-body-s muted" style="margin-top:8px;">On 30d each point is an hour's average; the dashed line under it is that hour's highest reading. Tap <strong>Max</strong> to hide or show the dashed lines; the scale fits the peaks only while they show.</div>
     </div>
   </div>
 </div>

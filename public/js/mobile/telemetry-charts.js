@@ -75,6 +75,26 @@
     return out;
   }
 
+  /**
+   * Rollup buckets' per-core MAX (`cpuCoreMaxPcts`, indexed like
+   * `cpuCorePcts`) → one [{ts, v}] series per core for the first `n` cores.
+   * A core with no max in a bucket gets v: null, which breaks its dashed line.
+   * Null when no sample carries the field (detail tier, or an older server).
+   */
+  function coreMaxSeries(samples, n) {
+    if (!n || !(samples || []).some(function (s) { return Array.isArray(s.cpuCoreMaxPcts); })) return null;
+    var out = [];
+    for (var c = 0; c < n; c++) out.push([]);
+    samples.forEach(function (s) {
+      var m = Array.isArray(s.cpuCoreMaxPcts) ? s.cpuCoreMaxPcts : [];
+      for (var c = 0; c < n; c++) {
+        var v = m[c];
+        out[c].push({ ts: s.timestamp, v: typeof v === "number" && isFinite(v) ? v : null });
+      }
+    });
+    return out;
+  }
+
   // Band tables — the desktop's _MEM_BANDS_* (same keys, labels, colours), so
   // a chip means the same thing on both surfaces.
   var BANDS_AGENT = [
@@ -220,18 +240,33 @@
       .filter(function (s) { return s.cpuPct != null; })
       .map(function (s) { return { ts: s.timestamp, v: s.cpuPct }; });
 
+    // A rollup tier carries each bucket's MAX beside its average: the dashed
+    // companions (lineChart's `max`), for the average and for each DRAWN core.
+    var resp = ctx.resp;
+    var rollup = !!(resp && typeof resp.bucketSeconds === "number" && resp.bucketSeconds > 0);
+    var avgMax = rollup
+      ? samples.map(function (s) { return { ts: s.timestamp, v: typeof s.maxCpuPct === "number" ? s.maxCpuPct : null }; })
+      : null;
+    var coreMax = rollup ? coreMaxSeries(samples, n) : null;
+    var maxOff = ctx.maxOff || {};
+    var showMax = !maxOff.cpu;
+
     var shownCores = 0;
     for (var c = 0; c < n; c++) if (!hidden[String(c)]) shownCores++;
     var series = [];
     for (var ci = 0; ci < n; ci++) {
       if (hidden[String(ci)]) continue;
-      series.push({ values: cores[ci], color: coreColor(ci, n), width: 1.1, opacity: shownCores > 1 ? 0.55 : 1 });
+      series.push({ values: cores[ci], color: coreColor(ci, n), width: 1.1, opacity: shownCores > 1 ? 0.55 : 1, max: coreMax ? coreMax[ci] : null });
     }
     // Last, so it draws on top.
-    if (!hidden.avg) series.push({ values: avg, color: "var(--md-primary)", gapFade: true, width: 2.2 });
+    if (!hidden.avg) series.push({ values: avg, color: "var(--md-primary)", gapFade: true, width: 2.2, max: avgMax });
+    var hasMax = series.some(function (s) {
+      return (s.max || []).some(function (p) { return p.v != null; });
+    });
 
     var chart = PolarisCharts.lineChart({
       series: series,
+      showMax: showMax,
       maintenance: ctx.maint,
       from: ctx.bounds && ctx.bounds.from,
       to: ctx.bounds && ctx.bounds.to,
@@ -243,15 +278,19 @@
     });
 
     var chips = chipHTML("cpu", "avg", "Avg", "var(--md-primary)", !hidden.avg);
+    // Beside Avg, so it is in reach without scrolling past 64 cores.
+    if (hasMax && PolarisCharts.maxChipHTML) chips += PolarisCharts.maxChipHTML(showMax);
     for (var k = 0; k < n; k++) chips += chipHTML("cpu", String(k), "Core " + k, coreColor(k, n), !hidden[String(k)]);
     // Outside the scrolling row, so it is in reach however many cores there are.
     var showAll = Object.keys(hidden).some(function (key) { return hidden[key]; })
       ? '<button type="button" class="btn btn-text" data-series-all="cpu" style="height:32px;padding:0 12px;flex:0 0 auto;">Show all</button>'
       : '';
 
-    // Per-core figures live on the detail tier only, so a rollup range has
-    // none even on a source that reports them. Said only for a split source
-    // (this one) and only off the detail tier.
+    // Rollup buckets carry per-core averages (and maxes) since the max-line
+    // change, so the note is only for rollup samples that still lack them —
+    // buckets rolled up before then, or an older server. `n` is 0 exactly when
+    // no sample carries `cpuCorePcts`. Said only for a split source (this one)
+    // and only off the detail tier.
     var tier = ctx.resp && ctx.resp.tier;
     var note = !n && tier && tier !== "detail"
       ? "Per-core detail is not kept in " + tier + " buckets, so this is the cross-core average. Pick a shorter range to see each core."
@@ -436,6 +475,15 @@
       if (!t) return;
       var ctx = host._telemetryCtx;
       if (!ctx) return;
+      // The Max chip: every dashed bucket-max line on the CPU chart at once.
+      // Its own key on the caller's per-asset state, so Show all (which is
+      // about cores) leaves it alone.
+      if (t.closest("[data-max-toggle]")) {
+        if (!ctx.maxOff) ctx.maxOff = {};
+        ctx.maxOff.cpu = !ctx.maxOff.cpu;
+        draw(host);
+        return;
+      }
       var all = t.closest("[data-series-all]");
       if (all) {
         Object.keys(ctx.hidden).forEach(function (k) { delete ctx.hidden[k]; });
@@ -455,7 +503,9 @@
   /**
    * Draw both charts into `host`. ctx: { resp (telemetry-history payload),
    * maint, asset, range, bounds, hidden (the caller's per-asset core
-   * visibility object — mutated by the legend) }.
+   * visibility object — mutated by the legend), maxOff (the caller's
+   * per-asset bucket-max choice, `{ cpu: true }` = hidden — mutated by the
+   * Max chip) }.
    */
   function render(host, ctx) {
     if (!host) return;
@@ -469,6 +519,7 @@
     render: render,
     // exported for unit tests
     _coreSeries: coreSeries,
+    _coreMaxSeries: coreMaxSeries,
     _coreColor: coreColor,
     _memBandsFor: memBandsFor,
     _agentBandsFor: agentBandsFor,

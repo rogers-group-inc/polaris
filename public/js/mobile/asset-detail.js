@@ -221,9 +221,31 @@
         // (the operator-pinned fast-poll subset); expanded shows every up
         // interface. Persists per asset for the lifetime of the SPA mount.
         interfacesShowAll: false,
+        // The Max chip's choice per chart (`monitor`, `telemetry`, `cpu`,
+        // `iface`, `sdwan-lat`, `sdwan-jit`): true = the dashed bucket-max
+        // lines are hidden; absent = shown (the default). Kept here, like
+        // `cpuHidden`, because the phone has no per-user prefs store — so it
+        // lasts for this asset for the life of the SPA mount.
+        maxOff: {},
       };
     }
     return _mounts[id];
+  }
+
+  // The Max chip's per-chart choice on a mount state (see `maxOff` above).
+  function maxShown(st, key) { return !(st && st.maxOff && st.maxOff[key]); }
+  function toggleMax(st, key) {
+    if (!st.maxOff) st.maxOff = {};
+    st.maxOff[key] = !st.maxOff[key];
+  }
+  // Guarded so a page (or a test) carrying a slimmer PolarisCharts still draws.
+  function isRollup(resp) {
+    return window.PolarisCharts && PolarisCharts.isRollup
+      ? PolarisCharts.isRollup(resp)
+      : !!(resp && typeof resp.bucketSeconds === "number" && resp.bucketSeconds > 0);
+  }
+  function wireMaxToggle(host, onToggle) {
+    if (window.PolarisCharts && PolarisCharts.wireMaxToggle) PolarisCharts.wireMaxToggle(host, onToggle);
   }
 
   // ─── Three-state slide-up sheet ────────────────────────────────────────
@@ -1451,8 +1473,22 @@
         dd.threshold, dd.recoveryPolls,
       );
       var samples = [];
+      // A rollup bucket's MAX rides beside its average as a dashed line in
+      // the same verdict colour (Up green, or Recovering for a bucket the
+      // replay calls recovering). A bucket with no successes has no max — the
+      // dashed line breaks there, as it does for one rolled up before the max
+      // was kept.
+      var rollup = isRollup(resp);
+      var maxPts = [];
       (resp.samples || []).forEach(function (s, i) {
         var status = (states[i] && states[i].status) || "up";
+        if (rollup) {
+          maxPts.push({
+            ts: s.timestamp,
+            v: hasResponse(s) && typeof s.maxResponseTimeMs === "number" ? s.maxResponseTimeMs : null,
+            rec: status === "recovering",
+          });
+        }
         if (hasResponse(s)) samples.push({ ts: s.timestamp, v: s.responseTimeMs, rec: status === "recovering" });
         else if (isFailure(s)) {
           samples.push({
@@ -1464,10 +1500,13 @@
       });
       if (chartHost) {
         var bounds = rangeBounds(range);
-        chartHost.innerHTML = PolarisCharts.lineChart({
+        var drawMonitor = function () { chartHost.innerHTML = PolarisCharts.lineChart({
           // The Up green rather than the app accent, mirroring desktop: the one
           // chart about reachability speaks the same colours as the status pill.
-          series: [{ values: samples, color: "var(--md-success)", fill: true }],
+          series: [{ values: samples, color: "var(--md-success)", fill: true, max: rollup ? maxPts : null }],
+          showMax: maxShown(st, "monitor"),
+          // The Max chip sits under the colour key (lineChart places it).
+          maxToggle: rollup,
           // Polling stops for a maintenance window, so the series has a hole
           // there; the band says why.
           maintenance: maint,
@@ -1479,7 +1518,9 @@
           // The key for the colours drawn — the same names the desktop chart
           // and the alert email use.
           legend: { series: "Up" },
-        });
+        }); };
+        drawMonitor();
+        wireMaxToggle(chartHost, function () { toggleMax(st, "monitor"); drawMonitor(); });
       }
       if (sub) {
         var stats = resp.stats || {};
@@ -1535,11 +1576,24 @@
       // range change keeps them.
       if (chartHost && window.PolarisTelemetryCharts && PolarisTelemetryCharts.splits(method, asset)) {
         if (!st.cpuHidden) st.cpuHidden = {};
+        if (!st.maxOff) st.maxOff = {};
+        // telemetry-charts.js handles its own Max chip; drop any combined-
+        // chart handler a previous render left on this host.
+        wireMaxToggle(chartHost, null);
         PolarisTelemetryCharts.render(chartHost, {
-          resp: resp, maint: maint, asset: asset, range: range, bounds: bounds, hidden: st.cpuHidden,
+          resp: resp, maint: maint, asset: asset, range: range, bounds: bounds, hidden: st.cpuHidden, maxOff: st.maxOff,
         });
       } else if (chartHost) {
-        chartHost.innerHTML = PolarisCharts.lineChart({
+        // The CPU line's rollup buckets carry their MAX (dashed); memory's
+        // is not drawn on the combined chart.
+        var telRollup = isRollup(resp);
+        var cpuMax = telRollup
+          ? samples.map(function (s) { return { ts: s.timestamp, v: typeof s.maxCpuPct === "number" ? s.maxCpuPct : null }; })
+          : null;
+        chartHost._telemetryCtx = null;   // a split render's legend handler stands down
+        var drawTelemetry = function () { chartHost.innerHTML = PolarisCharts.lineChart({
+          showMax: maxShown(st, "telemetry"),
+          maxToggle: telRollup,
           maintenance: maint,
           from: bounds && bounds.from,
           to: bounds && bounds.to,
@@ -1550,14 +1604,16 @@
           // dive across.
           outages: resp.outages,
           series: [
-            { values: cpuSeries, color: "var(--md-primary)", gapFade: true },
+            { values: cpuSeries, color: "var(--md-primary)", gapFade: true, max: cpuMax },
             { values: memSeries, color: "var(--md-tertiary)", gapFade: true },
           ],
           height: 120,
           yMin: 0, yMax: 100,
           yUnit: "%",
           ariaLabel: "CPU and memory over " + range,
-        });
+        }); };
+        drawTelemetry();
+        wireMaxToggle(chartHost, function () { toggleMax(st, "telemetry"); drawTelemetry(); });
       }
       if (sub) {
         var stats = resp.stats || {};
@@ -1967,6 +2023,10 @@
           ts: s.timestamp,
           inBps:  typeof s.inBytesPerSec  === "number" ? s.inBytesPerSec  * 8 : null,
           outBps: typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null,
+          // The bucket's MAX rate (bytes/s → bits/s). Null for a bucket rolled
+          // up before the max was kept, or an older server.
+          inMaxBps:  typeof s.maxInBytesPerSec  === "number" ? s.maxInBytesPerSec  * 8 : null,
+          outMaxBps: typeof s.maxOutBytesPerSec === "number" ? s.maxOutBytesPerSec * 8 : null,
           inErr:  typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null,
           outErr: typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null,
         };
@@ -2034,6 +2094,10 @@
       var common = { maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, outages: data.outages, height: 120 };
 
       var inPts = [], outPts = [], peak = 0, inSum = 0, inN = 0, outSum = 0, outN = 0;
+      // Rollup only: each bucket's MAX rate as a dashed companion, and the
+      // peak of those maxes (counted like `peak`).
+      var rollup = isRollup(data);
+      var inMax = [], outMax = [], maxPeak = 0;
       var t0 = data.since != null ? +new Date(data.since) : NaN;
       d.forEach(function (p) {
         // Lookback points are drawn (off-plot, so the line enters from the
@@ -2041,26 +2105,44 @@
         var counted = !(+new Date(p.ts) < t0);
         if (p.inBps != null)  { inPts.push({ ts: p.ts, v: p.inBps });  if (counted) { inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; } }
         if (p.outBps != null) { outPts.push({ ts: p.ts, v: p.outBps }); if (counted) { outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; } }
+        if (rollup) {
+          inMax.push({ ts: p.ts, v: p.inMaxBps != null ? p.inMaxBps : null });
+          outMax.push({ ts: p.ts, v: p.outMaxBps != null ? p.outMaxBps : null });
+          if (counted && p.inMaxBps != null && p.inMaxBps > maxPeak) maxPeak = p.inMaxBps;
+          if (counted && p.outMaxBps != null && p.outMaxBps > maxPeak) maxPeak = p.outMaxBps;
+        }
       });
       if (!inPts.length && !outPts.length) {
         tputEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
       } else {
-        var sc = bpsScale(peak);
-        var scaled = function (pts) { return pts.map(function (p) { return { ts: p.ts, v: p.v / sc.div }; }); };
-        tputEl.innerHTML = PolarisCharts.lineChart(Object.assign({}, common, {
-          series: [
-            { values: scaled(inPts),  color: "var(--md-primary)",  gapFade: true },
-            { values: scaled(outPts), color: "var(--md-tertiary)", gapFade: true },
-          ],
-          // An idle port peaks at 0 — give it a 0–1 axis, not lineChart's
-          // -1–1 for a flat line.
-          yMin: 0, yMax: peak > 0 ? undefined : 1, yUnit: sc.unit,
-          ariaLabel: ifName + " throughput over " + range,
-        }));
+        var ist = mountState(assetId);
+        var drawTput = function () {
+          var showMax = maxShown(ist, "iface");
+          // The unit follows what the axis actually spans: the maxes too
+          // while they are shown.
+          var top = showMax ? Math.max(peak, maxPeak) : peak;
+          var sc = bpsScale(top);
+          var scaled = function (pts) { return pts.map(function (p) { return { ts: p.ts, v: p.v == null ? null : p.v / sc.div }; }); };
+          tputEl.innerHTML = PolarisCharts.lineChart(Object.assign({}, common, {
+            series: [
+              { values: scaled(inPts),  color: "var(--md-primary)",  gapFade: true, max: rollup ? scaled(inMax) : null },
+              { values: scaled(outPts), color: "var(--md-tertiary)", gapFade: true, max: rollup ? scaled(outMax) : null },
+            ],
+            showMax: showMax,
+            maxToggle: rollup,
+            // An idle port peaks at 0 — give it a 0–1 axis, not lineChart's
+            // -1–1 for a flat line.
+            yMin: 0, yMax: top > 0 ? undefined : 1, yUnit: sc.unit,
+            ariaLabel: ifName + " throughput over " + range,
+          }));
+        };
+        drawTput();
+        wireMaxToggle(tputEl, function () { toggleMax(ist, "iface"); drawTput(); });
+        // The true peak is the largest bucket max when the tier keeps one.
         if (tputSub) tputSub.innerHTML = ''
           + '<span style="color:var(--md-primary);">in avg ' + escapeHtml(fmtBps(inN ? inSum / inN : 0)) + '</span>'
           + ' · <span style="color:var(--md-tertiary);">out avg ' + escapeHtml(fmtBps(outN ? outSum / outN : 0)) + '</span>'
-          + ' · peak ' + escapeHtml(fmtBps(peak));
+          + ' · peak ' + escapeHtml(fmtBps(Math.max(peak, maxPeak)));
       }
 
       var inE = [], outE = [], inTot = 0, outTot = 0;
@@ -3068,37 +3150,51 @@
     var maintP = maintWindowsFor(assetId).then(function (w) { maint = w; });
     Promise.all(members.map(function (m) {
       return api.assets.perfSlaHistory(assetId, m.healthCheck, m.link, { range: range })
-        .then(function (data) { return { link: m.link, samples: (data && data.samples) || [], since: data && data.since }; })
+        .then(function (data) { return { link: m.link, samples: (data && data.samples) || [], since: data && data.since, rollup: isRollup(data) }; })
         .catch(function () { return { link: m.link, samples: [] }; });
     })).then(function (results) { return maintP.then(function () { return results; }); }).then(function (results) {
       // Bail if the operator switched health-check/range or closed the sheet
       // while this fetch was in flight.
       if (!_sdwanSheetState || _sdwanSheetState.hcName !== hcName || _sdwanSheetState.range !== range) return;
 
-      function chartFor(host, key, unit, yMax) {
+      // `maxKey` names the rollup bucket's MAX field, drawn as each member's
+      // dashed companion on a rollup tier (latency, jitter — not packet loss);
+      // `toggleKey` is the chart's own entry in the mount state's `maxOff`.
+      var sst = mountState(assetId);
+      function chartFor(host, key, unit, yMax, maxKey, toggleKey) {
+        var rollup = !!maxKey && results.some(function (r) { return r.rollup; });
         var series = results.map(function (r) {
           return {
             color: sdwanColor(r.link, memberNames),
             values: r.samples
               .filter(function (s) { return s[key] != null; })
               .map(function (s) { return { ts: s.timestamp, v: s[key] }; }),
+            max: rollup && r.rollup
+              ? r.samples.map(function (s) { return { ts: s.timestamp, v: typeof s[maxKey] === "number" ? s[maxKey] : null }; })
+              : null,
           };
         });
         var bounds = rangeBounds(range);
-        host.innerHTML = PolarisCharts.lineChart({
-          series: series,
-          maintenance: maint,
-          from: bounds && bounds.from,
-          to: bounds && bounds.to,
-          height: 120,
-          yMin: 0,
-          yMax: yMax,
-          yUnit: unit,
-          ariaLabel: hcName + " " + key + " over " + range,
-        });
+        var draw = function () {
+          host.innerHTML = PolarisCharts.lineChart({
+            series: series,
+            showMax: maxShown(sst, toggleKey),
+            maxToggle: rollup,
+            maintenance: maint,
+            from: bounds && bounds.from,
+            to: bounds && bounds.to,
+            height: 120,
+            yMin: 0,
+            yMax: yMax,
+            yUnit: unit,
+            ariaLabel: hcName + " " + key + " over " + range,
+          });
+        };
+        draw();
+        if (toggleKey) wireMaxToggle(host, function () { toggleMax(sst, toggleKey); draw(); });
       }
-      chartFor(latEl,  "latencyMs",  "ms", undefined);
-      chartFor(jitEl,  "jitterMs",   "ms", undefined);
+      chartFor(latEl,  "latencyMs",  "ms", undefined, "maxLatencyMs", "sdwan-lat");
+      chartFor(jitEl,  "jitterMs",   "ms", undefined, "maxJitterMs",  "sdwan-jit");
       chartFor(lossEl, "packetLoss", "%",  100);
 
       // Legend — one colored chip per member.

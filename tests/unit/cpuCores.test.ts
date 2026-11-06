@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { coreVector, coreConditionIsBelow, aggregateCores, coreSeries, coresToName, formatCoreList } from "../../src/utils/cpuCores.js";
+import { coreVector, coreVectorWithGaps, coreConditionIsBelow, aggregateCores, coreSeries, coresToName, formatCoreList } from "../../src/utils/cpuCores.js";
 import { evaluationOrder } from "../../src/services/notificationEngine.js";
 import { dimensionNounOf, METRIC_META, ASSET_METRICS, leadingRun, rollingAggregate } from "../../src/services/notificationTypes.js";
 import { processRankingForMetric } from "../../src/services/alertProcessService.js";
@@ -16,6 +16,22 @@ describe("coreVector", () => {
     expect(coreVector([1, NaN])).toBeNull();
     expect(coreVector(null)).toBeNull();
     expect(coreVector({ 0: 1 })).toBeNull();
+  });
+});
+
+describe("coreVectorWithGaps", () => {
+  it("keeps null slots as gaps so later cores keep their index", () => {
+    expect(coreVectorWithGaps([1, null, 3])).toEqual([1, null, 3]);
+    expect(coreVectorWithGaps([1, 2.5])).toEqual([1, 2.5]);
+  });
+  it("turns any other non-finite element into a gap", () => {
+    expect(coreVectorWithGaps([1, "2", NaN])).toEqual([1, null, null]);
+  });
+  it("is null for a non-array, an empty array, or one with no finite number", () => {
+    expect(coreVectorWithGaps(null)).toBeNull();
+    expect(coreVectorWithGaps([])).toBeNull();
+    expect(coreVectorWithGaps([null, null])).toBeNull();
+    expect(coreVectorWithGaps({ 0: 1 })).toBeNull();
   });
 });
 

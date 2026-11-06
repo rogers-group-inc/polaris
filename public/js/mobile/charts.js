@@ -15,7 +15,11 @@
 //     series: [
 //       { values: [{ts, v}, ...], color: "var(--md-primary)", fill: true, label: "RTT" },
 //     ],
-//     // a series may also set `width` (stroke px, default 1.6) and `opacity`
+//     // a series may also set `width` (stroke px, default 1.6) and `opacity`,
+//     // and `max: [{ts, v, rec?}]` — its rollup buckets' MAX, drawn as a
+//     // dashed companion line (see "Bucket max" below)
+//     showMax: true,         // draw the `max` companions (default true)
+//     maxToggle: true,       // render the Max chip under the chart
 //     yMin: 0, yMax: 100,    // optional — auto-derived if absent
 //     yUnit: "%",            // appended to y-axis tick labels
 //     height: 80,            // total px including axis gutters
@@ -47,6 +51,18 @@
 // window still open at the right-hand edge would otherwise fall off the end
 // of an axis that stops at the last sample, and a range spent entirely in
 // maintenance draws the band instead of "No data".
+//
+// Bucket max: a chart reading a ROLLUP tier (the history payload's
+// `bucketSeconds > 0`) plots each bucket's average, which flattens the spikes
+// the bucket held. A series' `max` companion draws the bucket MAX as a dashed
+// ("2 3") line in the series' own colour, thinner and fainter than the
+// average and drawn under every average, broken wherever a bucket's max is
+// null. While `showMax` is on the value axis spans the max too, so it is
+// never clipped; off, it spans the averages only. `maxToggle: true` adds the
+// `Max` chip (`maxChipHTML`) under the chart when any max was supplied; the
+// caller re-renders on a tap through `wireMaxToggle(host, onToggle)` and
+// keeps the choice. A max point may carry `rec` (the response-time chart's
+// recovering bucket) and takes that verdict colour like its average does.
 
 (function () {
   // Gutter widths chosen so axis labels fit without crowding the plot at
@@ -317,8 +333,20 @@
 
     // Normalize every series up front so the range/axis passes and the render
     // pass agree on exactly which points exist (gap markers included).
-    var prepared = series.map(function (s) { return { s: s, pts: seriesPoints(s) }; });
+    var prepared = series.map(function (s) { return { s: s, pts: seriesPoints(s), maxPts: maxPoints(s) }; });
     applySharedOutageMarkers(prepared, opts.outages);
+    var showMax = opts.showMax !== false;
+    var anyMax = prepared.some(function (e) {
+      return e.maxPts.some(function (p) { return p.v != null; });
+    });
+    // The chip's swatch: the line's own colour when every max line shares one
+    // (response time, CPU only), so the key matches what it toggles; the chip's
+    // text colour when they differ (in/out, members).
+    var maxColors = {};
+    prepared.forEach(function (e) {
+      if (e.maxPts.some(function (p) { return p.v != null; })) maxColors[e.s.color || "var(--md-primary)"] = true;
+    });
+    var maxSwatch = Object.keys(maxColors).length === 1 ? Object.keys(maxColors)[0] : null;
 
     // With an explicit range the window's left edge is `from`. History
     // endpoints return lookback rows before it only so a line can enter from
@@ -338,6 +366,14 @@
         anyPoints = true;
         if (p.v == null) return;
         anyValues = true;
+        if (opts.yMin == null && p.v < yMin) yMin = p.v;
+        if (opts.yMax == null && p.v > yMax) yMax = p.v;
+      });
+      // A shown max widens the axis so its peaks are never clipped; a hidden
+      // one leaves the axis to the averages.
+      if (!showMax) return;
+      e.maxPts.forEach(function (p) {
+        if (p.ts < edge || p.v == null) return;
         if (opts.yMin == null && p.v < yMin) yMin = p.v;
         if (opts.yMax == null && p.v > yMax) yMax = p.v;
       });
@@ -405,6 +441,14 @@
     body.push(maint.svg);
     var maintLabels = maint.labels;
 
+    // Bucket-max companions first, so every average draws over every max.
+    if (showMax) {
+      prepared.forEach(function (e) {
+        if (!e.maxPts.length) return;
+        body.push(maxLine(e.maxPts, e.s, x, y));
+      });
+    }
+
     prepared.forEach(function (e, si) {
       var color = e.s.color || "var(--md-primary)";
       var plot = e.pts.map(function (p) {
@@ -457,7 +501,92 @@
       +   (maintLabels ? '<div class="chart-maint-labels">' + maintLabels + '</div>' : '')
       +   xLabels
       + '</div>'
-      + (opts.legend ? stateLegend(prepared, edge, bands.length > 0, opts.legend) : '');
+      + (opts.legend ? stateLegend(prepared, edge, bands.length > 0, opts.legend) : '')
+      // The Max chip sits under the colour key: the key says what the colours
+      // mean, the chip is the control for the dashed lines.
+      + (opts.maxToggle && anyMax
+        ? '<div class="series-legend-bar"><div class="series-legend" data-legend="max">' + maxChipHTML(showMax, maxSwatch) + '</div></div>'
+        : '');
+  }
+
+  // A series' `max` companion → time-ordered { ts (ms), v, rec } points. A
+  // null / non-numeric v is KEPT (as v: null) because it is where the dashed
+  // line breaks — a bucket with no successes, or one rolled up before the max
+  // was kept.
+  function maxPoints(s) {
+    var pts = [];
+    (s.max || []).forEach(function (p) {
+      if (p == null || p.ts == null) return;
+      var t = +new Date(p.ts);
+      if (!isFinite(t)) return;
+      var v = typeof p.v === "number" && isFinite(p.v) ? p.v : null;
+      pts.push({ ts: t, v: v, rec: p.rec === true });
+    });
+    pts.sort(function (a, b) { return a.ts - b.ts; });
+    return pts;
+  }
+
+  // Dashed bucket-max line(s) for one series: one polyline per unbroken run
+  // of the same colour. Thinner (×0.75) and fainter (×0.6) than the series'
+  // own stroke. A colour change (Up → Recovering on the response-time chart)
+  // starts the next run AT the previous point, so the line stays joined.
+  var MAX_DASH = "2 3";
+  function maxLine(pts, s, x, y) {
+    var color = s.color || "var(--md-primary)";
+    var sw = ((s.width > 0 ? s.width : 1.6) * 0.75).toFixed(2).replace(/\.?0+$/, "");
+    var op = Math.round(((s.opacity != null && s.opacity < 1 ? s.opacity : 1) * 0.6) * 100) / 100;
+    var out = "";
+    function strokeOf(p) { return pointColorFor({ ok: true, rec: p.rec }, color); }
+    function emit(run) {
+      if (run.length < 2) return;
+      out += '<polyline class="max-line" points="' + run.map(function (p) { return x(p.ts).toFixed(1) + "," + y(p.v).toFixed(1); }).join(" ") +
+        '" fill="none" stroke="' + strokeOf(run[run.length - 1]) + '" stroke-width="' + sw + '" stroke-opacity="' + op +
+        '" stroke-dasharray="' + MAX_DASH + '" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
+    }
+    var run = [];
+    pts.forEach(function (p) {
+      if (p.v == null) { emit(run); run = []; return; }
+      if (run.length && strokeOf(p) !== strokeOf(run[run.length - 1])) {
+        var joint = run[run.length - 1];
+        emit(run);
+        // The joining segment takes the new run's colour.
+        run = [{ ts: joint.ts, v: joint.v, rec: p.rec }];
+      }
+      run.push(p);
+    });
+    emit(run);
+    return out;
+  }
+
+  // The Max chip — a `.chip` like the CPU chart's series chips, with a dashed
+  // swatch. A switched-off chip keeps most of its ink and is struck through.
+  // `color` = the swatch; omitted, the chip's own text colour (currentColor).
+  function maxChipHTML(on, color) {
+    return '<button type="button" class="chip series-chip max-chip" data-max-toggle="1"'
+      + ' aria-pressed="' + (on ? "true" : "false") + '" aria-label="Bucket max lines"'
+      + ' style="height:32px;padding:0 10px;gap:6px;font-size:13px;' + (on ? '' : 'opacity:.8;text-decoration:line-through;') + '">'
+      + '<span aria-hidden="true" style="width:14px;height:0;flex:0 0 auto;border-top:2px dashed ' + (color || 'currentColor') + ';' + (on ? '' : 'opacity:.45;') + '"></span>'
+      + 'Max</button>';
+  }
+
+  // One delegated click listener per host for the Max chip. The host keeps the
+  // LATEST callback, so a re-render or a range change never stacks a second
+  // handler; pass null to detach the behaviour without removing the listener.
+  function wireMaxToggle(host, onToggle) {
+    if (!host) return;
+    host._polarisMaxToggle = onToggle || null;
+    if (host.dataset.maxToggleWired === "1") return;
+    host.dataset.maxToggleWired = "1";
+    host.addEventListener("click", function (ev) {
+      var chip = ev.target && ev.target.closest ? ev.target.closest("[data-max-toggle]") : null;
+      if (!chip || typeof host._polarisMaxToggle !== "function") return;
+      host._polarisMaxToggle();
+    });
+  }
+
+  /** Is this history payload read from a rollup tier (hourly / daily buckets)? */
+  function isRollup(resp) {
+    return !!(resp && typeof resp.bucketSeconds === "number" && resp.bucketSeconds > 0);
   }
 
   // Maintenance bands as SVG rects plus their HTML labels (see the header note
@@ -688,6 +817,10 @@
     lineChart: lineChart,
     stackChart: stackChart,
     formatBytes: formatBytes,
+    maxChipHTML: maxChipHTML,
+    wireMaxToggle: wireMaxToggle,
+    isRollup: isRollup,
+    MAX_DASH: MAX_DASH,
     // exported for unit tests
     _outageMarkers: outageMarkers,
     _medianCadenceMs: medianCadenceMs,

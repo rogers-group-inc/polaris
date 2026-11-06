@@ -785,7 +785,7 @@ polls failing (minutes)* ([Automation triggers](Automation-Triggers#telemetryfai
 against a second axis on the right. It takes the same colours as the response
 line, so both say the same thing about the same minutes: green while the
 device is up, grey while its parent was down, blue while it climbs back, amber
-or the outage colour while polls are being missed. A key under the chart names
+or the outage colour while polls are being missed. A key above the chart names
 the colours it actually drew. That axis tops out at the worst loss in
 the window (4 %, 8 %, 12 %, 20 %, 40 %, 60 %, 80 % or 100 %), so small loss
 stays readable instead of hugging the bottom. Check the scale before comparing
@@ -797,6 +797,27 @@ one-hour view, longer on longer ranges; the tooltip names it), and the line
 breaks where nothing was probed rather than dropping to 0 %. The **Packet
 loss** figure above the chart is the same measurement over the whole window.
 Hovering a response-time point still says whether *that poll* was missed.
+
+**Longer ranges draw a dashed max line.** Once a range is longer than the
+detail you keep (with the default
+[retention](Server-Settings#retention), the **30d** range and any longer
+custom window), a chart plots one point per hour or per day, and each point is
+the *average* of that hour or day — a five-minute spike disappears into it. So
+those ranges also draw a fine dashed line, in the same colour and under the
+solid one, through the **highest reading in each hour or day**. It is drawn on
+Response time, CPU (the average and every core you have switched on), the
+CPU of the combined CPU & Memory chart, interface throughput (in and out),
+hardware sensors, and SD-WAN Performance SLA latency and jitter. The legend
+gets a **Max (hourly peak)** or **Max (daily peak)** chip: click it to hide or
+show the dashed lines. While they are shown, the chart's scale includes the
+peaks; hidden, it fits the averages, so the solid line fills the chart. Your
+choice is remembered per chart for your user in this browser. Hovering a point
+on these ranges names both readings — *avg* and *max* — whether the dashed
+line is shown or not. Shorter ranges plot every poll, so they have no max line
+and no chip. Per-core CPU history and interface peaks are kept from the update
+that added the max line onward; that update fills in the last few days from
+the detailed samples still on hand, and a stretch older than that shows the
+average alone (the CPU chart says so when a range has no per-core figures).
 An Unraid, TrueNAS or Proxmox VE workload with no address of its own charts its
 response time at **0 ms**: its up/down is the platform's state read, which has
 no latency ([Polling methods](Polling-Methods#the-unraid-and-truenas-methods),

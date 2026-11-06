@@ -79,7 +79,20 @@ const EXPORTS = [
   "_memBandVisible", "_setMemBandVisible", "_MEM_BANDS_OFF_BY_DEFAULT",
   "_getMemoryForecastVisible", "_setMemoryForecastVisible", "_renderMemForecastBar",
 ];
-const SRC = VIS_REGION + "\n" + REGION + "\n" + EXPORTS.map((n) => `globalThis.${n} = ${n};`).join("\n");
+/** Slice a top-level `function NAME(...) {` … `}` block out of assets.js. */
+function fnSrc(name: string): string {
+  const start = assetsLines.findIndex((l) => l.startsWith(`function ${name}(`));
+  if (start < 0) throw new Error(`assets.js: function ${name} not found`);
+  const end = assetsLines.findIndex((l, i) => i > start && l === "}");
+  return assetsLines.slice(start, end + 1).join("\n");
+}
+// The rollup max-line helpers and the charts prefs map they persist into —
+// eval'd for real: the on/off choice surviving a re-render is their behaviour.
+const MAX_HELPERS = [
+  "_getChartRangePref", "_setChartRangePref", "_inChartWindow", "_chartRollupTier", "_getMaxLinePref",
+  "_setMaxLinePref", "_maxLineChipHTML", "_maxLineLegendRowHTML", "_wireMaxLineChip", "_maxLineSVG", "_avgMaxText",
+].map(fnSrc).join("\n");
+const SRC = MAX_HELPERS + "\n" + VIS_REGION + "\n" + REGION + "\n" + EXPORTS.map((n) => `globalThis.${n} = ${n};`).join("\n");
 
 /** Turn every band on, for the tests that are about the stack rather than the chips. */
 function showAllBands() {
@@ -369,7 +382,7 @@ describe("CPU chart — per-core rendering", () => {
     const el = container();
     const samples = agentSamples([[1, 2], [3, 4]]).map((s) => { delete s.cpuCorePcts; return s; });
     g._renderCpuChart(el, payload(samples, { tier: "hourly" }), {}, {});
-    expect(el.textContent).toContain("Per-core detail is not kept in hourly buckets");
+    expect(el.textContent).toContain("Per-core detail is not kept in these hourly buckets");
   });
 
   it("does not blame the tier when the source simply has no cores", () => {
@@ -381,6 +394,112 @@ describe("CPU chart — per-core rendering", () => {
     const samples = agentSamples([[1, 2], [3, 4]]).map((s) => { delete s.cpuCorePcts; return s; });
     g._renderCpuChart(el, payload(samples, { tier: "hourly" }), {}, {});
     expect(el.textContent).not.toContain("Per-core detail");
+  });
+});
+
+describe("CPU charts — rollup max (bucket peak) lines", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    document.body.innerHTML = "";
+    installStubs();
+    // eslint-disable-next-line no-eval
+    (0, eval)(SRC);
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  /** Hourly rollup rows: per-core averages AND per-core maxima, same indexing. */
+  function rollupSamples(): any[] {
+    return agentSamples([[10, 20, 30], [12, 22, 32], [14, 24, 34]]).map((s, i) => ({
+      ...s,
+      maxCpuPct: 60 + i,
+      cpuCoreMaxPcts: [70, 80, i === 1 ? null : 90],
+    }));
+  }
+  const maxLines = (el: Element) => Array.from(el.querySelectorAll(".chart-max-line"));
+
+  it("draws a dashed max for the aggregate and every core on an hourly payload, none on detail", () => {
+    const el = container();
+    g._renderCpuChart(el, payload(rollupSamples(), { tier: "hourly", bucketSeconds: 3600 }), {}, {});
+    const ml = maxLines(el);
+    const polys = ml.filter((m) => m.tagName.toLowerCase() === "polyline");
+    expect(polys.length).toBeGreaterThan(0);
+    expect(polys.every((m) => m.getAttribute("stroke-dasharray") === "2 3")).toBe(true);
+    // Aggregate: one run. Cores 0 and 1: one run each. Core 2: its middle max
+    // is null, so two lone-bucket dots — a missing max breaks the line.
+    expect(ml.filter((m) => !m.hasAttribute("data-core"))).toHaveLength(1);
+    expect(ml.filter((m) => m.getAttribute("data-core") === "0")).toHaveLength(1);
+    expect(ml.filter((m) => m.getAttribute("data-core") === "2")).toHaveLength(2);
+    // The per-core lines are thinner than the aggregate's.
+    expect(ml.find((m) => m.getAttribute("data-core") === "0")!.getAttribute("stroke-width")).toBe("1");
+    expect(el.querySelector(".chart-max-chip")!.textContent).toBe("Max (hourly peak)");
+    // Many colours of max line: the swatch is the text colour, not a core's.
+    expect(el.querySelector(".chart-max-swatch")!.getAttribute("style")).toContain("var(--color-text-primary) 0");
+
+    const det = container();
+    g._renderCpuChart(det, payload(rollupSamples()), {}, {});
+    expect(maxLines(det)).toHaveLength(0);
+    expect(det.querySelector(".chart-max-chip")).toBeNull();
+  });
+
+  it("draws a core's max only while that core is drawn", () => {
+    const el = container();
+    g._setCpuHiddenCores(el, { "1": true });
+    g._renderCpuChart(el, payload(rollupSamples(), { tier: "hourly", bucketSeconds: 3600 }), {}, {});
+    const cores = maxLines(el).map((m) => m.getAttribute("data-core")).filter((c) => c !== null);
+    expect(cores).not.toContain("1");
+    expect(cores).toContain("0");
+    // Hiding the aggregate hides its max too.
+    g._setCpuHiddenCores(el, { avg: true });
+    g._renderCpuChart(el, payload(rollupSamples(), { tier: "hourly", bucketSeconds: 3600 }), {}, {});
+    expect(maxLines(el).filter((m) => !m.hasAttribute("data-core"))).toHaveLength(0);
+  });
+
+  it("one chip switches every max line, persists per user, and the tooltip keeps both readings", () => {
+    const el = container();
+    const data = payload(rollupSamples(), { tier: "daily", bucketSeconds: 86400 });
+    g._renderCpuChart(el, data, {}, {});
+    const chip = el.querySelector(".chart-max-chip") as HTMLElement;
+    expect(chip.textContent).toBe("Max (daily peak)");
+    chip.click();
+    expect(maxLines(el)).toHaveLength(0);
+    const stored = JSON.parse(localStorage.getItem("polaris-prefs-charts-tester") || "{}");
+    expect(stored["assetCpu:max"]).toBe("off");
+    // The isolate / Show-all machinery never touches it.
+    expect(el.querySelector(".cpu-legend-chip[data-series=\"max\"]")).toBeNull();
+    // A re-render (resize, silent refresh) keeps it off.
+    g._renderCpuChart(el, data, {}, {});
+    expect(maxLines(el)).toHaveLength(0);
+    const fn = g.__tooltipFns[g.__tooltipFns.length - 1];
+    const html = fn(el.querySelectorAll(".chart-hit")[0]!);
+    expect(html).toContain("20.0% avg");
+    expect(html).toContain("60.0% max");
+    expect(html).toContain("90.0% max"); // the busiest core's peak
+  });
+
+  it("the per-core note shows only when the rollup samples lack per-core vectors", () => {
+    const el = container();
+    g._renderCpuChart(el, payload(rollupSamples(), { tier: "hourly", bucketSeconds: 3600 }), {}, {});
+    expect(el.textContent).not.toContain("Per-core detail");
+  });
+
+  it("the combined CPU & Memory chart draws a max for CPU only", () => {
+    const el = container();
+    const samples = [0, 1, 2].map((i) => ({ timestamp: ts(i), cpuPct: 10 + i, maxCpuPct: 70, memPct: 40, maxMemPct: 90 }));
+    g._renderSystemChart(el, payload(samples, { tier: "hourly", bucketSeconds: 3600 }), {}, {});
+    const ml = maxLines(el);
+    expect(ml).toHaveLength(1);
+    expect(ml[0]!.getAttribute("stroke")).toBe("var(--color-accent)");
+    // The chip row sits ahead of the plot without hijacking `querySelector("svg")`.
+    expect(el.querySelector(".chart-max-chip")!.textContent).toBe("Max (hourly peak)");
+    // One max line here, so the swatch is its colour.
+    expect(el.querySelector(".chart-max-swatch")!.getAttribute("style")).toContain("var(--color-accent) 0");
+    expect(el.querySelector("svg")!.getAttribute("viewBox")).toMatch(/^0 0 /);
+    (el.querySelector(".chart-max-chip") as HTMLElement).click();
+    expect(maxLines(el)).toHaveLength(0);
+    const fn = g.__tooltipFns[g.__tooltipFns.length - 1];
+    const html = fn(el.querySelectorAll(".chart-hit")[0]!);
+    expect(html).toContain("10.0% avg");
+    expect(html).toContain("70.0% max");
   });
 });
 

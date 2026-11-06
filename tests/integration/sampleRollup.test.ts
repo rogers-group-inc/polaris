@@ -21,7 +21,7 @@
  *     from seeded hourly rows.
  */
 
-import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import { rollupHourly, rollupDaily } from "../../src/services/sampleRollupService.js";
@@ -367,5 +367,105 @@ d("rollupDaily — builds the day bucket from seeded hourly rows", () => {
     expect(second[0].id).toBe(firstId);
     expect(second[0].sampleCount).toBe(2);
     expect(second[0].avgResponseTimeMs).toBeCloseTo(100, 6);
+  });
+});
+
+// ─── EVERY statement runs ──────────────────────────────────────────────────────
+//
+// runOne() logs a failed statement and carries on with the next table, so a
+// broken builder fails silently: from 2026-10-21 (380b56ee3) the interface
+// hourly INSERT listed one more expression than target columns and every
+// hourly tick dropped it, leaving 30-day interface charts with nothing to read.
+// Each statement is executed here against the real schema; any error log fails.
+
+d("rollup statements — every source, both tiers", () => {
+  it("runs every hourly and daily statement without an error", async () => {
+    const { logger } = await import("../../src/utils/logger.js");
+    const spy = vi.spyOn(logger, "error");
+    try {
+      await rollupHourly();
+      await rollupDaily();
+      const failures = spy.mock.calls.map((c) => (c[0] as { source?: string; tier?: string }) ?? {});
+      expect(failures.map((f) => `${f.tier}:${f.source}`)).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("rolls interface counters into an hourly bucket", async () => {
+    await prisma.assetInterfaceSample.deleteMany({ where: { assetId: ASSET } });
+    await prisma.assetInterfaceSampleHourly.deleteMany({ where: { assetId: ASSET } });
+    const bucket = recentHourBucket();
+    const t1 = new Date(bucket.getTime() + 1 * 60_000);
+    const t2 = new Date(bucket.getTime() + 2 * 60_000);
+    await prisma.assetInterfaceSample.createMany({
+      data: [
+        { assetId: ASSET, ifName: "port1", timestamp: t1, inOctets: 1000n, outOctets: 100n, ipv6Address: "2001:db8::1", macAddress: "00:11:22:33:44:55", cadence: "fast" },
+        { assetId: ASSET, ifName: "port1", timestamp: t2, inOctets: 7000n, outOctets: 400n, ipv6Address: "2001:db8::1", macAddress: "00:11:22:33:44:55", cadence: "fast" },
+      ],
+    });
+
+    await rollupHourly();
+
+    const rows = await prisma.assetInterfaceSampleHourly.findMany({ where: { assetId: ASSET } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].firstInOctets).toBe(1000n);
+    expect(rows[0].lastInOctets).toBe(7000n);
+    // The two columns the duplicated expression had shifted out of place.
+    expect(rows[0].lastIpv6Address).toBe("2001:db8::1");
+    expect(rows[0].lastMacAddress).toBe("00:11:22:33:44:55");
+    await prisma.assetInterfaceSample.deleteMany({ where: { assetId: ASSET } });
+    await prisma.assetInterfaceSampleHourly.deleteMany({ where: { assetId: ASSET } });
+  });
+});
+
+// ─── BUCKET EDGES: a re-roll never rewrites a bucket with part of it ────────────
+//
+// rollupHourly() looks back `now − 2h` and the job ticks every 30 min, so the
+// last tick to touch an hour does so ~2h40m after it began. The lookback used
+// to be passed through un-truncated, and that tick re-rolled the hour from
+// only the rows at or after `now − 2h` — the hour's last ~20 minutes —
+// overwriting the full bucket. The daily tick had the same edge on a day.
+
+d("rollup lookback — whole buckets only", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("hourly: a lookback starting mid-hour still rolls the whole hour", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-05T14:40:00Z")); // since = 12:40
+    await prisma.assetMonitorSample.createMany({
+      data: [
+        { assetId: ASSET, timestamp: new Date("2026-11-05T12:05:00Z"), success: true, responseTimeMs: 10 },
+        { assetId: ASSET, timestamp: new Date("2026-11-05T12:50:00Z"), success: true, responseTimeMs: 30 },
+      ],
+    });
+
+    await rollupHourly();
+
+    const rows = await prisma.assetMonitorSampleHourly.findMany({ where: { assetId: ASSET } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].bucketStart.toISOString()).toBe("2026-11-05T12:00:00.000Z");
+    expect(rows[0].sampleCount).toBe(2);
+    expect(rows[0].avgResponseTimeMs).toBeCloseTo(20, 6);
+  });
+
+  it("daily: a lookback starting mid-day still rolls the whole day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-05T14:40:00Z")); // since = Nov 3 14:40
+    await prisma.assetMonitorSampleHourly.createMany({
+      data: [
+        { assetId: ASSET, bucketStart: new Date("2026-11-03T02:00:00Z"), sampleCount: 60, successCount: 60, failureCount: 0, avgResponseTimeMs: 10, minResponseTimeMs: 5, maxResponseTimeMs: 400 },
+        { assetId: ASSET, bucketStart: new Date("2026-11-03T20:00:00Z"), sampleCount: 60, successCount: 60, failureCount: 0, avgResponseTimeMs: 30, minResponseTimeMs: 5, maxResponseTimeMs: 50 },
+      ],
+    });
+
+    await rollupDaily();
+
+    const rows = await prisma.assetMonitorSampleDaily.findMany({
+      where: { assetId: ASSET, bucketStart: new Date("2026-11-03T00:00:00Z") },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sampleCount).toBe(120);
+    expect(rows[0].maxResponseTimeMs).toBe(400);
   });
 });
