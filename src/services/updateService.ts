@@ -35,6 +35,7 @@ import { resolveDashPort } from "../utils/dashConfig.js";
 import { createBackup } from "./backupService.js";
 import { logEvent } from "./eventLogService.js";
 import { fetchImageBuildInfo } from "../utils/imageRegistry.js";
+import { isProxyMode } from "../utils/proxyMode.js";
 
 /**
  * Every shell-out in this file goes through `execAsync`, which is a thin
@@ -1525,7 +1526,7 @@ export async function restartService() {
   // running) rather than fail the whole restart. Mirrors
   // deploy/update-linux.sh:sync_nginx_config() so manual + in-app paths
   // land the same end state.
-  const proxyMode = Boolean(process.env.POLARIS_PROXY_CERT_PATH);
+  const proxyMode = isProxyMode();
   // Render the operator's proxyConfig into /etc/nginx/conf.d/polaris.conf
   // before spawning the transient unit. Only fires when managedMode=true
   // — pre-adoption installs see their hand-edited file left alone, and

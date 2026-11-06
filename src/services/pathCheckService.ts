@@ -63,6 +63,7 @@ import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestS
 import { getPathCheckMaintenanceStates, dropPathCheckFromSchedules } from "./maintenanceScheduleService.js";
 
 import { runServerCheck, type RunCapture } from "./pathCheckServerRunner.js";
+import { publicBaseUrl } from "../utils/publicUrl.js";
 
 export { POLARIS_SERVER_SUBJECT,  };
 
@@ -307,7 +308,7 @@ async function polarisOwnHosts(): Promise<Set<string>> {
       out.add(new URL(raw).hostname.replace(/^\[|\]$/g, "").toLowerCase());
     } catch { /* not a URL */ }
   };
-  addUrlHost(process.env.POLARIS_PUBLIC_URL);
+  addUrlHost(publicBaseUrl());
   try {
     const row = await prisma.setting.findUnique({ where: { key: AGENT_SERVER_URL_SETTING_KEY } });
     const v = row?.value as unknown;

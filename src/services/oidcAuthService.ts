@@ -17,13 +17,13 @@
  * "/" — so there is no open-redirect surface.
  */
 
-import { trimTrailing } from "../utils/trimTrailing.js";
 import * as client from "openid-client";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { provisionExternalUser } from "./ssoProvisioning.js";
 import { SECRET_MASK, LEGACY_ASTERISK_MASK, isMaskedSecret } from "../utils/secretMask.js";
 import { movedDestinationKey } from "../utils/secretDestination.js";
+import { publicBaseUrl } from "../utils/publicUrl.js";
 
 export interface OidcSettings {
   enabled: boolean;
@@ -74,7 +74,7 @@ async function getOidcSettings(): Promise<OidcSettings> {
  * clear message rather than sending the IdP a bad redirect_uri.
  */
 export function getRedirectUri(): string {
-  const base = trimTrailing((process.env.POLARIS_PUBLIC_URL || "").trim(), "/");
+  const base = publicBaseUrl();
   if (!base) {
     throw new AppError(400, "POLARIS_PUBLIC_URL must be set for OIDC login (it derives the redirect URI).");
   }

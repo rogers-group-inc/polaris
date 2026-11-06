@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import { getPublicUrlPort, getPublicApiBaseUrl, deriveNginxServerName, derivePolarisPort } from "../../src/utils/publicUrl.js";
+import { getPublicUrlPort, getPublicApiBaseUrl, deriveNginxServerName, derivePolarisPort, publicBaseUrl } from "../../src/utils/publicUrl.js";
+import { ackUrlForEmail, ackUrlForPush, notificationsPageUrl, assetPageUrl, pushDeepLinkUrl } from "../../src/utils/notificationTemplate.js";
 
 const savedPublicUrl = process.env.POLARIS_PUBLIC_URL;
 const savedPort = process.env.PORT;
@@ -81,5 +82,54 @@ describe("derivePolarisPort", () => {
       process.env.PORT = bad;
       expect(derivePolarisPort()).toBe(3000);
     }
+  });
+});
+
+describe("publicBaseUrl", () => {
+  it("is null when unset, empty, blank or only slashes", () => {
+    expect(publicBaseUrl()).toBeNull();
+    process.env.POLARIS_PUBLIC_URL = "";
+    expect(publicBaseUrl()).toBeNull();
+    process.env.POLARIS_PUBLIC_URL = "   ";
+    expect(publicBaseUrl()).toBeNull();
+    process.env.POLARIS_PUBLIC_URL = "///";
+    expect(publicBaseUrl()).toBeNull();
+  });
+
+  it("trims whitespace and EVERY trailing slash, keeping a path", () => {
+    process.env.POLARIS_PUBLIC_URL = "https://polaris.example.com";
+    expect(publicBaseUrl()).toBe("https://polaris.example.com");
+    process.env.POLARIS_PUBLIC_URL = " https://polaris.example.com// \n";
+    expect(publicBaseUrl()).toBe("https://polaris.example.com");
+    process.env.POLARIS_PUBLIC_URL = "https://polaris.example.com:8443/ipam/";
+    expect(publicBaseUrl()).toBe("https://polaris.example.com:8443/ipam");
+  });
+
+  it("re-reads the variable on every call", () => {
+    process.env.POLARIS_PUBLIC_URL = "https://a.example.com";
+    expect(publicBaseUrl()).toBe("https://a.example.com");
+    process.env.POLARIS_PUBLIC_URL = "https://b.example.com";
+    expect(publicBaseUrl()).toBe("https://b.example.com");
+  });
+});
+
+// The bug the shared normaliser closed (CQ-B042, 2026-11-06): the link
+// builders stripped ONE trailing slash and no whitespace while OIDC stripped
+// both, so a value that signed people in fine mailed broken links.
+describe("alert links use the normalised base", () => {
+  it("a stray space or doubled slash no longer breaks emailed and pushed links", () => {
+    process.env.POLARIS_PUBLIC_URL = "https://polaris.example.com// ";
+    expect(ackUrlForEmail("n1")).toBe("https://polaris.example.com/alert-ack.html?id=n1");
+    expect(ackUrlForPush("n1")).toBe("https://polaris.example.com/alert-ack.html?id=n1");
+    expect(notificationsPageUrl()).toBe("https://polaris.example.com/automations.html");
+    expect(assetPageUrl("a1")).toMatch(/^https:\/\/polaris\.example\.com\/[^/]/);
+    expect(pushDeepLinkUrl("mobile")).toBe("https://polaris.example.com/mobile.html#alerts");
+  });
+
+  it("a blank value behaves as unset: email links null, push links relative", () => {
+    process.env.POLARIS_PUBLIC_URL = "  ";
+    expect(ackUrlForEmail("n1")).toBeNull();
+    expect(notificationsPageUrl()).toBeNull();
+    expect(ackUrlForPush("n1")).toBe("/alert-ack.html?id=n1");
   });
 });
