@@ -303,6 +303,8 @@ export interface AssetSightingForDisplay extends AssetSighting {
   vlan: number | null;
   /** That network's id — the VLAN cell opens it. */
   subnetId: string | null;
+  /** That network's CIDR — lets the panel open on the page holding `ipAddress`. */
+  subnetCidr: string | null;
   /** The firewall asset `fortigateDevice` resolves to; null when none does. */
   fortigateAsset: UpstreamAssetRef | null;
 }
@@ -334,6 +336,7 @@ export async function getSightingsForDisplay(assetId: string): Promise<AssetSigh
       subnetName: match?.name ?? null,
       vlan: match?.vlan ?? null,
       subnetId: match?.id ?? null,
+      subnetCidr: match?.cidr ?? null,
       fortigateAsset: gates.get(s.fortigateDevice.trim()) ?? null,
     };
   });
