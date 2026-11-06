@@ -1656,6 +1656,15 @@ Polaris Agent or a Generic API feed, is never changed. If a better source later
 reports the device, its name replaces the suffixed one. Open alerts follow the
 new name.
 
+**91(j) A MAC can be split off onto an asset of its own.** An asset that
+collected the MACs of several devices before 91(f) — one *iPhone* holding many
+phones — keeps them until they are split. The **Sources** tab lists every MAC on
+the asset; split one and it becomes its own asset, taking the addresses on it,
+their IP history and any DHCP reservation on it, named the 91(i) way. The
+primary MAC stays, and a MAC the device reports as its own (an interface port,
+or a network card the Polaris Agent, Intune or vCenter reports) is never another
+device, so it cannot be split. A quarantined asset must be released first.
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time

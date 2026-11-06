@@ -1885,6 +1885,19 @@ and one line naming which two sources decided it. Two rules outrank the order:
 catch-all counts as empty — so a specific type on either side wins, and no merge
 path writes `other` over a real type.
 
+**MAC addresses on this asset** (shown when the asset has two or more MACs)
+lists each MAC with the address it last held, the VLAN of that address's network,
+the FortiGate that saw it and when it was first and last seen. When several
+devices that share a name ended up on one asset, select their rows (click a row;
+right-click for the menu) and choose **Split each into its own asset**, or use a
+row's **Split** button. Each MAC becomes its own asset named after this one plus
+the last three octets of its MAC (*iPhone-717C43*), taking the addresses on it,
+their IP history and any DHCP reservation on it; monitoring, credentials, tags
+and notes stay here. This asset is renamed the same way when its name came from
+discovery ([rule 91](Business-Rules#rule-91)). The primary MAC, and a MAC the
+device reports as its own, cannot be split. Splitting needs Read-Write on Assets
+for this asset; **Merge asset** puts them back together.
+
 Below the source cards, **Firewall Sightings** lists each FortiGate that has
 handed the device an address: one row per gate and kind, so a gate that holds
 both a DHCP reservation and a lease for the device shows both, each with its
