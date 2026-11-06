@@ -193,7 +193,9 @@ POLARIS_PUBLIC_URL=
 TIMESCALE_COMPRESS_AFTER_DAYS=7
 
 # Persistent-state dir. When set, .env / .setup-complete / data/backups /
-# public/uploads all live under this dir (Docker pins to /app/state).
+# public/uploads all live under this dir (Docker pins to /app/state). Only
+# /app/state counts as a container signal (deploymentContext.runtimeIsContainer);
+# a relocated bare-metal state dir does not refuse Restart or HA.
 POLARIS_STATE_DIR=
 # One-time token the first-run wizard demands (16-128 of A-Za-z0-9_-); unset = random,
 # printed in the console and saved as .setup-token in the state dir (rule 108).
