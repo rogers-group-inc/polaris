@@ -276,7 +276,7 @@ d("GET /assets/:id/sightings — FortiGate and VLAN cells resolve to what they n
       // Resolved by FMG device name, not hostname — the gate's hostname differs.
       expect(live.fortigateAsset).toMatchObject({ id: gate, assetType: "firewall" });
       expect(live.fortigateAsset.managementAccess).toMatchObject({ https: true, ssh: true });
-      expect(live).toMatchObject({ subnetId: subnet.id, subnetName: "Staff", vlan: 50 });
+      expect(live).toMatchObject({ subnetId: subnet.id, subnetName: "Staff", vlan: 50, subnetCidr: "10.77.5.0/24" });
       // A gate not in inventory stays a name with no asset; no address, no network.
       const gone = res.body.find((s: any) => s.fortigateDevice === "DECOMMISSIONED-FGT");
       expect(gone).toMatchObject({ fortigateAsset: null, subnetId: null, vlan: null });
