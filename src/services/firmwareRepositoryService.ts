@@ -443,6 +443,18 @@ export async function getImage(id: string): Promise<FirmwareImageRow> {
   return toRow(r as ImageRecord, !(await fileExists(resolveImagePath(r.storagePath))));
 }
 
+/**
+ * Where an image's bytes are, for the Repository's Download verb (firmware:read).
+ * 404 when the row is gone or its file has left disk — the row's "File missing" pill.
+ */
+export async function getImageDownload(id: string): Promise<{ absPath: string; filename: string; sizeBytes: number }> {
+  const r = await prisma.firmwareImage.findUnique({ where: { id }, select: { storagePath: true, filename: true, sizeBytes: true } });
+  if (!r) throw new AppError(404, "Firmware image not found");
+  const absPath = resolveImagePath(r.storagePath);
+  if (!(await fileExists(absPath))) throw new AppError(404, "The image file is missing from disk — upload it again");
+  return { absPath, filename: r.filename, sizeBytes: r.sizeBytes };
+}
+
 export interface RegisterImageInput {
   tmpPath: string;
   originalName: string;
