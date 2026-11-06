@@ -1904,6 +1904,16 @@ auto-deploy, interface/storage auto-monitor, presence verification and directory
 sync — which read the database fleet-wide. Auto-deploy in particular would start
 agent installs across the whole fleet from one click.
 
+On a FortiGate (and so on its switches and access points) the run is the
+gate's **full** discovery, dependency tree included — see
+[Discovery → Discover Now on a FortiGate](Discovery#discover-now-on-a-fortigate).
+It does not poll: CPU, memory, interfaces, LLDP and the other monitoring
+readings keep their own schedules.
+
+If the run cannot start, the toast says why — most often **"A discovery is
+already running for …"**: wait for that run to finish (the sidebar shows it),
+then try again.
+
 On an Unraid or TrueNAS SCALE VM or container, and on any Proxmox VE node, VM or
 container, **Discover Now is disabled**: the integration's own **Discover**
 reads the whole host or cluster in one call, so there is nothing cheaper to

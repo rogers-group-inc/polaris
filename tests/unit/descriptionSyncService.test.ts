@@ -455,6 +455,40 @@ describe("runDescriptionSyncForIntegration", () => {
     expect(fmgQueryMock).not.toHaveBeenCalled(); // no wtp mirror with AP sync off
   });
 
+  // Business rule 142: a scoped Discover Now reconciles only its own gate's
+  // group. Another gate's switch is neither read nor pushed — its transport is
+  // never even built — and the name match is case-insensitive.
+  it("reconciles only the named gates when onlyDevices is given", async () => {
+    vi.mocked(prisma.asset.findMany).mockResolvedValue([
+      {
+        id: "sw1", hostname: "idf-sw", serialNumber: "S108EN0000000001", description: "IDF switch",
+        descriptionSync: null, fortinetTopology: { role: "fortiswitch", controllerFortigate: "FG-1" },
+      },
+      {
+        id: "sw2", hostname: "other-sw", serialNumber: "S108EN0000000002", description: "other",
+        descriptionSync: null, fortinetTopology: { role: "fortiswitch", controllerFortigate: "FG-2" },
+      },
+    ] as any);
+    vi.mocked(prisma.assetInterfaceOverride.findMany).mockResolvedValue([] as any);
+    vi.mocked(prisma.asset.update).mockResolvedValue({} as any);
+    callMock.mockImplementation(async (_t, method, path) => {
+      if (method === "GET" && path === "/api/v2/cmdb/switch-controller/managed-switch") {
+        return [{ "switch-id": "S108EN0000000001", description: "IDF switch", ports: [] }];
+      }
+      throw new Error(`unexpected FortiOS call: ${method} ${path}`);
+    });
+
+    const summary = await runDescriptionSyncForIntegration({
+      id: "intg-1", type: "fortigate", config: { syncSwitchDescriptions: true }, name: "FG",
+    }, ["fg-1"]);
+
+    expect(summary.devices).toBe(1);
+    expect(transportMock.mock.calls.map((c) => c[1])).toEqual(["FG-1"]);
+    expect(vi.mocked(prisma.assetInterfaceOverride.findMany).mock.calls[0][0]).toMatchObject({
+      where: { assetId: { in: ["sw1"] } },
+    });
+  });
+
   it("does nothing when every class is off", async () => {
     const summary = await runDescriptionSyncForIntegration({
       id: "intg-1", type: "fortigate",

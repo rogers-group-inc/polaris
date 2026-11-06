@@ -3099,3 +3099,15 @@ your tag — and then every binding in it may be released or revoked, on any
 FortiGate. See
 [Users, Roles and Permissions](Users-Roles-and-Permissions#tags-are-an-administrators-grant)
 and [Conflict resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).
+
+### Rule 142
+
+**Discover Now on a FortiGate is that gate's full discovery.** Every step the
+integration's own Discover runs after collecting data also runs, limited to that
+gate and what sits behind it: retiring switches and access points the gate no
+longer manages and a chassis replaced under the gate's name, interface
+auto-monitor, DNS and vendor lookups, **the dependency tree**, region and
+criteria tags, management access and description sync. It never judges another
+gate, and it never runs the monitoring polls (CPU, memory, response time,
+sensors, interfaces, LLDP, MAC tables). See
+[Discovery](Discovery#discover-now-on-a-fortigate).

@@ -1136,22 +1136,16 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       if (!ac.signal.aborted) {
         // Full run: "finalize" — deprecation + DNS/OUI + fleet-wide reconciles,
         // once all devices have been synced. Scoped run: "finalize-scoped" —
-        // ONLY the per-controller FortiSwitch/FortiAP decommission (Phase 2b);
-        // the roster-based sweeps would see a one-device fleet and mass-
-        // deprecate/decommission everything else. When the scoped gate's
-        // switch AND AP inventory queries both came back empty/failed, 2b is
-        // a guaranteed no-op — skip the sync call (and its fleet-scale
-        // preload queries) entirely.
+        // the same finalize, each phase narrowed to the one gate (business
+        // rule 142; the per-phase narrowing is at SyncMode). It always runs,
+        // even when the gate's switch and AP inventory reads came back empty:
+        // 2b no-ops itself then, but the dependency-tree recompute and the
+        // tag reconciles still owe the operator their answer.
         const finalizeMode: "finalize" | "finalize-scoped" = scope ? "finalize-scoped" : "finalize";
-        const scopedFinalizeIsNoop = scope !== undefined
-          && (discoveryResult.switchInventoriedDevices?.length ?? 0) === 0
-          && (discoveryResult.apInventoriedDevices?.length ?? 0) === 0;
-        if (!scopedFinalizeIsNoop) {
-          const r = await syncDhcpSubnets(integrationId, integrationName, integration.type, discoveryResult, actor, finalizeMode, ac.signal);
-          syncTotals.deprecated.push(...r.deprecated);
-          syncTotals.decommissionedSwitches.push(...(r.decommissionedSwitches || []));
-          syncTotals.decommissionedAps.push(...(r.decommissionedAps || []));
-        }
+        const r = await syncDhcpSubnets(integrationId, integrationName, integration.type, discoveryResult, actor, finalizeMode, ac.signal);
+        syncTotals.deprecated.push(...r.deprecated);
+        syncTotals.decommissionedSwitches.push(...(r.decommissionedSwitches || []));
+        syncTotals.decommissionedAps.push(...(r.decommissionedAps || []));
       }
     }
 
@@ -2084,14 +2078,14 @@ export class AssetIndex {
 // "skip-deprecation"   — run phases 1, 3–7 only (used in per-device syncs; no deprecation or DNS/OUI)
 // "deprecation-only"   — run only phase 2 (legacy; prefer "finalize")
 // "finalize"           — run phase 2 + phases 8–9; called once after all per-device syncs complete
-// "finalize-scoped"    — the finalize pass of a single-FortiGate scoped re-discovery: Phase 2b ONLY.
-//                        NEVER 2/2a/2c — a scoped run's result carries one device, so the roster-
-//                        based sweeps (knownFirewallSerials is built from result.devices, the
-//                        PROCESSED chunks, not the raw ADOM roster) would see a one-device fleet
-//                        and deprecate/decommission everything else. Phase 2b is inherently safe
-//                        scoped: it only judges assets whose controllerFortigate had a SUCCESSFUL
-//                        inventory query this run. Phases 8–9/12/13.x are fleet-wide reconciles
-//                        owned by full runs (their gates only pass full|finalize).
+// "finalize-scoped"    — the finalize pass of a single-FortiGate scoped re-discovery (Discover
+//                        Now): every finalize phase, each narrowed to THE GATE (business rule 142).
+//                        Phase 2 never runs (the gate is on the roster, so it has nothing to say);
+//                        2a judges only firewalls carrying the gate's name — the chassis-replaced
+//                        verdict, never the roster-absent one or its cascade; 2b is per-controller
+//                        already; 2c, 8–9 and 13.7 take the gate's asset set (`scopedFinalizeAssetIds`
+//                        / its device name); 12 / 13 / 13.65 are DB-wide reconciles that a scoped
+//                        run may simply run; 13.6 reads only the devices in the result.
 export type SyncMode = "full" | "skip-deprecation" | "deprecation-only" | "finalize" | "finalize-scoped";
 
 /**
@@ -2161,8 +2155,56 @@ export function assetOnlyPostSyncPassesEnabled(
  */
 export function sweepPhaseEnabled(mode: SyncMode, phase: "2" | "2a" | "2b" | "2c"): boolean {
   if (mode === "skip-deprecation") return false;
-  if (mode === "finalize-scoped") return phase === "2b";
+  // A scoped run's gate is on the roster by construction (the FMG service
+  // throws otherwise), so Phase 2 — deprecate the networks of gates that LEFT
+  // the roster — has nothing to say about it. 2a / 2c run narrowed to the gate
+  // (business rule 142); 2b is per-controller already.
+  if (mode === "finalize-scoped") return phase !== "2";
   return true;
+}
+
+/** Does this mode run the finalize-only phases (8–9, 12, 13.x)? */
+export function finalizePhasesEnabled(mode: SyncMode): boolean {
+  return mode === "full" || mode === "finalize" || mode === "finalize-scoped";
+}
+
+/**
+ * The assets a scoped (single-gate) re-discovery is about: the gate and its HA
+ * members, its FortiSwitches and FortiAPs (by serial), and every endpoint the
+ * gate reported this run (by MAC — DHCP leases / reservations, device
+ * inventory, ARP, the switch MAC tables). Pure; the finalize-scoped pass uses
+ * it to narrow the fleet-wide phases (2c, 8, 9) to what the operator asked
+ * about (business rule 142). `infra` is the gate + switch + AP subset — the
+ * auto-monitor apply works on infra only.
+ */
+export function scopedFinalizeAssetIds(
+  result: Pick<DiscoveryResult, "devices" | "fortiSwitches" | "fortiAps" | "dhcpEntries" | "deviceInventory" | "arpTable" | "switchMacTable">,
+  idx: { findBySerial(serial: string): { id: string } | undefined; findByMac(mac: string): { id: string } | undefined },
+): { all: Set<string>; infra: Set<string> } {
+  const infra = new Set<string>();
+  const all = new Set<string>();
+  const bySerial = (sn: string | null | undefined) => {
+    if (!sn || !sn.trim()) return;
+    const hit = idx.findBySerial(sn);
+    if (hit) { infra.add(hit.id); all.add(hit.id); }
+  };
+  for (const d of result.devices ?? []) {
+    bySerial(d.serial);
+    for (const m of d.haMembers ?? []) bySerial(m.serial);
+  }
+  for (const s of result.fortiSwitches ?? []) bySerial(s.serial);
+  for (const a of result.fortiAps ?? []) bySerial(a.serial);
+  const byMac = (mac: string | null | undefined) => {
+    const norm = normalizeMacOrNull(mac);
+    if (!norm) return;
+    const hit = idx.findByMac(norm);
+    if (hit) all.add(hit.id);
+  };
+  for (const e of result.dhcpEntries ?? []) byMac(e.macAddress);
+  for (const e of result.deviceInventory ?? []) byMac(e.macAddress);
+  for (const e of result.arpTable ?? []) byMac(e.mac);
+  for (const e of result.switchMacTable ?? []) byMac(e.mac);
+  return { all, infra };
 }
 
 /**
@@ -2275,6 +2317,25 @@ export function judgeRosterFirewall(
     return { kind: "replaced", oldSerial: serial, newSerials: [...cluster].sort() };
   }
   return { kind: "keep" };
+}
+
+/**
+ * Phase 2a's narrowing for a scoped (single-gate) run: does this firewall asset
+ * carry the name of a gate processed this run? `processedDevices` is the
+ * per-device chassis map (`clusterSerialsByDevice`), keyed on each processed
+ * gate's FMG device name AND FortiOS hostname, lower-cased — so a scoped run's
+ * map holds exactly the scoped gate. Pure; business rule 142.
+ */
+export function firewallNamedForScopedGate(
+  asset: { hostname: string | null; fortinetTopology: unknown },
+  processedDevices: Map<string, unknown>,
+): boolean {
+  for (const n of [readFirewallDeviceName(asset.fortinetTopology), asset.hostname]) {
+    if (typeof n !== "string") continue;
+    const key = n.trim().toLowerCase();
+    if (key && processedDevices.has(key)) return true;
+  }
+  return false;
 }
 
 /**
@@ -3315,6 +3376,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   }
   } // end Phases 1 (full | skip-deprecation)
 
+  // A scoped (Discover Now) finalize narrows Phases 2c / 8 / 9 to the assets
+  // the gate reported this run (business rule 142); null = the whole fleet.
+  const scopedAssets = mode === "finalize-scoped" ? scopedFinalizeAssetIds(result, assetIdx) : null;
+
   if (mode !== "skip-deprecation") {
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 2 — Deprecate stale subnets (single updateMany)
@@ -3394,10 +3459,13 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // A decommissioned firewall is reactivated by the Phase-3b firewall update
   // path above on a future discovery cycle when the device returns to FMG.
   //
-  // NEVER runs in "finalize-scoped": knownFirewallSerials is built from
-  // result.devices — the PROCESSED chunks (one device in a scoped run), not
-  // the raw ADOM roster — so a scoped pass would decommission every fleet
-  // firewall matched by serial only.
+  // In "finalize-scoped" (Discover Now on one gate, business rule 142) only
+  // firewalls carrying THAT gate's name are judged (`firewallNamedForScopedGate`),
+  // and only the chassis-replaced verdict acts: the gate is on the roster by
+  // construction, so a roster-absent verdict there would be a bug, and its
+  // cascade would reach other gates' children. The roster serials ARE whole in
+  // a scoped run (`knownDeviceSerials` is read before the roster is narrowed),
+  // so an HA member or a chassis now registered elsewhere still reads "keep".
   if (sweepPhaseEnabled(mode, "2a") && knownDeviceNames.size > 0 && (isFortinetIntegrationType(integrationType))) {
     const candidateFws = await prisma.asset.findMany({
       where: {
@@ -3424,9 +3492,12 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       haRosterPublishedUc: haRosterPublished,
       clusterSerialsByDevice,
     };
+    const scopedRun = mode === "finalize-scoped";
     for (const a of candidateFws) {
+      if (scopedRun && !firewallNamedForScopedGate(a, clusterSerialsByDevice)) continue;
       const verdict = judgeRosterFirewall(a, rosterCtx);
       if (verdict.kind === "keep") continue;
+      if (scopedRun && verdict.kind !== "replaced") continue;
       staleFwIds.push(a.id);
       if (verdict.kind === "replaced") {
         logEvent({
@@ -3570,9 +3641,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // down with it). A decommissioned switch/AP is automatically reactivated
   // by the Phase-3b update path above when its serial reappears.
   //
-  // The per-controller gating is also why this is the ONE sweep that runs in
+  // The per-controller gating is also why this sweep runs UNCHANGED in
   // "finalize-scoped" (single-FortiGate re-discovery): only assets behind
-  // the scoped, successfully-queried controller are ever judged.
+  // the scoped, successfully-queried controller are ever judged. (Its orphan
+  // clause is the exception, and is held off there — `rosterJudgeable`.)
   if (sweepPhaseEnabled(mode, "2b") && (switchInventoriedDevices.size > 0 || apInventoriedDevices.size > 0)) {
     const candidates = await prisma.asset.findMany({
       where: {
@@ -3599,7 +3671,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       if (dev.serial) currentNameBySerial.set(normalizeSerialKey(dev.serial), devName);
       for (const m of dev.haMembers ?? []) if (m.serial) currentNameBySerial.set(normalizeSerialKey(m.serial), devName);
     }
-    const rosterJudgeable = sweepPhaseEnabled(mode, "2a") && knownDeviceNames.size > 0;
+    // Never on a scoped run, even though 2a now runs there narrowed: the
+    // orphan clause judges children of gates OTHER than the scoped one.
+    const rosterJudgeable = mode !== "finalize-scoped" && sweepPhaseEnabled(mode, "2a") && knownDeviceNames.size > 0;
     const staleIds: string[] = [];
     for (const a of candidates) {
       const isSwitch = a.assetType === "switch";
@@ -3698,7 +3772,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       const selection = autoMonitor.coerceLegacySelection(cfg[blockKey]?.autoMonitorInterfaces ?? null);
       if (!selection) continue;
       try {
-        const r = await autoMonitor.applyAutoMonitorForClass(integrationId, klass, selection, actor);
+        const r = await autoMonitor.applyAutoMonitorForClass(integrationId, klass, selection, actor, scopedAssets?.infra);
         if (r.interfacesAdded > 0) {
           syncLog("info", `Auto-monitor (${klass}): pinned ${r.interfacesAdded} interface(s) on ${r.devices} device(s)`);
           await logEvent({
@@ -7642,7 +7716,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
   } // end Phases 3–7 (full | skip-deprecation)
 
-  if (mode === "full" || mode === "finalize") {
+  if (finalizePhasesEnabled(mode)) {
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 8 — DNS reverse lookup for assets missing dnsName
   phaseMark("8");
@@ -7650,7 +7724,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
   const DEFAULT_PTR_TTL_S = 3600;
   const nowMs = Date.now();
-  const assetsNeedingDns = assetIdx.all().filter((a: any) => {
+  // A scoped run looks up only the assets its gate reported (rule 142).
+  const finalizeAssets: any[] = scopedAssets
+    ? assetIdx.all().filter((a: any) => scopedAssets.all.has(a.id))
+    : assetIdx.all();
+  const assetsNeedingDns = finalizeAssets.filter((a: any) => {
     if (!a.ipAddress) return false;
     if (!a.dnsNameFetchedAt) return true;
     const fetchedMs = new Date(a.dnsNameFetchedAt).getTime();
@@ -7687,7 +7765,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // 9a — Apply OUI overrides to assets that already have a manufacturer
   //       (e.g. "Fortinet" from FMG can be overridden to a custom name; an
   //       optional device field overrides the asset's model too)
-  const assetsWithMacAndMfg = assetIdx.all().filter((a: any) => a.macAddress && a.manufacturer);
+  const assetsWithMacAndMfg = finalizeAssets.filter((a: any) => a.macAddress && a.manufacturer);
   if (assetsWithMacAndMfg.length > 0) {
     const overrideResults = await batchSettled(assetsWithMacAndMfg, async (asset: any) => {
       const override = await lookupOuiOverride(asset.macAddress);
@@ -7712,7 +7790,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // 9b — OUI lookup for assets still missing a manufacturer.
   //       Also pick up the override's device field when present (applies
   //       even if asset already has a model — override wins by design).
-  const assetsNeedingOui = assetIdx.all().filter((a: any) => a.macAddress && !a.manufacturer);
+  const assetsNeedingOui = finalizeAssets.filter((a: any) => a.macAddress && !a.manufacturer);
   if (assetsNeedingOui.length > 0) {
     syncLog("info", `OUI lookup: resolving ${assetsNeedingOui.length} assets missing manufacturer`);
     const ouiResults = await batchSettled(assetsNeedingOui, async (asset: any) => {
@@ -7974,13 +8052,16 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // fortinetTopology + interface-topology + LLDP signals. Drives the
   // dependency-suppression reconciler — see dependencyTreeService.
   //
-  // Gated on mode in {full, finalize} — per-device skip-deprecation passes
-  // see only a partial slice of the fleet, so a recompute run there would
-  // race with sibling per-device passes and write churn. The finalize
-  // pass owns the recompute.
+  // Gated on mode in {full, finalize, finalize-scoped} — per-device
+  // skip-deprecation passes see only a partial slice of the fleet, so a
+  // recompute run there would race with sibling per-device passes and write
+  // churn. The finalize pass owns the recompute. A scoped (Discover Now) run
+  // recomputes too (business rule 142): the recompute reads the DB, not this
+  // run's result, and the one gate's per-device pass has already landed — so
+  // a swapped switch is re-parented on the click, not 4 h later.
   //
   // Best-effort. Failures are logged but never block the sync return.
-  if (mode === "full" || mode === "finalize") {
+  if (finalizePhasesEnabled(mode)) {
     try {
       const dep = await recomputeDependencyTree(integrationId);
       if (dep.scoped > 0) {
@@ -8000,8 +8081,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // here is what makes a device re-pinned or re-parented by THIS discovery
     // run land in the right region without waiting for the 6-hour tick; the
     // cost is that a transiently-absent gate pin churns its subtree's tags for
-    // one pass. Best-effort, gated to mode in {full, finalize} mirroring
-    // Phase 12.
+    // one pass. Best-effort, gated like Phase 12 (a scoped run reconciles
+    // too: a DB-wide pass, idempotent, and it is what tags a new switch).
     try {
       const summary = await reconcileMapRegions();
       if (summary.assetsTouched > 0 || summary.subnetsTouched > 0) {
@@ -8037,8 +8118,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // effort — see fortinetManagementAccessService). Drives the slide-over's
     // Open HTTPS / Open SSH buttons + the FortiAP "SNMP not enabled" warning.
     // Read-only; never writes the device. FMG/FortiGate only. Best-effort —
-    // failures are logged and never block the sync. Gated to {full, finalize}
-    // so it runs once with the full fleet known (like Phases 12/13).
+    // failures are logged and never block the sync. Gated like Phases 12/13;
+    // reads only the devices in `result`, so a scoped run reads its one gate.
     if (isFortinetIntegrationType(integrationType)) {
       try {
         const integrationRow = await prisma.integration.findUnique({
@@ -8118,7 +8199,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           select: { id: true, type: true, config: true, name: true },
         });
         if (integrationRow && anyDescriptionSyncEnabled(integrationRow.config)) {
-          const summary = await runDescriptionSyncForIntegration(integrationRow);
+          // A scoped run reconciles only its gate's group (rule 142).
+          const onlyDevices = mode === "finalize-scoped"
+            ? result.devices.flatMap((d) => [d.name, d.hostname]).filter((n): n is string => !!n)
+            : undefined;
+          const summary = await runDescriptionSyncForIntegration(integrationRow, onlyDevices);
           if (summary.pushed || summary.adopted || summary.failed || summary.skippedDevices || summary.fmgMirrored || summary.fmgMirrorFailed) {
             syncLog("info", `Description sync: pushed ${summary.pushed}, adopted ${summary.adopted}, failed ${summary.failed}${summary.fmgMirrored || summary.fmgMirrorFailed ? `, FMG mirror ${summary.fmgMirrored} ok / ${summary.fmgMirrorFailed} failed` : ""}${summary.skippedDevices ? `, ${summary.skippedDevices} device(s) skipped` : ""}`);
           }

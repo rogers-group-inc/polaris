@@ -1017,7 +1017,9 @@ export interface ApplyResult {
 }
 
 /**
- * Apply `selection` to every asset of `klass` discovered by `integrationId`.
+ * Apply `selection` to every asset of `klass` discovered by `integrationId` —
+ * or, with `onlyAssetIds`, to just those (a scoped Discover Now applies to its
+ * one gate's devices, business rule 142; an empty set applies to nothing).
  * Strictly additive: pin = union(existing, computed); we never strip. Skips
  * the write when nothing would change so back-to-back discoveries stay quiet.
  */
@@ -1026,12 +1028,18 @@ export async function applyAutoMonitorForClass(
   klass: AutoMonitorClass,
   selection: AutoMonitorSelection,
   _actor?: string,
+  onlyAssetIds?: ReadonlySet<string>,
 ): Promise<ApplyResult> {
   const empty: ApplyResult = { devices: 0, interfacesAdded: 0, perDeviceMax: 0, sampleDevices: [] };
   if (!selection) return empty;
+  if (onlyAssetIds && onlyAssetIds.size === 0) return empty;
   const assetType = CLASS_TO_ASSET_TYPE[klass];
   const assets = await prisma.asset.findMany({
-    where: { discoveredByIntegrationId: integrationId, assetType: assetType as any },
+    where: {
+      discoveredByIntegrationId: integrationId,
+      assetType: assetType as any,
+      ...(onlyAssetIds ? { id: { in: [...onlyAssetIds] } } : {}),
+    },
     select: { id: true, hostname: true, serialNumber: true, fortinetTopology: true, monitoredInterfaces: true, monitoredIpsecTunnels: true },
   });
   if (assets.length === 0) return empty;

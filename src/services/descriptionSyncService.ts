@@ -861,13 +861,18 @@ interface ReconcileOverride {
  */
 export async function runDescriptionSyncForIntegration(
   integration: { id: string; type: string; config: unknown; name: string },
+  /**
+   * Reconcile only these gates' groups (FMG device name or hostname, any
+   * case) — a scoped Discover Now (business rule 142). Omitted = every gate.
+   */
+  onlyDevices?: readonly string[],
 ): Promise<DescriptionSyncSummary> {
   const summary: DescriptionSyncSummary = { devices: 0, pushed: 0, adopted: 0, failed: 0, skippedDevices: 0, fmgMirrored: 0, fmgMirrorFailed: 0 };
   const flags = descriptionSyncFlags(integration.config);
   if (!flags.fortigate && !flags.fortiswitch && !flags.fortiap) return summary;
   const pushedThisRun: PushedThisRun = { device: new Map(), port: new Map() };
 
-  const assets: ReconcileAsset[] = await prisma.asset.findMany({
+  let assets: ReconcileAsset[] = await prisma.asset.findMany({
     where: {
       discoveredByIntegrationId: integration.id,
       status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
@@ -911,7 +916,24 @@ export async function runDescriptionSyncForIntegration(
       if (ctrl) groupFor(ctrl).aps.push(a);
     }
   }
+  if (onlyDevices) {
+    const keep = new Set(onlyDevices.map((n) => n.trim().toLowerCase()).filter(Boolean));
+    for (const name of [...groups.keys()]) {
+      if (!keep.has(name.toLowerCase())) groups.delete(name);
+    }
+  }
   if (groups.size === 0) return summary;
+  // Narrowed run: the overrides read and the central-DB heal below see only
+  // the kept groups' assets.
+  if (onlyDevices) {
+    const inGroups = new Set<string>();
+    for (const g of groups.values()) {
+      if (g.firewall) inGroups.add(g.firewall.id);
+      for (const a of g.switches) inGroups.add(a.id);
+      for (const a of g.aps) inGroups.add(a.id);
+    }
+    assets = assets.filter((a) => inGroups.has(a.id));
+  }
 
   const allAssetIds = assets.map((a) => a.id);
   const overrides: ReconcileOverride[] = await prisma.assetInterfaceOverride.findMany({
