@@ -599,9 +599,11 @@ removed (**×**). The addresses come from a lease or
 reservation the device is holding, the address a FortiGate sees it using, ARP
 entries (a card's secondary addresses), the interface table of a monitored
 device, the interfaces the device's own Polaris Agent reports (source *Agent*),
-and anything typed by hand. Each address names where it came from, the
-network it sits in (its name, range and VLAN), the gate that reported it, wired
-or wireless when known, and when it was last seen.
+and anything typed by hand. Each address carries a chip beside its confidence
+score naming the VLAN of the network it sits in (the network's range when it
+has no VLAN; hover the chip for the network's name and range), then where it
+came from, the gate that reported it, wired or wireless when known, and when it
+was last seen.
 A FortiGate's addresses for a card leave the list once that gate stops
 reporting them ([rule 102](Business-Rules#rule-102)). Opening the details also
 checks the DHCP leases and reservations against IPAM: an address IPAM has

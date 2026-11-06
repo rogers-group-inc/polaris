@@ -6130,6 +6130,23 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 .addr-conf-penalty { color: var(--color-warning); font-size: 0.72rem; }
 
+/* The network chip beside the score in the IPs hover: "VLAN n" (or the CIDR
+ * when the network has no VLAN); its title names the network in full.
+ * Neutral — it is a fact about the address, not a judgement of it. */
+.addr-net-chip {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  margin-left: 6px;
+  white-space: nowrap;
+  cursor: default;
+  color: var(--color-text-secondary);
+  border: 1px solid color-mix(in srgb, var(--color-text-secondary) 35%, transparent);
+}
+
 /* ─── Dependency Tree block (asset details General tab) ──────────────────────
  * Compact vertical tree: parents above the current asset, children below. The
  * current asset is rendered bold and unclickable; everything else is a
