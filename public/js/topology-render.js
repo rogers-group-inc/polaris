@@ -1109,13 +1109,17 @@
 
   // The box name lives inside the box, under its top wall (stylesheet
   // [isLocGroup]). LOC_LABEL_BAND is the strip each box adds above its
-  // contents to hold it; LOC_LABEL_MARGIN_Y drops the label (anchored above
+  // contents to hold it (in place of the level's top padding — see
+  // _layoutLocationGroups); LOC_LABEL_MARGIN_Y drops the label (anchored above
   // the wall by valign top) down into that strip — its bottom edge 26 px
   // below the wall, so a 16 px name has ~6 px clear of the wall. A box is
   // also kept at least as wide as its name (estimated: no renderer in the
   // headless/mobile paths to measure with), so the name never crosses a side
   // wall.
   var LOC_LABEL_BAND = 28;
+  // Clear space between the name strip and what sits under it (an inner
+  // box's wall or a device icon) — the name is ~8 px off it.
+  var LOC_LABEL_GAP = 6;
   var LOC_LABEL_MARGIN_Y = 26;
   var LOC_LABEL_CHAR_PX = 10; // 16 px bold Inter, generous
   function _locLabelMinWidth(label, pad) {
@@ -1218,11 +1222,16 @@
       if (box === null) { cy.remove(n); return; }
       // The name's strip goes on top of the contents (asymmetric: only the
       // top wall moves), and a box narrower than its name widens evenly.
-      var band = n.data("label") ? LOC_LABEL_BAND : 0;
+      // A named box's top is its name strip plus LOC_LABEL_GAP — NOT the
+      // level's padding too: that stacked a second empty band under every
+      // name (42 px under an area's, 26 under a floor's) before the next
+      // wall or device. Sides and bottom keep the level's padding.
+      var named = !!n.data("label");
+      var topPad = named ? LOC_LABEL_BAND + LOC_LABEL_GAP : cfg.pad;
       var w = Math.max((box.x2 - box.x1 + cfg.pad * 2) * cfg.scaleW, _locLabelMinWidth(n.data("label"), cfg.pad));
-      var h = (box.y2 - box.y1 + cfg.pad * 2 + band) * cfg.scaleH;
+      var h = (box.y2 - box.y1 + topPad + cfg.pad) * cfg.scaleH;
       var cx = (box.x1 + box.x2) / 2;
-      var cyy = (box.y1 - band + box.y2) / 2;
+      var cyy = ((box.y1 - topPad) + (box.y2 + cfg.pad)) / 2;
       n.position({ x: cx, y: cyy });
       n.style({ width: w, height: h });
       fitted.push({
