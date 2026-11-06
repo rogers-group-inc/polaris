@@ -396,16 +396,15 @@
     //  - Initial view: the whole graph, as the desktop opens it — or the
     //    searched node when the URL carries ?q=<term>.
     _cy.one("layoutstop", function () {
-      if (savedPositions) {
-        _cy.batch(function () {
-          _cy.nodes().forEach(function (n) {
-            var p = savedPositions[n.id()];
-            if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
-          });
-        });
-      }
+      // The desktop's saved spots (pinned: the box-overlap push leaves them),
+      // and a device the save has none for placed beside its saved parent —
+      // the same helper the desktop map uses.
+      var applied = window.PolarisTopologyRender.applySavedPositions(_cy, savedPositions, elements);
       var suppress = locSuppressKinds();
-      window.PolarisTopologyRender.renderLocationGroups(_cy, suppress ? { suppressKinds: suppress } : undefined);
+      window.PolarisTopologyRender.renderLocationGroups(_cy, {
+        suppressKinds: suppress || undefined,
+        fixedIds: applied.pinned,
+      });
       // Cross-box links through the gutters, and any straight link bent
       // around a device it would pass through — with or without boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(_cy);

@@ -1256,7 +1256,8 @@
   // group's), so containment and the column structure both survive — then
   // everything re-fits and the sweep repeats until stable. Vertical pushes
   // only: columns encode network depth and must not change.
-  function _resolveLocGroupOverlaps(cy) {
+  function _resolveLocGroupOverlaps(cy, fixedIds) {
+    fixedIds = fixedIds || {};
     for (var pass = 0; pass < 8; pass++) {
       var hulls = cy.nodes("[isLocGroup]").toArray();
       if (hulls.length < 2) return;
@@ -1315,6 +1316,10 @@
             if (!_isDescendantScope(below.scope, other.scope)) return;
             (other.node.data("memberIds") || []).forEach(function (id) { memberIds[id] = true; });
           });
+          // A box holding any device from a saved layout stays where it is:
+          // the operator placed those devices, and an overlap is theirs to
+          // fix — never shove them (applySavedPositions → fixedIds).
+          if (Object.keys(memberIds).some(function (id) { return fixedIds[id]; })) continue;
           cy.batch(function () {
             Object.keys(memberIds).forEach(function (id) {
               var m = cy.getElementById(id);
@@ -1376,8 +1381,10 @@
     _layoutLocationGroups(cy);
     // Push apart shapes that don't nest inside each other. Runs at render
     // time only — the drag-follow refresh (refreshLocationGroups) must never
-    // move devices out from under the operator's pointer mid-drag.
-    _resolveLocGroupOverlaps(cy);
+    // move devices out from under the operator's pointer mid-drag — and
+    // never moves a box holding a saved device (opts.fixedIds, from
+    // applySavedPositions).
+    _resolveLocGroupOverlaps(cy, opts.fixedIds);
   }
 
   function removeLocationGroups(cy) {
@@ -3049,129 +3056,383 @@
     return out;
   }
 
-  // ── Quotient (two-level) layout for location-coded sites ─────────────────
-  // The flat solver's x is GLOBAL network depth, so a group's width is
-  // dictated by where its members happen to sit in the site-wide column
-  // sequence — a building whose chains start deep in the site renders as a
-  // huge sparse box. This layout fixes that with the classic compound-graph
-  // recipe:
+  // ── Level layout (every site, coded or not) ──────────────────────────────
+  // Places devices AND location boxes by the same network-depth rule, so a
+  // description edit only moves what it touches (2026-11-06; replaced the
+  // quotient layout, whose box order came from flat-solver ROWS — which the
+  // tier clustering reshuffles on every code change — and whose shelf
+  // packing wrapped columns at the tallest box's height).
   //
-  //   1. Run the flat solver once (it encodes every ordering/clustering rule).
-  //   2. Partition nodes into TOP-LEVEL groups — the outermost location tier
-  //      each node carries (its a: area, else its b: building). Uncoded
-  //      nodes (orphans, FortiLink fallbacks, untagged infra) share one
-  //      pseudo-group so they stay clustered.
-  //   3. Compact each group's interior: rank-compress the DISTINCT global
-  //      depth/lane values its members use, so the group is exactly as wide
-  //      and tall as its own subtree — internal shape, ordering, and the
-  //      full-tier (area→building→floor→room→jb) row clustering from the
-  //      flat solver are preserved, the dead space between them is not.
-  //      Because the flat solver now clusters through room/jb (anchors AND
-  //      each parent's leaf block), the inner-tier hulls inside a box are
-  //      contiguous bands wherever their members share a parent or sibling
-  //      set — the "two members at opposite corners" bounding-box blowup
-  //      only remains possible across different subtrees.
-  //   4. Lay out the QUOTIENT graph of group boxes: boxes are ordered into
-  //      quotient columns by each group's minimum global depth (so inter-
-  //      group flow still reads left-to-right), stacked within a column by
-  //      minimum global lane, with fixed grid gaps that clear the hull
-  //      padding. This is deterministic shelf packing — no iteration.
+  //   LEVEL   A device's level is its column from the weighted-Dijkstra flat
+  //           solver (computeTopologyColumns → depth: firewall 0, anchors on
+  //           even columns, leaves one right of their anchor). A box's level
+  //           is the level of its SHALLOWEST device, nested boxes' devices
+  //           included — an area holding a level-1 device is a level-1 area;
+  //           an area whose shallowest device is level 2 is level 2.
+  //   TREE    Boxes nest area > building > floor > room > junction box by
+  //           their scoped keys (the same keys renderLocationGroups draws, so
+  //           every laid-out box is a drawn box); a device belongs to its
+  //           deepest box, or to the site itself when it carries no code.
+  //   PLACE   Inside each box — and the site — the items are its child boxes
+  //           and the devices directly in it. Each item's COLUMN is its level
+  //           (distinct levels rank-compressed, so an empty level costs no
+  //           width); a column is as wide as its widest item, so a wide box
+  //           pushes deeper columns right and flow still reads left to right.
+  //           Within a column, an item sits on the ROW of the device it hangs
+  //           off (its upstream, already placed one or more columns left),
+  //           ties and unrooted items sorted by name; it moves down past any
+  //           item it would overlap in its own column, and past any item in a
+  //           column its link would cross (so a straight link never runs
+  //           through a device).
+  //   SIZE    Boxes are sized innermost first and placed as one block,
+  //           spaced from their siblings by what each one DRAWS (its wall's
+  //           reach beyond its devices, _levelSep) rounded up to half cells,
+  //           so sibling boxes never overlap, the overlap push in
+  //           renderLocationGroups has nothing to do, and every device stays
+  //           on the 65 px snap grid.
   //
-  // Returns the SAME { id: { depth, lane } } contract as
-  // computeTopologyColumns (units are grid columns/lanes; the caller
-  // multiplies by its px spacing), or null when the flat solver has no
-  // FortiGate root OR no node carries a location code (caller falls back to
-  // the flat solver / dagre).
+  // Nothing reads the flat solver's lanes, so adding a code to one device
+  // re-places only the boxes it joins or leaves and what stacks after them.
+  // Returns the computeTopologyColumns contract — { id: { depth, lane } } in
+  // grid units, device centres — or null when the flat solver has no
+  // FortiGate root (callers fall back to dagre).
+  // Spacing is computed in px against the 130 px cell and rounded UP to
+  // half cells: LEVEL_DEVICE_EXT is how far a device reaches from its centre
+  // (the firewall's 64 px body + border); siblings clear each other's walls
+  // by LOC_GROUP_SIBLING_GAP (so the overlap push in renderLocationGroups
+  // has nothing to do); a link crossing a column clears what is there by
+  // LEVEL_LINK_GAP. Devices never sit closer than one cell.
+  var LEVEL_CELL_PX = 130;
+  var LEVEL_DEVICE_EXT = 32;
+  var LEVEL_LINK_GAP = 20;
+  var _LEVEL_KIND = { a: "area", b: "building", f: "floor", r: "room", jb: "jb" };
+  function _ceilHalf(v) { return Math.ceil(v * 2 - 1e-9) / 2; }
+  function _levelSep(extA, extB) {
+    return Math.max(1, _ceilHalf((extA + extB + LOC_GROUP_SIBLING_GAP) / LEVEL_CELL_PX));
+  }
+  function _levelLinkSep(ext) {
+    return Math.max(0.5, _ceilHalf((ext + LEVEL_LINK_GAP) / LEVEL_CELL_PX));
+  }
+  var _levelMemo = { elements: null, upstream: null };
+
+  function _locPath(d) {
+    var a = d.locA || "", b = d.locB || "", f = d.locF || "", r = d.locR || "", jb = d.locJb || "";
+    var path = [];
+    if (a) path.push({ key: "a|" + a, name: d.locAName || a });
+    if (b) path.push({ key: "b|" + a + "|" + b, name: d.locBName || b });
+    if (f) path.push({ key: "f|" + a + "|" + b + "|" + f, name: d.locFName || f });
+    if (r) path.push({ key: "r|" + a + "|" + b + "|" + f + "|" + r, name: d.locRName || r });
+    if (jb) path.push({ key: "jb|" + a + "|" + b + "|" + f + "|" + r + "|" + jb, name: d.locJbName || jb });
+    return path;
+  }
+
+  // Each device's upstream: the linked device nearest it that is strictly
+  // closer to the firewall (smaller |depth|) — its parent in the drawn tree.
+  // MCLAG peer links are sideways, never parent links. Ties → smaller id.
+  function _upstreamMap(elements, global) {
+    var best = {};
+    function consider(child, cand) {
+      if (!(child in global) || !(cand in global) || child === cand) return;
+      var dc = Math.abs(global[child].depth);
+      var dp = Math.abs(global[cand].depth);
+      if (!(dp < dc)) return;
+      var cur = best[child];
+      if (cur !== undefined) {
+        var dcur = Math.abs(global[cur].depth);
+        if (dp < dcur || (dp === dcur && cand > cur)) return;
+      }
+      best[child] = cand;
+    }
+    (elements || []).forEach(function (el) {
+      var d = el && el.data;
+      if (!d || !d.source || !d.target || d.isMclag) return;
+      consider(d.target, d.source);
+      consider(d.source, d.target);
+    });
+    return best;
+  }
+
   function computeGroupedLayout(elements) {
     var global = computeTopologyColumns(elements);
     if (!global) return null;
-    var GAP_X = 2; // grid columns between quotient columns (~260px)
-    var GAP_Y = 2; // grid lanes between stacked boxes (~190px)
-    var order = [];
-    var groups = {};
-    var anyCoded = false;
+    var upstream = _upstreamMap(elements, global);
+    _levelMemo = { elements: elements, upstream: upstream };
+    var childrenOf = {};
+    Object.keys(upstream).forEach(function (c) {
+      (childrenOf[upstream[c]] = childrenOf[upstream[c]] || []).push(c);
+    });
+
+    // ── Tree of boxes ──
+    var root = { key: "", name: "", children: [], childByKey: {}, devices: [] };
+    var labelOf = {};
     (elements || []).forEach(function (el) {
       var d = el && el.data;
-      if (!d || !d.id || d.source) return;
-      if (!(d.id in global)) return;
-      var key = d.locA
-        ? "a|" + d.locA
-        : (d.locB ? "b|" + (d.locA || "") + "|" + d.locB : "");
-      if (key) anyCoded = true;
-      var g = groups[key];
-      if (!g) {
-        g = { key: key, members: [] };
-        groups[key] = g;
-        order.push(g);
-      }
-      g.members.push(d.id);
+      if (!d || !d.id || d.source || !(d.id in global)) return;
+      labelOf[d.id] = String(d.label || d.id).toLowerCase();
+      var box = root;
+      _locPath(d).forEach(function (seg) {
+        var next = box.childByKey[seg.key];
+        if (!next) {
+          next = { key: seg.key, name: String(seg.name).toLowerCase(), children: [], childByKey: {}, devices: [] };
+          box.childByKey[seg.key] = next;
+          box.children.push(next);
+        }
+        box = next;
+      });
+      box.devices.push(d.id);
     });
-    if (!anyCoded) return null; // untagged site — flat solver is the layout
-    function rankMap(values) {
-      var uniq = Object.keys(values).map(Number).sort(function (a, b) { return a - b; });
-      var m = {};
-      uniq.forEach(function (v, i) { m[v] = i; });
-      return { map: m, count: uniq.length };
+
+    function cmpStr(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+
+    // Level + entry device of every box, innermost first.
+    function measure(box) {
+      var level = Infinity;
+      var entry = null;
+      function offer(id) {
+        var lv = global[id].depth;
+        if (lv < level || (lv === level && (entry === null || cmpStr(labelOf[id], labelOf[entry]) < 0 ||
+            (labelOf[id] === labelOf[entry] && id < entry)))) {
+          level = lv;
+          entry = id;
+        }
+      }
+      box.devices.forEach(offer);
+      box.children.forEach(function (c) { measure(c); offer(c.entry); });
+      box.level = level;
+      box.entry = entry;
     }
-    order.forEach(function (g) {
-      var dVals = {};
-      var lVals = {};
-      var qDepth = Infinity;
-      var qLane = Infinity;
-      g.members.forEach(function (id) {
-        var p = global[id];
-        dVals[p.depth] = true;
-        lVals[p.lane] = true;
-        if (p.depth < qDepth) qDepth = p.depth;
-        if (p.lane < qLane) qLane = p.lane;
+    measure(root);
+
+    // Lay a box out. Returns { w, h, ext, rel }: rel = device CENTRES
+    // relative to the box's first (top-left) centre, w × h the span of those
+    // centres, ext the px its drawn wall reaches beyond them (the device
+    // radius plus each nested level's padding / name strip). Siblings are
+    // spaced by what they DRAW — the two exts plus the sibling gap, rounded
+    // up to half cells so every device stays on the 65 px snap grid — so
+    // nested boxes cost only their own walls, not a fixed margin per level.
+    function layout(box) {
+      var items = [];
+      var itemOfDevice = {}; // every device in this box's subtree → its item here
+      box.children.forEach(function (c) {
+        var inner = layout(c);
+        Object.keys(inner.rel).forEach(function (id) { itemOfDevice[id] = items.length; });
+        items.push({ level: c.level, name: c.name, key: "b:" + c.key, entry: c.entry,
+                     w: inner.w, h: inner.h, ext: inner.ext, rel: inner.rel });
       });
-      var dr = rankMap(dVals);
-      var lr = rankMap(lVals);
-      g.w = dr.count;
-      g.h = lr.count;
-      g.qDepth = qDepth;
-      g.qLane = qLane;
-      g.local = {};
-      g.members.forEach(function (id) {
-        var p = global[id];
-        g.local[id] = { x: dr.map[p.depth], y: lr.map[p.lane] };
+      box.devices.forEach(function (id) {
+        var rel = {};
+        rel[id] = { x: 0, y: 0 };
+        itemOfDevice[id] = items.length;
+        items.push({ level: global[id].depth, name: labelOf[id], key: "d:" + id, entry: id,
+                     w: 0, h: 0, ext: LEVEL_DEVICE_EXT, rel: rel });
       });
-    });
-    // Height-budgeted shelf packing. Groups are placed in ascending
-    // entry-depth order (the uncoded pseudo-group's fallback exiles carry
-    // negative depths so it lands leftmost; ties break by entry lane then
-    // key), stacking down the current quotient column and wrapping to a new
-    // column when the stack would exceed the budget — the tallest group's
-    // height, so the canvas is never taller than its biggest box and small
-    // groups (single-AP buildings) tuck under each other instead of each
-    // claiming a whole column.
-    order.sort(function (a, b) {
-      if (a.qDepth !== b.qDepth) return a.qDepth - b.qDepth;
-      if (a.qLane !== b.qLane) return a.qLane - b.qLane;
-      return a.key < b.key ? -1 : 1;
-    });
-    var budget = 0;
-    order.forEach(function (g) { if (g.h > budget) budget = g.h; });
-    var positions = {};
-    var xOffset = 0;
-    var colWidth = 0;
-    var yCursor = 0;
-    order.forEach(function (g) {
-      if (yCursor > 0 && yCursor + g.h > budget) {
-        xOffset += colWidth + GAP_X;
-        colWidth = 0;
-        yCursor = 0;
+
+      // Columns by level, left to right; a column's x clears the widest
+      // item and the largest wall of the column before it.
+      var levels = [];
+      items.forEach(function (it) { if (levels.indexOf(it.level) < 0) levels.push(it.level); });
+      levels.sort(function (a, b) { return a - b; });
+      var colOf = {};
+      levels.forEach(function (lv, i) { colOf[lv] = i; });
+      var cols = levels.map(function () { return { items: [], x: 0, w: 0, ext: 0, placed: [], reserved: [] }; });
+      items.forEach(function (it) {
+        it.col = colOf[it.level];
+        var c = cols[it.col];
+        c.items.push(it);
+        if (it.w > c.w) c.w = it.w;
+        if (it.ext > c.ext) c.ext = it.ext;
+      });
+      cols.forEach(function (c, i) {
+        c.x = i === 0 ? 0 : cols[i - 1].x + cols[i - 1].w + _levelSep(cols[i - 1].ext, c.ext);
+      });
+
+      // Row of an item's upstream device, when that device sits in an item
+      // of THIS box that is already placed; else null.
+      function upRow(it) {
+        var u = upstream[it.entry];
+        if (u === undefined) return null;
+        var idx = itemOfDevice[u];
+        if (idx === undefined) return null;
+        var host = items[idx];
+        if (host.y === undefined) return null;
+        return host.y + host.rel[u].y;
       }
-      g.members.forEach(function (id) {
-        positions[id] = {
-          depth: xOffset + g.local[id].x,
-          lane: yCursor + g.local[id].y,
-        };
+      // First y ≥ `y` where an item (top y, span h, wall ext) clears every
+      // item placed in column c and every link reserved through it; returns
+      // the y to retry from, or null when y is clear.
+      function clashAt(c, y, h, ext) {
+        for (var i = 0; i < c.placed.length; i++) {
+          var p = c.placed[i];
+          var s = _levelSep(p.ext, ext);
+          if (y < p.y + p.h + s && p.y < y + h + s) return p.y + p.h + s;
+        }
+        for (var j = 0; j < c.reserved.length; j++) {
+          var r = c.reserved[j];
+          var sl = _levelLinkSep(ext);
+          if (y - sl < r && r < y + h + sl) return r + sl;
+        }
+        return null;
+      }
+      // A link on `row` crossing column c: clear of every placed item there.
+      function linkClashAt(c, row) {
+        for (var i = 0; i < c.placed.length; i++) {
+          var p = c.placed[i];
+          var sl = _levelLinkSep(p.ext);
+          if (p.y - sl < row && row < p.y + p.h + sl) return p.y + p.h + sl;
+        }
+        return null;
+      }
+      // The SPINE: for each upstream device, its first child item (by level,
+      // then name) that skips columns keeps the upstream's row — the row is
+      // reserved through the columns in between, so leaf APs there step
+      // below it and a switch chain stays one flat row, as the flat solver
+      // drew it. Other children route as fan-out links.
+      var spineOf = {}; // upstream deviceId → item
+      items.forEach(function (it) {
+        var u = upstream[it.entry];
+        var hi = u === undefined ? undefined : itemOfDevice[u];
+        if (hi === undefined || it.col <= items[hi].col + 1) return;
+        var cur = spineOf[u];
+        if (!cur || it.col < cur.col || (it.col === cur.col && (cmpStr(it.name, cur.name) || cmpStr(it.key, cur.key)) < 0)) {
+          spineOf[u] = it;
+        }
       });
-      yCursor += g.h + GAP_Y;
-      if (g.w > colWidth) colWidth = g.w;
+      // OUTBOUND links: a device here whose child lies OUTSIDE this box
+      // links out through the box's right side on its own row, so that row
+      // is kept clear in every column right of it (an AP beside the core
+      // switch steps below the link to the next building instead of the
+      // link running through it).
+      var outbound = [];
+      Object.keys(itemOfDevice).forEach(function (u) {
+        var kids = childrenOf[u];
+        if (kids && kids.some(function (k) { return itemOfDevice[k] === undefined; })) outbound.push(u);
+      });
+      function reserveSpines(ci) {
+        Object.keys(spineOf).forEach(function (u) {
+          var it = spineOf[u];
+          var host = items[itemOfDevice[u]];
+          if (host.y === undefined || !(host.col < ci && ci < it.col)) return;
+          cols[ci].reserved.push(host.y + host.rel[u].y);
+        });
+        outbound.forEach(function (u) {
+          var host = items[itemOfDevice[u]];
+          if (host.y === undefined || !(host.col < ci)) return;
+          cols[ci].reserved.push(host.y + host.rel[u].y);
+        });
+      }
+
+      var height = 0;
+      cols.forEach(function (c, ci) {
+        reserveSpines(ci);
+        c.items.forEach(function (it) { it.up = upRow(it); });
+        c.items.sort(function (a, b) {
+          var au = a.up === null ? -Infinity : a.up;
+          var bu = b.up === null ? -Infinity : b.up;
+          if (au !== bu) return au - bu;
+          return cmpStr(a.name, b.name) || cmpStr(a.key, b.key);
+        });
+        c.items.forEach(function (it) {
+          var entryRow = it.rel[it.entry].y;
+          var y = Math.max(0, it.up === null ? 0 : it.up - entryRow);
+          var upIdx = it.up === null ? undefined : itemOfDevice[upstream[it.entry]];
+          var fromCol = upIdx === undefined ? ci - 1 : items[upIdx].col;
+          var spineSelf = upIdx !== undefined && spineOf[upstream[it.entry]] === it;
+          for (var guard = 0; guard < 10000; guard++) {
+            var next = clashAt(c, y, it.h, it.ext);
+            // Its link crosses the columns between it and its upstream: the
+            // entry row must clear what is placed there (its own reserved
+            // corridor is, by construction, already clear).
+            for (var k = fromCol + 1; k < ci && next === null; k++) {
+              var hit = linkClashAt(cols[k], y + entryRow);
+              if (hit !== null) next = hit - entryRow;
+              if (next === null && !spineSelf) {
+                // ...and must not ride another link's reserved corridor.
+                for (var q = 0; q < cols[k].reserved.length && next === null; q++) {
+                  if (Math.abs(cols[k].reserved[q] - (y + entryRow)) < 0.5) next = cols[k].reserved[q] + 0.5 - entryRow;
+                }
+              }
+            }
+            if (next === null) break;
+            y = Math.max(y, next);
+          }
+          it.x = c.x;
+          it.y = y;
+          c.placed.push(it);
+          if (y + it.h > height) height = y + it.h;
+        });
+      });
+
+      var out = {};
+      var maxExt = 0;
+      items.forEach(function (it) {
+        if (it.ext > maxExt) maxExt = it.ext;
+        Object.keys(it.rel).forEach(function (id) {
+          out[id] = { x: it.x + it.rel[id].x, y: it.y + it.rel[id].y };
+        });
+      });
+      var width = cols.length ? cols[cols.length - 1].x + cols[cols.length - 1].w : 0;
+      // This box's own wall: the larger of its level's side padding and the
+      // name strip on top, beyond the furthest-reaching thing inside it.
+      var cfg = LOC_GROUP_KINDS[_LEVEL_KIND[box.key.slice(0, box.key.indexOf("|"))]];
+      var own = cfg ? Math.max(cfg.pad, LOC_LABEL_BAND + LOC_LABEL_GAP) : 0;
+      return { w: width, h: height, ext: maxExt + own, rel: out };
+    }
+
+    var placed = layout(root).rel;
+    var positions = {};
+    Object.keys(placed).forEach(function (id) {
+      positions[id] = { depth: placed[id].x, lane: placed[id].y };
     });
     return positions;
+  }
+
+  // Upstream (parent) device of every device, from the same pass the level
+  // layout ran — for placing a device a saved layout has no spot for next to
+  // its saved parent (applySavedPositions).
+  function layoutUpstream(elements) {
+    if (_levelMemo.elements === elements && _levelMemo.upstream) return _levelMemo.upstream;
+    var global = computeTopologyColumns(elements);
+    return global ? _upstreamMap(elements, global) : {};
+  }
+
+  // Lay a view's SAVED layout over the level layout just run (call from the
+  // layoutstop handler, before renderLocationGroups). Saved devices go to
+  // their saved spots and are PINNED: renderLocationGroups({ fixedIds }) never
+  // pushes them. A device the save has no spot for keeps its level-layout
+  // offset from its nearest saved upstream ancestor — a new switch lands
+  // beside its saved parent, not where the parent would be on an empty map.
+  // Returns { pinned: { id: true }, restored: [node], placed: [node] }.
+  function applySavedPositions(cy, saved, elements) {
+    var res = { pinned: {}, restored: [], placed: [] };
+    if (!cy || !saved || typeof saved !== "object") return res;
+    var auto = {};
+    cy.nodes().forEach(function (n) {
+      var p = n.position();
+      auto[n.id()] = { x: p.x, y: p.y };
+    });
+    function ok(p) { return p && typeof p.x === "number" && typeof p.y === "number"; }
+    var up = layoutUpstream(elements);
+    cy.batch(function () {
+      cy.nodes().forEach(function (n) {
+        var p = saved[n.id()];
+        if (ok(p)) {
+          n.position({ x: p.x, y: p.y });
+          res.pinned[n.id()] = true;
+          res.restored.push(n);
+        }
+      });
+      cy.nodes().forEach(function (n) {
+        var id = n.id();
+        if (res.pinned[id]) return;
+        res.placed.push(n);
+        var a = up[id];
+        for (var guard = 0; a !== undefined && !res.pinned[a] && guard < 256; guard++) a = up[a];
+        if (a === undefined || !res.pinned[a] || !auto[a] || !auto[id]) return;
+        var s = saved[a];
+        n.position({ x: auto[id].x + (s.x - auto[a].x), y: auto[id].y + (s.y - auto[a].y) });
+      });
+    });
+    return res;
   }
 
   // ── Edge hover tooltip text ───────────────────────────────────────────────
@@ -3493,6 +3754,8 @@
     topologyLegendSpec: topologyLegendSpec,
     computeTopologyColumns: computeTopologyColumns,
     computeGroupedLayout: computeGroupedLayout,
+    layoutUpstream: layoutUpstream,
+    applySavedPositions: applySavedPositions,
     markFanOutEdges: markFanOutEdges,
     topologyNodeWeight: topologyNodeWeight,
     computeLocationGroups: computeLocationGroups,

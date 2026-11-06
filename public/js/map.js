@@ -2677,27 +2677,21 @@
     // Restore saved positions AFTER the dagre layout finishes so any
     // brand-new nodes get a sensible default placement and only the ones
     // the operator dragged previously snap to their stored coordinates.
+    // Saved devices are pinned: the box-overlap push in renderLocationGroups
+    // leaves them (and any box holding one) where the operator put them.
+    var pinnedIds = {};
     cyInstance.one("layoutstop", function () {
       if (!savedPositions) return;
-      var restored = [];
-      var placed = [];
-      cyInstance.batch(function () {
-        cyInstance.nodes().forEach(function (n) {
-          var p = savedPositions[n.id()];
-          if (p && typeof p.x === "number" && typeof p.y === "number") {
-            n.position({ x: p.x, y: p.y });
-            restored.push(n);
-          } else {
-            placed.push(n);
-          }
-        });
-      });
-      // A device new since the save can be auto-placed on a spot a saved
-      // device now holds (and an old blob can hold two on one spot): the
-      // saved devices keep their spots, first come first served, and the
-      // auto-placed ones step aside. Display only — it persists with the
-      // operator's next save.
-      _separateDevices(restored.concat(placed));
+      // Saved spots, plus a level-layout spot for any device the save has
+      // none for, kept relative to its nearest saved upstream device
+      // (topology-render.js → applySavedPositions).
+      var applied = window.PolarisTopologyRender.applySavedPositions(cyInstance, savedPositions, elements);
+      pinnedIds = applied.pinned;
+      // A device new since the save can land on a spot a saved device holds
+      // (and an old blob can hold two on one spot): the saved devices keep
+      // their spots, first come first served, and the others step aside.
+      // Display only — it persists with the operator's next save.
+      _separateDevices(applied.restored.concat(applied.placed));
       try { cyInstance.fit(undefined, 30); } catch (e) {}
     });
 
@@ -2909,10 +2903,10 @@
     // scope, so only the deeper shapes stay useful.
     if (topoState.hasLocationCodes) {
       var supKinds = _locSuppressKinds();
-      window.PolarisTopologyRender.renderLocationGroups(
-        cyInstance,
-        supKinds ? { suppressKinds: supKinds } : undefined
-      );
+      window.PolarisTopologyRender.renderLocationGroups(cyInstance, {
+        suppressKinds: supKinds || undefined,
+        fixedIds: pinnedIds,
+      });
       // Route cross-group links through the gutters between boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     } else {

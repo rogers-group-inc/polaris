@@ -264,6 +264,24 @@ that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
+**How the map places devices and boxes.** Every device has a level, which is
+how many hops it is from the FortiGate. Every location box has the level of
+the closest-to-the-FortiGate device inside it. Boxes and devices are laid out
+left to right by level, at every depth of nesting: the areas on the map,
+the buildings inside each area, and so on down. Each one sits on the same
+row as the device it connects to. A chain of switches stays on one straight
+row, and an access point beside it moves to the row below so that no link
+runs through a device.
+
+Because each box is placed by its level and not by the boxes around it,
+adding a location code to a device moves only the box that device joins or
+leaves, plus anything below it in the same column. If the map has a saved
+layout, a code change never moves a device you placed: the new box is drawn
+around the devices where they already are, even if two boxes then overlap.
+A device the saved layout has no spot for is placed next to the device it
+connects to. **Reset layout** › **Reset to baseline** lays the whole map out
+again from levels.
+
 **Editing the layout.** The topology opens **view-only**: you can click,
 select, pan, zoom, switch location views and export, but nothing moves.
 Dragging anywhere pans the map, including on a device or a location box. While

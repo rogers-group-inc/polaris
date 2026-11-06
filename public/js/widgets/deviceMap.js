@@ -286,15 +286,11 @@
     // Registered BEFORE the layout runs: a preset layout is synchronous and
     // would emit layoutstop before a later listener attached.
     cy.one("layoutstop", function () {
-      if (savedPositions) {
-        cy.batch(function () {
-          cy.nodes().forEach(function (n) {
-            var p = savedPositions[n.id()];
-            if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
-          });
-        });
-      }
-      R.renderLocationGroups(cy);
+      // The page's saved spots (pinned: the box-overlap push leaves them), and
+      // a device the save has none for placed beside its saved parent — the
+      // same helper the Device Map page uses.
+      var applied = R.applySavedPositions(cy, savedPositions, elements);
+      R.renderLocationGroups(cy, { fixedIds: applied.pinned });
       // Cross-box links through the gutters, and any straight link bent
       // around a device it would pass through — with or without boxes.
       R.routeInterGroupEdges(cy);

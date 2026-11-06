@@ -126,6 +126,8 @@ beforeAll(() => {
     computeTopologyColumns: () => ({ "fg-river": { depth: 0, lane: 0 } }),
     topologyStylesheet: () => [],
     renderLocationGroups: () => {},
+    // The shared saved-layout overlay (pins saved devices); nothing to pin here.
+    applySavedPositions: () => ({ pinned: {}, restored: [], placed: [] }),
     routeInterGroupEdges: () => {},
     markFanOutEdges: () => {},
     wireBentEdgeLabels: () => {},
