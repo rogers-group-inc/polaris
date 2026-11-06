@@ -146,7 +146,7 @@
   // Same spacing as the Device Map modal and the phone (map.js,
   // mobile/topology-tab.js), so a saved layout lands where it was saved.
   var TOPO_COL_SPACING = 130;
-  var TOPO_ROW_SPACING = 95;
+  var TOPO_ROW_SPACING = 130; // square since 2026-11-06 (was 95) — map.js
   // In load order: dagre before its Cytoscape adapter (which registers itself
   // on window.cytoscape), the renderer before the line editor it is read by.
   var TOPO_SCRIPTS = [

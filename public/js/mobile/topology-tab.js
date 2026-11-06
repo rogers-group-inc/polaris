@@ -52,7 +52,7 @@
   // Must match: the shared saved layout is in these coordinates, and a node
   // the layout has no entry for lands on this grid beside the saved ones.
   var TOPO_COL_SPACING = 130;
-  var TOPO_ROW_SPACING = 95;
+  var TOPO_ROW_SPACING = 130; // square since 2026-11-06 (was 95) — map.js
 
   // ─── Lazy loaders ──────────────────────────────────────────────────────
   // Inline-duplicated from map-tab.js to keep each tab module

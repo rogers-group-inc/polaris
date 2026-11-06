@@ -3314,8 +3314,8 @@
   // spot" is the device bodies (width × height, border excluded: a
   // selected device draws a thicker border, and its footprint must not
   // change with selection) overlapping — no
-  // clearance: the snap cells are 65 × 47.5, so two 46 px switches on
-  // neighbouring rows are 1.5 px apart and must count as free — two exactly equal x/y is the extreme case, and the one
+  // clearance: the snap cells are 65 px squares, so two switches (44 px
+  // bodies) on neighbouring cells are 21 px apart and must count as free — two exactly equal x/y is the extreme case, and the one
   // snapping produces when two devices round to one grid cell.
   //
   // separatePositions places `items` IN ORDER (earlier items keep their spot;
@@ -3336,7 +3336,7 @@
   function separatePositions(items, opts) {
     opts = opts || {};
     var stepX = opts.stepX > 0 ? opts.stepX : 130;
-    var stepY = opts.stepY > 0 ? opts.stepY : 95;
+    var stepY = opts.stepY > 0 ? opts.stepY : 130;
     var gap = typeof opts.gap === "number" ? opts.gap : _OVERLAP_GAP;
     var buckets = {};
     var maxW = 0, maxH = 0;

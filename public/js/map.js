@@ -43,7 +43,9 @@
   // its access switch/AP). depth → x (px between adjacent columns),
   // lane → y (px between stacked nodes in a column).
   var TOPO_COL_SPACING = 130;
-  var TOPO_ROW_SPACING = 95;
+  // Square (2026-11-06; rows were 95): a square lattice gives a square snap
+  // grid, and stacked devices room for the name under each icon.
+  var TOPO_ROW_SPACING = 130;
   // Legend overlay: per-user (singleton) — same key for every site, since
   // the legend describes the rendering rules, not site-specific content.
   // Persisted state is `{visible, x, y}` so opening the modal restores the
@@ -62,12 +64,12 @@
   // device still sits on a thick line, and an operator gets a cell between
   // any two of them. The thin (minor) lines split each major cell
   // TOPO_GRID_DIV ways, or TOPO_GRID_DIV_FINE ways from
-  // TOPO_GRID_FINE_MIN_ZOOM (100%) up (_topologyGridDiv) — the same 32.5 /
-  // 16.25 px spacing they had over the full lattice; thin AND thick lines
+  // TOPO_GRID_FINE_MIN_ZOOM (100%) up (_topologyGridDiv) — 32.5 / 16.25 px
+  // squares; thin AND thick lines
   // together are the lattice line points snap to, so the snap follows the
   // split being drawn.
   var TOPO_SNAP_COL = TOPO_COL_SPACING / 2;  // 65
-  var TOPO_SNAP_ROW = TOPO_ROW_SPACING / 2;  // 47.5
+  var TOPO_SNAP_ROW = TOPO_ROW_SPACING / 2;  // 65
   var TOPO_GRID_DIV = 2;
   var TOPO_GRID_DIV_FINE = 4;
   var TOPO_GRID_FINE_MIN_ZOOM = 1; // 100% — was ~135% (a 16 px fine cell) until 2026-11-06
@@ -3589,7 +3591,7 @@
   // topology-render.js → separatePositions.
   // An unrendered view blob has no node sizes: size every entry as a switch
   // body (44; the guard measures bodies, border excluded). Larger (the firewall) would make neighbouring snap
-  // cells — 65 × 47.5 apart — read as one spot; the load-time pass
+  // cells — 65 apart — read as one spot; the load-time pass
   // (layoutstop → _separateDevices) re-checks with real sizes anyway.
   var TOPO_BLOB_NODE_PX = 44;
 

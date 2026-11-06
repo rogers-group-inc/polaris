@@ -74,22 +74,25 @@ describe("separatePositions", () => {
     expect(out.b).toEqual({ x: 260, y: 285 });
   });
 
-  it("lets switches sit on neighbouring cells of the half-lattice snap grid (65 × 47.5)", () => {
-    // 46 px bodies 47.5 px apart are 1.5 px clear: neighbours, not one spot.
+  it("lets devices sit on neighbouring cells of the 65 px square snap grid", () => {
+    // Bodies (no border): switch 44, firewall 64. Neighbouring cells are
+    // 65 px apart, so every pair fits side by side and stacked.
     const items: Item[] = [
-      { id: "a", x: 65, y: 47.5, w: 46, h: 46 },
-      { id: "b", x: 65, y: 95, w: 46, h: 46 },
-      { id: "c", x: 130, y: 47.5, w: 46, h: 46 },
+      { id: "fw", x: 0, y: 0, w: 64, h: 64 },
+      { id: "below", x: 0, y: 65, w: 44, h: 44 },
+      { id: "right", x: 65, y: 0, w: 44, h: 44 },
+      { id: "diag", x: 65, y: 65, w: 44, h: 44 },
     ];
-    expect(sepPos(items, { stepX: 65, stepY: 47.5 })).toEqual({
-      a: { x: 65, y: 47.5 }, b: { x: 65, y: 95 }, c: { x: 130, y: 47.5 },
+    expect(sepPos(items, { stepX: 65, stepY: 65 })).toEqual({
+      fw: { x: 0, y: 0 }, below: { x: 0, y: 65 }, right: { x: 65, y: 0 }, diag: { x: 65, y: 65 },
     });
-    // A firewall (74 px with its border) is too tall for the row under it.
-    const fw = sepPos([
-      { id: "fw", x: 0, y: 0, w: 74, h: 74 },
-      { id: "sw", x: 0, y: 47.5, w: 46, h: 46 },
-    ], { stepX: 65, stepY: 47.5 });
-    expect(fw.sw).not.toEqual({ x: 0, y: 47.5 });
+    // Two on ONE cell still separate, onto a neighbouring cell.
+    const same = sepPos([
+      { id: "a", x: 65, y: 65, w: 44, h: 44 },
+      { id: "b", x: 65, y: 65, w: 44, h: 44 },
+    ], { stepX: 65, stepY: 65 });
+    expect(same.a).toEqual({ x: 65, y: 65 });
+    expect(Math.abs(same.b.x - 65) + Math.abs(same.b.y - 65)).toBe(65);
   });
 
   it("never moves a fixed device, and skips cells fixed devices hold", () => {
