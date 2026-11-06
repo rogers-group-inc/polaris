@@ -37,6 +37,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 const read = (...p: string[]) => readFileSync(join(process.cwd(), ...p), "utf-8");
 const DETAIL_SRC = read("public", "js", "mobile", "asset-detail.js");
@@ -114,6 +119,7 @@ function boot(perms: Record<string, string>, extra: Record<string, any> = {}) {
   delete g.PolarisAssetDetail;
   delete g.PolarisAssetEdit;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  loadSharedModules();
   new Function(DETAIL_SRC)();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(EDIT_SRC)();
