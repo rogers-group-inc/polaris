@@ -43,6 +43,10 @@ import { isProxyMode } from "../utils/proxyMode.js";
 import { getPublicApiBaseUrl } from "../utils/publicUrl.js";
 import { generateEd25519Keypair, SshKeygenError } from "../utils/sshKeygen.js";
 import { WAL_SAMPLES_KEY } from "./haHeartbeatService.js";
+// The SAME container test Restart (rule 99) and the OS probe use — the bare
+// POLARIS_STATE_DIR check this replaced refused HA on bare-metal installs that
+// relocate state under SELinux / STIG (CQ-B042).
+import { runtimeIsContainer } from "../utils/deploymentContext.js";
 import {
   rttAdvisory,
   walRateFromSamples,
@@ -395,7 +399,7 @@ export async function computeAdvisories(input: AdvisoryInput = {}): Promise<HaAd
       proxyMode: isProxyMode(),
       pgbouncer: isPgbouncerMode(),
       localPgdata: facts.pgdataLocal,
-      docker: Boolean(process.env.POLARIS_STATE_DIR),
+      docker: runtimeIsContainer(),
     }),
     latency: {
       standby: standbyAddr
@@ -646,7 +650,7 @@ export async function enableHa(input: EnableHaInput, actor: string): Promise<HaC
     proxyMode: isProxyMode(),
     pgbouncer: isPgbouncerMode(),
     localPgdata: true, // enableHa writes config only; the scripts re-check on the host
-    docker: Boolean(process.env.POLARIS_STATE_DIR),
+    docker: runtimeIsContainer(),
   });
   if (!support.supported) {
     throw new AppError(409, `This install cannot use the HA deployment: ${support.reasons.join(" ")}`);
