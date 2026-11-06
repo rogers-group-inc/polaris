@@ -4,7 +4,7 @@
  *
  * Three callers, one matrix: Read-Write on every scoped key. `alice` holds the
  * region WS-North and the other tag ws-pci; `bob` holds no tags; `root` holds
- * Full Read-Write (and Clear Alerts). Four devices: one alice added, one
+ * Full Read-Write (and Alert Clear). Four devices: one alice added, one
  * carrying her other tag, one carrying her region (different case), one with
  * no owner and no tags — the shape integration discovery leaves behind.
  *
@@ -201,7 +201,7 @@ d("alerts — judged on the device; none means Full Read-Write; clear is its own
     const r = await loginAs(root);
     expect((await r.agent.post("/api/v1/alerts/acknowledge").set("X-CSRF-Token", r.csrf).send({ ids: [n.id] })).status).toBe(200);
   });
-  it("clearing needs the Clear Alerts key, then the same reach", async () => {
+  it("clearing needs the Alert Clear key, then the same reach", async () => {
     const n = await alert(tagged);
     const a = await loginAs(alice);
     expect((await a.agent.post("/api/v1/alerts/clear").set("X-CSRF-Token", a.csrf).send({ ids: [n.id] })).status).toBe(403);

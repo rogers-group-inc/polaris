@@ -3066,7 +3066,7 @@ and [Users, Roles and Permissions](Users-Roles-and-Permissions#disabling-an-acco
 **A dangerous act is its own key, a tag is an administrator's grant, and a
 role carries no tags.** Merging two asset records (**Merge Assets**),
 deploying the Polaris Agent (**Agent Deploy**) and clearing an alert
-(**Clear Alerts**) are permissions of their own rather than the Full
+(**Alert Clear**) are permissions of their own rather than the Full
 read-write rung of Assets and Alerts; the update gave each one to exactly the
 roles that held that rung, so nobody gained or lost an act. Putting a tag on
 anything — a device, a port, a network, a block, a user, a group mapping — or
