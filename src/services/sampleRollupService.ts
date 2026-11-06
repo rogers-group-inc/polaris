@@ -658,7 +658,6 @@ function sqlInterfaceHourly(): string {
       (ARRAY_AGG("operStatus"  ORDER BY "timestamp" DESC) FILTER (WHERE "operStatus"  IS NOT NULL))[1],
       (ARRAY_AGG("ipAddress"   ORDER BY "timestamp" DESC) FILTER (WHERE "ipAddress"   IS NOT NULL))[1],
       (ARRAY_AGG("ipv6Address" ORDER BY "timestamp" DESC) FILTER (WHERE "ipv6Address" IS NOT NULL))[1],
-      (ARRAY_AGG("ipv6Address" ORDER BY "timestamp" DESC) FILTER (WHERE "ipv6Address" IS NOT NULL))[1],
       (ARRAY_AGG("macAddress"  ORDER BY "timestamp" DESC) FILTER (WHERE "macAddress"  IS NOT NULL))[1],
       (ARRAY_AGG("alias"       ORDER BY "timestamp" DESC) FILTER (WHERE "alias"       IS NOT NULL))[1],
       (ARRAY_AGG("description" ORDER BY "timestamp" DESC) FILTER (WHERE "description" IS NOT NULL))[1],
