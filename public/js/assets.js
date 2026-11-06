@@ -9769,7 +9769,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<th title="Monitored interfaces are polled every minute and record history. Unmonitored interfaces still show current state here, but record no history to chart." style="width:112px" data-col-id="poll" data-col-required="true" data-col-no-resize="true">' +
         '<button type="button" class="iface-mon-toggle iface-mon-all" id="iface-poll-all" title="Switch every listed interface (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>Monitor all</button>' +
       '</th>' +
-      '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="string">Interface</th>' +
+      '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="natural">Interface</th>' +
       '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
       '<th data-col-id="speed" data-sf-key="speed" data-sf-type="number" data-sf-nofilter>Speed</th>' +
       '<th data-col-id="ip" data-sf-key="ip" data-sf-type="ip">IP</th>' +
