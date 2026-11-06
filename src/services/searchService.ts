@@ -67,6 +67,36 @@ export interface SearchResults {
 }
 
 const PER_GROUP_LIMIT = 8;
+
+/**
+ * The asset columns a search hit is built from — every asset row a search
+ * loads (the column scan, the side-table joins, the JSON / discovered-name /
+ * tag / pin follow-ups) loads exactly these. Search runs per keystroke and a
+ * full Asset row carries the large JSON blobs (fortinetTopology,
+ * virtualization, associatedUsers, systemInfo…), up to ~60 of them per
+ * search before this. The required fields are compiler-checked by the
+ * assetHit / siteHit / decorateAssetHit / resolveOriginFortigates parameter
+ * types; the OPTIONAL ones (status, dependencySuppressed, dependencyTestUntil
+ * — the pill's maintenance and dependency overlays) are not, so a field added
+ * to AssetMonitorPillFields must be added here by hand.
+ */
+const SEARCH_ASSET_SELECT = {
+  id: true,
+  hostname: true,
+  ipAddress: true,
+  macAddress: true,
+  assetTag: true,
+  assetType: true,
+  manufacturer: true,
+  model: true,
+  serialNumber: true,
+  learnedLocation: true,
+  monitored: true,
+  monitorStatus: true,
+  status: true,
+  dependencySuppressed: true,
+  dependencyTestUntil: true,
+} as const satisfies Prisma.AssetSelect;
 // When the operator scopes a search to one group via a `block:` / `network:`
 // / `asset:` / `reservation:` / `map:` prefix (or the short forms `b:` /
 // `n:` / `a:` / `r:` / `m:`), the per-group cap is lifted to this value.
@@ -413,7 +443,7 @@ async function withPinHits(hits: SearchHit[], matches: PinFingerprintMatch[], li
   const byId = new Map(hits.map((h) => [h.id, h]));
   const missing = matches.map((m) => m.assetId).filter((id) => !byId.has(id));
   if (missing.length) {
-    const rows = await prisma.asset.findMany({ where: { id: { in: missing } } });
+    const rows = await prisma.asset.findMany({ where: { id: { in: missing } }, select: SEARCH_ASSET_SELECT });
     for (const r of rows) byId.set(r.id, assetHit(r));
   }
   const pinned: SearchHit[] = [];
@@ -734,6 +764,7 @@ async function searchAssetsByTag(terms: string[], limit = PER_GROUP_LIMIT, asset
   if (rows.length === 0) return [];
   const assets = await prisma.asset.findMany({
     where: { ...assetWhere, id: { in: rows.map((r) => r.id) } },
+    select: SEARCH_ASSET_SELECT,
     orderBy: { hostname: "asc" },
   });
   return assets;
@@ -842,6 +873,7 @@ async function runAssetSearch(
   const [byAsset, sourceHits, macSideHits, ipSideHits, ipHistHits, jsonHitIds, discoveredHostnames] = await Promise.all([
     prisma.asset.findMany({
       where: { ...baseFilter, AND: assetAnd },
+      select: SEARCH_ASSET_SELECT,
       take: limit,
       orderBy: { hostname: "asc" },
     }),
@@ -850,9 +882,7 @@ async function runAssetSearch(
         AND: sourceTerms.map((t) => ({ externalId: { contains: t, mode: "insensitive" as const } })),
         asset: baseFilter,
       },
-      include: {
-        asset: true,
-      },
+      select: { asset: { select: SEARCH_ASSET_SELECT } },
       take: limit,
     }),
     // Full MAC history (the side table) — `Asset.macAddress` only carries the
@@ -887,7 +917,7 @@ async function runAssetSearch(
             }),
         asset: baseFilter,
       },
-      include: { asset: true },
+      select: { asset: { select: SEARCH_ASSET_SELECT } },
       take: limit,
       orderBy: { lastSeen: "desc" },
     }),
@@ -899,7 +929,7 @@ async function runAssetSearch(
         AND: terms.map((t) => ({ ip: { contains: t, mode: "insensitive" as const } })),
         asset: baseFilter,
       },
-      include: { asset: true },
+      select: { asset: { select: SEARCH_ASSET_SELECT } },
       take: limit,
       orderBy: { lastSeen: "desc" },
     }),
@@ -913,7 +943,7 @@ async function runAssetSearch(
         AND: terms.map((t) => ({ ip: { contains: t, mode: "insensitive" as const } })),
         asset: baseFilter,
       },
-      include: { asset: true },
+      select: { asset: { select: SEARCH_ASSET_SELECT } },
       take: limit,
       orderBy: { lastSeen: "desc" },
     }),
@@ -948,6 +978,7 @@ async function runAssetSearch(
   const jsonAssets = jsonHitIds.length
     ? await prisma.asset.findMany({
         where: { ...baseFilter, id: { in: jsonHitIds.map((r) => r.assetId) } },
+        select: SEARCH_ASSET_SELECT,
         take: limit,
         orderBy: { hostname: "asc" },
       })
@@ -957,6 +988,7 @@ async function runAssetSearch(
   const discoveredAssets = discoveredHostnames.size
     ? await prisma.asset.findMany({
         where: { ...baseFilter, id: { in: Array.from(discoveredHostnames.keys()) } },
+        select: SEARCH_ASSET_SELECT,
         take: limit,
         orderBy: { hostname: "asc" },
       })
