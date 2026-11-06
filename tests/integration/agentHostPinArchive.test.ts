@@ -250,7 +250,14 @@ d("agent host pin archive (business rule 123)", () => {
     const allowed = { blocks: true, subnets: true, reservations: true, assets: true, sites: true, ipsec: true };
     const hit = (await searchAll("AA AA AA AA AA", { ...allowed, pins: true })).assets.find((h) => h.id === assetId);
     expect(hit?.subtitle).toContain(`TLS certificate ${IP}:5986`);
-    expect((await searchAll("AA AA AA AA AA", { ...allowed, pins: false })).assets.find((h) => h.id === assetId)).toBeUndefined();
+    // Without the pins gate the PIN path is closed: no hit for this asset may
+    // come from its certificate. Asserted on the pin subtitle, not on absence —
+    // the suite shares one database and runs background jobs, so another
+    // file's rows (a tag, a source, a MAC range) can legitimately make this
+    // asset match "aa" through the ordinary asset search; asserting absence
+    // made this case fail ~1 run in 3-5 and blocked CI image builds.
+    const ungated = (await searchAll("AA AA AA AA AA", { ...allowed, pins: false })).assets.find((h) => h.id === assetId);
+    expect(ungated?.subtitle ?? "").not.toContain("TLS certificate");
     expect((await searchAll("AA AA AA AA AA", { ...allowed, assets: false, pins: true })).assets).toEqual([]);
 
     // Archived on decommission: still found, by the archive, and listed.
