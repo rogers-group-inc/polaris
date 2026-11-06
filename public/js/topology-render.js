@@ -714,9 +714,13 @@
           label: "data(label)",
           "font-size": "16px",
           "font-weight": 700,
+          // The name sits INSIDE the box, just under its top wall: anchored
+          // above the box (valign top) and pushed down past the wall. The box
+          // reserves LOC_LABEL_BAND px for it above its contents
+          // (_layoutLocationGroups), so the name never sits on a device.
           "text-valign": "top",
           "text-halign": "center",
-          "text-margin-y": -5,
+          "text-margin-y": LOC_LABEL_MARGIN_Y,
           "text-wrap": "none",
         },
       },
@@ -1103,6 +1107,22 @@
     jb:       { rank: 4, pad: 12, color: "#f59e0b", colorLight: "#b45309", shape: "round-rectangle", dash: "dashed", z: 5, scaleW: 1, scaleH: 1 },
   };
 
+  // The box name lives inside the box, under its top wall (stylesheet
+  // [isLocGroup]). LOC_LABEL_BAND is the strip each box adds above its
+  // contents to hold it; LOC_LABEL_MARGIN_Y drops the label (anchored above
+  // the wall by valign top) down into that strip — its bottom edge 26 px
+  // below the wall, so a 16 px name has ~6 px clear of the wall. A box is
+  // also kept at least as wide as its name (estimated: no renderer in the
+  // headless/mobile paths to measure with), so the name never crosses a side
+  // wall.
+  var LOC_LABEL_BAND = 28;
+  var LOC_LABEL_MARGIN_Y = 26;
+  var LOC_LABEL_CHAR_PX = 10; // 16 px bold Inter, generous
+  function _locLabelMinWidth(label, pad) {
+    var t = String(label || "");
+    return t ? t.length * LOC_LABEL_CHAR_PX + pad * 2 : 0;
+  }
+
   function locGroupColor(kind, theme) {
     var cfg = LOC_GROUP_KINDS[kind] || LOC_GROUP_KINDS.building;
     return paletteFamily(theme) === "light" ? cfg.colorLight : cfg.color;
@@ -1196,10 +1216,13 @@
               x2: Math.max(box.x2, f.box.x2), y2: Math.max(box.y2, f.box.y2) };
       }
       if (box === null) { cy.remove(n); return; }
-      var w = (box.x2 - box.x1 + cfg.pad * 2) * cfg.scaleW;
-      var h = (box.y2 - box.y1 + cfg.pad * 2) * cfg.scaleH;
+      // The name's strip goes on top of the contents (asymmetric: only the
+      // top wall moves), and a box narrower than its name widens evenly.
+      var band = n.data("label") ? LOC_LABEL_BAND : 0;
+      var w = Math.max((box.x2 - box.x1 + cfg.pad * 2) * cfg.scaleW, _locLabelMinWidth(n.data("label"), cfg.pad));
+      var h = (box.y2 - box.y1 + cfg.pad * 2 + band) * cfg.scaleH;
       var cx = (box.x1 + box.x2) / 2;
-      var cyy = (box.y1 + box.y2) / 2;
+      var cyy = (box.y1 - band + box.y2) / 2;
       n.position({ x: cx, y: cyy });
       n.style({ width: w, height: h });
       fitted.push({
@@ -1210,8 +1233,9 @@
     });
   }
 
-  // Minimum clear space between two shapes at the same nesting level. Covers
-  // the group-name label rendered above each shape's top edge.
+  // Minimum clear space between two shapes at the same nesting level. Sized
+  // when the group name rendered ABOVE each shape's top edge; the name now
+  // sits inside (LOC_LABEL_BAND), so this is plain spacing.
   var LOC_GROUP_SIBLING_GAP = 36;
 
   // Resolve overlaps between DISTINCT groups (shapes that don't nest inside
