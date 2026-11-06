@@ -280,6 +280,21 @@ describe("sorting", () => {
     expect(names().slice(0, 2)).toEqual(["lag1", "port9"]);   // second click reverses
   });
 
+  // A plain string sort read port1, port10, port11, port2. The digit run sorts
+  // as a number and a space before it is ignored, both directions.
+  it("sorts the Interface column naturally — port2 before port10, 'port 3' among them", () => {
+    doc.body.innerHTML = '<div id="ifaces"></div>';
+    const phys = (ifName: string) => ({ ifName, ifType: "physical", adminStatus: "up", operStatus: "up" });
+    g._renderInterfacesTable(doc.getElementById("ifaces"), {
+      ...makeSi(),
+      interfaces: ["port10", "port2", "port 3", "port11", "port1"].map(phys),
+    }, ASSET);
+    sortBy("ifname");
+    expect(names()).toEqual(["port1", "port2", "port 3", "port10", "port11"]);
+    sortBy("ifname");
+    expect(names()).toEqual(["port11", "port10", "port 3", "port2", "port1"]);
+  });
+
   it("keeps a collapsed parent collapsed when sorted", () => {
     click(doc.querySelector('.iface-expand-toggle[data-parent="lag1"]'));
     sortBy("ifname");

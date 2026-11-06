@@ -8,7 +8,11 @@
  * Mark sortable/filterable columns with data-sf-key and data-sf-type attributes:
  *   <th data-sf-key="name" data-sf-type="string">Name</th>
  *
- * Supported types: string (default), number, date, ip, array
+ * Supported types: string (default), number, date, ip, array, natural
+ *
+ * natural -> a string sorted with its digit runs compared as numbers and its
+ * whitespace ignored, so "port1", "port 2", "port10" sort in that order (a
+ * plain string sort gives port1, port10, port11, port2). Filters as string.
  *
  * data-sf-nosort -> filterable but NOT sortable (no sort icon, header click
  * does nothing) - for a server-side column the API cannot order by.
@@ -1424,10 +1428,17 @@ TableSF.prototype.apply = function (data) {
       if (type === "number")    sv = parseFloat(v);
       else if (type === "date") sv = new Date(v).getTime();
       else if (type === "ip")   sv = self._ipNum(v);
+      else if (type === "natural") sv = String(v).replace(/\s+/g, "");
       else                      sv = String(v).toLowerCase();
       return { row: row, v: sv };
     });
+    // One collator per sort, not a localeCompare per comparison: building the
+    // collation state is the expensive part.
+    var natural = type === "natural"
+      ? new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
+      : null;
     decorated.sort(function (a, b) {
+      if (natural) return natural.compare(a.v, b.v) * dir;
       if (type === "number" || type === "date") {
         // A blank cell (null / "" / unparseable) resolves to NaN, and
         // `NaN - x` is NaN — an inconsistent comparator that leaves the
