@@ -219,6 +219,22 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/mapSitesService.ts
+
+**What it owns:** The Device Map's site reads, extracted verbatim from `src/api/routes/map.ts` (CQ-B044, 2026-11-06): the `GET /map/sites` list, the owner fields the topology GET judges `canEditLayout` on, and the topology modal's site-scoped endpoint search.
+
+**Public API:** `listMapSites(regionNames)`, `getSiteLayoutOwner(id)`, `searchSiteEndpoints(id, q)`.
+
+**Cross-service deps:** topologyGraphService (`monitorStatusToHealth`, `fetchRecentSampleStats`, `buildSiteEndpointAttribution`, `attributeEndpointToSiteSwitch`, `portOfLastSeenSwitch`), nocDashboardService (`downAlertAcknowledgedByAsset`), `utils/fortinetParentKey.ts` (`controllerStampWhereOr` / `readFirewallDeviceName` — never hostname alone), `utils/assetInvariants.ts`.
+
+**Used by:** `src/api/routes/map.ts` (GET /sites, GET /sites/:id/topology, GET /sites/:id/topology/search).
+
+**Invariants:**
+- Read-only. The per-caller `canEditLayout` (rule 141 (e)) is judged in the ROUTE — it needs the request's write scope — on the `createdBy` / `tags` each site row carries; the route spreads it FIRST so the payload's key order is unchanged.
+- A site's children are matched by serial / FMG device name / hostname via `controllerStampWhereOr`, and an endpoint's switch by its `switch-port` edge or a fleet-unique hostname prefix (business rule 91) — the same attribution as the topology payload's `endpoints[]`.
+
+**When changing this:** a new field on the sites list is a new `select` column here AND the Status Map / Device Map widgets that read it; at 2000 assets the list is the firewalls with coordinates (tens to hundreds), one subnet groupBy and two bounded follow-ups — keep it that shape.
+
 ## services/topologyGraphService.ts
 
 **What it owns:** The Device Map topology payload — `buildSiteTopology(siteId)` builds `GET /map/sites/:id/topology` for one FortiGate: the gate, its sibling FortiSwitches / FortiAPs (resolved by controller stamp, never hostname alone — see `cross-cutting/fortinet-parent-key-resolution.md`), endpoints, wireless stations, subnets, and every edge class. Read-only; it writes nothing.
@@ -228,7 +244,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Cross-service deps:** `interfaceTopologyService.inferInterfaceTopology` (interface-name edges), `topologyLayoutService.getLayoutsForSite` (the `savedLayouts` embed), `utils/cableMembers.ts → pairCableMembers` (per-cable expansion), `utils/locationCodes.ts` (node location codes); reads `prisma.asset`, `assetLldpNeighbor`, `assetInterface`, `assetMclagPeer`, `assetWirelessStation`, `subnet`, `assetMonitorSample`.
 
 **Used by:**
-- `src/api/routes/map.ts` — the topology GET delegates to `buildSiteTopology`; `GET /sites` pin health uses `monitorStatusToHealth` + `fetchRecentSampleStats`; the topology search shares `buildSiteEndpointAttribution` / `attributeEndpointToSiteSwitch` (rule 91).
+- `src/api/routes/map.ts` — the topology GET delegates to `buildSiteTopology`; `services/mapSitesService.ts` (since 2026-11-06) — `GET /sites` pin health uses `monitorStatusToHealth` + `fetchRecentSampleStats`; the topology search shares `buildSiteEndpointAttribution` / `attributeEndpointToSiteSwitch` (rule 91).
 - `public/js/map.js` + `public/js/topology-render.js` — render the payload (`edges`, `interfaceEdges`, `lldpEdges`, `bridgeEdges`, `mclagEdges`, ghost and remote nodes).
 
 **Invariants:**
